@@ -325,9 +325,25 @@ impl ClientPool {
         self.inner.max
     }
 
+    /// Max time a checkout may block waiting for a free slot.
+    /// `LEANKG_PG_POOL_WAIT_MS` (default 10_000).
+    fn wait_timeout_from_env() -> std::time::Duration {
+        let ms = std::env::var("LEANKG_PG_POOL_WAIT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v >= 100)
+            .unwrap_or(10_000);
+        std::time::Duration::from_millis(ms)
+    }
+
     /// Check out a client, connecting a new one up to `max` live, else
-    /// blocking on a Condvar until one is returned.
+    /// blocking on a Condvar until one is returned — but only up to
+    /// `LEANKG_PG_POOL_WAIT_MS` (default 10s). BUG-E defense-in-depth: an
+    /// unbounded wait let one wedged tool hold every slot forever, so ALL
+    /// later tools starved ("timed out after 30s" cascade). Starvation now
+    /// fails fast with a clear error instead of blocking indefinitely.
     pub fn checkout(&self, connect_url: &str) -> Result<PooledClient, Box<dyn std::error::Error>> {
+        let wait_budget = Self::wait_timeout_from_env();
         let mut guard = self.inner.state.lock().unwrap();
         let pool_arc = Arc::new(self.clone());
         loop {
@@ -349,12 +365,23 @@ impl ClientPool {
                 guard.live += 1;
                 return Ok(PooledClient::new(client, pool_arc.clone()));
             }
-            // At capacity — wait for a return.
-            guard = self
+            // At capacity — wait for a return, bounded.
+            let deadline = std::time::Duration::from_millis(wait_budget.as_millis() as u64);
+            let (nguard, res) = self
                 .inner
                 .has_slot
-                .wait(guard)
+                .wait_timeout(guard, deadline)
                 .unwrap_or_else(|e| e.into_inner());
+            guard = nguard;
+            if res.timed_out() && guard.idle.is_empty() && guard.live >= self.inner.max {
+                return Err(format!(
+                    "pg connection pool exhausted: {} slots held for over {}ms; \
+                     a slow tool may be stuck. Retry or raise LEANKG_PG_POOL_SIZE.",
+                    self.inner.max,
+                    deadline.as_millis()
+                )
+                .into());
+            }
         }
     }
 

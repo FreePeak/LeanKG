@@ -5763,49 +5763,159 @@ impl GraphEngine {
     /// US-MP-04 / FR-MP-19: focus the graph for a specialist agent
     /// persona, returning only elements matching path/cluster/type
     /// filters and relationships entirely within that subset.
+    ///
+    /// BUG-E: the previous implementation loaded the ENTIRE graph
+    /// (`all_elements` + `all_relationships`) and filtered in memory. On a
+    /// remote-PG mega-corpus each call scanned ~13k rows / ~92k rows, blew
+    /// past the 30s tool watchdog and — because blocking work cannot be
+    /// cancelled — wedged the shared connection pool for every later tool.
+    /// Filters now run inside the DB: one query for the focused element set,
+    /// then chunked IN-list queries for relationships whose endpoints are
+    /// both in that set.
     pub fn agent_focus(
         &self,
         persona: &AgentPersona,
     ) -> Result<AgentFocus, Box<dyn std::error::Error>> {
-        let elements = self.all_elements()?;
-        let rels = self.all_relationships()?;
-        let qn_keep: std::collections::HashSet<String> = elements
-            .iter()
-            .filter(|e| {
-                if !persona.element_types.is_empty()
-                    && !persona.element_types.contains(&e.element_type)
-                {
-                    return false;
-                }
-                if let Some(ref cid) = persona.cluster_id {
-                    if e.cluster_id.as_deref() != Some(cid.as_str()) {
-                        return false;
-                    }
-                }
-                if !persona.path_filters.is_empty()
-                    && !persona
-                        .path_filters
+        let tail = self.code_elements_tail();
+        let mut filters: Vec<String> = Vec::new();
+        let mut params: std::collections::BTreeMap<String, serde_json::Value> =
+            std::collections::BTreeMap::new();
+
+        if !persona.element_types.is_empty() {
+            filters.push("element_type in $etypes".to_string());
+            params.insert(
+                "etypes".to_string(),
+                serde_json::Value::Array(
+                    persona
+                        .element_types
                         .iter()
-                        .any(|p| e.file_path.starts_with(p))
-                {
-                    return false;
+                        .cloned()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        }
+        if let Some(ref cid) = persona.cluster_id {
+            filters.push("cluster_id = $cid".to_string());
+            params.insert("cid".to_string(), serde_json::Value::String(cid.clone()));
+        }
+        if !persona.path_filters.is_empty() {
+            // OR-of-prefixes collapsed into one anchored regex so the filter
+            // stays a single clause (`(a or b)` fragments are not accepted
+            // by the PG filter compiler).
+            let esc = |s: &str| {
+                s.replace('\\', "\\\\")
+                    .replace('.', "\\.")
+                    .replace('(', "\\(")
+                    .replace(')', "\\)")
+                    .replace('+', "\\+")
+                    .replace('*', "\\*")
+                    .replace('?', "\\?")
+                    .replace('[', "\\[")
+                    .replace(']', "\\]")
+                    .replace('^', "\\^")
+                    .replace('$', "\\$")
+                    .replace('|', "\\|")
+            };
+            let alts: Vec<String> = persona.path_filters.iter().map(|p| esc(p)).collect();
+            filters.push("regex_matches(file_path, $path_re)".to_string());
+            params.insert(
+                "path_re".to_string(),
+                serde_json::Value::String(format!("^({})", alts.join("|"))),
+            );
+        }
+        let where_clause = if filters.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", filters.join(", "))
+        };
+
+        let elem_query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}]{where_clause}"#
+        );
+        let result = self.db.run_script(&elem_query, params)?;
+        let kept: Vec<CodeElement> = result
+            .rows
+            .iter()
+            .map(|row| {
+                let parent_qualified = row[7].get_str().map(String::from);
+                let cluster_id = row[8].get_str().map(String::from);
+                let cluster_label = row[9].get_str().map(String::from);
+                let metadata_str = row[10].get_str().unwrap_or("{}");
+                let env = row
+                    .get(11)
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("local")
+                    .to_string();
+                CodeElement {
+                    qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                    element_type: row[1].get_str().unwrap_or("").to_string(),
+                    name: row[2].get_str().unwrap_or("").to_string(),
+                    file_path: row[3].get_str().unwrap_or("").to_string(),
+                    line_start: row[4].get_int().unwrap_or(0) as u32,
+                    line_end: row[5].get_int().unwrap_or(0) as u32,
+                    language: row[6].get_str().unwrap_or("").to_string(),
+                    parent_qualified,
+                    cluster_id,
+                    cluster_label,
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    env,
                 }
-                true
-            })
-            .map(|e| e.qualified_name.clone())
-            .collect();
-        let focused_rels: Vec<Relationship> = rels
-            .into_iter()
-            .filter(|r| {
-                qn_keep.contains(&r.source_qualified) && qn_keep.contains(&r.target_qualified)
             })
             .collect();
+        let qn_keep: std::collections::HashSet<String> =
+            kept.iter().map(|e| e.qualified_name.clone()).collect();
+        if qn_keep.is_empty() {
+            return Ok(AgentFocus {
+                agent: persona.name.clone(),
+                elements: Vec::new(),
+                relationships: Vec::new(),
+            });
+        }
+
+        // Relationships with BOTH endpoints inside the focused set. The set
+        // can be large, so drive the source side in chunks of GIDs (each
+        // chunk is one indexed lookup) and keep edges whose target also made
+        // the cut.
+        let mut qn_list: Vec<String> = qn_keep.iter().cloned().collect();
+        qn_list.sort();
+        const CHUNK: usize = 500;
+        let mut focused_rels: Vec<Relationship> = Vec::new();
+        for chunk in qn_list.chunks(CHUNK) {
+            let rel_query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], source_qualified in $srcs"#;
+            let mut rel_params = std::collections::BTreeMap::new();
+            rel_params.insert(
+                "srcs".to_string(),
+                serde_json::Value::Array(
+                    chunk
+                        .iter()
+                        .cloned()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+            let rel_result = self.db.run_script(rel_query, rel_params)?;
+            for row in &rel_result.rows {
+                let target = row[1].get_str().unwrap_or("");
+                if !qn_keep.contains(target) {
+                    continue;
+                }
+                focused_rels.push(Relationship {
+                    id: None,
+                    source_qualified: row[0].get_str().unwrap_or("").to_string(),
+                    target_qualified: target.to_string(),
+                    rel_type: row[2].get_str().unwrap_or("").to_string(),
+                    confidence: row[3].get_float().unwrap_or(1.0),
+                    metadata: serde_json::from_str(row[4].get_str().unwrap_or("{}"))
+                        .unwrap_or(serde_json::json!({})),
+                    ..Default::default()
+                });
+            }
+        }
+
         Ok(AgentFocus {
             agent: persona.name.clone(),
-            elements: elements
-                .into_iter()
-                .filter(|e| qn_keep.contains(&e.qualified_name))
-                .collect(),
+            elements: kept,
             relationships: focused_rels,
         })
     }
