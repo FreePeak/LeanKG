@@ -106,18 +106,18 @@ After hackathon: W8 (SQL-first seam waves) per `plan-remove-cozo-datalog-sql-mig
 
 ## 6. Hackathon (7-day continuous loop, branch `feature/hackathon`)
 
-**Charter:** 24/7 build loop — brainstorm → plan → implement → test → live test → fix → validate, repeating in rounds until the worktree is fully green and every MCP tool has been live-exercised against the remote PG (`.env LEANKG_PG_URL`, never Docker).
+**Charter:** 24/7 build loop — brainstorm → plan → implement → test → live test → fix → validate, repeating until the worktree is fully green and every MCP tool has been live-exercised against the remote PG (`.env LEANKG_PG_URL`, never Docker).
+**Rolling PR:** [#247](https://github.com/FreePeak/LeanKG/pull/247) · **Handoff:** `feature/hackathon` → `docs/cycles/HANDOFF.md` · **Cycle reports:** below.
 
-| Round | Focus | Status |
-|-------|-------|--------|
-| R0 | Worktree setup + charter + baseline gates | ✅ |
-| R1 | Live tool sweep: start MCP HTTP server, exercise ALL tools via JSON-RPC, log failures to `.worktrees/hackathon/HACKATHON.md` | 🚧 |
-| R2 | Fix bugs found in sweep (fan-out subagents) | ⬜ |
-| R3 | Feature round 1 — ENT-1 audit-log foundation (PRD) | ⬜ |
-| R4 | Feature round 2 — PLG-1 `leankg connect` client config generator | ⬜ |
-| R5 | Feature round 3 — brainstormed items from R1 findings | ⬜ |
-| R6 | Full validation: build/lib/integration/fmt/clippy + complete live tool sweep re-run | ⬜ |
-| R7+ | Repeat rounds: new bugs/features/ideas until 7-day window closes; keep HACKATHON.md log current | ⬜ |
+| Cycle | Scope | Status | Report |
+|-------|-------|--------|--------|
+| C1 / R0-R1 | Baseline gates + full live sweep of 76 tools (128 calls): 51 PASS, **7 FAIL found**, p50 4.9s/p95 90s N+1 | ✅ | `feature/hackathon:docs/cycles/cycle-01.md`, sweep report in `docs/analysis/hackathon-sweep-R1.md` |
+| C1 / R2 | **7 bugs fixed TDD-first**: update_knowledge upsert · index_docs watchdog · project-key canonicalization · export path anchoring · ontology schema adoption · hang-trio batching (get_context **72s→2.5s**) · agent_focus wedge kill | ✅ | same |
+| C1 / R3 | **6 features landed** (backlog H1-H11): connect · ENT-1 audit log · npm parity · quickstart smoke (88s) · export --markdown · doctor --deep (+3 more real bugs found & fixed during live verification) | ✅ | HACKATHON.md R3 |
+| C2 / R1 | Full live tool re-sweep post-fixes (expect 0 FAIL_ERROR) | 🚧 | pending |
+| C2+ | H4 provenance labels · H6 tool consolidation 76→~70 · H7 tool contract+CI guard · H8 benchmark gate · H10 usage dashboard · H12 README refresh; then W8 SQL-first seam | ⬜ | backlog: hackathon-backlog.md |
+
+State @ cycle-1 close: lib **1147✅** · fmt/clippy/build clean · PR #247 all CI green incl. new npm-parity gate.
 
 Exit criteria: zero red gates · full tool sweep clean (or documented known-issues) · features landed as commits on `feature/hackathon` with TDD evidence · HACKATHON.md log complete.
 
