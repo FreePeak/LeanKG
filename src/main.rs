@@ -976,6 +976,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Export {
             output,
             format,
+            markdown,
+            out,
             file,
             depth,
             path,
@@ -984,16 +986,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            export_graph(
-                &output,
-                &format,
-                file.as_deref(),
-                depth,
-                path.as_deref(),
-                community.as_deref(),
-                max_nodes,
-                &db_path,
-            )?;
+            if markdown {
+                let res =
+                    graph::export_markdown::run_export_markdown(&project_path, out.as_deref())?;
+                println!(
+                    "Exported {} elements and {} relationships to {} (format: markdown)",
+                    res.elements,
+                    res.relationships,
+                    res.path.display(),
+                );
+            } else {
+                export_graph(
+                    &output,
+                    &format,
+                    file.as_deref(),
+                    depth,
+                    path.as_deref(),
+                    community.as_deref(),
+                    max_nodes,
+                    &db_path,
+                )?;
+            }
         }
         cli::CLICommand::Tags {
             output,

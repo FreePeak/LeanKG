@@ -610,6 +610,13 @@ pub enum CLICommand {
         /// Export format: json, dot, mermaid, or html
         #[arg(long, default_value = "json")]
         format: String,
+        /// Emit git-committable Markdown graph docs (H11) instead of the raw
+        /// graph formats. Deterministic given DB state.
+        #[arg(long)]
+        markdown: bool,
+        /// Output file for --markdown (default: .leankg/graph-docs.md)
+        #[arg(long)]
+        out: Option<String>,
         /// Scope export to a specific file's subgraph
         #[arg(long)]
         file: Option<String>,
