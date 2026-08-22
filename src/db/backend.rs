@@ -160,6 +160,37 @@ pub trait DbBackend: Send + Sync {
     fn is_read_only(&self) -> bool {
         false
     }
+
+    /// FR-ENT-1: append a batch of hash-chained audit entries in ONE
+    /// multi-row INSERT. Ids are assigned by the DB (BIGSERIAL); callers pass
+    /// `id = 0` placeholders.
+    ///
+    /// Default errs so a backend that forgets to implement the ledger can
+    /// never silently lose rows.
+    fn insert_audit_batch(
+        &self,
+        _entries: &[crate::audit::AuditEntry],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Err("audit ledger not supported by this backend".into())
+    }
+
+    /// FR-ENT-1: entry_hash of the newest audit row (`None` on an empty
+    /// ledger), used by the recorder to continue the hash chain across
+    /// process restarts. Errors when the table is absent (pre-migration).
+    fn last_audit_entry_hash(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        Err("audit ledger not supported by this backend".into())
+    }
+
+    /// FR-ENT-1: ledger rows in id order, filtered by an inclusive
+    /// `[since, until]` timestamp window (either bound may be `None`).
+    /// Backs `leankg audit export|verify`.
+    fn query_audit(
+        &self,
+        _since: Option<std::time::SystemTime>,
+        _until: Option<std::time::SystemTime>,
+    ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
+        Err("audit ledger not supported by this backend".into())
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -534,6 +565,109 @@ impl PostgresBackend {
         } else {
             pool.checkout(&url)
         }
+    }
+
+    /// FR-ENT-1 sync body: one multi-row INSERT for the whole audit batch
+    /// (≤ 50 rows × 9 params per flush, well under the 65535 bind limit).
+    fn insert_audit_batch_sync(
+        &self,
+        entries: &[crate::audit::AuditEntry],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        const COLS: usize = 9;
+        let mut sql = String::from(
+            "INSERT INTO audit_log (ts, actor, agent_client, tool, project, \
+             args_hash, result_status, prev_hash, entry_hash) VALUES ",
+        );
+        let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> =
+            Vec::with_capacity(entries.len() * COLS);
+        for (i, e) in entries.iter().enumerate() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            let base = i * COLS;
+            sql.push('(');
+            for c in 0..COLS {
+                if c > 0 {
+                    sql.push(',');
+                }
+                sql.push_str(&format!("${}", base + c + 1));
+            }
+            sql.push(')');
+            params.push(Box::new(e.ts));
+            params.push(Box::new(e.actor.clone()));
+            params.push(Box::new(e.agent_client.clone()));
+            params.push(Box::new(e.tool.clone()));
+            params.push(Box::new(e.project.clone()));
+            params.push(Box::new(e.args_hash.clone()));
+            params.push(Box::new(e.result_status.clone()));
+            params.push(Box::new(e.prev_hash.clone()));
+            params.push(Box::new(e.entry_hash.clone()));
+        }
+        let param_refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut client = self.checkout()?;
+        client.execute(sql.as_str(), &param_refs)?;
+        Ok(())
+    }
+
+    /// FR-ENT-1 sync body: chain head for recorder restarts. Errors when the
+    /// audit_log table is absent — the recorder disables after one warn.
+    fn last_audit_entry_hash_sync(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let mut client = self.checkout()?;
+        let row = client.query_opt(
+            "SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1",
+            &[],
+        )?;
+        Ok(row.map(|r| r.get(0)))
+    }
+
+    /// FR-ENT-1 sync body: windowed ledger read for export/verify.
+    fn query_audit_sync(
+        &self,
+        since: Option<std::time::SystemTime>,
+        until: Option<std::time::SystemTime>,
+    ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
+        const COLS: &str = "id, ts, actor, agent_client, tool, project, args_hash, \
+                            result_status, prev_hash, entry_hash";
+        let mut clauses: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
+        if let Some(s) = since {
+            params.push(Box::new(s));
+            clauses.push(format!("ts >= ${}", params.len()));
+        }
+        if let Some(u) = until {
+            params.push(Box::new(u));
+            clauses.push(format!("ts <= ${}", params.len()));
+        }
+        let mut sql = format!("SELECT {COLS} FROM audit_log");
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" ORDER BY id ASC");
+
+        let refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut client = self.checkout()?;
+        let rows = client.query(sql.as_str(), &refs)?;
+        Ok(rows
+            .iter()
+            .map(|r| crate::audit::AuditEntry {
+                id: r.get(0),
+                ts: r.get(1),
+                actor: r.get(2),
+                agent_client: r.get(3),
+                tool: r.get(4),
+                project: r.get(5),
+                args_hash: r.get(6),
+                result_status: r.get(7),
+                prev_hash: r.get(8),
+                entry_hash: r.get(9),
+            })
+            .collect())
     }
 
     /// Take the PG advisory lock for exclusive jobs (e.g. `leankg index`,
@@ -1080,6 +1214,42 @@ impl PostgresBackend {
 impl DbBackend for PostgresBackend {
     fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// FR-ENT-1: one multi-row INSERT for the whole batch (≤ 50 rows × 9
+    /// params per flush, well under the 65535 bind limit).
+    fn insert_audit_batch(
+        &self,
+        entries: &[crate::audit::AuditEntry],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.insert_audit_batch_sync(entries))
+        } else {
+            self.insert_audit_batch_sync(entries)
+        }
+    }
+
+    /// FR-ENT-1: chain head for recorder restarts. Errors when the audit_log
+    /// table is absent — the recorder treats that as "disable after one warn".
+    fn last_audit_entry_hash(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.last_audit_entry_hash_sync())
+        } else {
+            self.last_audit_entry_hash_sync()
+        }
+    }
+
+    /// FR-ENT-1: windowed ledger read for `leankg audit export|verify`.
+    fn query_audit(
+        &self,
+        since: Option<std::time::SystemTime>,
+        until: Option<std::time::SystemTime>,
+    ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.query_audit_sync(since, until))
+        } else {
+            self.query_audit_sync(since, until)
+        }
     }
 
     fn run_script(
@@ -1939,6 +2109,62 @@ pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn s
             redact_url(&pg.pg_url)
         );
         Ok(Arc::new(pg))
+    }
+}
+
+/// FR-ENT-1: read-only backend for `leankg audit export|verify`.
+///
+/// Pins to the first project-schema candidate that OWNS an `audit_log`
+/// table. Unlike [`init_db_readonly`] — which pins only when the project's
+/// code index is already populated — the ledger must stay readable while a
+/// fresh project is still indexing (or was initialized but never indexed),
+/// otherwise `audit verify` could not attest the very calls that performed
+/// the indexing. Falls back to the legacy public layout when no candidate
+/// carries a ledger.
+pub fn init_db_readonly_audit(
+    db_path: &std::path::Path,
+) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    let probe = PostgresBackend::from_env_read_only()?;
+    let mut chosen: Option<String> = None;
+    // The CLI runs inside Tokio (#main block_on); the sync PG client must
+    // leave the ambient runtime first — same guard as checkout().
+    let probe_url = probe.pg_url.clone();
+    let probe_fn = |chosen: &mut Option<String>| -> Result<(), Box<dyn std::error::Error>> {
+        let mut client = pg_connect(&probe_url)?;
+        for schema in schema_candidates_for_path(db_path) {
+            // Candidate names are hex/hash-derived identifiers (see
+            // schema_name_from_key), so direct interpolation is safe —
+            // same assumption as schema_exists_sync.
+            let q = format!(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+                 WHERE table_schema = '{schema}' AND table_name = 'audit_log')"
+            );
+            if client
+                .query_one(&q, &[])
+                .map(|r| r.get::<_, bool>(0))
+                .unwrap_or(false)
+            {
+                *chosen = Some(schema);
+                break;
+            }
+        }
+        Ok(())
+    };
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| probe_fn(&mut chosen))?;
+    } else {
+        probe_fn(&mut chosen)?;
+    }
+    match chosen {
+        Some(schema) => {
+            let pg = PostgresBackend::from_env_read_only()?.with_schema(&schema);
+            tracing::info!(
+                "audit ledger backend pinned to schema {schema}: {}",
+                redact_url(&pg.pg_url)
+            );
+            Ok(Arc::new(pg))
+        }
+        None => Ok(Arc::new(probe)),
     }
 }
 

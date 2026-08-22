@@ -150,13 +150,22 @@ type Store = Arc<Mutex<BTreeMap<String, Vec<Vec<DataValue>>>>>;
 #[derive(Clone)]
 pub struct FakeBackend {
     store: Store,
+    /// FR-ENT-1: buffered audit ledger so recorder unit tests run without a
+    /// live Postgres. Shared across clones like `store`.
+    audit: Arc<Mutex<Vec<crate::audit::AuditEntry>>>,
 }
 
 impl FakeBackend {
     pub fn new() -> Self {
         Self {
             store: Arc::new(Mutex::new(BTreeMap::new())),
+            audit: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Snapshot of the buffered audit ledger (FR-ENT-1 tests).
+    pub fn audit_entries(&self) -> Vec<crate::audit::AuditEntry> {
+        self.audit.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// A fake whose store is keyed by a test `db_path`, so `init_db(path)`
@@ -174,7 +183,10 @@ impl FakeBackend {
             .entry(key)
             .or_insert_with(|| Arc::new(Mutex::new(BTreeMap::new())))
             .clone();
-        Self { store }
+        Self {
+            store,
+            audit: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     fn tables(&self) -> Vec<String> {
@@ -208,6 +220,45 @@ impl Default for FakeBackend {
 }
 
 impl DbBackend for FakeBackend {
+    /// FR-ENT-1: buffer entries; assign sequential ids like the BIGSERIAL.
+    fn insert_audit_batch(
+        &self,
+        entries: &[crate::audit::AuditEntry],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut ledger = self.audit.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next_id = ledger.last().map(|e| e.id + 1).unwrap_or(1);
+        for e in entries {
+            let mut e = e.clone();
+            e.id = next_id;
+            next_id += 1;
+            ledger.push(e);
+        }
+        Ok(())
+    }
+
+    fn last_audit_entry_hash(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        Ok(self
+            .audit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last()
+            .map(|e| e.entry_hash.clone()))
+    }
+
+    /// FR-ENT-1: windowed read of the buffered ledger (inclusive bounds).
+    fn query_audit(
+        &self,
+        since: Option<std::time::SystemTime>,
+        until: Option<std::time::SystemTime>,
+    ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
+        let ledger = self.audit.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(ledger
+            .iter()
+            .filter(|e| since.map_or(true, |s| e.ts >= s) && until.map_or(true, |u| e.ts <= u))
+            .cloned()
+            .collect())
+    }
+
     fn run_script(
         &self,
         query: &str,
@@ -1399,4 +1450,86 @@ fn parse_regex_clause(
         pat.to_string()
     };
     Ok((col, pat, lower))
+}
+
+#[cfg(test)]
+mod audit_query_tests {
+    use super::*;
+    use crate::audit::{chain_records, AuditRecord, GENESIS_HASH};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    fn ts(ms: u64) -> std::time::SystemTime {
+        UNIX_EPOCH + Duration::from_millis(ms)
+    }
+
+    fn rec(ms: u64, tool: &str) -> AuditRecord {
+        AuditRecord {
+            ts: ts(ms),
+            actor: "local".into(),
+            agent_client: "test".into(),
+            tool: tool.into(),
+            project: None,
+            args_hash: "a".repeat(64),
+            result_status: "ok".into(),
+        }
+    }
+
+    #[test]
+    fn query_audit_returns_inserted_rows_in_insertion_order() {
+        let b = FakeBackend::new();
+        let entries = chain_records(
+            &[rec(100, "t1"), rec(200, "t2"), rec(300, "t3")],
+            GENESIS_HASH,
+        );
+        b.insert_audit_batch(&entries).unwrap();
+        let got = b.query_audit(None, None).unwrap();
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].tool, "t1");
+        assert_eq!(got[1].tool, "t2");
+        assert_eq!(got[2].tool, "t3");
+    }
+
+    #[test]
+    fn query_audit_filters_by_inclusive_ts_window() {
+        let b = FakeBackend::new();
+        let entries = chain_records(
+            &[rec(100, "t1"), rec(200, "t2"), rec(300, "t3")],
+            GENESIS_HASH,
+        );
+        b.insert_audit_batch(&entries).unwrap();
+
+        // since=150 until=250 → only t2.
+        let got = b.query_audit(Some(ts(150)), Some(ts(250))).unwrap();
+        assert_eq!(
+            got.iter().map(|e| e.tool.as_str()).collect::<Vec<_>>(),
+            ["t2"]
+        );
+
+        // Inclusive bounds: since=200 until=200 still yields t2.
+        let got = b.query_audit(Some(ts(200)), Some(ts(200))).unwrap();
+        assert_eq!(
+            got.iter().map(|e| e.tool.as_str()).collect::<Vec<_>>(),
+            ["t2"]
+        );
+
+        // Open-ended lower bound: until=150 → t1 only.
+        let got = b.query_audit(None, Some(ts(150))).unwrap();
+        assert_eq!(
+            got.iter().map(|e| e.tool.as_str()).collect::<Vec<_>>(),
+            ["t1"]
+        );
+
+        // Open-ended upper bound: since=300 → t3 only.
+        let got = b.query_audit(Some(ts(300)), None).unwrap();
+        assert_eq!(
+            got.iter().map(|e| e.tool.as_str()).collect::<Vec<_>>(),
+            ["t3"]
+        );
+    }
+
+    #[test]
+    fn query_audit_on_empty_ledger_is_empty_ok() {
+        let b = FakeBackend::new();
+        assert!(b.query_audit(None, None).unwrap().is_empty());
+    }
 }
