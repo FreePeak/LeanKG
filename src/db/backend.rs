@@ -477,8 +477,11 @@ impl PostgresBackend {
             );
         }
         let (before, after) = base.split_once('?').unwrap_or((base, ""));
-        let sep = if after.is_empty() { "?" } else { "&" };
-        format!("{before}{sep}{after}options={RO_FLAG}")
+        if after.is_empty() {
+            format!("{before}?options={RO_FLAG}")
+        } else {
+            format!("{before}?{after}&options={RO_FLAG}")
+        }
     }
 
     /// Check out a client from the pool. On the first call this connects
@@ -1446,7 +1449,30 @@ fn percent_encode(s: &str) -> String {
 /// `leankg_p_` + hex bytes (short paths) or a 16-hex SipHash (long paths) —
 /// always a valid, lowercase PG identifier (≤ 63 bytes).
 pub fn schema_for_path(db_path: &std::path::Path) -> String {
-    let key = project_identity_key(db_path);
+    schema_candidates_for_path(db_path)
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "leankg_p_default".to_string())
+}
+
+/// Ordered Postgres-schema candidates for a project: `[0]` is the preferred
+/// identity (what new writes should use); any further entries are LEGACY
+/// keys kept for read-compatibility with pre-fix data (e.g. a relative
+/// `project_path` that older builds keyed literally). Callers pick the first
+/// candidate whose schema exists AND is populated; otherwise `[0]`.
+pub fn schema_candidates_for_path(db_path: &std::path::Path) -> Vec<String> {
+    let (key, legacy) = project_identity_keys(db_path);
+    let mut out = vec![schema_name_from_key(&key)];
+    if let Some(l) = legacy {
+        let name = schema_name_from_key(&l);
+        if name != out[0] {
+            out.push(name);
+        }
+    }
+    out
+}
+
+fn schema_name_from_key(key: &str) -> String {
     use std::fmt::Write;
     let mut hex = String::with_capacity(key.len() * 2);
     for b in key.as_bytes() {
@@ -1463,10 +1489,18 @@ pub fn schema_for_path(db_path: &std::path::Path) -> String {
     format!("leankg_p_{hex}")
 }
 
-/// Resolve the schema key for a project: prefer `project_path` from the
-/// project's `leankg.yaml` (stable across mounts), else the `.leankg` dir
-/// path itself. `db_path` may be a `.leankg` dir or a project root.
-fn project_identity_key(db_path: &std::path::Path) -> String {
+/// Resolve the identity key(s) for a project.
+///
+/// Preferred key: `project.project_path` from the project's leankg.yaml when
+/// present, RESOLVED — relative values are joined to the yaml's directory and
+/// canonicalized — so `"./src"` and `"<root>/src"` spell the same identity;
+/// else the normalized `.leankg`-stripped root path itself. Legacy key: when
+/// the raw yaml value was a RELATIVE path, the pre-fix literal spelling is
+/// returned too so data written by older builds stays reachable.
+///
+/// `db_path` may be a `.leankg` dir or a project root; both `<root>/leankg.yaml`
+/// and `<root>/.leankg/leankg.yaml` are consulted (setup writes the latter).
+fn project_identity_keys(db_path: &std::path::Path) -> (String, Option<String>) {
     // db_path is either `<root>/.leankg` (reader/MCP) or
     // `<root>/.leankg/leankg.db` (writer index/embed). Normalize both to the
     // project root so reader and writer derive the SAME schema even when the
@@ -1480,15 +1514,42 @@ fn project_identity_key(db_path: &std::path::Path) -> String {
     if root.ends_with(".leankg") {
         root = root.parent().unwrap_or(&root).to_path_buf();
     }
-    if let Ok(content) = std::fs::read_to_string(root.join("leankg.yaml")) {
-        if let Ok(config) = serde_yaml::from_str::<crate::config::ProjectConfig>(&content) {
-            if let Some(pp) = config.project.project_path {
-                return pp.to_string_lossy().to_string();
-            }
-        }
+
+    let mut configs: Vec<std::path::PathBuf> = vec![root.join("leankg.yaml")];
+    let dot_leankg_yaml = root.join(".leankg").join("leankg.yaml");
+    if dot_leankg_yaml != configs[0] {
+        configs.push(dot_leankg_yaml);
     }
-    // No yaml/project_path: key on the normalized project root path.
-    root.to_string_lossy().to_string()
+
+    for cfg_path in &configs {
+        let Ok(content) = std::fs::read_to_string(cfg_path) else {
+            continue;
+        };
+        let Ok(config) = serde_yaml::from_str::<crate::config::ProjectConfig>(&content) else {
+            continue;
+        };
+        let Some(pp) = config.project.project_path else {
+            continue;
+        };
+        let raw = pp.to_string_lossy().to_string();
+        let is_abs = pp.is_absolute();
+        // Canonicalize BOTH branches so `./src` and `/abs/src` (possibly
+        // through symlinked parents like macOS /tmp) converge on one key.
+        let joined = if is_abs {
+            pp.clone()
+        } else {
+            // Relative values were historically keyed LITERALLY ("./src"),
+            // which silently re-scoped every read/write whenever the field
+            // appeared or disappeared. Resolve them against the project root
+            // instead so all spellings converge on one identity.
+            root.join(&pp)
+        };
+        let resolved = std::fs::canonicalize(&joined).unwrap_or(joined);
+        let legacy = if !is_abs { Some(raw) } else { None };
+        return (resolved.to_string_lossy().to_string(), legacy);
+    }
+
+    (root.to_string_lossy().to_string(), None)
 }
 
 fn redact_url(url: &str) -> String {
@@ -1546,7 +1607,7 @@ pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error
     }
     #[allow(unreachable_code)]
     {
-        let schema = schema_for_path(db_path);
+        let schema = pick_schema_for_init(db_path);
         // Writer path: ALWAYS create + pin to the per-project schema. The
         // writer owns schema creation; it never falls back to `public` (that
         // fallback is reader-only, so a pre-schema index stays visible).
@@ -1610,6 +1671,28 @@ fn schema_exists_sync(schema: &str) -> bool {
         .query_one(&q, &[])
         .map(|row| row.get(0))
         .unwrap_or(false)
+}
+
+/// Pick the schema for a project init: the first identity candidate whose
+/// schema exists AND holds rows; else the preferred candidate. BUG-B: when
+/// the preferred identity changed (relative `project_path` used to be keyed
+/// literally), this adopts the legacy schema instead of silently serving an
+/// empty project. Zero extra probes when no legacy candidate exists.
+fn pick_schema_for_init(db_path: &std::path::Path) -> String {
+    let candidates = schema_candidates_for_path(db_path);
+    let Some(preferred) = candidates.first() else {
+        return "leankg_p_default".to_string();
+    };
+    for legacy in candidates.iter().skip(1) {
+        if schema_exists(legacy) {
+            tracing::warn!(
+                "project identity: preferred schema {preferred} is empty; \
+                 adopting populated legacy schema {legacy}"
+            );
+            return legacy.clone();
+        }
+    }
+    preferred.clone()
 }
 
 fn create_schema_if_missing_sync(
@@ -1756,7 +1839,7 @@ pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn s
     }
     #[allow(unreachable_code)]
     {
-        let schema = schema_for_path(db_path);
+        let schema = pick_schema_for_init(db_path);
         let pg = if schema_exists(&schema) {
             PostgresBackend::from_env_read_only()?.with_schema(&schema)
         } else {
