@@ -85,6 +85,7 @@ docker compose up -d postgres
 
 # 2. Index your project
 leankg setup                 # wire MCP into your agents
+leankg connect claude-code   # or: cursor | codex | gemini (--remote URL, --remove)
 cd your-project
 leankg init && leankg index ./src && leankg status
 leankg impact src/main.rs --depth 3

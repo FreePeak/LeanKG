@@ -301,6 +301,26 @@ pub enum CLICommand {
     },
     /// Auto-install MCP config
     Install,
+    /// FR-PLG-1: One-command MCP client setup — write (or remove) the
+    /// LeanKG server entry in an AI client's config file so agents can use
+    /// LeanKG without hand-editing JSON/TOML. Idempotent; preserves every
+    /// sibling key, comment, and unknown field.
+    Connect {
+        /// Target AI client: claude-code | cursor | codex | gemini
+        #[arg(value_enum)]
+        client: crate::connect::Client,
+        /// Point the client at a remote HTTP MCP endpoint (e.g.
+        /// http://localhost:9699) instead of spawning local stdio.
+        #[arg(long)]
+        remote: Option<String>,
+        /// Remove only the leankg entry from the client config
+        /// (succeeds even when absent).
+        #[arg(long, conflicts_with = "remote")]
+        remove: bool,
+        /// Project root passed as `mcp-stdio --project` (default: cwd)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Diagnose stale leankg processes, mmap'd DB files, and current
     /// RSS. Prints `leankg daemon kill` to clean them up. Safe to run
     /// at any time.
