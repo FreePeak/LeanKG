@@ -30,3 +30,17 @@
 8. [P2] Remote-PG latency: query_graph 84.8s, get_impact_radius 62.9s, shortest_path 60.5s, mcp_index incremental 30.8s
 9. [P2] agent_focus returns raw -32603 persona-not-found without fixture; hangs with fixture
 10. [P2] index_prd silently creates 0 requirements from valid mini-PRD headings (errors: [])
+
+### R2 — Bug fixes from sweep (2026-08-22)
+Merged fix-mcp-layer (4 commits) + fix-engine-layer (3 commits); backend.rs identity logic unified in manual merge (0d4715aa).
+| Bug | Fix | Commit |
+|---|---|---|
+| update_knowledge db error | pk_for_table knowledge_entries → ON CONFLICT upsert | 756b9292 |
+| mcp_index_docs 30s timeout | spawn_blocking + 300s tool floor | a53c65fa |
+| project-key mismatch CLI/MCP | canonical_project_root unification | ea74cd89 |
+| exports escaping project dir | resolve_out_path anchored at request root | cd60aff2 |
+| dynamic ontology "loss" | schema_candidates + legacy adoption; readonly URL sslmode fix | 004d6099 |
+| hang trio N+1 (get_context 72s→2.5s) | batched IN-list hydration | e59b60e5 |
+| agent_focus executor wedge | targeted queries + bounded pool wait (10s fail-fast) | 3f070c8f |
+Gates: lib 1053✅ · fmt✅ · clippy✅ · build 0 warnings.
+Latency after: get_context 72s→2.1-2.8s; temporal 4.5s; check_consistency 6-7s; agent_focus wedge gone (13ms warm).
