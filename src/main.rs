@@ -24,6 +24,7 @@ mod ctags_export;
 mod db;
 mod doc;
 mod doc_indexer;
+mod doctor;
 mod embed;
 // The `embeddings` module tree self-gates its heavy parts (ONNX / fastembed)
 // behind the feature in `src/embeddings/mod.rs`; `provider` / `profile` /
@@ -80,7 +81,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             read_only: _
         }
     ) {
-        tracing_subscriber::fmt::init();
+        // Logs go to STDERR so stdout stays machine-readable (piped JSON,
+        // table output consumed by scripts). tracing_subscriber defaults to
+        // stdout, which corrupted `doctor --deep --format json` consumers.
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .init();
     }
 
     match args.command {
@@ -631,7 +637,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Restart the client so it picks up the leankg MCP server.");
             }
         }
-        cli::CLICommand::Doctor { kill } => {
+        cli::CLICommand::Doctor {
+            kill,
+            deep,
+            format,
+            project,
+        } => {
+            if deep {
+                let exit =
+                    run_doctor_deep(format.as_deref().unwrap_or("text"), project.as_deref())?;
+                std::process::exit(exit);
+            }
             run_doctor(kill)?;
         }
         cli::CLICommand::Status => {
@@ -2772,6 +2788,31 @@ fn run_doctor(kill: bool) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// H9: `leankg doctor --deep` — deployment self-diagnosis. Prints an
+/// aligned check|status|detail|hint table (or JSON with `--format json`)
+/// and returns the CI exit code: 0 all-pass, 1 any warn, 2 any fail.
+fn run_doctor_deep(format: &str, project: Option<&str>) -> Result<i32, Box<dyn std::error::Error>> {
+    let root = match project {
+        Some(p) => std::path::PathBuf::from(p),
+        None => find_project_root()?,
+    };
+    let (report, db_path) =
+        doctor::deep::run_deep(&root).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    match format {
+        "json" => println!("{}", report.render_json()),
+        _ => {
+            println!("LeanKG doctor --deep — {}", root.display());
+            print!("{}", report.render_table());
+        }
+    }
+    eprintln!(".leankg: {}", db_path.display());
+    let code = report.exit_code();
+    if code != 0 {
+        eprintln!("leankg doctor --deep found issues (exit {code}); hints above suggest fixes.");
+    }
+    Ok(code)
 }
 
 fn install_mcp_config() -> Result<(), Box<dyn std::error::Error>> {

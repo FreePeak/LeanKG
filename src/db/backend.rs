@@ -2112,6 +2112,37 @@ pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn s
     }
 }
 
+/// Like [`init_db_readonly`] but NEVER falls back to the shared `public`
+/// layout: returns `Err` when no per-project schema exists for `db_path`.
+/// Multi-tenant remote Postgres makes the public fallback dangerous — it can
+/// silently serve another project's rows (doctor --deep reported TempDir
+/// fixtures from an unrelated schema through it).
+pub fn init_db_readonly_strict(
+    db_path: &std::path::Path,
+) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    #[cfg(test)]
+    {
+        return test_init_db(db_path);
+    }
+    #[allow(unreachable_code)]
+    {
+        let schema = pick_schema_for_init(db_path);
+        if !schema_exists(&schema) {
+            return Err(format!(
+                "no per-project schema for {} (tried {schema}); run `leankg init` + `leankg index` first",
+                db_path.display()
+            )
+            .into());
+        }
+        let pg = PostgresBackend::from_env_read_only()?.with_schema(&schema);
+        tracing::info!(
+            "DB engine = postgres read-only strict (default_transaction_read_only = on): {}",
+            redact_url(&pg.pg_url)
+        );
+        Ok(Arc::new(pg))
+    }
+}
+
 /// FR-ENT-1: read-only backend for `leankg audit export|verify`.
 ///
 /// Pins to the first project-schema candidate that OWNS an `audit_log`

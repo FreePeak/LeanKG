@@ -15,6 +15,7 @@ pub mod ctags_export;
 pub mod db;
 pub mod doc;
 pub mod doc_indexer;
+pub mod doctor;
 pub mod embeddings;
 pub mod gc;
 pub mod graph;
