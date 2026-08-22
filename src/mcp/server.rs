@@ -97,6 +97,24 @@ fn tool_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(secs)
 }
 
+/// Extended watchdog floor for bulk indexing tools. The docs pipeline makes
+/// ~75 sequential DB round-trips for a single markdown file; over remote PG
+/// (~2s/query) that is minutes of legitimate work (R1 sweep: ~15s/file
+/// average across a 224-file tree), so the interactive 30s budget always
+/// fired before completion and the response was lost. An explicit operator
+/// budget above the floor still wins.
+const BULK_INDEX_TOOL_FLOOR_SECS: u64 = 300;
+
+fn tool_timeout_for(tool: &str) -> std::time::Duration {
+    let base = tool_timeout();
+    if matches!(tool, "mcp_index" | "mcp_index_docs")
+        && base < std::time::Duration::from_secs(BULK_INDEX_TOOL_FLOOR_SECS)
+    {
+        return std::time::Duration::from_secs(BULK_INDEX_TOOL_FLOOR_SECS);
+    }
+    base
+}
+
 /// Build the per-server dispatch JSON response cache. Sized and TTL'd
 /// independently of the engine-level caches inside `CachingGraphEngine` so
 /// they can be tuned per deployment.
@@ -3516,7 +3534,7 @@ async fn process_jsonrpc_request(
             };
 
             let result = tokio::time::timeout(
-                tool_timeout(),
+                tool_timeout_for(tool_name),
                 mcp_server.execute_tool(tool_name, arguments),
             )
             .await
@@ -4200,6 +4218,54 @@ mod tests {
         let slow = async { std::future::pending::<()>().await };
         let result = tokio::time::timeout(std::time::Duration::from_millis(50), slow).await;
         assert!(result.is_err(), "pending future must time out");
+    }
+
+    // R1 sweep issue #11: the docs pipeline makes ~75 sequential DB
+    // round-trips for a single markdown file; on remote PG (~2s/query) that
+    // is minutes of legitimate work, so the interactive 30s watchdog budget
+    // is a mismatch ("timed out after 30s" while the op completed after).
+    // Bulk indexing tools get an extended floor; everything else stays 30s.
+    #[test]
+    fn bulk_index_tools_get_extended_watchdog_floor() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LEANKG_MCP_TOOL_TIMEOUT_SECS");
+        assert_eq!(
+            tool_timeout_for("mcp_index_docs"),
+            std::time::Duration::from_secs(300),
+            "mcp_index_docs must get the extended floor"
+        );
+        assert_eq!(
+            tool_timeout_for("mcp_index"),
+            std::time::Duration::from_secs(300),
+            "mcp_index must get the extended floor"
+        );
+        assert_eq!(
+            tool_timeout_for("search_code"),
+            std::time::Duration::from_secs(30),
+            "interactive tools keep the default budget"
+        );
+        assert_eq!(
+            tool_timeout_for("update_knowledge"),
+            std::time::Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn extended_watchdog_floor_respects_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // An explicit operator budget ABOVE the floor must win.
+        std::env::set_var("LEANKG_MCP_TOOL_TIMEOUT_SECS", "600");
+        assert_eq!(
+            tool_timeout_for("mcp_index_docs"),
+            std::time::Duration::from_secs(600)
+        );
+        std::env::set_var("LEANKG_MCP_TOOL_TIMEOUT_SECS", "10");
+        assert_eq!(
+            tool_timeout_for("mcp_index_docs"),
+            std::time::Duration::from_secs(300),
+            "floor still applies when env is below it"
+        );
+        std::env::remove_var("LEANKG_MCP_TOOL_TIMEOUT_SECS");
     }
 
     #[test]
