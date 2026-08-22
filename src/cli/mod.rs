@@ -1,5 +1,6 @@
 use clap::{Subcommand, ValueEnum};
 
+pub mod audit;
 pub mod mcp;
 pub mod reexec;
 pub mod shell_runner;
@@ -21,10 +22,51 @@ pub enum CostFormat {
     Json,
 }
 
+/// Output format for `leankg audit export`.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuditFormat {
+    /// One JSON object per line (SIEM-drain friendly).
+    Jsonl,
+}
+
+/// Subcommands for `leankg audit` (FR-ENT-1).
+#[derive(Subcommand, Debug)]
+pub enum AuditCommand {
+    /// Export ledger rows as JSONL
+    Export {
+        /// Only entries at/after this time (RFC3339 | epoch seconds | 90s|30m|24h|7d)
+        #[arg(long)]
+        since: Option<String>,
+        /// Only entries at/before this time
+        #[arg(long)]
+        until: Option<String>,
+        /// Output format
+        #[arg(long, default_value = "jsonl")]
+        format: AuditFormat,
+        /// Write to FILE instead of stdout
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Verify the append-only hash chain over the ledger
+    Verify {
+        /// Only entries at/after this time (RFC3339 | epoch seconds | 90s|30m|24h|7d)
+        #[arg(long)]
+        since: Option<String>,
+        /// Only entries at/before this time
+        #[arg(long)]
+        until: Option<String>,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 pub enum CLICommand {
     /// Show LeanKG version
     Version,
+    /// FR-ENT-1: export / verify the append-only hash-chained audit ledger
+    Audit {
+        #[command(subcommand)]
+        command: AuditCommand,
+    },
     /// Initialize a new LeanKG project
     Init {
         #[arg(long, default_value = ".leankg")]
@@ -301,14 +343,46 @@ pub enum CLICommand {
     },
     /// Auto-install MCP config
     Install,
+    /// FR-PLG-1: One-command MCP client setup — write (or remove) the
+    /// LeanKG server entry in an AI client's config file so agents can use
+    /// LeanKG without hand-editing JSON/TOML. Idempotent; preserves every
+    /// sibling key, comment, and unknown field.
+    Connect {
+        /// Target AI client: claude-code | cursor | codex | gemini
+        #[arg(value_enum)]
+        client: crate::connect::Client,
+        /// Point the client at a remote HTTP MCP endpoint (e.g.
+        /// http://localhost:9699) instead of spawning local stdio.
+        #[arg(long)]
+        remote: Option<String>,
+        /// Remove only the leankg entry from the client config
+        /// (succeeds even when absent).
+        #[arg(long, conflicts_with = "remote")]
+        remove: bool,
+        /// Project root passed as `mcp-stdio --project` (default: cwd)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Diagnose stale leankg processes, mmap'd DB files, and current
     /// RSS. Prints `leankg daemon kill` to clean them up. Safe to run
-    /// at any time.
+    /// at any time. With `--deep`, runs the full deployment
+    /// self-diagnosis suite (PG latency, migrations, index freshness,
+    /// embeddings, pool env, orphans, duplicates) instead.
     Doctor {
         /// Also kill stale leankg processes (default: report only).
         /// Refuses to kill the current process and the caller's parent.
         #[arg(long)]
         kill: bool,
+        /// Run the deep self-diagnosis suite over PG + project state.
+        /// Exit codes: 0 all-pass, 1 any warn, 2 any fail.
+        #[arg(long)]
+        deep: bool,
+        /// Output format for --deep: `text` (default) or `json`.
+        #[arg(long, requires = "deep")]
+        format: Option<String>,
+        /// Project root for --deep (default: discovered project root).
+        #[arg(long, requires = "deep")]
+        project: Option<String>,
     },
     /// Show index status
     Status,
@@ -548,6 +622,13 @@ pub enum CLICommand {
         /// Export format: json, dot, mermaid, or html
         #[arg(long, default_value = "json")]
         format: String,
+        /// Emit git-committable Markdown graph docs (H11) instead of the raw
+        /// graph formats. Deterministic given DB state.
+        #[arg(long)]
+        markdown: bool,
+        /// Output file for --markdown (default: .leankg/graph-docs.md)
+        #[arg(long)]
+        out: Option<String>,
         /// Scope export to a specific file's subgraph
         #[arg(long)]
         file: Option<String>,

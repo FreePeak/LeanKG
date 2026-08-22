@@ -160,6 +160,37 @@ pub trait DbBackend: Send + Sync {
     fn is_read_only(&self) -> bool {
         false
     }
+
+    /// FR-ENT-1: append a batch of hash-chained audit entries in ONE
+    /// multi-row INSERT. Ids are assigned by the DB (BIGSERIAL); callers pass
+    /// `id = 0` placeholders.
+    ///
+    /// Default errs so a backend that forgets to implement the ledger can
+    /// never silently lose rows.
+    fn insert_audit_batch(
+        &self,
+        _entries: &[crate::audit::AuditEntry],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Err("audit ledger not supported by this backend".into())
+    }
+
+    /// FR-ENT-1: entry_hash of the newest audit row (`None` on an empty
+    /// ledger), used by the recorder to continue the hash chain across
+    /// process restarts. Errors when the table is absent (pre-migration).
+    fn last_audit_entry_hash(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        Err("audit ledger not supported by this backend".into())
+    }
+
+    /// FR-ENT-1: ledger rows in id order, filtered by an inclusive
+    /// `[since, until]` timestamp window (either bound may be `None`).
+    /// Backs `leankg audit export|verify`.
+    fn query_audit(
+        &self,
+        _since: Option<std::time::SystemTime>,
+        _until: Option<std::time::SystemTime>,
+    ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
+        Err("audit ledger not supported by this backend".into())
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -325,9 +356,25 @@ impl ClientPool {
         self.inner.max
     }
 
+    /// Max time a checkout may block waiting for a free slot.
+    /// `LEANKG_PG_POOL_WAIT_MS` (default 10_000).
+    fn wait_timeout_from_env() -> std::time::Duration {
+        let ms = std::env::var("LEANKG_PG_POOL_WAIT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v >= 100)
+            .unwrap_or(10_000);
+        std::time::Duration::from_millis(ms)
+    }
+
     /// Check out a client, connecting a new one up to `max` live, else
-    /// blocking on a Condvar until one is returned.
+    /// blocking on a Condvar until one is returned — but only up to
+    /// `LEANKG_PG_POOL_WAIT_MS` (default 10s). BUG-E defense-in-depth: an
+    /// unbounded wait let one wedged tool hold every slot forever, so ALL
+    /// later tools starved ("timed out after 30s" cascade). Starvation now
+    /// fails fast with a clear error instead of blocking indefinitely.
     pub fn checkout(&self, connect_url: &str) -> Result<PooledClient, Box<dyn std::error::Error>> {
+        let wait_budget = Self::wait_timeout_from_env();
         let mut guard = self.inner.state.lock().unwrap();
         let pool_arc = Arc::new(self.clone());
         loop {
@@ -349,12 +396,23 @@ impl ClientPool {
                 guard.live += 1;
                 return Ok(PooledClient::new(client, pool_arc.clone()));
             }
-            // At capacity — wait for a return.
-            guard = self
+            // At capacity — wait for a return, bounded.
+            let deadline = std::time::Duration::from_millis(wait_budget.as_millis() as u64);
+            let (nguard, res) = self
                 .inner
                 .has_slot
-                .wait(guard)
+                .wait_timeout(guard, deadline)
                 .unwrap_or_else(|e| e.into_inner());
+            guard = nguard;
+            if res.timed_out() && guard.idle.is_empty() && guard.live >= self.inner.max {
+                return Err(format!(
+                    "pg connection pool exhausted: {} slots held for over {}ms; \
+                     a slow tool may be stuck. Retry or raise LEANKG_PG_POOL_SIZE.",
+                    self.inner.max,
+                    deadline.as_millis()
+                )
+                .into());
+            }
         }
     }
 
@@ -477,8 +535,11 @@ impl PostgresBackend {
             );
         }
         let (before, after) = base.split_once('?').unwrap_or((base, ""));
-        let sep = if after.is_empty() { "?" } else { "&" };
-        format!("{before}{sep}{after}options={RO_FLAG}")
+        if after.is_empty() {
+            format!("{before}?options={RO_FLAG}")
+        } else {
+            format!("{before}?{after}&options={RO_FLAG}")
+        }
     }
 
     /// Check out a client from the pool. On the first call this connects
@@ -504,6 +565,109 @@ impl PostgresBackend {
         } else {
             pool.checkout(&url)
         }
+    }
+
+    /// FR-ENT-1 sync body: one multi-row INSERT for the whole audit batch
+    /// (≤ 50 rows × 9 params per flush, well under the 65535 bind limit).
+    fn insert_audit_batch_sync(
+        &self,
+        entries: &[crate::audit::AuditEntry],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        const COLS: usize = 9;
+        let mut sql = String::from(
+            "INSERT INTO audit_log (ts, actor, agent_client, tool, project, \
+             args_hash, result_status, prev_hash, entry_hash) VALUES ",
+        );
+        let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> =
+            Vec::with_capacity(entries.len() * COLS);
+        for (i, e) in entries.iter().enumerate() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            let base = i * COLS;
+            sql.push('(');
+            for c in 0..COLS {
+                if c > 0 {
+                    sql.push(',');
+                }
+                sql.push_str(&format!("${}", base + c + 1));
+            }
+            sql.push(')');
+            params.push(Box::new(e.ts));
+            params.push(Box::new(e.actor.clone()));
+            params.push(Box::new(e.agent_client.clone()));
+            params.push(Box::new(e.tool.clone()));
+            params.push(Box::new(e.project.clone()));
+            params.push(Box::new(e.args_hash.clone()));
+            params.push(Box::new(e.result_status.clone()));
+            params.push(Box::new(e.prev_hash.clone()));
+            params.push(Box::new(e.entry_hash.clone()));
+        }
+        let param_refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut client = self.checkout()?;
+        client.execute(sql.as_str(), &param_refs)?;
+        Ok(())
+    }
+
+    /// FR-ENT-1 sync body: chain head for recorder restarts. Errors when the
+    /// audit_log table is absent — the recorder disables after one warn.
+    fn last_audit_entry_hash_sync(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let mut client = self.checkout()?;
+        let row = client.query_opt(
+            "SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1",
+            &[],
+        )?;
+        Ok(row.map(|r| r.get(0)))
+    }
+
+    /// FR-ENT-1 sync body: windowed ledger read for export/verify.
+    fn query_audit_sync(
+        &self,
+        since: Option<std::time::SystemTime>,
+        until: Option<std::time::SystemTime>,
+    ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
+        const COLS: &str = "id, ts, actor, agent_client, tool, project, args_hash, \
+                            result_status, prev_hash, entry_hash";
+        let mut clauses: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
+        if let Some(s) = since {
+            params.push(Box::new(s));
+            clauses.push(format!("ts >= ${}", params.len()));
+        }
+        if let Some(u) = until {
+            params.push(Box::new(u));
+            clauses.push(format!("ts <= ${}", params.len()));
+        }
+        let mut sql = format!("SELECT {COLS} FROM audit_log");
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" ORDER BY id ASC");
+
+        let refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut client = self.checkout()?;
+        let rows = client.query(sql.as_str(), &refs)?;
+        Ok(rows
+            .iter()
+            .map(|r| crate::audit::AuditEntry {
+                id: r.get(0),
+                ts: r.get(1),
+                actor: r.get(2),
+                agent_client: r.get(3),
+                tool: r.get(4),
+                project: r.get(5),
+                args_hash: r.get(6),
+                result_status: r.get(7),
+                prev_hash: r.get(8),
+                entry_hash: r.get(9),
+            })
+            .collect())
     }
 
     /// Take the PG advisory lock for exclusive jobs (e.g. `leankg index`,
@@ -1052,6 +1216,42 @@ impl DbBackend for PostgresBackend {
         self.read_only
     }
 
+    /// FR-ENT-1: one multi-row INSERT for the whole batch (≤ 50 rows × 9
+    /// params per flush, well under the 65535 bind limit).
+    fn insert_audit_batch(
+        &self,
+        entries: &[crate::audit::AuditEntry],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.insert_audit_batch_sync(entries))
+        } else {
+            self.insert_audit_batch_sync(entries)
+        }
+    }
+
+    /// FR-ENT-1: chain head for recorder restarts. Errors when the audit_log
+    /// table is absent — the recorder treats that as "disable after one warn".
+    fn last_audit_entry_hash(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.last_audit_entry_hash_sync())
+        } else {
+            self.last_audit_entry_hash_sync()
+        }
+    }
+
+    /// FR-ENT-1: windowed ledger read for `leankg audit export|verify`.
+    fn query_audit(
+        &self,
+        since: Option<std::time::SystemTime>,
+        until: Option<std::time::SystemTime>,
+    ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.query_audit_sync(since, until))
+        } else {
+            self.query_audit_sync(since, until)
+        }
+    }
+
     fn run_script(
         &self,
         query: &str,
@@ -1446,7 +1646,39 @@ fn percent_encode(s: &str) -> String {
 /// `leankg_p_` + hex bytes (short paths) or a 16-hex SipHash (long paths) —
 /// always a valid, lowercase PG identifier (≤ 63 bytes).
 pub fn schema_for_path(db_path: &std::path::Path) -> String {
-    let key = project_identity_key(db_path);
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let (key, _legacy) = project_identity_keys_in(db_path, &cwd);
+    schema_name_from_key(&key)
+}
+
+/// [`schema_for_path`] with an explicit base for RELATIVE db_path spellings
+/// (`leankg index ./src` resolves `./src` against the invocation CWD).
+/// Pure — tests pass a base instead of mutating the process CWD.
+#[doc(hidden)]
+pub fn schema_for_path_in(db_path: &std::path::Path, base: &std::path::Path) -> String {
+    let (key, _legacy) = project_identity_keys_in(db_path, base);
+    schema_name_from_key(&key)
+}
+
+/// Ordered Postgres-schema candidates for a project: `[0]` is the preferred
+/// identity (what new writes should use); any further entries are LEGACY
+/// keys kept for read-compatibility with pre-fix data (e.g. a relative
+/// `project_path` that older builds keyed literally). Callers pick the first
+/// candidate whose schema exists AND is populated; otherwise `[0]`.
+pub fn schema_candidates_for_path(db_path: &std::path::Path) -> Vec<String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let (key, legacy) = project_identity_keys_in(db_path, &cwd);
+    let mut out = vec![schema_name_from_key(&key)];
+    if let Some(l) = legacy {
+        let name = schema_name_from_key(&l);
+        if name != out[0] {
+            out.push(name);
+        }
+    }
+    out
+}
+
+fn schema_name_from_key(key: &str) -> String {
     use std::fmt::Write;
     let mut hex = String::with_capacity(key.len() * 2);
     for b in key.as_bytes() {
@@ -1463,32 +1695,117 @@ pub fn schema_for_path(db_path: &std::path::Path) -> String {
     format!("leankg_p_{hex}")
 }
 
-/// Resolve the schema key for a project: prefer `project_path` from the
-/// project's `leankg.yaml` (stable across mounts), else the `.leankg` dir
-/// path itself. `db_path` may be a `.leankg` dir or a project root.
-fn project_identity_key(db_path: &std::path::Path) -> String {
+/// Canonicalize a project path for identity-key derivation.
+///
+/// The ONE canonicalization used everywhere a project key is derived (CLI
+/// index/embed and MCP server alike). Existing paths are resolved through
+/// `std::fs::canonicalize` so symlinks, `.`/`..` components, relative
+/// spellings and trailing slashes all collapse to one physical directory.
+/// Non-existent paths fall back to lexical normalization (joined against
+/// the process CWD, dot-components dropped) — needed before first init and
+/// for the cross-mount `project_path` contract in leankg.yaml.
+pub fn canonical_project_root(path: &std::path::Path) -> std::path::PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    canonical_project_root_in(path, &cwd)
+}
+
+/// [`canonical_project_root`] against an explicit base directory for
+/// relative spellings — pure, so tests don't have to mutate the process CWD.
+pub fn canonical_project_root_in(
+    path: &std::path::Path,
+    base: &std::path::Path,
+) -> std::path::PathBuf {
+    if let Ok(canon) = std::fs::canonicalize(path) {
+        return canon;
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    // Lexical normalization: drop `.` and resolve `..` against the preceding
+    // component (required when canonicalize fails because an ANCESTOR is a
+    // symlink but leaf dirs don't exist yet — e.g. macOS /var/folders).
+    let mut out = std::path::PathBuf::new();
+    for c in absolute.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Resolve the identity key(s) for a project: `(preferred, Option<legacy>)`.
+///
+/// Preferred key: `project.project_path` from the project's leankg.yaml when
+/// present, RESOLVED (relative values joined to the project root and
+/// canonicalized, so `"./src"` and `"<root>/src"` spell the same identity);
+/// else the canonical `.leankg`-stripped root path itself. Legacy key: when
+/// the raw yaml value was a RELATIVE path, the pre-fix literal spelling is
+/// returned too so data written by older builds stays reachable.
+///
+/// `db_path` may be a `.leankg` dir or a project root; both `<root>/leankg.yaml`
+/// and `<root>/.leankg/leankg.yaml` are consulted (setup writes the latter).
+fn project_identity_keys_in(
+    db_path: &std::path::Path,
+    base: &std::path::Path,
+) -> (String, Option<String>) {
     // db_path is either `<root>/.leankg` (reader/MCP) or
-    // `<root>/.leankg/leankg.db` (writer index/embed). Normalize both to the
-    // project root so reader and writer derive the SAME schema even when the
-    // project's leankg.yaml lacks an explicit `project_path`.
-    let mut root = db_path.to_path_buf();
+    // `<root>/.leankg/leankg.db` (writer index/embed). Normalize BOTH the
+    // suffix stripping and the resulting root through ONE canonicalization
+    // so reader and writer derive the SAME schema regardless of how the
+    // path was spelled (R1 sweep issue #5: CLI `index ./src` keyed the
+    // literal string while MCP `--project <abs>` hashed the real path).
+    let normalized = canonical_project_root_in(db_path, base);
+    let mut root = normalized;
     // Strip a trailing `<root>/.leankg/leankg.db` → `<root>/.leankg`.
     if root.ends_with("leankg.db") {
         root = root.parent().unwrap_or(&root).to_path_buf();
     }
-    // Strip a trailing `<root>/.leankg` → `<root>`.
+    // Strip a trailing `<root>/.leankg` → `<root>` (re-canonicalize in case
+    // the suffix strip exposed a symlinked ancestor).
     if root.ends_with(".leankg") {
         root = root.parent().unwrap_or(&root).to_path_buf();
     }
-    if let Ok(content) = std::fs::read_to_string(root.join("leankg.yaml")) {
-        if let Ok(config) = serde_yaml::from_str::<crate::config::ProjectConfig>(&content) {
-            if let Some(pp) = config.project.project_path {
-                return pp.to_string_lossy().to_string();
-            }
-        }
+    let mut configs: Vec<std::path::PathBuf> = vec![root.join("leankg.yaml")];
+    let dot_leankg_yaml = root.join(".leankg").join("leankg.yaml");
+    if dot_leankg_yaml != configs[0] {
+        configs.push(dot_leankg_yaml);
     }
-    // No yaml/project_path: key on the normalized project root path.
-    root.to_string_lossy().to_string()
+
+    for cfg_path in &configs {
+        let Ok(content) = std::fs::read_to_string(cfg_path) else {
+            continue;
+        };
+        let Ok(config) = serde_yaml::from_str::<crate::config::ProjectConfig>(&content) else {
+            continue;
+        };
+        let Some(pp) = config.project.project_path else {
+            continue;
+        };
+        let raw = pp.to_string_lossy().to_string();
+        let is_abs = pp.is_absolute();
+        // Canonicalize BOTH branches so `./src` and `/abs/src` (possibly
+        // through symlinked parents like macOS /tmp) converge on one key.
+        let joined = if is_abs {
+            pp.clone()
+        } else {
+            // Relative values were historically keyed LITERALLY ("./src"),
+            // which silently re-scoped every read/write whenever the field
+            // appeared or disappeared. Resolve them against the project root
+            // instead so all spellings converge on one identity.
+            root.join(&pp)
+        };
+        let resolved = std::fs::canonicalize(&joined).unwrap_or(joined);
+        let legacy = if !is_abs { Some(raw) } else { None };
+        return (resolved.to_string_lossy().to_string(), legacy);
+    }
+
+    (root.to_string_lossy().to_string(), None)
 }
 
 fn redact_url(url: &str) -> String {
@@ -1546,7 +1863,7 @@ pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error
     }
     #[allow(unreachable_code)]
     {
-        let schema = schema_for_path(db_path);
+        let schema = pick_schema_for_init(db_path);
         // Writer path: ALWAYS create + pin to the per-project schema. The
         // writer owns schema creation; it never falls back to `public` (that
         // fallback is reader-only, so a pre-schema index stays visible).
@@ -1610,6 +1927,28 @@ fn schema_exists_sync(schema: &str) -> bool {
         .query_one(&q, &[])
         .map(|row| row.get(0))
         .unwrap_or(false)
+}
+
+/// Pick the schema for a project init: the first identity candidate whose
+/// schema exists AND holds rows; else the preferred candidate. BUG-B: when
+/// the preferred identity changed (relative `project_path` used to be keyed
+/// literally), this adopts the legacy schema instead of silently serving an
+/// empty project. Zero extra probes when no legacy candidate exists.
+fn pick_schema_for_init(db_path: &std::path::Path) -> String {
+    let candidates = schema_candidates_for_path(db_path);
+    let Some(preferred) = candidates.first() else {
+        return "leankg_p_default".to_string();
+    };
+    for legacy in candidates.iter().skip(1) {
+        if schema_exists(legacy) {
+            tracing::warn!(
+                "project identity: preferred schema {preferred} is empty; \
+                 adopting populated legacy schema {legacy}"
+            );
+            return legacy.clone();
+        }
+    }
+    preferred.clone()
 }
 
 fn create_schema_if_missing_sync(
@@ -1756,7 +2095,7 @@ pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn s
     }
     #[allow(unreachable_code)]
     {
-        let schema = schema_for_path(db_path);
+        let schema = pick_schema_for_init(db_path);
         let pg = if schema_exists(&schema) {
             PostgresBackend::from_env_read_only()?.with_schema(&schema)
         } else {
@@ -1770,6 +2109,93 @@ pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn s
             redact_url(&pg.pg_url)
         );
         Ok(Arc::new(pg))
+    }
+}
+
+/// Like [`init_db_readonly`] but NEVER falls back to the shared `public`
+/// layout: returns `Err` when no per-project schema exists for `db_path`.
+/// Multi-tenant remote Postgres makes the public fallback dangerous — it can
+/// silently serve another project's rows (doctor --deep reported TempDir
+/// fixtures from an unrelated schema through it).
+pub fn init_db_readonly_strict(
+    db_path: &std::path::Path,
+) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    #[cfg(test)]
+    {
+        return test_init_db(db_path);
+    }
+    #[allow(unreachable_code)]
+    {
+        let schema = pick_schema_for_init(db_path);
+        if !schema_exists(&schema) {
+            return Err(format!(
+                "no per-project schema for {} (tried {schema}); run `leankg init` + `leankg index` first",
+                db_path.display()
+            )
+            .into());
+        }
+        let pg = PostgresBackend::from_env_read_only()?.with_schema(&schema);
+        tracing::info!(
+            "DB engine = postgres read-only strict (default_transaction_read_only = on): {}",
+            redact_url(&pg.pg_url)
+        );
+        Ok(Arc::new(pg))
+    }
+}
+
+/// FR-ENT-1: read-only backend for `leankg audit export|verify`.
+///
+/// Pins to the first project-schema candidate that OWNS an `audit_log`
+/// table. Unlike [`init_db_readonly`] — which pins only when the project's
+/// code index is already populated — the ledger must stay readable while a
+/// fresh project is still indexing (or was initialized but never indexed),
+/// otherwise `audit verify` could not attest the very calls that performed
+/// the indexing. Falls back to the legacy public layout when no candidate
+/// carries a ledger.
+pub fn init_db_readonly_audit(
+    db_path: &std::path::Path,
+) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    let probe = PostgresBackend::from_env_read_only()?;
+    let mut chosen: Option<String> = None;
+    // The CLI runs inside Tokio (#main block_on); the sync PG client must
+    // leave the ambient runtime first — same guard as checkout().
+    let probe_url = probe.pg_url.clone();
+    let probe_fn = |chosen: &mut Option<String>| -> Result<(), Box<dyn std::error::Error>> {
+        let mut client = pg_connect(&probe_url)?;
+        for schema in schema_candidates_for_path(db_path) {
+            // Candidate names are hex/hash-derived identifiers (see
+            // schema_name_from_key), so direct interpolation is safe —
+            // same assumption as schema_exists_sync.
+            let q = format!(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+                 WHERE table_schema = '{schema}' AND table_name = 'audit_log')"
+            );
+            if client
+                .query_one(&q, &[])
+                .map(|r| r.get::<_, bool>(0))
+                .unwrap_or(false)
+            {
+                *chosen = Some(schema);
+                break;
+            }
+        }
+        Ok(())
+    };
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| probe_fn(&mut chosen))?;
+    } else {
+        probe_fn(&mut chosen)?;
+    }
+    match chosen {
+        Some(schema) => {
+            let pg = PostgresBackend::from_env_read_only()?.with_schema(&schema);
+            tracing::info!(
+                "audit ledger backend pinned to schema {schema}: {}",
+                redact_url(&pg.pg_url)
+            );
+            Ok(Arc::new(pg))
+        }
+        None => Ok(Arc::new(probe)),
     }
 }
 
@@ -2233,6 +2659,78 @@ mod tests {
             rs,
             schema_for_path(std::path::Path::new("/host/demo/.leankg")),
             "schema must key on the host project_path, not the mount path"
+        );
+    }
+
+    #[test]
+    fn relative_and_absolute_spellings_derive_same_schema() {
+        // R1 sweep issue #5: `leankg index ./src` keyed the schema on the
+        // literal string "./src" while the MCP server started with
+        // --project <abs-path> derived a different key — the server served
+        // an EMPTY DB right after a successful index. The same physical
+        // directory must always produce the same identity key.
+        //
+        // Uses the *_in variants with an explicit base so this test never
+        // mutates the process CWD (other tests read it concurrently).
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        // CLI flow: relative path resolved against the invocation CWD.
+        let rel_key =
+            schema_for_path_in(std::path::Path::new("./src/.leankg/leankg.db"), dir.path());
+        // MCP flow: absolute --project path, no base needed.
+        let abs_key = schema_for_path(&src.join(".leankg").join("leankg.db"));
+        assert_eq!(
+            rel_key, abs_key,
+            "CLI relative index path and MCP absolute --project must share one schema"
+        );
+
+        // The canonicalization itself collapses spellings of one directory:
+        // trailing slash + dot components + symlink-free relative form.
+        let plain = canonical_project_root_in(&src, dir.path());
+        assert_eq!(
+            plain,
+            canonical_project_root_in(
+                std::path::Path::new(&format!("{}/./src/../src/", dir.path().display())),
+                dir.path()
+            )
+        );
+    }
+
+    #[test]
+    fn trailing_slash_and_dot_components_derive_same_schema() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let plain = schema_for_path(&src.join(".leankg"));
+        let trailing =
+            schema_for_path(std::path::Path::new(&format!("{}/.leankg/", src.display())));
+        let dotted = schema_for_path(std::path::Path::new(&format!(
+            "{}/./src/../src/.leankg/leankg.db",
+            dir.path().display()
+        )));
+        assert_eq!(plain, trailing, "trailing slash must not change the key");
+        assert_eq!(
+            plain, dotted,
+            "./ and ../ components must not change the key"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_project_root_derives_same_schema() {
+        let dir = TempDir::new().unwrap();
+        let real = dir.path().join("real-project");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = dir.path().join("link-to-project");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert_eq!(
+            schema_for_path(&link),
+            schema_for_path(&real),
+            "a symlink pointing at the project root must not fork the schema"
         );
     }
 

@@ -119,23 +119,33 @@ impl<'a> ContextProvider<'a> {
         }
 
         let relationships = self.graph.get_relationships(file_path)?;
+        // BUG-D: one batched lookup for every relationship target instead of
+        // a `find_element` round-trip per edge (remote PG ≈ 500ms/query × N
+        // edges hung this tool for minutes).
+        let target_qns: Vec<String> = relationships
+            .iter()
+            .map(|r| r.target_qualified.clone())
+            .collect();
+        let targets = self.graph.get_elements_by_qualified_names(&target_qns)?;
         for rel in relationships {
-            if let Some(element) = self.graph.find_element(&rel.target_qualified)? {
-                if !seen_qualified.insert(element.qualified_name.clone()) {
-                    continue;
-                }
-                let priority = match rel.rel_type.as_str() {
-                    "imports" => ContextPriority::Imported,
-                    "contains" | "defines" => ContextPriority::Contained,
-                    _ => ContextPriority::Contained,
-                };
-                let token_count = Self::element_tokens(&element);
-                context_elements.push(ContextElement {
-                    element,
-                    priority,
-                    token_count,
-                });
+            let Some(element) = targets.get(&rel.target_qualified) else {
+                continue;
+            };
+            let element = element.clone();
+            if !seen_qualified.insert(element.qualified_name.clone()) {
+                continue;
             }
+            let priority = match rel.rel_type.as_str() {
+                "imports" => ContextPriority::Imported,
+                "contains" | "defines" => ContextPriority::Contained,
+                _ => ContextPriority::Contained,
+            };
+            let token_count = Self::element_tokens(&element);
+            context_elements.push(ContextElement {
+                element,
+                priority,
+                token_count,
+            });
         }
 
         context_elements.sort_by(|a, b| {
