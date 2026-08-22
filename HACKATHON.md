@@ -44,3 +44,22 @@ Merged fix-mcp-layer (4 commits) + fix-engine-layer (3 commits); backend.rs iden
 | agent_focus executor wedge | targeted queries + bounded pool wait (10s fail-fast) | 3f070c8f |
 Gates: lib 1053✅ · fmt✅ · clippy✅ · build 0 warnings.
 Latency after: get_context 72s→2.1-2.8s; temporal 4.5s; check_consistency 6-7s; agent_focus wedge gone (13ms warm).
+
+### R3 — Feature wave complete (2026-08-22)
+All 6 backlog items landed and merged to `feature/hackathon` @ d0dd213e → PR #247:
+| Item | Feature | Evidence |
+|---|---|---|
+| H1 | leankg connect (4 clients) | 43 tests, fake-HOME live proof |
+| H2 | ENT-1 audit log (hash chain) | chain verified live "5 entries"; <2ms overhead test |
+| H3 | npm version parity | CI guard + wrapper 0.17.9→0.26.0 |
+| H5 | quickstart smoke | 88s total vs 300s budget |
+| H11 | export --markdown | 12,864-line deterministic docs |
+| H9 | doctor --deep | 21 unit + 2 live-PG integration tests |
+
+**H9 hardening found 3 real bugs during live verification:**
+1. Synthetic `ontology://` URIs in code_elements counted as stale file paths → freshness check now skips URI schemes (+ samples in FAIL detail)
+2. Path comparison broke on macOS /tmp symlink + relative spellings → normalize both sides against canonicalized root
+3. `init_db_readonly` public-schema fallback served FOREIGN project rows to doctor → added `init_db_readonly_strict`; run_deep resolves root/src/yaml identities explicitly
+Also: tracing logs moved to stderr so `--format json` stdout stays machine-parseable.
+
+Gates: lib **1147✅** · fmt ✓ · clippy ✓ · build 0 warnings.
