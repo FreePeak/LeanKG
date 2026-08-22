@@ -365,12 +365,24 @@ pub enum CLICommand {
     },
     /// Diagnose stale leankg processes, mmap'd DB files, and current
     /// RSS. Prints `leankg daemon kill` to clean them up. Safe to run
-    /// at any time.
+    /// at any time. With `--deep`, runs the full deployment
+    /// self-diagnosis suite (PG latency, migrations, index freshness,
+    /// embeddings, pool env, orphans, duplicates) instead.
     Doctor {
         /// Also kill stale leankg processes (default: report only).
         /// Refuses to kill the current process and the caller's parent.
         #[arg(long)]
         kill: bool,
+        /// Run the deep self-diagnosis suite over PG + project state.
+        /// Exit codes: 0 all-pass, 1 any warn, 2 any fail.
+        #[arg(long)]
+        deep: bool,
+        /// Output format for --deep: `text` (default) or `json`.
+        #[arg(long, requires = "deep")]
+        format: Option<String>,
+        /// Project root for --deep (default: discovered project root).
+        #[arg(long, requires = "deep")]
+        project: Option<String>,
     },
     /// Show index status
     Status,
