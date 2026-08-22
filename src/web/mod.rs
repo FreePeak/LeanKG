@@ -25,6 +25,9 @@ pub struct AppState {
     db: Arc<RwLock<Option<crate::db::backend::SharedDb>>>,
     graph_engine: Arc<RwLock<Option<GraphEngine>>>,
     pub indexing_state: Arc<RwLock<IndexingState>>,
+    /// FR-ENT-1: fire-and-forget audit ledger for mutating API calls.
+    /// `None` until a backend exists — old schemas never crash.
+    pub audit: Option<Arc<crate::audit::AuditRecorder>>,
 }
 
 #[derive(Clone, Default)]
@@ -45,6 +48,7 @@ impl Default for AppState {
             db: Arc::new(RwLock::new(None)),
             graph_engine: Arc::new(RwLock::new(None)),
             indexing_state: Arc::new(RwLock::new(IndexingState::default())),
+            audit: None,
         }
     }
 }
@@ -60,6 +64,7 @@ impl AppState {
             db: Arc::new(RwLock::new(None)),
             graph_engine: Arc::new(RwLock::new(None)),
             indexing_state: Arc::new(RwLock::new(IndexingState::default())),
+            audit: None,
         })
     }
 
@@ -350,6 +355,52 @@ async fn root_handler() -> Response {
     serve_embedded_file("index.html").await
 }
 
+/// FR-ENT-1: audit middleware for mutating REST calls. POST/PUT/PATCH/DELETE
+/// against `/api/*` produce exactly one ledger entry whose `tool` column
+/// carries the route PATTERN (e.g. `/api/teams/:id`), never concrete ids.
+/// Request bodies are not persisted; `args_hash` covers an empty object.
+pub async fn audit_middleware(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use axum::extract::MatchedPath;
+    use axum::http::Method;
+
+    let method = req.method().clone();
+    let matched = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|m| m.as_str().to_string());
+    let raw_path = req.uri().path().to_string();
+
+    let resp = next.run(req).await;
+
+    let mutating = matches!(
+        method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    );
+    if mutating && raw_path.starts_with("/api/") {
+        if let Some(recorder) = &state.audit {
+            recorder.record(crate::audit::AuditRecord {
+                ts: std::time::SystemTime::now(),
+                actor: "local".to_string(),
+                agent_client: "web".to_string(),
+                tool: matched.unwrap_or(raw_path.clone()),
+                project: None,
+                args_hash: crate::audit::hash_args(&serde_json::json!({})),
+                result_status: if resp.status().is_success() {
+                    "ok"
+                } else {
+                    "error"
+                }
+                .to_string(),
+            });
+        }
+    }
+    resp
+}
+
 pub async fn start_server(
     port: u16,
     db_path: std::path::PathBuf,
@@ -359,8 +410,14 @@ pub async fn start_server(
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| db_path.clone());
-    let state = AppState::new(db_path.clone(), project_root.clone()).await?;
+    let mut state = AppState::new(db_path.clone(), project_root.clone()).await?;
     state.init_db().await?;
+
+    // FR-ENT-1: wire the audit recorder to the project's backend. A missing
+    // audit_log table only disables the ledger (logged once by the recorder).
+    if let Ok(db) = state.get_db() {
+        state.audit = Some(crate::audit::AuditRecorder::shared(db));
+    }
 
     // FR-ONT-PROC-01: watch ontology YAML while serve is running.
     // GraphEngine caches are Arc-shared across clones; sync_from_dir invalidates them.
@@ -467,4 +524,110 @@ pub async fn start_server(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod audit_middleware_tests {
+    use super::*;
+    use crate::audit::{hash_args, AuditRecorder};
+    use crate::db::backend::DbBackend;
+    use crate::db::fake::FakeBackend;
+    use axum::body::Body as AxumBody;
+    use axum::extract::Request;
+    use axum::http::{Method, Request as HttpRequest, StatusCode};
+    use axum::middleware;
+    use axum::response::IntoResponse;
+    use axum::routing::{delete, get, post};
+    use tower::ServiceExt;
+
+    async fn ok_handler() -> impl IntoResponse {
+        StatusCode::OK
+    }
+
+    async fn fail_handler() -> impl IntoResponse {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+
+    fn app_with(recorder: Option<Arc<AuditRecorder>>) -> Router {
+        let mut state = AppState::default();
+        state.audit = recorder;
+        Router::new()
+            .route("/api/cache/invalidate", post(ok_handler))
+            .route("/api/elements", get(ok_handler))
+            .route("/api/teams/:id", delete(fail_handler))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                audit_middleware,
+            ))
+            .with_state(state)
+    }
+
+    async fn send(app: Router, method: Method, uri: &str) -> StatusCode {
+        let req: Request = HttpRequest::builder()
+            .method(method)
+            .uri(uri)
+            .body(AxumBody::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        res.status()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mutating_api_calls_are_recorded_with_route_pattern() {
+        let fake = Arc::new(FakeBackend::new());
+        let backend: Arc<dyn DbBackend> = fake.clone();
+        let recorder = AuditRecorder::shared(backend);
+        let app = app_with(Some(recorder.clone()));
+
+        assert_eq!(
+            send(app.clone(), Method::POST, "/api/cache/invalidate").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            send(app, Method::DELETE, "/api/teams/42").await,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        recorder.flush().await;
+
+        let entries = fake.audit_entries();
+        assert_eq!(entries.len(), 2, "POST + DELETE recorded; nothing else");
+
+        // Route PATTERN (not concrete id) is recorded in the tool column.
+        assert_eq!(entries[0].tool, "/api/cache/invalidate");
+        assert_eq!(entries[1].tool, "/api/teams/:id");
+        assert_eq!(entries[1].result_status, "error", "5xx must record error");
+        assert_eq!(entries[0].result_status, "ok");
+        assert_eq!(entries[0].args_hash, hash_args(&serde_json::json!({})));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn read_only_api_calls_are_not_recorded() {
+        let fake = Arc::new(FakeBackend::new());
+        let backend: Arc<dyn DbBackend> = fake.clone();
+        let recorder = AuditRecorder::shared(backend);
+        let app = app_with(Some(recorder.clone()));
+
+        assert_eq!(
+            send(app.clone(), Method::GET, "/api/elements").await,
+            StatusCode::OK
+        );
+        recorder.flush().await;
+        assert!(
+            fake.audit_entries().is_empty(),
+            "GET must not produce ledger rows"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn non_api_paths_are_not_recorded() {
+        let fake = Arc::new(FakeBackend::new());
+        let backend: Arc<dyn DbBackend> = fake.clone();
+        let recorder = AuditRecorder::shared(backend);
+        // No /api POST route registered → 404, but the middleware still sees
+        // the request; a non-/api path must never be audited.
+        let status = send(app_with(Some(recorder.clone())), Method::POST, "/services").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        recorder.flush().await;
+        assert!(fake.audit_entries().is_empty());
+    }
 }
