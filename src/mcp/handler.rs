@@ -229,7 +229,7 @@ impl ToolHandler {
         let result = match tool_name {
             "mcp_init" => self.mcp_init(arguments),
             "mcp_index" => self.mcp_index(arguments).await,
-            "mcp_index_docs" => self.mcp_index_docs(arguments),
+            "mcp_index_docs" => self.mcp_index_docs(arguments).await,
             "mcp_install" => self.mcp_install(arguments),
             "mcp_status" => self.mcp_status(arguments),
             "detect_changes" => self.detect_changes(arguments),
@@ -705,16 +705,27 @@ impl ToolHandler {
         }))
     }
 
-    fn mcp_index_docs(&self, args: &Value) -> Result<Value, String> {
-        let docs_path = args["path"].as_str().unwrap_or("./docs");
-        let path = std::path::Path::new(docs_path);
+    async fn mcp_index_docs(&self, args: &Value) -> Result<Value, String> {
+        let docs_path = args["path"].as_str().unwrap_or("./docs").to_string();
+        let path = std::path::Path::new(&docs_path).to_path_buf();
 
         if !path.exists() {
             return Err(format!("Docs path does not exist: {}", docs_path));
         }
 
-        let result = crate::doc_indexer::index_docs_directory(path, &self.graph_engine)
-            .map_err(|e| e.to_string())?;
+        // R1 sweep issue #11: the doc walk + parse + per-ref resolution
+        // is ~75 sequential DB round-trips for even a 1-file dir. Run it
+        // on the blocking pool so (a) the hot async executor stays free
+        // and (b) the future actually yields between steps, letting
+        // tokio::time::timeout preempt promptly instead of surfacing
+        // "timed out after 30s" only AFTER the work had drained.
+        let graph = self.graph_engine.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            // Box<dyn Error> is not Send — stringify inside the worker.
+            crate::doc_indexer::index_docs_directory(&path, &graph).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("mcp_index_docs worker failed: {}", e))??;
 
         Ok(json!({
             "success": true,
@@ -4961,6 +4972,144 @@ fn semantic_no_corpus_hit(query: &str, prefix: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DbBackend double that sleeps before every script — simulates the
+    /// remote-PG per-query latency profile (R1 sweep: p50 ≈ 2-3s/query)
+    /// without needing a network. Delegates to a real backend for results.
+    struct SlowBackend {
+        inner: crate::db::backend::SharedDb,
+        delay: std::time::Duration,
+    }
+
+    impl crate::db::backend::DbBackend for SlowBackend {
+        fn run_script(
+            &self,
+            query: &str,
+            params: std::collections::BTreeMap<String, serde_json::Value>,
+        ) -> Result<crate::db::backend::NamedRows, Box<dyn std::error::Error>> {
+            std::thread::sleep(self.delay);
+            self.inner.run_script(query, params)
+        }
+
+        fn import_relations(
+            &self,
+            data: std::collections::BTreeMap<String, crate::db::backend::NamedRows>,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            std::thread::sleep(self.delay);
+            self.inner.import_relations(data)
+        }
+
+        fn redacted_url(&self) -> String {
+            self.inner.redacted_url()
+        }
+
+        fn mutability_for(&self, query: &str) -> crate::db::pg::mutability::ScriptMutability {
+            self.inner.mutability_for(query)
+        }
+    }
+
+    fn handler_in_temp_project() -> (ToolHandler, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let shared = crate::db::backend::init_db(&tmp.path().join("leankg.db")).unwrap();
+        let graph = GraphEngine::new(shared);
+        (ToolHandler::new(graph, tmp.path().to_path_buf()), tmp)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mcp_index_docs_small_dir_indexes_under_5s() {
+        // R1 sweep issue #11: mcp_index_docs blew the internal watchdog even
+        // for a 1-file docs dir. A small dir through the same code path must
+        // complete well inside the budget on a local-latency backend.
+        let (handler, tmp) = handler_in_temp_project();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(
+            docs.join("tiny.md"),
+            "# Tiny\n\nA doc that mentions `main.rs` once.\n",
+        )
+        .unwrap();
+
+        let start = Instant::now();
+        let result = handler
+            .execute_tool(
+                "mcp_index_docs",
+                &json!({"path": docs.display().to_string()}),
+            )
+            .await;
+        let elapsed = start.elapsed();
+
+        let value = result.expect("mcp_index_docs must succeed on a tiny docs dir");
+        assert_eq!(value["success"], json!(true));
+        assert_eq!(value["documents"], json!(1));
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "1-file docs dir took {:?} (budget 5s)",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn mcp_index_docs_yields_to_runtime_watchdog() {
+        // R1 sweep: "timed out after 30s ... op completed post-timeout".
+        // The docs pipeline ran synchronously inside the polled future, so
+        // tokio::time::timeout could not fire until the work finished — the
+        // client lost the response AND the executor thread stayed blocked.
+        // The handler must yield between DB calls so a watchdog deadline can
+        // preempt promptly while work continues off the hot executor.
+        //
+        // Own the runtime so shutdown can be bounded: the timed-out call
+        // leaves an orphaned blocking-pool worker draining the rest of the
+        // pipeline, and Runtime::drop would otherwise wait out every
+        // remaining simulated round trip.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let outcome = rt.block_on(async {
+            let (base_handler, tmp) = handler_in_temp_project();
+            let docs = tmp.path().join("docs");
+            std::fs::create_dir_all(&docs).unwrap();
+            std::fs::write(
+                docs.join("slow.md"),
+                "# Slow\n\nReferences `main.rs` and `lib.rs` here.\n",
+            )
+            .unwrap();
+
+            let slow_db = std::sync::Arc::new(SlowBackend {
+                inner: base_handler.graph_engine.db_arc().clone(),
+                delay: std::time::Duration::from_millis(400),
+            });
+            let handler = ToolHandler::new(GraphEngine::new(slow_db), tmp.path().to_path_buf());
+
+            // Work needs many sequential DB round trips (tens of seconds of
+            // simulated latency); give the watchdog 300ms and require the
+            // timeout to surface in ~real-time, not after the work drains.
+            let start = Instant::now();
+            let outcome = tokio::time::timeout(
+                std::time::Duration::from_millis(300),
+                handler.execute_tool(
+                    "mcp_index_docs",
+                    &json!({"path": docs.display().to_string()}),
+                ),
+            )
+            .await;
+            (outcome, start.elapsed())
+        });
+
+        let (outcome, elapsed) = outcome;
+        assert!(
+            outcome.is_err(),
+            "watchdog deadline must fire while work is still running"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "timeout surfaced after {:?}; the handler blocked the poll instead of yielding",
+            elapsed
+        );
+
+        rt.shutdown_timeout(std::time::Duration::from_millis(500));
+    }
 
     #[test]
     #[cfg(feature = "embeddings")]
