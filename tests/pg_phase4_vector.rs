@@ -241,7 +241,7 @@ fn phase4_set_local_hnsw_ef_search_takes_effect() {
 
 /// T4.6 batched upsert throughput: 1000 vectors in one transaction via
 /// the translator's `INSERT ... ON CONFLICT (qualified_name) DO UPDATE`.
-/// Mirrors the cozo `import_relations` path on the PostgresBackend impl.
+/// Mirrors the legacy `import_relations` path on the PostgresBackend impl.
 /// Measures v/s and prints it; the test asserts > 0 (correctness) and
 /// leaves the throughput value to be inspected.
 #[test]
@@ -344,10 +344,9 @@ fn phase4_has_any_proxies_correctly() {
         )
         .unwrap();
 
-    // `has_any` proxy (Phase 4 will route the Cozo `?[qualified_name] :=
-    // *embedding_vectors{qualified_name} :limit 1` shape through the
-    // translator; until attr syntax lands, the test asserts the
-    // equivalent LIMIT-1 EXISTS probe works).
+    // `has_any` proxy (Phase 4 routes the legacy-script qualified_name probe
+    // shape through the translator; until attr syntax lands, the test asserts
+    // the equivalent LIMIT-1 EXISTS probe works).
     let present: bool = client
         .query_one(
             "SELECT EXISTS(SELECT 1 FROM embedding_vectors LIMIT 1)",

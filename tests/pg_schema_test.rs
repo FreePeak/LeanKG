@@ -219,8 +219,8 @@ fn embedding_vectors_shape_and_hnsw_index() {
     );
 }
 
-/// code_elements: no PRIMARY KEY (cozo not keyed — duplicates allowed), but
-/// the four cozo-mirroring indexes exist.
+/// code_elements: no PRIMARY KEY (duplicates intentionally allowed), but
+/// the four expected indexes exist.
 #[test]
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
 fn code_elements_has_no_pk_and_expected_indexes() {
@@ -261,7 +261,7 @@ fn code_elements_has_no_pk_and_expected_indexes() {
         );
     }
 
-    // Duplicate qualified_name rows must be allowed (cozo non-keyed semantics,
+    // Duplicate qualified_name rows must be allowed (non-keyed semantics,
     // risk note 6).
     let ins = "INSERT INTO code_elements (qualified_name, element_type, name, file_path, line_start, line_end, language) VALUES ($1, 'function', 'f', 'f.rs', 1, 2, 'rust')";
     s.client.execute(ins, &[&"a::b"]).unwrap();
@@ -342,7 +342,7 @@ fn keyed_tables_have_pk_and_jsonb_columns() {
         );
     }
 
-    // JSONB round-trip of what cozo stored as a JSON string. Read back as a
+    // JSONB round-trip of the stored metadata. Read back as a
     // TEXT value so we get the canonical jsonb rendering and compare in JSON
     // space (avoids needing the `serde-1` feature on the postgres crate).
     s.client
@@ -367,7 +367,7 @@ fn keyed_tables_have_pk_and_jsonb_columns() {
 }
 
 /// migrations table records applied steps with a real timestamp (applied_at
-/// is TIMESTAMPTZ, not the cozo Int epoch). We can't decode TIMESTAMPTZ with
+/// is TIMESTAMPTZ, not an integer epoch). We can't decode TIMESTAMPTZ with
 /// the postgres crate's built-in types (needs the `with-chrono-*` feature, not
 /// enabled here), so assert its type via information_schema instead.
 #[test]

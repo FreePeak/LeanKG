@@ -225,8 +225,7 @@ fn test_cosine_distance_mapping() {
     assert_eq!(cosine_dist(&a, &b), 1.0);
     let c = [1.0f32, 0.0, 0.0];
     assert!(cosine_dist(&a, &c).abs() < 1e-12);
-    // Cozo HNSW `bind_distance: dist` also returns cosine distance (1 - cos_sim),
-    // so this same formula is what both stores compute.
+    // Cosine distance = 1 - cos_sim, which is exactly what this formula computes.
     let d = [1.0f32, 1.0, 0.0];
     let dn = d.iter().map(|x| x / (2.0f32).sqrt()).collect::<Vec<_>>();
     assert!((cosine_dist(&a, &dn) - (1.0 - std::f64::consts::FRAC_1_SQRT_2)).abs() < 1e-7);

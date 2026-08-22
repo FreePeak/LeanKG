@@ -3,7 +3,7 @@
 | Component | Technology |
 |-----------|------------|
 | Language | Rust |
-| Database | CozoDB (embedded relational-graph, Datalog queries) |
+| Database | PostgreSQL + pgvector (relational store, SQL queries, HNSW vector search) |
 | Parsing | tree-sitter |
 | CLI | Clap |
 | Web Server | Axum |
@@ -14,7 +14,7 @@
 src/
   cli/         - CLI commands (Clap)
   config/      - Project configuration
-  db/          - CozoDB persistence layer
+  db/          - PostgreSQL persistence layer
   doc/         - Documentation generator
   graph/       - Graph query engine
   indexer/     - Code parser (tree-sitter)
@@ -78,7 +78,7 @@ graph TB
         end
 
         subgraph "Storage"
-            CozoDB[(CozoDB)]
+            PG[(PostgreSQL<br/>+ pgvector)]
         end
     end
 
@@ -89,7 +89,7 @@ graph TB
     CLI --> Indexer
     CLI --> Graph
     Watcher --> Indexer
-    Indexer --> CozoDB
-    Graph --> CozoDB
+    Indexer --> PG
+    Graph --> PG
     Graph --> Cache
 ```

@@ -1,8 +1,8 @@
 //! Phase 3 parity tests (plan T3.6), Phase 8 reworked to PG-only.
 //!
-//! Runs the cozo-dialect query against the PostgresBackend; verifies the
+//! Runs the legacy-script-dialect query against the PostgresBackend; verifies the
 //! translator turns each query shape into working SQL (setup inserts + read
-//! returns the expected rows). The legacy CozoDB shim comparison arm was
+//! returns the expected rows). The legacy engine comparison arm was
 //! deleted in Phase 8 (plan D4) — Postgres is the only backend.
 //!
 //! Requires the Phase 0 Postgres container:
@@ -103,7 +103,7 @@ fn pstr(map: &mut BTreeMap<String, serde_json::Value>, k: &str, v: &str) {
     map.insert(k.into(), serde_json::Value::String(v.into()));
 }
 
-/// Run setup (cozo-dialect DDL, translated to no-op SQL on PG) then the
+/// Run setup (legacy-script-dialect DDL, translated to no-op SQL on PG) then the
 /// query against the PG backend. For writes, assert success; for reads,
 /// assert the result is non-empty and return it.
 fn run_pg(
@@ -305,7 +305,7 @@ fn parity_non_keyed_put_allows_duplicates() {
     let s = Scratch::new();
     let pg = pg_backend(&s.name);
     // Insert same qualified_name twice — PG translator must NOT add a PK for
-    // business_logic, so duplicates are allowed (matching cozo).
+    // business_logic, so duplicates are allowed.
     for _ in 0..2 {
         run_pg(
             &pg,

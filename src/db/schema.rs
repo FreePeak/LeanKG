@@ -1,7 +1,7 @@
 //! Schema-introspection helpers for the Postgres backend.
 //!
 //! Post-migration (Phase 8) these are the surviving pieces of the old
-//! cozo storage layer: the canonical column lists + arity probes used to
+//! embedded storage layer: the canonical column lists + arity probes used to
 //! describe the `code_elements` / `relationships` relations, and the
 //! project-root resolution for legacy RocksDB path layouts.
 

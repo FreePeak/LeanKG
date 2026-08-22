@@ -1,7 +1,7 @@
 //! PostgreSQL backend — the only storage engine (post-migration, plan D4).
 //!
 //! Everything that touches a database goes through [`PostgresBackend`].
-//! The legacy `DbBackend` trait and `CozoBackend` shim were deleted in
+//! The legacy `DbBackend` trait and embedded-backend shim were deleted in
 //! Phase 8; `run_script` is now a concrete inherent method.
 
 use crate::db::pg::mutability;
@@ -105,8 +105,8 @@ pub use crate::db::value::{DataValue, NamedRows};
 /// tests use an in-memory [`crate::db::fake::FakeBackend`] so unit tests
 /// never need a live Postgres.
 pub trait DbBackend: Send + Sync {
-    /// Run a Cozo-script query (translated to SQL by the PG backend, or
-    /// interpreted in-memory by the fake). Returns named rows.
+    /// Run a legacy Datalog-style script query (translated to SQL by the PG
+    /// backend, or interpreted in-memory by the fake). Returns named rows.
     fn run_script(
         &self,
         query: &str,
@@ -568,8 +568,9 @@ impl PostgresBackend {
         }
     }
 
-    /// Execute a script (cozo dialect → SQL via the translator) and return
-    /// named rows. Mirrors the historical 2-arg `run_script` convention
+    /// Execute a script (legacy Datalog-style dialect → SQL via the
+    /// translator) and return named rows. Mirrors the historical 2-arg
+    /// `run_script` convention
     /// (`serde_json::Value` params). Phase 5.5 regression finding: the
     /// `postgres` sync client spins up its own tokio runtime internally, so
     /// calling it from inside a tokio runtime (the MCP server's async tool
@@ -596,7 +597,7 @@ impl PostgresBackend {
     }
 
     /// Bulk-load named rows into a relation via batched `COPY`/upsert
-    /// (Phase 3 replaced cozo's `import_relations`).
+    /// (Phase 3 replaced the legacy engine's `import_relations`).
     pub fn import_relations(
         &self,
         data: BTreeMap<String, NamedRows>,
@@ -748,7 +749,7 @@ impl PostgresBackend {
         let mut tx = client.transaction()?;
         for (table, named) in data {
             let cols = named.headers.clone();
-            // The legacy cozo name for the vector column is `vector`; the PG
+            // The legacy dialect name for the vector column is `vector`; the PG
             // schema uses `vec`. Map before emitting SQL / binding values.
             let is_vectors_table =
                 table == "embedding_vectors" || table.starts_with("embedding_vectors_");
@@ -917,7 +918,7 @@ impl PostgresBackend {
         for row in &named.rows {
             let mut values: Vec<Box<dyn postgres::types::ToSql + Sync + Send>> = Vec::new();
             for (i, val) in row.iter().enumerate() {
-                values.push(cozo_to_pg(val, &cols[i]));
+                values.push(datavalue_to_sql(val, &cols[i]));
             }
             let value_refs: Vec<&(dyn postgres::types::ToSql + Sync)> = values
                 .iter()
@@ -1028,7 +1029,7 @@ impl PostgresBackend {
                     } else {
                         values_sql.push_str(&format!("${}", params.len() + 1));
                     }
-                    params.push(cozo_to_pg(val, &cols[j]));
+                    params.push(datavalue_to_sql(val, &cols[j]));
                 }
                 values_sql.push(')');
             }
@@ -1238,7 +1239,7 @@ fn format_named_params_for_log(params: &BTreeMap<String, serde_json::Value>) -> 
 fn log_pg_run_script(
     phase: &str,
     kind: crate::db::pg::translate::TranslationKind,
-    cozo: &str,
+    script: &str,
     sql: &str,
     named_params: &str,
     bound_param_count: usize,
@@ -1255,7 +1256,7 @@ fn log_pg_run_script(
         elapsed_ms,
         gucs = ?gucs,
         named_params,
-        cozo,
+        script,
         sql,
         "pg run_script"
     );
@@ -1305,7 +1306,7 @@ fn data_to_copy_text(v: &DataValue, col: &str) -> String {
         DataValue::Num(crate::db::value::Num::Float(f)) => f.to_string(),
         DataValue::Str(s) => s.as_str().to_string(),
         DataValue::Json(j) => j.clone(),
-        // The legacy cozo name for the vector column is `vector`; the PG
+        // The legacy dialect name for the vector column is `vector`; the PG
         // schema uses `vec`.
         DataValue::List(items) if col == "vec" || col == "vector" => {
             let mut s = String::from("[");
@@ -1349,7 +1350,7 @@ fn push_copy_text(out: &mut String, s: &str) {
 
 /// Convert a `DataValue` into a boxed `dyn ToSql` for binding. Vector
 /// values are emitted as pgvector text literals (e.g. `[0.1, 0.2]`).
-fn cozo_to_pg(v: &DataValue, col: &str) -> Box<dyn postgres::types::ToSql + Sync + Send> {
+fn datavalue_to_sql(v: &DataValue, col: &str) -> Box<dyn postgres::types::ToSql + Sync + Send> {
     match v {
         DataValue::Null => Box::new(Option::<String>::None),
         DataValue::Bool(b) => Box::new(*b),
@@ -1357,8 +1358,8 @@ fn cozo_to_pg(v: &DataValue, col: &str) -> Box<dyn postgres::types::ToSql + Sync
         DataValue::Num(crate::db::value::Num::Float(f)) => Box::new(*f),
         DataValue::Str(s) => Box::new(s.clone()),
         DataValue::Json(j) => Box::new(j.clone()),
-        // The caller's NamedRows headers use the legacy cozo name (`vector`);
-        // the PG column is `vec` (schema.sql). Match both.
+        // The caller's NamedRows headers use the legacy dialect name
+        // (`vector`); the PG column is `vec` (schema.sql). Match both.
         DataValue::List(items) if col == "vec" || col == "vector" => {
             // pgvector literal: `[0.1,0.2,...]`.
             let mut s = String::from("[");
@@ -1741,8 +1742,8 @@ fn create_scratch_schema() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 /// Open a read-only backend (T6.1): `default_transaction_read_only = on` —
-/// writes fail at the Postgres layer instead of the legacy CozoDB RocksDB
-/// same-handle workaround.
+/// writes fail at the Postgres layer instead of relying on the legacy
+/// embedded-engine same-handle workaround.
 ///
 /// Multi-project: when `db_path` resolves to a `.leankg` dir, the backend is
 /// pinned to that project's PG schema ([`schema_for_path`]) so `?project=`
@@ -2085,7 +2086,7 @@ mod tests {
 
     #[test]
     fn data_value_roundtrips() {
-        // The legacy cozo `DataValue` accessors survive on the new type.
+        // The legacy `DataValue` accessors survive on the new type.
         use crate::db::value::DataValue;
         let v = DataValue::from(42i64);
         assert_eq!(v.get_int(), Some(42));

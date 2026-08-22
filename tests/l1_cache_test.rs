@@ -8,7 +8,7 @@
 //! 2. `MCPServer` dispatch cache + `write_lock` decoupling — `requires_write_lock`
 //!    membership, `dispatch_cache_key` stability.
 //!
-//! We avoid touching the underlying RocksDB / CozoDB so these tests can run
+//! We avoid touching the underlying storage backends so these tests can run
 //! with the default SQLite engine and stay deterministic.
 
 use leankg::db::models::CodeElement;

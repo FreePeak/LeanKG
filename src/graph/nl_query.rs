@@ -96,7 +96,7 @@ const STOP_WORDS: &[&str] = &[
     "very",
     "just",
     "also",
-    // Connection-question verbs — rare as symbol names; exact-name Cozo
+    // Connection-question verbs — rare as symbol names; exact-name DB
     // scans on mega graphs time out when these are treated as seeds.
     "connect",
     "connects",

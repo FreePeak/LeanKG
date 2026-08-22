@@ -4,7 +4,7 @@
 //! `get_context`, `get_dependencies`, `get_dependents`, `get_call_graph`,
 //! `find_large_functions`, `query_file`-style element lookups, `get_tested_by`)
 //! are memoised here so concurrent agents asking the same questions do not
-//! re-hit RocksDB/CozoDB and contend with writers for the embedded DB lock.
+//! re-hit Postgres and contend with writers for connections.
 //!
 //! Design:
 //! - One moka `future::Cache` per logical read surface (so invalidation can be
@@ -15,7 +15,7 @@
 //!   the same cache entry (we cache the un-paged inner result and re-paginate
 //!   on the way out).
 //! - Write tools (`mcp_index`, `add_knowledge`, …) call `invalidate()` after
-//!   the underlying CozoDB transaction commits so subsequent reads see fresh
+//!   the underlying database transaction commits so subsequent reads see fresh
 //!   data.
 //!
 //! ponytail: This is the only caching layer; the per-tool `hot_cache` in
@@ -113,7 +113,7 @@ impl CachingGraphEngine {
     }
 
     /// Drop every cached entry. Called by the write path after a successful
-    /// CozoDB mutation so subsequent reads see the new state.
+    /// database mutation so subsequent reads see the new state.
     ///
     /// moka 0.12 dropped `clear()` in favour of `invalidate_entries_if`
     /// (predicate-driven). We match-all here because writes are infrequent

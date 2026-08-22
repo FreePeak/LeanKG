@@ -1,7 +1,8 @@
-//! CozoDB Datalog → PostgreSQL SQL translator (plan T3.1–T3.4).
+//! Legacy Datalog-style query syntax → PostgreSQL SQL translator
+//! (plan T3.1–T3.4).
 //!
-//! One mechanical translator that converts the ~115 cozo query shapes in
-//! `docs/analysis/cozo-query-inventory.md §2` into SQL + bound parameters.
+//! One mechanical translator that converts the ~115 legacy query shapes in
+//! the legacy query-shape inventory analysis §2 into SQL + bound parameters.
 //! Returns a [`Translation`] the caller executes and maps rows from.
 //!
 //! Scope: the 11 HAND-WRITE shapes (§3) plus the ~95 TRIVIAL+MODERATE shapes
@@ -9,8 +10,8 @@
 //! the MCP `run_raw_query` / web `api_query` pass-throughs, which take
 //! arbitrary user-supplied Datalog and need explicit fencing.
 //!
-//! Distance semantics note: pgvector `<->` returns L2 distance; cozo HNSW
-//! returns cosine distance (1 − cos_sim). On unit vectors the orders are
+//! Distance semantics note: pgvector `<->` returns L2 distance; the legacy
+//! HNSW index returned cosine distance (1 − cos_sim). On unit vectors the orders are
 //! identical; absolute values differ. Downstream `Seed.ann_distance` is only
 //! used for ordering + the reranker stage; we expose the raw `<->` value and
 //! note this in the doc on [`Translation::ann_select`].
@@ -42,7 +43,7 @@ pub struct Translation {
     /// Kind hint for the executor (SELECT / INSERT / DELETE / DDL no-op).
     pub kind: TranslationKind,
     /// Head column order (positional consumption downstream). For reads,
-    /// matches the cozo head exactly. Empty for writes.
+    /// matches the legacy head exactly. Empty for writes.
     pub head: Vec<String>,
     /// Postgres GUC overrides applied via `SET LOCAL` inside the same
     /// transaction as `sql` (Phase 4 — `LEANKG_HNSW_EF` → `hnsw.ef_search`).
@@ -151,7 +152,7 @@ pub fn translate(
     // write for the connection state even when we no-op).
     let _ = mutability_for(query);
 
-    // Strip a leading `\n` / `\r\n` common in cozo scripts; doesn't change semantics.
+    // Strip a leading `\n` / `\r\n` common in legacy scripts; doesn't change semantics.
     let body = trimmed;
 
     if body.is_empty() {
@@ -222,7 +223,7 @@ fn strip_prefix<'a>(s: &'a str, p: &str) -> Option<&'a str> {
 /// contains both a read rule head and a write action). Used to disambiguate
 /// the dispatcher when the leading token is `?`.
 fn find_write_operator(body: &str) -> Option<WriteOp> {
-    // Search for the LAST occurrence of a write operator token — cozo
+    // Search for the LAST occurrence of a write operator token — legacy
     // patterns put the action at the end (`?[cols] := *rel[...] :put t {...}`).
     const OPS: &[&str] = &[":put", ":rm", ":replace", ":delete", ":create"];
     let mut best: Option<(usize, &str)> = None;
@@ -448,8 +449,9 @@ struct AggSpec {
     /// For multi-col heads like `?[language, count(language)]` — the
     /// non-aggregate columns to GROUP BY (here `[language]`).
     extras: Vec<String>,
-    /// Original cozo head text of the count expression (e.g. `count(f)`)
-    /// — the result header must match cozo exactly (H6/G88: the positional
+    /// Original legacy head text of the count expression (e.g. `count(f)`)
+    /// — the result header must match the legacy dialect exactly (H6/G88:
+    /// the positional
     /// alias `f` is resolved to `file_path` for SQL but the header stays
     /// `count(f)`).
     head_label: Option<String>,
@@ -610,7 +612,7 @@ fn parse_relation_block(rest: &str) -> Option<(String, Vec<String>, String)> {
     } else {
         // Attribute-binding: `*rel{col = $x, ...}`. Collapse to underscore
         // placeholders so head matching still works (the order is preserved
-        // — cozo attribute syntax places values positionally in the head).
+        // — legacy attribute syntax places values positionally in the head).
         cols_str
             .split(',')
             .map(|s| {
@@ -722,7 +724,7 @@ fn simple_select(
     for clause in split_clauses(&filters) {
         let trimmed = clause.trim();
         for h in head {
-            // `==` is a cozo equality operator (`service_name == $svc`),
+            // `==` is a legacy equality operator (`service_name == $svc`),
             // NOT a definition — require `= ` or `=` followed by a
             // non-`=` char.
             let prefix = format!("{} =", h);
@@ -775,7 +777,7 @@ fn simple_select(
     }
     let cols_sql = select_parts.join(", ");
 
-    // Drop head-alias *definition* clauses from the WHERE list. Cozo rules
+    // Drop head-alias *definition* clauses from the WHERE list. Legacy rules
     // bind derived variables with `alias = expr` (G107 `span = line_end -
     // line_start`); that's a definition, not a constraint — the WHERE must
     // not reference the alias column (it doesn't exist in the table).
@@ -790,8 +792,8 @@ fn simple_select(
     let filters = resolve_filter_aliases(relation, &filters, rel_cols);
     // Inline string literals in the relation block (`*code_elements[qn,
     // "function", ...]`, H6/get_architecture hotspots) act as equality
-    // constraints — absent cozo-side would silently over-count. Cozo treats
-    // them as bound filters; emit `"element_type" = 'function'`.
+    // constraints — absent legacy-side would silently over-count. The legacy
+    // parser treats them as bound filters; emit `"element_type" = 'function'`.
     let filters = append_literal_constraints(&filters, rel_cols);
     let (where_sql, where_params) = compile_filters(filters, params)?;
     let (mut mod_sql, mod_params) = compile_modifiers(&modifiers, head, params);
@@ -826,8 +828,8 @@ fn simple_select(
     Ok(Translation::read(sql, all_params, head.to_vec()))
 }
 
-/// Resolve cozo positional alias tokens in the filter list against the
-/// relation block's column placeholders. Cozo allows `et in [...]` where
+/// Resolve legacy positional alias tokens in the filter list against the
+/// relation block's column placeholders. The legacy parser allows `et in [...]` where
 /// `et` is a positional alias bound to the 2nd column; PG needs the real
 /// column name (`element_type`). Only single-letter-ish aliases that are
 /// NOT real column names are remapped (guarded by the rel_cols lookup).
@@ -877,7 +879,7 @@ fn resolve_filter_aliases(relation: &str, filters: &str, rel_cols: &[String]) ->
     out
 }
 
-/// Cozo treats inline string literals inside a relation block as bound
+/// The legacy parser treats inline string literals inside a relation block as bound
 /// equality filters: `*code_elements[qn, "function", _, file_path, ...]`
 /// narrows to element_type = 'function'. PG must emit them as WHERE
 /// predicates or every read silently over-counts (get_architecture
@@ -1094,7 +1096,7 @@ fn aggregate_query(
     let (where_sql, where_params) = compile_filters(filters, params)?;
     let (group_sql, order_sql, _group_cols, mut mod_params) = compile_group_order(&modifiers);
 
-    // Resolve a head binding to its real table column. Cozo heads can alias
+    // Resolve a head binding to its real table column. Legacy heads can alias
     // positions: `?[node, count(node)] := *relationships[node, _, _, _, _, _]`
     // binds `node` to position 0 → `source_qualified`. Emitting the alias
     // name verbatim (`SELECT "node", count("node")`) fails with E42703.
@@ -1112,7 +1114,8 @@ fn aggregate_query(
 
     // Resolve `count(expr)` to a SQL expression. `expr` may be a column name
     // (use as-is), `_` (any literal — fall back to `*`), or `DISTINCT col`.
-    // Cozo positional aliases in count() heads are single ASCII letters
+    // The legacy dialect's positional aliases in count() heads are single
+    // ASCII letters
     // (`n`, `a`, `b`, ...) — these mean "count rows" because every position
     // in the relation block is bound to an alias, but the count is over
     // rows. Render as `count(*)` for these.
@@ -1144,7 +1147,7 @@ fn aggregate_query(
     };
 
     // Multi-col aggregate heads (`?[element_type, count(element_type)]`)
-    // implicitly group by the non-aggregate columns — cozo semantics.
+    // implicitly group by the non-aggregate columns — legacy semantics.
     // `:group` may also be explicit; `compile_group_order` covers that.
     let group_sql = if group_sql.is_empty() && !agg.extras.is_empty() {
         format!(
@@ -1454,7 +1457,7 @@ fn compile_filters(
     if trimmed.is_empty() {
         return Ok((String::new(), Vec::new()));
     }
-    // Split into clauses — cozo uses commas or newlines as AND separators.
+    // Split into clauses — the legacy syntax uses commas or newlines as AND separators.
     let clauses = split_clauses(&trimmed);
     let mut out_clauses: Vec<String> = Vec::with_capacity(clauses.len());
     let mut out_params: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
@@ -1814,7 +1817,7 @@ fn render_clause<'a>(
     let op_pos = find_top_level_op(trimmed)?;
     let op_raw = &trimmed[op_pos..op_pos + 2.min(trimmed.len() - op_pos)];
     let (op, op_len) = if matches!(op_raw, "==" | "!=" | ">=" | "<=") {
-        // Cozo uses `==` for equality (D39 attr syntax); PG wants `=`.
+        // The legacy syntax uses `==` for equality (D39 attr syntax); PG wants `=`.
         if op_raw == "==" {
             ("=", 2) // consume BOTH `=` chars from the RHS slice
         } else {
@@ -1846,7 +1849,7 @@ fn render_clause<'a>(
     // Literal string (quoted).
     if rhs.starts_with('"') && rhs.ends_with('"') && rhs.len() >= 2 {
         let inner = &rhs[1..rhs.len() - 1];
-        let value = unescape_cozo_string(inner);
+        let value = unescape_datalog_string_literal(inner);
         let placeholder = format!("${}", *next_idx);
         *next_idx += 1;
         let used = vec![json_to_pg(serde_json::Value::String(value))];
@@ -1998,8 +2001,9 @@ fn scalar_expr(s: &str) -> String {
     trimmed.to_string()
 }
 
-/// JSONB columns in schema.sql (cozo stored these as JSON *strings*, so
-/// string ops like `str_contains`/`regex_matches` applied to the raw text).
+/// JSONB columns in schema.sql (the legacy engine stored these as JSON
+/// *strings*, so string ops like `str_contains`/`regex_matches` applied to
+/// the raw text).
 /// PG needs an explicit `::text` cast for those operators to compile.
 const JSONB_COLUMNS: &[&str] = &[
     "metadata",
@@ -2018,8 +2022,8 @@ const JSONB_COLUMNS: &[&str] = &[
 
 /// Render a column reference for a string operator (`LIKE`/`~`), casting
 /// JSONB columns to text so the operator compiles (H5 — `str_contains(
-/// metadata, "...")` on code_elements.metadata; PG column is JSONB, cozo
-/// stored the JSON as a string).
+/// metadata, "...")` on code_elements.metadata; PG column is JSONB; the
+/// legacy engine stored the JSON as a string).
 fn string_op_col(s: &str) -> String {
     let trimmed = s.trim();
     // Handle `lowercase(col)` wrappers.
@@ -2043,8 +2047,8 @@ fn is_column_token(s: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn unescape_cozo_string(s: &str) -> String {
-    // Cozo `\\` and `\"` escape sequences inside `"..."`.
+fn unescape_datalog_string_literal(s: &str) -> String {
+    // Legacy `\\` and `\"` escape sequences inside `"..."`.
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -2085,7 +2089,7 @@ fn render_value_or_param(
     }
     if t.starts_with('"') && t.ends_with('"') && t.len() >= 2 {
         let inner = &t[1..t.len() - 1];
-        let value = unescape_cozo_string(inner);
+        let value = unescape_datalog_string_literal(inner);
         let placeholder = format!("${}", *next_idx);
         *next_idx += 1;
         return Ok((
@@ -2128,7 +2132,8 @@ fn ann_translation(
     let vec_literal = extract_ann_vec_literal(rest)?;
     let k = extract_ann_int_field(rest, "k").unwrap_or(50);
     // Phase 4: ef becomes `SET LOCAL hnsw.ef_search` inside the same tx as
-    // the SELECT — pgvector honours the GUC on each HNSW probe (cozo had it
+    // the SELECT — pgvector honours the GUC on each HNSW probe (the legacy
+    // engine had it
     // as a per-call field; here we plumb it via the translator so callers
     // stay on the standard run_script path).
     let ef = extract_ann_int_field(rest, "ef");
@@ -2142,7 +2147,8 @@ fn ann_translation(
     // `embedding_vectors` name.
     let vectors_table = ann_vectors_table(rest)?;
 
-    // Distance note: cozo HNSW returns cosine distance; pgvector `<->` is L2
+    // Distance note: the legacy HNSW index returned cosine distance;
+    // pgvector `<->` is L2
     // distance. On unit vectors the orders are identical (both monotone
     // decreasing in cosine similarity). We expose `<->` raw. Callers that
     // need a cosine-distance value should compute `(d*d)/2.0` themselves.
@@ -2258,7 +2264,8 @@ fn put_script(
     }
     // `:put table {cols} <- $args` — the source is the whole rule body
     // (CH2 — content_hash.rs save_hashes: `:put index_hashes {path, hash}
-    // <- $args` with `args = {path, hash}` a JSON object). Cozo binds the
+    // <- $args` with `args = {path, hash}` a JSON object). The legacy
+    // binder binds the
     // object's keys to the target columns. The `translate` dispatcher may
     // have stripped the leading `:put`, so accept both forms.
     if let Some((target_part, arrow_part)) = body.split_once("<-") {
@@ -2267,7 +2274,7 @@ fn put_script(
         if target_part.starts_with(":put") || source.is_empty() {
             if let Some(name) = arrow_part.strip_prefix('$') {
                 let v = params.get(name).cloned().unwrap_or(serde_json::Value::Null);
-                // Cozo's `<- $args` binds a NESTED LIST of rows
+                // The legacy `<- $args` binds a NESTED LIST of rows
                 // (`[[path, hash]]`); accept that as the primary form and
                 // a JSON object as a convenience.
                 let rows: Vec<Vec<serde_json::Value>> = match v {
@@ -2293,7 +2300,7 @@ fn put_script(
                 let table = infer_table(&cols, pk.as_deref());
                 // index_hashes is keyed by `path` even though the CH2 put
                 // omits the `=>` marker (the relation is auto-created keyed
-                // in cozo; schema.sql has PRIMARY KEY on path).
+                // in the legacy engine; schema.sql has PRIMARY KEY on path).
                 let pk = pk.or_else(|| {
                     if table == "index_hashes" {
                         Some("path".to_string())
@@ -2322,7 +2329,8 @@ fn parse_put_target(inner: &str) -> Result<(Vec<String>, Option<String>), String
             let left = left.trim();
             let right = right.trim();
             // The PK column is the one to the left of `=>`; the column to
-            // the right is also included in the column list (Cozo treats the
+            // the right is also included in the column list (the legacy
+            // engine treats the
             // PK side and the value side as both written).
             cols.push(left.to_string());
             pk = Some(left.to_string());
@@ -2356,13 +2364,13 @@ fn put_from_literal(
     params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
     // Parse `[[a, b, c], [a, b, c], ...]`. We accept either a Rust-style
-    // literal list (cozo callers use this) or a JSON array literal. Cozo
+    // literal list (legacy callers use this) or a JSON array literal. Legacy
     // literals may reference bound params (`[[ $eq, $desc, ... ]]` — D1
     // business_logic writes); substitute them from the params map first.
     let literal = substitute_params(literal, params);
     let rows = parse_nested_lists(&literal)?;
     if rows.is_empty() {
-        // No data → no-op write (preserves cozo's empty-result behaviour).
+        // No data → no-op write (preserves the legacy engine's empty-result behaviour).
         return Ok(Translation::write(
             "SELECT 1 WHERE false".to_string(),
             Vec::new(),
@@ -2388,7 +2396,8 @@ fn put_from_literal(
         infer_table(cols, pk)
     };
     // Resolve the effective PK from the known table catalog when the caller
-    // omitted the `=>` marker (Cozo allows `:put t {cols}` on a keyed table
+    // omitted the `=>` marker (the legacy syntax allows `:put t {cols}` on a
+    // keyed table
     // — the PK is implied by the table). Without this, a re-`put` of an
     // existing row hits `embedding_state_pkey` (duplicate key).
     let (pk, keyed) = resolve_effective_pk(&table, pk, is_keyed);
@@ -2406,7 +2415,7 @@ fn pk_for_table(table: &str) -> Option<&'static str> {
         "index_hashes" => Some("path"),
         "migrations" => Some("id"),
         "api_keys" => Some("key_hash"),
-        // Auth tables (004_auth): keyed by id for Cozo `:put` upsert.
+        // Auth tables (004_auth): keyed by id for legacy `:put` upsert.
         "accounts" => Some("id"),
         "orgs" => Some("id"),
         "access_tokens" => Some("id"),
@@ -2517,9 +2526,9 @@ fn infer_table_by_key(col: &str) -> Option<&'static str> {
     }
 }
 
-/// Replace `$name` tokens inside a cozo literal with their JSON values
+/// Replace `$name` tokens inside a legacy literal with their JSON values
 /// from the params map (D1 — `?[cols] <- [[ $eq, $desc, ... ]]`). Unbound
-/// names become JSON null (matching cozo's null-param semantics).
+/// names become JSON null (matching the legacy engine's null-param semantics).
 fn substitute_params(literal: &str, params: &BTreeMap<String, serde_json::Value>) -> String {
     let mut out = String::with_capacity(literal.len());
     let mut rest = literal;
@@ -2540,23 +2549,23 @@ fn substitute_params(literal: &str, params: &BTreeMap<String, serde_json::Value>
 }
 
 fn parse_nested_lists(s: &str) -> Result<Vec<Vec<serde_json::Value>>, String> {
-    // Cozo literals look like `[["a", 1], ["b", 2]]`. Accept either that or
+    // Legacy literals look like `[["a", 1], ["b", 2]]`. Accept either that or
     // JSON `[["a", 1], ["b", 2]]` (they overlap; treat as JSON if parseable).
-    // Also accepts the cozo vector literal `vec([1.0, 2.0])` inside rows
+    // Also accepts the legacy vector literal `vec([1.0, 2.0])` inside rows
     // (B1 — put_pairs_to_db_script: `[["qn", vec([...])]]`).
     let trimmed = s.trim();
     if !trimmed.starts_with('[') {
         return Err(format!("expected list literal: {s}"));
     }
     // Pre-convert `vec([...])` → `[...]` so the JSON parser accepts it.
-    let json_src = convert_cozo_vec_literals(trimmed);
+    let json_src = convert_legacy_json_array_literals(trimmed);
     serde_json::from_str::<Vec<Vec<serde_json::Value>>>(&json_src)
         .map_err(|e| format!("cannot parse list literal as JSON: {e} (input: {json_src})"))
 }
 
-/// Replace cozo `vec([1.0, 2.0])` vector literals with bare `[...]` arrays
+/// Replace legacy `vec([1.0, 2.0])` vector literals with bare `[...]` arrays
 /// so the rest of the JSON-based parser handles them (B1).
-fn convert_cozo_vec_literals(s: &str) -> String {
+fn convert_legacy_json_array_literals(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(idx) = rest.find("vec([") {
@@ -2579,8 +2588,9 @@ fn build_insert(
     rows: &[Vec<serde_json::Value>],
     is_keyed: bool,
 ) -> Result<Translation, String> {
-    // Cozo names the vector column `vector`; the PG schema.sql uses `vec`.
-    // Map the cozo name to the PG column for the embedding_vectors table and
+    // The legacy dialect names the vector column `vector`; the PG schema.sql
+    // uses `vec`.
+    // Map the legacy name to the PG column for the embedding_vectors table and
     // per-model collections (`embedding_vectors_<model_id>`, table-per-model
     // migration 002 — same legacy shape, same column rename).
     let pg_cols: Vec<String> = cols
@@ -2686,7 +2696,7 @@ fn build_insert(
             let placeholder = format!("${}{null_cast}", all_params.len() + 1);
             values_sql.push_str(&placeholder);
             if JSONB_COLUMNS.contains(&pg_cols[j].as_str()) {
-                // JSONB columns: cozo stored the JSON as a *string* (e.g.
+                // JSONB columns: the legacy engine stored the JSON as a *string* (e.g.
                 // `"{}"`); parse it and bind as `serde_json::Value` so the
                 // jsonb column receives the object/array, not a JSON
                 // string literal. NULL stays NULL.
@@ -2997,7 +3007,7 @@ fn cross_relation_rm(
 ) -> Result<Translation, String> {
     // Pattern: `?[cols] := *relationships[cols...], *code_elements[qn, ...], regex_matches(file_path, "^ontology://") :rm relationships {cols}`
     // We translate to `DELETE FROM {table} WHERE source_qualified IN (SELECT qualified_name FROM code_elements WHERE file_path ~ '^ontology://')`.
-    // The regex literal is already escaped into a cozo regex; pass it as a bound param.
+    // The regex literal is already escaped into a legacy-dialect regex; pass it as a bound param.
     let sql = format!(
         "DELETE FROM {table} WHERE source_qualified IN (SELECT qualified_name FROM code_elements WHERE file_path ~ $1)"
     );
@@ -3020,7 +3030,7 @@ fn extract_regex_literal(s: &str) -> Option<String> {
     }
     let pat = parts[1].trim();
     if pat.starts_with('"') && pat.ends_with('"') {
-        Some(unescape_cozo_string(&pat[1..pat.len() - 1]))
+        Some(unescape_datalog_string_literal(&pat[1..pat.len() - 1]))
     } else {
         None
     }
@@ -3030,7 +3040,8 @@ fn delete_where(
     body: &str,
     params: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Translation, String> {
-    // `:delete table where col = $x` (and `col in $arr`). Cozo parses the
+    // `:delete table where col = $x` (and `col in $arr`). The legacy parser
+    // parses the
     // `where` clause with the same operators as a filter — reuse the
     // compiler.
     let trimmed = body.trim();
@@ -3105,14 +3116,14 @@ fn index_ddl(rest: &str) -> Result<Translation, String> {
 }
 
 fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
-    // Phase 7 (T7.2): the cozo `::hnsw` operators map onto the real
+    // Phase 7 (T7.2): the legacy `::hnsw` operators map onto the real
     // pgvector index created by schema.sql. The bulk-embed path drops the
     // index before COPY and recreates it after (cold embeds only, gated by
     // `use_incr_hnsw` in build.rs); the translator emits the actual DDL so
     // `state::drop_hnsw_index` / `state::create_hnsw_index` work on PG.
     //
     // The index name is the schema.sql one (`embedding_vectors_vec_hnsw_idx`),
-    // which differs from cozo's `embedding_vectors:vec_idx` — map the known
+    // which differs from the legacy `embedding_vectors:vec_idx` name — map the known
     // pair. `CREATE` is idempotent (IF NOT EXISTS); `DROP` is IF EXISTS so a
     // missing index (e.g. a prior aborted bulk) is not an error.
     let trimmed = rest.trim();
@@ -3191,7 +3202,7 @@ fn hnsw_ddl(rest: &str) -> Result<Translation, String> {
 
 fn relations_introspection() -> Translation {
     // `::relations` returns relation names. Mirror with information_schema.
-    // Also include index names (cozo-style `table:idx` mapping via the known
+    // Also include index names (legacy-style `table:idx` mapping via the known
     // translator naming: `::hnsw create embedding_vectors:vec_idx` emits
     // `embedding_vectors_vec_hnsw_idx`). Including them lets
     // `ensure_embedding_state_table`'s `existing.contains("embedding_vectors:
@@ -3248,7 +3259,7 @@ pub fn map_row(
     let mut out = Vec::with_capacity(head.len());
     for (i, col) in head.iter().enumerate() {
         // JSONB columns: bind through the serde_json feature so the jsonb
-        // value round-trips (the legacy cozo storage kept the JSON as a
+        // value round-trips (the legacy embedded storage kept the JSON as a
         // string; consumers read it with `get_str()`).
         if JSONB_COLUMNS.contains(&col.as_str()) {
             // Consumers read JSON with `get_str()`. Return the canonical
@@ -3310,13 +3321,13 @@ pub fn named_rows_from_result(
 // Identifier quoting.
 // ---------------------------------------------------------------------------
 
-/// Cozo identifiers are bare strings (letters/digits/underscore + a few
-/// punctuation marks like `.` for relation qualifiers and `-` for some
-/// naming). Postgres wants double-quoted identifiers. Map Cozo's bare form
+/// Legacy-dialect identifiers are bare strings (letters/digits/underscore + a
+/// few punctuation marks like `.` for relation qualifiers and `-` for some
+/// naming). Postgres wants double-quoted identifiers. Map the legacy bare form
 /// to PG's quoted form, rejecting anything that looks injection-adjacent.
 pub(crate) fn quote_ident(s: &str) -> String {
     // Allow: letter | digit | underscore | dot (for relation.column, but
-    // cozo uses space-separated heads, so dot is rare). Reject quotes and
+    // the legacy syntax uses space-separated heads, so dot is rare). Reject quotes and
     // semicolons outright.
     if s.is_empty() {
         return "\"\"".into();
@@ -4104,7 +4115,7 @@ fn rm_embedding_state_with_table_prefix() {
 
 #[test]
 fn put_embedding_vectors_maps_vector_to_vec() {
-    // B1 — put_pairs_to_db_script shape: cozo `vector` col → PG `vec`.
+    // B1 — put_pairs_to_db_script shape: legacy `vector` col → PG `vec`.
     let t = translate(
         r#"?[qualified_name, vector] <- [["a", vec([1.0, 0.0, 0.0])]] :put embedding_vectors {qualified_name => vector}"#,
         BTreeMap::new(),

@@ -521,7 +521,7 @@ fn direct_copy_in_via_transaction() {
 /// `import_relations` COPY path (index dropped, as `leankg embed` does for
 /// large cold embeds). Extrapolates to workspace-be (~371k functions): total
 /// COPY time = (371k / measured v/s). The plan's exit criterion is a cold
-/// embed on PG < cozo time (cozo ≈ 700 v/s ≈ 9 min for 371k).
+/// embed on PG < legacy-engine time (legacy ≈ 700 v/s ≈ 9 min for 371k).
 #[test]
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
 fn synthetic_50k_cold_embed_measurement() {

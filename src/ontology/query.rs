@@ -1133,7 +1133,7 @@ fn json_str_array(meta: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Map a CozoDB result row into a `CodeElement`. Mirrors the column order used
+/// Map a DB result row into a `CodeElement`. Mirrors the column order used
 /// by `load_indexed_code_elements` / `find_element_by_qualified`.
 fn row_to_code_element(row: &[crate::db::backend::DataValue]) -> CodeElement {
     CodeElement {
@@ -1221,7 +1221,7 @@ pub struct KgSelfTestReport {
 
 impl OntologyQueryEngine {
     /// Run a non-mutating smoke test against every kg_* query path and
-    /// return per-tool status alongside the live CozoDB schema snapshot.
+    /// return per-tool status alongside the live schema snapshot.
     ///
     /// The probe queries use a synthetic `__selftest__` query string that
     /// does not match any ontology node in a real codebase, so the call

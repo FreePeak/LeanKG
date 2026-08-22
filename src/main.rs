@@ -6654,7 +6654,7 @@ fn run_semantic_context(
     let db = db::backend::init_db(&db_path)?;
     let graph = graph::GraphEngine::new(db.clone());
 
-    // Vectors live inside CozoDB now (embedding_vectors relation + HNSW index),
+    // Vectors live in Postgres (pgvector),
     // so the freshness check is a single count query rather than a file stat.
     let has_vectors = crate::embeddings::state::list_all(db.as_ref())
         .map(|rows| !rows.is_empty())

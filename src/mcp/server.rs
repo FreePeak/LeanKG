@@ -179,11 +179,11 @@ pub struct MCPServer {
     shutdown_flag: Arc<AtomicBool>,
     /// Port this server is bound to (for cleanup tracking)
     bound_port: Arc<AtomicU32>,
-    /// Serializes MCP write/index operations so Cozo SQLite is not written concurrently.
+    /// Serializes MCP write/index operations so the shared Postgres store is not written concurrently.
     write_lock: Arc<TokioMutex<()>>,
     /// Priority write bus. FR-P0-MCP-RC-02 seam: tool writes jump embed writes.
     /// Default is the in-process serial bus; a distributed impl (Kafka /
-    /// Pub/Sub) plugs in here when the remote-cozoserver path lands.
+    /// Pub/Sub) plugs in here when a distributed-broker path lands.
     write_bus: Arc<dyn crate::db::write_bus::WriteBus>,
     /// FR-P0-MCP-RC-03: concurrency cap so a heavy full-scan tool can never
     /// starve every Tokio worker (which stalled `/health` and flipped the
@@ -608,9 +608,8 @@ impl MCPServer {
     /// visibility tool. See step 4 of the ontology self-test plan.
     fn run_kg_self_test_on_startup(&self) {
         // Lock the shared GraphEngine directly (not via get_graph_engine()
-        // which clones the engine and its DB handle). Cloning the
-        // CozoDB/RocksDB handle leaves a session that holds a
-        // per-process RocksDB write lock until the next restart; calling
+        // which clones the engine and its DB handle). Reusing one DB handle
+        // keeps a single consistent session; calling
         // self-test on the shared handle reuses the existing session.
         let guard = self.graph_engine.lock();
         let ge = match &*guard {
@@ -683,12 +682,12 @@ impl MCPServer {
     }
 
     /// Spawn a tokio task that periodically calls `GraphEngine::vacuum()` to
-    /// reclaim free pages in the active CozoDB store. Skips ticks where the
+    /// reclaim free pages in the active Postgres store. Skips ticks where the
     /// engine is not yet initialized. Exits cleanly on shutdown.
     ///
     /// Configuration: `LEANKG_VACUUM_INTERVAL_HOURS` (default `1`, `0` disables).
-    /// The vacuum is a no-op on RocksDB backends (Cozo's RocksDB backend does
-    /// not support `VACUUM`); in that case the tick is logged at debug level.
+    /// The vacuum is a no-op on backends that do not support `VACUUM`; in
+    /// that case the tick is logged at debug level.
     fn spawn_vacuum_scheduler(&self) {
         let interval = match Self::parse_vacuum_interval() {
             Some(d) => d,
@@ -721,7 +720,7 @@ impl MCPServer {
                         tracing::info!("Vacuum tick: ok");
                     }
                     Some(Err(e)) => {
-                        // Cozo's RocksDB backend returns an error (no-op).
+                        // A backend without VACUUM support returns an error (no-op).
                         // Log at debug to avoid noise; warn only for anything
                         // unexpected (e.g. a real Sqlite error).
                         let msg = e.to_string();
@@ -793,9 +792,9 @@ impl MCPServer {
     /// Plan §"Part B Option 3" — in-process background embed.
     ///
     /// Spawns a detached thread that holds a clone of the same
-    /// `CozoDb`/`GraphEngine` MCP is using, so the embed runs against
-    /// the live DB without violating RocksDB's single-writer-per-process
-    /// rule. Defaults to 1 worker / batch 32 — conservative for macOS
+    /// shared DB handle / `GraphEngine` MCP is using, so the embed runs against
+    /// the live DB without opening a second writer against the same store.
+    /// Defaults to 1 worker / batch 32 — conservative for macOS
     /// RSS. Further capped by `LEANKG_EMBED_MAX_MB` (default 2048 on
     /// macOS). Operators can tune via env:
     ///
@@ -924,8 +923,8 @@ impl MCPServer {
     /// Sequential arm for every project in `LEANKG_PROJECT_DIRS`. Each
     /// project embed runs against the same MCP `GraphEngine` only when its
     /// path equals `LEANKG_MCP_PROJECT`; side mounts need their own process
-    /// (each project uses its own RocksDB subdirectory, so opening them
-    /// inside MCP would require a second `CozoDb` handle — out of scope for
+    /// (each project uses its own isolated store, so opening them
+    /// inside MCP would require a second DB handle — out of scope for
     /// the auto-arm path).
     ///
     /// ponytail: schedules one arm per project; first one runs while
@@ -1923,9 +1922,9 @@ impl MCPServer {
         self.spawn_gc_watchdog();
 
         // Plan §"Part B Option 3" — in-process background embed. We
-        // share the MCP's CozoDb handle (via GraphEngine::Arc<CozoDb>)
-        // so we don't open a second RocksDB writer in the same process,
-        // which RocksDB would reject. The worker is throttled (default
+        // share the MCP's shared DB handle (via GraphEngine)
+        // so we don't open a second writer against the same store in this
+        // process. The worker is throttled (default
         // 2 workers, batch 64) so request threads keep their latency
         // budget while HNSW catches up. Progress is written to
         // `<leankg_dir>/embed_status.json` — agents polling
@@ -2053,10 +2052,10 @@ impl MCPServer {
         tracing::info!("MCP HTTP server listening on http://{}", addr);
 
         // The startup kg_self_test probe is intentionally skipped at
-        // server boot. The CozoDB 0.2.2 / RocksDB binding holds a
-        // per-process write lock on every cloned DbInstance until the
-        // process restarts, so a startup probe against a cloned handle
-        // would block every subsequent tool call with "lock hold by
+        // server boot. The legacy engine (removed) held a per-process
+        // write lock on every cloned DbInstance until the process
+        // restarted, so a startup probe against a cloned handle would
+        // have blocked every subsequent tool call with "lock hold by
         // current process". The probe is still available to agents via
         // the kg_self_test MCP tool (see mcp/tools.rs) -- it runs against
         // the shared engine handle per request and does not leak a

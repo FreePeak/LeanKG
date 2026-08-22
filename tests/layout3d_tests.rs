@@ -1,6 +1,6 @@
 //! FR-E10..E14 — Track E 3D layout API integration tests.
 //!
-//! Exercises `leankg::graph::layout3d` against a real (temp-file) CozoDB:
+//! Exercises `leankg::graph::layout3d` against a real (temp-file) database:
 //! positions must be deterministic across runs, inside the unit cube, and
 //! bounded for every indexed element.
 
