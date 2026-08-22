@@ -1,13 +1,13 @@
 # SESSION HANDOFF — LeanKG Hackathon (resume from here)
 
-**Written:** 2026-08-22 · **Session goal file:** `~/.local/share/opencode/goals/ses_fdad784c8ffeoX8syoqqUBMlQ8.json` (status: active, cycle 3/∞)
+**Updated:** 2026-08-22 (post-H11 merge) · **Session goal file:** `~/.local/share/opencode/goals/ses_fdad784c8ffeoX8syoqqUBMlQ8.json` (status: active, cycle 4/∞)
 **Central SoT:** [`docs/roadmap-tracker.md`](../roadmap-tracker.md) §6 · **Running log:** [`HACKATHON.md`](../../HACKATHON.md) · **Cycle reports:** `docs/cycles/cycle-01.md`
 
 ---
 
 ## 1. One-paragraph state
 
-Hackathon runs on branch `feature/hackathon` (worktree `.worktrees/hackathon`), rolling PR **#247 → main: OPEN, MERGEABLE, ALL CI CHECKS GREEN**. Cycle 1 complete: R1 live sweep of all 76 MCP tools found 7 real bugs (all fixed TDD-first), then 5 backlog features landed (connect, audit log, npm parity, quickstart smoke, export --markdown). lib tests grew 1043→1126, all green. Two work items remain in flight: H11 (`hackathon/feat-exportmd` @ 9073782d — done but NOT yet merged back into feature/hackathon) and H9 doctor --deep (agent cancelled twice — restart it).
+Hackathon runs on branch `feature/hackathon` (worktree `.worktrees/hackathon`), rolling PR **#247 → main: OPEN, MERGEABLE, ALL CI CHECKS GREEN** (incl. new npm-parity gate). Cycle 1 complete: R1 live sweep of all 76 MCP tools found 7 real bugs (all fixed TDD-first), then 5 features landed and merged to the branch: connect, audit log, npm parity, quickstart smoke, export --markdown. Branch head `ed424591`, pushed. lib tests **1126 green**. Only open work item: **H9 doctor --deep** (subagent cancelled 3× — implement directly or retry single dispatch).
 
 ## 2. Branch / worktree map
 
@@ -50,15 +50,9 @@ scripts/quickstart_smoke.sh                # full timed e2e (~90s)
 bash tests/sync_npm_version_test.sh        # npm parity script tests
 ```
 
-## 5. Resume queue (in order)
-
-1. **Merge H11:** in `.worktrees/hackathon`: `git merge --no-ff hackathon/feat-exportmd` (it already merged e5433676 into itself, so this is a fast-forward-ish clean merge) → run gates → push.
-2. **Restart H9 doctor --deep:** dispatch ONE general subagent for `.worktrees/feat-doctor` (branch hackathon/feat-doctor @ c1d0b7d0): extend existing doctor with `--deep` checks (PG latency, migrations pending, index freshness/stale%, embedding coverage %, pool env sanity, orphaned rels sample, duplicate QN count, .leankg writability) + `--format json`; TDD; live test vs remote PG; commit "feat(cli): doctor --deep self-diagnosis suite". NOTE: single-agent dispatches work reliably; parallel multi-task calls got cancelled repeatedly this session.
-3. **Cycle-02 re-sweep:** same sweep protocol as R1 (see `docs/analysis/hackathon-sweep-R1.md` header for the curl/JSON-RPC pattern) → expect 0 FAIL_ERROR; new findings → new fixes.
-4. **Tracker update on main:** docs-only PR updating `docs/roadmap-tracker.md` §6 statuses (W-items ✅, cycle links to `docs/cycles/*.md`) + link PR #247. Main is ruleset-protected: squash-only via gh.
-5. When PR #247 CI green and stable → `gh pr merge 247 --squash` (or keep rolling if more cycles stack).
-6. Then next backlog items: H4 provenance labels surfacing, H6 tool consolidation 76→~70 (update redundant_tools_matrix + instructions/leankg-tools.md together), H7 stable-tool-contract doc+CI guard, H8 benchmark regression gate, H10 usage dashboard, H12 README quickstart refresh.
-7. Longer-term tracks: W8 SQL-first seam adoption per `docs/plan-remove-cozo-datalog-sql-migration.md` (worktree at orca/cozo-removal); ENT-3 SSO after audit/RBAC.
+4. When PR #247 stable and CI green → `gh pr merge 247 --squash` (or keep rolling if more cycles stack on it).
+5. Then next backlog items: H4 provenance labels surfacing, H6 tool consolidation 76→~70 (update redundant_tools_matrix + instructions/leankg-tools.md together), H7 stable-tool-contract doc+CI guard, H8 benchmark regression gate, H10 usage dashboard, H12 README quickstart refresh.
+6. Longer-term tracks: W8 SQL-first seam adoption per `docs/plan-remove-cozo-datalog-sql-migration.md` (worktree at orca/cozo-removal); ENT-3 SSO after audit/RBAC.
 
 ## 6. Hard rules (do not violate)
 
