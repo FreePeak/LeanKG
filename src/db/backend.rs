@@ -1446,7 +1446,16 @@ fn percent_encode(s: &str) -> String {
 /// `leankg_p_` + hex bytes (short paths) or a 16-hex SipHash (long paths) —
 /// always a valid, lowercase PG identifier (≤ 63 bytes).
 pub fn schema_for_path(db_path: &std::path::Path) -> String {
-    let key = project_identity_key(db_path);
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    schema_for_path_in(db_path, &cwd)
+}
+
+/// [`schema_for_path`] with an explicit base for RELATIVE db_path spellings
+/// (`leankg index ./src` resolves `./src` against the invocation CWD).
+/// Pure — tests pass a base instead of mutating the process CWD.
+#[doc(hidden)]
+pub fn schema_for_path_in(db_path: &std::path::Path, base: &std::path::Path) -> String {
+    let key = project_identity_key_in(db_path, base);
     use std::fmt::Write;
     let mut hex = String::with_capacity(key.len() * 2);
     for b in key.as_bytes() {
@@ -1469,19 +1478,27 @@ pub fn schema_for_path(db_path: &std::path::Path) -> String {
 /// index/embed and MCP server alike). Existing paths are resolved through
 /// `std::fs::canonicalize` so symlinks, `.`/`..` components, relative
 /// spellings and trailing slashes all collapse to one physical directory.
-/// Non-existent paths fall back to lexical normalization (CWD-joined,
-/// dot-components dropped) — needed before first init and for the
-/// cross-mount `project_path` contract in leankg.yaml.
+/// Non-existent paths fall back to lexical normalization (joined against
+/// the process CWD, dot-components dropped) — needed before first init and
+/// for the cross-mount `project_path` contract in leankg.yaml.
 pub fn canonical_project_root(path: &std::path::Path) -> std::path::PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    canonical_project_root_in(path, &cwd)
+}
+
+/// [`canonical_project_root`] against an explicit base directory for
+/// relative spellings — pure, so tests don't have to mutate the process CWD.
+pub fn canonical_project_root_in(
+    path: &std::path::Path,
+    base: &std::path::Path,
+) -> std::path::PathBuf {
     if let Ok(canon) = std::fs::canonicalize(path) {
         return canon;
     }
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join(path)
+        base.join(path)
     };
     absolute
         .components()
@@ -1492,14 +1509,14 @@ pub fn canonical_project_root(path: &std::path::Path) -> std::path::PathBuf {
 /// Resolve the schema key for a project: prefer `project_path` from the
 /// project's `leankg.yaml` (stable across mounts), else the `.leankg` dir
 /// path itself. `db_path` may be a `.leankg` dir or a project root.
-fn project_identity_key(db_path: &std::path::Path) -> String {
+fn project_identity_key_in(db_path: &std::path::Path, base: &std::path::Path) -> String {
     // db_path is either `<root>/.leankg` (reader/MCP) or
     // `<root>/.leankg/leankg.db` (writer index/embed). Normalize BOTH the
     // suffix stripping and the resulting root through ONE canonicalization
     // so reader and writer derive the SAME schema regardless of how the
     // path was spelled (R1 sweep issue #5: CLI `index ./src` keyed the
     // literal string while MCP `--project <abs>` hashed the real path).
-    let normalized = canonical_project_root(db_path);
+    let normalized = canonical_project_root_in(db_path, base);
     let mut root = normalized;
     // Strip a trailing `<root>/.leankg/leankg.db` → `<root>/.leankg`.
     if root.ends_with("leankg.db") {
@@ -2275,9 +2292,6 @@ mod tests {
         );
     }
 
-    /// Serialize tests that mutate the process CWD.
-    static CHDIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn relative_and_absolute_spellings_derive_same_schema() {
         // R1 sweep issue #5: `leankg index ./src` keyed the schema on the
@@ -2285,20 +2299,32 @@ mod tests {
         // --project <abs-path> derived a different key — the server served
         // an EMPTY DB right after a successful index. The same physical
         // directory must always produce the same identity key.
-        let _guard = CHDIR_LOCK.lock().unwrap();
+        //
+        // Uses the *_in variants with an explicit base so this test never
+        // mutates the process CWD (other tests read it concurrently).
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
 
-        let orig_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let rel_key = schema_for_path(std::path::Path::new("./src/.leankg/leankg.db"));
-        std::env::set_current_dir(orig_cwd).unwrap();
-
+        // CLI flow: relative path resolved against the invocation CWD.
+        let rel_key =
+            schema_for_path_in(std::path::Path::new("./src/.leankg/leankg.db"), dir.path());
+        // MCP flow: absolute --project path, no base needed.
         let abs_key = schema_for_path(&src.join(".leankg").join("leankg.db"));
         assert_eq!(
             rel_key, abs_key,
             "CLI relative index path and MCP absolute --project must share one schema"
+        );
+
+        // The canonicalization itself collapses spellings of one directory:
+        // trailing slash + dot components + symlink-free relative form.
+        let plain = canonical_project_root_in(&src, dir.path());
+        assert_eq!(
+            plain,
+            canonical_project_root_in(
+                std::path::Path::new(&format!("{}/./src/../src/", dir.path().display())),
+                dir.path()
+            )
         );
     }
 
