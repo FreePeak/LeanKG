@@ -7,8 +7,8 @@
 //! - Text-blob construction for code, ontology, and doc nodes
 //! - fastembed-backed embedding inference (BGE-small-en-v1.5) and reranking
 //!   (bge-reranker-v2-m3)
-//! - Vector storage via CozoDB's native HNSW index on `embedding_vectors`
-//! - Incremental build via the `embedding_state` CozoDB table
+//! - Vector storage via the pgvector HNSW index on `embedding_vectors`
+//! - Incremental build via the `embedding_state` Postgres table
 //! - Lazy model download + `embed --init` pre-download
 //! - In-process background embed (`spawn_background_embed`) for the
 //!   `LEANKG_EMBED_BACKGROUND=1` mcp-http mode

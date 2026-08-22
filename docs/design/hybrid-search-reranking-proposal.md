@@ -21,7 +21,7 @@ Combine Sparse and Dense search results using **Relative Score Fusion (RSF)**.
 
 #### A. Sparse Search (BM25)
 - **Goal:** Exact term matching for identifiers (e.g., `handleOAuthCallback`).
-- **Implementation:** Utilize CozoDB's full-text search capabilities or implement a statistical BM25 query in Datalog.
+- **Implementation:** Utilize PostgreSQL full-text search (`tsvector`/`tsquery`) or implement a statistical BM25 query in SQL.
 
 #### B. Dense Search (Vector Embeddings)
 - **Goal:** Semantic similarity for conceptual queries (e.g., "how is auth handled?").
@@ -48,7 +48,7 @@ Re-score the top candidates to ensure the most relevant context is sent to the L
 ### Phase 2: Local Vector Integration
 1. Add `fastembed` crate to `Cargo.toml`.
 2. Implement a background indexing task to generate embeddings for `CodeElement` names and annotations.
-3. Store vectors in CozoDB (leveraging its vector storage capabilities).
+3. Store vectors in PostgreSQL via the pgvector extension (leveraging its vector storage and HNSW index).
 
 ### Phase 3: Re-Ranking Tool
 1. Create a new internal tool `rerank_results`.
@@ -63,5 +63,5 @@ We will evaluate this implementation using the **RAGAS Framework**:
 
 ## References
 - [Hybrid Search and Re-Ranking in Production RAG (Towards Data Science)](https://towardsdatascience.com/hybrid-search-and-re-ranking-in-production-rag/)
-- [CozoDB Vector Search Documentation](https://docs.cozodb.org/en/latest/vector.html)
+- [pgvector Vector Search Documentation](https://github.com/pgvector/pgvector)
 - [FastEmbed-RS](https://github.com/Anirudh07/fastembed-rs)

@@ -201,7 +201,7 @@ fn file_matches_mention(element_file: &str, file_part: &str) -> bool {
 /// unique in the index, upgrade the join target from file-level to
 /// symbol-level (best-effort). Non-unique symbols fall back to file-level.
 /// FR-DOCJOIN-CACHE: memoize per-process so 24 md files referencing the
-/// same `handler.go` don't each pay the full CozoDB lookup cost.
+/// same `handler.go` don't each pay the full graph lookup cost.
 pub fn resolve_code_ref(graph: &GraphEngine, raw_ref: &str) -> Option<String> {
     thread_local! {
         static CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());

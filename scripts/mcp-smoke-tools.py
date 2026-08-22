@@ -43,7 +43,7 @@ SAMPLE_FILE = os.environ.get("LEANKG_SMOKE_FILE", "src/main.rs")
 WORKFLOW_ID = os.environ.get("LEANKG_SMOKE_WORKFLOW", "leankg-index-and-query")
 
 # FR-B50: >= 10 validated `run_raw_query` Datalog recipes. Each maps a
-# project's CozoDB relation to a useful probe. See
+# project's Postgres table to a useful probe. See
 # docs/guides/run-raw-query-recipes.md for the full catalogue with explanations.
 RAW_QUERY_RECIPES: list[tuple[str, str]] = [
     # (recipe name, Datalog query)

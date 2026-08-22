@@ -9,7 +9,7 @@
 //! ```
 //!
 //! It is a **distribution artifact** — never a live serving store. The serving
-//! DB (CozoDB/RocksDB) remains authoritative; a pack can be diffed, committed,
+//! DB (PostgreSQL + pgvector) remains authoritative; a pack can be diffed, committed,
 //! or shipped to a cold-start consumer.
 //!
 //! Determinism contract: identical graphs produce byte-identical

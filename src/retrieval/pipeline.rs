@@ -3,7 +3,7 @@
 //! MCP handler to hand off to the traversal stage.
 //!
 //! **FR-HNSW-B (v3.6.2)**: this pipeline is the canonical ANN path.
-//! `~<active_vectors_relation>:vec_idx` (CozoDB native HNSW, default
+//! the pgvector HNSW index (default
 //! `embedding_vectors:vec_idx`) is the only semantic index — there is no
 //! second ANN stack for discovery. Any caller that needs "find similar X by
 //! meaning" must construct a [`SemanticRetrievalPipeline`] and call
@@ -129,7 +129,7 @@ pub fn adaptive_k(index_size: usize) -> usize {
 /// Override knobs (FR-HNSW-F mega-graph tuning):
 /// - `LEANKG_HNSW_EF` env var — absolute ef. Use this on mega-graphs
 ///   (1M+ vectors) where the default `k*2` rule undersizes ef.
-/// - For very small `k` we still floor at 50 because CozoDB's HNSW
+/// - For very small `k` we still floor at 50 because pgvector's HNSW
 ///   rejects ef < 1.
 fn resolve_ef(k: usize) -> usize {
     if let Ok(env_ef) = std::env::var("LEANKG_HNSW_EF") {
@@ -207,7 +207,7 @@ mod adaptive_k_tests {
     #[test]
     fn resolve_ef_env_zero_falls_back() {
         std::env::set_var("LEANKG_HNSW_EF", "0");
-        // Zero is rejected (would underflow CozoDB's min ef).
+        // Zero is rejected (would underflow the HNSW min ef).
         assert_eq!(resolve_ef(25), 50);
         std::env::remove_var("LEANKG_HNSW_EF");
     }
@@ -290,7 +290,7 @@ impl SemanticRetrievalPipeline {
             (size, adaptive_k(size))
         };
 
-        // Stage 2: embed query, run CozoDB HNSW search.
+        // Stage 2: embed query, run pgvector HNSW search.
         let q = embed_query(self.provider.as_ref(), query)?;
         // Stash for downstream composite scoring (ontology-guided
         // traversal) so the query is embedded exactly once per request.
@@ -384,7 +384,7 @@ impl SemanticRetrievalPipeline {
 
     /// Count rows in `embedding_state`. Cheap; called once per retrieve to
     /// size adaptive k. Reuses the existing count_by_state aggregator
-    /// because CozoDB 0.7.x is picky about inline count() placement.
+    /// because the legacy engine (removed) was picky about inline count() placement.
     fn index_size(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let counts = crate::embeddings::state::count_by_state(self.db.as_ref())?;
         Ok(counts.fresh + counts.stale + counts.other)

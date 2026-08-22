@@ -1,4 +1,4 @@
-//! Integration tests for the embedding_state CozoDB table.
+//! Integration tests for the embedding_state table.
 //!
 //! Feature-gated: only compiled when the `embeddings` feature is on. Run with:
 //!
@@ -102,8 +102,8 @@ fn delete_state_rows_removes_named_rows() {
     let qns: Vec<String> = (0..4).map(|i| format!("q{i}")).collect();
     mark_stale_for_qualified_names(&db, &qns).expect("mark");
 
-    // delete_state_rows now takes full EmbeddingStateRow records (CozoDB 0.7.x
-    // requires all key columns for `:rm`). Build the rows from list_all.
+    // delete_state_rows takes full EmbeddingStateRow records (the API requires
+    // all key columns). Build the rows from list_all.
     let all_rows = list_all(&db).expect("list_all before delete");
     let to_delete: Vec<_> = all_rows
         .iter()

@@ -1,5 +1,6 @@
 //! Script mutability classification (write vs read) for the Postgres
-//! backend. Mirrors the historical cozo 0.7.x behavior: a Datalog script
+//! backend. Mirrors the historical embedded-engine (0.7.x) behavior: a
+//! Datalog script
 //! can combine a read head (`?[...] := ...`) with an action operator
 //! (`:put`, `:rm`, …) in one script, so the whole query is scanned for
 //! write operators rather than just the leading token.

@@ -1,9 +1,9 @@
 //! Versioned PostgreSQL schema runner (Phase 2, plan T2.2).
 //!
-//! The full DDL lives in `schema.sql` (mirroring the cozo relations from
-//! docs/analysis/cozo-query-inventory.md §1, query_cache dropped per D2).
+//! The full DDL lives in `schema.sql` (mirroring the legacy relations from
+//! the legacy query-shape inventory analysis §1, query_cache dropped per D2).
 //! A `migrations` table records `(id, applied_at)` — the same shape as the
-//! cozo relation, but `applied_at` is a real Postgres timestamp per T2.2.
+//! legacy relation, but `applied_at` is a real Postgres timestamp per T2.2.
 //!
 //! No sqlx yet (plan D1 defers the client choice to the translator phase);
 //! this uses the `postgres` crate directly, the same one the Phase 0 spike

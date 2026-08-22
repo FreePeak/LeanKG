@@ -8,8 +8,8 @@ use crate::graph::cache::QueryCache;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-/// Escape a value for embedding inside a Cozo Datalog string literal.
-/// Cozo does not process `\\` escapes (verified against regex_matches:
+/// Escape a value for embedding inside a legacy Datalog-style string literal.
+/// The legacy engine (removed) did not process `\\` escapes (verified against regex_matches:
 /// a pattern with `\\` never matches, while a single `\` passes through),
 /// so backslashes must be preserved verbatim — doubling them breaks every
 /// regex-based name search for dotted file names (e.g. `main.go`).
@@ -126,7 +126,7 @@ impl GraphEngine {
         Ok(Self::new(db))
     }
 
-    /// Run SQLite `VACUUM` against the underlying CozoDB SQLite store to
+    /// Run SQLite `VACUUM` against the underlying SQLite store to
     /// reclaim disk space after large deletes. No-op for RocksDB backends.
     /// The operation can be expensive (rewrites the entire DB file), so
     /// callers should gate it on a size check first.
@@ -995,7 +995,7 @@ impl GraphEngine {
                     .collect();
 
                 // Full page ⇒ more rows may exist. (Do not use rows.len() as total_count —
-                // Cozo :limit returns only the page, so offset+limit < rows.len() was always false.)
+                // the legacy engine (removed): its :limit returned only the page, so offset+limit < rows.len() was always false.)
                 let has_more = elements.len() >= limit;
                 let total_count = offset + elements.len() + if has_more { 1 } else { 0 };
 
@@ -1572,7 +1572,7 @@ impl GraphEngine {
         let limit = limit.unwrap_or(200).min(500);
         let offset = offset.unwrap_or(0);
 
-        // Build type filter clause using CozoDB's = syntax
+        // Build type filter clause using the legacy Datalog = syntax
         // For multiple types, we use multiple = clauses separated by comma (AND logic)
         let type_clause = match element_types {
             Some(types) if !types.is_empty() => {
@@ -2334,7 +2334,7 @@ impl GraphEngine {
     }
 
     /// Bulk remove all `code_elements` rows whose `file_path` is in `file_paths`.
-    /// One CozoDB query instead of N (each N was ~650ms scanning 3M rows).
+    /// One bulk query instead of N (each N was ~650ms scanning 3M rows).
     pub fn remove_elements_by_files_bulk(
         &self,
         file_paths: &[String],
@@ -2418,9 +2418,9 @@ impl GraphEngine {
         "#;
         // source_qualified values are like "/path/to/file.go::func_name".
         // To get all relationships FROM a file, match the prefix (everything
-        // before "::"). CozoDB's `in $list` matches exact strings, so we
+        // before "::"). The legacy engine's `in $list` matched exact strings only, so we
         // pass the full prefix-per-file as a regex/contains filter via `starts_with`.
-        // Actually CozoDB doesn't have starts_with — fall back to exact match on
+        // Actually the legacy engine had no starts_with — fall back to exact match on
         // constructed prefix patterns. Simpler: caller pre-computes exact
         // source_qualified prefixes per file. For now skip and rely on per-file
         // rm as a follow-up if exact match isn't enough.
@@ -2522,7 +2522,7 @@ impl GraphEngine {
     }
 
     /// Delete every `code_elements` row whose `qualified_name` matches (all
-    /// composite-key variants). Cozo `:put` keys the full tuple, so renames
+    /// composite-key variants). The legacy engine's `:put` keyed the full tuple, so renames
     /// leave duplicate GID rows — callers must rm-by-qn before put.
     pub fn remove_elements_by_qualified_name(
         &self,
@@ -2612,7 +2612,7 @@ impl GraphEngine {
 
     /// Declarative wipe of the ontology layer: drop relationships whose source
     /// is an ontology GID, then delete all `ontology://` code_elements rows
-    /// (including duplicate composite-key variants). Two bulk Cozo scripts
+    /// (including duplicate composite-key variants). Two bulk legacy Datalog-style scripts
     /// (not per-GID loops) to avoid SQLite lock storms under concurrent MCP.
     pub fn clear_ontology_layer(&self) -> Result<usize, Box<dyn std::error::Error>> {
         // Inline the qualified names query since list_ontology_qualified_names was removed
@@ -4362,7 +4362,7 @@ impl GraphEngine {
 
     /// FR-B23: Find dead code - functions/structs/classes/etc with zero callers,
     /// excluding well-known entry-point names. Implemented as a candidate fetch
-    /// followed by an in-Rust set difference because Cozo's negated rule
+    /// followed by an in-Rust set difference because the legacy engine's negated rule
     /// application does not allow projecting the negated symbol in the rule head.
     /// The set of "called or tested" qualified names is small relative to the
     /// candidate set, so the materialised HashSet is cheap to build.
@@ -4943,7 +4943,7 @@ impl GraphEngine {
             }));
         }
 
-        // Cap visits hard: each visit is 2 indexed Cozo lookups; mega graphs
+        // Cap visits hard: each visit is 2 indexed lookups; mega graphs
         // must stay within MCP request latency even when no path exists.
         const MAX_BFS_VISITS: usize = 120;
 
@@ -5382,7 +5382,7 @@ impl GraphEngine {
         exclude_hubs_percentile: Option<u8>,
     ) -> Result<Vec<GodNode>, Box<dyn std::error::Error>> {
         let limit = limit.clamp(1, 200);
-        // FR-GF-MEGA-01: degree computed in ONE CozoDB aggregate pass, not
+        // FR-GF-MEGA-01: degree computed in ONE aggregate pass, not
         // `all_relationships()` (materialized the whole 2.3M-edge graph on every
         // overview call and timed out the MCP resource on mega-graphs).
         let mut degree: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -6402,7 +6402,7 @@ mod tests {
         // Regression guard: `vacuum()` is invoked from the watcher when the
         // database file exceeds the configured size cap. We just assert that
         // the call returns a `Result` (it may be `Err` on a completely empty
-        // database depending on the CozoDB backend, which is acceptable
+        // database depending on the storage backend, which is acceptable
         // because the caller logs and continues) and that it does not panic.
         let (engine, _tmp) = make_test_engine();
         let _ = engine.vacuum();
@@ -6425,7 +6425,7 @@ mod tests {
     #[test]
     fn get_god_nodes_uses_bounded_pagination_not_all_relationships() {
         // FR-GF-MEGA-01 regression: get_god_nodes must compute degree via a
-        // CozoDB aggregate (not all_relationships()), which would materialize
+        // single aggregate pass (not all_relationships()), which would materialize
         // the whole 2.3M-edge graph and time out the overview resource.
         let (engine, _tmp) = make_test_engine();
         for name in ["hub_a", "hub_b", "spoke_c", "spoke_d"] {

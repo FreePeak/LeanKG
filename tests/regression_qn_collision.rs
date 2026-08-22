@@ -1,6 +1,6 @@
 //! Regression test: duplicate qualified_names across same-named symbols.
 //!
-//! Finding A of docs/plan-migrate-cozo-to-postgres-pgvector.md (§9 / finding 3
+//! Finding A of the legacy-engine→Postgres/pgvector migration plan (§9 / finding 3
 //! in docs/analysis/pg-perf-large-codebase.md): a real workspace index held
 //! 727k code_elements rows but only 348k distinct qualified_names (52%
 //! duplicates, up to 764 rows under one `...pb.validate.go::Error` key).

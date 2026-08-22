@@ -76,8 +76,8 @@ fn test_search_by_pattern_malicious_injection() {
 
 /// Regression for REL-SRC-01: search_by_name / search_by_name_typed must
 /// find elements whose names contain regex-special characters (every file
-/// name has a dot). Cozo does not unescape `\\` in Datalog string
-/// literals, so `escape_datalog` must preserve the single backslash that
+/// name has a dot). The legacy engine (removed) did not unescape `\\` in
+/// legacy-script string literals, so `escape_datalog` must preserve the single backslash that
 /// `regex::escape` produces.
 #[test]
 fn test_search_by_name_with_dotted_filename() {

@@ -1,6 +1,6 @@
 /**
  * FR-UI2-08 / US-UI2-06 — Query FAB dual-mode helpers.
- * Default NL → POST /api/query-graph; Advanced → POST /api/query (raw Cozo).
+ * Default NL → POST /api/query-graph; Advanced → POST /api/query (raw graph query).
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -30,9 +30,9 @@ describe('query-fab-mode (FR-UI2-08)', () => {
     });
   });
 
-  it('builds Advanced body with query field (preserves Cozo whitespace)', () => {
-    const cozo = '?[a] := *code_elements{qualified_name: a}';
-    expect(buildQueryBody('advanced', cozo)).toEqual({ query: cozo });
+  it('builds Advanced body with query field (preserves original whitespace)', () => {
+    const script = '?[a] := *code_elements{qualified_name: a}';
+    expect(buildQueryBody('advanced', script)).toEqual({ query: script });
   });
 
   it('rejects blank NL questions', () => {
@@ -45,7 +45,7 @@ describe('query-fab-mode (FR-UI2-08)', () => {
 
   it('shows NL-friendly placeholder by default', () => {
     expect(queryPlaceholder('nl')).toMatch(/connects|natural|question/i);
-    expect(queryPlaceholder('advanced')).toMatch(/\?\[|cozo|:=/i);
+    expect(queryPlaceholder('advanced')).toMatch(/\?\[|:=/i);
   });
 
   it('only accepts known modes', () => {

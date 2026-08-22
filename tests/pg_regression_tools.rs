@@ -1,4 +1,4 @@
-//! Phase 5.5 regression sweep — every user-facing MCP tool: cozo shim vs
+//! Phase 5.5 regression sweep — every user-facing MCP tool against
 //! PostgreSQL on identical fixture data. Diffs JSON responses, records
 //! p50 latency (N=5), flags >2x regressions.
 //!
@@ -7,7 +7,7 @@
 //! LEANKG_PG_URL=postgresql://postgres:postgres@localhost:5433/leankg \
 //!   cargo test --release --test pg_regression_tools -- --test-threads=1
 //! ```
-//! (--test-threads=1: tests share one scratch schema + the cozo OPENED path
+//! (--test-threads=1: tests share one scratch schema + the single-open DB
 //! guard; container-gated, like the other pg_* tests.)
 
 use leankg::db::backend::PostgresBackend;
@@ -77,8 +77,8 @@ impl Drop for ScratchSchema {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture — identical rows into cozo + PG. SQL is written in the canonical
-// cozo dialect; the translator turns it into the same PG rows.
+// Fixture — rows loaded into PG. SQL is written in the canonical
+// legacy-script dialect; the translator turns it into the same PG rows.
 // ---------------------------------------------------------------------------
 
 const FIXTURE_ELEMENTS: &str = r#"
@@ -128,7 +128,7 @@ const FIXTURE_BUSINESS_LOGIC: &str = r#"
 "#;
 
 /// Incidents are seeded via param binding (canonical production path):
-/// cozo's string literals reject `\"` escapes, so JSON-array-typed string
+/// The legacy engine (removed) rejected `\"` escapes, so JSON-array-typed string
 /// columns must arrive as bound values.
 fn seed_incidents(db: &leankg::db::backend::PostgresBackend) {
     let query = r#"?[id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket] <- [[$id, $env, $title, $sev, $occ, $res_at, $rc, $res, $svc, $tp, $prev, $tags, $author, $tk]] :put incidents {id, env, title, severity, occurred_at, resolved_at, root_cause, resolution, affected_services, trigger_pattern, prevention, tags, author, linked_ticket}"#;
@@ -173,7 +173,7 @@ fn seed_incidents(db: &leankg::db::backend::PostgresBackend) {
     for inc in incs {
         let mut params = std::collections::BTreeMap::new();
         for (k, v) in keys.iter().zip(inc.iter()) {
-            // cozo requires every $param to be bound; nulls must arrive as
+            // Every $param must be bound; nulls must arrive as
             // explicit `null` values.
             params.insert((*k).to_string(), v.clone().unwrap_or(Value::Null));
         }
@@ -327,7 +327,7 @@ fn seed_fixture(db: &leankg::db::backend::PostgresBackend) {
         // embedding_state + embedding_vectors (HNSW path for semantic_search).
         // Only when the embeddings feature is compiled in — same gate as the
         // schema itself (init_schema creates these tables only with the
-        // feature, so cozo and PG stay symmetric).
+        // feature, so the schema stays self-consistent).
         #[cfg(not(feature = "embeddings"))]
         {
             let _ = qns; // unused without the feature
@@ -400,7 +400,7 @@ fn fixture_repo(tmp: &tempfile::TempDir) {
     .unwrap();
 }
 
-/// Normalise volatile fields before comparing cozo vs PG JSON.
+/// Normalise volatile fields before comparing JSON responses.
 
 /// Run one tool against one handler, return (ok, latency ms).
 async fn run_tool(handler: &ToolHandler, tool: &str, args: &Value) -> (Result<Value, String>, f64) {
@@ -420,7 +420,7 @@ struct SweepResult {
 
 #[test]
 fn tool_sweep_all_tools_on_postgres() {
-    // Phase 8: the cozo shim is gone — this is a PG-only smoke sweep of
+    // Phase 8: the legacy engine is gone — this is a PG-only smoke sweep of
     // every user-facing MCP tool on identical fixture data. Asserts each
     // tool runs without error (or returns a documented empty result), and
     // records p50 latency.

@@ -1,4 +1,4 @@
-//! FR-BENCH-HNSW: deterministic CozoDB HNSW recall@k smoke test.
+//! FR-BENCH-HNSW: deterministic HNSW recall@k smoke test (pgvector).
 //!
 //! Inserts synthetic 384-dim vectors (no fastembed / model download), queries
 //! via `~embedding_vectors:vec_idx`, and asserts recall@k against brute-force
@@ -129,7 +129,7 @@ fn brute_force_top_k(items: &[(String, Vec<f32>)], qvec: &[f32], k: usize) -> Ve
         .iter()
         .map(|(qn, v)| (cosine_similarity(qvec, v), qn.as_str()))
         .collect();
-    // Higher cosine similarity = closer (Cosine distance in Cozo is 1 - sim).
+    // Higher cosine similarity = closer (cosine distance = 1 - sim).
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored
         .into_iter()

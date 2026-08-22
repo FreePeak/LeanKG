@@ -1,4 +1,4 @@
-//! CozoDB-persisted index inventory (FR-INDEX-INV-*).
+//! Postgres-persisted index inventory (FR-INDEX-INV-*).
 
 use crate::graph::GraphEngine;
 use serde::{Deserialize, Serialize};

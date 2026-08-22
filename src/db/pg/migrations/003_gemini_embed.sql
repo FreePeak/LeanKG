@@ -2,7 +2,7 @@
 -- Default output dimensionality for both gemini-embedding-001 and
 -- gemini-embedding-2 is 3072, so the collections below are vector(3072).
 -- runtime ensure_model_collections() creates the same tables idempotently
--- when this migration already ran on an existing DB (or for CozoDB).
+-- when this migration already ran on an existing DB.
 
 INSERT INTO embedding_models (model_id, provider, model_name, dimensions)
 VALUES

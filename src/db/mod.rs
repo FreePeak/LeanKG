@@ -138,9 +138,10 @@ pub fn delete_business_logic(
     db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // cozo 0.7.6 delete-by-predicate: rule derives the full row, then `:rm`
+    // Legacy 0.7.6 delete-by-predicate: rule derives the full row, then `:rm`
     // with ALL relation columns named. `:delete rel where col = $eq` is
-    // invalid syntax in this cozo version (parser error at the `where`).
+    // invalid syntax in that legacy parser version (parser error at the
+    // `where`).
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], element_qualified = $eq :rm business_logic {element_qualified, description, user_story_id, feature_id}"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
