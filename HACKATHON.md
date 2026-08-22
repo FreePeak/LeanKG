@@ -63,3 +63,14 @@ All 6 backlog items landed and merged to `feature/hackathon` @ d0dd213e → PR #
 Also: tracing logs moved to stderr so `--format json` stdout stays machine-parseable.
 
 Gates: lib **1147✅** · fmt ✓ · clippy ✓ · build 0 warnings.
+
+### Cycle-2 R1 — Full live re-sweep vs remote PG (2026-08-23)
+Report: `docs/analysis/hackathon-sweep-R2.md` · binary `$SWEEP` 0.26.0 @ 2ceb316d · port 9721 · schema `leankg_p_970a9b30ff7448d7`.
+
+**Counts:** 72 PASS / 1 PASS_EMPTY / 3 FAIL_TIMEOUT / 0 FAIL_ERROR / 3 EXPECTED_UNAVAILABLE · 85 calls, **0 cascade-poisoned** (R1: 35) · registry 76 tools identical to R1.
+**Latency vs R1:** p50 4,896ms → **2,746ms** (−44%) · p95 90,002ms → **45,003ms** (−50%) · steady p50 3,172 → 2,446ms. Heavy-graph tail still 44–62s (shortest_path/query_graph/impact).
+**Regression matrix (7 cycle-1 fixes):** update_knowledge roundtrip ✅ · mcp_index_docs 20.2s ✅ · get_context 4.6–18.9s ✅ · check_consistency ❌ (>150s fresh-server, populated corpus) · temporal_query ❌ (>120s) · agent_focus ⚠️ partial (hangs >60s but no wedge on fresh boot; wedge only via internal-watchdog path, N4) · exports anchored in project ✅ · dynamic ontology survives reopen + deletable ✅ (PG rows verified `source:'dynamic'`).
+**Audit (ENT-1):** `audit export` → 107 entries; `audit verify` → "OK: audit chain intact (107 entries verified)", exit 0.
+**CLI:** `export --markdown` exit 0, 4,068 lines. `doctor --deep` exit 2 (target ≤1): freshness WARN clean of `ontology://` noise (H9 hardening holds) but genuine FAILs — orphaned relationships 432/1000 sampled, duplicate doc-section QNs ×10.
+**New issues:** N1 `index` regenerates leankg.yaml dropping `project.project_path` → identity split returns (empty-schema serving observed twice); N2 legacy-schema adoption hijacks fresh index when relative project_path + stale legacy schema exist; N3 launcher-CWD leaks into identity (restart from parent repo pinned foreign schema); N4 wedge reachable via internal-watchdog expiry path (client-abandoned hangs safe); N5 doctor orphan/dup findings above; N6 cluster_skill parent-path bleed carried over. R1 #10 index_prd zero-work + orchestrate filename-parse error also carried over.
+Note: R3's warm-benchmarks (temporal 4.5s / check_consistency 6–7s / agent_focus 13ms) did NOT hold at full live scale on remote PG with 13.9k elements — hang trio is corpus-scale-dependent (empty-corpus probes ~7s each pass).
