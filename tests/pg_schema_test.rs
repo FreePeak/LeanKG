@@ -17,7 +17,8 @@ use std::env;
 /// (VEC_DIM = 384) and the vector(384) in schema.sql.
 const VEC_DIM: usize = 384;
 
-/// The 16 tables of the Phase 2 inventory (query_cache dropped per D2).
+/// The tables of the Phase 2 inventory + FR-ENT-1 audit ledger
+/// (query_cache dropped per D2).
 const EXPECTED_TABLES: &[&str] = &[
     "code_elements",
     "relationships",
@@ -35,6 +36,7 @@ const EXPECTED_TABLES: &[&str] = &[
     "embedding_state",
     "embedding_vectors",
     "index_hashes",
+    "audit_log",
 ];
 
 fn pg_url() -> String {
@@ -109,6 +111,7 @@ fn all_16_tables_exist_and_no_query_cache() {
             "003_gemini_embed".to_string(),
             "004_auth".to_string(),
             "005_hnsw_dims_cleanup".to_string(),
+            "006_audit_log".to_string(),
         ],
         "migrations should apply exactly once on a fresh schema"
     );
@@ -152,6 +155,7 @@ fn rerun_is_noop() {
             "003_gemini_embed".to_string(),
             "004_auth".to_string(),
             "005_hnsw_dims_cleanup".to_string(),
+            "006_audit_log".to_string(),
         ]
     );
 }

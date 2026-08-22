@@ -1,5 +1,6 @@
 use clap::{Subcommand, ValueEnum};
 
+pub mod audit;
 pub mod mcp;
 pub mod reexec;
 pub mod shell_runner;
@@ -21,10 +22,51 @@ pub enum CostFormat {
     Json,
 }
 
+/// Output format for `leankg audit export`.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuditFormat {
+    /// One JSON object per line (SIEM-drain friendly).
+    Jsonl,
+}
+
+/// Subcommands for `leankg audit` (FR-ENT-1).
+#[derive(Subcommand, Debug)]
+pub enum AuditCommand {
+    /// Export ledger rows as JSONL
+    Export {
+        /// Only entries at/after this time (RFC3339 | epoch seconds | 90s|30m|24h|7d)
+        #[arg(long)]
+        since: Option<String>,
+        /// Only entries at/before this time
+        #[arg(long)]
+        until: Option<String>,
+        /// Output format
+        #[arg(long, default_value = "jsonl")]
+        format: AuditFormat,
+        /// Write to FILE instead of stdout
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Verify the append-only hash chain over the ledger
+    Verify {
+        /// Only entries at/after this time (RFC3339 | epoch seconds | 90s|30m|24h|7d)
+        #[arg(long)]
+        since: Option<String>,
+        /// Only entries at/before this time
+        #[arg(long)]
+        until: Option<String>,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 pub enum CLICommand {
     /// Show LeanKG version
     Version,
+    /// FR-ENT-1: export / verify the append-only hash-chained audit ledger
+    Audit {
+        #[command(subcommand)]
+        command: AuditCommand,
+    },
     /// Initialize a new LeanKG project
     Init {
         #[arg(long, default_value = ".leankg")]
