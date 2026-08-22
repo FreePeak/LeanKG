@@ -47,6 +47,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "005_hnsw_dims_cleanup",
         include_str!("migrations/005_hnsw_dims_cleanup.sql"),
     ),
+    (
+        "006_audit_log",
+        include_str!("migrations/006_audit_log.sql"),
+    ),
 ];
 
 pub struct MigrationReport {

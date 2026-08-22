@@ -10,6 +10,7 @@
 #![allow(clippy::len_zero)]
 #![allow(clippy::absurd_extreme_comparisons)]
 mod api;
+mod audit;
 mod auth;
 mod benchmark;
 mod budget;
@@ -84,6 +85,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         cli::CLICommand::Version => {
             println!("leankg {}", env!("CARGO_PKG_VERSION"));
+        }
+        cli::CLICommand::Audit { command } => {
+            run_audit_command(command).await?;
         }
         cli::CLICommand::Update => {
             update_leankg().await?;
@@ -266,7 +270,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Another LeanKG watcher (PID {}) is already running for this project. Disabling --watch for this instance.",
                                 old_pid
                             );
-                            let mcp_server = mcp::MCPServer::new(db_path).with_read_only(read_only);
+                            let mut mcp_server =
+                                mcp::MCPServer::new(db_path.clone()).with_read_only(read_only);
+                            if let Some(rec) = attach_audit_recorder(&db_path, read_only) {
+                                mcp_server = mcp_server.with_audit_recorder(rec);
+                            }
                             if let Err(e) = mcp_server.serve_stdio().await {
                                 eprintln!("MCP stdio server error: {}", e);
                             }
@@ -278,10 +286,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let mcp_server = if watch {
-                mcp::MCPServer::new_with_watch(db_path, project_path.clone())
+                mcp::MCPServer::new_with_watch(db_path.clone(), project_path.clone())
                     .with_read_only(read_only)
             } else {
-                mcp::MCPServer::new(db_path).with_read_only(read_only)
+                mcp::MCPServer::new(db_path.clone()).with_read_only(read_only)
+            };
+            let mcp_server = if let Some(rec) = attach_audit_recorder(&db_path, read_only) {
+                mcp_server.with_audit_recorder(rec)
+            } else {
+                mcp_server
             };
             if let Err(e) = mcp_server.serve_stdio().await {
                 eprintln!("MCP stdio server error: {}", e);
@@ -311,12 +324,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tokio::fs::create_dir_all(&db_path).await.ok();
 
-            let mcp_server = if watch {
+            let mut mcp_server = if watch {
                 mcp::MCPServer::new_with_watch(db_path.clone(), project_path.clone())
                     .with_read_only(read_only)
+                    .with_transport("http")
             } else {
-                mcp::MCPServer::new(db_path.clone()).with_read_only(read_only)
+                mcp::MCPServer::new(db_path.clone())
+                    .with_read_only(read_only)
+                    .with_transport("http")
             };
+            // FR-ENT-1: attach the append-only audit ledger (best-effort —
+            // see attach_audit_recorder).
+            if let Some(rec) = attach_audit_recorder(&db_path, read_only) {
+                mcp_server = mcp_server.with_audit_recorder(rec);
+            }
 
             println!("╔═══════════════════════════════════════════════════════════════╗");
             println!("║  LeanKG MCP HTTP Server (Remote Mode)                      ║");
@@ -1435,6 +1456,79 @@ fn find_project_root() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
         }
     }
     Ok(current_dir)
+}
+
+/// FR-ENT-1: open the project backend and build the shared append-only audit
+/// recorder for a serving MCP server. Best-effort: when the DB cannot be
+/// opened the server still starts without auditing; when the audit_log table
+/// is missing (pre-migration schema) the recorder disables itself after one
+/// warn instead of ever failing a tool call.
+fn attach_audit_recorder(
+    db_path: &std::path::Path,
+    read_only: bool,
+) -> Option<std::sync::Arc<crate::audit::AuditRecorder>> {
+    let db = if read_only {
+        db::backend::init_db_readonly(db_path)
+    } else {
+        db::backend::init_db(db_path)
+    }
+    .inspect_err(|e| tracing::warn!("audit ledger unavailable (server starts unaudited): {e}"))
+    .ok()?;
+    Some(crate::audit::AuditRecorder::shared(db))
+}
+
+/// FR-ENT-1: `leankg audit export|verify` over the append-only ledger.
+/// Read-only DB access; exits non-zero when verification fails.
+async fn run_audit_command(command: cli::AuditCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+    // FR-ENT-1: pin to the project's ledger schema even while its code index
+    // is still empty/in-flight (init_db_readonly would fall back to public).
+    let db = db::backend::init_db_readonly_audit(&db_path)?;
+
+    match command {
+        cli::AuditCommand::Export {
+            since,
+            until,
+            format,
+            out,
+        } => {
+            debug_assert!(matches!(format, cli::AuditFormat::Jsonl));
+            let since = since
+                .map(|s| cli::audit::parse_time_filter(&s))
+                .transpose()?;
+            let until = until
+                .map(|u| cli::audit::parse_time_filter(&u))
+                .transpose()?;
+            let jsonl = cli::audit::export_ledger_jsonl(&db, since, until)?;
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, &jsonl)?;
+                    let lines = jsonl.lines().count();
+                    println!("wrote {lines} audit entries to {path}");
+                }
+                None => print!("{jsonl}"),
+            }
+        }
+        cli::AuditCommand::Verify { since, until } => {
+            let since = since
+                .map(|s| cli::audit::parse_time_filter(&s))
+                .transpose()?;
+            let until = until
+                .map(|u| cli::audit::parse_time_filter(&u))
+                .transpose()?;
+            match cli::audit::verify_ledger(&db, since, until) {
+                Ok(count) => {
+                    println!("OK: audit chain intact ({count} entries verified)");
+                }
+                Err(e) => {
+                    eprintln!("FAIL: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Resolve the project root for `leankg serve` / `web`.

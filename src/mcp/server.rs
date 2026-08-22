@@ -212,6 +212,13 @@ pub struct MCPServer {
     /// (search_code, get_context, kg_*, etc.) still work; write tools return
     /// `"server is in read-only mode"` before being dispatched.
     read_only: bool,
+    /// FR-ENT-1: fire-and-forget audit recorder over the append-only
+    /// hash-chained ledger. `None` when no backend is wired — dispatch then
+    /// behaves exactly as before (old schemas must not crash).
+    audit: Option<Arc<crate::audit::AuditRecorder>>,
+    /// FR-ENT-1: transport tag used as the agent_client fallback when the
+    /// client did not send clientInfo ("stdio" | "http").
+    transport: &'static str,
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -258,6 +265,8 @@ impl Clone for MCPServer {
             write_bus: self.write_bus.clone(),
             tool_semaphore: self.tool_semaphore.clone(),
             read_only: self.read_only,
+            audit: self.audit.clone(),
+            transport: self.transport,
         }
     }
 }
@@ -307,6 +316,8 @@ impl MCPServer {
             write_bus: Arc::new(crate::db::write_bus::InProcessWriteBus::default()),
             tool_semaphore: build_tool_semaphore(),
             read_only: false,
+            audit: None,
+            transport: "stdio",
         }
     }
 
@@ -331,6 +342,8 @@ impl MCPServer {
             write_bus: Arc::new(crate::db::write_bus::InProcessWriteBus::default()),
             tool_semaphore: build_tool_semaphore(),
             read_only: false,
+            audit: None,
+            transport: "stdio",
         }
     }
 
@@ -349,6 +362,65 @@ impl MCPServer {
     /// Returns true if this server is currently running in read-only mode.
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// FR-ENT-1: attach the shared audit recorder (builder-style).
+    pub fn with_audit_recorder(mut self, recorder: Arc<crate::audit::AuditRecorder>) -> Self {
+        self.audit = Some(recorder);
+        self
+    }
+
+    /// FR-ENT-1: override the transport tag ("stdio" | "http") used as the
+    /// agent_client fallback when no clientInfo was seen.
+    pub fn with_transport(mut self, transport: &'static str) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// FR-ENT-1: transport tag backing the agent_client fallback.
+    pub fn transport(&self) -> &'static str {
+        self.transport
+    }
+
+    /// FR-ENT-1: THE audit choke point. Every tool dispatch — rmcp
+    /// `ServerHandler::call_tool` (stdio + streamable HTTP) and the raw
+    /// JSON-RPC `tools/call` arm — goes through here, producing exactly one
+    /// ledger entry per call. Recording is fire-and-forget; it can never
+    /// change the outcome of the dispatch.
+    pub(crate) async fn execute_tool_audited(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        agent_client: Option<String>,
+        actor: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        let started = std::time::Instant::now();
+        let result = self.execute_tool(tool_name, arguments.clone()).await;
+        if let Some(recorder) = &self.audit {
+            // args_hash covers the serialized parameters only (NFR-2): raw
+            // arguments are never persisted.
+            let project = arguments
+                .get("project")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let record = crate::audit::AuditRecord {
+                ts: std::time::SystemTime::now(),
+                actor: actor.unwrap_or_else(|| "local".to_string()),
+                agent_client: agent_client.unwrap_or_else(|| self.transport.to_string()),
+                tool: tool_name.to_string(),
+                project,
+                args_hash: crate::audit::hash_args(&serde_json::Value::Object(arguments)),
+                result_status: if result.is_ok() { "ok" } else { "error" }.to_string(),
+            };
+            recorder.record(record);
+        }
+        tracing::debug!(
+            tool = tool_name,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            status = %if result.is_ok() { "ok" } else { "error" },
+            "tool dispatch complete"
+        );
+        result
     }
 
     /// Whether a filesystem watcher would be spawned (false in RO mode).
@@ -3033,15 +3105,24 @@ impl ServerHandler for MCPServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: rmcp::service::RequestContext<RoleServer>,
+        context: rmcp::service::RequestContext<RoleServer>,
     ) -> Result<CallToolResult, rmcp::model::ErrorData> {
         let tool_name = request.name.as_ref();
         let arguments = request.arguments.unwrap_or_default();
 
+        // FR-ENT-1: agent_client from the client's clientInfo when known.
+        let agent_client = context
+            .peer
+            .peer_info()
+            .map(|ci| ci.client_info.name.clone());
+
         // Always use TOON format (ignore client's format preference)
         let use_toon = true;
 
-        match self.execute_tool(tool_name, arguments).await {
+        match self
+            .execute_tool_audited(tool_name, arguments, agent_client, None)
+            .await
+        {
             Ok(result) => {
                 let content_str = if let Some(s) = result.as_str() {
                     // Already purely text (e.g. from context chunk fetch) - preserve as-is
@@ -3535,7 +3616,22 @@ async fn process_jsonrpc_request(
 
             let result = tokio::time::timeout(
                 tool_timeout_for(tool_name),
-                mcp_server.execute_tool(tool_name, arguments),
+                mcp_server.execute_tool_audited(
+                    tool_name,
+                    arguments,
+                    // FR-ENT-1: authenticated HTTP callers get their token
+                    // identity; anonymous ones record "local".
+                    Some(if auth_context.client_id == "anonymous" {
+                        mcp_server.transport().to_string()
+                    } else {
+                        auth_context.client_id.clone()
+                    }),
+                    Some(if auth_context.client_id == "anonymous" {
+                        "local".to_string()
+                    } else {
+                        auth_context.client_id.clone()
+                    }),
+                ),
             )
             .await
             .map_err(|_| {
@@ -4313,5 +4409,109 @@ mod tests {
             dockerfile.contains("LEANKG_EMBED_AUTO_ARM=0"),
             "Dockerfile must set LEANKG_EMBED_AUTO_ARM=0"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // FR-ENT-1: the ONE audit choke-point seam around tool dispatch. Both
+    // transports (rmcp ServerHandler::call_tool for stdio/streamable-HTTP,
+    // and the raw JSON-RPC `tools/call` arm) must go through
+    // `execute_tool_audited`, which records exactly one ledger entry per
+    // call with actor / agent_client / tool / project / args_hash and the
+    // ok|error result status.
+    // ---------------------------------------------------------------------
+
+    use crate::audit::{hash_args, AuditRecorder};
+    use crate::db::backend::DbBackend;
+    use crate::db::fake::FakeBackend;
+
+    fn audited_server(fake: &Arc<FakeBackend>) -> (MCPServer, Arc<crate::audit::AuditRecorder>) {
+        let backend: Arc<dyn DbBackend> = fake.clone();
+        let recorder = AuditRecorder::shared(backend);
+        let server = MCPServer::new(std::path::PathBuf::from("/tmp/opencode/audit-seam/.leankg"))
+            .with_audit_recorder(recorder.clone());
+        (server, recorder)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execute_tool_audited_records_error_calls_with_full_fields() {
+        let fake = Arc::new(FakeBackend::new());
+        let (server, recorder) = audited_server(&fake);
+
+        let mut args = serde_json::Map::new();
+        args.insert("project".into(), serde_json::json!("/proj/x"));
+        let result = server
+            .execute_tool_audited(
+                "definitely_not_a_real_tool",
+                args,
+                Some("cursor".to_string()),
+                Some("local".to_string()),
+            )
+            .await;
+        assert!(result.is_err(), "unknown tool must error");
+        recorder.flush().await;
+
+        let entries = fake.audit_entries();
+        assert_eq!(entries.len(), 1, "exactly one entry per dispatch");
+        let e = &entries[0];
+        assert_eq!(e.tool, "definitely_not_a_real_tool");
+        assert_eq!(e.actor, "local");
+        assert_eq!(e.agent_client, "cursor");
+        assert_eq!(e.project.as_deref(), Some("/proj/x"));
+        assert_eq!(
+            e.args_hash,
+            hash_args(&serde_json::json!({ "project": "/proj/x" }))
+        );
+        assert_eq!(
+            e.result_status, "error",
+            "failed dispatch must record error"
+        );
+        assert_eq!(e.prev_hash.len(), 64);
+        assert_eq!(e.entry_hash.len(), 64);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execute_tool_audited_defaults_actor_and_agent_client() {
+        let fake = Arc::new(FakeBackend::new());
+        let backend: Arc<dyn DbBackend> = fake.clone();
+        let recorder = AuditRecorder::shared(backend);
+        let server = MCPServer::new(std::path::PathBuf::from(
+            "/tmp/opencode/audit-seam2/.leankg",
+        ))
+        .with_audit_recorder(recorder.clone());
+
+        let _ = server
+            .execute_tool_audited("also_not_a_tool", Default::default(), None, None)
+            .await;
+        recorder.flush().await;
+
+        let entries = fake.audit_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].actor, "local", "actor defaults to local");
+        assert_eq!(
+            entries[0].agent_client,
+            server.transport(),
+            "agent_client falls back to the transport tag"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dispatch_without_recorder_attached_still_works() {
+        // Old schemas / disabled ledger: no crash, normal behavior.
+        let server = MCPServer::new(std::path::PathBuf::from(
+            "/tmp/opencode/audit-seam3/.leankg",
+        ));
+        let result = server
+            .execute_tool_audited("nope", Default::default(), None, None)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn transport_tag_defaults_to_stdio_and_is_settable() {
+        let s = MCPServer::new(std::path::PathBuf::from("/tmp/opencode/t1/.leankg"));
+        assert_eq!(s.transport(), "stdio");
+        let h = MCPServer::new(std::path::PathBuf::from("/tmp/opencode/t2/.leankg"))
+            .with_transport("http");
+        assert_eq!(h.transport(), "http");
     }
 }
