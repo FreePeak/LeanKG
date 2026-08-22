@@ -223,40 +223,61 @@ impl GraphEngine {
         if qns.is_empty() {
             return Ok(out);
         }
-        let tail = self.code_elements_tail();
-        let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = $qn"#
-        );
+        // Dedup + drop empties so each GID is fetched exactly once.
+        let mut unique: Vec<String> = Vec::with_capacity(qns.len());
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for qn in qns {
-            if qn.is_empty() || out.contains_key(qn) {
-                continue;
+            if !qn.is_empty() && seen.insert(qn.as_str()) {
+                unique.push(qn.clone());
             }
+        }
+        let tail = self.code_elements_tail();
+        // BUG-D: one IN-list query per chunk instead of one round-trip per
+        // GID (remote PG ≈ 500ms/query made per-GID loops hang tools).
+        const CHUNK: usize = 500;
+        for chunk in unique.chunks(CHUNK) {
+            let query = format!(
+                r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name in $qns"#
+            );
             let mut params = std::collections::BTreeMap::new();
-            params.insert("qn".to_string(), serde_json::Value::String(qn.clone()));
+            params.insert(
+                "qns".to_string(),
+                serde_json::Value::Array(
+                    chunk
+                        .iter()
+                        .cloned()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
             let result = self.db.run_script(&query, params)?;
-            let Some(row) = result.rows.first() else {
-                continue;
-            };
-            let parent_qualified = row[7].get_str().map(String::from);
-            let cluster_id = row[8].get_str().map(String::from);
-            let cluster_label = row[9].get_str().map(String::from);
-            let metadata_str = row[10].get_str().unwrap_or("{}");
-            let env = row[11].get_str().unwrap_or("local").to_string();
-            let elem = CodeElement {
-                qualified_name: row[0].get_str().unwrap_or("").to_string(),
-                element_type: row[1].get_str().unwrap_or("").to_string(),
-                name: row[2].get_str().unwrap_or("").to_string(),
-                file_path: row[3].get_str().unwrap_or("").to_string(),
-                line_start: row[4].get_int().unwrap_or(0) as u32,
-                line_end: row[5].get_int().unwrap_or(0) as u32,
-                language: row[6].get_str().unwrap_or("").to_string(),
-                parent_qualified,
-                cluster_id,
-                cluster_label,
-                metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                env,
-            };
-            out.insert(elem.qualified_name.clone(), elem);
+            for row in &result.rows {
+                let parent_qualified = row[7].get_str().map(String::from);
+                let cluster_id = row[8].get_str().map(String::from);
+                let cluster_label = row[9].get_str().map(String::from);
+                let metadata_str = row[10].get_str().unwrap_or("{}");
+                let env_idx = 11;
+                let env = row
+                    .get(env_idx)
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("local")
+                    .to_string();
+                let elem = CodeElement {
+                    qualified_name: row[0].get_str().unwrap_or("").to_string(),
+                    element_type: row[1].get_str().unwrap_or("").to_string(),
+                    name: row[2].get_str().unwrap_or("").to_string(),
+                    file_path: row[3].get_str().unwrap_or("").to_string(),
+                    line_start: row[4].get_int().unwrap_or(0) as u32,
+                    line_end: row[5].get_int().unwrap_or(0) as u32,
+                    language: row[6].get_str().unwrap_or("").to_string(),
+                    parent_qualified,
+                    cluster_id,
+                    cluster_label,
+                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+                    env,
+                };
+                out.insert(elem.qualified_name.clone(), elem);
+            }
         }
         Ok(out)
     }

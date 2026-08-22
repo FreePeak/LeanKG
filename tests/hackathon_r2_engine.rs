@@ -123,3 +123,117 @@ fn rand() -> u64 {
         .map(|d| d.subsec_nanos() as u64 ^ d.as_secs())
         .unwrap_or(42)
 }
+
+// BUG-D probes — hang trio (get_context / check_consistency / temporal_query)
+// against the real R1 corpus (13k elements / 92k relationships on remote PG).
+// Read-only; requires LEANKG_R2_PROBE_SCHEMA.
+// ===========================================================================
+
+fn r1_engine() -> Option<GraphEngine> {
+    let schema = std::env::var("LEANKG_R2_PROBE_SCHEMA").ok()?;
+    assert!(!pg_url().is_none(), "LEANKG_PG_URL required");
+    Some(GraphEngine::new(backend_for_schema(&schema)))
+}
+
+fn probe_file(engine: &GraphEngine) -> String {
+    // A mid-size real file from the indexed corpus.
+    let candidates = [
+        "./src/mcp/tools.rs",
+        "./src/mcp/handler.rs",
+        "./src/graph/query.rs",
+        "./src/main.rs",
+    ];
+    for f in candidates {
+        let elems = engine.get_elements_by_file(f).expect("by_file");
+        if !elems.is_empty() {
+            return f.to_string();
+        }
+    }
+    panic!("probe fixture files not found in corpus");
+}
+
+#[test]
+fn bug_d_probe_temporal_query_latency() {
+    let Some(engine) = r1_engine() else {
+        eprintln!("skipping: LEANKG_R2_PROBE_SCHEMA not set");
+        return;
+    };
+    let t0 = std::time::Instant::now();
+    let rels = engine.temporal_query(1_800_000_000).expect("temporal");
+    eprintln!("temporal_query: {} rels in {:?}", rels.len(), t0.elapsed());
+    assert!(
+        t0.elapsed().as_secs() < 10,
+        "BUG-D: temporal_query took {:?} (>10s)",
+        t0.elapsed()
+    );
+}
+
+#[test]
+fn bug_d_probe_check_consistency_latency() {
+    let Some(engine) = r1_engine() else {
+        eprintln!("skipping: LEANKG_R2_PROBE_SCHEMA not set");
+        return;
+    };
+    let t0 = std::time::Instant::now();
+    let report = engine.check_consistency().expect("consistency");
+    eprintln!(
+        "check_consistency: broken={} stale={} in {:?}",
+        report.broken,
+        report.stale,
+        t0.elapsed()
+    );
+    assert!(
+        t0.elapsed().as_secs() < 15,
+        "BUG-D: check_consistency took {:?} (>15s)",
+        t0.elapsed()
+    );
+}
+
+#[test]
+fn bug_d_probe_get_context_latency() {
+    let Some(engine) = r1_engine() else {
+        eprintln!("skipping: LEANKG_R2_PROBE_SCHEMA not set");
+        return;
+    };
+    let file = probe_file(&engine);
+    let t0 = std::time::Instant::now();
+    let ctx = engine.get_context(&file, 4000).expect("context");
+    eprintln!(
+        "get_context({file}): {} elements in {:?}",
+        ctx.elements.len(),
+        t0.elapsed()
+    );
+    assert!(
+        t0.elapsed().as_secs() < 10,
+        "BUG-D: get_context took {:?} (>10s)",
+        t0.elapsed()
+    );
+}
+
+#[test]
+fn bug_e_probe_agent_focus_latency() {
+    let Some(engine) = r1_engine() else {
+        eprintln!("skipping: LEANKG_R2_PROBE_SCHEMA not set");
+        return;
+    };
+    let persona = leankg::graph::query::AgentPersona {
+        name: "r2-probe".into(),
+        ..serde_json::from_str(
+            "{\"name\":\"r2-probe\",\"path_filters\":[\"./src/mcp\"],\"element_types\":[\"function\"]}",
+        )
+        .unwrap()
+    };
+    let t0 = std::time::Instant::now();
+    let focus = engine.agent_focus(&persona).expect("focus");
+    eprintln!(
+        "agent_focus: {} elements {} rels in {:?}",
+        focus.elements.len(),
+        focus.relationships.len(),
+        t0.elapsed()
+    );
+    assert!(
+        t0.elapsed().as_secs() < 5,
+        "BUG-E: agent_focus took {:?} (>5s)",
+        t0.elapsed()
+    );
+}
