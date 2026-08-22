@@ -2410,6 +2410,12 @@ fn pk_for_table(table: &str) -> Option<&'static str> {
         "accounts" => Some("id"),
         "orgs" => Some("id"),
         "access_tokens" => Some("id"),
+        // knowledge_entries has a UNIQUE index on id (schema.sql
+        // knowledge_entries_id_uniq) and update_knowledge re-puts an existing
+        // row through create_knowledge_entry's `:put` — without the PK entry
+        // that becomes a plain INSERT and dies on the unique constraint
+        // ("Failed to update knowledge entry: db error").
+        "knowledge_entries" => Some("id"),
         // Composite keys: two members of one org/team are distinct rows, so
         // the conflict target must cover both columns.
         "org_memberships" => Some("org_id, account_id"),
@@ -3658,6 +3664,40 @@ mod tests {
         assert!(
             t.sql.contains("ON CONFLICT"),
             "keyed :put must upsert: {}",
+            t.sql
+        );
+    }
+
+    #[test]
+    fn knowledge_entries_put_upserts_on_id() {
+        // update_knowledge (db/mod.rs update_knowledge_entry) re-puts the same
+        // id through create_knowledge_entry's `:put`. schema.sql carries a
+        // UNIQUE index on knowledge_entries(id), so the PG translation must be
+        // an ON CONFLICT ("id") DO UPDATE upsert — a plain INSERT fails with
+        // a unique-violation on every update ("Failed to update knowledge
+        // entry: db error", hackathon R1 sweep issue #3).
+        let q = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <- [["k-general-x", "general", "t2", "c2", null, null, null, "[]", "production", null, "mcp-client", 1, 2]] :put knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;
+        let t = translate(q, BTreeMap::new()).unwrap();
+        assert_eq!(t.kind, TranslationKind::Write);
+        assert!(
+            t.sql.contains("INSERT INTO knowledge_entries"),
+            "got: {}",
+            t.sql
+        );
+        assert!(
+            t.sql.contains(r#"ON CONFLICT ("id") DO UPDATE SET"#),
+            "knowledge_entries :put must upsert on id: {}",
+            t.sql
+        );
+        assert!(
+            t.sql.contains(r#""title" = EXCLUDED."title""#)
+                && t.sql.contains(r#""updated_at" = EXCLUDED."updated_at""#),
+            "upsert must refresh non-key columns: {}",
+            t.sql
+        );
+        assert!(
+            !t.sql.contains(r#""id" = EXCLUDED."id""#),
+            "pk column must stay out of the SET list: {}",
             t.sql
         );
     }
