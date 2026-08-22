@@ -7,6 +7,7 @@ pub mod budget;
 pub mod cli;
 pub mod compress;
 pub mod config;
+pub mod connect;
 pub mod conversation_indexer;
 pub mod cost_estimate;
 pub mod ctags_export;

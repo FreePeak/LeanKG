@@ -16,6 +16,7 @@ mod budget;
 mod cli;
 mod compress;
 mod config;
+mod connect;
 mod conversation_indexer;
 mod cost_estimate;
 mod ctags_export;
@@ -587,6 +588,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         cli::CLICommand::Install => {
             install_mcp_config()?;
+        }
+        cli::CLICommand::Connect {
+            client,
+            remote,
+            remove,
+            project,
+        } => {
+            let project_path = project.as_deref().map(std::path::PathBuf::from);
+            let path = connect::run_with_home(
+                client,
+                remote.as_deref(),
+                remove,
+                project_path.as_deref(),
+                None,
+            )?;
+            if remove {
+                println!("Removed leankg entry from {}", path.display());
+            } else {
+                println!("Configured leankg for {client:?} at {}", path.display());
+                println!("Restart the client so it picks up the leankg MCP server.");
+            }
         }
         cli::CLICommand::Doctor { kill } => {
             run_doctor(kill)?;
