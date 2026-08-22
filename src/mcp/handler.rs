@@ -325,17 +325,14 @@ impl ToolHandler {
 
         // US-GF-06 / FR-GF-13: auto-write GRAPH_REPORT.md after successful index
         if result.is_ok() && (tool_name == "mcp_index" || tool_name == "mcp_index_docs") {
-            let project_path = std::env::var("LEANKG_MCP_PROJECT")
-                .ok()
-                .map(std::path::PathBuf::from)
-                .or_else(|| std::env::current_dir().ok());
-            if let Some(pp) = project_path {
-                let db_path = pp.join(".leankg");
-                if let Err(e) =
-                    crate::report::write::write_graph_report_after_index(&pp, &db_path).await
-                {
-                    tracing::warn!("GRAPH_REPORT auto-write skipped after {}: {}", tool_name, e);
-                }
+            // Anchor at the ACTIVE project root, not LEANKG_MCP_PROJECT/CWD
+            // (R1 sweep issue #4 — the report landed in the parent repo).
+            let pp = self.active_project_root();
+            let db_path = pp.join(".leankg");
+            if let Err(e) =
+                crate::report::write::write_graph_report_after_index(&pp, &db_path).await
+            {
+                tracing::warn!("GRAPH_REPORT auto-write skipped after {}: {}", tool_name, e);
             }
         }
 
@@ -1349,21 +1346,19 @@ impl ToolHandler {
             .map_err(|e| e.to_string())?;
         // Persist to disk when format is not json
         if format != "json" {
-            if let Some(project_path) = std::env::var("LEANKG_MCP_PROJECT")
-                .ok()
-                .map(std::path::PathBuf::from)
-            {
-                let db_path = project_path.join(".leankg");
-                let pp = project_path.clone();
-                // Spawn a background task so the MCP response isn't delayed
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        crate::report::write::write_graph_report_after_index(&pp, &db_path).await
-                    {
-                        tracing::warn!("MCP get_graph_report persist: {}", e);
-                    }
-                });
-            }
+            // Anchor at the ACTIVE project root, not LEANKG_MCP_PROJECT/CWD
+            // — those point at whatever directory the server was launched
+            // from, so the report escaped to the parent repo (R1 issue #4).
+            let pp = self.active_project_root();
+            let db_path = pp.join(".leankg");
+            // Spawn a background task so the MCP response isn't delayed
+            tokio::spawn(async move {
+                if let Err(e) =
+                    crate::report::write::write_graph_report_after_index(&pp, &db_path).await
+                {
+                    tracing::warn!("MCP get_graph_report persist: {}", e);
+                }
+            });
         }
         if format == "json" {
             return Ok(json!({ "report": report }));
@@ -1678,6 +1673,34 @@ impl ToolHandler {
         Ok(value)
     }
 
+    /// The ACTIVE project root for this request, derived from `db_path`.
+    /// Handles all three spellings callers use (`<root>`,
+    /// `<root>/.leankg`, `<root>/.leankg/leankg.db`).
+    fn active_project_root(&self) -> std::path::PathBuf {
+        let mut root = self.db_path.clone();
+        if root.ends_with("leankg.db") {
+            root = root.parent().unwrap_or(&root).to_path_buf();
+        }
+        if root.ends_with(".leankg") {
+            root = root.parent().unwrap_or(&root).to_path_buf();
+        }
+        root
+    }
+
+    /// Resolve an export artifact path against the ACTIVE project root.
+    ///
+    /// Relative out paths (including the `.leankg/...` defaults) previously
+    /// resolved against the server process CWD, so exports escaped into a
+    /// parent repo's `.leankg/` (R1 sweep issue #4). Anchor them at this
+    /// request's project root; absolute paths are honoured verbatim.
+    fn resolve_out_path(&self, out_path: &str) -> std::path::PathBuf {
+        let p = std::path::Path::new(out_path);
+        if p.is_absolute() {
+            return p.to_path_buf();
+        }
+        self.active_project_root().join(p)
+    }
+
     fn export_graph_snapshot(&self, args: &Value) -> Result<Value, String> {
         if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
             &self.graph_engine,
@@ -1689,10 +1712,15 @@ impl ToolHandler {
             .as_str()
             .unwrap_or(".leankg/graph-snapshot.json");
         let project = args["project"].as_str().unwrap_or(".");
-        let out = std::path::Path::new(out_path);
+        // Resolve against the ACTIVE project root BEFORE Path::new so the
+        // default/relative spellings cannot escape to the server CWD.
+        let out = self.resolve_out_path(out_path);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
         let written = self
             .graph_engine
-            .export_snapshot(std::path::Path::new(project), out)
+            .export_snapshot(std::path::Path::new(project), &out)
             .map_err(|e| e.to_string())?;
         Ok(json!({
             "written": written,
@@ -1734,11 +1762,11 @@ impl ToolHandler {
         let exporter = export::HtmlExporter::new();
         let html = exporter.generate_html_with_meta(&elements, &relationships, &meta);
 
-        let out = std::path::Path::new(out_path);
+        let out = self.resolve_out_path(out_path);
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        std::fs::write(out, &html).map_err(|e| e.to_string())?;
+        std::fs::write(&out, &html).map_err(|e| e.to_string())?;
 
         Ok(json!({
             "path": out.display().to_string(),
@@ -5013,6 +5041,67 @@ mod tests {
         let shared = crate::db::backend::init_db(&tmp.path().join("leankg.db")).unwrap();
         let graph = GraphEngine::new(shared);
         (ToolHandler::new(graph, tmp.path().to_path_buf()), tmp)
+    }
+
+    #[tokio::test]
+    async fn relative_export_out_paths_land_inside_active_project_root() {
+        // R1 sweep issue #4: export_graph_snapshot / export_html / get_graph_report
+        // reported success but wrote into the SERVER PROCESS CWD's .leankg (the
+        // parent repo) instead of the served project. Relative out paths must be
+        // anchored at the request's project root.
+        let (handler, tmp) = handler_in_temp_project();
+        std::fs::write(tmp.path().join("a.rs"), "fn a() {}\n").unwrap();
+
+        let snap = handler
+            .execute_tool(
+                "export_graph_snapshot",
+                &json!({"out_path": ".leankg/graph-snapshot.json"}),
+            )
+            .await
+            .expect("export_graph_snapshot must succeed");
+        let reported = snap["path"].as_str().unwrap();
+        assert!(
+            reported.starts_with(tmp.path().to_str().unwrap()),
+            "snapshot escaped the project root: {reported}"
+        );
+        assert!(
+            tmp.path().join(".leankg/graph-snapshot.json").exists(),
+            "graph-snapshot.json must land inside <project>/.leankg"
+        );
+
+        let html = handler
+            .execute_tool(
+                "export_html",
+                &json!({"out_path": ".leankg/graph.html", "max_nodes": 10}),
+            )
+            .await
+            .expect("export_html must succeed");
+        let reported = html["path"].as_str().unwrap();
+        assert!(
+            reported.starts_with(tmp.path().to_str().unwrap()),
+            "html export escaped the project root: {reported}"
+        );
+        assert!(tmp.path().join(".leankg/graph.html").exists());
+    }
+
+    #[test]
+    fn default_export_paths_use_project_leankg_dir() {
+        // With NO out_path argument the tools defaulted to ".leankg/..." —
+        // relative to the server process CWD, not the project.
+        let (handler, tmp) = handler_in_temp_project();
+        assert_eq!(
+            handler.resolve_out_path(".leankg/graph-snapshot.json"),
+            tmp.path().join(".leankg").join("graph-snapshot.json")
+        );
+        assert_eq!(
+            handler.resolve_out_path("./.leankg/graph.html"),
+            tmp.path().join(".leankg").join("graph.html")
+        );
+        // Absolute out paths are honoured verbatim.
+        assert_eq!(
+            handler.resolve_out_path("/tmp/opencode/x.json"),
+            std::path::PathBuf::from("/tmp/opencode/x.json")
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -1463,27 +1463,66 @@ pub fn schema_for_path(db_path: &std::path::Path) -> String {
     format!("leankg_p_{hex}")
 }
 
+/// Canonicalize a project path for identity-key derivation.
+///
+/// The ONE canonicalization used everywhere a project key is derived (CLI
+/// index/embed and MCP server alike). Existing paths are resolved through
+/// `std::fs::canonicalize` so symlinks, `.`/`..` components, relative
+/// spellings and trailing slashes all collapse to one physical directory.
+/// Non-existent paths fall back to lexical normalization (CWD-joined,
+/// dot-components dropped) — needed before first init and for the
+/// cross-mount `project_path` contract in leankg.yaml.
+pub fn canonical_project_root(path: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(canon) = std::fs::canonicalize(path) {
+        return canon;
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join(path)
+    };
+    absolute
+        .components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .collect()
+}
+
 /// Resolve the schema key for a project: prefer `project_path` from the
 /// project's `leankg.yaml` (stable across mounts), else the `.leankg` dir
 /// path itself. `db_path` may be a `.leankg` dir or a project root.
 fn project_identity_key(db_path: &std::path::Path) -> String {
     // db_path is either `<root>/.leankg` (reader/MCP) or
-    // `<root>/.leankg/leankg.db` (writer index/embed). Normalize both to the
-    // project root so reader and writer derive the SAME schema even when the
-    // project's leankg.yaml lacks an explicit `project_path`.
-    let mut root = db_path.to_path_buf();
+    // `<root>/.leankg/leankg.db` (writer index/embed). Normalize BOTH the
+    // suffix stripping and the resulting root through ONE canonicalization
+    // so reader and writer derive the SAME schema regardless of how the
+    // path was spelled (R1 sweep issue #5: CLI `index ./src` keyed the
+    // literal string while MCP `--project <abs>` hashed the real path).
+    let normalized = canonical_project_root(db_path);
+    let mut root = normalized;
     // Strip a trailing `<root>/.leankg/leankg.db` → `<root>/.leankg`.
     if root.ends_with("leankg.db") {
         root = root.parent().unwrap_or(&root).to_path_buf();
     }
-    // Strip a trailing `<root>/.leankg` → `<root>`.
+    // Strip a trailing `<root>/.leankg` → `<root>` (re-canonicalize in case
+    // the suffix strip exposed a symlinked ancestor).
     if root.ends_with(".leankg") {
         root = root.parent().unwrap_or(&root).to_path_buf();
     }
+    let root = canonical_project_root(&root);
     if let Ok(content) = std::fs::read_to_string(root.join("leankg.yaml")) {
         if let Ok(config) = serde_yaml::from_str::<crate::config::ProjectConfig>(&content) {
             if let Some(pp) = config.project.project_path {
-                return pp.to_string_lossy().to_string();
+                // Resolve a relative project_path against THIS project root
+                // (`project_path: "./src"` means `<root>/src`, identical to
+                // what `leankg index ./src` inside <root> keys on), then use
+                // the same canonicalization. Unresolvable paths keep their
+                // lexical form — the cross-mount identity contract.
+                let joined = if pp.is_relative() { root.join(pp) } else { pp };
+                return canonical_project_root(&joined)
+                    .to_string_lossy()
+                    .to_string();
             }
         }
     }
@@ -2233,6 +2272,69 @@ mod tests {
             rs,
             schema_for_path(std::path::Path::new("/host/demo/.leankg")),
             "schema must key on the host project_path, not the mount path"
+        );
+    }
+
+    /// Serialize tests that mutate the process CWD.
+    static CHDIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn relative_and_absolute_spellings_derive_same_schema() {
+        // R1 sweep issue #5: `leankg index ./src` keyed the schema on the
+        // literal string "./src" while the MCP server started with
+        // --project <abs-path> derived a different key — the server served
+        // an EMPTY DB right after a successful index. The same physical
+        // directory must always produce the same identity key.
+        let _guard = CHDIR_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let orig_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let rel_key = schema_for_path(std::path::Path::new("./src/.leankg/leankg.db"));
+        std::env::set_current_dir(orig_cwd).unwrap();
+
+        let abs_key = schema_for_path(&src.join(".leankg").join("leankg.db"));
+        assert_eq!(
+            rel_key, abs_key,
+            "CLI relative index path and MCP absolute --project must share one schema"
+        );
+    }
+
+    #[test]
+    fn trailing_slash_and_dot_components_derive_same_schema() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let plain = schema_for_path(&src.join(".leankg"));
+        let trailing =
+            schema_for_path(std::path::Path::new(&format!("{}/.leankg/", src.display())));
+        let dotted = schema_for_path(std::path::Path::new(&format!(
+            "{}/./src/../src/.leankg/leankg.db",
+            dir.path().display()
+        )));
+        assert_eq!(plain, trailing, "trailing slash must not change the key");
+        assert_eq!(
+            plain, dotted,
+            "./ and ../ components must not change the key"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_project_root_derives_same_schema() {
+        let dir = TempDir::new().unwrap();
+        let real = dir.path().join("real-project");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = dir.path().join("link-to-project");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert_eq!(
+            schema_for_path(&link),
+            schema_for_path(&real),
+            "a symlink pointing at the project root must not fork the schema"
         );
     }
 
