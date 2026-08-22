@@ -5354,7 +5354,11 @@ impl GraphEngine {
         }
 
         let mut nodes: Vec<(String, usize)> = degree.into_iter().collect();
-        nodes.sort_by_key(|n| std::cmp::Reverse(n.1));
+        // Deterministic total order — degree desc, then qualified_name asc.
+        // The input vec comes from a randomly-seeded HashMap, so without the
+        // tie-break the `.take(limit)` cut varies between process runs
+        // (breaks `export --markdown` byte-determinism, H11).
+        nodes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
         if let Some(pctl) = exclude_hubs_percentile {
             if !nodes.is_empty() {
