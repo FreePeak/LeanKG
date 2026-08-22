@@ -16,7 +16,7 @@ LeanKG is a **pre-built knowledge graph** of the codebase. Always query it first
 
 ---
 
-## Semantic Discovery (v3.6.2 — CozoDB HNSW preferred)
+## Semantic Discovery (v3.6.2 — pgvector HNSW preferred)
 
 When the binary was built with `--features embeddings` AND the embedding
 index has been built (`leankg embed` after `leankg index`), prefer the
@@ -971,14 +971,14 @@ impl ToolHandler {
         }))
     }
 
-    /// Pre-process a user query string into valid Cozo Datalog syntax.
+    /// Pre-process a user query string into a valid legacy Datalog-style script.
     /// Handles common patterns like:
-    ///   "function[file ~ 'chat']"  →  full Cozo query
+    ///   "function[file ~ 'chat']"  →  full legacy Datalog-style query
     ///   "?[name] := *code_elements"  →  pass through
     fn preprocess_datalog_query(query: &str) -> String {
         let trimmed = query.trim();
 
-        // Already a valid Cozo query (starts with ? or :)
+        // Already a valid legacy Datalog-style script (starts with ? or :)
         if trimmed.starts_with('?') || trimmed.starts_with(':') {
             return trimmed.to_string();
         }
@@ -1012,11 +1012,13 @@ impl ToolHandler {
                 other => other,
             };
 
-            // NOTE: Cozo requires all columns to be bound in the head when using
-            // a materialized relation (*relation[...]). The full schema is:
+            // NOTE: the legacy engine (removed) required all columns to be
+            // bound in the head when using a materialized relation
+            // (*relation[...]); keep that shape since scripts are translated
+            // positionally. The full schema is:
             // qualified_name, element_type, name, file_path, line_start, line_end,
             // language, parent_qualified, cluster_id, cluster_label, metadata
-            // Use regex_matches() for regex filtering in Cozo
+            // Use regex_matches() for regex filtering in the legacy Datalog-style script
             return format!(
                 "?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] \
                  := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, _], \
@@ -1035,7 +1037,7 @@ impl ToolHandler {
             );
         }
 
-        // Fall through - pass as-is and let Cozo report the error
+        // Fall through - pass as-is and let the SQL translation/backend report the error
         trimmed.to_string()
     }
 
@@ -1934,7 +1936,7 @@ impl ToolHandler {
         let model = args["model"].as_str();
 
         // FR-HNSW-D: when the embeddings feature is on AND an embedding
-        // index exists, route through CozoDB HNSW (BGE-small-en-v1.5) →
+        // index exists, route through pgvector HNSW (BGE-small-en-v1.5) →
         // cross-encoder rerank → graph traverse. Falls back to the
         // ontology-first path when embeddings are not built (no index
         // rows), so the tool stays useful on slim installs.
@@ -2480,7 +2482,7 @@ impl ToolHandler {
     fn run_raw_query(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
 
-        // Pre-process common query patterns to valid Cozo Datalog
+        // Pre-process common query patterns to a valid legacy Datalog-style script
         let processed_query = Self::preprocess_datalog_query(query);
 
         let params: std::collections::BTreeMap<String, serde_json::Value> = args
@@ -4039,7 +4041,7 @@ impl ToolHandler {
         let _project = args["project"].as_str().unwrap_or(".");
         let model = args["model"].as_str();
 
-        // Vectors live in CozoDB now; freshness check is a state-table count.
+        // Vectors live in Postgres/pgvector now; freshness check is a state-table count.
         // FR-SEM-07: cheap :limit 1 — never list_all (~147k rows) before retrieve.
         // When a `model` is requested, scope the gate to that model's collection
         // (the default BGE table may be empty while the requested model is not).
@@ -4082,7 +4084,7 @@ impl ToolHandler {
                 .map_err(|e| format!("Failed to init retrieval pipeline: {}", e))?;
         let t_pipeline_ms = t0.elapsed().as_millis() as u64;
 
-        // CozoDB HNSW stores vectors as first-class data, so the old
+        // pgvector HNSW stores vectors as first-class data, so the old
         // `.meta.json` mtime staleness check no longer applies. Staleness
         // is now detected via the `embedding_state.state` column.
         let embeddings_stale = false;

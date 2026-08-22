@@ -135,9 +135,10 @@ pub fn delete_business_logic(
     db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // cozo 0.7.6 delete-by-predicate: rule derives the full row, then `:rm`
+    // Legacy 0.7.6 delete-by-predicate: rule derives the full row, then `:rm`
     // with ALL relation columns named. `:delete rel where col = $eq` is
-    // invalid syntax in this cozo version (parser error at the `where`).
+    // invalid syntax in that legacy parser version (parser error at the
+    // `where`).
     let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], element_qualified = $eq :rm business_logic {element_qualified, description, user_story_id, feature_id}"#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
@@ -762,7 +763,7 @@ pub fn update_knowledge_entry(
     db: &dyn crate::db::backend::DbBackend,
     entry: &models::KnowledgeEntry,
 ) -> Result<models::KnowledgeEntry, Box<dyn std::error::Error>> {
-    // :put acts as upsert in CozoDB
+    // :put acts as upsert in the legacy engine
     create_knowledge_entry(db, entry)
 }
 
@@ -770,7 +771,8 @@ pub fn delete_knowledge_entry(
     db: &dyn crate::db::backend::DbBackend,
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // CozoDB has no `:delete` operator. Read the matching row(s) by id via
+    // The legacy engine has no `:delete` operator. Read the matching row(s)
+    // by id via
     // head-binding, then `:rm` exactly those rows.
     let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], id = $id
 :rm knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;

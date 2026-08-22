@@ -1,9 +1,9 @@
 //! Embedding build orchestration: incremental vs full rebuild, plus orphan
 //! reaping. Implements `cargo run --release -- embed [--full]`.
 //!
-//! Vectors live in the CozoDB `embedding_vectors` relation (keyed by
-//! qualified_name, HNSW index via `::hnsw create embedding_vectors:vec_idx`).
-//! The `embedding_state` relation tracks freshness for incremental builds.
+//! Vectors live in the Postgres `embedding_vectors` table (keyed by
+//! qualified_name, HNSW ANN via pgvector).
+//! The `embedding_state` table tracks freshness for incremental builds.
 //!
 //! Incremental flow (default):
 //! 1. Walk all `code_elements` and compute the current text blob + hash for
@@ -23,8 +23,8 @@
 //!    (a) no state row exists, OR
 //!    (b) `state != "fresh"`, OR
 //!    (c) stored `content_hash` differs from the current blob hash.
-//! 3. For each batch: run fastembed inference, then `:put embedding_vectors`
-//!    in chunks of `UPSERT_CHUNK` (CozoDB pest parser limits).
+//! 3. For each batch: run fastembed inference, then upsert `embedding_vectors`
+//!    in chunks of `UPSERT_CHUNK`.
 //! 4. Mark embedded rows fresh in `embedding_state`.
 //! 5. Reap orphans: state rows whose qualified_name is no longer in the work
 //!    list get their vector removed (`:rm embedding_vectors`) and their state
@@ -74,10 +74,10 @@ impl EmbedderBackend {
     }
 }
 
-/// CozoDB pest parser has stack-depth limits on inline `<~ [...]` literals
-/// (limit ≈ 500 rows). We use *parameterized* queries
-/// (`?[col] <- $rows :put ...`) so the limit does NOT apply here. The
-/// practical bottleneck is the per-:put CozoDB transaction commit
+/// The legacy engine (removed) capped inline `<~ [...]` literals by its
+/// pest parser stack depth (limit ≈ 500 rows). Writes are *parameterized*
+/// batches now, so that limit does NOT apply here. The
+/// practical bottleneck is the per-batch commit
 /// (~10s regardless of batch size), so larger UPSERT_CHUNK amortizes
 /// that fixed cost across more rows. 5000 was the empirical sweet spot
 /// on a 400k-row workspace: ~6 min total vs ~120 min at UPSERT_CHUNK=500.
@@ -141,7 +141,7 @@ pub struct EmbedMemoryPlan {
 /// Cap workers / batch / writer queue so peak RSS stays near `LEANKG_EMBED_MAX_MB`.
 ///
 /// Rough model (BGE-small DirectEmbedder):
-/// - base process + Cozo ≈ 700–900 MB
+/// - base process + Postgres client ≈ 700–900 MB
 /// - each ONNX worker session ≈ 300–400 MB (weights + arenas)
 /// - in-flight channel vectors ≈ 2 KB each
 pub fn plan_embed_memory(requested_workers: usize, requested_batch: usize) -> EmbedMemoryPlan {
@@ -208,11 +208,11 @@ pub fn plan_embed_memory_with_budget(
         DEFAULT_UPSERT_CHUNK
     } else {
         // FR-EMBED-PERF-1000: high-memory budgets allow much larger import
-        // batches. Each CozoDB commit has ~16s fixed overhead (WAL/fsync);
+        // batches. Each batch commit has fixed overhead;
         // at 5000 rows that caps the writer at ~320 vec/s regardless of worker
         // count. 20000 rows amortizes the same fixed cost → ~1250 vec/s.
         // Lower peak RSS per flush (per-vector 384 f32 ≈ 1.5 KB) so a 20k
-        // flush is ~30 MB of Cozo row data — safe under 12g.
+        // flush is ~30 MB of row data — safe under 12g.
         DEFAULT_UPSERT_CHUNK * 4
     };
     let upsert_chunk = effective_upsert_chunk().min(upsert_cap).max(100);
@@ -257,23 +257,6 @@ fn wait_for_embed_rss_headroom(max_rss_mb: u64) {
     }
 }
 
-/// Opt-in hint for a locally patched Cozo (`vendor/cozo`) that honors
-/// `LEANKG_COZO_ROCKS_BULK=1` (`disable_wal` + `sync(false)`). Stock crates.io
-/// Cozo ignores the env; measured e2e gain was ≤1.15× so it is not required.
-fn enable_rocks_bulk_writes() {
-    let on = std::env::var("LEANKG_COZO_ROCKS_BULK")
-        .map(|v| {
-            let t = v.trim();
-            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false);
-    if on {
-        tracing::info!(
-            "LEANKG_COZO_ROCKS_BULK=1 set (no-op unless using a Cozo build that honors it)"
-        );
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildMode {
     /// Skip up-to-date rows; embed only stale/missing/changed.
@@ -288,7 +271,7 @@ pub struct BuildOptions {
     /// Vectors per fastembed call. ONNX Runtime pre-allocates per-thread
     /// memory arenas, so peak RSS scales with batch size.
     pub batch_size: usize,
-    /// Accepted for backward-compat with CLI flag; ignored (CozoDB HNSW
+    /// Accepted for backward-compat with CLI flag; ignored (pgvector HNSW
     /// manages its own capacity).
     pub reserve_capacity: Option<usize>,
     /// When set, only embed `CodeElement`s whose `element_type` is in this
@@ -507,8 +490,8 @@ fn work_item_from_element(el: &crate::db::models::CodeElement) -> Option<WorkIte
     })
 }
 
-/// Above this stale count, per-row `find_element` is pathological (Cozo
-/// script parse+exec × N) and leaves `embedded=0` for many minutes on
+/// Above this stale count, per-row `find_element` is pathological
+/// (script parse+exec × N) and leaves `embedded=0` for many minutes on
 /// mega-graphs. One paginated scan + HashSet join is O(elements).
 const INCREMENTAL_POINT_LOOKUP_CAP: usize = 2_000;
 
@@ -810,7 +793,7 @@ fn nothing_to_embed_report(
         skipped_fresh_count: skipped_fresh,
         orphaned_count: 0,
         index_size,
-        index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+        index_path: PathBuf::from("embedding_vectors table (pgvector HNSW)"),
     })
 }
 
@@ -935,7 +918,7 @@ pub fn run(
             skipped_fresh_count: skipped_fresh,
             orphaned_count: orphan_rows.len(),
             index_size,
-            index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+            index_path: PathBuf::from("embedding_vectors table (pgvector HNSW)"),
         });
     }
 
@@ -988,7 +971,6 @@ pub fn run(
     // inference-only run. No HNSW drop/rebuild, no vector upserts, no state
     // stamps, no orphan reaping — nothing touches Postgres.
     if opts.write_vectors {
-        enable_rocks_bulk_writes();
         if use_incr_hnsw {
             tracing::info!(
                 "small dirty set ({}); incremental HNSW puts (no full drop/rebuild)",
@@ -1102,7 +1084,7 @@ pub fn run(
         skipped_fresh_count: skipped_fresh,
         orphaned_count: orphan_rows.len(),
         index_size,
-        index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+        index_path: PathBuf::from("embedding_vectors table (pgvector HNSW)"),
     })
 }
 
@@ -1111,7 +1093,7 @@ pub fn run(
 /// shards. Completed `(qualified_name, vector)` pairs are pushed onto a
 /// bounded crossbeam channel; a single writer thread consumes the
 /// channel, accumulating up to `UPSERT_CHUNK` rows per `:put` so the
-/// CozoDB parser overhead is amortized over 500-row transactions.
+/// Parser/commit overhead is amortized over 500-row transactions.
 ///
 /// Why this is faster than the previous Mutex-on-write approach:
 ///   * Inference runs in parallel (N× BGE-small throughput)
@@ -1217,7 +1199,7 @@ pub fn build_index_parallel(
                 skipped_fresh_count: skipped_fresh,
                 orphaned_count: 0,
                 index_size: vectors_existing,
-                index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+                index_path: PathBuf::from("embedding_vectors table (pgvector HNSW)"),
             });
         }
         tracing::info!(
@@ -1237,7 +1219,7 @@ pub fn build_index_parallel(
             skipped_fresh_count: skipped_fresh,
             orphaned_count: orphan_rows.len(),
             index_size,
-            index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+            index_path: PathBuf::from("embedding_vectors table (pgvector HNSW)"),
         });
     }
 
@@ -1259,7 +1241,6 @@ pub fn build_index_parallel(
         vectors_existing,
     );
     if opts.write_vectors {
-        enable_rocks_bulk_writes();
         if use_incr_hnsw {
             tracing::info!(
                 "small dirty set ({}); parallel incremental HNSW puts (no full drop/rebuild)",
@@ -1615,7 +1596,7 @@ pub fn build_index_parallel(
         skipped_fresh_count: skipped_fresh,
         orphaned_count: orphan_rows.len(),
         index_size,
-        index_path: PathBuf::from(".leankg/embedding_vectors (CozoDB HNSW)"),
+        index_path: PathBuf::from("embedding_vectors table (pgvector HNSW)"),
     })
 }
 
@@ -1625,13 +1606,13 @@ fn active_vectors_relation() -> Result<String, Box<dyn std::error::Error>> {
     Ok(crate::embeddings::registry::resolve_active_model()?.vectors_relation())
 }
 
-/// Helper: write a batch of (qualified_name, vector) pairs to CozoDB
+/// Helper: write a batch of (qualified_name, vector) pairs to Postgres
 /// using `import_relations`. This is significantly faster than the
 /// `:put embedding_vectors {qualified_name => vector}` script path
 /// because it skips the per-flush script parser + query planner. The
 /// relation already exists (created by `ensure_embedding_state_table`)
 /// and the HNSW index is dropped before the bulk insert (rebuilt at the
-/// end), so the "no indices / no triggers" caveat in CozoDB's docs is
+/// end), so the "no indices / no triggers" caveat is
 /// satisfied for the duration of the embed.
 ///
 /// Throughput measured on M2 Pro 10c with /Users/you/work/other-repo
@@ -1647,8 +1628,8 @@ pub(crate) fn upsert_pairs_to_db(
     // was deleted — Postgres pgvector is the only vector store.
 
     if hnsw_live {
-        // The HNSW index stays live during incremental puts, and CozoDB
-        // 0.7.6 does NOT maintain usearch/HNSW indices on
+        // The HNSW index stays live during incremental puts. The legacy
+        // engine (removed) did NOT maintain its usearch/HNSW indices on
         // `import_relations` (vectors become invisible to
         // `~embedding_vectors:vec_idx`). The `:put` script form does
         // maintain the index, so the incremental path must use it.
@@ -1657,7 +1638,7 @@ pub(crate) fn upsert_pairs_to_db(
 
     let chunk_size = effective_upsert_chunk();
     for chunk in pairs.chunks(chunk_size) {
-        // Build the NamedRows with raw cozo DataValues — the PostgresBackend
+        // Build the NamedRows with raw DataValues — the PostgresBackend
         // recognises DataValue::List / DataValue::Vec and emits the pgvector
         // literal directly. The translator (via `import_relations` →
         // INSERT … ON CONFLICT) keeps the write path single-round-trip.
@@ -1737,8 +1718,9 @@ fn put_pairs_to_db_script(
 /// path was ~6× slower on the writer commit phase; this shares the
 /// faster implementation so a `workers=1` embed gets the same writer
 /// throughput as `workers=4`. When `hnsw_live` is set (incremental path,
-/// index not dropped), writes go through `:put` instead because CozoDB
-/// 0.7.6 skips HNSW index maintenance on `import_relations`.
+/// index not dropped), writes go through the script form instead — the
+/// legacy engine (removed) skipped HNSW index maintenance on
+/// `import_relations`, and that routing is preserved.
 fn upsert_vectors<'a, I>(
     db: &dyn crate::db::backend::DbBackend,
     items: I,
@@ -1888,8 +1870,8 @@ pub struct BackgroundEmbedHandle {
 }
 
 /// Spawn a detached background embed that runs inside the calling
-/// process, sharing the caller's `CozoDb` handle via `GraphEngine`'s
-/// `Arc<CozoDb>`. This avoids the RocksDB single-writer rejection that a
+/// process, sharing the caller's DB handle via `GraphEngine`. This avoids
+/// writer contention against the live store that a
 /// second `leankg embed` child would hit if launched while MCP is live.
 ///
 /// The worker writes `<leankg_dir>/embed_status.json` with progress and a
@@ -2063,8 +2045,8 @@ pub fn spawn_background_embed(
             };
 
             // Periodic status snapshot poller. Reads the live row count from the
-            // shared `CozoDb` handle (Arc-clone is safe — RocksDB allows
-            // concurrent readers in the same process) and writes a JSON
+            // shared DB handle (Arc-clone is safe — concurrent
+            // readers in the same process are fine) and writes a JSON
             // snapshot every 5s so `leankg embed --status` shows live
             // numbers while the embed is running.
             use std::sync::atomic::{AtomicBool, Ordering};
@@ -2339,7 +2321,7 @@ mod tests {
     }
 
     // FR-EMBED-PERF-1000: high-memory budgets allow 4× larger import batches
-    // so the ~16s/commit CozoDB writer cost amortizes toward >1000 vec/s.
+    // so the fixed per-commit writer cost amortizes toward >1000 vec/s.
     #[test]
     fn embed_memory_plan_12g_budget_allows_large_upsert_chunk() {
         let plan = plan_embed_memory_with_budget(8, 128, 12000);
@@ -2635,8 +2617,8 @@ mod tests {
     }
 
     /// Regression for REL-REFRESH-01: the incremental path writes vectors
-    /// while the HNSW index stays live, and CozoDB 0.7.6 does NOT update
-    /// usearch/HNSW indices on `import_relations` (vectors become
+    /// while the HNSW index stays live, and the legacy engine (removed)
+    /// did NOT update its usearch/HNSW indices on `import_relations` (vectors become
     /// invisible to `~embedding_vectors:vec_idx` — semantic_search then
     /// reports `ann_candidate_count: 0` forever on small projects). The
     /// incremental writer must use the `:put` script form so the index is

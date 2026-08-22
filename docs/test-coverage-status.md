@@ -32,7 +32,7 @@ This document is the **single source of truth** for:
 
 ### 1.2 Integration tests (`tests/integration.rs`)
 
-26 tests covering schema migration (FR-VE-TEST-FACTORY, FR-EMBED-RESUME-04), CozoDB relations, persistent cache, doc generator, and per-language indexing.
+26 tests covering schema migration (FR-VE-TEST-FACTORY, FR-EMBED-RESUME-04), database relations, persistent cache, doc generator, and per-language indexing.
 
 ### 1.3 End-to-end tests
 

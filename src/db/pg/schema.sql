@@ -1,20 +1,20 @@
--- LeanKG PostgreSQL schema (Phase 2 of the CozoDB → PostgreSQL + pgvector migration).
+-- LeanKG PostgreSQL schema (Phase 2 of the legacy-engine → PostgreSQL + pgvector migration).
 --
--- Source of truth for every column: docs/analysis/cozo-query-inventory.md §1,
+-- Source of truth for every column: the legacy query-shape inventory analysis §1,
 -- re-derived from src/db/schema.rs (:create DDL), src/embeddings/state.rs,
 -- src/graph/inventory.rs, src/db/keys.rs, src/indexer/content_hash.rs.
 --
 -- Mapping rules (plan T2.3):
---   cozo Int      → BIGINT        (timestamps kept BIGINT; see per-column notes)
---   cozo Float    → DOUBLE PRECISION
---   cozo String   → TEXT
---   cozo String?  → TEXT (nullable)
---   cozo Bool     → BOOLEAN
+--   legacy Int    → BIGINT        (timestamps kept BIGINT; see per-column notes)
+--   legacy Float  → DOUBLE PRECISION
+--   legacy String → TEXT
+--   legacy String?→ TEXT (nullable)
+--   legacy Bool   → BOOLEAN
 --   JSON-string cols (metadata/tags/members/deploy_envs) → JSONB
 --     All writers `serde_json::to_string()` a serde_json::Value / Vec / struct;
 --     all readers parse the string back. JSONB round-trips identically and the
 --     Postgres translator's row shim returns the JSON text (see pg-schema.md).
---   cozo <F32; 384> → vector(384)  (pgvector)
+--   legacy <F32; 384> → vector(384)  (pgvector)
 --
 -- VEC_DIM: 384 (BGE-small-en-v1.5 embedding dim, plan decision D5). Keep this
 -- in sync with the Rust const `VEC_DIM` in src/db/pg/migrations.rs.
@@ -22,10 +22,11 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ---------------------------------------------------------------------------
--- code_elements — NOT keyed in cozo (composite tuple key: :put with the same
+-- code_elements — NOT keyed in the legacy engine (composite tuple key: :put
+-- with the same
 -- qualified_name but different columns creates duplicate rows, and callers
 -- rely on delete-then-insert, e.g. G53/G44). Therefore NO PRIMARY KEY here;
--- the qualified_name index mirrors cozo's qualified_name_index, the file_path
+-- the qualified_name index mirrors the legacy qualified_name_index, the file_path
 -- index mirrors file_path_index, etc.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS code_elements (
@@ -50,11 +51,11 @@ CREATE INDEX IF NOT EXISTS code_elements_element_type_index ON code_elements (el
 CREATE INDEX IF NOT EXISTS code_elements_parent_qualified_index ON code_elements (parent_qualified);
 
 -- ---------------------------------------------------------------------------
--- relationships — not keyed in cozo. No PK. Indexes mirror the cozo
--- ::index create statements (rel_type, target_qualified, source_qualified).
+-- relationships — not keyed in the legacy engine. No PK. Indexes mirror the
+-- legacy ::index create statements (rel_type, target_qualified, source_qualified).
 -- No FK to code_elements: targets may be absent (e.g. "tested_by" / external
--- symbols; cozo never enforced referential integrity and removal order is
--- delete-relationships-then-elements). Index + comment instead of FK.
+-- symbols; the legacy engine never enforced referential integrity and removal
+-- order is delete-relationships-then-elements). Index + comment instead of FK.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS relationships (
     source_qualified TEXT NOT NULL,
@@ -70,7 +71,7 @@ CREATE INDEX IF NOT EXISTS relationships_target_qualified_index ON relationships
 CREATE INDEX IF NOT EXISTS relationships_source_qualified_index ON relationships (source_qualified);
 
 -- ---------------------------------------------------------------------------
--- business_logic — no PK in cozo, none here.
+-- business_logic — no PK in the legacy engine, none here.
 -- No FK to code_elements.qualified_name: code_elements has no PK (see above)
 -- and business_logic rows can reference non-indexed symbols (e.g. docs for
 -- removed code). Index mirrors query patterns (lookup by element_qualified,
@@ -88,9 +89,9 @@ CREATE INDEX IF NOT EXISTS business_logic_user_story_id_index ON business_logic 
 CREATE INDEX IF NOT EXISTS business_logic_feature_id_index ON business_logic (feature_id);
 
 -- ---------------------------------------------------------------------------
--- context_metrics — no PK in cozo, none here. timestamp is epoch seconds
--- (cozo Int, written as as_secs() — db/mod.rs:640). Indexes mirror the three
--- cozo ::index statements.
+-- context_metrics — no PK in the legacy engine, none here. timestamp is epoch
+-- seconds (a legacy Int, written as as_secs() — db/mod.rs:640). Indexes mirror
+-- the three legacy ::index statements.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS context_metrics (
     tool_name               TEXT NOT NULL,
@@ -119,8 +120,9 @@ CREATE INDEX IF NOT EXISTS context_metrics_timestamp_index ON context_metrics (t
 CREATE INDEX IF NOT EXISTS context_metrics_project_path_index ON context_metrics (project_path);
 
 -- ---------------------------------------------------------------------------
--- service_metadata — cozo is NOT keyed on service_name (composite tuple key),
--- so no PK here; (service_name, env) is the natural identity and the cozo
+-- service_metadata — the legacy schema is NOT keyed on service_name
+-- (composite tuple key),
+-- so no PK here; (service_name, env) is the natural identity and the legacy
 -- index. tags/deploy_envs: serde_json strings → JSONB (models.rs ServiceMetadata,
 -- writer db/mod.rs:1517). created_at/updated_at are epoch Ints → BIGINT.
 -- ---------------------------------------------------------------------------
@@ -146,7 +148,7 @@ CREATE INDEX IF NOT EXISTS service_metadata_svc_name_index ON service_metadata (
 CREATE INDEX IF NOT EXISTS service_metadata_svc_env_index ON service_metadata (env);
 
 -- ---------------------------------------------------------------------------
--- teams — no PK in cozo, none here. members/graph_read_users/graph_write_users
+-- teams — no PK in the legacy engine, none here. members/graph_read_users/graph_write_users
 -- are Vec<T> serialized with serde_json (db/mod.rs:1621-1629) → JSONB.
 -- created_at/updated_at epoch Ints → BIGINT.
 -- ---------------------------------------------------------------------------
@@ -165,7 +167,7 @@ CREATE TABLE IF NOT EXISTS teams (
 CREATE INDEX IF NOT EXISTS teams_owner_index ON teams (owner_id);
 
 -- ---------------------------------------------------------------------------
--- team_invites — no PK in cozo, none here. token is the natural lookup key.
+-- team_invites — no PK in the legacy engine, none here. token is the natural lookup key.
 -- created_at/expires_at epoch Ints → BIGINT.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS team_invites (
@@ -184,7 +186,7 @@ CREATE INDEX IF NOT EXISTS team_invites_team_index ON team_invites (team_id);
 CREATE INDEX IF NOT EXISTS team_invites_token_index ON team_invites (token);
 
 -- ---------------------------------------------------------------------------
--- migrations — versioned-schema bookkeeping (plan T2.2). The cozo relation
+-- migrations — versioned-schema bookkeeping (plan T2.2). The legacy relation
 -- was {id: String, applied_at: Int}; per the plan, applied_at is a real
 -- Postgres timestamp. `leankg migrate` is the only writer.
 -- ---------------------------------------------------------------------------
@@ -194,10 +196,11 @@ CREATE TABLE IF NOT EXISTS migrations (
 );
 
 -- ---------------------------------------------------------------------------
--- knowledge_entries — no PK in cozo, none here (id is a UUID, unique per
--- writer, but cozo :put keys the full tuple). tags is a JSON string
+-- knowledge_entries — no PK in the legacy engine, none here (id is a UUID,
+-- unique per
+-- writer, but the legacy :put keys the full tuple). tags is a JSON string
 -- (entry.tags.clone() — db/mod.rs:848) → JSONB. created_at/updated_at epoch
--- Ints → BIGINT. Indexes mirror the four cozo ::index statements.
+-- Ints → BIGINT. Indexes mirror the four legacy ::index statements.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS knowledge_entries (
     id               TEXT NOT NULL,
@@ -222,13 +225,13 @@ CREATE INDEX IF NOT EXISTS knowledge_entries_author_index ON knowledge_entries (
 -- Slice 7 audit (2026-08-06): the only `knowledge_entries` exact-match
 -- path is `id = $id` (update_knowledge / delete_knowledge at db/mod.rs:894
 -- and :rm at 921). Without this index every update/delete is a sequential
--- scan. The cozo comment notes `id` is "unique per writer" — promote that
+-- scan. The legacy comment notes `id` is "unique per writer" — promote that
 -- intent to a real constraint; it also makes ON CONFLICT (id) DO UPDATE
 -- viable if a future writer ever double-puts.
 CREATE UNIQUE INDEX IF NOT EXISTS knowledge_entries_id_uniq ON knowledge_entries (id);
 
 -- ---------------------------------------------------------------------------
--- feature_workflow_links — no PK in cozo (composite tuple key), none here.
+-- feature_workflow_links — no PK in the legacy engine (composite tuple key), none here.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS feature_workflow_links (
     feature_id  TEXT NOT NULL,
@@ -238,9 +241,9 @@ CREATE TABLE IF NOT EXISTS feature_workflow_links (
 CREATE INDEX IF NOT EXISTS feature_workflow_links_feature_id_index ON feature_workflow_links (feature_id);
 
 -- ---------------------------------------------------------------------------
--- incidents — no PK in cozo, none here. affected_services/tags are Vec<String>
+-- incidents — no PK in the legacy engine, none here. affected_services/tags are Vec<String>
 -- serialized with serde_json (db/mod.rs:1191) → JSONB. occurred_at/resolved_at
--- epoch Ints → BIGINT. Indexes mirror the three cozo ::index statements.
+-- epoch Ints → BIGINT. Indexes mirror the three legacy ::index statements.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS incidents (
     id                 TEXT NOT NULL,
@@ -264,7 +267,7 @@ CREATE INDEX IF NOT EXISTS incidents_severity_index ON incidents (severity);
 CREATE INDEX IF NOT EXISTS incidents_author_index ON incidents (author);
 
 -- ---------------------------------------------------------------------------
--- index_inventory — KEYED in cozo (key => ...), single row per key
+-- index_inventory — KEYED in the legacy engine (key => ...), single row per key
 -- (inventory.rs:10-24, :put with key => computed_at). PRIMARY KEY on key.
 -- estimated_* are Ints → BIGINT. *json columns are serde_json strings → JSONB.
 -- computed_at is epoch-seconds text (now_iso(), inventory.rs:187) — kept TEXT
@@ -287,11 +290,12 @@ CREATE TABLE IF NOT EXISTS index_inventory (
 );
 
 -- ---------------------------------------------------------------------------
--- api_keys — no PK in cozo (keys.rs:50), none here (id is the natural lookup).
+-- api_keys — no PK in the legacy engine (keys.rs:50), none here (id is the
+-- natural lookup).
 -- All timestamps are epoch-seconds TEXT (chrono_timestamp(), keys.rs:266) —
--- kept TEXT, NOT converted to TIMESTAMPTZ, to preserve semantics. Cozo's
--- null-equality semantics (`revoked_at = null` matches NULL, keys.rs:201)
--- translate to `revoked_at IS NULL` in the translator.
+-- kept TEXT, NOT converted to TIMESTAMPTZ, to preserve semantics. The legacy
+-- dialect's null-equality semantics (`revoked_at = null` matches NULL,
+-- keys.rs:201) translate to `revoked_at IS NULL` in the translator.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS api_keys (
     id           TEXT NOT NULL,
@@ -310,11 +314,11 @@ CREATE INDEX IF NOT EXISTS api_keys_id_index ON api_keys (id);
 CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_hash_uniq ON api_keys (key_hash);
 
 -- ---------------------------------------------------------------------------
--- embedding_state — KEYED in cozo (qualified_name => usearch_key), single row
--- per qualified_name → PRIMARY KEY. usearch_key is legacy schema-compat
--- (written as 0, risk note 20) → BIGINT NOT NULL DEFAULT 0. embedded_at is
--- a free-form String in cozo (state.rs:25) — kept TEXT. Indexes mirror the
--- cozo ::index statements (usearch_key, state).
+-- embedding_state — KEYED in the legacy engine (qualified_name => usearch_key),
+-- single row per qualified_name → PRIMARY KEY. usearch_key is legacy
+-- schema-compat (written as 0, risk note 20) → BIGINT NOT NULL DEFAULT 0.
+-- embedded_at is a free-form String in the legacy schema (state.rs:25) — kept
+-- TEXT. Indexes mirror the legacy ::index statements (usearch_key, state).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS embedding_state (
     qualified_name TEXT PRIMARY KEY,
@@ -328,9 +332,10 @@ CREATE INDEX IF NOT EXISTS embedding_state_usearch_key_index ON embedding_state 
 CREATE INDEX IF NOT EXISTS embedding_state_state_index ON embedding_state (state);
 
 -- ---------------------------------------------------------------------------
--- embedding_vectors — KEYED in cozo (qualified_name => vector) → PRIMARY KEY.
--- VEC_DIM = 384 (plan D5). HNSW index mirrors cozo's `::hnsw create
--- embedding_vectors:vec_idx` (dim 384, distance Cosine) — pgvector cosine
+-- embedding_vectors — KEYED in the legacy engine (qualified_name => vector)
+-- → PRIMARY KEY. VEC_DIM = 384 (plan D5). HNSW index mirrors the legacy
+-- `::hnsw create embedding_vectors:vec_idx` (dim 384, distance Cosine) —
+-- pgvector cosine
 -- opclass, m=16 / ef_construction=200 per plan T2.4.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS embedding_vectors (
@@ -343,8 +348,8 @@ CREATE INDEX IF NOT EXISTS embedding_vectors_vec_hnsw_idx
     WITH (m = 16, ef_construction = 200);
 
 -- ---------------------------------------------------------------------------
--- index_hashes — KEYED in cozo (path => hash; auto-created on first :put,
--- no :create DDL exists — inventory §1.3). PRIMARY KEY on path.
+-- index_hashes — KEYED in the legacy engine (path => hash; auto-created on
+-- first :put, no :create DDL exists — inventory §1.3). PRIMARY KEY on path.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS index_hashes (
     path TEXT PRIMARY KEY,

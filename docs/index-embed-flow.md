@@ -19,8 +19,8 @@ LeanKG has two independent but coordinated pipelines:
 
 | Pipeline | Parser | Storage | Staleness mechanism |
 |----------|--------|---------|---------------------|
-| **Index** | tree-sitter + regex extractors | `code_elements` + `relationships` (CozoDB) | Git commit timestamps vs DB modification time |
-| **Embed** | ONNX Runtime (BGE-small-en-v1.5) / fastembed | `embedding_vectors` (CozoDB HNSW) + `embedding_state` (CozoDB) | Per-element SHA-256 content hash in `embedding_state` |
+| **Index** | tree-sitter + regex extractors | `code_elements` + `relationships` (PostgreSQL) | Git commit timestamps vs DB modification time |
+| **Embed** | ONNX Runtime (BGE-small-en-v1.5) / fastembed | `embedding_vectors` (pgvector HNSW) + `embedding_state` (PostgreSQL) | Per-element SHA-256 content hash in `embedding_state` |
 
 The bridge: after every index operation, the indexer flags changed elements as `stale` in `embedding_state`. The embed step reads `stale` rows and recomputes vectors only for those.
 
@@ -39,7 +39,7 @@ The bridge: after every index operation, the indexer flags changed elements as `
                               │
                               ▼
 ┌────────────────────────────────────────────────────────────────────┐
-│  1. init_db()           Open CozoDB at .leankg/leankg.db          │
+│  1. init_db()           Connect to PostgreSQL backend             │
 │  2. ParserManager::new()  Init tree-sitter parsers                 │
 │  3. Load leankg.yaml    Project config                             │
 └────────────────────────────────────────────────────────────────────┘
@@ -124,7 +124,7 @@ The bridge: after every index operation, the indexer flags changed elements as `
                               ▼
 ┌────────────────────────────────────────────────────────────────────┐
 │  Phase 1: Delete     removed elements + relationships for deleted  │
-│                      files (immediate per-file CozoDB rm)          │
+│                      files (immediate per-file SQL delete)         │
 │                                                                    │
 │  Phase 2: Dependent discovery  (skipped on mega-graphs)           │
 │    Load all relationships, find_dependents() for each changed file │
@@ -138,11 +138,11 @@ The bridge: after every index operation, the indexer flags changed elements as `
 │    For each file:                                                   │
 │      new_files        → reindex_new_file_sync()    (insert only)   │
 │      needs_remove     → reindex_skip_remove_sync() (insert only)   │
-│      (bulk rm deferred to end — one CozoDB scan vs N scans)       │
+│      (bulk rm deferred to end — one SQL scan vs N scans)          │
 │                                                                    │
 │  Phase 5: Bulk remove   graph.remove_elements_by_files_bulk()      │
 │            + graph.remove_relationships_by_files_bulk()            │
-│            One CozoDB query vs 3K+ individual per-file scans       │
+│            One bulk SQL query vs 3K+ individual per-file scans     │
 │                                                                    │
 │  Phase 6: graph.clear_cache()    Single cache invalidation         │
 │                                                                    │
@@ -213,11 +213,11 @@ The bridge: after every index operation, the indexer flags changed elements as `
 │  Phase 1: Collect Dirty Work                                       │
 │                                                                    │
 │  state::list_stale(db)                                             │
-│    CozoDB: *embedding_state[..., state != "fresh"]                 │
+│    SQL: SELECT * FROM embedding_state WHERE state != 'fresh'       │
 │    Returns rows with state="stale" + new placeholders              │
 │                                                                    │
 │  state::list_orphans(db)                                           │
-│    CozoDB: state rows whose QN not in code_elements               │
+│    SQL: state rows whose QN not in code_elements                   │
 │                                                                    │
 │  IF stale_rows > 2 000:  Paginated scan of all code_elements,     │
 │    filtered by stale QN HashSet. O(elements) single pass.          │
@@ -259,9 +259,9 @@ The bridge: after every index operation, the indexer flags changed elements as `
 ┌────────────────────────────────────────────────────────────────────┐
 │  Phase 4: HNSW Rebuild (if was dropped)                            │
 │    state::create_hnsw_index(db)                                    │
-│    CozoDB: ::hnsw create embedding_vectors:vec_idx {               │
-│              dim: 384, dtype: F32, distance: Cosine,               │
-│              m: 50, ef_construction: 20 }                          │
+│    SQL: pgvector HNSW index on embedding_vectors                   │
+│           (dim: 384, dtype: F32, distance: cosine,                 │
+│            m: 50, ef_construction: 20)                             │
 └────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -370,7 +370,7 @@ Algorithm:
 
 ### Tier 2: Embedding Freshness (content-hash based)
 
-Tracks per-element embedding freshness via the `embedding_state` CozoDB table.
+Tracks per-element embedding freshness via the `embedding_state` table.
 
 **Table schema** (`src/embeddings/state.rs:25`):
 ```
@@ -427,7 +427,7 @@ get_graph_report()
 # MCP: detect code-level broken relationships
 check_consistency() → BROKEN / STALE / CURRENT
 
-# Raw CozoDB (for debugging)
+# Raw query (for debugging) — legacy Datalog-style script, translated to SQL
 # Count stale rows
 cargo run --release -- query "?[count(stale)] := *embedding_state[..., stale, ...], stale != \"fresh\""
 ```
@@ -455,7 +455,7 @@ cargo run --release -- query "?[count(stale)] := *embedding_state[..., stale, ..
 3. Delete rows for deleted files (immediate)
 4. Find dependents of changed files (files that import them) — skipped on mega-graphs
 5. Re-extract all changed + dependent files
-6. Bulk remove old rows for modified files (one CozoDB query)
+6. Bulk remove old rows for modified files (one bulk SQL query)
 7. `mark_files_stale()` — flag embedding_state rows for re-embed
 
 ### Re-embed
@@ -670,7 +670,7 @@ mcp:
 | `LEANKG_EMBED_FAST` | off | Use DirectEmbedder (ONNX Runtime, INT8, per-worker intra_threads) |
 | `LEANKG_EMBED_MAX_MB` | 2048/4096 | Soft RSS cap for embed |
 | `LEANKG_EMBED_MAX_BLOB_CHARS` | 500/1500 | Max text blob chars |
-| `LEANKG_EMBED_UPSERT_CHUNK` | 5000 | Vectors per CozoDB import batch |
+| `LEANKG_EMBED_UPSERT_CHUNK` | 5000 | Vectors per SQL import batch |
 | `LEANKG_EMBED_IDLE_AFTER_SECS` | 60 | MCP idle seconds before background embed |
 | `LEANKG_EMBED_PARTIAL_BATCHES` | 4 | Batches per yield slice |
 | `LEANKG_EMBED_PARTIAL_PAUSE_MS` | 500 | Pause between partial slices |
@@ -678,9 +678,7 @@ mcp:
 | `LEANKG_HNSW_M` | 50 | HNSW max connections per node |
 | `LEANKG_HNSW_EF_CONST` | 20 | HNSW ef_construction |
 | `LEANKG_HNSW_EF` | - | HNSW search ef (query-side) |
-| `LEANKG_COZO_ROCKS_BULK` | off | Disable WAL + sync(false) for bulk writes |
 | `LEANKG_INCREMENTAL_SKIP_DEPENDENTS` | off | Skip dependent expansion on mega-graphs |
-| `LEANKG_EMBED_VECTOR_STORE` | cozo | `redis` for Redis side-store |
 
 ---
 
@@ -700,10 +698,10 @@ flowchart TD
 
     EXTRACT --> ELEM["CodeElement {\n  qualified_name, name,\n  element_type, file_path,\n  metadata, line_start, ... }\nRelationship {\n  source, target, rel_type, ... }"]
 
-    ELEM --> COZO["CozoDB"]
-    COZO --> CE["code_elements"]
-    COZO --> REL["relationships"]
-    COZO --> ES["embedding_state\nstate = 'stale'\ncontent_hash = ''"]
+    ELEM --> PG["PostgreSQL + pgvector"]
+    PG --> CE["code_elements"]
+    PG --> REL["relationships"]
+    PG --> ES["embedding_state\nstate = 'stale'\ncontent_hash = ''"]
 
     ELEM -.->|"mark_stale_if_changed()\nor mark_files_stale()"| ES
 
@@ -719,7 +717,7 @@ flowchart TD
         L1 --> L2 --> L3 --> L4 --> L5
     end
 
-    EMBED_STEP --> HNSW["CozoDB HNSW Index\nembedding_vectors:vec_idx\n(cosine distance, 384-dim F32)"]
+    EMBED_STEP --> HNSW["pgvector HNSW Index\nembedding_vectors.vec\n(cosine distance, 384-dim F32)"]
 
     HNSW --> SEM["Semantic Search\nsemantic_search('query')\n→ HNSW ANN + cross-encoder rerank"]
 ```

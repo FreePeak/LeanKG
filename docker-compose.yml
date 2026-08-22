@@ -2,7 +2,7 @@
 # only storage engine. `docker compose up` brings up the postgres service; the
 # leankg service mounts your project and connects via LEANKG_PG_URL.
 #
-# The legacy embedded-RocksDB / cozoserver compose files were removed in Phase 8.
+# The legacy embedded-engine sidecar compose files were removed in Phase 8.
 services:
   postgres:
     image: pgvector/pgvector:pg18

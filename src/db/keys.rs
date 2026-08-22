@@ -29,8 +29,8 @@ impl ApiKeyStore {
 
     pub fn init_db(&self) -> Result<KeysDb, Box<dyn std::error::Error>> {
         // Post-migration (Phase 8): api_keys lives in Postgres (schema.sql).
-        // The legacy separate `keys.db` sqlite file and its CozoBackend shim
-        // are gone; the table is created by the schema migrations.
+        // The legacy separate `keys.db` sqlite file and its embedded-backend
+        // shim are gone; the table is created by the schema migrations.
         crate::db::backend::init_db_pg()
     }
 

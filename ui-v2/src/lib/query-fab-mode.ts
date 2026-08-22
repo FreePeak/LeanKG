@@ -20,7 +20,7 @@ export function buildQueryBody(
     }
     return { question };
   }
-  const query = text; // preserve Cozo whitespace; only reject fully empty
+  const query = text; // preserve original whitespace; only reject fully empty
   if (!query.trim()) {
     throw new Error('query must not be empty');
   }

@@ -9,7 +9,7 @@ cross-encoder reranking and graph-aware traversal. Gated behind the
 Code search by exact name (the rest of LeanKG) is exact but blind — it can't
 answer "where do we do embedding inference" without already knowing the answer.
 This module adds a path for natural-language queries: embed every code element
-with a sentence transformer, store the vectors in CozoDB's native HNSW index,
+with a sentence transformer, store the vectors in a pgvector HNSW index,
 retrieve the top-K candidates for a query, then rerank with a cross-encoder.
 A final graph traversal stage enriches the seeds with their immediate neighbors
 so the result is a small subgraph, not just a list of files.
@@ -25,7 +25,7 @@ cargo test             --features embeddings
 ```
 
 The flag pulls in `fastembed` (ONNX Runtime inference for embedder + reranker).
-Vectors are stored in CozoDB's native HNSW index — no extra native deps.
+Vectors are stored in Postgres via pgvector's HNSW index — no extra native deps.
 
 ## File map
 
@@ -34,8 +34,8 @@ Vectors are stored in CozoDB's native HNSW index — no extra native deps.
 | `mod.rs` | Public re-exports. The crate surface for `embeddings::*`. |
 | `models.rs` | `Embedder` (BGE-small-en-v1.5, 384-dim) and `Reranker` (bge-reranker-v2-m3) wrappers around fastembed. Also `init_models()` for `embed --init`. |
 | `text_blob.rs` | Per-element text blob construction + SHA-256 content hash. Caps blobs at 1500 chars (≈512 BPE tokens). |
-| `state.rs` | `embedding_state` CozoDB table + `embedding_vectors` relation + HNSW index. Helpers: mark_stale, list_all, upsert_fresh, delete_state_rows. |
-| `build.rs` | Orchestrates the `embed` CLI: incremental vs full rebuild, orphan reap. Writes to `embedding_vectors` via `:put`. |
+| `state.rs` | `embedding_state` Postgres table + `embedding_vectors` table + pgvector HNSW index. Helpers: mark_stale, list_all, upsert_fresh, delete_state_rows. |
+| `build.rs` | Orchestrates the `embed` CLI: incremental vs full rebuild, orphan reap. Writes vectors into `embedding_vectors`. |
 | `offsite.rs` | Offsite embedding: `export_work_items` (`embed --dry-run`) and `import_vectors` (`embed --import`). NDJSON exchange format, resume, graph-drift verify. |
 | `profile.rs` | `EmbedProfile` (`small` / `8k` / `32k`) — default blob/summary budgets read from `LEANKG_EMBED_PROFILE`. |
 
@@ -45,20 +45,19 @@ module; they don't define embedding policy.
 
 ## Data model
 
-Two CozoDB relations, both under the `.leankg/leankg.db` SQLite file:
+Two Postgres tables in the project's LeanKG database:
 
 1. **`embedding_state`** — one row per tracked CodeElement, keyed by
-   `qualified_name` (=> separator makes it the only key column so `:put`
-   upserts correctly). Columns:
+   `qualified_name` (the primary key, so writes upsert correctly). Columns:
    `qualified_name: String => usearch_key: Int, content_hash: String, state: String, embedded_at: String`.
    `state` is `"fresh"` after embed, `"stale"` after the indexer touches the element.
-   The `usearch_key` column is a legacy field kept at `0` — CozoDB HNSW keys
+   The `usearch_key` column is a legacy field kept at `0` — the HNSW index keys
    on `qualified_name` directly, so the SHA-256-derived u64 indirection is
    no longer needed. It will be dropped in a future schema migration.
 
-2. **`embedding_vectors`** — vector store, also keyed by `qualified_name`.
-   `:create embedding_vectors {qualified_name: String => vector: <F32; 384>}`.
-   The HNSW index `vec_idx` is created via:
+2. **`embedding_vectors`** — vector store, also keyed by `qualified_name`,
+   with a 384-dim vector column. The HNSW ANN index is created via
+   pgvector on that column. (For reference, the legacy engine created it as:
    ```
    ::hnsw create embedding_vectors:vec_idx {
        dim: 384, dtype: F32, fields: [vector],
@@ -68,7 +67,7 @@ Two CozoDB relations, both under the `.leankg/leankg.db` SQLite file:
    ```
 
 The HNSW index is the source of truth for vector data. `embedding_state`
-tracks freshness for incremental builds. Both live in CozoDB, so they share
+tracks freshness for incremental builds. Both live in Postgres, so they share
 the same transactional semantics as the rest of the KG.
 
 ## Multi-model registry (table-per-model collections)
@@ -101,8 +100,8 @@ re-embeds every element regardless of state.
    Full:        embed everything in the work list
 4. For each chunk (default 32):
      embedder.embed(chunk) -> Vec<Vec<f32>>
-     :put embedding_vectors {qualified_name => vector} (chunked at 500 rows
-       per CozoDB query to keep pest parser input bounded)
+     upsert embedding_vectors {qualified_name => vector} (chunked at 500 rows
+       per query)
      collect into fresh_rows
 5. state::upsert_fresh(fresh_rows)  -- marks rows fresh, stamps content_hash
 6. Orphan reap: existing_state.keys() NOT IN work_qns
@@ -111,8 +110,8 @@ re-embeds every element regardless of state.
 ```
 
 `upsert_fresh`, `mark_stale_for_qualified_names`, and `delete_state_rows` all
-chunk their CozoDB writes at 500 rows per query (see `UPSERT_CHUNK` in
-`state.rs`) to keep pest parser input bounded on large repos.
+chunk their writes at 500 rows per query (see `UPSERT_CHUNK` in
+`state.rs`).
 
 ## Offsite / dry-run embedding (`embed --dry-run` / `embed --import`)
 
@@ -180,24 +179,23 @@ Lives in `src/retrieval/pipeline.rs`. Four stages:
 The CLI front-end is `leankg semantic-context "<query>"` (see `src/cli/mod.rs`
 for flags). MCP front-end is the `kg_semantic_context` tool.
 
-## Why native CozoDB HNSW (vs. usearch sidecar)
+## Why in-database HNSW (vs. usearch sidecar)
 
 Earlier versions stored vectors in a `usearch` sidecar (`.leankg/embeddings.usearch`)
-because the vendored CozoDB 0.2.2 predates HNSW support (HNSW landed in
-CozoDB 0.6.0). Now that LeanKG is on CozoDB 0.7.6, vectors live natively in
-CozoDB:
+because the vendored engine of that era predated HNSW support. Vectors now
+live in-database, in Postgres:
 
-- **Transactional consistency.** Vectors and state share the same CozoDB
-  transaction, so a crash mid-embed can't leave state marked fresh while
+- **Transactional consistency.** Vectors and state share the same Postgres
+  store, so a crash mid-embed can't leave state marked fresh while
   vectors are missing (a known footgun with the old sidecar approach).
-- **No second persistence artifact.** The vector store is part of the SQLite
-  DB file, not a separate file that needs separate save/load + integrity
+- **No second persistence artifact.** The vector store lives inside the same
+  database, not a separate file that needs separate save/load + integrity
   management.
-- **Single source of truth.** `embedding_vectors` is just another relation —
+- **Single source of truth.** `embedding_vectors` is just another table —
   no SHA-256-derived u64 indirection, no `qn_map` reverse lookup, no key
   collisions to worry about.
-- **Built on CozoDB's official HNSW impl.** Same code path CozoDB itself
-  ships and tests; no separate ANN library to track.
+- **Built on pgvector's official HNSW impl.** Maintained and tested upstream;
+  no separate ANN library to track.
 
 ## Operational notes
 
@@ -243,7 +241,7 @@ Models cache to `~/Library/Caches/leankg/models/` (macOS),
 
 Integration tests in `/tests/embeddings_state_e2e.rs` require the feature flag
 but do NOT require the fastembed model cache — they exercise only the
-state-table helpers against a fresh CozoDB instance. Run with
+state-table helpers against a fresh Postgres test instance. Run with
 `cargo test --features embeddings --test embeddings_state_e2e`.
 
 End-to-end validation (real `embed --full` + `semantic-context`) is the

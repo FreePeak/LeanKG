@@ -72,7 +72,7 @@ fn unix_now() -> u64 {
 ///
 /// Strategy (same idea as `reindex_file_sync`): clear all existing
 /// `ontology://` rows + their outgoing relationships, then insert fresh.
-/// Avoids Cozo composite-key `:put` duplicates when `name`/`metadata` change.
+/// Avoids composite-key duplicate rows when `name`/`metadata` change.
 ///
 /// When `leankg_dir` is `Some`, touches `.leankg/ontology_synced` on success and
 /// invalidates the graph query cache.

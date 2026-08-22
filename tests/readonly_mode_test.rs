@@ -22,7 +22,7 @@ fn init_db_readonly_succeeds_on_fresh_sqlite_path() {
     let db_path = tmp.path().join("readonly.db");
 
     let db = init_db_readonly(&db_path).expect("init_db_readonly must succeed on fresh path");
-    drop(db); // explicit close — CozoDb doesn't expose close()
+    drop(db); // explicit close — the backend has no close()
 }
 
 #[test]

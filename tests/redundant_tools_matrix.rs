@@ -5,7 +5,7 @@
 //! Soft-deprecated tools are hard-removed in FR-SURF-07/08 (2026-07-21),
 //! Wave 1b FR-SURF-13/14 (2026-08-01: `load_layer`, `get_doc_structure`),
 //! and commit 541ff626 (11 redundant/thin-wrapper tools; registry 91→80 names,
-//! 76 unconditional after the CozoDB→Postgres backend swap).
+//! 76 unconditional after the legacy→Postgres backend swap).
 //!
 //! Report: `docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`
 //! Wave 1b: `docs/reports/rel-076-mcp-surf-1b-2026-08-01.md`

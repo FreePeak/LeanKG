@@ -10,7 +10,7 @@
 //! All fields are length-prefixed (u64 LE) so a boundary shift (e.g.
 //! `path="a", repo="bc"` vs `path="ab", repo="c"`) can never collide.
 //!
-//! The content-hash store is a Cozo relation (`index_hashes`) that survives
+//! The content-hash store is a Postgres relation (`index_hashes`) that survives
 //! across runs. This module is **standalone**: wiring into the index walk
 //! (`src/indexer/mod.rs`) is deferred until the P0 session merges, per plan —
 //! today it ships the pure key derivation + store CRUD + a unit-tested
@@ -59,13 +59,13 @@ pub struct IndexHashRow {
     pub hash: String,
 }
 
-/// Read persisted hashes from Cozo. Returns `Ok(Vec)` (possibly empty) when
+/// Read persisted hashes from Postgres. Returns `Ok(Vec)` (possibly empty) when
 /// the relation does not exist yet — the caller treats that as "index all".
 pub fn load_hashes(
     db: &crate::graph::GraphEngine,
 ) -> Result<Vec<IndexHashRow>, Box<dyn std::error::Error + Send + Sync>> {
     // The `<-` read form (`?[path, hash] <- index_hashes[...]`) is invalid
-    // cozo — use the canonical `:=` rule form (inventory CH1).
+    // legacy Datalog-style script — use the canonical `:=` rule form (inventory CH1).
     db.run_raw_query(
         "?[path, hash] := *index_hashes[path, hash]",
         std::collections::BTreeMap::new(),
@@ -86,8 +86,8 @@ pub fn save_hashes(
     db: &crate::graph::GraphEngine,
     rows: &[IndexHashRow],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Cozo `:put` on a 2-column relation keyed by `path` gives upsert.
-    // The `:put table {cols} <- $args` short form is NOT valid cozo — the
+    // Legacy Datalog-style `:put` on a 2-column relation keyed by `path` gives upsert.
+    // The `:put table {cols} <- $args` short form is NOT valid legacy Datalog — the
     // rule form `?[cols] <- [[...]] :put table {cols => key}` is canonical
     // (inventory CH2; the translator maps it to INSERT ... ON CONFLICT).
     for row in rows {

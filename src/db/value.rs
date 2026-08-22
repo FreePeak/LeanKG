@@ -1,9 +1,9 @@
 //! Row/result value types for the Postgres backend.
 //!
 //! Post-migration (Phase 8) these are the concrete row values flowing out of
-//! `run_script` — the subset of the old cozo `DataValue` API that the
-//! codebase actually consumed positionally (`row[0].get_str()`,
-//! `NamedRows::new`, `DataValue::Num`), now self-contained so the `cozo`
+//! `run_script` — the subset of the old embedded engine's `DataValue` API
+//! that the codebase actually consumed positionally (`row[0].get_str()`,
+//! `NamedRows::new`, `DataValue::Num`), now self-contained so the legacy
 //! dependency can be deleted.
 
 use std::cmp::Ordering;
@@ -49,7 +49,7 @@ impl fmt::Display for DataValue {
 }
 
 /// A number: int or float (kept distinct — `get_int` on a float with a
-/// whole value returns it, mirroring the old cozo semantics).
+/// whole value returns it, mirroring the old engine's semantics).
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum Num {
     Int(i64),

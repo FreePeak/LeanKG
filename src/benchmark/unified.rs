@@ -1068,7 +1068,7 @@ fn generate_markdown(report: &UnifiedReport) -> String {
 // Unit tests for benchmark helper functions
 //
 // These test the pure-logic helpers (token estimation, variant construction,
-// winner selection, case definitions) without requiring a live CozoDB or
+// winner selection, case definitions) without requiring a live database or
 // project filesystem. The DB-backed run_leankg/run_manual/compute_summary
 // functions are exercised by the integration benchmark harness.
 // =========================================================================

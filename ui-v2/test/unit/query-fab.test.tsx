@@ -43,7 +43,7 @@ describe('QueryFAB dual-mode (FR-UI2-08)', () => {
     expect(runQuery).not.toHaveBeenCalled();
   });
 
-  it('switches to Advanced and posts raw Cozo via runQuery', async () => {
+  it('switches to Advanced and posts raw graph query via runQuery', async () => {
     render(<QueryFAB />);
     fireEvent.click(screen.getByTestId('query-fab'));
     fireEvent.click(screen.getByTestId('query-mode-advanced'));
