@@ -98,3 +98,11 @@ Branch reset onto main cf357ad8 (cycles 1-2 banked via squash #247). Backlog thi
 ### Cycle 4 progress
 - H10 usage dashboard: leankg dashboard (--since/--format) with grouped-SQL aggregates, ASCII bars, JSON mode; 12 unit + 3 live-PG integration tests; empty-state + invalid-since handled. 18342c50
 - H8 perf regression gate: perf_gate.sh (compare/update, PERF_GATE_PCT) + run_perf_workload.sh (median-of-3) + gen_perf_fixture.py + CI workflow; 8/8 bash TDD tests; live baseline vs remote PG: index 18315ms / boot 19ms / search_code 13ms; forced-fail sensitivity proven. 33d69541→0448998b
+
+### Cycle 5 — W8 SQL-first Datalog removal begins
+- Plan doc adopted from dormant orca/cozo-removal WIP (branch wip/cozo-sql-seam-backup @ dd8018fa)
+- **P1 seam**: src/db/sql.rs (SqlParam/SqlRow/sql_query/sql_execute_batch/COPY) ported+TDD'd; run_script untouched, dual-path parity kept. 55979b60
+- **Wave-1a conversion**: db/keys.rs (7 sites) + content_hash.rs (2 sites) → typed parameterized methods; live proof shows sql_first_lines=1, cozo_lines=0 per op. c6e95d39
+- Caught during adoption: SqlRow::text() rendered NULL as Some("null") (fixed); legacy validate_key DELETE+reinsert wiped name/created_at (now updates last_used_at only)
+- Gates: lib **1213✅** · parity 11✅ · pg_schema 6✅ · fmt/clippy clean
+- Next: wave-1b (db/mod.rs ×46 helpers), then W2-W6 disjoint-file fan-out

@@ -5,7 +5,6 @@ use argon2::{
     Argon2,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use uuid::Uuid;
 
 pub type KeysDb = crate::db::backend::SharedDb;
@@ -20,11 +19,22 @@ pub struct ApiKey {
     pub revoked_at: Option<String>,
 }
 
-pub struct ApiKeyStore;
+pub struct ApiKeyStore {
+    /// Optional injected backend (tests pin a scratch-schema PG backend so
+    /// the shared `public` layout is never touched). `None` = open a fresh
+    /// `init_db_pg()` per operation, exactly as before W8.
+    db: Option<KeysDb>,
+}
 
 impl ApiKeyStore {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self)
+        Ok(Self { db: None })
+    }
+
+    /// Inject a shared backend (W8 wave-1 test seam; production callers keep
+    /// using [`Self::new`]).
+    pub fn with_db(db: KeysDb) -> Self {
+        Self { db: Some(db) }
     }
 
     pub fn init_db(&self) -> Result<KeysDb, Box<dyn std::error::Error>> {
@@ -34,34 +44,22 @@ impl ApiKeyStore {
         crate::db::backend::init_db_pg()
     }
 
+    /// The backend for one store operation: injected handle when present,
+    /// else a fresh per-call `init_db_pg()` (legacy behavior).
+    fn db(&self) -> Result<KeysDb, Box<dyn std::error::Error>> {
+        match &self.db {
+            Some(db) => Ok(db.clone()),
+            None => self.init_db(),
+        }
+    }
+
     pub fn create_key(&self, name: &str) -> Result<(String, ApiKey), Box<dyn std::error::Error>> {
-        let db = self.init_db()?;
+        let db = self.db()?;
 
         let key = generate_api_key();
         let key_id = Uuid::new_v4().to_string();
         let key_hash = hash_api_key(&key)?;
         let created_at = chrono_timestamp();
-
-        let mut params = BTreeMap::new();
-        params.insert("id".to_string(), serde_json::json!(key_id));
-        params.insert("name".to_string(), serde_json::json!(name));
-        params.insert("key_hash".to_string(), serde_json::json!(key_hash));
-        params.insert("created_at".to_string(), serde_json::json!(created_at));
-        params.insert(
-            "last_used_at".to_string(),
-            serde_json::json!(serde_json::Value::Null),
-        );
-        params.insert(
-            "revoked_at".to_string(),
-            serde_json::json!(serde_json::Value::Null),
-        );
-
-        let insert = r#"
-        ?[id, name, key_hash, created_at, last_used_at, revoked_at] <- [[$id, $name, $key_hash, $created_at, $last_used_at, $revoked_at]]
-        :put api_keys { id, name, key_hash, created_at, last_used_at, revoked_at }
-        "#;
-
-        db.run_script(insert, params)?;
 
         let api_key = ApiKey {
             id: key_id,
@@ -71,27 +69,23 @@ impl ApiKeyStore {
             last_used_at: None,
             revoked_at: None,
         };
+        db.insert_api_key(&api_key)?;
 
         Ok((key, api_key))
     }
 
     pub fn list_keys(&self) -> Result<Vec<ApiKey>, Box<dyn std::error::Error>> {
-        let db = self.init_db()?;
+        let db = self.db()?;
 
-        let query = r#"
-        ?[id, name, key_hash, created_at, last_used_at, revoked_at] := *api_keys[id, name, key_hash, created_at, last_used_at, revoked_at]
-        "#;
-
-        let result = db.run_script(query, BTreeMap::new())?;
+        let result = db.list_api_keys()?;
 
         let mut keys: std::collections::HashMap<String, ApiKey> = std::collections::HashMap::new();
-        for row in result.rows {
-            let id = row[0].get_str().unwrap_or("").to_string();
-            let name = row[1].get_str().unwrap_or("").to_string();
-            let key_hash = String::new();
-            let created_at = row[3].get_str().unwrap_or("").to_string();
-            let last_used_at = row[4].get_str().map(String::from);
-            let revoked_at: Option<String> = row[5].get_str().map(String::from);
+        for row in result {
+            let id = row.id;
+            let name = row.name;
+            let created_at = row.created_at;
+            let last_used_at = row.last_used_at;
+            let revoked_at: Option<String> = row.revoked_at;
 
             if revoked_at.is_some() {
                 keys.remove(&id);
@@ -104,7 +98,9 @@ impl ApiKeyStore {
                     ApiKey {
                         id,
                         name,
-                        key_hash,
+                        // Never surface the argon2 hash through listings —
+                        // same display contract as the legacy path.
+                        key_hash: String::new(),
                         created_at,
                         last_used_at,
                         revoked_at,
@@ -117,98 +113,20 @@ impl ApiKeyStore {
     }
 
     pub fn revoke_key(&self, id: &str) -> Result<bool, Box<dyn std::error::Error>> {
-        let db = self.init_db()?;
-
-        let query = r#"
-        ?[id, name, key_hash, created_at, last_used_at, revoked_at] := *api_keys[id, name, key_hash, created_at, last_used_at, revoked_at], id = $id
-        "#;
-
-        let mut params = BTreeMap::new();
-        params.insert("id".to_string(), serde_json::json!(id));
-
-        let result = db.run_script(query, params)?;
-
-        if result.rows.is_empty() {
-            return Ok(false);
-        }
-
-        let row = &result.rows[0];
-
-        let revoked_at_val = row[5].get_str();
-        if revoked_at_val.is_some() {
-            return Ok(false);
-        }
-
-        let revoked_at = chrono_timestamp();
-
-        let update = r#"
-        ?[id, name, key_hash, created_at, last_used_at, revoked_at] <- [[$id, $name, $key_hash, $created_at, $last_used_at, $revoked_at]]
-        :put api_keys { id, name, key_hash, created_at, last_used_at, revoked_at }
-        "#;
-
-        let mut params = BTreeMap::new();
-        params.insert(
-            "id".to_string(),
-            serde_json::json!(row[0].get_str().unwrap_or("")),
-        );
-        params.insert(
-            "name".to_string(),
-            serde_json::json!(row[1].get_str().unwrap_or("")),
-        );
-        params.insert(
-            "key_hash".to_string(),
-            serde_json::json!(row[2].get_str().unwrap_or("")),
-        );
-        params.insert(
-            "created_at".to_string(),
-            serde_json::json!(row[3].get_str().unwrap_or("")),
-        );
-        params.insert(
-            "last_used_at".to_string(),
-            serde_json::json!(row[4].get_str().map(String::from)),
-        );
-        params.insert("revoked_at".to_string(), serde_json::json!(revoked_at));
-
-        db.run_script(update, params)?;
-
-        Ok(true)
+        let db = self.db()?;
+        db.mark_api_key_revoked(id, &chrono_timestamp())
     }
 
     pub fn validate_key(&self, key: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        let db = self.init_db()?;
+        let db = self.db()?;
 
-        let query = r#"
-        ?[id, key_hash] := *api_keys[id, key_hash], revoked_at = null
-        "#;
-
-        let result = db.run_script(query, BTreeMap::new())?;
-
-        for row in result.rows {
-            let key_id = row[0].get_str().unwrap_or("").to_string();
-            let stored_hash = row[1].get_str().unwrap_or("");
-            if verify_api_key(key, stored_hash) {
-                let last_used = chrono_timestamp();
-
-                let delete = format!(r#":delete api_keys where id = "{}""#, key_id);
-                let _ = db.run_script(&delete, BTreeMap::new());
-
-                let insert = r#"
-                ?[id, name, key_hash, created_at, last_used_at, revoked_at] <- [[$id, $name, $key_hash, $created_at, $last_used_at, $revoked_at]]
-                :put api_keys { id, name, key_hash, created_at, last_used_at, revoked_at }
-                "#;
-
-                let mut params = BTreeMap::new();
-                params.insert("id".to_string(), serde_json::json!(key_id.clone()));
-                params.insert("name".to_string(), serde_json::json!(""));
-                params.insert("key_hash".to_string(), serde_json::json!(stored_hash));
-                params.insert("created_at".to_string(), serde_json::json!(""));
-                params.insert("last_used_at".to_string(), serde_json::json!(last_used));
-                params.insert(
-                    "revoked_at".to_string(),
-                    serde_json::json!(serde_json::Value::Null),
-                );
-                let _ = db.run_script(insert, params);
-
+        for (key_id, stored_hash) in db.list_active_api_key_hashes()? {
+            if verify_api_key(key, &stored_hash) {
+                // W8 deviation (documented in plan §6): the legacy Datalog
+                // flow DELETEd + re-inserted the row with name="" and
+                // created_at="" here, wiping the key's identity on every
+                // validation. The SQL-first path updates only last_used_at.
+                let _ = db.touch_api_key_last_used(&key_id, &chrono_timestamp());
                 return Ok(Some(key_id));
             }
         }
@@ -249,6 +167,31 @@ fn chrono_timestamp() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}", duration.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_then_verify_roundtrips() {
+        let key = generate_api_key();
+        let hash = hash_api_key(&key).expect("hash");
+        assert!(verify_api_key(&key, &hash), "correct key verifies");
+        assert!(!verify_api_key("wrong", &hash), "wrong key rejected");
+    }
+
+    #[test]
+    fn verify_rejects_malformed_hash() {
+        assert!(!verify_api_key("k", "not-a-argon2-hash"));
+    }
+
+    #[test]
+    fn generated_keys_have_lkkg_prefix() {
+        let k = generate_api_key();
+        assert!(k.starts_with("lkkg_"), "{k}");
+        assert!(k.len() > 20);
+    }
 }
 
 impl Default for ApiKeyStore {
