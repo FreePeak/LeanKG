@@ -165,7 +165,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 | Multi-repo server | Docker MCP `:9699` + Postgres/pgvector; `LEANKG_PROJECT_DIRS` |
 | Env governance | `env=`, `promote_environment`, `find_env_conflicts` |
 | Ops & ownership | `get_service_graph`, `query_incidents`, `get_team_map` |
-| Req ↔ code | `index_prd`, `get_traceability`, `search_by_requirement` |
+| Req ↔ code | `index_prd`, `get_traceability`, `get_traceability_matrix` |
 | Mega-graph | Frontier-local queries; 100k–700k+ elements |
 | Agent surface | **85+** MCP tools (peers typically ~1–17) |
 | Cost | A/B **−65% tokens**, **−85% tool calls**, **2.5×** vs grep/cat |

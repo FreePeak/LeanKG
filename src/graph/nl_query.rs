@@ -3,7 +3,7 @@
 //! Pipeline: keyword seed retrieval → bounded BFS expand (or shortest-path
 //! when the question asks what connects A to B) → trim to token budget.
 //! Every returned edge carries `confidence_label` (EXTRACTED / INFERRED /
-//! AMBIGUOUS). Distinct from `orchestrate` (routing) and embed pipelines.
+//! AMBIGUOUS). Distinct from embed pipelines.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 

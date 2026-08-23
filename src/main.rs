@@ -5141,7 +5141,6 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 const LEANKG_TOOLS = [
-  "mcp__leankg__orchestrate",
   "mcp__leankg__search_code",
   "mcp__leankg__get_impact_radius",
   "mcp__leankg__get_dependencies",
@@ -5217,25 +5216,22 @@ const input = JSON.parse(raw);
 
 const ROUTING_BLOCK = `
 <tool_selection_hierarchy>
-  1. ORCHESTRATE: mcp__leankg__orchestrate(intent)
-     - Natural language: "show me impact of changing function X"
-
-  2. CODE DISCOVERY: mcp__leankg__search_code(query, element_type)
+  1. CODE DISCOVERY: mcp__leankg__search_code(query, element_type)
      - Primary search. ONE call replaces many Grep/Bash commands.
 
-  3. IMPACT ANALYSIS: mcp__leankg__get_impact_radius(file, depth)
+  2. IMPACT ANALYSIS: mcp__leankg__get_impact_radius(file, depth)
      - Calculate blast radius BEFORE making changes.
 
-  4. CONTEXT: mcp__leankg__get_context(file)
+  3. CONTEXT: mcp__leankg__get_context(file)
      - Get minimal token-optimized context for a file.
 
-  5. DEPENDENCIES: mcp__leankg__get_dependencies(file) | mcp__leankg__get_dependents(file)
+  4. DEPENDENCIES: mcp__leankg__get_dependencies(file) | mcp__leankg__get_dependents(file)
 
-  6. CALLERS: mcp__leankg__get_call_graph(function, depth=1)
+  5. CALLERS: mcp__leankg__get_call_graph(function, depth=1)
 
-  7. DOCUMENTATION: mcp__leankg__get_doc_for_file(file) | mcp__leankg__get_traceability(element)
+  6. DOCUMENTATION: mcp__leankg__get_doc_for_file(file) | mcp__leankg__get_traceability(element)
 
-  8. TESTING: mcp__leankg__get_tested_by(file) | mcp__leankg__detect_changes(scope)
+  7. TESTING: mcp__leankg__get_tested_by(file) | mcp__leankg__detect_changes(scope)
 </tool_selection_hierarchy>
 
 <forbidden_actions>

@@ -4,8 +4,10 @@
 //! Overlap relationships live in [`OVERLAP_TABLE`] (documentation + keep-both).
 //! Soft-deprecated tools are hard-removed in FR-SURF-07/08 (2026-07-21),
 //! Wave 1b FR-SURF-13/14 (2026-08-01: `load_layer`, `get_doc_structure`),
-//! and commit 541ff626 (11 redundant/thin-wrapper tools; registry 91→80 names,
-//! 76 unconditional after the CozoDB→Postgres backend swap).
+//! commit 541ff626 (11 redundant/thin-wrapper tools; registry 91→80 names,
+//! 76 unconditional after the CozoDB→Postgres backend swap), and H6
+//! consolidation round 2 (`get_graph_report`, `orchestrate`,
+//! `search_by_requirement`; registry 76→73 unconditional).
 //!
 //! Report: `docs/reports/mcp-tool-redundancy-impact-2026-07-20.md`
 //! Wave 1b: `docs/reports/rel-076-mcp-surf-1b-2026-08-01.md`
@@ -67,6 +69,10 @@ const REMOVED_TOOLS: &[&str] = &[
     "session_recall",
     "kg_self_test",
     "mcp_embed",
+    // H6 consolidation round 2 (replaced by traceability quartet / kept graph tools):
+    "get_graph_report",
+    "orchestrate",
+    "search_by_requirement",
 ];
 
 /// Full inventory — must match `ToolRegistry::list_tools()` exactly (one row each).
@@ -130,11 +136,7 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         kind: Kind::DomainSpecific,
         note: "Knowledge-base keyword search.",
     },
-    ClassEntry {
-        name: "search_by_requirement",
-        kind: Kind::DomainSpecific,
-        note: "Requirement / story traceability search.",
-    },
+    // search_by_requirement removed in H6 (traceability quartet covers it).
     // --- Semantic / ontology context ---
     ClassEntry {
         name: "kg_context",
@@ -173,15 +175,11 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
         kind: Kind::Complementary,
         note: "File read with compression modes; keep — different payload from get_context.",
     },
-    ClassEntry {
-        name: "orchestrate",
-        kind: Kind::Complementary,
-        note: "Intent router + cache; distinct from query_graph.",
-    },
+    // orchestrate removed in H6 (cached intent router overlapped query_graph/kg_context/search_code).
     ClassEntry {
         name: "query_graph",
         kind: Kind::Complementary,
-        note: "NL scoped subgraph / connections; distinct from orchestrate.",
+        note: "NL scoped subgraph / connections.",
     },
     ClassEntry {
         name: "get_review_context",
@@ -237,13 +235,9 @@ const TOOL_CLASSIFICATION: &[ClassEntry] = &[
     ClassEntry {
         name: "get_god_nodes",
         kind: Kind::Complementary,
-        note: "Highest degree nodes; feeds get_graph_report.",
+        note: "Highest degree nodes (get_graph_report removed in H6).",
     },
-    ClassEntry {
-        name: "get_graph_report",
-        kind: Kind::Complementary,
-        note: "Prose graph report wrapping god nodes + suggestions.",
-    },
+    // get_graph_report removed in H6 — thin wrapper over get_god_nodes with a file side effect.
     // --- Calls ---
     ClassEntry {
         name: "get_call_graph",
@@ -509,7 +503,6 @@ const OVERLAP_TABLE: &[OverlapEntry] = &[
             "concept_search",
             "semantic_search",
             "search_knowledge",
-            "search_by_requirement",
         ],
         kind: Kind::DomainSpecific,
         note: "Prefer-order: concept_search → semantic_search → search_code; others entity-scoped.",
@@ -531,12 +524,6 @@ const OVERLAP_TABLE: &[OverlapEntry] = &[
         related: &["ctx_read"],
         kind: Kind::Complementary,
         note: "Graph context vs compression-mode file read — keep both.",
-    },
-    OverlapEntry {
-        primary: "orchestrate",
-        related: &["query_graph"],
-        kind: Kind::Complementary,
-        note: "Intent router vs NL connection subgraph.",
     },
     OverlapEntry {
         primary: "kg_context",
@@ -647,11 +634,11 @@ fn overlap_table_only_references_registered_tools() {
 }
 
 #[test]
-fn registry_has_exactly_76_tools() {
+fn registry_has_exactly_73_tools() {
     let count = registered().len();
     assert_eq!(
-        count, 76,
-        "expected exactly 76 unconditionally registered MCP tools, got {count} — drift?"
+        count, 73,
+        "expected exactly 73 unconditionally registered MCP tools, got {count} — drift?"
     );
 }
 

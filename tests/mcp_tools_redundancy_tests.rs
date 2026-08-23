@@ -19,7 +19,7 @@
 //! check_consistency, concept_search,
 //! delete_knowledge, explain_node, export_graph_snapshot,
 //! find_env_conflicts, find_route, find_tunnels,
-//! get_architecture, get_cluster_skill, get_god_nodes, get_graph_report,
+//! get_architecture, get_cluster_skill, get_god_nodes,
 //! get_nav_callers, get_nav_graph, get_overview_context,
 //! get_pr_impact, get_screen_args, get_service_context, get_team_map,
 //! get_upcoming_changes, kg_context, kg_ontology_status,
@@ -134,7 +134,6 @@ fn every_tested_tool_is_registered() {
         "get_architecture",
         "get_cluster_skill",
         "get_god_nodes",
-        "get_graph_report",
         "get_nav_callers",
         "get_nav_graph",
         "get_overview_context",
@@ -654,20 +653,6 @@ mod aggregators {
             .await
             .expect("get_god_nodes");
         assert!(!resp.to_string().is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn get_graph_report_returns_report_or_empty() {
-        let (handler, _tmp) = make_handler().await;
-        let resp = call(&handler, "get_graph_report", json!({})).await;
-        // May be Err if report not yet built; both shapes are acceptable.
-        match resp {
-            Ok(v) => assert!(!v.to_string().is_empty()),
-            Err(e) => assert!(
-                e.contains("not found") || e.contains("no report") || e.contains("missing"),
-                "expected graceful error: {e}"
-            ),
-        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

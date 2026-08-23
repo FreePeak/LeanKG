@@ -4,7 +4,6 @@ use crate::db::models::{CodeElement, ContextMetric, KnowledgeEntry, Relationship
 use crate::db::record_metric;
 use crate::graph::{export, export_select, GraphEngine, ImpactAnalyzer};
 use crate::mcp::token_budget::TokenBudget;
-use crate::orchestrator::QueryOrchestrator;
 use serde_json::{json, Value};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -62,30 +61,13 @@ User asks about codebase → mcp_status (check initialized)
   │
   ├─ "Find oversized functions" ──────────────► find_large_functions(min_lines=50, limit=20)
   │
-  ├─ Natural language query (any of the above) ─► orchestrate(intent="...")
-  │   └─ file param is OPTIONAL — only needed for impact/dependency queries
-  │      e.g. orchestrate(intent="show me impact of changing src/lib.rs", file="src/lib.rs")
+  ├─ "What connects X to Y?" (NL subgraph) ───► query_graph(question="...", token_budget=2000)
   │
   ├─ "What docs reference X?" ─────────────────► find_related_docs(file="X")
   ├─ "What code is in this doc?" ─────────────► get_files_for_doc(doc="docs/X.md")
   │
   └─ Pre-commit risk check ───────────────────► detect_changes(scope="staged"|"all")
 ```
-
----
-
-## Smart Shortcut: `orchestrate`
-
-Use when you want LeanKG to pick the best tool automatically. Only requires `intent`:
-
-| Intent Pattern | What It Does |
-|----------------|-------------|
-| "show me impact of changing X" | Impact radius analysis |
-| "get context for file X" | Token-optimized file context |
-| "find function named X" | Function location search |
-| "what does module X do?" | Cluster + dependency summary |
-
-**Parameters:** `intent` (required), `file` (optional — only needed when intent references a specific file for impact/dependency queries), `mode` (adaptive/full/map/signatures), `fresh` (bypass cache)
 
 ---
 
@@ -106,7 +88,6 @@ Use when you want LeanKG to pick the best tool automatically. Only requires `int
 - **depth>2 on get_impact_radius** — Returns hundreds of nodes, wastes tokens
 - **depth>3 on get_call_graph** — Neighbor explosion
 - **Reading full files with ctx_read mode=full** — Use signatures or adaptive for large files
-- **Calling orchestrate without intent** — intent is the only required param
 
 ---
 
@@ -180,7 +161,6 @@ Without the param, the server defaults to the project it was started in (`/works
 pub struct ToolHandler {
     graph_engine: GraphEngine,
     db_path: std::path::PathBuf,
-    orchestrator: QueryOrchestrator,
     session_cache: std::sync::Arc<parking_lot::RwLock<crate::compress::SessionCache>>,
 }
 
@@ -189,7 +169,6 @@ impl ToolHandler {
         Self {
             graph_engine: graph_engine.clone(),
             db_path,
-            orchestrator: QueryOrchestrator::with_persistence(graph_engine),
             session_cache: std::sync::Arc::new(parking_lot::RwLock::new(
                 crate::compress::SessionCache::new(),
             )),
@@ -239,7 +218,6 @@ impl ToolHandler {
             "get_review_context" => self.get_review_context(arguments),
             "get_context" => self.get_context(arguments),
             "ctx_read" => self.ctx_read(arguments),
-            "orchestrate" => self.orchestrate_tool(arguments),
             "explain_node" => self.explain_node(arguments),
             "get_god_nodes" => self.get_god_nodes(arguments),
             "temporal_query" => self.temporal_query(arguments),
@@ -257,7 +235,6 @@ impl ToolHandler {
             "get_pr_impact" => self.get_pr_impact(arguments),
             "export_graph_snapshot" => self.export_graph_snapshot(arguments),
             "export_html" => self.export_html_handler(arguments),
-            "get_graph_report" => self.get_graph_report(arguments),
             "query_graph" => self.query_graph(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
@@ -269,7 +246,6 @@ impl ToolHandler {
             "get_tested_by" => self.get_tested_by(arguments),
             "get_files_for_doc" => self.get_files_for_doc(arguments),
             "get_traceability" => self.get_traceability(arguments),
-            "search_by_requirement" => self.search_by_requirement(arguments),
             "get_doc_tree" => self.get_doc_tree(arguments),
             "get_code_tree" => self.get_code_tree(arguments),
             "find_related_docs" => self.find_related_docs(arguments),
@@ -442,30 +418,6 @@ impl ToolHandler {
 
         let final_string = format!("{}\n{}\n{}", header, result.content, footer);
         Ok(Value::String(final_string))
-    }
-
-    fn orchestrate_tool(&self, args: &Value) -> Result<Value, String> {
-        let intent = args["intent"]
-            .as_str()
-            .ok_or("Missing 'intent' parameter")?;
-        let file = args["file"].as_str();
-        let mode = args["mode"].as_str();
-        let fresh = args["fresh"].as_bool().unwrap_or(false);
-
-        let result = self.orchestrator.orchestrate(intent, file, mode, fresh)?;
-
-        Ok(json!({
-            "intent": result.intent,
-            "query_type": result.query_type,
-            "content": result.content,
-            "mode": result.mode,
-            "tokens": result.tokens,
-            "total_tokens": result.total_tokens,
-            "savings_percent": result.savings_percent,
-            "is_cached": result.is_cached,
-            "cache_key": result.cache_key,
-            "elements_count": result.elements_count
-        }))
     }
 
     fn mcp_init(&self, args: &Value) -> Result<Value, String> {
@@ -1369,45 +1321,6 @@ impl ToolHandler {
         }))
     }
 
-    fn get_graph_report(&self, args: &Value) -> Result<Value, String> {
-        if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
-            &self.graph_engine,
-            "get_graph_report",
-        ) {
-            return Ok(refusal);
-        }
-        let project_name = args["project_name"].as_str().unwrap_or("project");
-        let format = args["format"].as_str().unwrap_or("markdown");
-        let report = self
-            .graph_engine
-            .generate_graph_report(project_name)
-            .map_err(|e| e.to_string())?;
-        // Persist to disk when format is not json
-        if format != "json" {
-            // Anchor at the ACTIVE project root, not LEANKG_MCP_PROJECT/CWD
-            // — those point at whatever directory the server was launched
-            // from, so the report escaped to the parent repo (R1 issue #4).
-            let pp = self.active_project_root();
-            let db_path = pp.join(".leankg");
-            // Spawn a background task so the MCP response isn't delayed
-            tokio::spawn(async move {
-                if let Err(e) =
-                    crate::report::write::write_graph_report_after_index(&pp, &db_path).await
-                {
-                    tracing::warn!("MCP get_graph_report persist: {}", e);
-                }
-            });
-        }
-        if format == "json" {
-            return Ok(json!({ "report": report }));
-        }
-        let markdown = report.to_markdown();
-        Ok(json!({
-            "report": report,
-            "markdown": markdown,
-        }))
-    }
-
     fn temporal_query(&self, args: &Value) -> Result<Value, String> {
         if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
             &self.graph_engine,
@@ -2241,40 +2154,6 @@ impl ToolHandler {
             .collect();
 
         Ok(json!({ "traceability": entries }))
-    }
-
-    fn search_by_requirement(&self, args: &Value) -> Result<Value, String> {
-        let requirement_id = args["requirement_id"]
-            .as_str()
-            .ok_or("Missing 'requirement_id' parameter")?;
-
-        let entries = self
-            .graph_engine
-            .get_code_for_requirement(requirement_id)
-            .map_err(|e| e.to_string())?;
-
-        let results: Vec<_> = entries
-            .iter()
-            .map(|e| {
-                let doc_links: Vec<_> = e
-                    .doc_links
-                    .iter()
-                    .map(|d| {
-                        json!({
-                            "doc": d.doc_qualified,
-                            "title": d.doc_title
-                        })
-                    })
-                    .collect();
-                json!({
-                    "element": e.element_qualified,
-                    "description": e.description,
-                    "doc_links": doc_links
-                })
-            })
-            .collect();
-
-        Ok(json!({ "code_elements": results }))
     }
 
     fn get_doc_tree(&self, _args: &Value) -> Result<Value, String> {
@@ -5134,7 +5013,7 @@ mod tests {
 
     #[tokio::test]
     async fn relative_export_out_paths_land_inside_active_project_root() {
-        // R1 sweep issue #4: export_graph_snapshot / export_html / get_graph_report
+        // R1 sweep issue #4: export_graph_snapshot / export_html
         // reported success but wrote into the SERVER PROCESS CWD's .leankg (the
         // parent repo) instead of the served project. Relative out paths must be
         // anchored at the request's project root.

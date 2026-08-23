@@ -61,7 +61,6 @@ get_doc_tree
 get_feature_flow
 get_files_for_doc
 get_god_nodes
-get_graph_report
 get_impact_radius
 get_nav_callers
 get_nav_graph
@@ -88,14 +87,12 @@ mcp_init
 mcp_install
 mcp_status
 ontology_control
-orchestrate
 promote_environment
 query_graph
 query_incidents
 report_query_outcome
 resolve_with_lsp
 run_raw_query
-search_by_requirement
 search_code
 search_knowledge
 semantic_search

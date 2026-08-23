@@ -64,7 +64,6 @@ get_doc_tree|v0.0.1|stable
 get_feature_flow|v0.19.9|beta
 get_files_for_doc|v0.0.1|stable
 get_god_nodes|v0.18.0|stable
-get_graph_report|v0.18.0|stable
 get_impact_radius|v0.0.1|stable
 get_nav_callers|v0.16.6|stable
 get_nav_graph|v0.16.6|stable
@@ -91,14 +90,12 @@ mcp_init|v0.2.7|stable
 mcp_install|v0.2.7|stable
 mcp_status|v0.2.7|stable
 ontology_control|v0.19.3|beta
-orchestrate|v0.8.5|stable
 promote_environment|v0.17.1|stable
 query_graph|v0.19.2|beta
 query_incidents|v0.17.1|stable
 report_query_outcome|v0.18.0|stable
 resolve_with_lsp|v0.18.0|stable
 run_raw_query|v0.15.2|stable
-search_by_requirement|v0.0.1|stable
 search_code|v0.0.1|stable
 search_knowledge|v0.17.1|stable
 semantic_search|v0.17.1|stable
@@ -108,12 +105,20 @@ temporal_query|v0.18.0|stable
 timeline|v0.18.0|stable
 update_knowledge|v0.17.1|stable'
 
+# tool|removed_in|replacement — deprecation history (H6 consolidation round 2).
+# removed_in stays "unreleased" until the release ships, then pin the version.
+REMOVED_TABLE='get_graph_report|unreleased (v0.28)|get_god_nodes + get_architecture
+orchestrate|unreleased (v0.28)|query_graph / kg_context / search_code
+search_by_requirement|unreleased (v0.28)|get_traceability / get_traceability_matrix'
+
 [ -f "$TOOLS_RS" ] || { echo "error: tools registry not found: $TOOLS_RS" >&2; exit 2; }
 
-# Materialize table to a temp file (multi-line -v is not portable across awks)
+# Materialize tables to temp files (multi-line -v is not portable across awks)
 TABLE_FILE="$(mktemp)"
-trap 'rm -f "$TABLE_FILE"' EXIT
+trap 'rm -f "$TABLE_FILE" "$REMOVED_FILE"' EXIT
 printf '%s\n' "$SINCE_TABLE" > "$TABLE_FILE"
+REMOVED_FILE="$(mktemp)"
+printf '%s\n' "$REMOVED_TABLE" > "$REMOVED_FILE"
 
 # --- Extract registry (POSIX awk; no gawk capture groups) ----------------------
 # Emits records: NAME \t SINCE \t TIER \t DESCRIPTION \t PROPS \t REQUIRED
@@ -245,6 +250,18 @@ render() {
 '- Tool removal requires **2 minor releases** of deprecation notices (doc + tool description marked deprecated).' \
 '- A breaking input-schema change to a stable tool requires a **minor version bump treated as major-equivalent**, plus a release notice.' \
 '- Additive optional properties do not break the contract.' \
+'' \
+'## Deprecation history' \
+'' \
+'Removed tools, their removal release, and the surviving replacement surface.' \
+'' \
+'| Tool | Removed in | Replacement |' \
+'|------|------------|-------------|'
+
+  printf '%s\n' "$REMOVED_TABLE" | awk -F'|' '
+    { printf "| `%s` | %s | %s |\n", $1, $2, $3 }'
+
+  printf '%s\n' \
 '' \
 '## Tools' \
 '' \

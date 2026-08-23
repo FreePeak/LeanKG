@@ -49,17 +49,12 @@ async fn test_all_mcp_tools_return_data() {
         ("get_clusters", json!({})),
         ("ctx_read", json!({"file": &valid_file})),
         ("detect_changes", json!({"path": "./src"})),
-        ("orchestrate", json!({"intent": "find main function"})),
         ("get_service_graph", json!({})),
         ("mcp_index_docs", json!({"path": "./docs"})),
         ("mcp_install", json!({})),
         (
             "run_raw_query",
             json!({"query": "?[name] := *code_elements[_, _, name, _, _, _, _, _, _, _, _, _, _] :limit 5"}),
-        ),
-        (
-            "search_by_requirement",
-            json!({"requirement_id": "REQ-001"}),
         ),
     ];
 

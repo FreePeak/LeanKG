@@ -2,7 +2,7 @@
 
 # MCP Tool Contract
 
-Regenerated from `src/mcp/tools.rs` (`ToolRegistry::list_tools`). **79 tools.**
+Regenerated from `src/mcp/tools.rs` (`ToolRegistry::list_tools`). **76 tools.**
 To change the surface: edit the registry, run `scripts/gen_tool_contract.sh`, commit both.
 
 ## Stability tiers
@@ -16,6 +16,16 @@ To change the surface: edit the registry, run `scripts/gen_tool_contract.sh`, co
 - Tool removal requires **2 minor releases** of deprecation notices (doc + tool description marked deprecated).
 - A breaking input-schema change to a stable tool requires a **minor version bump treated as major-equivalent**, plus a release notice.
 - Additive optional properties do not break the contract.
+
+## Deprecation history
+
+Removed tools, their removal release, and the surviving replacement surface.
+
+| Tool | Removed in | Replacement |
+|------|------------|-------------|
+| `get_graph_report` | unreleased (v0.28) | get_god_nodes + get_architecture |
+| `orchestrate` | unreleased (v0.28) | query_graph / kg_context / search_code |
+| `search_by_requirement` | unreleased (v0.28) | get_traceability / get_traceability_matrix |
 
 ## Tools
 
@@ -32,7 +42,6 @@ To change the surface: edit the registry, run `scripts/gen_tool_contract.sh`, co
 | `detect_changes` | v0.6.0 | stable | Pre-commit risk analysis: computes diff between working tree and last indexed commit. Returns changed files, affected symbols, and risk level (critical/high/medium/low). Risk classification: critical>=10 dependents at depth 1, high>=5 dependents or public API changed, medium=2-4 dependents or cross-module dep, low=<=1 dependent within single cluster. | `scope:string, min_confidence:number, project:string` |
 | `get_review_context` | v0.0.1 | stable | Generate focused subgraph + structured review prompt | `files:array, project:string` |
 | `get_context` | v0.0.1 | stable | Get AI context for file (minimal, token-optimized) | `*file:string, signature_only:boolean, max_tokens:integer, project:string — required: file` |
-| `orchestrate` | v0.8.5 | stable | Smart context orchestration with caching. Provide natural language intent like 'show me impact of changing function X' or 'get context for file Y'. Internally: checks cache -> queries graph -> compresses -> caches result. Use this instead of multiple individual tools when you want LeanKG to optimize the flow. | `*intent:string, file:string, mode:string, fresh:boolean, project:string — required: intent` |
 | `ctx_read` | v0.8.5 | stable | Read file with compression modes for efficient LLM context | `*file:string, mode:string, lines:string, project:string — required: file` |
 | `explain_node` | v0.18.0 | stable | US-GF-02: Return a single-node dossier (definition site, cluster, in/out degree, top neighbors by relation type). Accepts qualified_name, exact name, or fuzzy suffix. | `*name:string, project:string — required: name` |
 | `export_graph_snapshot` | v0.18.0 | stable | US-GF-11: Write a portable graph snapshot (elements + relationships with relative paths) to a JSON file. Useful for committing the graph artifact to git so teams can merge work-in-progress knowledge. | `out_path:string, project:string` |
@@ -50,9 +59,8 @@ To change the surface: edit the registry, run `scripts/gen_tool_contract.sh`, co
 | `check_consistency` | v0.18.0 | stable | US-MP-05: Detect broken or stale relationships (missing targets, invalidated edges). Returns BROKEN / STALE / CURRENT findings plus counts. | `project:string` |
 | `temporal_query` | v0.18.0 | stable | US-MP-01: Return the graph state as of a given epoch (seconds). Edges with valid_from <= now <= valid_to are included. | `*at:integer, project:string — required: at` |
 | `timeline` | v0.18.0 | stable | US-MP-01: Return the chronological evolution of a code element's relationships (added / invalidated events with timestamps). | `*qualified_name:string, project:string — required: qualified_name` |
-| `get_graph_report` | v0.18.0 | stable | US-GF-06: Return the full graph report (god nodes, confidence distribution, suggested questions). Writes `.leankg/GRAPH_REPORT.md` on disk. | `project:string, project_name:string, format:string` |
 | `get_god_nodes` | v0.18.0 | stable | US-GF-05: Return the most-connected elements (highest combined in+out degree). Optional percentile cutoff excludes utility super-hubs. | `limit:integer, exclude_hubs_percentile:integer, project:string` |
-| `query_graph` | v0.19.2 | beta | US-GF-03: Natural-language scoped subgraph query. Seed retrieval → bounded BFS expand (or shortest path for 'what connects A to B?') → trim to token_budget. Every edge includes confidence_label (EXTRACTED / INFERRED / AMBIGUOUS). Distinct from orchestrate and kg_semantic_context. | `*question:string, token_budget:integer, max_depth:integer, project:string — required: question` |
+| `query_graph` | v0.19.2 | beta | US-GF-03: Natural-language scoped subgraph query. Seed retrieval → bounded BFS expand (or shortest path for 'what connects A to B?') → trim to token_budget. Every edge includes confidence_label (EXTRACTED / INFERRED / AMBIGUOUS). Distinct from kg_semantic_context. | `*question:string, token_budget:integer, max_depth:integer, project:string — required: question` |
 | `shortest_path` | v0.18.0 | stable | US-GF-01: BFS shortest path between two symbols. Returns ordered hops with relation, confidence, and provenance label (EXTRACTED / INFERRED / AMBIGUOUS). Inputs accept qualified_name, exact name, or fuzzy suffix. | `*source:string, *target:string, max_hops:integer, project:string — required: source, target` |
 | `get_call_graph` | v0.0.1 | stable | Get bounded function call chain. Use depth=1 for direct callees, depth=2 for two hops. Avoid depth>3 to prevent neighbor explosion. | `*function:string, depth:integer, max_results:integer, project:string — required: function` |
 | `search_code` | v0.0.1 | stable | [PREFER: for NL queries try semantic_search first] Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination. Prefer-order (search): try after concept_search and semantic_search when you need name/type filters. | `*query:string, element_type:string, limit:integer, offset:integer, use_ontology:boolean, env:string, project:string — required: query` |
@@ -62,7 +70,6 @@ To change the surface: edit the registry, run `scripts/gen_tool_contract.sh`, co
 | `get_tested_by` | v0.0.1 | stable | Get test coverage for a function/file | `*file:string, project:string — required: file` |
 | `get_files_for_doc` | v0.0.1 | stable | Get code elements referenced in a documentation file | `*doc:string, project:string — required: doc` |
 | `get_traceability` | v0.0.1 | stable | Get full traceability chain for a code element | `*element:string, project:string — required: element` |
-| `search_by_requirement` | v0.0.1 | stable | Find code elements related to a specific requirement | `*requirement_id:string, project:string — required: requirement_id` |
 | `get_doc_tree` | v0.0.1 | stable | Get documentation tree structure with hierarchy | `limit:integer, offset:integer, project:string` |
 | `get_code_tree` | v0.0.1 | stable | Get codebase structure | `limit:integer, offset:integer, project:string` |
 | `find_related_docs` | v0.0.1 | stable | Find documentation related to a code change | `*file:string, project:string — required: file` |

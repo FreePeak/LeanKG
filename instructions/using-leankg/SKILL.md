@@ -95,7 +95,7 @@ mcp_status → find_function / query_file → get_context → impact/deps tools
 After `mcp_index_docs`, path aliases resolve on read; markdown refs resolve to indexed file keys on write.
 
 ```
-1. FR / US requirement ID → search_by_requirement / get_traceability / link_element
+1. FR / US requirement ID → get_traceability / get_traceability_matrix / link_element
 2. Known file or doc path → get_files_for_doc / find_related_docs (canonical docs/… keys)
 3. Domain / workflow → concept_search → kg_trace_workflow
 4. Fuzzy NL → semantic_search → kg_semantic_context
@@ -106,7 +106,7 @@ Miss payloads include `tried[]` — do not assume empty graph when aliases fail.
 
 ### Hard-removed tools (do not call)
 
-`mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure`
+`mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure`, `get_graph_report` (use get_god_nodes + get_architecture), `orchestrate` (use query_graph / kg_context / search_code), `search_by_requirement` (use get_traceability)
 
 ### If mcp_status is not ready (but HTTP health was OK)
 
