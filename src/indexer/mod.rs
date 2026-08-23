@@ -1002,6 +1002,16 @@ pub fn index_files_parallel_with_typed_resolve(
     }
     all_relationships.extend(microservice_rels);
 
+    // Referential integrity: a full index must not persist edges whose
+    // endpoints were never written (doctor --deep orphaned-relationships).
+    let pruned = prune_dangling_relationships(&all_elements, &mut all_relationships);
+    if pruned > 0 {
+        eprintln!(
+            "Pruned {} dangling relationship(s) (missing endpoints)",
+            pruned
+        );
+    }
+
     eprintln!(
         "Inserting {} elements and {} relationships...",
         all_elements.len(),
@@ -1113,6 +1123,7 @@ fn synthesize_summary_nodes(
     }
 
     let mut bundles: HashMap<String, FileBundle> = HashMap::new();
+    let mut extra_file_idxs: Vec<usize> = Vec::new();
     for (i, el) in all_elements.iter().enumerate() {
         // Container rows from the physical-structure pass carry the raw path
         // as both qualified_name and file_path. A directory/project row is
@@ -1139,8 +1150,13 @@ fn synthesize_summary_nodes(
             // swift/objc/sql extractors, uppercase "File" rows from the
             // physical-structure pass — that row is upgraded in place into
             // this path's file-summary node instead of colliding with it.
-            if entry.existing_file_idx.is_none() {
-                entry.existing_file_idx = Some(i);
+            //
+            // When BOTH spellings exist for one path (sql/swift/objc/sfc),
+            // every row after the first is a duplicate qualified_name; their
+            // indexes are collected and the rows dropped in phase 2.
+            match entry.existing_file_idx {
+                None => entry.existing_file_idx = Some(i),
+                Some(_) => extra_file_idxs.push(i),
             }
             continue;
         }
@@ -1229,6 +1245,16 @@ fn synthesize_summary_nodes(
     // --- Phase 2: apply all mutations now that phase-1 borrows are gone. ---
     for (idx, el) in in_place_updates {
         all_elements[idx] = el;
+    }
+    if !extra_file_idxs.is_empty() {
+        // Duplicate file rows (extractor "file" + physical "File") must go
+        // AFTER in-place application: indexes were captured pre-mutation, so
+        // remove descending to keep each removal's position valid.
+        extra_file_idxs.sort_unstable();
+        extra_file_idxs.dedup();
+        for idx in extra_file_idxs.into_iter().rev() {
+            all_elements.remove(idx);
+        }
     }
     all_elements.extend(new_file_summaries);
     all_elements.extend(module_summaries);
@@ -2189,13 +2215,45 @@ pub fn generate_physical_structure(
     elements.extend(rat_elements);
     relationships.extend(rat_relationships);
 
-    // US-CBM-B6 / FR-B15: emit / listen event channel edges.
+    // US-CBM-B6 / FR-B15: emit / listen event channel edges. The channel
+    // edge is anchored on the containing FILE element (bare receiver
+    // identifiers like `emitter` are not graph nodes) and each distinct
+    // event gets a synthetic `event::<name>` element so both endpoints of
+    // every `emits`/`listens_on` edge resolve (doctor --deep orphan check).
+    let mut event_qns: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for file in files {
         if let Ok(content) = std::fs::read_to_string(file) {
             let edges = crate::indexer::event_edges::detect_event_edges(&content);
-            let edge_rels = crate::indexer::event_edges::to_relationships(&edges);
-            relationships.extend(edge_rels);
+            if edges.is_empty() {
+                continue;
+            }
+            let file_qn = rewrite_path_for_storage(file);
+            for mut rel in crate::indexer::event_edges::to_relationships(&edges) {
+                let receiver = rel.source_qualified.clone();
+                rel.source_qualified = file_qn.clone();
+                if let Some(obj) = rel.metadata.as_object_mut() {
+                    obj.insert("receiver".to_string(), serde_json::json!(receiver));
+                }
+                event_qns.insert(rel.target_qualified.clone());
+                relationships.push(rel);
+            }
         }
+    }
+
+    // Synthetic event elements: URI file_path so index-freshness skips them.
+    for qn in event_qns {
+        let name = qn.trim_start_matches("event::").to_string();
+        elements.push(CodeElement {
+            qualified_name: qn.clone(),
+            element_type: "event".to_string(),
+            name,
+            file_path: format!("event://{}", qn.trim_start_matches("event::")),
+            line_start: 0,
+            line_end: 0,
+            language: "synthetic".to_string(),
+            metadata: serde_json::json!({"synthetic": true}),
+            ..Default::default()
+        });
     }
 
     (elements, relationships)
@@ -2382,7 +2440,10 @@ fn populate_directory_metadata(elements: &mut [CodeElement], files: &[String]) {
     }
 }
 
-pub fn resolve_call_edges_inline(elements: &mut [CodeElement], relationships: &mut [Relationship]) {
+pub fn resolve_call_edges_inline(
+    elements: &mut [CodeElement],
+    relationships: &mut Vec<Relationship>,
+) {
     if relationships.is_empty() {
         return;
     }
@@ -2402,60 +2463,82 @@ pub fn resolve_call_edges_inline(elements: &mut [CodeElement], relationships: &m
     }
 
     let mut resolved = 0;
-    let mut unresolved = Vec::new();
+    let mut dropped = 0;
 
-    for rel in relationships.iter_mut() {
-        if rel.rel_type == "calls" && rel.target_qualified.starts_with("__unresolved__") {
-            let bare_name = rel.target_qualified.trim_start_matches("__unresolved__");
-            let file_hint = rel
-                .metadata
-                .get("callee_file_hint")
-                .and_then(|v| v.as_str());
+    // Unresolvable callees (std/inherent methods, external crates, minified
+    // bundles) used to be stored as bare-name targets — 23k orphan edges on
+    // the hackathon corpus. The generator must not persist edges it knows are
+    // dangling: drop them here instead.
+    relationships.retain_mut(|rel| {
+        if rel.rel_type != "calls" || !rel.target_qualified.starts_with("__unresolved__") {
+            return true;
+        }
+        let bare_name = rel.target_qualified.trim_start_matches("__unresolved__");
+        let file_hint = rel
+            .metadata
+            .get("callee_file_hint")
+            .and_then(|v| v.as_str());
 
-            let (target_qn, method) = if let Some(hint) = file_hint {
-                if let Some(qn) = by_name_and_file.get(&(bare_name, hint)) {
-                    ((*qn).to_string(), "name_file_hint")
-                } else if let Some(qn) = by_name.get(bare_name) {
-                    ((*qn).to_string(), "name")
-                } else {
-                    (bare_name.to_string(), "unresolved")
-                }
+        let (target_qn, method) = if let Some(hint) = file_hint {
+            if let Some(qn) = by_name_and_file.get(&(bare_name, hint)) {
+                ((*qn).to_string(), "name_file_hint")
             } else if let Some(qn) = by_name.get(bare_name) {
                 ((*qn).to_string(), "name")
             } else {
-                (bare_name.to_string(), "unresolved")
-            };
+                (String::new(), "unresolved")
+            }
+        } else if let Some(qn) = by_name.get(bare_name) {
+            ((*qn).to_string(), "name")
+        } else {
+            (String::new(), "unresolved")
+        };
 
-            rel.target_qualified = target_qn;
-            if method != "unresolved" {
-                rel.confidence = 1.0;
-                resolved += 1;
-            }
-            // Preserve existing metadata keys; set resolution_method.
-            let mut meta = if rel.metadata.is_object() {
-                rel.metadata.clone()
-            } else {
-                serde_json::json!({})
-            };
-            if let Some(obj) = meta.as_object_mut() {
-                obj.insert("resolution_method".to_string(), serde_json::json!(method));
-                obj.insert(
-                    "is_resolved".to_string(),
-                    serde_json::json!(method != "unresolved"),
-                );
-            }
-            rel.metadata = meta;
-        } else if rel.rel_type == "calls" {
-            unresolved.push(rel.target_qualified.clone());
+        if method == "unresolved" {
+            dropped += 1;
+            return false;
         }
-    }
 
-    if resolved > 0 {
+        rel.target_qualified = target_qn;
+        rel.confidence = 1.0;
+        resolved += 1;
+        // Preserve existing metadata keys; set resolution_method.
+        if let Some(obj) = rel.metadata.as_object_mut() {
+            obj.insert("resolution_method".to_string(), serde_json::json!(method));
+            obj.insert("is_resolved".to_string(), serde_json::json!(true));
+        }
+        true
+    });
+
+    if resolved > 0 || dropped > 0 {
         eprintln!(
-            "Resolved {} call edges inline (no DB pass needed)",
-            resolved
+            "Resolved {} call edges inline (no DB pass needed); dropped {} unresolvable",
+            resolved, dropped
         );
     }
+}
+
+/// Remove relationships whose endpoints are absent from the element set.
+///
+/// Full-index safety valve for data quality (doctor --deep orphan check): a
+/// full index holds every element of the project, so any edge pointing
+/// elsewhere is dangling by construction. `service_calls` is exempt — its
+/// endpoints are intentionally cross-project service identifiers. Call this
+/// ONLY on a full-corpus aggregation; per-file incremental batches reference
+/// elements from other files legitimately.
+pub fn prune_dangling_relationships(
+    elements: &[CodeElement],
+    relationships: &mut Vec<Relationship>,
+) -> usize {
+    use std::collections::HashSet;
+
+    let known: HashSet<&str> = elements.iter().map(|e| e.qualified_name.as_str()).collect();
+    let before = relationships.len();
+    relationships.retain(|r| {
+        r.rel_type == "service_calls"
+            || (known.contains(r.source_qualified.as_str())
+                && known.contains(r.target_qualified.as_str()))
+    });
+    before - relationships.len()
 }
 
 fn typed_resolve_setting_active(setting: &str) -> bool {
@@ -2494,6 +2577,194 @@ mod tests {
     // `std::env::set_var` / `remove_var` are not thread-safe; without this
     // lock, parallel `cargo test` invocations can race on `max_file_size`.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn inline_call_resolution_drops_unresolved_edges() {
+        // N5/F1 (hackathon-sweep-R2.md): 23,340 orphan `calls` edges carried
+        // bare-name targets (`unwrap_or`, `push_str`, ...) after inline
+        // resolution failed. The generator must not persist edges it knows
+        // are unresolvable.
+        let helper = CodeElement {
+            qualified_name: "/p/src/lib.rs::helper".to_string(),
+            element_type: "function".to_string(),
+            name: "helper".to_string(),
+            file_path: "/p/src/lib.rs".to_string(),
+            ..Default::default()
+        };
+        let mut elements = vec![helper];
+        let mut relationships = vec![
+            Relationship {
+                id: None,
+                source_qualified: "/p/src/lib.rs::caller".to_string(),
+                target_qualified: "__unresolved__helper".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 0.5,
+                metadata: serde_json::json!({}),
+                ..Default::default()
+            },
+            Relationship {
+                id: None,
+                source_qualified: "/p/src/lib.rs::caller".to_string(),
+                target_qualified: "__unresolved__some_std_method".to_string(),
+                rel_type: "calls".to_string(),
+                confidence: 0.5,
+                metadata: serde_json::json!({}),
+                ..Default::default()
+            },
+        ];
+
+        resolve_call_edges_inline(&mut elements, &mut relationships);
+
+        assert_eq!(
+            relationships.len(),
+            1,
+            "unresolvable call edge must be dropped, got {:?}",
+            relationships
+        );
+        assert_eq!(relationships[0].target_qualified, "/p/src/lib.rs::helper");
+        assert_eq!(
+            relationships[0].metadata["is_resolved"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn event_edges_anchor_on_file_element_with_synthetic_event_nodes() {
+        // N5/F1 (hackathon-sweep-R2.md): `emits`/`listens_on` edges pointed at
+        // bare receiver identifiers (`emitter`) and synthetic `event::<name>`
+        // targets — neither existed in code_elements (230 orphan edges).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("app.js");
+        std::fs::write(
+            &src,
+            concat!(
+                "emitter.emit('data:changed', payload);\n",
+                "bus.on('data:changed', handler);\n",
+            ),
+        )
+        .expect("write app.js");
+
+        let file_qn = rewrite_path_for_storage(&src.to_string_lossy());
+        let files = vec![src.to_string_lossy().to_string()];
+        let (elements, relationships) = generate_physical_structure("/", &files);
+
+        let event_elem = elements
+            .iter()
+            .find(|e| e.element_type == "event" && e.qualified_name == "event::data:changed")
+            .expect("synthetic event element must be written as a code_element");
+        assert!(
+            event_elem.file_path.contains("://"),
+            "event element file_path must be a URI so freshness skips it"
+        );
+
+        let channel_edges: Vec<&Relationship> = relationships
+            .iter()
+            .filter(|r| r.rel_type == "emits" || r.rel_type == "listens_on")
+            .collect();
+        assert_eq!(channel_edges.len(), 2, "both channel edges must survive");
+        for rel in channel_edges {
+            assert_eq!(
+                rel.source_qualified, file_qn,
+                "channel edge source must be the containing file element"
+            );
+            assert_eq!(rel.target_qualified, "event::data:changed");
+            assert!(
+                rel.metadata.get("receiver").is_some(),
+                "original receiver identifier must be preserved in metadata"
+            );
+        }
+    }
+
+    #[test]
+    fn prune_dangling_relationships_drops_missing_endpoints_keeps_service_calls() {
+        let mk = |qn: &str| CodeElement {
+            qualified_name: qn.to_string(),
+            element_type: "function".to_string(),
+            name: qn.to_string(),
+            file_path: qn.to_string(),
+            ..Default::default()
+        };
+        let elements = vec![mk("/p/a"), mk("/p/b")];
+        let rel = |s: &str, t: &str, ty: &str| Relationship {
+            id: None,
+            source_qualified: s.to_string(),
+            target_qualified: t.to_string(),
+            rel_type: ty.to_string(),
+            confidence: 1.0,
+            metadata: serde_json::json!({}),
+            ..Default::default()
+        };
+        let mut relationships = vec![
+            rel("/p/a", "/p/b", "calls"),
+            rel("/p/a", "/p/missing", "calls"),
+            rel("/p/missing", "/p/b", "imports"),
+            rel("svc-a", "svc-b", "service_calls"),
+        ];
+
+        let removed = prune_dangling_relationships(&elements, &mut relationships);
+
+        assert_eq!(removed, 2, "edges with any missing endpoint must be pruned");
+        assert_eq!(relationships.len(), 2);
+        assert_eq!(relationships[0].target_qualified, "/p/b");
+        assert_eq!(relationships[1].rel_type, "service_calls");
+    }
+
+    #[test]
+    fn summary_synthesis_collapses_extractor_and_physical_file_rows() {
+        // N5/F2 (hackathon-sweep-R2.md): .sql/.swift/.objc/.sfc extractors
+        // emit a lowercase "file" node AND the physical-structure pass emits
+        // an uppercase "File" row for the same path. Summary synthesis used
+        // to enrich only the first and silently keep the second — a duplicate
+        // qualified_name doctor --deep flagged (e.g. 002_multi_model_embed.sql×2).
+        let sql_path = "/p/src/db/pg/migrations/004_auth.sql";
+        let mut elements = vec![
+            // SqlExtractor-style bare file node (language set).
+            CodeElement {
+                qualified_name: sql_path.to_string(),
+                element_type: "file".to_string(),
+                name: "004_auth.sql".to_string(),
+                file_path: sql_path.to_string(),
+                language: "sql".to_string(),
+                ..Default::default()
+            },
+            CodeElement {
+                qualified_name: format!("{sql_path}::accounts"),
+                element_type: "table".to_string(),
+                name: "accounts".to_string(),
+                file_path: sql_path.to_string(),
+                language: "sql".to_string(),
+                ..Default::default()
+            },
+            // Physical-structure pass "File" row for the same path.
+            CodeElement {
+                qualified_name: sql_path.to_string(),
+                element_type: "File".to_string(),
+                name: "004_auth.sql".to_string(),
+                file_path: sql_path.to_string(),
+                ..Default::default()
+            },
+        ];
+        let mut relationships = Vec::new();
+
+        synthesize_summary_nodes(&mut elements, &mut relationships, false);
+
+        let file_rows: Vec<&CodeElement> = elements
+            .iter()
+            .filter(|e| {
+                e.file_path == sql_path && matches!(e.element_type.as_str(), "file" | "File")
+            })
+            .collect();
+        assert_eq!(
+            file_rows.len(),
+            1,
+            "exactly one file-summary row must survive per path, got {file_rows:?}"
+        );
+        assert_eq!(file_rows[0].language, "sql", "extractor language is kept");
+        assert!(
+            file_rows[0].metadata.get("summary").is_some(),
+            "surviving row must carry the synthesized TOC"
+        );
+    }
 
     #[test]
     fn test_max_file_size_default_is_2_mib() {
