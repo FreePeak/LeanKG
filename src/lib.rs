@@ -12,6 +12,7 @@ pub mod connect;
 pub mod conversation_indexer;
 pub mod cost_estimate;
 pub mod ctags_export;
+pub mod dashboard;
 pub mod db;
 pub mod doc;
 pub mod doc_indexer;

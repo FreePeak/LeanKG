@@ -21,6 +21,7 @@ mod connect;
 mod conversation_indexer;
 mod cost_estimate;
 mod ctags_export;
+mod dashboard;
 mod db;
 mod doc;
 mod doc_indexer;
@@ -663,6 +664,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(exit);
             }
             run_doctor(kill)?;
+        }
+        cli::CLICommand::Dashboard {
+            since,
+            format,
+            project,
+        } => {
+            run_dashboard(since.as_deref(), format.as_deref(), project.as_deref())?;
         }
         cli::CLICommand::Status => {
             let project_path = find_project_root()?;
@@ -2852,6 +2860,43 @@ fn run_doctor_deep(format: &str, project: Option<&str>) -> Result<i32, Box<dyn s
         eprintln!("leankg doctor --deep found issues (exit {code}); hints above suggest fixes.");
     }
     Ok(code)
+}
+
+/// H10 / FR-PLG-8: render the usage dashboard over `context_metrics`.
+/// Pins to the project's PG schema (probed for the ledger table so it works
+/// while the code index is still empty) and prints text or JSON.
+fn run_dashboard(
+    since: Option<&str>,
+    format: Option<&str>,
+    project: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = match project {
+        Some(p) => std::path::PathBuf::from(p),
+        None => find_project_root()?,
+    };
+    let cutoff_secs = match since.map(dashboard::parse_since) {
+        Some(Some(window)) => Some(window),
+        Some(None) => {
+            return Err("invalid --since window (expected e.g. 24h, 7d, 30d, 2w)".into());
+        }
+        None => None,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("system clock before epoch: {e}"))?
+        .as_secs() as i64;
+    let db = db::backend::init_db_readonly_probed(
+        &root.join(".leankg"),
+        "context_metrics",
+        "usage ledger",
+    )?;
+    let data = dashboard::collect(&db, cutoff_secs.map(|window| now - window))?;
+    match format.unwrap_or("text") {
+        "json" => println!("{}", dashboard::render_json(&data)?),
+        "text" => print!("{}", dashboard::render_text(&data)),
+        other => return Err(format!("unknown --format {other:?} (expected text|json)").into()),
+    }
+    Ok(())
 }
 
 fn install_mcp_config() -> Result<(), Box<dyn std::error::Error>> {
