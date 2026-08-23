@@ -1,0 +1,7 @@
+{
+  "_comment": "perf gate baseline \u2014 regenerate via scripts/perf_gate.sh --update",
+  "get_impact_radius": 13,
+  "index": 18315,
+  "search_code": 13,
+  "server_boot": 19
+}
