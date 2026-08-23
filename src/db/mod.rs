@@ -4,6 +4,7 @@ pub mod keys;
 pub mod models;
 pub mod pg;
 pub mod schema;
+pub mod sql;
 pub mod value;
 pub mod versioning;
 pub mod write_bus;
@@ -17,6 +18,8 @@ pub use backend::{init_db, init_db_pg, init_db_readonly, PostgresBackend, Shared
 pub use models::*;
 #[allow(unused_imports)]
 pub use schema::*;
+#[allow(unused_imports)]
+pub use sql::SqlParam;
 
 pub fn create_business_logic(
     db: &dyn crate::db::backend::DbBackend,

@@ -203,6 +203,59 @@ pub trait DbBackend: Send + Sync {
     ) -> Result<crate::dashboard::UsageAggregates, Box<dyn std::error::Error>> {
         Err("usage dashboard not supported by this backend".into())
     }
+
+    // ---- SQL-first API (W8 P0 — Datalog removal seam) ----
+
+    /// Run a parameterized PostgreSQL SELECT and return owned named rows.
+    /// The default (fake / un-migrated backends) reports unsupported.
+    fn sql_query(
+        &self,
+        _sql: &str,
+        _params: &[crate::db::sql::SqlParam],
+    ) -> Result<Vec<crate::db::sql::SqlRow>, Box<dyn std::error::Error>> {
+        Err(crate::db::sql::unsupported())
+    }
+
+    /// [`Self::sql_query`] with session GUCs applied inside the read
+    /// transaction (e.g. `hnsw.ef_search` before a vector search).
+    fn sql_query_gucs(
+        &self,
+        _sql: &str,
+        _params: &[crate::db::sql::SqlParam],
+        _gucs: &[(&str, &str)],
+    ) -> Result<Vec<crate::db::sql::SqlRow>, Box<dyn std::error::Error>> {
+        Err(crate::db::sql::unsupported())
+    }
+
+    /// Run a parameterized INSERT/UPDATE/DELETE/DDL statement; returns the
+    /// affected row count.
+    fn sql_execute(
+        &self,
+        _sql: &str,
+        _params: &[crate::db::sql::SqlParam],
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        Err(crate::db::sql::unsupported())
+    }
+
+    /// Run several statements in ONE transaction — all commit or all roll
+    /// back. Replaces multi-statement `:put`/`:rm` scripts.
+    fn sql_execute_batch(
+        &self,
+        _stmts: &[(&str, Vec<crate::db::sql::SqlParam>)],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Err(crate::db::sql::unsupported())
+    }
+
+    /// Bulk-load rows into `table` via PostgreSQL COPY (text format).
+    /// Replaces `import_relations` / `submit_import`.
+    fn sql_copy_import(
+        &self,
+        _table: &str,
+        _columns: &[&str],
+        _rows: &[Vec<crate::db::sql::SqlParam>],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Err(crate::db::sql::unsupported())
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -454,6 +507,218 @@ impl std::fmt::Debug for PostgresBackend {
 }
 
 impl PostgresBackend {
+    /// Box the bind params once, then hand `&dyn ToSql` refs to the client.
+    fn sql_binds(
+        params: &[crate::db::sql::SqlParam],
+    ) -> Vec<Box<dyn postgres::types::ToSql + Sync + Send>> {
+        params.iter().map(|p| p.to_pg()).collect()
+    }
+
+    /// Pool selection for a SQL-first statement: a read-only backend never
+    /// touches the RW pool (writes fail at the Postgres layer with a clean
+    /// `read-only` error), mirroring [`Self::run_script_sync`].
+    fn checkout_for_sql(&self) -> Result<PooledClient, Box<dyn std::error::Error>> {
+        if self.read_only {
+            self.checkout_read_only()
+        } else {
+            self.checkout()
+        }
+    }
+
+    /// Emit one `leankg::pg_sql` line for a SQL-first op. Deliberately has NO
+    /// `cozo=` field — converted paths are proven Datalog-free by its absence.
+    fn log_sql_op(phase: &str, op: &str, sql: &str, rows: usize, elapsed_ms: u128) {
+        tracing::info!(
+            target: "leankg::pg_sql",
+            phase,
+            kind = "sql",
+            op,
+            rows,
+            elapsed_ms,
+            sql,
+            "pg sql_first"
+        );
+    }
+
+    /// W8 P0 sync body behind [`DbBackend::sql_query`].
+    fn sql_query_sync(
+        &self,
+        sql: &str,
+        params: &[crate::db::sql::SqlParam],
+    ) -> Result<Vec<crate::db::sql::SqlRow>, Box<dyn std::error::Error>> {
+        let binds = Self::sql_binds(params);
+        let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = binds
+            .iter()
+            .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
+            .collect();
+        let mut client = self.checkout_for_sql()?;
+        let started = std::time::Instant::now();
+        let result = client.query(sql, &refs)?;
+        let rows: Vec<crate::db::sql::SqlRow> =
+            result.iter().map(crate::db::sql::row_from_pg).collect();
+        Self::log_sql_op(
+            "done",
+            "query",
+            sql,
+            rows.len(),
+            started.elapsed().as_millis(),
+        );
+        Ok(rows)
+    }
+
+    /// W8 P0 sync body behind [`DbBackend::sql_query_gucs`]: `SET LOCAL`
+    /// knobs ride the same transaction as the read and revert on commit.
+    fn sql_query_gucs_sync(
+        &self,
+        sql: &str,
+        params: &[crate::db::sql::SqlParam],
+        gucs: &[(&str, &str)],
+    ) -> Result<Vec<crate::db::sql::SqlRow>, Box<dyn std::error::Error>> {
+        let binds = Self::sql_binds(params);
+        let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = binds
+            .iter()
+            .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
+            .collect();
+        let mut client = self.checkout_for_sql()?;
+        let started = std::time::Instant::now();
+        let mut tx = client.transaction()?;
+        let owned: Vec<(String, String)> = gucs
+            .iter()
+            .map(|(n, v)| ((*n).to_string(), (*v).to_string()))
+            .collect();
+        apply_gucs(&mut tx, &owned)?;
+        let result = tx.query(sql, &refs)?;
+        let rows: Vec<crate::db::sql::SqlRow> =
+            result.iter().map(crate::db::sql::row_from_pg).collect();
+        tx.commit()?;
+        Self::log_sql_op(
+            "done",
+            "query_gucs",
+            sql,
+            rows.len(),
+            started.elapsed().as_millis(),
+        );
+        Ok(rows)
+    }
+
+    /// W8 P0 sync body behind [`DbBackend::sql_execute`].
+    fn sql_execute_sync(
+        &self,
+        sql: &str,
+        params: &[crate::db::sql::SqlParam],
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        let binds = Self::sql_binds(params);
+        let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = binds
+            .iter()
+            .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
+            .collect();
+        let mut client = self.checkout_for_sql()?;
+        let started = std::time::Instant::now();
+        let n = client.execute(sql, &refs)?;
+        Self::log_sql_op(
+            "done",
+            "execute",
+            sql,
+            n as usize,
+            started.elapsed().as_millis(),
+        );
+        Ok(n)
+    }
+
+    /// W8 P0 sync body behind [`DbBackend::sql_execute_batch`]: every
+    /// statement runs in ONE transaction — any failure rolls back all.
+    fn sql_execute_batch_sync(
+        &self,
+        stmts: &[(&str, Vec<crate::db::sql::SqlParam>)],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut client = self.checkout_for_sql()?;
+        let started = std::time::Instant::now();
+        let mut tx = client.transaction()?;
+        for (sql, params) in stmts {
+            let binds = Self::sql_binds(params);
+            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = binds
+                .iter()
+                .map(|b| b.as_ref() as &(dyn postgres::types::ToSql + Sync))
+                .collect();
+            tx.execute(*sql, &refs)?;
+        }
+        tx.commit()?;
+        Self::log_sql_op(
+            "done",
+            "execute_batch",
+            &format!("{} stmt(s)", stmts.len()),
+            0,
+            started.elapsed().as_millis(),
+        );
+        Ok(())
+    }
+
+    /// W8 P0 sync body behind [`DbBackend::sql_copy_import`] — text-format
+    /// COPY inside a transaction. NULL is the `\N` marker so an empty string
+    /// stays distinct from SQL NULL.
+    fn sql_copy_import_sync(
+        &self,
+        table: &str,
+        columns: &[&str],
+        rows: &[Vec<crate::db::sql::SqlParam>],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write;
+
+        // Table/column names come from internal callers; still quoted like
+        // every other identifier in this file.
+        let q_table = translate::quote_ident(table);
+        let q_cols = columns
+            .iter()
+            .map(|c| translate::quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let copy_sql = format!("COPY {q_table} ({q_cols}) FROM STDIN");
+        let mut client = self.checkout_for_sql()?;
+        let started = std::time::Instant::now();
+        let mut tx = client.transaction()?;
+        let mut writer = tx.copy_in(&copy_sql)?;
+        for row in rows {
+            let mut line = String::new();
+            for (i, val) in row.iter().enumerate() {
+                if i > 0 {
+                    line.push('\t');
+                }
+                if matches!(val, crate::db::sql::SqlParam::Null) {
+                    // Raw \N marker: push_copy_text would escape the
+                    // backslash, turning NULL into a literal "\N" string.
+                    line.push_str("\\N");
+                } else {
+                    push_copy_text(&mut line, &val.to_copy_text());
+                }
+            }
+            line.push('\n');
+            writer.write_all(line.as_bytes())?;
+        }
+        writer.finish()?;
+        tx.commit()?;
+        Self::log_sql_op(
+            "done",
+            "copy_import",
+            &copy_sql,
+            rows.len(),
+            started.elapsed().as_millis(),
+        );
+        Ok(())
+    }
+
+    /// Wrap a sync SQL-first body in the standard `block_in_place` guard
+    /// (the sync `postgres::Client` must not run on an ambient tokio worker).
+    fn sql_off_runtime<T>(
+        &self,
+        body: impl FnOnce() -> Result<T, Box<dyn std::error::Error>>,
+    ) -> Result<T, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(body)
+        } else {
+            body()
+        }
+    }
+
     /// Format-check the resolved Postgres URL. Precedence:
     /// `LEANKG_PG_URL` env > `db:` block in `leankg.yaml` > built-in dev
     /// default (`postgresql://postgres:postgres@localhost:5433/leankg`,
@@ -1322,6 +1587,49 @@ impl PostgresBackend {
 impl DbBackend for PostgresBackend {
     fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    // ---- SQL-first API (W8 P0) ----
+
+    fn sql_query(
+        &self,
+        sql: &str,
+        params: &[crate::db::sql::SqlParam],
+    ) -> Result<Vec<crate::db::sql::SqlRow>, Box<dyn std::error::Error>> {
+        self.sql_off_runtime(|| self.sql_query_sync(sql, params))
+    }
+
+    fn sql_query_gucs(
+        &self,
+        sql: &str,
+        params: &[crate::db::sql::SqlParam],
+        gucs: &[(&str, &str)],
+    ) -> Result<Vec<crate::db::sql::SqlRow>, Box<dyn std::error::Error>> {
+        self.sql_off_runtime(|| self.sql_query_gucs_sync(sql, params, gucs))
+    }
+
+    fn sql_execute(
+        &self,
+        sql: &str,
+        params: &[crate::db::sql::SqlParam],
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        self.sql_off_runtime(|| self.sql_execute_sync(sql, params))
+    }
+
+    fn sql_execute_batch(
+        &self,
+        stmts: &[(&str, Vec<crate::db::sql::SqlParam>)],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.sql_off_runtime(|| self.sql_execute_batch_sync(stmts))
+    }
+
+    fn sql_copy_import(
+        &self,
+        table: &str,
+        columns: &[&str],
+        rows: &[Vec<crate::db::sql::SqlParam>],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.sql_off_runtime(|| self.sql_copy_import_sync(table, columns, rows))
     }
 
     /// FR-ENT-1: one multi-row INSERT for the whole batch (≤ 50 rows × 9
@@ -2277,6 +2585,32 @@ fn create_scratch_schema() -> Result<String, Box<dyn std::error::Error>> {
     // Keep the admin connection alive so the schema is dropped on exit.
     std::mem::forget(client);
     Ok(name)
+}
+
+/// Test-only: a migrated scratch-schema [`PostgresBackend`] for the
+/// SQL-first seam tests (W8 P0). Process-stable per key path, same mapping
+/// contract as [`test_scratch_schema`].
+#[cfg(test)]
+pub(crate) fn test_sql_scratch_backend() -> std::sync::Arc<PostgresBackend> {
+    let schema = test_scratch_schema(std::path::Path::new("/tmp/leankg-w8-sql-seam"))
+        .expect("scratch schema for SQL seam tests");
+    let pg = PostgresBackend::from_env()
+        .expect("pg url")
+        .with_schema(&schema);
+    std::sync::Arc::new(pg)
+}
+
+/// Test-only read-only variant ([`test_sql_scratch_backend`]): every
+/// statement goes through the RO pool (`default_transaction_read_only = on`),
+/// so writes fail at the Postgres layer.
+#[cfg(test)]
+pub(crate) fn test_sql_scratch_backend_ro() -> std::sync::Arc<PostgresBackend> {
+    let schema = test_scratch_schema(std::path::Path::new("/tmp/leankg-w8-sql-seam"))
+        .expect("scratch schema for SQL seam tests");
+    let pg = PostgresBackend::from_env_read_only()
+        .expect("pg url")
+        .with_schema(&schema);
+    std::sync::Arc::new(pg)
 }
 
 /// Open a read-only backend (T6.1): `default_transaction_read_only = on` —
