@@ -114,10 +114,12 @@ After hackathon: W8 (SQL-first seam waves) per `plan-remove-cozo-datalog-sql-mig
 | C1 / R0-R1 | Baseline gates + full live sweep of 76 tools (128 calls): 51 PASS, **7 FAIL found**, p50 4.9s/p95 90s N+1 | ✅ | `feature/hackathon:docs/cycles/cycle-01.md`, sweep report in `docs/analysis/hackathon-sweep-R1.md` |
 | C1 / R2 | **7 bugs fixed TDD-first**: update_knowledge upsert · index_docs watchdog · project-key canonicalization · export path anchoring · ontology schema adoption · hang-trio batching (get_context **72s→2.5s**) · agent_focus wedge kill | ✅ | same |
 | C1 / R3 | **6 features landed** (backlog H1-H11): connect · ENT-1 audit log · npm parity · quickstart smoke (88s) · export --markdown · doctor --deep (+3 more real bugs found & fixed during live verification) | ✅ | HACKATHON.md R3 |
-| C2 / R1 | Full live tool re-sweep post-fixes (expect 0 FAIL_ERROR) | 🚧 | pending |
-| C2+ | H4 provenance labels · H6 tool consolidation 76→~70 · H7 tool contract+CI guard · H8 benchmark gate · H10 usage dashboard · H12 README refresh; then W8 SQL-first seam | ⬜ | backlog: hackathon-backlog.md |
+| C2 / R1 | Full live re-sweep: **0 FAIL_ERROR**, p50 −44%, p95 −50%, audit chain verified (107 entries); regression matrix 4/2/1 → all fixed in R2a-c | ✅ | `docs/analysis/hackathon-sweep-R2.md` |
+| C2 / R2 | Identity cluster (yaml anchor preservation, legacy-adoption precedence, --project canonicalization) · O(n²) token-budget fix (**consistency 211s→5.8s**, temporal 12min→7s) · data quality (**orphans 432/1000→0/72,699; dup QNs 10→0/14,091**) | ✅ | banked via #247 squash `cf357ad8` |
+| C3 | H7 tool-contract doc+CI drift guard · H12 README quickstart refresh · H4 provenance labels on all graph surfaces (36k edges labeled live) · H6 consolidation 76→73 with deprecation history | ✅ | banked via #249 squash `63c37714`; rolling log HACKATHON.md |
+| C4+ | H10 usage dashboard · H8 benchmark regression gate · W8 SQL-first seam waves; loop continues | ⬜ | backlog: hackathon-backlog.md |
 
-State @ cycle-1 close: lib **1147✅** · fmt/clippy/build clean · PR #247 all CI green incl. new npm-parity gate.
+State @ cycle-3 close: lib **1183✅** · tools **73 stable-tiered** · fmt/clippy/build clean.
 
 Exit criteria: zero red gates · full tool sweep clean (or documented known-issues) · features landed as commits on `feature/hackathon` with TDD evidence · HACKATHON.md log complete.
 
