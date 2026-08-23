@@ -80,20 +80,27 @@ cargo install leankg
 ## Get Started
 
 ```bash
-# 1. Postgres (once)
-docker compose up -d postgres
+# 0. Postgres once — point at your instance (or: docker compose up -d postgres)
+export LEANKG_PG_URL="postgres://user:pass@host:5432/db"
 
-# 2. Index your project
-leankg setup                 # wire MCP into your agents
-leankg connect claude-code   # or: cursor | codex | gemini (--remote URL, --remove)
+# 1. Per project: init -> migrate -> index
 cd your-project
-leankg init && leankg index ./src && leankg status
-leankg impact src/main.rs --depth 3
-leankg mcp-stdio --watch     # local agents
-leankg mcp-http --port 9699  # HTTP / Docker
+leankg init && leankg migrate && leankg index ./src
+
+# 2a. Wire up an AI client — one command (also: cursor | codex | gemini)
+leankg connect claude-code           # add --remote http://host:9699 to reuse a shared server
+
+# 2b. ...or serve MCP over HTTP yourself
+leankg mcp-http --port 9699          # GET /health returns 200 when ready
 ```
 
-Docker MCP: pass **container** paths as `project=` (e.g. `/workspace`), never the host Mac path.
+Self-check any deployment: `leankg doctor --deep` — PG latency, migrations, index freshness,
+embedding coverage, pool env, orphan edges, duplicate names (exit 0 pass / 1 warn / 2 fail).
+
+Measured timings (`scripts/quickstart_smoke.sh`, run weekly in CI): full e2e smoke **88 s**
+vs a 300 s budget; indexing a small repo takes well under 2 minutes.
+
+Docker MCP users: pass **container** paths as `project=` (e.g. `/workspace`), never host paths.
 
 ### Server-side setup pipeline (clone -> index -> embed)
 

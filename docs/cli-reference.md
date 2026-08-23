@@ -91,12 +91,14 @@ leankg init
 leankg init --with-lsp
 
 # 2. Index your codebase (worker or compat)
+leankg migrate          # apply pending PG schema migrations first
 leankg-worker index ./src
 # or: leankg index ./src
 
 # 3. Start query-only MCP (for AI tools)
 leankg-mcp mcp-http --port 9699
 # or compat: leankg mcp-http --read-only / leankg serve
+# one-command client hookup instead: leankg connect claude-code (also cursor | codex | gemini)
 
 # 4. Compute impact radius for a file
 leankg impact src/main.rs --depth 3
