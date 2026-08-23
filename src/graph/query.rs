@@ -5881,9 +5881,14 @@ impl GraphEngine {
         // can be large, so drive the source side in chunks of GIDs (each
         // chunk is one indexed lookup) and keep edges whose target also made
         // the cut.
+        //
+        // R2b perf fix: CHUNK was 500, costing one remote-PG round trip per
+        // chunk (~27 sequential queries on a 13k-element focus ≈ >60s).
+        // The translator emits `source_qualified = ANY($n::text[])` — a
+        // single bound array param — so 10k QNs ride in ONE query.
         let mut qn_list: Vec<String> = qn_keep.iter().cloned().collect();
         qn_list.sort();
-        const CHUNK: usize = 500;
+        const CHUNK: usize = 10_000;
         let mut focused_rels: Vec<Relationship> = Vec::new();
         for chunk in qn_list.chunks(CHUNK) {
             let rel_query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], source_qualified in $srcs"#;

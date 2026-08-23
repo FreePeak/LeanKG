@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub struct TokenBudget;
 
@@ -63,68 +63,118 @@ impl TokenBudget {
             return false;
         }
 
-        if value.is_array() {
-            // Take ownership of the array
-            if let Value::Array(mut arr) = std::mem::replace(value, Value::Null) {
-                while !arr.is_empty() {
-                    let tmp = Value::Array(arr.clone());
-                    if Self::count_tokens(&tmp) <= max_tokens {
-                        break;
-                    }
-                    arr.pop();
-                }
-                *value = Value::Array(arr);
-                return true;
+        match value {
+            Value::Array(arr) => Self::truncate_array(arr, max_tokens),
+            Value::Object(obj) => Self::truncate_object(obj, max_tokens),
+            _ => false,
+        }
+    }
+
+    /// Exact serialized size of one JSON item in compact form (bytes).
+    /// serde_json's compact writer escapes deterministically, so
+    /// `item.to_string().len()` is exactly the item's contribution.
+    fn item_bytes(item: &Value) -> usize {
+        item.to_string().len()
+    }
+
+    /// Exact serialized size of `"key":value` plus its trailing comma slot.
+    fn entry_bytes(key: &str, value: &Value) -> usize {
+        let key_str = serde_json::to_string(key).unwrap_or_else(|_| format!("\"{key}\""));
+        key_str.len() + 1 + Self::item_bytes(value) + 1
+    }
+
+    /// Exact serialized size of a compact JSON object.
+    fn object_bytes(obj: &Map<String, Value>) -> usize {
+        if obj.is_empty() {
+            return 2; // "{}"
+        }
+        let entries: usize = obj.iter().map(|(k, v)| Self::entry_bytes(k, v)).sum();
+        2 + entries - 1 // drop the last comma slot
+    }
+
+    /// R2b perf fix: the old loop cloned the array and re-serialized it once
+    /// per popped item (O(n²)) — 24k consistency findings or 93k temporal
+    /// relationships burned a tokio worker for minutes and wedged the whole
+    /// server (N4). Per-item sizes are now summed in ONE pass and the
+    /// largest fitting prefix is kept via partition point (O(n)).
+    ///
+    /// Semantics preserved: keep as many leading items as fit the budget,
+    /// report `truncated = true` when items were dropped.
+    fn truncate_array(arr: &mut Vec<Value>, max_tokens: usize) -> bool {
+        let budget = max_tokens.saturating_mul(4);
+        // cum[i] = exact bytes of "[i0,i1,...,ii]"
+        let mut cum: Vec<usize> = Vec::with_capacity(arr.len());
+        let mut acc = 2usize;
+        for item in arr.iter() {
+            acc += Self::item_bytes(item) + 1;
+            cum.push(acc);
+        }
+        let keep = cum.partition_point(|&c| c <= budget);
+        if keep == arr.len() {
+            // Whole array fits on its own — the over-budget part is the
+            // parent object; nothing to drop here.
+            return false;
+        }
+        arr.truncate(keep.max(1)); // never hand back a silently emptied payload marker
+        true
+    }
+
+    /// R2b perf fix: mirror of `truncate_array`. Recursion into children is
+    /// unchanged; key removal now tracks the running serialized size instead
+    /// of cloning + re-serializing the object per removed key (O(n²) → O(n)).
+    /// Same removal order (map iteration order) and same "stop when under
+    /// budget" rule; protected keys are never dropped.
+    fn truncate_object(obj: &mut Map<String, Value>, max_tokens: usize) -> bool {
+        let mut truncated = false;
+        for child in obj.values_mut() {
+            if child.is_array() || child.is_object() {
+                truncated |= Self::truncate_value(child, max_tokens);
             }
         }
 
-        if value.is_object() {
-            if let Value::Object(mut obj) = std::mem::replace(value, Value::Null) {
-                let mut truncated = false;
-                for child in obj.values_mut() {
-                    if child.is_array() || child.is_object() {
-                        truncated |= Self::truncate_value(child, max_tokens);
-                    }
-                }
+        let removable = |k: &str| {
+            !matches!(
+                k,
+                "service"
+                    | "env"
+                    | "query"
+                    | "file"
+                    | "function"
+                    | "element"
+                    | "id"
+                    | "results"
+                    | "incidents"
+                    | "conflicts"
+                    | "calls"
+                    | "called_by"
+                    | "open_incidents"
+                    | "recent_incidents"
+                    | "count"
+                    // Primary payload keys of full-scan tools must survive so
+                    // the response keeps its shape after truncation:
+                    | "findings"
+                    | "relationships"
+                    | "elements"
+            )
+        };
+        let keys_to_remove: Vec<String> = obj.keys().filter(|k| removable(k)).cloned().collect();
 
-                let keys_to_remove: Vec<String> = obj
-                    .keys()
-                    .filter(|k| {
-                        !matches!(
-                            k.as_str(),
-                            "service"
-                                | "env"
-                                | "query"
-                                | "file"
-                                | "function"
-                                | "element"
-                                | "id"
-                                | "results"
-                                | "incidents"
-                                | "conflicts"
-                                | "calls"
-                                | "called_by"
-                                | "open_incidents"
-                                | "recent_incidents"
-                                | "count"
-                        )
-                    })
-                    .cloned()
-                    .collect();
-                for key in keys_to_remove {
-                    let tmp = Value::Object(obj.clone());
-                    if Self::count_tokens(&tmp) <= max_tokens {
-                        break;
-                    }
-                    obj.remove(&key);
-                    truncated = true;
-                }
-                *value = Value::Object(obj);
-                return truncated;
+        let mut cur = Self::object_bytes(obj);
+        let budget = max_tokens.saturating_mul(4);
+        for key in keys_to_remove {
+            if cur <= budget {
+                break;
             }
+            let Some(v) = obj.remove(&key) else {
+                continue;
+            };
+            let remaining = obj.len();
+            cur = cur
+                .saturating_sub(Self::entry_bytes(&key, &v))
+                .saturating_sub(if remaining >= 1 { 1 } else { 0 });
+            truncated = true;
         }
-
-        false
+        truncated
     }
 }
 

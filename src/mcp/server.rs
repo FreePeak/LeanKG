@@ -105,12 +105,36 @@ fn tool_timeout() -> std::time::Duration {
 /// budget above the floor still wins.
 const BULK_INDEX_TOOL_FLOOR_SECS: u64 = 300;
 
+/// Extended watchdog floor for full-graph scan tools (R2b, N4 defense).
+/// check_consistency / temporal_query / agent_focus legitimately scan the
+/// whole graph; over a loaded remote PG that is 45-60s+ (R2 sweep:
+/// get_impact_radius 61s, query_graph 57s). The interactive 30s expiry did
+/// NOT release their pooled connection anyway — the sync scan runs inside
+/// block_in_place and cannot be cancelled mid-poll — it only discarded the
+/// finished response and fed the starvation cascade. Letting them run to
+/// completion returns both the response AND the slot.
+const GRAPH_SCAN_TOOL_FLOOR_SECS: u64 = 120;
+
 fn tool_timeout_for(tool: &str) -> std::time::Duration {
     let base = tool_timeout();
     if matches!(tool, "mcp_index" | "mcp_index_docs")
         && base < std::time::Duration::from_secs(BULK_INDEX_TOOL_FLOOR_SECS)
     {
         return std::time::Duration::from_secs(BULK_INDEX_TOOL_FLOOR_SECS);
+    }
+    if matches!(
+        tool,
+        "check_consistency"
+            | "temporal_query"
+            | "timeline"
+            | "find_tunnels"
+            | "agent_focus"
+            | "get_impact_radius"
+            | "query_graph"
+            | "shortest_path"
+    ) && base < std::time::Duration::from_secs(GRAPH_SCAN_TOOL_FLOOR_SECS)
+    {
+        return std::time::Duration::from_secs(GRAPH_SCAN_TOOL_FLOOR_SECS);
     }
     base
 }
@@ -4373,6 +4397,37 @@ mod tests {
             "floor still applies when env is below it"
         );
         std::env::remove_var("LEANKG_MCP_TOOL_TIMEOUT_SECS");
+    }
+
+    // R2b / N4 defense: full-graph scan tools legitimately run 45-60s+ over
+    // remote PG. Their 30s expiry never released the pooled connection (the
+    // sync scan continues inside block_in_place) — it only discarded the
+    // finished response and fed the starvation cascade.
+    #[test]
+    fn graph_scan_tools_get_extended_watchdog_floor() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LEANKG_MCP_TOOL_TIMEOUT_SECS");
+        for tool in [
+            "check_consistency",
+            "temporal_query",
+            "timeline",
+            "find_tunnels",
+            "agent_focus",
+            "get_impact_radius",
+            "query_graph",
+            "shortest_path",
+        ] {
+            assert_eq!(
+                tool_timeout_for(tool),
+                std::time::Duration::from_secs(120),
+                "{tool} must get the graph-scan floor"
+            );
+        }
+        assert_eq!(
+            tool_timeout_for("search_knowledge"),
+            std::time::Duration::from_secs(30),
+            "interactive tools keep the default budget"
+        );
     }
 
     #[test]
