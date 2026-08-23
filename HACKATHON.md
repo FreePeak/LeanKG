@@ -74,3 +74,14 @@ Report: `docs/analysis/hackathon-sweep-R2.md` · binary `$SWEEP` 0.26.0 @ 2ceb31
 **CLI:** `export --markdown` exit 0, 4,068 lines. `doctor --deep` exit 2 (target ≤1): freshness WARN clean of `ontology://` noise (H9 hardening holds) but genuine FAILs — orphaned relationships 432/1000 sampled, duplicate doc-section QNs ×10.
 **New issues:** N1 `index` regenerates leankg.yaml dropping `project.project_path` → identity split returns (empty-schema serving observed twice); N2 legacy-schema adoption hijacks fresh index when relative project_path + stale legacy schema exist; N3 launcher-CWD leaks into identity (restart from parent repo pinned foreign schema); N4 wedge reachable via internal-watchdog expiry path (client-abandoned hangs safe); N5 doctor orphan/dup findings above; N6 cluster_skill parent-path bleed carried over. R1 #10 index_prd zero-work + orchestrate filename-parse error also carried over.
 Note: R3's warm-benchmarks (temporal 4.5s / check_consistency 6–7s / agent_focus 13ms) did NOT hold at full live scale on remote PG with 13.9k elements — hang trio is corpus-scale-dependent (empty-corpus probes ~7s each pass).
+
+### Cycle 2 — re-sweep + identity/perf/data-quality waves (2026-08-22)
+**R1 re-sweep:** 72 PASS / 1 PASS_EMPTY / 3 FAIL_TIMEOUT / **0 FAIL_ERROR** (R1: 3) · 0 cascade-poisoned (R1: 35) · p50 4896→2746ms, p95 90002→45003ms · audit chain intact (107 entries). Regression matrix 4 PASS/2 FAIL/1 PARTIAL. Report: docs/analysis/hackathon-sweep-R2.md.
+
+| Wave | Fixes | Live evidence |
+|---|---|---|
+| R2a identity | yaml anchor preservation (serde skip_serializing bug); legacy schema adopted only when preferred empty; --project canonicalized at entrypoint; .leankg store outvotes stale root yaml | search_code count>0 from FOREIGN cwd after yaml corruption |
+| R2b perf/wedge | token_budget truncate O(n²)→O(n) single-pass; agent_focus IN-list chunks 500→10k; 120s watchdog floor for graph scans | check_consistency **211s→5.8s**; temporal 12min-hang→7s; starvation canaries answer during heavy calls |
+| R2c data quality | drop unresolvable call edges at generation; prune_dangling_relationships valve; docs hierarchy synthetic dir elements; per-doc heading QN #k counters; collapse dup file rows | doctor exit 2→1: orphans 432/1000→**0/72,699**; dup QNs 10→**0/14,091** |
+
+Gates @ cycle-2 close: lib **1169✅** · fmt/clippy/build clean.
