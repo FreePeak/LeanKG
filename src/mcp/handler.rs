@@ -1071,6 +1071,7 @@ impl ToolHandler {
                 json!({
                     "target": d.target_qualified,
                     "confidence": d.confidence,
+                    "confidence_label": d.confidence_label,
                     "type": "imports"
                 })
             })
@@ -1092,7 +1093,9 @@ impl ToolHandler {
             .map(|r| {
                 json!({
                     "source": r.source_qualified,
-                    "type": r.rel_type
+                    "type": r.rel_type,
+                    "confidence": r.confidence,
+                    "confidence_label": r.confidence_label(),
                 })
             })
             .collect();
@@ -1114,22 +1117,38 @@ impl ToolHandler {
             "start_file": result.start_file,
             "max_depth": result.max_depth,
             "affected": result.affected_elements.len(),
-            "elements": result.affected_elements.iter().map(|e| json!({
-                "qualified_name": e.qualified_name,
-                "name": e.name,
-                "type": e.element_type,
-                "file": e.file_path
-            })).collect::<Vec<_>>(),
-            "elements_with_confidence": result.affected_with_confidence.iter().map(|a| json!({
-                "qualified_name": a.element.qualified_name,
-                "name": a.element.name,
-                "type": a.element.element_type,
-                "file": a.element.file_path,
-                "confidence": a.confidence,
-                "confidence_label": a.confidence_label,
-                "severity": a.severity,
-                "depth": a.depth
-            })).collect::<Vec<_>>()
+            "elements": result.affected_elements.iter().map(|e| {
+                let mut o = json!({
+                    "qualified_name": e.qualified_name,
+                    "name": e.name,
+                    "type": e.element_type,
+                    "file": e.file_path
+                });
+                // ENT-9: flag non-extractor-derived rows where derivable.
+                if crate::graph::provenance::is_synthetic_element(&e.element_type, &e.file_path) {
+                    o["synthetic"] = json!(true);
+                }
+                o
+            }).collect::<Vec<_>>(),
+            "elements_with_confidence": result.affected_with_confidence.iter().map(|a| {
+                let mut o = json!({
+                    "qualified_name": a.element.qualified_name,
+                    "name": a.element.name,
+                    "type": a.element.element_type,
+                    "file": a.element.file_path,
+                    "confidence": a.confidence,
+                    "confidence_label": a.confidence_label,
+                    "severity": a.severity,
+                    "depth": a.depth
+                });
+                if crate::graph::provenance::is_synthetic_element(
+                    &a.element.element_type,
+                    &a.element.file_path,
+                ) {
+                    o["synthetic"] = json!(true);
+                }
+                o
+            }).collect::<Vec<_>>()
         });
 
         Ok(self.maybe_compress(response, args, "get_impact_radius"))
@@ -1165,17 +1184,26 @@ impl ToolHandler {
         let review_prompt = generate_review_prompt(&context_elements, &context_relationships);
 
         Ok(json!({
-            "elements": context_elements.iter().map(|e| json!({
-                "qualified_name": e.qualified_name,
-                "name": e.name,
-                "type": e.element_type,
-                "file": e.file_path,
-                "lines": format!("{}-{}", e.line_start, e.line_end)
-            })).collect::<Vec<_>>(),
+            "elements": context_elements.iter().map(|e| {
+                let mut o = json!({
+                    "qualified_name": e.qualified_name,
+                    "name": e.name,
+                    "type": e.element_type,
+                    "file": e.file_path,
+                    "lines": format!("{}-{}", e.line_start, e.line_end)
+                });
+                // ENT-9: flag non-extractor-derived rows where derivable.
+                if crate::graph::provenance::is_synthetic_element(&e.element_type, &e.file_path) {
+                    o["synthetic"] = json!(true);
+                }
+                o
+            }).collect::<Vec<_>>(),
             "relationships": context_relationships.iter().map(|r| json!({
                 "source": r.source_qualified,
                 "target": r.target_qualified,
-                "type": r.rel_type
+                "type": r.rel_type,
+                "confidence": r.confidence,
+                "confidence_label": r.confidence_label(),
             })).collect::<Vec<_>>(),
             "review_prompt": review_prompt
         }))

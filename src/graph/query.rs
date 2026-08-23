@@ -347,6 +347,8 @@ impl GraphEngine {
                     .map(|qn| DependencyInfo {
                         target_qualified: qn,
                         confidence: 1.0,
+                        confidence_label: crate::graph::provenance::confidence_label_for(1.0, None)
+                            .to_string(),
                     })
                     .collect());
             }
@@ -373,9 +375,18 @@ impl GraphEngine {
                 if target.is_empty() {
                     return None;
                 }
+                let confidence = row[2].get_float().unwrap_or(1.0);
+                let metadata: serde_json::Value = row[3]
+                    .get_str()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_else(|| serde_json::json!({}));
                 Some(DependencyInfo {
                     target_qualified: target.to_string(),
-                    confidence: row[2].get_float().unwrap_or(1.0),
+                    confidence,
+                    confidence_label: crate::graph::provenance::confidence_label_for_metadata(
+                        confidence, &metadata,
+                    )
+                    .to_string(),
                 })
             })
             .collect();
@@ -4729,6 +4740,9 @@ pub struct Tunnel {
     pub target: String,
     pub rel_type: String,
     pub confidence: f64,
+    /// ENT-9: provenance label so tunnel edges calibrate like all others.
+    #[serde(default)]
+    pub confidence_label: String,
     pub source_cluster: String,
     pub target_cluster: String,
 }
@@ -5762,6 +5776,7 @@ impl GraphEngine {
                         target: r.target_qualified.clone(),
                         rel_type: r.rel_type.clone(),
                         confidence: r.confidence,
+                        confidence_label: r.confidence_label().to_string(),
                         source_cluster: sc.clone(),
                         target_cluster: tc.clone(),
                     });
@@ -7531,6 +7546,7 @@ mod tests {
             target: "b".into(),
             rel_type: "calls".into(),
             confidence: 0.9,
+            confidence_label: "EXTRACTED".into(),
             source_cluster: "c1".into(),
             target_cluster: "c2".into(),
         };
@@ -7538,6 +7554,8 @@ mod tests {
         assert_eq!(v["source_cluster"], "c1");
         assert_eq!(v["target_cluster"], "c2");
         assert_eq!(v["confidence"], 0.9);
+        // ENT-9: tunnel edges carry a provenance label like every edge.
+        assert_eq!(v["confidence_label"], "EXTRACTED");
     }
 
     // US-MP-04: AgentPersona roundtrip + DiaryEntry
