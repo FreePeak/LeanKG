@@ -1771,10 +1771,17 @@ fn project_identity_keys_in(
     if root.ends_with(".leankg") {
         root = root.parent().unwrap_or(&root).to_path_buf();
     }
-    let mut configs: Vec<std::path::PathBuf> = vec![root.join("leankg.yaml")];
+    // The `.leankg` store is the authoritative config location (written by
+    // `leankg init` / setup); the root-level `leankg.yaml` is a legacy
+    // duplicate kept readable. Checking the store FIRST prevents a stale
+    // root-level anchor from out-voting the managed one when the two copies
+    // diverge (cycle-2 R2a live proof: init's cwd copy anchored `<root>`
+    // while the healed store anchored `<root>/src`).
     let dot_leankg_yaml = root.join(".leankg").join("leankg.yaml");
-    if dot_leankg_yaml != configs[0] {
-        configs.push(dot_leankg_yaml);
+    let root_yaml = root.join("leankg.yaml");
+    let mut configs: Vec<std::path::PathBuf> = vec![dot_leankg_yaml];
+    if root_yaml != configs[0] {
+        configs.push(root_yaml);
     }
 
     for cfg_path in &configs {
@@ -1905,50 +1912,123 @@ pub fn create_schema_if_missing(
 /// schema exists but is empty (e.g. a re-index that created tables but wrote
 /// no elements), so existing shared-layout local indexes stay queryable.
 fn schema_exists(schema: &str) -> bool {
+    schema_state(schema).populated
+}
+
+/// Existence/population state of one per-project PG schema.
+///
+/// - `exists`: the schema owns a `code_elements` table (created+migrated).
+/// - `populated`: that table holds at least one row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SchemaState {
+    exists: bool,
+    populated: bool,
+}
+
+/// Probe [`SchemaState`] for `schema`, safe to call from async contexts
+/// (same `block_in_place` guard as the other sync-PG helpers).
+fn schema_state(schema: &str) -> SchemaState {
     if tokio::runtime::Handle::try_current().is_ok() {
-        tokio::task::block_in_place(|| schema_exists_sync(schema))
+        tokio::task::block_in_place(|| schema_state_sync(schema))
     } else {
-        schema_exists_sync(schema)
+        schema_state_sync(schema)
     }
 }
 
-fn schema_exists_sync(schema: &str) -> bool {
+fn schema_state_sync(schema: &str) -> SchemaState {
     let base = match PostgresBackend::from_env() {
         Ok(pg) => pg.pg_url,
-        Err(_) => return false,
+        Err(_) => {
+            return SchemaState {
+                exists: false,
+                populated: false,
+            }
+        }
     };
     let Ok(mut client) = pg_connect(&base) else {
-        return false;
+        return SchemaState {
+            exists: false,
+            populated: false,
+        };
     };
     // Schema names come from schema_for_path (hex/hash, always a safe
     // identifier), so qualifying the table directly is injection-safe.
-    let q = format!("SELECT EXISTS (SELECT 1 FROM {schema}.code_elements LIMIT 1)");
-    client
-        .query_one(&q, &[])
+    let exists = client
+        .query_one(
+            &format!("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = '{schema}')"),
+            &[],
+        )
         .map(|row| row.get(0))
-        .unwrap_or(false)
+        .unwrap_or(false);
+    if !exists {
+        return SchemaState {
+            exists: false,
+            populated: false,
+        };
+    }
+    let populated = client
+        .query_one(
+            &format!("SELECT EXISTS (SELECT 1 FROM {schema}.code_elements LIMIT 1)"),
+            &[],
+        )
+        .map(|row| row.get(0))
+        .unwrap_or(false);
+    SchemaState {
+        exists: true,
+        populated,
+    }
 }
 
-/// Pick the schema for a project init: the first identity candidate whose
-/// schema exists AND holds rows; else the preferred candidate. BUG-B: when
-/// the preferred identity changed (relative `project_path` used to be keyed
-/// literally), this adopts the legacy schema instead of silently serving an
-/// empty project. Zero extra probes when no legacy candidate exists.
-fn pick_schema_for_init(db_path: &std::path::Path) -> String {
-    let candidates = schema_candidates_for_path(db_path);
+/// Pure N2 decision: may the LEGACY candidate be adopted over the preferred?
+///
+/// Only when the preferred schema does not exist or holds no rows AND the
+/// legacy candidate actually holds rows. The R2 sweep caught this adopting a
+/// stale 13k-row legacy schema even though the freshly indexed preferred
+/// schema was fully populated.
+fn should_adopt_legacy(
+    preferred_exists: bool,
+    preferred_populated: bool,
+    legacy_exists: bool,
+    legacy_populated: bool,
+) -> bool {
+    (!preferred_exists || !preferred_populated) && legacy_exists && legacy_populated
+}
+
+/// Probe-driven candidate selection (pure so tests can fake the probes):
+/// keep the preferred identity whenever it is populated; otherwise adopt the
+/// first legacy candidate that is populated; else stay on the preferred name.
+type SchemaProbe<'a> = &'a dyn Fn(&str) -> SchemaState;
+
+fn pick_schema_from_candidates(candidates: &[String], probe: SchemaProbe<'_>) -> String {
     let Some(preferred) = candidates.first() else {
         return "leankg_p_default".to_string();
     };
+    let pref = probe(preferred);
+    if pref.populated || candidates.len() == 1 {
+        return preferred.clone();
+    }
     for legacy in candidates.iter().skip(1) {
-        if schema_exists(legacy) {
+        let lg = probe(legacy);
+        if should_adopt_legacy(pref.exists, pref.populated, lg.exists, lg.populated) {
             tracing::warn!(
-                "project identity: preferred schema {preferred} is empty; \
+                "project identity: preferred schema {preferred} is missing or empty; \
                  adopting populated legacy schema {legacy}"
             );
             return legacy.clone();
         }
     }
     preferred.clone()
+}
+
+/// Pick the schema for a project init: the preferred identity candidate
+/// unless it is missing/empty while a populated LEGACY candidate exists
+/// (BUG-B self-heal for pre-fix data keyed on the literal relative
+/// `project_path`). A populated preferred schema always wins — a stale
+/// legacy schema must never hijack fresh data.
+fn pick_schema_for_init(db_path: &std::path::Path) -> String {
+    let candidates = schema_candidates_for_path(db_path);
+    let probe: SchemaProbe<'_> = &|s| schema_state(s);
+    pick_schema_from_candidates(&candidates, probe)
 }
 
 fn create_schema_if_missing_sync(
@@ -2165,7 +2245,7 @@ pub fn init_db_readonly_audit(
         for schema in schema_candidates_for_path(db_path) {
             // Candidate names are hex/hash-derived identifiers (see
             // schema_name_from_key), so direct interpolation is safe —
-            // same assumption as schema_exists_sync.
+            // same assumption as schema_state_sync.
             let q = format!(
                 "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
                  WHERE table_schema = '{schema}' AND table_name = 'audit_log')"
@@ -2731,6 +2811,174 @@ mod tests {
             schema_for_path(&link),
             schema_for_path(&real),
             "a symlink pointing at the project root must not fork the schema"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // N2 (cycle-2 R2a): legacy-schema adoption must never hijack a
+    // populated preferred schema.
+    // ------------------------------------------------------------------
+
+    /// Full decision matrix: adopt the legacy schema ONLY when the preferred
+    /// schema is missing or EMPTY and the legacy candidate actually holds
+    /// rows. A populated preferred schema always wins (the R2 sweep saw a
+    /// stale 13k-row legacy schema pin over a fresh index).
+    #[test]
+    fn legacy_adoption_matrix() {
+        type Row = (bool, bool, bool, bool);
+        let cases: Vec<((bool, bool, bool, bool), bool)> = vec![
+            // (pref_exists, pref_populated, legacy_exists, legacy_populated) => adopt?
+            ((false, false, true, true), true),
+            ((false, false, true, false), false),
+            ((false, false, false, false), false),
+            ((true, false, true, true), true),
+            ((true, false, true, false), false),
+            ((true, true, true, true), false),
+            ((true, true, true, false), false),
+            ((true, true, false, false), false),
+            ((false, true, true, true), true), // contradictory input; "missing preferred" wins
+            ((true, false, false, true), false), // impossible: populated implies exists
+        ];
+        for (row, expect) in cases {
+            assert_eq!(
+                should_adopt_legacy(row.0, row.1, row.2, row.3),
+                expect,
+                "matrix row {row:?}"
+            );
+        }
+    }
+
+    /// Candidate selection with FAKE probes: populated preferred beats an
+    /// existing legacy schema; empty preferred adopts populated legacy;
+    /// fully-empty state keeps the preferred name.
+    #[test]
+    fn pick_schema_from_candidates_uses_probe_matrix() {
+        let candidates = vec![
+            "leankg_p_preferred".to_string(),
+            "leankg_p_legacy".to_string(),
+        ];
+        let probe = |s: &str| SchemaState {
+            exists: true,
+            populated: s.ends_with("preferred"),
+        };
+        assert_eq!(
+            pick_schema_from_candidates(&candidates, &probe),
+            "leankg_p_preferred",
+            "populated preferred must NOT be hijacked by an existing legacy schema"
+        );
+
+        let probe_empty_preferred = |s: &str| SchemaState {
+            exists: true,
+            populated: s.ends_with("legacy"),
+        };
+        assert_eq!(
+            pick_schema_from_candidates(&candidates, &probe_empty_preferred),
+            "leankg_p_legacy",
+            "empty preferred + populated legacy must adopt the legacy schema"
+        );
+
+        let probe_nothing = |_: &str| SchemaState {
+            exists: false,
+            populated: false,
+        };
+        assert_eq!(
+            pick_schema_from_candidates(&candidates, &probe_nothing),
+            "leankg_p_preferred",
+            "nothing populated anywhere must keep the preferred identity"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // N3 (cycle-2 R2a): launcher-CWD must not leak into project identity.
+    // ------------------------------------------------------------------
+
+    /// Once `--project` is canonicalized at the entrypoint (what mcp-http now
+    /// does before any schema derivation), the derived schema for one physical
+    /// project is identical no matter which directory the server was launched
+    /// from.
+    #[test]
+    fn canonicalized_project_derives_same_schema_from_any_cwd() {
+        let project = TempDir::new().unwrap();
+        std::fs::create_dir_all(project.path().join(".leankg")).unwrap();
+        std::fs::write(
+            project.path().join(".leankg").join("leankg.yaml"),
+            format!(
+                "project:\n  name: p\n  root: .\n  project_path: {}\n",
+                project.path().display()
+            ),
+        )
+        .unwrap();
+        let elsewhere = TempDir::new().unwrap();
+
+        // Launch A: process CWD = an unrelated directory.
+        let db_a = canonical_project_root_in(project.path(), elsewhere.path());
+        // Launch B: process CWD = the parent of the project itself.
+        let db_b = canonical_project_root_in(project.path(), project.path());
+
+        let schema_a = schema_for_path_in(&db_a, elsewhere.path());
+        let schema_b = schema_for_path_in(&db_b, project.path());
+        assert_eq!(
+            schema_a, schema_b,
+            "same --project from different launcher CWDs must pin one schema"
+        );
+        assert_eq!(
+            schema_a,
+            schema_for_path(&project.path().join(".leankg")),
+            "pre-canonicalized launch agrees with direct derivation"
+        );
+    }
+
+    /// Documents the bug shape: WITHOUT entrypoint canonicalization a
+    /// relative `--project` spelling resolves against the launcher CWD and
+    /// two launches pin DIFFERENT schemas.
+    #[test]
+    fn uncanonicalized_relative_project_leaks_launcher_cwd() {
+        let base_a = TempDir::new().unwrap();
+        let base_b = TempDir::new().unwrap();
+        for base in [&base_a, &base_b] {
+            std::fs::create_dir_all(base.path().join("fixture").join(".leankg")).unwrap();
+        }
+        let rel = std::path::Path::new("fixture/.leankg");
+        assert_ne!(
+            schema_for_path_in(rel, base_a.path()),
+            schema_for_path_in(rel, base_b.path()),
+            "relative spelling without pre-canonicalization depends on CWD"
+        );
+    }
+
+    /// The `.leankg/leankg.yaml` store is the authoritative anchor location:
+    /// when it and a stale root-level copy disagree (init's cwd duplicate vs
+    /// the healed store), the STORE must win — otherwise per-request routing
+    /// re-keys the project onto an empty schema while boot used the right
+    /// one.
+    #[test]
+    fn dot_leankg_store_anchor_outvotes_stale_root_level_copy() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".leankg")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+
+        // Stale root-level copy anchored at the repo root itself...
+        std::fs::write(
+            root.join("leankg.yaml"),
+            format!(
+                "project:\n  name: p\n  root: ./src\n  project_path: {}\n",
+                root.display()
+            ),
+        )
+        .unwrap();
+        // ...while the managed store carries the writer's anchor.
+        std::fs::write(
+            root.join(".leankg").join("leankg.yaml"),
+            "project:\n  name: p\n  root: ./src\n  languages: [rust]\n  project_path: ./src\n",
+        )
+        .unwrap();
+
+        let expected = schema_for_path(&root.join("src"));
+        let derived = schema_for_path(&root.join(".leankg"));
+        assert_eq!(
+            derived, expected,
+            "store anchor (./src) must outvote the stale root-level copy"
         );
     }
 
