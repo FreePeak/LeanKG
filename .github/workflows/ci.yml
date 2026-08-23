@@ -103,3 +103,26 @@ jobs:
 
       - name: Verify npm wrapper matches crate version
         run: bash scripts/sync-npm-version.sh --check
+
+  # FR-PLG-5: the MCP tool surface is contractual. Regenerate the tool
+  # contract from src/mcp/tools.rs and fail when it drifted from the
+  # committed docs/mcp-tool-contract.md ("tool surface changed without
+  # contract update"). Also proves the generator is byte-deterministic.
+  tool-contract:
+    name: MCP Tool Contract Drift Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate contract and diff against committed doc
+        run: |
+          bash scripts/gen_tool_contract.sh --stdout > /tmp/mcp-tool-contract.generated.md
+          if ! diff -u docs/mcp-tool-contract.md /tmp/mcp-tool-contract.generated.md; then
+            echo "::error::tool surface changed without contract update — run scripts/gen_tool_contract.sh and commit docs/mcp-tool-contract.md"
+            exit 1
+          fi
+
+      - name: Generator determinism check
+        run: |
+          bash scripts/gen_tool_contract.sh --stdout > /tmp/mcp-tool-contract.rerun.md
+          cmp /tmp/mcp-tool-contract.generated.md /tmp/mcp-tool-contract.rerun.md

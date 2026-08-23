@@ -76,7 +76,7 @@
 | dead / unused / orphan | `find_dead_code` → `get_callers` → `query_graph` | dead-code candidates + caller neighborhoods |
 | impact / breaking / what breaks / change / refactor / break | `get_context` → `get_impact_radius` → `get_dependents` → `get_dependencies` → `query_graph` | dependents/dependencies into change-impact subgraph |
 | test / coverage / tested | `query_file` → `get_tested_by` → `query_graph` | tested_by edges + element neighborhood |
-| trace / requirement / traceability / fr- / us- / doc | `search_by_requirement` → `get_traceability` → `get_files_for_doc` → `find_related_docs` → `query_graph` | traceability chains + doc refs over shared elements |
+| trace / requirement / traceability / fr- / us- / doc | `get_traceability` → `get_files_for_doc` → `find_related_docs` → `query_graph` | traceability chains + doc refs over shared elements |
 | call / caller / callee / depend / who calls / what calls | `get_callers` → `get_call_graph` → `query_graph` | caller/callee hops into call subgraph |
 | where is / where are / find / implemented / which / what is / how does | `semantic_search` ∥ `concept_search` → `query_file` → `query_graph` | search hits around discovered seeds |
 | cluster / module / architecture / overview / component | `get_architecture` → `get_clusters` → `get_cluster_context` → `query_graph` | cluster neighborhoods over shared graph |
