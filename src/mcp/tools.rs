@@ -152,7 +152,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "orchestrate".to_string(),
-                description: "Smart context orchestration with caching. Provide natural language intent like 'show me impact of changing function X' or 'get context for file Y'. Internally: checks cache -> queries graph -> compresses -> caches result. Use this instead of multiple individual tools when you want LeanKG to optimize the flow.".to_string(),
+                description: "Deprecated: use query_graph / kg_context / search_code directly; removal in v0.28. Smart context orchestration with caching. Provide natural language intent like 'show me impact of changing function X' or 'get context for file Y'. Internally: checks cache -> queries graph -> compresses -> caches result.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -382,7 +382,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_graph_report".to_string(),
-                description: "US-GF-06: Return the full graph report (god nodes, confidence distribution, suggested questions). Writes `.leankg/GRAPH_REPORT.md` on disk.".to_string(),
+                description: "Deprecated: use get_god_nodes (top hubs) + get_architecture (overview) instead; removal in v0.28. US-GF-06: Return the full graph report (god nodes, confidence distribution, suggested questions). Writes `.leankg/GRAPH_REPORT.md` on disk.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -541,7 +541,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "search_by_requirement".to_string(),
-                description: "Find code elements related to a specific requirement".to_string(),
+                description: "Deprecated: use get_traceability / get_traceability_matrix instead; removal in v0.28. Find code elements related to a specific requirement".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
