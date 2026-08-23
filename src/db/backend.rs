@@ -191,6 +191,18 @@ pub trait DbBackend: Send + Sync {
     ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
         Err("audit ledger not supported by this backend".into())
     }
+
+    /// H10 / FR-PLG-8: usage-dashboard buckets over `context_metrics`, all
+    /// computed in SINGLE grouped queries (`GROUP BY tool_name`,
+    /// `timestamp/86400`, `project_path`, `query_pattern`). `since_cutoff`
+    /// filters `timestamp >= cutoff` (epoch seconds); `None` = all time.
+    /// Soft-deleted rows are always excluded.
+    fn query_usage_aggregates(
+        &self,
+        _since_cutoff: Option<i64>,
+    ) -> Result<crate::dashboard::UsageAggregates, Box<dyn std::error::Error>> {
+        Err("usage dashboard not supported by this backend".into())
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -668,6 +680,102 @@ impl PostgresBackend {
                 entry_hash: r.get(9),
             })
             .collect())
+    }
+
+    /// H10 / FR-PLG-8: usage-dashboard buckets over `context_metrics`.
+    ///
+    /// Four SINGLE grouped queries (totals / tool / day / project + pattern);
+    /// never row-by-row. Day bucketing uses integer division
+    /// `timestamp / 86400` rather than `date_trunc('day', to_timestamp(..))`:
+    /// the column is epoch seconds (BIGINT) and integer division is
+    /// deterministic UTC regardless of session TimeZone — it matches the
+    /// reference `dashboard::aggregate_rows` (`div_euclid`) exactly.
+    fn query_usage_aggregates_sync(
+        &self,
+        since_cutoff: Option<i64>,
+    ) -> Result<crate::dashboard::UsageAggregates, Box<dyn std::error::Error>> {
+        let mut params: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
+        let mut window = String::from("is_deleted = FALSE");
+        if let Some(cutoff) = since_cutoff {
+            params.push(Box::new(cutoff));
+            window.push_str(&format!(" AND timestamp >= ${}", params.len()));
+        }
+
+        // PG semantics: SUM(bigint) widens to numeric — every token/time
+        // sum is cast back to BIGINT so the sync client reads i64s.
+        let totals_sql = format!(
+            "SELECT COUNT(*)::BIGINT, COALESCE(SUM(input_tokens), 0)::BIGINT, \
+             COALESCE(SUM(output_tokens), 0)::BIGINT, \
+             COALESCE(SUM(tokens_saved), 0)::BIGINT, \
+             COALESCE(SUM(savings_percent), 0)::FLOAT8, \
+             COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0)::BIGINT \
+             FROM context_metrics WHERE {window}"
+        );
+        let tool_sql = format!(
+            "SELECT tool_name, COUNT(*)::BIGINT, COALESCE(SUM(tokens_saved), 0)::BIGINT, \
+             COALESCE(SUM(execution_time_ms), 0)::BIGINT FROM context_metrics WHERE {window} \
+             GROUP BY tool_name ORDER BY 3 DESC, tool_name ASC"
+        );
+        // Integer epoch-day bucket; see doc comment.
+        let day_sql = format!(
+            "SELECT timestamp / 86400, COUNT(*)::BIGINT, \
+             COALESCE(SUM(tokens_saved), 0)::BIGINT \
+             FROM context_metrics WHERE {window} GROUP BY 1 ORDER BY 1 ASC"
+        );
+        let project_sql = format!(
+            "SELECT project_path, COUNT(*)::BIGINT, COALESCE(SUM(tokens_saved), 0)::BIGINT \
+             FROM context_metrics WHERE {window} GROUP BY project_path \
+             ORDER BY 3 DESC, project_path ASC LIMIT 5"
+        );
+        let pattern_sql = format!(
+            "SELECT query_pattern, COUNT(*)::BIGINT, COALESCE(SUM(tokens_saved), 0)::BIGINT \
+             FROM context_metrics WHERE {window} AND query_pattern IS NOT NULL \
+             GROUP BY query_pattern ORDER BY 2 DESC, query_pattern ASC LIMIT 10"
+        );
+
+        let refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut client = self.checkout()?;
+        let trow = client.query_one(&totals_sql, &refs)?;
+        let mut agg = crate::dashboard::UsageAggregates {
+            calls: trow.get::<_, i64>(0).max(0) as u64,
+            input_tokens: trow.get(1),
+            output_tokens: trow.get(2),
+            tokens_saved: trow.get(3),
+            savings_percent_sum: trow.get(4),
+            successful_calls: trow.get::<_, i64>(5).max(0) as u64,
+            ..Default::default()
+        };
+        for r in client.query(&tool_sql, &refs)? {
+            let calls: i64 = r.get(1);
+            let ms_sum: i64 = r.get(3);
+            agg.tools.push(crate::dashboard::ToolUsage {
+                tool: r.get(0),
+                calls: calls.max(0) as u64,
+                tokens_saved: r.get(2),
+                avg_ms: ms_sum as f64 / calls.max(1) as f64,
+            });
+        }
+        for r in client.query(&day_sql, &refs)? {
+            let day_bucket: i64 = r.get(0);
+            agg.days.push(crate::dashboard::DayUsage {
+                day: crate::dashboard::day_label(day_bucket),
+                calls: r.get::<_, i64>(1).max(0) as u64,
+                tokens_saved: r.get(2),
+            });
+        }
+        for r in client.query(&project_sql, &refs)? {
+            agg.projects.push(crate::dashboard::ProjectUsage {
+                project: r.get(0),
+                calls: r.get::<_, i64>(1).max(0) as u64,
+                tokens_saved: r.get(2),
+            });
+        }
+        for r in client.query(&pattern_sql, &refs)? {
+            agg.patterns
+                .push((r.get(0), r.get::<_, i64>(1).max(0) as u64, r.get(2)));
+        }
+        Ok(agg)
     }
 
     /// Take the PG advisory lock for exclusive jobs (e.g. `leankg index`,
@@ -1249,6 +1357,18 @@ impl DbBackend for PostgresBackend {
             tokio::task::block_in_place(|| self.query_audit_sync(since, until))
         } else {
             self.query_audit_sync(since, until)
+        }
+    }
+
+    /// H10 / FR-PLG-8: grouped usage-dashboard buckets (see trait docs).
+    fn query_usage_aggregates(
+        &self,
+        since_cutoff: Option<i64>,
+    ) -> Result<crate::dashboard::UsageAggregates, Box<dyn std::error::Error>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.query_usage_aggregates_sync(since_cutoff))
+        } else {
+            self.query_usage_aggregates_sync(since_cutoff)
         }
     }
 
@@ -2235,42 +2355,57 @@ pub fn init_db_readonly_strict(
 pub fn init_db_readonly_audit(
     db_path: &std::path::Path,
 ) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    init_db_readonly_probed(db_path, "audit_log", "audit ledger")
+}
+
+/// H10 / FR-PLG-8 + FR-ENT-1 shared seam: read-only backend pinned to the
+/// first project-schema candidate that owns `table`. The same rationale as
+/// [`init_db_readonly_audit`] applies to any per-project ledger that must
+/// outlive a (re)index — for the dashboard that's `context_metrics`, which
+/// starts filling during the very first MCP session. Falls back to the
+/// legacy public layout when no candidate carries the table.
+pub fn init_db_readonly_probed(
+    db_path: &std::path::Path,
+    table: &str,
+    label: &str,
+) -> Result<SharedDb, Box<dyn std::error::Error>> {
     let probe = PostgresBackend::from_env_read_only()?;
     let mut chosen: Option<String> = None;
     // The CLI runs inside Tokio (#main block_on); the sync PG client must
     // leave the ambient runtime first — same guard as checkout().
     let probe_url = probe.pg_url.clone();
-    let probe_fn = |chosen: &mut Option<String>| -> Result<(), Box<dyn std::error::Error>> {
-        let mut client = pg_connect(&probe_url)?;
-        for schema in schema_candidates_for_path(db_path) {
-            // Candidate names are hex/hash-derived identifiers (see
-            // schema_name_from_key), so direct interpolation is safe —
-            // same assumption as schema_state_sync.
-            let q = format!(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
-                 WHERE table_schema = '{schema}' AND table_name = 'audit_log')"
-            );
-            if client
-                .query_one(&q, &[])
-                .map(|r| r.get::<_, bool>(0))
-                .unwrap_or(false)
-            {
-                *chosen = Some(schema);
-                break;
+    let probe_fn =
+        |chosen: &mut Option<String>, table: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let mut client = pg_connect(&probe_url)?;
+            for schema in schema_candidates_for_path(db_path) {
+                // Candidate names are hex/hash-derived identifiers (see
+                // schema_name_from_key), so direct interpolation is safe —
+                // same assumption as schema_state_sync.
+                let q = format!(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+                     WHERE table_schema = '{schema}' AND table_name = '{table}')"
+                );
+                if client
+                    .query_one(&q, &[])
+                    .map(|r| r.get::<_, bool>(0))
+                    .unwrap_or(false)
+                {
+                    *chosen = Some(schema);
+                    break;
+                }
             }
-        }
-        Ok(())
-    };
+            Ok(())
+        };
     if tokio::runtime::Handle::try_current().is_ok() {
-        tokio::task::block_in_place(|| probe_fn(&mut chosen))?;
+        tokio::task::block_in_place(|| probe_fn(&mut chosen, table))?;
     } else {
-        probe_fn(&mut chosen)?;
+        probe_fn(&mut chosen, table)?;
     }
     match chosen {
         Some(schema) => {
             let pg = PostgresBackend::from_env_read_only()?.with_schema(&schema);
             tracing::info!(
-                "audit ledger backend pinned to schema {schema}: {}",
+                "{label} backend pinned to schema {schema}: {}",
                 redact_url(&pg.pg_url)
             );
             Ok(Arc::new(pg))
