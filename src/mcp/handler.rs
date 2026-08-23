@@ -482,14 +482,15 @@ impl ToolHandler {
         }
 
         let config = crate::config::ProjectConfig::default();
-        let config_yaml = serde_yaml::to_string(&config)
-            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        // N1 (cycle-2 R2a): merge under an existing leankg.yaml instead of
+        // overwriting it — dropping `project.project_path` here re-scoped the
+        // project identity on the next server boot (empty-DB serving).
         let config_path = if path_ref.is_file() {
             std::path::PathBuf::from("leankg.yaml")
         } else {
             path_ref.join("leankg.yaml")
         };
-        std::fs::write(config_path, config_yaml)
+        crate::config::write_config_preserving_existing(&config_path, &config)
             .map_err(|e| format!("Failed to write config: {}", e))?;
 
         Ok(json!({
@@ -5041,6 +5042,57 @@ mod tests {
         let shared = crate::db::backend::init_db(&tmp.path().join("leankg.db")).unwrap();
         let graph = GraphEngine::new(shared);
         (ToolHandler::new(graph, tmp.path().to_path_buf()), tmp)
+    }
+
+    /// N1 (cycle-2 R2a): the `mcp_init` tool used to overwrite leankg.yaml
+    /// with `ProjectConfig::default()` — dropping `project.project_path`
+    /// and every unmodeled user key, which re-scoped the project identity
+    /// on the next server boot ("database_exists: false" empty-DB serving).
+    /// Re-init must merge under the existing file instead.
+    #[test]
+    fn mcp_init_preserves_existing_user_fields() {
+        let (handler, tmp) = handler_in_temp_project();
+        let cfg_path = tmp.path().join("leankg.yaml");
+        std::fs::write(
+            &cfg_path,
+            format!(
+                "project:\n  name: user-name\n  root: ./src\n  project_path: {}\n  team_probe: keep-us\n",
+                tmp.path().display()
+            ),
+        )
+        .unwrap();
+
+        let res = handler
+            .mcp_init(&json!({"path": tmp.path().to_string_lossy().as_ref()}))
+            .expect("mcp_init ok");
+        assert_eq!(res["success"], json!(true));
+
+        let out = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(out.contains("user-name"), "name kept:\n{out}");
+        assert!(
+            out.contains(tmp.path().display().to_string().as_str()),
+            "project_path anchor kept:\n{out}"
+        );
+        assert!(out.contains("team_probe"), "custom key kept:\n{out}");
+        // Missing standard keys still get filled in from defaults.
+        assert!(
+            out.contains("auto_index_on_start"),
+            "mcp block filled:\n{out}"
+        );
+    }
+
+    /// N1: init into a FRESH directory keeps creating a full default config.
+    #[test]
+    fn mcp_init_creates_default_config_when_absent() {
+        let (handler, tmp) = handler_in_temp_project();
+        let fresh = tmp.path().join("new-project");
+        std::fs::create_dir_all(&fresh).unwrap();
+        handler
+            .mcp_init(&json!({"path": fresh.to_string_lossy().as_ref()}))
+            .expect("mcp_init ok");
+        let out = std::fs::read_to_string(fresh.join("leankg.yaml")).unwrap();
+        assert!(out.contains("my-project"), "\n{out}");
+        assert!(out.contains("languages"), "\n{out}");
     }
 
     #[tokio::test]

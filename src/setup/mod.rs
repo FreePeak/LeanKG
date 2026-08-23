@@ -268,6 +268,11 @@ fn fetch_and_checkout(dir: &Path, ref_name: &str) -> Result<(), Box<dyn std::err
 }
 
 /// Write a minimal `.leankg/leankg.yaml` project config for a repo dir.
+///
+/// N1 (cycle-2 R2a): when a config already exists, this is read-modify-write
+/// — user fields (including the `project.project_path` identity anchor and
+/// keys serde does not model) are preserved and only MISSING template keys
+/// are filled in. An unparseable existing file is left untouched.
 pub fn write_project_config(dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let name = dir
         .file_name()
@@ -276,9 +281,6 @@ pub fn write_project_config(dir: &Path) -> Result<PathBuf, Box<dyn std::error::E
     let leankg_dir = dir.join(".leankg");
     std::fs::create_dir_all(&leankg_dir)?;
     let config_path = leankg_dir.join("leankg.yaml");
-    if config_path.exists() {
-        return Ok(config_path);
-    }
     let yaml = format!(
         r#"project:
   name: "{name}"
@@ -314,8 +316,35 @@ indexer:
         name = name,
         path = dir.display(),
     );
-    std::fs::write(&config_path, yaml)?;
-    Ok(config_path)
+    match std::fs::read_to_string(&config_path) {
+        Ok(existing) => {
+            // Merge the template UNDER the existing document; skip the write
+            // entirely when nothing was missing.
+            let Ok(mut merged) = serde_yaml::from_str::<serde_yaml::Value>(&existing) else {
+                return Ok(config_path);
+            };
+            if !merged.is_mapping() {
+                // A scalar/sequence document is not project config — leave it
+                // exactly as the user wrote it.
+                return Ok(config_path);
+            }
+            let Ok(template) = serde_yaml::from_str::<serde_yaml::Value>(&yaml) else {
+                return Ok(config_path);
+            };
+            let before = merged.clone();
+            crate::config::fill_missing_yaml_keys(&mut merged, &template);
+            if merged == before {
+                return Ok(config_path);
+            }
+            let out = serde_yaml::to_string(&merged)?;
+            std::fs::write(&config_path, out)?;
+            Ok(config_path)
+        }
+        Err(_) => {
+            std::fs::write(&config_path, yaml)?;
+            Ok(config_path)
+        }
+    }
 }
 
 /// Re-invoke the `leankg` binary for a subcommand inside a repo dir.
@@ -656,6 +685,53 @@ mod tests {
         let second = write_project_config(&dir).expect("write again");
         assert_eq!(first, second);
         assert_eq!(std::fs::read_to_string(&second).expect("read"), "sentinel");
+    }
+
+    /// N1 (cycle-2 R2a): re-running setup over an EXISTING user-edited
+    /// leankg.yaml must preserve every user field — including unmodeled
+    /// custom keys and the project_path identity anchor.
+    #[test]
+    fn write_project_config_preserves_user_fields() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("repo-y");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join(".leankg").join("leankg.yaml"),
+            format!(
+                "project:\n  name: user-name\n  root: ./src\n  project_path: {}\n  team_probe: keep-us\n",
+                dir.display()
+            ),
+        )
+        .expect("seed yaml");
+        write_project_config(&dir).expect("rewrite");
+        let out = std::fs::read_to_string(dir.join(".leankg").join("leankg.yaml")).unwrap();
+        assert!(out.contains("user-name"), "name kept:\n{out}");
+        assert!(out.contains("./src"), "root kept:\n{out}");
+        assert!(out.contains("team_probe"), "custom key kept:\n{out}");
+        assert!(
+            out.contains(&dir.display().to_string()),
+            "anchor kept:\n{out}"
+        );
+    }
+
+    /// N1: when an existing yaml LOST its project_path anchor (the R2 sweep
+    /// corruption), setup fills ONLY that missing key and leaves everything
+    /// else untouched.
+    #[test]
+    fn write_project_config_refills_missing_identity_anchor() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("repo-z");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join(".leankg").join("leankg.yaml"),
+            "project:\n  name: anchored\n  team_probe: keep-us\n",
+        )
+        .expect("seed yaml");
+        write_project_config(&dir).expect("fill");
+        let out = std::fs::read_to_string(dir.join(".leankg").join("leankg.yaml")).unwrap();
+        assert!(out.contains("project_path:"), "anchor refilled:\n{out}");
+        assert!(out.contains("anchored"), "name kept:\n{out}");
+        assert!(out.contains("keep-us"), "custom key kept:\n{out}");
     }
 
     /// setup_done respects the marker.

@@ -468,7 +468,18 @@ impl MCPServer {
     /// 1. project_path from config (if exists and valid)
     /// 2. project.root relative path resolution
     /// 3. Original db_path as fallback
+    ///
+    /// N3 (cycle-2 R2a): the resolved db dir is canonicalized before use so a
+    /// RELATIVE `project_path`/`root` inside leankg.yaml cannot re-key the
+    /// project schema against whatever directory the server was launched
+    /// from.
     fn resolve_project_root(db_path: std::path::PathBuf) -> std::path::PathBuf {
+        let chosen = Self::resolve_project_root_raw(db_path);
+        std::fs::canonicalize(&chosen).unwrap_or(chosen)
+    }
+
+    /// Pre-N3 resolution body (may return non-canonical paths).
+    fn resolve_project_root_raw(db_path: std::path::PathBuf) -> std::path::PathBuf {
         let config_path = db_path.join("leankg.yaml");
         if !config_path.exists() {
             return db_path;
