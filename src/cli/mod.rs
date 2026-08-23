@@ -384,6 +384,23 @@ pub enum CLICommand {
         #[arg(long, requires = "deep")]
         project: Option<String>,
     },
+    /// H10 / FR-PLG-8: usage dashboard over the `context_metrics` ledger —
+    /// totals (calls / tokens / savings), top tools, per-day trend with
+    /// `▇` bars, and top projects. Reads the project's Postgres schema
+    /// (`LEANKG_PG_URL`); exits non-zero when the ledger is unreachable.
+    Dashboard {
+        /// Time window: `<N>h`, `<N>d`, or `<N>w` (e.g. 24h, 7d, 30d).
+        /// Default: all time.
+        #[arg(long)]
+        since: Option<String>,
+        /// Output format: `text` (default) or `json`.
+        #[arg(long)]
+        format: Option<String>,
+        /// Project root whose PG schema holds the ledger (default:
+        /// discovered project root).
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Show index status
     Status,
     /// Start file watcher for incremental re-indexing.

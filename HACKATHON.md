@@ -94,3 +94,7 @@ Branch reset onto main cf357ad8 (cycles 1-2 banked via squash #247). Backlog thi
 - H12 README quickstart: one-command connect flow, timed smoke numbers, doctor self-check; every command live-verified. 1b83049b
 - H4 ENT-9 provenance labels: single confidence_label helper threaded through impact_radius/shortest_path/dependencies/dependents/review_context + synthetic element markers; 36,054 edges labeled in live REST response. 80dd38f3→4210232c
 - H6 consolidation: 3 tools removed (get_graph_report/orchestrate/search_by_requirement; temporal_query+timeline kept per matrix), deprecation notices first, contract history updated, matrix RED→GREEN, live :9728 proof (73 total, removed→Unknown tool). ca2a0234→9210602e
+
+### Cycle 4 progress
+- H10 usage dashboard: leankg dashboard (--since/--format) with grouped-SQL aggregates, ASCII bars, JSON mode; 12 unit + 3 live-PG integration tests; empty-state + invalid-since handled. 18342c50
+- H8 perf regression gate: perf_gate.sh (compare/update, PERF_GATE_PCT) + run_perf_workload.sh (median-of-3) + gen_perf_fixture.py + CI workflow; 8/8 bash TDD tests; live baseline vs remote PG: index 18315ms / boot 19ms / search_code 13ms; forced-fail sensitivity proven. 33d69541→0448998b
