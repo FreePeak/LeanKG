@@ -286,6 +286,9 @@ impl Default for Relationship {
 pub struct DependencyInfo {
     pub target_qualified: String,
     pub confidence: f64,
+    /// ENT-9: provenance label derived from confidence + resolver metadata.
+    #[serde(default)]
+    pub confidence_label: String,
 }
 
 impl Relationship {
@@ -345,20 +348,9 @@ impl Relationship {
     }
 
     fn derive_confidence_label(confidence: f64, metadata: &serde_json::Value) -> &'static str {
-        let method = metadata
-            .get("resolution_method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        match method {
-            "typed" => confidence_labels::EXTRACTED,
-            "name" if confidence >= 0.8 => confidence_labels::EXTRACTED,
-            "name_file_hint" if confidence >= 0.6 => confidence_labels::INFERRED,
-            "name" => confidence_labels::INFERRED,
-            "unresolved" => confidence_labels::AMBIGUOUS,
-            _ if confidence >= 0.8 => confidence_labels::EXTRACTED,
-            _ if confidence >= 0.5 => confidence_labels::INFERRED,
-            _ => confidence_labels::AMBIGUOUS,
-        }
+        // ENT-9: canonical thresholds live in graph::provenance so every
+        // serializer derives identical labels from raw confidence + metadata.
+        crate::graph::provenance::confidence_label_for_metadata(confidence, metadata)
     }
 
     /// Lower rank = higher trust (EXTRACTED first).
