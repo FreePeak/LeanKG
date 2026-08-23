@@ -128,6 +128,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await?;
+            // N1 self-heal (cycle-2 R2a): refill a missing project_path
+            // anchor in any conventional leankg.yaml around this index
+            // target BEFORE deriving the schema. The hint is THIS run's own
+            // canonical identity, so a rewritten/regenerated config cannot
+            // silently re-scope the project identity.
+            config::ensure_identity_fields_for_db(
+                &db_path,
+                &db::backend::canonical_project_root(&project_path),
+            );
             let exclude_patterns: Vec<String> = exclude
                 .as_ref()
                 .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
@@ -1662,18 +1671,30 @@ fn init_project(path: &str, with_lsp: bool) -> Result<(), Box<dyn std::error::Er
         config.indexer.typed_resolve = tr.join(",");
     }
 
+    // N1 (cycle-2 R2a): write via read-modify-write so a re-init never drops
+    // user fields — most importantly project.project_path, the schema
+    // identity anchor (its `skip_serializing` made even a fresh init emit a
+    // yaml without it).
     let config_yaml = serde_yaml::to_string(&config)?;
 
     std::fs::create_dir_all(path)?;
     let leankg_dir_config = std::path::Path::new(path).join("leankg.yaml");
-    std::fs::write(&leankg_dir_config, &config_yaml)?;
+    if leankg_dir_config.exists() {
+        let existing = std::fs::read_to_string(&leankg_dir_config)?;
+        std::fs::write(
+            &leankg_dir_config,
+            config::merge_yaml_preserving_existing(&existing, &config),
+        )?;
+    } else {
+        std::fs::write(&leankg_dir_config, &config_yaml)?;
+    }
 
     let cwd_config = std::path::Path::new("leankg.yaml");
     if cwd_config.exists() {
-        if let Ok(existing) = std::fs::read_to_string(cwd_config) {
-            if existing != config_yaml {
-                std::fs::write(cwd_config, &config_yaml)?;
-            }
+        let existing = std::fs::read_to_string(cwd_config)?;
+        let merged = config::merge_yaml_preserving_existing(&existing, &config);
+        if merged != existing {
+            std::fs::write(cwd_config, merged)?;
         }
     } else {
         std::fs::write(cwd_config, &config_yaml)?;
