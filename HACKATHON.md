@@ -88,3 +88,8 @@ Gates @ cycle-2 close: lib **1169✅** · fmt/clippy/build clean.
 
 ### Cycle 3 opened (2026-08-22)
 Branch reset onto main cf357ad8 (cycles 1-2 banked via squash #247). Backlog this cycle: H4 provenance labels, H7 tool contract+CI guard, H6 tool consolidation, H10 usage dashboard, H12 README refresh. New rolling PR opens with first commit.
+
+### Cycle 3 progress
+- H7 tool contract: docs/mcp-tool-contract.md (79 tools, since-versions from git history) + scripts/gen_tool_contract.sh + CI drift guard; TDD caught 3 real parser bugs. fd600b71
+- H12 README quickstart: one-command connect flow, timed smoke numbers, doctor self-check; every command live-verified. 1b83049b
+- H4 ENT-9 provenance labels: single confidence_label helper threaded through impact_radius/shortest_path/dependencies/dependents/review_context + synthetic element markers; 36,054 edges labeled in live REST response. 80dd38f3→4210232c
