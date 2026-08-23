@@ -324,10 +324,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             project,
             read_only,
         } => {
+            // N3 (cycle-2 R2a): canonicalize --project BEFORE any schema
+            // derivation. A relative or non-canonical spelling used to be
+            // resolved against the launcher's CWD further down (yaml
+            // project_path joins, schema_for_path base), so the same command
+            // pinned a different PG schema depending on where it was started.
             let project_path = if let Some(ref p) = project {
-                std::path::PathBuf::from(p)
+                db::backend::canonical_project_root(std::path::Path::new(p))
             } else {
-                find_project_root()?
+                db::backend::canonical_project_root(&find_project_root()?)
             };
             let db_path = project_path.join(".leankg");
             let port = port.unwrap_or_else(|| {
