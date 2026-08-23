@@ -82,19 +82,28 @@ Decisions:
 
 ## 4. Phases
 
-### P0 Baseline [-]
-- [x] Worktree created, branch `feat/remove-cozo-datalog`.
-- [ ] Record baseline: `cargo build --release` + `cargo test` results.
+### P0 Baseline [x]
+- [x] Worktree created, branch `feat/remove-cozo-datalog` (original session).
+- [x] Record baseline: `feature/hackathon` @ `03b969c4` — `cargo test --release --lib`
+      1195 passed / 0 failed (CARGO_TARGET_DIR=/tmp/opencode/t-w8).
 
-### P1 SQL seam in db layer [ ]
-- [ ] Add `SqlParam`, `SqlRow`, `query/execute/transaction/copy_import` to
-      `PostgresBackend` (trait methods with default error impls so the tree
-      compiles mid-migration).
-- [ ] Unit tests for the seam against live-PG scratch schema (TDD).
-- [ ] Keep `run_script` delegating to nothing new; both paths coexist until P3.
+### P1 SQL seam in db layer [x]
+- [x] Add `SqlParam`, `SqlRow`, `sql_query`/`sql_query_gucs`/`sql_execute`/
+      `sql_execute_batch`/`sql_copy_import` to the backend trait with default
+      error impls (tree compiles mid-migration; FakeBackend inherits them).
+      Ported from WIP `wip/cozo-sql-seam-backup` @ `dd8018fa`, adapted to the
+      current tree (audit-ledger + dashboard trait methods landed since).
+- [x] Unit tests for the seam against live-PG scratch schema (TDD):
+      RED 7 pass / 8 fail on defaults, GREEN 15/15 after PostgresBackend impl
+      (`src/db/sql.rs` tests, probe-gated skip when PG unreachable).
+- [x] Keep `run_script` untouched; both paths coexist until P3 (the dual-path
+      parity test relies on this).
 
 ### P2 Call-site conversion waves (fan-out subagents, one agent per wave)
-- [ ] W1 `src/db/mod.rs` helpers (46) + schema.rs + keys.rs + write_bus.rs
+- [-] W1 **SPLIT for hackathon C5**: wave-1a = `keys.rs` (7 sites) +
+      `indexer/content_hash.rs` (2 sites) — DONE (see section 6). The remainder of
+      the original W1 (`db/mod.rs` helpers, schema.rs, write_bus.rs) is
+      wave-1b, still open.
 - [ ] W2 `src/graph/query.rs` part A (read/query shapes)
 - [ ] W3 `src/graph/query.rs` part B (writes/aggregation/vector) +
       inventory.rs + clustering.rs + nl_query/l1_cache if touched
@@ -138,3 +147,20 @@ W2-W6 are leaf domains that can run in parallel once W1 lands.
 | FakeBackend-dependent unit tests lose no-DB property | Scratch-schema + probe-skip pattern is established; docker PG is mandatory locally anyway |
 | Hidden datalog built dynamically (string interpolation) | Wave agents must grep their files for format!/push_str into scripts; flag any to orchestrator |
 | Concurrent subagent edits conflict | Waves own disjoint file sets; only shared file is backend seam (P1, done first, by orchestrator) |
+
+## 6. W8 execution log (hackathon C5, feature/hackathon)
+
+| Item | Status |
+|------|--------|
+| Plan adopted from dormant WIP | copied from `wip/cozo-sql-seam-backup` @ `dd8018fa`; this section logs deviations. |
+| P0 seam commit | `feat(db): SQL-first seam adoption (W8 P0)` — `src/db/sql.rs` (655 ln), trait + PostgresBackend impls in `backend.rs`. |
+| Wave-1a converted | `keys.rs`: create/list/revoke/validate -> typed trait methods (`insert_api_key`, `list_api_keys`, `mark_api_key_revoked`, `list_active_api_key_hashes`, `touch_api_key_last_used`). `content_hash.rs`: load/save -> generic seam (`sql_query` / `sql_execute_batch`), signature now takes `&dyn DbBackend` instead of `&GraphEngine`. |
+| Parity gating | `tests/pg_sql_wave1_test.rs` (5 tests, #[ignore]-gated): lifecycle, dual-path parity old-Datalog-vs-new-SQL on identical rows, multi-key listing filter, content-hash upsert roundtrip, empty-store read. Dual path possible because the translator still runs during W8. |
+| Deviation A | WIP `mod.rs` diff had replaced `pub mod schema;` with `pub mod sql;` — port keeps BOTH modules. |
+| Deviation B | WIP's `bind()` helper (Vec of refs built from temporaries) was unsound/uncompilable — dropped; binding goes through `SqlParam::to_pg()` boxed values owned by the caller frame. |
+| Deviation C | `SqlRow::text()` fixed to return `None` for `DataValue::Null`/`Bot` (WIP rendered NULL as the literal string "null", which broke every optional-column read; caught by wave-1 integration tests, locked by unit test). |
+| Deviation D | Vector binding documented as `$n::text::vector` (matches translator convention; a direct `$n::vector` cast rejects the String bind at ToSql level). JSON binds as `serde_json::Value` (postgres `with-serde_json-1`). |
+| Deviation E | `validate_key` no longer DELETE+re-inserts the row (legacy behavior wiped `name` and `created_at` on EVERY successful validation). SQL-first path updates only `last_used_at`; guarded by a lifecycle test assertion. |
+| Deviation F | COPY text format: NULL emitted as raw backslash-N marker (escaping it produced a literal two-char string); empty string stays distinct from NULL — regression-tested. |
+| Gates (wave-1a) | build --release 0 warnings - cargo test --release --lib green - fmt --check green - clippy CI gate green - pg_schema_test + pg_sql_wave1_test vs remote managed PG (LEANKG_PG_URL via repo .env; never Docker) green. |
+| Live proof | `leankg api-key create/list/revoke` against remote PG with `LEANKG_PG_SQL_LOG=1`: `leankg::pg_sql` lines carry `kind="sql"` + plain SQL and NO `cozo=` field for converted ops (old paths always emit `cozo=`). |

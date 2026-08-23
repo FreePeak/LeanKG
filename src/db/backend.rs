@@ -256,6 +256,58 @@ pub trait DbBackend: Send + Sync {
     ) -> Result<(), Box<dyn std::error::Error>> {
         Err(crate::db::sql::unsupported())
     }
+
+    // ---- W8 wave 1 typed queries: api_keys (parameterized SQL) ----
+    // Each method replaces one Datalog `run_script` site in keys.rs. The
+    // defaults err so a backend that skips the migration fails loudly.
+
+    /// Upsert one API key row (`:put api_keys` parity — conflict target is
+    /// the unique `key_hash`, matching the translator's pk_for_table).
+    fn insert_api_key(
+        &self,
+        _key: &crate::db::keys::ApiKey,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Err("SQL-first api_keys not supported by this backend".into())
+    }
+
+    /// All key rows. Replaces the unfiltered `*api_keys[...]` read; callers
+    /// apply their own revoked/display filtering exactly as before.
+    fn list_api_keys(&self) -> Result<Vec<crate::db::keys::ApiKey>, Box<dyn std::error::Error>> {
+        Err("SQL-first api_keys not supported by this backend".into())
+    }
+
+    /// Revoke by id if not already revoked. Returns whether a row was
+    /// updated: `false` covers BOTH "no such id" and "already revoked",
+    /// matching the legacy two-step read+check behavior.
+    fn mark_api_key_revoked(
+        &self,
+        _id: &str,
+        _revoked_at: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        Err("SQL-first api_keys not supported by this backend".into())
+    }
+
+    /// `(id, key_hash)` for every non-revoked key — the argon2 verification
+    /// candidate set for [`Self`]-level token validation.
+    fn list_active_api_key_hashes(
+        &self,
+    ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+        Err("SQL-first api_keys not supported by this backend".into())
+    }
+
+    /// Record last-use timestamp on successful validation.
+    ///
+    /// Deviation from the legacy path (documented in the plan): the old
+    /// Datalog flow DELETEd the row and re-inserted it with `name=""`,
+    /// `created_at=""` on EVERY validation, wiping the key's identity. The
+    /// SQL-first path only updates `last_used_at`.
+    fn touch_api_key_last_used(
+        &self,
+        _id: &str,
+        _last_used_at: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Err("SQL-first api_keys not supported by this backend".into())
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -1630,6 +1682,96 @@ impl DbBackend for PostgresBackend {
         rows: &[Vec<crate::db::sql::SqlParam>],
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.sql_off_runtime(|| self.sql_copy_import_sync(table, columns, rows))
+    }
+
+    // ---- W8 wave 1 typed queries: api_keys ----
+
+    fn insert_api_key(
+        &self,
+        key: &crate::db::keys::ApiKey,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.sql_execute(
+            "INSERT INTO api_keys (id, name, key_hash, created_at, last_used_at, revoked_at) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (key_hash) DO UPDATE SET \
+               id = EXCLUDED.id, name = EXCLUDED.name, created_at = EXCLUDED.created_at, \
+               last_used_at = EXCLUDED.last_used_at, revoked_at = EXCLUDED.revoked_at",
+            &[
+                crate::db::sql::SqlParam::Text(key.id.clone()),
+                crate::db::sql::SqlParam::Text(key.name.clone()),
+                crate::db::sql::SqlParam::Text(key.key_hash.clone()),
+                crate::db::sql::SqlParam::Text(key.created_at.clone()),
+                crate::db::sql::SqlParam::from(key.last_used_at.clone()),
+                crate::db::sql::SqlParam::from(key.revoked_at.clone()),
+            ],
+        )
+        .map(|_| ())
+    }
+
+    fn list_api_keys(&self) -> Result<Vec<crate::db::keys::ApiKey>, Box<dyn std::error::Error>> {
+        let rows = self.sql_query(
+            "SELECT id, name, key_hash, created_at, last_used_at, revoked_at FROM api_keys",
+            &[],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|r| crate::db::keys::ApiKey {
+                id: r.text("id").unwrap_or_default(),
+                name: r.text("name").unwrap_or_default(),
+                key_hash: r.text("key_hash").unwrap_or_default(),
+                created_at: r.text("created_at").unwrap_or_default(),
+                last_used_at: r.text("last_used_at"),
+                revoked_at: r.text("revoked_at"),
+            })
+            .collect())
+    }
+
+    fn mark_api_key_revoked(
+        &self,
+        id: &str,
+        revoked_at: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let n = self.sql_execute(
+            "UPDATE api_keys SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL",
+            &[
+                crate::db::sql::SqlParam::Text(id.to_string()),
+                crate::db::sql::SqlParam::Text(revoked_at.to_string()),
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    fn list_active_api_key_hashes(
+        &self,
+    ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+        let rows = self.sql_query(
+            "SELECT id, key_hash FROM api_keys WHERE revoked_at IS NULL",
+            &[],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.text("id").unwrap_or_default(),
+                    r.text("key_hash").unwrap_or_default(),
+                )
+            })
+            .collect())
+    }
+
+    fn touch_api_key_last_used(
+        &self,
+        id: &str,
+        last_used_at: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.sql_execute(
+            "UPDATE api_keys SET last_used_at = $2 WHERE id = $1",
+            &[
+                crate::db::sql::SqlParam::Text(id.to_string()),
+                crate::db::sql::SqlParam::Text(last_used_at.to_string()),
+            ],
+        )
+        .map(|_| ())
     }
 
     /// FR-ENT-1: one multi-row INSERT for the whole batch (≤ 50 rows × 9

@@ -10,8 +10,9 @@
 //! All fields are length-prefixed (u64 LE) so a boundary shift (e.g.
 //! `path="a", repo="bc"` vs `path="ab", repo="c"`) can never collide.
 //!
-//! The content-hash store is a Cozo relation (`index_hashes`) that survives
-//! across runs. This module is **standalone**: wiring into the index walk
+//! The content-hash store is the `index_hashes` PG table (W8 wave 1: read
+//! and written as parameterized SQL through the [`crate::db::sql`] seam,
+//! no Datalog). This module is **standalone**: wiring into the index walk
 //! (`src/indexer/mod.rs`) is deferred until the P0 session merges, per plan —
 //! today it ships the pure key derivation + store CRUD + a unit-tested
 //! "should re-index?" predicate so the walk hook is a two-line call later.
@@ -59,48 +60,55 @@ pub struct IndexHashRow {
     pub hash: String,
 }
 
-/// Read persisted hashes from Cozo. Returns `Ok(Vec)` (possibly empty) when
+/// Read persisted hashes. Returns `Ok(Vec)` (possibly empty) when
 /// the relation does not exist yet — the caller treats that as "index all".
+///
+/// W8 wave 1: issued as parameterized SQL through the [`crate::db::sql`]
+/// seam on the backend trait (was: a Datalog `run_raw_query` script).
 pub fn load_hashes(
-    db: &crate::graph::GraphEngine,
+    db: &dyn crate::db::backend::DbBackend,
 ) -> Result<Vec<IndexHashRow>, Box<dyn std::error::Error + Send + Sync>> {
-    // The `<-` read form (`?[path, hash] <- index_hashes[...]`) is invalid
-    // cozo — use the canonical `:=` rule form (inventory CH1).
-    db.run_raw_query(
-        "?[path, hash] := *index_hashes[path, hash]",
-        std::collections::BTreeMap::new(),
-    )
-    .map(|rows| {
-        rows.rows
-            .iter()
-            .map(|row| IndexHashRow {
-                path: row[0].get_str().unwrap_or("").to_string(),
-                hash: row[1].get_str().unwrap_or("").to_string(),
-            })
-            .collect()
-    })
+    let rows = db
+        .sql_query("SELECT path, hash FROM index_hashes", &[])
+        .map_err(|e| {
+            Box::new(std::io::Error::other(e.to_string()))
+                as Box<dyn std::error::Error + Send + Sync>
+        })?;
+    Ok(rows
+        .iter()
+        .map(|row| IndexHashRow {
+            path: row.text("path").unwrap_or_default(),
+            hash: row.text("hash").unwrap_or_default(),
+        })
+        .collect())
 }
 
-/// Persist the new hash set (upsert semantics: `put` overwrites by `path`).
+/// Persist the new hash set (upsert semantics: overwrite by `path`).
+///
+/// W8 wave 1: one atomic parameterized batch through the
+/// [`crate::db::sql`] seam — `ON CONFLICT (path) DO UPDATE` replaces the
+/// per-row Datalog `:put` scripts (which also were not atomic across rows).
 pub fn save_hashes(
-    db: &crate::graph::GraphEngine,
+    db: &dyn crate::db::backend::DbBackend,
     rows: &[IndexHashRow],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Cozo `:put` on a 2-column relation keyed by `path` gives upsert.
-    // The `:put table {cols} <- $args` short form is NOT valid cozo — the
-    // rule form `?[cols] <- [[...]] :put table {cols => key}` is canonical
-    // (inventory CH2; the translator maps it to INSERT ... ON CONFLICT).
-    for row in rows {
-        let params = std::collections::BTreeMap::from([
-            ("path".to_string(), row.path.clone().into()),
-            ("hash".to_string(), row.hash.clone().into()),
-        ]);
-        db.run_raw_query(
-            r#"?[path, hash] <- [[$path, $hash]] :put index_hashes {path => hash}"#,
-            params,
-        )?;
-    }
-    Ok(())
+    let stmts: Vec<(&str, Vec<crate::db::sql::SqlParam>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                "INSERT INTO index_hashes (path, hash) VALUES ($1, $2) \
+                 ON CONFLICT (path) DO UPDATE SET hash = $2",
+                vec![
+                    crate::db::sql::SqlParam::Text(r.path.clone()),
+                    crate::db::sql::SqlParam::Text(r.hash.clone()),
+                ],
+            )
+        })
+        .collect();
+    db.sql_execute_batch(&stmts)
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+            Box::new(std::io::Error::other(e.to_string()))
+        })
 }
 
 /// Build the per-file hash set for a directory walk (content read from disk).

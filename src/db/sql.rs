@@ -177,10 +177,14 @@ impl SqlRow {
         key.lookup(self)
     }
 
+    /// String view of a cell. SQL NULL (and the legacy bottom type) map to
+    /// `None` — same contract as `NamedRows::get_str` on the Datalog path,
+    /// which callers like `keys.rs` rely on to detect optional columns.
     pub fn text(&self, key: impl RowKey) -> Option<String> {
         match self.get(key) {
             Some(DataValue::Str(s)) => Some(s.clone()),
             Some(DataValue::Json(j)) => Some(j.clone()),
+            Some(DataValue::Null) | Some(DataValue::Bot) => None,
             Some(other) => Some(other.to_string()),
             None => None,
         }
@@ -394,15 +398,22 @@ mod tests {
     #[test]
     fn sql_row_accessors_by_name_and_index() {
         let row = SqlRow::new(
-            vec!["name".into(), "count".into()],
+            vec!["name".into(), "count".into(), "opt".into()],
             vec![
                 DataValue::Str("main.rs".into()),
                 DataValue::Num(Num::Int(7)),
+                DataValue::Null,
             ],
         );
         assert_eq!(row.text("name"), Some("main.rs".into()));
         assert_eq!(row.int(1), Some(7));
         assert_eq!(row.int("missing"), None);
+        // NULL cells read as None through every typed accessor — parity
+        // with the legacy `get_str` contract (regression guard: the WIP
+        // seam rendered NULL text as Some("null"), which broke keys.rs).
+        assert_eq!(row.text("opt"), None);
+        assert_eq!(row.text("missing"), None);
+        assert_eq!(row.int("opt"), None);
     }
 
     #[test]
