@@ -90,3 +90,16 @@ jobs:
       - name: Install and build ui-v2
         working-directory: ui-v2
         run: npm ci && npm run build
+
+  # FR-PLG-6: npm wrapper must never lag the crate again (was 0.17.9 vs
+  # 0.26.0). Fails any build where npm/leankg/package.json drifted from
+  # Cargo.toml. Release-time sync lives in release.yml (publish-npm job);
+  # this guard catches manual edits and missed syncs between releases.
+  npm-parity:
+    name: npm/crate Version Parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify npm wrapper matches crate version
+        run: bash scripts/sync-npm-version.sh --check
