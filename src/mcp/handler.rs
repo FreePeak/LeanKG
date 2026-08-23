@@ -725,15 +725,24 @@ impl ToolHandler {
         .await
         .map_err(|e| format!("mcp_index_docs worker failed: {}", e))??;
 
+        // `documents` also carries synthetic `directory` container rows
+        // (dir -> document `contains` edges need a resolvable source);
+        // the wire contract counts real markdown documents only.
+        let doc_count = result
+            .documents
+            .iter()
+            .filter(|d| d.element_type == "document")
+            .count();
+
         Ok(json!({
             "success": true,
-            "documents": result.documents.len(),
+            "documents": doc_count,
             "sections": result.sections.len(),
             "relationships": result.relationships.len(),
             "path": docs_path,
             "message": format!(
                 "Indexed {} documents, {} sections, {} relationships",
-                result.documents.len(),
+                doc_count,
                 result.sections.len(),
                 result.relationships.len()
             )

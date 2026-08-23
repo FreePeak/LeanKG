@@ -2353,6 +2353,43 @@ impl GraphEngine {
         Ok(())
     }
 
+    /// Remove every `relationships` row whose `source_qualified` OR
+    /// `target_qualified` is in `qualified_names`.
+    ///
+    /// Delete-before-insert for doc re-indexing: a document's edges carry the
+    /// doc on either side (`contains`/`references` source it,
+    /// `documented_by` targets it), so stale rows must be swept by endpoint,
+    /// not just source (doctor --deep orphaned-relationships check).
+    pub fn remove_relationships_by_endpoint_bulk(
+        &self,
+        qualified_names: &[String],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if qualified_names.is_empty() {
+            return Ok(());
+        }
+        let query = r#"
+            ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
+                source_qualified in $qns
+            ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _],
+                target_qualified in $qns
+            :rm relationships {source_qualified, target_qualified, rel_type, confidence, metadata}
+        "#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "qns".to_string(),
+            serde_json::Value::Array(
+                qualified_names
+                    .iter()
+                    .map(|f| serde_json::Value::String(f.clone()))
+                    .collect(),
+            ),
+        );
+        self.db.run_script(query, params)?;
+        Ok(())
+    }
+
     /// Bulk remove all `relationships` rows whose `source_qualified` starts
     /// with any of the file paths' qualified names. Cheaper than one query
     /// per file when 3K+ files are in the batch.
