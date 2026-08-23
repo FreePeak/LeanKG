@@ -93,3 +93,4 @@ Branch reset onto main cf357ad8 (cycles 1-2 banked via squash #247). Backlog thi
 - H7 tool contract: docs/mcp-tool-contract.md (79 tools, since-versions from git history) + scripts/gen_tool_contract.sh + CI drift guard; TDD caught 3 real parser bugs. fd600b71
 - H12 README quickstart: one-command connect flow, timed smoke numbers, doctor self-check; every command live-verified. 1b83049b
 - H4 ENT-9 provenance labels: single confidence_label helper threaded through impact_radius/shortest_path/dependencies/dependents/review_context + synthetic element markers; 36,054 edges labeled in live REST response. 80dd38f3→4210232c
+- H6 consolidation: 3 tools removed (get_graph_report/orchestrate/search_by_requirement; temporal_query+timeline kept per matrix), deprecation notices first, contract history updated, matrix RED→GREEN, live :9728 proof (73 total, removed→Unknown tool). ca2a0234→9210602e
