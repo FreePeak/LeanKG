@@ -151,21 +151,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "orchestrate".to_string(),
-                description: "Smart context orchestration with caching. Provide natural language intent like 'show me impact of changing function X' or 'get context for file Y'. Internally: checks cache -> queries graph -> compresses -> caches result. Use this instead of multiple individual tools when you want LeanKG to optimize the flow.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "intent": {"type": "string", "description": "Natural language intent (e.g., 'show me impact of changing main.rs', 'get context for handler.rs', 'find function named parse')"},
-                        "file": {"type": "string", "description": "Optional: specific file to query"},
-                        "mode": {"type": "string", "enum": ["adaptive", "full", "map", "signatures"], "default": "adaptive", "description": "Compression mode for file content"},
-                        "fresh": {"type": "boolean", "default": false, "description": "Force fresh query, bypass cache"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["intent"]
-                }),
-            },
-            ToolDefinition {
                 name: "ctx_read".to_string(),
                 description: "Read file with compression modes for efficient LLM context".to_string(),
                 input_schema: json!({
@@ -381,18 +366,6 @@ impl ToolRegistry {
                 }),
             },
             ToolDefinition {
-                name: "get_graph_report".to_string(),
-                description: "US-GF-06: Return the full graph report (god nodes, confidence distribution, suggested questions). Writes `.leankg/GRAPH_REPORT.md` on disk.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"},
-                        "project_name": {"type": "string", "default": "project", "description": "Display name for the report header"},
-                        "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"}
-                    }
-                }),
-            },
-            ToolDefinition {
                 name: "get_god_nodes".to_string(),
                 description: "US-GF-05: Return the most-connected elements (highest combined in+out degree). Optional percentile cutoff excludes utility super-hubs.".to_string(),
                 input_schema: json!({
@@ -406,7 +379,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "query_graph".to_string(),
-                description: "US-GF-03: Natural-language scoped subgraph query. Seed retrieval → bounded BFS expand (or shortest path for 'what connects A to B?') → trim to token_budget. Every edge includes confidence_label (EXTRACTED / INFERRED / AMBIGUOUS). Distinct from orchestrate and kg_semantic_context.".to_string(),
+                description: "US-GF-03: Natural-language scoped subgraph query. Seed retrieval → bounded BFS expand (or shortest path for 'what connects A to B?') → trim to token_budget. Every edge includes confidence_label (EXTRACTED / INFERRED / AMBIGUOUS). Distinct from kg_semantic_context.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -537,18 +510,6 @@ impl ToolRegistry {
                         "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
                     },
                     "required": ["element"]
-                }),
-            },
-            ToolDefinition {
-                name: "search_by_requirement".to_string(),
-                description: "Find code elements related to a specific requirement".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "requirement_id": {"type": "string", "description": "Requirement ID to search for"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["requirement_id"]
                 }),
             },
             ToolDefinition {
@@ -1189,11 +1150,11 @@ mod tests {
             names.contains(&"get_architecture"),
             "get_architecture is the primary overview tool"
         );
-        // Exact count: 87 - 11 = 76
+        // Exact count: 87 - 11 = 76, then H6 round 2 removes 3 more → 73
         assert_eq!(
             names.len(),
-            76,
-            "expected 76 tools after removing 11 redundant ones"
+            73,
+            "expected 73 tools after removing 11 redundant ones + H6 consolidation"
         );
     }
 

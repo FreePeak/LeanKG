@@ -52,30 +52,13 @@ User asks about codebase → mcp_status (check initialized)
   │
   ├─ "Find oversized functions" ──────────────► find_large_functions(min_lines=50, limit=20)
   │
-  ├─ Natural language query (any of the above) ─► orchestrate(intent="...")
-  │   └─ file param is OPTIONAL — only needed for impact/dependency queries
-  │      e.g. orchestrate(intent="show me impact of changing src/lib.rs", file="src/lib.rs")
+  ├─ "What connects X to Y?" (NL subgraph) ───► query_graph(question="...", token_budget=2000)
   │
   ├─ "What docs reference X?" ─────────────────► find_related_docs(file="X")
   ├─ "What code is in this doc?" ─────────────► get_files_for_doc(doc="docs/X.md")
   │
   └─ Pre-commit risk check ───────────────────► detect_changes(scope="staged"|"all")
 ```
-
----
-
-## Smart Shortcut: `orchestrate`
-
-Use when you want LeanKG to pick the best tool automatically. Only requires `intent`:
-
-| Intent Pattern | What It Does |
-|----------------|-------------|
-| "show me impact of changing X" | Impact radius analysis |
-| "get context for file X" | Token-optimized file context |
-| "find function named X" | Function location search |
-| "what does module X do?" | Cluster + dependency summary |
-
-**Parameters:** `intent` (required), `file` (optional — only needed when intent references a specific file for impact/dependency queries), `mode` (adaptive/full/map/signatures), `fresh` (bypass cache)
 
 ---
 
@@ -96,7 +79,6 @@ Use when you want LeanKG to pick the best tool automatically. Only requires `int
 - **depth>2 on get_impact_radius** — Returns hundreds of nodes, wastes tokens
 - **depth>3 on get_call_graph** — Neighbor explosion
 - **Reading full files with ctx_read mode=full** — Use signatures or adaptive for large files
-- **Calling orchestrate without intent** — intent is the only required param
 
 ---
 

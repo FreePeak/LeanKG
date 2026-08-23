@@ -478,7 +478,6 @@ fn tool_sweep_all_tools_on_postgres() {
         ("get_files_for_doc", json!({"doc": "src/lib.rs::caller"})),
         ("get_doc_tree", json!({})),
         ("get_traceability", json!({"element": "src/lib.rs::caller"})),
-        ("search_by_requirement", json!({"requirement": "US-002"})),
         ("get_code_tree", json!({"file": "src/lib.rs"})),
         (
             "find_related_docs",

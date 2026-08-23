@@ -404,6 +404,7 @@ fn deps_to_json(deps: &[DependencyInfo]) -> Value {
         "dependencies": deps.iter().map(|d| json!({
             "target": d.target_qualified,
             "confidence": d.confidence,
+            "confidence_label": d.confidence_label,
             "type": "imports"
         })).collect::<Vec<_>>()
     })

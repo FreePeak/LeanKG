@@ -11,6 +11,7 @@ pub mod layout;
 pub mod layout3d;
 pub mod nl_query;
 pub mod planner;
+pub mod provenance;
 pub mod query;
 pub mod traversal;
 

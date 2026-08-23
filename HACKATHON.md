@@ -85,3 +85,12 @@ Note: R3's warm-benchmarks (temporal 4.5s / check_consistency 6–7s / agent_foc
 | R2c data quality | drop unresolvable call edges at generation; prune_dangling_relationships valve; docs hierarchy synthetic dir elements; per-doc heading QN #k counters; collapse dup file rows | doctor exit 2→1: orphans 432/1000→**0/72,699**; dup QNs 10→**0/14,091** |
 
 Gates @ cycle-2 close: lib **1169✅** · fmt/clippy/build clean.
+
+### Cycle 3 opened (2026-08-22)
+Branch reset onto main cf357ad8 (cycles 1-2 banked via squash #247). Backlog this cycle: H4 provenance labels, H7 tool contract+CI guard, H6 tool consolidation, H10 usage dashboard, H12 README refresh. New rolling PR opens with first commit.
+
+### Cycle 3 progress
+- H7 tool contract: docs/mcp-tool-contract.md (79 tools, since-versions from git history) + scripts/gen_tool_contract.sh + CI drift guard; TDD caught 3 real parser bugs. fd600b71
+- H12 README quickstart: one-command connect flow, timed smoke numbers, doctor self-check; every command live-verified. 1b83049b
+- H4 ENT-9 provenance labels: single confidence_label helper threaded through impact_radius/shortest_path/dependencies/dependents/review_context + synthetic element markers; 36,054 edges labeled in live REST response. 80dd38f3→4210232c
+- H6 consolidation: 3 tools removed (get_graph_report/orchestrate/search_by_requirement; temporal_query+timeline kept per matrix), deprecation notices first, contract history updated, matrix RED→GREEN, live :9728 proof (73 total, removed→Unknown tool). ca2a0234→9210602e

@@ -511,23 +511,6 @@ mod traceability_tools {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_search_by_requirement() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler
-            .execute_tool(
-                "search_by_requirement",
-                &json!({"requirement_id": "REQ-001"}),
-            )
-            .await;
-        // May return empty if no requirements indexed, but should not error
-        assert!(
-            result.is_ok(),
-            "search_by_requirement should succeed: {:?}",
-            result.err()
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_code_tree() {
         let (handler, _tmp) = create_real_handler().await;
         let result = handler.execute_tool("get_code_tree", &json!({})).await;
@@ -621,25 +604,6 @@ mod utility_tools {
         let value = result.unwrap();
         let has_data = value.get("changes").is_some() || !value.to_string().is_empty();
         assert!(has_data, "detect_changes should return data");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_orchestrate() {
-        let (handler, _tmp) = create_real_handler().await;
-        let result = handler
-            .execute_tool("orchestrate", &json!({"intent": "find main function"}))
-            .await;
-        assert!(
-            result.is_ok(),
-            "orchestrate should succeed: {:?}",
-            result.err()
-        );
-        let value = result.unwrap();
-        // Orchestrate may return complex result, just verify it returns something
-        assert!(
-            !value.to_string().is_empty(),
-            "orchestrate should return data"
-        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -799,7 +763,6 @@ mod mega_guard_tests {
         // get_cluster_skill is excluded: it now serves precomputed cluster rows
         // on mega (better than refusal) — covered by the dedicated test below.
         let cases: Vec<(&str, serde_json::Value)> = vec![
-            ("get_graph_report", json!({})),
             ("export_html", json!({})),
             ("export_graph_snapshot", json!({})),
             ("check_consistency", json!({})),

@@ -99,7 +99,6 @@ const RULES: &[Rule] = &[
     Rule {
         keys: &["trace", "requirement", "traceability", "fr-", "us-", "doc"],
         tools: &[
-            "search_by_requirement",
             "get_traceability",
             "get_files_for_doc",
             "find_related_docs",
