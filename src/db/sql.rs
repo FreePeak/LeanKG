@@ -1,4 +1,4 @@
-//! SQL-first query seam (W8 P0 — plan `docs/plan-remove-cozo-datalog-sql-migration.md`).
+//! SQL-first query seam (W8 P0 — the SQL-migration plan under `docs/`).
 //!
 //! The Datalog dialect is being removed wave-by-wave: every query becomes
 //! plain, parameterized PostgreSQL issued through [`crate::db::backend::DbBackend`]

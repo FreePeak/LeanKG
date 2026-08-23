@@ -31,17 +31,17 @@ fn fresh_db() -> leankg::db::backend::SharedDb {
 #[test]
 fn ensure_embedding_state_table_is_idempotent() {
     let db = fresh_db();
-    ensure_embedding_state_table(&db).expect("first call");
-    ensure_embedding_state_table(&db).expect("second call");
+    ensure_embedding_state_table(db.as_ref()).expect("first call");
+    ensure_embedding_state_table(db.as_ref()).expect("second call");
 }
 
 #[test]
 fn mark_stale_inserts_rows_with_placeholder_hash() {
     let db = fresh_db();
     let qns: Vec<String> = (0..5).map(|i| format!("src/file{i}.rs::fn{i}")).collect();
-    mark_stale_for_qualified_names(&db, &qns).expect("mark_stale");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark_stale");
 
-    let stale = list_stale(&db).expect("list_stale");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert_eq!(stale.len(), 5);
     for row in &stale {
         assert_eq!(row.state, "stale");
@@ -53,10 +53,10 @@ fn mark_stale_inserts_rows_with_placeholder_hash() {
 fn mark_stale_is_idempotent() {
     let db = fresh_db();
     let qns = vec!["src/a.rs::f".to_string()];
-    mark_stale_for_qualified_names(&db, &qns).expect("first");
-    mark_stale_for_qualified_names(&db, &qns).expect("second");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("first");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("second");
 
-    let all = list_all(&db).expect("list_all");
+    let all = list_all(db.as_ref()).expect("list_all");
     assert_eq!(all.len(), 1, "no duplicates after double mark_stale");
 }
 
@@ -64,7 +64,7 @@ fn mark_stale_is_idempotent() {
 fn upsert_fresh_transitions_state_and_stores_hash() {
     let db = fresh_db();
     let qns: Vec<String> = (0..3).map(|i| format!("q{i}")).collect();
-    mark_stale_for_qualified_names(&db, &qns).expect("mark");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark");
 
     let fresh_rows: Vec<FreshRow> = qns
         .iter()
@@ -74,12 +74,12 @@ fn upsert_fresh_transitions_state_and_stores_hash() {
             content_hash: format!("hash-{qn}"),
         })
         .collect();
-    upsert_fresh(&db, &fresh_rows).expect("upsert_fresh");
+    upsert_fresh(db.as_ref(), &fresh_rows).expect("upsert_fresh");
 
-    let stale = list_stale(&db).expect("list_stale");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert!(stale.is_empty(), "no rows should still be stale");
 
-    let all = list_all(&db).expect("list_all");
+    let all = list_all(db.as_ref()).expect("list_all");
     for row in &all {
         assert_eq!(row.state, "fresh");
         assert!(row.content_hash.starts_with("hash-"));
@@ -90,9 +90,9 @@ fn upsert_fresh_transitions_state_and_stores_hash() {
 fn list_orphans_detects_rows_without_code_elements() {
     let db = fresh_db();
     let qns = vec!["ghost1".to_string(), "ghost2".to_string()];
-    mark_stale_for_qualified_names(&db, &qns).expect("mark");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark");
     // No code_elements rows created → both are orphans.
-    let orphans = list_orphans(&db).expect("list_orphans");
+    let orphans = list_orphans(db.as_ref()).expect("list_orphans");
     assert_eq!(orphans.len(), 2);
 }
 
@@ -100,19 +100,19 @@ fn list_orphans_detects_rows_without_code_elements() {
 fn delete_state_rows_removes_named_rows() {
     let db = fresh_db();
     let qns: Vec<String> = (0..4).map(|i| format!("q{i}")).collect();
-    mark_stale_for_qualified_names(&db, &qns).expect("mark");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark");
 
     // delete_state_rows takes full EmbeddingStateRow records (the API requires
     // all key columns). Build the rows from list_all.
-    let all_rows = list_all(&db).expect("list_all before delete");
+    let all_rows = list_all(db.as_ref()).expect("list_all before delete");
     let to_delete: Vec<_> = all_rows
         .iter()
         .filter(|r| r.qualified_name == "q0" || r.qualified_name == "q1")
         .cloned()
         .collect();
-    delete_state_rows(&db, &to_delete).expect("delete");
+    delete_state_rows(db.as_ref(), &to_delete).expect("delete");
 
-    let remaining = list_all(&db).expect("list_all");
+    let remaining = list_all(db.as_ref()).expect("list_all");
     assert_eq!(remaining.len(), 2);
     let remaining_qns: std::collections::HashSet<String> =
         remaining.iter().map(|r| r.qualified_name.clone()).collect();
@@ -124,9 +124,9 @@ fn delete_state_rows_removes_named_rows() {
 fn count_by_state_partitions_correctly() {
     let db = fresh_db();
     let qns: Vec<String> = (0..5).map(|i| format!("q{i}")).collect();
-    mark_stale_for_qualified_names(&db, &qns).expect("mark");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark");
 
-    let counts = count_by_state(&db).expect("count_by_state");
+    let counts = count_by_state(db.as_ref()).expect("count_by_state");
     assert_eq!(counts.stale, 5);
     assert_eq!(counts.fresh, 0);
 
@@ -138,9 +138,9 @@ fn count_by_state_partitions_correctly() {
             content_hash: "x".to_string(),
         })
         .collect();
-    upsert_fresh(&db, &fresh_rows).expect("upsert");
+    upsert_fresh(db.as_ref(), &fresh_rows).expect("upsert");
 
-    let counts = count_by_state(&db).expect("count_by_state again");
+    let counts = count_by_state(db.as_ref()).expect("count_by_state again");
     assert_eq!(counts.fresh, 2);
     assert_eq!(counts.stale, 3);
 }
@@ -149,9 +149,9 @@ fn count_by_state_partitions_correctly() {
 fn mark_stale_if_changed_skips_unchanged_fresh_rows() {
     let db = fresh_db();
     let qns: Vec<String> = vec!["src/a.rs::f".into(), "src/b.rs::g".into()];
-    mark_stale_for_qualified_names(&db, &qns).expect("mark");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark");
     upsert_fresh(
-        &db,
+        db.as_ref(),
         &[
             FreshRow {
                 qualified_name: "src/a.rs::f".into(),
@@ -169,7 +169,7 @@ fn mark_stale_if_changed_skips_unchanged_fresh_rows() {
 
     // Same hashes → both skipped.
     let (marked, skipped) = mark_stale_if_changed(
-        &db,
+        db.as_ref(),
         &[
             ("src/a.rs::f".into(), "hash-a".into()),
             ("src/b.rs::g".into(), "hash-b".into()),
@@ -178,12 +178,12 @@ fn mark_stale_if_changed_skips_unchanged_fresh_rows() {
     .expect("if_changed");
     assert_eq!(marked, 0);
     assert_eq!(skipped, 2);
-    let stale = list_stale(&db).expect("list_stale");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert!(stale.is_empty(), "unchanged fresh rows must stay fresh");
 
     // Changed hash on a only → mark a, skip b.
     let (marked, skipped) = mark_stale_if_changed(
-        &db,
+        db.as_ref(),
         &[
             ("src/a.rs::f".into(), "hash-a-NEW".into()),
             ("src/b.rs::g".into(), "hash-b".into()),
@@ -192,7 +192,7 @@ fn mark_stale_if_changed_skips_unchanged_fresh_rows() {
     .expect("if_changed changed");
     assert_eq!(marked, 1);
     assert_eq!(skipped, 1);
-    let stale = list_stale(&db).expect("list_stale");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].qualified_name, "src/a.rs::f");
 }
@@ -201,9 +201,9 @@ fn mark_stale_if_changed_skips_unchanged_fresh_rows() {
 fn mark_stale_if_changed_marks_missing_rows() {
     let db = fresh_db();
     let (marked, skipped) =
-        mark_stale_if_changed(&db, &[("new.rs::f".into(), "h1".into())]).expect("mark");
+        mark_stale_if_changed(db.as_ref(), &[("new.rs::f".into(), "h1".into())]).expect("mark");
     assert_eq!(marked, 1);
     assert_eq!(skipped, 0);
-    let stale = list_stale(&db).expect("stale");
+    let stale = list_stale(db.as_ref()).expect("stale");
     assert_eq!(stale.len(), 1);
 }

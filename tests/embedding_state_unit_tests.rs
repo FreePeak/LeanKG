@@ -29,7 +29,7 @@ fn fixture_db() -> (TempDir, leankg::db::backend::SharedDb) {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let db = init_db(&db_path).expect("init_db");
-    ensure_embedding_state_table(&db).expect("ensure embedding_state table");
+    ensure_embedding_state_table(db.as_ref()).expect("ensure embedding_state table");
     (tmp, db)
 }
 
@@ -46,7 +46,7 @@ fn make_function(name: &str, file: &str) -> CodeElement {
     }
 }
 
-fn insert_code_element(db: &leankg::db::backend::PostgresBackend, qn: &str, name: &str) {
+fn insert_code_element(db: &dyn leankg::db::backend::DbBackend, qn: &str, name: &str) {
     let q = format!(
         r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env, ontology_layer] <-
 [["{}", "function", "{}", "./src/{}.rs", 1, 10, "rust", "", "", "", "{{}}", "local", "procedural"]]
@@ -65,9 +65,9 @@ fn insert_code_element(db: &leankg::db::backend::PostgresBackend, qn: &str, name
 fn mark_stale_inserts_placeholders_for_unknown_qns() {
     let (_tmp, db) = fixture_db();
     let qns = vec!["a.rs::alpha".to_string(), "b.rs::beta".to_string()];
-    mark_stale_for_qualified_names(&db, &qns).expect("mark_stale");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark_stale");
 
-    let stale = list_stale(&db).expect("list_stale");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert_eq!(stale.len(), 2);
     let names: HashSet<String> = stale.iter().map(|r| r.qualified_name.clone()).collect();
     assert!(names.contains("a.rs::alpha"));
@@ -78,17 +78,17 @@ fn mark_stale_inserts_placeholders_for_unknown_qns() {
 fn mark_stale_is_idempotent_on_already_stale_rows() {
     let (_tmp, db) = fixture_db();
     let qns = vec!["a.rs::alpha".to_string()];
-    mark_stale_for_qualified_names(&db, &qns).expect("mark_stale #1");
-    mark_stale_for_qualified_names(&db, &qns).expect("mark_stale #2");
-    let stale = list_stale(&db).expect("list_stale");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark_stale #1");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark_stale #2");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert_eq!(stale.len(), 1, "duplicate calls must not duplicate rows");
 }
 
 #[test]
 fn mark_stale_empty_input_is_noop() {
     let (_tmp, db) = fixture_db();
-    mark_stale_for_qualified_names(&db, &[]).expect("noop");
-    let stale = list_stale(&db).expect("list_stale");
+    mark_stale_for_qualified_names(db.as_ref(), &[]).expect("noop");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert!(stale.is_empty());
 }
 
@@ -100,7 +100,7 @@ fn mark_stale_empty_input_is_noop() {
 fn mark_stale_if_changed_skips_fresh_with_matching_hash() {
     let (_tmp, db) = fixture_db();
     let el = make_function("alpha", "src/a.rs");
-    insert_code_element(&db, &el.qualified_name, "alpha");
+    insert_code_element(db.as_ref(), &el.qualified_name, "alpha");
 
     // Build blob, compute content_hash, upsert as fresh.
     let blob = build_blob(&el).expect("blob");
@@ -110,11 +110,12 @@ fn mark_stale_if_changed_skips_fresh_with_matching_hash() {
         usearch_key: 0,
         content_hash: hash.clone(),
     }];
-    upsert_fresh(&db, &fresh).expect("upsert_fresh");
+    upsert_fresh(db.as_ref(), &fresh).expect("upsert_fresh");
 
     // No-op full index with identical hash → must NOT mark stale.
     let items = vec![(el.qualified_name.clone(), hash.clone())];
-    let (marked, skipped) = mark_stale_if_changed(&db, &items).expect("mark_stale_if_changed");
+    let (marked, skipped) =
+        mark_stale_if_changed(db.as_ref(), &items).expect("mark_stale_if_changed");
     assert_eq!(
         marked, 0,
         "fresh row with matching hash must not be re-marked"
@@ -122,7 +123,7 @@ fn mark_stale_if_changed_skips_fresh_with_matching_hash() {
     assert_eq!(skipped, 1);
 
     // Confirm DB still says fresh.
-    let stale = list_stale(&db).expect("list_stale");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert!(stale.is_empty(), "row should remain fresh: {stale:?}");
 }
 
@@ -130,12 +131,12 @@ fn mark_stale_if_changed_skips_fresh_with_matching_hash() {
 fn mark_stale_if_changed_marks_rows_with_mismatched_hash() {
     let (_tmp, db) = fixture_db();
     let el = make_function("alpha", "src/a.rs");
-    insert_code_element(&db, &el.qualified_name, "alpha");
+    insert_code_element(db.as_ref(), &el.qualified_name, "alpha");
 
     let blob = build_blob(&el).expect("blob");
     let hash = content_hash_for(&blob);
     upsert_fresh(
-        &db,
+        db.as_ref(),
         &[FreshRow {
             qualified_name: el.qualified_name.clone(),
             usearch_key: 0,
@@ -146,11 +147,12 @@ fn mark_stale_if_changed_marks_rows_with_mismatched_hash() {
 
     // Simulate a code change → hash differs.
     let items = vec![(el.qualified_name.clone(), "different-hash".to_string())];
-    let (marked, skipped) = mark_stale_if_changed(&db, &items).expect("mark_stale_if_changed");
+    let (marked, skipped) =
+        mark_stale_if_changed(db.as_ref(), &items).expect("mark_stale_if_changed");
     assert_eq!(marked, 1);
     assert_eq!(skipped, 0);
 
-    let stale = list_stale(&db).expect("list_stale");
+    let stale = list_stale(db.as_ref()).expect("list_stale");
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].qualified_name, el.qualified_name);
 }
@@ -165,10 +167,10 @@ fn list_orphans_returns_state_rows_not_in_code_elements() {
 
     // Mark two stale rows but only insert one CodeElement → other is orphan.
     let qns = vec!["alive.rs::alive".to_string(), "ghost.rs::ghost".to_string()];
-    mark_stale_for_qualified_names(&db, &qns).expect("mark_stale");
-    insert_code_element(&db, "alive.rs::alive", "alive");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark_stale");
+    insert_code_element(db.as_ref(), "alive.rs::alive", "alive");
 
-    let orphans = list_orphans(&db).expect("list_orphans");
+    let orphans = list_orphans(db.as_ref()).expect("list_orphans");
     assert_eq!(orphans.len(), 1);
     assert_eq!(orphans[0].qualified_name, "ghost.rs::ghost");
 }
@@ -188,16 +190,16 @@ fn upsert_fresh_chunks_at_500() {
             content_hash: "x".into(),
         })
         .collect();
-    upsert_fresh(&db, &updates).expect("upsert_fresh 1,250 rows");
-    let all = list_all(&db).expect("list_all");
+    upsert_fresh(db.as_ref(), &updates).expect("upsert_fresh 1,250 rows");
+    let all = list_all(db.as_ref()).expect("list_all");
     assert_eq!(all.len(), n, "all chunks must land");
 }
 
 #[test]
 fn upsert_fresh_empty_input_is_noop() {
     let (_tmp, db) = fixture_db();
-    upsert_fresh(&db, &[]).expect("noop");
-    let all = list_all(&db).expect("list_all");
+    upsert_fresh(db.as_ref(), &[]).expect("noop");
+    let all = list_all(db.as_ref()).expect("list_all");
     assert!(all.is_empty());
 }
 
@@ -209,17 +211,17 @@ fn upsert_fresh_empty_input_is_noop() {
 fn delete_state_rows_removes_only_targeted_rows() {
     let (_tmp, db) = fixture_db();
     let qns = vec!["a.rs::alpha".to_string(), "b.rs::beta".to_string()];
-    mark_stale_for_qualified_names(&db, &qns).expect("mark_stale");
+    mark_stale_for_qualified_names(db.as_ref(), &qns).expect("mark_stale");
 
-    let all = list_all(&db).expect("list_all");
+    let all = list_all(db.as_ref()).expect("list_all");
     let to_delete: Vec<EmbeddingStateRow> = all
         .iter()
         .filter(|r| r.qualified_name == "a.rs::alpha")
         .cloned()
         .collect();
 
-    delete_state_rows(&db, &to_delete).expect("delete");
-    let remaining = list_all(&db).expect("list_all");
+    delete_state_rows(db.as_ref(), &to_delete).expect("delete");
+    let remaining = list_all(db.as_ref()).expect("list_all");
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].qualified_name, "b.rs::beta");
 }
@@ -227,7 +229,7 @@ fn delete_state_rows_removes_only_targeted_rows() {
 #[test]
 fn delete_state_rows_empty_is_noop() {
     let (_tmp, db) = fixture_db();
-    delete_state_rows(&db, &[]).expect("noop");
+    delete_state_rows(db.as_ref(), &[]).expect("noop");
 }
 
 // ---------------------------------------------------------------------------

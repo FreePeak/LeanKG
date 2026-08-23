@@ -5,7 +5,7 @@
 //! Soft-deprecated tools are hard-removed in FR-SURF-07/08 (2026-07-21),
 //! Wave 1b FR-SURF-13/14 (2026-08-01: `load_layer`, `get_doc_structure`),
 //! commit 541ff626 (11 redundant/thin-wrapper tools; registry 91→80 names,
-//! 76 unconditional after the CozoDB→Postgres backend swap), and H6
+//! 76 unconditional after the Postgres backend swap), and H6
 //! consolidation round 2 (`get_graph_report`, `orchestrate`,
 //! `search_by_requirement`; registry 76→73 unconditional).
 //!
@@ -635,10 +635,13 @@ fn overlap_table_only_references_registered_tools() {
 
 #[test]
 fn registry_has_exactly_73_tools() {
+    // 73 base tools; the `embeddings` feature registers 3 more
+    // (semantic_search / leankg embed tooling) → 76.
+    let expected = if cfg!(feature = "embeddings") { 76 } else { 73 };
     let count = registered().len();
     assert_eq!(
-        count, 73,
-        "expected exactly 73 unconditionally registered MCP tools, got {count} — drift?"
+        count, expected,
+        "expected exactly {expected} MCP tools for this feature set, got {count} — drift?"
     );
 }
 

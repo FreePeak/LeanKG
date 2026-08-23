@@ -56,6 +56,7 @@ static WRITE_TOOLS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "add_documentation",
         "promote_environment",
         "embed_control",
+        "mcp_embed",
         "ontology_control",
         // FR-P0-MCP-RC-04: dynamic ontology writes must serialize under the
         // write lock like other mutations.

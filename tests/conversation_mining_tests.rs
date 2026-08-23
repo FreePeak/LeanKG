@@ -251,6 +251,13 @@ fn reindex_is_idempotent() {
             .filter(|e| e.element_type == "decision")
             .collect();
         assert_eq!(decisions.len(), 1, "second run must not duplicate nodes");
+
+        let rels = graph.all_relationships().unwrap();
+        let edges: Vec<_> = rels
+            .iter()
+            .filter(|r| r.rel_type == "decided_about")
+            .collect();
+        assert_eq!(edges.len(), 1, "second run must not duplicate edges");
     });
 }
 

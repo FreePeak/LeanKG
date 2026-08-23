@@ -1151,10 +1151,13 @@ mod tests {
             "get_architecture is the primary overview tool"
         );
         // Exact count: 87 - 11 = 76, then H6 round 2 removes 3 more → 73
+        // base tools; the `embeddings` feature registers 3 more
+        // (semantic_search / leankg embed tooling) → 76.
+        let expected = if cfg!(feature = "embeddings") { 76 } else { 73 };
         assert_eq!(
             names.len(),
-            73,
-            "expected 73 tools after removing 11 redundant ones + H6 consolidation"
+            expected,
+            "unexpected tool-count drift (removed-tools regression?)"
         );
     }
 

@@ -1622,19 +1622,19 @@ fn active_vectors_relation() -> Result<String, Box<dyn std::error::Error>> {
 pub(crate) fn upsert_pairs_to_db(
     db: &dyn crate::db::backend::DbBackend,
     pairs: &[(String, Vec<f32>)],
-    hnsw_live: bool,
+    _hnsw_live: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Phase 8: the Redis HNSW side-store (LEANKG_EMBED_VECTOR_STORE=redis)
     // was deleted — Postgres pgvector is the only vector store.
 
-    if hnsw_live {
-        // The HNSW index stays live during incremental puts. The legacy
-        // engine (removed) did NOT maintain its usearch/HNSW indices on
-        // `import_relations` (vectors become invisible to
-        // `~embedding_vectors:vec_idx`). The `:put` script form does
-        // maintain the index, so the incremental path must use it.
-        return put_pairs_to_db_script(db, pairs);
-    }
+    // `hnsw_live` used to route incremental puts through the `:put`
+    // script form because the REMOVED legacy engine did not maintain
+    // usearch/HNSW indices on `import_relations`. On Postgres that concern
+    // is obsolete: `import_relations` lowers to INSERT .. ON CONFLICT and
+    // pgvector maintains the HNSW index on every DML. The script form also
+    // round-trips megabytes of float literals through a text parser, which
+    // is both slow and fragile. Everything goes through `import_relations`.
+    let _ = _hnsw_live;
 
     let chunk_size = effective_upsert_chunk();
     for chunk in pairs.chunks(chunk_size) {
@@ -1671,56 +1671,12 @@ pub(crate) fn upsert_pairs_to_db(
     Ok(())
 }
 
-/// Write a batch of `(qualified_name, vector)` pairs via the `:put`
-/// script form, which maintains the live HNSW index (the bulk path drops
-/// and rebuilds the index instead, keeping `import_relations` for
-/// throughput — see `upsert_pairs_to_db`).
-///
-/// On Postgres the translator handles the `:put embedding_vectors`
-/// shape and emits `INSERT ... ON CONFLICT (qualified_name) DO UPDATE`
-/// with the optional `hnsw.ef_construction` GUC applied inside the same
-/// tx (Phase 4: `embedding_gucs_for` table hook).
-fn put_pairs_to_db_script(
-    db: &dyn crate::db::backend::DbBackend,
-    pairs: &[(String, Vec<f32>)],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let chunk_size = effective_upsert_chunk();
-    let vectors_rel = active_vectors_relation()?;
-    for chunk in pairs.chunks(chunk_size) {
-        let rows: Vec<String> = chunk
-            .iter()
-            .map(|(qn, vector)| {
-                let vec_literal = vector
-                    .iter()
-                    .map(|f| format!("{:.6}", f))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "[{}, vec([{}])]",
-                    serde_json::Value::String(qn.clone()),
-                    vec_literal
-                )
-            })
-            .collect();
-        let values_clause = rows.join(", ");
-        let query = format!(
-            r#"?[qualified_name, vector] <- [{values_clause}]
-               :put {vectors_rel} {{qualified_name => vector}}"#
-        );
-        db.run_script(&query, Default::default())?;
-    }
-    Ok(())
-}
-
 /// Sequential-path helper: write a batch of `(qualified_name, vector)`
 /// pairs via `import_relations` (same fast path as the parallel writer,
 /// see `upsert_pairs_to_db` for the rationale). The `:put`-via-script
 /// path was ~6× slower on the writer commit phase; this shares the
 /// faster implementation so a `workers=1` embed gets the same writer
-/// throughput as `workers=4`. When `hnsw_live` is set (incremental path,
-/// index not dropped), writes go through the script form instead — the
-/// legacy engine (removed) skipped HNSW index maintenance on
-/// `import_relations`, and that routing is preserved.
+/// throughput as `workers=4`.
 fn upsert_vectors<'a, I>(
     db: &dyn crate::db::backend::DbBackend,
     items: I,
@@ -1732,35 +1688,7 @@ where
     let collected: Vec<(String, Vec<f32>)> = items
         .map(|(item, vector)| (item.qualified_name.clone(), vector.clone()))
         .collect();
-    if hnsw_live {
-        return put_pairs_to_db_script(db, &collected);
-    }
-    let chunk_size = effective_upsert_chunk();
-    for chunk in collected.chunks(chunk_size) {
-        let mut rows: Vec<Vec<crate::db::backend::DataValue>> = Vec::with_capacity(chunk.len());
-        for (qn, vec) in chunk {
-            let mut row = Vec::with_capacity(2);
-            row.push(crate::db::backend::DataValue::Str(qn.as_str().into()));
-            let mut list = Vec::with_capacity(vec.len());
-            for &f in vec.iter() {
-                list.push(crate::db::backend::DataValue::from(f as f64));
-            }
-            row.push(crate::db::backend::DataValue::List(list));
-            rows.push(row);
-        }
-        let named_rows = crate::db::backend::NamedRows::new(
-            vec!["qualified_name".to_string(), "vector".to_string()],
-            rows,
-        );
-        let mut map = std::collections::BTreeMap::new();
-        let vectors_rel = active_vectors_relation()?;
-        map.insert(vectors_rel, named_rows);
-        db.import_relations(map)
-            .map_err(|e| -> Box<dyn std::error::Error> {
-                format!("import_relations: {e}").into()
-            })?;
-    }
-    Ok(())
+    upsert_pairs_to_db(db, &collected, hnsw_live)
 }
 
 /// `:rm embedding_vectors {qualified_name}` for a batch of orphans.

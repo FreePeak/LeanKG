@@ -3377,6 +3377,43 @@ mod tests {
     }
 
     #[test]
+    fn put_literal_rows_large_vector_batch_translates_to_write() {
+        // Regression (live embed bug): a batched vector `:put` (the
+        // incremental HNSW path) must translate as a Write, not degrade to
+        // a read — and it must parse at realistic batch sizes (~800 rows x
+        // 384 dims, ~2 MB of script text).
+        let mut values = String::new();
+        for i in 0..800 {
+            if !values.is_empty() {
+                values.push_str(", ");
+            }
+            let vec = std::iter::repeat("0.123456")
+                .take(384)
+                .collect::<Vec<_>>()
+                .join(", ");
+            // Shape mirrors build.rs put_pairs_to_db_script exactly:
+            // `["qn", vec([f1, f2, ...])]`.
+            values.push_str("[\"");
+            values.push_str(&format!("src/m{}.rs::f{}", i % 7, i));
+            values.push_str("\", vec([");
+            values.push_str(&vec);
+            values.push_str("])]");
+        }
+        let q = format!(
+            "?[qualified_name, vector] <- [{values}]\n               :put embedding_vectors {{qualified_name => vector}}"
+        );
+        let t = translate(&q, BTreeMap::new())
+            .unwrap_or_else(|e| panic!("large vector batch must translate: {e}"));
+        assert_eq!(t.kind, TranslationKind::Write);
+        assert!(
+            t.sql.to_uppercase().contains("INSERT"),
+            "vector batch must lower to INSERT, got: {}",
+            &t.sql[..200.min(t.sql.len())]
+        );
+        assert_eq!(t.params.len(), 1600, "one bind per row per column");
+    }
+
+    #[test]
     fn read_simple_select() {
         let t = translate("?[a, b, c] := *table[a, b, c]", BTreeMap::new()).unwrap();
         assert_eq!(t.kind, TranslationKind::Read);

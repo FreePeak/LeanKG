@@ -118,7 +118,7 @@ After hackathon: W8 (SQL-first seam waves) per the Datalog-removal SQL migration
 | C2 / R2 | Identity cluster (yaml anchor preservation, legacy-adoption precedence, --project canonicalization) · O(n²) token-budget fix (**consistency 211s→5.8s**, temporal 12min→7s) · data quality (**orphans 432/1000→0/72,699; dup QNs 10→0/14,091**) | ✅ | banked via #247 squash `cf357ad8` |
 | C3 | H7 tool-contract doc+CI drift guard · H12 README quickstart refresh · H4 provenance labels on all graph surfaces (36k edges labeled live) · H6 consolidation 76→73 with deprecation history | ✅ | banked via #249 squash `63c37714`; rolling log HACKATHON.md |
 | C4 | H10 usage dashboard (`leankg dashboard`, grouped-SQL aggregates, ASCII bars + JSON; PLG-8) · H8 perf regression gate (perf_gate.sh + CI workflow; baseline: index 18.3s/boot 19ms/search 13ms; forced-fail proven) · all backlog H1-H12 DONE | ✅ | banked via #251 squash `542a15e8` |
-| C5+ | **W8 SQL-first Datalog removal waves** (translate.rs/fake.rs deletion per plan doc) · carried minors (index_prd zero-work, cluster-skill path bleed) · continuous re-sweeps | ⬜ | plan: `docs/plan-remove-cozo-datalog-sql-migration.md` + WIP branch `feat/remove-cozo-datalog` |
+| C5+ | **W8 SQL-first Datalog removal waves** (translate.rs/fake.rs deletion per plan doc) · carried minors (index_prd zero-work, cluster-skill path bleed) · continuous re-sweeps | ⬜ | plan: SQL-migration plan under `docs/` + active removal branch |
 
 State @ cycle-4 close: lib **1195✅** · tools 73 · fmt/clippy/build clean · PR #251 CI green.
 

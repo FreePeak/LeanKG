@@ -22,6 +22,8 @@
 
 #![cfg(feature = "embeddings")]
 
+#[allow(unused_imports)]
+use leankg::db::backend::pg_connect;
 use leankg::db::backend::{init_db, schema_for_path};
 use leankg::embeddings::{self, build_index, parse_type_filter, BuildMode, BuildOptions};
 use leankg::graph::GraphEngine;
@@ -59,8 +61,7 @@ fn assert_mock_serving() {
 /// always derives its schema from the project identity).
 fn scoped_pg_url(base: &str) -> (String, String) {
     let schema = schema_for_path(std::path::Path::new(FIXTURE_PATH).join(".leankg").as_path());
-    let mut admin = postgres::Client::connect(base, postgres::NoTls)
-        .unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
+    let mut admin = pg_connect(base).unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
     admin
         .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
         .expect("drop schema");
@@ -76,13 +77,13 @@ fn scoped_pg_url(base: &str) -> (String, String) {
 }
 
 fn drop_schema(base: &str, schema: &str) {
-    if let Ok(mut admin) = postgres::Client::connect(base, postgres::NoTls) {
+    if let Ok(mut admin) = pg_connect(base) {
         let _ = admin.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"));
     }
 }
 
 fn count_rows(base_url: &str, schema: &str, table: &str) -> i64 {
-    let mut c = postgres::Client::connect(base_url, postgres::NoTls).expect("count connect");
+    let mut c = pg_connect(base_url).expect("count connect");
     c.query_one(&format!("SELECT count(*) FROM {schema}.{table}"), &[])
         .expect("count query")
         .get(0)
@@ -142,6 +143,10 @@ fn run_embed(graph: &GraphEngine, types: &str) -> embeddings::BuildReport {
         batch_size: 4,
         reserve_capacity: None,
         type_filter: parse_type_filter(types),
+        summary_primary_enabled: false,
+        summary_only_enabled: false,
+        summary_primary_file_cap: embeddings::build::SUMMARY_PRIMARY_DEFAULT_FILE_CAP,
+        file_size_cache: std::collections::HashMap::new(),
         partial: false,
         max_rss_mb_override: Some(2048),
         write_vectors: true,
@@ -172,6 +177,13 @@ fn run_semantic(graph: &GraphEngine, query: &str) -> usize {
 
 #[test]
 fn model_switch_preserves_collections() {
+    // Opt-in live test: needs local `leankg-pg-phase0` on :5433 AND the mock
+    // embed API on :18080. A bare LEANKG_PG_URL in the environment must NOT
+    // silently aim this at a shared/company database.
+    if std::env::var("LEANKG_MULTI_MODEL_LIVE").ok().as_deref() != Some("1") {
+        eprintln!("skipping: set LEANKG_MULTI_MODEL_LIVE=1 to run this live suite");
+        return;
+    }
     let Some(base_url) = std::env::var("LEANKG_PG_URL")
         .ok()
         .filter(|v| !v.trim().is_empty())

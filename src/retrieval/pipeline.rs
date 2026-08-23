@@ -180,35 +180,29 @@ mod adaptive_k_tests {
 
     // FR-HNSW-F: ef knob tests. Defaults to 2k floored at 50; env var
     // override wins; invalid env values are ignored.
+    //
+    // One combined test: the variants mutate process-global `LEANKG_HNSW_EF`,
+    // and cargo runs tests on parallel threads — separate tests raced each
+    // other's set/remove (flake seen in full-matrix runs).
     #[test]
-    fn resolve_ef_default_scales_with_k() {
+    fn resolve_ef_default_and_env_overrides() {
         std::env::remove_var("LEANKG_HNSW_EF");
         assert_eq!(resolve_ef(25), 50); // floor
         assert_eq!(resolve_ef(50), 100); // k*2
         assert_eq!(resolve_ef(100), 200);
         assert_eq!(resolve_ef(500), 1000);
-    }
 
-    #[test]
-    fn resolve_ef_env_override_wins() {
         std::env::set_var("LEANKG_HNSW_EF", "400");
         assert_eq!(resolve_ef(10), 400);
-        std::env::remove_var("LEANKG_HNSW_EF");
-    }
 
-    #[test]
-    fn resolve_ef_env_invalid_falls_back() {
         std::env::set_var("LEANKG_HNSW_EF", "not-a-number");
         // Falls back to default rule.
         assert_eq!(resolve_ef(25), 50);
-        std::env::remove_var("LEANKG_HNSW_EF");
-    }
 
-    #[test]
-    fn resolve_ef_env_zero_falls_back() {
         std::env::set_var("LEANKG_HNSW_EF", "0");
         // Zero is rejected (would underflow the HNSW min ef).
         assert_eq!(resolve_ef(25), 50);
+
         std::env::remove_var("LEANKG_HNSW_EF");
     }
 }

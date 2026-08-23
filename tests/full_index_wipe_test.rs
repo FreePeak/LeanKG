@@ -15,6 +15,8 @@
 //!   cargo test --release --test full_index_wipe_test
 
 use leankg::db::backend::init_db;
+#[allow(unused_imports)]
+use leankg::db::backend::pg_connect;
 use leankg::db::models::CodeElement;
 use leankg::graph::GraphEngine;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -41,8 +43,7 @@ fn fresh_migrated_schema() -> String {
         SCHEMA_COUNTER.fetch_add(1, Ordering::Relaxed)
     );
     let base = base_url();
-    let mut admin = postgres::Client::connect(&base, postgres::NoTls)
-        .unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
+    let mut admin = pg_connect(&base).unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
     admin
         .batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))
         .expect("drop schema");
@@ -54,26 +55,35 @@ fn fresh_migrated_schema() -> String {
         .expect("set search_path");
     leankg::db::pg::migrations::run_migrations(&mut admin)
         .expect("run_migrations on scratch schema");
-    // Keep the admin connection alive so the schema survives the test body.
-    std::mem::forget(admin);
+    // Drop the admin connection — the schema persists server-side, and this
+    // role has a tight connection cap (E53300/refused when leaked).
+    drop(admin);
     name
 }
 
 /// Build a GraphEngine on a fresh migrated scratch schema.
 fn fresh_engine() -> GraphEngine {
-    let schema = fresh_migrated_schema();
-    let sep = if base_url().contains('?') { '&' } else { '?' };
-    let scoped = format!(
-        "{}{}options=-csearch_path%3D{}%2Cpublic",
-        base_url(),
-        sep,
-        schema
-    );
+    let _schema = fresh_migrated_schema();
+    // Under #[cfg(test)] init_db derives its scratch schema from db_path, so
+    // a FIXED path here made every test share one schema — rows from one
+    // test bled into another's assertions. Unique path per engine.
+    static PATH_COUNTER: AtomicU32 = AtomicU32::new(0);
+    let db_path = std::env::temp_dir().join(format!(
+        "leankg_wipe_test_{}_{}.db",
+        std::process::id(),
+        PATH_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     let guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
-    std::env::set_var("LEANKG_PG_URL", &scoped);
-    let db = init_db(std::path::Path::new("/tmp/leankg_wipe_test.db"))
-        .expect("init_db on scratch schema");
-    std::env::remove_var("LEANKG_PG_URL");
+    // Restore the caller's value afterwards — removing the var entirely made
+    // later tests fall back to the built-in localhost:5433 default even when
+    // the suite was pointed at remote PG via the environment.
+    let prev = std::env::var("LEANKG_PG_URL").ok();
+    std::env::set_var("LEANKG_PG_URL", &base_url());
+    let db = init_db(&db_path).expect("init_db on scratch schema");
+    match prev {
+        Some(v) => std::env::set_var("LEANKG_PG_URL", v),
+        None => std::env::remove_var("LEANKG_PG_URL"),
+    }
     drop(guard);
     GraphEngine::new(db)
 }

@@ -713,6 +713,7 @@ impl ToolHandler {
                 "initialized": false,
                 "storage_engine": storage_engine,
                 "storage_path": storage_path,
+                "counts_included": false,
                 "message": "LeanKG not initialized. Run mcp_init first."
             }));
         }

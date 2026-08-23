@@ -10,6 +10,8 @@
 //! (--test-threads=1: tests share one scratch schema + the single-open DB
 //! guard; container-gated, like the other pg_* tests.)
 
+#[allow(unused_imports)]
+use leankg::db::backend::pg_connect;
 use leankg::db::backend::PostgresBackend;
 use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
@@ -39,8 +41,8 @@ impl ScratchSchema {
             std::process::id(),
             SCHEMA_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
-        let mut admin = postgres::Client::connect(&base, postgres::NoTls)
-            .unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
+        let mut admin =
+            pg_connect(&base).unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
         admin
             .batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))
             .unwrap();
@@ -333,6 +335,15 @@ fn seed_fixture(db: &leankg::db::backend::PostgresBackend) {
             let _ = qns; // unused without the feature
             return;
         }
+        // Deterministic 384-dim vector for row i: two seeded spikes so ANN
+        // queries have stable, well-separated nearest neighbors.
+        fn vector_for(i: usize, _qn: &str) -> String {
+            let mut v = vec![0.0f32; 384];
+            v[i % 384] = 1.0;
+            v[(i + 7) % 384] = 0.5;
+            let parts: Vec<String> = v.iter().map(|f| format!("{f}")).collect();
+            format!("vec([{}])", parts.join(","))
+        }
         let qns = [
             "src/main.rs::main",
             "src/main.rs::validate_key",
@@ -346,7 +357,8 @@ fn seed_fixture(db: &leankg::db::backend::PostgresBackend) {
         let state_rows: Vec<String> = qns
             .iter()
             .enumerate()
-            .map(|(i, qn)| format!(r#"["{qn}", {i}, "{qn}", "fresh", 1700000000]"#))
+            // embedded_at is TEXT in the PG schema — quote the epoch.
+            .map(|(i, qn)| format!(r#"["{qn}", {i}, "{qn}", "fresh", "1700000000"]"#))
             .collect();
         let state = format!(
         "?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [{}] :put embedding_state {{qualified_name, usearch_key, content_hash, state, embedded_at}}",

@@ -641,7 +641,7 @@ impl PostgresBackend {
     }
 
     /// Emit one `leankg::pg_sql` line for a SQL-first op. Deliberately has NO
-    /// `cozo=` field — converted paths are proven Datalog-free by its absence.
+    /// legacy-engine field — converted paths are proven Datalog-free by its absence.
     fn log_sql_op(phase: &str, op: &str, sql: &str, rows: usize, elapsed_ms: u128) {
         tracing::info!(
             target: "leankg::pg_sql",

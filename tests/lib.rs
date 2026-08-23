@@ -107,9 +107,10 @@ mod parser_tests {
                 pm.get_parser_for_language("cobol").is_none(),
                 "Should return None for 'cobol'"
             );
+            // 'c' moved to the registry-driven grammars — it resolves now.
             assert!(
-                pm.get_parser_for_language("c").is_none(),
-                "Should return None for 'c'"
+                pm.get_parser_for_language("c").is_some(),
+                "Registry should provide a parser for 'c'"
             );
             assert!(
                 pm.get_parser_for_language("").is_none(),

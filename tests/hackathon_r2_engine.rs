@@ -63,6 +63,13 @@ impl ScratchSchema {
         admin
             .batch_execute(&format!("CREATE SCHEMA {name}"))
             .unwrap();
+        // Pin migrations to the scratch schema — without this they land in
+        // `public`, and every engine in the binary shares one global table
+        // set (cross-test interference: a concurrent test's rows satisfy
+        // another test's post-delete lookup).
+        admin
+            .batch_execute(&format!("SET search_path TO {name}, public"))
+            .unwrap();
         leankg::db::pg::migrations::run_migrations(&mut admin).unwrap();
         Self { admin, name }
     }

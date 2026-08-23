@@ -20,6 +20,10 @@ const ALLOWLIST_PREFIXES: &[&str] = &[
     "CHANGELOG.md",
     // migration audit trail (dated engineering evidence)
     "docs/plan-migrate-cozo-to-postgres-pgvector.md",
+    // SQL-migration plan + dated cycle handoff records (historical evidence
+    // of the engine removal itself — the terms ARE the subject matter)
+    "docs/plan-remove-cozo-datalog-sql-migration.md",
+    "docs/cycles/",
     "docs/analysis/",
     "docs/plans/",
     "docs/planning/",
@@ -41,6 +45,7 @@ const ALLOWLIST_PREFIXES: &[&str] = &[
     "docs/prd-task-tracker.md",
     "docs/prd-task-tracker.json",
     "docs/interview-highlights.md",
+    "HACKATHON.md",
     // local scratch / build artifacts / VCS internals
     ".leankg/",
     ".git/",

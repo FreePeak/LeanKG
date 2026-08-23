@@ -3032,7 +3032,15 @@ impl GraphEngine {
         &self,
         query: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let result = self.db.run_script(&query, Default::default())?;
+        self.run_element_query_with_params(query, Default::default())
+    }
+
+    fn run_element_query_with_params(
+        &self,
+        query: &str,
+        params: std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
+        let result = self.db.run_script(&query, params)?;
         Ok(result
             .rows
             .iter()
@@ -3199,22 +3207,26 @@ impl GraphEngine {
             return Ok(vec![]);
         }
 
-        // Build query to get code elements for these sources
-        let sources_pattern = caller_sources
-            .iter()
-            .map(|s| format!(r#"qualified_name = "{}""#, escape_datalog(s)))
-            .collect::<Vec<_>>()
-            .join(" or ");
-
+        // Build query to get code elements for these sources. Parameterized
+        // `in $qs` (not a parenthesized OR chain — the translator rejects
+        // `(a = "x" or a = "y")` as a top-level clause).
         let element_query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
-               ({sources})
+               qualified_name in $qs
                :limit 50"#,
-            sources = sources_pattern,
         );
-
-        self.run_element_query(&element_query)
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "qs".to_string(),
+            serde_json::Value::Array(
+                caller_sources
+                    .iter()
+                    .map(|s| serde_json::Value::String(s.clone()))
+                    .collect(),
+            ),
+        );
+        self.run_element_query_with_params(&element_query, params)
     }
 
     #[allow(clippy::type_complexity)]

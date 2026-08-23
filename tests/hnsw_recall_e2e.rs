@@ -74,7 +74,7 @@ fn vec_literal(v: &[f32]) -> String {
         .join(", ")
 }
 
-fn put_vectors(db: &leankg::db::backend::PostgresBackend, items: &[(String, Vec<f32>)]) {
+fn put_vectors(db: &dyn leankg::db::backend::DbBackend, items: &[(String, Vec<f32>)]) {
     let rows: Vec<String> = items
         .iter()
         .map(|(qn, vector)| {
@@ -94,7 +94,7 @@ fn put_vectors(db: &leankg::db::backend::PostgresBackend, items: &[(String, Vec<
         .expect("put embedding_vectors");
 }
 
-fn hnsw_query(db: &leankg::db::backend::PostgresBackend, qvec: &[f32], k: usize) -> Vec<String> {
+fn hnsw_query(db: &dyn leankg::db::backend::DbBackend, qvec: &[f32], k: usize) -> Vec<String> {
     let ef: usize = std::env::var("LEANKG_HNSW_EF")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -161,7 +161,7 @@ fn hnsw_recall_at_k_meets_threshold() {
         let qn = format!("src/cluster{cluster}.rs::fn_{i}");
         items.push((qn, make_vector(i, cluster)));
     }
-    put_vectors(&db, &items);
+    put_vectors(db.as_ref(), &items);
 
     // Query = near-centroid of cluster 0 (same axis, tiny noise).
     let mut query = make_vector(0, 0);
@@ -180,7 +180,7 @@ fn hnsw_recall_at_k_meets_threshold() {
     l2_normalize(&mut query);
 
     let brute = brute_force_top_k(&items, &query, K);
-    let hnsw = hnsw_query(&db, &query, K);
+    let hnsw = hnsw_query(db.as_ref(), &query, K);
 
     assert_eq!(
         hnsw.len(),
@@ -230,7 +230,7 @@ fn hnsw_exact_neighbor_is_rank_one() {
             make_vector(i + 100, cluster),
         ));
     }
-    put_vectors(&db, &items);
+    put_vectors(db.as_ref(), &items);
 
     // Query with the exact stored vector for item 0 — must be distance ~0 / rank 1.
     let target_qn = "exact/c0::item_0".to_string();
@@ -241,7 +241,7 @@ fn hnsw_exact_neighbor_is_rank_one() {
         .1
         .clone();
 
-    let hnsw = hnsw_query(&db, &qvec, 5);
+    let hnsw = hnsw_query(db.as_ref(), &qvec, 5);
     assert_eq!(
         hnsw.first().map(|s| s.as_str()),
         Some(target_qn.as_str()),
