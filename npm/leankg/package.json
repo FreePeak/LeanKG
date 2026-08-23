@@ -1,6 +1,6 @@
 {
   "name": "leankg",
-  "version": "0.26.0",
+  "version": "0.26.1",
   "description": "LeanKG — a lightweight knowledge graph for AI-assisted development. npm wrapper that downloads the right prebuilt binary for your platform.",
   "license": "Apache-2.0",
   "repository": {
