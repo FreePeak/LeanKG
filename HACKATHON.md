@@ -85,3 +85,6 @@ Note: R3's warm-benchmarks (temporal 4.5s / check_consistency 6–7s / agent_foc
 | R2c data quality | drop unresolvable call edges at generation; prune_dangling_relationships valve; docs hierarchy synthetic dir elements; per-doc heading QN #k counters; collapse dup file rows | doctor exit 2→1: orphans 432/1000→**0/72,699**; dup QNs 10→**0/14,091** |
 
 Gates @ cycle-2 close: lib **1169✅** · fmt/clippy/build clean.
+
+### Cycle 3 opened (2026-08-22)
+Branch reset onto main cf357ad8 (cycles 1-2 banked via squash #247). Backlog this cycle: H4 provenance labels, H7 tool contract+CI guard, H6 tool consolidation, H10 usage dashboard, H12 README refresh. New rolling PR opens with first commit.
