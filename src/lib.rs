@@ -1,18 +1,21 @@
 // LeanKG Library
 // This library contains the core modules for the knowledge graph system
 
+pub mod audit;
 pub mod auth;
 pub mod benchmark;
 pub mod budget;
 pub mod cli;
 pub mod compress;
 pub mod config;
+pub mod connect;
 pub mod conversation_indexer;
 pub mod cost_estimate;
 pub mod ctags_export;
 pub mod db;
 pub mod doc;
 pub mod doc_indexer;
+pub mod doctor;
 pub mod embeddings;
 pub mod gc;
 pub mod graph;

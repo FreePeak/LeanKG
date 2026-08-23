@@ -10,18 +10,21 @@
 #![allow(clippy::len_zero)]
 #![allow(clippy::absurd_extreme_comparisons)]
 mod api;
+mod audit;
 mod auth;
 mod benchmark;
 mod budget;
 mod cli;
 mod compress;
 mod config;
+mod connect;
 mod conversation_indexer;
 mod cost_estimate;
 mod ctags_export;
 mod db;
 mod doc;
 mod doc_indexer;
+mod doctor;
 mod embed;
 // The `embeddings` module tree self-gates its heavy parts (ONNX / fastembed)
 // behind the feature in `src/embeddings/mod.rs`; `provider` / `profile` /
@@ -78,12 +81,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             read_only: _
         }
     ) {
-        tracing_subscriber::fmt::init();
+        // Logs go to STDERR so stdout stays machine-readable (piped JSON,
+        // table output consumed by scripts). tracing_subscriber defaults to
+        // stdout, which corrupted `doctor --deep --format json` consumers.
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .init();
     }
 
     match args.command {
         cli::CLICommand::Version => {
             println!("leankg {}", env!("CARGO_PKG_VERSION"));
+        }
+        cli::CLICommand::Audit { command } => {
+            run_audit_command(command).await?;
         }
         cli::CLICommand::Update => {
             update_leankg().await?;
@@ -117,6 +128,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await?;
+            // N1 self-heal (cycle-2 R2a): refill a missing project_path
+            // anchor in any conventional leankg.yaml around this index
+            // target BEFORE deriving the schema. The hint is THIS run's own
+            // canonical identity, so a rewritten/regenerated config cannot
+            // silently re-scope the project identity.
+            config::ensure_identity_fields_for_db(
+                &db_path,
+                &db::backend::canonical_project_root(&project_path),
+            );
             let exclude_patterns: Vec<String> = exclude
                 .as_ref()
                 .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
@@ -266,7 +286,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Another LeanKG watcher (PID {}) is already running for this project. Disabling --watch for this instance.",
                                 old_pid
                             );
-                            let mcp_server = mcp::MCPServer::new(db_path).with_read_only(read_only);
+                            let mut mcp_server =
+                                mcp::MCPServer::new(db_path.clone()).with_read_only(read_only);
+                            if let Some(rec) = attach_audit_recorder(&db_path, read_only) {
+                                mcp_server = mcp_server.with_audit_recorder(rec);
+                            }
                             if let Err(e) = mcp_server.serve_stdio().await {
                                 eprintln!("MCP stdio server error: {}", e);
                             }
@@ -278,10 +302,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let mcp_server = if watch {
-                mcp::MCPServer::new_with_watch(db_path, project_path.clone())
+                mcp::MCPServer::new_with_watch(db_path.clone(), project_path.clone())
                     .with_read_only(read_only)
             } else {
-                mcp::MCPServer::new(db_path).with_read_only(read_only)
+                mcp::MCPServer::new(db_path.clone()).with_read_only(read_only)
+            };
+            let mcp_server = if let Some(rec) = attach_audit_recorder(&db_path, read_only) {
+                mcp_server.with_audit_recorder(rec)
+            } else {
+                mcp_server
             };
             if let Err(e) = mcp_server.serve_stdio().await {
                 eprintln!("MCP stdio server error: {}", e);
@@ -295,10 +324,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             project,
             read_only,
         } => {
+            // N3 (cycle-2 R2a): canonicalize --project BEFORE any schema
+            // derivation. A relative or non-canonical spelling used to be
+            // resolved against the launcher's CWD further down (yaml
+            // project_path joins, schema_for_path base), so the same command
+            // pinned a different PG schema depending on where it was started.
             let project_path = if let Some(ref p) = project {
-                std::path::PathBuf::from(p)
+                db::backend::canonical_project_root(std::path::Path::new(p))
             } else {
-                find_project_root()?
+                db::backend::canonical_project_root(&find_project_root()?)
             };
             let db_path = project_path.join(".leankg");
             let port = port.unwrap_or_else(|| {
@@ -311,12 +345,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tokio::fs::create_dir_all(&db_path).await.ok();
 
-            let mcp_server = if watch {
+            let mut mcp_server = if watch {
                 mcp::MCPServer::new_with_watch(db_path.clone(), project_path.clone())
                     .with_read_only(read_only)
+                    .with_transport("http")
             } else {
-                mcp::MCPServer::new(db_path.clone()).with_read_only(read_only)
+                mcp::MCPServer::new(db_path.clone())
+                    .with_read_only(read_only)
+                    .with_transport("http")
             };
+            // FR-ENT-1: attach the append-only audit ledger (best-effort —
+            // see attach_audit_recorder).
+            if let Some(rec) = attach_audit_recorder(&db_path, read_only) {
+                mcp_server = mcp_server.with_audit_recorder(rec);
+            }
 
             println!("╔═══════════════════════════════════════════════════════════════╗");
             println!("║  LeanKG MCP HTTP Server (Remote Mode)                      ║");
@@ -588,7 +630,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Install => {
             install_mcp_config()?;
         }
-        cli::CLICommand::Doctor { kill } => {
+        cli::CLICommand::Connect {
+            client,
+            remote,
+            remove,
+            project,
+        } => {
+            let project_path = project.as_deref().map(std::path::PathBuf::from);
+            let path = connect::run_with_home(
+                client,
+                remote.as_deref(),
+                remove,
+                project_path.as_deref(),
+                None,
+            )?;
+            if remove {
+                println!("Removed leankg entry from {}", path.display());
+            } else {
+                println!("Configured leankg for {client:?} at {}", path.display());
+                println!("Restart the client so it picks up the leankg MCP server.");
+            }
+        }
+        cli::CLICommand::Doctor {
+            kill,
+            deep,
+            format,
+            project,
+        } => {
+            if deep {
+                let exit =
+                    run_doctor_deep(format.as_deref().unwrap_or("text"), project.as_deref())?;
+                std::process::exit(exit);
+            }
             run_doctor(kill)?;
         }
         cli::CLICommand::Status => {
@@ -933,6 +1006,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Export {
             output,
             format,
+            markdown,
+            out,
             file,
             depth,
             path,
@@ -941,16 +1016,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
-            export_graph(
-                &output,
-                &format,
-                file.as_deref(),
-                depth,
-                path.as_deref(),
-                community.as_deref(),
-                max_nodes,
-                &db_path,
-            )?;
+            if markdown {
+                let res =
+                    graph::export_markdown::run_export_markdown(&project_path, out.as_deref())?;
+                println!(
+                    "Exported {} elements and {} relationships to {} (format: markdown)",
+                    res.elements,
+                    res.relationships,
+                    res.path.display(),
+                );
+            } else {
+                export_graph(
+                    &output,
+                    &format,
+                    file.as_deref(),
+                    depth,
+                    path.as_deref(),
+                    community.as_deref(),
+                    max_nodes,
+                    &db_path,
+                )?;
+            }
         }
         cli::CLICommand::Tags {
             output,
@@ -1437,6 +1523,79 @@ fn find_project_root() -> Result<std::path::PathBuf, Box<dyn std::error::Error>>
     Ok(current_dir)
 }
 
+/// FR-ENT-1: open the project backend and build the shared append-only audit
+/// recorder for a serving MCP server. Best-effort: when the DB cannot be
+/// opened the server still starts without auditing; when the audit_log table
+/// is missing (pre-migration schema) the recorder disables itself after one
+/// warn instead of ever failing a tool call.
+fn attach_audit_recorder(
+    db_path: &std::path::Path,
+    read_only: bool,
+) -> Option<std::sync::Arc<crate::audit::AuditRecorder>> {
+    let db = if read_only {
+        db::backend::init_db_readonly(db_path)
+    } else {
+        db::backend::init_db(db_path)
+    }
+    .inspect_err(|e| tracing::warn!("audit ledger unavailable (server starts unaudited): {e}"))
+    .ok()?;
+    Some(crate::audit::AuditRecorder::shared(db))
+}
+
+/// FR-ENT-1: `leankg audit export|verify` over the append-only ledger.
+/// Read-only DB access; exits non-zero when verification fails.
+async fn run_audit_command(command: cli::AuditCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = find_project_root()?;
+    let db_path = project_path.join(".leankg");
+    // FR-ENT-1: pin to the project's ledger schema even while its code index
+    // is still empty/in-flight (init_db_readonly would fall back to public).
+    let db = db::backend::init_db_readonly_audit(&db_path)?;
+
+    match command {
+        cli::AuditCommand::Export {
+            since,
+            until,
+            format,
+            out,
+        } => {
+            debug_assert!(matches!(format, cli::AuditFormat::Jsonl));
+            let since = since
+                .map(|s| cli::audit::parse_time_filter(&s))
+                .transpose()?;
+            let until = until
+                .map(|u| cli::audit::parse_time_filter(&u))
+                .transpose()?;
+            let jsonl = cli::audit::export_ledger_jsonl(&db, since, until)?;
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, &jsonl)?;
+                    let lines = jsonl.lines().count();
+                    println!("wrote {lines} audit entries to {path}");
+                }
+                None => print!("{jsonl}"),
+            }
+        }
+        cli::AuditCommand::Verify { since, until } => {
+            let since = since
+                .map(|s| cli::audit::parse_time_filter(&s))
+                .transpose()?;
+            let until = until
+                .map(|u| cli::audit::parse_time_filter(&u))
+                .transpose()?;
+            match cli::audit::verify_ledger(&db, since, until) {
+                Ok(count) => {
+                    println!("OK: audit chain intact ({count} entries verified)");
+                }
+                Err(e) => {
+                    eprintln!("FAIL: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Resolve the project root for `leankg serve` / `web`.
 /// Prefer `--project`, then `LEANKG_SERVE_PROJECT`, then find_project_root (cwd).
 /// Do **not** default to `LEANKG_MCP_PROJECT` — MCP often points at a multi-repo
@@ -1517,18 +1676,30 @@ fn init_project(path: &str, with_lsp: bool) -> Result<(), Box<dyn std::error::Er
         config.indexer.typed_resolve = tr.join(",");
     }
 
+    // N1 (cycle-2 R2a): write via read-modify-write so a re-init never drops
+    // user fields — most importantly project.project_path, the schema
+    // identity anchor (its `skip_serializing` made even a fresh init emit a
+    // yaml without it).
     let config_yaml = serde_yaml::to_string(&config)?;
 
     std::fs::create_dir_all(path)?;
     let leankg_dir_config = std::path::Path::new(path).join("leankg.yaml");
-    std::fs::write(&leankg_dir_config, &config_yaml)?;
+    if leankg_dir_config.exists() {
+        let existing = std::fs::read_to_string(&leankg_dir_config)?;
+        std::fs::write(
+            &leankg_dir_config,
+            config::merge_yaml_preserving_existing(&existing, &config),
+        )?;
+    } else {
+        std::fs::write(&leankg_dir_config, &config_yaml)?;
+    }
 
     let cwd_config = std::path::Path::new("leankg.yaml");
     if cwd_config.exists() {
-        if let Ok(existing) = std::fs::read_to_string(cwd_config) {
-            if existing != config_yaml {
-                std::fs::write(cwd_config, &config_yaml)?;
-            }
+        let existing = std::fs::read_to_string(cwd_config)?;
+        let merged = config::merge_yaml_preserving_existing(&existing, &config);
+        if merged != existing {
+            std::fs::write(cwd_config, merged)?;
         }
     } else {
         std::fs::write(cwd_config, &config_yaml)?;
@@ -2656,6 +2827,31 @@ fn run_doctor(kill: bool) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// H9: `leankg doctor --deep` — deployment self-diagnosis. Prints an
+/// aligned check|status|detail|hint table (or JSON with `--format json`)
+/// and returns the CI exit code: 0 all-pass, 1 any warn, 2 any fail.
+fn run_doctor_deep(format: &str, project: Option<&str>) -> Result<i32, Box<dyn std::error::Error>> {
+    let root = match project {
+        Some(p) => std::path::PathBuf::from(p),
+        None => find_project_root()?,
+    };
+    let (report, db_path) =
+        doctor::deep::run_deep(&root).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    match format {
+        "json" => println!("{}", report.render_json()),
+        _ => {
+            println!("LeanKG doctor --deep — {}", root.display());
+            print!("{}", report.render_table());
+        }
+    }
+    eprintln!(".leankg: {}", db_path.display());
+    let code = report.exit_code();
+    if code != 0 {
+        eprintln!("leankg doctor --deep found issues (exit {code}); hints above suggest fixes.");
+    }
+    Ok(code)
 }
 
 fn install_mcp_config() -> Result<(), Box<dyn std::error::Error>> {

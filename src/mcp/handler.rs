@@ -229,7 +229,7 @@ impl ToolHandler {
         let result = match tool_name {
             "mcp_init" => self.mcp_init(arguments),
             "mcp_index" => self.mcp_index(arguments).await,
-            "mcp_index_docs" => self.mcp_index_docs(arguments),
+            "mcp_index_docs" => self.mcp_index_docs(arguments).await,
             "mcp_install" => self.mcp_install(arguments),
             "mcp_status" => self.mcp_status(arguments),
             "detect_changes" => self.detect_changes(arguments),
@@ -325,17 +325,14 @@ impl ToolHandler {
 
         // US-GF-06 / FR-GF-13: auto-write GRAPH_REPORT.md after successful index
         if result.is_ok() && (tool_name == "mcp_index" || tool_name == "mcp_index_docs") {
-            let project_path = std::env::var("LEANKG_MCP_PROJECT")
-                .ok()
-                .map(std::path::PathBuf::from)
-                .or_else(|| std::env::current_dir().ok());
-            if let Some(pp) = project_path {
-                let db_path = pp.join(".leankg");
-                if let Err(e) =
-                    crate::report::write::write_graph_report_after_index(&pp, &db_path).await
-                {
-                    tracing::warn!("GRAPH_REPORT auto-write skipped after {}: {}", tool_name, e);
-                }
+            // Anchor at the ACTIVE project root, not LEANKG_MCP_PROJECT/CWD
+            // (R1 sweep issue #4 — the report landed in the parent repo).
+            let pp = self.active_project_root();
+            let db_path = pp.join(".leankg");
+            if let Err(e) =
+                crate::report::write::write_graph_report_after_index(&pp, &db_path).await
+            {
+                tracing::warn!("GRAPH_REPORT auto-write skipped after {}: {}", tool_name, e);
             }
         }
 
@@ -485,14 +482,15 @@ impl ToolHandler {
         }
 
         let config = crate::config::ProjectConfig::default();
-        let config_yaml = serde_yaml::to_string(&config)
-            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        // N1 (cycle-2 R2a): merge under an existing leankg.yaml instead of
+        // overwriting it — dropping `project.project_path` here re-scoped the
+        // project identity on the next server boot (empty-DB serving).
         let config_path = if path_ref.is_file() {
             std::path::PathBuf::from("leankg.yaml")
         } else {
             path_ref.join("leankg.yaml")
         };
-        std::fs::write(config_path, config_yaml)
+        crate::config::write_config_preserving_existing(&config_path, &config)
             .map_err(|e| format!("Failed to write config: {}", e))?;
 
         Ok(json!({
@@ -705,26 +703,46 @@ impl ToolHandler {
         }))
     }
 
-    fn mcp_index_docs(&self, args: &Value) -> Result<Value, String> {
-        let docs_path = args["path"].as_str().unwrap_or("./docs");
-        let path = std::path::Path::new(docs_path);
+    async fn mcp_index_docs(&self, args: &Value) -> Result<Value, String> {
+        let docs_path = args["path"].as_str().unwrap_or("./docs").to_string();
+        let path = std::path::Path::new(&docs_path).to_path_buf();
 
         if !path.exists() {
             return Err(format!("Docs path does not exist: {}", docs_path));
         }
 
-        let result = crate::doc_indexer::index_docs_directory(path, &self.graph_engine)
-            .map_err(|e| e.to_string())?;
+        // R1 sweep issue #11: the doc walk + parse + per-ref resolution
+        // is ~75 sequential DB round-trips for even a 1-file dir. Run it
+        // on the blocking pool so (a) the hot async executor stays free
+        // and (b) the future actually yields between steps, letting
+        // tokio::time::timeout preempt promptly instead of surfacing
+        // "timed out after 30s" only AFTER the work had drained.
+        let graph = self.graph_engine.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            // Box<dyn Error> is not Send — stringify inside the worker.
+            crate::doc_indexer::index_docs_directory(&path, &graph).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("mcp_index_docs worker failed: {}", e))??;
+
+        // `documents` also carries synthetic `directory` container rows
+        // (dir -> document `contains` edges need a resolvable source);
+        // the wire contract counts real markdown documents only.
+        let doc_count = result
+            .documents
+            .iter()
+            .filter(|d| d.element_type == "document")
+            .count();
 
         Ok(json!({
             "success": true,
-            "documents": result.documents.len(),
+            "documents": doc_count,
             "sections": result.sections.len(),
             "relationships": result.relationships.len(),
             "path": docs_path,
             "message": format!(
                 "Indexed {} documents, {} sections, {} relationships",
-                result.documents.len(),
+                doc_count,
                 result.sections.len(),
                 result.relationships.len()
             )
@@ -1338,21 +1356,19 @@ impl ToolHandler {
             .map_err(|e| e.to_string())?;
         // Persist to disk when format is not json
         if format != "json" {
-            if let Some(project_path) = std::env::var("LEANKG_MCP_PROJECT")
-                .ok()
-                .map(std::path::PathBuf::from)
-            {
-                let db_path = project_path.join(".leankg");
-                let pp = project_path.clone();
-                // Spawn a background task so the MCP response isn't delayed
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        crate::report::write::write_graph_report_after_index(&pp, &db_path).await
-                    {
-                        tracing::warn!("MCP get_graph_report persist: {}", e);
-                    }
-                });
-            }
+            // Anchor at the ACTIVE project root, not LEANKG_MCP_PROJECT/CWD
+            // — those point at whatever directory the server was launched
+            // from, so the report escaped to the parent repo (R1 issue #4).
+            let pp = self.active_project_root();
+            let db_path = pp.join(".leankg");
+            // Spawn a background task so the MCP response isn't delayed
+            tokio::spawn(async move {
+                if let Err(e) =
+                    crate::report::write::write_graph_report_after_index(&pp, &db_path).await
+                {
+                    tracing::warn!("MCP get_graph_report persist: {}", e);
+                }
+            });
         }
         if format == "json" {
             return Ok(json!({ "report": report }));
@@ -1667,6 +1683,34 @@ impl ToolHandler {
         Ok(value)
     }
 
+    /// The ACTIVE project root for this request, derived from `db_path`.
+    /// Handles all three spellings callers use (`<root>`,
+    /// `<root>/.leankg`, `<root>/.leankg/leankg.db`).
+    fn active_project_root(&self) -> std::path::PathBuf {
+        let mut root = self.db_path.clone();
+        if root.ends_with("leankg.db") {
+            root = root.parent().unwrap_or(&root).to_path_buf();
+        }
+        if root.ends_with(".leankg") {
+            root = root.parent().unwrap_or(&root).to_path_buf();
+        }
+        root
+    }
+
+    /// Resolve an export artifact path against the ACTIVE project root.
+    ///
+    /// Relative out paths (including the `.leankg/...` defaults) previously
+    /// resolved against the server process CWD, so exports escaped into a
+    /// parent repo's `.leankg/` (R1 sweep issue #4). Anchor them at this
+    /// request's project root; absolute paths are honoured verbatim.
+    fn resolve_out_path(&self, out_path: &str) -> std::path::PathBuf {
+        let p = std::path::Path::new(out_path);
+        if p.is_absolute() {
+            return p.to_path_buf();
+        }
+        self.active_project_root().join(p)
+    }
+
     fn export_graph_snapshot(&self, args: &Value) -> Result<Value, String> {
         if let Some(refusal) = crate::ontology::safe_discover::refuse_full_scan_if_mega(
             &self.graph_engine,
@@ -1678,10 +1722,15 @@ impl ToolHandler {
             .as_str()
             .unwrap_or(".leankg/graph-snapshot.json");
         let project = args["project"].as_str().unwrap_or(".");
-        let out = std::path::Path::new(out_path);
+        // Resolve against the ACTIVE project root BEFORE Path::new so the
+        // default/relative spellings cannot escape to the server CWD.
+        let out = self.resolve_out_path(out_path);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
         let written = self
             .graph_engine
-            .export_snapshot(std::path::Path::new(project), out)
+            .export_snapshot(std::path::Path::new(project), &out)
             .map_err(|e| e.to_string())?;
         Ok(json!({
             "written": written,
@@ -1723,11 +1772,11 @@ impl ToolHandler {
         let exporter = export::HtmlExporter::new();
         let html = exporter.generate_html_with_meta(&elements, &relationships, &meta);
 
-        let out = std::path::Path::new(out_path);
+        let out = self.resolve_out_path(out_path);
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        std::fs::write(out, &html).map_err(|e| e.to_string())?;
+        std::fs::write(&out, &html).map_err(|e| e.to_string())?;
 
         Ok(json!({
             "path": out.display().to_string(),
@@ -4961,6 +5010,256 @@ fn semantic_no_corpus_hit(query: &str, prefix: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DbBackend double that sleeps before every script — simulates the
+    /// remote-PG per-query latency profile (R1 sweep: p50 ≈ 2-3s/query)
+    /// without needing a network. Delegates to a real backend for results.
+    struct SlowBackend {
+        inner: crate::db::backend::SharedDb,
+        delay: std::time::Duration,
+    }
+
+    impl crate::db::backend::DbBackend for SlowBackend {
+        fn run_script(
+            &self,
+            query: &str,
+            params: std::collections::BTreeMap<String, serde_json::Value>,
+        ) -> Result<crate::db::backend::NamedRows, Box<dyn std::error::Error>> {
+            std::thread::sleep(self.delay);
+            self.inner.run_script(query, params)
+        }
+
+        fn import_relations(
+            &self,
+            data: std::collections::BTreeMap<String, crate::db::backend::NamedRows>,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            std::thread::sleep(self.delay);
+            self.inner.import_relations(data)
+        }
+
+        fn redacted_url(&self) -> String {
+            self.inner.redacted_url()
+        }
+
+        fn mutability_for(&self, query: &str) -> crate::db::pg::mutability::ScriptMutability {
+            self.inner.mutability_for(query)
+        }
+    }
+
+    fn handler_in_temp_project() -> (ToolHandler, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let shared = crate::db::backend::init_db(&tmp.path().join("leankg.db")).unwrap();
+        let graph = GraphEngine::new(shared);
+        (ToolHandler::new(graph, tmp.path().to_path_buf()), tmp)
+    }
+
+    /// N1 (cycle-2 R2a): the `mcp_init` tool used to overwrite leankg.yaml
+    /// with `ProjectConfig::default()` — dropping `project.project_path`
+    /// and every unmodeled user key, which re-scoped the project identity
+    /// on the next server boot ("database_exists: false" empty-DB serving).
+    /// Re-init must merge under the existing file instead.
+    #[test]
+    fn mcp_init_preserves_existing_user_fields() {
+        let (handler, tmp) = handler_in_temp_project();
+        let cfg_path = tmp.path().join("leankg.yaml");
+        std::fs::write(
+            &cfg_path,
+            format!(
+                "project:\n  name: user-name\n  root: ./src\n  project_path: {}\n  team_probe: keep-us\n",
+                tmp.path().display()
+            ),
+        )
+        .unwrap();
+
+        let res = handler
+            .mcp_init(&json!({"path": tmp.path().to_string_lossy().as_ref()}))
+            .expect("mcp_init ok");
+        assert_eq!(res["success"], json!(true));
+
+        let out = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(out.contains("user-name"), "name kept:\n{out}");
+        assert!(
+            out.contains(tmp.path().display().to_string().as_str()),
+            "project_path anchor kept:\n{out}"
+        );
+        assert!(out.contains("team_probe"), "custom key kept:\n{out}");
+        // Missing standard keys still get filled in from defaults.
+        assert!(
+            out.contains("auto_index_on_start"),
+            "mcp block filled:\n{out}"
+        );
+    }
+
+    /// N1: init into a FRESH directory keeps creating a full default config.
+    #[test]
+    fn mcp_init_creates_default_config_when_absent() {
+        let (handler, tmp) = handler_in_temp_project();
+        let fresh = tmp.path().join("new-project");
+        std::fs::create_dir_all(&fresh).unwrap();
+        handler
+            .mcp_init(&json!({"path": fresh.to_string_lossy().as_ref()}))
+            .expect("mcp_init ok");
+        let out = std::fs::read_to_string(fresh.join("leankg.yaml")).unwrap();
+        assert!(out.contains("my-project"), "\n{out}");
+        assert!(out.contains("languages"), "\n{out}");
+    }
+
+    #[tokio::test]
+    async fn relative_export_out_paths_land_inside_active_project_root() {
+        // R1 sweep issue #4: export_graph_snapshot / export_html / get_graph_report
+        // reported success but wrote into the SERVER PROCESS CWD's .leankg (the
+        // parent repo) instead of the served project. Relative out paths must be
+        // anchored at the request's project root.
+        let (handler, tmp) = handler_in_temp_project();
+        std::fs::write(tmp.path().join("a.rs"), "fn a() {}\n").unwrap();
+
+        let snap = handler
+            .execute_tool(
+                "export_graph_snapshot",
+                &json!({"out_path": ".leankg/graph-snapshot.json"}),
+            )
+            .await
+            .expect("export_graph_snapshot must succeed");
+        let reported = snap["path"].as_str().unwrap();
+        assert!(
+            reported.starts_with(tmp.path().to_str().unwrap()),
+            "snapshot escaped the project root: {reported}"
+        );
+        assert!(
+            tmp.path().join(".leankg/graph-snapshot.json").exists(),
+            "graph-snapshot.json must land inside <project>/.leankg"
+        );
+
+        let html = handler
+            .execute_tool(
+                "export_html",
+                &json!({"out_path": ".leankg/graph.html", "max_nodes": 10}),
+            )
+            .await
+            .expect("export_html must succeed");
+        let reported = html["path"].as_str().unwrap();
+        assert!(
+            reported.starts_with(tmp.path().to_str().unwrap()),
+            "html export escaped the project root: {reported}"
+        );
+        assert!(tmp.path().join(".leankg/graph.html").exists());
+    }
+
+    #[test]
+    fn default_export_paths_use_project_leankg_dir() {
+        // With NO out_path argument the tools defaulted to ".leankg/..." —
+        // relative to the server process CWD, not the project.
+        let (handler, tmp) = handler_in_temp_project();
+        assert_eq!(
+            handler.resolve_out_path(".leankg/graph-snapshot.json"),
+            tmp.path().join(".leankg").join("graph-snapshot.json")
+        );
+        assert_eq!(
+            handler.resolve_out_path("./.leankg/graph.html"),
+            tmp.path().join(".leankg").join("graph.html")
+        );
+        // Absolute out paths are honoured verbatim.
+        assert_eq!(
+            handler.resolve_out_path("/tmp/opencode/x.json"),
+            std::path::PathBuf::from("/tmp/opencode/x.json")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mcp_index_docs_small_dir_indexes_under_5s() {
+        // R1 sweep issue #11: mcp_index_docs blew the internal watchdog even
+        // for a 1-file docs dir. A small dir through the same code path must
+        // complete well inside the budget on a local-latency backend.
+        let (handler, tmp) = handler_in_temp_project();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(
+            docs.join("tiny.md"),
+            "# Tiny\n\nA doc that mentions `main.rs` once.\n",
+        )
+        .unwrap();
+
+        let start = Instant::now();
+        let result = handler
+            .execute_tool(
+                "mcp_index_docs",
+                &json!({"path": docs.display().to_string()}),
+            )
+            .await;
+        let elapsed = start.elapsed();
+
+        let value = result.expect("mcp_index_docs must succeed on a tiny docs dir");
+        assert_eq!(value["success"], json!(true));
+        assert_eq!(value["documents"], json!(1));
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "1-file docs dir took {:?} (budget 5s)",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn mcp_index_docs_yields_to_runtime_watchdog() {
+        // R1 sweep: "timed out after 30s ... op completed post-timeout".
+        // The docs pipeline ran synchronously inside the polled future, so
+        // tokio::time::timeout could not fire until the work finished — the
+        // client lost the response AND the executor thread stayed blocked.
+        // The handler must yield between DB calls so a watchdog deadline can
+        // preempt promptly while work continues off the hot executor.
+        //
+        // Own the runtime so shutdown can be bounded: the timed-out call
+        // leaves an orphaned blocking-pool worker draining the rest of the
+        // pipeline, and Runtime::drop would otherwise wait out every
+        // remaining simulated round trip.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let outcome = rt.block_on(async {
+            let (base_handler, tmp) = handler_in_temp_project();
+            let docs = tmp.path().join("docs");
+            std::fs::create_dir_all(&docs).unwrap();
+            std::fs::write(
+                docs.join("slow.md"),
+                "# Slow\n\nReferences `main.rs` and `lib.rs` here.\n",
+            )
+            .unwrap();
+
+            let slow_db = std::sync::Arc::new(SlowBackend {
+                inner: base_handler.graph_engine.db_arc().clone(),
+                delay: std::time::Duration::from_millis(400),
+            });
+            let handler = ToolHandler::new(GraphEngine::new(slow_db), tmp.path().to_path_buf());
+
+            // Work needs many sequential DB round trips (tens of seconds of
+            // simulated latency); give the watchdog 300ms and require the
+            // timeout to surface in ~real-time, not after the work drains.
+            let start = Instant::now();
+            let outcome = tokio::time::timeout(
+                std::time::Duration::from_millis(300),
+                handler.execute_tool(
+                    "mcp_index_docs",
+                    &json!({"path": docs.display().to_string()}),
+                ),
+            )
+            .await;
+            (outcome, start.elapsed())
+        });
+
+        let (outcome, elapsed) = outcome;
+        assert!(
+            outcome.is_err(),
+            "watchdog deadline must fire while work is still running"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "timeout surfaced after {:?}; the handler blocked the poll instead of yielding",
+            elapsed
+        );
+
+        rt.shutdown_timeout(std::time::Duration::from_millis(500));
+    }
 
     #[test]
     #[cfg(feature = "embeddings")]

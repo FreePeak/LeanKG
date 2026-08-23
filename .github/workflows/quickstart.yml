@@ -1,0 +1,73 @@
+# H5 / FR-PLG-7 — Quickstart < 5 min timed smoke test (weekly gate + manual dispatch).
+# Runs scripts/quickstart_smoke.sh against a real PostgreSQL with pgvector:
+# src/db/pg/schema.sql issues `CREATE EXTENSION IF NOT EXISTS vector`, so the plain
+# postgres:16 image would fail migrations. We use pgvector/pgvector:pg16 (the
+# maintained successor of the deprecated ankane/pgvector images).
+name: quickstart-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly gate: Mondays 06:00 UTC
+    - cron: "0 6 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quickstart:
+    name: Quickstart < 5 min smoke
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: leankg
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      LEANKG_PG_URL: postgres://postgres:postgres@localhost:5432/leankg
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Run quickstart smoke (< 300 s budget)
+        run: |
+          set -o pipefail
+          bash tests/quickstart_smoke_test.sh
+          ./scripts/quickstart_smoke.sh 2>&1 | tee quickstart-timing.txt
+
+      - name: Upload timing artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickstart-timing
+          path: quickstart-timing.txt
+          if-no-files-found: ignore

@@ -220,3 +220,67 @@ jobs:
           test -x target/release/leankg
           echo "embeddings build OK"
 
+  # FR-PLG-6 / H3: keep npm/leankg in lockstep with the crate and publish the
+  # wrapper on every tagged release. Waits for the full build matrix because
+  # the wrapper's postinstall downloads a binary asset from this tag's
+  # GitHub Release — publishing earlier would ship installs that cannot fetch.
+  publish-npm:
+    runs-on: ubuntu-latest
+    needs: [publish-crates, build]
+    # `secrets` is not usable inside if-conditionals; evaluate presence here.
+    env:
+      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://registry.npmjs.org/
+
+      - name: Sync npm wrapper version to crate version
+        run: bash scripts/sync-npm-version.sh
+
+      - name: Commit synced version (main)
+        env:
+          TAG_NAME: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- npm/leankg/package.json; then
+            echo "npm/leankg/package.json already at ${TAG_NAME} — no commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add npm/leankg/package.json
+          git commit -m "chore(npm): sync ${TAG_NAME}"
+          # The release tag sits on main (release-PR merge commit), so this is
+          # normally a fast-forward. If main moved ahead, warn instead of
+          # failing the whole job — ci.yml's npm-parity guard catches any
+          # residual drift on the next push.
+          git push origin HEAD:main ||
+            echo "::warning::could not fast-forward main with synced version; npm-parity guard will verify on next CI run"
+
+      - name: Publish to npm
+        if: env.HAS_NPM_TOKEN == 'true'
+        working-directory: npm/leankg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          # Idempotency, mirrors the crates.io step: manual re-dispatch of an
+          # already-published tag must not fail on "cannot overwrite".
+          if npm view "leankg@${VERSION}" version > /dev/null 2>&1; then
+            echo "leankg ${VERSION} already on npm — skipping."
+            exit 0
+          fi
+          npm publish --access public
+
+      - name: Skip notice (no NPM_TOKEN)
+        if: env.HAS_NPM_TOKEN != 'true'
+        run: echo "::notice::NPM_TOKEN secret not configured — skipped npm publish. Wrapper version was still committed; add the NPM_TOKEN repo secret to enable automatic publishing."
+

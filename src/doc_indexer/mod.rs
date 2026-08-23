@@ -140,14 +140,55 @@ impl DocIndexer {
             }
         }
 
+        // Directory elements for every ancestor under docs_root so the
+        // dir -> document `contains` edges below have a resolvable source
+        // (doctor --deep orphaned-relationships check).
+        let mut seen_dirs: HashMap<PathBuf, String> = HashMap::new();
+
         for (parent_path, children) in doc_hierarchy {
+            let parent_qn = match seen_dirs.get(&parent_path) {
+                Some(qn) => qn.clone(),
+                None => {
+                    let rel = parent_path.strip_prefix(docs_path).unwrap_or(&parent_path);
+                    let dir_qn = if rel.as_os_str().is_empty() {
+                        "docs".to_string()
+                    } else {
+                        format!("docs/{}", rel.display().to_string().replace('\\', "/"))
+                    };
+                    let dir_stored = crate::indexer::rewrite_path_for_storage(
+                        &parent_path.display().to_string(),
+                    );
+                    let name = parent_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| dir_qn.clone());
+                    documents.push(CodeElement {
+                        qualified_name: dir_qn.clone(),
+                        element_type: "directory".to_string(),
+                        name,
+                        file_path: dir_stored,
+                        language: "markdown".to_string(),
+                        metadata: serde_json::json!({"synthetic": true}),
+                        ..Default::default()
+                    });
+                    seen_dirs.insert(parent_path.clone(), dir_qn.clone());
+                    dir_qn
+                }
+            };
             for child_path in children {
-                let parent_name = format!("{}", parent_path.display());
-                let child_name = format!("{}", child_path.display());
+                // Target must be the document's graph QN (`docs/<rel>`),
+                // never the raw filesystem path — parse_doc_file keys the
+                // document element on the relative form, so a raw target
+                // would dangle (doctor --deep orphan check).
+                let child_rel = child_path.strip_prefix(docs_path).unwrap_or(&child_path);
+                let child_qn = format!(
+                    "docs/{}",
+                    child_rel.display().to_string().replace('\\', "/")
+                );
                 relationships.push(Relationship {
                     id: None,
-                    source_qualified: parent_name,
-                    target_qualified: child_name,
+                    source_qualified: parent_qn.clone(),
+                    target_qualified: child_qn,
                     rel_type: "contains".to_string(),
                     confidence: 1.0,
                     metadata: serde_json::json!({}),
@@ -429,6 +470,26 @@ impl DocIndexer {
         String::new()
     }
 
+    /// Deterministic section qualified_name for one heading occurrence.
+    ///
+    /// Real docs legitimately repeat heading text ("### Fix" once per issue).
+    /// The first occurrence keeps `{doc}::{heading}`; later duplicates get
+    /// `{doc}::{heading}#{k}` (k ≥ 2) — mirrors the rust-extractor's
+    /// disambiguation convention so re-indexes stay key-stable.
+    fn next_section_qualified(
+        doc_qualified: &str,
+        heading: &str,
+        seen: &mut HashMap<String, u32>,
+    ) -> String {
+        let count = seen.entry(heading.to_string()).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            format!("{}::{}", doc_qualified, heading)
+        } else {
+            format!("{}::{}#{}", doc_qualified, heading, count)
+        }
+    }
+
     fn extract_sections(
         &self,
         content: &str,
@@ -440,6 +501,8 @@ impl DocIndexer {
         let mut relationships = Vec::new();
         let mut current_section: Option<(&str, u32)> = None;
         let mut line_num = 0u32;
+        // Heading-text -> occurrences within THIS document.
+        let mut seen_headings: HashMap<String, u32> = HashMap::new();
 
         for line in content.lines() {
             line_num += 1;
@@ -447,7 +510,8 @@ impl DocIndexer {
 
             if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
                 if let Some((sec_name, sec_start)) = current_section {
-                    let section_qualified = format!("{}::{}", doc_qualified, sec_name);
+                    let section_qualified =
+                        Self::next_section_qualified(doc_qualified, sec_name, &mut seen_headings);
                     sections.push(CodeElement {
                         qualified_name: section_qualified.clone(),
                         element_type: "doc_section".to_string(),
@@ -482,7 +546,8 @@ impl DocIndexer {
         }
 
         if let Some((sec_name, sec_start)) = current_section {
-            let section_qualified = format!("{}::{}", doc_qualified, sec_name);
+            let section_qualified =
+                Self::next_section_qualified(doc_qualified, sec_name, &mut seen_headings);
             sections.push(CodeElement {
                 qualified_name: section_qualified.clone(),
                 element_type: "doc_section".to_string(),
@@ -697,6 +762,31 @@ pub fn index_docs_directory(
     };
 
     if !result.documents.is_empty() {
+        // Delete-before-insert keyed on the docs' stored file_path (sections
+        // share it): repeated `index_docs` runs must be idempotent, otherwise
+        // edited files leave stale section rows under still-live QNs — the
+        // ×5 duplicate qualified_names doctor --deep flagged.
+        // Directory elements are included in `documents`, so their stored
+        // dir paths are covered too.
+        let doc_files: Vec<String> = result
+            .documents
+            .iter()
+            .map(|d| d.file_path.clone())
+            .collect();
+        graph.remove_elements_by_files_bulk(&doc_files)?;
+
+        // Sweep stale edges by endpoint: `contains`/`references` carry the
+        // doc/dir/section QN as source, `documented_by` as target.
+        let mut doc_qns: Vec<String> = result
+            .documents
+            .iter()
+            .chain(result.sections.iter())
+            .map(|e| e.qualified_name.clone())
+            .collect();
+        doc_qns.sort();
+        doc_qns.dedup();
+        graph.remove_relationships_by_endpoint_bulk(&doc_qns)?;
+
         graph.insert_elements(&result.documents)?;
     }
 
@@ -772,6 +862,56 @@ mod tests {
             Some(v) => std::env::set_var("LEANKG_DOC_MAX_CODE_REFS", v),
             None => std::env::remove_var("LEANKG_DOC_MAX_CODE_REFS"),
         }
+    }
+
+    #[test]
+    fn duplicate_headings_within_and_across_files_get_unique_section_qns() {
+        // N5/F2 (hackathon-sweep-R2.md): a doc with repeated `### Fix`
+        // headings produced one code_elements row per occurrence under the
+        // SAME qualified_name (`docs/...md::Fix×8` in doctor --deep).
+        // Section QNs must stay unique within a file AND across files.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(docs.join("analysis")).expect("mkdir");
+
+        std::fs::write(
+            docs.join("analysis").join("one.md"),
+            "# One\n\n## Context\n\ntext\n\n## Fix\n\nfirst\n\n## Fix\n\nsecond\n",
+        )
+        .expect("write one.md");
+        std::fs::write(
+            docs.join("analysis").join("two.md"),
+            "# Two\n\n## Fix\n\nother file fix\n\n### Fix\n\nnested dup\n",
+        )
+        .expect("write two.md");
+
+        let db = crate::db::backend::init_db(&tmp.path().join(".leankg")).expect("test db");
+        let indexer = DocIndexer::new(db);
+        let result = indexer
+            .index_docs_with_graph(&docs, None)
+            .expect("index docs fixture");
+
+        let mut qns: Vec<String> = result
+            .sections
+            .iter()
+            .map(|s| s.qualified_name.clone())
+            .collect();
+        let total = qns.len();
+        qns.sort();
+        qns.dedup();
+        assert_eq!(
+            qns.len(),
+            total,
+            "section qualified_names must be globally unique; got {qns:?}"
+        );
+        // one.md: Context + Fix + Fix; two.md: Fix + Fix.
+        assert_eq!(total, 5, "expected 5 doc_section rows");
+        let fix_qns: Vec<&String> = qns.iter().filter(|q| q.contains("::Fix")).collect();
+        assert_eq!(
+            fix_qns.len(),
+            4,
+            "four distinct Fix sections across the two files: {fix_qns:?}"
+        );
     }
 
     #[test]

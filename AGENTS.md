@@ -27,6 +27,8 @@ cargo fmt --all -- --check      # formatting check
 | `cargo run --release -- embed --import <file>` | Import vectors produced from a `--dry-run` export (resumable; `--no-verify` skips drift check) |
 | `cargo run --release -- serve` | REST API + embedded UI v2 on :8080 |
 | `cargo run --release -- impact <file> <depth>` | Blast radius calc |
+| `cargo run --release -- doctor` | Stale-process / mmap diagnostics |
+| `cargo run --release -- doctor --deep [--format json] [--project PATH]` | Deployment self-diagnosis (H9): PG latency, migrations, index freshness, embeddings coverage, pool env, orphan edges, duplicate names. Exit 0 pass / 1 warn / 2 fail |
 
 Embeddings require `--features embeddings` build flag (off by default). Without them, `semantic_search` / `kg_semantic_context` return "no vectors".
 

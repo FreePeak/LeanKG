@@ -3,6 +3,7 @@ pub mod clustering;
 pub mod context;
 pub mod entity_resolve;
 pub mod export;
+pub mod export_markdown;
 pub mod export_select;
 pub mod inventory;
 pub mod l1_cache;
