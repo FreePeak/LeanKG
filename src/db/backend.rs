@@ -308,6 +308,69 @@ pub trait DbBackend: Send + Sync {
     ) -> Result<(), Box<dyn std::error::Error>> {
         Err("SQL-first api_keys not supported by this backend".into())
     }
+
+    // ========================================================================
+    // W8 wave-1b: knowledge_entries parameterized-SQL surface.
+    // Replaces the Datalog `:put`/`:rm`/regex-scan bodies in db/mod.rs.
+    // Semantics locked by tests/pg_sql_wave1b_test.rs.
+    // ========================================================================
+
+    /// Insert or update by id (legacy `:put` = upsert; the wave-1 fix made
+    /// the translator emit ON CONFLICT — here it is explicit).
+    fn upsert_knowledge_entry(
+        &self,
+        _entry: &crate::db::models::KnowledgeEntry,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Err("SQL-first knowledge_entries not supported by this backend".into())
+    }
+
+    fn find_knowledge_entry(
+        &self,
+        _id: &str,
+    ) -> Result<Option<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        Err("SQL-first knowledge_entries not supported by this backend".into())
+    }
+
+    /// Delete by id. Returns whether a row was removed (legacy `:rm`
+    /// silently no-opped on absent ids, so absence is not an error).
+    fn delete_knowledge_entry_by_id(&self, _id: &str) -> Result<bool, Box<dyn std::error::Error>> {
+        Err("SQL-first knowledge_entries not supported by this backend".into())
+    }
+
+    /// Case-insensitive substring match over title/content (equivalent to
+    /// the legacy `regex_matches(lowercase(x), ".*q.*")` scan), with
+    /// optional exact-match filters and limit.
+    fn search_knowledge_entries(
+        &self,
+        _query: &str,
+        _knowledge_type: Option<&str>,
+        _environment: Option<&str>,
+        _limit: usize,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        Err("SQL-first knowledge_entries not supported by this backend".into())
+    }
+
+    fn list_knowledge_by_element(
+        &self,
+        _element_qualified: &str,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        Err("SQL-first knowledge_entries not supported by this backend".into())
+    }
+
+    fn list_knowledge_by_feature(
+        &self,
+        _feature_id: &str,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        Err("SQL-first knowledge_entries not supported by this backend".into())
+    }
+
+    fn list_knowledge_by_environment(
+        &self,
+        _environment: &str,
+        _limit: usize,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        Err("SQL-first knowledge_entries not supported by this backend".into())
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -1774,6 +1837,151 @@ impl DbBackend for PostgresBackend {
         .map(|_| ())
     }
 
+    // ========================================================================
+    // W8 wave-1b: knowledge_entries parameterized-SQL implementations.
+    // ========================================================================
+
+    fn upsert_knowledge_entry(
+        &self,
+        entry: &crate::db::models::KnowledgeEntry,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.sql_execute(
+            "INSERT INTO knowledge_entries \
+               (id, knowledge_type, title, content, element_qualified, user_story_id, \
+                feature_id, tags, environment, branch, author, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) \
+             ON CONFLICT (id) DO UPDATE SET \
+               knowledge_type = EXCLUDED.knowledge_type, title = EXCLUDED.title, \
+               content = EXCLUDED.content, element_qualified = EXCLUDED.element_qualified, \
+               user_story_id = EXCLUDED.user_story_id, feature_id = EXCLUDED.feature_id, \
+               tags = EXCLUDED.tags, environment = EXCLUDED.environment, \
+               branch = EXCLUDED.branch, author = EXCLUDED.author, \
+               created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at",
+            &[
+                crate::db::sql::SqlParam::Text(entry.id.clone()),
+                crate::db::sql::SqlParam::Text(entry.knowledge_type.clone()),
+                crate::db::sql::SqlParam::Text(entry.title.clone()),
+                crate::db::sql::SqlParam::Text(entry.content.clone()),
+                opt_text(entry.element_qualified.as_deref()),
+                opt_text(entry.user_story_id.as_deref()),
+                opt_text(entry.feature_id.as_deref()),
+                // tags column is JSONB; legacy bound an arbitrary JSON-ish
+                // string — parse when possible, else wrap as a JSON string.
+                crate::db::sql::SqlParam::Json(
+                    serde_json::from_str::<serde_json::Value>(&entry.tags)
+                        .unwrap_or(serde_json::Value::String(entry.tags.clone())),
+                ),
+                crate::db::sql::SqlParam::Text(entry.environment.clone()),
+                opt_text(entry.branch.as_deref()),
+                crate::db::sql::SqlParam::Text(entry.author.clone()),
+                crate::db::sql::SqlParam::Int(entry.created_at),
+                crate::db::sql::SqlParam::Int(entry.updated_at),
+            ],
+        )
+        .map(|_| ())
+    }
+
+    fn find_knowledge_entry(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        let rows = self.sql_query(
+            "SELECT id, knowledge_type, title, content, element_qualified, user_story_id, \
+                    feature_id, tags, environment, branch, author, created_at, updated_at \
+             FROM knowledge_entries WHERE id = $1",
+            &[crate::db::sql::SqlParam::Text(id.to_string())],
+        )?;
+        Ok(rows.first().map(knowledge_entry_from_row))
+    }
+
+    fn delete_knowledge_entry_by_id(&self, id: &str) -> Result<bool, Box<dyn std::error::Error>> {
+        self.sql_execute(
+            "DELETE FROM knowledge_entries WHERE id = $1",
+            &[crate::db::sql::SqlParam::Text(id.to_string())],
+        )
+        .map(|n| n > 0)
+    }
+
+    fn search_knowledge_entries(
+        &self,
+        query: &str,
+        knowledge_type: Option<&str>,
+        environment: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        // Legacy semantics: regex .*q.* over lowercase(title|content). ILIKE
+        // with escaped wildcards is the SQL equivalent for substring match.
+        let needle = format!("%{}%", escape_like(query));
+        let mut sql = String::from(
+            "SELECT id, knowledge_type, title, content, element_qualified, user_story_id, \
+                    feature_id, tags, environment, branch, author, created_at, updated_at \
+             FROM knowledge_entries WHERE (title ILIKE $1 OR content ILIKE $1)",
+        );
+        let mut params: Vec<crate::db::sql::SqlParam> =
+            vec![crate::db::sql::SqlParam::Text(needle)];
+        if let Some(kt) = knowledge_type {
+            params.push(crate::db::sql::SqlParam::Text(kt.to_string()));
+            sql.push_str(&format!(" AND knowledge_type = ${}", params.len()));
+        }
+        if let Some(env) = environment {
+            params.push(crate::db::sql::SqlParam::Text(env.to_string()));
+            sql.push_str(&format!(" AND environment = ${}", params.len()));
+        }
+        params.push(crate::db::sql::SqlParam::Int(limit as i64));
+        sql.push_str(&format!(
+            " ORDER BY updated_at DESC LIMIT ${}",
+            params.len()
+        ));
+        let rows = self.sql_query(&sql, &params)?;
+        Ok(rows.iter().map(knowledge_entry_from_row).collect())
+    }
+
+    fn list_knowledge_by_element(
+        &self,
+        element_qualified: &str,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        let rows = self.sql_query(
+            "SELECT id, knowledge_type, title, content, element_qualified, user_story_id, \
+                    feature_id, tags, environment, branch, author, created_at, updated_at \
+             FROM knowledge_entries WHERE element_qualified = $1",
+            &[crate::db::sql::SqlParam::Text(
+                element_qualified.to_string(),
+            )],
+        )?;
+        Ok(rows.iter().map(knowledge_entry_from_row).collect())
+    }
+
+    fn list_knowledge_by_feature(
+        &self,
+        feature_id: &str,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        let rows = self.sql_query(
+            "SELECT id, knowledge_type, title, content, element_qualified, user_story_id, \
+                    feature_id, tags, environment, branch, author, created_at, updated_at \
+             FROM knowledge_entries WHERE feature_id = $1",
+            &[crate::db::sql::SqlParam::Text(feature_id.to_string())],
+        )?;
+        Ok(rows.iter().map(knowledge_entry_from_row).collect())
+    }
+
+    fn list_knowledge_by_environment(
+        &self,
+        environment: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        let rows = self.sql_query(
+            "SELECT id, knowledge_type, title, content, element_qualified, user_story_id, \
+                    feature_id, tags, environment, branch, author, created_at, updated_at \
+             FROM knowledge_entries WHERE environment = $1 \
+             ORDER BY updated_at DESC LIMIT $2",
+            &[
+                crate::db::sql::SqlParam::Text(environment.to_string()),
+                crate::db::sql::SqlParam::Int(limit as i64),
+            ],
+        )?;
+        Ok(rows.iter().map(knowledge_entry_from_row).collect())
+    }
+
     /// FR-ENT-1: one multi-row INSERT for the whole batch (≤ 50 rows × 9
     /// params per flush, well under the 65535 bind limit).
     fn insert_audit_batch(
@@ -2383,6 +2591,43 @@ fn project_identity_keys_in(
     }
 
     (root.to_string_lossy().to_string(), None)
+}
+
+/// `Option<&str>` → bind param: `None` maps to SQL NULL (matches the legacy
+/// Datalog `serde_json::Value::Null` bindings for optional columns).
+fn opt_text(v: Option<&str>) -> crate::db::sql::SqlParam {
+    match v {
+        Some(s) => crate::db::sql::SqlParam::Text(s.to_string()),
+        None => crate::db::sql::SqlParam::Null,
+    }
+}
+
+/// Escape LIKE wildcards in user input so `search_knowledge` substring
+/// semantics match the legacy `regex_matches(lowercase(x), ".*q.*")` scan.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Map a knowledge_entries row onto the model — field-for-field identical
+/// to db/mod.rs's `row_to_knowledge_entry` defaults.
+fn knowledge_entry_from_row(r: &crate::db::sql::SqlRow) -> crate::db::models::KnowledgeEntry {
+    crate::db::models::KnowledgeEntry {
+        id: r.text("id").unwrap_or_default(),
+        knowledge_type: r.text("knowledge_type").unwrap_or_else(|| "general".into()),
+        title: r.text("title").unwrap_or_default(),
+        content: r.text("content").unwrap_or_default(),
+        element_qualified: r.text("element_qualified"),
+        user_story_id: r.text("user_story_id"),
+        feature_id: r.text("feature_id"),
+        tags: r.text("tags").unwrap_or_else(|| "[]".into()),
+        environment: r.text("environment").unwrap_or_else(|| "production".into()),
+        branch: r.text("branch"),
+        author: r.text("author").unwrap_or_default(),
+        created_at: r.int("created_at").unwrap_or(0),
+        updated_at: r.int("updated_at").unwrap_or(0),
+    }
 }
 
 fn redact_url(url: &str) -> String {
