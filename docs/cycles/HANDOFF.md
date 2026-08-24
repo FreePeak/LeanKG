@@ -1,73 +1,83 @@
-# SESSION HANDOFF — LeanKG Hackathon (resume from here)
+# SESSION HANDOFF — LeanKG Hackathon (resume here in a new session)
 
-**Updated:** 2026-08-22 (post-H11 merge) · **Session goal file:** `~/.local/share/opencode/goals/ses_fdad784c8ffeoX8syoqqUBMlQ8.json` (status: active, cycle 4/∞)
-**Central SoT:** [`docs/roadmap-tracker.md`](../roadmap-tracker.md) §6 · **Running log:** [`HACKATHON.md`](../../HACKATHON.md) · **Cycle reports:** `docs/cycles/cycle-01.md`
+**Written:** 2026-08-23 · **Goal file:** `~/.local/share/opencode/goals/ses_fdad784c8ffeoX8syoqqUBMlQ8.json` (active, infinite loop)
+**Central SoT:** `docs/roadmap-tracker.md` §6 (on main) · **Running log:** `.worktrees/hackathon/HACKATHON.md` · **This file:** `docs/cycles/HANDOFF.md`
 
 ---
 
-## 1. One-paragraph state
+## 1. Mission (unchanged)
 
-Hackathon runs on branch `feature/hackathon` (worktree `.worktrees/hackathon`), rolling PR **#247 → main: OPEN, MERGEABLE, ALL CI CHECKS GREEN** (incl. new npm-parity gate). Cycle 1 complete: R1 live sweep of all 76 MCP tools found 7 real bugs (all fixed TDD-first), then 5 features landed and merged to the branch: connect, audit log, npm parity, quickstart smoke, export --markdown. Branch head `ed424591`, pushed. lib tests **1126 green**. Only open work item: **H9 doctor --deep** (subagent cancelled 3× — implement directly or retry single dispatch).
+Infinite autonomous loop on branch `feature/hackathon`: brainstorm → plan → implement → test → live-test → fix → validate, repeating. Remote Postgres ONLY (`LEANKG_PG_URL` in repo `.env`), NEVER Docker. TDD mandatory. Main lands via squash PRs only (ruleset-protected). Conventional commits, NO AI attribution. Always `--release`.
 
-## 2. Branch / worktree map
+## 2. Delivered so far (all squash-merged to main)
 
-| Worktree | Branch | SHA | State |
-|---|---|---|---|
-| `.worktrees/hackathon` | `feature/hackathon` | e5433676 | **MAINLINE — pushed to origin, = PR #247 head minus cycle docs? NO: pushed at e5433676; HANDOFF/cycle-docs commits land on top** |
-| `.worktrees/feat-exportmd` | `hackathon/feat-exportmd` | 9073782d | ✅ H11 DONE — **needs merge back into feature/hackathon** (already contains merge of e5433676 as parent 9f35436b) |
-| `.worktrees/feat-doctor` | `hackathon/feat-doctor` | c1d0b7d0 | ⏳ H9 NOT STARTED (only synced with hackathon HEAD; agent cancelled 2×) |
-| `.worktrees/feat-audit` | `hackathon/feat-audit` | 4b4f966d | merged (e5433676) — deletable |
-| `.worktrees/feat-connect` | `hackathon/feat-connect` | a7b17d0d | merged (cbd5c44e) — deletable |
-| `.worktrees/feat-npm` | `hackathon/feat-npm` | 20869eec | merged (8dadc1fe) — deletable |
-| `.worktrees/feat-quickstart` | `hackathon/feat-quickstart` | dfac6b8c | merged (f48df7f0) — deletable |
-| `.worktrees/fix-mcp`, `fix-engine` | `hackathon/fix-*-layer` | cd60aff2/3f070c8f | merged (b7cda6c5/0d4715aa) — deletable |
-| `/Users/linh.doan/orca/workspaces/cozo-removal` | `feat/remove-cozo-datalog` | d14045ff | PRE-HACKATHON WIP: SQL-first seam + removal plan doc — future W8 track, untouched |
-| parent repo | `main` | 0b2ee2cc | local behind origin by tracker commit; origin/main has PRs #242–244 |
+| Cycle | PR | Content |
+|---|---|---|
+| Pre-hack | #242–244 | Cozo purge, QN-collision + EEXIST fixes, roadmap-2027 + prd-enterprise + tracker docs |
+| C1 | #247 (squash `cf357ad8`) | R1 sweep 128 calls: 7 bugs fixed (update_knowledge upsert; index_docs watchdog; project-key canonicalization; export anchoring; ontology schema adoption+sslmode URL; hang-trio batching get_context **72s→2.5s**; agent_focus wedge kill). Features: H1 connect, H2 ENT-1 audit log (hash chain), H3 npm parity, H5 quickstart smoke 88s |
+| C2 | same PR | Re-sweep 0 FAIL_ERROR; identity cluster fixes; **O(n²) token-budget fix — consistency 211s→5.8s**, temporal 12min→7s; data quality **orphans 432/1000→0/72,699, dup QNs 10→0/14,091** |
+| C3 | #249 (`63c37714`) | H7 tool-contract doc + CI drift guard; H12 README refresh; H4 provenance labels all graph surfaces (36k edges live); H6 consolidation 76→73 tools with deprecation history |
+| C4 | #251 (`542a15e8`) | H10 usage dashboard (`leankg dashboard`, grouped-SQL, bars+JSON); H8 perf regression gate (perf_gate.sh + CI workflow; baseline index 18.3s/boot 19ms/search 13ms) |
+| C5 | #253 (`d01d9295`) | **W8 begins**: SQL-first seam adopted from dormant WIP (`src/db/sql.rs`); wave-1a converted db/keys.rs (7 sites) + content_hash.rs (2); caught NULL-rendering + validate_key data-loss bugs |
 
-## 3. What shipped (all on PR #247 unless noted)
+State at last green: lib **1213✅** · fmt/clippy/build clean · tools **73 tiered** · trackers #248/#250/#252 merged.
 
-**Pre-hackathon (already squash-merged to main):**
-- #242 cozo purge (matrix test 6/6, doc truth, −413 LOC dead code)
-- #243 QN-collision disambiguation + EEXIST regression guards + migrate TLS fix
-- #244 roadmap-2027.md + prd-enterprise.md + roadmap-tracker.md
+## 3. ⚠️ IN-FLIGHT RIGHT NOW (W8 wave-1b, UNCOMMITTED)
 
-**Hackathon cycle 1:**
-- R1 sweep: 128 live calls, 51 PASS / 18 PASS_EMPTY / 7 FAIL → report `docs/analysis/hackathon-sweep-R1.md`
-- 7 bug fixes (RED→GREEN each): update_knowledge upsert · mcp_index_docs watchdog yield · project-key canonicalization · export path anchoring · dynamic-ontology schema adoption (+readonly sslmode URL fix) · hang-trio N+1 batching (get_context 72s→2.5s) · agent_focus wedge kill (+bounded pool wait). get_context/temporal/check_consistency latency collapsed.
-- Features: **ENT-1 audit log** (migration 006, hash chain, <2ms recorder, MCP+REST hooks, `leankg audit export/verify` — live chain verified) · **PLG-1 connect** (4 clients, idempotent, --remote/--remove; fake-HOME live proof) · **npm parity** (CI guard, wrapper 0.17.9→0.26.0, release publish wiring) · **quickstart smoke** (88s total vs 300s budget; weekly CI cron w/ pgvector service) · **export --markdown** (12,864-line deterministic graph docs; only generated_at differs between runs)
+Worktree: `.worktrees/w8-wave1b` (branch `hackathon/w8-wave1b` @ d01d9295).
+`git status`: **`M src/db/backend.rs` only** — a partial edit that does NOT compile yet.
 
-## 4. Verification cheatsheet
+Done in that edit:
+- Trait default methods added to `DbBackend` (after `touch_api_key_last_used`): `upsert_knowledge_entry`, `find_knowledge_entry`, `delete_knowledge_entry_by_id`, `search_knowledge_entries`, `list_knowledge_by_element/feature/environment` (default-Err pattern like api_keys).
+
+Still TODO to make it compile & pass:
+1. Add helper fns near the keys PG impls in backend.rs: `fn opt_text(Option<&str>) -> SqlParam` and `fn knowledge_entry_from_row(&crate::db::sql::SqlRow) -> crate::db::models::KnowledgeEntry` (mirror `row_to_knowledge_entry` field-for-field; created_at/updated_at via `r.int(...)`) and `fn escape_like(&str) -> String` (escape `%_\`).
+2. Rewrite bodies of the 8 knowledge fns in `src/db/mod.rs` (~lines 669–905) to delegate to the trait methods; DELETE their Datalog strings + `row_to_knowledge_entry` if now orphaned.
+3. RED-first integration test `tests/pg_sql_wave1b_test.rs` (pattern = tests/pg_sql_wave1_test.rs): upsert/find/delete parity round-trips incl. NULL optional cols; search ILIKE semantics vs legacy regex; by_element/by_feature/by_environment; limit ordering by updated_at DESC.
+4. Gates: `CARGO_TARGET_DIR=/tmp/opencode/t-w8b cargo build --release` (0 warnings), lib tests, fmt --check, clippy --all -- -D warnings, wave-1b test vs remote PG (`set -a; source ../../.env; set +a`).
+5. Live proof: boot `$BIN mcp-http :9872 --project <abs worktree>` after indexing small fixture; curl add_knowledge→search_knowledge→update_knowledge→delete_knowledge; logs show `kind="sql"` and zero `cozo=` lines for those ops.
+6. Update plan doc execution log (wave-1b done + counts). Commits: "refactor(db): knowledge_entries SQL conversion (W8 wave-1b)".
+
+Then push branch → rolling cycle-6 PR (same pattern as before).
+
+## 4. Branch / worktree map
+
+| Path | Branch | State |
+|---|---|---|
+| parent repo | main | tracks origin/main `03b969c4`… check latest (#253 merged as d01d9295) |
+| `.worktrees/hackathon` | feature/hackathon | pushed 5d2e8c29 (C5 docs); PR #253 MERGED — reset to origin/main when resuming |
+| `.worktrees/w8-wave1b` | hackathon/w8-wave1b | ⚠️ IN-FLIGHT partial edit (see §3) |
+| `/Users/linh.doan/orca/workspaces/cozo-removal` | feat/remove-cozo-datalog (+wip/cozo-sql-seam-backup dd8018fa) | reference-only; seam already adopted |
+| misc `.worktrees/feat-*`, `fix-*` | merged branches | deletable |
+
+## 5. Resume queue (in order)
+
+1. **Finish wave-1b** per §3 checklist → commit → push → cycle-6 rolling PR → merge on green.
+2. **Wave-2 conversions** (disjoint files, fan-out one agent at a time): graph/query.rs (~105 sites), embeddings/state.rs (15), ontology/query.rs (8), auth/accounts.rs (9), tokens.rs (6), handler.rs (4), server.rs (3), clustering/inventory/pipeline/write_bus/schema leftovers.
+3. **P3 deletion sweep**: remove `translate.rs` (4.3k LOC), `mutability.rs`, `fake.rs` (1.4k), `escape_datalog`, `preprocess_datalog_query`; decide `run_raw_query` fate (deprecate → NL-only).
+4. **Dependabot**: 18 vulnerabilities flagged (9 high) — triage `cargo update` / bump PRs (noted 2026-08-23).
+5. Carried minors: index_prd zero-work bug; get_cluster_skill parent-repo path bleed.
+6. Keep looping: re-sweeps each cycle, HACKATHON.md + tracker §6 updates, squash-merge stable slices.
+
+## 6. Infra quirks (learned the hard way)
+
+- Subagent `task` dispatches fail randomly ("Endpoint unavailable", "Failed to execute statement") → retry once, then implement directly.
+- Parallel multi-task calls get cancelled → ONE agent at a time.
+- Shared cargo target dir (`~/.cache/cargo-target/leankg-target`) gets lock-contended → use isolated `CARGO_TARGET_DIR=/tmp/opencode/t-*` per workstream; builds take 10–20 min under load → always background nohup+poll.
+- Full `index ./src` over remote PG ≈ 45 min (~350ms/statement) — prefer fixtures/background.
+- psql needs `sslmode=verify-full`→`require` URL rewrite; leankg handles TLS natively.
+- macOS /tmp→/private/tmp symlink affects path identity (canonical_project_root handles it).
+- `git stash` is repo-global across worktrees — avoid.
+- tracing logs now go to stderr (stdout machine-readable); JSON-RPC pattern: POST /mcp initialize → tools/list → tools/call.
+
+## 7. Verify cheatsheet
 
 ```bash
-cd .worktrees/hackathon
-cargo build --release                      # ~4-5 min cold, 0 warnings required
-cargo test --release --lib                 # expect ≥1126 passed, 0 failed
+cd .worktrees/hackathon   # or w8-wave1b
+cargo build --release && cargo test --release --lib    # expect ≥1213 green
 cargo fmt --all -- --check && cargo clippy --all -- -D warnings
-set -a; source ../.env; set +a             # LEANKG_PG_URL — REMOTE PG ONLY, NEVER DOCKER
-target/release/leankg mcp-http --port 9701 --project "$PWD" &
-curl -s localhost:9701/health              # then JSON-RPC POST /mcp tools/list, tools/call
-scripts/quickstart_smoke.sh                # full timed e2e (~90s)
-bash tests/sync_npm_version_test.sh        # npm parity script tests
+set -a; source ../.env; set +a                          # LEANKG_PG_URL
+bash scripts/perf_gate.sh --baseline benchmarks/baseline.json --metrics '{"index":18315,"server_boot":19,"search_code":13,"get_impact_radius":13}'
+scripts/quickstart_smoke.sh                             # ~90s e2e
+leankg doctor --deep --project "$PWD"                   # exit ≤1
 ```
-
-4. When PR #247 stable and CI green → `gh pr merge 247 --squash` (or keep rolling if more cycles stack on it).
-5. Then next backlog items: H4 provenance labels surfacing, H6 tool consolidation 76→~70 (update redundant_tools_matrix + instructions/leankg-tools.md together), H7 stable-tool-contract doc+CI guard, H8 benchmark regression gate, H10 usage dashboard, H12 README quickstart refresh.
-6. Longer-term tracks: W8 SQL-first seam adoption per `docs/plan-remove-cozo-datalog-sql-migration.md` (worktree at orca/cozo-removal); ENT-3 SSO after audit/RBAC.
-
-## 6. Hard rules (do not violate)
-
-- Remote Postgres ONLY (`source ../.env` → LEANKG_PG_URL). NEVER create Docker containers/local PG.
-- Main is protected: changes land via squash PRs (`gh pr create` → `--squash`). Direct push rejected.
-- Conventional commits, NO AI attribution / Co-Authored-By. Pre-commit hook auto-runs fmt+clippy.
-- Always `--release` (debug profile has debug=false).
-- TDD mandatory: failing test first, then fix/feature.
-- Never paste personal host paths into committed files.
-- Goal loop: infinite until user cancels; keep HACKATHON.md + docs/cycles/* updated every round.
-
-## 7. Known quirks learned this session
-
-- Parallel multi-`task` dispatches were cancelled repeatedly → use ONE subagent at a time.
-- Cargo.lock merges: take either side, `cargo build --release` regenerates, re-add.
-- macOS /var symlink breaks naive canonicalize for nonexistent paths — canonical_project_root_in now lexically resolves `..` (backend.rs).
-- `git stash` is repo-global across worktrees — avoid stashing while agents share the repo.
-- Indexing ./src over remote PG ≈ 350ms/statement → ~45min for full src corpus; prefer small fixtures or background runs.
