@@ -670,78 +670,7 @@ pub fn create_knowledge_entry(
     db: &dyn crate::db::backend::DbBackend,
     entry: &models::KnowledgeEntry,
 ) -> Result<models::KnowledgeEntry, Box<dyn std::error::Error>> {
-    let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <- [[$id, $kt, $title, $content, $eq, $us, $feat, $tags, $env, $branch, $author, $cat, $uat]] :put knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;
-    let mut params = std::collections::BTreeMap::new();
-    params.insert(
-        "id".to_string(),
-        serde_json::Value::String(entry.id.clone()),
-    );
-    params.insert(
-        "kt".to_string(),
-        serde_json::Value::String(entry.knowledge_type.clone()),
-    );
-    params.insert(
-        "title".to_string(),
-        serde_json::Value::String(entry.title.clone()),
-    );
-    params.insert(
-        "content".to_string(),
-        serde_json::Value::String(entry.content.clone()),
-    );
-    params.insert(
-        "eq".to_string(),
-        entry
-            .element_qualified
-            .as_ref()
-            .map(|s| serde_json::Value::String(s.clone()))
-            .unwrap_or(serde_json::Value::Null),
-    );
-    params.insert(
-        "us".to_string(),
-        entry
-            .user_story_id
-            .as_ref()
-            .map(|s| serde_json::Value::String(s.clone()))
-            .unwrap_or(serde_json::Value::Null),
-    );
-    params.insert(
-        "feat".to_string(),
-        entry
-            .feature_id
-            .as_ref()
-            .map(|s| serde_json::Value::String(s.clone()))
-            .unwrap_or(serde_json::Value::Null),
-    );
-    params.insert(
-        "tags".to_string(),
-        serde_json::Value::String(entry.tags.clone()),
-    );
-    params.insert(
-        "env".to_string(),
-        serde_json::Value::String(entry.environment.clone()),
-    );
-    params.insert(
-        "branch".to_string(),
-        entry
-            .branch
-            .as_ref()
-            .map(|s| serde_json::Value::String(s.clone()))
-            .unwrap_or(serde_json::Value::Null),
-    );
-    params.insert(
-        "author".to_string(),
-        serde_json::Value::String(entry.author.clone()),
-    );
-    params.insert(
-        "cat".to_string(),
-        serde_json::Value::Number(entry.created_at.into()),
-    );
-    params.insert(
-        "uat".to_string(),
-        serde_json::Value::Number(entry.updated_at.into()),
-    );
-
-    db.run_script(query, params)?;
+    db.upsert_knowledge_entry(entry)?;
     Ok(entry.clone())
 }
 
@@ -749,23 +678,14 @@ pub fn get_knowledge_entry(
     db: &dyn crate::db::backend::DbBackend,
     id: &str,
 ) -> Result<Option<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
-    let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], id = $id"#;
-    let mut params = std::collections::BTreeMap::new();
-    params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-
-    let result = db.run_script(query, params)?;
-    if result.rows.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(row_to_knowledge_entry(&result.rows[0])))
+    db.find_knowledge_entry(id)
 }
 
 pub fn update_knowledge_entry(
     db: &dyn crate::db::backend::DbBackend,
     entry: &models::KnowledgeEntry,
 ) -> Result<models::KnowledgeEntry, Box<dyn std::error::Error>> {
-    // :put acts as upsert in CozoDB
+    // legacy :put acted as upsert
     create_knowledge_entry(db, entry)
 }
 
@@ -773,14 +693,8 @@ pub fn delete_knowledge_entry(
     db: &dyn crate::db::backend::DbBackend,
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // CozoDB has no `:delete` operator. Read the matching row(s) by id via
-    // head-binding, then `:rm` exactly those rows.
-    let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], id = $id
-:rm knowledge_entries {id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}"#;
-    let mut params = std::collections::BTreeMap::new();
-    params.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-    db.run_script(query, params)?;
-    Ok(())
+    // legacy :rm silently no-opped on absent ids
+    db.delete_knowledge_entry_by_id(id).map(|_| ())
 }
 
 pub fn search_knowledge(
@@ -790,75 +704,21 @@ pub fn search_knowledge(
     environment: Option<&str>,
     limit: usize,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
-    let regex_pattern = format!(".*{}.*", query_str.to_lowercase());
-    let mut conditions = vec![format!(
-        "(regex_matches(lowercase(title), \"{0}\") or regex_matches(lowercase(content), \"{0}\"))",
-        regex_pattern
-    )];
-    let mut params = std::collections::BTreeMap::new();
-
-    if let Some(kt) = knowledge_type {
-        params.insert("kt".to_string(), serde_json::Value::String(kt.to_string()));
-        conditions.push("knowledge_type = $kt".to_string());
-    }
-    if let Some(env) = environment {
-        params.insert(
-            "env".to_string(),
-            serde_json::Value::String(env.to_string()),
-        );
-        conditions.push("environment = $env".to_string());
-    }
-
-    let where_clause = conditions.join(", ");
-    let query = format!(
-        r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], {} :limit {}"#,
-        where_clause, limit
-    );
-
-    let result = db.run_script(&query, params)?;
-    Ok(result
-        .rows
-        .iter()
-        .map(|r| row_to_knowledge_entry(r))
-        .collect())
+    db.search_knowledge_entries(query_str, knowledge_type, environment, limit)
 }
 
 pub fn get_knowledge_by_element(
     db: &dyn crate::db::backend::DbBackend,
     element_qualified: &str,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
-    let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], element_qualified = $eq"#;
-    let mut params = std::collections::BTreeMap::new();
-    params.insert(
-        "eq".to_string(),
-        serde_json::Value::String(element_qualified.to_string()),
-    );
-
-    let result = db.run_script(query, params)?;
-    Ok(result
-        .rows
-        .iter()
-        .map(|r| row_to_knowledge_entry(r))
-        .collect())
+    db.list_knowledge_by_element(element_qualified)
 }
 
 pub fn get_knowledge_by_feature(
     db: &dyn crate::db::backend::DbBackend,
     feature_id: &str,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
-    let query = r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], feature_id = $feat"#;
-    let mut params = std::collections::BTreeMap::new();
-    params.insert(
-        "feat".to_string(),
-        serde_json::Value::String(feature_id.to_string()),
-    );
-
-    let result = db.run_script(query, params)?;
-    Ok(result
-        .rows
-        .iter()
-        .map(|r| row_to_knowledge_entry(r))
-        .collect())
+    db.list_knowledge_by_feature(feature_id)
 }
 
 pub fn get_knowledge_by_environment(
@@ -866,40 +726,7 @@ pub fn get_knowledge_by_environment(
     environment: &str,
     limit: usize,
 ) -> Result<Vec<models::KnowledgeEntry>, Box<dyn std::error::Error>> {
-    let query = format!(
-        r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] := *knowledge_entries[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at], environment = $env :limit {}"#,
-        limit
-    );
-    let mut params = std::collections::BTreeMap::new();
-    params.insert(
-        "env".to_string(),
-        serde_json::Value::String(environment.to_string()),
-    );
-
-    let result = db.run_script(&query, params)?;
-    Ok(result
-        .rows
-        .iter()
-        .map(|r| row_to_knowledge_entry(r))
-        .collect())
-}
-
-fn row_to_knowledge_entry(row: &[crate::db::backend::DataValue]) -> models::KnowledgeEntry {
-    models::KnowledgeEntry {
-        id: row[0].get_str().unwrap_or("").to_string(),
-        knowledge_type: row[1].get_str().unwrap_or("general").to_string(),
-        title: row[2].get_str().unwrap_or("").to_string(),
-        content: row[3].get_str().unwrap_or("").to_string(),
-        element_qualified: row[4].get_str().map(String::from),
-        user_story_id: row[5].get_str().map(String::from),
-        feature_id: row[6].get_str().map(String::from),
-        tags: row[7].get_str().unwrap_or("[]").to_string(),
-        environment: row[8].get_str().unwrap_or("production").to_string(),
-        branch: row[9].get_str().map(String::from),
-        author: row[10].get_str().unwrap_or("").to_string(),
-        created_at: row[11].get_int().unwrap_or(0),
-        updated_at: row[12].get_int().unwrap_or(0),
-    }
+    db.list_knowledge_by_environment(environment, limit)
 }
 
 // ============================================================================
