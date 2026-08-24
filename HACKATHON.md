@@ -106,3 +106,10 @@ Branch reset onto main cf357ad8 (cycles 1-2 banked via squash #247). Backlog thi
 - Caught during adoption: SqlRow::text() rendered NULL as Some("null") (fixed); legacy validate_key DELETE+reinsert wiped name/created_at (now updates last_used_at only)
 - Gates: lib **1213✅** · parity 11✅ · pg_schema 6✅ · fmt/clippy clean
 - Next: wave-1b (db/mod.rs ×46 helpers), then W2-W6 disjoint-file fan-out
+
+### Cycle 6 — W8 wave-1b knowledge_entries conversion
+- 8 db/mod.rs fns delegate to parameterized-SQL trait methods; run_script sites in db/mod.rs **46→39**
+- Parity test caught real bug: tags column is JSONB but legacy bound Text → SqlParam::Json with string-fallback
+- ILIKE search + updated_at DESC ordering match legacy regex-scan semantics; NULL optionals round-trip as None
+- Gates: lib 1195✅ · wave-1b parity 1✅ (live PG) · fmt/clippy clean · build 0 warnings
+- Live proof: add_knowledge via converted path on :9874 → status ok, server log cozo_lines=0
