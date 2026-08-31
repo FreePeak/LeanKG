@@ -35,6 +35,7 @@ Position LeanKG as the **deterministic, self-hostable, MCP-native code knowledge
 | W11 | Tool consolidation round 2 (76→~70) | ⬜ PENDING | hackathon backlog | candidates: get_graph_report, orchestrate, traceability quartet |
 | W12 | npm wrapper version sync automation | ✅ DONE (verify) | — | npm/leankg already at 0.26.1 (matches crate); confirm release.yml auto-syncs on tag |
 | W13 | Phase-1 enterprise features (see PRD) | ⬜ PENDING | **hackathon** | starts with ENT-1 observability/audit-log foundation |
+| W14 | Harness-era live-probe fixes (2026-08-30 assessment) | ⬜ PENDING | **hackathon** | alias coverage `FR-HEA-01` (probe 2: 14 missing vs 13 entities); semantic dead-end fallback `FR-HEA-02` (probe 4: 0/3); 50k cap banner `FR-HEA-03` (probe 6: 360,953-element graph refused); remote-PG latency `FR-HEA-04` (probe 5: 30s `kg_semantic_context` timeout); positioning cutover `FR-HEA-05` — see `prd-task-tracker.md` HEA section |
 
 Status legend: ⬜ pending · 🚧 in progress · ✅ done · ⛔ blocked · ❌ cancelled
 
