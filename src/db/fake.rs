@@ -330,6 +330,52 @@ impl DbBackend for FakeBackend {
     fn mutability_for(&self, query: &str) -> super::pg::mutability::ScriptMutability {
         super::pg::mutability::mutability_for(query)
     }
+
+    // ---- W8 wave-2: SQL-first code_elements reads (in-memory parity) ----
+
+    fn find_element_by_key(
+        &self,
+        qualified_name: &str,
+    ) -> Result<Option<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let qn_idx = col_index("code_elements", "qualified_name").unwrap_or(0);
+        let rows = self.rows("code_elements");
+        Ok(rows
+            .iter()
+            .find(|r| r.get(qn_idx).and_then(|v| v.get_str()) == Some(qualified_name))
+            .map(|r| code_element_from_cells(r, false)))
+    }
+
+    fn find_element_by_name_col(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let nm_idx = col_index("code_elements", "name").unwrap_or(2);
+        let rows = self.rows("code_elements");
+        Ok(rows
+            .iter()
+            .find(|r| r.get(nm_idx).and_then(|v| v.get_str()) == Some(name))
+            .map(|r| code_element_from_cells(r, false)))
+    }
+
+    fn elements_by_qualified_names(
+        &self,
+        qualified_names: &[String],
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let qn_idx = col_index("code_elements", "qualified_name").unwrap_or(0);
+        let wanted: std::collections::HashSet<&str> =
+            qualified_names.iter().map(|s| s.as_str()).collect();
+        Ok(self
+            .rows("code_elements")
+            .iter()
+            .filter(|r| {
+                r.get(qn_idx)
+                    .and_then(|v| v.get_str())
+                    .map(|qn| wanted.contains(qn))
+                    .unwrap_or(false)
+            })
+            .map(|r| code_element_from_cells(r, true))
+            .collect())
+    }
 }
 
 fn fake_err(msg: &str) -> Box<dyn std::error::Error> {
@@ -940,6 +986,51 @@ fn json_to_dv(v: &serde_json::Value) -> DataValue {
 
 fn col_index(rel: &str, col: &str) -> Option<usize> {
     table_columns(rel)?.iter().position(|c| *c == col)
+}
+
+/// Map one in-memory `code_elements` row (positional per `table_columns`) to
+/// a [`CodeElement`]. Mirrors `element_from_row` in `graph/query.rs`:
+/// optional columns NULL → `None`, `metadata` parsed as JSON when present,
+/// `env` selected only when `include_env` is true; missing/Null `env` cell
+/// → schema default `"local"` (matches the 11-col `:put` rows from
+/// `GraphEngine::insert_element`).
+fn code_element_from_cells(row: &[DataValue], include_env: bool) -> crate::db::models::CodeElement {
+    let text = |idx: usize| -> Option<String> {
+        match row.get(idx) {
+            Some(DataValue::Str(s)) => Some(s.clone()),
+            Some(DataValue::Json(j)) => Some(j.clone()),
+            Some(DataValue::Null) | Some(DataValue::Bot) | None => None,
+            Some(other) => Some(other.to_string()),
+        }
+    };
+    let text_or_default = |idx: usize| text(idx).unwrap_or_default();
+    let int_or_zero = |idx: usize| -> i64 { row.get(idx).and_then(|v| v.get_int()).unwrap_or(0) };
+    let metadata_str = match row.get(10) {
+        Some(DataValue::Str(s)) => Some(s.clone()),
+        Some(DataValue::Json(j)) => Some(j.clone()),
+        _ => None,
+    };
+    let env_idx = 11;
+    crate::db::models::CodeElement {
+        qualified_name: text_or_default(0),
+        element_type: text_or_default(1),
+        name: text_or_default(2),
+        file_path: text_or_default(3),
+        line_start: int_or_zero(4) as u32,
+        line_end: int_or_zero(5) as u32,
+        language: text_or_default(6),
+        parent_qualified: text(7),
+        cluster_id: text(8),
+        cluster_label: text(9),
+        metadata: metadata_str
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::json!({})),
+        env: if include_env {
+            text(env_idx).unwrap_or_else(|| "local".to_string())
+        } else {
+            "local".to_string()
+        },
+    }
 }
 
 /// Split `:limit N :offset M` off the body. Both tokens are scanned

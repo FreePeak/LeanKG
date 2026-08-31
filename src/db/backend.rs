@@ -371,6 +371,35 @@ pub trait DbBackend: Send + Sync {
     ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
         Err("SQL-first knowledge_entries not supported by this backend".into())
     }
+
+    // ---- SQL-first code_elements reads (W8 wave-2) ----
+
+    /// Keyed lookup by `qualified_name`. `env` is NOT selected (matches the
+    /// legacy 11-column projection used by `find_element`/`find_element_by_name`).
+    fn find_element_by_key(
+        &self,
+        _qualified_name: &str,
+    ) -> Result<Option<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        Err("SQL-first code_elements reads not supported by this backend".into())
+    }
+
+    /// First row whose `name` matches exactly (legacy `find_element_by_name`).
+    fn find_element_by_name_col(
+        &self,
+        _name: &str,
+    ) -> Result<Option<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        Err("SQL-first code_elements reads not supported by this backend".into())
+    }
+
+    /// Keyed hydration for a set of qualified names (HNSW ANN hits, FR-SEM-07).
+    /// `env` IS selected here. Callers dedup/drop-empties before calling; the
+    /// backend chunks the IN-list internally.
+    fn elements_by_qualified_names(
+        &self,
+        _qualified_names: &[String],
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        Err("SQL-first code_elements reads not supported by this backend".into())
+    }
 }
 
 /// Shared handle used throughout the codebase. `Arc` so clones of
@@ -1983,6 +2012,58 @@ impl DbBackend for PostgresBackend {
         Ok(rows.iter().map(knowledge_entry_from_row).collect())
     }
 
+    // ---- SQL-first code_elements reads (W8 wave-2) ----
+
+    fn find_element_by_key(
+        &self,
+        qualified_name: &str,
+    ) -> Result<Option<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let rows = self.sql_query(
+            "SELECT qualified_name, element_type, name, file_path, line_start, line_end, \
+                    language, parent_qualified, cluster_id, cluster_label, metadata \
+             FROM code_elements WHERE qualified_name = $1 LIMIT 1",
+            &[crate::db::sql::SqlParam::Text(qualified_name.to_string())],
+        )?;
+        Ok(rows.first().map(code_element_from_row))
+    }
+
+    fn find_element_by_name_col(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let rows = self.sql_query(
+            "SELECT qualified_name, element_type, name, file_path, line_start, line_end, \
+                    language, parent_qualified, cluster_id, cluster_label, metadata \
+             FROM code_elements WHERE name = $1 LIMIT 1",
+            &[crate::db::sql::SqlParam::Text(name.to_string())],
+        )?;
+        Ok(rows.first().map(code_element_from_row))
+    }
+
+    fn elements_by_qualified_names(
+        &self,
+        qualified_names: &[String],
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        const CHUNK: usize = 500;
+        let mut out = Vec::with_capacity(qualified_names.len());
+        for chunk in qualified_names.chunks(CHUNK) {
+            let placeholders: Vec<String> = (1..=chunk.len()).map(|i| format!("${i}")).collect();
+            let sql = format!(
+                "SELECT qualified_name, element_type, name, file_path, line_start, line_end, \
+                        language, parent_qualified, cluster_id, cluster_label, metadata, env \
+                 FROM code_elements WHERE qualified_name IN ({})",
+                placeholders.join(", ")
+            );
+            let params: Vec<crate::db::sql::SqlParam> = chunk
+                .iter()
+                .map(|qn| crate::db::sql::SqlParam::Text(qn.clone()))
+                .collect();
+            let rows = self.sql_query(&sql, &params)?;
+            out.extend(rows.iter().map(code_element_from_row_env));
+        }
+        Ok(out)
+    }
+
     /// FR-ENT-1: one multi-row INSERT for the whole batch (≤ 50 rows × 9
     /// params per flush, well under the 65535 bind limit).
     fn insert_audit_batch(
@@ -2628,6 +2709,40 @@ fn knowledge_entry_from_row(r: &crate::db::sql::SqlRow) -> crate::db::models::Kn
         author: r.text("author").unwrap_or_default(),
         created_at: r.int("created_at").unwrap_or(0),
         updated_at: r.int("updated_at").unwrap_or(0),
+    }
+}
+
+fn code_element_from_row(r: &crate::db::sql::SqlRow) -> crate::db::models::CodeElement {
+    code_element_from_row_env_impl(r, "local")
+}
+
+fn code_element_from_row_env(r: &crate::db::sql::SqlRow) -> crate::db::models::CodeElement {
+    code_element_from_row_env_impl(r, &r.text("env").unwrap_or_else(|| "local".into()))
+}
+
+/// Shared mapper for the W8 SQL-first `code_elements` reads. `with_env_col`
+/// selects between the 11-column (env defaulted) and 12-column (env selected)
+/// query shapes in `find_element_by_key` / `elements_by_qualified_names`.
+fn code_element_from_row_env_impl(
+    r: &crate::db::sql::SqlRow,
+    env: &str,
+) -> crate::db::models::CodeElement {
+    crate::db::models::CodeElement {
+        qualified_name: r.text("qualified_name").unwrap_or_default(),
+        element_type: r.text("element_type").unwrap_or_default(),
+        name: r.text("name").unwrap_or_default(),
+        file_path: r.text("file_path").unwrap_or_default(),
+        line_start: r.int("line_start").unwrap_or(0) as u32,
+        line_end: r.int("line_end").unwrap_or(0) as u32,
+        language: r.text("language").unwrap_or_default(),
+        parent_qualified: r.text("parent_qualified"),
+        cluster_id: r.text("cluster_id"),
+        cluster_label: r.text("cluster_label"),
+        metadata: r
+            .text("metadata")
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::json!({})),
+        env: env.to_string(),
     }
 }
 
