@@ -41,7 +41,7 @@
 - v1.18 - RTK Integration
 - v1.13 - Terraform and CI/CD YAML Indexing
 - v1.5 - MCP Server Self-Initialization
-- v1.2.1 - Migrated from SurrealDB to CozoDB
+- v1.2.1 - Migrated from SurrealDB to the legacy embedded engine (removed)
 
 ---
 
@@ -72,7 +72,7 @@ graph TB
     subgraph "User's Machine"
         subgraph "LeanKG System"
             KG[LeanKG Application]
-            DB[(CozoDB<br/>Database)]
+            DB[(PostgreSQL +<br/>pgvector)]
             KG --- DB
         end
         
@@ -139,7 +139,7 @@ graph TB
         Consist[Consistency<br/>Checker<br/>PLANNED]
         Agents[Agent<br/>Contexts<br/>PLANNED]
 
-        DB[(CozoDB<br/>Database)]
+        DB[(PostgreSQL +<br/>pgvector)]
 
         CLI --> Indexer
         CLI --> PipeIdx
@@ -203,7 +203,7 @@ graph TB
 | Code Indexer | Parse source code with tree-sitter (13 languages fully) | tree-sitter (Rust) |
 | Pipeline Indexer | Parse CI/CD configuration files | Custom YAML parsers (Rust) |
 | Doc Indexer | Parse documentation files and extract code references | pulldown-cmark (Rust) |
-| Graph Engine | Query and traverse knowledge graph | Rust + CozoDB Datalog |
+| Graph Engine | Query and traverse knowledge graph | Rust + SQL (PostgreSQL) |
 | Doc Generator | Generate markdown documentation + wiki | Rust templates |
 | File Watcher | Monitor file changes | notify (Rust) |
 | Impact Analyzer | Calculate blast radius with confidence scores | Rust (BFS traversal) |
@@ -213,11 +213,11 @@ graph TB
 | Orchestrator | Smart query routing with intent parsing and persistent cache | Rust |
 | Git Hooks | pre-commit, post-commit, post-checkout hooks + GitWatcher | Rust (shell script generation) |
 | Benchmark | Compare vs OpenCode, Gemini CLI, Kilo CLI | Rust |
-| Global Registry | Multi-repo management | Rust + CozoDB |
-| CozoDB | Persistent storage (per-project) | CozoDB 0.2 (embedded SQLite-backed) |
+| Global Registry | Multi-repo management | Rust + PostgreSQL |
+| PostgreSQL + pgvector | Persistent storage (per-project database/schema) | PostgreSQL + pgvector extension |
 | Conversation Miner | [PLANNED] Mine Claude/ChatGPT/Slack transcripts for decisions | Rust (JSON parsing) |
-| Consistency Checker | [PLANNED] Detect stale/broken graph links | Rust + CozoDB |
-| Agent Contexts | [PLANNED] Specialist agent personas with focused graph views | Rust + CozoDB |
+| Consistency Checker | [PLANNED] Detect stale/broken graph links | Rust + PostgreSQL |
+| Agent Contexts | [PLANNED] Specialist agent personas with focused graph views | Rust + PostgreSQL |
 
 ### 2.3 Component Diagram (C4-3)
 
@@ -306,7 +306,7 @@ graph TB
     
     subgraph "Orchestrator"
         Intent[Intent Parser<br/>7 Query Types]
-        OrchCache[Persistent Cache<br/>CozoDB-backed]
+        OrchCache[Persistent Cache<br/>PostgreSQL-backed]
         Router[Query Router]
         
         Intent --> Router
@@ -335,7 +335,7 @@ graph TB
         Handler --> WriteTracker
     end
     
-    Builder -->|Writes| DB[(CozoDB)]
+    Builder -->|Writes| DB[(PostgreSQL + pgvector)]
     Query -.->|Reads| DB
     Tools -.->|Queries| Graph
     BFS -.->|Reads| DB
@@ -359,8 +359,8 @@ graph TB
                 end
                 
                 subgraph "Data Layer"
-                    DB[(CozoDB<br/>.leankg/)]
-                    PCache[Persistent Cache<br/>CozoDB query_cache]
+                    DB[(PostgreSQL<br/>+ pgvector)]
+                    PCache[Persistent Cache<br/>PostgreSQL-backed]
                 end
                 
                 subgraph "Processing"
@@ -413,7 +413,7 @@ graph TB
 | REST API Server | 8081 | REST API with auth (optional) |
 | MCP Server | stdio | MCP protocol via stdin/stdout |
 | File Watcher | - | Background notify process |
-| CozoDB | - | Embedded SQLite-backed database |
+| PostgreSQL + pgvector | 5432 | PostgreSQL server with pgvector extension (external service) |
 
 ---
 
@@ -429,7 +429,7 @@ sequenceDiagram
     participant Parse as Parser Manager
     participant Extract as Entity Extractor
     participant Build as Graph Builder
-    participant DB as CozoDB
+    participant DB as PostgreSQL
 
     Dev->>CLI: leankg index ./src
     CLI->>Parse: Parse directory (parallel via rayon)
@@ -455,7 +455,7 @@ sequenceDiagram
     participant MCP as MCP Server
     participant Orch as Orchestrator
     participant Query as Query Processor
-    participant DB as CozoDB
+    participant DB as PostgreSQL
 
     AI->>MCP: orchestrate("show impact of changing handler.rs")
     MCP->>Orch: Parse intent
@@ -480,7 +480,7 @@ sequenceDiagram
     participant AI as AI Tool
     participant MCP as MCP Server
     participant BFS as BFS Traversal
-    participant DB as CozoDB
+    participant DB as PostgreSQL
 
     AI->>MCP: get_impact_radius(file.rs, depth=3, compress_response=true)
     MCP->>BFS: Calculate blast radius
@@ -499,7 +499,7 @@ sequenceDiagram
     participant Dev as Developer
     participant Hook as Pre-commit Hook
     participant CLI as leankg detect-changes
-    participant DB as CozoDB
+    participant DB as PostgreSQL
 
     Dev->>Hook: git commit
     Hook->>Hook: Check critical files<br/>(src/lib.rs, Cargo.toml, leankg.yaml)
@@ -521,7 +521,7 @@ sequenceDiagram
     participant AI as AI Tool
     participant MCP as MCP Server
     participant TQ as Temporal Query
-    participant DB as CozoDB
+    participant DB as PostgreSQL
 
     AI->>MCP: temporal_query(element="src/handler.rs", as_of="2026-03-01")
     MCP->>TQ: Parse timestamp
@@ -540,7 +540,7 @@ sequenceDiagram
     participant AI as AI Tool
     participant MCP as MCP Server
     participant Cache as File Cache
-    participant DB as CozoDB
+    participant DB as PostgreSQL
 
     AI->>MCP: wake_up()
     MCP->>Cache: Check .leankg/wake_up.txt
@@ -565,7 +565,7 @@ sequenceDiagram
     participant MCP as MCP Server
     participant CC as Consistency Checker
     participant FS as File System
-    participant DB as CozoDB
+    participant DB as PostgreSQL
 
     AI->>MCP: check_consistency()
     MCP->>CC: Run consistency checks
@@ -832,7 +832,7 @@ When MCP server starts with existing project:
 
 **Auto-Indexing on DB Write:**
 1. **WriteTracker** - In-memory `Arc<AtomicBool>` dirty flag + `Arc<RwLock<Instant>>` last_write_time
-2. **TrackingDb** - Wraps `CozoDb` to intercept `:put` and `:delete` operations
+2. **TrackingDb** - Wraps the database backend to intercept write operations
 3. **Lazy Reindex** - On any MCP tool call, checks dirty flag; if set, triggers incremental reindex
 
 **TOON Response Format (v2.2):**
@@ -1066,7 +1066,8 @@ documentation:
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| cozo | 0.2 | Embedded SQLite-backed relational-graph database |
+| postgres | 0.19 | PostgreSQL client (sync) |
+| pgvector | - | Vector similarity search extension on the PostgreSQL server |
 | rmcp | 1.2 | MCP protocol server |
 | tree-sitter | 0.25 | Code parsing |
 | clap | 4 | CLI framework |

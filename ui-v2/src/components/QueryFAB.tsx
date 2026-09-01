@@ -30,7 +30,7 @@ export function QueryFAB() {
     }
   };
 
-  const title = mode === 'nl' ? 'Natural language query' : 'Raw Cozo query';
+  const title = mode === 'nl' ? 'Natural language query' : 'Raw graph query';
 
   return (
     <div className="absolute bottom-4 left-4 z-10">

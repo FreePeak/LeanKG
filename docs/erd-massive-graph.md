@@ -30,7 +30,7 @@
 
 **Architecture:** Lazy-loading graph API with DB-level filtering. UI starts at service/folder level, expanding on click. CodeViewer sidebar shows source for file/function nodes. Never loads full DB at once.
 
-**Tech Stack:** Rust (Axum) backend + Vite/React (sigma.js) frontend + CozoDB
+**Tech Stack:** Rust (Axum) backend + Vite/React (sigma.js) frontend + PostgreSQL + pgvector
 
 ---
 
@@ -56,7 +56,7 @@
 | `GET /api/graph/clusters` | `api_graph_clusters` | 2805 | **FULL** | Loads ALL elements + ALL relationships. Groups by parent directory. Creates `cluster:` prefix nodes. Builds inter-cluster edges. |
 | `GET /api/graph/layout` | `api_graph_layout` | — | Partial | Server-side ForceAtlas2 layout via `LayoutEngine`. |
 | `GET /api/export/graph` | `api_export_graph` | 2566 | **FULL** | Loads ALL, formats for export. |
-| `POST /api/query` | `api_query` | — | Passthrough | Raw CozoDB Datalog query. User controls scope. |
+| `POST /api/query` | `api_query` | — | Passthrough | Raw query (legacy Datalog-style syntax, translated to SQL). User controls scope. |
 | `POST /api/project/switch` | `api_switch_path` | — | None | Switches project, spawns background indexing thread. |
 | `GET /api/index/status` | `api_index_status` | — | None | Returns indexing progress state. |
 | `GET /api/file` | `api_get_file` | — | None | Reads file from filesystem. Security: canonicalizes path. |
@@ -226,7 +226,7 @@ UI loads -> GET /api/graph/stats (fast histogram)
 ### 5.1 `GET /api/graph/stats` (NEW)
 
 ```
-Returns a full histogram of the DB. Cheap CozoDB COUNT aggregations.
+Returns a full histogram of the DB. Cheap SQL COUNT aggregations.
 Used by the UI to decide loading strategy before fetching any graph data.
 Should be cached (TTL 60s) to avoid repeated counting.
 
@@ -274,7 +274,7 @@ Response:
 }
 
 Implementation:
-  - Single CozoDB aggregation query using GROUP BY on element_type, rel_type
+  - Single SQL aggregation query using GROUP BY on element_type, rel_type
   - Depth computed from file_path segment count (split by '/', count segments)
   - Folders: DISTINCT file_path prefixes with COUNT
   - Services: only populated for multi-repo (from service-topology logic)
@@ -321,7 +321,7 @@ Query params:
   - offset: int (default 0)
 
 Implementation: Build on existing GraphEngine::get_children() at query.rs:354.
-                Add element_type filter and LIMIT/OFFSET to the CozoDB query.
+                Add element_type filter and LIMIT/OFFSET to the SQL query.
 
 Response:
 {
@@ -400,19 +400,20 @@ pub fn get_children_filtered(
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<ChildrenResult, Box<dyn std::error::Error>> {
-    // CozoDB query with path prefix + optional type filter + limit
+    // SQL query with path prefix + optional type filter + limit
     let type_filter = match element_types {
         Some(types) => format!("et in [{}]", types.iter().map(|t| format!("\"{}\"", t)).collect::<Vec<_>>().join(", ")),
         None => String::new(),
     };
 
     let query = format!(r#"
-        ?[qn, et, name, fp, ls, le, lang, pq, cid, clbl, meta] :=
-            *code_elements[qn, et, name, fp, ls, le, lang, pq, cid, clbl, meta],
-            starts_with_str(fp, $prefix),
-            {type_filter}
-        :limit $limit
-        :offset $offset
+        SELECT qualified_name AS qn, element_type AS et, name, file_path AS fp,
+               line_start AS ls, line_end AS le, language AS lang,
+               parent_qualified AS pq, cluster_id AS cid, cluster_label AS clbl, metadata AS meta
+        FROM code_elements
+        WHERE file_path LIKE $prefix || '%'
+          {type_filter}
+        LIMIT $limit OFFSET $offset
     "#);
     // ... execute and return
 }
@@ -420,14 +421,14 @@ pub fn get_children_filtered(
 
 **Approach 2: Path-prefix query for directory listing**
 
-```cozo
-?[qn, et, name, fp] :=
-    *code_elements[qn, et, name, fp, ls, le, lang, pq, cid, clbl, meta],
-    starts_with_str(fp, $prefix),
-    et = $type
+```sql
+SELECT qualified_name, element_type, name, file_path
+FROM code_elements
+WHERE file_path LIKE $prefix || '%'
+  AND element_type = $type
 ```
 
-**Note on CozoDB:** `starts_with_str` is available. If not, use Rust-side filtering with cursor-based iteration (read in chunks via `:limit` + `:offset`).
+**Note:** prefix filtering uses `LIKE` on `file_path`. If not efficient, use Rust-side filtering with cursor-based iteration (read in chunks via `LIMIT` + `OFFSET`).
 
 ### 6.3 Directory Nodes — Missing Data Problem
 
@@ -487,7 +488,7 @@ nodeTypeFilter: string[]           // Active node types for API filtering
 
 ```
 UI -> GET /api/graph/stats
-API -> CozoDB COUNT aggregations (fast: < 100ms even on 100K DB)
+API -> SQL COUNT aggregations (fast: < 100ms even on 100K DB)
 API -> Return histogram: total_nodes, total_edges, nodes_by_type, folders, services
 API -> Cache result with 60s TTL
 UI -> Decide loading strategy:
@@ -539,7 +540,7 @@ User clicks folder node "src/graph/"
 UI -> Show per-node loading spinner
 UI -> GET /api/graph/children?parent=src/graph/&element_types=directory,file,function&limit=200
 API -> GraphEngine::get_children_filtered("src/graph/", ["directory","file","function"], 200, 0)
-API -> DB: CozoDB query with starts_with_str(fp, "src/graph/") + type filter + LIMIT
+API -> DB: SQL query with file_path LIKE 'src/graph/%' + type filter + LIMIT
 API -> Synthesize directory nodes from file_path prefixes
 API -> Get relationships for returned elements
 API -> Response: { nodes, relationships, total_count, has_more }
@@ -571,7 +572,7 @@ UI -> Highlight lines 8-22 (from node metadata startLine/endLine)
 
 | Task | File | Description |
 |------|------|-------------|
-| 0.1 | `src/graph/query.rs` | Add `get_db_stats()` method — runs CozoDB COUNT aggregations: total nodes, total edges, nodes_by_type, edges_by_type, nodes_by_depth, top folders by node count |
+| 0.1 | `src/graph/query.rs` | Add `get_db_stats()` method — runs SQL COUNT aggregations: total nodes, total edges, nodes_by_type, edges_by_type, nodes_by_depth, top folders by node count |
 | 0.2 | `src/web/handlers.rs` | Add `api_graph_stats` handler — calls `get_db_stats()`, detects project_type, returns full histogram. Cache with 60s TTL in AppState. |
 | 0.3 | `src/web/mod.rs` | Register route `GET /api/graph/stats` |
 | 0.4 | `src/graph/query.rs` | Add depth parameter to element queries — compute depth from file_path segment count, support `?depth=0,1` filter |
@@ -767,8 +768,8 @@ cd ui/ && npm run dev
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Stats COUNT query slow on 100K+ DB | Low | Medium | Cache with 60s TTL. Use CozoDB aggregation (not Rust-side counting). If still slow, maintain running counts on insert. |
-| CozoDB `starts_with_str` not efficient for prefix scans | Medium | High | Fall back to Rust-side filtering with cursor pagination (`:limit` + `:offset`) |
+| Stats COUNT query slow on 100K+ DB | Low | Medium | Cache with 60s TTL. Use SQL aggregation (not Rust-side counting). If still slow, maintain running counts on insert. |
+| `file_path LIKE` prefix scans not efficient | Medium | High | Fall back to Rust-side filtering with cursor pagination (`LIMIT` + `OFFSET`) |
 | Large directory (>1000 files) | High | Medium | LIMIT + pagination + "Load more" UI |
 | Sigma.js performance with > 500 nodes | Medium | Medium | Virtual rendering, hide labels on zoom out, limit visible nodes |
 | `parent_qualified` field not populated for all elements | High | High | Fallback to file_path prefix extraction for directory listing |
@@ -811,7 +812,7 @@ Two completely separate APIs detect services differently:
 
 | API | Method | Node ID Format | Data Source |
 |-----|--------|---------------|-------------|
-| `/api/graph/services` | `get_service_graph()` | `"be-gateway"` (plain) | CozoDB relationships |
+| `/api/graph/services` | `get_service_graph()` | `"be-gateway"` (plain) | PostgreSQL relationships |
 | `/api/graph/service-topology` | `extract_service_topology()` | `"service:be-gateway"` (prefixed) | Filesystem scan |
 
 The frontend `useSigma.ts:223` checks both patterns (`node.startsWith('service:') || data.nodeType === 'Service'`), but the main graph data endpoint (`/api/graph/children`) returns neither format.

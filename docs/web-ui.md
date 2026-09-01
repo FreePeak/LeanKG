@@ -35,7 +35,7 @@ Screenshots: [docs/reports/ui-v2-screenshots-2026-07-20.md](reports/ui-v2-screen
 - **Force / Tree / Circles** layouts (Sigma + graphology)
 - **Filters + file tree** (US-MG-04 defaults)
 - **Code panel** via `/api/file`
-- **Search + Query FAB** via `/api/search`; NL `POST /api/query-graph` (default) or Advanced raw Cozo `POST /api/query` (FR-UI2-08)
+- **Search + Query FAB** via `/api/search`; NL `POST /api/query-graph` (default) or Advanced raw query `POST /api/query` (FR-UI2-08)
 - **Mega-graph skip** gate with “Load graph anyway”
 
 ## Architecture

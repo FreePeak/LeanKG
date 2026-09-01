@@ -3,8 +3,8 @@ import { test, expect, Page } from '@playwright/test';
 // Phase 5.5 T5.5.3 — WebUI regression against the Postgres-era backend.
 //
 // The UI talks to the leankg web server over `/api/*` (vite dev proxy →
-// BACKEND_TARGET). The web server is path-based cozo TODAY (Phase 6 wires
-// LEANKG_DB_ENGINE=postgres routing — see src/db/backend.rs resolve_engine),
+// BACKEND_TARGET). The web server is PostgreSQL-backed today
+// (see src/db/backend.rs resolve_engine),
 // so these tests exercise the real UI against the same GraphEngine surface
 // the tool sweep covered. Re-run with:
 //

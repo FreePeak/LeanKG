@@ -88,7 +88,7 @@ RCA: [`docs/reports/root_cause_api_file_service_folder_400.md`](../docs/reports/
 - Left explore: node/edge filters, focus depth, file list
 - Code panel on content-bearing select (`GET /api/file`); Service/Folder metadata only
 - Double-click Service/Folder replaces graph via expand-service
-- Header search (`GET /api/search`) + Query FAB: **NL** default (`POST /api/query-graph`) · **Advanced** raw Cozo (`POST /api/query`) — FR-UI2-08
+- Header search (`GET /api/search`) + Query FAB: **NL** default (`POST /api/query-graph`) · **Advanced** raw graph query (`POST /api/query`) — FR-UI2-08
 - Mega-graph skip gate + “Load graph anyway”
 - URL: `?path=`, `?skipGraph=`, `?project=`, `?expand=1`
 

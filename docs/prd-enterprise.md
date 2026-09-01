@@ -37,7 +37,7 @@ Priority: P0 = launch-blocking for segment · P1 = competitive parity · P2 = di
 | ENT-4 | **SAML 2.0** + SCIM provisioning/deprovisioning | P1 (Q1'27) | Deprovisioned user loses access ≤5 min |
 | ENT-5 | **Self-hosted deployment kit**: Helm chart, compose prod profile, upgrade guide | P0 (Q1'27) | Fresh cluster → serving in ≤30 min |
 | ENT-6 | **Data residency pinning**: EU/US storage regions for hosted tier | P1 | Region choice at workspace creation; no cross-region replication |
-| ENT-7 | **SIEM export**: webhook + syslog drain of audit stream | P1 | Splunk/Datadog-compatible field schema |
+| ENT-7 | **SIEM export**: webhook + syslog drain of audit stream | P1 | Splunk-compatible field schema (works with common SIEM vendors) |
 | ENT-8 | **Air-gap install**: offline license file, signed updates, zero outbound telemetry | P2 (Q2'27) | Runs fully offline ≥90 days; license expiry grace 14d |
 | ENT-9 | **Provenance labels** on all relationship/graph responses (EXTRACTED/INFERRED/AMBIGUOUS) | P0 | Every edge in tool output carries confidence_label |
 | ENT-10 | **SOC 2 controls automation**: evidence collection, access reviews | P1 (Q1'27 runway) | Type I readiness checklist complete |
@@ -59,7 +59,7 @@ Priority: P0 = launch-blocking for segment · P1 = competitive parity · P2 = di
 
 | ID | Requirement | Priority | Acceptance criteria |
 |----|-------------|----------|---------------------|
-| CORE-1 | **Complete Datalog removal**: SQL-first seam; delete translate.rs/fake.rs/mutability.rs | P0 | `rg "cozo::" src/` = 0 Datalog strings; parity harness green; fake.rs deleted |
+| CORE-1 | **Complete Datalog removal**: SQL-first seam; delete translate.rs/fake.rs/mutability.rs | P0 | `rg "Datalog"` in src/ = 0 legacy query strings; parity harness green; fake.rs deleted |
 | CORE-2 | **Tool consolidation**: 79→~70 tools; matrix test green | P0 | redundant_tools_matrix passes; contract doc updated |
 | CORE-3 | **qualified_name uniqueness**: dedup strategy + UNIQUE constraint | P0 | Embed succeeds on real 371k-fn repo; collision report tool |
 | CORE-4 | **Re-index reliability**: fix EEXIST on `leankg index` re-run | P0 | index→index→index idempotent in integration test |
