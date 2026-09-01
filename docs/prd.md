@@ -7,7 +7,7 @@
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
 **Codebase Version:** 0.19.31 (`origin/main`)
 
-> **Storage engine (2026-08-05):** LeanKG is now **PostgreSQL + pgvector only** (plan [migrate-cozo-to-postgres-pgvector.md](plan-migrate-cozo-to-postgres-pgvector.md), decisions D1–D5). The CozoDB/SQLite/RocksDB backends, `DbBackend` trait, `CozoBackend` shim, and `LEANKG_DB_ENGINE` were removed in Phase 8. Local dev requires `docker compose up postgres` + `LEANKG_PG_URL`. See [analysis/pg-migration-report.md](analysis/pg-migration-report.md).
+> **Storage engine (2026-08-05):** LeanKG is now **PostgreSQL + pgvector only** (decisions D1–D5). The legacy embedded backends (SQLite/RocksDB), `DbBackend` trait, engine shim, and `LEANKG_DB_ENGINE` were removed in Phase 8. Local dev requires `docker compose up postgres` + `LEANKG_PG_URL`. See [analysis/pg-migration-report.md](analysis/pg-migration-report.md).
 
 > **Task lists + status live in one place (humans + AI agents):**
 > - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
@@ -59,7 +59,7 @@
 > **Trigger:** Live validation of all 88 leankg HTTP MCP tools on Docker `:9699` against the `/workspace-be` mega-graph (662,378 elements / 2,259,855 relationships) ([validation](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [RCA](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md)). Empty results treated as failures per the goal. **44 / 88 tools failed** (50% pass). Deep-dive (4 subagents, code-traced + live-DB-verified) collapsed the failures into 4 code defects + a data-absence class:
 > - **D1 — file-arg project routing shadows `project`** (`src/mcp/server.rs:2640-2682`): tools taking `file`/`path` route the DB via `find_leankg_for_path` from container cwd `/workspace` → opens `/workspace/.leankg` (wrong project) instead of honoring `project=/workspace-be`. Breaks ~8 empty + 4 lock tools.
 > - **D2 — no single-handle-per-DB invariant → RocksDB double-open lock** (`src/db/schema.rs:193-204`, ontology watcher `src/ontology/watcher.rs:50` holds the `/workspace` handle forever; cache-clear `server.rs:2734-2737` then re-opens → `lock hold by current process`). 4 lock tools.
-> - **D3 — blocking sync CozoDB on Tokio async workers + no request timeout** (`server.rs:2979`, `schema.rs:25`, no `spawn_blocking` in `src/mcp/`): one heavy full-scan starves all `num_cpus` workers → `/health` times out → container `(unhealthy)` until `docker restart`. This is the whole-server-collapse mechanism.
+> - **D3 — blocking sync DB calls on Tokio async workers + no request timeout** (`server.rs:2979`, `schema.rs:25`, no `spawn_blocking` in `src/mcp/`): one heavy full-scan starves all `num_cpus` workers → `/health` times out → container `(unhealthy)` until `docker restart`. This is the whole-server-collapse mechanism.
 > - **D4 — mega-guard opt-in (7 of ~90 tools) + guard's own check is a full COUNT** (`safe_discover.rs:68`, `query.rs:3483`): 15 unguarded tools full-scan; `get_cluster_skill` runs live Louvain on 662k nodes; ontology write tools not in `WRITE_TOOLS`.
 > - **Data-absence (tool correct, ~8):** `/workspace-be` is code-only — no PRD, incidents, service metadata, clusters, or docs. `find_tunnels`/`get_service_*`/`get_traceability_*`/`query_incidents`/`get_files_for_doc` correctly return empty.
 
@@ -142,45 +142,45 @@
 **New content:** §1.3; §3.28 US-SM; §5.32 FR-SM + REL-075. Analysis: [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md) (deepened 2026-08-01).  
 **Related:** Strengthen US-GE-05 / FR-GE-05 ACs to require auto-recall path (`US-SM-02`).
 
-### v3.8.1-enterprise-docker - Separate RocksDB into cozoserver sidecar (2026-07-28)
+### v3.8.1-enterprise-docker - Separate storage into a graph-server sidecar (superseded by Postgres-only) (2026-07-28)
 
 > **Trigger:** Single-container `freepeak/leankg` couples the MCP/REST API
 > process to the embedded RocksDB engine. Operators want independent scaling,
 > backup orchestration, and HA on the storage tier without doubling the API
-> fleet. The CozoDB project ships a standalone `cozoserver` (HTTP, RocksDB
+> fleet. The legacy engine project shipped a standalone graph server (HTTP, RocksDB
 > backend) that exposes the same wire protocol LeanKG already uses.
 
 **Product actions this revision:**
 
 | ID | Priority | Focus | Intent |
 |----|----------|-------|--------|
-| US-ENT-DOCKER-01 / FR-ENT-DOCKER-01 / REL-071 | Must Have | **P2** | New `Dockerfile.cozoserver` builds `freepeak/cozoserver:latest` from upstream `cozo-bin -F storage-rocksdb`; healthcheck probes :3000 |
-| US-ENT-DOCKER-02 / FR-ENT-DOCKER-02 / REL-072 | Must Have | **P2** | New `docker-compose.enterprise.yml` wires `cozoserver` (RocksDB) + `leankg` (MCP/REST) via shared net namespace; `depends_on: service_healthy` |
-| US-ENT-DOCKER-03 / FR-ENT-DOCKER-03 / REL-073 | Must Have | **P2** | `scripts/cozo_health_gate.sh` extracted from `entrypoint.sh`; unit-tested in `tests/enterprise_docker/` (skip / success / timeout / custom interval paths) |
+| US-ENT-DOCKER-01 / FR-ENT-DOCKER-01 / REL-071 | Must Have | **P2** | a legacy sidecar Dockerfile builds the standalone graph-server image from the upstream engine binary; healthcheck probes :3000 (superseded by Postgres-only) |
+| US-ENT-DOCKER-02 / FR-ENT-DOCKER-02 / REL-072 | Must Have | **P2** | New `docker-compose.enterprise.yml` wires a graph-server sidecar (RocksDB) + `leankg` (MCP/REST) via shared net namespace; `depends_on: service_healthy` |
+| US-ENT-DOCKER-03 / FR-ENT-DOCKER-03 / REL-073 | Must Have | **P2** | the legacy health-gate script extracted from `entrypoint.sh`; unit-tested in `tests/enterprise_docker/` (skip / success / timeout / custom interval paths) |
 | US-ENT-DOCKER-04 / FR-ENT-DOCKER-04 | Should Have | **P2** | Live integration test (`test_live.sh`) builds the image, runs CRUD via HTTP, restarts container, verifies RocksDB persistence, verifies netns-joiner can reach the sidecar |
-| US-ENT-DOCKER-05 | Should Have | **P2** | Future: Rust HTTP client in `src/db/` consumes `LEANKG_COZO_ENDPOINT`; infra lands first so compose + ops have something to point at |
+| US-ENT-DOCKER-05 | Should Have | **P2** | Future: Rust HTTP client in `src/db/` consumes the legacy remote-endpoint env var; infra lands first so compose + ops have something to point at |
 
 **Out of scope (this revision):**
 - Rust HTTP client (`src/db/remote.rs`) — deferred; `init_db` keeps the
   embedded path until the HTTP client lands. `entrypoint.sh` already
-  health-gates on `LEANKG_COZO_ENDPOINT`.
-- TiKV-backed cozoserver — `cozo-bin -F storage-tikv` ships later.
+  health-gates on the legacy remote-endpoint env var.
+- TiKV-backed graph server — upstream engine binary with TiKV storage ships later.
 - Auth token plumbing for cross-host binds — shared net namespace avoids
   it for v1.
 
-**Known constraint (documented, not blocked):** cozo-bin v0.7.6 hardcodes
-`TcpListener::bind("127.0.0.1:3000")` in `cozo-bin/src/server.rs`
-regardless of `--bind` / `--port`. `Dockerfile.cozoserver` and the compose
+**Known constraint (documented, not blocked):** the legacy binary v0.7.6 hardcodes
+`TcpListener::bind("127.0.0.1:3000")` in the upstream engine's server source
+regardless of `--bind` / `--port`. The legacy sidecar Dockerfile and the compose
 file pin everything to 3000 with a `ponytail:` comment naming the upgrade
 path (bump to v0.7.7+ or the Leapsight fork).
 
-**New files:** `Dockerfile.cozoserver`, `docker-compose.enterprise.yml`,
-`scripts/cozo_health_gate.sh`, `docs/enterprise-docker.md`,
+**New files:** a legacy sidecar Dockerfile, `docker-compose.enterprise.yml`,
+the legacy health-gate script, `docs/enterprise-docker.md`,
 `tests/enterprise_docker/{test_compose_files.sh,test_health_gate.sh,test_live.sh,run_all.sh}`.
 
-**Modified files:** `Dockerfile.rocksdb` (+`LEANKG_COZO_ENDPOINT` env, +copy
+**Modified files:** `Dockerfile.rocksdb` (+legacy remote-endpoint env var, +copy
 of `scripts/`), `docker-compose.rocksdb.yml` (header note pointing at
-enterprise compose), `entrypoint.sh` (sources `scripts/cozo_health_gate.sh`),
+enterprise compose), `entrypoint.sh` (sources the legacy health-gate script),
 `src/db/schema.rs` (`ponytail:` comment marking the HTTP-client follow-up).
 
 **New content:** §3.27 US-ENT-DOCKER; §5.31 FR-ENT-DOCKER; `docs/enterprise-docker.md`
@@ -194,7 +194,7 @@ deploy + sizing + backup guide.
 | ID | Priority | Focus | Intent |
 |----|----------|-------|--------|
 | US-PRD-KG-01 / FR-PRD-KG-01..03 / REL-070 | Must Have | **P1** | Parse `docs/prd.md` into structured KG entries (FR-*/US-* as `knowledge_entries` with `prd_mapping` type) |
-| US-PRD-KG-02 / FR-PRD-KG-04 | Must Have | **P1** | `feature_workflow_links` CozoDB relation connecting FRs to ontology workflows |
+| US-PRD-KG-02 / FR-PRD-KG-04 | Must Have | **P1** | `feature_workflow_links` Postgres table connecting FRs to ontology workflows |
 | US-PRD-KG-03 / FR-PRD-KG-05 | Must Have | **P1** | `get_feature_flow` MCP tool: FR → linked workflows → ordered steps → code_refs forward chain |
 | US-PRD-KG-04 / FR-PRD-KG-06 | Must Have | **P1** | `get_traceability_matrix` MCP tool: PO-facing FR coverage matrix (workflow count, annotated elements, doc links) |
 | US-PRD-KG-05 / FR-PRD-KG-07 | Must Have | **P1** | `index_prd` MCP tool: idempotent PRD parser with auto-linking to ontology workflows via code_ref matching |
@@ -214,7 +214,7 @@ deploy + sizing + backup guide.
 |----|----------|-------|--------|
 | US-DOCEMBED-01..03 / FR-DOCEMBED-01..04 / REL-065 | Must Have | **P1** | Embed + query `document` / `doc_section`; enrich doc metadata; stale-mark after `mcp_index_docs` |
 | US-EMBED-PERF-01..03 / FR-EMBED-TYPES-01..04 / REL-066 | Must Have | **P1** | CLI `--types perf` preset for mega cold/full runs |
-| US-INDEX-INV-01 / FR-INDEX-INV-01..04 / REL-067 | Must Have | **P1** | Cozo `index_inventory` totals after index/embed; `mcp_status(include_counts=true)` |
+| US-INDEX-INV-01 / FR-INDEX-INV-01..04 / REL-067 | Must Have | **P1** | Postgres `index_inventory` totals after index/embed; `mcp_status(include_counts=true)` |
 | US-TEST-ED-01..02 / FR-TEST-ED-01..04 / REL-068 | Must Have | **P1** | Full unit matrix + live fixture/mega MCP evidence gates |
 
 **Perf type preset:** `function,method,class,interface,file,struct,property,constructor,document,doc_section`
@@ -536,12 +536,12 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 
 > **Task inventory move (same day):** All US/FR/Release status tables and checkboxes were moved to [`prd-task-tracker.md`](prd-task-tracker.md). Sections 3/4/5/8 now reference that file instead of duplicating lists.
 
-> **Code status (synced 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) `feature/vector-engine-gate`):** P0 Vector Engine **DONE** — unit (56), e2e (`tests/vector_engine_e2e.rs`), bench (`cargo bench --bench vector_engine_ab`), CI-sim `cargo test --lib` (651). Measured A/B: token **−65.0%**, tool **−84.6%**, speedup **2.50×** (100 tasks). 1M ANN P95≈**0.055ms** (Neon). Idle RSS: lean-bench absolute ≈**65MB** / warm **delta ≈58MB** (unit/e2e assert `delta_ok` — absolute process RSS is not CI-safe under debug `cargo test --lib`). TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true` / `preferred_ann_backend=local_engine`. Report: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). Cozo remains runtime default until callers honor the gate. Crate **0.19.0**. Awaiting merge to `main`.
+> **Code status (synced 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) `feature/vector-engine-gate`):** P0 Vector Engine **DONE** — unit (56), e2e (`tests/vector_engine_e2e.rs`), bench (`cargo bench --bench vector_engine_ab`), CI-sim `cargo test --lib` (651). Measured A/B: token **−65.0%**, tool **−84.6%**, speedup **2.50×** (100 tasks). 1M ANN P95≈**0.055ms** (Neon). Idle RSS: lean-bench absolute ≈**65MB** / warm **delta ≈58MB** (unit/e2e assert `delta_ok` — absolute process RSS is not CI-safe under debug `cargo test --lib`). TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true` / `preferred_ann_backend=local_engine`. Report: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). The legacy embedded engine remained runtime default until callers honored the gate (superseded by the Phase 8 Postgres cutover). Crate **0.19.0**. Awaiting merge to `main`.
 
 > **Mission reinforcement:** *"Stop Burning Tokens. Start Coding Lean."* Surgical retrieval = Semantic Search (vectors) + Structural Graphs (LSP/KG). Same product surface as FR-HNSW-*; **new storage/runtime engine** for constrained local hardware and cloud scale without rewriting core query logic.
 
 **Strategic decision (relationship to v3.6.2 / v3.6.3):**
-- **Keep** CozoDB `::hnsw` on `embedding_vectors:vec_idx` as the **current shipped canonical ANN** (FR-HNSW-B) until the Local/Cloud vector engine reaches parity and FR-VE-GATE flips default.
+- **Keep** pgvector HNSW on `embedding_vectors` as the **current shipped canonical ANN** (FR-HNSW-B) until the Local/Cloud vector engine reaches parity and FR-VE-GATE flips default.
 - **Adopt** a decoupled **3-tier storage architecture** (graph topology + quantized RAM vectors + flat payload) as the **next-gen LocalEngine / CloudEngine** path — solves query latency, idle RAM, and SSD write amplification under M2 Pro / 16GB / 256GB SSD constraints; scales to Linux x86_64 + TiKV without rewriting retrieval APIs.
 - **Do not** reopen FalkorDB/Redis as cold-embed SLA fixes (v3.6.3 Won't Do still stands). This track is about **query/runtime I/O + memory**, not ONNX cold-write throughput.
 
@@ -569,17 +569,17 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 
 ### v3.6.3-embed-runtime - Cold embed SLA reality + MCP decoupling (2026-07-16)
 
-> **Measured reality (mega-graph cold embed):** end-to-end sustained rate is ~**170 vec/sec** → ~**36 min** for ~371k `function,method` nodes (M2 Pro 10c). Writer-only microbenches on empty RocksDB show Cozo `import_relations` at ~**100k–130k vec/sec** (&lt;1 min for 371k). **Storage commit / WAL is not the cold-SLA bottleneck**; ONNX inference + end-to-end CPU contention is.
+> **Measured reality (mega-graph cold embed):** end-to-end sustained rate is ~**170 vec/sec** → ~**36 min** for ~371k `function,method` nodes (M2 Pro 10c). Writer-only microbenches on empty RocksDB show the legacy `import_relations` bulk path at ~**100k–130k vec/sec** (&lt;1 min for 371k). **Storage commit / WAL is not the cold-SLA bottleneck**; ONNX inference + end-to-end CPU contention is.
 >
-> **2026-08-04 re-measure (8c M-series, Docker):** be fresh embed of **381,493** vectors (378k functions) took **~24 min** — ~**470 vec/sec** inference (≈13 min) + **201s** HNSW rebuild + collect/orphan. 1.4× better than the 170 v/s baseline above, but still volume-bound; be embed stays **accepted at ~24 min** for now. **Enhancement (future):** the vendored-cozo RocksDB bulk-load path (`feat/full-lang-support`, ~1250 v/s) would cut inference to ~5 min → total ~8 min. Not yet on main; do not regress via a new DB.
+> **2026-08-04 re-measure (8c M-series, Docker):** be fresh embed of **381,493** vectors (378k functions) took **~24 min** — ~**470 vec/sec** inference (≈13 min) + **201s** HNSW rebuild + collect/orphan. 1.4× better than the 170 v/s baseline above, but still volume-bound; be embed stays **accepted at ~24 min** for now. **Enhancement (future):** the vendored-engine RocksDB bulk-load path (`feat/full-lang-support`, ~1250 v/s) would cut inference to ~5 min → total ~8 min. Not yet on main; do not regress via a new DB.
 
 **Done (ops / architecture):**
-- MCP boot decoupled from embed: `LEANKG_EMBED_ON_BOOT=0` + in-process `LEANKG_EMBED_BACKGROUND=1` (shared `CozoDb`). MCP healthy ~60s while embed continues. See FR-EMBED-R1.
+- MCP boot decoupled from embed: `LEANKG_EMBED_ON_BOOT=0` + in-process `LEANKG_EMBED_BACKGROUND=1` (shared backend handle). MCP healthy ~60s while embed continues. See FR-EMBED-R1.
 - Parallel embed pipeline + `import_relations` + `DirectEmbedder` (FR-EMBED-R2). ~2× vs earlier `:put` path (~73 min → ~36 min ETA) — still above aspirational &lt;10/&lt;20 min cold.
 
 **Tried and rejected as cold-SLA fixes (evidence in `generated_docs/embed_bg_job_and_runtime_plan_2026-07-15.md`):**
-- Cozo RocksDB WAL-off / `sync(false)` / no-snapshot write txs (`LEANKG_COZO_ROCKS_BULK`) — **≤1.15×** writer-only; no meaningful e2e gain.
-- Redis Stack HNSW as vector side-store (`LEANKG_EMBED_VECTOR_STORE=redis`) — bulk HASH write ~164k/s (similar to Cozo); live HNSW during write ~2.7k/s (**worse**). Does **not** beat Cozo for cold SLA. Keep Cozo HNSW as canonical (FR-HNSW-B). Redis remains experimental only.
+- Legacy-engine WAL-off / `sync(false)` / no-snapshot write tuning — **≤1.15×** writer-only; no meaningful e2e gain.
+- Redis Stack HNSW as vector side-store (`LEANKG_EMBED_VECTOR_STORE=redis`) — bulk HASH write ~164k/s (similar to the legacy engine); live HNSW during write ~2.7k/s (**worse**). Does **not** beat the legacy engine for cold SLA. pgvector HNSW stays canonical (FR-HNSW-B). Redis remains experimental only.
 
 **Product SLA (revised):**
 - **Must:** MCP never blocks on cold embed; semantic tools degrade until HNSW ready; day-2 incremental embed stays fast (FR-HNSW-E).
@@ -587,22 +587,22 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 
 **New FRs:** Section **5.12** additions FR-EMBED-R1..R4.
 
-### v3.6.2-hnsw-semantic - Drop LSH roadmap; expand CozoDB HNSW for semantic search (2026-07-15)
+### v3.6.2-hnsw-semantic - Drop LSH roadmap; expand in-database HNSW for semantic search (2026-07-15)
 
-> **Strategic decision:** LeanKG differentiates on **meaning-based retrieval** (dense embeddings + CozoDB native `::hnsw`), not on copy-paste / near-clone detection (MinHash / LSH). Agents need “what means like this,” not “which bodies are Jaccard-near.”
+> **Strategic decision:** LeanKG differentiates on **meaning-based retrieval** (dense embeddings + in-database native HNSW), not on copy-paste / near-clone detection (MinHash / LSH). Agents need “what means like this,” not “which bodies are Jaccard-near.”
 
 **Cancel / Won’t Do (LSH track):**
-- FR-LSH-A..F and FR-BENCH-A (CBM MinHash parity) — **Won’t Do**. Do not expand MinHash/LSH; do not adopt Cozo `::lsh` for clones either (clone ANN is out of product focus).
+- FR-LSH-A..F and FR-BENCH-A (CBM MinHash parity) — **Won’t Do**. Do not expand MinHash/LSH; do not adopt legacy `::lsh` for clones either (clone ANN is out of product focus).
 - Custom in-process LSH (`src/minhash.rs` + `find_clones --cross-file`) **removed** on `integration/prd-pending` (FR-HNSW-A).
 - Same-file Jaccard `find_clones` MCP + `leankg clones` CLI **hard-removed** (2026-07-20) — non-strategic and unusable on mega-graphs (`max_functions` guard). Prefer `semantic_search` / `concept_search` for discovery.
 - US-CBM-B7 / FR-B30 / FR-B31 remain historically DONE for the light same-file Jaccard tool; product surface no longer exposes it.
 
-**Adopt / Expand (HNSW track) — reuse CozoDB 0.7.x native index (already in tree):**
-- LeanKG already depends on `cozo = "0.7.6"` and already uses `::hnsw create embedding_vectors:vec_idx` (`src/embeddings/state.rs`, `src/retrieval/pipeline.rs`). Pattern to double down on: **LeanKG extracts features → Cozo indexes**.
+**Adopt / Expand (HNSW track) — reuse the legacy 0.7.x in-database index (as of that era):**
+- At that time LeanKG depended on the legacy engine 0.7.6 and used its native HNSW index on `embedding_vectors`. Pattern to double down on: **LeanKG extracts features → the database indexes them**.
 - New FRs: Section **5.12** (HNSW expansion) + Section **5.13** (LSP-only remainder from former CBM adoption track).
 - **Implementation landed on `integration/prd-pending` (2026-07-15):** FR-HNSW-A..F + FR-BENCH-HNSW + US-CBM-C1 / FR-C01 (Docker `--features embeddings` + `entrypoint.sh` `embed_if_needed`; HNSW `semantic_search` dispatch; `LEANKG_HNSW_{M,EF_CONST,EF}` knobs; `tests/hnsw_recall_e2e.rs` synthetic recall@k smoke).
 - **PRD hygiene (2026-07-15):** corrected language / Graphify / MemPalace status rows that overclaimed “DONE” for extractors that exist as modules but are **not hooked into the index walk** (Swift, Vue/Svelte, SQL DDL). Softened “17 languages fully extracted” claims to match `find_files_sync` + `get_language`.
-- Research record: `generated_docs/research_cozo_native_lsh_vs_custom_minhash_2026-07-15.md` (main tree) — Cozo already ships both `::hnsw` and `::lsh`; we choose HNSW only.
+- Research record (generated research doc, dated 2026-07-15) — the legacy engine already shipped both `::hnsw` and `::lsh`; we choose HNSW only.
 
 **CBM deep-compare (v3.6.1) still valid for LSP gaps** (FR-LSP-A..D). MinHash / LSH “wins” from that compare are explicitly **not** adopted.
 
@@ -657,7 +657,7 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 |------|-----|----------------------|------|
 | Role | Core clone product | Historical LeanKG helper (removed) | **Won't adopt** further LSH |
 | Shingle unit | AST leaf trigrams `I/S/N/T` | Whitespace 5-grams | Irrelevant under HNSW strategy |
-| Index home | In-process C | Custom Rust `LshIndex` (also unused Cozo `::lsh`) | Prefer deleting custom LSH; do not wire Cozo `::lsh` |
+| Index home | In-process C | Custom Rust `LshIndex` (also unused legacy `::lsh`) | Prefer deleting custom LSH; do not wire legacy `::lsh` |
 
 **CBM Hybrid LSP (pass over tree-sitter)** — `internal/cbm/lsp/{py,go,ts,java,kotlin,rust,c,cpp,cs,php,perl}_lsp.{c,h}` plus `type_rep.{c,h}`, `scope.{c,h}`, `type_registry.{c,h}`, `py_builtins.c`, `kotlin_builtins.c`, `rust_cargo.c`, `rust_proc_macros.c`, `rust_rustdoc.{c,h}`, `generated/python_stdlib_data.c` (12k lines of pre-baked stdlib metadata):
 
@@ -673,7 +673,7 @@ Second identical run (unchanged code) **must** skip fresh rows and must **not** 
 **LeanKG wins (what CBM does not have):**
 - 85 MCP tools vs CBM's 15
 - Ontology / concept / workflow layer
-- **CozoDB native HNSW embeddings path** (semantic ANN) — primary differentiation going forward (v3.6.2)
+- **In-database native HNSW embeddings path** (semantic ANN; now pgvector) — primary differentiation going forward (v3.6.2)
 - `env` namespacing + incident knowledge + service context + env-conflict detection
 - Android / Kotlin / XML deep features, Graphify-inspired work-memory loop, tunnel detection, consistency checker, portable graph snapshot, npm install
 - Real language-server correctness (when a server is configured)
@@ -781,7 +781,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 
 **P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact. **DONE**.
 
-**Explicit non-goals for company ROI:** PDF/image/video graph ingest; replacing CozoDB with NetworkX; chasing 36 languages before typed resolve depth.
+**Explicit non-goals for company ROI:** PDF/image/video graph ingest; replacing the graph store with NetworkX; chasing 36 languages before typed resolve depth.
 
 ### 1.2 Graph Engineering curriculum (vs Codez 14-step scaffold)
 
@@ -843,7 +843,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 **Explicit non-goals:** chat-persona SoT; OpenClaw/Hermes/Tencent VDB product binding; Mermaid as primary graph store; renaming LeanKG code-context layers.
 
 **Key Metrics (v0.19.0 — codebase `origin/main` 2026-07-17; engine KPIs in Section 9 / 8.4):**
-- **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; Cozo default until callers honor `preferred_ann_backend()`
+- **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; legacy-engine default until callers honored `preferred_ann_backend()` (superseded by Postgres cutover)
 - **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
 - 30+ CLI commands (added `leankg lsp-resolve`, `leankg check-consistency`, `leankg tunnels`, `leankg prs`, `leankg reflect`; `leankg clones` hard-removed 2026-07-20)
 - **Indexed languages (production walk):** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI YAML + common config manifests + **Vue/Svelte (`sfc.rs`) + SQL DDL (`sql.rs`) + Swift (`swift.rs`) + Objective-C (`objc.rs`) (REL-032 wired 2026-08-02)**. Parsers may exist for Ruby/PHP/etc. without index-walk wiring. + Markdown docs
@@ -1063,7 +1063,7 @@ TOON (187 tokens, 40% reduction):
 **Problem:** The original `api_graph_expand_service` handler called `g.all_elements()` and `g.all_relationships()` which loaded ALL 1.5M elements and ALL 1.6M relationships into memory, then filtered in Rust. This took ~19 seconds.
 
 **Solution (DONE):**
-- Added `get_elements_in_folder()` to `GraphEngine` using CozoDB `regex_matches(file_path, $pat)` with bound parameter
+- Added `get_elements_in_folder()` to `GraphEngine` using legacy-style `regex_matches(file_path, $pat)` with bound parameter
 - Handler converts absolute paths to DB format: `/Users/.../be-engagement` → `./platform-transport/be-engagement`
 - Only loads ~7.7k relevant elements instead of 1.5M
 - Response time: ~13s (30% improvement). Remaining time is from loading all 1.6M relationships.
@@ -1127,7 +1127,7 @@ TOON (187 tokens, 40% reduction):
 **LeanKG adaptation:**
 - Agent config in `.leankg/agents/*.json` — focus areas and context filters
 - Each agent gets a filtered view of the graph
-- Agent diary: per-agent CozoDB table storing session notes
+- Agent diary: per-agent database table storing session notes
 - New MCP tools: `agent_focus`, `agent_diary_write`, `agent_diary_read`
 </details>
 
@@ -1200,7 +1200,7 @@ Palace Mapping:
 
 > **Source:** Competitive analysis of [Graphify](https://github.com/Graphify-Labs/graphify) — AI coding-assistant skill that builds a queryable knowledge graph from code (tree-sitter, no LLM) plus optional docs/media. Key differentiators: `path` / `explain` / `query` agent verbs, every edge tagged `EXTRACTED|INFERRED|AMBIGUOUS`, god-node + surprising-connection reports, WHY/ADR rationale nodes, PR community conflict triage, and a work-memory reflect loop. Full matrix: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (2026-07-20) + [`graphify-comparison-2026-07-13.md`](analysis/graphify-comparison-2026-07-13.md).
 >
-> **LeanKG keep / do not regress:** TOON/RTK token compression, requirement↔code traceability, microservice topology, severity-graded impact radius, CozoDB/RocksDB persistence, multi-project HTTP deploy.
+> **LeanKG keep / do not regress:** TOON/RTK token compression, requirement↔code traceability, microservice topology, severity-graded impact radius, PostgreSQL persistence, multi-project HTTP deploy.
 >
 > **Company rule:** Steal Graphify **packaging** (install, report, honest edges, HTML share). Do **not** chase multimodal or NetworkX. Prioritize §1.1 P1 queue for cost.
 
@@ -1357,7 +1357,7 @@ Palace Mapping:
 
 | Dimension | LeanKG | CBM |
 |-----------|--------|-----|
-| Stack | Rust + CozoDB/RocksDB | Pure C + SQLite |
+| Stack | Rust + PostgreSQL/pgvector | Pure C + SQLite |
 | MCP | 85 tools (current), stdio + HTTP/SSE + REST | ~14 tools, stdio |
 | Strength | Ontology, knowledge, env/incidents, Android, Docker+RocksDB, RTK | Speed, 158 langs, Hybrid LSP, clones, CROSS_*, static binary |
 | Call resolve today | `name` / `name_file_hint` / `unresolved` + confidence | Hybrid LSP Tier 1/2/3 |
@@ -1416,7 +1416,7 @@ Palace Mapping:
 - No formal `resources/read` endpoint for `get_overview_context` (tool-only)
 - ~~Vue / Svelte / SQL extractors exist as modules but `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`~~ — **RESOLVED 2026-08-02 (REL-032 / PR-14):** `.vue` / `.svelte` / `.sql` in `find_files_sync`, `extract_elements_for_file`, `index_file_sync`
 
-**Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace Cozo/RocksDB; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path; **custom MinHash/LSH or Cozo `::lsh` clone ANN** (v3.6.2 — semantic HNSW only).
+**Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace the storage engine; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path; **custom MinHash/LSH or legacy `::lsh` clone ANN** (v3.6.2 — semantic HNSW only).
 </details>
 
 ### 3.12 Team Knowledge Infrastructure (US-V2) — merged from `prd-leankg.md` v2
@@ -1456,7 +1456,7 @@ Palace Mapping:
 >
 > **Depends on:** FR-HNSW-* product path (semantic ANN UX). **Does not cancel** FR-HNSW-B until LocalEngine recall/latency gates pass and factory switch is default for Local mode.
 >
-> **P0 gate complete on `feature/vector-engine-gate`:** US-VE-* + FR-VE-* quality gates **DONE**. `evaluate_gate` sets `ready_for_default` under `LEANKG_VE_GATE_FULL=1`. Cozo remains runtime default until callers honor `preferred_ann_backend`.
+> **P0 gate complete on `feature/vector-engine-gate`:** US-VE-* + FR-VE-* quality gates **DONE**. `evaluate_gate` sets `ready_for_default` under `LEANKG_VE_GATE_FULL=1`. The legacy engine remained runtime default until callers honored `preferred_ann_backend` (superseded by the Phase 8 Postgres cutover).
 
 > **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `US-VE-*` / `FR-VE-*`.
 
@@ -1472,7 +1472,7 @@ Palace Mapping:
 
 > **Trigger:** Live Docker MCP probe 2026-07-17 ([`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)). Pipeline (HNSW ANN → cross-encoder rerank → optional graph hop) is **correct**; these stories improve agent-facing honesty, budgets, transport resilience, and release smoke — **not** recall correctness.
 >
-> **Depends on:** FR-HNSW-D / FR-V2-06 / FR-V2-07 (shipped). **Does not** reopen Cozo vs LocalEngine cutover (FR-VE-GATE).
+> **Depends on:** FR-HNSW-D / FR-V2-06 / FR-V2-07 (shipped). **Does not** reopen the legacy-vs-LocalEngine cutover question (FR-VE-GATE).
 >
 > **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SEM-*` / `FR-SEM-*` / `REL-051` / `REL-054`. **P0 open:** `US-SEM-06` / `FR-SEM-07` / `REL-054`.
 
@@ -1818,18 +1818,18 @@ Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker 
 
 
 
-### 5.12 Semantic ANN — CozoDB HNSW expansion (v3.6.2) + embed runtime (v3.6.3)
+### 5.12 Semantic ANN — in-database HNSW expansion (v3.6.2) + embed runtime (v3.6.3)
 
 > **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-HNSW-*`, `FR-EMBED-*`, `FR-LSH-*`, `FR-BENCH-HNSW`.
 
-> **Product bet:** LeanKG's strong path is **semantic search** via dense embeddings + CozoDB native `::hnsw`. Do **not** reimplement MinHash/LSH in-process, and do **not** wire Cozo `::lsh` for clones. Pattern already proven by embeddings: LeanKG builds text blobs → Cozo stores vectors + HNSW index.
+> **Product bet:** LeanKG's strong path is **semantic search** via dense embeddings + in-database native HNSW. Do **not** reimplement MinHash/LSH in-process, and do **not** wire legacy `::lsh` for clones. Pattern already proven by embeddings: LeanKG builds text blobs → the database stores vectors + HNSW index.
 >
-> **Cold-embed reality (v3.6.3):** on mega-graphs, wall time is dominated by **ONNX embedding inference** (~170 vec/sec e2e → ~36 min for ~371k functions). Cozo/Redis writer-only paths are ~100k+ vec/sec. Do **not** treat storage migration (WAL-off, Redis, FalkorDB) as the primary cold-SLA lever.
+> **Cold-embed reality (v3.6.3):** on mega-graphs, wall time is dominated by **ONNX embedding inference** (~170 vec/sec e2e → ~36 min for ~371k functions). Legacy-engine/Redis writer-only paths are ~100k+ vec/sec. Do **not** treat storage migration (WAL-off, Redis, FalkorDB) as the primary cold-SLA lever.
 
 **Policy (details + status in tracker):**
-- Remove custom MinHash/LSH; keep Cozo `::hnsw` as shipped default until FR-VE-GATE
+- Remove custom MinHash/LSH; keep in-database HNSW as shipped default until FR-VE-GATE
 - MCP must not block on cold embed; **day-2 incremental / resume is P0** (FR-EMBED-RESUME-* closes gaps vs FR-HNSW-E PARTIAL)
-- **Won't Do:** Cozo `::lsh` for clones; migrate KG to FalkorDB/Redis to fix cold embed
+- **Won't Do:** legacy `::lsh` for clones; migrate KG to FalkorDB/Redis to fix cold embed
 
 ### 5.13 LSP Adoption Track from CBM (moved from former 5.12; deep compare 2026-07-15)
 
@@ -1861,7 +1861,7 @@ Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker 
 
 > **Goal:** Ultra-lightweight vector/graph storage + retrieval that works under Apple M2 Pro / 16GB / 256GB SSD and scales to Linux x86_64 + TiKV **without rewriting** MCP/CLI semantic APIs.
 >
-> **Coexistence:** FR-VE-GATE is **met** on PR #80 when `LEANKG_VE_GATE_FULL=1` (`ready_for_default=true`). Runtime **shipped default ANN** remains Cozo `::hnsw` (FR-HNSW-B) until callers honor `preferred_ann_backend()`. LocalEngine / CloudEngine stay opt-in via `LEANKG_VECTOR_ENGINE=local|cloud`.
+> **Coexistence:** FR-VE-GATE is **met** on PR #80 when `LEANKG_VE_GATE_FULL=1` (`ready_for_default=true`). Runtime **shipped default ANN** was in-database HNSW (FR-HNSW-B) until the Phase 8 Postgres cutover made pgvector the default. LocalEngine / CloudEngine stay opt-in via `LEANKG_VECTOR_ENGINE=local|cloud`.
 >
 > **Verification (2026-07-17 — PR #80):**
 > - Unit: `cargo test --release --lib -- vector_engine` → **56 passed** (3 ignored full-scale)
@@ -1933,13 +1933,13 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-SEM-07 | Must Have (**P0**) | **Mega-safe HNSW semantic path:** `semantic_search` / `kg_semantic_context` (and any helper they call for seed hydration) must **not** invoke unbounded `all_elements()` or load the full element set into RAM on graphs above `LEANKG_MAX_CACHE_ELEMENTS`. Hydrate ANN hit QNs via keyed/paginated DB reads only. Peak RSS must fit documented MCP `mem_limit` (compose default 6g; effective cgroup may be lower) without OOM/restart. Small-graph HNSW path must not regress. |
 | REL-051 | Should Have | Release note: live semantic smoke executed (or waived with reason) alongside embeddings cargo suite — **DONE** 2026-07-18 |
 | REL-054 | Must Have (**P0**) | Live mega smoke gate: on `/workspace-other` (or equivalent), `semantic_search` + `kg_semantic_context` succeed without OOM/HTTP drop; record peak RSS + latency in a `docs/reports/` note. Complements REL-051 (small-graph) |
-| FR-ONT-MEGA-01 | Must Have (**P0**) | **Mega-safe `concept_search`:** resolve `code_refs` via keyed/path-prefixed Cozo queries with `:limit`; name fallback via `search_by_name_typed`. Ban `load_indexed_code_elements` on the hot path. |
+| FR-ONT-MEGA-01 | Must Have (**P0**) | **Mega-safe `concept_search`:** resolve `code_refs` via keyed/path-prefixed indexed queries with LIMIT; name fallback via `search_by_name_typed`. Ban `load_indexed_code_elements` on the hot path. |
 | FR-GF-MEGA-01 | Must Have (**P0**) | **Mega-safe `query_graph` / `shortest_path`:** keyed `resolve_to_qualified` (no `all_elements`); BFS via frontier-local relationship fetch (no `all_relationships`). |
 | FR-CL-MEGA-01 | Must Have (**P1**) | **Mega `get_clusters` serve:** when live Louvain is refused, return clusters from precomputed `cluster_id`/`cluster_label`; else structured empty + offline-assign hint. |
 | REL-055 | Must Have (**P0**) | Live mega smoke: `concept_search` + `query_graph` + `get_clusters` on `/workspace-other` without OOM/timeout; no `all_elements`/`all_relationships` WARN on those paths. |
 
 **Won't Do (this track):**
-- Replacing Cozo HNSW default before FR-VE-GATE callers honor LocalEngine
+- Replacing the shipped HNSW default before FR-VE-GATE callers honor LocalEngine
 - Treating transient HTTP flakes as ANN / ontology product failures
 - Dropping truncation entirely (mission is still lean tokens)
 - Raising OrbStack/host VM RAM alone as the “fix” for `all_elements()` on mega HNSW (ops headroom helps; code must still stop full-graph dumps)
@@ -2041,7 +2041,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | US-UI2-03 | Must Have | As a developer, I select a **content-bearing** node (File/Function/Method/Class/…) and see syntax-highlighted source via `/api/file`; Service/Folder/Directory selection does **not** call `/api/file` |
 | US-UI2-04 | Must Have | As a developer, I search via `/api/search` and run raw queries via QueryFAB `/api/query` |
 | US-UI2-05 | Must Have | As a developer on a mega-graph, the UI skips full canvas load and offers “Load graph anyway” |
-| US-UI2-06 | Must Have | As a developer, Query FAB default mode runs NL `query_graph`; Advanced mode keeps raw Cozo |
+| US-UI2-06 | Must Have | As a developer, Query FAB default mode runs NL `query_graph`; Advanced mode keeps raw graph query |
 | US-UI2-07 | Must Have | As a company, ui-v2 is the default explorer embedded in `leankg serve` / Docker (cutover from Phase-1-only `ui-v2/`) |
 | US-UI2-08 | Should Have | As a developer, I filter communities via a cluster legend (Graphify sidebar parity) |
 | US-UI2-09 | Should Have | As an ops engineer, incidents / env / conflicts panels from legacy `ui/` are available in ui-v2 |
@@ -2127,7 +2127,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-UI2-13 | Must Have | Expand-service `?limit=`/`?offset=` + correct `hasMore`; UI default page 500; **Load more (+200)** **merges** by node/edge id into current `kg`; pagination cursor advances by requested limit |
 | FR-UI2-14 | Must Have | Explore sidebar hierarchical Folders & files (`buildExplorerTree`); include Directory/Folder; synthesize parents from paths; prefer `src` over demos; folder double-click → `drillIntoPath` |
 | REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
-| FR-UI2-08 | Must Have | Query FAB dual-mode: NL → `query_graph` / orchestrate; Advanced → raw Cozo `POST /api/query` |
+| FR-UI2-08 | Must Have | Query FAB dual-mode: NL → `query_graph` / orchestrate; Advanced → raw graph query via `POST /api/query` |
 | FR-UI2-09 | Must Have | Build ui-v2 into `src/embed/` (or equivalent); `leankg serve` + Docker Option A serve ui-v2 by default |
 | FR-UI2-10 | Should Have | Cluster legend + show/hide filters wired to `/api/graph/clusters` |
 | FR-UI2-11 | Should Have | Port incidents / env / conflicts panels from legacy `ui/` into ui-v2 |
@@ -2260,7 +2260,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-UI2-13 | Must Have | Expand-service `?limit=`/`?offset=` + correct `hasMore`; UI default page 500; **Load more (+200)** **merges** by node/edge id into current `kg`; pagination cursor advances by requested limit |
 | FR-UI2-14 | Must Have | Explore sidebar hierarchical Folders & files (`buildExplorerTree`); include Directory/Folder; synthesize parents from paths; prefer `src` over demos; folder double-click → `drillIntoPath` |
 | REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
-| FR-UI2-08 | Must Have | Query FAB dual-mode: NL → `query_graph` / orchestrate; Advanced → raw Cozo `POST /api/query` |
+| FR-UI2-08 | Must Have | Query FAB dual-mode: NL → `query_graph` / orchestrate; Advanced → raw graph query via `POST /api/query` |
 | FR-UI2-09 | Must Have | Build ui-v2 into `src/embed/` (or equivalent); `leankg serve` + Docker Option A serve ui-v2 by default |
 | FR-UI2-10 | Should Have | Cluster legend + show/hide filters wired to `/api/graph/clusters` |
 | FR-UI2-11 | Should Have | Port incidents / env / conflicts panels from legacy `ui/` into ui-v2 |
@@ -2396,7 +2396,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 
 | ID | Priority | Story |
 |----|----------|-------|
-| US-INDEX-INV-01 | Must Have (**P1**) | As ops, I see element/rel/vector totals persisted in Cozo `index_inventory` after index/embed |
+| US-INDEX-INV-01 | Must Have (**P1**) | As ops, I see element/rel/vector totals persisted in the `index_inventory` table after index/embed |
 
 **Verified by:** unit inventory tests / REL-067 mega probes.
 
@@ -2427,34 +2427,34 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 
 ### 3.27 Enterprise Docker separation (US-ENT-DOCKER) — v3.8.1 **P2**
 
-> **Why now:** Operators want independent scaling, backup orchestration, and HA on the storage tier without doubling the API fleet. CozoDB ships a standalone `cozoserver` (HTTP, RocksDB backend) with the same wire protocol LeanKG already uses, so the separation costs zero impedance.
+> **Why now:** Historical motivation: operators wanted independent scaling, backup orchestration, and HA on the storage tier without doubling the API fleet. The legacy embedded engine shipped a standalone HTTP graph server (RocksDB backend) speaking the same wire protocol, so separation cost zero impedance. Superseded by managed PostgreSQL.
 
 | ID | Priority | Story |
 |----|----------|-------|
-| US-ENT-DOCKER-01 | Must Have (**P2**) | As ops, I build a `cozoserver` image from `Dockerfile.cozoserver` and run RocksDB-backed CozoDB on a separate container; healthcheck confirms `/` returns HTTP 200 |
-| US-ENT-DOCKER-02 | Must Have (**P2**) | As ops, I bring up `docker-compose.enterprise.yml` and get a healthy `cozoserver` + `leankg` stack; `leankg` waits for `cozoserver` health before starting MCP |
-| US-ENT-DOCKER-03 | Must Have (**P2**) | As a developer, I can extract `scripts/cozo_health_gate.sh` from `entrypoint.sh` and unit-test it in isolation (skip / success / timeout / custom interval) |
+| US-ENT-DOCKER-01 | Must Have (**P2**) | As ops, I build a graph-server image from the legacy sidecar Dockerfile and run the engine on a separate container; healthcheck confirms `/` returns HTTP 200 |
+| US-ENT-DOCKER-02 | Must Have (**P2**) | As ops, I bring up `docker-compose.enterprise.yml` and get a healthy graph-server + leankg stack; leankg waits for sidecar health before starting MCP |
+| US-ENT-DOCKER-03 | Must Have (**P2**) | As a developer, I can extract the health-gate script from `entrypoint.sh` and unit-test it in isolation (skip / success / timeout / custom interval) |
 | US-ENT-DOCKER-04 | Must Have (**P2**) | As ops, I have a live integration script (`tests/enterprise_docker/test_live.sh`) that builds the image, exercises CRUD via `/text-query`, restarts the container, and verifies RocksDB data survives |
-| US-ENT-DOCKER-05 | Should Have (**P2**) | As a future developer, I add a Rust HTTP client (`src/db/remote.rs`) that consumes `LEANKG_COZO_ENDPOINT` so the two containers actually exchange data without a fork |
+| US-ENT-DOCKER-05 | Should Have (**P2**) | As a future developer, I add a Rust HTTP client (`src/db/remote.rs`) that consumes the legacy remote-endpoint env var so the two containers actually exchange data without a fork |
 
 
 ### 5.31 Enterprise Docker separation (FR-ENT-DOCKER) — v3.8.1 **P2**
 
 | ID | Priority | Requirement |
 |----|----------|-------------|
-| FR-ENT-DOCKER-01 | Must Have | `Dockerfile.cozoserver` builds `freepeak/cozoserver:latest` from `cozo-bin -F storage-rocksdb`; runtime image based on `debian:bookworm-slim` with `libsqlite3-0` + `libc++1` for the dynamic deps |
-| FR-ENT-DOCKER-02 | Must Have | `Dockerfile.cozoserver` pins listener + healthcheck to `127.0.0.1:3000` (cozo-bin v0.7.6 hardcoded bind); upgrade path documented in `ponytail:` comment |
-| FR-ENT-DOCKER-03 | Must Have | `docker-compose.enterprise.yml` wires `cozoserver` (RocksDB) + `leankg` (MCP/REST) via `network_mode: service:cozoserver` so the joiner reaches cozoserver on `127.0.0.1:3000` without auth; cozoserver owns the public port publishing (9699/8080) |
-| FR-ENT-DOCKER-04 | Must Have | `depends_on: cozoserver: condition: service_healthy` ensures leankg never starts before cozoserver passes healthcheck |
-| FR-ENT-DOCKER-05 | Must Have | `scripts/cozo_health_gate.sh` is extracted from `entrypoint.sh`, sourced at boot, and unit-tested (5 assertions: skip / 200 / timeout / custom interval / budget respected) |
-| FR-ENT-DOCKER-06 | Must Have | `LEANKG_COZO_ENDPOINT` env var is read by the gate; when unset, the gate returns immediately with rc=0 (backward-compat for single-container mode) |
+| FR-ENT-DOCKER-01 | Must Have | The legacy sidecar Dockerfile builds the standalone graph-server image from the upstream engine binary (RocksDB mode); runtime image based on `debian:bookworm-slim` with `libsqlite3-0` + `libc++1` for the dynamic deps |
+| FR-ENT-DOCKER-02 | Must Have | The legacy sidecar Dockerfile pins listener + healthcheck to `127.0.0.1:3000` (upstream v0.7.6 hardcoded bind); upgrade path documented in `ponytail:` comment |
+| FR-ENT-DOCKER-03 | Must Have | `docker-compose.enterprise.yml` wires the graph-server sidecar (RocksDB) + `leankg` (MCP/REST) via a shared network namespace so the joiner reaches the sidecar on `127.0.0.1:3000` without auth; the sidecar owns the public port publishing (9699/8080) |
+| FR-ENT-DOCKER-04 | Must Have | `depends_on: <sidecar>: condition: service_healthy` ensures leankg never starts before the sidecar passes healthcheck |
+| FR-ENT-DOCKER-05 | Must Have | The health-gate script is extracted from `entrypoint.sh`, sourced at boot, and unit-tested (5 assertions: skip / 200 / timeout / custom interval / budget respected) |
+| FR-ENT-DOCKER-06 | Must Have | The legacy remote-endpoint env var is read by the gate; when unset, the gate returns immediately with rc=0 (backward-compat for single-container mode) |
 | FR-ENT-DOCKER-07 | Must Have | Live integration test (`test_live.sh`) proves: image builds, container runs, HTTP 200 from `/`, `:create` + `:put` + read round-trip succeeds, data survives container restart, sidecar netns pattern works |
 | FR-ENT-DOCKER-08 | Must Have | Compose-file validator (`test_compose_files.sh`) parses both `docker-compose.enterprise.yml` and `docker-compose.rocksdb.yml` and asserts 16 invariants (services present, env wired, ports ownership, network mode, backward-compat) |
-| FR-ENT-DOCKER-09 | Should Have | `Dockerfile.rocksdb` exposes `LEANKG_COZO_ENDPOINT=` (empty default) so enterprise deployments can set it via `.dockerfile` or compose env without rebuilding the image |
+| FR-ENT-DOCKER-09 | Should Have | `Dockerfile.rocksdb` exposes the legacy remote-endpoint variable (empty default) so enterprise deployments can set it via `.dockerfile` or compose env without rebuilding the image |
 | FR-ENT-DOCKER-10 | Should Have | `docker-compose.rocksdb.yml` (single-container) gains a header comment pointing at `docker-compose.enterprise.yml` and `docs/enterprise-docker.md` |
-| REL-071 | Must Have | Live evidence: `freepeak/cozoserver:latest` image exists; `docker compose -f docker-compose.enterprise.yml up -d cozoserver` reports healthy |
+| REL-071 | Must Have | Live evidence: the standalone graph-server image exists; enterprise compose brings the sidecar up healthy |
 | REL-072 | Must Have | Live evidence: HTTP `POST /text-query` returns `{"ok": true, "rows": [...]}` for `:create`, `:put`, and `*persist_test[name, value]` |
-| REL-073 | Must Have | Live evidence: after `docker rm -f cozoserver && docker run ... -v leankg-live-cozo-data:/data/cozo`, the same query still returns the same rows (RocksDB persistence) |
+| REL-073 | Must Have | Live evidence: after recreating the sidecar container with its data volume, the same query still returns the same rows (persistent storage) |
 | REL-074 | Must Have | Unit + compose + live test runner (`tests/enterprise_docker/run_all.sh`) reports `Test files: PASS=N FAIL=0` |
 
 
@@ -2484,7 +2484,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 
 **Acceptance (US-SM-03..04):** Tracker PENDING until shipped; provenance fields present on new writes; RRF search returns merged ranked hits with score threshold + budgets.
 
-**Won't Do:** Chat-persona SoT; OpenClaw/Hermes product binding; renaming LeanKG code-context L0–L3; Mermaid as primary Cozo graph store.
+**Won't Do:** Chat-persona SoT; OpenClaw/Hermes product binding; renaming LeanKG code-context L0–L3; Mermaid as primary graph store.
 
 
 ### 3.29 RocksDB LOCK poison — embed auto-arm blocks all DB tools — v3.8.4 **P0**
@@ -2513,7 +2513,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 > **Trigger:** 2026-08-02 live validation of all 88 MCP tools against the `/workspace-be` mega-graph (662,378 elements / 2,259,855 relationships) — empty treated as failure. 44 / 88 failed. Four root causes, code-traced and live-DB-verified:
 > - **D1 file-arg routing shadows `project`** — `execute_tool` picks the DB by `file → path → project` priority (`src/mcp/server.rs:2640-2662`); relative `file`/`path` args resolve via `find_leankg_for_path` from container cwd `/workspace` → wrong project DB. `project=/workspace-be` is ignored for file/path tools.
 > - **D2 RocksDB double-open lock** — no single-handle-per-DB invariant (`src/db/schema.rs:193-204` is a debug-only assert); the ontology YAML watcher holds the `/workspace` `GraphEngine` for the process lifetime (`src/ontology/watcher.rs:50`), and the cache-clear on write (`src/mcp/server.rs:2734-2737`) makes the next request re-open the same path → `lock hold by current process`.
-> - **D3 blocking-sync stall** — synchronous `cozo::Db::run_script` on Tokio async workers with no `spawn_blocking` and no `tokio::time::timeout` in the MCP path (`src/mcp/server.rs:2979`, `src/db/schema.rs:25`). Heavy full-scans starve all `num_cpus` workers → `/health` stalls → container `(unhealthy)`.
+> - **D3 blocking-sync stall** — synchronous DB script execution on Tokio async workers (legacy engine era) with no `spawn_blocking` and no `tokio::time::timeout` in the MCP path (`src/mcp/server.rs:2979`, `src/db/schema.rs:25`). Heavy full-scans starve all `num_cpus` workers → `/health` stalls → container `(unhealthy)`.
 > - **D4 mega-guard opt-in** — `refuse_full_scan_if_mega` (`src/ontology/safe_discover.rs:68`) is wired into only 7 of ~90 tools; 15 unguarded tools full-scan; the guard's `count_elements()` is itself a full COUNT (`src/graph/query.rs:3483`); `get_cluster_skill` runs live Louvain on 662k nodes; ontology write tools not in `WRITE_TOOLS`.
 > - **Data-absence (tool correct, ~8)** — `/workspace-be` is code-only: no PRD, incidents, service metadata, clusters, or docs.
 
@@ -2561,7 +2561,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-SM-12 | Could Have | Retention days + reclaim for session refs / low-heat memories; pinned and high-heat exempt; min retention ≥3 days when enabled |
 | REL-075 | Must Have | Analysis deepened + PRD §1.3/§3.28/§5.32 + tracker `US-SM-*`/`FR-SM-*` rows landed; smoke report when US-SM-01/02 implement |
 
-**Won't Do:** Tencent VDB / OpenClaw plugin packaging; irreversible summarization without drill-down IDs; second parallel memory DB beside Cozo + `.leankg/` files.
+**Won't Do:** Tencent VDB / OpenClaw plugin packaging; irreversible summarization without drill-down IDs; second parallel memory DB beside the graph store + `.leankg/` files.
 
 
 ### 5.33 RocksDB LOCK poison — embed auto-arm blocks all DB tools (FR-P0-EMBED-LOCK) — v3.8.4 **P0**
@@ -2654,7 +2654,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 
 | ID | Priority | Requirement |
 |----|----------|-------------|
-| FR-INDEX-INV-01 | Must Have | Cozo relation `index_inventory` key=`latest` with element/rel/vector totals + estimated bytes |
+| FR-INDEX-INV-01 | Must Have | Postgres table `index_inventory` key=`latest` with element/rel/vector totals + estimated bytes |
 | FR-INDEX-INV-02 | Must Have | Refresh after code index, doc index, and embed |
 | FR-INDEX-INV-03 | Must Have | `mcp_status(include_counts=true)` includes `inventory` |
 | FR-INDEX-INV-04 | Must Have | CLI `status` prints inventory when present |
@@ -2712,7 +2712,7 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | Component | Technology | Version |
 |-----------|------------|---------|
 | Core Language | Rust | 1.70+ (edition 2021) |
-| Database | CozoDB (SQLite / RocksDB) + native `::hnsw` | 0.7.6 |
+| Database | PostgreSQL + pgvector (HNSW ANN) | current |
 | Code Parsing | tree-sitter | 0.25 |
 | MCP Server | rmcp (Rust MCP library) | 1.2 |
 | CLI Framework | Clap | 4 |
@@ -2810,7 +2810,7 @@ src/
 ├── lib.rs               # Library exports (registers modules below)
 ├── cli/                 # Clap command enum + ShellRunner
 ├── config/              # ProjectConfig, IndexerConfig (typed_resolve flag), DocConfig, McpConfig
-├── db/                  # CozoDB models, schema, operations, API key store, valid_from/valid_to fields
+├── db/                  # Postgres models, schema, operations, API key store, valid_from/valid_to fields
 ├── doc/                 # DocGenerator, template rendering, wiki generation
 ├── doc_indexer/         # Documentation indexing (docs/ → documented_by edges)
 ├── graph/               # GraphEngine, queries, context, traversal, clustering, cache (incl. hot-path cache), export (HTML/SVG/GraphML/Neo4j/snapshot), clones, tunnels
@@ -2825,7 +2825,7 @@ src/
 ├── hooks/               # Git hooks (pre-commit, post-commit, post-checkout, GitWatcher)
 ├── benchmark/           # Benchmark runner (LeanKG vs OpenCode/Gemini/Kilo)
 ├── ontology/            # Concept + procedural ontology (concepts.yaml, workflows.yaml) — kg_* tools
-├── embeddings/          # Semantic embeddings → CozoDB `embedding_vectors` + `::hnsw` (feature-gated; product focus)
+├── embeddings/          # Semantic embeddings → Postgres `embedding_vectors` + pgvector HNSW (feature-gated; product focus)
 ├── retrieval/           # embed → HNSW ANN → rerank → graph traverse
 ├── embed.rs             # Legacy/compat embedding wrappers (prefer `embeddings/`)
 ├── budget.rs            # Per-tool token / RSS / wall-clock budget enforcement
@@ -2840,7 +2840,7 @@ src/
 ```
 +-----------------------------------------------------+
 |                   LeanKG Backend                    |
-|            (Axum + CozoDB / RocksDB)                |
+|            (Axum + PostgreSQL / pgvector)                |
 |                                                     |
 |  +--------------+  +--------------+  +----------+  |
 |  |  production  |  |   staging    |  |  local   |  |
@@ -2848,7 +2848,7 @@ src/
 |  +--------------+  +--------------+  +----------+  |
 |                                                     |
 |  +-----------------------------------------------+  |
-|  |  CozoDB (Datalog) + HNSW embeddings (semantic ANN focus)  |  |
+|  |  PostgreSQL + pgvector HNSW embeddings (semantic ANN focus)  |  |
 |  +-----------------------------------------------+  |
 +-----------------------------------------------------+
          ^                    ^                ^
@@ -2879,7 +2879,7 @@ src/
 
 ### 6.6 HLD — Key Data Flows
 
-**Incident contribution:** CLI/API → validate Incident → CozoDB → available to MCP queries.
+**Incident contribution:** CLI/API → validate Incident → Postgres → available to MCP queries.
 
 **Env conflicts:** fetch service across envs → compare schema/config/endpoints/deploy → risk HIGH/MEDIUM/LOW.
 
@@ -2910,13 +2910,13 @@ src/
 | Schema migration breaks v1 data | High | Default `env=local` for existing rows |
 | Token budgets too tight | Medium | Configurable budgets + TOON |
 | Scale to large multi-service graphs | High | RocksDB, caches, pagination |
-| Concurrent writes | Medium | Cozo transactions |
+| Concurrent writes | Medium | Postgres transactions + advisory lock |
 | Unbounded DB growth | Medium | Hourly vacuum |
 | Ontology arity drift → MCP -32603 | High | `kg_self_test` startup WARN |
 | LocalEngine dual-write crash leaves dangling offsets | High | Append → fsync → Rocks commit → RAM; recovery skips incomplete (FR-VE-FS-*) |
 | SIMD path SIGILL on older CPUs | High | Runtime feature detect + scalar fallback (FR-VE-RT-SIMD) |
 | 2GB cgroup OOM during ANN warm | High | Auto-tune block cache + SQ8-only hot path (FR-VE-RT-MEM / BENCH-OOM) |
-| Premature Cozo→LocalEngine default switch | Medium | Hard FR-VE-GATE before changing FR-HNSW-B default |
+| Premature engine default switch | Medium | Hard FR-VE-GATE before changing FR-HNSW-B default |
 
 ### 6.10 HLD — Optimized Local-First Vector Graph Engine (v3.7.0)
 
@@ -2957,7 +2957,7 @@ GC: shadow page + delta sync when fragmentation > 30% (readers unblocked)
 
 **Dynamic adaptation:** cgroups/`sysinfo` → RocksDB block cache; runtime CPU feature detect → SIMD lane; Local leaves 2 cores free.
 
-**Migration:** Cozo `embedding_vectors:vec_idx` remains default until FR-VE-GATE; optional dual-run / shadow compare for recall before cutover.
+**Migration:** pgvector HNSW is the default ANN since the Postgres cutover; optional dual-run / shadow compare for recall preceded it.
 
 ---
 
@@ -3215,12 +3215,12 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 3. **Multi-user collaborative editing of the graph** - Single writer per project DB; shared read via HTTP MCP is OK
 4. **Plugin system** - Future consideration
 5. **Raw Datalog query passthrough** - Security risk (except controlled `run_raw_query`)
-6. **Replacing CozoDB/RocksDB with NetworkX-only primary store** - Snapshot/HTML export is additive
+6. **Replacing the graph store with NetworkX-only primary store** - Snapshot/HTML export is additive
 7. **Full 158-language / Pure-C rewrite (CBM chase)** - Selective languages only
 8. **Split PRD/HLD documents** - This file is the only SoT for narrative/HLD; do not recreate `docs/requirement/prd-*.md` or `docs/design/hld-leankg.md`. Task lists/status live only in [`prd-task-tracker.md`](prd-task-tracker.md)
 9. **Status tables / FR checkboxes inside this PRD** - Forbidden; use the tracker
 10. **Redis/FalkorDB as cold-embed write accelerator** - Rejected v3.6.3; not revived by v3.7 vector engine
-11. **Default cutover from Cozo HNSW before FR-VE-GATE** - Explicitly forbidden
+11. **Default cutover away from the gated HNSW default before FR-VE-GATE** - Explicitly forbidden
 12. **Replace Sigma live UI with vis.js-only static HTML** - Steal HTML *export*; keep live explorer
 13. **36–40 language grammar race to match Graphify** - Wire tested extractors only; prefer typed resolve depth
 14. **LLM auto-extraction of procedural workflows from arbitrary code (P0)** - YAML remains SoT for v3.7.9; auto-update means watch/sync/index-hook of authored ontology, not Graphiti-style LLM invent
@@ -3257,7 +3257,7 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 | SQ8 / INT8 quantization | Down-casted vectors kept fully in RAM for SIMD ANN |
 | Flat Payload File | Tier-3 append-only binary storing FP32 + source for post-filter |
 | Dual-Write | Append → fsync → commit offsets → update RAM (crash-safe order) |
-| FR-VE-GATE | Quality gate required before replacing Cozo HNSW as Local default |
+| FR-VE-GATE | Quality gate required before replacing the shipped HNSW default |
 | Token honesty | Delivered `tokens` vs `_token_budget.actual` when payloads are truncated |
 | Live MCP semantic smoke | Docker HTTP probe of `semantic_search` / `concept_search` / `kg_*` — complements, does not replace, cargo embeddings tests |
 
@@ -3265,7 +3265,8 @@ All MCP tool responses use TOON (Token-Oriented Object Notation) format by defau
 
 ## 12. References
 
-- CozoDB: https://github.com/cozodb/cozo
+- PostgreSQL: https://www.postgresql.org/docs/
+- pgvector: https://github.com/pgvector/pgvector
 - tree-sitter: https://tree-sitter.github.io/tree-sitter/
 - MCP Protocol: https://modelcontextprotocol.io/
 - rmcp: https://crates.io/crates/rmcp

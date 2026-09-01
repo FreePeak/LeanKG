@@ -1,4 +1,4 @@
-//! Pure-inference microbench (no CozoDB): measure DirectEmbedder vec/sec.
+//! Pure-inference microbench (no database): measure DirectEmbedder vec/sec.
 //!
 //! Usage:
 //!   cargo run --release --features embeddings --example bench_embed_infer

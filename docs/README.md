@@ -18,7 +18,7 @@ Lightweight, local-first knowledge graph for AI-assisted development.
 
 ## Quick Links
 
-- **Tech Stack**: Rust + CozoDB (SQLite / RocksDB) + tree-sitter
+- **Tech Stack**: Rust + PostgreSQL + pgvector + tree-sitter
 - **Features**: Code indexing, impact radius, ontology, MCP server, team env/incidents
 - **Target**: AI coding tools (Cursor, OpenCode, Claude Code, Gemini, …)
 - **PRD/HLD**: Edit only [`docs/prd.md`](./prd.md) — do not recreate split PRDs under `docs/requirement/` or `docs/design/hld-leankg.md`

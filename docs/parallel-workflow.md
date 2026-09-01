@@ -64,7 +64,7 @@ cat > TODO.md <<'EOF'
 - [ ] Implement MCP tool: get_traceability
 - [ ] Add tests for graph/query.rs
 - [ ] Update documentation for indexer
-- [ ] Fix CozoDB connection pooling
+- [ ] Fix database connection pooling
 - [ ] Add performance benchmarks
 EOF
 ```

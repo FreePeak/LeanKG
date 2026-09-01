@@ -6,7 +6,7 @@ As a project focused on **Lightweight Knowledge Graphs for AI**, we value contri
 
 ## 🛠 Tech Stack
 - **Language:** Rust (Latest Stable)
-- **Database:** CozoDB (Graph engine)
+- **Database:** PostgreSQL + pgvector (graph store + ANN)
 - **Parsers:** tree-sitter (for Go, Rust, TS, Python, etc.)
 - **Protocol:** Model Context Protocol (MCP)
 

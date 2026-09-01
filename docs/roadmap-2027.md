@@ -39,7 +39,7 @@
 
 ### Q3 2026 — "Solid Foundation" (engineering credibility)
 **Theme:** finish the Postgres era cleanly; make the project trustworthy to adopt.
-- **E1. Complete CozoDB/Datalog removal** (waves per `plan-remove-cozo-datalog-sql-migration.md`): SQL-first seam → convert 238 run_script sites → delete translate.rs (4.3k), fake.rs (1.4k), mutability.rs. Exit criteria: zero Datalog strings in src/, parity harness green, `run_raw_query` deprecated→removed or NL-only.
+- **E1. Complete legacy-engine/Datalog removal** (waves per the Datalog-removal SQL migration plan, see roadmap-tracker companion docs): SQL-first seam → convert 238 run_script sites → delete translate.rs (4.3k), fake.rs (1.4k), mutability.rs. Exit criteria: zero Datalog strings in src/, parity harness green, `run_raw_query` deprecated→removed or NL-only.
 - **E2. Tool-surface discipline:** fix red matrix test; consolidation round 76→~70; publish stable-tool API contract (semver for tool names/schemas); auto-sync npm wrapper with crate version.
 - **E3. Known-finding fixes:** qualified_name UNIQUE dedup strategy; `leankg index` EEXIST re-index bug.
 - **E4. CI hardening:** promote PG integration suite into CI (Postgres service already configured); flake quarantine process.

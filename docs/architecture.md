@@ -18,7 +18,7 @@ graph TB
                 Extractor["Extractor<br/>functions, classes, imports, calls, routes"]
             end
 
-            DB[("CozoDB<br/>SQLite or RocksDB")]
+            DB[("PostgreSQL<br/>+ pgvector")]
 
             subgraph "MCP Server"
                 Tools["MCP Tools<br/>65 tools — search, impact, ontology, incidents"]
@@ -52,7 +52,7 @@ graph LR
         A["Source Code"] --> B["tree-sitter"]
         B --> C["Code Elements"]
         B --> D["Relationships"]
-        C --> E[("CozoDB")]
+        C --> E[("PostgreSQL<br/>+ pgvector")]
         D --> E
     end
 
