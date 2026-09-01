@@ -10,6 +10,8 @@
 //! Every test is #[ignore]-gated by default so `cargo test` skips them
 //! (the container is not required on dev machines).
 
+#[allow(unused_imports)]
+use leankg::db::backend::pg_connect;
 use leankg::db::backend::{ClientPool, PostgresBackend};
 use std::collections::BTreeMap;
 use std::env;
@@ -51,8 +53,8 @@ impl Scratch {
     fn new() -> Self {
         let base = pg_url();
         let name = scratch_schema_name();
-        let mut admin = postgres::Client::connect(&base, postgres::NoTls)
-            .unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
+        let mut admin =
+            pg_connect(&base).unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
         admin
             .batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))
             .unwrap();
@@ -188,7 +190,7 @@ fn read_only_url_merges_search_path_option() {
         "RO URL must carry both options: {url}"
     );
     // Connect with it and confirm the session is actually read-only.
-    let mut c = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    let mut c = pg_connect(&url).unwrap();
     let ro_flag: String = c
         .query_one("SHOW default_transaction_read_only", &[])
         .unwrap()

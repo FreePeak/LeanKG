@@ -1,7 +1,7 @@
 //! W8 wave-1 parity + behavior tests: api_keys and content-hash paths
-//! converted from Datalog `run_script` scripts to parameterized SQL through
-//! the [`leankg::db::sql`] seam (plan:
-//! docs/plan-remove-cozo-datalog-sql-migration.md).
+//! converted from legacy Datalog `run_script` scripts to parameterized SQL
+//! through the [`leankg::db::sql`] seam (see the SQL-migration plan under
+//! `docs/`).
 //!
 //! Pattern: tests/pg_schema_test.rs — each test builds a scratch schema in
 //! the target Postgres (LEANKG_PG_URL; remote managed PG supported through

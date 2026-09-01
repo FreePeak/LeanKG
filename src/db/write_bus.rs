@@ -4,15 +4,15 @@
 //! handle. This module adds a thin priority write bus so an operator can later
 //! swap the in-process serial bus for a distributed one (Kafka / Google
 //! Pub/Sub) WITHOUT touching callers — but only when a multi-writer / remote
-//! topology exists (`LEANKG_COZO_ENDPOINT`, see `src/db/schema.rs`). Embedded
-//! RocksDB is single-host: two processes cannot share one RocksDB directory,
+//! topology exists (see `src/db/schema.rs`). The legacy embedded engine was
+//! single-host: two processes cannot share one data directory,
 //! so a distributed queue buys nothing today (YAGNI).
 //!
 //! The in-process default is a priority-ordered serial bus: tool writes
 //! (`Priority::ToolWrite`) are dequeued ahead of embed writes
 //! (`Priority::EmbedWrite`) so a long embed batch can never starve a tool
-//! write. Actual `:put`/`:update` calls still execute on the caller's shared
-//! `Arc<CozoDb>`; the bus only orders them.
+//! write. Actual write calls still execute on the caller's shared
+//! backend handle; the bus only orders them.
 
 use std::collections::BinaryHeap;
 use std::sync::Arc;
@@ -35,7 +35,7 @@ pub struct WriteJob {
     /// A caller-supplied label for diagnostics (e.g. `add_knowledge`, `embed`).
     pub kind: &'static str,
     /// The synchronous write closure, executed serially on the bus worker.
-    /// Writes run on the shared `Arc<CozoDb>` handle (never a second open).
+    /// Writes run on the shared backend handle (never a second open).
     pub run: Box<dyn FnOnce() -> Result<(), String> + Send + 'static>,
 }
 

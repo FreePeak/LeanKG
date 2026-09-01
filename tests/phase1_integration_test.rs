@@ -418,12 +418,41 @@ fn test_resolution_method_in_metadata() {
         metadata: serde_json::json!({"resolution_method": "typed", "is_resolved": true}),
         ..Default::default()
     };
+    let rel2 = Relationship {
+        source_qualified: "src/handler.rs::handle".to_string(),
+        target_qualified: "src/utils.rs::validate".to_string(),
+        rel_type: "calls".to_string(),
+        confidence: 0.9,
+        metadata: serde_json::json!({"resolution_method": "typed", "is_resolved": true}),
+        ..Default::default()
+    };
     engine.insert_relationship(&rel).unwrap();
+    engine.insert_relationship(&rel2).unwrap();
+
+    let elem3 = CodeElement {
+        qualified_name: "src/handler.rs::handle".to_string(),
+        element_type: "function".to_string(),
+        name: "handle".to_string(),
+        file_path: "src/handler.rs".to_string(),
+        line_start: 40,
+        line_end: 60,
+        language: "rust".to_string(),
+        ..Default::default()
+    };
+    engine.insert_element(&elem3).unwrap();
 
     let callers = engine
         .get_callers("validate", Some("src/utils.rs"))
         .unwrap();
-    assert!(!callers.is_empty(), "Should find callers");
+    assert!(
+        callers.len() >= 2,
+        "Should find both callers, got {}: {:?}",
+        callers.len(),
+        callers
+            .iter()
+            .map(|c| &c.qualified_name)
+            .collect::<Vec<_>>()
+    );
 }
 
 // ── FR-B22: Token budget truncation integration tests ──

@@ -1,7 +1,8 @@
 //! In-memory `DbBackend` for unit tests (no Postgres needed).
 //!
 //! The graph/ontology/pack unit tests seed `code_elements`, `relationships`,
-//! and `business_logic` then query them back with a small Cozo-script subset.
+//! and `business_logic` then query them back with a small legacy
+//! Datalog-style script subset.
 //! This fake interprets exactly that subset and fails loudly (never silently
 //! wrong) on anything outside it.
 //!
@@ -831,7 +832,7 @@ fn extract_write_rows(
     // with its JSON value before parsing.
     if src.starts_with('[') {
         let json: serde_json::Value =
-            serde_json::from_str(&strip_cozo_vec_literals(&interpolate(src, params)))
+            serde_json::from_str(&strip_legacy_vec_literals(&interpolate(src, params)))
                 .map_err(|e| fake_err(&format!("bad literal: {e}")))?;
         return rows_from_json(&json, cols);
     }
@@ -871,12 +872,12 @@ fn interpolate(src: &str, params: &BTreeMap<String, serde_json::Value>) -> Strin
     out
 }
 
-/// Strip CozoDB vector literals `vec([1.0, 2.0])` → `[1.0, 2.0]` so the
+/// Strip legacy vector literals `vec([1.0, 2.0])` → `[1.0, 2.0]` so the
 /// write source parses as JSON. The embeddings writer (`put_pairs_to_db_script`)
-/// emits vector cells in this Cozo form, which is not valid JSON. The inner
-/// content is a float list (no `]`), so the match is unambiguous and never
-/// touches `])` sequences inside string cells (qualified names / blobs).
-fn strip_cozo_vec_literals(src: &str) -> String {
+/// emits vector cells in this legacy dialect form, which is not valid JSON.
+/// The inner content is a float list (no `]`), so the match is unambiguous and
+/// never touches `])` sequences inside string cells (qualified names / blobs).
+fn strip_legacy_vec_literals(src: &str) -> String {
     let re = regex::Regex::new(r"vec\(\[([^\]]*)\]\)").expect("valid vec-literal regex");
     re.replace_all(src, "[$1]").into_owned()
 }

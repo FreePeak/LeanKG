@@ -167,7 +167,7 @@ leankg embed
 
 ### Index lifecycle
 
-`leankg embed` (default) is **incremental**: it reads the `embedding_state` CozoDB table that tracks per-node freshness and only re-embeds nodes that are stale (touched by a recent `index` run), missing (newly added), or whose text blob hash changed. Orphans (state rows whose `qualified_name` is no longer in `code_elements`) are reaped.
+`leankg embed` (default) is **incremental**: it reads the `embedding_state` table that tracks per-node freshness and only re-embeds nodes that are stale (touched by a recent `index` run), missing (newly added), or whose text blob hash changed. Orphans (state rows whose `qualified_name` is no longer in `code_elements`) are reaped.
 
 `leankg embed --full` ignores state and re-embeds every node. Use after a model swap or suspected index corruption.
 

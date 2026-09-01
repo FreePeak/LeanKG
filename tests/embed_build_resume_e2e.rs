@@ -7,8 +7,8 @@
 
 #![cfg(feature = "embeddings")]
 
+use leankg::db::init_db;
 use leankg::db::models::CodeElement;
-use leankg::db::schema::{init_db, run_script};
 use leankg::embeddings::state::{upsert_fresh, FreshRow};
 use leankg::embeddings::text_blob::{build_blob, content_hash_for};
 use leankg::embeddings::{build_index, BuildMode, BuildOptions};
@@ -36,7 +36,10 @@ fn insert_fake_vectors(graph: &GraphEngine, qualified_names: &[String]) {
         let script = format!(
             r#"?[qualified_name, vector] <- [["{qn}", {vector}]] :put embedding_vectors {{qualified_name => vector}}"#
         );
-        run_script(graph.db(), &script, Default::default()).expect("seed embedding_vectors");
+        graph
+            .db()
+            .run_script(&script, Default::default())
+            .expect("seed embedding_vectors");
     }
 }
 

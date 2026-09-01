@@ -6,7 +6,7 @@ LeanKG is a **pre-built knowledge graph** of the codebase. Always query it first
 
 ---
 
-## Semantic Discovery (v3.6.2 — CozoDB HNSW preferred)
+## Semantic Discovery (v3.6.2 — pgvector HNSW preferred)
 
 When the binary was built with `--features embeddings` AND the embedding
 index has been built (`leankg embed` after `leankg index`), prefer the

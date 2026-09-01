@@ -4,7 +4,7 @@
 
 LeanKG is a lightweight knowledge graph for codebase understanding. It indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.
 
-**Tech Stack:** Rust + CozoDB + tree-sitter + MCP
+**Tech Stack:** Rust + PostgreSQL/pgvector + tree-sitter + MCP
 
 ## Quick Start
 

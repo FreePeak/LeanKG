@@ -9,6 +9,8 @@
 //! Run only these (the crate has slow unrelated integration tests):
 //!   cargo test --release --test pg_phase0_spike
 
+#[allow(unused_imports)]
+use leankg::db::backend::pg_connect;
 use std::env;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -94,6 +96,35 @@ fn pg_url() -> String {
 
 /// Reset the table to exactly `vectors` (names, dim-checked). Panics with the
 /// SQL error if the server rejects anything (dimension mismatch surfaces here).
+
+/// Chunked multi-row INSERT: N_ROWS round trips instead of one-per-row,
+/// so the suite stays viable against managed remote Postgres (high RTT).
+fn insert_chunked(
+    tx: &mut postgres::Transaction<'_>,
+    sql_head: &str,
+    sql_tail: &str,
+    rows: &[(String, String)],
+) {
+    const CHUNK: usize = 200;
+    for chunk in rows.chunks(CHUNK) {
+        let placeholders: Vec<String> = (0..chunk.len())
+            .map(|i| {
+                let b = i * 2;
+                format!("(${}, ${}::text::vector)", b + 1, b + 2)
+            })
+            .collect();
+        let sql = format!("{sql_head} VALUES {}{sql_tail}", placeholders.join(", "));
+        let mut params: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            Vec::with_capacity(chunk.len() * 2);
+        for (name, vec_text) in chunk {
+            // &String coerces to &(dyn ToSql + Sync) at the push site.
+            params.push(name);
+            params.push(vec_text);
+        }
+        tx.execute(&sql, &params[..]).unwrap();
+    }
+}
+
 fn load_vectors(client: &mut postgres::Client, names: &[String], vecs: &[Vec<f32>]) {
     client
         .batch_execute("DROP TABLE IF EXISTS embedding_vectors")
@@ -105,14 +136,17 @@ fn load_vectors(client: &mut postgres::Client, names: &[String], vecs: &[Vec<f32
         .unwrap();
     let mut tx = client.transaction().unwrap();
     {
-        let stmt = tx
-            .prepare(
-                "INSERT INTO embedding_vectors (qualified_name, vec) VALUES ($1, $2::text::vector)",
-            )
-            .unwrap();
-        for (n, v) in names.iter().zip(vecs) {
-            tx.execute(&stmt, &[&n.as_str(), &pgvector(v)]).unwrap();
-        }
+        let rows: Vec<(String, String)> = names
+            .iter()
+            .zip(vecs)
+            .map(|(n, v)| (n.clone(), pgvector(v)))
+            .collect();
+        insert_chunked(
+            &mut tx,
+            "INSERT INTO embedding_vectors (qualified_name, vec)",
+            "",
+            &rows,
+        );
     }
     tx.commit().unwrap();
 }
@@ -225,8 +259,7 @@ fn test_cosine_distance_mapping() {
     assert_eq!(cosine_dist(&a, &b), 1.0);
     let c = [1.0f32, 0.0, 0.0];
     assert!(cosine_dist(&a, &c).abs() < 1e-12);
-    // Cozo HNSW `bind_distance: dist` also returns cosine distance (1 - cos_sim),
-    // so this same formula is what both stores compute.
+    // Cosine distance = 1 - cos_sim, which is exactly what this formula computes.
     let d = [1.0f32, 1.0, 0.0];
     let dn = d.iter().map(|x| x / (2.0f32).sqrt()).collect::<Vec<_>>();
     assert!((cosine_dist(&a, &dn) - (1.0 - std::f64::consts::FRAC_1_SQRT_2)).abs() < 1e-7);
@@ -248,7 +281,7 @@ fn test_pgvector_roundtrip() {
 #[ignore = "requires docker compose -p leankg-pg ... up"]
 fn pgvector_topk_matches_brute_force() {
     let _guard = PG_LOCK.lock().unwrap();
-    let mut client = postgres::Client::connect(&pg_url(), postgres::NoTls).unwrap();
+    let mut client = pg_connect(&pg_url()).expect("pg_connect");
 
     let mut rng = Rng::new(0xDEAD_BEEF);
     let names: Vec<String> = (0..N_VECTORS).map(|i| format!("v{i:05}")).collect();
@@ -284,7 +317,7 @@ fn pgvector_topk_matches_brute_force() {
 #[ignore = "requires docker compose -p leankg-pg ... up"]
 fn hnsw_index_build_time() {
     let _guard = PG_LOCK.lock().unwrap();
-    let mut client = postgres::Client::connect(&pg_url(), postgres::NoTls).unwrap();
+    let mut client = pg_connect(&pg_url()).expect("pg_connect");
 
     let mut rng = Rng::new(0xDEAD_BEEF);
     let names: Vec<String> = (0..N_VECTORS).map(|i| format!("v{i:05}")).collect();
@@ -336,8 +369,8 @@ fn hnsw_index_build_time() {
 #[ignore = "requires docker compose -p leankg-pg ... up"]
 fn reindex_concurrently_does_not_block_reads() {
     let _guard = PG_LOCK.lock().unwrap();
-    let mut client = postgres::Client::connect(&pg_url(), postgres::NoTls).unwrap();
-    let mut reindex_client = postgres::Client::connect(&pg_url(), postgres::NoTls).unwrap();
+    let mut client = pg_connect(&pg_url()).expect("pg_connect");
+    let mut reindex_client = pg_connect(&pg_url()).expect("pg_connect");
 
     let mut rng = Rng::new(0xDEAD_BEEF);
     let names: Vec<String> = (0..N_VECTORS).map(|i| format!("v{i:05}")).collect();

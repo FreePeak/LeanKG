@@ -694,7 +694,7 @@ mod tests {
     fn write_project_config_preserves_user_fields() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path().join("repo-y");
-        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::create_dir_all(dir.join(".leankg")).expect("mkdir .leankg");
         std::fs::write(
             dir.join(".leankg").join("leankg.yaml"),
             format!(
@@ -721,7 +721,7 @@ mod tests {
     fn write_project_config_refills_missing_identity_anchor() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path().join("repo-z");
-        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::create_dir_all(dir.join(".leankg")).expect("mkdir .leankg");
         std::fs::write(
             dir.join(".leankg").join("leankg.yaml"),
             "project:\n  name: anchored\n  team_probe: keep-us\n",

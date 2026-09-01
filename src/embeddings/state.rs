@@ -1,4 +1,4 @@
-//! `embedding_state` CozoDB table and helpers.
+//! `embedding_state` Postgres table and helpers.
 //!
 //! Tracks per-CodeElement embedding freshness so `embed` runs incrementally.
 //! See plan §"Incremental embedding & staleness".
@@ -15,7 +15,7 @@
 //!
 //! FR-HNSW-B (v3.6.2): `embedding_vectors:vec_idx` is the **canonical ANN**
 //! for all discovery. LeanKG does not run a parallel ANN stack (no
-//! `Cozo ::lsh`, no custom LSH — those were removed in FR-HNSW-A). Any
+//! `::lsh`, no custom LSH — those were removed in FR-HNSW-A). Any
 //! new feature that needs "find similar X by meaning" must route through
 //! `~embedding_vectors:vec_idx` plus cross-encoder rerank
 //! (`src/retrieval/pipeline.rs::SemanticRetrievalPipeline`).
@@ -51,7 +51,7 @@ fn hnsw_index_key(vectors_rel: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct EmbeddingStateRow {
     pub qualified_name: String,
-    /// Stored in CozoDB as i64; cast to u64 when feeding usearch. Bit pattern
+    /// Stored in the DB as i64; cast to u64 when feeding usearch. Bit pattern
     /// is preserved across the cast.
     pub usearch_key: i64,
     pub content_hash: String,
@@ -132,7 +132,7 @@ pub fn ensure_model_collections(
 
 /// Drop the HNSW index on the active model's vectors relation so a bulk
 /// insert can proceed without paying the per-vector HNSW update cost. The
-/// CozoDB `::hnsw` operator is idempotent for `drop` — if the index is
+/// index drop is idempotent — if the index is
 /// missing the call is a no-op, which is the only error path we swallow here.
 pub fn drop_hnsw_index(
     db: &dyn crate::db::backend::DbBackend,
@@ -191,7 +191,7 @@ fn build_hnsw_create_stmt(vectors_rel: &str, dim: usize) -> String {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|v| (1..=2000).contains(v))
         .unwrap_or(20)
-        // pgvector requires ef_construction >= 2*m (CozoDB accepted any pair).
+        // pgvector requires ef_construction >= 2*m.
         .max(2 * m);
     let vec_idx = hnsw_index_key(vectors_rel);
     format!(
@@ -380,9 +380,9 @@ pub fn has_any(db: &dyn crate::db::backend::DbBackend) -> Result<bool, Box<dyn s
     Ok(!result.rows.is_empty())
 }
 
-/// Maximum number of rows to inline into a single CozoDB `<~ [...]` literal.
-/// CozoDB's pest grammar parser recurses on large literals and can blow the
-/// stack or hit internal limits on thousand-row repos; chunking keeps each
+/// Maximum number of rows to inline into a single batched statement.
+/// The legacy engine (removed) had a recursive grammar parser that could blow
+/// the stack or hit internal limits on thousand-row repos; chunking keeps each
 /// statement bounded.
 const UPSERT_CHUNK: usize = 500;
 
@@ -400,7 +400,7 @@ pub fn upsert_fresh(
         // Parameterized import (DataValue) instead of string-interpolating
         // qualified_name / content_hash into a Datalog query. A QN containing
         // characters that serde_json::Value::String emits raw (e.g. non-ASCII
-        // bytes, backslashes, control chars) broke the CozoDB query parser at
+        // bytes, backslashes, control chars) broke the legacy query parser at
         // a fixed byte offset mid-batch. import_relations skips script parsing
         // entirely, matching the safe path already used by upsert_vectors.
         use crate::db::backend::DataValue;
@@ -435,7 +435,7 @@ pub fn upsert_fresh(
 }
 
 /// Delete state rows for a set of orphan qualified_names. Called after the
-/// embed step removes orphan vectors. With the CozoDB 0.7.x schema
+/// embed step removes orphan vectors. With the legacy schema
 /// (`qualified_name: String => ...`), only the key column is needed for `:rm`.
 pub fn delete_state_rows(
     db: &dyn crate::db::backend::DbBackend,
@@ -473,8 +473,9 @@ pub fn delete_state_rows(
 pub fn count_by_state(
     db: &dyn crate::db::backend::DbBackend,
 ) -> Result<StateCounts, Box<dyn std::error::Error>> {
-    // Aggregate in Rust — CozoDB 0.7.x has stricter handling of underscore
-    // bindings and `count()` placement that makes the inline aggregation fragile.
+    // Aggregate in Rust — the legacy engine (removed) had stricter handling of
+    // underscore bindings and `count()` placement that made the inline
+    // aggregation fragile.
     let all = list_all(db)?;
     let mut counts = StateCounts::default();
     for row in all {

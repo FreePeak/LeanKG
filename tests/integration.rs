@@ -6,7 +6,20 @@ use leankg::graph::{GraphEngine, ImpactAnalyzer};
 use leankg::indexer::{find_files_sync, index_file_sync, ParserManager};
 use leankg::ontology::OntologyQueryEngine;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use tempfile::TempDir;
+
+/// Serializes the real-`.leankg` `init_db` calls below: on a FRESH derived
+/// PG schema all three race the same migrations and concurrent `CREATE TYPE`
+/// dies on `pg_type_typname_nsp_index` (duplicate key).
+static REAL_DB_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn real_db_init_guard() -> std::sync::MutexGuard<'static, ()> {
+    REAL_DB_INIT_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_find_files_empty_dir() {
@@ -513,7 +526,7 @@ async fn test_get_relationships_with_real_db() {
         println!("Skipping - no .leankg database in current dir");
         return;
     }
-
+    let _init = real_db_init_guard();
     let db = init_db(db_path).expect("failed to init db");
 
     // Check if DB has data (skip test if empty)
@@ -579,7 +592,7 @@ async fn test_get_dependencies_with_real_db() {
         println!("Skipping - no .leankg database");
         return;
     }
-
+    let _init = real_db_init_guard();
     let db = init_db(db_path).expect("failed to init db");
     let graph = GraphEngine::new(db.clone());
 
@@ -623,7 +636,7 @@ async fn test_get_call_graph_with_real_db() {
         println!("Skipping - no .leankg database");
         return;
     }
-
+    let _init = real_db_init_guard();
     let db = init_db(db_path).expect("failed to init db");
     let graph = GraphEngine::new(db.clone());
 

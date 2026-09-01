@@ -55,6 +55,9 @@ fn make_element(qn: &str, et: &str, name: &str, fp: &str, lang: &str) -> CodeEle
 fn seed(graph: &GraphEngine, n: usize) {
     let types = ["File", "function", "class", "struct", "import", "directory"];
     let langs = ["rust", "typescript", "python"];
+    // Chunked batch insert: 15k single-row inserts is WAN-bound minutes on
+    // remote Postgres; batches of 1000 keep this to seconds.
+    let mut batch: Vec<CodeElement> = Vec::with_capacity(1000);
     for i in 0..n {
         let et = types[i % types.len()];
         let lang = langs[i % langs.len()];
@@ -63,8 +66,20 @@ fn seed(graph: &GraphEngine, n: usize) {
         } else {
             format!("./src/file_{}.rs", i)
         };
-        let elem = make_element(&format!("qn_{}", i), et, &format!("name_{}", i), &fp, lang);
-        graph.insert_element(&elem).expect("insert failed");
+        batch.push(make_element(
+            &format!("qn_{}", i),
+            et,
+            &format!("name_{}", i),
+            &fp,
+            lang,
+        ));
+        if batch.len() == 1000 {
+            graph.insert_elements(&batch).expect("insert failed");
+            batch.clear();
+        }
+    }
+    if !batch.is_empty() {
+        graph.insert_elements(&batch).expect("insert failed");
     }
 }
 
@@ -72,7 +87,15 @@ fn seed(graph: &GraphEngine, n: usize) {
 /// 3s ceiling is tight: with the all_elements()/all_relationships() bulk-pull
 /// bug, even 60k rows takes >>3s because every row is materialized into a Vec
 /// then re-iterated; with the count()/paginated fix, all three methods complete
-/// in milliseconds regardless of graph size.
+/// in milliseconds regardless of graph size. The ceiling assumes LOCAL-latency
+/// PG — override with LEANKG_TEST_OVERVIEW_SECS for remote Postgres where WAN
+/// RTT dominates.
+fn overview_budget_secs() -> u64 {
+    std::env::var("LEANKG_TEST_OVERVIEW_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3)
+}
 fn assert_fast<T>(label: &str, started: Instant, result: &Result<T, String>) {
     let elapsed = started.elapsed();
     assert!(
@@ -81,8 +104,9 @@ fn assert_fast<T>(label: &str, started: Instant, result: &Result<T, String>) {
         result.as_ref().err()
     );
     assert!(
-        elapsed < std::time::Duration::from_secs(3),
-        "{label} took {elapsed:?} (expected <3s)"
+        elapsed < std::time::Duration::from_secs(overview_budget_secs()),
+        "{label} took {elapsed:?} (expected <{}s)",
+        overview_budget_secs()
     );
 }
 

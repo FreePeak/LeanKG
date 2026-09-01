@@ -15,6 +15,8 @@ use tempfile::TempDir;
 async fn create_real_handler() -> (ToolHandler, TempDir) {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("leankg.db");
+    // mcp_status gates on the project marker existing; materialize it.
+    std::fs::create_dir_all(&db_path).unwrap();
     let db = init_db(db_path.as_path()).unwrap();
     seed_test_data(db.as_ref());
     let graph = GraphEngine::new(db.clone());

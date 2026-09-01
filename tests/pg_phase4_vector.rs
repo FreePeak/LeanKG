@@ -13,6 +13,8 @@
 //!
 //! Every test is `#[ignore]`-gated by default; flip with `--include-ignored`.
 
+#[allow(unused_imports)]
+use leankg::db::backend::pg_connect;
 use std::env;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -95,6 +97,35 @@ fn brute_force_topk(names: &[String], vecs: &[Vec<f32>], q: &[f32], k: usize) ->
 /// Reset `embedding_vectors` to the supplied rows in a fresh table; the
 /// caller's connection owns the schema (admin) so we don't collide with
 /// the `leankg` DB's real table.
+
+/// Chunked multi-row INSERT: N_ROWS round trips instead of one-per-row,
+/// so the suite stays viable against managed remote Postgres (high RTT).
+fn insert_chunked(
+    tx: &mut postgres::Transaction<'_>,
+    sql_head: &str,
+    sql_tail: &str,
+    rows: &[(String, String)],
+) {
+    const CHUNK: usize = 200;
+    for chunk in rows.chunks(CHUNK) {
+        let placeholders: Vec<String> = (0..chunk.len())
+            .map(|i| {
+                let b = i * 2;
+                format!("(${}, ${}::text::vector)", b + 1, b + 2)
+            })
+            .collect();
+        let sql = format!("{sql_head} VALUES {}{sql_tail}", placeholders.join(", "));
+        let mut params: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            Vec::with_capacity(chunk.len() * 2);
+        for (name, vec_text) in chunk {
+            // &String coerces to &(dyn ToSql + Sync) at the push site.
+            params.push(name);
+            params.push(vec_text);
+        }
+        tx.execute(&sql, &params[..]).unwrap();
+    }
+}
+
 fn load_vectors(client: &mut postgres::Client, names: &[String], vecs: &[Vec<f32>]) {
     client
         .batch_execute("DROP TABLE IF EXISTS embedding_vectors")
@@ -113,14 +144,17 @@ fn load_vectors(client: &mut postgres::Client, names: &[String], vecs: &[Vec<f32
         .unwrap();
     let mut tx = client.transaction().unwrap();
     {
-        let stmt = tx
-            .prepare(
-                "INSERT INTO embedding_vectors (qualified_name, vec) VALUES ($1, $2::text::vector)",
-            )
-            .unwrap();
-        for (n, v) in names.iter().zip(vecs) {
-            tx.execute(&stmt, &[&n.as_str(), &pgvector(v)]).unwrap();
-        }
+        let rows: Vec<(String, String)> = names
+            .iter()
+            .zip(vecs)
+            .map(|(n, v)| (n.clone(), pgvector(v)))
+            .collect();
+        insert_chunked(
+            &mut tx,
+            "INSERT INTO embedding_vectors (qualified_name, vec)",
+            "",
+            &rows,
+        );
     }
     tx.commit().unwrap();
 }
@@ -187,7 +221,7 @@ fn test_pgvector_roundtrip() {
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
 fn phase4_vector_round_trip_top_k_matches_brute_force() {
     let _guard = pg_lock();
-    let mut client = postgres::Client::connect(&pg_url(), postgres::NoTls).unwrap();
+    let mut client = pg_connect(&pg_url()).expect("pg_connect");
 
     let n = 50usize;
     let k = 5usize;
@@ -217,7 +251,7 @@ fn phase4_vector_round_trip_top_k_matches_brute_force() {
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
 fn phase4_set_local_hnsw_ef_search_takes_effect() {
     let _guard = pg_lock();
-    let mut client = postgres::Client::connect(&pg_url(), postgres::NoTls).unwrap();
+    let mut client = pg_connect(&pg_url()).expect("pg_connect");
     let names: Vec<String> = (0..32).map(|i| format!("ef{i:03}")).collect();
     let vecs: Vec<Vec<f32>> = (0..32)
         .map(|i| random_unit_vector(i as u64, VEC_DIM))
@@ -241,14 +275,14 @@ fn phase4_set_local_hnsw_ef_search_takes_effect() {
 
 /// T4.6 batched upsert throughput: 1000 vectors in one transaction via
 /// the translator's `INSERT ... ON CONFLICT (qualified_name) DO UPDATE`.
-/// Mirrors the cozo `import_relations` path on the PostgresBackend impl.
+/// Mirrors the legacy `import_relations` path on the PostgresBackend impl.
 /// Measures v/s and prints it; the test asserts > 0 (correctness) and
 /// leaves the throughput value to be inspected.
 #[test]
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
 fn phase4_batched_upsert_throughput_smoke() {
     let _guard = pg_lock();
-    let mut client = postgres::Client::connect(&pg_url(), postgres::NoTls).unwrap();
+    let mut client = pg_connect(&pg_url()).expect("pg_connect");
     client
         .batch_execute("DROP TABLE IF EXISTS embedding_vectors")
         .unwrap();
@@ -269,16 +303,18 @@ fn phase4_batched_upsert_throughput_smoke() {
     let t = Instant::now();
     let mut tx = client.transaction().unwrap();
     {
-        let stmt = tx
-            .prepare(
-                "INSERT INTO embedding_vectors (qualified_name, vec) \
-                 VALUES ($1, $2::text::vector) \
+        let rows: Vec<(String, String)> = names
+            .iter()
+            .zip(&vecs)
+            .map(|(name, v)| (name.clone(), pgvector(v)))
+            .collect();
+        insert_chunked(
+            &mut tx,
+            "INSERT INTO embedding_vectors (qualified_name, vec)",
+            " \
                  ON CONFLICT (qualified_name) DO UPDATE SET vec = EXCLUDED.vec",
-            )
-            .unwrap();
-        for (name, v) in names.iter().zip(&vecs) {
-            tx.execute(&stmt, &[&name.as_str(), &pgvector(v)]).unwrap();
-        }
+            &rows,
+        );
     }
     tx.commit().unwrap();
     let elapsed_ms = t.elapsed().as_millis();
@@ -318,7 +354,7 @@ fn phase4_batched_upsert_throughput_smoke() {
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
 fn phase4_has_any_proxies_correctly() {
     let _guard = pg_lock();
-    let mut client = postgres::Client::connect(&pg_url(), postgres::NoTls).unwrap();
+    let mut client = pg_connect(&pg_url()).expect("pg_connect");
     client
         .batch_execute("DROP TABLE IF EXISTS embedding_vectors")
         .unwrap();
@@ -344,10 +380,9 @@ fn phase4_has_any_proxies_correctly() {
         )
         .unwrap();
 
-    // `has_any` proxy (Phase 4 will route the Cozo `?[qualified_name] :=
-    // *embedding_vectors{qualified_name} :limit 1` shape through the
-    // translator; until attr syntax lands, the test asserts the
-    // equivalent LIMIT-1 EXISTS probe works).
+    // `has_any` proxy (Phase 4 routes the legacy-script qualified_name probe
+    // shape through the translator; until attr syntax lands, the test asserts
+    // the equivalent LIMIT-1 EXISTS probe works).
     let present: bool = client
         .query_one(
             "SELECT EXISTS(SELECT 1 FROM embedding_vectors LIMIT 1)",

@@ -1,6 +1,6 @@
 # Workflow: Large-Scale Engine Migration via Fan-Out Subagents in a Git Worktree
 
-**Status:** DRAFT v0.1 — derived from the LeanKG CozoDB → PostgreSQL + pgvector migration (2026-08-04 → 2026-08-05). 10 commits ahead of origin on `worktree-leankg-pg-migration`.
+**Status:** DRAFT v0.1 — derived from the LeanKG embedded-engine → PostgreSQL + pgvector migration (2026-08-04 → 2026-08-05). 10 commits ahead of origin on `worktree-leankg-pg-migration`.
 
 **Author:** Hermes (this session), synthesizing the actual Claude Code session JSONL `5d294459-37eb-46dd-8c7f-e6a492f1409d.jsonl` (2091 lines, 660 assistant turns, 326 tool calls, 14 subagent fan-outs, 11 TaskCreate, 41 user prompts).
 
@@ -18,7 +18,7 @@ Use this workflow when **all** of these are true:
 | A single agent loop would take **>1 working day** | Actual: ~12 hours of wall-clock with 14 subagents vs estimated 2-3 days serial |
 | The plan document has **discrete per-phase exit criteria** | Each phase had "Exit:" bullet + measurable tests |
 | The codebase has a **non-trivial abstraction surface to maintain during the migration** (trait, interface, schema version) | The `DbBackend` trait was kept intact through Phases 1-7 so other code could compile unchanged |
-| **Production runtime is live and MUST NOT be touched** | Docker containers `leankg-leankg-1` and `leankg-enterprise-cozoserver-1` were running 24/7; only side dev containers allowed |
+| **Production runtime is live and MUST NOT be touched** | The production `leankg-leankg-1` container and its legacy graph-server sidecar container were running 24/7; only side dev containers allowed |
 | The user is willing to **explicitly waive the "no commits without explicit user request" rule** for this goal | User said "Create PR for me after done everything" + "Keep working on this goal" |
 
 **Do NOT use** for: 1-day bug fixes, single-file refactors, migrations where the engine boundary is clean and a `sed` + `go fix` suffices.
@@ -159,11 +159,11 @@ LeanKG had one case (Phase 3 SQL translator) where the first attempt died mid-re
 git log --oneline -8
 git status --short
 ls src/db/pg/
-grep 'cozo' Cargo.toml
+grep 'postgres' Cargo.toml
 
 # 2. Find the partially-done file + read its current state
 wc -l src/db/backend.rs
-grep -rn 'cozo' src/db/ | head -10
+grep -rn 'PostgresBackend' src/db/ | head -10
 
 # 3. Fan out a new subagent with the EXPLICIT HANDOFF context:
 #    "Phase 3 was started but died. Here is exactly where it stopped.
@@ -180,11 +180,11 @@ In LeanKG the recovery subagent (subagent #5, "Finish Phase 1 Arc threading") ha
 ```text
 STATE (verify first):
 - src/db/backend.rs is COMPLETE: `trait DbBackend: Send + Sync { ... }`,
-  `SharedDb = Arc<dyn DbBackend>`, `CozoBackend` shim, `PostgresBackend` stub,
-  `init_db/init_db_readonly/init_db_pg/init_cozo` factories, `resolve_engine()`.
+  `SharedDb = Arc<dyn DbBackend>`, the legacy engine shim, `PostgresBackend` stub,
+  `init_db/init_db_readonly/init_db_pg` factories, `resolve_engine()`.
   9 unit tests. DO NOT redesign it.
-- src/db/schema.rs: has `pub fn run_script_cozo`, ... The types `NamedRows`
-  and `ScriptMutability` are IMPORTED from `cozo` — check whether schema.rs
+- src/db/schema.rs: has `pub fn run_script`, ... The types `NamedRows`
+  and `ScriptMutability` are IMPORTED from the legacy engine crate — check whether schema.rs
   re-exports them pub; if not, re-export them.
 
 If something is missing from the STATE description, verify by reading the
@@ -294,7 +294,7 @@ git diff --stat @{u}..HEAD
 # Review: only files in this phase's expected set
 
 # 5. Does the plan doc §9 progress tracker need updating?
-grep -E "^\| [0-9]" docs/plan-migrate-cozo-to-postgres-pgvector.md
+grep -E "^\| [0-9]" docs/plan-migrate-to-postgres-pgvector.md
 # Update the "✅" / "🚧" status column to match reality
 
 # 6. Push to origin
@@ -340,8 +340,8 @@ The LeanKG workflow here was:
 1. **Use `release-please`** (already configured in `.github/workflows/`) — do NOT manually bump `Cargo.toml`. Plan doc §8.5 explains:
    > "Push → release-please opens a release PR bumping to `0.20.0` (minor, via `feat:` commits). Do not manually bump `Cargo.toml`; it is ignored."
 2. Conventional commits are the trigger: every `feat:` since the last release becomes a changelog entry.
-3. The user explicitly set the scope: "**0.20.0** is **MINOR** because all the migration changes are additive (Postgres backend becomes the default; cozo shim stays as migration path until v0.21)."
-4. **For breaking MAJOR (if removing cozo shim itself at v0.21)**: release-please never auto-majors (config `bump-minor-pre-major: true`). Manual procedure:
+3. The user explicitly set the scope: "**0.20.0** is **MINOR** because all the migration changes are additive (Postgres backend becomes the default; the legacy shim stays as migration path until v0.21)."
+4. **For breaking MAJOR (if removing the legacy shim itself at v0.21)**: release-please never auto-majors (config `bump-minor-pre-major: true`). Manual procedure:
    - Bump `manifest.json` `"."` to target major
    - Push → CI releases from that base
 
@@ -351,13 +351,13 @@ The LeanKG workflow here was:
 
 ## Step 8 — Common pitfalls (LeanKG lessons)
 
-### 8.1 The "ship cozo as the only engine" mistake
+### 8.1 The "keep the legacy engine around too long" mistake
 
-LeanKG kept `cozo` as a Cargo dep through Phases 0-7 so the migration shim could still validate against it. Removing cozo before Phase 8 meant **no way to A/B test** the new PG backend. The discipline:
+LeanKG kept the legacy embedded engine as a Cargo dep through Phases 0-7 so the migration shim could still validate against it. Removing it before Phase 8 meant **no way to A/B test** the new PG backend. The discipline:
 
-- Keep both engines present + routable via `LEANKG_DB_ENGINE=postgres|cozo`
-- Default to PG (the new path) but keep cozo as escape hatch
-- Remove cozo ONLY at Phase 8, in a single "T8.4 cozo deletion" commit
+- Keep both engines present + routable via `LEANKG_DB_ENGINE=postgres|legacy`
+- Default to PG (the new path) but keep the old engine as escape hatch
+- Remove the old engine ONLY at Phase 8, in a single "T8.4 legacy deletion" commit
 
 ### 8.2 The "commit but no push" bug
 
@@ -407,7 +407,7 @@ The migration is done when **all** of these are true:
 # LeanKG: Postgres Migration Kanban
 
 **Last updated:** <ISO timestamp>
-**Source of truth:** docs/plan-migrate-cozo-to-postgres-pgvector.md §9
+**Source of truth:** docs/plan-migrate-to-postgres-pgvector.md §9
 **Worktree:** .claude/worktrees/leankg-pg-migration (branch worktree-leankg-pg-migration)
 
 **Note on staleness:** <explain parent JSONL stops but work continues>
@@ -524,7 +524,7 @@ Critical pitfall avoided: the regex must extract the leading number from `"N. Na
 
 This workflow document was derived from:
 - **Primary source**: `5d294459-37eb-46dd-8c7f-e6a492f1409d.jsonl` (the active Claude Code session, 2091 lines, Aug 4 08:02 → Aug 5 07:41)
-- **Secondary sources**: 14 subagent JSONLs (under `/private/tmp/claude-502/.../tasks/`), plan doc `docs/plan-migrate-cozo-to-postgres-pgvector.md` (437 lines, 9 sections), kanban file `docs/pg-migration-kanban.md`
+- **Secondary sources**: 14 subagent JSONLs (under `/private/tmp/claude-502/.../tasks/`), plan doc `docs/plan-migrate-to-postgres-pgvector.md` (437 lines, 9 sections), kanban file `docs/pg-migration-kanban.md`
 - **Outcome as of writing**: Phases 0-7 ✅ committed (10 commits ahead of origin), Phase 8 🚧 in flight, Phase 9 mostly done in same worktree (15 KB report exists)
 
 The actual user steering patterns observed:

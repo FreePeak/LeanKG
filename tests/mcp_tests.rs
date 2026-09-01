@@ -413,11 +413,15 @@ mod server_tests {
         // Test that multiple MCPServers can be created with the same db_path
         // This verifies multi-session support works (no single-instance lock blocking)
         let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join(".leankg");
+        let mut db_path = temp_dir.path().join(".leankg");
         std::fs::create_dir_all(&db_path).unwrap();
 
         // Initialize database first
         let _db = init_db(&db_path).expect("Database init should succeed");
+
+        // MCPServer resolves the path through the filesystem (canonicalize),
+        // so on macOS /tmp → /private/tmp. Compare against the resolved form.
+        db_path = db_path.canonicalize().unwrap();
 
         // Create first server
         let server1 = MCPServer::new(db_path.clone());

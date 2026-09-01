@@ -29,7 +29,7 @@ fn doc_max_file_size() -> u64 {
 }
 
 /// Maximum `code_refs` resolved per markdown doc. Each resolution can fire
-/// multiple CozoDB round-trips; on the be mega-graph (721k elements) a
+/// multiple database round-trips; on the be mega-graph (721k elements) a
 /// single doc with hundreds of references blows the 10-min budget.
 /// Default 25 — doc joins are best-effort; a handful of resolved refs per
 /// file is plenty for get_files_for_doc / get_traceability.
@@ -271,7 +271,7 @@ impl DocIndexer {
 
         // FR-DOC-REF-CAP-100: stop resolving refs once we hit the per-doc
         // budget so a single doc can't blow the 10-min index budget on
-        // thousands of CozoDB queries.
+        // thousands of database queries.
         for (target, context) in code_refs.into_iter().take(cap) {
             let resolved_target = match graph {
                 Some(g) => match resolve_code_ref(g, &target) {

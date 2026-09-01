@@ -25,6 +25,19 @@ use crate::db::backend::SharedDb;
 pub const LATENCY_WARN_MS: u64 = 500;
 /// Round-trip latency above this many ms is a FAIL.
 pub const LATENCY_FAIL_MS: u64 = 5_000;
+
+/// Env-tunable WARN threshold (`LEANKG_DOCTOR_LATENCY_WARN_MS`) so doctor
+/// runs against remote / managed Postgres don't flag routine WAN RTT as
+/// slow. Only raises (values below [`LATENCY_WARN_MS`] are ignored) and is
+/// clamped just under [`LATENCY_FAIL_MS`] so the Fail tier stays reachable.
+pub fn latency_warn_ms() -> u64 {
+    std::env::var("LEANKG_DOCTOR_LATENCY_WARN_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v >= LATENCY_WARN_MS)
+        .map(|v| v.min(LATENCY_FAIL_MS - 1))
+        .unwrap_or(LATENCY_WARN_MS)
+}
 /// Edge sample cap for the orphan scan.
 pub const ORPHAN_SAMPLE_LIMIT: usize = 1_000;
 /// Duplicate-qualified_name offenders listed in findings.
@@ -221,7 +234,7 @@ impl DoctorReport {
 
 /// Everything the deep checks need from the deployment, as pure results.
 ///
-/// Production wires [`BackendProbes`] (Cozo scripts through a `SharedDb`);
+/// Production wires [`BackendProbes`] (graph-script reads through a `SharedDb`);
 /// unit tests inject canned values so every failure mode is provable
 /// without Postgres.
 pub trait DeepProbes: Send + Sync {
@@ -241,7 +254,7 @@ pub trait DeepProbes: Send + Sync {
     fn embedded_names(&self) -> Result<Option<Vec<String>>, String>;
 }
 
-/// Production probes: Cozo-script reads through a shared backend handle.
+/// Production probes: graph-script reads through a shared backend handle.
 pub struct BackendProbes {
     pub backend: SharedDb,
 }
@@ -447,14 +460,15 @@ impl DoctorCheck for PgLatencyCheck {
 
     fn run(&self, ctx: &DeepContext) -> Finding {
         const CHECK: &str = "pg-latency";
+        let warn_ms = latency_warn_ms();
         match ctx.probes.ping_ms() {
-            Ok(ms) if ms <= LATENCY_WARN_MS => {
+            Ok(ms) if ms <= warn_ms => {
                 Finding::new(CHECK, CheckStatus::Pass, format!("{ms} ms round-trip"), "")
             }
             Ok(ms) if ms <= LATENCY_FAIL_MS => Finding::new(
                 CHECK,
                 CheckStatus::Warn,
-                format!("round-trip {ms} ms (>{LATENCY_WARN_MS} ms)"),
+                format!("round-trip {ms} ms (>{warn_ms} ms)"),
                 "Postgres answers but slowly — check network distance to the DB host \
                  (cross-region links routinely exceed this); prefer a co-located replica.",
             ),
@@ -1403,7 +1417,7 @@ mod tests {
         p.indexed = Ok(vec![
             fx.root.join("a.rs").to_string_lossy().to_string(),
             "ontology://local:agent:known_issue:agent-000000007af8b289:v1".to_string(),
-            "ontology://local:concept:cozo_integration:v3".to_string(),
+            "ontology://local:concept:legacy_integration:v3".to_string(),
         ]);
         let f = finding_of(&IndexFreshnessCheck, &p, &fx);
         assert_eq!(f.status, CheckStatus::Pass, "detail: {}", f.detail);

@@ -172,6 +172,15 @@ fn elem_qn(file: &str, i: usize) -> String {
 }
 
 fn run_deep(fixture: &SeededFixture) -> leankg::doctor::deep::DoctorReport {
+    // Remote managed PG routinely shows WAN RTT spikes >500 ms; raise the
+    // doctor's WARN budget for off-host LEANKG_PG_URL (same remote-aware
+    // default pattern as concurrent_mcp_during_embed_test).
+    if pg_url()
+        .map(|u| !u.contains("localhost") && !u.contains("127.0.0.1"))
+        .unwrap_or(false)
+    {
+        std::env::set_var("LEANKG_DOCTOR_LATENCY_WARN_MS", "2000");
+    }
     // CLI-dispatch equivalent: probes over the project backend, default
     // registry, env snapshot captured once.
     let probes = BackendProbes::new(backend_for_schema(&fixture._schema.name));

@@ -7,12 +7,13 @@ use std::sync::Arc;
 use thiserror::Error;
 
 /// Historical default vector width (BGE-small-en-v1.5) for the pgvector
-/// column / cozo `<F32; N>` vector type. The **effective** storage width is
+/// column / the legacy engine's `<F32; N>` vector type (removed). The
+/// **effective** storage width is
 /// runtime-configurable — see [`vec_dim`].
 pub const VEC_DIM: usize = 384;
 
-/// Effective vector width for BOTH storage (`vector(N)` column / cozo
-/// `<F32; N>`) and the active embed provider. Precedence:
+/// Effective vector width for BOTH storage (`vector(N)` column) and the
+/// active embed provider. Precedence:
 /// 1. `LEANKG_EMBED_DIM` (explicit override, clamped 32..=16384)
 /// 2. remote provider (`LEANKG_EMBED_PROVIDER=openai`): `LEANKG_EMBED_API_DIM`
 ///    (clamped 32..=16384, default [`VEC_DIM`])
@@ -405,7 +406,7 @@ fn openai_provider_from_env(expected_dim: usize) -> Result<Arc<dyn EmbedProvider
         std::env::var("LEANKG_EMBED_API_MODEL").unwrap_or_else(|_| "bge-small-en-v1.5".to_string());
     // Registry dim wins (per-model width, e.g. 2560 for Qwen3); fall back to
     // the storage width [`vec_dim`] only when the registry didn't pin one.
-    // The pgvector column / cozo vector type is created at exactly this size,
+    // The pgvector column is created at exactly this size,
     // so a mismatch fails every insert/query with a dimension error.
     let dimensions = std::env::var("LEANKG_EMBED_API_DIM")
         .ok()

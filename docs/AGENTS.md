@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in CozoDB, and exposes functionality via CLI and MCP protocol.
+LeanKG is a Rust-based knowledge graph system that indexes codebases using tree-sitter parsers, stores data in PostgreSQL + pgvector, and exposes functionality via CLI and MCP protocol.
 
-**Tech Stack**: Rust 1.70+, CozoDB (embedded relational-graph), tree-sitter, Axum, Clap, Tokio
+**Tech Stack**: Rust 1.70+, PostgreSQL + pgvector, tree-sitter, Axum, Clap, Tokio
 
 ---
 
@@ -55,7 +55,7 @@ This codebase contains 339 elements and 262 relationships.
 src/
 ├── cli/          # Clap CLI commands
 ├── config/       # Project configuration
-├── db/           # CozoDB layer (models, schema)
+├── db/           # Database layer (models, schema)
 ├── doc/          # Documentation generator
 ├── graph/        # Graph engine, query, traversal
 ├── indexer/      # tree-sitter parsers, entity extraction

@@ -367,8 +367,8 @@ mod tests {
 
     #[test]
     fn file_status_stale_when_completed_but_no_live_vectors() {
-        // P0: embed_status.json is a Cozo-era artifact claiming success while
-        // the live RocksDB store holds zero vectors. Republishing it verbatim
+        // P0: embed_status.json is a stale artifact claiming success while
+        // the live store holds zero vectors. Republishing it verbatim
         // tells operators the embed is done when it never ran here.
         let fs = json!({"status": "completed", "embedded": 628_259});
         assert!(file_status_is_stale(Some(&fs), 0));

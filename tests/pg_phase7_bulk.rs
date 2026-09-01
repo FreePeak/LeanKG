@@ -16,6 +16,8 @@
 //!
 //! Every test is `#[ignore]`-gated; flip with `--include-ignored`.
 
+#[allow(unused_imports)]
+use leankg::db::backend::pg_connect;
 use leankg::db::backend::{ClientPool, PostgresBackend};
 use std::collections::BTreeMap;
 use std::env;
@@ -60,8 +62,8 @@ impl Scratch {
     fn new() -> Self {
         let base = pg_url();
         let name = scratch_schema_name();
-        let mut admin = postgres::Client::connect(&base, postgres::NoTls)
-            .unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
+        let mut admin =
+            pg_connect(&base).unwrap_or_else(|e| panic!("cannot connect to {base}: {e}"));
         admin
             .batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"))
             .unwrap();
@@ -213,8 +215,19 @@ fn named_state(
 /// cold-bulk path (HNSW index dropped, as `leankg embed` does for large
 /// cold embeds) exceeds 3k v/s. Also reports the index-live COPY rate so
 /// the two are compared (the index maintenance tax).
+/// Throughput floor for COPY benchmarks, calibrated for local-latency PG.
+/// Override (e.g. LEANKG_TEST_MIN_COPY_VPS=200) when running against
+/// managed remote Postgres where WAN bandwidth, not the DB, is the bound.
+fn min_copy_vps() -> f64 {
+    std::env::var("LEANKG_TEST_MIN_COPY_VPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3_000.0)
+}
+
 #[test]
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
+
 fn copy_bulk_load_10k_vectors_row_count() {
     let _g = pg_lock();
     let mut s = Scratch::new();
@@ -263,8 +276,9 @@ fn copy_bulk_load_10k_vectors_row_count() {
         .get(0);
     assert_eq!(count, n as i64, "COPY must land exactly {n} rows");
     assert!(
-        cold_v_per_s >= 3_000.0,
-        "cold-bulk COPY throughput {cold_v_per_s:.0} v/s below 3k v/s target"
+        cold_v_per_s >= min_copy_vps(),
+        "cold-bulk COPY throughput {cold_v_per_s:.0} v/s below {:.0} v/s target",
+        min_copy_vps()
     );
 }
 
@@ -521,7 +535,7 @@ fn direct_copy_in_via_transaction() {
 /// `import_relations` COPY path (index dropped, as `leankg embed` does for
 /// large cold embeds). Extrapolates to workspace-be (~371k functions): total
 /// COPY time = (371k / measured v/s). The plan's exit criterion is a cold
-/// embed on PG < cozo time (cozo ≈ 700 v/s ≈ 9 min for 371k).
+/// embed on PG < legacy-engine time (legacy ≈ 700 v/s ≈ 9 min for 371k).
 #[test]
 #[ignore = "requires the leankg-pg-phase0 container (localhost:5433)"]
 fn synthetic_50k_cold_embed_measurement() {
@@ -560,7 +574,8 @@ fn synthetic_50k_cold_embed_measurement() {
         .get(0);
     assert_eq!(count, n as i64, "50k COPY must land all rows");
     assert!(
-        v_per_s >= 3_000.0,
-        "50k cold COPY throughput {v_per_s:.0} v/s below 3k v/s target"
+        v_per_s >= min_copy_vps(),
+        "50k cold COPY throughput {v_per_s:.0} v/s below {:.0} v/s target",
+        min_copy_vps()
     );
 }

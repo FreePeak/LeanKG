@@ -1,6 +1,6 @@
 # LeanKG — Agent Context
 
-**Tech stack:** Rust + CozoDB + tree-sitter + MCP
+**Tech stack:** Rust + PostgreSQL/pgvector + tree-sitter + MCP
 
 ## Build & Test
 
@@ -103,10 +103,10 @@ For 3+ independent tasks: dispatch to `.worktree/<feature>/` worktrees with feat
 
 ## Cursor Cloud specific instructions
 
-Single Rust binary (`leankg`); all modes are subcommands. No external DB service in the default dev path — CozoDB is embedded (SQLite under `.leankg/`). The VM snapshot already has the toolchain and system libs below; the startup update script only runs `cargo fetch`.
+Single Rust binary (`leankg`); all modes are subcommands. Storage is PostgreSQL-only — set `LEANKG_PG_URL` (remote managed Postgres works; see `.env`). The VM snapshot already has the toolchain and system libs below; the startup update script only runs `cargo fetch`.
 
 - **Toolchain**: build requires Rust **stable ≥ 1.85** (transitive deps use edition2024). The base image's 1.83 is too old; the snapshot ships `rustup default stable`. README's "Rust 1.75+" badge is outdated for building from source.
-- **Native build deps**: `cozo` (RocksDB via the `cxx`/C++ toolchain) needs C++ stdlib headers. `clang`/`cc` select GCC 14, so `libstdc++-14-dev` (plus `g++`) must be present or the build fails with `fatal error: 'algorithm' file not found`. These are installed in the snapshot.
+- **Native build deps**: native extensions compiled via the `cxx`/C++ toolchain need C++ stdlib headers. `clang`/`cc` select GCC 14, so `libstdc++-14-dev` (plus `g++`) must be present or the build fails with `fatal error: 'algorithm' file not found`. These are installed in the snapshot.
 - **Always `--release`**: the debug profile sets `debug=false`; use `cargo build --release` / `cargo run --release --` per `Makefile`. First release build ≈ 4–5 min; `cargo clippy --all -- -D warnings` ≈ 3 min.
 - **Verify commands** (all pass): `cargo fmt --all -- --check`, `cargo clippy --all -- -D warnings` (CI gate; `make lint` adds `--all-features` which pulls the heavy `embeddings`/ONNX stack), `cargo test --lib` (734 tests, ~4s). See `AGENTS.md` Build & Test and `.github/workflows/ci.yml`.
 - **Index step is slow**: `leankg index ./src` inserts ~8k elements / ~50k relationships into SQLite and takes ~4–5 min; it is not hung. Run `leankg init` first.

@@ -565,11 +565,11 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "run_raw_query".to_string(),
-                description: "Execute a raw Datalog/Cypher query against the LeanKG CozoDB engine".to_string(),
+                description: "Execute a raw graph query (legacy Datalog-style syntax, translated to SQL against the Postgres store)".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "The CozoDB Datalog query to execute"},
+                        "query": {"type": "string", "description": "The graph query to execute (legacy Datalog-style syntax)"},
                         "params": {
                             "type": "object",
                             "description": "Optional parameters for the parameterized query",
@@ -873,7 +873,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "semantic_search".to_string(),
-                description: "Natural language semantic discovery with pagination. Dual path: when an embedding index exists (embeddings feature + leankg embed), uses CozoDB HNSW vector retrieval with cross-encoder rerank; otherwise falls back to ontology-first safe_discover (concept ontology then bounded name search). Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables). Prefer-order (search): after concept_search; before search_code. Prefer-order (semantic): try first; then kg_semantic_context; then kg_context.".to_string(),
+                description: "Natural language semantic discovery with pagination. Dual path: when an embedding index exists (embeddings feature + leankg embed), uses pgvector HNSW vector retrieval with cross-encoder rerank; otherwise falls back to ontology-first safe_discover (concept ontology then bounded name search). Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables). Prefer-order (search): after concept_search; before search_code. Prefer-order (semantic): try first; then kg_semantic_context; then kg_context.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1151,10 +1151,13 @@ mod tests {
             "get_architecture is the primary overview tool"
         );
         // Exact count: 87 - 11 = 76, then H6 round 2 removes 3 more → 73
+        // base tools; the `embeddings` feature registers 3 more
+        // (semantic_search / leankg embed tooling) → 76.
+        let expected = if cfg!(feature = "embeddings") { 76 } else { 73 };
         assert_eq!(
             names.len(),
-            73,
-            "expected 73 tools after removing 11 redundant ones + H6 consolidation"
+            expected,
+            "unexpected tool-count drift (removed-tools regression?)"
         );
     }
 

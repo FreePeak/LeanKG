@@ -12,6 +12,8 @@
 //!   cargo test --test concurrent_mcp_during_embed_test -- --nocapture
 //! ```
 
+#[allow(unused_imports)]
+use leankg::db::backend::pg_connect;
 use leankg::db::backend::{index_advisory_lock, init_db, DataValue, NamedRows, PostgresBackend};
 use leankg::db::models::CodeElement;
 use leankg::graph::GraphEngine;
@@ -28,8 +30,33 @@ static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static SCHEMA_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 const VEC_DIM: usize = 384;
-const QUERY_TIMEOUT: Duration = Duration::from_secs(5);
-const WORKER_HOLD: Duration = Duration::from_secs(2);
+
+/// Tunable for high-RTT managed Postgres (defaults assume local-latency PG).
+fn env_secs(var: &str, default: u64) -> Duration {
+    Duration::from_secs(
+        std::env::var(var)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default),
+    )
+}
+
+fn query_timeout() -> Duration {
+    // 5s assumes local-latency PG; a single WAN RTT spike against managed
+    // remote Postgres can exceed it while the worker holds the advisory
+    // lock. Default to 15s when LEANKG_PG_URL points off-host.
+    let default = match std::env::var("LEANKG_PG_URL") {
+        Ok(url) if !url.is_empty() && !url.contains("localhost") && !url.contains("127.0.0.1") => {
+            15
+        }
+        _ => 5,
+    };
+    env_secs("LEANKG_TEST_QUERY_TIMEOUT_SECS", default)
+}
+
+fn worker_hold() -> Duration {
+    env_secs("LEANKG_TEST_WORKER_HOLD_SECS", 2)
+}
 
 fn require_pg_url() -> Option<String> {
     match std::env::var("LEANKG_PG_URL") {
@@ -58,8 +85,8 @@ impl ScopedPg {
             std::process::id(),
             SCHEMA_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
-        let mut admin = postgres::Client::connect(base_url, postgres::NoTls)
-            .unwrap_or_else(|e| panic!("cannot connect to {base_url}: {e}"));
+        let mut admin =
+            pg_connect(base_url).unwrap_or_else(|e| panic!("cannot connect to {base_url}: {e}"));
         admin
             .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
             .expect("drop schema");
@@ -93,7 +120,7 @@ impl ScopedPg {
         // Drop runs env restore; schema DROP is sync PG — must be off-runtime
         // or under block_in_place (caller responsibility).
         drop(self);
-        if let Ok(mut admin) = postgres::Client::connect(&base, postgres::NoTls) {
+        if let Ok(mut admin) = pg_connect(&base) {
             let _ = admin.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"));
         }
     }
@@ -212,7 +239,9 @@ async fn concurrent_ro_mcp_queries_succeed_while_worker_holds_lock_and_writes() 
 
     // Worker: hold index advisory lock + slow batched embed writes.
     let worker = std::thread::spawn(move || {
-        let _lock = index_advisory_lock().expect("index_advisory_lock");
+        let lock_path = _tmp.path().join("leankg");
+        let _lock = index_advisory_lock("local", lock_path.to_str().expect("utf8 db path"))
+            .expect("index_advisory_lock");
         let pg = PostgresBackend::from_env().expect("worker PostgresBackend");
         let mut n = 0u32;
         while !stop_w.load(Ordering::SeqCst) {
@@ -235,7 +264,7 @@ async fn concurrent_ro_mcp_queries_succeed_while_worker_holds_lock_and_writes() 
     // Give the worker a moment to acquire the lock and start writing.
     tokio::time::sleep(Duration::from_millis(80)).await;
 
-    let deadline = Instant::now() + WORKER_HOLD;
+    let deadline = Instant::now() + worker_hold();
     let mut status_ok = 0u32;
     let mut search_ok = 0u32;
 
@@ -243,9 +272,9 @@ async fn concurrent_ro_mcp_queries_succeed_while_worker_holds_lock_and_writes() 
         let t0 = Instant::now();
         let status = server.execute_tool_pub("mcp_status", Map::new()).await;
         assert!(
-            t0.elapsed() < QUERY_TIMEOUT,
+            t0.elapsed() < query_timeout(),
             "mcp_status exceeded {:?}: {:?}",
-            QUERY_TIMEOUT,
+            query_timeout(),
             t0.elapsed()
         );
         assert_not_ro_or_conn_error("mcp_status", status);
@@ -257,9 +286,9 @@ async fn concurrent_ro_mcp_queries_succeed_while_worker_holds_lock_and_writes() 
         let t1 = Instant::now();
         let search = server.execute_tool_pub("search_code", args).await;
         assert!(
-            t1.elapsed() < QUERY_TIMEOUT,
+            t1.elapsed() < query_timeout(),
             "search_code exceeded {:?}: {:?}",
-            QUERY_TIMEOUT,
+            query_timeout(),
             t1.elapsed()
         );
         assert_not_ro_or_conn_error("search_code", search);
@@ -274,9 +303,12 @@ async fn concurrent_ro_mcp_queries_succeed_while_worker_holds_lock_and_writes() 
         batches >= 1,
         "worker must complete at least one embed write batch (got {batches})"
     );
+    // At least one successful RO query per kind during the hold. The old
+    // `>= 2` assumed local-latency PG (2s hold fits ~4+ round trips); over
+    // managed remote Postgres a single query can eat most of the window.
     assert!(
-        status_ok >= 2 && search_ok >= 2,
-        "expected multiple successful RO queries during worker hold \
+        status_ok >= 1 && search_ok >= 1,
+        "expected successful RO queries during worker hold \
          (mcp_status={status_ok}, search_code={search_ok}, batches={batches})"
     );
     eprintln!(

@@ -7,8 +7,9 @@
 > `scripts/mcp-smoke-tools.py` (`RAW_QUERY_RECIPES`) and is gated by the
 > FR-B50 smoke gate.
 
-`run_raw_query` executes **CozoDB Datalog** directly against the resolved
-project's relations. It is a read tool; the Cozo read-write filter
+`run_raw_query` executes **legacy Datalog-style scripts** — translated to SQL by
+the runtime translator — directly against the resolved
+project's relations. It is a read tool; the read-write filter
 (`src/db/schema.rs` — `:put` / `:rm` / `:create` / `:replace` / `PRAGMA` are
 rejected) keeps it safe for agents.
 

@@ -174,6 +174,19 @@ pub fn index_items(
         relationships.extend(rels);
     }
 
+    // Idempotent re-index (G53/G44 rm-before-put pattern): `code_elements`
+    // and `relationships` carry no unique key on qualified_name (legacy
+    // `:put` tuple semantics — see db/pg/schema.sql), so a second mining
+    // run over the same items would otherwise duplicate every node and
+    // edge. Remove prior rows for this batch's sources before writing.
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for element in &elements {
+        if seen.insert(element.qualified_name.as_str()) {
+            graph.remove_elements_by_qualified_name(&element.qualified_name)?;
+            graph.remove_relationships_by_source(&element.qualified_name)?;
+        }
+    }
+
     if !elements.is_empty() {
         graph.insert_elements(&elements)?;
     }

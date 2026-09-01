@@ -271,7 +271,7 @@ fn max_file_size() -> u64 {
         .unwrap_or(2 * 1024 * 1024)
 }
 
-/// Insert batch size used when chunking elements/relationships into CozoDB.
+/// Insert batch size used when chunking elements/relationships into Postgres.
 /// Default 20_000. Override with `LEANKG_INSERT_BATCH_SIZE` (usize, > 0).
 /// FR-INDEX-BATCH-20K: bumping 5k → 20k cut commit overhead enough to keep
 /// the be fresh index under the 10-15min budget on 2-workspace Docker MCP.
@@ -1638,7 +1638,7 @@ pub struct IncrementalIndexResult {
 /// but never flags them stale, so the HNSW stays empty.
 ///
 /// Looks up qualified_names per file (one indexed query each), then
-/// issues a single `mark_stale_for_qualified_names` CozoDB call.
+/// issues a single `mark_stale_for_qualified_names` call.
 /// One bulk call at end of batch avoids per-file DB round-trips.
 #[cfg(feature = "embeddings")]
 pub fn mark_files_stale(
@@ -1652,7 +1652,7 @@ pub fn mark_files_stale(
     // Single bulk query: collect every qualified_name whose file_path
     // is in `files`. Uses the file_path index from commit 8132a5b so the
     // join is O(matching) instead of O(3M). Per-file loops were 3834
-    // sequential CozoDB round-trips on a 3K-file cold start (hours).
+    // sequential database round-trips on a 3K-file cold start (hours).
     let query = r#"?[qualified_name] := *code_elements[qualified_name, _, _, file_path, _, _, _, _, _, _, _, _, _], file_path in $fps"#.to_string();
     let mut params = std::collections::BTreeMap::new();
     params.insert(
@@ -1856,7 +1856,7 @@ pub async fn incremental_index_sync(
         }
         let file_ms = file_start.elapsed().as_millis();
         // Per-file slow log: >500ms per file on a 3K-file batch indicates a
-        // bottleneck (CozoDB write, fs read, parser) worth investigating.
+        // bottleneck (DB write, fs read, parser) worth investigating.
         if file_ms > 500 {
             tracing::warn!("slow reindex {}ms for {}", file_ms, file_path);
         }
@@ -1878,7 +1878,7 @@ pub async fn incremental_index_sync(
         }
     }
 
-    // Single bulk rm at the end of the batch: one CozoDB query that scans
+    // Single bulk rm at the end of the batch: one query that scans
     // code_elements + relationships ONCE instead of once per file.
     let rm_start = std::time::Instant::now();
     if let Err(e) = graph.remove_elements_by_files_bulk(&needs_remove_files) {

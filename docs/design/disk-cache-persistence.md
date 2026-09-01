@@ -2,34 +2,34 @@
 
 ## Overview
 
-This document describes the design for persisting LeanKG's query caches to disk using CozoDB, enabling cache survival across process restarts.
+This document describes the design for persisting LeanKG's query caches to disk using PostgreSQL, enabling cache survival across process restarts.
 
 **Architecture**: Write-through L1/L2 cache
 - **L1**: In-memory `TimedCache` (existing)
-- **L2**: CozoDB-backed persistent storage (new)
+- **L2**: PostgreSQL-backed persistent storage (new)
 
 ## 1. Data Model
 
-### CozoDB Table: `query_cache`
+### Table: `query_cache`
 
-```cozo
-:create query_cache {
-    cache_key: String,
-    value_json: String,
-    created_at: Int,          -- Unix timestamp (seconds)
-    ttl_seconds: Int,         -- TTL in seconds (0 = never expires)
-    tool_name: String,        -- 'dependencies' | 'dependents' | 'orchestrate'
-    project_path: String,     -- For multi-project isolation
-    metadata: String          -- JSON for future extensibility
-}
+```sql
+CREATE TABLE IF NOT EXISTS query_cache (
+    cache_key TEXT,
+    value_json TEXT,
+    created_at BIGINT,        -- Unix timestamp (seconds)
+    ttl_seconds BIGINT,       -- TTL in seconds (0 = never expires)
+    tool_name TEXT,           -- 'dependencies' | 'dependents' | 'orchestrate'
+    project_path TEXT,        -- For multi-project isolation
+    metadata TEXT             -- JSON for future extensibility
+);
 ```
 
 ### Indexes
 
-```cozo
-:create query_cache::tool_name_index {ref: (tool_name), compressed: true}
-:create query_cache::project_path_index {ref: (project_path), compressed: true}
-:create query_cache::cache_key_index {ref: (cache_key), compressed: true, unique: true}
+```sql
+CREATE INDEX query_cache_tool_name_idx ON query_cache (tool_name);
+CREATE INDEX query_cache_project_path_idx ON query_cache (project_path);
+CREATE UNIQUE INDEX query_cache_cache_key_idx ON query_cache (cache_key);
 ```
 
 ## 2. Cache Key Strategy
@@ -46,7 +46,7 @@ Key generation is deterministic, allowing consistent invalidation via prefix mat
 
 ## 3. TTL Strategy
 
-- **Stored**: `ttl_seconds` column in CozoDB (integer, seconds since epoch)
+- **Stored**: `ttl_seconds` column in PostgreSQL (integer, seconds since epoch)
 - **Expiration check**: On every `get()`, compare `created_at + ttl_seconds` vs current time
 - **Default TTL**: 300 seconds (5 minutes), configurable
 - **Never-expire**: `ttl_seconds = 0` indicates no expiration
@@ -59,7 +59,7 @@ Key generation is deterministic, allowing consistent invalidation via prefix mat
 ```rust
 // Modified constructor
 impl GraphEngine {
-    pub fn new(db: CozoDb) -> Self {
+    pub fn new(db: Arc<PostgresBackend>) -> Self {
         let persistent_cache = PersistentCache::new(db.clone());
         let cache = QueryCache::with_persistence(300, 1000, persistent_cache);
         Self { db, cache: Arc::new(RwLock::new(cache)) }
@@ -84,23 +84,23 @@ impl QueryOrchestrator {
 
 When file changes are detected via the watcher:
 1. Invalidate in-memory cache for affected file
-2. Invalidate CozoDB entries where `cache_key LIKE '{type}:{project}:{file}%'`
+2. Invalidate database entries where `cache_key LIKE '{type}:{project}:{file}%'`
 
 ## 5. Schema Migration
 
 The cache table is created if not exists (upsert pattern):
 
 ```rust
-fn ensure_cache_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
-    let check = r#"::relations"#;
-    let existing: HashSet<String> = db.run_script(check, Default::default())?
-        .rows.iter()
+fn ensure_cache_table(conn: &mut Client) -> Result<(), Box<dyn std::error::Error>> {
+    let check = r#"SELECT table_name FROM information_schema.tables WHERE table_name = 'query_cache'"#;
+    let exists: HashSet<String> = conn.query(check, &[])?
+        .iter()
         .filter_map(|row| row.get(0).and_then(|v| v.as_str().map(String::from)))
         .collect();
     
-    if !existing.contains("query_cache") {
-        let create = r#":create query_cache {...}"#;
-        db.run_script(create, Default::default())?;
+    if !exists.contains("query_cache") {
+        let create = r#"CREATE TABLE IF NOT EXISTS query_cache (...)"#;
+        conn.batch_execute(create)?;
     }
     Ok(())
 }
@@ -123,7 +123,7 @@ fn ensure_cache_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
 
 ## 7. Error Handling
 
-- **CozoDB unavailable**: Log warning, fall back to in-memory only
+- **Database unavailable**: Log warning, fall back to in-memory only
 - **Serialization error**: Log error, skip cache entry
 - **TTL expired**: Treat as cache miss, return None
 
@@ -146,20 +146,21 @@ fn ensure_cache_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
                                 ▼
                     ┌───────────────────────┐
                     │   L2 Persistent      │
-                    │   (CozoDB query_cache) │
+                    │   (PostgreSQL        │
+                    │    query_cache)       │
                     └───────────────────────┘
                                 │
                      Cache Miss?│
                                 ▼
                     ┌───────────────────────┐
-                    │   Query CozoDB        │
+                    │   Query PostgreSQL   │
                     │   (relationships)      │
                     └───────────────────────┘
 ```
 
 **Write-through on result:**
 1. Store in L1 memory cache
-2. Async write to L2 CozoDB (non-blocking)
+2. Async write to L2 PostgreSQL (non-blocking)
 
 ### 8.2 QueryOrchestrator Cache Flow
 
@@ -178,7 +179,8 @@ fn ensure_cache_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
                                 ▼
                     ┌───────────────────────┐
                     │   L2 Persistent      │
-                    │   (CozoDB query_cache) │
+                    │   (PostgreSQL        │
+                    │    query_cache)       │
                     └───────────────────────┘
                                 │
                      Cache Miss?│
@@ -254,11 +256,11 @@ if !existing_relations.contains("query_cache") {
 ### Step 2: Create PersistentCache Module (src/graph/persistent_cache.rs)
 
 New file with:
-- `PersistentCache` struct wrapping CozoDB
+- `PersistentCache` struct wrapping the PostgreSQL connection
 - In-memory HashMap for L1
 - `get()`, `insert()`, `invalidate()`, `invalidate_prefix()`
 - TTL checking on reads
-- Lazy loading from CozoDB
+- Lazy loading from PostgreSQL
 
 ### Step 3: Extend QueryCache (src/graph/cache.rs)
 
@@ -282,7 +284,7 @@ Add:
 
 Modify `GraphEngine::new()`:
 ```rust
-pub fn new(db: CozoDb) -> Self {
+pub fn new(db: Arc<PostgresBackend>) -> Self {
     let persistent_cache = Arc::new(PersistentCache::new(db.clone(), 300));
     let cache = QueryCache::with_persistence(300, 1000, persistent_cache);
     Self { db, cache: Arc::new(RwLock::new(cache)) }
@@ -311,11 +313,11 @@ orchestrator_cache.lock().invalidate_prefix(&changed_path);
 
 ### Step 8: Add Background Cleanup (Optional)
 
-Add periodic task to delete expired entries from CozoDB:
+Add periodic task to delete expired entries from PostgreSQL:
 ```rust
 fn cleanup_expired(&self) -> Result<usize> {
-    let query = r#":delete query_cache where (now() - created_at) > ttl_seconds"#;
-    self.db.run_script(query, Default::default())?;
+    let sql = r#"DELETE FROM query_cache WHERE (EXTRACT(EPOCH FROM now())::BIGINT - created_at) > ttl_seconds"#;
+    self.conn.execute(sql, &[])?;
     Ok(0) // Return count
 }
 ```

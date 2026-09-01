@@ -58,8 +58,21 @@ fn doc_indexer_enriches_metadata() {
     let _guard = ProjectRootGuard::change_to(root);
     let result = index_docs_directory(Path::new("docs"), &graph).unwrap();
 
-    assert_eq!(result.documents.len(), 1);
-    let doc = &result.documents[0];
+    // `documents` also carries synthetic `directory` elements for parent
+    // dirs of indexed files — count only real documents.
+    assert_eq!(
+        result
+            .documents
+            .iter()
+            .filter(|d| d.element_type == "document")
+            .count(),
+        1
+    );
+    let doc = result
+        .documents
+        .iter()
+        .find(|d| d.element_type == "document")
+        .unwrap();
     assert_eq!(doc.metadata["title"], "Feature");
     assert!(doc.metadata["first_paragraph"]
         .as_str()
@@ -92,11 +105,11 @@ fn index_docs_marks_embedding_state_stale() {
 
     let db = init_db(&root.join("leankg.db")).unwrap();
     let graph = GraphEngine::new(db.clone());
-    state::ensure_embedding_state_table(&db).unwrap();
+    state::ensure_embedding_state_table(db.as_ref()).unwrap();
     let _guard = ProjectRootGuard::change_to(root);
     index_docs_directory(Path::new("docs"), &graph).unwrap();
 
-    let stale = state::list_stale(&db).unwrap();
+    let stale = state::list_stale(db.as_ref()).unwrap();
     assert!(
         stale.iter().any(|r| r.qualified_name.contains("note.md")),
         "doc index should mark document rows stale for embed: {:?}",
@@ -122,7 +135,9 @@ fn index_inventory_persists_after_doc_index() {
     let _guard = ProjectRootGuard::change_to(root);
     index_docs_directory(Path::new("docs"), &graph).unwrap();
 
-    let inv = load_latest_inventory(&db).unwrap().expect("inventory row");
+    let inv = load_latest_inventory(db.as_ref())
+        .unwrap()
+        .expect("inventory row");
     assert!(inv.total_documents >= 1);
     assert!(inv.total_doc_sections >= 1);
     assert_eq!(inv.notes, "doc_index");
@@ -143,8 +158,12 @@ fn index_inventory_updates_after_code_index() {
     parser.init_parsers().unwrap();
     let _guard = ProjectRootGuard::change_to(root);
     index_file_sync(&graph, &mut parser, "./src/lib.rs").unwrap();
+    // Inventory refresh is deferred to end-of-batch by design (it scans
+    // every row and dominated per-file cost on megagraphs) — a direct
+    // single-file sync must trigger it explicitly.
+    leankg::graph::inventory::refresh_index_inventory(&graph, "code_index").unwrap();
 
-    let inv = load_latest_inventory(&db)
+    let inv = load_latest_inventory(db.as_ref())
         .unwrap()
         .expect("inventory after code index");
     assert!(inv.total_elements >= 1);
@@ -188,7 +207,7 @@ fn struct_and_doc_classify_for_embedding() {
 fn untracked_elements_need_full_or_stale_mark() {
     let tmp = TempDir::new().unwrap();
     let db = init_db(tmp.path()).unwrap();
-    state::ensure_embedding_state_table(&db).unwrap();
+    state::ensure_embedding_state_table(db.as_ref()).unwrap();
     let graph = GraphEngine::new(db.clone());
 
     let el = CodeElement {
@@ -201,7 +220,7 @@ fn untracked_elements_need_full_or_stale_mark() {
     };
     graph.insert_elements(&[el]).unwrap();
 
-    let stale_before = state::list_stale(&db).unwrap();
+    let stale_before = state::list_stale(db.as_ref()).unwrap();
     assert!(
         stale_before.is_empty(),
         "untracked QN has no embedding_state row until --full or stale mark"
@@ -215,9 +234,13 @@ fn untracked_elements_need_full_or_stale_mark() {
     )
     .unwrap();
     let hash = text_blob::content_hash_for(&blob);
-    state::mark_stale_if_changed(&db, &[("src/orphan.rs::orphan_fn".to_string(), hash)]).unwrap();
+    state::mark_stale_if_changed(
+        db.as_ref(),
+        &[("src/orphan.rs::orphan_fn".to_string(), hash)],
+    )
+    .unwrap();
 
-    let stale_after = state::list_stale(&db).unwrap();
+    let stale_after = state::list_stale(db.as_ref()).unwrap();
     assert!(
         stale_after
             .iter()

@@ -225,7 +225,7 @@ async fn test_pipeline_execution_flow() {
     all_elements.extend(process_result.process_elements);
     all_relationships.extend(process_result.process_relationships);
 
-    // Test insertion to CozoDB works for the newly modified RelationshipTypes
+    // Test insertion to the graph backend works for the newly modified RelationshipTypes
     graph.insert_elements(&all_elements).unwrap();
     graph.insert_relationships(&all_relationships).unwrap();
 
