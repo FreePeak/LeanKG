@@ -1,11 +1,11 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.8.5-mcp-validation-rca
-**Date:** 2026-08-02
+**Version:** 3.8.7-harness-era-positioning
+**Date:** 2026-08-30
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
-**Codebase Version:** 0.19.31 (`origin/main`)
+**Codebase Version:** 0.26.1 (`origin/main` per `docs/roadmap-tracker.md` W12, npm wrapper in lockstep)
 
 > **Storage engine (2026-08-05):** LeanKG is now **PostgreSQL + pgvector only** (decisions D1–D5). The legacy embedded backends (SQLite/RocksDB), `DbBackend` trait, engine shim, and `LEANKG_DB_ENGINE` were removed in Phase 8. Local dev requires `docker compose up postgres` + `LEANKG_PG_URL`. See [analysis/pg-migration-report.md](analysis/pg-migration-report.md).
 
@@ -23,6 +23,7 @@
 > | **P0** | **CLOSED** | Procedural ontology auto-update — `US-ONT-PROC-01` / `REL-059` ([smoke](reports/ontology-proc-auto-smoke-2026-07-21.md)) |
 > | **P1** | **DONE** | Wave **4** single-repo expand — `US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md). Waves 0a–3 **DONE** (Wave 3: [NL Query FAB](reports/ui-v2-nl-query-fab-2026-08-01.md)). Ops: OnRender embeddings exit 101 — [RCA](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md) |
 > | **P1** | **DONE** | Wave **1b** MCP hard-delete — `load_layer` + `get_doc_structure` (`US-SURF-08..11` / `REL-076`) — [evidence](reports/rel-076-mcp-surf-1b-2026-08-01.md). Cumulative hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure` |
+| **P1** | **NEW** | Harness-era repositioning (2026-08-30 assessment) — org-memory substrate focus + alias metric / semantic dead-end / remote-PG latency / mega-scan banner fixes — `FR-HEA-01..05` (§3.31 / §5.36) — [research](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md) |
 > | **P2** | **CURRENT** | Ordered: (1) Session MCP offload `US-SM-01` → (2) Auto-recall `US-SM-02` / closes `US-GE-05` → (3) Provenance+RRF `US-SM-03/04` → (4) Doc↔code join polish `US-DOCJOIN-*` → (5) Graph-eng `US-GE-02..04` → (6) Heat index / promote traces `US-SM-05/06` |
 > | **P3** | Backlog | `US-SM-07` retention/GC; `US-GE-06` LLM pass-2; Track E 3D |
 >
@@ -37,6 +38,22 @@
 ---
 
 ## Changelog
+
+### v3.8.7-harness-era-positioning - Harness-era value assessment: org-memory substrate focus + 4 live-probe fixes (2026-08-30)
+
+> **Trigger:** [`freepeak/.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md`](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md) — live probe of LeanKG MCP (5 probes, 2026-08-30 snapshot) in the context of 2026 harness-native primitives (Glob/Grep/LSP, subagent fan-out, session memory). Verdict: **high value as org-memory substrate** (requirements traceability, cross-env conflicts, incidents, team map, cross-repo service graph); **mid value as search tool** — out-competed by harness-native search, semantic layer frequently below the confidence floor. Recommendation adopted: narrow the product surface; stop positioning against harness-native search.
+
+> **Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-HEA-01` | **P1** | Fix ontology alias-coverage accounting (probe: `kg_ontology_status` reports `nodes_missing_aliases: 14` while `domain_entity.counts` sums to 13) — backfill aliases or fix the metric before promoting the ontology | **NOT_DONE** |
+| 2 | `FR-HEA-02` | **P1** | Semantic dead-end escape: on empty/below-floor `semantic_search` / `kg_semantic_context` results, return an actionable `search_code` fallback hint instead of a bare empty answer | **NOT_DONE** |
+| 3 | `FR-HEA-03` | **P2** | Mega-graph full-scan visibility: surface the 50k full-scan cap + affected-tool banner in `get_architecture` / `mcp_status` output so on-call agents do not script against the full graph | **NOT_DONE** |
+| 4 | `FR-HEA-04` | **P1** | Remote-Postgres latency: shorter per-tool timeouts + documented local-PG / materialised-view options for heavy queries (`kg_semantic_context` 30s+ timeouts on remote PG) | **NOT_DONE** |
+| 5 | `FR-HEA-05` | **P1** | Positioning: README + §1 + agent-surface docs lead with the org-memory substrate (traceability / env conflicts / incidents / team map / cross-repo service graph), not generic search | **NOT_DONE** |
+
+> **New content:** §3.31 (US-HEA-01..05), §5.36 (FR-HEA-01..05). Roadmap sync: `roadmap-2027-v2.md` §3 NOW rows 13–14, §4.1 repositioning bullet, §10 harness-native-search risk row.
 
 ### v3.8.6-competitive-strategy-tactical - Competitive-strategy tactical wins: ctags export, cost estimate, context pack, steer config, content-hash helper (2026-08-03)
 
@@ -872,6 +889,7 @@ Unlike heavy frameworks like Graphiti that require external databases (Neo4j) an
 - vs [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp): see Section 3.11 / 5.10 — Lean into business-context depth; close structural gaps; do **not** chase 158-language / Pure-C parity
 - vs LSP-by-default (CBM style): see Section 3.11 / 5.10 — LeanKG now has the bridge + wiring (FR-B03..B07 + FR-B08); `typed`-class edges still PENDING for Go (`FR-B03`) and TS (`FR-B04`).
 - vs mmap-heavy / full-FP32-in-RAM vector stores: LeanKG targets SQ8 hot path + flat payload post-filter (Section 5.14 / 6.10) to protect 256GB SSDs and 16GB laptops.
+- vs 2026 harness-native primitives (Glob/Grep/LSP, subagent fan-out, session memory): search = mid value (out-competed); **org-memory substrate = high value** — requirements traceability, `find_env_conflicts`, `query_incidents`, `get_team_map`, cross-repo service graph are surfaces no harness ships. Narrow the product surface accordingly (US-HEA / FR-HEA, §3.31 / §5.36; [assessment 2026-08-30](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md)).
 
 ---
 
@@ -1714,6 +1732,41 @@ Historical soft-deprecation ACs satisfied; use `env=` on primary search / `kg_*`
 **As an** operator, **I want** matrix/smoke/skills/docs grep-clean of preferred calls to deleted tools, **so that** agents do not chase ghosts.
 
 **Acceptance:** `redundant_tools_matrix` green; smoke/install updated; hard-removed list includes Wave 1b tools.
+
+### 3.31 Harness-Era Repositioning (US-HEA) — v3.8.7
+
+> **Trigger:** 2026-08-30 live-probe assessment ([research](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md)) of LeanKG against 2026 harness-native primitives. Verdict: high value as **org-memory substrate**; mid value as search tool (harness-native Glob/Grep/LSP out-compete; semantic probes returned 0/3 with dead-end hints; `kg_ontology_status` alias accounting broken; remote-PG 30s timeouts; 50k full-scan cap invisible).
+
+#### US-HEA-01 — Lead with the org-memory substrate (Must Have)
+
+**As a** product owner, **I want** README + agent-surface docs to position LeanKG as the org-memory substrate (requirements traceability, cross-env conflicts, incidents, team map, cross-repo service graph), **so that** the wedge is the layer no harness ships instead of search agents already have.
+
+**Acceptance:** README opening + §1.1 + skills/install docs name the org-memory surfaces first; search is positioned as complementary (graph-verified, deterministic), never as a Grep/LSP replacement.
+
+#### US-HEA-02 — Fix ontology alias-coverage accounting (Must Have)
+
+**As an** agent, **I want** `kg_ontology_status` to report self-consistent alias coverage, **so that** I can trust the metric before promoting the ontology.
+
+**Acceptance:**
+- **Given** the live probe result (`nodes_missing_aliases: 14` while `domain_entity.counts` sums to 13), **When** the fix lands, **Then** missing-alias count cannot exceed the aliased population (invariant test) and real aliases are backfilled or the formula is corrected.
+
+#### US-HEA-03 — Semantic dead-end escape (Must Have)
+
+**As an** AI agent, **I want** empty or below-floor semantic results to return an actionable fallback, **so that** I never hit a bare "0 results — use search_code or disk grep" dead end.
+
+**Acceptance:** `semantic_search` / `kg_semantic_context` empty responses carry a structured `fallback` hint (`search_code` with the same query terms); live probe repeats the 0/3 scenario and returns the hint.
+
+#### US-HEA-04 — Mega-graph full-scan visibility (Should Have)
+
+**As an** on-call operator, **I want** the 50k full-scan cap surfaced in `get_architecture` / `mcp_status`, **so that** I do not script `check_consistency`-class tools against a 360k-element graph.
+
+**Acceptance:** `get_architecture` (default view) includes the cap + list of guarded tools; docs note it next to the refusal message.
+
+#### US-HEA-05 — Remote-Postgres latency play (Must Have)
+
+**As a** self-hoster on remote Postgres, **I want** a documented + enforced latency strategy, **so that** heavy queries (`kg_semantic_context` 30s+) do not time out my MCP client.
+
+**Acceptance:** per-tool timeout below the 30s client-kill threshold returns a structured timeout error; docs give the local-PG / materialised-view options for heavy semantic queries.
 
 ## 4. Implementation Status Summary
 
@@ -2629,6 +2682,21 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 - `file` and `module` are already in `UPPER_TYPES` and already use `contains` downward rules, so the seed→traverse retrieval flow needed **zero** handler changes.
 - Out of scope: filesystem `directory` summaries (every file covered); embedding type declarations (`class`/`struct`) under summary-only. Both extensible later by widening `SUMMARY_ONLY_TYPES`.
 
+
+### 5.36 Harness-era assessment fixes (FR-HEA) — v3.8.7 **P1**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-HEA-01..05` **NOT_DONE**.
+> **Narrative:** §3.31. Evidence: [`freepeak/.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md`](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md) (5 probes, 2026-08-30 snapshot).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-HEA-01 | Must Have (**P1**) | `kg_ontology_status` alias accounting is self-consistent: `nodes_missing_aliases` cannot exceed the sum of aliased entity counts (probe returned 14 missing vs 13 domain entities); add the invariant test + backfill real aliases or fix the formula |
+| FR-HEA-02 | Must Have (**P1**) | Empty / below-confidence-floor `semantic_search` and `kg_semantic_context` responses include a structured `fallback` hint naming `search_code` with the caller's terms (probe 4: 0/3 concrete query → dead-end prose hint only) |
+| FR-HEA-03 | Should Have (**P2**) | `get_architecture` default output carries a mega-graph banner: element count, the 50k full-scan cap, and which tools refuse (`check_consistency`, `temporal_query`, `timeline`, ...); the refusal error message references the banner (probe 6: 360,953-element graph refused with cap invisible) |
+| FR-HEA-04 | Must Have (**P1**) | Remote-PG latency: per-tool `tokio::time::timeout` floors for semantic tools set below typical 30s client timeouts, structured timeout error (not hang); README / `mcp-setup.md` document local-PG or materialised-view options for heavy semantic queries (probe 5: `kg_semantic_context` timed out at 30s on remote PG) |
+| FR-HEA-05 | Must Have (**P1**) | Positioning cutover: README lead + §1.1 + agent-surface docs (using-leankg, install hooks, skills) present the org-memory substrate surfaces first — traceability (`get_traceability*`), `find_env_conflicts`, `query_incidents`, `get_team_map`, cross-repo `get_service_graph` — and describe search as deterministic/graph-verified complement, not a harness-native-search competitor |
+
+**Won't Do (this track):** Competing with harness-native Glob/Grep/LSP on raw search speed; rebuilding session/chat memory (see §1.3 boundary); demoting or removing the semantic layer (keep as complementary hybrid).
 
 ### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**
 
