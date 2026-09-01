@@ -35,6 +35,7 @@ use std::time::{Duration, SystemTime};
 use tokio::signal;
 use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock};
 use tower_http::cors::{Any, CorsLayer};
+use uuid::Uuid;
 
 /// Tools that mutate the underlying DB or filesystem / pipeline state.
 /// Single source of truth for `is_write_tool`, the RO execute gate, and
@@ -3388,10 +3389,12 @@ async fn handle_mcp_request(
                     data: None,
                 }),
             };
+            let body_json = serde_json::to_string(&response).unwrap();
             return Response::builder()
                 .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(serde_json::to_string(&response).unwrap()))
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .body(Body::from(format!("event: message\ndata: {body_json}\n\n")))
                 .unwrap();
         }
     };
@@ -3503,12 +3506,27 @@ async fn handle_mcp_request(
             }),
         },
     };
-
-    Response::builder()
+    let body_json = serde_json::to_string(&response).unwrap();
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(serde_json::to_string(&response).unwrap()))
-        .unwrap()
+        // Streamable-HTTP clients expect an SSE envelope. Wrap the JSON-RPC
+        // payload as a single `event: message` frame so `Accept:
+        // application/json, text/event-stream` is honored either way.
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache");
+    if request.method == "initialize" {
+        // Mcp-Session-Id per the MCP Streamable-HTTP spec. The client will
+        // echo this on subsequent calls; the server is currently stateless
+        // across requests, so we accept any value (including none) on
+        // follow-ups. Allocating one is the minimum needed to stop the
+        // Streamable-HTTP client from tearing the transport down on the
+        // first reconnect.
+        let sid = Uuid::new_v4().to_string();
+        builder = builder.header("Mcp-Session-Id", sid);
+    }
+
+    let sse_body = format!("event: message\ndata: {body_json}\n\n");
+    builder.body(Body::from(sse_body)).unwrap()
 }
 
 /// Process a JSON-RPC request and return the result
