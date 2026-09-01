@@ -485,3 +485,130 @@ fn bug_b_dynamic_rows_survive_yaml_sync_cycle_pg() {
     let status = q.get_ontology_status().expect("status after sync");
     assert!(status.dynamic_concepts >= 1);
 }
+
+/// FR-HEA-01: alias accounting must be self-consistent — every ontology node
+/// kind seeds a name-derived alias. The YAML loader previously dropped
+/// `step_def.aliases` entirely and `WorkflowStepMetadata::new` seeded
+/// `aliases: vec![]`, so 100% of YAML-loaded workflow_steps were reported in
+/// `nodes_missing_aliases` (live probe: 57 missing = 57 workflow_steps).
+/// Parity: `WorkflowMetadata::new` and `FailureModeNode::new` both seed
+/// `normalize_alias(name)`.
+#[test]
+fn fr_hea01_workflow_steps_carry_aliases() {
+    // Red: unit-level — the metadata constructor must seed the name alias.
+    let meta = leankg::ontology::WorkflowStepMetadata::new(
+        "local",
+        "default",
+        "wf-1",
+        "step-1",
+        1,
+        "desc",
+        "Find Source Files",
+    );
+    assert!(
+        !meta.aliases.is_empty(),
+        "WorkflowStepMetadata::new must seed a name-derived alias (FR-HEA-01)"
+    );
+    assert_eq!(meta.aliases[0], "find source files");
+
+    // Green at the node level: builder must merge YAML aliases on top of the
+    // name-derived seed.
+    let node = leankg::ontology::WorkflowStepNode::new(
+        "local",
+        "default",
+        "wf-1",
+        "step-1",
+        "Find Source Files",
+        1,
+        "desc",
+    )
+    .with_aliases(vec!["file discovery".to_string()]);
+    assert_eq!(node.metadata.aliases[0], "find source files");
+    assert!(node
+        .metadata
+        .aliases
+        .contains(&"file discovery".to_string()));
+}
+
+/// FR-HEA-01 end-to-end: sync a workflows.yaml whose steps declare aliases
+/// (and some that do not) — after sync, `get_ontology_status` must report
+/// zero workflow_steps in `nodes_missing_aliases`.
+#[test]
+fn fr_hea01_yaml_sync_backfills_step_aliases() {
+    let Some(_) = pg_url() else {
+        eprintln!("skipping: LEANKG_PG_URL not set");
+        return;
+    };
+    let scratch = ScratchSchema::new();
+    let engine = GraphEngine::new(scratch.backend());
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ont = tmp.path().join("ontology");
+    std::fs::create_dir_all(&ont).unwrap();
+    std::fs::write(
+        ont.join("workflows.yaml"),
+        r#"workflows:
+  - id: alias_flow
+    name: Alias Flow
+    env: local
+    aliases: [aliased pipeline]
+    description: flow used to verify step alias coverage
+    steps:
+      - id: aliased_step
+        name: Aliased Step
+        aliases: [custom step alias]
+        failure_modes: []
+      - id: bare_step
+        name: Bare Step
+        failure_modes: []
+"#,
+    )
+    .unwrap();
+
+    leankg::ontology::sync_from_dir(&ont, &engine, None).expect("sync");
+
+    let q = OntologyQueryEngine::new(engine.db_arc().clone());
+    let status = q.get_ontology_status().expect("status after sync");
+    assert_eq!(
+        status.nodes_missing_aliases, 0,
+        "FR-HEA-01: no ontology node may lack a name-derived alias; \
+         status={:?}",
+        status
+    );
+
+    // Workflow-level alias search still works.
+    let wf = q
+        .search_workflows("aliased pipeline", "local")
+        .expect("workflow search");
+    assert!(
+        wf.iter().any(|w| w.name == "Alias Flow"),
+        "workflow-level alias must still match"
+    );
+
+    // Step-level: the declared step alias must round-trip into the stored
+    // metadata (kg_trace_workflow / concept_search read it from there).
+    let steps = q
+        .trace_workflow("alias_flow", "local")
+        .expect("steps via trace_workflow");
+    let aliased = steps
+        .iter()
+        .find(|s| s.name == "Aliased Step")
+        .expect("aliased step present");
+    assert!(
+        aliased
+            .metadata
+            .aliases
+            .contains(&"custom step alias".to_string()),
+        "declared YAML step alias must be applied; got {:?}",
+        aliased.metadata.aliases
+    );
+    let bare = steps
+        .iter()
+        .find(|s| s.name == "Bare Step")
+        .expect("bare step present");
+    assert_eq!(
+        bare.metadata.aliases,
+        vec!["bare step".to_string()],
+        "name-derived alias seed must backfill undeclared steps"
+    );
+}

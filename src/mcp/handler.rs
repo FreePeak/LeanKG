@@ -3231,8 +3231,8 @@ impl ToolHandler {
                 &step_id,
                 i,
                 step_desc,
+                step_name,
             );
-            step_meta.aliases = vec![crate::ontology::normalize_alias(step_name)];
             step_meta.code_refs = step_code_refs;
             step_meta.failure_modes = step_failure_modes.clone();
             step_meta.source = Some("dynamic".to_string());
