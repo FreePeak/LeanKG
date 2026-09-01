@@ -172,49 +172,13 @@ impl GraphEngine {
         &self,
         qualified_name: &str,
     ) -> Result<Option<CodeElement>, Box<dyn std::error::Error>> {
-        let tail = self.code_elements_tail();
-        let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name = $qn"#
-        );
-        let mut params = std::collections::BTreeMap::new();
-        params.insert(
-            "qn".to_string(),
-            serde_json::Value::String(qualified_name.to_string()),
-        );
-        let result = self.db.run_script(&query, params)?;
-        let rows = result.rows;
-
-        if rows.is_empty() {
-            return Ok(None);
-        }
-
-        let row = &rows[0];
-        let parent_qualified = row[7].get_str().map(String::from);
-        let cluster_id = row[8].get_str().map(String::from);
-        let cluster_label = row[9].get_str().map(String::from);
-        let metadata_str = row[10].get_str().unwrap_or("{}");
-
-        Ok(Some(CodeElement {
-            qualified_name: row[0].get_str().unwrap_or("").to_string(),
-            element_type: row[1].get_str().unwrap_or("").to_string(),
-            name: row[2].get_str().unwrap_or("").to_string(),
-            file_path: row[3].get_str().unwrap_or("").to_string(),
-            line_start: row[4].get_int().unwrap_or(0) as u32,
-            line_end: row[5].get_int().unwrap_or(0) as u32,
-            language: row[6].get_str().unwrap_or("").to_string(),
-            parent_qualified,
-            cluster_id,
-            cluster_label,
-            metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-            ..Default::default()
-        }))
+        // W8 wave-2 (SQL-first): typed seam — backend owns the projection.
+        // `env` is not selected here (matches the legacy 11-col projection);
+        // callers needing env use `get_elements_by_qualified_names`.
+        self.db.find_element_by_key(qualified_name)
     }
 
     /// Keyed lookup for a small set of qualified names (HNSW ANN hits).
-    ///
-    /// FR-SEM-07: never call [`Self::all_elements`] to hydrate ~top-k seeds —
-    /// that OOMs mega-graphs (~600k+ elements). Includes `env` (unlike
-    /// [`Self::find_element`]) so env filters in retrieval stay correct.
     pub fn get_elements_by_qualified_names(
         &self,
         qns: &[String],
@@ -231,53 +195,11 @@ impl GraphEngine {
                 unique.push(qn.clone());
             }
         }
-        let tail = self.code_elements_tail();
-        // BUG-D: one IN-list query per chunk instead of one round-trip per
-        // GID (remote PG ≈ 500ms/query made per-GID loops hang tools).
-        const CHUNK: usize = 500;
-        for chunk in unique.chunks(CHUNK) {
-            let query = format!(
-                r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], qualified_name in $qns"#
-            );
-            let mut params = std::collections::BTreeMap::new();
-            params.insert(
-                "qns".to_string(),
-                serde_json::Value::Array(
-                    chunk
-                        .iter()
-                        .cloned()
-                        .map(serde_json::Value::String)
-                        .collect(),
-                ),
-            );
-            let result = self.db.run_script(&query, params)?;
-            for row in &result.rows {
-                let parent_qualified = row[7].get_str().map(String::from);
-                let cluster_id = row[8].get_str().map(String::from);
-                let cluster_label = row[9].get_str().map(String::from);
-                let metadata_str = row[10].get_str().unwrap_or("{}");
-                let env_idx = 11;
-                let env = row
-                    .get(env_idx)
-                    .and_then(|v| v.get_str())
-                    .unwrap_or("local")
-                    .to_string();
-                let elem = CodeElement {
-                    qualified_name: row[0].get_str().unwrap_or("").to_string(),
-                    element_type: row[1].get_str().unwrap_or("").to_string(),
-                    name: row[2].get_str().unwrap_or("").to_string(),
-                    file_path: row[3].get_str().unwrap_or("").to_string(),
-                    line_start: row[4].get_int().unwrap_or(0) as u32,
-                    line_end: row[5].get_int().unwrap_or(0) as u32,
-                    language: row[6].get_str().unwrap_or("").to_string(),
-                    parent_qualified,
-                    cluster_id,
-                    cluster_label,
-                    metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-                    env,
-                };
-                out.insert(elem.qualified_name.clone(), elem);
-            }
+        // W8 wave-2 (SQL-first): typed seam — backend chunks the IN-list
+        // internally (BUG-D: one round-trip per chunk, not per GID). Backend
+        // selects `env`; fake / PG return the stored env (NULL → "local").
+        for elem in self.db.elements_by_qualified_names(&unique)? {
+            out.insert(elem.qualified_name.clone(), elem);
         }
         Ok(out)
     }
@@ -287,42 +209,9 @@ impl GraphEngine {
         &self,
         name: &str,
     ) -> Result<Option<CodeElement>, Box<dyn std::error::Error>> {
-        let tail = self.code_elements_tail();
-        let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}], name = $nm"#
-        );
-        let mut params = std::collections::BTreeMap::new();
-        params.insert(
-            "nm".to_string(),
-            serde_json::Value::String(name.to_string()),
-        );
-        let result = self.db.run_script(&query, params)?;
-        let rows = result.rows;
-
-        if rows.is_empty() {
-            return Ok(None);
-        }
-
-        let row = &rows[0];
-        let parent_qualified = row[7].get_str().map(String::from);
-        let cluster_id = row[8].get_str().map(String::from);
-        let cluster_label = row[9].get_str().map(String::from);
-        let metadata_str = row[10].get_str().unwrap_or("{}");
-
-        Ok(Some(CodeElement {
-            qualified_name: row[0].get_str().unwrap_or("").to_string(),
-            element_type: row[1].get_str().unwrap_or("").to_string(),
-            name: row[2].get_str().unwrap_or("").to_string(),
-            file_path: row[3].get_str().unwrap_or("").to_string(),
-            line_start: row[4].get_int().unwrap_or(0) as u32,
-            line_end: row[5].get_int().unwrap_or(0) as u32,
-            language: row[6].get_str().unwrap_or("").to_string(),
-            parent_qualified,
-            cluster_id,
-            cluster_label,
-            metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
-            ..Default::default()
-        }))
+        // W8 wave-2 (SQL-first): typed seam — backend owns the projection.
+        // `env` is not selected here (matches the legacy 11-col projection).
+        self.db.find_element_by_name_col(name)
     }
 
     pub fn get_dependencies(

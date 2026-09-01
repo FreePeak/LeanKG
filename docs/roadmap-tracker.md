@@ -1,7 +1,7 @@
 # LeanKG Central Progress Tracker
 
 > **THIS IS THE SINGLE SOURCE OF TRUTH for the 2026–2027 roadmap execution.**
-> Update this file after every completed step. Last updated: 2026-08-22.
+> Update this file after every completed step. Last updated: 2026-08-28.
 
 ## 0. Mission
 
@@ -10,9 +10,10 @@ Position LeanKG as the **deterministic, self-hostable, MCP-native code knowledge
 **Companion documents:**
 | Document | Purpose |
 |---|---|
-| [`docs/roadmap-2027.md`](roadmap-2027.md) | 1-year roadmap (Q3'26 → Q2'27), quarterly themes |
+| [`docs/roadmap-2027-v2.md`](roadmap-2027-v2.md) | **1-year roadmap v2 (Aug 2026 → Jun 2027), operational** — supersedes roadmap-2027.md for now/month/quarter execution |
+| [`docs/roadmap-2027.md`](roadmap-2027.md) | v1 quarter-level narrative (strategic themes, pricing, market) |
 | [`docs/prd-enterprise.md`](prd-enterprise.md) | PRD: enterprise + startup feature requirements (FR-ENT-*, FR-PLG-*) |
-| Datalog removal SQL migration plan (on the legacy-engine-removal worktree branch) | Full removal plan for the legacy embedded engine + Datalog IR |
+| [`docs/plan-remove-cozo-datalog-sql-migration.md`](plan-remove-cozo-datalog-sql-migration.md) | Full removal plan for the legacy embedded engine + Datalog IR (adopted seam) |
 | [`docs/pg-migration-kanban.md`](pg-migration-kanban.md) | Historical: legacy-engine → Postgres migration (Phases 0–9 DONE) |
 
 ---
@@ -28,12 +29,13 @@ Position LeanKG as the **deterministic, self-hostable, MCP-native code knowledge
 | W5 | Fix red `tests/redundant_tools_matrix.rs` (P0-a) | ✅ DONE | PR #242 | matrix 6/6 green; REMOVED_TOOLS+11; assert ==76 |
 | W6 | Purge stale engine mentions from generated docs + ontology YAMLs (P0-c) | ✅ DONE | PR #242 | generator.rs/wiki.rs truthful; 3 YAMLs purged; generated docs clean of stale storage claims |
 | W7 | Delete orphaned db/mod.rs fns + dead arms + broken script (P1) | ✅ DONE | PR #242 | −413 lines; pg-cli-sweep.sh deleted; token_budget arms pruned |
-| W8 | SQL-first seam adoption (adopt worktree plan P0) | ⬜ PENDING | legacy-engine-removal worktree branch | existing WIP at orca workspace; land sql.rs seam |
+| W8 | SQL-first seam adoption (adopt worktree plan P0) | 🟡 IN PROGRESS | feat/roadmap-2027 | P0 seam + P1 trait + wave-1a (#253) + wave-1b (#254) + PR #246 naming purge merged; 223 run_script sites remain (108 in graph/query.rs); waves W2-W6+W13 then P3 deletion sweep |
 | W9 | Known finding: qualified_name collision | ✅ DONE | PR #243 | extraction-time disambiguation; live: 2711/2711 distinct QNs; regression_qn_collision.rs added |
 | W10 | Known finding: `leankg index` EEXIST bug | ✅ DONE | PR #243 | already fixed by 56a0a86b; locked with tests/regression_index_eexist.rs (CLI e2e double-index exit 0) |
 | W11 | Tool consolidation round 2 (76→~70) | ⬜ PENDING | hackathon backlog | candidates: get_graph_report, orchestrate, traceability quartet |
-| W12 | npm wrapper version sync automation | ⬜ PENDING | quick win | npm/leankg at 0.17.9 vs crate 0.26.0 |
+| W12 | npm wrapper version sync automation | ✅ DONE (verify) | — | npm/leankg already at 0.26.1 (matches crate); confirm release.yml auto-syncs on tag |
 | W13 | Phase-1 enterprise features (see PRD) | ⬜ PENDING | **hackathon** | starts with ENT-1 observability/audit-log foundation |
+| W14 | Harness-era live-probe fixes (2026-08-30 assessment) | ⬜ PENDING | **hackathon** | alias coverage `FR-HEA-01` (probe 2: 14 missing vs 13 entities); semantic dead-end fallback `FR-HEA-02` (probe 4: 0/3); 50k cap banner `FR-HEA-03` (probe 6: 360,953-element graph refused); remote-PG latency `FR-HEA-04` (probe 5: 30s `kg_semantic_context` timeout); positioning cutover `FR-HEA-05` — see `prd-task-tracker.md` HEA section |
 
 Status legend: ⬜ pending · 🚧 in progress · ✅ done · ⛔ blocked · ❌ cancelled
 

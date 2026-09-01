@@ -1662,6 +1662,26 @@ pub static LANG_SPECS: &[LanguageSpec] = &[
         grammar: Some(|| tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     },
     LanguageSpec {
+        // The plain "typescript" grammar (LANGUAGE_TYPESCRIPT) cannot parse
+        // JSX syntax (`<Foo>...`), so .tsx/.jsx files need the TSX grammar
+        // variant. Previously .tsx/.jsx had no LanguageSpec entry at all
+        // (not even routed to a parser), so every such file silently
+        // produced zero extracted elements regardless of project config.
+        name: "tsx",
+        extensions: &["tsx", "jsx"],
+        config_files: EMPTY,
+        tier: Tier::Full,
+        kinds: NodeKinds {
+            functions: &["function_definition", "function_declaration"],
+            classes: &["class_declaration"],
+            interfaces: &["interface_declaration"],
+            properties: EMPTY,
+            imports: &["import_statement"],
+            calls: &["call_expression"],
+        },
+        grammar: Some(|| tree_sitter_typescript::LANGUAGE_TSX.into()),
+    },
+    LanguageSpec {
         name: "go",
         extensions: &["go"],
         config_files: EMPTY,
@@ -2406,6 +2426,38 @@ mod tests {
     fn init_parsers_contains_c() {
         let parsers = init_parsers();
         assert!(parsers.contains_key("c"));
+    }
+
+    /// Regression (PR #237): .tsx/.jsx were silently producing zero extracted
+    /// elements — the walker's extension whitelist had dropped them, and the
+    /// only TypeScript spec used LANGUAGE_TYPESCRIPT, which cannot parse JSX.
+    #[test]
+    fn tsx_and_jsx_route_to_tsx_spec() {
+        let tsx = language_for_path("src/components/App.tsx").expect("tsx spec");
+        assert_eq!(tsx.name, "tsx");
+        assert_eq!(tsx.tier, Tier::Full);
+        let jsx = language_for_path("src/components/Button.jsx").expect("jsx spec");
+        assert_eq!(jsx.name, "tsx");
+        // Plain .ts must keep routing to the typescript spec, not tsx.
+        assert_eq!(language_for_path("src/util.ts").unwrap().name, "typescript");
+    }
+
+    /// The tsx grammar must parse JSX syntax cleanly. LANGUAGE_TYPESCRIPT
+    /// (the old routing) produces an error node on `<Foo>` — this is the
+    /// assertion that would have caught the original regression.
+    #[test]
+    fn tsx_grammar_parses_jsx_without_errors() {
+        let mut parser = parser_for("tsx").expect("tsx parser");
+        let tree = parser
+            .parse(
+                "export function App() {\n  return <div className=\"x\"><Child /></div>;\n}",
+                None,
+            )
+            .expect("parse");
+        assert!(
+            !tree.root_node().has_error(),
+            "JSX parse produced error nodes"
+        );
     }
 
     /// lang-extras feature gates the 25 non-core grammars. When disabled

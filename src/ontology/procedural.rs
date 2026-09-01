@@ -191,6 +191,7 @@ impl WorkflowStepMetadata {
         step_id: &str,
         order: usize,
         description: &str,
+        name: &str,
     ) -> Self {
         let gid = OntologyGid {
             env: env.to_string(),
@@ -207,7 +208,10 @@ impl WorkflowStepMetadata {
             ontology_layer: "procedural".to_string(),
             workflow_gid: format!("{}:{}:{}:{}:{}", env, scope, "workflow", workflow_id, "v1"),
             order,
-            aliases: Vec::new(),
+            // FR-HEA-01: every node kind carries a name-derived alias so
+            // alias-based search and coverage accounting stay consistent
+            // (parity with WorkflowMetadata::new / FailureModeMetadata).
+            aliases: vec![normalize_alias(name)],
             description: description.to_string(),
             code_refs: Vec::new(),
             failure_modes: Vec::new(),
@@ -218,6 +222,12 @@ impl WorkflowStepMetadata {
             stale_reason: None,
             last_seen_at: None,
         }
+    }
+
+    pub fn with_aliases(mut self, aliases: Vec<String>) -> Self {
+        self.aliases
+            .extend(aliases.iter().map(|alias| normalize_alias(alias)));
+        self
     }
 
     pub fn with_code_refs(mut self, refs: Vec<String>) -> Self {
@@ -308,7 +318,7 @@ impl WorkflowStepNode {
         description: &str,
     ) -> Self {
         let metadata =
-            WorkflowStepMetadata::new(env, scope, workflow_id, step_id, order, description);
+            WorkflowStepMetadata::new(env, scope, workflow_id, step_id, order, description, name);
 
         Self {
             gid: metadata.gid.clone(),
@@ -320,6 +330,13 @@ impl WorkflowStepNode {
             env: env.to_string(),
             metadata,
         }
+    }
+
+    /// FR-HEA-01: merge YAML-declared aliases on top of the name-derived
+    /// seed applied by [`WorkflowStepMetadata::new`].
+    pub fn with_aliases(mut self, aliases: Vec<String>) -> Self {
+        self.metadata = self.metadata.with_aliases(aliases);
+        self
     }
 
     pub fn with_code_refs(mut self, refs: Vec<String>) -> Self {
@@ -477,6 +494,7 @@ mod tests {
             "authorize_payment",
             2,
             "Authorize payment step",
+            "Authorize Payment",
         );
         assert_eq!(
             meta.workflow_gid,

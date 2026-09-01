@@ -1,6 +1,6 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-02 (PR-13 SEM token budgets — FR-SEM-01..03 / US-SEM-01..03 DONE). **PR-03 DONE** (`REL-SRC-01` / `REL-SRC-WATCH-01` / `REL-REFRESH-01`). **P1 ALL WAVES DONE** (`US-MG-02` / `FR-MG-03`). Waves 0a–3 DONE. **P2 next (ordered):** `US-SM-01` → `US-SM-02`/`US-GE-05` → `US-SM-03/04` → DOCJOIN → `US-GE-02..04` → `US-SM-05/06`. **P3:** `US-SM-07`, `US-GE-06`.
+**Last synced:** 2026-08-30 — new **FR-HEA-01..05** (`US-HEA-01..05`) track from [`2026-08-30 value assessment`](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md): harness-era repositioning + 4 live-probe fixes (alias metric, semantic dead-end, mega-scan banner, remote-PG latency). Total tracked 546 → 560, open 93 → 106.
 **P0 MCP root-cause fixes + REL live smoke ALL DONE (2026-08-03):** `FR-P0-MCP-RC-01..04` + `FR-P0-EMBED-LOCK` + `REL-P0-MCP-RC` + `REL-P0-EMBED-LOCK` landed (PRs #195/#196/#198/#199/#200). Live evidence: [`p0-mcp-root-cause-fixes-2026-08-03.md`](reports/p0-mcp-root-cause-fixes-2026-08-03.md).  
 **This file is the SoT for task inventory + status.**  
 **PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §3.30 / §5.18 / §5.22–5.23 / §5.32 / §5.34  
@@ -22,8 +22,8 @@
 | **P0** | MCP 88-tool validation root causes — project routing / RocksDB double-open / async stall / mega-guard gaps | **OPEN (5 items)** |
 | **P0** | RocksDB LOCK poison — embed auto-arm blocks all DB tools | **OPEN (2 items)** |
 | **P0** | Procedural ontology auto-update | **DONE** |
-| **P1** | Company adoption waves 0–4 + MCP surface Wave 1b | **NOW = Wave 4** (1b DONE) |
-| **P2** | Session memory SM → DOCJOIN → GE curriculum | After Wave 4 |
+| **P0** | MCP 88-tool validation root causes — file-arg project routing / RocksDB double-open / async stall / mega-guard gaps | **DONE (5 items)** |
+| **P1** | Harness-era repositioning — org-memory substrate focus + alias-metric / semantic dead-end / remote-PG latency / mega-scan banner fixes (`FR-HEA-01..05`) | **OPEN (5 items)** |
 | **P3** | Retention/GC, LLM pass-2, Track E 3D | Backlog |
 
 ## Status legend
@@ -41,29 +41,27 @@
 
 ## Summary counts
 
-| Metric | Count |
+| **Total tracked** | **560** |
 |--------|------:|
-| **Total tracked** | **546** |
-| NOT_DONE | 58 |
-| PENDING | 25 |
+| NOT_DONE | 66 |
+| PENDING | 30 |
 | PARTIAL | 9 |
 | OPEN | 1 |
 | DONE | 450 |
 | WONT_DO | 3 |
-| Open work | **93** |
+| Open work | **106** |
 
 | Open by Focus | Count |
-|---------------|------:|
 | P0 | 0 |
-| P1 | 2 |
+| P1 | 7 |
 | P2 | ~92 |
 | P3 | ~13 |
 
 | Kind | Count |
 |------|------:|
-| FR | 263 |
-| Release | 64 |
-| User Story | 182 |
+| FR | 270 |
+| Release | 65 |
+| User Story | 187 |
 
 ---
 
@@ -111,8 +109,29 @@ Evidence: [`ab-leankg-vs-raw-live-2026-08-02.md`](reports/ab-leankg-vs-raw-live-
 | `REL-P0-MCP-RC` | DONE | Fix + live smoke on `/workspace-be`: all 88 tools return within budget (empty only where data absent); 5× parallel storm keeps `:9699/health` ok; container stays `(healthy)` |
 
 Evidence: [`mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [`root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md). PRD §3.30 / §5.34. **Fixes:** PR #195 (RC-02), #196 (RC-04), #198 (RC-01), #199 (RC-03). **Live smoke:** `scripts/mcp-p0-fix-smoke.sh` 8/8 PASS on `:9699`/`/workspace-be`; 88-tool smoke 43 PASS / 2 harness-fail (0 lock, 0 hang, heavy tools refuse); storm kept container `(healthy)`. Evidence: [`p0-mcp-root-cause-fixes-2026-08-03.md`](reports/p0-mcp-root-cause-fixes-2026-08-03.md).
+---
+
+## P1 — Harness-era repositioning + live-probe fixes (OPEN — 2026-08-30)
+
+> **P1 track (2026-08-30, [research](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md)).** Live-probe assessment vs 2026 harness-native primitives: org-memory substrate = high value, search = mid value. Narrow the product surface + fix the 4 probe findings.
+
+| ID | Status | Intent |
+|----|--------|--------|
+| `FR-HEA-01` | NOT_DONE | `kg_ontology_status` alias accounting is self-consistent — `nodes_missing_aliases ≤ sum(domain_entity_counts)` invariant test; backfill aliases or fix the formula (probe: 14 missing vs 13 entities) |
+| `FR-HEA-02` | NOT_DONE | Empty / below-floor `semantic_search` / `kg_semantic_context` responses carry a structured `search_code` fallback hint (no bare "use disk grep" dead ends) |
+| `FR-HEA-03` | NOT_DONE | `get_architecture` default output carries the mega-graph 50k full-scan banner + list of guarded tools (probe: 360,953-element graph refused with cap invisible) |
+| `FR-HEA-04` | NOT_DONE | Per-tool `tokio::time::timeout` floors for heavy semantic tools set below 30s client budget; structured timeout response; `mcp-setup.md` documents local-PG / materialised-view options |
+| `FR-HEA-05` | NOT_DONE | Positioning cutover — README lead + §1.1 + agent-surface docs lead with the org-memory substrate (traceability, env conflicts, incidents, team map, cross-repo service graph), not generic search |
+| `US-HEA-01` | PENDING | Lead with the org-memory substrate (positioning) |
+| `US-HEA-02` | PENDING | Fix ontology alias-coverage accounting |
+| `US-HEA-03` | PENDING | Semantic dead-end escape (fallback hint on empty/below-floor) |
+| `US-HEA-04` | PENDING | Mega-graph full-scan visibility (50k cap banner) |
+| `US-HEA-05` | PENDING | Remote-Postgres latency play (per-tool timeouts + docs) |
+
+Evidence: [`2026-08-30 value assessment`](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md) (5 probes, 2026-08-30 snapshot). PRD §3.31 / §5.36. Roadmap: `roadmap-2027-v2.md` §3 NOW rows 13–14, §4.1 repositioning bullet, §10 risk row.
 
 ---
+
 
 ## Company adoption — implementation waves (P1 — CURRENT)
 

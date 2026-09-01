@@ -243,6 +243,11 @@ pub fn load_workflows_yaml(
                 order + 1,
                 "", // steps don't have separate descriptions in current format
             )
+            // FR-HEA-01: apply YAML-declared step aliases — previously this
+            // field was parsed (WorkflowStepDef.aliases) but never applied,
+            // so every YAML-loaded step was reported in
+            // kg_ontology_status.nodes_missing_aliases.
+            .with_aliases(step_def.aliases.clone())
             .with_code_refs(step_def.code_refs.clone())
             .with_failure_modes(step_def.failure_modes.clone())
             .with_feature_ids(step_def.feature_ids.clone())
