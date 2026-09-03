@@ -1,15 +1,15 @@
 # LeanKG PRD Task Tracker (Single Session)
 
-**Last synced:** 2026-08-30 — new **FR-HEA-01..05** (`US-HEA-01..05`) track from [`2026-08-30 value assessment`](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md): harness-era repositioning + 4 live-probe fixes (alias metric, semantic dead-end, mega-scan banner, remote-PG latency). Total tracked 546 → 560, open 93 → 106.
+**Last synced:** 2026-09-02 — new **FR-SMA-01..06** (`US-SMA-01..06`) track from the omp-Hindsight memory audit (2026-09-02): recall write path dead (`RecallStore::push_dedup` zero production callers), lesson decay, outcome feedback loop, `session_retain`, worktree-shared scope; master `FR-SM-04/05` → NOT_DONE/PARTIAL, `US-SM-02` → PENDING (re-grounded). Total tracked 560 → 572, open 106 → 124. Prior: 2026-08-30 **FR-HEA-01..05** (harness-era repositioning, 546 → 560, open 93 → 106).
 **P0 MCP root-cause fixes + REL live smoke ALL DONE (2026-08-03):** `FR-P0-MCP-RC-01..04` + `FR-P0-EMBED-LOCK` + `REL-P0-MCP-RC` + `REL-P0-EMBED-LOCK` landed (PRs #195/#196/#198/#199/#200). Live evidence: [`p0-mcp-root-cause-fixes-2026-08-03.md`](reports/p0-mcp-root-cause-fixes-2026-08-03.md).  
 **This file is the SoT for task inventory + status.**  
-**PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §3.30 / §5.18 / §5.22–5.23 / §5.32 / §5.34  
-**All-open fan-out campaign (worktrees + TDD + PRs):** [`docs/planning/2026-08-01-all-open-prd-campaign.md`](planning/2026-08-01-all-open-prd-campaign.md)
+**PRD narrative / ACs / HLD:** [`docs/prd.md`](prd.md) §1.1 / §1.2 / §1.3 / §3.16 / §3.19–3.20 / §3.28 / §3.30 / §3.32 / §5.18 / §5.22–5.23 / §5.32 / §5.34 / §5.37  
+**All-open fan-out campaign (worktrees + TDD + PRs):** [`docs/planning/2026-08-01-all-open-prd-campaign.md`](planning/2026-08-01-all-open-prd-campaign.md)  
 
 > **Agent rule:** Work **P0 first**, then P1 waves → P2 → P3.  
 > **P0:** Procedural ontology auto-update — **DONE**. **NEW P0 (2026-08-02): MCP 88-tool validation root causes** — file-arg project routing (`FR-P0-MCP-RC-01`), RocksDB double-open lock (`FR-P0-MCP-RC-02`), blocking-sync/async stall (`FR-P0-MCP-RC-03`), mega-guard gaps (`FR-P0-MCP-RC-04`). **P0 (2026-08-02): RocksDB LOCK poison** — embed auto-arm blocks all DB tools (`FR-P0-EMBED-LOCK` / `REL-P0-EMBED-LOCK`).  
 > **P1:** Waves 0a–4 + Wave 1b MCP hard-delete — **ALL DONE**.  
-> **P2 CURRENT (priority order):** `US-SM-01` offload → `US-SM-02` auto-recall → `US-SM-03/04` → DOCJOIN → GE planner/entity/cluster → `US-SM-05/06`.  
+> **P2 CURRENT (priority order):** `US-SM-01` offload → `US-SM-02` auto-recall (**lands via `FR-SMA-01..04`**) → `US-SM-03/04` → DOCJOIN → GE planner/entity/cluster → `US-SM-05/06`.  
 > **P3:** `US-SM-07` GC; `US-GE-06` LLM pass-2.  
 > Open `prd.md` only for design narrative and acceptance criteria.
 
@@ -24,6 +24,7 @@
 | **P0** | Procedural ontology auto-update | **DONE** |
 | **P0** | MCP 88-tool validation root causes — file-arg project routing / RocksDB double-open / async stall / mega-guard gaps | **DONE (5 items)** |
 | **P1** | Harness-era repositioning — org-memory substrate focus + alias-metric / semantic dead-end / remote-PG latency / mega-scan banner fixes (`FR-HEA-01..05`) | **OPEN (5 items)** |
+| **P2** | Session-memory audit vs omp Hindsight — dead recall write path / decay / feedback loop / session_retain (`FR-SMA-01..06`) | **OPEN (12 items)** |
 | **P3** | Retention/GC, LLM pass-2, Track E 3D | Backlog |
 
 ## Status legend
@@ -41,28 +42,27 @@
 
 ## Summary counts
 
-| **Total tracked** | **560** |
+| **Total tracked** | **572** |
 |--------|------:|
-| NOT_DONE | 66 |
-| PENDING | 30 |
-| PARTIAL | 9 |
+| NOT_DONE | 74 |
+| PENDING | 38 |
+| PARTIAL | 11 |
 | OPEN | 1 |
-| DONE | 450 |
+| DONE | 444 |
 | WONT_DO | 3 |
-| Open work | **106** |
+| Open work | **124** |
 
 | Open by Focus | Count |
 | P0 | 0 |
 | P1 | 7 |
-| P2 | ~92 |
-| P3 | ~13 |
+| P2 | ~104 |
+| P3 | ~15 |
 
 | Kind | Count |
 |------|------:|
-| FR | 270 |
+| FR | 276 |
 | Release | 65 |
-| User Story | 187 |
-
+| User Story | 193 |
 ---
 
 ## P0 — procedural ontology auto-update (CLOSED)
@@ -320,7 +320,8 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 
 > Fit matrix: [`analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md). Steal session offload + auto-recall; Won’t Do chat-persona SoT. Does **not** preempt Wave packaging.
 >
-> **Build order (priority):** `US-SM-01` → `US-SM-02` (closes `US-GE-05`) → `US-SM-03`/`04` → `US-SM-05`/`06` → `US-SM-07` (P3).
+> **Build order (priority):** `US-SM-01` → `US-SM-02` (closes `US-GE-05`; **now rides `FR-SMA-01..04`**) → `US-SM-03`/`04` → `US-SM-05`/`06` → `US-SM-07` (P3).
+> **v3.8.8 audit correction (2026-09-02):** the audit found `RecallStore::push_dedup` has **zero production callers** — LESSONS.md / diary / knowledge never write `recall_index.jsonl`, so `get_overview_context(recall=true)` injects nothing and `FR-SM-04`/`FR-SM-05` did not hold end-to-end. Master-table DONE marks for `FR-SM-04/05` → **NOT_DONE**/**PARTIAL** and `US-SM-02` → **PENDING** (the per-section table was already PENDING/NOT_DONE). Rework tracked as `FR-SMA-01..06` (below, P2); end-to-end closure rides `US-SMA-01..04`.
 
 | # | ID | Status | Intent |
 |--:|----|--------|--------|
@@ -332,6 +333,19 @@ Evidence baseline: [`mcp-tool-redundancy-impact-2026-07-20.md`](reports/mcp-tool
 | 5 | `US-SM-05` / `FR-SM-10` | PENDING / NOT_DONE | Heat-ranked `MEMORY_INDEX.md` |
 | 6 | `US-SM-06` / `FR-SM-11` | PENDING / NOT_DONE | Promote successful traces → workflow proposals |
 | 7 | `US-SM-07` / `FR-SM-12` | PENDING / NOT_DONE (P3) | Retention / GC for session refs + agent memory |
+
+### Session-memory audit vs omp Hindsight (US-SMA / FR-SMA) (P2 — v3.8.8, 2026-09-02)
+
+> Source-grounded audit of omp.sh's Hindsight memory backend + autolearn against `src/session/mod.rs` / `src/mcp/handler.rs` / `src/graph/query.rs`. Key finding: `RecallStore::push_dedup` has zero production callers — the lessons index is never fed, so the `US-SM-02` read path injects nothing. PRD §3.32 / §5.37.
+
+| # | ID | Status | Intent |
+|--:|----|--------|--------|
+| 1 | `US-SMA-01` / `FR-SMA-01` | PENDING / NOT_DONE | Wire the recall write path: outcome/diary/knowledge writes feed `RecallStore` (outcome-weighted rank seed); fix module doc `session/mod.rs:8-12` |
+| 2 | `US-SMA-02` / `FR-SMA-02` | PENDING / NOT_DONE | `Lesson.created_at` + recency decay in `recall_for_overview` scoring |
+| 3 | `US-SMA-03` / `FR-SMA-03` | PENDING / NOT_DONE | Outcome feedback loop: `report_query_outcome` lesson_id bumps/decays/rewrites lessons (no LLM) |
+| 4 | `US-SMA-04` / `FR-SMA-04` | PENDING / NOT_DONE | `session_retain` MCP tool — idempotent `documentId=session_id` transcript ingest + Stop-hook recipe |
+| 5 | `US-SMA-05` / `FR-SMA-05` | PENDING / NOT_DONE (P3) | Memory root at git common dir — `.worktrees/` share one recall index |
+| 6 | `US-SMA-06` / `FR-SMA-06` | PENDING / NOT_DONE (P3) | Secret redaction on diary/lesson writes; truncation markers on injected lessons |
 
 ## Wave 1b MCP surface hard-delete (P1 — DONE)
 
@@ -381,6 +395,7 @@ make report                                 # regenerate Markdown + JSON from JS
 > **2026-07-21 — v3.7.12:** Wave 1a MCP surface cleanup added.  
 > **2026-07-21 — v3.7.11:** Priority reorder.  
 > **2026-07-21 — v3.7.9 P0 CLOSED:** Procedural ontology auto-update.
+> **2026-09-02 — v3.8.8 SMA track:** Session-memory audit vs omp Hindsight — `FR-SMA-01..06` / `US-SMA-01..06` added (P2; recall write path dead, see §3.32/§5.37).  
 >
 > **2026-08-02 — NEW P0:** RocksDB LOCK poison — embed auto-arm blocks all DB tools ([A/B evidence](reports/ab-leankg-vs-raw-live-2026-08-02.md)).  
 > **2026-08-02 — NEW P0:** MCP 88-tool validation root causes — project routing / RocksDB double-open / async stall / mega-guard gaps ([validation](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md) + [RCA](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md)).
@@ -415,6 +430,18 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P1** | `FR-GF-13` | FR | **DONE** | Must Have | Auto-generate '.leankg/GRAPH_REPORT.md' on every index (CLI 'leankg report' / MCP 'get_gra… | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-GF-21` | FR | **DONE** | Must Have | CLI/MCP export html — single-file bounded subgraph/community; document node budget | 5.9 Graphify-Inspired Features |
 | **P1** | `FR-UI2-08` | FR | **DONE** | Must Have | Query FAB dual-mode: NL → query_graph; Advanced → raw Cozo POST /api/query | 5.19 UI v2 Graph Explorer |
+| **P2** | `US-SMA-01` | User Story | **PENDING** | Must Have | Wire the recall write path: outcome/diary/knowledge feed `RecallStore` | 3.32 Session-memory audit (US-SMA) |
+| **P2** | `FR-SMA-01` | FR | **NOT_DONE** | Must Have | `report_query_outcome` / `agent_diary_write` / `add_knowledge` push into `RecallStore::push_dedup` with outcome-weighted rank seed; module doc corrected | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P2** | `US-SMA-02` | User Story | **PENDING** | Must Have | Lesson recency decay so top-K injection reflects current reality | 3.32 Session-memory audit (US-SMA) |
+| **P2** | `FR-SMA-02` | FR | **NOT_DONE** | Must Have | `Lesson.created_at` + recency decay in `recall_for_overview` scoring | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P2** | `US-SMA-03` | User Story | **PENDING** | Should Have | Lessons self-correct via outcome feedback without an LLM pass | 3.32 Session-memory audit (US-SMA) |
+| **P2** | `FR-SMA-03` | FR | **NOT_DONE** | Should Have | `report_query_outcome` lesson_id: useful bumps / dead_end decays / corrected rewrites | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P2** | `US-SMA-04` | User Story | **PENDING** | Should Have | Harness session-end capture via one MCP call (omp agent_end analog) | 3.32 Session-memory audit (US-SMA) |
+| **P2** | `FR-SMA-04` | FR | **NOT_DONE** | Should Have | `session_retain(project, session_id, transcript)` — idempotent documentId, chunking, Stop-hook recipe | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P3** | `US-SMA-05` | User Story | **PENDING** | Could Have | Worktree sessions share one memory scope | 3.32 Session-memory audit (US-SMA) |
+| **P3** | `FR-SMA-05` | FR | **NOT_DONE** | Could Have | Memory root resolves to git common dir | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P3** | `US-SMA-06` | User Story | **PENDING** | Could Have | Memory writes never leak tokens; injection budgets auditable | 3.32 Session-memory audit (US-SMA) |
+| **P3** | `FR-SMA-06` | FR | **NOT_DONE** | Could Have | Secret redaction before diary/lesson writes; truncation markers on injected lessons | 5.37 Session-memory audit fixes (FR-SMA) |
 | **P1** | `FR-MG-03` | FR | **DONE** | Must Have | Single-repo projects treated as single service — root double-click loads everything | 5.7 Massive Graph UI (DONE) |
 | **P2** | `FR-GE-02` | FR | **DONE** | Should Have | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
 | **P2** | `FR-GE-03` | FR | **DONE** | Should Have | Cross-alias entity resolution beyond qualified_name + typed_resolve | 5.23 Graph Engineering curriculum gaps (v3.7.14) |
@@ -423,8 +450,8 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SM-01` | FR | **DONE** | Must Have | Persist offloaded MCP payloads under .leankg/sessions/<id>/refs/<node_id>.md | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-02` | FR | **DONE** | Must Have | Session canvas (Mermaid/JSON) + inject canvas when budget threshold hit | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-03` | FR | **DONE** | Must Have | session_recall / ctx_read recovers payload by node_id | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-04` | FR | **DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-05` | FR | **DONE** | Must Have | Opt-in get_overview_context enrichment with top-K lessons | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-04` | FR | **NOT_DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup — re-grounded 2026-09-02: write path never wired, §3.32; rework as `FR-SMA-01` | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-05` | FR | **PARTIAL** | Must Have | Opt-in get_overview_context enrichment with top-K lessons — read path exists, default OFF, A/B unmeasured | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-06` | FR | **DONE** | Must Have | Recall timeout + char budgets; never block MCP | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-07` | FR | **DONE** | Should Have | Provenance source_ids / node_id on durable agent writes | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-08` | FR | **DONE** | Should Have | Typed agent-memory kinds: preference / decision / standing_rule | 5.32 Session memory (FR-SM) |
@@ -434,7 +461,7 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P3** | `FR-SM-12` | FR | **DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
 | **P2** | `REL-075` | Release | **DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
 | **P2** | `US-SM-01` | User Story | **DONE** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-02` | User Story | **DONE** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) — closes via `FR-SMA-01..04` | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-03` | User Story | **DONE** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-04` | User Story | **DONE** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-05` | User Story | **DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 3.28 Session memory from TencentDB (US-SM) |
@@ -609,8 +636,8 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P2** | `FR-SM-01` | FR | **DONE** | Must Have | Persist offloaded MCP payloads under .leankg/sessions/<id>/refs/<node_id>.md | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-02` | FR | **DONE** | Must Have | Session canvas (Mermaid/JSON) + inject canvas when budget threshold hit | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-03` | FR | **DONE** | Must Have | session_recall / ctx_read recovers payload by node_id | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-04` | FR | **DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup | 5.32 Session memory (FR-SM) |
-| **P2** | `FR-SM-05` | FR | **DONE** | Must Have | Opt-in get_overview_context enrichment with top-K lessons | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-04` | FR | **NOT_DONE** | Must Have | Ranked lessons index from outcomes/diary/knowledge with dedup — re-grounded 2026-09-02: write path never wired, §3.32; rework as `FR-SMA-01` | 5.32 Session memory (FR-SM) |
+| **P2** | `FR-SM-05` | FR | **PARTIAL** | Must Have | Opt-in get_overview_context enrichment with top-K lessons — read path exists, default OFF, A/B unmeasured | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-06` | FR | **DONE** | Must Have | Recall timeout + char budgets; never block MCP | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-07` | FR | **DONE** | Should Have | Provenance source_ids / node_id on durable agent writes | 5.32 Session memory (FR-SM) |
 | **P2** | `FR-SM-08` | FR | **DONE** | Should Have | Typed agent-memory kinds: preference / decision / standing_rule | 5.32 Session memory (FR-SM) |
@@ -620,12 +647,24 @@ make report                                 # regenerate Markdown + JSON from JS
 | **P3** | `FR-SM-12` | FR | **DONE** | Could Have | Retention/GC for session refs + low-heat agent memory | 5.32 Session memory (FR-SM) |
 | **P2** | `REL-075` | Release | **DONE** | Must Have | Analysis + PRD §1.3/§3.28/§5.32 + tracker US-SM/FR-SM; smoke when US-SM-01/02 ship | 5.32 Session memory (FR-SM) |
 | **P2** | `US-SM-01` | User Story | **DONE** | Must Have | Session MCP offload + node_id canvas + drill-down | 3.28 Session memory from TencentDB (US-SM) |
-| **P2** | `US-SM-02` | User Story | **DONE** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SM-02` | User Story | **PENDING** | Must Have | Auto-recall lessons/diary at session start (closes US-GE-05) — closes via `FR-SMA-01..04` | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-03` | User Story | **DONE** | Should Have | Provenance + typed agent-memory kinds | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-04` | User Story | **DONE** | Should Have | Hybrid RRF over agent-memory stores | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-05` | User Story | **DONE** | Could Have | Heat-ranked MEMORY_INDEX.md | 3.28 Session memory from TencentDB (US-SM) |
 | **P2** | `US-SM-06` | User Story | **DONE** | Could Have | Promote successful traces → ontology workflow proposals | 3.28 Session memory from TencentDB (US-SM) |
 | **P3** | `US-SM-07` | User Story | **DONE** | Could Have | Retention/GC for session refs + agent memory | 3.28 Session memory from TencentDB (US-SM) |
+| **P2** | `US-SMA-01` | User Story | **PENDING** | Must Have | Wire the recall write path: outcome/diary/knowledge feed `RecallStore` | 3.32 Session-memory audit (US-SMA) |
+| **P2** | `FR-SMA-01` | FR | **NOT_DONE** | Must Have | `report_query_outcome` / `agent_diary_write` / `add_knowledge` push into `RecallStore::push_dedup` with outcome-weighted rank seed; module doc corrected | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P2** | `US-SMA-02` | User Story | **PENDING** | Must Have | Lesson recency decay so top-K injection reflects current reality | 3.32 Session-memory audit (US-SMA) |
+| **P2** | `FR-SMA-02` | FR | **NOT_DONE** | Must Have | `Lesson.created_at` + recency decay in `recall_for_overview` scoring | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P2** | `US-SMA-03` | User Story | **PENDING** | Should Have | Lessons self-correct via outcome feedback without an LLM pass | 3.32 Session-memory audit (US-SMA) |
+| **P2** | `FR-SMA-03` | FR | **NOT_DONE** | Should Have | `report_query_outcome` lesson_id: useful bumps / dead_end decays / corrected rewrites | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P2** | `US-SMA-04` | User Story | **PENDING** | Should Have | Harness session-end capture via one MCP call (omp agent_end analog) | 3.32 Session-memory audit (US-SMA) |
+| **P2** | `FR-SMA-04` | FR | **NOT_DONE** | Should Have | `session_retain(project, session_id, transcript)` — idempotent documentId, chunking, Stop-hook recipe | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P3** | `US-SMA-05` | User Story | **PENDING** | Could Have | Worktree sessions share one memory scope | 3.32 Session-memory audit (US-SMA) |
+| **P3** | `FR-SMA-05` | FR | **NOT_DONE** | Could Have | Memory root resolves to git common dir | 5.37 Session-memory audit fixes (FR-SMA) |
+| **P3** | `US-SMA-06` | User Story | **PENDING** | Could Have | Memory writes never leak tokens; injection budgets auditable | 3.32 Session-memory audit (US-SMA) |
+| **P3** | `FR-SMA-06` | FR | **NOT_DONE** | Could Have | Secret redaction before diary/lesson writes; truncation markers on injected lessons | 5.37 Session-memory audit fixes (FR-SMA) |
 | **P2** | `FR-DOCJOIN-02` | FR | **DONE** | Must Have | Normalize doc/file path aliases on get_files_for_doc and find_related_docs | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-01` | FR | **DONE** | Must Have | Resolve markdown code refs to indexed file-level CodeElement keys on write | 5.22 Doc↔Code Join Quality (v3.7.13) |
 | **P2** | `FR-DOCJOIN-03` | FR | **DONE** | Must Have | Persist references edge context snippet + EXTRACTED confidence metadata | 5.22 Doc↔Code Join Quality (v3.7.13) |
