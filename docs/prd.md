@@ -1,7 +1,7 @@
 # LeanKG PRD - Consolidated Tracking Document
 
-**Version:** 3.8.7-harness-era-positioning
-**Date:** 2026-08-30
+**Version:** 3.8.8-hindsight-memory-audit
+**Date:** 2026-09-02
 **Status:** Active Development — **single source of truth** for product requirements + HLD
 **Author:** Product Owner
 **Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
@@ -24,7 +24,8 @@
 > | **P1** | **DONE** | Wave **4** single-repo expand — `US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md). Waves 0a–3 **DONE** (Wave 3: [NL Query FAB](reports/ui-v2-nl-query-fab-2026-08-01.md)). Ops: OnRender embeddings exit 101 — [RCA](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md) |
 > | **P1** | **DONE** | Wave **1b** MCP hard-delete — `load_layer` + `get_doc_structure` (`US-SURF-08..11` / `REL-076`) — [evidence](reports/rel-076-mcp-surf-1b-2026-08-01.md). Cumulative hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure` |
 | **P1** | **NEW** | Harness-era repositioning (2026-08-30 assessment) — org-memory substrate focus + alias metric / semantic dead-end / remote-PG latency / mega-scan banner fixes — `FR-HEA-01..05` (§3.31 / §5.36) — [research](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md) |
-> | **P2** | **CURRENT** | Ordered: (1) Session MCP offload `US-SM-01` → (2) Auto-recall `US-SM-02` / closes `US-GE-05` → (3) Provenance+RRF `US-SM-03/04` → (4) Doc↔code join polish `US-DOCJOIN-*` → (5) Graph-eng `US-GE-02..04` → (6) Heat index / promote traces `US-SM-05/06` |
+> | **P2** | **CURRENT** | Ordered: (1) Session MCP offload `US-SM-01` → (2) Auto-recall `US-SM-02` / closes `US-GE-05` → (2a) Wire dead recall write path `FR-SMA-01..04` (v3.8.8 — prerequisite: recall currently injects nothing) → (3) Provenance+RRF `US-SM-03/04` → (4) Doc↔code join polish `US-DOCJOIN-*` → (5) Graph-eng `US-GE-02..04` → (6) Heat index / promote traces `US-SM-05/06` |
+> | **P2** | **NEW (v3.8.8)** | Session-memory audit vs omp Hindsight — wire the dead `RecallStore` write path (recall injects nothing today), lesson decay + outcome feedback loop, `session_retain` ingest, worktree-shared memory scope — `US-SMA-01..06` / `FR-SMA-01..06` (§3.32 / §5.37) |
 > | **P3** | Backlog | `US-SM-07` retention/GC; `US-GE-06` LLM pass-2; Track E 3D |
 >
 > **Prior P0 mega-graph serve CLOSED** — `US-MG-TOOL-01` / `REL-055` / `FR-SEM-07` / `REL-054` DONE.
@@ -38,6 +39,26 @@
 ---
 
 ## Changelog
+
+### v3.8.8-hindsight-memory-audit - Session-memory audit vs omp Hindsight: wire the dead recall write path + decay, feedback loop, session retain (2026-09-02)
+
+> **Trigger:** Source-grounded audit (2026-09-02) of omp.sh's Hindsight memory backend + autolearn (`pi-coding-agent/src/hindsight/*`, `src/autolearn/controller.ts` — auto-recall on first turn, auto-retain every N user turns with prefix-hash incremental transcripts, 16-item/5s debounced retain queue, per-project-tagged scoping, 3 seeded mental models) against LeanKG's session-memory surface (`src/session/mod.rs`, `src/mcp/handler.rs`, `src/graph/query.rs`).
+>
+> **Audit verdict:** the read path (`RecallStore` dedup + rank-sorted budgeted injection, `session/mod.rs:185-227`) is complete, but **`RecallStore::push_dedup` has zero production callers** — `report_query_outcome` writes LESSONS.md only (`query.rs:5887`), `agent_diary_write` writes its own JSONL (`handler.rs:1417`), `add_knowledge` writes PG. `recall_index.jsonl` is never fed, so `get_overview_context(recall=true)` injects nothing. The module doc (`session/mod.rs:8-12`) claiming LESSONS.md/diary/knowledge feed the index is aspirational. `Lesson` has no timestamp → no staleness; ranks are static.
+>
+> **Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-SMA-01` | **P2** | Wire the write path: `report_query_outcome` / `agent_diary_write` / `add_knowledge` also push into `RecallStore` (outcome-weighted rank seed); correct the aspirational module doc | **NOT_DONE** |
+| 2 | `FR-SMA-02` | **P2** | Lesson metadata: `created_at` + recency decay in `recall_for_overview` scoring (rank is static f64 today) | **NOT_DONE** |
+| 3 | `FR-SMA-03` | **P2** | Feedback loop: `report_query_outcome` accepts `lesson_id` — `useful` bumps rank, `dead_end` decays, `corrected` rewrites text (deterministic consolidation, no LLM) | **NOT_DONE** |
+| 4 | `FR-SMA-04` | **P2** | `session_retain` MCP tool (omp `agent_end` analog): idempotent `documentId=session_id` transcript ingest feeding the lessons index; documented Stop-hook recipe for harness flush | **NOT_DONE** |
+| 5 | `FR-SMA-05` | **P3** | Scope normalization: resolve memory root to the git common dir so `.worktrees/<feature>/` share one recall index | **NOT_DONE** |
+| 6 | `FR-SMA-06` | **P3** | Hygiene: secret redaction before diary/lesson writes (diary JSONL is raw today); truncation markers on injected lessons | **NOT_DONE** |
+
+> **New content:** §3.32 (US-SMA-01..06), §5.37 (FR-SMA-01..06). Status re-grounding in the tracker: `FR-SM-04` DONE→**NOT_DONE**, `FR-SM-05` DONE→**PARTIAL**, `US-SM-02` DONE→**PENDING** (per-section table was already PENDING/NOT_DONE) — the write path was never wired. Explicitly does **not** reopen US-SM-03..07 scope; `US-SM-02` remains the umbrella this track lands under.
+---
 
 ### v3.8.7-harness-era-positioning - Harness-era value assessment: org-memory substrate focus + 4 live-probe fixes (2026-08-30)
 
@@ -1768,7 +1789,53 @@ Historical soft-deprecation ACs satisfied; use `env=` on primary search / `kg_*`
 
 **Acceptance:** per-tool timeout below the 30s client-kill threshold returns a structured timeout error; docs give the local-PG / materialised-view options for heavy semantic queries.
 
+### 3.32 Session-Memory Audit vs omp Hindsight (US-SMA) — v3.8.8
+
+> **Trigger:** Source-grounded audit (2026-09-02) of omp.sh's Hindsight memory backend + autolearn against LeanKG's session-memory surface. omp mechanics (verified in `pi-coding-agent` sources): auto-recall on the first model turn (query composed from prompt + recent turns, injected as `<memories>` background context), auto-retain every N user turns at `agent_end` with prefix-hash incremental full-session transcripts, a 16-item/5s debounced retain queue flushed async, `per-project-tagged` scoping keyed on the repo primary checkout root (worktrees share one scope), and 3 seeded mental models (user-preferences / project-conventions / project-decisions) re-rendered on consolidation.
+>
+> **Audit finding:** LeanKG's `US-SM` read path is complete — `RecallStore` (`src/session/mod.rs:185-227`) has SHA-256 fingerprint dedup and rank-sorted, budgeted, timeout-bounded injection into `get_overview_context(recall=true)` — but **`RecallStore::push_dedup` has zero production callers**. `report_query_outcome` appends LESSONS.md only (`src/graph/query.rs:5887`), `agent_diary_write` appends its own JSONL (`src/mcp/handler.rs:1417`), `add_knowledge` writes the knowledge table. `recall_index.jsonl` is never written, so auto-recall injects nothing; the module doc (`src/session/mod.rs:8-12`) claiming those sources feed the index is aspirational. `Lesson {id, source, rank, text}` carries no timestamp, so rank cannot decay; diary read is last-N recency with no relevance.
+
+#### US-SMA-01 — Wire the recall write path (Must Have)
+
+**As an** agent writing durable memory via `report_query_outcome` / `agent_diary_write` / `add_knowledge`, **I want** those writes to also feed the ranked lessons index, **so that** `get_overview_context(recall=true)` actually injects prior lessons and `US-SM-02` / `US-GE-05` close for real.
+
+**Acceptance:**
+- **Given** one `agent_diary_write` (or `report_query_outcome`), **When** `get_overview_context(recall=true)` runs afterwards, **Then** `session_lessons` is non-empty and contains that note.
+- `report_query_outcome` seeds rank by outcome (`useful` 1.0 / `corrected` 0.8 / `dead_end` 0.2); diary notes carry tags in the lesson text; `add_knowledge` writes `title — content`.
+- Existing SHA-256 dedup applies; duplicates return `pushed: false` without error.
+- The module doc at `src/session/mod.rs:8-12` matches observed behavior.
+
+#### US-SMA-02 — Lesson recency decay (Must Have)
+
+**As an** agent starting a session, **I want** stale lessons ranked below fresh ones, **so that** the top-K injection reflects current reality instead of old one-offs.
+
+**Acceptance:** `Lesson` gains `created_at`; `recall_for_overview` scores `rank × recency_decay` (≈30-day half-life); no-timestamp rows (legacy) sort as oldest.
+
+#### US-SMA-03 — Outcome feedback loop on lessons (Should Have)
+
+**As an** agent re-using a prior lesson, **I want** `report_query_outcome` to reinforce or retire that lesson, **so that** the index self-corrects without an LLM consolidation pass (LeanKG's deterministic analog of omp's consolidation-triggered mental-model refresh).
+
+**Acceptance:** `report_query_outcome` accepts an optional `lesson_id`: `useful` bumps rank, `dead_end` decays it, `corrected` rewrites the text (new fingerprint supersedes the old line via dedup). Idempotent per lesson+outcome.
+
+#### US-SMA-04 — Session retain ingest (Should Have)
+
+**As a** harness (omp / Claude Code) ending a session, **I want** one `session_retain(project, session_id, transcript)` call to ingest the conversation, **so that** session-end capture works like omp's `agent_end` auto-retain without LeanKG needing to observe harness events.
+
+**Acceptance:** idempotent per `documentId = session_id` (re-sends do not duplicate lessons); long transcripts chunk deterministically; ingestion feeds the same dedup + index; a documented Stop-hook recipe shows the flush wiring.
+
+#### US-SMA-05 — Worktree-shared memory scope (Could Have)
+
+**As an** agent working in `.worktrees/<feature>/`, **I want** memory rooted at the repo common dir, **so that** feature-branch sessions share the recall index instead of fragmenting it (mirrors omp's primary-checkout scoping).
+
+#### US-SMA-06 — Memory hygiene (Could Have)
+
+**As an** operator, **I want** secret redaction before diary/lesson writes and truncation markers on injected lessons, **so that** tokens never leak into `.leankg/` and injection budgets are visually auditable.
+
+**Won't Do (this track):** reopen `US-SM-03..07` scope; embedding-backed lesson retrieval (rides `US-SM-04` RRF later); an LLM consolidation pass; a server-side memory bank.
+
+
 ## 4. Implementation Status Summary
+
 
 > **Implementation status:** see [`prd-task-tracker.md`](prd-task-tracker.md) — Summary counts + Active session (open work) + Master table.
 
@@ -2697,6 +2764,20 @@ Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
 | FR-HEA-05 | Must Have (**P1**) | Positioning cutover: README lead + §1.1 + agent-surface docs (using-leankg, install hooks, skills) present the org-memory substrate surfaces first — traceability (`get_traceability*`), `find_env_conflicts`, `query_incidents`, `get_team_map`, cross-repo `get_service_graph` — and describe search as deterministic/graph-verified complement, not a harness-native-search competitor |
 
 **Won't Do (this track):** Competing with harness-native Glob/Grep/LSP on raw search speed; rebuilding session/chat memory (see §1.3 boundary); demoting or removing the semantic layer (keep as complementary hybrid).
+
+### 5.37 Session-memory audit fixes (FR-SMA) — v3.8.8 **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-SMA-01..06` **NOT_DONE**.
+> **Narrative:** §3.32. Evidence: source audit 2026-09-02 of omp `pi-coding-agent/src/hindsight/*` vs LeanKG `src/session/mod.rs` / `src/mcp/handler.rs` / `src/graph/query.rs` (file:line cites inline).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SMA-01 | Must Have (**P2**) | `report_query_outcome` / `agent_diary_write` / `add_knowledge` also push into `RecallStore::push_dedup` (outcome-weighted rank seed: useful 1.0 / corrected 0.8 / dead_end 0.2); module doc `session/mod.rs:8-12` corrected; one diary write → non-empty `session_lessons` |
+| FR-SMA-02 | Must Have (**P2**) | `Lesson` gains `created_at`; `recall_for_overview` scores `rank × recency_decay` (≈30-day half-life); legacy timestamp-less rows sort as oldest |
+| FR-SMA-03 | Should Have (**P2**) | `report_query_outcome` accepts optional `lesson_id` — `useful` bumps rank, `dead_end` decays, `corrected` rewrites text (new fingerprint supersedes old line); idempotent per lesson+outcome |
+| FR-SMA-04 | Should Have (**P2**) | `session_retain(project, session_id, transcript)` MCP tool: idempotent `documentId=session_id`, deterministic chunking, feeds dedup + lessons index; documented Stop-hook recipe for omp / Claude Code session-end flush |
+| FR-SMA-05 | Could Have (**P3**) | Memory root resolves to the git common dir so `.worktrees/<feature>/` sessions share one recall index (omp primary-checkout scoping analog) |
+| FR-SMA-06 | Could Have (**P3**) | Secret redaction before diary/lesson writes (diary JSONL raw today, `handler.rs:1417-1449`); truncation markers on injected lessons |
 
 ### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**
 
