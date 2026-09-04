@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod handler;
+pub mod roots;
 pub mod server;
 pub mod token_budget;
 pub mod tools;

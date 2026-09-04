@@ -245,6 +245,9 @@ pub struct MCPServer {
     /// FR-ENT-1: transport tag used as the agent_client fallback when the
     /// client did not send clientInfo ("stdio" | "http").
     transport: &'static str,
+    /// FR-ZCP-01 clause 2: per-session cwd root cache fed by the
+    /// server-initiated `roots/list` probe over HTTP.
+    http_session_roots: crate::mcp::roots::SessionRootCache,
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -293,6 +296,7 @@ impl Clone for MCPServer {
             read_only: self.read_only,
             audit: self.audit.clone(),
             transport: self.transport,
+            http_session_roots: self.http_session_roots.clone(),
         }
     }
 }
@@ -344,6 +348,7 @@ impl MCPServer {
             read_only: false,
             audit: None,
             transport: "stdio",
+            http_session_roots: crate::mcp::roots::SessionRootCache::new(),
         }
     }
 
@@ -370,6 +375,7 @@ impl MCPServer {
             read_only: false,
             audit: None,
             transport: "stdio",
+            http_session_roots: crate::mcp::roots::SessionRootCache::new(),
         }
     }
 
@@ -2157,9 +2163,9 @@ impl MCPServer {
                 tracing::warn!("Failed to acquire port lock: {}, proceeding anyway", e);
             }
         }
-
         // Bind with SO_REUSEADDR to handle TIME_WAIT and prevent "Address already in use"
         let std_listener = std::net::TcpListener::bind(addr)?;
+
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
@@ -3359,6 +3365,14 @@ async fn handle_mcp_request(
             result
         });
 
+    // FR-ZCP-01 clause 2: session id for per-session root caching. The
+    // server allocates one at initialize (below) and streamable-HTTP
+    // clients echo it back on every subsequent call.
+    let session_id = headers
+        .get("Mcp-Session-Id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     // Extract Authorization header
     let auth_value = headers
         .get(header::AUTHORIZATION)
@@ -3408,11 +3422,28 @@ async fn handle_mcp_request(
     // Check if this is a notification (no id) - notifications must not receive a response
     let is_notification = request.id.is_none();
 
+    // FR-ZCP-01 clause 2: resolution order for the DB-routing key.
+    // 1. Session root learned from the server-initiated `roots/list`
+    //    probe (per-session cache) — the client's cwd IS the scope.
+    // 2. Legacy `?project=` query param (compat, deprecated).
+    let session_root: Option<PathBuf> = session_id
+        .as_deref()
+        .and_then(|sid| server.mcp_server.http_session_roots.root_for_session(sid));
+    if let Some(root) = &session_root {
+        if project_param.is_none() {
+            tracing::debug!("Routing via session roots/list root: {}", root.display());
+        }
+    }
+    let effective_project: Option<String> = session_root
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| project_param.clone());
+
     // Apply project override from query param. Inject "project" for DB routing,
     // but only absolutize arguments for tools that read the filesystem. Graph
     // query tools expect stored project-relative paths like "./src/main.rs";
     // rewriting those to absolute paths forces expensive full-graph scans.
-    let request = if let Some(ref project) = project_param {
+    let request = if let Some(ref project) = effective_project {
         let project_path = std::path::PathBuf::from(project);
         let mut req = request.clone();
         if let Some(ref mut params) = req.params {
@@ -3460,15 +3491,22 @@ async fn handle_mcp_request(
     };
 
     if is_notification {
-        // Process the notification but don't send a response
+        // Process the notification but don't send a response.
+        // FR-ZCP-01 clause 2: notifications still carry the session id so
+        // `notifications/roots/list_changed` can invalidate the cached root.
+        let session_ctx = session_id.as_deref().map(|sid| SessionContext {
+            session_id: sid,
+            is_initialize: false,
+        });
         let _ = process_jsonrpc_request(
             &server.mcp_server,
             &request,
-            project_param.as_deref(),
+            effective_project.as_deref(),
             crate::db::models::AuthContext {
                 client_id: "anonymous".to_string(),
                 role: crate::db::models::Role::Admin,
             },
+            session_ctx.as_ref(),
         )
         .await;
         return Response::builder()
@@ -3477,12 +3515,33 @@ async fn handle_mcp_request(
             .unwrap();
     }
 
+    // Allocate / identify the session BEFORE dispatch: the initialize
+    // arm needs the session id to register the roots probe, and the
+    // answer arm needs it to store the client's root.
+    let is_initialize = request.method == "initialize";
+    let sid = match &session_id {
+        Some(sid) => sid.clone(),
+        None if is_initialize => {
+            // First request on the connection: allocate a session id
+            // (Mcp-Session-Id per the MCP Streamable-HTTP spec). The
+            // client echoes it on subsequent calls; the server accepts
+            // any value on follow-ups.
+            Uuid::new_v4().to_string()
+        }
+        None => String::new(),
+    };
+    let session_ctx = (!sid.is_empty()).then(|| SessionContext {
+        session_id: &sid,
+        is_initialize,
+    });
+
     // Process the request, passing project param for routing
     let result = process_jsonrpc_request(
         &server.mcp_server,
         &request,
-        project_param.as_deref(),
+        effective_project.as_deref(),
         auth_context,
+        session_ctx.as_ref(),
     )
     .await;
 
@@ -3507,52 +3566,146 @@ async fn handle_mcp_request(
         },
     };
     let body_json = serde_json::to_string(&response).unwrap();
-    let mut builder = Response::builder()
-        .status(StatusCode::OK)
-        // Streamable-HTTP clients expect an SSE envelope. Wrap the JSON-RPC
-        // payload as a single `event: message` frame so `Accept:
-        // application/json, text/event-stream` is honored either way.
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .header(header::CACHE_CONTROL, "no-cache");
-    if request.method == "initialize" {
-        // Mcp-Session-Id per the MCP Streamable-HTTP spec. The client will
-        // echo this on subsequent calls; the server is currently stateless
-        // across requests, so we accept any value (including none) on
-        // follow-ups. Allocating one is the minimum needed to stop the
-        // Streamable-HTTP client from tearing the transport down on the
-        // first reconnect.
-        let sid = Uuid::new_v4().to_string();
-        builder = builder.header("Mcp-Session-Id", sid);
+    let mut frames = format!("event: message\ndata: {body_json}\n\n");
+
+    // FR-ZCP-01 clause 2: after replying to initialize, append a
+    // server-to-client `roots/list` request as a second SSE frame on the
+    // SAME response stream. Streamable-HTTP clients route any request
+    // frame inside a POST response to their request handler and answer
+    // via a normal POST /mcp (echoing Mcp-Session-Id), so no bidirectional
+    // channel is needed. Clients that never answer simply leave the
+    // session pending; `settle` expires it and resolution falls through
+    // to `?project=`.
+    let mut probe_pending = false;
+    if is_initialize {
+        let roots_capable = crate::mcp::roots::client_supports_roots(
+            request.params.as_ref().and_then(|p| p.get("capabilities")),
+        );
+        if roots_capable {
+            let probe = crate::mcp::roots::build_roots_list_request();
+            frames.push_str(&format!(
+                "event: message\ndata: {}\n\n",
+                serde_json::to_string(&probe).unwrap()
+            ));
+            probe_pending = true;
+        }
     }
 
-    let sse_body = format!("event: message\ndata: {body_json}\n\n");
-    builder.body(Body::from(sse_body)).unwrap()
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        // Streamable-HTTP clients expect an SSE envelope. One or more
+        // `event: message` frames (initialize result + optional roots
+        // probe) so `Accept: application/json, text/event-stream` is
+        // honored either way.
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache");
+    if is_initialize {
+        builder = builder.header("Mcp-Session-Id", &sid);
+    }
+    if probe_pending {
+        // Arm the expiry: if no answer lands within the window, the
+        // pending entry is dropped and `?project=` routing resumes.
+        let server_for_probe = Arc::clone(&server);
+        let sid_for_probe = sid.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(crate::mcp::roots::ROOTS_ANSWER_WINDOW).await;
+            server_for_probe
+                .mcp_server
+                .http_session_roots
+                .settle(&sid_for_probe);
+        });
+    }
+
+    builder.body(Body::from(frames)).unwrap()
 }
 
-/// Process a JSON-RPC request and return the result
+/// FR-ZCP-01 clause 2: per-connection context threaded into
+/// `process_jsonrpc_request` so the initialize arm can register the
+/// session and advertise the roots probe.
+struct SessionContext<'a> {
+    /// `Mcp-Session-Id` the server allocated for this connection.
+    session_id: &'a str,
+    /// Whether this is the first request on the session (initialize).
+    is_initialize: bool,
+}
+
 async fn process_jsonrpc_request(
     mcp_server: &MCPServer,
     request: &JsonRpcRequest,
     project_param: Option<&str>,
     auth_context: crate::db::models::AuthContext,
+    session: Option<&SessionContext<'_>>,
 ) -> Result<serde_json::Value, String> {
     let method = &request.method;
     let params = request.params.as_ref();
 
     match method.as_str() {
-        "initialize" => Ok(serde_json::json!({
-            "protocolVersion": "2025-06-18",
-            "capabilities": {
-                "tools": { "listChanged": true },
-                "resources": {}
-            },
-            "serverInfo": {
-                "name": "leankg",
-                "version": env!("CARGO_PKG_VERSION")
+        "initialize" => {
+            // FR-ZCP-01 clause 2: when the client advertises the `roots`
+            // capability, register the session as roots-pending so the
+            // HTTP layer appends a server-to-client `roots/list` probe to
+            // the initialize response stream. Clients without the
+            // capability (or with no session id) are never probed and
+            // resolution falls through to `?project=` unchanged.
+            let roots_capable = session.map(|s| s.is_initialize).unwrap_or(false)
+                && crate::mcp::roots::client_supports_roots(
+                    params.and_then(|p| p.get("capabilities")),
+                );
+            if let Some(session) = session.filter(|_| roots_capable) {
+                let list_changed = crate::mcp::roots::client_supports_roots_list_changed(
+                    params.and_then(|p| p.get("capabilities")),
+                );
+                mcp_server
+                    .http_session_roots
+                    .register_session(session.session_id, list_changed);
             }
-        })),
+            Ok(serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                    "tools": { "listChanged": true },
+                    "resources": {}
+                },
+                "serverInfo": {
+                    "name": "leankg",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }))
+        }
         "notifications/initialized" => {
             // Client is done initializing, no response needed
+            Ok(serde_json::Value::Null)
+        }
+        "roots/list" => {
+            // FR-ZCP-01 clause 2: the client's ANSWER to our server-to-
+            // client roots/list probe. Same JSON-RPC method name, riding
+            // the normal POST /mcp direction (request→response). Store
+            // the first usable root on the session cache.
+            if let Some(session) = session {
+                let root = crate::mcp::roots::project_root_from_roots_response(
+                    params.unwrap_or(&serde_json::Value::Null),
+                );
+                mcp_server
+                    .http_session_roots
+                    .set_root(session.session_id, root);
+            }
+            // This arm exists so a roots-capable client's answer is
+            // recognized; the probe itself never originates from this
+            // method dispatcher.
+            Ok(serde_json::Value::Null)
+        }
+        "notifications/roots/list_changed" => {
+            // FR-ZCP-01 clause 2 (listChanged clients): drop the cached
+            // root so the session re-probes / re-resolves. Only clients
+            // that declared `roots.listChanged` are invalidated; others
+            // cache for the connection lifetime.
+            if let Some(session) = session {
+                if mcp_server
+                    .http_session_roots
+                    .wants_list_changed(session.session_id)
+                {
+                    mcp_server.http_session_roots.invalidate(session.session_id);
+                }
+            }
             Ok(serde_json::Value::Null)
         }
         "resources/list" => {
@@ -3641,7 +3794,7 @@ async fn process_jsonrpc_request(
                 .unwrap_or_default();
 
             // Inject project from URL query param if not already in arguments
-            if let Some(ref project) = project_param {
+            if let Some(project) = &project_param {
                 arguments
                     .entry("project".to_string())
                     .or_insert(serde_json::Value::String(project.to_string()));
@@ -3861,6 +4014,330 @@ mod tests {
         assert!(!should_resolve_tool_paths("get_context"));
         assert!(!should_resolve_tool_paths("search_code"));
         assert!(!should_resolve_tool_paths("find_function"));
+    }
+
+    // ---------------------------------------------------------------------
+    // FR-ZCP-01 clause 2: server-initiated `roots/list` project resolution.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fr_zcp01_initialize_without_roots_capability_gets_no_probe() {
+        // OMP sends `capabilities: {}` — no roots capability, no probe
+        // frame, and the session cache stays untouched. Resolution must
+        // be unchanged (falls through to `?project=` / FS walk).
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        let init_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "omp", "version": "1.0"}
+            }
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            HeaderMap::new(),
+            init_body.to_string(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let (parts, body) = response.into_parts();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        // Exactly ONE frame: the initialize result. No roots probe.
+        let frames: Vec<&str> = text.split("\n\n").filter(|f| !f.is_empty()).collect();
+        assert_eq!(frames.len(), 1, "no probe frame without roots capability");
+        assert!(frames[0].contains("\"method\"") == false);
+        assert!(frames[0].contains("serverInfo"));
+        // Session id is still allocated (streamable-HTTP transport needs it).
+        assert!(parts.headers.contains_key("Mcp-Session-Id"));
+        assert!(
+            server
+                .mcp_server
+                .http_session_roots
+                .root_for_session(parts.headers["Mcp-Session-Id"].to_str().unwrap())
+                .is_none(),
+            "no root cached for a client without roots capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_initialize_with_roots_capability_appends_probe_frame() {
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        let init_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"roots": {"listChanged": true}},
+                "clientInfo": {"name": "pi-coding-agent", "version": "1.0"}
+            }
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            HeaderMap::new(),
+            init_body.to_string(),
+        )
+        .await;
+        let (parts, body) = response.into_parts();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        // TWO frames: initialize result + server-to-client roots/list.
+        let frames: Vec<&str> = text.split("\n\n").filter(|f| !f.is_empty()).collect();
+        assert_eq!(frames.len(), 2, "initialize result + roots/list probe");
+        let probe: serde_json::Value = frames[1]
+            .strip_prefix("event: message\ndata: ")
+            .expect("SSE frame shape")
+            .parse()
+            .unwrap();
+        assert_eq!(probe["jsonrpc"], "2.0");
+        assert_eq!(probe["method"], "roots/list");
+        assert!(probe["id"].is_i64());
+        // Session registered as pending with listChanged declared.
+        let sid = parts.headers["Mcp-Session-Id"].to_str().unwrap();
+        assert!(
+            server.mcp_server.http_session_roots.wants_list_changed(sid),
+            "listChanged must be recorded for the session"
+        );
+        // The answer arm stores the first file:// root for the session.
+        let answer = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "roots/list",
+            "params": {"result": {"roots": [
+                {"uri": "file:///Users/dev/repo", "name": "repo"},
+                {"uri": "file:///other"}
+            ]}}
+        });
+        // The client's answer arrives as a normal POST (request-shaped
+        // envelope carrying the result — see answer arm).
+        let answer_response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    "Mcp-Session-Id",
+                    axum::http::HeaderValue::from_str(sid).unwrap(),
+                );
+                h
+            },
+            answer.to_string(),
+        )
+        .await;
+        assert_eq!(answer_response.status(), StatusCode::OK);
+        assert_eq!(
+            server.mcp_server.http_session_roots.root_for_session(sid),
+            Some(PathBuf::from("/Users/dev/repo")),
+            "first file:// root wins and is cached for the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_session_root_precedes_query_param_but_yields_to_it_when_present() {
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        // Seed a session root.
+        server
+            .mcp_server
+            .http_session_roots
+            .register_session("sid-roots", false);
+        server
+            .mcp_server
+            .http_session_roots
+            .set_root("sid-roots", Some(PathBuf::from("/Users/dev/repo-roots")));
+        assert_eq!(
+            server
+                .mcp_server
+                .http_session_roots
+                .root_for_session("sid-roots"),
+            Some(PathBuf::from("/Users/dev/repo-roots"))
+        );
+        // The `?project=` query param, when present, still wins only when
+        // no session root exists — here the session root must take
+        // precedence in `effective_project` (roots before legacy param).
+        let effective_from_roots: Option<String> = server
+            .mcp_server
+            .http_session_roots
+            .root_for_session("sid-roots")
+            .map(|p| p.to_string_lossy().into_owned());
+        assert_eq!(
+            effective_from_roots.as_deref(),
+            Some("/Users/dev/repo-roots")
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_list_changed_notification_invalidates_cached_root() {
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        server
+            .mcp_server
+            .http_session_roots
+            .register_session("sid-lc", true);
+        server
+            .mcp_server
+            .http_session_roots
+            .set_root("sid-lc", Some(PathBuf::from("/Users/dev/repo-a")));
+        // Client changed cwd: notification arrives (no id).
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/roots/list_changed"
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    "Mcp-Session-Id",
+                    axum::http::HeaderValue::from_str("sid-lc").unwrap(),
+                );
+                h
+            },
+            notification.to_string(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        // Cached root is gone; next resolution falls through / re-probes.
+        assert_eq!(
+            server
+                .mcp_server
+                .http_session_roots
+                .root_for_session("sid-lc"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_list_changed_ignored_for_non_listchanged_clients() {
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        server
+            .mcp_server
+            .http_session_roots
+            .register_session("sid-static", false);
+        server
+            .mcp_server
+            .http_session_roots
+            .set_root("sid-static", Some(PathBuf::from("/Users/dev/repo-a")));
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/roots/list_changed"
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    "Mcp-Session-Id",
+                    axum::http::HeaderValue::from_str("sid-static").unwrap(),
+                );
+                h
+            },
+            notification.to_string(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        // Connection-lifetime cache: notification has no effect.
+        assert_eq!(
+            server
+                .mcp_server
+                .http_session_roots
+                .root_for_session("sid-static"),
+            Some(PathBuf::from("/Users/dev/repo-a"))
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_roots_answer_via_full_http_initialize_flow() {
+        // End-to-end smoke: a roots-capable streamable-HTTP client
+        // (initialize → probe frame in stream → answer POST) resolves the
+        // session root; then the session root routes a later request even
+        // without `?project=`.
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        let init_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"roots": {}},
+                "clientInfo": {"name": "test", "version": "0"}
+            }
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            HeaderMap::new(),
+            init_body.to_string(),
+        )
+        .await;
+        let (parts, body) = response.into_parts();
+        let sid = parts.headers["Mcp-Session-Id"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        let frames: Vec<&str> = text.split("\n\n").filter(|f| !f.is_empty()).collect();
+        assert_eq!(frames.len(), 2);
+        // Client answers via POST, echoing the session id.
+        let answer = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "roots/list",
+            "params": {"roots": [{"uri": "file:///Users/dev/my-repo"}]}
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Mcp-Session-Id",
+            axum::http::HeaderValue::from_str(&sid).unwrap(),
+        );
+        let _ = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            headers,
+            answer.to_string(),
+        )
+        .await;
+        assert_eq!(
+            server.mcp_server.http_session_roots.root_for_session(&sid),
+            Some(PathBuf::from("/Users/dev/my-repo"))
+        );
     }
 
     // ---------------------------------------------------------------------
