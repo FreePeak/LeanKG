@@ -9,7 +9,7 @@
 #
 # Default embed profile: quality (FP32, full 512-token window). For a fast
 # cold embed, override LEANKG_EMBED_FAST=1 + LEANKG_EMBED_MAX_SEQ=128 (the
-# INT8 path) — see docs/reports/embed-3-workspaces-2026-07-17.md.
+# INT8 path) — see docs/archive/reports/embed-3-workspaces-2026-07-17.md.
 # Prefer BACKGROUND=1 on the main MCP service for day-2 so MCP stays up during rebuild.
 
 services:
@@ -26,7 +26,7 @@ services:
     # `--full`: paginated scan + type filter (avoids cold incremental
     # per-QN find_element stall on mega-graphs). workers=8 + 14g mem_limit
     # let INT8 sessions run flat-out under the 12g soft cap (FR-EMBED-PERF-15M;
-    # see docs/validation/2026-08-03-leankg-mcp-validation.md).
+    # see docs/archive/validation/2026-08-03-leankg-mcp-validation.md).
     command:
       [
         "embed",

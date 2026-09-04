@@ -181,7 +181,7 @@ jobs:
   # regressions (openssl/ort/RocksDB/fastembed) at release time instead of at
   # Render deploy. Deliberately NOT a push/PR workflow — a repeat 40-min gate
   # on every Cargo.lock touch would slow releases more than it saves (see
-  # docs/reports/root_cause_onrender_embeddings_exit101-2026-08-01.md F2 note).
+  # docs/archive/reports/root_cause_onrender_embeddings_exit101-2026-08-01.md F2 note).
   build-embeddings:
     runs-on: ubuntu-latest
     timeout-minutes: 60

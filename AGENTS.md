@@ -67,8 +67,8 @@ Do **not** open with `query_graph`. Discover first:
 
 ## Development workflow
 
-1. Update `docs/prd.md` (narrative + ACs) + `docs/prd-task-tracker.md` (task list)
-2. Implement per `docs/workflow-opencode-agent.md`
+1. Update `docs/prd.md` (narrative + ACs) + `docs/prd-task-tracker.md` (task list) — the only two live docs; everything else is in `docs/archive/`
+2. Implement per `docs/archive/workflow-opencode-agent.md`
 3. `cargo build --release && cargo test`
 4. `git commit -m "feat: description"` (one feature per commit; **no** `Co-Authored-By` or AI attribution)
 5. `git pull --rebase && git push`
