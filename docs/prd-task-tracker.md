@@ -1,6 +1,6 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-04 — v4.1.1-omp-embed-ground-truth adds FR-ZCP-11 (M7, embedding correctness ported from zvec-grep) and rewrites FR-ZCP-01 (HTTP resolution = server-initiated MCP `roots/list`; `clientInfo.workingDirectory` proposal dropped — no harness sends it) and FR-ZCP-07 (mnemopi-compatible bank/scoping/`retained_through_user_turn`-cursor contract + hindsight-shaped HTTP memory API). Prior revisions: v4.1.0 (2026-09-04) added FR-ZCP-09/10; the 2026-09-03 reset (v4.0.0) preserved 585 unique IDs in [`archive/prd-task-tracker.md`](archive/prd-task-tracker.md) + machine copy [`archive/prd-task-tracker.json`](archive/prd-task-tracker.json).
+**Last synced:** 2026-09-04 — v4.3.0-one-tool-ladder rewrites FR-ZCP-03 as the capability-probe router with an L0–L3 degradation ladder (vectors → FTS/trigram fuzzy → exact/regex → cold guidance; `retrieval: {rung, reason}` provenance; registers the unregistered `orchestrate` parser) and adds FR-ZCP-13 (first-run setup contract: one auto/manual question persisted in `.leankg/config.json`, `leankg add <path> [--embed]` one-command repo registration, embeddings = preference never prerequisite) + FR-ZCP-05 bridge tier (pg_trgm GIN + text_pattern_ops before FTS). Prior: v4.2.0 (2026-09-04) added FR-ZCP-12 (M8); v4.1.1 added FR-ZCP-11; v4.1.0 added FR-ZCP-09/10; the 2026-09-03 reset (v4.0.0) preserved 585 unique IDs verbatim in [`archive/prd-task-tracker.md`](archive/prd-task-tracker.md) + machine copy [`archive/prd-task-tracker.json`](archive/prd-task-tracker.json).
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 
@@ -11,21 +11,22 @@
 | Status | Count |
 |--------|------:|
 | IN_PROGRESS | 1 |
-| TODO | 36 (10 live + 26 carry-forward) |
+| TODO | 38 (12 live + 26 carry-forward) |
 | DONE | 3 |
-| Open work | 37 |
+| Open work | 39 |
 
-**Inventory note (ID-level accounting):** the archived tracker holds **40 open inventory items** (35 master-table `NOT_DONE`/`PENDING`/`PARTIAL`/`OPEN` IDs + 5 `FR-HEA-*` section-table rows). All 40 are accounted for below: FR IDs appear as named rows; each paired `US-*` tracks with its FR (the archive itself pairs them `US-X / FR-X` as one work item); `FR-ZG-01..05` + `US-ZG-01..05` + `FR-B05` are superseded inside the live `FR-ZCP-*` rows (Supersedes column); `FR-HEA-05` is DONE (v4.0.0 §1 cutover). `FR-ZCP-09/10/11` are **new in v4.1.x** (no archive IDs). Row-level open work = 1 IN_PROGRESS + 10 live + 26 carry-forward = 37. (The 26 carry-forward rows cover 35 archived open IDs: 3 rows pair multiple US stories with their FR; the inventory note above reconciles the ID count.)
+**Inventory note (ID-level accounting):** the archived tracker holds **40 open inventory items** (35 master-table `NOT_DONE`/`PENDING`/`PARTIAL`/`OPEN` IDs + 5 `FR-HEA-*` section-table rows). All 40 are accounted for below: FR IDs appear as named rows; each paired `US-*` tracks with its FR (the archive itself pairs them `US-X / FR-X` as one work item); `FR-ZG-01..05` + `US-ZG-01..05` + `FR-B05` are superseded inside the live `FR-ZCP-*` rows (Supersedes column); `FR-HEA-05` is DONE (v4.0.0 §1 cutover). `FR-ZCP-09/10/11/12/13` are **new in v4.1.x–v4.3.0** (no archive IDs). Row-level open work = 1 IN_PROGRESS + 12 live + 26 carry-forward = 39. (The 26 carry-forward rows cover 35 archived open IDs: 3 rows pair multiple US stories with their FR; the inventory note ab…
 
 | Milestone | Live items | Carry-forward items | Status |
 |---|---|---|---|
-| M1 — Zero-config attach | 2 | — | **IN_PROGRESS** |
+| M1 — Zero-config attach | 3 | — | **IN_PROGRESS** |
 | M2 — One-tool surface | 2 | — | TODO |
 | M3 — Honest search | 2 | FR-HEA-02, FR-HEA-04 | TODO |
 | M4 — Harness memory | 1 | FR-SMA-01..03, FR-SM-04/05, US-SM-02 | TODO |
 | M5 — Defensible evidence | 1 | FR-HEA-01, FR-HEA-03 | TODO |
 | M6 — Org-scale portfolio | 2 | — | TODO |
 | M7 — Embedding correctness | 1 | — | TODO |
+| M8 — Measured simplicity | 1 | — | TODO |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
@@ -36,19 +37,22 @@
 |----|-------|---------|-------|
 | FR-ZCP-01 | Contextual project resolution — connection→project mapping (cwd / server-initiated `roots/list` / session registration); `?project=` demoted to escape hatch | 2026-09-03 | Resolution order + cache design in prd.md §3.1 (v4.1.1 rewrite, clause 0 = nearest repo marker; portfolio cwd → FR-ZCP-09; HTTP clause = **server-initiated MCP `roots/list`**, which OMP answers `file://<cwd>` — `clientInfo.workingDirectory` proposal dropped, no harness sends it). Verified anchors: `find_leankg_for_path` `src/mcp/server.rs:588-605`, `resolve_project_db_path` `:637-661` (per-request FS walk, no connection cache), **silent default-schema fallback** `:2987-2989` (dies in FR-ZCP-02), initialize reads no client params `:3542-3552` (roots/list makes this irrelevant), no `X-LeanKG-Project` header in `src/`, identity = canonical root via `project_identity_keys_in` `src/db/backend.rs:2613-2675` + `schema_candidates_for_path` re-key pattern `:2528-2540` |
 
-## Todo — live v4.1.x items (ordered)
+## Todo — live v4.1.x–v4.3.0 items (ordered)
 
 | ID | Title | Priority | Milestone | Supersedes |
 |----|-------|----------|-----------|------------|
 | FR-ZCP-02 | Lazy auto-attach + background first index; never fail with "not initialized"; `freshness: cold` state | **P0** | M1 | FR-ZCP-01 |
-| FR-ZCP-03 | Default toolset: one `leankg_context` router tool; full catalog behind `full` opt-in | **P0** | M2 | FR-ZG-01, US-ZG-01 |
+| FR-ZCP-03 | Default toolset: one `leankg_context` router — capability probe + L0–L3 degradation ladder (vectors / FTS+trigram fuzzy / exact+regex / cold guidance), `retrieval: {rung, reason}` on every response, zero hard errors; registers the unregistered `orchestrate` parser (`src/orchestrator/mod.rs:26-46`); full catalog behind `full` opt-in | **P0** | M2 | FR-ZG-01, US-ZG-01 |
 | FR-ZCP-04 | `leankg install --target opencode\|claude\|codex\|cursor\|omp` — project-less URLs + `--register-cwd` hook | P1 | M2 | FR-ZG-04, US-ZG-04 |
 | FR-ZCP-05 | Postgres FTS: `tsvector` + GIN, `websearch_to_tsquery`, RRF fusion in `semantic_search` | P1 | M3 | FR-ZG-02, US-ZG-02 |
 | FR-ZCP-06 | Freshness contract: `freshness: fresh\|possibly_stale\|cold` on every index-backed response; reconciliation off the query path | P1 | M3 | FR-ZG-03, US-ZG-03 |
 | FR-ZCP-07 | Memory-backend adjacency: mnemopi-compatible bank naming (`<basename>-<wyhash36(cwd)>`, cwd-only), 3-mode scoping, `retained_through_user_turn` cursor, `session_retain`/`session_recall` + `<memories>`-equivalent injection; hindsight-shaped HTTP memory API as upstream `memory.backend: "mcp"` evidence | P1 | M4 | FR-SMA-04, US-SMA-04, US-SM-02 |
 | FR-ZCP-08 | Cross-tool harness hardening: pinned SHAs/prompts, ≥3 trials/arm, judge-blind scorer, zg pitfalls checklist | P2 | M5 | FR-ZG-05, US-ZG-05, FR-B05 |
+| FR-ZCP-09 | Project registry (`public.leankg_projects`) + portfolio scope (T0 manifest inventory, per-child freshness) + cross-schema portfolio queries + memory federation; one indexer slot, hot-set cap, LRU detach-to-cold | **P1** | M6 | — |
 | FR-ZCP-10 | Per-schema migration fleet reconciliation + `doctor --deep` drift check (per-schema ledgers today, nothing fleet-wide) | P2 | M6 | — |
 | FR-ZCP-11 | Embedding correctness ported from zvec-grep: pinned model catalog (commit revision + query/document prefixes), model-stamped vectors + hard rebuild guard, chunker-version coupling, 3-signal change detection, per-file atomic replace + truncation accounting, watcher reconciliation, single-flight indexing | **P1** | M7 | FR-EMBED-R4 (supersedes the aspirational perf-only goal with a correctness contract) |
+| FR-ZCP-12 | Measured-simplicity contract (young-product adoption): T1 error catalog (stable code + cause + runnable fix + doc anchor, 100% CI-linted) + single copy-paste config block + env inventory + claim hygiene; T2 CI-timed published TTFV ≤ 5 min; T3 CI-pinned default-tool budget ≤ 12 (tier-tagged) riding FR-ZCP-03 | **P1** | M8 | — |
+| FR-ZCP-13 | First-run setup contract + `leankg add`: one auto/manual question (init+index+embed vs manual) persisted in `.leankg/config.json` (`setup`, `embed`), honored by every later attach; `leankg add <path> [--embed]` one-command registration returning `mcp_status`-shaped status; embeddings are a preference, never a prerequisite (ladder serves L2/L1 until vectors exist) | P1 | M1 | — |
 
 ## Todo — carry-forward from archive (original IDs preserved)
 
@@ -100,4 +104,4 @@
 
 ---
 
-*Last updated: 2026-09-04 — open inventory: 1 IN_PROGRESS + 36 TODO (10 live + 26 carry-forward) = 37 open; full 585-ID history in archive.*
+*Last updated: 2026-09-04 — open inventory: 1 IN_PROGRESS + 38 TODO (12 live + 26 carry-forward) = 39 open; full 585-ID history in archive.*
