@@ -35,5 +35,6 @@ pub mod report;
 pub mod retrieval;
 pub mod runtime;
 pub mod session;
+pub mod setup_config;
 pub mod sources;
 pub mod watcher;

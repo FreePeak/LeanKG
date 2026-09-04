@@ -166,7 +166,7 @@ impl WorkerCommand {
                 auth,
                 embed,
             }),
-            WorkerCommand::Status => Ok(CLICommand::Status),
+            WorkerCommand::Status => Ok(CLICommand::Status { json: false }),
             WorkerCommand::Embed {
                 init,
                 full,

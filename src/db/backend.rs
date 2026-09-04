@@ -3029,6 +3029,29 @@ fn create_schema_if_missing_sync(
     Ok(ext_schema)
 }
 
+/// FR-ZCP-13: cheap reachability probe for status/add summaries. A short
+/// connect + `SELECT 1`; any failure (bad URL, server down) → `false`.
+/// Callers degrade gracefully (labels instead of counts) — never an error.
+/// Runs under the same `block_in_place` guard as the other sync-PG helpers
+/// so CLI dispatch on the tokio runtime cannot nest a `block_on`.
+pub fn pg_reachable() -> bool {
+    let probe = || -> bool {
+        let base = match PostgresBackend::from_env() {
+            Ok(pg) => pg.pg_url,
+            Err(_) => return false,
+        };
+        let Ok(mut client) = pg_connect(&base) else {
+            return false;
+        };
+        client.batch_execute("SELECT 1").is_ok()
+    };
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(probe)
+    } else {
+        probe()
+    }
+}
+
 #[cfg(test)]
 fn test_init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
     Ok(Arc::new(crate::db::fake::FakeBackend::for_path(db_path)))

@@ -49,6 +49,7 @@ mod retrieval;
 mod runtime;
 mod session;
 mod setup;
+mod setup_config;
 mod sources;
 mod watcher;
 mod web;
@@ -102,6 +103,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         cli::CLICommand::Init { path, with_lsp } => {
             init_project(&path, with_lsp)?;
+        }
+        cli::CLICommand::Add {
+            path,
+            auto,
+            manual,
+            embed,
+        } => {
+            run_add(path.as_deref(), auto, manual, embed).await?;
         }
         cli::CLICommand::Index {
             path,
@@ -220,6 +229,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => eprintln!("Warning: Failed to save benchmark report: {}", e),
                 }
             }
+            // FR-ZCP-13: when this index run was started by
+            // `leankg add --auto --embed` (LEANKG_ADD_CHAIN_EMBED=1), chain
+            // a background embed once indexing finishes. Self-gating — a
+            // no-op for every other `leankg index` invocation.
+            chain_embed_after_index(&project_path, &db_path);
         }
         cli::CLICommand::Serve { port, project } => {
             let port = port.unwrap_or_else(|| {
@@ -630,6 +644,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         cli::CLICommand::Install => {
             install_mcp_config()?;
+            // FR-ZCP-13: point new users at the one-command project setup.
+            println!("Register a project with `leankg add <path>` (auto or manual setup).");
         }
         cli::CLICommand::Connect {
             client,
@@ -669,13 +685,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             since,
             format,
             project,
+            auth: _,
         } => {
             run_dashboard(since.as_deref(), format.as_deref(), project.as_deref())?;
         }
-        cli::CLICommand::Status => {
-            let project_path = find_project_root()?;
-            let db_path = project_path.join(".leankg");
-            show_status(&db_path)?;
+        cli::CLICommand::Status { json } => {
+            show_status_multi(json)?;
         }
         cli::CLICommand::Watch {
             path: _,
@@ -1259,11 +1274,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             status_repo(&name)?;
         }
         cli::CLICommand::Setup {
+            reset,
             clone,
             index,
             embed,
             status,
         } => {
+            // FR-ZCP-13: `leankg setup --reset` clears the stored setup
+            // choice so the next `leankg add` re-asks.
+            if reset {
+                let project_path = find_project_root()?;
+                match crate::setup_config::reset_setup_choice(&project_path) {
+                    Ok(true) => println!(
+                        "Cleared stored setup choice in {}; the next `leankg add` re-asks.",
+                        crate::setup_config::config_path_for(&project_path).display()
+                    ),
+                    Ok(false) => println!(
+                        "No setup choice stored at {} — nothing to reset.",
+                        crate::setup_config::config_path_for(&project_path).display()
+                    ),
+                    Err(e) => return Err(e),
+                }
+                if !clone && !index && !embed && !status {
+                    return Ok(());
+                }
+            }
             if clone || index || embed || status {
                 crate::setup::run_setup(clone, index, embed, status)?;
             } else {
@@ -1517,6 +1552,232 @@ fn pull_from_remote(
     }
     Ok(())
 }
+
+/// FR-ZCP-13: process-local single-flight flag for `add --auto` spawned
+/// index runs (per-project cross-process exclusivity is the PG advisory
+/// lock inside `index_codebase`; this only stops one process from
+/// spawning duplicates).
+static ADD_AUTO_SPAWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// FR-ZCP-13: `leankg add [path] [--auto|--manual] [--embed]`.
+///
+/// One command to register a project and resolve its first-run setup:
+/// 1. canonicalize the target path;
+/// 2. run the existing init machinery (de-facto `.leankg` init) — no DB;
+/// 3. resolve the setup mode: `--auto`/`--manual` flag > `LEANKG_SETUP_MODE`
+///    env > stored `config.json` > interactive prompt (only when stdin AND
+///    stdout are TTYs) > manual default (non-interactive never blocks);
+/// 4. persist the resolved choice to `<root>/.leankg/config.json`;
+/// 5. AUTO: kick indexing as a detached child (returns in <2s) and print
+///    an mcp_status-shaped summary; MANUAL: print runnable next commands.
+async fn run_add(
+    path: Option<&str>,
+    auto: bool,
+    manual: bool,
+    embed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let started = std::time::Instant::now();
+
+    // 1. Canonical target root (explicit path or cwd).
+    let raw = match path {
+        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+        _ => std::env::current_dir()?,
+    };
+    if !raw.exists() {
+        return Err(format!("path does not exist: {}", raw.display()).into());
+    }
+    let root = db::backend::canonical_project_root(&raw);
+
+    // 2. De-facto `.leankg` init. `init_project` writes `leankg.yaml`
+    // relative to ITS input path, so run from the target root.
+    let previous_cwd = std::env::current_dir()?;
+    std::env::set_current_dir(&root)?;
+    let init_result = init_project(".", false);
+    std::env::set_current_dir(previous_cwd)?;
+    init_result?;
+    let leankg_dir = root.join(".leankg");
+    std::fs::create_dir_all(&leankg_dir)?;
+
+    // 3. Resolve the setup mode (flag > env > stored > prompt > manual).
+    let flag = if auto {
+        Some(setup_config::SetupMode::Auto)
+    } else if manual {
+        Some(setup_config::SetupMode::Manual)
+    } else {
+        None
+    };
+    let env_mode = std::env::var("LEANKG_SETUP_MODE")
+        .ok()
+        .and_then(|v| setup_config::SetupMode::parse_env_value(&v));
+    let (stored_cfg, stored_outcome) = setup_config::load(&root);
+    if let setup_config::ConfigOutcome::Corrupt(e) = &stored_outcome {
+        eprintln!(
+            "Warning: {} is corrupt ({}); ignoring it — resolve the setup mode again.",
+            crate::setup_config::config_path_for(&root).display(),
+            e
+        );
+    }
+    use std::io::IsTerminal;
+    let stdin_tty = std::io::stdin().is_terminal();
+    let stdout_tty = std::io::stdout().is_terminal();
+    let (mode, source) = setup_config::resolve_setup_mode(
+        flag,
+        env_mode,
+        stored_cfg.setup,
+        stdin_tty && stdout_tty,
+        || {
+            eprint!("Set up LeanKG automatically [index+embed now] or manually? [auto/manual] ");
+            let mut line = String::new();
+            match std::io::stdin().read_line(&mut line) {
+                Ok(0) | Err(_) => None,
+                Ok(_) => setup_config::SetupMode::parse_env_value(line.trim()),
+            }
+        },
+    );
+
+    // 4. Persist the resolved choice.
+    setup_config::save(
+        &root,
+        &setup_config::SetupConfig {
+            setup: Some(mode),
+            embed,
+        },
+    )?;
+
+    // 5. Print the mcp_status-shaped summary / next steps.
+    let schema = db::backend::schema_for_path(&root.join(".leankg"));
+    let mut summary = serde_json::json!({
+        "initialized": true,
+        "project_root": root.display().to_string(),
+        "schema": schema,
+        "setup": mode.as_str(),
+        "setup_source": source.as_str(),
+        "embed_requested": embed,
+        "freshness": "cold",
+    });
+
+    match mode {
+        setup_config::SetupMode::Manual => {
+            summary["message"] = serde_json::Value::String(
+                "Manual setup: run the commands below when ready.".to_string(),
+            );
+        }
+        setup_config::SetupMode::Auto => {
+            let indexing = spawn_detached_index(&root, embed)?;
+            summary["indexing"] = serde_json::Value::String(if indexing {
+                "started".to_string()
+            } else {
+                "already_running".to_string()
+            });
+            if embed {
+                summary["embed_planned"] =
+                    serde_json::Value::String("chained_after_index".to_string());
+            }
+        }
+    }
+
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    if mode == setup_config::SetupMode::Manual {
+        println!();
+        println!("Next commands:");
+        println!("  leankg index {}", root.display());
+        println!("  leankg embed --project {}", root.display());
+        println!(
+            "(or re-run `leankg add {} --auto` to index in the background)",
+            root.display()
+        );
+    }
+
+    tracing::debug!("leankg add resolved in {:?}", started.elapsed());
+    Ok(())
+}
+
+/// Spawn `leankg index <root>` as a detached child process. Returns
+/// `false` when an index for this project is already running (the
+/// process-local single-flight flag or the per-project PG advisory lock
+/// reports contention) — spawning duplicates is never attempted.
+fn spawn_detached_index(
+    root: &std::path::Path,
+    embed: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if ADD_AUTO_SPAWNED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        tracing::info!("add: index already spawned in this process; skipping");
+        return Ok(false);
+    }
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("index").arg(root);
+    if embed {
+        // Mark the child so its index dispatch chains the embed.
+        cmd.env("LEANKG_ADD_CHAIN_EMBED", "1");
+    }
+    let child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match child {
+        Ok(child) => {
+            println!(
+                "Background indexing started (PID {}). Check progress with `leankg status --json`.",
+                child.id()
+            );
+            Ok(true)
+        }
+        Err(e) => {
+            ADD_AUTO_SPAWNED.store(false, std::sync::atomic::Ordering::SeqCst);
+            Err(format!("failed to spawn background index: {}", e).into())
+        }
+    }
+}
+
+/// Chain a background embed after the index that `add --auto` started.
+/// Runs in the index child process, after indexing completes, as a
+/// detached `leankg embed --project <root>` child (same one-command flow
+/// as the embed CLI: lock file + status JSON under `<root>/.leankg`).
+#[cfg(feature = "embeddings")]
+fn chain_embed_after_index(root: &std::path::Path, db_path: &std::path::Path) {
+    if !std::env::var("LEANKG_ADD_CHAIN_EMBED")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        return;
+    }
+    // Single-flight: refuse to double-spawn when an embed is live.
+    let lock_path = db_path.join("embed.lock");
+    if let Some(pid) = read_lock_pid(&lock_path) {
+        if pid_alive(pid) {
+            tracing::info!("add: embed already running (PID {pid}); skipping chain");
+            return;
+        }
+    }
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("add: cannot resolve exe to chain embed: {}", e);
+            return;
+        }
+    };
+    match std::process::Command::new(exe)
+        .arg("embed")
+        .arg("--project")
+        .arg(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => tracing::info!(
+            "add: chained background embed for {} (PID {})",
+            root.display(),
+            child.id()
+        ),
+        Err(e) => tracing::warn!("add: failed to chain background embed: {}", e),
+    }
+}
+
+#[cfg(not(feature = "embeddings"))]
+fn chain_embed_after_index(_root: &std::path::Path, _db_path: &std::path::Path) {}
 
 fn find_project_root() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let current_dir = std::env::current_dir()?;
@@ -2735,6 +2996,7 @@ fn run_doctor(kill: bool) -> Result<(), Box<dyn std::error::Error>> {
     let my_exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
+
     // Heuristic: the leankg binary path itself is what we want.
     // Match `argv[0]` ending in `leankg` (absolute or relative) but
     // NOT paths that merely contain a directory named `leankg` (e.g.
@@ -2835,6 +3097,130 @@ fn run_doctor(kill: bool) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// FR-ZCP-13: `leankg status` over every known project: LEANKG_PROJECT_DIRS
+/// entries plus the current project root. Each row carries a freshness
+/// label and (when Postgres is reachable) element/vector counts.
+/// `--json` prints one JSON document; the text output stays human-readable.
+fn show_status_multi(json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let current = find_project_root()?;
+    let mut roots = web_file_resolve_project_dirs();
+    roots.push(current.clone());
+    let roots = setup_config::merge_project_roots(&roots);
+
+    let pg_up = db::backend::pg_reachable();
+    let mut projects: Vec<serde_json::Value> = Vec::new();
+    for root in &roots {
+        let entry = collect_project_status(root, pg_up);
+        if json {
+            projects.push(entry);
+        } else {
+            print_project_status_row(&entry, root == &roots[roots.len() - 1]);
+        }
+    }
+
+    if json {
+        let doc = serde_json::json!({
+            "postgres": pg_up,
+            "projects": projects,
+        });
+        println!("{}", serde_json::to_string_pretty(&doc)?);
+    } else if !pg_up {
+        println!();
+        println!("Postgres unreachable — set LEANKG_PG_URL (counts unavailable).");
+    }
+    Ok(())
+}
+
+fn web_file_resolve_project_dirs() -> Vec<std::path::PathBuf> {
+    crate::web::file_resolve::project_dirs_from_env()
+}
+
+/// Cheap per-project status snapshot: freshness label from local facts +
+/// counts from the per-project schema when PG is reachable. Never errors —
+/// degraded projects report `error` instead of failing the whole listing.
+fn collect_project_status(root: &std::path::Path, pg_up: bool) -> serde_json::Value {
+    let leankg_dir = root.join(".leankg");
+    let initialized = leankg_dir.exists();
+    let (setup_cfg, _outcome) = setup_config::load(root);
+    let mut entry = serde_json::json!({
+        "project_root": root.display().to_string(),
+        "initialized": initialized,
+        "setup": setup_cfg.setup.map(|m| m.as_str()),
+        "embed": setup_cfg.embed,
+    });
+
+    let mut inventory_at: Option<String> = None;
+    if initialized && pg_up {
+        match db::backend::init_db_readonly(&leankg_dir) {
+            Ok(db) => {
+                let graph = graph::GraphEngine::new(db.clone());
+                match graph.count_elements() {
+                    Ok(n) => entry["elements"] = serde_json::Value::from(n),
+                    Err(e) => entry["error"] = serde_json::Value::String(e.to_string()),
+                }
+                if let Ok(n) = graph.count_relationships() {
+                    entry["relationships"] = serde_json::Value::from(n);
+                }
+                if let Ok(Some(inv)) = crate::graph::inventory::load_latest_inventory(db.as_ref()) {
+                    entry["vectors"] = serde_json::Value::from(inv.total_vectors);
+                    inventory_at = Some(inv.computed_at);
+                }
+            }
+            Err(e) => {
+                entry["error"] = serde_json::Value::String(e.to_string());
+            }
+        }
+        if let Ok(commit) = crate::indexer::git_workspace::workspace_last_commit_time(root) {
+            entry["last_commit"] = serde_json::Value::from(commit);
+        }
+        let last_commit = entry.get("last_commit").and_then(|v| v.as_i64());
+        let computed_at: Option<i64> = inventory_at.as_deref().and_then(|s| s.parse::<i64>().ok());
+        let count = entry.get("elements").and_then(|v| v.as_u64()).unwrap_or(0);
+        entry["freshness"] = serde_json::Value::String(
+            setup_config::freshness_label(count as usize, computed_at, last_commit).to_string(),
+        );
+    } else if !initialized {
+        entry["freshness"] = serde_json::Value::String("unknown".to_string());
+    } else {
+        entry["freshness"] = serde_json::Value::String("cold".to_string());
+    }
+    entry
+}
+
+fn print_project_status_row(entry: &serde_json::Value, is_current: bool) {
+    let marker = if is_current { "*" } else { " " };
+    println!(
+        "{} {}",
+        marker,
+        entry
+            .get("project_root")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+    );
+    println!(
+        "    setup: {}  freshness: {}",
+        entry
+            .get("setup")
+            .and_then(|v| v.as_str())
+            .unwrap_or("not_configured"),
+        entry
+            .get("freshness")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+    );
+    if let Some(n) = entry.get("elements").and_then(|v| v.as_u64()) {
+        let rel = entry
+            .get("relationships")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let vec = entry.get("vectors").and_then(|v| v.as_u64()).unwrap_or(0);
+        println!("    elements: {n}  relationships: {rel}  vectors: {vec}");
+    }
+    if let Some(e) = entry.get("error").and_then(|v| v.as_str()) {
+        println!("    error: {e}");
+    }
 }
 
 /// H9: `leankg doctor --deep` — deployment self-diagnosis. Prints an
