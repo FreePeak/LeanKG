@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://leankg.onrender.com"><strong>Live Demo</strong></a>
   ·
-  <a href="docs/cli-reference.md">Docs</a>
+  <a href="docs/prd.md">Docs</a>
   ·
   <a href="https://hub.docker.com/r/freepeak/leankg">Docker Hub</a>
 </p>
@@ -152,7 +152,7 @@ npm run dev
 ```
 
 Vite proxies `/api` → `127.0.0.1:8080`. Status should show **connected**.  
-Details: [ui-v2/README.md](ui-v2/README.md) · [docs/web-ui.md](docs/web-ui.md)
+Details: [ui-v2/README.md](ui-v2/README.md) · [docs/archive/web-ui.md](docs/archive/web-ui.md)
 
 ---
 
@@ -178,7 +178,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 | Mega-graph (100k+) | Yes | Partial | Viz capped | Varies | n/a |
 | MCP depth | 85+ | ~17 | ~10 | ~5 | docs only |
 
-Deep dives: [ROI vs Graphify](docs/reports/leankg-vs-graphify-company-roi-2026-07-21.md) · [Competitive one-pager](docs/competitive-analysis.md) · [Research matrix](docs/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md)
+Deep dives (archived): [ROI vs Graphify](docs/archive/reports/leankg-vs-graphify-company-roi-2026-07-21.md) · [Competitive one-pager](docs/archive/competitive-analysis.md) · [Research matrix](docs/archive/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md)
 
 ---
 
@@ -219,7 +219,7 @@ Discover first — do **not** open with `query_graph`:
 | How A↔B? | `shortest_path` |
 | Expand after seeds | `query_graph` |
 
-Catalog: [docs/mcp-tools.md](docs/mcp-tools.md) · Setup: [docs/agentic-instructions.md](docs/agentic-instructions.md)
+Catalog: [docs/archive/mcp-tools.md](docs/archive/mcp-tools.md) · Setup: [docs/archive/agentic-instructions.md](docs/archive/agentic-instructions.md)
 
 ---
 
@@ -236,20 +236,24 @@ leankg ontology sync | ontology trace <workflow>
 
 UI hot-reload: `cd ui-v2 && npm install && npm run dev` → http://127.0.0.1:5173
 
-Full reference: [docs/cli-reference.md](docs/cli-reference.md)
+Full reference: [docs/archive/cli-reference.md](docs/archive/cli-reference.md)
 
 ---
 
 ## Docs
 
+The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/prd.md`) + task tracker (`docs/prd-task-tracker.md`). All historical design docs, analyses, reports, and plans are preserved under [`docs/archive/`](docs/archive/).
+
 | Doc | |
 | --- | --- |
-| [Architecture](docs/architecture.md) | Design & data model |
-| [MCP tools](docs/mcp-tools.md) | Tool catalog |
-| [CLI](docs/cli-reference.md) | All commands |
-| [Benchmarks](docs/benchmark.md) | Methodology |
+| [PRD](docs/prd.md) | Unified product requirements + HLD (single SoT) |
+| [Task tracker](docs/prd-task-tracker.md) | Done / in-progress / todo |
+| [Architecture (archived)](docs/archive/architecture.md) | Design & data model (historical) |
+| [MCP tools (archived)](docs/archive/mcp-tools.md) | Tool catalog (historical) |
+| [CLI (archived)](docs/archive/cli-reference.md) | All commands (historical) |
+| [Benchmarks (archived)](docs/archive/benchmark.md) | Methodology (historical) |
 | [Embeddings](src/embeddings/EMBEDDINGS.md) | HNSW / ops |
-| [Postgres migration](docs/analysis/pg-migration-report.md) | Engine notes |
+| [Postgres migration (archived)](docs/archive/analysis/pg-migration-report.md) | Engine notes (historical) |
 | [AGENTS.md](AGENTS.md) | Agent / Docker notes |
 
 ---

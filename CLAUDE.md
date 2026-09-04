@@ -97,7 +97,7 @@ When MCP HTTP on `:9699` is healthy, for fuzzy / NL / “where is X?” question
 | What is this known symbol? | `explain_node` |
 | Expand subgraph after seeds | `query_graph` (**after** semantic/concept hits) |
 
-**BAN:** Do not call `query_graph` as the first NL discovery tool when embeddings/concepts may answer. Full catalog: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+**BAN:** Do not call `query_graph` as the first NL discovery tool when embeddings/concepts may answer. Full catalog: [`docs/archive/mcp-tools.md`](docs/archive/mcp-tools.md).
 
 **Dynamic ontology (agent memory):** Agents persist discoveries as `add_ontology_concept` (concept-level: bugs, design insights, domain logic) and `add_ontology_workflow` (procedural: fix sequences, debug procedures, release flows). These survive YAML re-syncs and appear in `concept_search` results. Use `add_knowledge` for free-form notes; `search_knowledge` matches both title and content. Delete only dynamic rows with `delete_ontology_concept`.
 

@@ -12,7 +12,7 @@ Compare token usage AND context correctness between LeanKG-assisted and baseline
 
 **Total:** 7 tests, LeanKG wins F1 on 2 tests, +41,048 token overhead
 
-See [docs/analysis/ab-testing-results-2026-04-08.md](../docs/analysis/ab-testing-results-2026-04-08.md) for full analysis.
+See [docs/analysis/ab-testing-results-2026-04-08.md](../docs/archive/analysis/ab-testing-results-2026-04-08.md) for full analysis.
 
 ## Usage
 

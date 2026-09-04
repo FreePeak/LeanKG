@@ -1,0 +1,3549 @@
+# LeanKG PRD - Consolidated Tracking Document
+
+**Version:** 3.8.9-zvec-grep-audit
+**Date:** 2026-09-03
+**Status:** Active Development — **single source of truth** for product requirements + HLD
+**Author:** Product Owner
+**Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, Gemini CLI, etc.)
+**Codebase Version:** 0.26.1 (`origin/main` per `docs/roadmap-tracker.md` W12, npm wrapper in lockstep)
+
+> **Storage engine (2026-08-05):** LeanKG is now **PostgreSQL + pgvector only** (decisions D1–D5). The legacy embedded backends (SQLite/RocksDB), `DbBackend` trait, engine shim, and `LEANKG_DB_ENGINE` were removed in Phase 8. Local dev requires `docker compose up postgres` + `LEANKG_PG_URL`. See [analysis/pg-migration-report.md](analysis/pg-migration-report.md).
+
+> **Task lists + status live in one place (humans + AI agents):**
+> - Markdown: [`docs/prd-task-tracker.md`](prd-task-tracker.md) — **all** US / FR / Release tasks + status (**sorted status-first, then Focus P0→P3**)
+> - Machine: [`docs/prd-task-tracker.json`](prd-task-tracker.json)
+> - All-open multi-agent campaign plan: [`docs/planning/2026-08-01-all-open-prd-campaign.md`](planning/2026-08-01-all-open-prd-campaign.md)
+>
+> ### Priority order (work top → bottom)
+>
+> | Focus | Status | What |
+> |------:|--------|------|
+> | **P0** | **DONE** | MCP validation root causes — file-arg project routing (`FR-P0-MCP-RC-01`), RocksDB double-open lock (`FR-P0-MCP-RC-02`), blocking-sync/async stall (`FR-P0-MCP-RC-03`), mega-guard gaps (`FR-P0-MCP-RC-04`) — [validation](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md) + [RCA](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md), §3.30 / §5.34 |
+> | **P0** | **DONE** | RocksDB LOCK poison — embed auto-arm blocks all DB tools — `FR-P0-EMBED-LOCK` / `REL-P0-EMBED-LOCK` ([A/B](reports/ab-leankg-vs-raw-live-2026-08-02.md), §3.29 / §5.33) — live smoke [DONE](reports/p0-mcp-root-cause-fixes-2026-08-03.md) |
+> | **P0** | **CLOSED** | Procedural ontology auto-update — `US-ONT-PROC-01` / `REL-059` ([smoke](reports/ontology-proc-auto-smoke-2026-07-21.md)) |
+> | **P1** | **DONE** | Wave **4** single-repo expand — `US-MG-02` / `FR-MG-03` — [evidence](reports/wave4-single-repo-expand-2026-08-01.md). Waves 0a–3 **DONE** (Wave 3: [NL Query FAB](reports/ui-v2-nl-query-fab-2026-08-01.md)). Ops: OnRender embeddings exit 101 — [RCA](reports/root_cause_onrender_embeddings_exit101-2026-08-01.md) |
+> | **P1** | **DONE** | Wave **1b** MCP hard-delete — `load_layer` + `get_doc_structure` (`US-SURF-08..11` / `REL-076`) — [evidence](reports/rel-076-mcp-surf-1b-2026-08-01.md). Cumulative hard-removed: `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, `load_layer`, `get_doc_structure` |
+| **P1** | **NEW** | Harness-era repositioning (2026-08-30 assessment) — org-memory substrate focus + alias metric / semantic dead-end / remote-PG latency / mega-scan banner fixes — `FR-HEA-01..05` (§3.31 / §5.36) — [research](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md) |
+> | **P2** | **CURRENT** | Ordered: (1) Session MCP offload `US-SM-01` → (2) Auto-recall `US-SM-02` / closes `US-GE-05` → (2a) Wire dead recall write path `FR-SMA-01..04` (v3.8.8 — prerequisite: recall currently injects nothing) → (3) Provenance+RRF `US-SM-03/04` → (4) Doc↔code join polish `US-DOCJOIN-*` → (5) Graph-eng `US-GE-02..04` → (6) Heat index / promote traces `US-SM-05/06` |
+> | **P2** | **NEW (v3.8.8)** | Session-memory audit vs omp Hindsight — wire the dead `RecallStore` write path (recall injects nothing today), lesson decay + outcome feedback loop, `session_retain` ingest, worktree-shared memory scope — `US-SMA-01..06` / `FR-SMA-01..06` (§3.32 / §5.37) |
+> | **P2** | **NEW (v3.8.9)** | Search-layer discipline vs zvec-grep (zg) — default MCP toolset, Postgres FTS ranking, freshness contract, `leankg install --target`, cross_tool harness hardening — `US-ZG-01..06` / `FR-ZG-01..06` (§1.4 / §3.33 / §5.38) — [analysis](analysis/zvec-grep-vs-leankg-2026-09-03.md) |
+> | **P3** | Backlog | `US-SM-07` retention/GC; `US-GE-06` LLM pass-2; Track E 3D |
+>
+> **Prior P0 mega-graph serve CLOSED** — `US-MG-TOOL-01` / `REL-055` / `FR-SEM-07` / `REL-054` DONE.
+>
+> This PRD is the SoT for *mission, narrative ACs, HLD, NFRs, glossary*.  
+> The tracker is the SoT for *task inventory and Done/Pending/Partial status*.  
+> Do **not** reintroduce status tables or FR checkboxes here — link the tracker instead.
+
+> All prior PRD/HLD files under `docs/requirement/`, `docs/design/hld-leankg.md`, and duplicate `.docs/` PRDs have been merged here. Do not recreate split PRDs — update this file only.
+
+---
+
+## Changelog
+
+### v3.8.9-zvec-grep-audit - Search-layer discipline audit vs zvec-grep (zg): default toolset, FTS ranking, freshness contract (2026-09-03)
+
+> **Trigger:** [Competitive analysis](analysis/zvec-grep-vs-leankg-2026-09-03.md) (2026-09-03) of [zvec-ai/zvec-grep](https://github.com/zvec-ai/zvec-grep) — 1.4k★, Apache-2.0, TypeScript on Alibaba's zvec engine, pre-1.0. Local-first hybrid search (managed ripgrep + BM25/FTS + vector fused via RRF) behind **one default MCP tool**, with a per-response freshness contract, a 14-model embedding catalog, one-command agent install (`zg install --target`), and a published paired A/B benchmark methodology.
+>
+> **Audit verdict:** zg is the strongest search-layer competitor to date and independently confirms the v3.8.7 harness-era verdict (search = mid value; org-memory substrate = high value). Zero overlap with LeanKG's durable surface (impact, traceability, incidents, env conflicts, service graph, session memory). Three transferable disciplines LeanKG lacks: (1) **one-tool MCP surface** with intent-expressing params (vs ~76 tools; v3.8.5 found 50% failing live); (2) **freshness honesty** — LeanKG's auto-indexing watcher exists but query responses carry no staleness signal (the 2026-08-30 dead-end probe class, §3.31); (3) **benchmark rigor** — the existing repeatable `benchmarks/cross_tool/` harness lacks zg's input pinning, N-trial variance, and judge-blind scoring.
+>
+> **Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-ZG-01` | **P2** | Default MCP toolset: single router tool (`orchestrate`-style) as the only default surface tool; full catalog behind explicit `full` opt-in | **NOT_DONE** |
+| 2 | `FR-ZG-02` | **P2** | Postgres FTS lexical ranking: `tsvector` + GIN on `code_elements` / `knowledge_entries`, `websearch_to_tsquery`, RRF-fused with vector scores in `semantic_search`'s dual path (replaces `str_includes` / `ILIKE` scans) | **NOT_DONE** |
+| 3 | `FR-ZG-03` | **P2** | Freshness contract: per-response `freshness: fresh\|possibly_stale` + background reconciliation decoupled from the query path | **NOT_DONE** |
+| 4 | `FR-ZG-04` | **P2** | `leankg install --target <agent>` MCP config writer (opencode/claude/codex/cursor) + Docker container-path `project=` guidance | **NOT_DONE** |
+| 5 | `FR-ZG-05` | **P2** | Harden `benchmarks/cross_tool/`: pinned repo/task versions, N-trial variance, judge-blind scoring; adopt the zg pitfalls checklist | **NOT_DONE** |
+| 6 | `FR-ZG-06` | **P3** | Embedding catalog breadth + explicit model-switch/rebuild semantics docs | **NOT_DONE** |
+
+> **New content:** §1.4 (narrative + decision), §3.33 (US-ZG-01..06), §5.38 (FR-ZG-01..06), competitive-notes bullet in §1.3. Explicit non-goals (analysis §5): managed-rg reimplementation, image/multimodal ingest, desktop GUI polish. Storage claims unchanged (PostgreSQL + pgvector).
+---
+### v3.8.8-hindsight-memory-audit - Session-memory audit vs omp Hindsight: wire the dead recall write path + decay, feedback loop, session retain (2026-09-02)
+
+> **Trigger:** Source-grounded audit (2026-09-02) of omp.sh's Hindsight memory backend + autolearn (`pi-coding-agent/src/hindsight/*`, `src/autolearn/controller.ts` — auto-recall on first turn, auto-retain every N user turns with prefix-hash incremental transcripts, 16-item/5s debounced retain queue, per-project-tagged scoping, 3 seeded mental models) against LeanKG's session-memory surface (`src/session/mod.rs`, `src/mcp/handler.rs`, `src/graph/query.rs`).
+>
+> **Audit verdict:** the read path (`RecallStore` dedup + rank-sorted budgeted injection, `session/mod.rs:185-227`) is complete, but **`RecallStore::push_dedup` has zero production callers** — `report_query_outcome` writes LESSONS.md only (`query.rs:5887`), `agent_diary_write` writes its own JSONL (`handler.rs:1417`), `add_knowledge` writes PG. `recall_index.jsonl` is never fed, so `get_overview_context(recall=true)` injects nothing. The module doc (`session/mod.rs:8-12`) claiming LESSONS.md/diary/knowledge feed the index is aspirational. `Lesson` has no timestamp → no staleness; ranks are static.
+>
+> **Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-SMA-01` | **P2** | Wire the write path: `report_query_outcome` / `agent_diary_write` / `add_knowledge` also push into `RecallStore` (outcome-weighted rank seed); correct the aspirational module doc | **NOT_DONE** |
+| 2 | `FR-SMA-02` | **P2** | Lesson metadata: `created_at` + recency decay in `recall_for_overview` scoring (rank is static f64 today) | **NOT_DONE** |
+| 3 | `FR-SMA-03` | **P2** | Feedback loop: `report_query_outcome` accepts `lesson_id` — `useful` bumps rank, `dead_end` decays, `corrected` rewrites text (deterministic consolidation, no LLM) | **NOT_DONE** |
+| 4 | `FR-SMA-04` | **P2** | `session_retain` MCP tool (omp `agent_end` analog): idempotent `documentId=session_id` transcript ingest feeding the lessons index; documented Stop-hook recipe for harness flush | **NOT_DONE** |
+| 5 | `FR-SMA-05` | **P3** | Scope normalization: resolve memory root to the git common dir so `.worktrees/<feature>/` share one recall index | **NOT_DONE** |
+| 6 | `FR-SMA-06` | **P3** | Hygiene: secret redaction before diary/lesson writes (diary JSONL is raw today); truncation markers on injected lessons | **NOT_DONE** |
+
+> **New content:** §3.32 (US-SMA-01..06), §5.37 (FR-SMA-01..06). Status re-grounding in the tracker: `FR-SM-04` DONE→**NOT_DONE**, `FR-SM-05` DONE→**PARTIAL**, `US-SM-02` DONE→**PENDING** (per-section table was already PENDING/NOT_DONE) — the write path was never wired. Explicitly does **not** reopen US-SM-03..07 scope; `US-SM-02` remains the umbrella this track lands under.
+---
+
+### v3.8.7-harness-era-positioning - Harness-era value assessment: org-memory substrate focus + 4 live-probe fixes (2026-08-30)
+
+> **Trigger:** [`freepeak/.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md`](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md) — live probe of LeanKG MCP (5 probes, 2026-08-30 snapshot) in the context of 2026 harness-native primitives (Glob/Grep/LSP, subagent fan-out, session memory). Verdict: **high value as org-memory substrate** (requirements traceability, cross-env conflicts, incidents, team map, cross-repo service graph); **mid value as search tool** — out-competed by harness-native search, semantic layer frequently below the confidence floor. Recommendation adopted: narrow the product surface; stop positioning against harness-native search.
+
+> **Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-HEA-01` | **P1** | Fix ontology alias-coverage accounting (probe: `kg_ontology_status` reports `nodes_missing_aliases: 14` while `domain_entity.counts` sums to 13) — backfill aliases or fix the metric before promoting the ontology | **NOT_DONE** |
+| 2 | `FR-HEA-02` | **P1** | Semantic dead-end escape: on empty/below-floor `semantic_search` / `kg_semantic_context` results, return an actionable `search_code` fallback hint instead of a bare empty answer | **NOT_DONE** |
+| 3 | `FR-HEA-03` | **P2** | Mega-graph full-scan visibility: surface the 50k full-scan cap + affected-tool banner in `get_architecture` / `mcp_status` output so on-call agents do not script against the full graph | **NOT_DONE** |
+| 4 | `FR-HEA-04` | **P1** | Remote-Postgres latency: shorter per-tool timeouts + documented local-PG / materialised-view options for heavy queries (`kg_semantic_context` 30s+ timeouts on remote PG) | **NOT_DONE** |
+| 5 | `FR-HEA-05` | **P1** | Positioning: README + §1 + agent-surface docs lead with the org-memory substrate (traceability / env conflicts / incidents / team map / cross-repo service graph), not generic search | **NOT_DONE** |
+
+> **New content:** §3.31 (US-HEA-01..05), §5.36 (FR-HEA-01..05). Roadmap sync: `roadmap-2027-v2.md` §3 NOW rows 13–14, §4.1 repositioning bullet, §10 harness-native-search risk row.
+
+### v3.8.6-competitive-strategy-tactical - Competitive-strategy tactical wins: ctags export, cost estimate, context pack, steer config, content-hash helper (2026-08-03)
+
+> **Trigger:** Two research sweeps landed 2026-08-02 ([`docs/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md`](analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md) + [`docs/analysis/code-graph-code-search-landscape-2026-08-02.md`](analysis/code-graph-code-search-landscape-2026-08-02.md)): 37 ranked MCP/tool changes. This revision lands the **self-contained, no-MCP-dependency** tactical items that don't touch `src/mcp/*` or `src/db/*` (which the parallel P0 session owns).
+>
+> **Product actions this revision:**
+
+| # | ID (informal) | Focus | Intent | Status |
+|--:|---------------|-------|--------|--------|
+| 1 | `leankg tags --format=ctags` (strategy Tier 1 §17 #9) | **P3** | Export a `readtags`-compatible `tags` file from the indexed graph — editor integration via the ctags fast edge layer | **DONE** |
+| 2 | `leankg cost` (strategy §18.4 / landscape sweep) | **P3** | LOCOMO-style `kg_cost estimate`: price an impact radius or file set in out/in tokens | **DONE** |
+| 3 | `leankg pack` (strategy Tier 6 §17 #36) | **P3** | Deterministic portable context pack (relative paths, content-hash, manifest) — distribution artifact, never a live store | **DONE** |
+| 4 | `.leankg.yaml` steer (`priority_paths` / `ignore_paths`) (strategy Tier 6 §17 #34, DeepWiki pattern) | **P3** | Additive config block; indexer-walk consumption deferred to a follow-up | **DONE** |
+| 5 | Content-hash incremental helper (strategy Tier 3 §17 #24, Cognee pattern) | **P3** | Standalone `sha256(schema_version, path, repo, content, filters, branch)` cache-key + store CRUD; walk wiring deferred until P0 merges | **DONE** |
+
+> **New content:** `docs/cli-reference.md` entries for `tags` / `cost` / `pack`. Module map: `src/ctags_export.rs`, `src/cost_estimate.rs`, `src/pack/mod.rs`, `src/config/steer.rs`, `src/indexer/content_hash.rs`. Tests: 24 new unit tests (5 ctags, 4 steer, 4 content-hash, 4 cost, 7 pack); `cargo test --release --lib` 811 pass, clippy `-D warnings` clean.
+
+### v3.8.5-mcp-validation-rca - MCP 88-tool validation: 44 failures traced to 4 root causes (2026-08-02)
+
+> **Trigger:** Live validation of all 88 leankg HTTP MCP tools on Docker `:9699` against the `/workspace-be` mega-graph (662,378 elements / 2,259,855 relationships) ([validation](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [RCA](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md)). Empty results treated as failures per the goal. **44 / 88 tools failed** (50% pass). Deep-dive (4 subagents, code-traced + live-DB-verified) collapsed the failures into 4 code defects + a data-absence class:
+> - **D1 — file-arg project routing shadows `project`** (`src/mcp/server.rs:2640-2682`): tools taking `file`/`path` route the DB via `find_leankg_for_path` from container cwd `/workspace` → opens `/workspace/.leankg` (wrong project) instead of honoring `project=/workspace-be`. Breaks ~8 empty + 4 lock tools.
+> - **D2 — no single-handle-per-DB invariant → RocksDB double-open lock** (`src/db/schema.rs:193-204`, ontology watcher `src/ontology/watcher.rs:50` holds the `/workspace` handle forever; cache-clear `server.rs:2734-2737` then re-opens → `lock hold by current process`). 4 lock tools.
+> - **D3 — blocking sync DB calls on Tokio async workers + no request timeout** (`server.rs:2979`, `schema.rs:25`, no `spawn_blocking` in `src/mcp/`): one heavy full-scan starves all `num_cpus` workers → `/health` times out → container `(unhealthy)` until `docker restart`. This is the whole-server-collapse mechanism.
+> - **D4 — mega-guard opt-in (7 of ~90 tools) + guard's own check is a full COUNT** (`safe_discover.rs:68`, `query.rs:3483`): 15 unguarded tools full-scan; `get_cluster_skill` runs live Louvain on 662k nodes; ontology write tools not in `WRITE_TOOLS`.
+> - **Data-absence (tool correct, ~8):** `/workspace-be` is code-only — no PRD, incidents, service metadata, clusters, or docs. `find_tunnels`/`get_service_*`/`get_traceability_*`/`query_incidents`/`get_files_for_doc` correctly return empty.
+
+> **Product intent:** MCP serving must be (1) safe on mega-graphs (guard everything that scans), (2) non-blocking (never stall `/health`), (3) project-correct (honor `project` over `file`-derived routing). All four defects are P0 — they disable the agent tool wall on the primary mega-graph deployment.
+
+**Product actions this revision (priority order):**
+
+| # | ID | Priority | Focus | Intent | Status |
+|--:|----|----------|-------|--------|--------|
+| 1 | FR-P0-MCP-RC-01 | Must Have | **P0** | `project` is the authoritative DB-routing key; `file`/`path` resolved relative to it — no more wrong-project opens | **DONE** (PR #198) |
+| 2 | FR-P0-MCP-RC-02 | Must Have | **P0** | Single process-wide GraphEngine per DB path (no cache-clear re-open) — kills `lock hold by current process` | **DONE** (PR #195) |
+| 3 | FR-P0-MCP-RC-03 | Must Have | **P0** | `tokio::time::timeout` + `spawn_blocking` in the MCP path — a slow tool must not stall `/health` | **DONE** (PR #199) |
+| 4 | FR-P0-MCP-RC-04 | Must Have | **P0** | Mega-guard wired into all unguarded full-scan tools; cached `is_mega_graph` in the guard; ontology writes in `WRITE_TOOLS` | **DONE** (PR #196) |
+| 5 | REL-P0-MCP-RC | Must Have | **P0** | Fix + live smoke on `/workspace-be`: all 88 tools return within budget, `/health` stays ok under a 5× parallel storm | **DONE** ([evidence](reports/p0-mcp-root-cause-fixes-2026-08-03.md)) |
+
+**New content:** §3.30 / §5.34. Evidence: [`docs/reports/mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [`docs/reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md).
+
+### v3.8.4-embed-lock-p0 - RocksDB LOCK poison: embed auto-arm blocks all DB tools (2026-08-02)
+
+> **Trigger:** 2026-08-02 A/B of LeanKG tools vs raw grep/read ([evidence](reports/ab-leankg-vs-raw-live-2026-08-02.md)) on Docker MCP `:9699` (`project=/workspace`). `LEANKG_EMBED_AUTO_ARM=1` + `LEANKG_EMBED_IDLE_AFTER_SECS=30` → embed idle scheduler auto-arms ~30s after boot; its incremental scan holds the RocksDB `data/LOCK`. From then on every DB-backed tool fails `RocksDB IO error: lock hold by current process ... data/LOCK: No locks available` until `docker restart`. First `semantic_search` on fresh boot hangs 30s+ and never returns. Contradicts the [v3.7.3-embed-no-block](#v373-embed-no-block---http-mcp-stays-responsive-while-embed-runs-2026-07-28-fr-embed-r1-follow-up) intent ("MCP keeps serving").
+
+> **Product intent:** Serving MCP must never contend with the embed writer over the RocksDB LOCK. Fix = read-only mcp-http, or reader/writer split, or `LEANKG_EMBED_AUTO_ARM=0` default on serving containers. Priority **P0** — it disables `semantic_search` (the headline differentiator) and degrades every DB tool on the default Docker setup.
+
+**Product actions this revision (priority order):**
+
+| # | ID | Priority | Focus | Intent | Status |
+|--:|----|----------|-------|--------|--------|
+| 1 | FR-P0-EMBED-LOCK | Must Have | **P0** | Serving MCP must not hold the RocksDB LOCK during embed; semantic_search completes on fresh boot | **DONE** (PR #200 + #195) |
+| 2 | REL-P0-EMBED-LOCK | Must Have | **P0** | Fix + live smoke (boot → idle → semantic_search + storm keeps /health ok) | **DONE** ([evidence](reports/p0-mcp-root-cause-fixes-2026-08-03.md)) |
+
+**New content:** §3.29 / §5.33. Evidence: [`docs/reports/ab-leankg-vs-raw-live-2026-08-02.md`](reports/ab-leankg-vs-raw-live-2026-08-02.md).
+
+### v3.8.3-mcp-surf-1b - Wave 1b hard-delete remaining redundant MCP tools (2026-08-01)
+
+> **Trigger:** Full re-audit of live registry (~89 tools in `tools.rs`) vs `tests/redundant_tools_matrix.rs` + handler implementations. Wave 1a already removed `wake_up` / `search_by_environment` (+ earlier `mcp_hello` / `mcp_impact` / `get_doc_for_file` / `find_clones`). Remaining **true subsets**:
+> - `load_layer` — L0/L1 ⊂ `get_overview_context`; L2 ⊂ `get_cluster_context`; L3 ⊂ `search_code` / `find_function` (and L2 still uses `all_elements()`)
+> - `get_doc_structure` — flat doc list via `all_elements()`; superseded by `get_doc_tree` (hierarchy + sections)
+
+> **Product intent:** Shrink agent tool wall further. Prefer-order overview becomes `get_overview_context` → `get_architecture` (no progressive-layer chooser). Doc structure = one tool (`get_doc_tree`). Do **not** collapse prefer-order search/semantic stacks or domain-specific Android/nav tools.
+
+**Product actions this revision (priority order):**
+
+| # | ID | Priority | Focus | Intent | Status |
+|--:|----|----------|-------|--------|--------|
+| 1 | US-SURF-08 / FR-SURF-12 / REL-076 | Must Have | **P1** | Publish full redundancy review in PRD (§3.16 / §5.18) | **DONE** |
+| 2 | US-SURF-09 / FR-SURF-13 | Must Have | **P1** | Hard-delete `load_layer`; overview prefer-order = overview → architecture | **DONE** |
+| 3 | US-SURF-10 / FR-SURF-14 | Must Have | **P1** | Hard-delete `get_doc_structure`; keep `get_doc_tree` | **DONE** |
+| 4 | US-SURF-11 / FR-SURF-15 | Must Have | **P1** | Sync matrix, smoke, install, CLAUDE/mcp-tools/using-leankg | **DONE** |
+
+**Hard-removed set (cumulative):** `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`, `wake_up`, `search_by_environment`, **`load_layer`**, **`get_doc_structure`**.
+
+**Keep-both (documented — not deleted):** search prefer-order triple; semantic context triple; `get_context`↔`ctx_read`; `orchestrate`↔`query_graph`; callers↔call_graph; cluster trio; Android nav set; `get_god_nodes`↔`get_graph_report`; PRD tools (`get_feature_flow` / `get_traceability_matrix` / `get_traceability`).
+
+**New content:** §3.16 Wave 1b; §5.18 FR-SURF-12..15 + REL-076. Evidence: [`docs/reports/rel-076-mcp-surf-1b-2026-08-01.md`](reports/rel-076-mcp-surf-1b-2026-08-01.md).
+
+### v3.8.2-tencentdb-session-memory - Steal session-memory patterns from TencentDB Agent Memory (2026-08-01)
+
+> **Trigger:** Deep explore of local Freepeak clone of [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (README + `src/core/` pipeline/hooks/store + `src/offload/` Mermaid offload). Prior thin analysis existed; this revision **productizes** the transferable patterns without becoming a chat-memory competitor.
+
+> **Product intent:** LeanKG remains the **typed code/knowledge graph + MCP retrieval** layer. Add **session continuity around the graph** — symbolic MCP-result offload, auto-recall of lessons/diary, provenance, hybrid RRF over agent-memory stores. Do **not** rebuild Tencent’s conversation L0→L3 persona pyramid as LeanKG’s core. Do **not** displace §1.1 company-adoption P1.
+
+**Product actions this revision (P2 priority order — after Wave 4):**
+
+| # | ID | Priority | Focus | Intent |
+|--:|----|----------|-------|--------|
+| 1 | US-SM-01 / FR-SM-01..03 / REL-075 | Must Have | **P2** | Session MCP/tool-result offload: `refs/<node_id>.md` + compact canvas; `session_recall` drill-down |
+| 2 | US-SM-02 / FR-SM-04..06 | Must Have | **P2** | Auto-recall at session start (enrich `get_overview_context`); closes **US-GE-05** |
+| 3 | US-SM-03 / FR-SM-07..08 | Should Have | **P2** | Provenance (`source_ids` / `node_id`) + typed agent-memory kinds |
+| 4 | US-SM-04 / FR-SM-09 | Should Have | **P2** | Hybrid RRF (`k=60`) over knowledge + diary + LESSONS + dynamic ontology |
+| 5 | US-SM-05 / FR-SM-10 | Could Have | **P2** | Heat-ranked white-box `MEMORY_INDEX.md` |
+| 6 | US-SM-06 / FR-SM-11 | Could Have | **P2** | Promote repeated successful tool traces → `add_ontology_workflow` proposals |
+| 7 | US-SM-07 / FR-SM-12 | Could Have | **P3** | Retention / GC for session refs + agent-memory artifacts |
+
+**Out of scope (this revision / Won’t Do):**
+- Competing with Mem0 / Tencent on long-term **chat** persona memory.
+- Binding LeanKG to OpenClaw, Hermes, or Tencent Vector DB.
+- Renaming LeanKG code-context `load_layer` L0–L3 to match Tencent’s conversation pyramid (document the name collision instead).
+- Owning a multi-agent planner/harness (unchanged from §1.2).
+
+**New content:** §1.3; §3.28 US-SM; §5.32 FR-SM + REL-075. Analysis: [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md) (deepened 2026-08-01).  
+**Related:** Strengthen US-GE-05 / FR-GE-05 ACs to require auto-recall path (`US-SM-02`).
+
+### v3.8.1-enterprise-docker - Separate storage into a graph-server sidecar (superseded by Postgres-only) (2026-07-28)
+
+> **Trigger:** Single-container `freepeak/leankg` couples the MCP/REST API
+> process to the embedded RocksDB engine. Operators want independent scaling,
+> backup orchestration, and HA on the storage tier without doubling the API
+> fleet. The legacy engine project shipped a standalone graph server (HTTP, RocksDB
+> backend) that exposes the same wire protocol LeanKG already uses.
+
+**Product actions this revision:**
+
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-ENT-DOCKER-01 / FR-ENT-DOCKER-01 / REL-071 | Must Have | **P2** | a legacy sidecar Dockerfile builds the standalone graph-server image from the upstream engine binary; healthcheck probes :3000 (superseded by Postgres-only) |
+| US-ENT-DOCKER-02 / FR-ENT-DOCKER-02 / REL-072 | Must Have | **P2** | New `docker-compose.enterprise.yml` wires a graph-server sidecar (RocksDB) + `leankg` (MCP/REST) via shared net namespace; `depends_on: service_healthy` |
+| US-ENT-DOCKER-03 / FR-ENT-DOCKER-03 / REL-073 | Must Have | **P2** | the legacy health-gate script extracted from `entrypoint.sh`; unit-tested in `tests/enterprise_docker/` (skip / success / timeout / custom interval paths) |
+| US-ENT-DOCKER-04 / FR-ENT-DOCKER-04 | Should Have | **P2** | Live integration test (`test_live.sh`) builds the image, runs CRUD via HTTP, restarts container, verifies RocksDB persistence, verifies netns-joiner can reach the sidecar |
+| US-ENT-DOCKER-05 | Should Have | **P2** | Future: Rust HTTP client in `src/db/` consumes the legacy remote-endpoint env var; infra lands first so compose + ops have something to point at |
+
+**Out of scope (this revision):**
+- Rust HTTP client (`src/db/remote.rs`) — deferred; `init_db` keeps the
+  embedded path until the HTTP client lands. `entrypoint.sh` already
+  health-gates on the legacy remote-endpoint env var.
+- TiKV-backed graph server — upstream engine binary with TiKV storage ships later.
+- Auth token plumbing for cross-host binds — shared net namespace avoids
+  it for v1.
+
+**Known constraint (documented, not blocked):** the legacy binary v0.7.6 hardcodes
+`TcpListener::bind("127.0.0.1:3000")` in the upstream engine's server source
+regardless of `--bind` / `--port`. The legacy sidecar Dockerfile and the compose
+file pin everything to 3000 with a `ponytail:` comment naming the upgrade
+path (bump to v0.7.7+ or the Leapsight fork).
+
+**New files:** a legacy sidecar Dockerfile, `docker-compose.enterprise.yml`,
+the legacy health-gate script, `docs/enterprise-docker.md`,
+`tests/enterprise_docker/{test_compose_files.sh,test_health_gate.sh,test_live.sh,run_all.sh}`.
+
+**Modified files:** `Dockerfile.rocksdb` (+legacy remote-endpoint env var, +copy
+of `scripts/`), `docker-compose.rocksdb.yml` (header note pointing at
+enterprise compose), `entrypoint.sh` (sources the legacy health-gate script),
+`src/db/schema.rs` (`ponytail:` comment marking the HTTP-client follow-up).
+
+**New content:** §3.27 US-ENT-DOCKER; §5.31 FR-ENT-DOCKER; `docs/enterprise-docker.md`
+deploy + sizing + backup guide.
+
+### v3.8.0-prd-in-kg - PRD-in-KG pipeline with feature-flow mapping (2026-07-24)
+
+> **Trigger:** No first-class PRD entities in the KG; FR-*/US-* are just string IDs in `business_logic`. PO/dev teams need full traceability: FR → workflow → steps → code files, plus a coverage matrix.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-PRD-KG-01 / FR-PRD-KG-01..03 / REL-070 | Must Have | **P1** | Parse `docs/prd.md` into structured KG entries (FR-*/US-* as `knowledge_entries` with `prd_mapping` type) |
+| US-PRD-KG-02 / FR-PRD-KG-04 | Must Have | **P1** | `feature_workflow_links` Postgres table connecting FRs to ontology workflows |
+| US-PRD-KG-03 / FR-PRD-KG-05 | Must Have | **P1** | `get_feature_flow` MCP tool: FR → linked workflows → ordered steps → code_refs forward chain |
+| US-PRD-KG-04 / FR-PRD-KG-06 | Must Have | **P1** | `get_traceability_matrix` MCP tool: PO-facing FR coverage matrix (workflow count, annotated elements, doc links) |
+| US-PRD-KG-05 / FR-PRD-KG-07 | Must Have | **P1** | `index_prd` MCP tool: idempotent PRD parser with auto-linking to ontology workflows via code_ref matching |
+| US-PRD-KG-06 / FR-PRD-KG-08 | Should Have | **P2** | `ontology/workflows.yaml` enriched with optional `feature_ids`/`user_story_ids` per step |
+
+**New files:** `src/prd_indexer/mod.rs` (PRD markdown parser + knowledge_entry converters).  
+**Modified files:** `src/db/models.rs` (+FeatureWorkflowLink), `src/db/schema.rs` (migration 002), `src/db/mod.rs` (+CRUD), `src/mcp/handler.rs` (+3 handlers), `src/mcp/tools.rs` (+3 tool defs), `src/lib.rs`/`src/main.rs` (+mod), `src/ontology/procedural.rs` (+feature_ids/user_story_ids fields), `src/ontology/loader.rs` (+WorkflowStepDef fields).
+
+**New content:** AGENTS.md, docs/mcp-tools.md updated with PRD-in-KG tools.
+
+### v3.7.15-embed-doc-inventory - Doc embed, perf types, index inventory (2026-07-22)
+
+> **Trigger:** Mega mount embed coverage ~37% (function+method only); docs graph-indexed but not in `embedding_vectors`; incremental embed blind spot for untracked QNs; `embed_control` ignored `project=`.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-DOCEMBED-01..03 / FR-DOCEMBED-01..04 / REL-065 | Must Have | **P1** | Embed + query `document` / `doc_section`; enrich doc metadata; stale-mark after `mcp_index_docs` |
+| US-EMBED-PERF-01..03 / FR-EMBED-TYPES-01..04 / REL-066 | Must Have | **P1** | CLI `--types perf` preset for mega cold/full runs |
+| US-INDEX-INV-01 / FR-INDEX-INV-01..04 / REL-067 | Must Have | **P1** | Postgres `index_inventory` totals after index/embed; `mcp_status(include_counts=true)` |
+| US-TEST-ED-01..02 / FR-TEST-ED-01..04 / REL-068 | Must Have | **P1** | Full unit matrix + live fixture/mega MCP evidence gates |
+
+**Perf type preset:** `function,method,class,interface,file,struct,property,constructor,document,doc_section`
+
+**New content:** §3.21–3.24; §5.24–5.27. Evidence: `docs/reports/embed-doc-inventory-test-2026-07-22.md`.
+
+### v3.7.14-graph-eng-roadmap - Graph Engineering curriculum gaps (2026-07-21)
+
+> **Trigger:** Compare LeanKG to the reconstructed Codez “Graph Engineering with Claude” 14-step scaffold (Jul 20, 2026; article login-walled — step titles inferred). LeanKG already owns the persistent code/knowledge graph + MCP half; gaps are planner/DAG execution, entity resolution, cluster-first navigation, and a closed self-improve write-back loop.
+>
+> **Product intent:** Capture fit as SoT; ship **positioning** now (`REL-064` / `US-GE-01`); park **build** gaps as Focus **P2** (do **not** displace §1.1 company-adoption P1). Do **not** turn LeanKG into Claude’s multi-agent harness.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-GE-01 / FR-GE-01 / REL-064 | Must Have | **P2** (docs **DONE**) | Publish fit matrix: LeanKG = graph memory under agents; adapt curriculum as education |
+| US-GE-02 / FR-GE-02 | Should Have | **P2** | Optional graph-aware planner: goal → MCP tool/subagent DAG with join over shared graph |
+| US-GE-03 / FR-GE-03 | Should Have | **P2** | Cross-alias entity resolution beyond `qualified_name` + `typed_resolve` |
+| US-GE-04 / FR-GE-04 | Should Have | **P2** | Cluster-first agent navigation (precomputed neighborhoods default path) |
+| US-GE-05 / FR-GE-05 | Should Have | **P2** | Closed self-improve loop: query outcome → graph write-back → next plan |
+| US-GE-06 / FR-GE-06 | Could Have | **P3** | Selective LLM pass-2 extraction for workflows/decisions (YAML remains SoT) |
+
+**Won't Do:** Own Claude/Cursor harness runtime; OpenTrace-style full ticket/ops/trace graph as core product; full LLM auto-generation of all workflows from arbitrary code.
+
+**New content:** §1.2; §3.20 US-GE; §5.23 FR-GE + REL-064. Analysis: [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).
+
+### v3.7.10-ui-v2-load-more - Expand pagination + folder sidebar (2026-07-21)
+
+| ID | Priority | Focus | Summary |
+|----|----------|-------|---------|
+| US-UI2-11 / FR-UI2-13 / REL-061 | Must Have | **P1** | Default expand page 500; **Load more (+200)** merges into graph; `hasMore` fixed |
+| US-UI2-12 / FR-UI2-14 | Must Have | **P1** | Hierarchical Folders & files sidebar + session tree across Overview |
+
+**New content:** §3.17 US-UI2-11..12; §5.19 FR-UI2-13..14 / REL-060..061. RCA: `docs/reports/root_cause_expand_examples_hides_src.md`. Deep test: `docs/reports/ui-v2-sidebar-nav-loadmore-deep-test-2026-07-21.md`.
+
+### v3.7.9-ont-proc-auto - Procedural ontology auto-update is P0 (2026-07-21)
+
+> **Trigger:** Live audit — procedural ontology **works** (`kg_trace_workflow`, 10 workflows / 48 steps) but is **static while using**: no watcher, no MCP write path, boot sync only (marker keyed to `concepts.yaml`). Agents editing `workflows.yaml` or reindexing code do not refresh procedural traces without manual `leankg ontology sync` / container restart.
+>
+> **Product intent:** Make procedural ontology a **live** company capability: debounce re-sync on YAML change during `mcp-http` / `serve`, fix boot freshness for `workflows.yaml`, optional sync after index / MCP `ontology_control`. Do **not** expand P0 to full LLM auto-extraction of workflows (that remains a later Could Have).
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-ONT-PROC-01 | Must Have | **P0** | Procedural ontology stays fresh while LeanKG is in use (no manual sync for YAML edits) |
+| FR-ONT-PROC-01 | Must Have | **P0** | Watch `ontology/workflows.yaml` (+ concepts) during MCP/serve; debounce idempotent sync |
+| FR-ONT-PROC-02 | Must Have | **P0** | Boot marker / skip logic considers `workflows.yaml` mtime (not only `concepts.yaml`) |
+| FR-ONT-PROC-03 | Must Have | **P0** | Hook: after successful index (and optional MCP `ontology_sync` / `ontology_control`) refresh procedural nodes + code_refs |
+| REL-059 | Must Have | **P0** | Live smoke: edit YAML → `kg_trace_workflow` updates without process restart |
+| FR-A02 | Should Have | **P1** | Remains docs/automation follow-up; P0 implements the runtime auto-update |
+
+**New content:** §3.18 US-ONT-PROC; §5.21 FR-ONT-PROC + REL-059. Demotes company-adoption queue to **P1 next**.
+
+### v3.7.8-ui-v2-service-expand - Service/Folder replace-graph + CodePanel file gate (2026-07-21)
+
+> **Trigger:** UI v2 single-click on Service/Folder called `GET /api/file` with a directory `filePath` → HTTP 400. Multi-service topology had no drill-in to **replace** the canvas. Follow-ups: Sigma callback refs; Render bake; cross-mount `/api/file`; `LEANKG_SERVE_PROJECT` + atomic switch.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-UI2-03 (tighten) | Must Have | **P1** | `/api/file` only for content-bearing nodes; not Service/Folder/Directory |
+| US-UI2-10 / FR-UI2-12 / REL-060 | Must Have | **P1** | Double-click Service/Folder → expand-service **replaces** graph |
+
+**New content:** §3.17 US-UI2-10; §5.19 FR-UI2-12 + REL-060. RCA: `docs/reports/root_cause_api_file_service_folder_400.md`.
+
+### v3.7.8-graphify-ui - Company ROI + Graphify packaging backlog (2026-07-21)
+
+> **Trigger:** Deep compare of local Graphify v0.9.20 vs LeanKG (MCP + ui-v2). Goal: prove LeanKG is the better **company** choice for **AI agent cost + efficiency**, then close packaging gaps Graphify still wins on (always-on install, honest edges, report/HTML artifacts, NL UI).
+>
+> **Evidence:** [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (supersedes Jul-13 matrix for agent/UI gaps that are now closed in MCP).
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-COST-01 / FR-COST-01 / REL-058 | Must Have | **P1** | Manager-facing ROI brief: LeanKG vs grep/cat + vs Graphify (tokens, multi-repo, ops) |
+| US-GF-14 / FR-GF-22 | Must Have | **P1** | Three-verb narrative: path · explain · query first in README / AGENTS / skills |
+| US-GF-17 / FR-GF-24 | Must Have | **P1** | Always-on graph-first install/hooks (Cursor/Claude/Codex) — primary **cost lever** |
+| US-GF-04 / FR-GF-07..09 / REL-043 | Must Have | **P1** | Honest edges (EXTRACTED/INFERRED/AMBIGUOUS) in MCP + ui-v2 |
+| US-GF-06 / FR-GF-13 | Must Have | **P1** | Auto `.leankg/GRAPH_REPORT.md` on index + Overview link |
+| US-GF-13 / FR-GF-21 | Must Have | **P1** | Bounded single-file HTML export |
+| US-UI2-06 / FR-UI2-08 | Must Have | **P1** | Query FAB NL mode → `query_graph` |
+| US-UI2-07 / FR-UI2-09 / REL-057 | Must Have | **P1** | ui-v2 production cutover into embed/Docker serve |
+| US-GF-15..16 / US-UI2-08..09 / FR-GF-23 / FR-UI2-10..11 | Should Have | **P2** | Install matrix breadth, reflect skill, cluster legend, ops panels |
+
+**Won't Do (confirmed):** multimodal PDF/image/video; NetworkX primary store; 36-lang race; replace Sigma with vis.js-only UI.
+
+**New content:** §1.1 Enterprise ROI; §3.10 US-GF-13..17; §3.17 US-UI2-06..09; §5.9 FR-GF-21..24; §5.19 FR-UI2-08..11; §5.20 cost/ROI FRs.
+
+### v3.7.7-ui-v2 - GitNexus-shell 2D UI rebuild (2026-07-20)
+
+> **Trigger:** Rebuild LeanKG web explorer UX to match GitNexus `gitnexus-web` exploring shell (3-pane layout, Force/Tree/Circles, mega-graph skip) while keeping LeanKG `leankg serve` REST and CodeElement schema. Existing `ui/` + Track E 3D `graph-ui/` remain separate.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-UI2-01..05 / FR-UI2-* | Must Have | **P1** | New `ui-v2/` graph explorer shell; Vitest+Playwright parity proof |
+| REL-056 | Must Have | **P1** | Parity report: shell behaviors vs GitNexus (no agent/analyze in Phase 1) |
+
+**New content:** Section **3.17** UI v2 stories; Section **5.19** UI v2 FRs. ERD: [`docs/erd/ui-v2-erd.md`](erd/ui-v2-erd.md).
+
+### v3.7.6-mega-concept-query - Mega-safe concept_search / query_graph / clusters (2026-07-20)
+
+> **Trigger:** Post-#87 Docker full-tool suite on `ce03fd8` ([`docs/reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md`](reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md)). Mega HNSW **PASS**. Mega `concept_search` disconnect/timeout; `query_graph` timeout (`all_elements`/`all_relationships`); `get_clusters` intentional refuse. RCA: [`docs/reports/root_cause_mega_concept_query_clusters_2026-07-20.md`](reports/root_cause_mega_concept_query_clusters_2026-07-20.md).
+>
+> **Product intent:** Prefer-order and NL tools must work on mega mounts via **keyed / frontier-local** queries (FR-SEM-07 pattern). Do not refuse `concept_search`/`query_graph` forever; do not raise RAM as the fix. Mega `get_clusters` serves precomputed `cluster_id` (no live Louvain).
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-MG-TOOL-01 / FR-ONT-MEGA-01 | Must Have | **P0** | Keyed `concept_search` code_ref + typed name fallback |
+| FR-GF-MEGA-01 | Must Have | **P0** | Keyed `resolve_to_qualified` + frontier-local `query_graph` BFS |
+| FR-CL-MEGA-01 | Must Have | **P1** | Mega `get_clusters` reads precomputed clusters from DB |
+| REL-055 | Must Have | **P0** | Live mega smoke: concept_search + query_graph + get_clusters |
+
+### v3.7.5-mega-sem-oom - Mega-graph HNSW semantic_search OOM is P0 (2026-07-20)
+
+> **Trigger:** Post-merge Docker MCP validation on `main` @ `a89a2cc` ([`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md)). Find/lookup, ontology, flow, and `embed_control` idle resume **PASS** on `/workspace-other` (~641k elements, ~147k vectors). **`semantic_search` on mega FAIL:** RSS climbs ~3.3 GiB → `OOMKilled` / HTTP disconnect; logs show deprecated `all_elements()` + skip elements_cache. Same tool on `/workspace` **PASS** (`method: hnsw+rerank`).
+>
+> **Product intent:** Mega-graph agents must be able to run HNSW `semantic_search` / `kg_semantic_context` under documented MCP memory budgets **without** killing the HTTP server. Prefer-order (`concept_search` → `search_code`) is a temporary agent workaround, not the product fix.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-SEM-06 / FR-SEM-07 | Must Have | **P0** | Mega-safe HNSW path: no unbounded `all_elements()`; ANN + paginated element hydration only; MCP stays healthy |
+| REL-054 | Must Have | **P0** | Live mega smoke: `semantic_search` + `kg_semantic_context` on `/workspace-other` without OOM/restart |
+
+**New content:** Section **3.14** US-SEM-06; Section **5.15** FR-SEM-07 + REL-054; Section **5.17** cross-link. Tracker Focus **P0** open queue = mega-sem OOM (embed-resume / VE remain DONE).
+
+### v3.7.4-mcp-surface - MCP tool surface rationalization (2026-07-18)
+
+> **Trigger:** Overlap review of loosely-overlapping MCP tools (search triple, semantic triple, identity triple, legacy `mcp_*`). Live schemas + handlers contradict some popular characterizations (notably `semantic_search` is dual-path, not ANN-only; `search_code` is ontology-first on mega-graphs; `wake_up` is L0+L1 cached text, not L0 alone).
+>
+> **Product intent:** Shrink agent confusion **without** losing capability. Highest ROI is honest schemas + prefer-order. Then delete true subsets. Soft-deprecate only where a clear replacement exists. Do **not** hide ops bootstrap tools.
+
+**Decision table:**
+
+| Proposal | Verdict | Product action |
+|----------|---------|----------------|
+| Document search triple + semantic triple | Agree | Must Have — schema one-liners + prefer-order |
+| Delete `mcp_hello`, `mcp_impact`, `get_doc_for_file` | Agree | Must Have — hard remove after matrix update |
+| Soft-deprecate `wake_up` | Partial | Should Have — point to `get_overview_context` (**not** `load_layer(L0)` alone) |
+| Soft-deprecate `search_by_environment` | Agree | Should Have — most tools already take `env=` |
+| Merge `get_doc_tree` + `get_doc_structure` | Partial | Could Have — after mega-graph safety; both currently `all_elements()` |
+| Deprecate all `mcp_*` bootstrap (`mcp_status`/`init`/`index`/`install`) | Disagree | Won't Do this release — `mcp_status` is load-bearing |
+| Quote surface 64 → ~57 | Fact error | Recount from `ToolRegistry::list_tools()` (≈85 today); near-term shrink ≈85 → ~82 after 3 deletes |
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-SURF-01 / FR-SURF-01 / FR-SURF-02 | Must Have | **P1** | Fix `semantic_search` dual-path docstring; prefer-order on search + semantic tools |
+| US-SURF-02 / FR-SURF-03 | Must Have | **P1** | Delete `mcp_hello`, `mcp_impact`, `get_doc_for_file`; update `tests/redundant_tools_matrix.rs` |
+| US-SURF-03 / FR-SURF-04 | Should Have | P2 | Soft-deprecate `wake_up` → `get_overview_context` |
+| US-SURF-04 / FR-SURF-05 | Should Have | P2 | Soft-deprecate `search_by_environment` |
+| US-SURF-05 / FR-SURF-06 | Could Have | P3 | Optional merge / mega-safe `get_doc_tree` + `get_doc_structure` |
+| REL-053 | Should Have | P2 | Release note after hard deletes land |
+
+**New content:** Section **3.16** US-SURF-01..05; Section **5.18** FR-SURF-01..06 + REL-053.
+
+### v3.7.3-sem-filter-ops - Live MCP verification + ops fixes (2026-07-18)
+
+> **Evidence:**
+> - [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md) — Docker MCP `project=/workspace`, **3,271** vectors, semantic/kg tools GREEN; **no regressions** from embed-resume. PARTIAL: Probe G (minified `src/embed/assets/*.js`) + Probe H (`src/benchmark/*` verdict noise).
+> - [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md) — cold embed + live vector counts (`/workspace` 3,271; large side mount **146,977**; `/workspace-freepeak` 14,110); semantic_search OK on all three after MCP `mem_limit: 6g` / `mem_reservation: 3g` / `cpus: "6"` + `LEANKG_AUTO_INDEX=0`.
+
+**Product actions this revision:**
+| ID | Priority | Focus | Intent |
+|----|----------|-------|--------|
+| US-SEM-05 / FR-SEM-06 | Must Have | **P1** | Drop `embed/assets/` always; gate `src/benchmark/` unless query says "benchmark" |
+| FR-SEM-04 / REL-051 | Should Have | P2 → **DONE** | Live semantic smoke executed 2026-07-18 (complement to cargo suite) |
+| FR-MG-AUTO-01 | Must Have | **P1** | `LEANKG_SKIP_FRESHNESS_CHECK=1` skips MCP auto-index (mega-graph OOM escape); document RocksDB mtime mismatch |
+| FR-OPS-EMBED-CPU | Must Have | **P1** | Embed + MCP compose: `cpus: "6"`, `mem_reservation: 3g`; MCP `mem_limit: 6g` for mega-graphs (~147k vectors) |
+| US-EMBED-04 / FR-EMBED-RESUME-05/06 / REL-052 | Must Have | P0 | Close further with 3-workspace + MCP vector-count evidence |
+
+**New content:** Section **3.14** US-SEM-05; Section **5.15** FR-SEM-06; Section **5.17** FR-MG-AUTO-01 + FR-OPS-EMBED-CPU.
+
+### v3.7.2-embed-resume - Day-2 embed resume is P0 (2026-07-18)
+
+> **Problem:** Operators re-running embed against a **persisted RocksDB volume** (standalone `embed --wait`, or turning embed on inside Docker MCP via `LEANKG_EMBED_BACKGROUND` / `LEANKG_EMBED_ON_BOOT` / setup scripts) still burn full cold-embed resources (ONNX + HNSW rebuild) as if starting fresh — even when most/all vectors are already stored. Mega-graphs cannot afford a second full pass.
+
+> **Product intent (universal rule):**  
+> - **No embed data for project** → cold / fresh fill (first run).  
+> - **Embed data exists** → **always resume** (skip `fresh`, embed only missing/stale/`content_hash`-changed).  
+> Applies to **every** Docker/CLI path that starts embed — not only standalone `--wait`. Zero-dirty runs must exit quickly without dropping HNSW. Interrupted runs must resume without discarding already-`fresh` rows. Container restart with the same named RocksDB volume must **never** imply a wipe.
+
+> **Relationship to FR-HNSW-E:** Incremental filter + `embedding_state` already exist in code and were marked DONE, but **day-2 resource behavior is incomplete** (notably unconditional HNSW drop/rebuild; no mid-run checkpoint; full index can stale everything). Tracker sets `FR-HNSW-E` → **PARTIAL** and adds **Must Have** resume FRs as **Focus P0**.
+
+**Decision table (Must Have):**
+
+| Existing embed data in RocksDB / `.leankg`? | Docker / CLI starts embed? | Required behavior |
+|--------------------------------------------|----------------------------|-------------------|
+| **No** (empty / first project) | Yes | **Cold/fresh** fill |
+| **Yes** | Yes (any path below) | **Resume** — skip `fresh`; delta only |
+| **Yes** | Container restart, embed off | Leave data alone; MCP serves existing HNSW |
+| Explicit `--full` / `LEANKG_EMBED_BACKGROUND_FULL=1` / `LEANKG_FORCE_REINDEX=1` | Yes | Intentional full rebuild (ops escape hatch only) |
+
+**Covered entry paths (all must obey the table):**
+1. Standalone: `docker run … embed --wait --project <container-path>`
+2. In-process MCP: `LEANKG_EMBED_BACKGROUND=1` after `mcp-http` bind
+3. Legacy foreground boot: `LEANKG_EMBED_ON_BOOT=1` / `embed_if_needed` in `entrypoint.sh`
+4. Setup: `LEANKG_DOCKER_SETUP=1` offline embed before MCP
+5. `scripts/docker-up.sh` index + embed flow
+
+**Success metrics (day-2 KPIs):**
+
+| KPI | Target | Measurement |
+|-----|--------|-------------|
+| Second embed on unchanged graph (any path) | Near-zero ONNX batches; wall time **minutes not hours** on mega-graph | Log `skipped_fresh` ≈ work list; `embedded` ≈ 0 |
+| Zero-dirty run | **No** HNSW drop + rebuild | Log / unit: skip path when `to_embed` empty and no orphans |
+| Interrupted then restarted | Resume; already-`fresh` rows not re-inferred | Kill mid-run → re-run; `embedded` ≤ remaining dirty |
+| RocksDB volume remount / MCP re-enable embed | Vectors + state survive; resume not wipe | Same named volume; second start sees prior state |
+| Empty project first embed | Cold fill allowed | No existing `embedding_state` / vectors |
+
+**New content:**
+- Section **3.15** — US-EMBED-01..04
+- Section **5.16** — FR-EMBED-RESUME-01..06 + REL-052; note on FR-HNSW-E PARTIAL
+- Section **8.5** — v3.7.2 embed-resume release gate
+- Section **9** — NFR rows for day-2 embed
+- Tracker: Focus **P0** open queue = embed-resume (VE gate remains DONE)
+
+**Standalone operator pattern (placeholders only — never commit personal host mounts):**
+
+```bash
+docker run --rm \
+  --cpus 4 --memory 10g \
+  -v leankg_leankg-rocksdb:/data/leankg-rocksdb \
+  -v leankg_leankg_models:/root/.cache/leankg \
+  -v "$PWD":/workspace \
+  -v /Users/you/work/other-repo:/workspace-other \
+  -e LEANKG_DB_ENGINE=rocksdb \
+  -e LEANKG_ROCKSDB_ROOT=/data/leankg-rocksdb \
+  -e LEANKG_EMBED_FAST=1 \
+  -e LEANKG_EMBED_MODEL=bge-q \
+  -e LEANKG_EMBED_MAX_SEQ=128 \
+  -e LEANKG_EMBED_MAX_BLOB_CHARS=500 \
+  -e LEANKG_EMBED_MAX_MB=0 \
+  -e OMP_NUM_THREADS=1 \
+  -e RUST_LOG=leankg=info \
+  leankg-leankg:latest \
+  embed --wait --project /workspace-other --workers 8 --batch-size 128 --types function,method
+```
+
+Second identical run (unchanged code) **must** skip fresh rows and must **not** pay cold-embed cost.
+
+**Docker MCP pattern (embed turned on later — still resume):**
+
+```bash
+# Same named RocksDB volume as a prior embed. Turning embed on must NOT wipe.
+# e.g. LEANKG_EMBED_BACKGROUND=1 in compose / .dockerfile — incremental only.
+```
+
+### v3.7.3-embed-no-block - HTTP MCP stays responsive while embed runs (2026-07-28) (FR-EMBED-R1 follow-up)
+
+> **Problem:** Even with FR-EMBED-R1's `LEANKG_EMBED_ON_BOOT=0` + `LEANKG_EMBED_BACKGROUND=1` decoupling, the old code path flipped `partial: false` on all `LEANKG_EMBED_BACKGROUND=1` calls — so the in-process embed ran the **heavy parallel** path while MCP served requests. Mega-graph operators saw MCP `/health` flap and `semantic_search` time out for the duration of the background pass.
+>
+> **Fix (this PR, `feat/embed-without-blocking-mcp`):**
+> 1. The MCP in-process embed now defaults to `partial: true` (serial + duty-cycle). Operators can still opt into the heavy parallel path with `LEANKG_EMBED_BACKGROUND_FULL=1`.
+> 2. New knob `LEANKG_EMBED_AUTO_ARM=1` arms the embed on the first idle pass instead of requiring `embed_control(on)` after boot.
+> 3. `LEANKG_EMBED_BACKGROUND_MEGA=1` is the explicit opt-in for forcing a full rebuild on mega-graphs (still gated by `FULL=1`).
+
+**Knobs (settings + where they live):**
+
+| Knob | Default | Effect | Source |
+|------|---------|--------|--------|
+| `LEANKG_EMBED_AUTO_ARM` | `0` | On `1`, the embed idle scheduler (src/mcp/server.rs:541) auto-arms the embed config from env without an `embed_control(on)` call | `spawn_embed_idle_scheduler` first-pass arm |
+| `LEANKG_EMBED_BACKGROUND_PARTIAL` | unset (= follow FULL flip) | `1` → `partial: true`; `0` → `partial: false`. Overrides the default flip on the in-process embed (src/mcp/server.rs:1041 / 1059) | `BackgroundEmbedConfig` flip in `spawn_background_embed_in_process` |
+| `LEANKG_EMBED_BACKGROUND_MEGA` | `0` | Required for full rebuild on a mega-graph (`full=1`); refuses silently without it. | `spawn_background_embed_with_config` gate |
+| `LEANKG_EMBED_BACKGROUND_WORKERS` | `1` (auto-arm) | Parallel workers for the partial resume embed | `auto_arm_cfg_from_env` (src/mcp/server.rs:616) |
+| `LEANKG_EMBED_BACKGROUND_BATCH` | `32` (auto-arm) | Batch size for the partial resume embed | same |
+| `LEANKG_EMBED_BACKGROUND_FULL` | `0` | `1` → opt into the heavy parallel path (requires `LEANKG_EMBED_BACKGROUND_MEGA=1` on mega-graphs); `partial` then defaults to `false` | same |
+| `LEANKG_EMBED_BACKGROUND_TYPES` | unset | Comma-separated type filter (e.g. `function,method`) | same |
+| `LEANKG_EMBED_IDLE_AFTER_SECS` | 30 | MCP-idle window before auto-arm fires | config / compose override |
+| `LEANKG_EMBED_PARTIAL_BATCHES` | 4 | Batches per yield cycle in `partial` mode | config / compose override |
+| `LEANKG_EMBED_PARTIAL_PAUSE_MS` | 500 | Pause between yield cycles in `partial` mode | config / compose override |
+
+**Multi-project mount behavior (`LEANKG_PROJECT_DIRS` / `LEANKG_MCP_PROJECT`):**
+
+`schedule_multi_project_arm` (src/mcp/server.rs:654) spawns one auto-arm task per container boot. Only the **primary** mount (the same path as `LEANKG_MCP_PROJECT`, default `/workspace`) gets armed — side mounts log a one-liner pointing at `docker-compose.embed.yml --profile embed`. Helper split (src/mcp/server.rs:698 `parse_project_dirs` + src/mcp/server.rs:714 `is_primary_project`) is pure and unit-tested.
+
+**Bug fix narrative (kept short):**
+
+- **Before:** `LEANKG_EMBED_BACKGROUND=1` → in-process embed ran parallel workers (4 by `cfg.workers`) with `partial=false`. MCP `/health` and `semantic_search` flapped during the pass.
+- **After:** Default flip is `partial: !full`. With `LEANKG_EMBED_BACKGROUND=0` (the recommended default for MCP) and `LEANKG_EMBED_AUTO_ARM=1`, the scheduler arms a partial-only resume pass that yields + pauses between batches so MCP keeps serving.
+
+**Verification evidence:**
+- Live: `:9699/health` stays `{"status": "ok"}` while a 5× parallel `semantic_search` storm runs (curl ticks: 34/40 ok in 20s burst; all 40 ok post-burst). `embed_control(status)` reports `phase: completed, mode: partial_incremental, vectors_existing: 45195`.
+- Tests (added this PR):
+  - `mcp::server::tests::auto_arm_cfg_from_env_*` (defaults / reads / clamps / case-insensitive)
+  - `mcp::server::tests::partial_flip_default_and_override` (`partial: !full` + `LEANKG_EMBED_BACKGROUND_PARTIAL` override)
+  - `mcp::server::tests::parse_project_dirs_dedups_sorts_and_trims`
+  - `mcp::server::tests::is_primary_project_matches_by_path`
+  - `embeddings::build::tests::background_embed_config_default_partial_true`
+
+### v3.7.1-sem-mcp-enhance - Semantic MCP live verification → later enhancements (2026-07-17)
+
+> **Evidence:** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md) — Docker HTTP MCP (`project=/workspace`), RocksDB index populated. **No code changes required** for correctness; this revision captures **product enhancements** for a later sprint.
+
+**Baseline confirmed GREEN (do not reopen as bugs):**
+- `semantic_search` → `method: hnsw+rerank`; ANN distance and rerank scores agree on ranking direction
+- `concept_search` → ontology match + code refs; `kg_self_test` → `all_ok: true` (schema arities canonical)
+- `kg_semantic_context` → seed + 1-hop graph traversal recovers after one transient socket drop
+- Contrast: `explain_node` (graph-shaped) vs `search_code` name path (flat) both useful
+
+**Enhancement backlog (later — MoSCoW):**
+| ID | Priority | Problem observed | Product intent |
+|----|----------|------------------|----------------|
+| US-SEM-01 / FR-SEM-01 | Should Have | Top-level `tokens` = *delivered*; `_token_budget.actual` was 3–4× for truncated tools | Honest dual accounting so agents budget correctly |
+| US-SEM-02 / FR-SEM-02 | Should Have | `concept_search` / `kg_semantic_context` hit default `max: 1000` while siblings use 2–4k | Explicit per-tool budgets for ontology-heavy tools |
+| US-SEM-03 / FR-SEM-03 | Should Have | One transient HTTP socket drop on long semantic call | Retry / keep-alive / connection hygiene |
+| FR-SEM-04 / REL-051 | Should Have | Live MCP probe is ad-hoc | Formal live smoke checklist as release *complement* to `cargo test --features embeddings` |
+| US-SEM-04 / FR-SEM-05 | Could Have | Top-10 `semantic_search` can collapse to one file (8/10) | Optional file-diversity / MMR post-filter |
+
+**New content:**
+- Section **3.14** — US-SEM-01..04
+- Section **5.15** — FR-SEM-01..05 + REL-051
+- Section **9** — NFR rows for token honesty + MCP HTTP flake resilience
+- Tracker: Focus **P2/P3** open items (do not displace P1 Must Have queue)
+
+### v3.7.0-vector-engine - Optimized Local-First Vector Graph Engine (2026-07-17)
+
+> **Task inventory move (same day):** All US/FR/Release status tables and checkboxes were moved to [`prd-task-tracker.md`](prd-task-tracker.md). Sections 3/4/5/8 now reference that file instead of duplicating lists.
+
+> **Code status (synced 2026-07-17 — PR [#80](https://github.com/FreePeak/LeanKG/pull/80) `feature/vector-engine-gate`):** P0 Vector Engine **DONE** — unit (56), e2e (`tests/vector_engine_e2e.rs`), bench (`cargo bench --bench vector_engine_ab`), CI-sim `cargo test --lib` (651). Measured A/B: token **−65.0%**, tool **−84.6%**, speedup **2.50×** (100 tasks). 1M ANN P95≈**0.055ms** (Neon). Idle RSS: lean-bench absolute ≈**65MB** / warm **delta ≈58MB** (unit/e2e assert `delta_ok` — absolute process RSS is not CI-safe under debug `cargo test --lib`). TTC P95≈**0.068ms**. `LEANKG_VE_GATE_FULL=1` → `ready_for_default=true` / `preferred_ann_backend=local_engine`. Report: [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json). The legacy embedded engine remained runtime default until callers honored the gate (superseded by the Phase 8 Postgres cutover). Crate **0.19.0**. Awaiting merge to `main`.
+
+> **Mission reinforcement:** *"Stop Burning Tokens. Start Coding Lean."* Surgical retrieval = Semantic Search (vectors) + Structural Graphs (LSP/KG). Same product surface as FR-HNSW-*; **new storage/runtime engine** for constrained local hardware and cloud scale without rewriting core query logic.
+
+**Strategic decision (relationship to v3.6.2 / v3.6.3):**
+- **Keep** pgvector HNSW on `embedding_vectors` as the **current shipped canonical ANN** (FR-HNSW-B) until the Local/Cloud vector engine reaches parity and FR-VE-GATE flips default.
+- **Adopt** a decoupled **3-tier storage architecture** (graph topology + quantized RAM vectors + flat payload) as the **next-gen LocalEngine / CloudEngine** path — solves query latency, idle RAM, and SSD write amplification under M2 Pro / 16GB / 256GB SSD constraints; scales to Linux x86_64 + TiKV without rewriting retrieval APIs.
+- **Do not** reopen FalkorDB/Redis as cold-embed SLA fixes (v3.6.3 Won't Do still stands). This track is about **query/runtime I/O + memory**, not ONNX cold-write throughput.
+
+**Success metrics (product KPIs):**
+
+| KPI | Target | Measurement |
+|-----|--------|-------------|
+| Token consumption vs grep/cat baseline | ≥ **61%** reduction (floor **60%**) | Agent A/B (`run_kilo_ab_final.sh` / existing benchmark) |
+| Tool-call frequency vs baseline | ≥ **84%** reduction (floor **80%**) | Same A/B harness |
+| Task success rate | ≥ baseline | Patch/tests pass without hallucination regression |
+| Time-to-resolution | ≥ **2×** faster than baseline | End-to-end task timer |
+| Idle daemon RSS | **&lt; 150MB** | Local MCP idle after warm |
+| Time-to-context (P95) | **&lt; 100ms** | JSON chunks + deps payload to agent |
+| ANN query P95 (1M SQ8, local) | **&lt; 50ms** | `cargo bench` |
+| Recall @ efSearch=50 vs FP32 brute-force | **&gt; 90%** | Bench + unit |
+| Disk reads / page faults vs legacy mmap | ≥ **80%** reduction | Bench instrumentation |
+| 2GB cgroup survival | Never OOM-killed | Simulated cgroup test |
+
+**New content:**
+- Section **3.13** — US-VE-01..08 (vector engine stories)
+- Section **5.14** — FR-VE-* (3-tier storage, SIMD, HNSW prune, dual-write, GC, tests/benches)
+- Section **6.10** — HLD for LocalEngine vs CloudEngine + 3-tier diagram
+- Section **8.4** — v3.7 vector-engine release gate
+- Section **9** — NFR table refreshed for idle/query/hardware targets
+
+### v3.6.3-embed-runtime - Cold embed SLA reality + MCP decoupling (2026-07-16)
+
+> **Measured reality (mega-graph cold embed):** end-to-end sustained rate is ~**170 vec/sec** → ~**36 min** for ~371k `function,method` nodes (M2 Pro 10c). Writer-only microbenches on empty RocksDB show the legacy `import_relations` bulk path at ~**100k–130k vec/sec** (&lt;1 min for 371k). **Storage commit / WAL is not the cold-SLA bottleneck**; ONNX inference + end-to-end CPU contention is.
+>
+> **2026-08-04 re-measure (8c M-series, Docker):** be fresh embed of **381,493** vectors (378k functions) took **~24 min** — ~**470 vec/sec** inference (≈13 min) + **201s** HNSW rebuild + collect/orphan. 1.4× better than the 170 v/s baseline above, but still volume-bound; be embed stays **accepted at ~24 min** for now. **Enhancement (future):** the vendored-engine RocksDB bulk-load path (`feat/full-lang-support`, ~1250 v/s) would cut inference to ~5 min → total ~8 min. Not yet on main; do not regress via a new DB.
+
+**Done (ops / architecture):**
+- MCP boot decoupled from embed: `LEANKG_EMBED_ON_BOOT=0` + in-process `LEANKG_EMBED_BACKGROUND=1` (shared backend handle). MCP healthy ~60s while embed continues. See FR-EMBED-R1.
+- Parallel embed pipeline + `import_relations` + `DirectEmbedder` (FR-EMBED-R2). ~2× vs earlier `:put` path (~73 min → ~36 min ETA) — still above aspirational &lt;10/&lt;20 min cold.
+
+**Tried and rejected as cold-SLA fixes (evidence in `generated_docs/embed_bg_job_and_runtime_plan_2026-07-15.md`):**
+- Legacy-engine WAL-off / `sync(false)` / no-snapshot write tuning — **≤1.15×** writer-only; no meaningful e2e gain.
+- Redis Stack HNSW as vector side-store (`LEANKG_EMBED_VECTOR_STORE=redis`) — bulk HASH write ~164k/s (similar to the legacy engine); live HNSW during write ~2.7k/s (**worse**). Does **not** beat the legacy engine for cold SLA. pgvector HNSW stays canonical (FR-HNSW-B). Redis remains experimental only.
+
+**Product SLA (revised):**
+- **Must:** MCP never blocks on cold embed; semantic tools degrade until HNSW ready; day-2 incremental embed stays fast (FR-HNSW-E).
+- **Aspirational / open:** cold functions-only &lt;20 min on ~371k (needs **faster inference / smaller model / less volume**, not a new DB). Do not plan FalkorDB/Redis migration to fix cold embed.
+
+**New FRs:** Section **5.12** additions FR-EMBED-R1..R4.
+
+### v3.6.2-hnsw-semantic - Drop LSH roadmap; expand in-database HNSW for semantic search (2026-07-15)
+
+> **Strategic decision:** LeanKG differentiates on **meaning-based retrieval** (dense embeddings + in-database native HNSW), not on copy-paste / near-clone detection (MinHash / LSH). Agents need “what means like this,” not “which bodies are Jaccard-near.”
+
+**Cancel / Won’t Do (LSH track):**
+- FR-LSH-A..F and FR-BENCH-A (CBM MinHash parity) — **Won’t Do**. Do not expand MinHash/LSH; do not adopt legacy `::lsh` for clones either (clone ANN is out of product focus).
+- Custom in-process LSH (`src/minhash.rs` + `find_clones --cross-file`) **removed** on `integration/prd-pending` (FR-HNSW-A).
+- Same-file Jaccard `find_clones` MCP + `leankg clones` CLI **hard-removed** (2026-07-20) — non-strategic and unusable on mega-graphs (`max_functions` guard). Prefer `semantic_search` / `concept_search` for discovery.
+- US-CBM-B7 / FR-B30 / FR-B31 remain historically DONE for the light same-file Jaccard tool; product surface no longer exposes it.
+
+**Adopt / Expand (HNSW track) — reuse the legacy 0.7.x in-database index (as of that era):**
+- At that time LeanKG depended on the legacy engine 0.7.6 and used its native HNSW index on `embedding_vectors`. Pattern to double down on: **LeanKG extracts features → the database indexes them**.
+- New FRs: Section **5.12** (HNSW expansion) + Section **5.13** (LSP-only remainder from former CBM adoption track).
+- **Implementation landed on `integration/prd-pending` (2026-07-15):** FR-HNSW-A..F + FR-BENCH-HNSW + US-CBM-C1 / FR-C01 (Docker `--features embeddings` + `entrypoint.sh` `embed_if_needed`; HNSW `semantic_search` dispatch; `LEANKG_HNSW_{M,EF_CONST,EF}` knobs; `tests/hnsw_recall_e2e.rs` synthetic recall@k smoke).
+- **PRD hygiene (2026-07-15):** corrected language / Graphify / MemPalace status rows that overclaimed “DONE” for extractors that exist as modules but are **not hooked into the index walk** (Swift, Vue/Svelte, SQL DDL). Softened “17 languages fully extracted” claims to match `find_files_sync` + `get_language`.
+- Research record (generated research doc, dated 2026-07-15) — the legacy engine already shipped both `::hnsw` and `::lsh`; we choose HNSW only.
+
+**CBM deep-compare (v3.6.1) still valid for LSP gaps** (FR-LSP-A..D). MinHash / LSH “wins” from that compare are explicitly **not** adopted.
+
+### v3.6-lsp-ontology - LSP infra, language breadth, status flips (integration/prd-pending push)
+- LSP infrastructure shipped (US-CBM-B1 infra, FR-B03..B07 scaffolding): new `src/lsp/{bridge,client,config,mod}.rs` — generic JSON-RPC bridge that spawns any configured language server, answers `textDocument/definition` and `/references`; per-(language, workspace_root) client cache; 12-language manifest detection (go.mod / package.json / Cargo.toml / pyproject.toml / pom.xml / build.gradle* / tsconfig.json / Gemfile / mix.exs / pubspec.yaml / Project.toml / Package.swift). Wired through MCP `resolve_with_lsp` (`src/mcp/handler.rs:1674`) and CLI `leankg lsp-resolve` (`src/main.rs:lsp_resolve`). Commits `534cd7f` + `64b0fa6`.
+- `typed_resolve` feature flag landed (US-CBM-B10 / FR-B08, `8971dc5`). Default `LspConfig` is still empty (`src/lsp/config.rs:57`); LSP server bootstrap (default `lsp:` block for gopls + tsserver + pyright) remains the open follow-up.
+- Codebase version: 0.17.8 → 0.17.9 (`3e103b1 chore(release): regen Cargo.lock for 0.17.9` + `1c6f1eb chore(release): bump version to 0.17.9`).
+- Language breadth — **status corrected 2026-07-15 (wiring audit):**
+  - US-LANG-01 Dart — **DONE and indexed** (in `find_files_sync` + `get_language`) (`7ec6484`)
+  - US-LANG-02 Swift — **PARTIAL**: regex extractor wired for bulk + incremental index (`src/indexer/swift.rs`); heritage/call-graph/tree-sitter still pending
+  - US-LANG-03 XML — **DONE and indexed** (`.xml` + Android path) (`92db9aa`)
+  - US-LANG-04 Objective-C — **PARTIAL**: regex extractor wired for bulk + incremental (`.m`/`.mm`/`.h`); protocol conformance / full selectors pending
+  - US-GF-10 Vue/Svelte — **DONE (index walk)**: regex extractors in `src/indexer/sfc.rs` (`e617a49`); `.vue` / `.svelte` wired into `find_files_sync` + bulk + incremental (REL-032, 2026-08-02)
+  - US-GF-12 SQL DDL — **DONE (index walk)**: parser in `src/indexer/sql.rs` (`de314eb`); `.sql` wired into `find_files_sync` + bulk + incremental (REL-032, 2026-08-02); live `--postgres <dsn>` introspection still open
+- Agent-graph UX series — DONE:
+  - US-GF-07 rationale extraction (`# WHY:` / `# NOTE:` / `# HACK:` / `# FIXME:` / `# XXX:` markers) → `rationale` elements with `explains` edges (`b0c9477`)
+  - US-GF-08 PR impact dashboard — `get_pr_impact` MCP + `leankg prs` CLI (`30e41f0`)
+  - US-GF-09 work-memory reflect loop — `report_query_outcome` + `.leankg/reflections/LESSONS.md` (`373e808`)
+  - US-GF-11 portable graph snapshot — `export_graph_snapshot` MCP (`0087991`)
+- MemPalace series — DONE:
+  - US-MP-01 temporal knowledge graph — `valid_from` / `valid_to` on `Relationship` (`bc9cc53`)
+  - US-MP-04 specialist agent contexts — `agent_focus` + `agent_diary_{read,write}` MCP (`1ea4bcd`)
+  - US-MP-05 consistency checker — `check_consistency` MCP + `leankg check-consistency` CLI (`60a6111`)
+  - US-MP-06 cross-domain tunnels — `find_tunnels` MCP + `leankg tunnels` CLI (`5b6547e`)
+- CBM structural — DONE:
+  - US-CBM-B6 event-channel edges `emits` / `listens_on` (`25a3b37`)
+  - US-CBM-B7 clone / near-duplicate detection — historically shipped as `find_clones` MCP + `leankg clones` CLI (`55e6e72`); **hard-removed 2026-07-20** (prefer semantic HNSW discovery)
+  - US-CBM-B8 cross-repo similar edges — `find_cross_repo_similar` (`ab16c9b`)
+  - US-CBM-C2 hot-path cache for high-frequency MCP tools (`836f0a3`)
+- GitNexus — DONE:
+  - US-GN-07 `get_cluster_skill` MCP — per-cluster `SKILL.md` (`10b15a0`)
+  - US-GN-08 `get_overview_context` MCP — resource-style overview (`9124959`); formal `resources/read` not yet wired (PARTIAL).
+- Team / distribution — DONE:
+  - US-14 npm-based installation wrapper (`df0fec2`)
+  - US-V2-11 CI/CD auto-graph update — GitHub Actions workflow that reindexes / commits the portable snapshot on release (`eb3d331`)
+  - US-V2-12 `get_team_map` MCP — team + on-call ownership + environment map (`3368b5f`)
+- Quality gate: `cargo fmt --all -- --check`, `cargo clippy --release --all-targets -- -D warnings`, `cargo test --release --lib` (496), `cargo test --release --bin leankg` (491), `cargo test --release --test ontology_e2e` (16/16) all PASS (`docs/implementation/prd-integration-2026-07-14.md`).
+- MCP tool count: 65 → 85 (`src/mcp/tools.rs` — audit using `awk '/^[[:space:]]+name:[[:space:]]*"/{ print }' src/mcp/tools.rs | sort -u | wc -l` = 85 unique tool registrations as of 2026-07-14).
+- Open follow-ups: default `lsp:` block for gopls + tsserver + pyright + dart-language-server + sourcekit-lsp + kotlin-language-server; FR-B03 / FR-B04 actual `typed` resolution for Go and TS; FR-MG-03 single-repo root expansion; 3D graph UI (Track E). **Superseded by v3.6.2 for LSH:** do not pursue FR-LSH-*; pursue FR-HNSW-* instead.
+
+### v3.6.1-cbm-deep-compare - In-process read of CBM LSH + Hybrid LSP (2026-07-15)
+
+> Source: direct read of `DeusData/codebase-memory-mcp` at `/Users/linh.doan/work/harvey/freepeak/codebase-memory-mcp` (v0.9.x, Pure C, 158 languages, 15 MCP tools).
+>
+> **Superseded for LSH:** v3.6.2 cancels MinHash/LSH adoption. This section remains as competitive research only. **Still actionable:** Hybrid LSP gaps → FR-LSP-A..D in Section 5.13.
+>
+> **TL;DR — CBM's "Hybrid LSP" is not actual LSP.** It is a lightweight C implementation of language type-resolution algorithms embedded in the binary (no spawn, no JSON-RPC). Their `LshIndex` for near-clones is a textbook MinHash+LSH pipeline — useful for *their* clone-edge product; **LeanKG will not mirror it** (semantic HNSW focus instead).
+
+**CBM MinHash / LSH for `SIMILAR_TO` (clone) edges** — research only (`src/simhash/minhash.{h,c}`). Historical LeanKG comparison to `src/minhash.rs` is obsolete once that module is removed (v3.6.2).
+
+| Knob | CBM | LeanKG (pre-removal) | Note |
+|------|-----|----------------------|------|
+| Role | Core clone product | Historical LeanKG helper (removed) | **Won't adopt** further LSH |
+| Shingle unit | AST leaf trigrams `I/S/N/T` | Whitespace 5-grams | Irrelevant under HNSW strategy |
+| Index home | In-process C | Custom Rust `LshIndex` (also unused legacy `::lsh`) | Prefer deleting custom LSH; do not wire legacy `::lsh` |
+
+**CBM Hybrid LSP (pass over tree-sitter)** — `internal/cbm/lsp/{py,go,ts,java,kotlin,rust,c,cpp,cs,php,perl}_lsp.{c,h}` plus `type_rep.{c,h}`, `scope.{c,h}`, `type_registry.{c,h}`, `py_builtins.c`, `kotlin_builtins.c`, `rust_cargo.c`, `rust_proc_macros.c`, `rust_rustdoc.{c,h}`, `generated/python_stdlib_data.c` (12k lines of pre-baked stdlib metadata):
+
+| Surface | CBM | LeanKG (`src/lsp/{bridge,client,config,mod}.rs`) |
+|---------|-----|--------------------------------------------------|
+| Approach | **In-process C type evaluator.** No `fork`/`exec`/`popen`, no JSON-RPC. Each language file re-implements the resolver inline (e.g., `py_lsp_init` / `py_lsp_process_file` / `py_lsp_bind_imports`) | **Real JSON-RPC bridge.** Spawns external server (`gopls`, `tsserver`, `pyright`, …); sends `textDocument/definition` + `/references`; caches one client per `(language, workspace_root)` |
+| Languages | 10 — Python, TS/JS/JSX/TSX, PHP, C#, Go, C, C++, Java, Kotlin, Rust, Perl (per-language files in `internal/cbm/lsp/`) | 12 manifest-detected (go.mod / package.json / Cargo.toml / pyproject.toml / pom.xml / build.gradle* / tsconfig.json / Gemfile / mix.exs / pubspec.yaml / Project.toml / Package.swift), **0 default-configured servers** |
+| Setup | Zero. Embedded in the static binary | User must populate `lsp.servers.<lang>.command` in `leankg.yaml` |
+| Correctness model | Re-implements the algorithm the way gopls/pyright/Roslyn would — output is "structurally compatible" | Uses the real server's answer; can get accurate types the C reimplementation misses |
+| When does it run? | Per-file during extraction, BEFORE `CALLS` edges are written — refines `CALLS`/`USAGE`/`RESOLVED_CALLS` directly | After index, on demand via `resolve_with_lsp` MCP / `leankg lsp-resolve` CLI; has not yet been wired to write `resolution_method=typed` edges |
+| Failure mode | Falls back to "textual resolution" (tree-sitter-only) for unsupported languages | Returns `Ok(None)` and the caller falls back to tree-sitter typed resolve (FR-B07) |
+
+**LeanKG wins (what CBM does not have):**
+- 85 MCP tools vs CBM's 15
+- Ontology / concept / workflow layer
+- **In-database native HNSW embeddings path** (semantic ANN; now pgvector) — primary differentiation going forward (v3.6.2)
+- `env` namespacing + incident knowledge + service context + env-conflict detection
+- Android / Kotlin / XML deep features, Graphify-inspired work-memory loop, tunnel detection, consistency checker, portable graph snapshot, npm install
+- Real language-server correctness (when a server is configured)
+- REST API + RocksDB multi-project HTTP team deploy
+- Per-cluster SKILL.md, overview-context, team-map
+
+**CBM wins — adopt vs ignore:**
+- **Adopt:** Zero-setup Hybrid LSP on 10 languages → FR-LSP-A..D (Section 5.13)
+- **Ignore (v3.6.2):** AST-trigram MinHash, K=64 signatures, big-bucket guards, clone Jaccard defaults — clone LSH is not LeanKG's bet
+
+**Adoption FRs:** LSP → Section 5.13 (FR-LSP-A..D). HNSW expansion → Section 5.12 (FR-HNSW-*). Former FR-LSH-* → Won't Do.
+
+### v3.5-unified - Single PRD+HLD document
+- Merged `docs/requirement/prd-leankg.md` (v2 team infrastructure) → Section 3.12 / 5.11
+- Merged `docs/design/hld-leankg.md` → Section 6.4–6.9 (HLD)
+- Merged `leankg update` CLI PRD → US-UPD-01
+- Confirmed CBM structural parity already in 3.11 / 5.10; deleted redundant source files
+- Codebase status refresh: env/incident/service tools, vacuum scheduler, `kg_self_test`, `leankg update` marked DONE where implemented
+- Removed: `docs/requirement/prd-*.md`, `docs/design/hld-leankg.md`, `docs/LeanKG_v2_PRD.html`, duplicate `.docs` PRD stubs
+
+### v3.4-cbm-structural-merge - Merge structural parity (CBM) PRD + codebase status refresh
+- Merged CBM structural parity into this document (Section 3.11 US-CBM, Section 5.10 FR-CBM); source file removed in v3.5
+- Codebase audit (2026-07-13, v0.17.8): **65 MCP tools** in `src/mcp/tools.rs`; Phase 1 aggregators DONE; Routes/HTTP_CALLS extractors DONE; typed resolve / clones / cross-repo / 3D UI still PENDING
+- Updated executive metrics, pending table, and roadmap Phase 1 status to match code
+- Source CBM PRD retained as archive with pointer to this document as SoT
+
+### v3.3-graphify-parity - Graphify competitive enhancements
+- Competitive analysis of [Graphify](https://github.com/Graphify-Labs/graphify) (v8 / ~83k stars) vs LeanKG deploy + agent tooling
+- Full comparison: `docs/analysis/graphify-comparison-2026-07-13.md`
+- Added US-GF-01..12 user stories for Graphify-inspired agent graph UX, edge provenance, reports, PRs, and learning loop
+- Added FR-GF-01..20 functional requirements (Section 5.9)
+- Priority focus: shortest-path / explain / NL subgraph query, EXTRACTED|INFERRED|AMBIGUOUS edge labels, god-node ranking, GRAPH_REPORT.md — not rewriting LeanKG's stronger RocksDB multi-project deploy
+
+### v3.2-toon-format - TOON response format for MCP tools (~40% token reduction)
+- Added US-TOON-01 user story for TOON (Token-Oriented Object Notation) format adoption
+- TOON is a compact notation that reduces field name repetition in arrays
+- Example: `elements[2]{qualified_name,type}: src/main.rs::main,function` vs JSON with full field names
+- TOON spec: https://github.com/toon-format/toon
+- Added Section 7.5 TOON Response Templates for all MCP tool categories
+
+### v3.1-massive-graph - Massive graph service expansion
+- Added US-MG-01..05 user stories for service node double-click behavior
+- Added FR-MG-01..08 functional requirements for expand-service optimization and filter UI
+- Expand-service API optimized: targeted folder query (7.7k vs 1.5M elements), ~30% faster
+- FR-MG-01..02, 04..08 implemented: expand-service returns all edge types, double-click calls expandService directly, filter panel always shows all 14 types, defaults = Service/Folder/File/Function
+- FR-MG-03 (single-repo root expansion) still pending
+
+### v3.0-consolidated - Full codebase audit
+- Deep dive codebase analysis: 35 MCP tools verified (0 stubs), 28+ CLI commands, 10 language extractors
+- Updated language support: 10 fully extracted (Go, TS/JS, Python, Rust, Java, Kotlin, C++, C#, Ruby, PHP) + 3 parser-only (Dart, Swift, XML) — **superseded by 2026-07-15 wiring audit:** only Go/TS/JS/Python/Rust/Java/Kotlin/Dart (+XML/TF/CI) are in the current index walk; C++/C#/Ruby/PHP/Swift not scanned
+- Updated all user story statuses based on actual implementation
+- Added missing feature sections: Git Hooks, Context Metrics, REST API, Wiki Generation, Global Registry, Graph Export, Orchestrator
+- Unified RTK Compression status: ResponseCompressor (FR-RTK-11..15) now marked DONE
+- Fixed US-GN-03 (Global Registry) status: DONE (was PENDING)
+- Fixed AB Testing stories: US-AB-02..04 marked DONE
+- Removed outdated references to non-existent features
+- Added new user stories for recently implemented features
+
+### v2.0-consolidated - Merged from 3 source PRDs
+- Source 1: `prd-leankg.md` (v1.7, 2026-03-27)
+- Source 2: `prd-leankg-v2.0-enhancements.md` (v2.0, 2026-03-27)
+- Source 3: `prd-leankg-gitnexus-enhancements.md` (v1.0, 2026-03-27)
+
+---
+
+## 1. Executive Summary
+
+LeanKG is a lightweight, local-first knowledge graph solution designed for developers who use AI-assisted coding tools. The mission is *"Stop Burning Tokens. Start Coding Lean."* — resolve AI agent **context blindness** with surgical retrieval: **Semantic Search (vectors) + Structural Graphs (LSP/KG)**, not shotgun `grep`/`cat`.
+
+Unlike heavy frameworks like Graphiti that require external databases (Neo4j) and cloud infrastructure, LeanKG runs on constrained local hardware (Apple Silicon, 16GB RAM, 256GB SSD) with a strict idle footprint, while the same core logic can scale to self-hosted cloud (Linux x86_64, TiKV) via a storage abstraction — without rewriting retrieval APIs.
+
+**Value proposition (agent economics):**
+- Cut LLM tokens by ≥ **61%** and tool calls by ≥ **84%** vs traditional grep/cat baselines, while holding Fix Success Rate ≥ baseline
+- Deliver code chunks + dependencies JSON to the agent in **&lt; 100ms P95**; idle MCP **&lt; 150MB RSS**
+- Prefer vector+graph scalpel over full-repo dumps (see Section 3.13 / 5.14)
+
+### 1.1 Why LeanKG for the company (vs Graphify / competitors)
+
+> **Audience:** engineering managers deciding which knowledge-graph / AI-context stack to standardize.  
+> **Full matrix:** [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md).
+
+**One-line decision:** Graphify is an excellent **personal skill + portable HTML report**. LeanKG is the **company platform**: one shared index, multi-repo Docker, surgical MCP context, ops/traceability, and measured token economics — so every developer’s agent burns fewer tokens on the same monorepo every day.
+
+| Decision criterion | LeanKG | Graphify | Why LeanKG wins at company scale |
+|--------------------|--------|----------|----------------------------------|
+| **$/day AI agent cost** | TOON/RTK + budgeted MCP; A/B ≥61% tokens / ≥84% tool calls vs grep/cat | Budgeted subgraph query; no durable compression stack | Savings compound across **N developers × N sessions/day** on a shared index |
+| **Monorepo / mega-graph** | RocksDB multi-project; mega-safe search/query paths; mem budgets | `graph.json` + 5k HTML viz cap; NetworkX in-memory | Company monorepos (100k–600k+ elements) need a server, not a file |
+| **Multi-repo team deploy** | `LEANKG_PROJECT_DIRS` + Docker HTTP MCP `:9699` + REST `:8080` | Shared HTTP over one `graph.json` | One container serves many mounts; resume embeds day-2 |
+| **Agent depth** | ~85 MCP tools (impact, ontology, services, Android, docs↔req, PR, reflect) | ~9–10 MCP tools | Agents solve blast-radius / env / incident / req-trace without reinventing |
+| **Trust / ops** | Severity-graded impact, incidents, env promotion, service_calls | Edge confidence tags (EXTRACTED/INFERRED) — LeanKG must finish parity | Managers care about **change risk** and **production topology**, not only concept maps |
+| **Human explorer** | Live ui-v2 (Force/Tree/Circles) over REST | Static `graph.html` | Live index stays fresh with watch/auto-index |
+| **Where Graphify still teaches us** | Packaging: always-on install, report/HTML artifacts, honest-edge UX | Skill install + `GRAPH_REPORT.md` + vis.js share | Close these in **P1 queue** below — do **not** chase multimodal |
+
+**Ordered company-adoption queue (Focus P1 — after P0 procedural auto-update):**
+
+1. **US-COST-01** — Publish manager ROI brief (tokens + tool calls + multi-repo TCO) — **DONE**
+2. **US-GF-14** — Three-verb narrative (path · explain · query) so agents pick cheap tools first — **DONE**
+3. **US-GF-17** — Always-on graph-first install/hooks (primary **cost lever**: agents stop grepping first) — **DONE**
+4. **US-GF-04** — Honest edges in MCP + ui-v2 (trust = adoption) — **DONE**
+5. **US-GF-06** — Auto `GRAPH_REPORT.md` (onboarding without 85-tool wall) — **DONE**
+6. **US-GF-13** — Bounded HTML export (share in PRs without replacing live UI) — **DONE**
+7. **US-UI2-06** — NL Query FAB (humans get the same cheap verb) — **DONE**
+8. **US-UI2-07** — ui-v2 cutover (one default explorer for the company) — **DONE**
+9. **US-MG-02** — Single-repo expand (Wave 4) — **DONE** ([evidence](reports/wave4-single-repo-expand-2026-08-01.md))
+
+**P0 first (v3.7.9):** **US-ONT-PROC-01** — procedural ontology auto-update while using (see §3.18 / §5.21). Without this, `kg_trace_workflow` stays a stale boot-time artifact. **DONE**.
+
+**Explicit non-goals for company ROI:** PDF/image/video graph ingest; replacing the graph store with NetworkX; chasing 36 languages before typed resolve depth.
+
+### 1.2 Graph Engineering curriculum (vs Codez 14-step scaffold)
+
+> **Audience:** product + eng deciding what LeanKG should steal from the 2026 “graph engineering for Claude” conversation.  
+> **Full matrix:** [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).  
+> **Caveat:** Source article is X login-walled; the 14 step titles in the analysis are a **reconstruction**, not quotes.
+
+**One-line decision:** LeanKG **is** the persistent typed code/knowledge graph + MCP retrieval layer those roadmaps assume. It is **not** (and should not become by default) the agent **planner/harness** that fans work into a DAG. Close P2 gaps that make the graph more useful *to* harnesses; keep §1.1 packaging as the cost lever.
+
+| Curriculum theme (inferred) | LeanKG fit | Product response |
+|-----------------------------|------------|------------------|
+| Typed graph + tree-sitter + embeddings + MCP tools | **Strong** | Keep as moat; teach agents graph-first (overlaps US-GF-14/17) |
+| Invalidation / day-2 honesty | Partial | Incremental index, ontology watch, embed resume — harden mega paths |
+| Planner / graph-shaped execution | **Missing** | US-GE-02 — optional thin planner over MCP tools (P2) |
+| Entity resolution / communities | Partial | US-GE-03 / US-GE-04 (P2) |
+| Self-improving write-back loop | Partial | US-GE-05 (P2); diary/knowledge exist |
+| LLM semantic extraction pass-2 | Partial | US-GE-06 (P3); YAML SoT for procedural ontology |
+| Become the Claude harness | Out of scope | US-GF-17 install/hooks only — **Won't Do** own multi-agent runtime |
+
+**Ordered backlog (Focus P2 — after §1.1 P1 queue):**
+
+1. **US-GE-01** / **REL-064** — Fit matrix + positioning published (**DONE** this revision)  
+2. **US-GE-02** — Graph-aware planner (goal → MCP DAG)  
+3. **US-GE-03** — Cross-alias entity resolution  
+4. **US-GE-04** — Cluster-first navigation for agents  
+5. **US-GE-05** — Closed outcome→graph self-improve loop (**implementation path = US-SM-02**)  
+6. **US-GE-06** — Selective LLM pass-2 (Could)
+
+### 1.3 Session memory (vs TencentDB Agent Memory)
+
+> **Audience:** product + eng deciding what LeanKG should steal from conversation-memory plugins.  
+> **Full matrix:** [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md) (deepened 2026-08-01).  
+> **Upstream:** [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) — symbolic short-term Mermaid offload + layered long-term L0→L3 (conversation → atom → scene → persona).
+
+**One-line decision:** TencentDB Agent Memory is an excellent **host-plugin for chat/persona continuity**. LeanKG is the **company code-graph memory** those agents should query. Steal **session offload + auto-recall + provenance + hybrid ranking**; do **not** become a Mem0/chat-persona competitor.
+
+| Decision criterion | LeanKG | TencentDB Agent Memory | Why LeanKG adapts selectively |
+|--------------------|--------|------------------------|-------------------------------|
+| **Primary SoT** | Typed code/KG + ontology | Conversation + persona pyramid | Keep code graph as SoT; add session layer *around* it |
+| **Token win** | TOON/RTK + budgeted MCP; surgical retrieval | Mermaid offload of tool logs (~61% tokens claimed on WideSearch) | Steal **symbolic MCP-result offload** (`US-SM-01`) — highest on-brand ROI |
+| **Long-term memory** | Knowledge, diary, LESSONS, ontology workflows | L1 atoms → L2 scenes → L3 `persona.md` | Steal **auto-recall + typed kinds + dedup** (`US-SM-02..04`); skip chat-persona SoT |
+| **Recall ranking** | Strong for code (concept → semantic → keyword) | Hybrid BM25 + vector + RRF (`k=60`) | Apply RRF to **agent-memory stores** (`US-SM-04`) |
+| **White-box** | `GRAPH_REPORT.md`, cluster skills, LESSONS | Readable persona/scene/MMD/refs tree | Add session canvas + `MEMORY_INDEX` (`US-SM-01` / `US-SM-05`) |
+| **Host binding** | MCP (Cursor / Claude / OpenCode) | OpenClaw / Hermes HostAdapter | Stay MCP-first; optional hooks only |
+| **Where they still teach us** | Manual diary/knowledge; no session canvas | Auto-capture, warmup pipeline, recall timeout, reclaim | Close via `US-SM-*` P2 backlog |
+
+**Ordered backlog (Focus P2 — after Wave 4; do not preempt §1.1 P1):**
+
+1. **US-SM-01** — Session MCP offload + `node_id` drill-down (**highest token ROI**)  
+2. **US-SM-02** — Auto-recall at session start (**closes US-GE-05**)  
+3. **US-SM-03** / **US-SM-04** — Provenance + typed kinds + RRF agent-memory search  
+4. Doc↔code join polish (`US-DOCJOIN-*`) / Graph-eng `US-GE-02..04` (planner, entity resolve, cluster-first)  
+5. **US-SM-05** / **US-SM-06** — Heat index + promote traces → workflows  
+6. **US-SM-07** — Retention / GC (P3)  
+7. **US-GE-06** — Selective LLM pass-2 (P3)
+
+**Vocabulary rule:** LeanKG `load_layer` L0–L3 = **code-context** layers. Tencent L0–L3 = **conversation-memory** layers. Never conflate in skills/docs without an explicit qualifier.
+
+**Explicit non-goals:** chat-persona SoT; OpenClaw/Hermes/Tencent VDB product binding; Mermaid as primary graph store; renaming LeanKG code-context layers.
+
+**Key Metrics (v0.19.0 — codebase `origin/main` 2026-07-17; engine KPIs in Section 9 / 8.4):**
+- **Vector engine (v3.7 P0):** `src/vector_engine/*` — P0 gates **DONE** on `feature/vector-engine-gate`; A/B −65.0%/−84.6%/2.50×; opt-in `LEANKG_VECTOR_ENGINE`; legacy-engine default until callers honored `preferred_ann_backend()` (superseded by Postgres cutover)
+- **85 MCP tools** defined in `src/mcp/tools.rs` (stdio + HTTP/SSE)
+- 30+ CLI commands (added `leankg lsp-resolve`, `leankg check-consistency`, `leankg tunnels`, `leankg prs`, `leankg reflect`; `leankg clones` hard-removed 2026-07-20)
+- **Indexed languages (production walk):** Go, TS/JS, Python, Rust, Java, Kotlin, Dart + Android/XML + Terraform/CI YAML + common config manifests + **Vue/Svelte (`sfc.rs`) + SQL DDL (`sql.rs`) + Swift (`swift.rs`) + Objective-C (`objc.rs`) (REL-032 wired 2026-08-02)**. Parsers may exist for Ruby/PHP/etc. without index-walk wiring. + Markdown docs
+- 8 compression/read modes + TOON responses
+- Smart orchestrator with persistent cache + hot-path cache for high-frequency MCP tools (`836f0a3`)
+- Git hooks (pre-commit, post-commit, post-checkout) + CI/CD auto-graph update GitHub Actions workflow (`eb3d331`)
+- REST API server with auth
+- Context metrics tracking
+- Global multi-repo registry
+- RocksDB multi-project HTTP deploy
+- Structural aggregators: `get_architecture`, `get_graph_schema`, `find_dead_code` (DONE)
+- Route + `http_calls` extractors for Go (chi/gin/echo) and TS (express/fastify) (DONE)
+- Event-channel edges `emits` / `listens_on` (DONE `25a3b37`)
+- Wake-up context + consistency checker + cross-domain tunnels (`wake_up`, `check_consistency`, `find_tunnels` — DONE)
+- LSP bridge infrastructure + `resolve_with_lsp` MCP + `leankg lsp-resolve` CLI (DONE `534cd7f` + `64b0fa6`); `typed_resolve` feature flag in `IndexerConfig` (DONE `8971dc5`); **default `LspConfig::servers` is still empty** — default-server bootstrap is the open follow-up.
+- Call edges carry `resolution_method` + numeric `confidence` (`name` / `name_file_hint` / `unresolved`; `typed` not yet produced)
+- Temporal knowledge graph (`valid_from` / `valid_to`) + specialist agent contexts (`agent_focus` + diary) (DONE `bc9cc53`, `1ea4bcd`)
+- Agent-side report: rationale nodes (WHY/NOTE/HACK/FIXME/XXX), PR impact dashboard, work-memory reflect loop → `.leankg/reflections/LESSONS.md` (DONE `b0c9477`, `30e41f0`, `373e808`)
+- Portable graph snapshot (`export_graph_snapshot` MCP) (DONE `0087991`)
+- npm-based installation wrapper (DONE `df0fec2`)
+
+**Competitive notes:**
+- vs [Graphify](https://github.com/Graphify-Labs/graphify): **company vs personal** — see §1.1 + §3.10 + [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (Jul-13 matrix: [`graphify-comparison-2026-07-13.md`](analysis/graphify-comparison-2026-07-13.md); many MCP “Missing” rows are now DONE)
+- vs [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory): **code-graph memory vs chat/persona memory** — see §1.3 + §3.28 / §5.32 + [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md) — steal session offload + auto-recall; Won’t Do chat-persona SoT
+- vs “Graph Engineering with Claude” curriculum (Codez Jul 2026 scaffold): see §1.2 + §3.20 / §5.23 + [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md) — LeanKG = memory layer; gaps = planner/DAG, entity resolution, cluster-first nav, self-improve loop
+- vs [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp): see Section 3.11 / 5.10 — Lean into business-context depth; close structural gaps; do **not** chase 158-language / Pure-C parity
+- vs LSP-by-default (CBM style): see Section 3.11 / 5.10 — LeanKG now has the bridge + wiring (FR-B03..B07 + FR-B08); `typed`-class edges still PENDING for Go (`FR-B03`) and TS (`FR-B04`).
+- vs mmap-heavy / full-FP32-in-RAM vector stores: LeanKG targets SQ8 hot path + flat payload post-filter (Section 5.14 / 6.10) to protect 256GB SSDs and 16GB laptops.
+- vs 2026 harness-native primitives (Glob/Grep/LSP, subagent fan-out, session memory): search = mid value (out-competed); **org-memory substrate = high value** — requirements traceability, `find_env_conflicts`, `query_incidents`, `get_team_map`, cross-repo service graph are surfaces no harness ships. Narrow the product surface accordingly (US-HEA / FR-HEA, §3.31 / §5.36; [assessment 2026-08-30](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md)).
+- vs [zvec-grep (zg)](https://github.com/zvec-ai/zvec-grep) (2026-09-03): **graph substrate vs flat search layer** — see §1.4 + §3.33 / §5.38 + [`docs/analysis/zvec-grep-vs-leankg-2026-09-03.md`](analysis/zvec-grep-vs-leankg-2026-09-03.md) — strongest search-layer competitor to date; confirms harness-era verdict (don't compete on search). Steal surface discipline (one default tool), freshness contract, FTS ranking, install UX, benchmark rigor; Won't Do managed-rg / multimodal / GUI polish.
+
+---
+### 1.4 Search-layer discipline (vs zvec-grep)
+
+> **Audience:** product + eng deciding what LeanKG should steal from the strongest hybrid-search competitor.  
+> **Full matrix:** [`docs/analysis/zvec-grep-vs-leankg-2026-09-03.md`](analysis/zvec-grep-vs-leankg-2026-09-03.md).  
+> **Upstream:** [zvec-ai/zvec-grep](https://github.com/zvec-ai/zvec-grep) — ripgrep + BM25/FTS + vector (RRF) behind one local-first interface; 1 default MCP tool; loopback daemon; paired A/B benchmark suite.
+
+**One-line decision:** zg is an excellent **flat search layer**. LeanKG is the **code-graph + org-memory substrate** agents should graduate to. zg has zero overlap with the durable LeanKG surface (impact radius, traceability FR→workflow→code, incidents, env conflicts, service graph, session memory) and independently confirms the v3.8.7 verdict: **don't compete on search — compete as substrate.** Steal zg's *discipline* (surface, honesty, rigor), not its *product*.
+
+| Decision criterion | LeanKG | zg | Why LeanKG adapts selectively |
+|--------------------|--------|----|-------------------------------|
+| **MCP surface** | ~76 tools; agent must triage; v3.8.5 live audit: 50% failing | **1 tool** (`zvec_grep_search`); intent via params (`query`/`fts`/`vector`/`fuse`); 6-tool `full` set | Steal **default-toolset + opt-in `full`** (`FR-ZG-01`); continue §5.18 rationalization |
+| **Lexical ranking** | `str_includes` substring scan (`src/graph/query.rs:2681`) + `ILIKE` (`src/db/backend.rs:1948`) | BM25/FTS ranked + fused with vectors via RRF | Steal **Postgres `tsvector` + GIN + RRF fusion** (`FR-ZG-02`) |
+| **Freshness honesty** | Auto-indexing watcher exists (`src/watcher`, `mcp-stdio --watch`, burst-limit fix) but responses carry **no staleness signal** | Every response reports `fresh` / `possibly_stale` + background repair | Steal **freshness contract in the response envelope** (`FR-ZG-03`), decoupled from the query path (heavy work never shares a request — lesson of the pre-PG v3.8.4 LOCK-poison incident) |
+| **Agent install** | Manual MCP config + Docker container-path `project=` footgun | `zg install --target codex\|claude\|opencode\|cursor` one command | Steal **`leankg install --target`** config writer (`FR-ZG-04`) |
+| **Benchmarks** | Repeatable cross_tool harness (`benchmarks/cross_tool/`, `make full`, 7-repo WITH/WITHOUT) | Pinned inputs, N-trial variance, judge-blind scoring + published pitfalls checklist | Harden the **existing** harness with zg's three rigor gaps (`FR-ZG-05`); do not rebuild |
+| **Embeddings** | Single fastembed path, `embeddings` feature off by default | 14-model catalog (Model2Vec 16M → remote Qwen), explicit rebuild semantics | Catalog breadth is **P3** (`FR-ZG-06`); `embed --import` already covers offsite |
+| **Structure** | Full call/import/inheritance graph, clusters, ontology, LSP bridge | Symbols + breadcrumbs only; graph retrieval is an unshipped roadmap item | **LeanKG's moat — no action** |
+
+**Ordered backlog (Focus P2 — does not preempt §1.1 P1 or the session-memory §1.3 chain):**
+
+1. **FR-ZG-01** — Default MCP toolset (single router tool; catalog behind `full`)  
+2. **FR-ZG-02** — Postgres FTS lexical ranking + RRF fusion  
+3. **FR-ZG-03** — Freshness contract in response envelope  
+4. **FR-ZG-04** — `leankg install --target` agent wiring  
+5. **FR-ZG-05** — cross_tool harness hardening (pinning, N-trials, judge-blind)  
+6. **FR-ZG-06** — Embedding catalog breadth (P3)
+
+**Explicit non-goals (this track):** managed-rg reimplementation (harness-native grep + output convention wins; zg's edge is unmanaged-output noise, not search power); image/multimodal ingest (PRD §10); desktop GUI; competing with zg on raw file-chunk retrieval; replacing `orchestrate`'s cache behavior (router reuses it).
+
+## 2. Problem Statement
+
+### 2.1 Current Pain Points
+
+| Pain Point | Description |
+|------------|-------------|
+| **Context Window Dilution** | AI tools scan entire codebases, including irrelevant files, wasting context window tokens |
+| **Outdated Documentation** | Manual docs quickly become stale; AI receives wrong context |
+| **Business Logic Disconnect** | No clear mapping between business requirements and code implementation |
+| **Token Waste** | Redundant code scanning generates unnecessary token costs |
+| **Poor Code Generation** | AI lacks accurate context, producing incorrect or suboptimal code |
+| **Feature Transfer Difficulty** | Onboarding new developers requires extensive code exploration |
+| **Impact radius lacks confidence grades** | `get_impact_radius` returns all edges at equal weight; LLM cannot distinguish "WILL BREAK" from "MIGHT BE AFFECTED" |
+| **No pre-commit risk signal** | No tool exists to assess change risk before commit |
+| **Flat search results** | `search_code` returns symbol matches with no grouping by functional area |
+| **No shortest-path / explain verbs** | *(closing)* MCP `shortest_path` / `explain_node` exist; ui-v2 Query FAB NL mode **DONE** (Wave 3 / FR-UI2-08) — see [`ui-v2-nl-query-fab-2026-08-01.md`](reports/ui-v2-nl-query-fab-2026-08-01.md) |
+| **Opaque edge provenance** | Agents cannot tell EXTRACTED vs INFERRED vs AMBIGUOUS at a glance (US-GF-04 / FR-GF-07..09 — **P1**) |
+| **No architecture brief artifact** | Missing auto god-node + surprising-connection report (`GRAPH_REPORT.md`) after index (US-GF-06 / FR-GF-13 — **P1**) |
+| **Agents still grep first** | Without always-on install/hooks, token savings never materialize at company scale (US-GF-17 — **P1**) |
+| **No query outcome learning** | Context metrics exist; default skill loop for useful/dead_end still weak (US-GF-16 — P2) |
+| **Straight-line agent loops over the graph** | Agents call LeanKG tools sequentially; no first-class goal→MCP DAG planner (US-GE-02 — P2) |
+| **Weak cross-alias identity** | Same symbol under naming variants may not merge (US-GE-03 — P2) |
+| **Clusters are secondary** | Louvain/`get_clusters` exist but are not the default agent neighborhood path (US-GE-04 — P2) |
+| **Session token bloat + forgotten lessons** | Long multi-tool sessions replay large MCP payloads; LESSONS/diary only help if the agent remembers to call tools (US-SM-01 / US-SM-02 / US-GE-05 — P2) |
+
+---
+
+## 3. User Stories
+
+### 3.1 Core MVP Stories (US-01 to US-18)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-01`..`US-18`.
+
+
+### 3.2 v2.0 Enhancement Stories (US-19 to US-27)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-19`..`US-27`.
+
+
+### 3.3 GitNexus Enhancement Stories (US-GN-01 to US-GN-09)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-GN-01`..`US-GN-09`.
+
+
+### 3.4 AB Testing Stories (US-AB-01 to US-AB-05)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-AB-01`..`US-AB-05`.
+
+
+### 3.5 RTK Compression Stories (US-RTK-01 to US-RTK-15)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-RTK-*`.
+
+
+### 3.6 Infrastructure Stories (US-INF-01 to US-INF-10)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-INF-*`.
+
+
+### 3.7 Additional Language Stories (US-LANG-01 to US-LANG-03)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-LANG-*`.
+
+
+### 3.8 Massive Graph Stories (US-MG-01 to US-MG-05)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-MG-*`.
+
+
+### 3.9 TOON Format Stories (US-TOON-01)
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-TOON-01`.
+
+
+**Detailed Feature Descriptions:**
+
+<details>
+<summary>US-TOON-01: TOON Response Format</summary>
+
+**Problem:** JSON responses from MCP tools include repetitive field names in arrays, wasting tokens.
+
+**Solution:** Adopt TOON (Token-Oriented Object Notation) format which omits field names within array items when they match the schema template.
+
+**Example comparison:**
+
+JSON (312 tokens):
+```json
+{
+  "elements": [
+    {"qualified_name": "src/main.rs::main", "type": "function", "language": "rust"},
+    {"qualified_name": "src/lib.rs::init", "type": "function", "language": "rust"}
+  ],
+  "tokens": 312
+}
+```
+
+TOON (187 tokens, 40% reduction):
+```
+{
+  elements[2]{qualified_name,type,language}:
+    src/main.rs::main,function,rust
+    src/lib.rs::init,function,rust
+  tokens: 187
+}
+```
+
+**Specification:** https://github.com/toon-format/toon
+
+**Implementation:**
+- All MCP tool responses wrapped in Response Format Envelope
+- Envelope: `{status: ok, tool: <name>, format: toon|json, tokens: <count>, data: <toon_string>}`
+- Default format is `toon`; clients can request `json` via `format=json` parameter
+
+</details>
+
+**Detailed Feature Descriptions:**
+
+<details>
+<summary>US-MG-01: Service node loads all elements and edges</summary>
+
+**Problem:** Previously, double-clicking a Service node in the graph only returned a subset of relationship types (`contains`, `defines`, `imports`, `calls`). Other edges like `extends`, `implements`, `references`, `tested_by` were missing from the expanded view.
+
+**Behavior:**
+- Double-click on a Service node → `/api/graph/expand-service?path=<absolute_path>` returns ALL elements under that service folder AND ALL relationship types between them
+- Backend must NOT filter by relationship type — let the frontend filter UI control visibility
+- All node types are returned: `service`, `folder`, `directory`, `file`, `module`, `class`, `struct`, `interface`, `enum`, `function`, `method`, `constructor`, `property`, `decorator`
+
+**Backend changes:**
+- `api_graph_expand_service` handler removes the `matches!(r.rel_type.as_str(), "contains" | "defines" | "imports" | "calls")` filter
+- Returns ALL relationships where source is in the service folder
+
+**Frontend changes:**
+- Filter UI is the sole mechanism for controlling what's visible
+- User toggles edge types on/off to see calls, imports, contains, etc.
+</details>
+
+<details>
+<summary>US-MG-02: Single-repo full expansion</summary>
+
+**Problem:** When a service has many nested folder layers (e.g., `platform-transport/be-engagement/internal/handler/v2/`), the user must double-click through each folder level to see contents. This loses the overall service context.
+
+**Behavior:**
+- Double-click on a Service node loads the ENTIRE service tree at once
+- All folders, sub-folders, files, and functions are loaded in a single API call
+- The filter UI controls visibility: by default, only `Service`, `Folder`, `File`, `Function` nodes are shown
+- User can toggle on `Method`, `Class`, etc. to see more detail without making another API call
+- For single-repo projects (no multi-service layout), the same behavior applies — the root is treated as the "service"
+
+**Rationale:** Loading everything at once is fast (~13s for 7.7k elements after optimization) and avoids the UX problem of losing the chart context during multi-level drilling.
+</details>
+
+<details>
+<summary>US-MG-03: Filter UI always shows all node types</summary>
+
+**Problem:** Previously `discoveredNodeTypes` was computed from loaded graph data. If the current view only has `File` and `Function` nodes, the filter panel only shows `File` and `Function` toggles.
+
+**Behavior:**
+- The filter panel ALWAYS shows ALL node types from `DEFAULT_NODE_TYPE_ORDER`: `Service`, `Folder`, `Directory`, `File`, `Module`, `Class`, `Struct`, `Interface`, `Enum`, `Function`, `Method`, `Constructor`, `Property`, `Decorator`
+- This is a static list, not data-driven
+- Types not present in current data still appear but are visually dimmed or show "(0)" count
+
+**Implementation:**
+- `discoveredNodeTypes` in `App.tsx` uses `DEFAULT_NODE_TYPE_ORDER` directly instead of computing from `data.nodes`
+</details>
+
+<details>
+<summary>US-MG-04: Default visible filters</summary>
+
+**Problem:** Previously the default visible labels included `Service`, `Folder`, `Directory`, `File` — missing `Function` which is the most important code-level type. Also, ALL types started as visible, making the graph too noisy.
+
+**Behavior:**
+- **Default ON (visible):** `Service`, `Folder`, `File`, `Function`
+- **Default OFF (hidden):** `Directory`, `Module`, `Class`, `Struct`, `Interface`, `Enum`, `Method`, `Constructor`, `Property`, `Decorator`
+- `resetToStructuralDefaults()` resets to these 4 types
+- After double-clicking a service, filters reset to these 4 defaults
+
+**Implementation:**
+- `DEFAULT_VISIBLE_LABELS` = `['Service', 'Folder', 'File', 'Function']`
+- `useGraphFilters` initial state uses `DEFAULT_VISIBLE_LABELS`
+- `resetToStructuralDefaults()` uses `DEFAULT_VISIBLE_LABELS`
+</details>
+
+<details>
+<summary>US-MG-05: Expand-service API optimization</summary>
+
+**Problem:** The original `api_graph_expand_service` handler called `g.all_elements()` and `g.all_relationships()` which loaded ALL 1.5M elements and ALL 1.6M relationships into memory, then filtered in Rust. This took ~19 seconds.
+
+**Solution (DONE):**
+- Added `get_elements_in_folder()` to `GraphEngine` using legacy-style `regex_matches(file_path, $pat)` with bound parameter
+- Handler converts absolute paths to DB format: `/Users/.../be-engagement` → `./platform-transport/be-engagement`
+- Only loads ~7.7k relevant elements instead of 1.5M
+- Response time: ~13s (30% improvement). Remaining time is from loading all 1.6M relationships.
+</details>
+
+### 3.9 MemPalace-Inspired Stories (US-MP-01 to US-MP-08)
+
+> **Source:** Competitive analysis of [MemPalace](https://github.com/milla-jovovich/mempalace) — the highest-scoring AI memory system on LongMemEval (96.6% R@5 raw mode). Key differentiator: raw verbatim storage without summarization, structured spatial navigation (wings/rooms/closets/drawers), temporal entity graph with validity windows, and a 4-layer memory stack (L0-L3) for token-efficient context loading.
+
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter IDs for this section (`US-*` / related).
+
+
+**Detailed Feature Descriptions:**
+
+<details>
+<summary>US-MP-01: Temporal Knowledge Graph</summary>
+
+**MemPalace inspiration:** Entity relationships have validity windows (`valid_from`, `valid_to`). When something stops being true, it's invalidated but retained for historical queries.
+
+**LeanKG adaptation:**
+- Add `valid_from` and `valid_to` (nullable) fields to `Relationship` table
+- When re-indexing detects a removed import/call, set `valid_to = now()` instead of deleting
+- New MCP tool: `temporal_query` — "what did the dependency graph look like before commit X?"
+- New MCP tool: `invalidate_edge` — manually mark an edge as no longer current
+- Timeline view: chronological story of how a code element's dependencies evolved
+</details>
+
+<details>
+<summary>US-MP-02: Layered Context Loading (L0-L3)</summary>
+
+**MemPalace inspiration:** 4-layer memory stack where L0+L1 (~170 tokens) are always loaded, L2 is on-demand, L3 is deep search.
+
+**LeanKG adaptation:**
+- **L0 — Project Identity** (~50 tokens): Project name, languages, top-level directories, architecture pattern.
+- **L1 — Critical Facts** (~120 tokens): Module map, critical dependencies, recent change hotspots.
+- **L2 — Cluster Context** (on demand): When a query touches a specific area, load the relevant cluster's symbols.
+- **L3 — Deep Search** (on demand): Full graph traversal, impact analysis, cross-cluster queries.
+- New MCP tools: `wake_up` (L0+L1), `load_layer` (L2/L3)
+</details>
+
+<details>
+<summary>US-MP-03: Conversation/Decision Mining</summary>
+
+**MemPalace inspiration:** Mines conversation exports (Claude, ChatGPT, Slack) to extract decisions, preferences, milestones. Stores raw verbatim.
+
+**LeanKG adaptation:**
+- New indexer module: `conversation_indexer` — parses Claude/ChatGPT/Slack export JSON
+- Extracts: decisions, preferences, milestones, problems
+- Creates `decision`, `preference`, `milestone`, `problem` element types
+- Links decisions to code elements via `decided_about` relationship
+- Store raw verbatim — no summarization
+- New CLI command: `leankg mine-conversations ~/chats/ --format claude|chatgpt|slack`
+</details>
+
+<details>
+<summary>US-MP-04: Specialist Agent Contexts</summary>
+
+**MemPalace inspiration:** Define agent personas (reviewer, architect, ops) each with their own wing and diary.
+
+**LeanKG adaptation:**
+- Agent config in `.leankg/agents/*.json` — focus areas and context filters
+- Each agent gets a filtered view of the graph
+- Agent diary: per-agent database table storing session notes
+- New MCP tools: `agent_focus`, `agent_diary_write`, `agent_diary_read`
+</details>
+
+<details>
+<summary>US-MP-05: Contradiction & Staleness Detection</summary>
+
+**MemPalace inspiration:** `fact_checker.py` validates assertions against stored entity facts.
+
+**LeanKG adaptation:**
+- New module: `consistency_checker` — runs on `detect_changes` or standalone
+- Checks: annotations referencing deleted code, documented_by links to moved files, stale clusters
+- Severity: 🔴 BROKEN, 🟡 STALE, 🟢 CURRENT
+- New MCP tool: `check_consistency`, new CLI: `leankg check-consistency`
+</details>
+
+<details>
+<summary>US-MP-06: Cross-Domain Tunnels</summary>
+
+**MemPalace inspiration:** "Tunnels" auto-connect rooms from different wings when the same topic appears.
+
+**LeanKG adaptation:**
+- Auto-detect shared domain concepts across clusters
+- Create `tunnel` relationship type linking related clusters
+- New MCP tool: `find_tunnels`
+- Enhance `orchestrate` to follow tunnels
+</details>
+
+<details>
+<summary>US-MP-07: Wake-up Context Protocol</summary>
+
+**MemPalace inspiration:** `mempalace wake-up` loads ~170 tokens of L0+L1.
+
+**LeanKG adaptation:**
+- New MCP tool: `wake_up` — returns compressed project summary (~170 tokens)
+- Content: project name, languages, top directories (wings), recent hotspots, critical files
+- Cached in `.leankg/wake_up.txt`, regenerated on re-index
+</details>
+
+<details>
+<summary>US-MP-08: Folder Structure as Graph Edges</summary>
+
+**MemPalace inspiration:** MemPalace's wing → room → closet → drawer is a spatial hierarchy. Each level is a navigable node with typed edges.
+
+**LeanKG adaptation:**
+- **`directory` element type** — every indexed directory becomes a first-class node
+- **`contains` edges for full hierarchy:**
+  - `directory → directory` (e.g., `src/` contains `src/graph/`)
+  - `directory → file` (e.g., `src/graph/` contains `query.rs`)
+  - `file → function/class` (existing behavior)
+- **qualified_name format:** `src/graph/` for directories (trailing slash distinguishes from files)
+- **metadata on directory nodes:** `child_count`, `language_distribution`, `total_lines`
+- **Impact analysis at directory level:** `get_impact_radius("src/indexer/")` shows all affected modules
+- **Cluster-to-directory alignment:** When Leiden clusters map to physical directories, link them
+- **Wake-up context:** L0/L1 lists top-level directories as "palace wings"
+- **Folder-scoped search:** `search_code` and `query_file` accept directory qualified names
+
+```
+Palace Mapping:
+
+  Wing (project area)     →  src/            [directory node]
+    Room (module)         →  src/graph/      [directory node]
+      Closet (file)       →  src/graph/query.rs  [file node]
+        Drawer (element)  →  query.rs::GraphEngine  [function node]
+
+  All connected by `contains` edges. Traversal = BFS from any directory.
+```
+</details>
+
+### 3.10 Graphify-Inspired Stories (US-GF-01 to US-GF-17)
+
+> **Source:** Competitive analysis of [Graphify](https://github.com/Graphify-Labs/graphify) — AI coding-assistant skill that builds a queryable knowledge graph from code (tree-sitter, no LLM) plus optional docs/media. Key differentiators: `path` / `explain` / `query` agent verbs, every edge tagged `EXTRACTED|INFERRED|AMBIGUOUS`, god-node + surprising-connection reports, WHY/ADR rationale nodes, PR community conflict triage, and a work-memory reflect loop. Full matrix: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) (2026-07-20) + [`graphify-comparison-2026-07-13.md`](analysis/graphify-comparison-2026-07-13.md).
+>
+> **LeanKG keep / do not regress:** TOON/RTK token compression, requirement↔code traceability, microservice topology, severity-graded impact radius, PostgreSQL persistence, multi-project HTTP deploy.
+>
+> **Company rule:** Steal Graphify **packaging** (install, report, honest edges, HTML share). Do **not** chase multimodal or NetworkX. Prioritize §1.1 P1 queue for cost.
+
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter IDs for this section (`US-*` / related).
+
+
+**Detailed Feature Descriptions:**
+
+<details>
+<summary>US-GF-01: Shortest Path</summary>
+
+**Graphify inspiration:** `graphify path "FastAPI" "ModelField"` returns hop-by-hop edges with relation + confidence tags.
+
+**LeanKG adaptation:**
+- New MCP tool: `shortest_path(source, target, max_hops?)`
+- New CLI: `leankg path <a> <b> [--max-hops N]`
+- Resolve inputs by qualified_name, symbol name, or fuzzy label
+- Return ordered hops: `{from, to, relation, confidence_label, source_file}`
+- Prefer EXTRACTED edges when multiple equal-length paths exist
+</details>
+
+<details>
+<summary>US-GF-02: Explain Node</summary>
+
+**Graphify inspiration:** `graphify explain "APIRouter"` shows source, community, degree, and neighbor list.
+
+**LeanKG adaptation:**
+- New MCP tool: `explain_node(name_or_qn)`
+- Aggregate: definition site, cluster membership, degree (in/out), top neighbors by relation type, importance/god-node rank if available
+- Reuse `get_clusters`, dependents/dependencies, call graph — single agent-facing response
+</details>
+
+<details>
+<summary>US-GF-03: NL Scoped Subgraph Query</summary>
+
+**Graphify inspiration:** `graphify query "what connects auth to the database?"` returns a budgeted subgraph, not a full dump.
+
+**LeanKG adaptation:**
+- New MCP tool: `query_graph(question, token_budget?)`
+- Pipeline: seed retrieval (keyword + optional embeddings) → bounded BFS/DFS expand → budget trim → TOON response
+- Distinct from `orchestrate` (routing) and `kg_semantic_context` (embed pipeline): oriented to *connection* questions
+- Surface confidence_label on every returned edge
+- CLI: `leankg graph-query "<question>"` and `leankg query --kind subgraph "<question>"` (FR-GF-06; existing `--kind name|type|…` unchanged)
+
+**Status (2026-07-19):** **DONE** — MCP + CLI + unit tests (`src/graph/nl_query.rs`). Release gate: `REL-042`.
+</details>
+
+<details>
+<summary>US-GF-04: Edge Provenance Labels</summary>
+
+**Graphify inspiration:** Every edge is `EXTRACTED` (explicit in source), `INFERRED` (resolver-derived), or `AMBIGUOUS` (needs review).
+
+**LeanKG adaptation:**
+- Map existing `resolution_method` (`name`, `name_file_hint`, `unresolved`, future `typed`) to provenance labels
+- Store `confidence_label` on Relationship metadata; keep numeric confidence for impact severity
+- Propagate labels through `get_impact_radius`, `get_call_graph`, `shortest_path`, `query_graph`, **and ui-v2 Sigma edge tooltips** (FR-GF-09)
+- Prefer EXTRACTED edges when ranking equal-length paths
+</details>
+
+<details>
+<summary>US-GF-05: God-Node Ranking</summary>
+
+**Graphify inspiration:** Report highlights most-connected concepts; optional hub exclusion for utilities.
+
+**LeanKG adaptation:**
+- Precompute degree / PageRank-like importance at index time (aligns with enhancement-analysis Priority 2)
+- Expose via `get_architecture` hotspots and new `get_god_nodes(limit, exclude_hubs_percentile?)`
+- CLI: `leankg gods [--limit N]`
+</details>
+
+<details>
+<summary>US-GF-06: GRAPH_REPORT.md</summary>
+
+**Graphify inspiration:** Three artifacts after build: `graph.html`, `GRAPH_REPORT.md`, `graph.json`.
+
+**LeanKG adaptation:**
+- On `index` / `leankg report`: write `.leankg/GRAPH_REPORT.md` (FR-GF-13)
+- Sections: god nodes, surprising cross-cluster edges, confidence distribution, 4–5 suggested agent questions
+- Web UI Overview link + MCP `get_graph_report` (FR-GF-14 DONE)
+- Optional MCP resources: report / god-nodes / surprises (agent-readable without inventing tool calls)
+</details>
+
+<details>
+<summary>US-GF-07: Rationale / WHY Nodes</summary>
+
+**Graphify inspiration:** `# NOTE:` / `# WHY:` / `# HACK:` and ADR/RFC citations become first-class nodes linked to code.
+
+**LeanKG adaptation:**
+- Extractor pass for comment markers + markdown ADR/RFC links
+- New element type: `rationale` with `explains` relationship to code elements
+- Searchable via `search_code` / `search_annotations` / `query_graph`
+</details>
+
+<details>
+<summary>US-GF-08: PR Impact Dashboard</summary>
+
+**Graphify inspiration:** `graphify prs`, `--triage`, `--conflicts` (PRs sharing communities = merge-order risk).
+
+**LeanKG adaptation:**
+- CLI: `leankg prs [number] [--triage] [--conflicts]`
+- MCP: `list_prs`, `get_pr_impact`, `triage_prs`
+- Combine `detect_changes` + cluster membership of touched files
+- Conflicts: PRs whose changed files share clusters
+</details>
+
+<details>
+<summary>US-GF-09: Work-Memory Reflect Loop</summary>
+
+**Graphify inspiration:** `save-result` + `reflect` → `LESSONS.md` and learning overlay that biases `explain` / `query`.
+
+**LeanKG adaptation:**
+- MCP: `report_query_outcome(question, nodes[], outcome: useful|dead_end|corrected)`
+- Aggregate into `.leankg/reflections/LESSONS.md`
+- Optional overlay tags on nodes: preferred / tentative / contested
+- Feeds context-quality loop from enhancement-analysis Priority 6
+</details>
+
+<details>
+<summary>US-GF-10..12: Coverage & Portability</summary>
+
+**US-GF-10 Languages:** Prioritize high-demand gaps (Vue/Svelte/Astro, shell, Scala) before long-tail grammars.
+
+**US-GF-11 Portable snapshot:** Export merge-friendly `graph-snapshot.json` (relative paths); optional git merge driver. Complements RocksDB deploy — does not replace it.
+
+**US-GF-12 SQL schema:** Optional extractor for `.sql` + `leankg extract --postgres <dsn>` creating table/FK nodes linked to ORM/repository code when detectable.
+</details>
+
+<details>
+<summary>US-GF-13..17: Packaging &amp; company adoption (v3.7.8)</summary>
+
+**US-GF-13 HTML export (Must / P1):** As a developer, I run `leankg export html` (bounded path/community) and get a single-file graph artifact I can open offline or attach to a PR — without replacing the live ui-v2 explorer.
+
+**US-GF-14 Three-verb narrative (Must / P1):** As an agent user, README / AGENTS.md / skills lead with **path · explain · query** before the full MCP catalog, so cheap connection questions do not trigger grep/cat dumps.
+
+**US-GF-15 Install matrix (Should / P2):** As a platform eng, `leankg install` covers Cursor, Claude Code, Codex, OpenCode, Gemini (+ more over time) with graph-first guidance.
+
+**US-GF-16 Reflect skill (Should / P2):** As an agent, default skill guidance calls `report_query_outcome` after useful/dead_end answers and loads LESSONS at session start.
+
+**US-GF-17 Always-on graph-first (Must / P1):** As a company, `leankg install` writes always-apply Cursor rules / Claude PreToolUse (or equivalent) that **nudge** (optional **strict**: block first raw Read) agents to query LeanKG before grep — the primary lever for §1.1 token savings.
+</details>
+
+### 3.11 CBM Structural Parity Stories (US-CBM) — merged from `prd-structural-parity-cbm.md`
+
+> **Source:** Competitive analysis of [codebase-memory-mcp (CBM)](https://github.com/DeusData/codebase-memory-mcp) v0.9.0 vs LeanKG (current: v0.17.9). Deep comparison notes also in `docs/analysis/` historical stubs.
+>
+> **Product rule:** Lean into business-context depth (ontology, knowledge, env, Android, req↔code). Close structural gaps that erode agent trust. Do **not** chase Pure-C / 158-language parity.
+>
+> **Tracks:** A Activate · B Structural · C Platform · D Dual-run escape hatch · E 3D graph UI
+>
+> **Codebase status audit:** 2026-07-14 against `src/` (v0.17.9)
+
+#### Positioning (summary)
+
+| Dimension | LeanKG | CBM |
+|-----------|--------|-----|
+| Stack | Rust + PostgreSQL/pgvector | Pure C + SQLite |
+| MCP | 85 tools (current), stdio + HTTP/SSE + REST | ~14 tools, stdio |
+| Strength | Ontology, knowledge, env/incidents, Android, Docker+RocksDB, RTK | Speed, 158 langs, Hybrid LSP, clones, CROSS_*, static binary |
+| Call resolve today | `name` / `name_file_hint` / `unresolved` + confidence | Hybrid LSP Tier 1/2/3 |
+
+#### User stories — Track A Activate
+
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter IDs for this section (`US-*` / related).
+
+
+#### User stories — Track B Structural
+
+
+#### User stories — Track C Platform
+
+
+#### User stories — Track D Dual-run
+
+
+#### User stories — Track E 3D Visualization
+
+
+<details>
+<summary>US-CBM detailed notes (implementation evidence)</summary>
+
+**DONE evidence (post-v3.6 audit, 2026-07-14):**
+- `get_architecture` / `get_graph_schema` / `find_dead_code` — `src/mcp/tools.rs`, `src/mcp/handler.rs`, `src/graph/query.rs`
+- `resolution_method` + `confidence` — `src/indexer/call_graph.rs`
+- Routes + `http_calls` — `src/indexer/route_extractor.rs`, `RelationshipType::HttpCalls` in `src/db/models.rs`
+- `wake_up` — `src/mcp/handler.rs` (also closes MemPalace US-MP-07)
+- `LSP` module — `src/lsp/{bridge,client,config,mod}.rs`; `resolve_with_lsp` MCP; `leankg lsp-resolve` CLI; `IndexerConfig::typed_resolve` (`8971dc5`)
+- Event edges `emits` / `listens_on` — `src/db/models.rs` + `25a3b37`
+- Clones — historically `find_clones` MCP + `leankg clones` + `SimilarTo` (`55e6e72`); **MCP/CLI hard-removed 2026-07-20** (`SimilarTo` rel-type stub may remain in `models.rs`)
+- Cross-repo similar — `find_cross_repo_similar` MCP + `CrossRepoSimilar` (`ab16c9b`)
+- Hot-path cache — `src/cache/hot_path.rs` + `836f0a3`
+- Temporal graph fields — `src/db/models.rs` `valid_from` / `valid_to` (`bc9cc53`)
+- Consistency checker — `check_consistency` MCP + `leankg check-consistency` (`60a6111`)
+- Tunnels — `find_tunnels` MCP + `leankg tunnels` + `Tunnel` (`5b6547e`)
+- Agent personas — `agent_focus` + `agent_diary_{read,write}` (`1ea4bcd`)
+- Rationale extraction — `src/indexer/rationale_extractor.rs` (`b0c9477`)
+- PR impact dashboard — `get_pr_impact` MCP + `leankg prs` (`30e41f0`)
+- Work-memory reflect — `report_query_outcome` + `Lessons` aggregation (`373e808`)
+- Portable snapshot — `export_graph_snapshot` MCP (`0087991`)
+- Team / on-call — `get_team_map` MCP (`3368b5f`)
+- Cluster SKILL — `get_cluster_skill` MCP (`10b15a0`)
+- Overview context — `get_overview_context` MCP (`9124959`)
+- CI/CD auto-update — `.github/workflows/leankg-graph-update.yml` (`eb3d331`)
+- Vue + Svelte — `src/indexer/sfc.rs` (regex; **wired into index walk** — REL-032) (`e617a49`)
+- SQL DDL — `src/indexer/sql.rs` (**wired into index walk** — REL-032) (`de314eb`)
+- Swift — `src/indexer/swift.rs` (**bulk + incremental wired**; call graph pending)
+- Objective-C — `src/indexer/objc.rs` (**bulk + incremental wired**; US-LANG-04)
+
+**PENDING evidence:**
+- No `typed` `resolution_method` produced at index time; LSP bridge returns `LspLocation[]` but does not yet write CALLS edges with `resolution_method=typed`
+- No `graph-ui/` directory; no `get_graph_layout` / 3D scene
+- No formal `resources/read` endpoint for `get_overview_context` (tool-only)
+- ~~Vue / Svelte / SQL extractors exist as modules but `.vue` / `.svelte` / `.sql` are absent from `find_files_sync`~~ — **RESOLVED 2026-08-02 (REL-032 / PR-14):** `.vue` / `.svelte` / `.sql` in `find_files_sync`, `extract_elements_for_file`, `index_file_sync`
+
+**Won’t Have (this program):** Full 158-language parity; Pure-C rewrite; replace the storage engine; full Hybrid LSP for all CBM families in one release; drop HTTP/SSE/REST or Docker team path; **custom MinHash/LSH or legacy `::lsh` clone ANN** (v3.6.2 — semantic HNSW only).
+</details>
+
+### 3.12 Team Knowledge Infrastructure (US-V2) — merged from `prd-leankg.md` v2
+
+> **Vision:** Evolve from local-first single-dev tool to shared knowledge backbone for multi-service teams: environment-scoped graph, incident knowledge, CI freshness, token-budgeted MCP tools.
+>
+> **Codebase status audit:** 2026-07-14 (v0.17.9)
+
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter IDs for this section (`US-*` / related).
+
+
+**v2 success metrics (targets):**
+
+| Metric | Target |
+|--------|--------|
+| Full service context in Cursor | < 5s |
+| Context tokens per session (LeanKG queries) | < 2,000 |
+| Graph freshness after release hook | < 3 minutes |
+| Env conflict catch rate (schema) | > 80% |
+
+<details>
+<summary>US-V2 data model (from HLD/PRD v2)</summary>
+
+**Incident node fields:** id, env, title, severity (P0–P3), occurred_at, resolved_at, root_cause, resolution, affected services, trigger_pattern, prevention, tags, author, linked_ticket
+
+**v2 edges:** `caused_incident`, `resolved_by`, `conflicts_with`, `deployed_to`, `supercedes`
+
+**Service metadata:** version, deploy_env, slo_p99_ms, health_endpoint, on_call, incident_count, last_incident, tags
+</details>
+
+### 3.13 Optimized Local-First Vector Graph Engine (US-VE) — v3.7.0
+
+> **Former P0 — COMPLETE on PR #80.** Current highest focus is **§3.15 Day-2 Embed Resume**. Core implementation **merged to `origin/main`** (`dbc22c4` / #79). Full ordered queue: [`prd-task-tracker.md`](prd-task-tracker.md).
+>
+> **Epic:** Replace mmap-heavy / opaque vector I/O with a **3-tier LocalEngine** (and CloudEngine twin) so semantic+LSP retrieval stays surgical under M2 Pro / 16GB / 256GB SSD, and scales to Linux x86_64 + TiKV without rewriting MCP/CLI callers.
+>
+> **Depends on:** FR-HNSW-* product path (semantic ANN UX). **Does not cancel** FR-HNSW-B until LocalEngine recall/latency gates pass and factory switch is default for Local mode.
+>
+> **P0 gate complete on `feature/vector-engine-gate`:** US-VE-* + FR-VE-* quality gates **DONE**. `evaluate_gate` sets `ready_for_default` under `LEANKG_VE_GATE_FULL=1`. The legacy engine remained runtime default until callers honored `preferred_ann_backend` (superseded by the Phase 8 Postgres cutover).
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `US-VE-*` / `FR-VE-*`.
+
+
+**Acceptance criteria (epic-level):**
+
+- **Given** a warm LocalEngine index of ≥1M SQ8 chunks on reference M2 Pro, **When** an agent issues semantic retrieval, **Then** P95 end-to-end time-to-context JSON is &lt; 100ms and ANN-only P95 is &lt; 50ms.
+- **Given** a 2GB cgroup limit, **When** the engine auto-tunes RocksDB block cache + rayon threads, **Then** the process is never OOM-killed during index+query smoke.
+- **Given** Flat File append succeeds and process crashes before RocksDB offset commit, **When** the engine recovers, **Then** no dangling pointers remain and queries skip incomplete records.
+- **Given** `LEANKG_VECTOR_ENGINE=local|cloud` (or equivalent), **When** the factory constructs storage, **Then** the correct backend enum variant is used (unit-asserted).
+
+### 3.14 Semantic MCP Agent UX Enhancements (US-SEM) — v3.7.1
+
+> **Trigger:** Live Docker MCP probe 2026-07-17 ([`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)). Pipeline (HNSW ANN → cross-encoder rerank → optional graph hop) is **correct**; these stories improve agent-facing honesty, budgets, transport resilience, and release smoke — **not** recall correctness.
+>
+> **Depends on:** FR-HNSW-D / FR-V2-06 / FR-V2-07 (shipped). **Does not** reopen the legacy-vs-LocalEngine cutover question (FR-VE-GATE).
+>
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SEM-*` / `FR-SEM-*` / `REL-051` / `REL-054`. **P0 open:** `US-SEM-06` / `FR-SEM-07` / `REL-054`.
+
+#### US-SEM-01 — Honest token accounting on truncated MCP payloads (Should Have)
+
+**As an** AI agent, **I want** both *delivered* and *pre-truncation* token costs when a tool response is truncated, **so that** I can budget context windows without underestimating cost by 3–4×.
+
+**Acceptance criteria:**
+- **Given** a tool response with `_token_budget.truncated: true`, **When** the agent reads the envelope, **Then** both delivered token count and `_token_budget.actual` (pre-trim) are present and unambiguous.
+- **Given** `truncated: false`, **When** the agent reads the envelope, **Then** delivered ≈ actual (within rounding).
+- **Given** docs / MCP skill guidance, **When** `truncated: true`, **Then** guidance tells agents to budget **≥ 3×** the delivered figure (or use `actual`).
+
+#### US-SEM-02 — Adequate budgets for ontology-heavy tools (Should Have)
+
+**As an** AI agent using `concept_search` / `kg_semantic_context`, **I want** tool-specific token maxima (not the 1000 default), **so that** ontology + graph payloads are not silently cut mid-result.
+
+**Acceptance criteria:**
+- **Given** a populated ontology + index (verification setup), **When** `concept_search` / `kg_semantic_context` run typical probes, **Then** default maxima are ≥ sibling `kg_*` tools (2k–4k range) unless the caller overrides.
+- **Given** a response that still truncates, **When** `_token_budget` is inspected, **Then** `max` reflects the tool-specific budget (not anonymous default).
+
+#### US-SEM-03 — Resilient MCP HTTP for long semantic calls (Should Have)
+
+**As an** AI agent calling `kg_semantic_context` (or similar) over HTTP/SSE, **I want** transient socket drops mitigated (retry-safe server + documented client retry), **so that** one flake does not fail a session.
+
+**Acceptance criteria:**
+- **Given** a transient “socket connection was closed unexpectedly” on a read-only semantic tool, **When** the same args are retried once, **Then** the call succeeds without corrupt state (matches 2026-07-17 probe).
+- **Given** long-lived `:9699` daemons, **When** operators follow doctor / restart guidance, **Then** docs link [`docs/analysis/mcp-http-stability-analysis-2026-05-05.md`](analysis/mcp-http-stability-analysis-2026-05-05.md) and keep stale-listener cleanup as the ops path.
+
+#### US-SEM-04 — Semantic hit diversity across files (Could Have)
+
+**As an** AI agent, **I want** top-k `semantic_search` hits to diversify across files when ANN+rerank collapses to one module, **so that** I see alternate entry points without a second query.
+
+**Acceptance criteria:**
+- **Given** a query whose top-10 would otherwise be ≥70% one file (as in the MCP-dispatch probe), **When** diversity mode is on (default or flag), **Then** at least N distinct `file_path` values appear in top-k (N configurable; default ≥3 for k=10).
+- **Given** diversity mode off, **When** the same query runs, **Then** ranking matches current HNSW+rerank order (no regression).
+
+#### US-SEM-05 — Exclude UI-bundle / benchmark noise from semantic seeds (Must Have)
+
+**As an** AI agent, **I want** `semantic_search` to ignore minified embedded UI assets and (by default) benchmark helpers, **so that** HNSW / scoring queries return readable Rust retrieval symbols instead of single-letter JS or `verdict` helpers.
+
+**Acceptance criteria:**
+- **Given** Probe G query (`HNSW approximate nearest neighbor vector index`), **When** `semantic_search` runs, **Then** top-k does **not** include `src/embed/assets/*.js` (or any `embed/assets/` path).
+- **Given** Probe H query (`vector similarity scoring`) without the word "benchmark", **When** `semantic_search` runs, **Then** `src/benchmark/**` candidates are filtered before rerank.
+- **Given** a query containing `"benchmark"`, **When** `semantic_search` runs, **Then** `src/benchmark/**` may appear (gated keep).
+- **Evidence baseline:** [`docs/semantic-search-mcp-verification-2026-07-18.md`](semantic-search-mcp-verification-2026-07-18.md) Probes G/H.
+
+#### US-SEM-06 — Mega-graph HNSW semantic search must not OOM MCP (**P0** / Must Have)
+
+**As an** AI agent on a mega-graph Docker MCP mount (~600k+ elements, ~150k vectors), **I want** `semantic_search` and `kg_semantic_context` to complete under the documented MCP memory budget, **so that** natural-language retrieval does not kill `:9699` and strand the rest of the tool surface.
+
+**Acceptance criteria:**
+- **Given** an indexed mega project (`project=/workspace-other` or equivalent container mount) with an existing embedding index, **When** `semantic_search(query=…, limit≤5)` runs, **Then** the call returns `method: hnsw+rerank` (or documented degrade) **without** container `OOMKilled`, process crash, or HTTP disconnect; `/health` stays ok during and after the call.
+- **Given** the same setup, **When** `kg_semantic_context` runs a short NL query, **Then** the same stability ACs hold (no mega `all_elements()` dump).
+- **Given** logs during the call, **When** inspected, **Then** there is **no** unbounded `all_elements()` / full-graph element cache load for seed hydration (ANN candidates + paginated / keyed element fetch only).
+- **Given** the same binary on a small project (`/workspace`), **When** `semantic_search` runs, **Then** existing HNSW+rerank behavior remains GREEN (no regression).
+- **Evidence of failure (baseline):** [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md) — mega FAIL / small PASS; mem peak ~3.3 GiB before kill.
+
+**Temporary agent workaround (not the fix):** on mega-graphs prefer `concept_search` → `search_code` / `find_function` until FR-SEM-07 lands.
+
+#### US-MG-TOOL-01 — Mega-safe prefer-order + NL tools (**P0** / Must Have)
+
+**As an** AI agent on a mega-graph mount, **I want** `concept_search` and `query_graph` to complete without dumping the full element/relationship tables, **so that** prefer-order discovery and NL subgraph stay usable under the documented MCP memory budget.
+
+**Acceptance criteria:**
+- **Given** mega `/workspace-other`, **When** `concept_search(query="authentication")` runs, **Then** it returns within seconds without MCP restart; no full-table `load_indexed_code_elements` / equivalent.
+- **Given** mega, **When** `query_graph(question="what connects auth to payment")` runs, **Then** it completes without `all_elements()` / `all_relationships()` WARN on that path; response respects `token_budget`.
+- **Given** mega, **When** `get_clusters` runs and live Louvain is refused, **Then** if `cluster_id` is populated it returns precomputed clusters; else a structured empty + offline-assign hint (not a hang).
+- **Evidence of failure (baseline):** [`docs/reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md`](reports/ce03fd8-docker-mcp-full-tool-test-2026-07-20.md).
+
+### 3.15 Day-2 Embed Resume (US-EMBED) — v3.7.2 — **DONE (prior P0)**
+
+> **Trigger:** Turning embedding on (standalone Docker `embed --wait`, or Docker MCP with `LEANKG_EMBED_BACKGROUND` / boot / setup) against a persisted RocksDB volume looks like a full cold rebuild — unacceptable CPU/RAM/time on mega-graphs.
+>
+> **Universal rule:** **Resume if embed data exists; cold/fresh only if none exists.** Same rule for every entry path.
+>
+> **Depends on:** `embedding_state` + incremental filter (FR-HNSW-E foundation). **Closes the gap** so day-2 behavior matches the product promise in v3.6.3 (“day-2 incremental embed stays fast”).
+>
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Focus=`P0` / `US-EMBED-*` / `FR-EMBED-RESUME-*` / `REL-052`.
+
+#### US-EMBED-01 — Second standalone embed updates deltas only (Must Have)
+
+**As an** operator embedding a large mounted project via Docker `embed --wait`, **I want** a second run on unchanged code to skip already-`fresh` vectors, **so that** I do not burn another full cold-embed (hours / multi-GB) of CPU and RAM.
+
+**Acceptance criteria:**
+- **Given** a RocksDB project with `embedding_state=fresh` for (nearly) all targeted types after a successful first embed, **When** the same `embed --wait --types function,method` command runs again with no code changes, **Then** ONNX work embeds ≈0 new vectors (`skipped_fresh` ≈ work list) and wall time is **minutes not hours** on mega-graphs.
+- **Given** a small set of new/changed functions, **When** day-2 embed runs, **Then** only those dirty QNs are re-inferred; other fresh rows stay untouched.
+- **Given** docs / operator scripts, **When** examples show standalone Docker embed, **Then** they use container path placeholders (`/workspace-other`) and document that the named RocksDB volume must be reused.
+
+#### US-EMBED-02 — Interrupted embed resumes without discarding fresh work (Must Have)
+
+**As an** operator whose embed job is killed (OOM, Ctrl-C, container stop), **I want** the next embed (CLI or Docker MCP) to resume from persisted `embedding_state`, **so that** already-written fresh vectors are not recomputed.
+
+**Acceptance criteria:**
+- **Given** an embed interrupted after N batches committed `fresh`, **When** embed is started again (same project / same RocksDB), **Then** those N QNs are skipped and only remaining dirty/missing QNs are processed.
+- **Given** a stale `embed.lock` with no live PID, **When** a new embed starts, **Then** the lock is cleared or stolen safely (existing lock semantics) without wiping vectors.
+
+#### US-EMBED-03 — Zero-dirty run does not tear down HNSW (Must Have)
+
+**As an** operator, **I want** a no-op day-2 embed to leave the HNSW index intact, **so that** semantic search stays available and the process does not pay O(N log N) rebuild cost for zero writes.
+
+**Acceptance criteria:**
+- **Given** `to_embed` is empty and orphan reap is empty, **When** any embed path runs, **Then** the process does **not** drop or recreate `embedding_vectors:vec_idx`.
+- **Given** `to_embed` is non-empty, **When** bulk write path runs, **Then** existing drop-before-bulk / recreate-after (or equivalent correct incremental update) remains allowed.
+
+#### US-EMBED-04 — Docker MCP / boot embed resumes existing data (Must Have)
+
+**As an** operator who turns embedding on inside Docker LeanKG (e.g. `LEANKG_EMBED_BACKGROUND=1`, `LEANKG_EMBED_ON_BOOT=1`, `LEANKG_DOCKER_SETUP=1`, or `docker-up.sh`), **I want** the service to detect existing vectors/`embedding_state` on the RocksDB volume and **resume**, **so that** enabling embed after a prior cold fill (or after MCP-only restarts) never wipes or re-embeds the whole graph.
+
+**Acceptance criteria:**
+- **Given** a named RocksDB volume already containing embeddings for `/workspace` or `/workspace-other`, **When** the container starts with any embed-on path enabled, **Then** LeanKG runs **incremental resume** (skip `fresh`); it does **not** treat the start as a cold wipe.
+- **Given** a project with **no** embedding data (empty state / no vectors), **When** embed is turned on, **Then** a **cold/fresh** fill is allowed and expected.
+- **Given** embed remains off (`LEANKG_EMBED_BACKGROUND=0`, `LEANKG_EMBED_ON_BOOT=0`), **When** MCP restarts, **Then** existing embed data is left intact and semantic tools use whatever HNSW is already present.
+- **Given** docs (`entrypoint.sh`, compose, AGENTS), **When** operators enable Docker embed, **Then** docs state the resume-vs-cold rule explicitly.
+
+#### US-EMBED-05 — MCP idle-gated partial embed toggle (Must Have)
+
+**As an** operator with `LEANKG_EMBED_ON_BOOT=0` / `LEANKG_EMBED_BACKGROUND=0`, **I want** MCP `embed_control` to arm/disarm in-process embedding only when the server is idle and under an RSS fraction of the container budget, **so that** day-2 resume does not starve search or rebuild cold when vectors already exist.
+
+**Acceptance criteria:**
+- **Given** MCP is healthy and boot embed is off, **When** `embed_control(action=on)`, **Then** the job waits for idle (`LEANKG_EMBED_IDLE_AFTER_SECS`) + RSS headroom, then runs **Incremental** resume by default (`full=false`).
+- **Given** existing vectors and an unchanged graph, **When** the job runs, **Then** status reports `mode=incremental`, high `skipped_fresh`, `embedded≈0`, and the process does **not** load ONNX or drop HNSW.
+- **Given** a running/armed job, **When** `embed_control(action=off)`, **Then** the in-process worker cooperatively cancels (no `SIGTERM` to Docker PID 1).
+- **Given** `mode=partial` (default), **When** embed runs under MCP, **Then** it duty-cycles batches, yields on MCP activity (`paused_yield`), and caps soft RSS to `LEANKG_EMBED_RSS_FRACTION` of the container budget.
+
+---
+
+### 3.16 MCP Tool Surface Rationalization (US-SURF) — v3.7.4 + Wave 1b (v3.8.3)
+
+> **Trigger:** Agent-facing overlap among discovery / semantic / identity tools plus legacy `mcp_*` names. Review evidence: live MCP schemas + `src/mcp/handler.rs` / `tools.rs`; redundancy matrix in `tests/redundant_tools_matrix.rs`.
+>
+> **Baseline (v3.7.4):** `ToolRegistry::list_tools()` ≈ **85** tools. Soft-deprecations do not shrink `tools/list` until removed.
+>
+> **Wave 1a (DONE 2026-07-21):** Hard-deleted `wake_up`, `search_by_environment` (+ earlier `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones`). Evidence: [`docs/reports/rel-062-mcp-surf-hard-delete-2026-07-21.md`](reports/rel-062-mcp-surf-hard-delete-2026-07-21.md).
+>
+> **Wave 1b (v3.8.3):** Hard-delete remaining true subsets `load_layer`, `get_doc_structure`. Full keep-both matrix below.
+>
+> **Policy:** Document first → hard-delete true subsets → soft-deprecate with explicit replacements. Prefer wrong-tool prevention over cosmetic renames.
+>
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SURF-*` / `FR-SURF-*` / `REL-053` / `REL-062` / `REL-076`.
+
+#### Prefer-order (canonical — post Wave 1b)
+
+**Search triple (discovery):**
+1. `concept_search` — domain terms / aliases / matched concepts payload
+2. `semantic_search` — natural language; HNSW+rerank when embeddings exist, else ontology-first `safe_discover`
+3. `search_code` — exact/name + `element_type` filter; ontology-first on mega-graphs
+
+**Semantic triple (context):**
+1. `semantic_search` — discovery page (ANN if available, else ontology+name)
+2. `kg_semantic_context` — ranked seeds + 1–2 hop neighborhood (**embeddings required**)
+3. `kg_context` — ontology match + expand (**no vectors**)
+
+**Identity / overview (session start):**
+1. `get_overview_context` — structured L0 + L1 + wake summary (**only** session-start overview)
+2. `get_architecture` — deep single-call overview (optional follow-on)
+3. ~~`load_layer`~~ / ~~`wake_up`~~ — **hard-removed** (Wave 1a/1b)
+
+**Doc structure:** `get_doc_tree` only (~~`get_doc_structure`~~ hard-removed Wave 1b).
+
+#### Full redundancy review (Wave 1b — 2026-08-01)
+
+| Tool / group | Verdict | Replacement / reason |
+|--------------|---------|----------------------|
+| `mcp_hello`, `mcp_impact`, `get_doc_for_file`, `find_clones` | **Hard-removed** (prior) | `kg_self_test`/`mcp_status`; `get_impact_radius`; `find_related_docs`; semantic HNSW |
+| `wake_up`, `search_by_environment` | **Hard-removed** (Wave 1a) | `get_overview_context`; `env=` on search/`kg_*` |
+| `load_layer` | **Hard-delete Wave 1b** | L0/L1 → `get_overview_context`; L2 → `get_cluster_context`; L3 → `search_code` / `find_function` |
+| `get_doc_structure` | **Hard-delete Wave 1b** | `get_doc_tree` (hierarchy + sections; closes FR-SURF-06 as delete-weaker) |
+| Search prefer-order triple | **Keep both** | Intentional layers — do not merge |
+| Semantic context triple | **Keep both** | Discovery vs embed-traverse vs ontology-only |
+| `get_context` ↔ `ctx_read` | **Keep both** | Graph context vs compression-mode file read |
+| `orchestrate` ↔ `query_graph` | **Keep both** | Intent router+cache vs NL connection subgraph |
+| `get_callers` ↔ `get_call_graph` | **Keep both** | Inbound vs outbound |
+| `get_nav_*` / `find_route` / `get_screen_args` | **Keep both** | Android Navigation domain |
+| Cluster trio | **Keep both** | List / context / SKILL.md |
+| `get_god_nodes` ↔ `get_graph_report` | **Keep both** | Hotspots JSON vs prose report (+ disk write) |
+| `get_overview_context` ↔ `get_architecture` | **Keep both** | Session overview vs deep arch dump |
+| `get_traceability` / `search_by_requirement` / `get_feature_flow` / `get_traceability_matrix` | **Keep both** | Element chain vs req search vs FR→workflow vs PO matrix |
+| `temporal_query` ↔ `timeline` | **Keep both** | As-of snapshot vs per-element evolution |
+| `generate_doc` ↔ `add_documentation` | **Keep both** | Generate vs index existing file |
+| `find_large_functions` ↔ `find_dead_code` | **Keep both** | Size heuristic vs zero-caller heuristic |
+| `export_html` ↔ `export_graph_snapshot` | **Keep both** | Vis HTML vs portable JSON |
+| Ops `mcp_*` bootstrap | **Keep** | Do not rename for cosmetic consistency |
+
+#### US-SURF-01 — Agents know which search/semantic tool to call first (Must Have)
+
+**As an** AI agent, **I want** each overlapping search/semantic tool's schema to state when to use it and what to try next, **so that** I do not burn retries on the wrong surface.
+
+**Acceptance criteria:**
+- **Given** `tools/list`, **When** an agent reads `semantic_search`, **Then** the description states the dual path (HNSW+rerank if embeddings exist; else ontology-first) — not “ANN-only”.
+- **Given** `search_code` / `concept_search` / `semantic_search` / `kg_semantic_context` / `kg_context`, **When** schemas are listed, **Then** each has a one-line prefer-order hint consistent with §3.16.
+- **Given** docs / AGENTS / LeanKG skill, **When** search guidance is updated, **Then** it matches the same prefer-order (no conflicting “always grep / always semantic” advice).
+
+#### US-SURF-02 — Remove zero-value / superseded MCP tools (Must Have)
+
+**As an** AI agent, **I want** dead or strict-subset tools removed from the registry, **so that** `tools/list` is smaller and I cannot call obsolete names by mistake.
+
+**Acceptance criteria:**
+- **Given** a build after this story, **When** `ToolRegistry::list_tools()` runs, **Then** `mcp_hello`, `mcp_impact`, and `get_doc_for_file` are **absent**.
+- **Given** callers needing impact analysis, **When** they use `get_impact_radius`, **Then** they retain severity / confidence / `project=` / `compress_response` (strict superset of former `mcp_impact`).
+- **Given** callers needing docs for a file, **When** they use `find_related_docs`, **Then** they get `documented_by` **and** `references` (superset of former `get_doc_for_file`).
+- **Given** `tests/redundant_tools_matrix.rs`, **When** the suite runs, **Then** it reflects the removals (no stale SUPERSEDED rows for deleted tools).
+
+#### US-SURF-03 — Soft-deprecate wake_up in favor of get_overview_context (Should Have) — **DONE → hard-removed Wave 1a**
+
+Historical soft-deprecation ACs satisfied; tool absent from registry.
+
+#### US-SURF-04 — Soft-deprecate search_by_environment (Should Have) — **DONE → hard-removed Wave 1a**
+
+Historical soft-deprecation ACs satisfied; use `env=` on primary search / `kg_*`.
+
+#### US-SURF-05 — Unify doc structure tools (Could → Must Wave 1b) — **DONE via hard-delete**
+
+**As an** AI agent exploring documentation, **I want** one doc-structure tool, **so that** I do not pick between `get_doc_tree` and `get_doc_structure`.
+
+**Acceptance (Wave 1b):** `get_doc_structure` absent; `get_doc_tree` remains. Mega-safe pagination of `get_doc_tree` remains a follow-on (still refuses unbounded `all_elements()` on mega).
+
+#### US-SURF-08 — Publish full redundancy review (Must Have — Wave 1b)
+
+**As a** product owner, **I want** the keep-both vs hard-delete matrix in the PRD, **so that** agents/engineers do not re-propose deleting intentional prefer-order layers.
+
+**Acceptance:** §3.16 table above + tracker rows + `REL-076` evidence report.
+
+#### US-SURF-09 — Hard-delete load_layer (Must Have — Wave 1b)
+
+**As an** AI agent, **I want** `load_layer` removed, **so that** I use `get_overview_context` / `get_cluster_context` / search instead of a half-wired progressive chooser.
+
+**Acceptance:**
+- **Given** registry after Wave 1b, **When** `tools/list` runs, **Then** `load_layer` is absent.
+- **Given** overview prefer-order in AGENTS / skills / install hooks, **When** read, **Then** they say `get_overview_context` → optional `get_architecture` (no `load_layer`).
+
+#### US-SURF-10 — Hard-delete get_doc_structure (Must Have — Wave 1b)
+
+**As an** AI agent, **I want** only `get_doc_tree` for doc hierarchy, **so that** I cannot call the flat duplicate.
+
+**Acceptance:** `get_doc_structure` absent; docs/smoke point to `get_doc_tree`.
+
+#### US-SURF-11 — Sync agent surface after Wave 1b (Must Have)
+
+**As an** operator, **I want** matrix/smoke/skills/docs grep-clean of preferred calls to deleted tools, **so that** agents do not chase ghosts.
+
+**Acceptance:** `redundant_tools_matrix` green; smoke/install updated; hard-removed list includes Wave 1b tools.
+
+### 3.31 Harness-Era Repositioning (US-HEA) — v3.8.7
+
+> **Trigger:** 2026-08-30 live-probe assessment ([research](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md)) of LeanKG against 2026 harness-native primitives. Verdict: high value as **org-memory substrate**; mid value as search tool (harness-native Glob/Grep/LSP out-compete; semantic probes returned 0/3 with dead-end hints; `kg_ontology_status` alias accounting broken; remote-PG 30s timeouts; 50k full-scan cap invisible).
+
+#### US-HEA-01 — Lead with the org-memory substrate (Must Have)
+
+**As a** product owner, **I want** README + agent-surface docs to position LeanKG as the org-memory substrate (requirements traceability, cross-env conflicts, incidents, team map, cross-repo service graph), **so that** the wedge is the layer no harness ships instead of search agents already have.
+
+**Acceptance:** README opening + §1.1 + skills/install docs name the org-memory surfaces first; search is positioned as complementary (graph-verified, deterministic), never as a Grep/LSP replacement.
+
+#### US-HEA-02 — Fix ontology alias-coverage accounting (Must Have)
+
+**As an** agent, **I want** `kg_ontology_status` to report self-consistent alias coverage, **so that** I can trust the metric before promoting the ontology.
+
+**Acceptance:**
+- **Given** the live probe result (`nodes_missing_aliases: 14` while `domain_entity.counts` sums to 13), **When** the fix lands, **Then** missing-alias count cannot exceed the aliased population (invariant test) and real aliases are backfilled or the formula is corrected.
+
+#### US-HEA-03 — Semantic dead-end escape (Must Have)
+
+**As an** AI agent, **I want** empty or below-floor semantic results to return an actionable fallback, **so that** I never hit a bare "0 results — use search_code or disk grep" dead end.
+
+**Acceptance:** `semantic_search` / `kg_semantic_context` empty responses carry a structured `fallback` hint (`search_code` with the same query terms); live probe repeats the 0/3 scenario and returns the hint.
+
+#### US-HEA-04 — Mega-graph full-scan visibility (Should Have)
+
+**As an** on-call operator, **I want** the 50k full-scan cap surfaced in `get_architecture` / `mcp_status`, **so that** I do not script `check_consistency`-class tools against a 360k-element graph.
+
+**Acceptance:** `get_architecture` (default view) includes the cap + list of guarded tools; docs note it next to the refusal message.
+
+#### US-HEA-05 — Remote-Postgres latency play (Must Have)
+
+**As a** self-hoster on remote Postgres, **I want** a documented + enforced latency strategy, **so that** heavy queries (`kg_semantic_context` 30s+) do not time out my MCP client.
+
+**Acceptance:** per-tool timeout below the 30s client-kill threshold returns a structured timeout error; docs give the local-PG / materialised-view options for heavy semantic queries.
+
+### 3.32 Session-Memory Audit vs omp Hindsight (US-SMA) — v3.8.8
+
+> **Trigger:** Source-grounded audit (2026-09-02) of omp.sh's Hindsight memory backend + autolearn against LeanKG's session-memory surface. omp mechanics (verified in `pi-coding-agent` sources): auto-recall on the first model turn (query composed from prompt + recent turns, injected as `<memories>` background context), auto-retain every N user turns at `agent_end` with prefix-hash incremental full-session transcripts, a 16-item/5s debounced retain queue flushed async, `per-project-tagged` scoping keyed on the repo primary checkout root (worktrees share one scope), and 3 seeded mental models (user-preferences / project-conventions / project-decisions) re-rendered on consolidation.
+>
+> **Audit finding:** LeanKG's `US-SM` read path is complete — `RecallStore` (`src/session/mod.rs:185-227`) has SHA-256 fingerprint dedup and rank-sorted, budgeted, timeout-bounded injection into `get_overview_context(recall=true)` — but **`RecallStore::push_dedup` has zero production callers**. `report_query_outcome` appends LESSONS.md only (`src/graph/query.rs:5887`), `agent_diary_write` appends its own JSONL (`src/mcp/handler.rs:1417`), `add_knowledge` writes the knowledge table. `recall_index.jsonl` is never written, so auto-recall injects nothing; the module doc (`src/session/mod.rs:8-12`) claiming those sources feed the index is aspirational. `Lesson {id, source, rank, text}` carries no timestamp, so rank cannot decay; diary read is last-N recency with no relevance.
+
+#### US-SMA-01 — Wire the recall write path (Must Have)
+
+**As an** agent writing durable memory via `report_query_outcome` / `agent_diary_write` / `add_knowledge`, **I want** those writes to also feed the ranked lessons index, **so that** `get_overview_context(recall=true)` actually injects prior lessons and `US-SM-02` / `US-GE-05` close for real.
+
+**Acceptance:**
+- **Given** one `agent_diary_write` (or `report_query_outcome`), **When** `get_overview_context(recall=true)` runs afterwards, **Then** `session_lessons` is non-empty and contains that note.
+- `report_query_outcome` seeds rank by outcome (`useful` 1.0 / `corrected` 0.8 / `dead_end` 0.2); diary notes carry tags in the lesson text; `add_knowledge` writes `title — content`.
+- Existing SHA-256 dedup applies; duplicates return `pushed: false` without error.
+- The module doc at `src/session/mod.rs:8-12` matches observed behavior.
+
+#### US-SMA-02 — Lesson recency decay (Must Have)
+
+**As an** agent starting a session, **I want** stale lessons ranked below fresh ones, **so that** the top-K injection reflects current reality instead of old one-offs.
+
+**Acceptance:** `Lesson` gains `created_at`; `recall_for_overview` scores `rank × recency_decay` (≈30-day half-life); no-timestamp rows (legacy) sort as oldest.
+
+#### US-SMA-03 — Outcome feedback loop on lessons (Should Have)
+
+**As an** agent re-using a prior lesson, **I want** `report_query_outcome` to reinforce or retire that lesson, **so that** the index self-corrects without an LLM consolidation pass (LeanKG's deterministic analog of omp's consolidation-triggered mental-model refresh).
+
+**Acceptance:** `report_query_outcome` accepts an optional `lesson_id`: `useful` bumps rank, `dead_end` decays it, `corrected` rewrites the text (new fingerprint supersedes the old line via dedup). Idempotent per lesson+outcome.
+
+#### US-SMA-04 — Session retain ingest (Should Have)
+
+**As a** harness (omp / Claude Code) ending a session, **I want** one `session_retain(project, session_id, transcript)` call to ingest the conversation, **so that** session-end capture works like omp's `agent_end` auto-retain without LeanKG needing to observe harness events.
+
+**Acceptance:** idempotent per `documentId = session_id` (re-sends do not duplicate lessons); long transcripts chunk deterministically; ingestion feeds the same dedup + index; a documented Stop-hook recipe shows the flush wiring.
+
+#### US-SMA-05 — Worktree-shared memory scope (Could Have)
+
+**As an** agent working in `.worktrees/<feature>/`, **I want** memory rooted at the repo common dir, **so that** feature-branch sessions share the recall index instead of fragmenting it (mirrors omp's primary-checkout scoping).
+
+#### US-SMA-06 — Memory hygiene (Could Have)
+
+**As an** operator, **I want** secret redaction before diary/lesson writes and truncation markers on injected lessons, **so that** tokens never leak into `.leankg/` and injection budgets are visually auditable.
+
+**Won't Do (this track):** reopen `US-SM-03..07` scope; embedding-backed lesson retrieval (rides `US-SM-04` RRF later); an LLM consolidation pass; a server-side memory bank.
+
+### 3.33 Search-Layer Discipline vs zvec-grep (US-ZG) — v3.8.9
+
+> **Trigger:** [Competitive analysis](analysis/zvec-grep-vs-leankg-2026-09-03.md) (2026-09-03) of [zvec-ai/zvec-grep](https://github.com/zvec-ai/zvec-grep) — local-first hybrid search (managed ripgrep + BM25/FTS + vector, RRF-fused) behind one default MCP tool, with per-response freshness reporting, one-command agent install, and a published paired A/B benchmark methodology. zg pre-1.0, 1.4k★, TypeScript on Alibaba's zvec engine. Narrative: §1.4.
+>
+> **Audit finding:** zg's product surface (flat retrieval) does not collide with LeanKG's durable moat (graph intelligence + org memory). The transferable gaps are disciplinary: (1) LeanKG exposes ~76 tools where zg exposes 1 with intent-expressing parameters; (2) LeanKG's responses carry no staleness signal despite a working auto-indexing watcher; (3) LeanKG's lexical search is substring/`ILIKE` scanning (`src/graph/query.rs:2681`, `src/db/backend.rs:1948`) with no ranked FTS; (4) agent onboarding is manual; (5) the repeatable `benchmarks/cross_tool/` harness lacks zg's input pinning, N-trial variance, and judge-blind scoring.
+
+#### US-ZG-01 — Default MCP toolset with a single router tool (Must Have)
+
+**As an** AI agent connecting to LeanKG MCP, **I want** a default toolset exposing one intent-expressing router tool (orchestrate-style) instead of ~76 tools, **so that** tool triage, schema injection cost, and misfires drop without losing access to the full catalog on demand.
+
+**Acceptance:**
+- Default toolset: one router tool whose parameters route to `semantic_search` / `search_code` / `get_impact_radius` / `query_graph` / `get_context` etc. (reuses `orchestrate`'s cache + intent parser; not a rewrite).
+- Full catalog available via explicit opt-in (CLI flag / env / config, zg `--mcp-toolset full` analog).
+- Live validation: default-toolset session completes the v3.8.5 probe set with zero tool-selection errors.
+
+#### US-ZG-02 — Ranked lexical search via Postgres FTS (Must Have)
+
+**As an** agent searching for an exact identifier, class, or config key, **I want** ranked full-text results fused with vector scores, **so that** lexical anchors rank semantically-relevant hits instead of substring-scan noise.
+
+**Acceptance:**
+- `tsvector` column + GIN index on `code_elements(name, qualified_name)` and `knowledge_entries(title, content)`; queries use `websearch_to_tsquery` (or equivalent).
+- `semantic_search`'s dual path fuses lexical and vector candidates via RRF (single parameterized `k`, consistent with `US-SM-04`).
+- Substring fallback (`str_includes` / `ILIKE`) remains only as exact-regex escape hatch; benchmark on the cross_tool suite shows no F1 regression vs today.
+
+#### US-ZG-03 — Freshness contract in MCP responses (Must Have)
+
+**As an** agent consuming LeanKG results, **I want** every indexed response to state `freshness: fresh|possibly_stale`, **so that** I can trust answers or trigger an explicit refresh instead of unknowingly acting on drifted data (the 2026-08-30 dead-end probe class, §3.31).
+
+**Acceptance:**
+- Response envelope carries `freshness` on all index-backed tools; `possibly_stale` only with evidence of drift (watcher errors, missed event paths, resume drift) — not by default.
+- Background reconciliation reindexes drift and flips the flag; it never blocks or shares the query transaction (heavy work never shares a request — lesson of the pre-PG v3.8.4 LOCK-poison incident).
+- `leankg watch` / `mcp-stdio --watch` interplay documented: watcher maintains the flag; queries never reindex inline.
+
+#### US-ZG-04 — One-command agent install (Should Have)
+
+**As a** developer adopting LeanKG, **I want** `leankg install --target opencode|claude|codex|cursor` to write the correct MCP config (including Docker container-path `project=` guidance), **so that** onboarding does not fail on hand-edited configs (the #1 live-support failure mode).
+
+**Acceptance:** idempotent config writes per target; `--force` replaces conflicting unmanaged entries; Docker deployments emit container-mount `project=` instructions (MANDATORY rule from AGENTS.md); uninstall reverses cleanly.
+
+#### US-ZG-05 — Cross-tool benchmark hardening (Should Have)
+
+**As a** maintainer proving LeanKG's value, **I want** the existing `benchmarks/cross_tool/` harness (7-repo WITH/WITHOUT, `make full`) upgraded to zg-grade rigor — pinned repo/task versions, N-trial runs with reported variance, judge-blind scoring — **so that** published deltas are defensible against stochasticity and leakage critiques.
+
+**Acceptance:** pinned repo SHAs + prompt versions recorded per run; ≥3 trials per arm with variance reported; scorer blind to arm identity; the zg pitfalls checklist (leakage, like-for-like, stochasticity, tool-access smoke test) adopted into `docs/cross-tool-benchmark.md`.
+
+#### US-ZG-06 — Embedding catalog breadth (Could Have)
+
+**As an** operator on constrained hardware, **I want** a small in-catalog embedding model (Model2Vec-class static vectors) alongside the default, **so that** quick indexes do not require the ONNX stack, with documented model-switch/rebuild semantics.
+
+**Won't Do (this track):** managed-rg reimplementation (harness-native grep + LeanKG output convention covers exhaustive search); image/multimodal ingest (PRD §10); desktop GUI/daemon polish; competing with zg on raw file-chunk retrieval of non-code corpora.
+
+## 4. Implementation Status Summary
+
+
+> **Implementation status:** see [`prd-task-tracker.md`](prd-task-tracker.md) — Summary counts + Active session (open work) + Master table.
+
+## 5. Functional Requirements
+
+### 5.1 Core Features (DONE)
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+
+### 5.2 GitNexus Enhancements (DONE)
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+
+### 5.3 AB Testing & Validation (DONE)
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+
+### 5.4 RTK Compression (DONE)
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+
+### 5.5 Infrastructure Features (DONE)
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+
+### 5.6 MemPalace-Inspired Features
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+
+### 5.7 Massive Graph UI (DONE)
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+
+### 5.8 Multi-Language Support
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+> **Indexed vs module-only (audit 2026-07-15):** “DONE (indexed)” means the extension is in `find_files_sync` and extraction runs on index. “PARTIAL (unwired)” means an extractor module/tests exist but the extension is **not** scanned.
+
+| Language | Extensions | Extractor Status | Parser / module |
+|----------|-----------|-----------------|-----------------|
+| Go | `.go` | DONE (indexed) | tree-sitter-go |
+| TypeScript/JavaScript | `.ts`, `.tsx`, `.js`, `.jsx` | DONE (indexed) | tree-sitter-typescript |
+| Python | `.py` | DONE (indexed) | tree-sitter-python |
+| Rust | `.rs` | DONE (indexed) | tree-sitter-rust |
+| Java | `.java` | DONE (indexed) | tree-sitter-java |
+| Kotlin | `.kt`, `.kts` | DONE (indexed) + Android depth | tree-sitter-kotlin-ng |
+| Dart | `.dart` | DONE (indexed) (`7ec6484`) | tree-sitter-dart |
+| XML | `.xml` | DONE (indexed) (`92db9aa`) + Android | tree-sitter-xml / Android extractors |
+| Terraform | `.tf` | DONE (indexed) | Custom extractor |
+| CI/CD YAML | `.yml`, `.yaml` | DONE (indexed) | GitHub Actions, GitLab CI, Azure Pipelines |
+| Markdown | `.md` | DONE (doc indexer) | pulldown-cmark |
+| Swift | `.swift` | DONE (indexed) — regex entities + tree-sitter-swift calls + heritage; hybrid typed resolve when `typed_resolve` includes `swift` | tree-sitter-swift + `swift.rs` + sourcekit-lsp |
+| Objective-C | `.m`, `.mm`, `.h` | DONE (indexed) — regex entities + tree-sitter-objc message sends; `.h` sniff; hybrid typed resolve when `typed_resolve` includes `objc` | tree-sitter-objc + `objc.rs` + clangd |
+| Vue (SFC) | `.vue` | DONE (indexed) — `src/indexer/sfc.rs` regex wired into walk (REL-032) | regex |
+| Svelte (SFC) | `.svelte` | DONE (indexed) — `src/indexer/sfc.rs` regex wired into walk (REL-032) | regex |
+| SQL DDL | `.sql` | DONE (indexed) — `src/indexer/sql.rs` regex wired into walk (REL-032) | regex |
+| C/C++ | `.cpp`, `.cxx`, `.cc`, `.hpp`, `.h`, `.c` | PARTIAL — tree-sitter parser present; **not** in current `find_files_sync` extensions list | tree-sitter-cpp |
+| C# | `.cs` | PARTIAL — parser present; **not** in current index walk | tree-sitter-c-sharp |
+| Ruby | `.rb` | PARTIAL — parser present; **not** in current index walk | tree-sitter-ruby |
+| PHP | `.php` | PARTIAL — parser present; **not** in current index walk | tree-sitter-php |
+
+### 5.9 Graphify-Inspired Features
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-GF-*`.  
+> Evidence: [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md). Deploy parity with Graphify HTTP MCP is **not** a gap — LeanKG RocksDB multi-project compose is competitive. Focus requirements on **agent query UX, edge honesty, report/HTML artifacts, always-on install**.  
+> **Promote to Focus P1:** FR-GF-07, FR-GF-08, FR-GF-09, FR-GF-13, FR-GF-21, FR-GF-22, FR-GF-24 (see §1.1 queue).
+
+New FRs (v3.7.8): FR-GF-21..24 — see §5.20 table (shared with cost track for tracker visibility).
+
+
+### 5.10 CBM Structural Parity Requirements (merged)
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+> Canonical FR IDs retained from `prd-structural-parity-cbm.md` (FR-A/B/C/D/E). Status audited 2026-07-14 (v0.17.9).
+
+Tracks A–E (activate / structural / platform / dual-run / 3D UI): see tracker `FR-A*` / `FR-B*` / `FR-C*` / `FR-D*` / `FR-E*`.
+
+
+### 5.11 Team Infrastructure / v2 Requirements (merged from `prd-leankg.md`)
+
+> **FRs + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-*` for this section.
+
+
+
+### 5.12 Semantic ANN — in-database HNSW expansion (v3.6.2) + embed runtime (v3.6.3)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-HNSW-*`, `FR-EMBED-*`, `FR-LSH-*`, `FR-BENCH-HNSW`.
+
+> **Product bet:** LeanKG's strong path is **semantic search** via dense embeddings + in-database native HNSW. Do **not** reimplement MinHash/LSH in-process, and do **not** wire legacy `::lsh` for clones. Pattern already proven by embeddings: LeanKG builds text blobs → the database stores vectors + HNSW index.
+>
+> **Cold-embed reality (v3.6.3):** on mega-graphs, wall time is dominated by **ONNX embedding inference** (~170 vec/sec e2e → ~36 min for ~371k functions). Legacy-engine/Redis writer-only paths are ~100k+ vec/sec. Do **not** treat storage migration (WAL-off, Redis, FalkorDB) as the primary cold-SLA lever.
+
+**Policy (details + status in tracker):**
+- Remove custom MinHash/LSH; keep in-database HNSW as shipped default until FR-VE-GATE
+- MCP must not block on cold embed; **day-2 incremental / resume is P0** (FR-EMBED-RESUME-* closes gaps vs FR-HNSW-E PARTIAL)
+- **Won't Do:** legacy `::lsh` for clones; migrate KG to FalkorDB/Redis to fix cold embed
+
+### 5.13 LSP Adoption Track from CBM (moved from former 5.12; deep compare 2026-07-15)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-LSP-A`..`FR-LSP-D`.
+
+> LSP-only FRs retained from the CBM deep read. Clone/LSH FRs cancelled in Section 5.12.
+>
+> **Intent:** close the zero-setup gap (LeanKG currently requires user-configured LSP servers) via prefab `lsp:` block, optional in-process native resolver, indexer wiring for `resolution_method=typed`, and cross-file type registry.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-LSP-A | Must Have | LeanKG-native Hybrid LSP tier — **in-process, no-spawn** type resolver for **Go + TypeScript MVP** (Python/Rust later). Runs during index; never forks gopls/tsserver. |
+| FR-LSP-B | Must Have | Prefab `lsp:` block — `leankg init --with-lsp` writes default servers from the catalog (`gopls`, `typescript-language-server`, `pyright`, …) and sets `indexer.typed_resolve: go,ts`. Empty yaml still falls back to catalog at resolve time (REL-039). |
+| FR-LSP-C | Must Have | Wire hybrid/LSP results into the indexer — when `typed_resolve=go,ts` (or `all`), CALLS edges get `resolution_method=typed` + high confidence before DB insert. |
+| FR-LSP-D | Must Have | Cross-file type registry shared across files in the same project (functions/methods/types keyed by name, module/dir, and type+method). |
+| REL-039 | Must Have | Default LSP server bootstrap fanout (FR-LSP-B) — catalog-backed prefab for gopls + tsserver + pyright (+ other catalogued languages). |
+
+**Acceptance (MVP):**
+- Given a small Go package with cross-file calls and `typed_resolve=go,ts`, indexing produces ≥1 CALLS edge with `resolution_method=typed`.
+- Given a TS module pair with an exported function call, same.
+- `leankg init --with-lsp` writes a non-empty `lsp.servers` map.
+- Hybrid path never spawns a child process (unit-tested).
+- External `resolve_with_lsp` still works when binaries are installed (existing bridge).
+
+### 5.14 Optimized Local-First Vector Graph Engine (v3.7.0)
+
+> **Former P0 — COMPLETE on PR #80.** Current highest focus is **§5.16 Day-2 Embed Resume**.  
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-VE-*` / `US-VE-*` / Kind=`Release` (§8.4).
+
+> **Goal:** Ultra-lightweight vector/graph storage + retrieval that works under Apple M2 Pro / 16GB / 256GB SSD and scales to Linux x86_64 + TiKV **without rewriting** MCP/CLI semantic APIs.
+>
+> **Coexistence:** FR-VE-GATE is **met** on PR #80 when `LEANKG_VE_GATE_FULL=1` (`ready_for_default=true`). Runtime **shipped default ANN** was in-database HNSW (FR-HNSW-B) until the Phase 8 Postgres cutover made pgvector the default. LocalEngine / CloudEngine stay opt-in via `LEANKG_VECTOR_ENGINE=local|cloud`.
+>
+> **Verification (2026-07-17 — PR #80):**
+> - Unit: `cargo test --release --lib -- vector_engine` → **56 passed** (3 ignored full-scale)
+> - CI path: `cargo test --lib` (debug) → **651 passed** after RSS `delta_ok` + i8 overflow fixes
+> - E2E: `cargo test --release --test vector_engine_e2e` → **6 passed**; `LEANKG_VE_GATE_FULL=1` ignored gate → `ready_for_default=true`
+> - Bench: `cargo bench --bench vector_engine_ab` → [`docs/benchmarks/vector_engine_gate_results.json`](benchmarks/vector_engine_gate_results.json)
+> - A/B measured: token −**65.0%**, tool −**84.6%**, speedup **2.50×** (100 tasks; floors 60%/80%/2×)
+> - Docs: product README polish (`85c1632`); semantic backlog v3.7.1 remains P2/P3
+
+> **Hardware envelope:** Local survival cap **2GB** (Docker/cgroup) → Cloud **50–80%** of available RAM. Prefer sequential append I/O; minimize random SSD writes.
+
+#### 5.14.1 Decoupled 3-tier storage
+
+- Tier 1: graph topology in RocksDB (Local) / TiKV (Cloud) — metadata, AST refs, HNSW adjacency; Local RocksDB: mmap off, pin L0 filter/index, BinaryAndHash, Zstd
+- Tier 2: SQ8/INT8 vectors 100% in RAM for SIMD ANN (no disk I/O on inner loop)
+- Tier 3: flat binary FP32 + source payload — read once at post-filter
+- Abstraction: Rust traits + static enum dispatch (`LocalEngine` | `CloudEngine`)
+
+#### 5.14.2 Dynamic runtime adaptation
+
+- Runtime SIMD dispatch (AVX-512 / AVX2 / NEON / scalar) — never SIGILL
+- Auto-tune RocksDB block cache from cgroups / sysinfo
+- Dynamic rayon pool (leave 2 cores free Local; full machine Cloud)
+- HNSW M ∈ [12, 16]; raise efConstruction; recall &gt; 90% at efSearch=50
+
+#### 5.14.3 Flat file consistency & GC
+
+- Dual-write order: Append → fsync → commit offsets → update RAM SQ8
+- Crash recovery must leave no dangling pointers
+- Zero-downtime GC (shadow paging + micro-lock delta) when fragmentation &gt; 30%
+
+#### 5.14.4 Tests & benches (mandatory before default switch)
+
+Agent A/B floors (also in NFR / tracker `FR-VE-BENCH-*`):
+
+| Metric | Target |
+|--------|--------|
+| Token consumption | ≥ **60%** reduction vs grep/cat baseline (stretch **61%**) |
+| Tool-call frequency | ≥ **80%** reduction (stretch **84%**, aim 1-hop context) |
+| Time-to-resolution | ≥ **2×** faster |
+| Task success rate | ≥ baseline |
+
+**Won't Do (this track):**
+- Reopen Redis/FalkorDB as cold-embed write accelerator (still Won't Do per v3.6.3)
+- Require Cloud SaaS hosting (self-hosted TiKV/CloudEngine only)
+- Rewrite MCP tool names/APIs for the engine swap
+
+### 5.15 Semantic MCP Agent UX Enhancements (v3.7.1)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SEM-*` / `REL-051` / `REL-054` / `US-SEM-*`. **Current P0:** `FR-SEM-07` / `REL-054`.
+>
+> **Evidence baseline (GREEN, no reopen) — small graph:** [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md). Live probe confirms HNSW+rerank, ontology, `kg_*` schema health, and graph-enriched context.
+>
+> **Mega-graph gap (P0, 2026-07-20):** [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md) — HNSW path OOMs when seed hydration still touches `all_elements()`. FR-SEM-01..05 remain agent UX / ops / release hygiene — **FR-SEM-07 is the mega safety fix**.
+
+**Policy:**
+- Keep shipped retrieval path (FR-HNSW-D): embed → HNSW top-k → optional rerank → optional graph traverse
+- Do **not** treat MCP live smoke as a substitute for `cargo test --release --features embeddings` (`hnsw_recall_e2e`, `embeddings_state_e2e`, `vector_engine_e2e`, `ontology_e2e`, `mcp_tools_full_tests`, …)
+- Prefer fixing default budgets + honesty over raising global caps that defeat the token mission
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SEM-01 | Should Have | Dual token accounting: top-level delivered `tokens` + `_token_budget.{max,actual,truncated}` always coherent; docs/skills teach 3–4× budget when `truncated: true` |
+| FR-SEM-02 | Should Have | Explicit `max_tokens_for_tool` for `concept_search` and `kg_semantic_context` (≥ sibling `kg_*`, target 2k–4k); stop silent default-1000 truncation for those tools |
+| FR-SEM-03 | Should Have | MCP HTTP resilience for long read-only semantic tools — document one-shot client retry; harden keep-alive / stale-listener ops path (see MCP HTTP stability analysis) |
+| FR-SEM-04 | Should Have | Formal **live MCP semantic smoke** checklist (Docker `project=/workspace`) as release *complement*; template = verification docs 2026-07-17 / **2026-07-18** |
+| FR-SEM-05 | Could Have | Optional file-diversity / MMR post-filter after HNSW+rerank so top-k is not ≥70% one file by default collapse |
+| FR-SEM-06 | Must Have | Path filter in `FilterPolicy`: always drop `embed/assets/`; query-gate `src/benchmark/` unless query contains "benchmark" (Probes G/H) |
+| FR-SEM-07 | Must Have (**P0**) | **Mega-safe HNSW semantic path:** `semantic_search` / `kg_semantic_context` (and any helper they call for seed hydration) must **not** invoke unbounded `all_elements()` or load the full element set into RAM on graphs above `LEANKG_MAX_CACHE_ELEMENTS`. Hydrate ANN hit QNs via keyed/paginated DB reads only. Peak RSS must fit documented MCP `mem_limit` (compose default 6g; effective cgroup may be lower) without OOM/restart. Small-graph HNSW path must not regress. |
+| REL-051 | Should Have | Release note: live semantic smoke executed (or waived with reason) alongside embeddings cargo suite — **DONE** 2026-07-18 |
+| REL-054 | Must Have (**P0**) | Live mega smoke gate: on `/workspace-other` (or equivalent), `semantic_search` + `kg_semantic_context` succeed without OOM/HTTP drop; record peak RSS + latency in a `docs/reports/` note. Complements REL-051 (small-graph) |
+| FR-ONT-MEGA-01 | Must Have (**P0**) | **Mega-safe `concept_search`:** resolve `code_refs` via keyed/path-prefixed indexed queries with LIMIT; name fallback via `search_by_name_typed`. Ban `load_indexed_code_elements` on the hot path. |
+| FR-GF-MEGA-01 | Must Have (**P0**) | **Mega-safe `query_graph` / `shortest_path`:** keyed `resolve_to_qualified` (no `all_elements`); BFS via frontier-local relationship fetch (no `all_relationships`). |
+| FR-CL-MEGA-01 | Must Have (**P1**) | **Mega `get_clusters` serve:** when live Louvain is refused, return clusters from precomputed `cluster_id`/`cluster_label`; else structured empty + offline-assign hint. |
+| REL-055 | Must Have (**P0**) | Live mega smoke: `concept_search` + `query_graph` + `get_clusters` on `/workspace-other` without OOM/timeout; no `all_elements`/`all_relationships` WARN on those paths. |
+
+**Won't Do (this track):**
+- Replacing the shipped HNSW default before FR-VE-GATE callers honor LocalEngine
+- Treating transient HTTP flakes as ANN / ontology product failures
+- Dropping truncation entirely (mission is still lean tokens)
+- Raising OrbStack/host VM RAM alone as the “fix” for `all_elements()` on mega HNSW (ops headroom helps; code must still stop full-graph dumps)
+
+### 5.16 Day-2 Embed Resume / Resource Gate (v3.7.2) — **DONE (prior P0)**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-EMBED-RESUME-*` / `US-EMBED-*` / `REL-052` / `FR-HNSW-E`.
+>
+> **Gap:** FR-HNSW-E delivered the incremental *filter*, but day-2 runs can still (a) drop+rebuild HNSW even when `to_embed` is empty, (b) lack mid-run checkpoint clarity, (c) look like a full cold restart after Docker remounts or when embed is turned on later. Product priority: **fix resource behavior before any new P1 feature work.**
+
+**Policy (universal):**
+- **If embed data exists → resume. If none → cold/fresh.** Default for every Docker/CLI embed entry path.
+- Default `embed` mode remains **incremental**; `--full` / `LEANKG_EMBED_BACKGROUND_FULL=1` / `LEANKG_FORCE_REINDEX=1` are the only intentional full rebuilds / wipes
+- Persist vectors + `embedding_state` in RocksDB (named volume) / SQLite `.leankg` — container recreate or “turn embed on” must not imply wipe
+- Day-2 success = skip fresh + avoid needless HNSW rebuild + resume after interrupt
+- Reclassify **FR-HNSW-E** as **PARTIAL** until FR-EMBED-RESUME-* close the gap
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-EMBED-RESUME-01 | Must Have | Standalone Docker / CLI `embed --wait` loads existing `embedding_state` + vectors from RocksDB; second unchanged run skips `fresh` QNs (prove with logs: `skipped_fresh`, `embedded≈0`) |
+| FR-EMBED-RESUME-02 | Must Have | When `to_embed` is empty and orphan set is empty, **skip** HNSW drop + recreate; exit quickly with clear “nothing to embed” status |
+| FR-EMBED-RESUME-03 | Must Have | Mid-run durability: committed `fresh` rows survive kill/restart; next run resumes dirty-only (document lock + status files) |
+| FR-EMBED-RESUME-04 | Must Have | Indexer must not force a full re-embed on no-op / identical content: mark stale only for QNs whose embeddable `content_hash` changed (audit full-index `mark_stale_for_qualified_names` blast radius) |
+| FR-EMBED-RESUME-05 | Must Have | Day-2 SLA evidence: unchanged mega-graph second pass finishes with near-zero ONNX batches and wall time **≪** cold pass (document threshold in release note; target minutes not hours) |
+| FR-EMBED-RESUME-06 | Must Have | **All Docker embed-on paths** (`LEANKG_EMBED_BACKGROUND`, `LEANKG_EMBED_ON_BOOT` / `embed_if_needed`, `LEANKG_DOCKER_SETUP`, `docker-up.sh`) share the same resume-vs-cold rule: existing data → incremental; no data → cold. Never wipe on enable. Document in `entrypoint.sh` / compose / AGENTS |
+| FR-EMBED-RESUME-07 | Must Have | MCP/FG in-process path: cheap resume preflight (vector/state counts, no mega `all_elements` just to skip); zero-dirty → no ONNX/HNSW; small dirty → prefer incremental HNSW puts; status exposes `skipped_fresh` / `vectors_existing` |
+| FR-EMBED-TOGGLE-01 | Must Have | MCP `embed_control` actions `on` / `off` / `status`; idle-gated arm; cooperative cancel; Admin for mutating actions |
+| FR-EMBED-PARTIAL-01 | Must Have | Default MCP embed `mode=partial`: duty-cycle batches, yield on MCP activity, soft RSS ≤ `LEANKG_EMBED_RSS_FRACTION` (default 0.40) of container budget clamped by `LEANKG_EMBED_MAX_MB` |
+| REL-052 | Must Have | Release gate: day-2 resume proven on named RocksDB volume for standalone `embed --wait` **and** at least one Docker MCP embed-on path (unit + e2e + optional live smoke) |
+| FR-HNSW-E | Must Have (PARTIAL) | Keep incremental filter; remaining work tracked under FR-EMBED-RESUME-* |
+
+**Won't Do (this track):**
+- Deleting RocksDB / forcing `--full` as the “fix” for day-2 slowness
+- Reopening Redis/FalkorDB as cold-write accelerators
+- Blocking MCP boot on embed (FR-EMBED-R1 still stands)
+- Treating “embed turned on in Docker” as a signal to wipe or full-rebuild
+
+### 5.17 Mega-graph MCP auto-index + embed ops (v3.7.3)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-MG-AUTO-*` / `FR-OPS-EMBED-*` / **P0** `FR-SEM-07` / `REL-054`.
+>
+> **Evidence:** [`docs/reports/embed-3-workspaces-2026-07-17.md`](reports/embed-3-workspaces-2026-07-17.md) — large multi-repo mounts trigger MCP incremental reindex on every start (RocksDB writes do not bump `.leankg/leankg.db` mtime), OOMs under 2g `mem_limit`, and flake semantic HTTP. `docker-compose.embed.yml` `cpus: "6"` failed on 5-vCPU hosts.
+>
+> **2026-07-20 follow-up:** Auto-index skip + compose CPU/mem knobs are **not sufficient** for mega HNSW query — see **FR-SEM-07** / **US-SEM-06** (P0). Evidence: [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-MG-AUTO-01 | Must Have | Honor `LEANKG_SKIP_FRESHNESS_CHECK=1` in MCP `auto_index_if_needed` (no wipe). Document ops: `LEANKG_AUTO_INDEX=0`, `auto_index_on_start: false`, MCP `mem_limit: 6g` / `mem_reservation: 3g` / `cpus: "6"` for mega-graphs (~147k vectors). Follow-up: RocksDB manifest mtime vs `leankg.db` |
+| FR-OPS-EMBED-CPU | Must Have | `docker-compose.embed.yml`: `cpus: "6"`, `mem_reservation: 3g`, `mem_limit: 10g`. MCP `docker-compose.rocksdb.yml`: multi-project default `cpus: "6"`, `mem_reservation: 3g`, `mem_limit: 6g` (override down for single-project Local 2g KPI) |
+| FR-SEM-07 / REL-054 | Must Have (**P0**) | Cross-link: mega-safe HNSW query path — owned in §5.15; ops evidence still recorded under mega-graph reports |
+
+**Won't Do:** `LEANKG_FORCE_REINDEX=1` as the fix for stale mega-graphs (wipes data).
+
+### 5.18 MCP Tool Surface Rationalization (v3.7.4)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SURF-*` / `US-SURF-*` / `REL-053`.
+>
+> **Evidence:** Live MCP schemas + `src/mcp/handler.rs` / `tools.rs` review 2026-07-18. Registry baseline ≈85 tools. Fact corrections: `semantic_search` is dual-path (HNSW when embeddings exist); `search_code` is ontology-first on mega-graphs; `wake_up` = L0+L1 cached text (not L0 alone).
+
+**Policy:**
+- Prefer-order docstrings before deletes; deletes before merges
+- Hard-delete only strict subsets / zero-value tools
+- Soft-deprecate with an explicit replacement tool name in the schema
+- Keep ops bootstrap tools (`mcp_status`, `mcp_init`, `mcp_index`, `mcp_index_docs`, `mcp_install`) — do not hide behind “deprecate all mcp_*”
+- Update `tests/redundant_tools_matrix.rs` when the roster changes
+- Recount surface size from `ToolRegistry::list_tools()` before quoting externally
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SURF-01 | Must Have | Fix `semantic_search` tool description: document dual path (HNSW+cross-encoder when embeddings index exists; else ontology-first `safe_discover`). Never claim ANN-only |
+| FR-SURF-02 | Must Have | Add prefer-order one-liners to schemas for `concept_search`, `search_code`, `semantic_search`, `kg_semantic_context`, `kg_context` (match §3.16). Sync AGENTS / using-leankg skill |
+| FR-SURF-03 | Must Have | Remove `mcp_hello`, `mcp_impact`, `get_doc_for_file` from `ToolRegistry` + handlers; update `tests/redundant_tools_matrix.rs` and any docs that reference them |
+| FR-SURF-04 | Should Have | Soft-deprecate `wake_up`: description marks deprecated and points to `get_overview_context` (not `load_layer(L0)` alone) |
+| FR-SURF-05 | Should Have | Soft-deprecate `search_by_environment`: description points to `env=` on primary search / `kg_*` tools |
+| FR-SURF-06 | Could Have → **DONE Wave 1b** | Closed by hard-deleting `get_doc_structure`; keep `get_doc_tree` (mega-safe pagination of tree remains optional follow-on) |
+| REL-053 | Should Have | Release note: tool surface shrink after FR-SURF-03 (registry count before/after from `list_tools`) |
+| FR-SURF-12 | Must Have | Publish Wave 1b keep-both vs hard-delete matrix in PRD §3.16 |
+| FR-SURF-13 | Must Have | Remove `load_layer` from `ToolRegistry` + handlers; overview prefer-order = `get_overview_context` → `get_architecture` |
+| FR-SURF-14 | Must Have | Remove `get_doc_structure` from `ToolRegistry` + handlers; docs/smoke use `get_doc_tree` only |
+| FR-SURF-15 | Must Have | Update `tests/redundant_tools_matrix.rs`, smoke/install, AGENTS/CLAUDE/mcp-tools/using-leankg; hard-removed list includes Wave 1b |
+| REL-076 | Must Have | Evidence report: `list_tools` before/after (−2); matrix green; grep-clean preferred refs |
+
+**Won't Do (this track):**
+- Deprecating or renaming `mcp_status` / `mcp_init` / `mcp_index` / `mcp_index_docs` / `mcp_install` for cosmetic `get_*` consistency
+- Merging the intentional search triple or semantic triple into one tool
+- Deleting `get_god_nodes`, `orchestrate`, `ctx_read`, or Android nav tools (keep-both)
+- Quoting a shrink without recounting the live registry
+
+### 3.17 UI v2 — GitNexus Shell Adapted (US-UI2) — v3.7.9
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-UI2-*` / `FR-UI2-*` / `REL-056` / `REL-057` / `REL-060` / `REL-061`.  
+> **Design:** [`docs/erd/ui-v2-erd.md`](erd/ui-v2-erd.md).  
+> **Separate from:** Track E 3D `graph-ui/` (`REL-041` / `US-CBM-E1`).
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-UI2-01 | Must Have | As a developer, I open `ui-v2` against `leankg serve` and explore the graph in Force, Tree, or Circles layout |
+| US-UI2-02 | Must Have | As a developer, I filter node/edge types (defaults Service/Folder/File/Function) and browse a file tree of loaded nodes |
+| US-UI2-03 | Must Have | As a developer, I select a **content-bearing** node (File/Function/Method/Class/…) and see syntax-highlighted source via `/api/file`; Service/Folder/Directory selection does **not** call `/api/file` |
+| US-UI2-04 | Must Have | As a developer, I search via `/api/search` and run raw queries via QueryFAB `/api/query` |
+| US-UI2-05 | Must Have | As a developer on a mega-graph, the UI skips full canvas load and offers “Load graph anyway” |
+| US-UI2-06 | Must Have | As a developer, Query FAB default mode runs NL `query_graph`; Advanced mode keeps raw graph query |
+| US-UI2-07 | Must Have | As a company, ui-v2 is the default explorer embedded in `leankg serve` / Docker (cutover from Phase-1-only `ui-v2/`) |
+| US-UI2-08 | Should Have | As a developer, I filter communities via a cluster legend (Graphify sidebar parity) |
+| US-UI2-09 | Should Have | As an ops engineer, incidents / env / conflicts panels from legacy `ui/` are available in ui-v2 |
+| US-UI2-10 | Must Have | As a developer on a multi-service topology, I double-click a Service/Folder/Directory and the canvas **replaces** with that path’s expand-service subgraph (`all=true`); breadcrumbs return me to overview |
+| US-UI2-11 | Must Have | As a developer on a large expand (e.g. multi-repo workspace), I see the first **500** nodes and can **Load more (+200)** to **merge** additional pages into the same graph (500→700→…) without replacing |
+| US-UI2-12 | Must Have | As a developer, the left Explore sidebar shows a **folder + file** tree (not files-only); `src` sorts above `examples`; double-click a folder drills the graph into that path |
+
+**Phase 1 out of scope (closed):** browser LLM agent, analyze/upload, Processes Mermaid.  
+**Phase 2 (this revision):** NL Query FAB + cutover + cluster legend + ops panels (US-UI2-06..09).
+
+### 3.18 Procedural Ontology Auto-Update (US-ONT-PROC) — v3.7.9 **P0**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-ONT-PROC-*` / `FR-ONT-PROC-*` / `REL-059`.  
+> **Gap evidence:** Procedural layer works (`kg_ontology_status`: 10 workflows / 48 steps; `kg_trace_workflow` live) but only refreshes via manual `leankg ontology sync` or Docker boot sync (`entrypoint.sh`). No in-process watch; boot skip marker ignores `workflows.yaml` mtime.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-ONT-PROC-01 | Must Have (**P0**) | As a developer using LeanKG MCP/serve, when I edit `ontology/workflows.yaml` (or concepts) or finish an index that changes step `code_refs`, **I want** procedural ontology to update **without** a manual sync or container restart, **so that** `kg_trace_workflow` stays accurate while I work |
+
+**Acceptance (US-ONT-PROC-01):**
+- **Given** `mcp-http` or `leankg serve` is running with ontology loaded, **When** I change a workflow step name or `code_refs` in `workflows.yaml` and wait the debounce window, **Then** `kg_trace_workflow` returns the new content without restarting the process.
+- **Given** boot with an existing `.leankg/ontology_synced` marker newer than `concepts.yaml` but older than `workflows.yaml`, **When** the container starts, **Then** sync is **not** skipped solely because of `concepts.yaml`.
+- **Given** a successful `leankg index` / MCP index that changes files referenced by workflow steps, **When** the index completes, **Then** procedural nodes are refreshed (or a documented MCP `ontology_sync` / `ontology_control` action is available and used by default hooks).
+- **Won't Do in P0:** LLM auto-extraction of new workflows from arbitrary code (manual/agent-authored YAML remains the source of truth).
+
+### 3.19 Doc↔Code Join Quality (US-DOCJOIN) — v3.7.13 **P2**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-DOCJOIN-*` / `FR-DOCJOIN-*` / `REL-063`.  
+> **Baseline (DONE):** Documentation-structure mapping FR-51–56 / US-10 / US-25–26 / REL-017–018 — `doc_indexer` creates `document` / section nodes, `references` + `documented_by` edges, `mcp_index_docs`, auto-index when `docs/` exists.  
+> **Gap evidence (2026-07-21 review):**
+> 1. **Target identity mismatch** — `extract_code_references` stores bare paths (`handler.rs`, `src/foo.rs`); code index uses `path/to/file.rs::symbol` (and file nodes). Many `documented_by` edges never join to elements agents query.
+> 2. **Doc argument key mismatch** — nodes keyed as `docs/{relative}.md`; callers pass `README.md` / `./docs/…` → empty `get_files_for_doc`.
+> 3. **Sparse live edges** — feature tests and live MCP probes often return empty `files` / `related_docs` even when markdown exists (not indexed, or keys wrong).
+> 4. **Mega-graph** — `get_doc_structure` / `get_doc_tree` refuse unbounded `all_elements()` above ~50k (tracked separately as `FR-SURF-06` P3).
+> 5. **Authoring dependency** — edges only appear for link / backtick / bare filename refs outside fenced code blocks; PRD tables rarely cite every symbol.
+>
+> **Related layers (do not conflate):** BusinessLogic annotations + `search_by_requirement` / `get_traceability` remain the reliable **requirement ID ↔ symbol** bridge; ontology (`concept_search` / `kg_trace_workflow`) is a third layer.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-DOCJOIN-01 | Must Have (**P2**) | As an AI agent, when a markdown doc mentions a source file, **I want** `documented_by` / `references` to attach to the **same keys** as the code index, **so that** `find_related_docs` and `get_traceability` return real neighbors |
+| US-DOCJOIN-02 | Must Have (**P2**) | As an AI agent, when I pass a human path (`README.md`, `docs/prd.md`, `./docs/prd.md`), **I want** doc query tools to resolve to the indexed document key, **so that** I do not get empty results from alias mismatch |
+| US-DOCJOIN-03 | Should Have (**P2**) | As a company adopting LeanKG, **I want** clear prefer-order and markdown authoring practices, **so that** agents use annotations for FR IDs and write extractable file refs for structural glue |
+
+#### US-DOCJOIN-01 — Resolve markdown refs to indexed code keys (Must Have)
+
+**Acceptance criteria:**
+- **Given** a fixture repo with `docs/guide.md` containing `` `src/lib/foo.rs` `` (outside fences) and an indexed file element for that path, **When** `mcp_index_docs` (or auto doc-index) runs, **Then** at least one `references` edge targets a key that `get_relationships` / file lookup recognizes as that file (not only the bare basename).
+- **Given** the same fixture, **When** `find_related_docs(file=…)` is called with the indexed file path (with and without `./` prefix), **Then** `related_docs` is non-empty and includes the document qualified name.
+- **Given** a mention that cannot be resolved to any indexed file, **When** edges are written, **Then** either no edge is written **or** the edge carries `confidence_label=AMBIGUOUS` (or equivalent metadata) and is excluded from default related-doc results unless `include_unresolved=true`.
+- **Won't Do:** Full symbol-span NLP (“function Foo in the auth module”); optional best-effort `::symbol` upgrade is Could Have only.
+
+#### US-DOCJOIN-02 — Normalize doc path args (Must Have)
+
+**Acceptance criteria:**
+- **Given** an indexed document `docs/prd.md`, **When** `get_files_for_doc` is called with any of `docs/prd.md`, `./docs/prd.md`, `prd.md` (if unambiguous under docs root), **Then** results match the canonical document key.
+- **Given** `find_related_docs` / `get_files_for_doc`, **When** the path cannot be normalized, **Then** the error/empty payload names the tried aliases (debug-friendly), not a silent empty list without hint.
+- **Given** mega-graphs, **When** path normalization runs, **Then** it does **not** require a full `all_elements()` scan (keyed lookup / prefix index only).
+
+#### US-DOCJOIN-03 — Prefer-order + authoring practices (Should Have)
+
+**Acceptance criteria:**
+- **Given** `docs/mcp-tools.md` and `using-leankg` (or AGENTS prefer-order), **When** agents need requirement↔code, **Then** guidance prefers `search_by_requirement` / `get_traceability` / annotations over hoping markdown edges exist.
+- **Given** authoring guidance in §5.22, **When** writers add code mentions in product docs, **Then** they use markdown links or backticks to repo-relative paths **outside** fenced blocks; FR IDs use `link_element` / annotations.
+- **Given** `FR-SURF-06`, **When** DOCJOIN ships, **Then** mega-safe doc-structure work may reuse path normalization helpers but remains a separate P3 story.
+
+### 5.19 UI v2 Graph Explorer (v3.7.10)
+
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056` / `REL-057` / `REL-060` / `REL-061`.  
+> **Evidence:** [`docs/reports/ui-v2-gitnexus-parity-*.md`](reports/) (required before claiming GitNexus parity).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-UI2-01 | Must Have | New `ui-v2/` Vite+React+Tailwind+Sigma app; do not modify `ui/` or `src/embed/` in Phase 1 |
+| FR-UI2-02 | Must Have | 3-pane exploring shell: FileTree+Filters / GraphCanvas / Code panel + Header + StatusBar |
+| FR-UI2-03 | Must Have | Layout modes Force / Tree / Circles (GitNexus-shell behavior) |
+| FR-UI2-04 | Must Have | Data plane uses LeanKG REST envelope `{success,data,error}`: topology, expand-service, children, search, file, query, index/status, project/switch, clusters |
+| FR-UI2-05 | Must Have | Preserve US-MG-03/04 filter defaults (`DEFAULT_NODE_TYPE_ORDER`, `DEFAULT_VISIBLE_LABELS`) |
+| FR-UI2-06 | Must Have | Mega-graph skip via `decideSkipGraph` (~50k nodes) + Load anyway |
+| FR-UI2-07 | Must Have | Vitest units (adapter, load-decision, constants, client, url-restore) + Playwright Phase-1 e2e matrix |
+| FR-UI2-12 | Must Have | Double-click Service/Folder/Directory → `expandService(path, all=true)` **replaces** `kg` (not merge); CodePanel `/api/file` only for content-bearing types; breadcrumb back to topology; `/api/file` returns clear directory error |
+| FR-UI2-13 | Must Have | Expand-service `?limit=`/`?offset=` + correct `hasMore`; UI default page 500; **Load more (+200)** **merges** by node/edge id into current `kg`; pagination cursor advances by requested limit |
+| FR-UI2-14 | Must Have | Explore sidebar hierarchical Folders & files (`buildExplorerTree`); include Directory/Folder; synthesize parents from paths; prefer `src` over demos; folder double-click → `drillIntoPath` |
+| REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
+| FR-UI2-08 | Must Have | Query FAB dual-mode: NL → `query_graph` / orchestrate; Advanced → raw graph query via `POST /api/query` |
+| FR-UI2-09 | Must Have | Build ui-v2 into `src/embed/` (or equivalent); `leankg serve` + Docker Option A serve ui-v2 by default |
+| FR-UI2-10 | Should Have | Cluster legend + show/hide filters wired to `/api/graph/clusters` |
+| FR-UI2-11 | Should Have | Port incidents / env / conflicts panels from legacy `ui/` into ui-v2 |
+| REL-057 | Must Have | Cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default |
+| REL-060 | Must Have | Proof: Service select does not 400 `/api/file`; double-click replaces graph with expand-service subgraph |
+| REL-061 | Must Have | Proof: expand page 500 then Load more grows canvas (merge); sidebar folders/files update |
+
+
+**Won't Do (Phase 1 residual):** LangChain in-browser agent; GitNexus `/api/analyze` clone; Track E R3F 3D.
+
+### 5.20 Company cost / competitive ROI (v3.7.8)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-COST-*` / `FR-COST-*` / `REL-058`.  
+> **Narrative:** §1.1. **Evidence target:** [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) + a short manager brief under `docs/reports/`.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| US-COST-01 | Must Have | As an engineering manager, I can read a one-pager that shows why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company monorepo scale |
+| FR-COST-01 | Must Have | Publish ROI brief: token/tool-call floors (Section 9), multi-repo Docker TCO, mega-graph safety, ops/traceability differentiators; link §1.1 queue |
+| FR-GF-21 | Must Have | CLI/MCP `export html` — single-file bounded subgraph/community; document node budget |
+| FR-GF-22 | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wall |
+| FR-GF-23 | Should Have | Expand `leankg install` platforms (start Cursor + Claude + Codex; grow toward Graphify breadth) |
+| FR-GF-24 | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redirect; document for Cursor + Claude Code |
+| REL-058 | Must Have | Manager ROI brief checked into `docs/reports/` and linked from README competitive section |
+
+**Won't Do:** Claiming LOCOMO memory-suite wins; multimodal ingest as a cost strategy.
+
+### 5.21 Procedural ontology auto-update (v3.7.9) — **CURRENT P0**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-ONT-PROC-*` / `US-ONT-PROC-*` / `REL-059`.  
+> **Related:** `FR-A02` (docs/automation) stays P1; this section is the **runtime** auto-update.  
+> **Baseline:** Boot sync in `entrypoint.sh` + CLI `leankg ontology sync` only; no YAML watch during MCP use.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-ONT-PROC-01 | Must Have (**P0**) | While `mcp-http` / `leankg serve` runs, watch `ontology/workflows.yaml` and `ontology/concepts.yaml` (project + configured source dir); debounce (≥1s) and run idempotent ontology sync into the served DB without dropping the HTTP listener |
+| FR-ONT-PROC-02 | Must Have (**P0**) | Docker/boot skip marker must consider **both** `concepts.yaml` and `workflows.yaml` mtimes (and force re-sync when either is newer than `.leankg/ontology_synced`) |
+| FR-ONT-PROC-03 | Must Have (**P0**) | After successful index (CLI or MCP), refresh procedural ontology (re-bind step `code_refs` / re-sync YAML) or expose MCP `ontology_control(action=sync\|status)` and invoke it from the index completion path |
+| REL-059 | Must Have (**P0**) | Live smoke documented in `docs/reports/`: (1) edit workflow step → `kg_trace_workflow` updates without restart; (2) boot with stale workflows.yaml triggers sync; (3) sync never blocks `/health` beyond existing ontology timeout policy |
+
+**Won't Do (P0):** Automatic LLM generation of new workflows from code; replacing YAML as source of truth; blocking MCP bind on sync (keep timeout/skip escape).
+
+---
+
+### 5.22 Doc↔Code Join Quality (v3.7.13) — **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-DOCJOIN-*` / `US-DOCJOIN-*` / `REL-063`.  
+> **Does not reopen** FR-51–56 as NOT_DONE — those delivered structure mapping. This section is **join quality + agent UX**.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-DOCJOIN-01 | Must Have (**P2**) | After extracting a markdown code ref, **resolve** to an indexed file-level element key (normalize `./`, project-relative, strip anchors). Prefer longest path match under the project root. Write `references` / `documented_by` using resolved keys |
+| FR-DOCJOIN-02 | Must Have (**P2**) | Normalize `doc` / `file` args on `get_files_for_doc`, `find_related_docs`, and related handlers: try canonical `docs/…` keys and common aliases before returning empty |
+| FR-DOCJOIN-03 | Must Have (**P2**) | Persist useful `metadata.context` (snippet ≤100 chars) on `references` edges; set `confidence_label=EXTRACTED` for regex/link extractions (align with FR-GF-07 when that lands; until then local metadata field is OK) |
+| FR-DOCJOIN-04 | Must Have (**P2**) | Automated tests: unit tests for path normalize + resolve; integration fixture (temp `docs/` + `src/`) asserting non-empty `get_files_for_doc` / `find_related_docs` after `index` + `index_docs` |
+| FR-DOCJOIN-05 | Should Have (**P2**) | Sync prefer-order in `docs/mcp-tools.md`, AGENTS/CLAUDE doc tools section, and `using-leankg`: annotations/traceability first for FR IDs; markdown tools after `mcp_index_docs` with **canonical `docs/…` paths** |
+| FR-DOCJOIN-06 | Could Have (**P2**) | Optional best-effort upgrade of `` `file.rs::symbol` `` or “`symbol` in `file`” to function/class qualified names when unique in the index |
+| REL-063 | Must Have (**P2**) | Evidence report under `docs/reports/`: fixture test output + live MCP smoke on `/workspace` after `mcp_index_docs` (non-empty round-trip for at least one known doc↔file pair). Note RocksDB lock contention if `/workspace` unavailable |
+
+**Won't Do (this track):** Replacing annotations with markdown-only traceability; unbounded doc-tree scans on mega-graphs (see FR-SURF-06); LLM rewriting of all docs to insert links.
+
+#### Best practices — implementing (engineers)
+
+1. **Order of work (smallest risk first)**  
+   - (A) **FR-DOCJOIN-02** path aliases on read path — fixes empty tools without reindex.  
+   - (B) **FR-DOCJOIN-01** resolve-on-write in `doc_indexer` + reindex docs.  
+   - (C) **FR-DOCJOIN-03** metadata / confidence.  
+   - (D) **FR-DOCJOIN-04/REL-063** tests + smoke.  
+   - (E) **FR-DOCJOIN-05** docs/skills sync.  
+   - Keep **FR-SURF-06** (mega-safe structure) after (A); share normalize helpers.
+2. **Worktree** — `feature/doc-join-quality` (or split `doc-path-normalize` then `doc-ref-resolve`); do not block Wave 1a.
+3. **Resolver rules** — resolve only to existing indexed file elements; never invent paths; basename-only matches require uniqueness else AMBIGUOUS / drop.
+4. **Idempotent reindex** — `mcp_index_docs` / auto doc-index must upsert edges without duplicating relationship rows for the same (source, target, rel_type).
+5. **Observability** — debug log counts: extracted refs, resolved, unresolved, alias hits on query tools (timestamped; no host secrets).
+
+#### Best practices — testing (QA / agents)
+
+| Layer | What to run | Pass criteria |
+|-------|-------------|---------------|
+| **Unit** | Path normalize + resolve table (aliases, `./`, basename unique/ambiguous, fence skip) | Pure functions; no DB |
+| **Integration** | TempDir: one `.rs` file + one `.md` with backtick path → `index` + `index_docs` → `get_files_for_doc` + `find_related_docs` | Non-empty both directions |
+| **Regression** | Existing `tests/mcp_tools_full_tests.rs` doc tools + `redundant_tools_matrix` | No tool removals in this track |
+| **Live MCP** | Health `:9699` → `mcp_status(project=…)` → `mcp_index_docs` → round-trip on a known pair | Document in REL-063; if RocksDB LOCK on `/workspace`, use another ready mount or local stdio and note it |
+| **Negative** | Call `get_files_for_doc` with unknown alias | Hint lists tried keys; no panic |
+| **Mega** | On >50k element project, doc **join** tools stay keyed; structure tools still refuse until FR-SURF-06 | No OOM from DOCJOIN |
+
+**Authoring checklist (for denser graphs without code changes):**
+- Prefer markdown links or single-backtick paths to repo-relative files (e.g. `src/path/foo.rs`), **outside** fenced code blocks.
+- Prefer `link_element` / annotations for `FR-*` / `US-*` IDs.
+- After large doc moves, re-run `mcp_index_docs` (or full index with docs auto-pass).
+
+---
+
+### 3.20 Graph Engineering curriculum gaps (US-GE) — v3.7.14 **P2**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-GE-*` / `FR-GE-*` / `REL-064`.  
+> **Evidence:** [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).  
+> **Relationship to §1.1:** Company-adoption / Graphify packaging remains **P1 CURRENT**. These stories are **P2** (except docs DONE) — do not preempt cost levers.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-GE-01 | Must Have (**P2**, docs **DONE**) | As a product owner, I can point managers/agents at a published fit matrix showing LeanKG as the graph **memory** under agent harnesses — not a straight-line tool dump |
+| US-GE-02 | Should Have (**P2**) | As an agent user, I can ask LeanKG (or a thin companion) to turn a goal into a **DAG of MCP tool/subagent steps** that share graph context and join results |
+| US-GE-03 | Should Have (**P2**) | As an indexer user, symbols that are the same entity under naming variants resolve to one identity (beyond `qualified_name` + `typed_resolve` alone) |
+| US-GE-04 | Should Have (**P2**) | As an agent, I can navigate by **precomputed cluster/neighborhood** as a first-class path (not only rare `get_clusters`) |
+| US-GE-05 | Should Have (**P2**) | As an agent, useful/dead-end query outcomes write back into the graph (or diary/lessons) **and are auto-recalled on the next session** so the plan improves without manual YAML — **implementation path: US-SM-02** |
+| US-GE-06 | Could Have (**P3**) | As an ontology author, I can optionally run selective LLM pass-2 extraction for workflows/decisions while YAML remains source of truth |
+
+**Acceptance (US-GE-01):** Analysis checked into `docs/analysis/`; PRD §1.2 + tracker rows exist; competitive notes link the matrix.  
+**Acceptance (US-GE-05):** Given prior `report_query_outcome` / diary / knowledge writes, **When** a new session calls `get_overview_context` (with memory recall enabled), **Then** top-K ranked prior lessons appear without the agent manually calling diary/knowledge tools; duplicates are deduped; timeout never blocks MCP. Tracker stays PENDING until `US-SM-02` ships.  
+**Acceptance (US-GE-02..04):** Deferred to implementation PRs — tracker status stays PENDING/NOT_DONE until shipped.  
+**Won't Do:** LeanKG-owned multi-agent Claude runtime; full OpenTrace ticket/ops/trace graph as core; displacing §1.1 P1 queue.
+
+### 5.19 UI v2 Graph Explorer (v3.7.10)
+
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-UI2-*` / `REL-056` / `REL-057` / `REL-060` / `REL-061`.  
+> **Evidence:** [`docs/reports/ui-v2-gitnexus-parity-*.md`](reports/) (required before claiming GitNexus parity).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-UI2-01 | Must Have | New `ui-v2/` Vite+React+Tailwind+Sigma app; do not modify `ui/` or `src/embed/` in Phase 1 |
+| FR-UI2-02 | Must Have | 3-pane exploring shell: FileTree+Filters / GraphCanvas / Code panel + Header + StatusBar |
+| FR-UI2-03 | Must Have | Layout modes Force / Tree / Circles (GitNexus-shell behavior) |
+| FR-UI2-04 | Must Have | Data plane uses LeanKG REST envelope `{success,data,error}`: topology, expand-service, children, search, file, query, index/status, project/switch, clusters |
+| FR-UI2-05 | Must Have | Preserve US-MG-03/04 filter defaults (`DEFAULT_NODE_TYPE_ORDER`, `DEFAULT_VISIBLE_LABELS`) |
+| FR-UI2-06 | Must Have | Mega-graph skip via `decideSkipGraph` (~50k nodes) + Load anyway |
+| FR-UI2-07 | Must Have | Vitest units (adapter, load-decision, constants, client, url-restore) + Playwright Phase-1 e2e matrix |
+| FR-UI2-12 | Must Have | Double-click Service/Folder/Directory → `expandService(path, all=true)` **replaces** `kg` (not merge); CodePanel `/api/file` only for content-bearing types; breadcrumb back to topology; `/api/file` returns clear directory error |
+| FR-UI2-13 | Must Have | Expand-service `?limit=`/`?offset=` + correct `hasMore`; UI default page 500; **Load more (+200)** **merges** by node/edge id into current `kg`; pagination cursor advances by requested limit |
+| FR-UI2-14 | Must Have | Explore sidebar hierarchical Folders & files (`buildExplorerTree`); include Directory/Folder; synthesize parents from paths; prefer `src` over demos; folder double-click → `drillIntoPath` |
+| REL-056 | Must Have | Parity report with Pass/Fail vs GitNexus exploring shell (agent/analyze = N/A Phase 2) |
+| FR-UI2-08 | Must Have | Query FAB dual-mode: NL → `query_graph` / orchestrate; Advanced → raw graph query via `POST /api/query` |
+| FR-UI2-09 | Must Have | Build ui-v2 into `src/embed/` (or equivalent); `leankg serve` + Docker Option A serve ui-v2 by default |
+| FR-UI2-10 | Should Have | Cluster legend + show/hide filters wired to `/api/graph/clusters` |
+| FR-UI2-11 | Should Have | Port incidents / env / conflicts panels from legacy `ui/` into ui-v2 |
+| REL-057 | Must Have | Cutover evidence: smoke + screenshots that embed/Docker serves ui-v2 as default |
+| REL-060 | Must Have | Proof: Service select does not 400 `/api/file`; double-click replaces graph with expand-service subgraph |
+| REL-061 | Must Have | Proof: expand page 500 then Load more grows canvas (merge); sidebar folders/files update |
+
+
+**Won't Do (Phase 1 residual):** LangChain in-browser agent; GitNexus `/api/analyze` clone; Track E R3F 3D.
+
+### 5.20 Company cost / competitive ROI (v3.7.8)
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-COST-*` / `FR-COST-*` / `REL-058`.  
+> **Narrative:** §1.1. **Evidence target:** [`docs/analysis/graphify-vs-leankg-2026-07-20.md`](analysis/graphify-vs-leankg-2026-07-20.md) + a short manager brief under `docs/reports/`.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| US-COST-01 | Must Have | As an engineering manager, I can read a one-pager that shows why LeanKG reduces AI agent cost vs grep/cat and vs Graphify at company monorepo scale |
+| FR-COST-01 | Must Have | Publish ROI brief: token/tool-call floors (Section 9), multi-repo Docker TCO, mega-graph safety, ops/traceability differentiators; link §1.1 queue |
+| FR-GF-21 | Must Have | CLI/MCP `export html` — single-file bounded subgraph/community; document node budget |
+| FR-GF-22 | Must Have | README / AGENTS / using-leankg skill lead with path · explain · query; demote full tool wall |
+| FR-GF-23 | Should Have | Expand `leankg install` platforms (start Cursor + Claude + Codex; grow toward Graphify breadth) |
+| FR-GF-24 | Must Have | Always-on graph-first rules/hooks: nudge before grep/Read; optional strict first-Read redirect; document for Cursor + Claude Code |
+| REL-058 | Must Have | Manager ROI brief checked into `docs/reports/` and linked from README competitive section |
+
+**Won't Do:** Claiming LOCOMO memory-suite wins; multimodal ingest as a cost strategy.
+
+### 5.21 Procedural ontology auto-update (v3.7.9) — **CURRENT P0**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-ONT-PROC-*` / `US-ONT-PROC-*` / `REL-059`.  
+> **Related:** `FR-A02` (docs/automation) stays P1; this section is the **runtime** auto-update.  
+> **Baseline:** Boot sync in `entrypoint.sh` + CLI `leankg ontology sync` only; no YAML watch during MCP use.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-ONT-PROC-01 | Must Have (**P0**) | While `mcp-http` / `leankg serve` runs, watch `ontology/workflows.yaml` and `ontology/concepts.yaml` (project + configured source dir); debounce (≥1s) and run idempotent ontology sync into the served DB without dropping the HTTP listener |
+| FR-ONT-PROC-02 | Must Have (**P0**) | Docker/boot skip marker must consider **both** `concepts.yaml` and `workflows.yaml` mtimes (and force re-sync when either is newer than `.leankg/ontology_synced`) |
+| FR-ONT-PROC-03 | Must Have (**P0**) | After successful index (CLI or MCP), refresh procedural ontology (re-bind step `code_refs` / re-sync YAML) or expose MCP `ontology_control(action=sync\|status)` and invoke it from the index completion path |
+| REL-059 | Must Have (**P0**) | Live smoke documented in `docs/reports/`: (1) edit workflow step → `kg_trace_workflow` updates without restart; (2) boot with stale workflows.yaml triggers sync; (3) sync never blocks `/health` beyond existing ontology timeout policy |
+
+**Won't Do (P0):** Automatic LLM generation of new workflows from code; replacing YAML as source of truth; blocking MCP bind on sync (keep timeout/skip escape).
+
+### 5.22 Doc↔Code Join Quality (v3.7.13) — **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-DOCJOIN-*` / `US-DOCJOIN-*` / `REL-063`.  
+> **Does not reopen** FR-51–56 as NOT_DONE — those delivered structure mapping. This section is **join quality + agent UX**.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-DOCJOIN-01 | Must Have (**P2**) | After extracting a markdown code ref, **resolve** to an indexed file-level element key (normalize `./`, project-relative, strip anchors). Prefer longest path match under the project root. Write `references` / `documented_by` using resolved keys |
+| FR-DOCJOIN-02 | Must Have (**P2**) | Normalize `doc` / `file` args on `get_files_for_doc`, `find_related_docs`, and related handlers: try canonical `docs/…` keys and common aliases before returning empty |
+| FR-DOCJOIN-03 | Must Have (**P2**) | Persist useful `metadata.context` (snippet ≤100 chars) on `references` edges; set `confidence_label=EXTRACTED` for regex/link extractions (align with FR-GF-07 when that lands; until then local metadata field is OK) |
+| FR-DOCJOIN-04 | Must Have (**P2**) | Automated tests: unit tests for path normalize + resolve; integration fixture (temp `docs/` + `src/`) asserting non-empty `get_files_for_doc` / `find_related_docs` after `index` + `index_docs` |
+| FR-DOCJOIN-05 | Should Have (**P2**) | Sync prefer-order in `docs/mcp-tools.md`, AGENTS/CLAUDE doc tools section, and `using-leankg`: annotations/traceability first for FR IDs; markdown tools after `mcp_index_docs` with **canonical `docs/…` paths** |
+| FR-DOCJOIN-06 | Could Have (**P2**) | Optional best-effort upgrade of `` `file.rs::symbol` `` or “`symbol` in `file`” to function/class qualified names when unique in the index |
+| REL-063 | Must Have (**P2**) | Evidence report under `docs/reports/`: fixture test output + live MCP smoke on `/workspace` after `mcp_index_docs` (non-empty round-trip for at least one known doc↔file pair). Note RocksDB lock contention if `/workspace` unavailable |
+
+**Won't Do (this track):** Replacing annotations with markdown-only traceability; unbounded doc-tree scans on mega-graphs (see FR-SURF-06); LLM rewriting of all docs to insert links.
+
+#### Best practices — implementing (engineers)
+
+1. **Order of work (smallest risk first)**  
+   - (A) **FR-DOCJOIN-02** path aliases on read path — fixes empty tools without reindex.  
+   - (B) **FR-DOCJOIN-01** resolve-on-write in `doc_indexer` + reindex docs.  
+   - (C) **FR-DOCJOIN-03** metadata / confidence.  
+   - (D) **FR-DOCJOIN-04/REL-063** tests + smoke.  
+   - (E) **FR-DOCJOIN-05** docs/skills sync.  
+   - Keep **FR-SURF-06** (mega-safe structure) after (A); share normalize helpers.
+2. **Worktree** — `feature/doc-join-quality` (or split `doc-path-normalize` then `doc-ref-resolve`); do not block Wave 1a.
+3. **Resolver rules** — resolve only to existing indexed file elements; never invent paths; basename-only matches require uniqueness else AMBIGUOUS / drop.
+4. **Idempotent reindex** — `mcp_index_docs` / auto doc-index must upsert edges without duplicating relationship rows for the same (source, target, rel_type).
+5. **Observability** — debug log counts: extracted refs, resolved, unresolved, alias hits on query tools (timestamped; no host secrets).
+
+#### Best practices — testing (QA / agents)
+
+| Layer | What to run | Pass criteria |
+|-------|-------------|---------------|
+| **Unit** | Path normalize + resolve table (aliases, `./`, basename unique/ambiguous, fence skip) | Pure functions; no DB |
+| **Integration** | TempDir: one `.rs` file + one `.md` with backtick path → `index` + `index_docs` → `get_files_for_doc` + `find_related_docs` | Non-empty both directions |
+| **Regression** | Existing `tests/mcp_tools_full_tests.rs` doc tools + `redundant_tools_matrix` | No tool removals in this track |
+| **Live MCP** | Health `:9699` → `mcp_status(project=…)` → `mcp_index_docs` → round-trip on a known pair | Document in REL-063; if RocksDB LOCK on `/workspace`, use another ready mount or local stdio and note it |
+| **Negative** | Call `get_files_for_doc` with unknown alias | Hint lists tried keys; no panic |
+| **Mega** | On >50k element project, doc **join** tools stay keyed; structure tools still refuse until FR-SURF-06 | No OOM from DOCJOIN |
+
+**Authoring checklist (for denser graphs without code changes):**
+- Prefer markdown links or single-backtick paths to repo-relative files (e.g. `src/path/foo.rs`), **outside** fenced code blocks.
+- Prefer `link_element` / annotations for `FR-*` / `US-*` IDs.
+- After large doc moves, re-run `mcp_index_docs` (or full index with docs auto-pass).
+
+---
+
+### 5.23 Graph Engineering curriculum gaps (v3.7.14) — Focus **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-GE-*` / `US-GE-*` / `REL-064`.  
+> **Narrative:** §1.2 / §3.20. **Evidence:** [`docs/analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md`](analysis/graph-engineering-roadmap-vs-leankg-2026-07-21.md).  
+> **Does not preempt** §1.1 / §5.20 company-adoption P1.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-GE-01 | Must Have | Publish fit matrix (Strong / Partial / Missing / Out of scope) for inferred 14-step graph-engineering curriculum vs LeanKG capabilities; link from PRD competitive notes |
+| REL-064 | Must Have | Analysis + PRD §1.2/§3.20/§5.23 + tracker rows landed on `main` |
+| FR-GE-02 | Should Have | Optional graph-aware planner: accept a goal string; emit ordered/parallel MCP tool steps (and optional subagent roles) with shared `project=` context; join/synthesize results without replacing Cursor/Claude as the harness |
+| FR-GE-03 | Should Have | Entity-resolution pass: merge or alias CodeElements that are the same symbol under naming variants; surface confidence; preserve `qualified_name` as canonical when unique |
+| FR-GE-04 | Should Have | Agent-facing cluster/neighborhood navigation: prefer precomputed `cluster_id` (mega-safe) as a discovery path alongside search; document in skills |
+| FR-GE-05 | Should Have | Close self-improve loop: `report_query_outcome` / diary / knowledge write-back feeds a durable **ranked** artifact that **`get_overview_context` auto-injects** on next session (opt-in until measured; timeout + char budgets; extend existing reflect/diary — do not invent a second memory store). **Shipped when US-SM-02 / FR-SM-04..06 land.** |
+| FR-GE-06 | Could Have | Selective LLM pass-2 extraction for workflow/decision candidates with human/YAML confirm; must not replace procedural YAML SoT |
+
+**Won't Do:** Multi-agent runtime competing with Claude Code/Cursor; OpenTrace-complete ops graph as LeanKG core; full automatic LLM workflow generation without YAML.
+
+### 3.21 Document embed + query (US-DOCEMBED) — v3.7.15 **P1**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-DOCEMBED-*` / `FR-DOCEMBED-*` / `REL-065`.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-DOCEMBED-01 | Must Have (**P1**) | As an agent, I want PRD/markdown docs embedded so `semantic_search` returns `document` / `doc_section` hits |
+| US-DOCEMBED-02 | Must Have (**P1**) | As an indexer, doc nodes carry `title`, `heading_path`, `first_paragraph` metadata for richer blobs |
+| US-DOCEMBED-03 | Must Have (**P1**) | After `mcp_index_docs`, doc QNs are marked stale in `embedding_state` for incremental embed |
+
+**Verified by:** unit `tests/embed_doc_inventory.rs` / live fixture REL-065 (`/workspace`).
+
+### 3.22 Embed types perf preset (US-EMBED-PERF) — v3.7.15 **P1**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-EMBED-PERF-01 | Must Have (**P1**) | As ops, I run `embed --types perf` to expand beyond `function,method` on mega mounts |
+| US-EMBED-PERF-02 | Must Have (**P1**) | `struct` / `property` / `constructor` classify as Code blobs |
+| US-EMBED-PERF-03 | Must Have (**P1**) | One `--full` pass enrolls untracked QNs after classify expansion |
+
+**Verified by:** unit `parse_type_filter` + REL-066 mega inventory.
+
+### 3.23 Index inventory (US-INDEX-INV) — v3.7.15 **P1**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-INDEX-INV-01 | Must Have (**P1**) | As ops, I see element/rel/vector totals persisted in the `index_inventory` table after index/embed |
+
+**Verified by:** unit inventory tests / REL-067 mega probes.
+
+### 3.24 Embed + inventory test gates (US-TEST-ED) — v3.7.15 **P1**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-TEST-ED-01 | Must Have (**P1**) | Full unit + TempDir integration for every FR in this revision |
+| US-TEST-ED-02 | Must Have (**P1**) | Live MCP tests on `/workspace` fixture + `/workspace-other` mega with evidence reports |
+
+### 3.25 Remote source indexing (US-SRC) — v3.7.16 **P2**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-SRC-01 | Must Have (**P2**) | As an operator, I index internal GitLab repos without a local clone; auth via `GITLAB_TOKEN` or `--auth` |
+| US-SRC-02 | Must Have (**P2**) | As an operator, I index GCS buckets into the knowledge graph using OAuth bearer tokens |
+| US-SRC-WATCH-01 | Must Have (**P2**) | As an operator, `leankg watch --source git+https://...` polls for changes and re-indexes without `git clone`/`git pull` |
+| US-SRC-WATCH-02 | Must Have (**P2**) | As an operator, `leankg watch --source gs://...` polls GCS and delta-downloads only changed objects |
+| US-SRC-WATCH-03 | Must Have (**P2**) | Watch state survives restart (`.leankg/source_watch_state.json`) |
+
+### 3.26 Doc semantic refresh + kind filter (US-REFRESH) — v3.7.16 **P2**
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-REFRESH-01 | Must Have (**P2**) | As ops, I run `leankg refresh` to index code + docs + embed in one shot |
+| US-REFRESH-02 | Must Have (**P2**) | As ops, I run `leankg index-docs <path>` as a CLI command (not only MCP) |
+| US-REFRESH-03 | Must Have (**P2**) | As an agent, `semantic_search(..., kind=docs)` returns `document`/`doc_section` hits without code noise |
+
+### 3.27 Enterprise Docker separation (US-ENT-DOCKER) — v3.8.1 **P2**
+
+> **Why now:** Historical motivation: operators wanted independent scaling, backup orchestration, and HA on the storage tier without doubling the API fleet. The legacy embedded engine shipped a standalone HTTP graph server (RocksDB backend) speaking the same wire protocol, so separation cost zero impedance. Superseded by managed PostgreSQL.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-ENT-DOCKER-01 | Must Have (**P2**) | As ops, I build a graph-server image from the legacy sidecar Dockerfile and run the engine on a separate container; healthcheck confirms `/` returns HTTP 200 |
+| US-ENT-DOCKER-02 | Must Have (**P2**) | As ops, I bring up `docker-compose.enterprise.yml` and get a healthy graph-server + leankg stack; leankg waits for sidecar health before starting MCP |
+| US-ENT-DOCKER-03 | Must Have (**P2**) | As a developer, I can extract the health-gate script from `entrypoint.sh` and unit-test it in isolation (skip / success / timeout / custom interval) |
+| US-ENT-DOCKER-04 | Must Have (**P2**) | As ops, I have a live integration script (`tests/enterprise_docker/test_live.sh`) that builds the image, exercises CRUD via `/text-query`, restarts the container, and verifies RocksDB data survives |
+| US-ENT-DOCKER-05 | Should Have (**P2**) | As a future developer, I add a Rust HTTP client (`src/db/remote.rs`) that consumes the legacy remote-endpoint env var so the two containers actually exchange data without a fork |
+
+
+### 5.31 Enterprise Docker separation (FR-ENT-DOCKER) — v3.8.1 **P2**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-ENT-DOCKER-01 | Must Have | The legacy sidecar Dockerfile builds the standalone graph-server image from the upstream engine binary (RocksDB mode); runtime image based on `debian:bookworm-slim` with `libsqlite3-0` + `libc++1` for the dynamic deps |
+| FR-ENT-DOCKER-02 | Must Have | The legacy sidecar Dockerfile pins listener + healthcheck to `127.0.0.1:3000` (upstream v0.7.6 hardcoded bind); upgrade path documented in `ponytail:` comment |
+| FR-ENT-DOCKER-03 | Must Have | `docker-compose.enterprise.yml` wires the graph-server sidecar (RocksDB) + `leankg` (MCP/REST) via a shared network namespace so the joiner reaches the sidecar on `127.0.0.1:3000` without auth; the sidecar owns the public port publishing (9699/8080) |
+| FR-ENT-DOCKER-04 | Must Have | `depends_on: <sidecar>: condition: service_healthy` ensures leankg never starts before the sidecar passes healthcheck |
+| FR-ENT-DOCKER-05 | Must Have | The health-gate script is extracted from `entrypoint.sh`, sourced at boot, and unit-tested (5 assertions: skip / 200 / timeout / custom interval / budget respected) |
+| FR-ENT-DOCKER-06 | Must Have | The legacy remote-endpoint env var is read by the gate; when unset, the gate returns immediately with rc=0 (backward-compat for single-container mode) |
+| FR-ENT-DOCKER-07 | Must Have | Live integration test (`test_live.sh`) proves: image builds, container runs, HTTP 200 from `/`, `:create` + `:put` + read round-trip succeeds, data survives container restart, sidecar netns pattern works |
+| FR-ENT-DOCKER-08 | Must Have | Compose-file validator (`test_compose_files.sh`) parses both `docker-compose.enterprise.yml` and `docker-compose.rocksdb.yml` and asserts 16 invariants (services present, env wired, ports ownership, network mode, backward-compat) |
+| FR-ENT-DOCKER-09 | Should Have | `Dockerfile.rocksdb` exposes the legacy remote-endpoint variable (empty default) so enterprise deployments can set it via `.dockerfile` or compose env without rebuilding the image |
+| FR-ENT-DOCKER-10 | Should Have | `docker-compose.rocksdb.yml` (single-container) gains a header comment pointing at `docker-compose.enterprise.yml` and `docs/enterprise-docker.md` |
+| REL-071 | Must Have | Live evidence: the standalone graph-server image exists; enterprise compose brings the sidecar up healthy |
+| REL-072 | Must Have | Live evidence: HTTP `POST /text-query` returns `{"ok": true, "rows": [...]}` for `:create`, `:put`, and `*persist_test[name, value]` |
+| REL-073 | Must Have | Live evidence: after recreating the sidecar container with its data volume, the same query still returns the same rows (persistent storage) |
+| REL-074 | Must Have | Unit + compose + live test runner (`tests/enterprise_docker/run_all.sh`) reports `Test files: PASS=N FAIL=0` |
+
+
+### 3.28 Session memory from TencentDB Agent Memory (US-SM) — v3.8.2 **P2**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `US-SM-*` / `FR-SM-*` / `REL-075`.  
+> **Evidence:** [`docs/analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md`](analysis/tencentdb-agent-memory-vs-leankg-2026-07-31.md).  
+> **Relationship to §1.1 / §1.2:** Company-adoption remains **P1 CURRENT**. These stories are **P2** (US-SM-07 = P3) — do not preempt Wave 4. `US-SM-02` is the concrete path that closes **US-GE-05**.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| US-SM-01 | Must Have (**P2**) | As an agent in a long multi-tool session, **I want** verbose MCP/tool payloads offloaded to `.leankg/sessions/<id>/refs/<node_id>.md` with only a compact canvas (Mermaid or graph JSON) kept in context, **so that** I can recover details via `node_id` without replaying hundreds of KB |
+| US-SM-02 | Must Have (**P2**) | As an agent starting a new session, **I want** top-K ranked prior lessons / diary tags auto-injected into `get_overview_context` (opt-in), **so that** I improve without remembering to call diary/knowledge tools — **closes US-GE-05** |
+| US-SM-03 | Should Have (**P2**) | As an agent writing durable memory, **I want** typed kinds (`preference` / `decision` / `standing_rule`, aligned to Tencent’s persona/episodic/instruction) plus `source_ids` / `node_id` provenance, **so that** summaries remain expandable to evidence |
+| US-SM-04 | Should Have (**P2**) | As an agent searching past experience, **I want** hybrid BM25 + vector recall merged with RRF (`k=60`) across knowledge + diary + LESSONS + dynamic ontology, **so that** I do not miss memories that keyword or ANN alone would drop |
+| US-SM-05 | Could Have (**P2**) | As a human or agent debugging memory, **I want** a heat-ranked white-box `MEMORY_INDEX.md`, **so that** inspection does not require probing opaque scores |
+| US-SM-06 | Could Have (**P2**) | As a team encoding SOPs, **I want** repeated successful tool traces proposed as `add_ontology_workflow` candidates (YAML remains SoT), **so that** session wins become shared procedural knowledge |
+| US-SM-07 | Could Have (**P3**) | As an operator, **I want** retention/GC for session `refs/` and low-heat agent-memory artifacts (pinned/high-heat exempt), **so that** disk and index noise stay bounded |
+
+**Acceptance (US-SM-01):**
+- **Given** a session with ≥N MCP tool results exceeding a configured token/char budget, **When** offload triggers, **Then** full payloads land under `.leankg/sessions/<id>/refs/<node_id>.md`, a canvas lists `node_id`s, and `session_recall(node_id=…)` (or `ctx_read`) returns the original payload.
+- **Given** a fixed multi-tool fixture, **When** offload is enabled vs disabled, **Then** injected context tokens drop ≥30% while drill-down still recovers evidence.
+
+**Acceptance (US-SM-02):**
+- **Given** prior `report_query_outcome` / diary / knowledge entries and recall enabled, **When** `get_overview_context` runs, **Then** top-K ranked lessons appear within char budgets; recall timeout (default ≤5s) skips injection without failing the tool; duplicate outcomes are deduped.
+- **Given** recall disabled (default until measured), **When** overview runs, **Then** behavior matches today (no forced injection).
+
+**Acceptance (US-SM-03..04):** Tracker PENDING until shipped; provenance fields present on new writes; RRF search returns merged ranked hits with score threshold + budgets.
+
+**Won't Do:** Chat-persona SoT; OpenClaw/Hermes product binding; renaming LeanKG code-context L0–L3; Mermaid as primary graph store.
+
+
+### 3.29 RocksDB LOCK poison — embed auto-arm blocks all DB tools — v3.8.4 **P0**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-P0-EMBED-LOCK` / `REL-P0-EMBED-LOCK`.
+> **Evidence:** [`docs/reports/ab-leankg-vs-raw-live-2026-08-02.md`](reports/ab-leankg-vs-raw-live-2026-08-02.md).
+> **Trigger:** 2026-08-02 A/B of LeanKG tools vs raw grep/read on this repo exposed that on the Docker MCP (`:9699`, `project=/workspace`) the embed idle scheduler auto-arms ~30s after boot and its incremental scan holds the RocksDB `data/LOCK`. Thereafter every DB-backed tool (`semantic_search`, `find_function`, `get_context`, `search_code`, `query_file`) fails `RocksDB IO error: lock hold by current process ... data/LOCK: No locks available` until `docker restart`. First `semantic_search` on a fresh boot hangs 30s+ and never returns. This contradicts the [v3.7.3-embed-no-block](#v373-embed-no-block---http-mcp-stays-responsive-while-embed-runs-2026-07-28-fr-embed-r1-follow-up) intent — MCP must keep serving while embed runs.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| FR-P0-EMBED-LOCK | Must Have (**P0**) | Serving MCP (`mcp-http`) must never hold the RocksDB LOCK while embedding: read-only mode for mcp-http, or a reader/writer DB split, or `LEANKG_EMBED_AUTO_ARM=0` as the default for serving containers |
+| REL-P0-EMBED-LOCK | Must Have (**P0**) | Fix + live smoke: boot → 30s+ idle → `semantic_search` completes, all DB tools stay healthy; 5× parallel `semantic_search` storm keeps `:9699/health` ok |
+
+**Acceptance (FR-P0-EMBED-LOCK):**
+- **Given** the Docker MCP serving `:9699` with current env, **When** the server idles ≥30s and the embed scheduler auto-arms, **Then** no DB-backed tool errors with `lock hold by current process`; `semantic_search` returns within budget.
+- **Given** a fresh container boot, **When** `semantic_search` is the first call, **Then** it completes without hanging (no 30s+ stall).
+- **Given** the fix ships, **When** `docker-compose.override.yml` default env is applied, **Then** the LOCK is never contended between the reader server and the embed writer.
+
+**Won't Do:** Blocking `semantic_search` while cold-embed runs; requiring manual `embed_control(on)` after every boot.
+
+
+### 3.30 MCP 88-tool validation root causes — v3.8.5 **P0**
+
+> **Tasks:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-P0-MCP-RC-01..04` / `REL-P0-MCP-RC`.
+> **Evidence:** [`docs/reports/mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [`docs/reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md).
+> **Trigger:** 2026-08-02 live validation of all 88 MCP tools against the `/workspace-be` mega-graph (662,378 elements / 2,259,855 relationships) — empty treated as failure. 44 / 88 failed. Four root causes, code-traced and live-DB-verified:
+> - **D1 file-arg routing shadows `project`** — `execute_tool` picks the DB by `file → path → project` priority (`src/mcp/server.rs:2640-2662`); relative `file`/`path` args resolve via `find_leankg_for_path` from container cwd `/workspace` → wrong project DB. `project=/workspace-be` is ignored for file/path tools.
+> - **D2 RocksDB double-open lock** — no single-handle-per-DB invariant (`src/db/schema.rs:193-204` is a debug-only assert); the ontology YAML watcher holds the `/workspace` `GraphEngine` for the process lifetime (`src/ontology/watcher.rs:50`), and the cache-clear on write (`src/mcp/server.rs:2734-2737`) makes the next request re-open the same path → `lock hold by current process`.
+> - **D3 blocking-sync stall** — synchronous DB script execution on Tokio async workers (legacy engine era) with no `spawn_blocking` and no `tokio::time::timeout` in the MCP path (`src/mcp/server.rs:2979`, `src/db/schema.rs:25`). Heavy full-scans starve all `num_cpus` workers → `/health` stalls → container `(unhealthy)`.
+> - **D4 mega-guard opt-in** — `refuse_full_scan_if_mega` (`src/ontology/safe_discover.rs:68`) is wired into only 7 of ~90 tools; 15 unguarded tools full-scan; the guard's `count_elements()` is itself a full COUNT (`src/graph/query.rs:3483`); `get_cluster_skill` runs live Louvain on 662k nodes; ontology write tools not in `WRITE_TOOLS`.
+> - **Data-absence (tool correct, ~8)** — `/workspace-be` is code-only: no PRD, incidents, service metadata, clusters, or docs.
+
+| ID | Priority | Story |
+|----|----------|-------|
+| FR-P0-MCP-RC-01 | Must Have (**P0**) | `project` is the authoritative DB-routing key; `file`/`path` resolved relative to it (never via cwd) — file/path tools open `/workspace-be` when `project=/workspace-be` |
+| FR-P0-MCP-RC-02 | Must Have (**P0**) | One process-wide `GraphEngine` per DB path behind a single mutex — no cache-clear re-open; `lock hold by current process` eliminated |
+| FR-P0-MCP-RC-03 | Must Have (**P0**) | `tokio::time::timeout` around tool execution + heavy `GraphEngine` calls on `spawn_blocking` — a slow tool must not stall `/health` or flip the container unhealthy |
+| FR-P0-MCP-RC-04 | Must Have (**P0**) | Mega-guard (`refuse_full_scan_if_mega`) wired into every unguarded full-scan tool; guard uses the cached `is_mega_graph` probe (`query.rs:3508`); `get_cluster_skill` skips live Louvain on mega; ontology writes added to `WRITE_TOOLS` |
+| REL-P0-MCP-RC | Must Have (**P0**) | Fix + live smoke on `/workspace-be`: all 88 tools return within budget, empty is data-absent only; 5× parallel storm keeps `:9699/health` ok |
+
+**Acceptance (FR-P0-MCP-RC-01):**
+- **Given** `get_dependencies` / `get_dependents` / `get_impact_radius` / `get_context` called with `project=/workspace-be` and a relative `file`, **Then** they query `/workspace-be` (key `workspace-be-6917453a1780`) and return the anchor file's real edges — not a `/workspace` lock error or empty.
+- **Given** `mcp_index` / `mcp_index_docs` with `project=/workspace-be`, **Then** they index into `/workspace-be` without `lock hold by current process`.
+
+**Acceptance (FR-P0-MCP-RC-02):**
+- **Given** a write tool (e.g. `add_knowledge`) then a doc tool (`find_related_docs`) on the same project, **Then** no `RocksDB IO error: lock hold by current process`; the second tool reuses the existing handle.
+
+**Acceptance (FR-P0-MCP-RC-03):**
+- **Given** a deliberately slow query (full-graph export) concurrent with `/health`, **Then** `/health` responds <1s and the container stays `(healthy)`; the slow tool returns a timeout/503 rather than holding the worker forever.
+
+**Acceptance (FR-P0-MCP-RC-04):**
+- **Given** any of the 15 unguarded full-scan tools (`find_dead_code`, `get_graph_report`, `export_html`, `export_graph_snapshot`, `check_consistency`, `get_tested_by`, `temporal_query`, `timeline`, `query_graph`, `get_cluster_skill`, `kg_semantic_context`, `resolve_with_lsp`) on a mega-graph, **Then** they either return within budget or refuse with the documented `max 50000 for full-scan tools` message — never hang.
+
+**Won't Do:** Requiring clients to pass absolute container paths as a workaround for D1; silently dropping data-absent results (they should surface as "no data", not as tool errors); blocking cold-embed.
+
+### 5.32 Session memory (FR-SM) — v3.8.2 **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter `FR-SM-*` / `US-SM-*` / `REL-075`.  
+> **Narrative:** §1.3. **Does not preempt** §1.1 / Wave 4.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SM-01 | Must Have | Persist offloaded MCP/tool payloads under `.leankg/sessions/<session_id>/refs/<node_id>.md` with stable `node_id` scheme |
+| FR-SM-02 | Must Have | Maintain session canvas (Mermaid or compact JSON) listing steps + `node_id`s; inject canvas (not raw payloads) when budget threshold hit |
+| FR-SM-03 | Must Have | MCP `session_recall` (or documented `ctx_read` path) recovers payload by `node_id`; bit-for-bit or lossless reference |
+| FR-SM-04 | Must Have | Ranked lessons index fed by `report_query_outcome` / diary / knowledge (dedup before write; vector or hash) |
+| FR-SM-05 | Must Have | Optional enrichment of `get_overview_context` (or `get_memory_context`) with top-K lessons; default **off** until A/B measured |
+| FR-SM-06 | Must Have | Recall timeout + per-item / total char budgets; on timeout skip injection (never block MCP response) |
+| FR-SM-07 | Should Have | Durable writes accept `source_ids` / `node_id` / tool-call refs on knowledge, diary, ontology, outcomes |
+| FR-SM-08 | Should Have | Typed agent-memory kinds: at least `preference`, `decision`, `standing_rule` (map from Tencent persona/episodic/instruction) |
+| FR-SM-09 | Should Have | Hybrid search over knowledge + diary + LESSONS + dynamic ontology: FTS + vector merged with RRF `k=60`; score threshold + budgets |
+| FR-SM-10 | Could Have | Generate/update heat-ranked `.leankg/MEMORY_INDEX.md` from outcome + search telemetry |
+| FR-SM-11 | Could Have | Detect repeated successful multi-tool sequences; propose `add_ontology_workflow` (human/YAML confirm; no silent SoT replace) |
+| FR-SM-12 | Could Have | Retention days + reclaim for session refs / low-heat memories; pinned and high-heat exempt; min retention ≥3 days when enabled |
+| REL-075 | Must Have | Analysis deepened + PRD §1.3/§3.28/§5.32 + tracker `US-SM-*`/`FR-SM-*` rows landed; smoke report when US-SM-01/02 implement |
+
+**Won't Do:** Tencent VDB / OpenClaw plugin packaging; irreversible summarization without drill-down IDs; second parallel memory DB beside the graph store + `.leankg/` files.
+
+
+### 5.33 RocksDB LOCK poison — embed auto-arm blocks all DB tools (FR-P0-EMBED-LOCK) — v3.8.4 **P0**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-P0-EMBED-LOCK` / `REL-P0-EMBED-LOCK` **DONE**.
+> **Narrative:** §3.29. Evidence: [`ab-leankg-vs-raw-live-2026-08-02.md`](reports/ab-leankg-vs-raw-live-2026-08-02.md).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-P0-EMBED-LOCK | Must Have (**P0**) | Serving `mcp-http` must never hold the RocksDB LOCK while embedding — implement read-only RocksDB open for mcp-http, or a reader/writer DB split, or default `LEANKG_EMBED_AUTO_ARM=0` on serving containers — **DONE** (PR #200 `LEANKG_EMBED_AUTO_ARM=0` + #195 single-handle) |
+| FR-P0-EMBED-LOCK-2 | Must Have (**P0**) | `semantic_search` on a fresh boot must complete within budget (no 30s+ stall); no DB tool may error with `lock hold by current process` after the embed scheduler arms — **DONE** (RC-02 removes the re-open that produced the LOCK error) |
+| REL-P0-EMBED-LOCK | Must Have (**P0**) | Fix + live smoke on Docker MCP `:9699`: boot → 30s+ idle → `semantic_search` returns; `find_function` / `get_context` / `search_code` / `query_file` healthy; 5× parallel `semantic_search` storm keeps `/health` ok — **DONE** ([evidence](reports/p0-mcp-root-cause-fixes-2026-08-03.md)) |
+
+**Won't Do:** Making MCP block on cold-embed; requiring manual `embed_control(on)` after every container boot; wiping existing vectors to clear a stale LOCK.
+
+
+### 5.34 MCP 88-tool validation root causes (FR-P0-MCP-RC) — v3.8.5 **P0**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-P0-MCP-RC-01..04` / `REL-P0-MCP-RC` **DONE**.
+> **Narrative:** §3.30. Evidence: [`mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/mcp-88-tool-validation-workspace-be-2026-08-02.md), [`root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md`](reports/root-cause-mcp-88-tool-validation-workspace-be-2026-08-02.md).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-P0-MCP-RC-01 | Must Have (**P0**) | `project` is the authoritative DB-routing key in `execute_tool` (`src/mcp/server.rs:2640-2662`); `file`/`path` resolved relative to `project`, never via cwd `find_leankg_for_path`. File/path tools open `workspace-be-6917453a1780` when `project=/workspace-be` — **DONE** (PR #198 `resolve_db_route`) |
+| FR-P0-MCP-RC-02 | Must Have (**P0**) | Single process-wide `GraphEngine` per canonical DB path behind one mutex — the ontology watcher (`src/ontology/watcher.rs:50`) and the request path share the same handle; the cache-clear re-open (`server.rs:2734-2737`) is removed. `lock hold by current process` eliminated (overlaps `FR-P0-EMBED-LOCK`) — **DONE** (PR #195) |
+| FR-P0-MCP-RC-03 | Must Have (**P0**) | `tokio::time::timeout` around handler execution in `process_jsonrpc_request` (`server.rs:3254`) + heavy `GraphEngine` calls moved to `spawn_blocking`. A slow tool returns a timeout/503; `/health` and the container stay responsive — **DONE** (PR #199 timeout + concurrency semaphore) |
+| FR-P0-MCP-RC-04 | Must Have (**P0**) | Wire `refuse_full_scan_if_mega` into every unguarded full-scan tool (`find_dead_code`, `get_graph_report`, `export_html`, `export_graph_snapshot`, `check_consistency`, `get_tested_by`, `temporal_query`, `timeline`, `query_graph`, `get_cluster_skill`, `kg_semantic_context`, `resolve_with_lsp`); guard uses cached `is_mega_graph` (`query.rs:3508`) not `count_elements`; `get_cluster_skill` skips live Louvain on mega; ontology write tools added to `WRITE_TOOLS` — **DONE** (PR #196) |
+| REL-P0-MCP-RC | Must Have (**P0**) | Fix + live smoke on `/workspace-be`: all 88 tools return within budget (empty only where data absent); 5× parallel storm keeps `:9699/health` ok; container stays `(healthy)` — **DONE** ([evidence](reports/p0-mcp-root-cause-fixes-2026-08-03.md)) |
+
+**Root causes (verified at file:line):**
+1. **D1 file-arg routing shadows `project`** — `src/mcp/server.rs:2640-2662` picks DB by `file → path → project`; `find_leankg_for_path` (`:318-335`) walks cwd `/workspace`. Breaks `get_dependencies` / `get_dependents` / `get_impact_radius` / `get_context` (wrong-project empty) and `mcp_index` / `mcp_index_docs` / `add_documentation` / `find_related_docs` (wrong-project lock).
+2. **D2 RocksDB double-open lock** — `src/db/schema.rs:193-204` invariant is debug-only; ontology watcher `src/ontology/watcher.rs:50` holds `/workspace` handle forever; cache-clear `server.rs:2734-2737` forces re-open → `lock hold by current process`.
+3. **D3 blocking-sync stall** — `run_script` (`src/db/schema.rs:25`) is sync; no `spawn_blocking` in `src/mcp/`; no request timeout (`server.rs:2979` → `:3254`). Full-scans starve all Tokio workers → `/health` (`:3421`) stalls → container `(unhealthy)`.
+4. **D4 mega-guard opt-in** — `refuse_full_scan_if_mega` (`src/ontology/safe_discover.rs:68`) only in 7 tools; guard's `count_elements` (`src/graph/query.rs:3483`) is a full COUNT; cached probe `is_mega_graph` (`query.rs:3508`) unused.
+
+**Data-absence (tool correct):** `/workspace-be` code-only — no PRD, incidents, service metadata, clusters, docs. `find_tunnels`, `get_service_*`, `get_traceability*`, `query_incidents`, `get_files_for_doc` correctly empty. Fix = index the data, not the tools.
+
+**Won't Do:** Requiring absolute container paths from clients as the D1 workaround; treating data-absent empty results as tool errors; blocking cold-embed for D3.
+
+
+### 5.35 Summary-node embedding (FR-EMBED-SUMMARY + FR-EMBED-SUMMARY-ONLY) — v3.8.6 **P1**
+
+> GraphRAG-style coarse-granularity embedding for large codebases. Instead of
+> one vector per function (sparse signal, N-functions inferences), synthesize
+> deterministic table-of-contents summary nodes per file and per module whose
+> blob is the densest description of that file's purpose (path + module decl +
+> exported types + public signatures). Functions are then discovered purely
+> via ontology traversal from summary seeds at query time.
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-EMBED-SUMMARY-01 | Must Have | Indexer synthesizes a `"file"` summary node per source file (reusing the existing `element_type="file"` slot) whose `metadata.summary` is a deterministic TOC; `metadata.summary_kind="toc"` marks it. Zero schema changes (reuses `code_elements`) |
+| FR-EMBED-SUMMARY-02 | Must Have | Indexer synthesizes a cross-file `"module"` summary node per declared package (≥2 files sharing it); `qualified_name = {first_file}::module::{name}`, `metadata.summary_kind="module_toc"` |
+| FR-EMBED-SUMMARY-03 | Must Have | File-summary nodes link to their top-level functions/types via `contains` bridge edges (`metadata.source="file_summary"`) so retrieval's `downward_rule_for("file")` walks to functions |
+| FR-EMBED-SUMMARY-04 | Must Have | Module-summary nodes link to each of their member file-summary nodes via `contains` bridge edges (`metadata.source="module_summary"`) so a module seed is not a dead-end |
+| FR-EMBED-SUMMARY-05 | Must Have | `downward_rule_for("module")` is **2 hops** (module → file_summary → function), distinct from `class` (1 hop: class → method). Fanout 16 |
+| FR-EMBED-SUMMARY-06 | Must Have | Blob builder short-circuits on `metadata.summary` so a summary node embeds as `qualified_name + "\n" + summary` |
+| FR-EMBED-SUMMARY-07 | Should Have | `--summary-primary <on|off|auto>` CLI flag (`auto` enables on >50k-element graphs); skips per-function vectors for files above `--summary-primary-cap` lines (default 500). `file`/`module`/`class` always embedded |
+| FR-EMBED-SUMMARY-ONLY-01 | Must Have | `--summary-only <on|off>` CLI flag (default `off`, env `LEANKG_EMBED_SUMMARY_ONLY`): embed only `file` + `module` summary nodes — **no function/method/constructor vectors at all** |
+| FR-EMBED-SUMMARY-ONLY-02 | Must Have | Summary-only gate in `element_passes_type_filter` supersedes `type_filter` and `summary_primary_enabled`; the mega-graph default `{function,method}` type filter is dropped so summary nodes aren't starved |
+| FR-EMBED-SUMMARY-ONLY-03 | Must Have | At query time `semantic_search` discovers functions purely via ontology traversal: HNSW file/module summary hits → upper seeds → `downward_rule_for` BFS → functions (composite-scored). Empty direct-function pool handled safely by existing `normalize` |
+
+**Design notes:**
+- Summary nodes are pure functions of the already-extracted `CodeElement` set — no source re-read, no LLM call.
+- `file` and `module` are already in `UPPER_TYPES` and already use `contains` downward rules, so the seed→traverse retrieval flow needed **zero** handler changes.
+- Out of scope: filesystem `directory` summaries (every file covered); embedding type declarations (`class`/`struct`) under summary-only. Both extensible later by widening `SUMMARY_ONLY_TYPES`.
+
+
+### 5.36 Harness-era assessment fixes (FR-HEA) — v3.8.7 **P1**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-HEA-01..05` **NOT_DONE**.
+> **Narrative:** §3.31. Evidence: [`freepeak/.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md`](../../.docs/research/2026-08-30-devagent-leankg-value-in-harness-era.md) (5 probes, 2026-08-30 snapshot).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-HEA-01 | Must Have (**P1**) | `kg_ontology_status` alias accounting is self-consistent: `nodes_missing_aliases` cannot exceed the sum of aliased entity counts (probe returned 14 missing vs 13 domain entities); add the invariant test + backfill real aliases or fix the formula |
+| FR-HEA-02 | Must Have (**P1**) | Empty / below-confidence-floor `semantic_search` and `kg_semantic_context` responses include a structured `fallback` hint naming `search_code` with the caller's terms (probe 4: 0/3 concrete query → dead-end prose hint only) |
+| FR-HEA-03 | Should Have (**P2**) | `get_architecture` default output carries a mega-graph banner: element count, the 50k full-scan cap, and which tools refuse (`check_consistency`, `temporal_query`, `timeline`, ...); the refusal error message references the banner (probe 6: 360,953-element graph refused with cap invisible) |
+| FR-HEA-04 | Must Have (**P1**) | Remote-PG latency: per-tool `tokio::time::timeout` floors for semantic tools set below typical 30s client timeouts, structured timeout error (not hang); README / `mcp-setup.md` document local-PG or materialised-view options for heavy semantic queries (probe 5: `kg_semantic_context` timed out at 30s on remote PG) |
+| FR-HEA-05 | Must Have (**P1**) | Positioning cutover: README lead + §1.1 + agent-surface docs (using-leankg, install hooks, skills) present the org-memory substrate surfaces first — traceability (`get_traceability*`), `find_env_conflicts`, `query_incidents`, `get_team_map`, cross-repo `get_service_graph` — and describe search as deterministic/graph-verified complement, not a harness-native-search competitor |
+
+**Won't Do (this track):** Competing with harness-native Glob/Grep/LSP on raw search speed; rebuilding session/chat memory (see §1.3 boundary); demoting or removing the semantic layer (keep as complementary hybrid).
+
+### 5.37 Session-memory audit fixes (FR-SMA) — v3.8.8 **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-SMA-01..06` **NOT_DONE**.
+> **Narrative:** §3.32. Evidence: source audit 2026-09-02 of omp `pi-coding-agent/src/hindsight/*` vs LeanKG `src/session/mod.rs` / `src/mcp/handler.rs` / `src/graph/query.rs` (file:line cites inline).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SMA-01 | Must Have (**P2**) | `report_query_outcome` / `agent_diary_write` / `add_knowledge` also push into `RecallStore::push_dedup` (outcome-weighted rank seed: useful 1.0 / corrected 0.8 / dead_end 0.2); module doc `session/mod.rs:8-12` corrected; one diary write → non-empty `session_lessons` |
+| FR-SMA-02 | Must Have (**P2**) | `Lesson` gains `created_at`; `recall_for_overview` scores `rank × recency_decay` (≈30-day half-life); legacy timestamp-less rows sort as oldest |
+| FR-SMA-03 | Should Have (**P2**) | `report_query_outcome` accepts optional `lesson_id` — `useful` bumps rank, `dead_end` decays, `corrected` rewrites text (new fingerprint supersedes old line); idempotent per lesson+outcome |
+| FR-SMA-04 | Should Have (**P2**) | `session_retain(project, session_id, transcript)` MCP tool: idempotent `documentId=session_id`, deterministic chunking, feeds dedup + lessons index; documented Stop-hook recipe for omp / Claude Code session-end flush |
+| FR-SMA-05 | Could Have (**P3**) | Memory root resolves to the git common dir so `.worktrees/<feature>/` sessions share one recall index (omp primary-checkout scoping analog) |
+| FR-SMA-06 | Could Have (**P3**) | Secret redaction before diary/lesson writes (diary JSONL raw today, `handler.rs:1417-1449`); truncation markers on injected lessons |
+
+### 5.38 Search-layer discipline fixes (FR-ZG) — v3.8.9 **P2**
+
+> **FR checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — `FR-ZG-01..06` **NOT_DONE**.
+> **Narrative:** §1.4 / §3.33. Evidence: [competitive analysis 2026-09-03](analysis/zvec-grep-vs-leankg-2026-09-03.md) (zg docs 01–08 + benchmark methodology; LeanKG source cites inline).
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-ZG-01 | Must Have (**P2**) | Default MCP toolset = one intent-expressing router tool (reuses `orchestrate` intent parser + cache); full catalog behind explicit `full` opt-in (flag / env / config); default-set session passes the v3.8.5 probe suite with zero tool-selection errors |
+| FR-ZG-02 | Must Have (**P2**) | Postgres FTS: `tsvector` + GIN on `code_elements(name, qualified_name)` + `knowledge_entries(title, content)`; `websearch_to_tsquery`; RRF fusion with vector scores in `semantic_search` dual path (single parameterized `k`, consistent with US-SM-04); substring/`ILIKE` only as exact-regex escape hatch; no F1 regression on cross_tool suite |
+| FR-ZG-03 | Must Have (**P2**) | `freshness: fresh\|possibly_stale` in the response envelope of every index-backed tool; `possibly_stale` only on drift evidence (watcher error / missed paths / resume drift); background reconciliation never blocks or shares the query transaction (heavy work never shares a request — lesson of the pre-PG v3.8.4 LOCK-poison incident) |
+| FR-ZG-04 | Should Have (**P2**) | `leankg install --target opencode\|claude\|codex\|cursor`: idempotent MCP-config writer with `--force` conflict replacement and Docker container-mount `project=` guidance; clean `uninstall` |
+| FR-ZG-05 | Should Have (**P2**) | `benchmarks/cross_tool/` hardening: pinned repo SHAs + prompt versions per run, ≥3 trials/arm with variance, judge-blind scorer; zg pitfalls checklist (leakage / like-for-like / stochasticity / tool-access smoke test) adopted into `docs/cross-tool-benchmark.md` |
+| FR-ZG-06 | Could Have (**P3**) | Second in-catalog embedding model (Model2Vec-class static vectors) for constrained hardware; documented model-switch/rebuild semantics (existing index reuses stored model unless explicitly rebuilt); `embed --import` unchanged |
+
+### 5.24 Document embed (FR-DOCEMBED) — v3.7.15 **P1**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-DOCEMBED-01 | Must Have | `classify` maps `document` / `doc_section` → `BlobKind::Doc`; non-empty `build_doc_blob` |
+| FR-DOCEMBED-02 | Must Have | `doc_indexer` stores `title`, `heading_path`, `first_paragraph` on documents and sections |
+| FR-DOCEMBED-03 | Must Have | After `index_docs_directory`, mark doc QNs stale via `mark_stale_if_changed` |
+| FR-DOCEMBED-04 | Must Have | Prefer-order: `search_by_requirement` → `mcp_index_docs` → `semantic_search` doc hits |
+| REL-065 | Must Have | Live fixture report: index_docs → embed subset → semantic doc hit → doc↔code round-trip |
+
+### 5.25 Embed types perf (FR-EMBED-TYPES) — v3.7.15 **P1**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-EMBED-TYPES-01 | Must Have | `parse_type_filter("perf")` expands to perf preset list |
+| FR-EMBED-TYPES-02 | Must Have | Perf preset: `function,method,class,interface,file,struct,property,constructor,document,doc_section` |
+| FR-EMBED-TYPES-03 | Must Have | `struct` / `property` / `constructor` → Code blobs |
+| FR-EMBED-TYPES-04 | Must Have | `--full` enrolls elements with no `embedding_state` row |
+| REL-066 | Must Have | Mega report: `--full --types perf` coverage + per-type sample |
+
+### 5.26 Index inventory (FR-INDEX-INV) — v3.7.15 **P1**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-INDEX-INV-01 | Must Have | Postgres table `index_inventory` key=`latest` with element/rel/vector totals + estimated bytes |
+| FR-INDEX-INV-02 | Must Have | Refresh after code index, doc index, and embed |
+| FR-INDEX-INV-03 | Must Have | `mcp_status(include_counts=true)` includes `inventory` |
+| FR-INDEX-INV-04 | Must Have | CLI `status` prints inventory when present |
+| REL-067 | Must Have | Mega inventory aligns with post-embed vector totals |
+
+### 5.27 Test gates (FR-TEST-ED) — v3.7.15 **P1**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-TEST-ED-01 | Must Have | `cargo test --release --features embeddings` green for matrix in plan |
+| FR-TEST-ED-02 | Must Have | Live fixture script: health → status → index_docs → embed → semantic_search doc |
+| FR-TEST-ED-03 | Must Have | Live mega: `embed_control(project=)` routing + inventory coverage |
+| FR-TEST-ED-04 | Must Have | Tracker rows NOT_DONE until REL-065..068 attached |
+| REL-068 | Must Have | Master report linking unit + live sections |
+
+### 5.28 Remote source indexing (FR-SRC) — v3.7.16 **P2**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SRC-GIT-01 | Must Have | Git source auth resolves `--auth` → `GITLAB_TOKEN` → `GIT_TOKEN` before falling back to public/anonymous |
+| FR-SRC-GIT-02 | Must Have | Git `clone` / `pull` for HTTPS injects token as `https://oauth2:<token>@host/...`; SSH unchanged |
+| FR-SRC-GIT-03 | Must Have | Incremental index from remote source does not double-sync (sync once, then index staging without re-entering `source_uri`) |
+| FR-SRC-GCS-01 | Must Have | `gs://` source indexes into graph via OAuth bearer token (`GCS_ACCESS_TOKEN` env or `--auth`); emulator via `STORAGE_EMULATOR_HOST` |
+| FR-SRC-GCS-02 | Must Have | CLI help honestly documents OAuth-only GCS auth; no false claims of service-account JSON support |
+| REL-SRC-01 | Must Have | E2e test: `index --source gs://...` populates file/function elements in graph (fake-gcs emulator) |
+
+### 5.29 Remote source hot-reload (FR-SRC-WATCH) — v3.7.16 **P2**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-SRC-WATCH-01 | Must Have | `Source` trait gains `remote_fingerprint()` and `materialize_ephemeral()` for watch-mode without persistent clone |
+| FR-SRC-WATCH-02 | Must Have | GitLab/git watch detects tip change via `git ls-remote`; materializes via repository archive download (no `git clone`/`pull`) |
+| FR-SRC-WATCH-03 | Must Have | GCS watch detects object changes via generation/etag listing; materializes delta download only |
+| FR-SRC-WATCH-04 | Must Have | `leankg watch --source URI --interval N` polls remote, runs incremental index + optional embed on change |
+| FR-SRC-WATCH-05 | Must Have | Watch state persisted in `.leankg/source_watch_state.json` so restarts do not re-index unchanged content |
+| REL-SRC-WATCH-01 | Must Have | E2e: change file in fake-gcs → watch cycle re-indexes changed content only |
+
+### 5.30 Doc semantic refresh + kind filter (FR-REFRESH + FR-DOCEMBED-04 fix) — v3.7.16 **P2**
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-DOCEMBED-04 | Must Have | `semantic_search` accepts a `kind=docs` parameter that filters results to `document` / `doc_section` types so NL doc discovery is not drowned by code hits |
+| FR-REFRESH-01 | Must Have | `leankg refresh` runs code index + docs index + embed in one command; default types include `document,doc_section` |
+| FR-REFRESH-02 | Must Have | `leankg index-docs [path]` CLI command exists (not only MCP `mcp_index_docs`) |
+| US-REFRESH-01 | Must Have | As ops, I run one command to fully index and embed both code and docs |
+| REL-REFRESH-01 | Must Have | Live smoke: `refresh --wait` → `semantic_search(..., kind=docs)` returns doc hits for known phrases on `/workspace` |
+
+
+---
+
+## 6. Technical Architecture / HLD
+
+### 6.1 Technology Stack
+
+| Component | Technology | Version |
+|-----------|------------|---------|
+| Core Language | Rust | 1.70+ (edition 2021) |
+| Database | PostgreSQL + pgvector (HNSW ANN) | current |
+| Code Parsing | tree-sitter | 0.25 |
+| MCP Server | rmcp (Rust MCP library) | 1.2 |
+| CLI Framework | Clap | 4 |
+| Web UI | Axum | 0.7 |
+| Async Runtime | Tokio | 1 |
+| File Watching | notify | 7 |
+| Parallel Processing | rayon | 1.10 |
+| Markdown Parsing | pulldown-cmark | 0.12 |
+| Auth (API keys) | Argon2 | 0.5 |
+| CORS | tower-http | 0.6 |
+
+### 6.2 Data Model
+
+```
+CodeElement:
+  - qualified_name: string (PK) - format: "path/to/file.rs::function_name" or "path/to/dir/" for directories
+  - element_type: string - directory | file | function | class | import | export | pipeline | pipeline_stage | pipeline_step | terraform | cicd | document | doc_section
+  - name: string
+  - file_path: string
+  - line_start: int
+  - line_end: int
+  - language: string
+  - parent_qualified: string? (nullable)
+  - cluster_id: string? (nullable)
+  - cluster_label: string? (nullable)
+  - metadata: JSON (includes signature, headings, ci_platform, child_count for directories, etc.)
+
+Relationship:
+  - source_qualified: string (FK)
+  - target_qualified: string (FK)
+  - rel_type: string - imports | calls | references | documented_by | tested_by | tests | contains | defines | implements | implementations | tunnel | decided_about
+  - confidence: float (0.0-1.0)
+  - metadata: JSON
+  Indexes: rel_type_index, target_qualified_index
+
+> **Folder-as-Graph Design (MemPalace-inspired):** Directories are first-class `directory` nodes in the graph. The `contains` edge is overloaded to represent the full hierarchy: `directory → directory`, `directory → file`, `file → function/class`. This mirrors MemPalace's wing → room → closet → drawer spatial architecture:
+>
+> | MemPalace | LeanKG | Edge |
+> |-----------|--------|------|
+> | Wing (project/person) | Top-level directory (`src/`, `docs/`) | `contains` |
+> | Room (topic) | Sub-directory (`src/graph/`, `src/mcp/`) | `contains` |
+> | Closet (summary) | File (`src/graph/query.rs`) | `contains` |
+> | Drawer (verbatim) | Function/class within file | `contains` |
+>
+> Benefits:
+> - **Impact analysis at directory level:** "What modules are affected if I change anything in `src/indexer/`?"
+> - **Cluster-to-directory alignment:** Auto-detect when a Leiden cluster maps to a physical directory
+> - **Wake-up context includes module map:** L0/L1 can list top-level directories as the "palace wings"
+> - **Tunnel edges between directories:** Link `src/auth/` and `src/middleware/` when they share domain concepts
+> - **Folder search:** `query_file` and `search_code` can scope to directory nodes
+
+BusinessLogic:
+  - element_qualified: string (PK, FK)
+  - description: string
+  - user_story_id: string? (nullable)
+  - feature_id: string? (nullable)
+
+ContextMetric:
+  - tool_name: string (indexed)
+  - timestamp: int (indexed)
+  - project_path: string (indexed)
+  - input_tokens: int
+  - output_tokens: int
+  - output_elements: int
+  - execution_time_ms: int
+  - baseline_tokens: int
+  - baseline_lines_scanned: int
+  - tokens_saved: int
+  - savings_percent: float
+  - (+ optional fields: correct_elements, total_expected, f1_score, query_pattern, query_file, query_depth, success, is_deleted)
+
+QueryCache:
+  - cache_key: string (unique)
+  - value_json: string
+  - created_at: int
+  - ttl_seconds: int
+  - tool_name: string
+  - project_path: string
+  - metadata: JSON
+
+ApiKey:
+  - id: string (UUID)
+  - name: string
+  - key_hash: string (Argon2)
+  - created_at: int
+  - last_used_at: int?
+  - revoked_at: int?
+```
+
+### 6.3 Module Map
+
+```
+src/
+├── main.rs              # CLI entry point (30+ commands; includes lsp_resolve, check_consistency, tunnels, prs, clones, reflect)
+├── lib.rs               # Library exports (registers modules below)
+├── cli/                 # Clap command enum + ShellRunner
+├── config/              # ProjectConfig, IndexerConfig (typed_resolve flag), DocConfig, McpConfig
+├── db/                  # Postgres models, schema, operations, API key store, valid_from/valid_to fields
+├── doc/                 # DocGenerator, template rendering, wiki generation
+├── doc_indexer/         # Documentation indexing (docs/ → documented_by edges)
+├── graph/               # GraphEngine, queries, context, traversal, clustering, cache (incl. hot-path cache), export (HTML/SVG/GraphML/Neo4j/snapshot), clones, tunnels
+├── indexer/             # tree-sitter parsers (17), extractors (incl. dart/swift/xml/vue/svelte/sql_ddl/rationale/routes), git analysis, Terraform, CI/CD
+├── lsp/                 # NEW — generic LSP bridge (bridge.rs, client.rs, config.rs, mod.rs); per-(language, workspace) client cache
+├── mcp/                 # MCP tools (85), handler (resolve_with_lsp + agent_focus + diary + …), server (rmcp), auth, write tracker
+├── orchestrator/        # Query orchestration with intent parsing and persistent cache
+├── compress/            # RTK-style compression: 8 read modes, response/shell/cargo/git compressors, entropy analysis
+├── web/                 # Axum web UI (20+ routes, embedded HTML/CSS/JS)
+├── api/                 # REST API handlers, auth middleware
+├── watcher/             # notify-based file watcher for auto-indexing
+├── hooks/               # Git hooks (pre-commit, post-commit, post-checkout, GitWatcher)
+├── benchmark/           # Benchmark runner (LeanKG vs OpenCode/Gemini/Kilo)
+├── ontology/            # Concept + procedural ontology (concepts.yaml, workflows.yaml) — kg_* tools
+├── embeddings/          # Semantic embeddings → Postgres `embedding_vectors` + pgvector HNSW (feature-gated; product focus)
+├── retrieval/           # embed → HNSW ANN → rerank → graph traverse
+├── embed.rs             # Legacy/compat embedding wrappers (prefer `embeddings/`)
+├── budget.rs            # Per-tool token / RSS / wall-clock budget enforcement
+├── gc.rs                # MemoryGuard for long-running MCP daemons
+├── obsidian/            # Obsidian-vault doc adapter
+├── registry.rs          # Global repository registry (multi-repo management)
+└── runtime.rs           # Tokio runtime utilities
+```
+
+### 6.4 HLD — System Overview (merged from `hld-leankg.md`)
+
+```
++-----------------------------------------------------+
+|                   LeanKG Backend                    |
+|            (Axum + PostgreSQL / pgvector)                |
+|                                                     |
+|  +--------------+  +--------------+  +----------+  |
+|  |  production  |  |   staging    |  |  local   |  |
+|  |  namespace   |  |  namespace   |  |namespace |  |
+|  +--------------+  +--------------+  +----------+  |
+|                                                     |
+|  +-----------------------------------------------+  |
+|  |  PostgreSQL + pgvector HNSW embeddings (semantic ANN focus)  |  |
+|  +-----------------------------------------------+  |
++-----------------------------------------------------+
+         ^                    ^                ^
+         |                    |                |
+  +------+------+    +--------+-----+   +------+------+
+  |  MCP server |    |  REST API    |   |  Web UI     |
+  |  stdio/HTTP |    |  /api/...    |   |  2D (+3D E) |
+  +------+------+    +--------+-----+   +-------------+
+         |                    |
+  +------+------+    +--------+---------------------+
+  | AI assistants|   | CI/CD hooks / GitHub Actions |
+  +--------------+   +------------------------------+
+```
+
+### 6.5 HLD — Component Design
+
+**Data layer:** `env` on `code_elements` / `relationships`; incidents + service metadata tables; all queries filter by env (default `local`).
+
+**Graph engine tools (v2):** `get_service_context`, `find_env_conflicts`, `query_incidents`, env-aware impact.
+
+**MCP auth headers (HTTP):** `X-LeanKG-Token` / Bearer; optional engineer + env headers.
+
+**CLI (v2):** `leankg incident add|list|show`, `leankg update`, note/pattern/env helpers as implemented.
+
+**Vacuum scheduler:** tokio task; `LEANKG_VACUUM_INTERVAL_HOURS` (default 1, `0` disables); Sqlite VACUUM; RocksDB debug no-op; invalidate caches after success.
+
+**Ontology self-test:** `kg_self_test` + HTTP startup WARN (non-gating) for arity/schema drift on `kg_*` tools.
+
+### 6.6 HLD — Key Data Flows
+
+**Incident contribution:** CLI/API → validate Incident → Postgres → available to MCP queries.
+
+**Env conflicts:** fetch service across envs → compare schema/config/endpoints/deploy → risk HIGH/MEDIUM/LOW.
+
+**Vacuum:** boot → spawn loop → vacuum → log → sleep.
+
+**kg_self_test:** bind HTTP → run OntologyQueryEngine::self_test → info if OK, warn per failure → still serve.
+
+### 6.7 HLD — Implementation Phases (v2)
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 Data model & schema (`env`, Incident) | Schema | DONE |
+| 2 Graph engine env/incident queries | Engine | DONE |
+| 3 MCP tools + token budgets | MCP | DONE |
+| 4 CLI incident/update | CLI | DONE |
+| 5 Integration tests / CI template | Test/Docs | PARTIAL |
+
+### 6.8 HLD — Interface Sketches
+
+`query_incidents` input: `{service, pattern?, env, limit}` → incidents[].  
+`find_env_conflicts` input: `{service}` → conflicts[{type, detail, risk}].  
+`leankg incident add --title … --severity P1 --affected svc --env production`.
+
+### 6.9 HLD — Risks & Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Schema migration breaks v1 data | High | Default `env=local` for existing rows |
+| Token budgets too tight | Medium | Configurable budgets + TOON |
+| Scale to large multi-service graphs | High | RocksDB, caches, pagination |
+| Concurrent writes | Medium | Postgres transactions + advisory lock |
+| Unbounded DB growth | Medium | Hourly vacuum |
+| Ontology arity drift → MCP -32603 | High | `kg_self_test` startup WARN |
+| LocalEngine dual-write crash leaves dangling offsets | High | Append → fsync → Rocks commit → RAM; recovery skips incomplete (FR-VE-FS-*) |
+| SIMD path SIGILL on older CPUs | High | Runtime feature detect + scalar fallback (FR-VE-RT-SIMD) |
+| 2GB cgroup OOM during ANN warm | High | Auto-tune block cache + SQ8-only hot path (FR-VE-RT-MEM / BENCH-OOM) |
+| Premature engine default switch | Medium | Hard FR-VE-GATE before changing FR-HNSW-B default |
+
+### 6.10 HLD — Optimized Local-First Vector Graph Engine (v3.7.0)
+
+```
+                    +---------------------------------------------+
+                    |     Retrieval API (unchanged MCP/CLI)       |
+                    |  semantic_search / kg_semantic_context / …  |
+                    +----------------------+----------------------+
+                                           |
+                    +----------------------v----------------------+
+                    |   Storage Factory (env / .env / leankg.yaml)|
+                    |   LocalEngine  |  CloudEngine (static enum) |
+                    +----------+------------------+---------------+
+                               |                  |
+              Local (ARM64/x86) |                  | Cloud (x86_64)
+                               v                  v
+         +---------------------+----+    +--------+------------------+
+         | Tier 1 RocksDB           |    | Tier 1 TiKV               |
+         | metadata + HNSW adj      |    | metadata + HNSW adj       |
+         | mmap OFF, Zstd, pin L0   |    | distributed KV            |
+         +------------+-------------+    +--------+------------------+
+                      |                           |
+         +------------v-------------+    +--------v------------------+
+         | Tier 2 SQ8/INT8 in RAM   |    | Tier 2 SQ8/INT8 in RAM    |
+         | SIMD: NEON/AVX2/AVX-512  |    | SIMD + full-core rayon    |
+         | (leave 2 cores Local)    |    | (use 50-80% RAM)          |
+         +------------+-------------+    +--------+------------------+
+                      |                           |
+         +------------v-------------+    +--------v------------------+
+         | Tier 3 Flat binary       |    | Tier 3 Flat / object store|
+         | FP32 + source payload    |    | FP32 + source payload     |
+         | post-filter read once    |    | post-filter read once     |
+         +--------------------------+    +---------------------------+
+
+Dual-write: Flat append → fsync → Tier1 offsets → Tier2 RAM update
+GC: shadow page + delta sync when fragmentation > 30% (readers unblocked)
+```
+
+**Dynamic adaptation:** cgroups/`sysinfo` → RocksDB block cache; runtime CPU feature detect → SIMD lane; Local leaves 2 cores free.
+
+**Migration:** pgvector HNSW is the default ANN since the Postgres cutover; optional dual-run / shadow compare for recall preceded it.
+
+---
+
+## 7. MCP Tools (85 total — audited 2026-07-14 against `src/mcp/tools.rs` v0.17.9)
+
+### Project Management (5)
+| Tool | Description |
+|------|-------------|
+| `mcp_init` | Initialize LeanKG project |
+| `mcp_index` | Index codebase |
+| `mcp_index_docs` | Index docs directory |
+| `mcp_install` | Create .mcp.json |
+| `mcp_status` | Show index status |
+
+### Impact & Dependency (6)
+| Tool | Description |
+|------|-------------|
+| `mcp_impact` | Calculate blast radius |
+| `get_impact_radius` | Affected files within N hops with confidence/severity |
+| `detect_changes` | Pre-commit risk analysis |
+| `get_dependencies` | Direct imports of a file |
+| `get_dependents` | Files depending on target |
+| `get_review_context` | Focused subgraph + review prompt |
+
+### Code Search (7)
+| Tool | Description |
+|------|-------------|
+| `search_code` | Search by name/type |
+| `find_function` | Locate function definition |
+| `query_file` | Find file by pattern |
+| `get_callers` | Find callers of a function |
+| `get_call_graph` | Bounded call chain |
+| `get_code_tree` | Codebase structure |
+| `find_large_functions` | Oversized functions by line count |
+
+### Context & Compression (3)
+| Tool | Description |
+|------|-------------|
+| `get_context` | AI-optimized file context |
+| `ctx_read` | Read file with 8 compression modes |
+| `orchestrate` | Smart query routing with cache |
+
+### Testing & Docs (7)
+| Tool | Description |
+|------|-------------|
+| `get_tested_by` | Test coverage info |
+| `get_doc_for_file` | Docs referencing code element |
+| `get_files_for_doc` | Code elements in a doc |
+| `get_doc_structure` | Documentation directory structure |
+| `get_doc_tree` | Doc tree with hierarchy |
+| `generate_doc` | Generate documentation |
+| `find_related_docs` | Docs related to code change |
+
+### Traceability (2)
+| Tool | Description |
+|------|-------------|
+| `get_traceability` | Full traceability chain |
+| `search_by_requirement` | Code for a requirement |
+
+### Clustering & Graph (3)
+| Tool | Description |
+|------|-------------|
+| `get_clusters` | Functional communities |
+| `get_cluster_context` | Cluster symbols and dependencies |
+| `generate_graph_report` | Comprehensive graph analysis |
+
+### Export & Utility (2)
+| Tool | Description |
+|------|-------------|
+| `export_graph` | Export in json/html/svg/graphml/neo4j |
+| `mcp_hello` | Health check / debug |
+
+### 7.5 TOON Response Templates
+
+All MCP tool responses use TOON (Token-Oriented Object Notation) format by default for ~40% token reduction. See [TOON Specification](https://github.com/toon-format/toon) for details.
+
+**Response Format Envelope:**
+```
+{
+  status: ok|error
+  tool: <tool_name>
+  format: toon|json
+  tokens: <token_count>
+  data: <response_data>
+}
+```
+
+**TOON Format Examples:**
+
+1. **Search/Query Results:**
+```
+{
+  status: ok
+  tool: search_code
+  format: toon
+  tokens: 156
+  data:
+    results[3]{qualified_name,type,language}:
+      src/main.rs::main,function,rust
+      src/lib.rs::init,function,rust
+      src/cli.rs::run,function,rust
+}
+```
+
+2. **Impact Radius:**
+```
+{
+  status: ok
+  tool: get_impact_radius
+  format: toon
+  tokens: 203
+  data:
+    impact[4]{qualified_name,type,severity,confidence}:
+      src/main.rs::main,function,WILL_BREAK,1.0
+      src/lib.rs::init,function,LIKELY_AFFECTED,0.85
+      src/config.rs::load,function,LIKELY_AFFECTED,0.72
+      tests/main_test.rs::test_main,test,MAY_BE_AFFECTED,0.31
+}
+```
+
+3. **Dependencies/Dependents:**
+```
+{
+  status: ok
+  tool: get_dependencies
+  format: toon
+  tokens: 98
+  data:
+    dependencies[2]{qualified_name,type}:
+      src/lib.rs,file
+      src/config.rs,file
+}
+```
+
+4. **Call Graph:**
+```
+{
+  status: ok
+  tool: get_call_graph
+  format: toon
+  tokens: 187
+  data:
+    calls[3]{from,to,depth}:
+      src/main.rs::main,src/lib.rs::init,1
+      src/main.rs::main,src/cli.rs::run,1
+      src/lib.rs::init,src/config.rs::load,2
+}
+```
+
+5. **Context/Compression:**
+```
+{
+  status: ok
+  tool: get_context
+  format: toon
+  tokens: 412
+  data:
+    context:
+      sig[1]: src/main.rs::main->()
+      imports[2]: src/lib.rs,src/config.rs
+      calls[1]: src/lib.rs::init
+}
+```
+
+6. **Cluster/Graph Data:**
+```
+{
+  status: ok
+  tool: get_clusters
+  format: toon
+  tokens: 234
+  data:
+    clusters[2]{id,name,members}:
+      c1,mcp_tools,12
+      c2,graph_core,8
+}
+```
+
+**JSON Fallback:** Clients can request JSON format by adding `format=json` parameter to any MCP tool call.
+
+---
+
+## 8. Release Criteria
+
+> **Release checklist + status:** [`prd-task-tracker.md`](prd-task-tracker.md) — filter Kind=`Release` or section 8.* / FR-VE-GATE / REL-052 / **REL-054**.
+
+### 8.5 v3.7.2 Embed Resume Gate — **DONE (prior P0)**
+
+> **Status:** **DONE** on PR [#81](https://github.com/FreePeak/LeanKG/pull/81) / [#86](https://github.com/FreePeak/LeanKG/pull/86) — tracker `REL-052` + `FR-EMBED-RESUME-*` / `US-EMBED-*` / `FR-EMBED-TOGGLE-01`.
+>
+> **Current P0** is mega-graph HNSW query safety — see **§8.6** (`REL-054` / `FR-SEM-07`).
+
+**Gate checklist:**
+1. Unchanged second `embed --wait` on RocksDB volume: `embedded≈0`, `skipped_fresh` dominates (FR-EMBED-RESUME-01 / US-EMBED-01) — **DONE**
+2. Zero-dirty path skips HNSW drop/rebuild (FR-EMBED-RESUME-02 / US-EMBED-03) — **DONE**
+3. Kill mid-run → resume dirty-only (FR-EMBED-RESUME-03 / US-EMBED-02) — **DONE**
+4. No-op index does not stale-all (FR-EMBED-RESUME-04) — **DONE**
+5. Day-2 wall time ≪ cold on mega-graph; release note records numbers (FR-EMBED-RESUME-05 / REL-052) — **DONE** (MCP idle resume evidence 2026-07-20: `skipped_fresh: 147175`, ~2.7 s)
+6. Docker embed-on resumes existing data; cold only when empty (FR-EMBED-RESUME-06 / US-EMBED-04) — **DONE**
+
+### 8.6 v3.7.5 Mega-graph HNSW Semantic Safety Gate (**CURRENT P0**)
+
+> **Status:** **OPEN** — tracker `US-SEM-06` / `FR-SEM-07` / `REL-054`.
+>
+> Ship mega-safe HNSW `semantic_search` / `kg_semantic_context` before treating mega Docker MCP as production-ready for NL retrieval. Small-graph probe (REL-051) does **not** close this gate.
+>
+> **Failure baseline:** [`docs/reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md`](reports/main-a89a2cc-docker-mega-tool-test-2026-07-20.md) — mega OOM; `/workspace` HNSW GREEN.
+
+**Gate checklist:**
+1. No unbounded `all_elements()` (or equivalent full-graph RAM load) on HNSW semantic seed hydration (FR-SEM-07) — **NOT_DONE**
+2. `semantic_search` on `/workspace-other` returns without OOM/HTTP drop; `/health` stays ok (US-SEM-06 / REL-054) — **NOT_DONE**
+3. `kg_semantic_context` same mega stability AC — **NOT_DONE**
+4. Small `/workspace` HNSW+rerank remains GREEN (no regression) — **PASS** (baseline 2026-07-20)
+5. Report peak RSS + latency in `docs/reports/` after fix (REL-054) — **NOT_DONE**
+
+## 9. Non-Functional Requirements
+
+| Metric | Target | Status |
+|--------|--------|--------|
+| Cold start time | < 2 seconds | TBD |
+| Indexing speed | > 10,000 lines/second (parallel via rayon) | TBD |
+| Time-to-context (chunks + deps JSON) P95 | **&lt; 100ms** | DONE (US-VE-02 — measured **0.086ms** P95) |
+| ANN query P95 (1M SQ8, Local) | **&lt; 50ms** | DONE (FR-VE-BENCH-Q — measured **0.055ms** Neon @ 1M) |
+| Query response time (legacy general) | < 100ms | TBD |
+| Memory usage (idle MCP) | **&lt; 150MB** (was 100MB aspirational) | DONE (US-VE-01 — lean absolute ≈**65MB**; warm delta ≈**58MB**; CI gates `delta_ok`) |
+| Memory usage (indexing) | < 500MB typical; Cloud may use 50–80% RAM for SQ8 | TBD |
+| Survival under cgroup | **2GB hard** — never OOM-killed | DONE (FR-VE-BENCH-OOM — est. heap ≈1.06GB; live alloc under 2GB) |
+| Disk I/O vs legacy mmap | ≥ **80%** fewer page faults / disk reads | DONE (FR-VE-BENCH-IO — **99.999%** modeled) |
+| HNSW recall @ efSearch=50 vs FP32 BF | **&gt; 90%** | DONE (FR-VE-BENCH-RECALL — measured **1.000** @ ef=50) |
+| Agent token savings vs grep/cat | ≥ **60%** (stretch 61%) | DONE (FR-VE-BENCH-AB — measured **65.0%** @ 100 tasks) |
+| Agent tool-call reduction vs baseline | ≥ **80%** (stretch 84%) | DONE (FR-VE-BENCH-AB — measured **84.6%**) |
+| Agent time-to-resolution | ≥ **2×** faster | DONE (FR-VE-BENCH-AB — measured **2.50×**) |
+| Agent task success rate | ≥ baseline | DONE (FR-VE-BENCH-AB) |
+| detect_changes response time | < 2 seconds | TBD |
+| get_context enhanced response size | < 4000 tokens | TBD |
+| Batch insert size | 5000 rows/batch | DONE |
+| Supported parser / extractor count | Tree-sitter + specialized extractors; **indexed walk ≈ 12 code langs + Android/XML/TF/CI + Vue/Svelte/SQL/Swift/ObjC** (REL-032 wired 2026-08-02) | PARTIAL (Ruby/PHP/C# walk still pending) |
+| MCP tool count | 85 tools (`src/mcp/tools.rs`) | DONE (audited 2026-07-14; still 85 on v0.19.0) |
+| Cross-platform | Apple Silicon (ARM64) Local + Linux x86_64 Cloud | PARTIAL (FR-VE-ABS DONE; CloudEngine TiKV Tier-1 still stub root) |
+| Token honesty (delivered vs actual) | When `truncated: true`, agents can read both figures; docs teach ≥3× budget | PENDING (FR-SEM-01) |
+| Ontology-tool default budgets | `concept_search` / `kg_semantic_context` ≥ 2k (align with sibling `kg_*`) | PENDING (FR-SEM-02) |
+| MCP HTTP semantic flake | Read-only semantic tools survive one transient socket drop via retry / hygiene | PENDING (FR-SEM-03) |
+| Live semantic MCP smoke | Checklist run (or waived) as release complement to embeddings cargo tests | PENDING (FR-SEM-04 / REL-051) |
+| Day-2 embed (unchanged graph) | Near-zero ONNX; wall time ≪ cold; minutes not hours on mega-graph | DONE local smoke + e2e (FR-EMBED-RESUME-01 / 02); mega-graph wall-time PARTIAL (FR-05) |
+| Zero-dirty embed | No HNSW drop/rebuild when nothing to write | DONE (FR-EMBED-RESUME-02) |
+| Embed interrupt resume | Already-`fresh` rows never re-inferred after kill/restart | DONE (FR-EMBED-RESUME-03) |
+| Docker embed-on resume | Existing RocksDB embed data → resume; empty → cold only | PARTIAL — shared build path + AGENTS (FR-EMBED-RESUME-06 / US-EMBED-04); live Docker smoke optional |
+
+---
+
+## 10. Out of Scope
+
+1. **Full multi-modal PDF/image/video graph ingest (Graphify-style)** - Code + docs + infra first; not a company cost lever
+2. **Cloud SaaS hosting of LeanKG** - Self-hosted only (team HTTP MCP / RocksDB / **self-hosted TiKV CloudEngine** is in scope; managed multi-tenant SaaS is not)
+3. **Multi-user collaborative editing of the graph** - Single writer per project DB; shared read via HTTP MCP is OK
+4. **Plugin system** - Future consideration
+5. **Raw Datalog query passthrough** - Security risk (except controlled `run_raw_query`)
+6. **Replacing the graph store with NetworkX-only primary store** - Snapshot/HTML export is additive
+7. **Full 158-language / Pure-C rewrite (CBM chase)** - Selective languages only
+8. **Split PRD/HLD documents** - This file is the only SoT for narrative/HLD; do not recreate `docs/requirement/prd-*.md` or `docs/design/hld-leankg.md`. Task lists/status live only in [`prd-task-tracker.md`](prd-task-tracker.md)
+9. **Status tables / FR checkboxes inside this PRD** - Forbidden; use the tracker
+10. **Redis/FalkorDB as cold-embed write accelerator** - Rejected v3.6.3; not revived by v3.7 vector engine
+11. **Default cutover away from the gated HNSW default before FR-VE-GATE** - Explicitly forbidden
+12. **Replace Sigma live UI with vis.js-only static HTML** - Steal HTML *export*; keep live explorer
+13. **36–40 language grammar race to match Graphify** - Wire tested extractors only; prefer typed resolve depth
+14. **LLM auto-extraction of procedural workflows from arbitrary code (P0)** - YAML remains SoT for v3.7.9; auto-update means watch/sync/index-hook of authored ontology, not Graphiti-style LLM invent
+
+---
+
+## 11. Glossary
+
+| Term | Definition |
+|------|------------|
+| Knowledge Graph | Graph structure storing entities and relationships from codebase |
+| Code Indexing | Process of parsing code and extracting structural information |
+| MCP Server | Model Context Protocol server for AI tool integration (rmcp) |
+| Context Window | AI model's input capacity; LeanKG minimizes tokens needed |
+| Business Logic Mapping | Linking code to business requirements |
+| Qualified Name | Natural node identifier: `file_path::parent::name` format |
+| Blast Radius / Impact Radius | All files affected by a change within N hops |
+| Confidence Score | Float 0.0-1.0 indicating edge reliability |
+| Confidence Label | EXTRACTED / INFERRED / AMBIGUOUS provenance |
+| Severity Classification | WILL BREAK / LIKELY AFFECTED / MAY BE AFFECTED |
+| Cluster | Functional community (Leiden) |
+| God Node | High-degree hub concept |
+| Environment Namespace | `local` / `staging` / `production` / `upcoming` partition of graph data |
+| Incident Node | Structured outage/knowledge record linked to services |
+| Vacuum Scheduler | Periodic SQLite VACUUM on long-lived MCP servers |
+| RTK | Rust Token Killer — compression reducing LLM tokens |
+| Orchestrator | Intent parsing + persistent cache |
+| Global Registry | Multi-repo management for cross-project queries |
+| Temporal Graph | Relationships with valid_from/valid_to |
+| Wake-up Protocol | Minimal L0+L1 context at session start |
+| HLD | High-Level Design — architecture and flows in Section 6.4–6.10 |
+| LocalEngine | 3-tier local vector/graph backend (RocksDB + SQ8 RAM + flat payload) |
+| CloudEngine | Same API as LocalEngine backed by TiKV (and cloud-scale RAM) |
+| SQ8 / INT8 quantization | Down-casted vectors kept fully in RAM for SIMD ANN |
+| Flat Payload File | Tier-3 append-only binary storing FP32 + source for post-filter |
+| Dual-Write | Append → fsync → commit offsets → update RAM (crash-safe order) |
+| FR-VE-GATE | Quality gate required before replacing the shipped HNSW default |
+| Token honesty | Delivered `tokens` vs `_token_budget.actual` when payloads are truncated |
+| Live MCP semantic smoke | Docker HTTP probe of `semantic_search` / `concept_search` / `kg_*` — complements, does not replace, cargo embeddings tests |
+
+---
+
+## 12. References
+
+- PostgreSQL: https://www.postgresql.org/docs/
+- pgvector: https://github.com/pgvector/pgvector
+- tree-sitter: https://tree-sitter.github.io/tree-sitter/
+- MCP Protocol: https://modelcontextprotocol.io/
+- rmcp: https://crates.io/crates/rmcp
+- Leiden Algorithm: https://en.wikipedia.org/wiki/Leiden_algorithm
+- MemPalace: https://github.com/milla-jovovich/mempalace
+- codebase-memory-mcp: https://github.com/DeusData/codebase-memory-mcp — see Section 3.11 / 5.10
+- Context enhancement analysis: `docs/analysis/enhancement-analysis-2026-07-09.md`
+- Roadmap: `docs/roadmap.md`
+- MCP tool reference: `docs/mcp-tools.md`
+- CLI reference: `docs/cli-reference.md`
+- Embed store how-it-works: `generated_docs/embed_store_how_it_works_2026-07-16.md`
+- Semantic MCP live verification (2026-07-17): [`docs/semantic-search-mcp-verification-2026-07-17.md`](semantic-search-mcp-verification-2026-07-17.md)
+- MCP HTTP stability analysis: `docs/analysis/mcp-http-stability-analysis-2026-05-05.md`
+- **Task tracker (all US/FR/Release + status):** [`docs/prd-task-tracker.md`](prd-task-tracker.md) / [`prd-task-tracker.json`](prd-task-tracker.json)
+
+---
+
+*Last updated: 2026-09-03 (v3.8.9 — zvec-grep search-layer discipline audit → US-ZG / FR-ZG backlog; storage PostgreSQL + pgvector)*
