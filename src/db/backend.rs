@@ -98,6 +98,14 @@ fn tls_client_config(
 pub fn pg_connect(url: &str) -> Result<postgres::Client, Box<dyn std::error::Error>> {
     let normalized = normalize_pg_url_for_parse(url);
     let wants_tls = url_wants_verified_tls(url);
+    // Test builds fail fast on an unreachable dev Postgres (e.g. a stopped
+    // container whose port proxy still accepts): without a timeout the
+    // live-PG unit tests that should SKIP hang the suite instead.
+    #[cfg(test)]
+    let mut cfg: postgres::Config = normalized.parse()?;
+    #[cfg(test)]
+    cfg.connect_timeout(std::time::Duration::from_secs(3));
+    #[cfg(not(test))]
     let cfg: postgres::Config = normalized.parse()?;
     // Install the ring crypto provider before any rustls use (idempotent;
     // rustls 0.23 panics at first handshake if no provider is installed).
@@ -436,6 +444,22 @@ pub trait DbBackend: Send + Sync {
         _limit: usize,
     ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
         Err("SQL-first fuzzy find not supported by this backend".into())
+    }
+
+    /// FR-ZCP-05/FR-ZCP-03: whether pg_trgm's `similarity()` resolves on
+    /// this backend. Default `false` so the router's L2 rung degrades to
+    /// ILIKE-only recall on backends without trigram support;
+    /// `PostgresBackend` overrides with a cached per-URL probe.
+    fn trgm_available(&self) -> bool {
+        false
+    }
+
+    /// FR-ZCP-03 test seam: downcast support so router unit tests can flip
+    /// backend-specific flags (FakeBackend's trgm availability) through the
+    /// shared `dyn DbBackend` handle.
+    #[cfg(test)]
+    fn as_any(&self) -> &dyn std::any::Any {
+        unimplemented!("as_any is only meaningful on test backends")
     }
 
     /// FR-ZCP-05: did-you-mean suggestions — top-K distinct element names
@@ -1094,36 +1118,6 @@ impl PostgresBackend {
         client.execute(sql.as_str(), &param_refs)?;
         Ok(())
     }
-
-    /// FR-ZCP-05: whether `similarity()` resolves through this backend's
-    /// connection (pg_trgm installed AND on search_path). Probed once per
-    /// URL and cached process-wide — extensions are per-database state, so
-    /// the answer cannot change within a process. The degraded ILIKE-only
-    /// SQLs keep the seam working when this returns false.
-    fn trgm_available(&self) -> bool {
-        static CACHE: LazyLock<Mutex<HashMap<String, bool>>> =
-            LazyLock::new(|| Mutex::new(HashMap::new()));
-        let key = self.pg_url.clone();
-        {
-            let guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(known) = guard.get(&key) {
-                return *known;
-            }
-        }
-        let available = self.sql_query(TRGM_PROBE_SQL, &[]).is_ok();
-        if !available {
-            tracing::warn!(
-                "FR-ZCP-05: pg_trgm unavailable on this database; \
-                 fuzzy find/suggest degrade to ILIKE-only recall"
-            );
-        }
-        CACHE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(key, available);
-        available
-    }
-
     /// FR-ENT-1 sync body: chain head for recorder restarts. Errors when the
     /// audit_log table is absent — the recorder disables after one warn.
     fn last_audit_entry_hash_sync(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -1915,6 +1909,35 @@ fn fuzzy_ilike_params(query: &str, limit: usize) -> [crate::db::sql::SqlParam; 2
 impl DbBackend for PostgresBackend {
     fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// FR-ZCP-05: whether `similarity()` resolves through this backend's
+    /// connection (pg_trgm installed AND on search_path). Probed once per
+    /// URL and cached process-wide — extensions are per-database state, so
+    /// the answer cannot change within a process. The degraded ILIKE-only
+    /// SQLs keep the seam working when this returns false.
+    fn trgm_available(&self) -> bool {
+        static CACHE: LazyLock<Mutex<HashMap<String, bool>>> =
+            LazyLock::new(|| Mutex::new(HashMap::new()));
+        let key = self.pg_url.clone();
+        {
+            let guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(known) = guard.get(&key) {
+                return *known;
+            }
+        }
+        let available = self.sql_query(TRGM_PROBE_SQL, &[]).is_ok();
+        if !available {
+            tracing::warn!(
+                "FR-ZCP-05: pg_trgm unavailable on this database; \
+                 fuzzy find/suggest degrade to ILIKE-only recall"
+            );
+        }
+        CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, available);
+        available
     }
 
     // ---- SQL-first API (W8 P0) ----

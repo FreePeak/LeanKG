@@ -7,8 +7,23 @@ impl ToolRegistry {
     pub fn list_tools() -> Vec<ToolDefinition> {
         vec![
             ToolDefinition {
+                name: "leankg_context".to_string(),
+                description: "Tier: core. The one default LeanKG tool. Ask any question about the indexed codebase — intent is auto-classified (semantic | lexical | impact | graph | files) and served by a capability ladder: L3 vector (ANN + rerank), L2 keyword (trigram fuzzy + ontology), L1 exact (identifier/regex + did-you-mean), L0 cold (guidance + background index). Degrades ranking, never availability; every response carries retrieval {rung, reason, freshness}. Prefer this over search_code / semantic_search / concept_search; drop to those only for their specialized filters.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Natural-language question, identifier, path, or graph/impact question"},
+                        "intent": {"type": "string", "enum": ["semantic", "lexical", "impact", "graph", "files"], "description": "Optional explicit intent; defaults to auto-classification from the query shape"},
+                        "limit": {"type": "integer", "default": 20, "description": "Max results (1-50)"},
+                        "full": {"type": "boolean", "default": false, "description": "File/impact intents: return full compressed context instead of a page"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolDefinition {
                 name: "mcp_init".to_string(),
-                description: "Initialize LeanKG project (creates .leankg/ and leankg.yaml)"
+                description: "Tier: setup. Initialize LeanKG project (creates .leankg/ and leankg.yaml)"
                     .to_string(),
                 input_schema: json!({
                     "type": "object",
@@ -20,7 +35,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "mcp_index".to_string(),
-                description: "Index codebase (mirrors CLI: leankg index)".to_string(),
+                description: "Tier: setup. Index codebase (mirrors CLI: leankg index)".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -38,7 +53,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "mcp_index_docs".to_string(),
-                description: "Index documentation directory to create code-doc traceability edges. \
+                description: "Tier: setup. Index documentation directory to create code-doc traceability edges. \
                               Run after mcp_index to populate documented_by and references relationships."
                     .to_string(),
                 input_schema: json!({
@@ -51,7 +66,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "mcp_install".to_string(),
-                description: "Create .mcp.json for MCP client configuration".to_string(),
+                description: "Tier: setup. Create .mcp.json for MCP client configuration".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -63,7 +78,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "mcp_status".to_string(),
-                description: "Show LeanKG index status".to_string(),
+                description: "Tier: setup. Show LeanKG index status".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -74,7 +89,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_dependencies".to_string(),
-                description: "Get file dependencies (direct imports)".to_string(),
+                description: "Tier: core. Get file dependencies (direct imports)".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -86,7 +101,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_dependents".to_string(),
-                description: "Get files depending on target".to_string(),
+                description: "Tier: core. Get files depending on target".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -98,7 +113,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_impact_radius".to_string(),
-                description: "Get all files affected by change within N hops. Keep depth<=2 for LLM context budgets. Depth 3 may return hundreds of nodes. Results include confidence scores (0.0-1.0) and severity classification (WILL BREAK, LIKELY AFFECTED, MAY BE AFFECTED). Set compress_response=true for token-optimized output.".to_string(),
+                description: "Tier: core. Get all files affected by change within N hops. Keep depth<=2 for LLM context budgets. Depth 3 may return hundreds of nodes. Results include confidence scores (0.0-1.0) and severity classification (WILL BREAK, LIKELY AFFECTED, MAY BE AFFECTED). Set compress_response=true for token-optimized output.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -113,7 +128,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "detect_changes".to_string(),
-                description: "Pre-commit risk analysis: computes diff between working tree and last indexed commit. Returns changed files, affected symbols, and risk level (critical/high/medium/low). Risk classification: critical>=10 dependents at depth 1, high>=5 dependents or public API changed, medium=2-4 dependents or cross-module dep, low=<=1 dependent within single cluster.".to_string(),
+                description: "Tier: advanced. Pre-commit risk analysis: computes diff between working tree and last indexed commit. Returns changed files, affected symbols, and risk level (critical/high/medium/low). Risk classification: critical>=10 dependents at depth 1, high>=5 dependents or public API changed, medium=2-4 dependents or cross-module dep, low=<=1 dependent within single cluster.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -126,7 +141,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_review_context".to_string(),
-                description: "Generate focused subgraph + structured review prompt".to_string(),
+                description: "Tier: advanced. Generate focused subgraph + structured review prompt".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -138,7 +153,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_context".to_string(),
-                description: "Get AI context for file (minimal, token-optimized)".to_string(),
+                description: "Tier: core. Get AI context for file (minimal, token-optimized)".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -152,7 +167,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "ctx_read".to_string(),
-                description: "Read file with compression modes for efficient LLM context".to_string(),
+                description: "Tier: core. Read file with compression modes for efficient LLM context".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -166,7 +181,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "explain_node".to_string(),
-                description: "US-GF-02: Return a single-node dossier (definition site, cluster, in/out degree, top neighbors by relation type). Accepts qualified_name, exact name, or fuzzy suffix.".to_string(),
+                description: "Tier: advanced. US-GF-02: Return a single-node dossier (definition site, cluster, in/out degree, top neighbors by relation type). Accepts qualified_name, exact name, or fuzzy suffix.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -178,7 +193,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "export_graph_snapshot".to_string(),
-                description: "US-GF-11: Write a portable graph snapshot (elements + relationships with relative paths) to a JSON file. Useful for committing the graph artifact to git so teams can merge work-in-progress knowledge.".to_string(),
+                description: "Tier: advanced. US-GF-11: Write a portable graph snapshot (elements + relationships with relative paths) to a JSON file. Useful for committing the graph artifact to git so teams can merge work-in-progress knowledge.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -189,7 +204,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "export_html".to_string(),
-                description: "US-GF-21: Export knowledge graph as an interactive HTML visualization (vis-network). Supports scoping by file, path prefix, or community cluster, and a maximum-node budget with a truncation banner.".to_string(),
+                description: "Tier: advanced. US-GF-21: Export knowledge graph as an interactive HTML visualization (vis-network). Supports scoping by file, path prefix, or community cluster, and a maximum-node budget with a truncation banner.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -205,7 +220,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_pr_impact".to_string(),
-                description: "US-GF-08: PR impact dashboard. Given changed files, returns cluster overlap and severity (LOW / MEDIUM / HIGH). Use to triage merge-order risk before pushing.".to_string(),
+                description: "Tier: advanced. US-GF-08: PR impact dashboard. Given changed files, returns cluster overlap and severity (LOW / MEDIUM / HIGH). Use to triage merge-order risk before pushing.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -218,7 +233,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "resolve_with_lsp".to_string(),
-                description: "US-CBM-B1: Resolve a symbol via the configured LSP server for the file's language. Walks up to the nearest .git / manifest to pick the right workspace, so multi-repo and nested service directories are routed correctly. Falls back to None when no server is configured or the request times out (US-CBM-B07).".to_string(),
+                description: "Tier: advanced. US-CBM-B1: Resolve a symbol via the configured LSP server for the file's language. Walks up to the nearest .git / manifest to pick the right workspace, so multi-repo and nested service directories are routed correctly. Falls back to None when no server is configured or the request times out (US-CBM-B07).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -234,7 +249,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_overview_context".to_string(),
-                description: "US-GN-08: Session-start overview (L0 identity + L1 critical facts + project summary). Prefer over load_layer(L0) alone. Replaces removed wake_up tool.".to_string(),
+                description: "Tier: advanced. US-GN-08: Session-start overview (L0 identity + L1 critical facts + project summary). Prefer over load_layer(L0) alone. Replaces removed wake_up tool.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -245,7 +260,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_team_map".to_string(),
-                description: "US-V2-12: Aggregated team / ownership map (team name, on-call, services owned) for a given environment.".to_string(),
+                description: "Tier: advanced. US-V2-12: Aggregated team / ownership map (team name, on-call, services owned) for a given environment.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -256,7 +271,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "report_query_outcome".to_string(),
-                description: "US-GF-09: Record whether a graph query result was useful (useful | dead_end | corrected). Appends an entry to .leankg/reflections/LESSONS.md so future agents can bias ranking toward previously-useful nodes.".to_string(),
+                description: "Tier: advanced. US-GF-09: Record whether a graph query result was useful (useful | dead_end | corrected). Appends an entry to .leankg/reflections/LESSONS.md so future agents can bias ranking toward previously-useful nodes.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -271,7 +286,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "agent_focus".to_string(),
-                description: "US-MP-04: Return a focused subgraph filtered by agent persona (path filters, cluster_id, element_types). Persona config lives in .leankg/agents/<name>.json.".to_string(),
+                description: "Tier: advanced. US-MP-04: Return a focused subgraph filtered by agent persona (path filters, cluster_id, element_types). Persona config lives in .leankg/agents/<name>.json.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -283,7 +298,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "agent_diary_write".to_string(),
-                description: "US-MP-04: Append a note to an agent's diary (.leankg/agents/<name>.diary.jsonl).".to_string(),
+                description: "Tier: advanced. US-MP-04: Append a note to an agent's diary (.leankg/agents/<name>.diary.jsonl).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -297,7 +312,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "agent_diary_read".to_string(),
-                description: "US-MP-04: Read recent diary entries for an agent.".to_string(),
+                description: "Tier: advanced. US-MP-04: Read recent diary entries for an agent.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -310,7 +325,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_cluster_skill".to_string(),
-                description: "US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
+                description: "Tier: advanced. US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -322,7 +337,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "find_tunnels".to_string(),
-                description: "US-MP-06: Find cross-domain tunnels — relationships where source and target belong to different Leiden clusters. Sorted by confidence descending.".to_string(),
+                description: "Tier: advanced. US-MP-06: Find cross-domain tunnels — relationships where source and target belong to different Leiden clusters. Sorted by confidence descending.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -333,7 +348,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "check_consistency".to_string(),
-                description: "US-MP-05: Detect broken or stale relationships (missing targets, invalidated edges). Returns BROKEN / STALE / CURRENT findings plus counts.".to_string(),
+                description: "Tier: advanced. US-MP-05: Detect broken or stale relationships (missing targets, invalidated edges). Returns BROKEN / STALE / CURRENT findings plus counts.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -343,7 +358,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "temporal_query".to_string(),
-                description: "US-MP-01: Return the graph state as of a given epoch (seconds). Edges with valid_from <= now <= valid_to are included.".to_string(),
+                description: "Tier: advanced. US-MP-01: Return the graph state as of a given epoch (seconds). Edges with valid_from <= now <= valid_to are included.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -355,7 +370,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "timeline".to_string(),
-                description: "US-MP-01: Return the chronological evolution of a code element's relationships (added / invalidated events with timestamps).".to_string(),
+                description: "Tier: advanced. US-MP-01: Return the chronological evolution of a code element's relationships (added / invalidated events with timestamps).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -367,7 +382,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_god_nodes".to_string(),
-                description: "US-GF-05: Return the most-connected elements (highest combined in+out degree). Optional percentile cutoff excludes utility super-hubs.".to_string(),
+                description: "Tier: advanced. US-GF-05: Return the most-connected elements (highest combined in+out degree). Optional percentile cutoff excludes utility super-hubs.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -379,7 +394,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "query_graph".to_string(),
-                description: "US-GF-03: Natural-language scoped subgraph query. Seed retrieval → bounded BFS expand (or shortest path for 'what connects A to B?') → trim to token_budget. Every edge includes confidence_label (EXTRACTED / INFERRED / AMBIGUOUS). Distinct from kg_semantic_context.".to_string(),
+                description: "Tier: core. US-GF-03: Natural-language scoped subgraph query. Seed retrieval → bounded BFS expand (or shortest path for 'what connects A to B?') → trim to token_budget. Every edge includes confidence_label (EXTRACTED / INFERRED / AMBIGUOUS). Distinct from kg_semantic_context.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -393,7 +408,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "shortest_path".to_string(),
-                description: "US-GF-01: BFS shortest path between two symbols. Returns ordered hops with relation, confidence, and provenance label (EXTRACTED / INFERRED / AMBIGUOUS). Inputs accept qualified_name, exact name, or fuzzy suffix.".to_string(),
+                description: "Tier: advanced. US-GF-01: BFS shortest path between two symbols. Returns ordered hops with relation, confidence, and provenance label (EXTRACTED / INFERRED / AMBIGUOUS). Inputs accept qualified_name, exact name, or fuzzy suffix.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -407,7 +422,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_call_graph".to_string(),
-                description: "Get bounded function call chain. Use depth=1 for direct callees, depth=2 for two hops. Avoid depth>3 to prevent neighbor explosion.".to_string(),
+                description: "Tier: core. Get bounded function call chain. Use depth=1 for direct callees, depth=2 for two hops. Avoid depth>3 to prevent neighbor explosion.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -421,7 +436,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "search_code".to_string(),
-                description: "[PREFER: for NL queries try semantic_search first] Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination. Prefer-order (search): try after concept_search and semantic_search when you need name/type filters.".to_string(),
+                description: "Tier: core. [PREFER: for NL queries try semantic_search first] Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination. Prefer-order (search): try after concept_search and semantic_search when you need name/type filters.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -438,7 +453,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "concept_search".to_string(),
-                description: "Concept-gated semantic search: extracts keywords from raw input, scans the concept ontology for matching concepts, loads each concept's code references, and queries the LeanKG DB for the actual code. Use this for natural-language / domain-concept queries (e.g. 'feature flag', 'gorm store', 'grpc service'). Falls back to name-based code search if no concept matches. Prefer-order (search): try first for domain concepts; then semantic_search; then search_code.".to_string(),
+                description: "Tier: core. Concept-gated semantic search: extracts keywords from raw input, scans the concept ontology for matching concepts, loads each concept's code references, and queries the LeanKG DB for the actual code. Use this for natural-language / domain-concept queries (e.g. 'feature flag', 'gorm store', 'grpc service'). Falls back to name-based code search if no concept matches. Prefer-order (search): try first for domain concepts; then semantic_search; then search_code.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -452,7 +467,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "generate_doc".to_string(),
-                description: "Generate documentation for file".to_string(),
+                description: "Tier: advanced. Generate documentation for file".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -464,7 +479,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "find_large_functions".to_string(),
-                description: "Find oversized functions by line count".to_string(),
+                description: "Tier: advanced. Find oversized functions by line count".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -478,7 +493,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_tested_by".to_string(),
-                description: "Get test coverage for a function/file".to_string(),
+                description: "Tier: advanced. Get test coverage for a function/file".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -490,7 +505,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_files_for_doc".to_string(),
-                description: "Get code elements referenced in a documentation file".to_string(),
+                description: "Tier: advanced. Get code elements referenced in a documentation file".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -502,7 +517,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_traceability".to_string(),
-                description: "Get full traceability chain for a code element".to_string(),
+                description: "Tier: advanced. Get full traceability chain for a code element".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -514,7 +529,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_doc_tree".to_string(),
-                description: "Get documentation tree structure with hierarchy".to_string(),
+                description: "Tier: advanced. Get documentation tree structure with hierarchy".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -527,7 +542,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_code_tree".to_string(),
-                description: "Get codebase structure".to_string(),
+                description: "Tier: advanced. Get codebase structure".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -540,7 +555,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "find_related_docs".to_string(),
-                description: "Find documentation related to a code change".to_string(),
+                description: "Tier: advanced. Find documentation related to a code change".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -552,7 +567,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_clusters".to_string(),
-                description: "Get all clusters (functional communities) in the codebase. Returns cluster ID, label, member count, and representative files.".to_string(),
+                description: "Tier: advanced. Get all clusters (functional communities) in the codebase. Returns cluster ID, label, member count, and representative files.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -565,7 +580,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "run_raw_query".to_string(),
-                description: "Execute a raw graph query (legacy Datalog-style syntax, translated to SQL against the Postgres store)".to_string(),
+                description: "Tier: advanced. Execute a raw graph query (legacy Datalog-style syntax, translated to SQL against the Postgres store)".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -582,7 +597,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_nav_graph".to_string(),
-                description: "Get the navigation graph structure for a screen or nav file. Returns destinations, actions, arguments, and deep links.".to_string(),
+                description: "Tier: advanced. Get the navigation graph structure for a screen or nav file. Returns destinations, actions, arguments, and deep links.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -595,7 +610,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "find_route".to_string(),
-                description: "Find which destination a route string or action ID resolves to.".to_string(),
+                description: "Tier: advanced. Find which destination a route string or action ID resolves to.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -607,7 +622,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_screen_args".to_string(),
-                description: "List all arguments a screen/destination requires, with types and default values.".to_string(),
+                description: "Tier: advanced. List all arguments a screen/destination requires, with types and default values.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -620,7 +635,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_nav_callers".to_string(),
-                description: "Find all call sites that navigate to a given destination. Use for impact radius when changing screen args.".to_string(),
+                description: "Tier: advanced. Find all call sites that navigate to a given destination. Use for impact radius when changing screen args.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -632,7 +647,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_service_graph".to_string(),
-                description: "Get microservice call graph with service repos as nodes. Returns aggregated service-to-service topology from service_calls relationships. The current service repo is the biggest node.".to_string(),
+                description: "Tier: advanced. Get microservice call graph with service repos as nodes. Returns aggregated service-to-service topology from service_calls relationships. The current service repo is the biggest node.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -646,7 +661,7 @@ impl ToolRegistry {
             // Knowledge Contribution Tools
             ToolDefinition {
                 name: "add_knowledge".to_string(),
-                description: "Add a knowledge entry to the knowledge base. Supports business knowledge, domain knowledge, architecture docs, PRD-code mapping, debugging notes, and general notes. Entries can optionally be linked to code elements, user stories, or features.".to_string(),
+                description: "Tier: advanced. Add a knowledge entry to the knowledge base. Supports business knowledge, domain knowledge, architecture docs, PRD-code mapping, debugging notes, and general notes. Entries can optionally be linked to code elements, user stories, or features.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -665,7 +680,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "update_knowledge".to_string(),
-                description: "Update an existing knowledge entry by ID.".to_string(),
+                description: "Tier: advanced. Update an existing knowledge entry by ID.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -681,7 +696,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "delete_knowledge".to_string(),
-                description: "Delete a knowledge entry by ID.".to_string(),
+                description: "Tier: advanced. Delete a knowledge entry by ID.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -693,7 +708,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "search_knowledge".to_string(),
-                description: "Search all knowledge entries by keyword. Filters by knowledge type and environment. Matches both title and content fields. Returns matching entries with titles, content snippets, and metadata.".to_string(),
+                description: "Tier: advanced. Search all knowledge entries by keyword. Filters by knowledge type and environment. Matches both title and content fields. Returns matching entries with titles, content snippets, and metadata.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -708,7 +723,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "add_annotation".to_string(),
-                description: "Add or update a business logic annotation for a code element. Links a description (and optionally a user story or feature) to a code element.".to_string(),
+                description: "Tier: advanced. Add or update a business logic annotation for a code element. Links a description (and optionally a user story or feature) to a code element.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -723,7 +738,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "link_element".to_string(),
-                description: "Link a code element to a user story or feature ID.".to_string(),
+                description: "Tier: advanced. Link a code element to a user story or feature ID.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -737,7 +752,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "add_documentation".to_string(),
-                description: "Index a single documentation file into the knowledge graph. Extracts code references and creates documented_by/references relationships.".to_string(),
+                description: "Tier: advanced. Index a single documentation file into the knowledge graph. Extracts code references and creates documented_by/references relationships.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -754,7 +769,7 @@ impl ToolRegistry {
 
             ToolDefinition {
                 name: "add_ontology_concept".to_string(),
-                description: "Add a dynamic ontology concept at runtime. Agent discoveries about code semantics, architecture, bugs, or domain logic are persisted as searchable ontology concepts. These survive YAML re-syncs and appear in concept_search results.".to_string(),
+                description: "Tier: advanced. Add a dynamic ontology concept at runtime. Agent discoveries about code semantics, architecture, bugs, or domain logic are persisted as searchable ontology concepts. These survive YAML re-syncs and appear in concept_search results.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -772,7 +787,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "add_ontology_workflow".to_string(),
-                description: "Add a dynamic procedural workflow at runtime. Captures step-by-step processes the agent discovers: debugging procedures, release processes, fix sequences, CI/CD flows, or decision trees. Workflow steps can reference code elements and failure modes.".to_string(),
+                description: "Tier: advanced. Add a dynamic procedural workflow at runtime. Captures step-by-step processes the agent discovers: debugging procedures, release processes, fix sequences, CI/CD flows, or decision trees. Workflow steps can reference code elements and failure modes.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -793,7 +808,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "delete_ontology_concept".to_string(),
-                description: "Remove a dynamically-added ontology concept or workflow. Only deletes rows with source:dynamic in metadata — never touches YAML-derived concepts. Also removes orphaned workflow steps and failure modes.".to_string(),
+                description: "Tier: advanced. Remove a dynamically-added ontology concept or workflow. Only deletes rows with source:dynamic in metadata — never touches YAML-derived concepts. Also removes orphaned workflow steps and failure modes.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -807,7 +822,7 @@ impl ToolRegistry {
             // Version/Branch Tagging Tools
             ToolDefinition {
                 name: "get_upcoming_changes".to_string(),
-                description: "Get knowledge entries and code elements tagged as 'upcoming' (feature branch changes not yet in main). Shows what's coming in the next release.".to_string(),
+                description: "Tier: advanced. Get knowledge entries and code elements tagged as 'upcoming' (feature branch changes not yet in main). Shows what's coming in the next release.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -820,7 +835,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "promote_environment".to_string(),
-                description: "Promote knowledge entries and code elements from one environment to another (e.g., upcoming -> production). Used when a feature branch merges to main.".to_string(),
+                description: "Tier: advanced. Promote knowledge entries and code elements from one environment to another (e.g., upcoming -> production). Used when a feature branch merges to main.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -833,7 +848,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "query_incidents".to_string(),
-                description: "Find past incidents matching a pattern or service. Returns structured incident records with root cause, resolution, and prevention advice.".to_string(),
+                description: "Tier: advanced. Find past incidents matching a pattern or service. Returns structured incident records with root cause, resolution, and prevention advice.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -848,7 +863,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "find_env_conflicts".to_string(),
-                description: "Surface mismatches between local, staging, and production environments for a service. Detects schema version drift, config differences, and missing deployments.".to_string(),
+                description: "Tier: advanced. Surface mismatches between local, staging, and production environments for a service. Detects schema version drift, config differences, and missing deployments.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -860,7 +875,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_service_context".to_string(),
-                description: "Get a complete snapshot of a service in a given environment: dependencies, callers, open incidents, and recent incident history.".to_string(),
+                description: "Tier: advanced. Get a complete snapshot of a service in a given environment: dependencies, callers, open incidents, and recent incident history.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -873,7 +888,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "semantic_search".to_string(),
-                description: "Natural language semantic discovery with pagination. Dual path: when an embedding index exists (embeddings feature + leankg embed), uses pgvector HNSW vector retrieval with cross-encoder rerank; otherwise falls back to ontology-first safe_discover (concept ontology then bounded name search). Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables). Prefer-order (search): after concept_search; before search_code. Prefer-order (semantic): try first; then kg_semantic_context; then kg_context.".to_string(),
+                description: "Tier: core. Natural language semantic discovery with pagination. Dual path: when an embedding index exists (embeddings feature + leankg embed), uses pgvector HNSW vector retrieval with cross-encoder rerank; otherwise falls back to ontology-first safe_discover (concept ontology then bounded name search). Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables). Prefer-order (search): after concept_search; before search_code. Prefer-order (semantic): try first; then kg_semantic_context; then kg_context.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -893,7 +908,7 @@ impl ToolRegistry {
             // Ontology Semantic Search Tools
             ToolDefinition {
                 name: "kg_context".to_string(),
-                description: "Get ontology-aware context for a semantic query. Returns matched concept nodes, expanded code context, workflows, docs, tests, and confidence scores. Use for agentic semantic questions like 'where is checkout refund failure handled?' Prefer-order (semantic): try after semantic_search / kg_semantic_context when ontology expand without vectors is enough.".to_string(),
+                description: "Tier: core. Get ontology-aware context for a semantic query. Returns matched concept nodes, expanded code context, workflows, docs, tests, and confidence scores. Use for agentic semantic questions like 'where is checkout refund failure handled?' Prefer-order (semantic): try after semantic_search / kg_semantic_context when ontology expand without vectors is enough.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -907,7 +922,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "kg_trace_workflow".to_string(),
-                description: "Get an ordered procedural trace for a workflow. Useful for debugging user flows, understanding what code runs before/after a step, and identifying missing tests or failure handling.".to_string(),
+                description: "Tier: advanced. Get an ordered procedural trace for a workflow. Useful for debugging user flows, understanding what code runs before/after a step, and identifying missing tests or failure handling.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -920,7 +935,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "kg_ontology_status".to_string(),
-                description: "Get ontology coverage status: counts of concept and procedural nodes by type, relationships by type, nodes missing aliases, and workflows without failure modes.".to_string(),
+                description: "Tier: advanced. Get ontology coverage status: counts of concept and procedural nodes by type, relationships by type, nodes missing aliases, and workflows without failure modes.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -931,7 +946,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "ontology_control".to_string(),
-                description: "FR-ONT-PROC-03: Sync or inspect procedural/domain ontology YAML into the served DB. Actions: sync (load ontology/concepts.yaml + workflows.yaml, touch .leankg/ontology_synced), status (YAML mtimes, marker, procedural counts). Prefer auto-update via YAML watcher; use sync after manual edits if watcher is off. Admin-only.".to_string(),
+                description: "Tier: advanced. FR-ONT-PROC-03: Sync or inspect procedural/domain ontology YAML into the served DB. Actions: sync (load ontology/concepts.yaml + workflows.yaml, touch .leankg/ontology_synced), status (YAML mtimes, marker, procedural counts). Prefer auto-update via YAML watcher; use sync after manual edits if watcher is off. Admin-only.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -944,7 +959,7 @@ impl ToolRegistry {
             #[cfg(feature = "embeddings")]
             ToolDefinition {
                 name: "kg_semantic_context".to_string(),
-                description: "Vector retrieval + cross-encoder rerank + adaptive KG traversal. Use for natural-language queries where keyword search misses: 'where do we validate access rights', 'how does the refund flow work'. Returns ranked seed nodes plus 1-2 hop graph context (related code, tests, docs, workflows). Requires the `embeddings` cargo feature and an embedding index built via `cargo run --release -- embed`. Prefer-order (semantic): after semantic_search; before kg_context. Requires embeddings.".to_string(),
+                description: "Tier: advanced. Vector retrieval + cross-encoder rerank + adaptive KG traversal. Use for natural-language queries where keyword search misses: 'where do we validate access rights', 'how does the refund flow work'. Returns ranked seed nodes plus 1-2 hop graph context (related code, tests, docs, workflows). Requires the `embeddings` cargo feature and an embedding index built via `cargo run --release -- embed`. Prefer-order (semantic): after semantic_search; before kg_context. Requires embeddings.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -964,7 +979,7 @@ impl ToolRegistry {
             #[cfg(feature = "embeddings")]
             ToolDefinition {
                 name: "embed_control".to_string(),
-                description: "US-EMBED-05 / FR-EMBED-TOGGLE-01: Arm or disarm in-process day-2 embedding when LEANKG_EMBED_ON_BOOT/BACKGROUND are off. Actions: on (idle-gated Incremental resume, default mode=partial with RSS fraction), off (cooperative cancel, Docker PID-1 safe), status (armed/phase/skipped_fresh/vectors_existing). Never wipes existing RocksDB vectors. Mega graphs refuse full unless force_full=true.".to_string(),
+                description: "Tier: advanced. US-EMBED-05 / FR-EMBED-TOGGLE-01: Arm or disarm in-process day-2 embedding when LEANKG_EMBED_ON_BOOT/BACKGROUND are off. Actions: on (idle-gated Incremental resume, default mode=partial with RSS fraction), off (cooperative cancel, Docker PID-1 safe), status (armed/phase/skipped_fresh/vectors_existing). Never wipes existing RocksDB vectors. Mega graphs refuse full unless force_full=true.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -984,7 +999,7 @@ impl ToolRegistry {
             #[cfg(feature = "embeddings")]
             ToolDefinition {
                 name: "set_embed_model".to_string(),
-                description: "Set the runtime-active embedding model for this MCP process. Subsequent semantic_search / kg_semantic_context calls default to this model (per-request `model` arg still overrides). With persist=true the choice is saved to .leankg/embed-model.json and restored on the next boot. Registered models: bge-small-en-v1.5-384 (default, local), qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072 (remote).".to_string(),
+                description: "Tier: advanced. Set the runtime-active embedding model for this MCP process. Subsequent semantic_search / kg_semantic_context calls default to this model (per-request `model` arg still overrides). With persist=true the choice is saved to .leankg/embed-model.json and restored on the next boot. Registered models: bge-small-en-v1.5-384 (default, local), qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072 (remote).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -997,7 +1012,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_architecture".to_string(),
-                description: "Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries. Supports max_items to cap each section for token budget control.".to_string(),
+                description: "Tier: advanced. Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries. Supports max_items to cap each section for token budget control.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1010,7 +1025,7 @@ impl ToolRegistry {
             // PRD-in-KG Traceability Tools
             ToolDefinition {
                 name: "index_prd".to_string(),
-                description: "Parse a PRD markdown document into structured knowledge graph entries. Extracts FR-* (feature requirements) and US-* (user stories), creates knowledge_entries, and auto-links features to ontology workflows by matching code paths.".to_string(),
+                description: "Tier: advanced. Parse a PRD markdown document into structured knowledge graph entries. Extracts FR-* (feature requirements) and US-* (user stories), creates knowledge_entries, and auto-links features to ontology workflows by matching code paths.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1023,7 +1038,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_feature_flow".to_string(),
-                description: "Given a feature requirement ID (e.g. FR-ONT-PROC-01), returns the full implementation chain: FR → linked ontology workflows → ordered steps with code_refs and failure_modes → annotated code elements. Reverse traceability for devs.".to_string(),
+                description: "Tier: advanced. Given a feature requirement ID (e.g. FR-ONT-PROC-01), returns the full implementation chain: FR → linked ontology workflows → ordered steps with code_refs and failure_modes → annotated code elements. Reverse traceability for devs.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1036,7 +1051,7 @@ impl ToolRegistry {
             },
             ToolDefinition {
                 name: "get_traceability_matrix".to_string(),
-                description: "Returns a PO-facing traceability matrix: all feature requirements (FR-*) with their workflow count, annotated code element count, and documentation coverage. Filter by feature_id or status tag.".to_string(),
+                description: "Tier: advanced. Returns a PO-facing traceability matrix: all feature requirements (FR-*) with their workflow count, annotated code element count, and documentation coverage. Filter by feature_id or status tag.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1153,7 +1168,9 @@ mod tests {
         // Exact count: 87 - 11 = 76, then H6 round 2 removes 3 more → 73
         // base tools; the `embeddings` feature registers 3 more
         // (semantic_search / leankg embed tooling) → 76.
-        let expected = if cfg!(feature = "embeddings") { 76 } else { 73 };
+        // FR-ZCP-03 adds the feature-independent `leankg_context` router →
+        // 77 with embeddings / 74 without.
+        let expected = if cfg!(feature = "embeddings") { 77 } else { 74 };
         assert_eq!(
             names.len(),
             expected,
@@ -1176,6 +1193,48 @@ mod tests {
         assert!(props.contains_key("max_depth"));
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v.as_str() == Some("question")));
+    }
+
+    /// FR-ZCP-12 T3 accounting (FR-ZCP-03): every tool description carries
+    /// a `Tier:` marker — core (router + essentials), setup, advanced — with
+    /// no tool left unmarked and no unknown tier values.
+    #[test]
+    fn test_all_tools_carry_tier_markers() {
+        let tools = ToolRegistry::list_tools();
+        assert!(!tools.is_empty());
+        let mut counts = std::collections::BTreeMap::new();
+        for tool in &tools {
+            let desc = &tool.description;
+            let tier = desc
+                .strip_prefix("Tier: ")
+                .and_then(|rest| {
+                    let end = rest.find(". ")?;
+                    Some(&rest[..end])
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "tool {} description missing Tier marker: {}",
+                        tool.name, desc
+                    )
+                });
+            assert!(
+                matches!(tier, "core" | "setup" | "advanced"),
+                "tool {} has unknown tier {:?}",
+                tool.name,
+                tier
+            );
+            *counts.entry(tier).or_insert(0usize) += 1;
+        }
+        // The router is the headline core tool; core stays within the
+        // budget territory (router + 11 essentials).
+        assert_eq!(counts.get("core").copied().unwrap_or(0), 12);
+        assert_eq!(counts.get("setup").copied().unwrap_or(0), 5);
+        // leankg_context must be marked core.
+        let router = tools
+            .iter()
+            .find(|t| t.name == "leankg_context")
+            .expect("leankg_context must be registered");
+        assert!(router.description.starts_with("Tier: core. "));
     }
 
     #[test]

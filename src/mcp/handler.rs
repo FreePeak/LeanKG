@@ -238,6 +238,7 @@ impl ToolHandler {
             "query_graph" => self.query_graph(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
+            "leankg_context" => self.leankg_context(arguments),
             "search_code" => self.search_code(arguments),
             "concept_search" => self.concept_search(arguments),
             "semantic_search" => self.semantic_search(arguments),
@@ -1941,6 +1942,50 @@ impl ToolHandler {
             "fallback_used": result.fallback_used,
             "fallback_results": fallback_results,
         })
+    }
+
+    /// FR-ZCP-03: the one-tool capability router. `crate::mcp::router`
+    /// owns intent classification, capability probing, and the L0-L3
+    /// degradation ladder; this handler wires the ladder's capability-backed
+    /// executors to the existing pipelines.
+    fn leankg_context(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"]
+            .as_str()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .ok_or("Missing 'query'")?
+            .to_string();
+
+        // L3 executor: the existing semantic pipeline (HNSW+rerank when
+        // vectors exist, ontology-first dual path otherwise). Also reused
+        // by the impact/graph/files intents' graph-backed executors.
+        let engine = self.graph_engine.clone();
+        let semantic_exec = |q: &str, limit: usize| -> Result<Value, String> {
+            self.semantic_search(&serde_json::json!({ "query": q, "limit": limit }))
+        };
+
+        // Background-index kick (FR-ZCP-02). The hook lives on MCPServer
+        // (feat/fr-zcp-02-auto-attach: MCPServer::kick_background_index,
+        // idempotent single-flight, non-blocking) and is not reachable from
+        // the ToolHandler handle. Integration note for the coordinator:
+        // wire the kick here once AutoAttach lands — e.g. via a registered
+        // server handle or a static one-slot channel — and thread a real
+        // closure into RouterExec. Until then the kick is a logged no-op;
+        // L0 responses stay non-error and point at `leankg index .` /
+        // mcp_status.
+        let index_kick = || -> Result<Value, String> {
+            tracing::info!(
+                target: "leankg::mcp",
+                "FR-ZCP-02 background index kick requested (hook not yet wired to ToolHandler)"
+            );
+            Ok(serde_json::json!({ "indexing": false, "hook": "pending-fr-zcp-02-integration" }))
+        };
+
+        let exec = crate::mcp::router::RouterExec {
+            semantic: &semantic_exec,
+            index_kick: &index_kick,
+        };
+        crate::mcp::router::route(&engine, &query, args, &exec)
     }
 
     fn semantic_search(&self, args: &Value) -> Result<Value, String> {
@@ -4051,16 +4096,38 @@ impl ToolHandler {
                 String::new(),
             ),
         };
+        // FR-ZCP-03: capability loss downgrades ranking, never availability.
+        // The pre-router behavior hard-errored here, which is exactly the
+        // pattern the ladder deletes: degrade to the keyword rung (trigram
+        // fuzzy + ontology fusion) with a structured hint instead of an error.
         if !has_vectors {
-            return Err(format!(
+            let hint = format!(
                 "No embedded vectors found{} (collection `{target_rel}`). Run `leankg embed` \
-                 with the matching LEANKG_EMBED_ACTIVE_MODEL to build the index.",
+                 with the matching LEANKG_EMBED_ACTIVE_MODEL to build the index; \
+                 leankg_context serves keyword-rung results meanwhile.",
                 if model.is_some() {
                     " for the requested model"
                 } else {
                     ""
                 }
-            ));
+            );
+            let (results, method) =
+                crate::mcp::router::fuse_l2(&self.graph_engine, query, &env, top_k.min(50))?;
+            return Ok(serde_json::json!({
+                "query": query,
+                "env": env,
+                "seeds": [],
+                "traversed": [],
+                "functions": results,
+                "degraded": true,
+                "hint": hint,
+                "method": method,
+                "retrieval": {
+                    "rung": "keyword",
+                    "reason": "no embedding vectors; keyword rung (trigram fuzzy + ontology)",
+                    "freshness": "cold",
+                },
+            }));
         }
 
         let t0 = std::time::Instant::now();
@@ -4834,7 +4901,7 @@ pub(crate) fn vectors_missing_hint(total_vectors: usize) -> Option<&'static str>
     if total_vectors == 0 {
         Some(
             "no embedding vectors for this project, so semantic_search cannot match anything; \
-             use search_code instead, and run \
+             use leankg_context (keyword rung) instead, and run \
              embed_control action=on force_full=true to build the vectors",
         )
     } else {
@@ -4901,15 +4968,15 @@ fn semantic_low_confidence(query: &str, rerank_fallback: bool) -> Value {
         (
             "reranker-fallback",
             "semantic_search ran without the cross-encoder reranker (ANN-only fallback); \
-             matches may be token/substring coincidences. Use search_code \
-             for exact-name lookups, or rg on disk.",
+             matches may be token/substring coincidences. Use leankg_context \
+             (exact rung) for exact-name lookups, or rg on disk.",
         )
     } else {
         (
             "below-confidence-floor",
             "no semantic_search hit reached the relevance floor; matches were token \
-             collisions, not intent. Use search_code for exact names, \
-             or rg on disk.",
+             collisions, not intent. Use leankg_context (exact rung) for exact \
+             names, or rg on disk.",
         )
     };
     json!({
@@ -4939,7 +5006,8 @@ fn semantic_no_corpus_hit(query: &str, prefix: &str) -> Value {
         "path_prefix": prefix,
         "hint": format!(
             "no indexed element under path_prefix \"{}\" — this corpus is not in the index. \
-             Re-index it (leankg index <tree>) or run rg on disk.",
+             Re-index it (leankg index <tree>), or run rg on disk; leankg_context \
+             reports index state.",
             prefix
         ),
     })
