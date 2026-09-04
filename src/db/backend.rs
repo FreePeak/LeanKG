@@ -4499,21 +4499,32 @@ mod tests {
         admin
             .batch_execute(&format!("CREATE DATABASE {db_name}"))
             .expect("create scratch database");
+        // CREATE DATABASE does NOT switch this client's connection — it
+        // still points at the base URL's database. Reconnect so migrations
+        // (and 007's CREATE EXTENSION) land in the SCRATCH database, never
+        // in the shared one.
+        admin = pg_connect(&swapped_db_url(&base, &db_name)).expect("connect scratch database");
         crate::db::pg::migrations::run_migrations(&mut admin).expect("migrate scratch database");
-        // Swap the database segment of the base URL (last path component
-        // before any `?query`); the fresh database's default search_path
-        // (public) is what we want, no GUC injection needed.
-        let (base_no_q, query) = base.split_once('?').unwrap_or((&base, ""));
+        let url = swapped_db_url(&base, &db_name);
+        let backend = PostgresBackend::from_env()
+            .expect("pg url")
+            .with_db_url(&url);
+        Some((db_name, std::sync::Arc::new(backend)))
+    }
+
+    /// Swap the database segment of a Postgres URL (last path component
+    /// before any `?query`), preserving host/credentials/query. Used to
+    /// point admin and test connections at the FR-ZCP-05 scratch database
+    /// (whose default search_path `public` needs no GUC injection).
+    fn swapped_db_url(base: &str, db_name: &str) -> String {
+        let (base_no_q, query) = base.split_once('?').unwrap_or((base, ""));
         let (prefix, _old_db) = base_no_q.rsplit_once('/').unwrap_or((base_no_q, ""));
         let mut url = format!("{prefix}/{db_name}");
         if !query.is_empty() {
             url.push('?');
             url.push_str(query);
         }
-        let backend = PostgresBackend::from_env()
-            .expect("pg url")
-            .with_db_url(&url);
-        Some((db_name, std::sync::Arc::new(backend)))
+        url
     }
 
     /// Tear down a scratch database (best-effort — a leftover is removed
