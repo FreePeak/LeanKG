@@ -6,6 +6,7 @@
 
 use crate::db::pg::mutability;
 use crate::db::pg::translate;
+use rustls_pki_types::pem::PemObject;
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Condvar, Mutex};
@@ -52,6 +53,44 @@ fn normalize_pg_url_for_parse(url: &str) -> String {
     format!("{base}?{}", normalized.join("&"))
 }
 
+/// Build the root store for verified-TLS connections.
+///
+/// `Some(path)` — private/managed CA bundle (Aiven, Neon, ...); roots at that
+/// file and rejects a bundle with zero parseable certificates (an empty root
+/// store would otherwise only fail at handshake time, far from the cause).
+/// `None` — public CAs, verified against the Mozilla roots compiled in via
+/// webpki-roots (already in the tree through reqwest/hyper-rustls).
+fn ca_root_store(
+    ca_path: Option<&str>,
+) -> Result<rustls::RootCertStore, Box<dyn std::error::Error>> {
+    let mut roots = rustls::RootCertStore::empty();
+    if let Some(path) = ca_path {
+        let certs = rustls_pki_types::CertificateDer::pem_file_iter(path)
+            .map_err(|e| format!("cannot read CA file {path}: {e}"))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if certs.is_empty() {
+            return Err(format!("no certificates parsed from CA file {path}").into());
+        }
+        for c in certs {
+            roots
+                .add(c)
+                .map_err(|e| format!("bad CA cert in {path}: {e}"))?;
+        }
+    } else {
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+    Ok(roots)
+}
+
+/// Build the rustls client config for verified-TLS connections.
+fn tls_client_config(
+    ca_path: Option<&str>,
+) -> Result<rustls::ClientConfig, Box<dyn std::error::Error>> {
+    Ok(rustls::ClientConfig::builder()
+        .with_root_certificates(ca_root_store(ca_path)?)
+        .with_no_client_auth())
+}
+
 /// Connect a `postgres::Client`, applying the crate's URL/TLS rules
 /// (`sslmode=verify-full` normalization, `LEANKG_PG_CA_CERT`, webpki roots).
 /// Public so integration tests can perform admin DDL against the same
@@ -63,38 +102,16 @@ pub fn pg_connect(url: &str) -> Result<postgres::Client, Box<dyn std::error::Err
     // Install the ring crypto provider before any rustls use (idempotent;
     // rustls 0.23 panics at first handshake if no provider is installed).
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let ca_path = std::env::var("LEANKG_PG_CA_CERT").ok();
-    match ca_path {
+    let connector = match std::env::var("LEANKG_PG_CA_CERT").ok().as_deref() {
         Some(path) => {
-            // Private/managed CA (Aiven, Neon, ...): root at that CA cert.
-            let pem = std::fs::read(&path)?;
-            let certs = rustls_pemfile::certs(&mut &pem[..]).collect::<Result<Vec<_>, _>>()?;
-            let mut roots = rustls::RootCertStore::empty();
-            for c in certs {
-                roots
-                    .add(c)
-                    .map_err(|e| format!("bad CA cert in {path}: {e}"))?;
-            }
-            let config = rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            let connector = postgres_rustls::MakeTlsConnector::new(Arc::new(config).into());
-            Ok(cfg.connect(connector)?)
+            postgres_rustls::MakeTlsConnector::new(Arc::new(tls_client_config(Some(path))?).into())
         }
         None if wants_tls => {
-            // Public CA (Let's Encrypt, ...): verify against the Mozilla roots
-            // compiled in via webpki-roots (already in the tree through
-            // reqwest/hyper-rustls; no new dependency).
-            let mut roots = rustls::RootCertStore::empty();
-            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            let config = rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            let connector = postgres_rustls::MakeTlsConnector::new(Arc::new(config).into());
-            Ok(cfg.connect(connector)?)
+            postgres_rustls::MakeTlsConnector::new(Arc::new(tls_client_config(None)?).into())
         }
-        None => Ok(cfg.connect(postgres::NoTls)?),
-    }
+        None => return Ok(cfg.connect(postgres::NoTls)?),
+    };
+    Ok(cfg.connect(connector)?)
 }
 
 /// Re-export the row/result value types the rest of the codebase consumes
@@ -4056,5 +4073,64 @@ mod tests {
     fn truncate_json_for_log_short_value_unchanged() {
         let short = serde_json::json!("abc");
         assert_eq!(truncate_json_for_log(&short, 240), "\"abc\"");
+    }
+
+    #[test]
+    fn tls_config_parses_ca_bundle_from_file() {
+        // Throwaway self-signed CA written to a temp file — no tracked certs.
+        let pem = concat!(
+            "-----BEGIN CERTIFICATE-----\n",
+            "MIIBiDCCAS+gAwIBAgIUZ8I/ebL09vl5EmBDKPyQnAaJsBgwCgYIKoZIzj0EAwIw\n",
+            "GTEXMBUGA1UEAwwObGVhbmtnLXRlc3QtY2EwIBcNMjYwOTA0MDY1NTAzWhgPMjEy\n",
+            "NjA4MTEwNjU1MDNaMBkxFzAVBgNVBAMMDmxlYW5rZy10ZXN0LWNhMFkwEwYHKoZI\n",
+            "zj0CAQYIKoZIzj0DAQcDQgAEPq8HFrmX8qLxEYNDHPXZmKXEkpYMdiR/aqVCVcun\n",
+            "Ib/DhzOuO3Y7UgzMGCxuqGMvI3TMHX5fJkMh35XE+sAG0aNTMFEwHQYDVR0OBBYE\n",
+            "FMR/fX12loln7tFdh3QvfJamoG51MB8GA1UdIwQYMBaAFMR/fX12loln7tFdh3Qv\n",
+            "fJamoG51MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgU5dBV25f\n",
+            "ZKIuqpwC1E1bHA7E4zO7UuOUYKd4Fh5biSsCIBYPbT4/BM3/dJ/pzVbEp3SffOSR\n",
+            "bFMPuVLIRoh04whB\n",
+            "-----END CERTIFICATE-----\n",
+        );
+        let path = std::env::temp_dir().join(format!(
+            "leankg-test-ca-{}-{}.pem",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, pem).expect("write temp CA");
+        let store =
+            ca_root_store(Some(path.to_str().expect("utf8 path"))).expect("valid CA bundle");
+        std::fs::remove_file(&path).ok();
+        assert_eq!(store.roots.len(), 1, "bundle has exactly 1 cert");
+    }
+
+    #[test]
+    fn tls_config_rejects_empty_ca_file() {
+        let err = ca_root_store(Some("/dev/null")).expect_err("empty CA must fail");
+        assert!(
+            err.to_string().contains("no certificates parsed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn tls_config_rejects_missing_ca_file() {
+        let err = ca_root_store(Some("/nonexistent/ca.pem")).expect_err("missing CA must fail");
+        assert!(
+            err.to_string().contains("cannot read CA file"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn tls_config_without_ca_uses_mozilla_roots() {
+        let store = ca_root_store(None).expect("webpki roots");
+        assert!(
+            store.roots.len() > 100,
+            "Mozilla root store must be populated: {}",
+            store.roots.len()
+        );
     }
 }

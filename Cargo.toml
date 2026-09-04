@@ -161,7 +161,7 @@ libc = "0.2"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = "0.7"
 chrono = "0.4"
-notify = "7"
+notify = "8"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
 rmcp = { version = "1.4.0", features = ["server", "transport-io"] }
@@ -189,12 +189,13 @@ moka = { version = "0.12", features = ["future"] }
 # ToSql/FromSql for the JSONB columns (metadata/tags/members/...).
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
 # TLS for remote managed Postgres (Aiven/Neon/...). `postgres-rustls` gives
-# `MakeTlsConnector` for the sync `postgres` client; rustls-pemfile loads the
-# private CA cert from `LEANKG_PG_CA_CERT`. Only active when a CA cert is set —
+# `MakeTlsConnector` for the sync `postgres` client; `rustls-pki-types` (the
+# maintained successor of the archived rustls-pemfile) loads the private CA
+# cert from `LEANKG_PG_CA_CERT`. Only active when a CA cert is set —
 # local dev PG on :5433 stays NoTls.
 postgres_rustls = "0.1"
 rustls = { version = "0.23", features = ["ring"] }
-rustls-pemfile = "2"
+rustls-pki-types = "1"
 tokio-postgres = { version = "0.7", default-features = false }
 # Mozilla root store for `sslmode=verify-*` TLS URLs without a private CA
 # (public CAs like Let's Encrypt). Already in the tree via reqwest/hyper-rustls.
