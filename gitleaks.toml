@@ -1,0 +1,19 @@
+# Gitleaks configuration — allowlisted false positives verified 2026-09-04.
+# 1. session-heat-promote report: "content_key" is a truncated SHA of a mined
+#    sequence (12 hex chars), not an API key.
+# 2. mcp-http-server-issues doc: `Authorization: Bearer codex-token` is a
+#    placeholder for curl examples against a local dev server.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Verified false positives"
+commits = [
+  "234cb2da841f166069deefb01c0be96e90aff9f9",
+  "d66da1a2c41836d8605e3167d316565764140b48",
+]
+# Local tooling state dirs (untracked caches/logs; not repo content).
+paths = [
+  '''^\.gitnexus/''',
+  '''^\.claude/''',
+]

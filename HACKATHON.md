@@ -17,7 +17,7 @@
 
 **Results:** registry = **76 tools served** (+3 embeddings-gated absent): **51 PASS / 18 PASS_EMPTY / 3 FAIL_ERROR / 4 FAIL_TIMEOUT / 3 EXPECTED_UNAVAILABLE** across 128 individual calls (35 poisoned by wedge cascades). Latency p50 4.9s / p95 90s all calls; steady-state ops p50 3.2s / p95 12s-ish.
 
-**Detail report:** [`docs/analysis/hackathon-sweep-R1.md`](docs/analysis/hackathon-sweep-R1.md)
+**Detail report:** [`docs/archive/analysis/hackathon-sweep-R1.md`](docs/archive/analysis/hackathon-sweep-R1.md)
 
 **Top issues (one-liners):**
 1. [P0] Hung tool handler (add_documentation big doc; agent_focus w/ persona) is never cancelled → blocks ALL subsequent calls with "tool X timed out after 30s" until restart (repro ×2)

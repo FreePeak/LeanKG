@@ -42,7 +42,7 @@ cargo test --release mcp::server -- --nocapture
 cargo test --release http -- --list
 target/release/leankg mcp-http --port 19799 --project /Users/linh.doan/work/harvey/freepeak/leankg
 target/release/leankg mcp-http --port 19799 --project /Users/linh.doan/work/harvey/freepeak/leankg --reuse
-MCP_HTTP_AUTH=codex-token target/release/leankg mcp-http --port 19800 --project /Users/linh.doan/work/harvey/freepeak/leankg
+MCP_HTTP_AUTH=<auth-token> target/release/leankg mcp-http --port 19800 --project /Users/linh.doan/work/harvey/freepeak/leankg
 ```
 
 ## Passing Checks
@@ -91,7 +91,7 @@ data: /mcp
 Start the server with a configured token:
 
 ```bash
-MCP_HTTP_AUTH=codex-token target/release/leankg mcp-http \
+MCP_HTTP_AUTH=<auth-token> target/release/leankg mcp-http \
   --port 19800 \
   --project /Users/linh.doan/work/harvey/freepeak/leankg
 ```
@@ -100,14 +100,14 @@ Send an authenticated JSON-RPC request:
 
 ```bash
 curl -i http://127.0.0.1:19800/mcp \
-  -H 'Authorization: Bearer codex-token' \
+  -H 'Authorization: Bearer <auth-token>' \
   -H 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
 ```
 
 ### Expected
 
-The server accepts `Authorization: Bearer codex-token` because `codex-token` is the configured token from `MCP_HTTP_AUTH`, then returns the normal `initialize` result.
+The server accepts `Authorization: Bearer <auth-token>` because `<auth-token>` is the configured token from `MCP_HTTP_AUTH`, then returns the normal `initialize` result.
 
 ### Actual
 
