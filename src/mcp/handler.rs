@@ -297,7 +297,16 @@ impl ToolHandler {
             "ontology_control" => Err(
                 "ontology_control is handled by MCPServer; unreachable via ToolHandler".into(),
             ),
-            _ => Err(format!("Unknown tool: {}", tool_name)),
+            _ => Err(format!(
+                "{} Nearest registry match: '{}'.",
+                crate::errors::render(
+                    crate::errors::UNKNOWN_TOOL.code,
+                    &format!("tool '{tool_name}' is not in this server's registry"),
+                    "call leankg_context (the default router that serves every intent) or \
+                     re-read tools/list for the complete catalog and retry with the corrected name",
+                ),
+                crate::mcp::tools::nearest_tool_name(tool_name),
+            )),
         };
 
         // US-GF-06 / FR-GF-13: auto-write GRAPH_REPORT.md after successful index
@@ -4109,15 +4118,17 @@ impl ToolHandler {
         // pattern the ladder deletes: degrade to the keyword rung (trigram
         // fuzzy + ontology fusion) with a structured hint instead of an error.
         if !has_vectors {
-            let hint = format!(
-                "No embedded vectors found{} (collection `{target_rel}`). Run `leankg embed` \
-                 with the matching LEANKG_EMBED_ACTIVE_MODEL to build the index; \
-                 leankg_context serves keyword-rung results meanwhile.",
-                if model.is_some() {
-                    " for the requested model"
+            let hint = crate::errors::render(
+                crate::errors::NO_VECTORS.code,
+                &if model.is_some() {
+                    format!(
+                        "no embedded vectors for the requested model (collection `{target_rel}`)"
+                    )
                 } else {
-                    ""
-                }
+                    "no embedding vectors exist for this project".to_string()
+                },
+                "run `leankg embed` (requires the embeddings cargo feature) to build the \
+                 vectors; leankg_context serves keyword-rung results meanwhile",
             );
             let (results, method) =
                 crate::mcp::router::fuse_l2(&self.graph_engine, query, &env, top_k.min(50))?;
@@ -4905,13 +4916,11 @@ pub(crate) fn should_check_vectors_missing(
 /// vector index, and agents abandon the graph instead of falling through to
 /// the name-based tools that still work.
 #[cfg(feature = "embeddings")]
-pub(crate) fn vectors_missing_hint(total_vectors: usize) -> Option<&'static str> {
+pub(crate) fn vectors_missing_hint(total_vectors: usize) -> Option<String> {
     if total_vectors == 0 {
-        Some(
-            "no embedding vectors for this project, so semantic_search cannot match anything; \
-             use leankg_context (keyword rung) instead, and run \
-             embed_control action=on force_full=true to build the vectors",
-        )
+        // FR-ZCP-12 T1: hint carries the stable NO_VECTORS code + cause +
+        // fix + doc anchor from the catalog.
+        Some(crate::errors::NO_VECTORS.message())
     } else {
         None
     }
@@ -5367,7 +5376,8 @@ mod tests {
         // P0: `status: ok` + `results: []` is indistinguishable from a broken
         // vector index. Callers need to know a name-based tool would work.
         let hint = vectors_missing_hint(0).expect("empty vector table must hint");
-        assert!(hint.contains("search_code"));
+        assert!(hint.contains("LEANKG_ERROR_NO_VECTORS"));
+        assert!(hint.contains("search_code") || hint.contains("leankg_context"));
         assert!(vectors_missing_hint(1).is_none());
     }
 

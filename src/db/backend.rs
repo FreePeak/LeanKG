@@ -953,9 +953,14 @@ impl PostgresBackend {
             })
             .unwrap_or_else(|| "postgresql://postgres:postgres@localhost:5433/leankg".to_string());
         if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
-            return Err(format!(
-                "LEANKG_PG_URL must be a postgres:// URL, got: {}",
-                redact_url(&url)
+            return Err(crate::errors::render(
+                crate::errors::PG_URL_MALFORMED.code,
+                &format!(
+                    "the resolved Postgres URL is malformed (got: {})",
+                    redact_url(&url)
+                ),
+                "set a full postgres:// URL including host and database, or the `db.url` key \
+                 in .leankg/leankg.yaml",
             ));
         }
         let pool_size = ClientPool::size_from_env_or(
@@ -1928,10 +1933,7 @@ impl DbBackend for PostgresBackend {
         }
         let available = self.sql_query(TRGM_PROBE_SQL, &[]).is_ok();
         if !available {
-            tracing::warn!(
-                "FR-ZCP-05: pg_trgm unavailable on this database; \
-                 fuzzy find/suggest degrade to ILIKE-only recall"
-            );
+            tracing::warn!("{}", crate::errors::TRGM_UNAVAILABLE.message());
         }
         CACHE
             .lock()

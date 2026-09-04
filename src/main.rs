@@ -33,6 +33,7 @@ mod embed;
 // `indexer` (e.g. `reconcile_vector_dim`, summary-node blob caps) can resolve
 // `crate::embeddings::*` in the binary build too.
 mod embeddings;
+mod errors;
 mod gc;
 mod graph;
 mod indexer;
@@ -3128,7 +3129,15 @@ fn show_status_multi(json: bool) -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", serde_json::to_string_pretty(&doc)?);
     } else if !pg_up {
         println!();
-        println!("Postgres unreachable — set LEANKG_PG_URL (counts unavailable).");
+        println!(
+            "{}",
+            errors::render(
+                crate::errors::PG_UNREACHABLE.code,
+                "Postgres is not reachable at the configured URL (element/vector counts unavailable)",
+                "start Postgres (`docker compose up -d postgres`) or point LEANKG_PG_URL at \
+                 your instance, then check `leankg doctor`",
+            )
+        );
     }
     Ok(())
 }
@@ -3280,7 +3289,14 @@ fn run_dashboard(
     match format.unwrap_or("text") {
         "json" => println!("{}", dashboard::render_json(&data)?),
         "text" => print!("{}", dashboard::render_text(&data)),
-        other => return Err(format!("unknown --format {other:?} (expected text|json)").into()),
+        other => {
+            return Err(errors::render(
+                crate::errors::MISSING_PARAM.code,
+                &format!("unknown --format value {other:?}"),
+                "pass --format text (default) or --format json",
+            )
+            .into())
+        }
     }
     Ok(())
 }

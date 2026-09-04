@@ -1067,6 +1067,50 @@ impl ToolRegistry {
     }
 }
 
+/// FR-ZCP-12 T1: nearest registered tool name for an unknown-tool error —
+/// case-insensitive longest-common-substring so `search_cod` suggests
+/// `search_code` and `LEAN` suggests `leankg_context`. Falls back to the
+/// default router (`leankg_context`) when nothing shares a token.
+pub fn nearest_tool_name(unknown: &str) -> String {
+    let unknown_lower = unknown.to_lowercase();
+    let mut best: Option<(String, usize)> = None;
+    for tool in ToolRegistry::list_tools() {
+        let name_lower = tool.name.to_lowercase();
+        let score = longest_common_substring_len(&unknown_lower, &name_lower);
+        if best
+            .as_ref()
+            .is_none_or(|(_, best_score)| score > *best_score)
+        {
+            best = Some((tool.name.clone(), score));
+        }
+    }
+    match best {
+        Some((name, score)) if score >= 3 => name,
+        _ => "leankg_context".to_string(),
+    }
+}
+
+fn longest_common_substring_len(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut best = 0;
+    let mut dp = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        let mut prev_diag = 0;
+        for j in 1..=b.len() {
+            let tmp = dp[j];
+            dp[j] = if a[i - 1] == b[j - 1] {
+                prev_diag + 1
+            } else {
+                0
+            };
+            best = best.max(dp[j]);
+            prev_diag = tmp;
+        }
+    }
+    best
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolDefinition {
     pub name: String,

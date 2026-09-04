@@ -717,11 +717,13 @@ impl MCPServer {
         }
         let leankg_dir = project_root.join(".leankg");
         if !leankg_dir.is_dir() {
-            return Err(format!(
-                "LEANKG_ERROR_PROJECT_NOT_INITIALIZED: no .leankg directory at {}. \
-                 Fix: run `leankg add {}` or mcp_init with that path first",
-                leankg_dir.display(),
-                project_root.display()
+            return Err(crate::errors::render(
+                crate::errors::PROJECT_NOT_INITIALIZED.code,
+                &format!("no .leankg directory at {}", leankg_dir.display()),
+                &format!(
+                    "run `leankg add {}` or mcp_init with that path first",
+                    project_root.display()
+                ),
             ));
         }
         match self.spawn_background_index(project_root.to_path_buf(), leankg_dir) {
@@ -1146,10 +1148,10 @@ impl MCPServer {
                 let _ = std::fs::create_dir_all(&project_db_path);
             }
             if !project_db_path.exists() {
-                return Err(format!(
-                    "LEANKG_ERROR_PROJECT_NOT_INITIALIZED: no .leankg directory at {}. \
-                     Fix: run `leankg add <path>` or `leankg init` first.",
-                    project_db_path.display()
+                return Err(crate::errors::render(
+                    crate::errors::PROJECT_NOT_INITIALIZED.code,
+                    &format!("no .leankg directory at {}", project_db_path.display()),
+                    "run `leankg add <path>` or `leankg init` first",
                 ));
             }
         }
@@ -1789,7 +1791,11 @@ impl MCPServer {
                     }
                 }))
             }
-            other => Err(format!("unknown embed_control action '{}'", other)),
+            other => Err(crate::errors::render(
+                crate::errors::UNKNOWN_ACTION.code,
+                &format!("embed_control received action '{other}'"),
+                "use action=on|off|status (see embed_control's inputSchema in tools/list)",
+            )),
         }
     }
 
@@ -1905,7 +1911,11 @@ impl MCPServer {
                     }
                 }))
             }
-            other => Err(format!("unknown ontology_control action '{}'", other)),
+            other => Err(crate::errors::render(
+                crate::errors::UNKNOWN_ACTION.code,
+                &format!("ontology_control received action '{other}'"),
+                "use action=sync|status (see ontology_control's inputSchema in tools/list)",
+            )),
         }
     }
 
@@ -2799,9 +2809,10 @@ impl MCPServer {
         let test_file = project_root.join(".leankg_write_test");
         if std::fs::write(&test_file, "test").is_err() {
             std::fs::remove_file(test_file).ok();
-            return Err(format!(
-                "Filesystem at {} is not writable: Read-only file system",
-                project_root.display()
+            return Err(crate::errors::render(
+                crate::errors::AUTO_ATTACH_FAILED.code,
+                &format!("Filesystem at {} is not writable: Read-only file system", project_root.display()),
+                "mount the project root read-write (Docker: add the workspace as a rw volume) and retry mcp_init",
             ));
         }
         std::fs::remove_file(test_file).ok();
@@ -3330,9 +3341,10 @@ impl MCPServer {
         // Subagent A uses to invalidate the L1 cache (`requires_write_lock`
         // below) — duplicates are fine, missing tools are not.
         if self.read_only && Self::is_write_tool(tool_name) {
-            return Err(format!(
-                "server is in read-only mode (tool '{}' is a write tool)",
-                tool_name
+            return Err(crate::errors::render(
+                crate::errors::READ_ONLY.code,
+                &format!("server is in read-only mode (tool '{}' is a write tool)", tool_name),
+                "restart the server without --read-only or route writes through a writable instance",
             ));
         }
         let project_root = self.find_project_root()?;
@@ -3593,17 +3605,18 @@ impl MCPServer {
     /// opt-out only when it is actually set.
     fn unknown_project_error(key: &str) -> String {
         if Self::auto_attach_enabled() {
-            format!(
-                "LEANKG_ERROR_UNKNOWN_PROJECT: no .leankg project found for '{key}'. \
-                 Fix: run `leankg add <path>` (or mcp_init with path) for that project, \
-                 then retry; queries never fall back to another project's data."
+            crate::errors::render(
+                crate::errors::UNKNOWN_PROJECT.code,
+                &format!("no .leankg project found for '{key}'"),
+                "run `leankg add <path>` (or mcp_init with path) for that project, then \
+                 retry; queries never fall back to another project's data",
             )
         } else {
-            format!(
-                "LEANKG_ERROR_UNKNOWN_PROJECT: no .leankg project found for '{key}' and \
-                 auto-attach is disabled by LEANKG_AUTO_ATTACH=0. Fix: run \
-                 `leankg add <path>` (or mcp_init with path) for that project, or \
-                 remove LEANKG_AUTO_ATTACH=0 to allow auto-attach."
+            crate::errors::render(
+                crate::errors::UNKNOWN_PROJECT.code,
+                &format!("no .leankg project found for '{key}'"),
+                "run `leankg add <path>` (or mcp_init with path) for that project, or \
+                 remove LEANKG_AUTO_ATTACH=0 to allow auto-attach",
             )
         }
     }
@@ -3616,13 +3629,14 @@ impl MCPServer {
         if !Self::auto_attach_enabled() {
             return Err(Self::unknown_project_error(key));
         }
-        // Read-only deployments never create project state on disk: an
-        // unresolved project errors instead of de-facto initializing.
         if self.read_only && Self::find_leankg_for_path(key).is_none() {
-            return Err(format!(
-                "LEANKG_ERROR_UNKNOWN_PROJECT: no .leankg project found for '{key}' and \
-                 this server is read-only (RO deployments never auto-initialize). \
-                 Fix: initialize the project out-of-band (leankg add <path>) and retry."
+            return Err(crate::errors::render(
+                crate::errors::UNKNOWN_PROJECT.code,
+                &format!(
+                    "no .leankg project found for '{key}' and this server is read-only \
+                     (RO deployments never auto-initialize)"
+                ),
+                "initialize the project out-of-band (`leankg add <path>`) and retry",
             ));
         }
         if let Some(leankg_path) = Self::find_leankg_for_path(key) {
@@ -3642,8 +3656,13 @@ impl MCPServer {
                 let leankg_dir = repo_root.join(".leankg");
                 std::fs::create_dir_all(&leankg_dir).map_err(|e| {
                     format!(
-                        "LEANKG_ERROR_AUTO_ATTACH_FAILED: cannot create {}: {e}",
-                        leankg_dir.display()
+                        "{} (details: {e})",
+                        crate::errors::render(
+                            crate::errors::AUTO_ATTACH_FAILED.code,
+                            &format!("cannot create {}", leankg_dir.display()),
+                            "check write permission on the project directory and run \
+                             `leankg add <path>` once, then retry",
+                        )
                     )
                 })?;
                 let config_path = leankg_dir.join("leankg.yaml");
@@ -4002,7 +4021,10 @@ async fn handle_mcp_request(
         Err(status) => {
             return Response::builder()
                 .status(status)
-                .body(Body::from(r#"{"error": "Unauthorized"}"#))
+                .body(Body::from(format!(
+                    r#"{{"error": "{}"}}"#,
+                    crate::errors::UNAUTHORIZED.message()
+                )))
                 .unwrap();
         }
     };
@@ -4345,7 +4367,11 @@ async fn process_jsonrpc_request(
             let uri = params
                 .and_then(|p| p.get("uri"))
                 .and_then(|v| v.as_str())
-                .ok_or("Missing uri for resources/read")?;
+                .ok_or(crate::errors::render(
+                    crate::errors::MISSING_PARAM.code,
+                    "resources/read requires a uri parameter",
+                    "supply the uri from resources/list (e.g. leankg://overview)",
+                ))?;
             let project_ref = project_param.map(|s| s.to_string());
             let engine = mcp_server
                 .get_graph_engine_for_path(project_ref.as_ref())
@@ -4358,7 +4384,13 @@ async fn process_jsonrpc_request(
                     let wake = engine.wake_up_summary().unwrap_or_default();
                     format!("{}\n{}\n{}", l0, l1, wake)
                 }
-                _ => return Err(format!("unknown resource URI: {uri}")),
+                _ => {
+                    return Err(crate::errors::render(
+                        crate::errors::METHOD_NOT_FOUND.code,
+                        &format!("resource URI '{uri}' is not served by this server"),
+                        "pick a uri from resources/list (leankg://overview)",
+                    ));
+                }
             };
             Ok(serde_json::json!({
                 "contents": [{
@@ -4388,12 +4420,20 @@ async fn process_jsonrpc_request(
         "tools/call" => {
             let params_obj = params
                 .and_then(|p| p.as_object())
-                .ok_or("Missing params for tools/call")?;
+                .ok_or(crate::errors::render(
+                    crate::errors::MISSING_PARAM.code,
+                    "tools/call requires a params object",
+                    "send JSON-RPC params {\"name\": <tool>, \"arguments\": {...}} per tools/list",
+                ))?;
 
             let tool_name = params_obj
                 .get("name")
                 .and_then(|v| v.as_str())
-                .ok_or("Missing tool name")?;
+                .ok_or(crate::errors::render(
+                    crate::errors::MISSING_PARAM.code,
+                    "tools/call requires a tool name",
+                    "send JSON-RPC params {\"name\": <tool>, \"arguments\": {...}} per tools/list",
+                ))?;
 
             // RBAC: Check if user has permission to call this tool
             if let Err(e) = mcp_server
@@ -4402,7 +4442,11 @@ async fn process_jsonrpc_request(
                 .await
                 .check_permission(&auth_context, tool_name)
             {
-                return Err(format!("Permission denied: {}", e));
+                return Err(crate::errors::render(
+                    crate::errors::PERMISSION_DENIED.code,
+                    &format!("the authenticated account's role is not allowed to call {tool_name}: {e}"),
+                    "retry with an access token whose role covers this tool (DB-backed access-token store), or ask an admin to grant the role",
+                ));
             }
 
             let mut arguments = params_obj
@@ -4479,7 +4523,11 @@ async fn process_jsonrpc_request(
                 "content": [{ "type": "text", "text": content_str }]
             }))
         }
-        _ => Err(format!("Method not found: {}", method)),
+        _ => Err(crate::errors::render(
+            crate::errors::METHOD_NOT_FOUND.code,
+            &format!("JSON-RPC method '{method}' is not implemented by this server"),
+            "use initialize, tools/list, tools/call, resources/list, or ping; re-initialize the session after upgrading the server",
+        )),
     }
 }
 
@@ -4581,7 +4629,10 @@ async fn handle_sse_stream(
         Err(status) => {
             return Response::builder()
                 .status(status)
-                .body(Body::from(r#"event: error\ndata: Unauthorized\n\n"#))
+                .body(Body::from(format!(
+                    "event: error\ndata: {}\n\n",
+                    crate::errors::UNAUTHORIZED.message()
+                )))
                 .unwrap();
         }
     };
