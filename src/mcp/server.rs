@@ -3504,6 +3504,19 @@ impl MCPServer {
                 self.engine_freshness_for_path(&project_db_path).to_json(),
             );
         }
+        // FR-ZCP-03: the router's L0 rung reports the background-index kick
+        // in its guidance. The dispatch layer auto-kicked the index above
+        // (FR-ZCP-02 empty-graph branch); inject its live state so the
+        // handler's leankg_context can embed it without a server handle.
+        if tool_name == "leankg_context" {
+            arguments.insert(
+                "_server_index_kick".to_string(),
+                serde_json::json!({
+                    "indexing": self.indexing.running.load(std::sync::atomic::Ordering::SeqCst),
+                    "hook": "fr-zcp-02-auto-attach",
+                }),
+            );
+        }
         let arguments_obj = arguments.clone();
         let args_value = serde_json::Value::Object(arguments);
         let mut result = handler.execute_tool(tool_name, &args_value).await;

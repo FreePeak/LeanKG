@@ -1955,7 +1955,13 @@ impl ToolHandler {
             .filter(|q| !q.is_empty())
             .ok_or("Missing 'query'")?
             .to_string();
-
+        // Background-index kick (FR-ZCP-02 via FR-ZCP-03). The dispatcher
+        // already auto-kicks the single-flight background index for any
+        // tool on an empty graph (server.rs dispatch, FR-ZCP-02) BEFORE the
+        // handler runs, and injects the live state via _server_index_kick.
+        // This closure therefore REPORTS that kick in the L0 guidance
+        // (never re-triggers, never errors) and falls back to pointing at
+        // `leankg index .` when no server is present (tests, direct use).
         // L3 executor: the existing semantic pipeline (HNSW+rerank when
         // vectors exist, ontology-first dual path otherwise). Also reused
         // by the impact/graph/files intents' graph-backed executors.
@@ -1964,23 +1970,25 @@ impl ToolHandler {
             self.semantic_search(&serde_json::json!({ "query": q, "limit": limit }))
         };
 
-        // Background-index kick (FR-ZCP-02). The hook lives on MCPServer
-        // (feat/fr-zcp-02-auto-attach: MCPServer::kick_background_index,
-        // idempotent single-flight, non-blocking) and is not reachable from
-        // the ToolHandler handle. Integration note for the coordinator:
-        // wire the kick here once AutoAttach lands — e.g. via a registered
-        // server handle or a static one-slot channel — and thread a real
-        // closure into RouterExec. Until then the kick is a logged no-op;
-        // L0 responses stay non-error and point at `leankg index .` /
-        // mcp_status.
+        let server_kick = args
+            .get("_server_index_kick")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let server_kick = &server_kick;
         let index_kick = || -> Result<Value, String> {
-            tracing::info!(
-                target: "leankg::mcp",
-                "FR-ZCP-02 background index kick requested (hook not yet wired to ToolHandler)"
-            );
-            Ok(serde_json::json!({ "indexing": false, "hook": "pending-fr-zcp-02-integration" }))
+            match server_kick {
+                Value::Null => {
+                    tracing::info!(
+                        target: "leankg::mcp",
+                        "FR-ZCP-02 background index kick requested (no server dispatch; run `leankg index .`)"
+                    );
+                    Ok(serde_json::json!(
+                        { "indexing": false, "hook": "no-server-dispatch-run-leankg-index" }
+                    ))
+                }
+                kicked => Ok(kicked.clone()),
+            }
         };
-
         let exec = crate::mcp::router::RouterExec {
             semantic: &semantic_exec,
             index_kick: &index_kick,
