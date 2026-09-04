@@ -708,13 +708,31 @@ impl ToolHandler {
         let storage_engine = "postgres";
         let storage_path = self.graph_engine.db().redacted_url();
 
+        // FR-ZCP-02: server-side indexing state, injected by the dispatch
+        // layer (ToolHandler has no MCPServer handle). Consumed + stripped
+        // so it never leaks into echoed args.
+        let server_indexing = args
+            .get("_server_indexing")
+            .cloned()
+            .unwrap_or_else(|| json!({ "state": "idle" }));
+        let server_freshness = args
+            .get("_server_freshness")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Never-report "not initialized": mcp_status is the status surface —
+        // it reports state (incl. freshness + indexing), it does not error.
         if !db_path.exists() {
             return Ok(json!({
                 "initialized": false,
+                "freshness": server_freshness,
+                "indexing": server_indexing,
                 "storage_engine": storage_engine,
                 "storage_path": storage_path,
                 "counts_included": false,
-                "message": "LeanKG not initialized. Run mcp_init first."
+                "message": "No .leankg directory at this path yet. Fix: run `leankg add <path>` or mcp_init(path=<path>); auto-attach (LEANKG_AUTO_ATTACH, default on) also initializes on first query.",
+                "fix": "leankg add <path>"
             }));
         }
 
@@ -723,7 +741,13 @@ impl ToolHandler {
         if !has_elements {
             return Ok(json!({
                 "initialized": false,
-                "message": "LeanKG directory exists but database not initialized. Run mcp_index to populate index.",
+                "freshness": "cold",
+                "indexing": server_indexing,
+                "message": if server_indexing["state"] == json!("indexing") {
+                    "Index is empty; background indexing is running — results are freshness:cold until it completes."
+                } else {
+                    "Index is empty. Fix: run `leankg add <path>` or mcp_index(path=<path>); auto-attach triggers a background index on the next query."
+                },
                 "database_exists": false,
                 "storage_engine": storage_engine,
                 "storage_path": storage_path.clone(),
@@ -737,6 +761,8 @@ impl ToolHandler {
                 "index_populated": true,
                 "database_exists": true,
                 "database": db_path.to_string_lossy(),
+                "freshness": server_freshness,
+                "indexing": server_indexing,
                 "storage_engine": storage_engine,
                 "storage_path": storage_path.clone(),
                 "counts_included": false,
@@ -764,6 +790,8 @@ impl ToolHandler {
             "index_populated": true,
             "database_exists": true,
             "database": db_path.to_string_lossy(),
+            "freshness": server_freshness,
+            "indexing": server_indexing,
             "storage_engine": storage_engine,
             "storage_path": storage_path.clone(),
             "counts_included": true,
@@ -4961,6 +4989,82 @@ mod tests {
         let shared = crate::db::backend::init_db(&tmp.path().join("leankg.db")).unwrap();
         let graph = GraphEngine::new(shared);
         (ToolHandler::new(graph, tmp.path().to_path_buf()), tmp)
+    }
+
+    // -------------------------------------------------------------------
+    // FR-ZCP-02: mcp_status carries indexing state + freshness and never
+    // errors with "not initialized".
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn fr_zcp02_mcp_status_missing_dir_reports_state_not_error() {
+        let (base_handler, tmp) = handler_in_temp_project();
+        // db_path that does not exist on disk (missing .leankg marker).
+        let handler = ToolHandler::new(
+            base_handler.graph_engine.clone(),
+            tmp.path().join("no-such-leankg"),
+        );
+        let v = handler
+            .mcp_status(&serde_json::json!({ "_server_indexing": {
+                "state": "indexing", "files_done": 2, "files_total": null },
+            "_server_freshness": "cold" }))
+            .unwrap();
+        assert_eq!(v["initialized"], serde_json::json!(false));
+        assert_eq!(v["freshness"], serde_json::json!("cold"));
+        assert_eq!(v["indexing"]["state"], serde_json::json!("indexing"));
+        assert!(v["fix"].is_string(), "must carry runnable fix: {v}");
+        assert!(!v.to_string().contains("Run mcp_init first."));
+    }
+
+    #[test]
+    fn fr_zcp02_mcp_status_empty_graph_is_cold_not_error() {
+        let (handler, tmp) = handler_in_temp_project();
+        // Marker dir exists (as auto-attach creates it) but graph is empty.
+        std::fs::create_dir_all(tmp.path().join(".leankg")).unwrap();
+        let v = handler
+            .mcp_status(
+                &serde_json::json!({ "_server_indexing": { "state": "indexing",
+                "files_done": 0, "files_total": 12 }, "_server_freshness": "cold" }),
+            )
+            .unwrap();
+        assert_eq!(v["initialized"], serde_json::json!(false));
+        assert_eq!(v["freshness"], serde_json::json!("cold"));
+        assert_eq!(v["indexing"]["state"], serde_json::json!("indexing"));
+        assert_eq!(v["indexing"]["files_total"], serde_json::json!(12));
+        assert!(
+            v["message"]
+                .as_str()
+                .unwrap()
+                .contains("background indexing is running"),
+            "message must explain the running index: {v}"
+        );
+    }
+
+    #[test]
+    fn fr_zcp02_mcp_status_populated_carries_freshness_and_indexing() {
+        let (handler, tmp) = handler_in_temp_project();
+        std::fs::create_dir_all(tmp.path().join(".leankg")).unwrap();
+        // Populate the graph with one element so has_elements() is true.
+        let el = crate::db::models::CodeElement {
+            element_type: "function".into(),
+            name: "auth_check".into(),
+            file_path: "./src/lib.py".into(),
+            qualified_name: "./src/lib.py::auth_check".into(),
+            language: "python".into(),
+            line_start: 1,
+            line_end: 2,
+            ..Default::default()
+        };
+        handler.graph_engine.insert_elements(&[el]).unwrap();
+        let v = handler
+            .mcp_status(
+                &serde_json::json!({ "_server_indexing": { "state": "idle" },
+                "_server_freshness": "possibly_stale" }),
+            )
+            .unwrap();
+        assert_eq!(v["initialized"], serde_json::json!(true));
+        assert_eq!(v["freshness"], serde_json::json!("possibly_stale"));
+        assert_eq!(v["indexing"]["state"], serde_json::json!("idle"));
     }
 
     /// N1 (cycle-2 R2a): the `mcp_init` tool used to overwrite leankg.yaml

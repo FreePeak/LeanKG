@@ -248,6 +248,102 @@ pub struct MCPServer {
     /// FR-ZCP-01 clause 2: per-session cwd root cache fed by the
     /// server-initiated `roots/list` probe over HTTP.
     http_session_roots: crate::mcp::roots::SessionRootCache,
+    /// FR-ZCP-02: shared progress/state of the single background index job
+    /// (single-flight per process). Read by `mcp_status`; flipped by the
+    /// spawned indexing task.
+    indexing: Arc<IndexingShared>,
+}
+
+/// FR-ZCP-02: process-wide single-flight state for background first-index
+/// jobs. One job at a time (the watcher remains single-project-per-process;
+/// multi-project is FR-ZCP-09 scope). `run_id` increments on every spawn so
+/// a stale task cannot clobber a newer job's counters.
+#[derive(Debug, Default)]
+pub struct IndexingShared {
+    running: std::sync::atomic::AtomicBool,
+    files_done: std::sync::atomic::AtomicUsize,
+    files_total: std::sync::atomic::AtomicUsize,
+    /// 0 = unknown/none; usize::MAX = unbounded (incremental run).
+    files_total_sentinel: std::sync::atomic::AtomicUsize,
+    run_id: std::sync::atomic::AtomicU64,
+}
+
+impl IndexingShared {
+    fn start_run(&self) -> u64 {
+        self.files_done
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.files_total
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.files_total_sentinel
+            .store(UNBOUNDED_TOTAL, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.run_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+
+    fn end_run(&self) {
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn snapshot(&self) -> IndexingState {
+        if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            return IndexingState::Idle;
+        }
+        let done = self.files_done.load(std::sync::atomic::Ordering::Relaxed);
+        let sentinel = self
+            .files_total_sentinel
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let total = if sentinel == usize::MAX {
+            None
+        } else {
+            Some(self.files_total.load(std::sync::atomic::Ordering::Relaxed))
+        };
+        IndexingState::Indexing {
+            files_done: done,
+            files_total: total,
+        }
+    }
+}
+
+const UNBOUNDED_TOTAL: usize = usize::MAX;
+
+/// Clears the running flag when the spawned index task ends (including
+/// panics/early returns) so `mcp_status` never reports a phantom job.
+struct RunGuard<'a> {
+    shared: &'a IndexingShared,
+    run_id: u64,
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        if self.shared.run_id.load(std::sync::atomic::Ordering::SeqCst) == self.run_id {
+            self.shared.end_run();
+        }
+    }
+}
+
+/// FR-ZCP-02: freshness of the graph at `db_path` from cheap local facts
+/// (element count, latest inventory snapshot, last commit time). Shared by
+/// `mcp_status` enrichment and the auto-attach cold responses.
+fn engine_freshness(engine: &GraphEngine, db_path: &std::path::Path) -> Freshness {
+    let count = engine.count_elements().unwrap_or(0);
+    let computed_at = crate::graph::inventory::load_latest_inventory(engine.db())
+        .ok()
+        .flatten()
+        .and_then(|inv| inv.computed_at.parse::<i64>().ok());
+    let project_root = db_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| db_path.to_path_buf());
+    let last_commit = crate::indexer::git_workspace::workspace_last_commit_time(&project_root).ok();
+    match crate::setup_config::freshness_label(count, computed_at, last_commit) {
+        "cold" => Freshness::Cold,
+        "fresh" => Freshness::Fresh,
+        _ => Freshness::PossiblyStale,
+    }
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -297,6 +393,7 @@ impl Clone for MCPServer {
             audit: self.audit.clone(),
             transport: self.transport,
             http_session_roots: self.http_session_roots.clone(),
+            indexing: self.indexing.clone(),
         }
     }
 }
@@ -315,6 +412,78 @@ pub enum AutoIndexDecision {
     SkippedNoGit,
     /// Incremental (or fallback full) index ran.
     Indexed,
+}
+
+/// FR-ZCP-02: live indexing state surfaced by `mcp_status`. `Idle` = no
+/// background index running; `Indexing` carries cheap counters from the
+/// shared progress atomics (`files_total` is unknown for incremental runs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexingState {
+    Idle,
+    Indexing {
+        files_done: usize,
+        files_total: Option<usize>,
+    },
+}
+
+impl IndexingState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IndexingState::Idle => "idle",
+            IndexingState::Indexing { .. } => "indexing",
+        }
+    }
+
+    pub fn to_json(self) -> serde_json::Value {
+        match self {
+            IndexingState::Idle => serde_json::json!({ "state": "idle" }),
+            IndexingState::Indexing {
+                files_done,
+                files_total,
+            } => serde_json::json!({
+                "state": "indexing",
+                "files_done": files_done,
+                "files_total": files_total,
+            }),
+        }
+    }
+}
+
+/// FR-ZCP-02 freshness vocabulary (FR-ZCP-06 contract). `cold` = attached
+/// but not yet indexed (first query in a never-indexed repo); `cold` queries
+/// are served as zero-verbosity successes, never "not initialized" errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    Fresh,
+    PossiblyStale,
+    Cold,
+}
+
+impl Freshness {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Freshness::Fresh => "fresh",
+            Freshness::PossiblyStale => "possibly_stale",
+            Freshness::Cold => "cold",
+        }
+    }
+}
+
+/// FR-ZCP-02 freshness of a resolved route. `Unknown` when no engine is
+/// open for the route (the JSON field then reads `"unknown"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineFreshness {
+    Known(Freshness),
+    Unknown,
+}
+
+impl EngineFreshness {
+    pub fn to_json(self) -> serde_json::Value {
+        match self {
+            EngineFreshness::Known(f) => serde_json::Value::String(f.as_str().to_string()),
+            EngineFreshness::Unknown => serde_json::Value::String("unknown".to_string()),
+        }
+    }
 }
 
 impl MCPServer {
@@ -349,6 +518,7 @@ impl MCPServer {
             audit: None,
             transport: "stdio",
             http_session_roots: crate::mcp::roots::SessionRootCache::new(),
+            indexing: Arc::new(IndexingShared::default()),
         }
     }
 
@@ -376,6 +546,7 @@ impl MCPServer {
             audit: None,
             transport: "stdio",
             http_session_roots: crate::mcp::roots::SessionRootCache::new(),
+            indexing: Arc::new(IndexingShared::default()),
         }
     }
 
@@ -494,6 +665,265 @@ impl MCPServer {
         project_path: &str,
     ) -> Result<AutoIndexDecision, String> {
         self.ensure_project_indexed(project_path).await
+    }
+
+    /// FR-ZCP-02: `LEANKG_AUTO_ATTACH` gate. Default ON for local single-user
+    /// deployments; `0`/`false` opts out (read-only / shared deployments) —
+    /// unresolved projects then error with cause + fix instead of attaching.
+    pub fn auto_attach_enabled() -> bool {
+        match std::env::var("LEANKG_AUTO_ATTACH") {
+            Ok(v) => !matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off" | "no"
+            ),
+            Err(_) => true,
+        }
+    }
+
+    /// FR-ZCP-02: freshness label for the graph backing `project_db_path`,
+    /// computed from cheap local facts (element count + inventory snapshot
+    /// vs last commit). `Cold` when the graph holds no elements (attached,
+    /// index still building); `Unknown` when no engine is open.
+    pub fn engine_freshness_for_path(&self, project_db_path: &std::path::Path) -> EngineFreshness {
+        let engine = {
+            let cache = self.graph_engine_cache.lock();
+            cache.get(project_db_path).cloned()
+        };
+        let Some(engine) = engine else {
+            return EngineFreshness::Unknown;
+        };
+        EngineFreshness::Known(engine_freshness(&engine, project_db_path))
+    }
+
+    /// Live indexing state of the single background index job.
+    pub fn indexing_state(&self) -> IndexingState {
+        self.indexing.snapshot()
+    }
+
+    /// FR-ZCP-02 public hook for the router tool (FR-ZCP-03): idempotently
+    /// kick a background first-index for `project_root` without ever
+    /// blocking the caller. Returns a small JSON status; the router embeds
+    /// it in its L0 preamble so the agent can watch `mcp_status`.
+    pub fn kick_background_index(
+        &self,
+        project_root: &std::path::Path,
+    ) -> Result<serde_json::Value, String> {
+        if self.read_only {
+            return Ok(serde_json::json!({
+                "indexing": false,
+                "project": project_root.display().to_string(),
+                "message": "read-only server: background indexing disabled",
+            }));
+        }
+        let leankg_dir = project_root.join(".leankg");
+        if !leankg_dir.is_dir() {
+            return Err(format!(
+                "LEANKG_ERROR_PROJECT_NOT_INITIALIZED: no .leankg directory at {}. \
+                 Fix: run `leankg add {}` or mcp_init with that path first",
+                leankg_dir.display(),
+                project_root.display()
+            ));
+        }
+        match self.spawn_background_index(project_root.to_path_buf(), leankg_dir) {
+            Some(()) => Ok(serde_json::json!({
+                "indexing": true,
+                "project": project_root.display().to_string(),
+                "message": "background index started; query results are freshness:cold \
+                    until it completes (see mcp_status)",
+            })),
+            None => Ok(serde_json::json!({
+                "indexing": true,
+                "project": project_root.display().to_string(),
+                "message": "background index already running for this project",
+            })),
+        }
+    }
+
+    /// FR-ZCP-02: spawn the background first-index job (single-flight).
+    /// Returns `None` when a job is already running. The spawned task owns
+    /// the whole index pipeline: parser init → incremental-or-full index →
+    /// call edges → ontology refresh → engine-cache drop so the next query
+    /// reopens against the populated graph.
+    fn spawn_background_index(&self, project_root: PathBuf, leankg_dir: PathBuf) -> Option<()> {
+        if self
+            .indexing
+            .running
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return None;
+        }
+        let run_id = self.indexing.start_run();
+        let shared = Arc::clone(&self.indexing);
+        let me = self.clone();
+        tokio::spawn(async move {
+            let _guard = RunGuard {
+                shared: &shared,
+                run_id,
+            };
+            // 1) leankg.yaml bootstrap (mirrors mcp_init: merge, never
+            //    overwrite — dropping project.project_path re-scopes the
+            //    project identity on the next boot).
+            let config_path = leankg_dir.join("leankg.yaml");
+            if !config_path.exists() {
+                if let Err(e) = crate::config::write_config_preserving_existing(
+                    &config_path,
+                    &crate::config::ProjectConfig::default(),
+                ) {
+                    tracing::warn!(
+                        "AutoAttach: failed to write {} config: {}",
+                        project_root.display(),
+                        e
+                    );
+                }
+            }
+            // 2) Index.
+            match me.run_index_pipeline(&project_root, run_id).await {
+                Ok(decision) => {
+                    if decision == AutoIndexDecision::Indexed {
+                        me.refresh_ontology_after_index();
+                        // Drop the per-project engine so the next query
+                        // reopens against the freshly populated graph
+                        // instead of the pre-index empty handle. The L1
+                        // caches must go too — they may hold pre-index
+                        // empty results (same invalidation mcp_index does).
+                        let key = leankg_dir.canonicalize().unwrap_or(leankg_dir.clone());
+                        me.graph_engine_cache.lock().remove(&key);
+                        me.invalidate_l1_caches_public().await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "AutoAttach: background index for {} failed: {}",
+                        project_root.display(),
+                        e
+                    );
+                }
+            }
+        });
+        Some(())
+    }
+
+    /// FR-ZCP-02: the actual index work for a project root. Prefers the
+    /// incremental sync; for a never-indexed clean repo (empty git diff)
+    /// falls back to a full pass so the graph actually populates. File
+    /// progress streams into the shared atomics for `mcp_status`.
+    async fn run_index_pipeline(
+        &self,
+        project_root: &std::path::Path,
+        run_id: u64,
+    ) -> Result<AutoIndexDecision, String> {
+        // Config gates: reuse the same leankg.yaml knobs as the other
+        // auto-index paths so operators have one way to say "don't".
+        let config_path = project_root.join(".leankg/leankg.yaml");
+        let config = if config_path.exists() {
+            let content = std::fs::read_to_string(&config_path)
+                .map_err(|e| format!("Failed to read config: {}", e))?;
+            serde_yaml::from_str::<crate::config::ProjectConfig>(&content)
+                .map_err(|e| format!("Failed to parse config: {}", e))?
+        } else {
+            crate::config::ProjectConfig::default()
+        };
+        if !config.mcp.auto_index_on_start {
+            return Ok(AutoIndexDecision::SkippedDisabled);
+        }
+        if std::env::var("LEANKG_SKIP_FRESHNESS_CHECK")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            return Ok(AutoIndexDecision::SkippedDisabled);
+        }
+
+        let graph_engine = self
+            .get_graph_engine_for_path(Some(&project_root.to_string_lossy().to_string()))
+            .map_err(|e| format!("Database error: {}", e))?;
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        parser_manager
+            .init_parsers()
+            .map_err(|e| format!("Parser init error: {}", e))?;
+
+        let root_str = project_root.to_string_lossy().to_string();
+        let mut indexed = false;
+        match crate::indexer::incremental_index_sync(&graph_engine, &mut parser_manager, &root_str)
+            .await
+        {
+            Ok(result) => {
+                tracing::info!(
+                    "AutoAttach: incremental index for {}: {} files, {} elements",
+                    project_root.display(),
+                    result.total_files_processed,
+                    result.elements_indexed
+                );
+                indexed = true;
+            }
+            Err(e) => {
+                tracing::info!(
+                    "AutoAttach: incremental unavailable for {} ({}); running full index",
+                    project_root.display(),
+                    e
+                );
+            }
+        }
+
+        if !indexed || !graph_engine.has_elements().unwrap_or(false) {
+            // Full pass with progress accounting.
+            let files = crate::indexer::find_files_sync(&root_str)
+                .map_err(|e| format!("Find files error: {}", e))?;
+            let total = files.len();
+            self.indexing
+                .files_total
+                .store(total, std::sync::atomic::Ordering::Relaxed);
+            self.indexing
+                .files_total_sentinel
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            let shared = Arc::clone(&self.indexing);
+            let mut indexed_count = 0usize;
+            for file_path in &files {
+                if crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path)
+                    .is_ok()
+                {
+                    indexed_count += 1;
+                }
+                shared
+                    .files_done
+                    .store(indexed_count, std::sync::atomic::Ordering::Relaxed);
+                if !shared.running.load(std::sync::atomic::Ordering::SeqCst)
+                    || shared.run_id.load(std::sync::atomic::Ordering::SeqCst) != run_id
+                {
+                    return Ok(AutoIndexDecision::SkippedDisabled);
+                }
+            }
+            tracing::info!(
+                "AutoAttach: full index for {}: {} files",
+                project_root.display(),
+                indexed_count
+            );
+            indexed = true;
+        }
+
+        if let Err(e) = graph_engine.resolve_call_edges() {
+            tracing::warn!("AutoAttach: failed to resolve call edges: {}", e);
+        }
+
+        // Parity with the legacy auto-index path: docs/ under the project
+        // root is indexed too (best-effort).
+        if let Ok(true) = project_root.join("docs").try_exists() {
+            if let Ok(doc_result) = crate::doc_indexer::index_docs_directory(
+                project_root.join("docs").as_path(),
+                &graph_engine,
+            ) {
+                tracing::info!(
+                    "AutoAttach: indexed {} documents for {}",
+                    doc_result.documents.len(),
+                    project_root.display()
+                );
+            }
+        }
+
+        if indexed {
+            Ok(AutoIndexDecision::Indexed)
+        } else {
+            Ok(AutoIndexDecision::SkippedNoGit)
+        }
     }
 
     /// Read leankg.yaml and resolve project root with fallback chain:
@@ -668,16 +1098,23 @@ impl MCPServer {
 
     fn get_graph_engine_for_path(&self, file_path: Option<&String>) -> Result<GraphEngine, String> {
         let project_db_path = if let Some(fp) = file_path {
-            if let Some(leankg_path) = Self::resolve_project_db_path(fp.as_str()) {
-                tracing::debug!(
-                    "Routing query for '{}' to database at {}",
-                    fp,
-                    leankg_path.display()
-                );
-                leankg_path
-            } else {
-                tracing::debug!("No .leankg found for '{}', using default db_path", fp);
-                self.get_db_path()
+            match Self::resolve_project_db_path(fp.as_str()) {
+                Some(leankg_path) => {
+                    tracing::debug!(
+                        "Routing query for '{}' to database at {}",
+                        fp,
+                        leankg_path.display()
+                    );
+                    leankg_path
+                }
+                // FR-ZCP-02: an explicit route key that resolves to no
+                // project marker must NEVER silently open the server-default
+                // schema — that is the wrong-project-data bug this FR kills.
+                // Error with cause + runnable fix; callers with graceful
+                // fallbacks (embed status) treat it as "project not ready".
+                None => {
+                    return Err(Self::unknown_project_error(fp));
+                }
             }
         } else {
             Self::resolve_project_db_path(".")
@@ -696,10 +1133,19 @@ impl MCPServer {
         // Phase 8 (D4): Postgres is the only engine — no central RocksDB
         // index to probe.
         if !project_db_path.exists() {
-            return Err(
-                "LeanKG not initialized. No .leankg directory found. Run 'leankg init' first."
-                    .to_string(),
-            );
+            // FR-ZCP-02: the server's own default project (no explicit route
+            // key) with a missing marker is auto-initialized — a query must
+            // not die with "not initialized" when auto-attach is on.
+            if file_path.is_none() && Self::auto_attach_enabled() {
+                let _ = std::fs::create_dir_all(&project_db_path);
+            }
+            if !project_db_path.exists() {
+                return Err(format!(
+                    "LEANKG_ERROR_PROJECT_NOT_INITIALIZED: no .leankg directory at {}. \
+                     Fix: run `leankg add <path>` or `leankg init` first.",
+                    project_db_path.display()
+                ));
+            }
         }
 
         // Single critical section: cache check + init_db + cache insert.
@@ -2871,7 +3317,7 @@ impl MCPServer {
     async fn execute_tool(
         &self,
         tool_name: &str,
-        arguments: serde_json::Map<String, serde_json::Value>,
+        mut arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
         // Read-only enforcement: short-circuit before acquiring any locks or
         // touching the DB. The set of write tools here MUST match the set
@@ -2979,6 +3425,14 @@ impl MCPServer {
         // or wrong-project lock).
         let routing_key = Self::resolve_db_route(&arguments);
 
+        // FR-ZCP-02: a project resolves via its nearest `.leankg` marker.
+        // The old behavior silently routed unresolved projects to the
+        // server-default schema — wrong-project data with no error. Now:
+        //   * auto-attach ON (default): attach the nearest marker root,
+        //     serve freshness:cold, and kick a BACKGROUND first index;
+        //   * opt-out (`LEANKG_AUTO_ATTACH=0`): structured error with the
+        //     runnable fix; never the default schema.
+        let mut attached_cold = false;
         let project_db_path = match &routing_key {
             Some(key) => match Self::resolve_project_db_path(key) {
                 Some(leankg_path) => {
@@ -2990,46 +3444,92 @@ impl MCPServer {
                     leankg_path
                 }
                 None => {
-                    tracing::debug!("No .leankg found for '{}', using default db_path", key);
-                    self.get_db_path()
+                    let (p, attached) = self.attach_or_reject(key)?;
+                    attached_cold = attached;
+                    p
                 }
             },
-            None => Self::resolve_project_db_path(".")
+            None => match Self::resolve_project_db_path(".")
                 .or_else(|| Self::find_leankg_for_path("."))
-                .unwrap_or_else(|| self.get_db_path()),
+            {
+                Some(found) => found,
+                // No routing key and no project marker: preserve the legacy
+                // server-default behavior (the server was started IN a
+                // project — its own db_path IS the resolution).
+                None => self.get_db_path(),
+            },
         };
 
         let graph_engine = self.get_graph_engine_for_path(routing_key.as_ref())?;
 
-        // On-demand auto-indexing: if the project has no indexed elements
-        // yet (Phase 8 — Postgres holds the data, so "has an index" is a
-        // populated-graph check, not a file check). Read-only MCP never
-        // indexes — worker owns that pipeline.
+        // FR-ZCP-02: never block a query on indexing. The pre-existing
+        // empty-graph check used to run `ensure_project_indexed` inline in
+        // the request (tens of minutes on real trees). Now a first query in
+        // a never-indexed repo is served cold (zero-verbosity) and the index
+        // pipeline runs in a spawned single-flight task.
         if !self.read_only
             && tool_name != "mcp_index"
             && tool_name != "mcp_init"
             && tool_name != "mcp_index_docs"
             && !graph_engine.has_elements().unwrap_or(false)
         {
-            tracing::info!(
-                "Project at {} has no indexed elements, triggering auto-index",
-                project_db_path.display()
-            );
-            let _ = self
-                .ensure_project_indexed(
-                    project_db_path
-                        .parent()
-                        .unwrap_or(&project_db_path)
-                        .to_string_lossy()
-                        .as_ref(),
-                )
-                .await;
+            let project_root = project_db_path
+                .parent()
+                .unwrap_or(&project_db_path)
+                .to_path_buf();
+            match self.spawn_background_index(project_root.clone(), project_db_path.clone()) {
+                Some(()) => tracing::info!(
+                    "AutoAttach: project {} has no indexed elements; background index started",
+                    project_root.display()
+                ),
+                None => tracing::debug!(
+                    "AutoAttach: background index already running for {}",
+                    project_root.display()
+                ),
+            }
         }
 
-        let handler = ToolHandler::new(graph_engine, project_db_path);
+        let handler = ToolHandler::new(graph_engine, project_db_path.clone());
+        // FR-ZCP-02: mcp_status is the indexing-status surface. The handler
+        // has no MCPServer handle, so the dispatch layer injects the live
+        // state (single background job + this route's freshness) into the
+        // args; mcp_status consumes and strips it.
+        if tool_name == "mcp_status" {
+            arguments.insert(
+                "_server_indexing".to_string(),
+                self.indexing_state().to_json(),
+            );
+            arguments.insert(
+                "_server_freshness".to_string(),
+                self.engine_freshness_for_path(&project_db_path).to_json(),
+            );
+        }
         let arguments_obj = arguments.clone();
         let args_value = serde_json::Value::Object(arguments);
-        let result = handler.execute_tool(tool_name, &args_value).await;
+        let mut result = handler.execute_tool(tool_name, &args_value).await;
+
+        // FR-ZCP-02: attach provenance + freshness on every index-backed
+        // response. Cold = attached this request with an empty graph; the
+        // agent learns why results are empty instead of guessing. Auth and
+        // parameter errors stay errors — only index state is decorated.
+        if attached_cold {
+            if let Ok(ref mut v) = result {
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert(
+                        "freshness".into(),
+                        serde_json::json!(Freshness::Cold.as_str()),
+                    );
+                    obj.insert("indexing".into(), self.indexing_state().to_json());
+                    obj.insert(
+                        "_note".into(),
+                        serde_json::json!(
+                            "project auto-attached with an empty index; background \
+                             indexing is running — re-run shortly for full results"
+                        ),
+                    );
+                }
+            }
+        }
 
         if tool_name == "mcp_index" && result.is_ok() {
             self.refresh_ontology_after_index();
@@ -3067,6 +3567,105 @@ impl MCPServer {
         }
 
         result
+    }
+
+    /// FR-ZCP-02: the canonical "unknown project" error — stable code,
+    /// cause, runnable fix (FR-ZCP-12 T1 style). Mentions the auto-attach
+    /// opt-out only when it is actually set.
+    fn unknown_project_error(key: &str) -> String {
+        if Self::auto_attach_enabled() {
+            format!(
+                "LEANKG_ERROR_UNKNOWN_PROJECT: no .leankg project found for '{key}'. \
+                 Fix: run `leankg add <path>` (or mcp_init with path) for that project, \
+                 then retry; queries never fall back to another project's data."
+            )
+        } else {
+            format!(
+                "LEANKG_ERROR_UNKNOWN_PROJECT: no .leankg project found for '{key}' and \
+                 auto-attach is disabled by LEANKG_AUTO_ATTACH=0. Fix: run \
+                 `leankg add <path>` (or mcp_init with path) for that project, or \
+                 remove LEANKG_AUTO_ATTACH=0 to allow auto-attach."
+            )
+        }
+    }
+
+    /// FR-ZCP-02: resolve `key` to its project, attaching when the nearest
+    /// `.leankg` marker exists (auto-attach ON) or rejecting with cause+fix
+    /// (opt-out / no marker). NEVER falls back to the server-default schema
+    /// — that fallback served wrong-project data silently.
+    fn attach_or_reject(&self, key: &str) -> Result<(PathBuf, bool), String> {
+        if !Self::auto_attach_enabled() {
+            return Err(Self::unknown_project_error(key));
+        }
+        // Read-only deployments never create project state on disk: an
+        // unresolved project errors instead of de-facto initializing.
+        if self.read_only && Self::find_leankg_for_path(key).is_none() {
+            return Err(format!(
+                "LEANKG_ERROR_UNKNOWN_PROJECT: no .leankg project found for '{key}' and \
+                 this server is read-only (RO deployments never auto-initialize). \
+                 Fix: initialize the project out-of-band (leankg add <path>) and retry."
+            ));
+        }
+        if let Some(leankg_path) = Self::find_leankg_for_path(key) {
+            tracing::info!(
+                "AutoAttach: resolved '{}' to project marker {}",
+                key,
+                leankg_path.display()
+            );
+            return Ok((leankg_path, true));
+        }
+        // No `.leankg` marker yet: attach the nearest repo root (`.git`) and
+        // de-facto init it (mkdir + default config — the same contract
+        // `mcp_init` has always honored). PRD FR-ZCP-02: "today a de-facto
+        // .leankg init" is the attach primitive until FR-ZCP-09's registry.
+        match Self::find_repo_root_for_path(key) {
+            Some(repo_root) => {
+                let leankg_dir = repo_root.join(".leankg");
+                std::fs::create_dir_all(&leankg_dir).map_err(|e| {
+                    format!(
+                        "LEANKG_ERROR_AUTO_ATTACH_FAILED: cannot create {}: {e}",
+                        leankg_dir.display()
+                    )
+                })?;
+                let config_path = leankg_dir.join("leankg.yaml");
+                if !config_path.exists() {
+                    if let Err(e) = crate::config::write_config_preserving_existing(
+                        &config_path,
+                        &crate::config::ProjectConfig::default(),
+                    ) {
+                        tracing::warn!(
+                            "AutoAttach: failed to write {} config: {}",
+                            repo_root.display(),
+                            e
+                        );
+                    }
+                }
+                tracing::info!(
+                    "AutoAttach: attached fresh repo root {} for '{}'",
+                    repo_root.display(),
+                    key
+                );
+                Ok((leankg_dir, true))
+            }
+            None => Err(Self::unknown_project_error(key)),
+        }
+    }
+
+    /// FR-ZCP-02: nearest repo root (`.git` marker — directory or worktree
+    /// gitfile) walking up from `path`. Mirrors [`Self::find_leankg_for_path`]
+    /// but keys on the repo instead of the LeanKG marker.
+    fn find_repo_root_for_path(path: &str) -> Option<PathBuf> {
+        let path = if path.starts_with('/') {
+            PathBuf::from(path)
+        } else {
+            std::env::current_dir().ok()?.join(path)
+        };
+        for ancestor in path.ancestors() {
+            if ancestor.join(".git").exists() {
+                return Some(ancestor.to_path_buf());
+            }
+        }
+        None
     }
 
     fn requires_write_lock(tool_name: &str) -> bool {
@@ -5074,5 +5673,276 @@ mod tests {
         let h = MCPServer::new(std::path::PathBuf::from("/tmp/opencode/t2/.leankg"))
             .with_transport("http");
         assert_eq!(h.transport(), "http");
+    }
+
+    // ---------------------------------------------------------------------
+    // FR-ZCP-02: lazy auto-attach + background first index + no silent
+    // wrong-project fallback.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn fr_zcp02_auto_attach_default_on_and_opt_out_parsing() {
+        let _g = ENV_LOCK.lock().unwrap();
+        // Default (env unset): ON.
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+        assert!(MCPServer::auto_attach_enabled());
+        // Explicit opt-outs.
+        for v in ["0", "false", "off", "no"] {
+            std::env::set_var("LEANKG_AUTO_ATTACH", v);
+            assert!(!MCPServer::auto_attach_enabled(), "value {v} must opt out");
+        }
+        // Explicit opt-ins.
+        for v in ["1", "true", "yes"] {
+            std::env::set_var("LEANKG_AUTO_ATTACH", v);
+            assert!(MCPServer::auto_attach_enabled(), "value {v} must opt in");
+        }
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+    }
+
+    #[test]
+    fn fr_zcp02_attach_or_reject_attaches_nearest_marker() {
+        // Holds ENV_LOCK: auto_attach_enabled() reads process env.
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mount = tmp.path().join("proj-a");
+        std::fs::create_dir_all(mount.join(".leankg")).unwrap();
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+
+        let (resolved, attached) = server
+            .attach_or_reject(mount.to_str().unwrap())
+            .expect("existing marker must attach");
+        assert!(attached);
+        assert_eq!(resolved, mount.join(".leankg"));
+    }
+
+    #[test]
+    fn fr_zcp02_attach_or_reject_never_returns_server_default() {
+        // Holds ENV_LOCK: auto_attach_enabled() reads process env.
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        // A path with NO .leankg and NO .git anywhere above it.
+        let orphan = tmp.path().join("no-project-here");
+        std::fs::create_dir_all(&orphan).unwrap();
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+
+        let err = server
+            .attach_or_reject(orphan.to_str().unwrap())
+            .expect_err("unresolvable project must error, never fall back");
+        assert!(
+            err.contains("LEANKG_ERROR_UNKNOWN_PROJECT"),
+            "error must carry the stable code: {err}"
+        );
+    }
+
+    #[test]
+    fn fr_zcp02_opt_out_error_names_leankg_auto_attach_with_fix() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let orphan = tmp.path().join("no-project-here");
+        std::fs::create_dir_all(&orphan).unwrap();
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LEANKG_AUTO_ATTACH", "0");
+        let err = server
+            .attach_or_reject(orphan.to_str().unwrap())
+            .expect_err("opt-out must reject unresolved projects");
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+
+        assert!(err.contains("LEANKG_ERROR_UNKNOWN_PROJECT"), "{err}");
+        assert!(err.contains("LEANKG_AUTO_ATTACH=0"), "{err}");
+        assert!(
+            err.contains("leankg add"),
+            "error must carry a runnable fix: {err}"
+        );
+    }
+
+    #[test]
+    fn fr_zcp02_fresh_repo_auto_inits_marker() {
+        // Holds ENV_LOCK: auto_attach_enabled() reads process env.
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        // A repo root with .git but no .leankg.
+        let repo = tmp.path().join("fresh-repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+
+        let (resolved, attached) = server
+            .attach_or_reject(repo.to_str().unwrap())
+            .expect("fresh repo must de-facto init and attach");
+        assert!(attached);
+        assert!(
+            resolved.is_dir(),
+            "marker dir must exist: {}",
+            resolved.display()
+        );
+        assert!(
+            resolved.join("leankg.yaml").exists(),
+            "config must be written"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fr_zcp02_kick_background_index_single_flight_and_state() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let leankg = tmp.path().join(".leankg");
+        std::fs::create_dir_all(&leankg).unwrap();
+        let server = MCPServer::new(leankg.clone());
+
+        // Idle before kick.
+        assert_eq!(server.indexing_state(), IndexingState::Idle);
+
+        // kick requires the marker dir; missing marker → structured error.
+        let bare = tempfile::TempDir::new().unwrap();
+        let err = server
+            .kick_background_index(bare.path())
+            .expect_err("kick without .leankg must error with code");
+        assert!(
+            err.contains("LEANKG_ERROR_PROJECT_NOT_INITIALIZED"),
+            "{err}"
+        );
+
+        // kick with marker → job runs (or has run) and reports via state.
+        let kicked = server.kick_background_index(tmp.path()).unwrap();
+        assert_eq!(kicked["indexing"], serde_json::json!(true));
+        // Wait for the tiny empty project to finish, then state returns to
+        // idle and the single-flight slot is free again.
+        for _ in 0..100 {
+            if server.indexing_state() == IndexingState::Idle {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(server.indexing_state(), IndexingState::Idle);
+    }
+
+    #[test]
+    fn fr_zcp02_indexing_state_json_shapes() {
+        assert_eq!(
+            IndexingState::Idle.to_json(),
+            serde_json::json!({ "state": "idle" })
+        );
+        let v = IndexingState::Indexing {
+            files_done: 3,
+            files_total: Some(10),
+        }
+        .to_json();
+        assert_eq!(v["state"], serde_json::json!("indexing"));
+        assert_eq!(v["files_done"], serde_json::json!(3));
+        assert_eq!(v["files_total"], serde_json::json!(10));
+        let unbounded = IndexingState::Indexing {
+            files_done: 1,
+            files_total: None,
+        }
+        .to_json();
+        assert!(unbounded["files_total"].is_null());
+    }
+
+    #[test]
+    fn fr_zcp02_freshness_vocabulary_strings() {
+        assert_eq!(Freshness::Cold.as_str(), "cold");
+        assert_eq!(Freshness::Fresh.as_str(), "fresh");
+        assert_eq!(Freshness::PossiblyStale.as_str(), "possibly_stale");
+        assert_eq!(
+            EngineFreshness::Known(Freshness::Cold).to_json(),
+            serde_json::json!("cold")
+        );
+        assert_eq!(
+            EngineFreshness::Unknown.to_json(),
+            serde_json::json!("unknown")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fr_zcp02_unknown_explicit_project_never_opens_default_engine() {
+        // With an explicit project arg that resolves nowhere and auto-attach
+        // opt-out, execute_tool must fail with the structured code instead of
+        // routing to the server-default db_path.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let server = MCPServer::new(tmp.path().join(".leankg"));
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LEANKG_AUTO_ATTACH", "0");
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "project".to_string(),
+            serde_json::Value::String(tmp.path().join("nope").to_string_lossy().to_string()),
+        );
+        let result = server.execute_tool("mcp_status", args).await;
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+        let err = result.expect_err("unknown project under opt-out must error");
+        assert!(err.contains("LEANKG_ERROR_UNKNOWN_PROJECT"), "{err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fr_zcp02_first_query_auto_attaches_and_serves_cold() {
+        // Fresh repo (git init, one committed file, no .leankg): a query
+        // with an explicit project arg must attach (de-facto init), return
+        // a NON-ERROR freshness:cold response, and start the background
+        // index — the pre-FR behavior served the default schema silently.
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path().join("fresh-repo");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(
+            repo.join("src").join("lib.py"),
+            "def auth_check():\n    return True\n",
+        )
+        .unwrap();
+        let git_ok = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&repo)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !git_ok {
+            // git unavailable in the sandbox: attach must still work because
+            // the de-facto init does not require git.
+            eprintln!("git init unavailable; exercising non-git attach path");
+        } else {
+            let _ = std::process::Command::new("git")
+                .args(["add", "."])
+                .current_dir(&repo)
+                .status();
+            let _ = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.email=t@e.com",
+                    "-c",
+                    "user.name=t",
+                    "commit",
+                    "-m",
+                    "init",
+                ])
+                .current_dir(&repo)
+                .status();
+        }
+
+        let server = MCPServer::new(tmp.path().join(".leankg"));
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "project".to_string(),
+            serde_json::Value::String(repo.to_string_lossy().to_string()),
+        );
+        let result = server.execute_tool("mcp_status", args).await;
+        let v = result.expect("first query in a fresh repo must NOT error");
+        assert_eq!(v["freshness"], serde_json::json!("cold"), "{v}");
+        assert_eq!(v["initialized"], serde_json::json!(false), "{v}");
+        // Background index was kicked (single-flight slot visible).
+        let kicked = server.kick_background_index(&repo).unwrap();
+        assert_eq!(kicked["indexing"], serde_json::json!(true));
+
+        // Wait for the tiny index to finish, then the marker dir exists with
+        // a config and state returns to idle.
+        for _ in 0..150 {
+            if server.indexing_state() == IndexingState::Idle {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(
+            repo.join(".leankg").is_dir(),
+            ".leankg must exist after attach"
+        );
     }
 }
