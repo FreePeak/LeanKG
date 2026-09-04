@@ -864,7 +864,13 @@ impl MCPServer {
             }
         }
 
-        if !indexed || !graph_engine.has_elements().unwrap_or(false) {
+        // The full pass populates a never-indexed clean repo (empty git
+        // diff). Skip it under the test-only FakeBackend: unrelated tests
+        // share one cwd-ancestor resolution, and walking the real host repo
+        // with tree-sitter turns a ms test into minutes.
+        if (!indexed || !graph_engine.has_elements().unwrap_or(false))
+            && !graph_engine.db().redacted_url().starts_with("fake://")
+        {
             // Full pass with progress accounting.
             let files = crate::indexer::find_files_sync(&root_str)
                 .map_err(|e| format!("Find files error: {}", e))?;
