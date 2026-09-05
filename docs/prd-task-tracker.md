@@ -1,6 +1,6 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-04 — v4.3.0-one-tool-ladder rewrites FR-ZCP-03 as the capability-probe router with an L0–L3 degradation ladder (vectors → FTS/trigram fuzzy → exact/regex → cold guidance; `retrieval: {rung, reason}` provenance; registers the unregistered `orchestrate` parser) and adds FR-ZCP-13 (first-run setup contract: one auto/manual question persisted in `.leankg/config.json`, `leankg add <path> [--embed]` one-command repo registration, embeddings = preference never prerequisite) + FR-ZCP-05 bridge tier (pg_trgm GIN + text_pattern_ops before FTS). Prior: v4.2.0 (2026-09-04) added FR-ZCP-12 (M8); v4.1.1 added FR-ZCP-11; v4.1.0 added FR-ZCP-09/10; the 2026-09-03 reset (v4.0.0) preserved 585 unique IDs verbatim in [`archive/prd-task-tracker.md`](archive/prd-task-tracker.md) + machine copy [`archive/prd-task-tracker.json`](archive/prd-task-tracker.json).
+**Last synced:** 2026-09-05 — v4.3.1-one-tool-envelope hard cutover: registry = exactly 1 tool (`leankg_context`), all ~76 capabilities ride the `{verb}` envelope (verb namespace = legacy tool namespace), envelope resolved before RO-gate/write-lock/audit; FR-ZCP-03 end-state DONE; FR-ZCP-12 T3 re-scoped to the one-tool CI invariant (T2 outstanding). Prior: v4.3.0-one-tool-ladder rewrites FR-ZCP-03 as the capability-probe router with an L0–L3 degradation ladder (vectors → FTS/trigram fuzzy → exact/regex → cold guidance; `retrieval: {rung, reason}` provenance; registers the unregistered `orchestrate` parser) and adds FR-ZCP-13 (first-run setup contract: one auto/manual question persisted in `.leankg/config.json`, `leankg add <path> [--embed]` one-command repo registration, embeddings = preference never prerequisite) + FR-ZCP-05 bridge tier (pg_trgm GIN + text_pattern_ops before FTS). Prior: v4.2.0 (2026-09-04) added FR-ZCP-12 (M8); v4.1.1 added FR-ZCP-11; v4.1.0 added FR-ZCP-09/10; the 2026-09-03 reset (v4.0.0) preserved 585 unique IDs verbatim in [`archive/prd-task-tracker.md`](archive/prd-task-tracker.md) + machine copy [`archive/prd-task-tracker.json`](archive/prd-task-tracker.json).
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 
@@ -20,13 +20,13 @@
 | Milestone | Live items | Carry-forward items | Status |
 |---|---|---|---|
 | M1 — Zero-config attach | 3 | — | **IN_PROGRESS** (FR-ZCP-01 clause-2 roots/list DONE 87e18287; FR-ZCP-02 DONE 0aba41ad+d9ccd8b5; FR-ZCP-13 DONE b251046c) |
-| M2 — One-tool surface | 2 | — | **IN_PROGRESS** (FR-ZCP-03 router+ladder DONE 4231d256 — T3 CI budget test outstanding) |
+| M2 — One-tool surface | 2 | — | **IN_PROGRESS** (FR-ZCP-03 router+ladder DONE 4231d256; **v4.3.1 hard cutover DONE** — registry 1 tool + verb envelope; FR-ZCP-04 install --target outstanding) |
 | M3 — Honest search | 2 | FR-HEA-02, FR-HEA-04 | **IN_PROGRESS** (FR-ZCP-05 bridge tier DONE 7d902461+3a68d571 — tsvector FTS + RRF outstanding) |
 | M4 — Harness memory | 1 | FR-SMA-01..03, FR-SM-04/05, US-SM-02 | TODO |
 | M5 — Defensible evidence | 1 | FR-HEA-01, FR-HEA-03 | TODO |
 | M6 — Org-scale portfolio | 2 | — | TODO |
 | M7 — Embedding correctness | 1 | — | TODO |
-| M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991 — T2/T3 outstanding) |
+| M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991; T3 re-scoped to one-tool CI invariant — landed with v4.3.1; T2 TTFV outstanding) |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
@@ -60,7 +60,7 @@
 | FR-ZCP-10 | Per-schema migration fleet reconciliation + `doctor --deep` drift check (per-schema ledgers today, nothing fleet-wide) | P2 | M6 | — |
 | FR-ZCP-11 | Embedding correctness ported from zvec-grep: pinned model catalog (commit revision + query/document prefixes), model-stamped vectors + hard rebuild guard, chunker-version coupling, 3-signal change detection, per-file atomic replace + truncation accounting, watcher reconciliation, single-flight indexing | **P1** | M7 | FR-EMBED-R4 (supersedes the aspirational perf-only goal with a correctness contract) |
 | FR-ZCP-05 (remainder) | Postgres FTS: `tsvector` + GIN, `websearch_to_tsquery`, RRF fusion in `semantic_search` — the L2 rung's FTS half beyond the landed trgm bridge | P1 | M3 | FR-ZG-02, US-ZG-02 |
-| FR-ZCP-12 (remainder) | Measured-simplicity T2 (CI-timed published TTFV ≤ 5 min) + T3 (CI-pinned default-tool budget ≤ 12, tier-tagged) — T1 error catalog already DONE | P1 | M8 | — |
+| FR-ZCP-12 (remainder) | Measured-simplicity T2 (CI-timed published TTFV ≤ 5 min) — T1 error catalog DONE; T3 superseded by v4.3.1's CI-enforced one-tool invariant (landed) | P1 | M8 | — |
 
 ## Todo — carry-forward from archive (original IDs preserved)
 

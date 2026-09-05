@@ -598,11 +598,44 @@ impl MCPServer {
         actor: Option<String>,
     ) -> Result<serde_json::Value, String> {
         let started = std::time::Instant::now();
-        let result = self.execute_tool(tool_name, arguments.clone()).await;
+        // FR-ZCP-03 one-tool envelope: audit the effective capability (the
+        // verb), not the envelope tool name — otherwise every call would
+        // ledger as `leankg_context` and write verbs would be
+        // indistinguishable from reads in the audit trail.
+        let (capability, inner_args) =
+            match crate::mcp::tools::resolve_envelope(tool_name, &arguments) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    // Envelope refusals (unknown tool/verb) are dispatch errors:
+                    // record them under the raw name so the audit trail shows
+                    // the refused call, then return.
+                    if let Some(recorder) = &self.audit {
+                        recorder.record(crate::audit::AuditRecord {
+                            ts: std::time::SystemTime::now(),
+                            actor: actor.unwrap_or_else(|| "local".to_string()),
+                            agent_client: agent_client
+                                .unwrap_or_else(|| self.transport.to_string()),
+                            tool: tool_name.to_string(),
+                            project: arguments
+                                .get("project")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                            args_hash: crate::audit::hash_args(&serde_json::Value::Object(
+                                arguments.clone(),
+                            )),
+                            result_status: "error".to_string(),
+                        });
+                    }
+                    return Err(e);
+                }
+            };
+        let result = self
+            .execute_capability(&capability, inner_args.clone())
+            .await;
         if let Some(recorder) = &self.audit {
             // args_hash covers the serialized parameters only (NFR-2): raw
             // arguments are never persisted.
-            let project = arguments
+            let project = inner_args
                 .get("project")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
@@ -610,15 +643,15 @@ impl MCPServer {
                 ts: std::time::SystemTime::now(),
                 actor: actor.unwrap_or_else(|| "local".to_string()),
                 agent_client: agent_client.unwrap_or_else(|| self.transport.to_string()),
-                tool: tool_name.to_string(),
+                tool: capability.clone(),
                 project,
-                args_hash: crate::audit::hash_args(&serde_json::Value::Object(arguments)),
+                args_hash: crate::audit::hash_args(&serde_json::Value::Object(inner_args)),
                 result_status: if result.is_ok() { "ok" } else { "error" }.to_string(),
             };
             recorder.record(record);
         }
         tracing::debug!(
-            tool = tool_name,
+            tool = %capability,
             elapsed_ms = started.elapsed().as_millis() as u64,
             status = %if result.is_ok() { "ok" } else { "error" },
             "tool dispatch complete"
@@ -3334,6 +3367,23 @@ impl MCPServer {
     async fn execute_tool(
         &self,
         tool_name: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        // Hard one-tool cutover (FR-ZCP-03 end-state): `leankg_context` is
+        // the only registered tool. Legacy tool names are hard-refused;
+        // every capability rides the envelope as `{"verb": "<capability>"}`.
+        // The envelope is unwrapped BEFORE any gate (read-only, write-lock,
+        // audit) so verb-scoped security decisions cannot be bypassed by
+        // hiding a write verb inside a read-named envelope.
+        let (capability, inner) = crate::mcp::tools::resolve_envelope(tool_name, &arguments)?;
+        self.execute_capability(&capability, inner).await
+    }
+
+    /// The legacy dispatch body, now keyed by the resolved capability
+    /// (verb) rather than the advertised tool name.
+    async fn execute_capability(
+        &self,
+        tool_name: &str,
         mut arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
         // Read-only enforcement: short-circuit before acquiring any locks or
@@ -4435,25 +4485,35 @@ async fn process_jsonrpc_request(
                     "send JSON-RPC params {\"name\": <tool>, \"arguments\": {...}} per tools/list",
                 ))?;
 
-            // RBAC: Check if user has permission to call this tool
+            // FR-ZCP-03 one-tool envelope: resolve the effective capability
+            // BEFORE the RBAC gate — a Viewer token must not reach a write
+            // verb by hiding it inside the read-named `leankg_context`
+            // envelope. Unknown names/verbs fail here with the catalog error.
+            let (capability, mut arguments) =
+                match crate::mcp::tools::resolve_envelope(
+                    tool_name,
+                    params_obj
+                        .get("arguments")
+                        .and_then(|v| v.as_object())
+                        .unwrap_or(&serde_json::Map::new()),
+                ) {
+                    Ok(pair) => pair,
+                    Err(e) => return Err(e),
+                };
+
+            // RBAC: Check if user has permission to call this capability
             if let Err(e) = mcp_server
                 .auth_manager
                 .read()
                 .await
-                .check_permission(&auth_context, tool_name)
+                .check_permission(&auth_context, &capability)
             {
                 return Err(crate::errors::render(
                     crate::errors::PERMISSION_DENIED.code,
-                    &format!("the authenticated account's role is not allowed to call {tool_name}: {e}"),
-                    "retry with an access token whose role covers this tool (DB-backed access-token store), or ask an admin to grant the role",
+                    &format!("the authenticated account's role is not allowed to call {capability}: {e}"),
+                    "retry with an access token whose role covers this capability (DB-backed access-token store), or ask an admin to grant the role",
                 ));
             }
-
-            let mut arguments = params_obj
-                .get("arguments")
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
 
             // Inject project from URL query param if not already in arguments
             if let Some(project) = &project_param {
@@ -4483,9 +4543,9 @@ async fn process_jsonrpc_request(
             };
 
             let result = tokio::time::timeout(
-                tool_timeout_for(tool_name),
+                tool_timeout_for(&capability),
                 mcp_server.execute_tool_audited(
-                    tool_name,
+                    &capability,
                     arguments,
                     // FR-ENT-1: authenticated HTTP callers get their token
                     // identity; anonymous ones record "local".
@@ -4504,7 +4564,7 @@ async fn process_jsonrpc_request(
             .await
             .map_err(|_| {
                 format!(
-                    "tool {tool_name} timed out after {}s",
+                    "capability {capability} timed out after {}s",
                     tool_timeout().as_secs()
                 )
             })?
@@ -4516,7 +4576,7 @@ async fn process_jsonrpc_request(
             let content_str = if let Some(s) = result.as_str() {
                 s.to_string()
             } else {
-                crate::mcp::toon::wrap_response(tool_name, &result, true)
+                crate::mcp::toon::wrap_response(&capability, &result, true)
             };
 
             Ok(serde_json::json!({
@@ -5492,6 +5552,16 @@ mod tests {
         assert_eq!(MCPServer::resolve_db_route(&args), None);
     }
 
+    /// One-tool envelope helper (FR-ZCP-03 end-state): wrap args in the
+    /// `{"verb": <capability>}` envelope for server-level dispatch tests.
+    fn verb_args(
+        mut args: serde_json::Map<String, serde_json::Value>,
+        verb: &str,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        args.insert("verb".into(), serde_json::json!(verb));
+        args
+    }
+
     // FR-P0-MCP-RC-03: timeout + concurrency cap.
     #[test]
     fn tool_timeout_defaults_to_30_secs() {
@@ -5936,7 +6006,9 @@ mod tests {
             "project".to_string(),
             serde_json::Value::String(tmp.path().join("nope").to_string_lossy().to_string()),
         );
-        let result = server.execute_tool("mcp_status", args).await;
+        let result = server
+            .execute_tool("leankg_context", verb_args(args, "mcp_status"))
+            .await;
         std::env::remove_var("LEANKG_AUTO_ATTACH");
         let err = result.expect_err("unknown project under opt-out must error");
         assert!(err.contains("LEANKG_ERROR_UNKNOWN_PROJECT"), "{err}");
@@ -5994,7 +6066,9 @@ mod tests {
             "project".to_string(),
             serde_json::Value::String(repo.to_string_lossy().to_string()),
         );
-        let result = server.execute_tool("mcp_status", args).await;
+        let result = server
+            .execute_tool("leankg_context", verb_args(args, "mcp_status"))
+            .await;
         let v = result.expect("first query in a fresh repo must NOT error");
         assert_eq!(v["freshness"], serde_json::json!("cold"), "{v}");
         assert_eq!(v["initialized"], serde_json::json!(false), "{v}");

@@ -4,1066 +4,28 @@ use serde_json::Value;
 pub struct ToolRegistry;
 
 impl ToolRegistry {
+    /// Hard one-tool cutover (FR-ZCP-03 end-state): exactly one registered
+    /// MCP tool. Every capability (all former tool names) rides the envelope
+    /// as an optional `verb` argument; omitting `verb` uses the
+    /// natural-language router. Verb dispatch is enforced by
+    /// `resolve_envelope` at the server boundary.
     pub fn list_tools() -> Vec<ToolDefinition> {
-        vec![
-            ToolDefinition {
-                name: "leankg_context".to_string(),
-                description: "Tier: core. The one default LeanKG tool. Ask any question about the indexed codebase — intent is auto-classified (semantic | lexical | impact | graph | files) and served by a capability ladder: L3 vector (ANN + rerank), L2 keyword (trigram fuzzy + ontology), L1 exact (identifier/regex + did-you-mean), L0 cold (guidance + background index). Degrades ranking, never availability; every response carries retrieval {rung, reason, freshness}. Prefer this over search_code / semantic_search / concept_search; drop to those only for their specialized filters.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Natural-language question, identifier, path, or graph/impact question"},
-                        "intent": {"type": "string", "enum": ["semantic", "lexical", "impact", "graph", "files"], "description": "Optional explicit intent; defaults to auto-classification from the query shape"},
-                        "limit": {"type": "integer", "default": 20, "description": "Max results (1-50)"},
-                        "full": {"type": "boolean", "default": false, "description": "File/impact intents: return full compressed context instead of a page"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-            ToolDefinition {
-                name: "mcp_init".to_string(),
-                description: "Tier: setup. Initialize LeanKG project (creates .leankg/ and leankg.yaml)"
-                    .to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Path for LeanKG project (default: .leankg)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "mcp_index".to_string(),
-                description: "Tier: setup. Index codebase (mirrors CLI: leankg index)".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Path to index (default: current directory)"},
-                        "incremental": {"type": "boolean", "description": "Only index changed files (git-based)"},
-                        "resolve_calls": {"type": "boolean", "default": false, "description": "Resolve unresolved call edges after indexing. Defaults to false for MCP responsiveness."},
-                        "lang": {"type": "string", "description": "Filter by language (e.g., go,ts,py,rs,kt)"},
-                        "exclude": {"type": "string", "description": "Exclude patterns (comma-separated)"},
-                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Target environment for this index"},
-                        "service_name": {"type": "string", "description": "Service name for this index"},
-                        "version": {"type": "string", "description": "Version tag (semver or git sha)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "mcp_index_docs".to_string(),
-                description: "Tier: setup. Index documentation directory to create code-doc traceability edges. \
-                              Run after mcp_index to populate documented_by and references relationships."
-                    .to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Path to docs directory (default: ./docs)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "mcp_install".to_string(),
-                description: "Tier: setup. Create .mcp.json for MCP client configuration".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "mcp_config_path": {"type": "string", "description": "Path for .mcp.json (default: .mcp.json)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "mcp_status".to_string(),
-                description: "Tier: setup. Show LeanKG index status".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "project": {"type": "string", "description": "Optional: project path to check status for (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "get_dependencies".to_string(),
-                description: "Tier: core. Get file dependencies (direct imports)".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File to get dependencies for"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_dependents".to_string(),
-                description: "Tier: core. Get files depending on target".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File to get dependents for"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_impact_radius".to_string(),
-                description: "Tier: core. Get all files affected by change within N hops. Keep depth<=2 for LLM context budgets. Depth 3 may return hundreds of nodes. Results include confidence scores (0.0-1.0) and severity classification (WILL BREAK, LIKELY AFFECTED, MAY BE AFFECTED). Set compress_response=true for token-optimized output.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File to analyze"},
-                        "depth": {"type": "integer", "default": 3, "description": "Hop depth (default: 3). Keep <=2 for context budgets."},
-                        "min_confidence": {"type": "number", "default": 0.0, "description": "Minimum confidence threshold (0.0-1.0). Only return results with confidence >= this value."},
-                        "compress_response": {"type": "boolean", "default": false, "description": "Enable RTK-style compression for token savings"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "detect_changes".to_string(),
-                description: "Tier: advanced. Pre-commit risk analysis: computes diff between working tree and last indexed commit. Returns changed files, affected symbols, and risk level (critical/high/medium/low). Risk classification: critical>=10 dependents at depth 1, high>=5 dependents or public API changed, medium=2-4 dependents or cross-module dep, low=<=1 dependent within single cluster.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "scope": {"type": "string", "enum": ["staged", "unstaged", "all"], "default": "all", "description": "Scope of changes to analyze: 'staged' (git staged), 'unstaged', or 'all' (default)"},
-                        "min_confidence": {"type": "number", "default": 0.0, "description": "Minimum confidence threshold for affected symbols."},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "get_review_context".to_string(),
-                description: "Tier: advanced. Generate focused subgraph + structured review prompt".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "files": {"type": "array", "items": {"type": "string"}, "description": "Files to include in review context"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "get_context".to_string(),
-                description: "Tier: core. Get AI context for file (minimal, token-optimized)".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File to get context for"},
-                        "signature_only": {"type": "boolean", "default": true, "description": "Return only signatures (default). Set false for full body metadata."},
-                        "max_tokens": {"type": "integer", "default": 4000, "description": "Token budget cap"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "ctx_read".to_string(),
-                description: "Tier: core. Read file with compression modes for efficient LLM context".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File path to read"},
-                        "mode": {"type": "string", "enum": ["adaptive", "full", "map", "signatures", "diff", "aggressive", "entropy", "lines"], "default": "adaptive", "description": "Compression mode"},
-                        "lines": {"type": "string", "description": "Lines specification for 'lines' mode (e.g., '1-10,20,30-40')"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "explain_node".to_string(),
-                description: "Tier: advanced. US-GF-02: Return a single-node dossier (definition site, cluster, in/out degree, top neighbors by relation type). Accepts qualified_name, exact name, or fuzzy suffix.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Qualified_name, exact name, or fuzzy suffix"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["name"]
-                }),
-            },
-            ToolDefinition {
-                name: "export_graph_snapshot".to_string(),
-                description: "Tier: advanced. US-GF-11: Write a portable graph snapshot (elements + relationships with relative paths) to a JSON file. Useful for committing the graph artifact to git so teams can merge work-in-progress knowledge.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "out_path": {"type": "string", "default": ".leankg/graph-snapshot.json"},
-                        "project": {"type": "string"}
-                    }
-                }),
-            },
-            ToolDefinition {
-                name: "export_html".to_string(),
-                description: "Tier: advanced. US-GF-21: Export knowledge graph as an interactive HTML visualization (vis-network). Supports scoping by file, path prefix, or community cluster, and a maximum-node budget with a truncation banner.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "out_path": {"type": "string", "default": ".leankg/graph.html"},
-                        "project": {"type": "string", "description": "Project path (container path for Docker MCP)"},
-                        "file": {"type": "string", "description": "Scope to a specific file's subgraph"},
-                        "depth": {"type": "integer", "default": 3, "description": "Max depth for file-scoped traversal"},
-                        "path": {"type": "string", "description": "Scope to a path prefix (e.g. src)"},
-                        "community": {"type": "string", "description": "Scope to a community/cluster id"},
-                        "max_nodes": {"type": "integer", "default": 5000, "description": "Maximum nodes before truncation"}
-                    }
-                }),
-            },
-            ToolDefinition {
-                name: "get_pr_impact".to_string(),
-                description: "Tier: advanced. US-GF-08: PR impact dashboard. Given changed files, returns cluster overlap and severity (LOW / MEDIUM / HIGH). Use to triage merge-order risk before pushing.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "files": {"type": "array", "items": {"type": "string"}, "description": "Changed file paths (e.g. from git diff --name-only)"},
-                        "env": {"type": "string", "default": "local"},
-                        "project": {"type": "string"}
-                    },
-                    "required": ["files"]
-                }),
-            },
-            ToolDefinition {
-                name: "resolve_with_lsp".to_string(),
-                description: "Tier: advanced. US-CBM-B1: Resolve a symbol via the configured LSP server for the file's language. Walks up to the nearest .git / manifest to pick the right workspace, so multi-repo and nested service directories are routed correctly. Falls back to None when no server is configured or the request times out (US-CBM-B07).".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "language": {"type": "string", "description": "Source language (go, typescript, python, rust, java, kotlin, ...)"},
-                        "file_path": {"type": "string", "description": "Absolute path of the file containing the symbol"},
-                        "line": {"type": "integer", "minimum": 0},
-                        "character": {"type": "integer", "minimum": 0},
-                        "request": {"type": "string", "enum": ["definition", "references", "hover"], "default": "definition"},
-                        "project": {"type": "string", "description": "Project root for leankg.yaml lookup (defaults to .)"}
-                    },
-                    "required": ["language", "file_path", "line", "character"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_overview_context".to_string(),
-                description: "Tier: advanced. US-GN-08: Session-start overview (L0 identity + L1 critical facts + project summary). Prefer over load_layer(L0) alone. Replaces removed wake_up tool.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "project": {"type": "string"},
-                        "project_name": {"type": "string", "default": "project"}
-                    }
-                }),
-            },
-            ToolDefinition {
-                name: "get_team_map".to_string(),
-                description: "Tier: advanced. US-V2-12: Aggregated team / ownership map (team name, on-call, services owned) for a given environment.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "env": {"type": "string", "default": "local", "description": "Environment scope (local/staging/production)"},
-                        "project": {"type": "string"}
-                    }
-                }),
-            },
-            ToolDefinition {
-                name: "report_query_outcome".to_string(),
-                description: "Tier: advanced. US-GF-09: Record whether a graph query result was useful (useful | dead_end | corrected). Appends an entry to .leankg/reflections/LESSONS.md so future agents can bias ranking toward previously-useful nodes.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "question": {"type": "string", "description": "Original question"},
-                        "nodes": {"type": "array", "items": {"type": "string"}, "description": "Qualified_names that were returned"},
-                        "outcome": {"type": "string", "enum": ["useful", "dead_end", "corrected"]},
-                        "note": {"type": "string", "description": "Optional free-form lesson learned"},
-                        "project": {"type": "string"}
-                    },
-                    "required": ["question", "outcome"]
-                }),
-            },
-            ToolDefinition {
-                name: "agent_focus".to_string(),
-                description: "Tier: advanced. US-MP-04: Return a focused subgraph filtered by agent persona (path filters, cluster_id, element_types). Persona config lives in .leankg/agents/<name>.json.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Agent persona name"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["name"]
-                }),
-            },
-            ToolDefinition {
-                name: "agent_diary_write".to_string(),
-                description: "Tier: advanced. US-MP-04: Append a note to an agent's diary (.leankg/agents/<name>.diary.jsonl).".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "note": {"type": "string"},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                        "project": {"type": "string"}
-                    },
-                    "required": ["name", "note"]
-                }),
-            },
-            ToolDefinition {
-                name: "agent_diary_read".to_string(),
-                description: "Tier: advanced. US-MP-04: Read recent diary entries for an agent.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "limit": {"type": "integer", "default": 50},
-                        "project": {"type": "string"}
-                    },
-                    "required": ["name"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_cluster_skill".to_string(),
-                description: "Tier: advanced. US-GN-07: Generate a per-cluster SKILL.md with label, member count, top files, entry points, and usage hints.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "cluster_id": {"type": "string", "description": "Cluster ID (from get_clusters)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["cluster_id"]
-                }),
-            },
-            ToolDefinition {
-                name: "find_tunnels".to_string(),
-                description: "Tier: advanced. US-MP-06: Find cross-domain tunnels — relationships where source and target belong to different Leiden clusters. Sorted by confidence descending.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    }
-                }),
-            },
-            ToolDefinition {
-                name: "check_consistency".to_string(),
-                description: "Tier: advanced. US-MP-05: Detect broken or stale relationships (missing targets, invalidated edges). Returns BROKEN / STALE / CURRENT findings plus counts.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    }
-                }),
-            },
-            ToolDefinition {
-                name: "temporal_query".to_string(),
-                description: "Tier: advanced. US-MP-01: Return the graph state as of a given epoch (seconds). Edges with valid_from <= now <= valid_to are included.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "at": {"type": "integer", "description": "Epoch seconds (e.g. 1718000000)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["at"]
-                }),
-            },
-            ToolDefinition {
-                name: "timeline".to_string(),
-                description: "Tier: advanced. US-MP-01: Return the chronological evolution of a code element's relationships (added / invalidated events with timestamps).".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "qualified_name": {"type": "string", "description": "Code element qualified_name"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["qualified_name"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_god_nodes".to_string(),
-                description: "Tier: advanced. US-GF-05: Return the most-connected elements (highest combined in+out degree). Optional percentile cutoff excludes utility super-hubs.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
-                        "exclude_hubs_percentile": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Exclude top-N% super-hubs (e.g. 90 keeps bottom 90%)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    }
-                }),
-            },
-            ToolDefinition {
-                name: "query_graph".to_string(),
-                description: "Tier: core. US-GF-03: Natural-language scoped subgraph query. Seed retrieval → bounded BFS expand (or shortest path for 'what connects A to B?') → trim to token_budget. Every edge includes confidence_label (EXTRACTED / INFERRED / AMBIGUOUS). Distinct from kg_semantic_context.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "question": {"type": "string", "description": "Natural-language connection question, e.g. 'what connects auth to the database?'"},
-                        "token_budget": {"type": "integer", "default": 2000, "minimum": 200, "maximum": 20000, "description": "Max approximate tokens for the subgraph response"},
-                        "max_depth": {"type": "integer", "default": 2, "minimum": 1, "maximum": 5, "description": "BFS expansion depth from seeds"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["question"]
-                }),
-            },
-            ToolDefinition {
-                name: "shortest_path".to_string(),
-                description: "Tier: advanced. US-GF-01: BFS shortest path between two symbols. Returns ordered hops with relation, confidence, and provenance label (EXTRACTED / INFERRED / AMBIGUOUS). Inputs accept qualified_name, exact name, or fuzzy suffix.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "source": {"type": "string", "description": "Source qualified_name, name, or fuzzy suffix"},
-                        "target": {"type": "string", "description": "Target qualified_name, name, or fuzzy suffix"},
-                        "max_hops": {"type": "integer", "default": 6, "minimum": 1, "maximum": 10, "description": "Maximum hops (1-10)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["source", "target"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_call_graph".to_string(),
-                description: "Tier: core. Get bounded function call chain. Use depth=1 for direct callees, depth=2 for two hops. Avoid depth>3 to prevent neighbor explosion.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "function": {"type": "string", "description": "Function to get call graph for"},
-                        "depth": {"type": "integer", "default": 2, "description": "Maximum call graph depth (default: 2, max: 3)"},
-                        "max_results": {"type": "integer", "default": 30, "description": "Maximum number of results (default: 30)"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["function"]
-                }),
-            },
-            ToolDefinition {
-                name: "search_code".to_string(),
-                description: "Tier: core. [PREFER: for NL queries try semantic_search first] Ontology-first paginated code search. On mega-graphs (>LEANKG_MAX_CACHE_ELEMENTS) defaults to concept ontology → code_refs → DB, then semantic name fallback. Never full-table scans large workspaces. Use limit/offset for pagination. Prefer-order (search): try after concept_search and semantic_search when you need name/type filters.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query string (raw words/concepts allowed)"},
-                        "element_type": {"type": "string", "enum": ["file", "function", "struct", "class", "module", "import"], "description": "Filter by element type"},
-                        "limit": {"type": "integer", "default": 20, "description": "Page size (default: 20, max: 50)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
-                        "use_ontology": {"type": "boolean", "default": true, "description": "Concept-gated workflow first. Defaults true on mega-graphs; set false only for tiny projects."},
-                        "env": {"type": "string", "default": "local", "description": "Environment scope for the ontology scan"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-            ToolDefinition {
-                name: "concept_search".to_string(),
-                description: "Tier: core. Concept-gated semantic search: extracts keywords from raw input, scans the concept ontology for matching concepts, loads each concept's code references, and queries the LeanKG DB for the actual code. Use this for natural-language / domain-concept queries (e.g. 'feature flag', 'gorm store', 'grpc service'). Falls back to name-based code search if no concept matches. Prefer-order (search): try first for domain concepts; then semantic_search; then search_code.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Raw natural-language or concept query"},
-                        "env": {"type": "string", "default": "local", "description": "Environment scope for the ontology scan"},
-                        "limit": {"type": "integer", "default": 20, "description": "Maximum number of matched concepts / code results"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-            ToolDefinition {
-                name: "generate_doc".to_string(),
-                description: "Tier: advanced. Generate documentation for file".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File to generate documentation for"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "find_large_functions".to_string(),
-                description: "Tier: advanced. Find oversized functions by line count".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "min_lines": {"type": "integer", "default": 50, "description": "Minimum line count threshold (default: 50)"},
-                        "limit": {"type": "integer", "default": 20, "description": "Maximum number of results (default: 20, max: 100)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Number of results to skip (pagination offset)"},
-                        "project": {"type": "string", "description": "Optional: project path to search in (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "get_tested_by".to_string(),
-                description: "Tier: advanced. Get test coverage for a function/file".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File to get test coverage for"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_files_for_doc".to_string(),
-                description: "Tier: advanced. Get code elements referenced in a documentation file".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "doc": {"type": "string", "description": "Documentation file path"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["doc"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_traceability".to_string(),
-                description: "Tier: advanced. Get full traceability chain for a code element".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "element": {"type": "string", "description": "Code element to trace"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["element"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_doc_tree".to_string(),
-                description: "Tier: advanced. Get documentation tree structure with hierarchy".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "default": 50, "description": "Maximum number of categories (default: 50, max: 200)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Number of categories to skip (pagination offset)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "get_code_tree".to_string(),
-                description: "Tier: advanced. Get codebase structure".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "default": 50, "description": "Maximum number of files (default: 50, max: 200)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Number of files to skip (pagination offset)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "find_related_docs".to_string(),
-                description: "Tier: advanced. Find documentation related to a code change".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "File that was changed"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["file"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_clusters".to_string(),
-                description: "Tier: advanced. Get all clusters (functional communities) in the codebase. Returns cluster ID, label, member count, and representative files.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "default": 50, "description": "Maximum number of clusters (default: 50, max: 100)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Number of clusters to skip (pagination offset)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "run_raw_query".to_string(),
-                description: "Tier: advanced. Execute a raw graph query (legacy Datalog-style syntax, translated to SQL against the Postgres store)".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "The graph query to execute (legacy Datalog-style syntax)"},
-                        "params": {
-                            "type": "object",
-                            "description": "Optional parameters for the parameterized query",
-                            "additionalProperties": true
-                        },
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_nav_graph".to_string(),
-                description: "Tier: advanced. Get the navigation graph structure for a screen or nav file. Returns destinations, actions, arguments, and deep links.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string", "description": "Nav XML file path or Kotlin DSL file path"},
-                        "graph_id": {"type": "string", "description": "Nav graph ID (alternative to file)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "find_route".to_string(),
-                description: "Tier: advanced. Find which destination a route string or action ID resolves to.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "route": {"type": "string", "description": "Route string (e.g. 'profile/{userId}') or action ID (e.g. 'action_home_to_detail')"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["route"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_screen_args".to_string(),
-                description: "Tier: advanced. List all arguments a screen/destination requires, with types and default values.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "destination": {"type": "string", "description": "Destination name, route, or file path"},
-                        "limit": {"type": "integer", "default": 20, "description": "Maximum results"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["destination"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_nav_callers".to_string(),
-                description: "Tier: advanced. Find all call sites that navigate to a given destination. Use for impact radius when changing screen args.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "destination": {"type": "string", "description": "Destination name, route, fragment class, or activity class"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": ["destination"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_service_graph".to_string(),
-                description: "Tier: advanced. Get microservice call graph with service repos as nodes. Returns aggregated service-to-service topology from service_calls relationships. The current service repo is the biggest node.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "service": {"type": "string", "description": "Current service name (defaults to project directory name)"},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-
-            // Knowledge Contribution Tools
-            ToolDefinition {
-                name: "add_knowledge".to_string(),
-                description: "Tier: advanced. Add a knowledge entry to the knowledge base. Supports business knowledge, domain knowledge, architecture docs, PRD-code mapping, debugging notes, and general notes. Entries can optionally be linked to code elements, user stories, or features.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "knowledge_type": {"type": "string", "enum": ["business", "domain", "architecture", "prd_mapping", "debugging", "general"], "description": "Type of knowledge entry"},
-                        "title": {"type": "string", "description": "Title of the knowledge entry"},
-                        "content": {"type": "string", "description": "Content in markdown format"},
-                        "element_qualified": {"type": "string", "description": "Optional: qualified name of code element to link (e.g., src/main.rs::main)"},
-                        "user_story_id": {"type": "string", "description": "Optional: user story ID to link"},
-                        "feature_id": {"type": "string", "description": "Optional: feature ID to link"},
-                        "tags": {"type": "string", "description": "Comma-separated tags"},
-                        "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming"], "description": "Environment tag (default: production)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["knowledge_type", "title", "content"]
-                }),
-            },
-            ToolDefinition {
-                name: "update_knowledge".to_string(),
-                description: "Tier: advanced. Update an existing knowledge entry by ID.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string", "description": "ID of the knowledge entry to update"},
-                        "title": {"type": "string", "description": "New title"},
-                        "content": {"type": "string", "description": "New content in markdown"},
-                        "tags": {"type": "string", "description": "New comma-separated tags"},
-                        "environment": {"type": "string", "description": "New environment tag"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["id"]
-                }),
-            },
-            ToolDefinition {
-                name: "delete_knowledge".to_string(),
-                description: "Tier: advanced. Delete a knowledge entry by ID.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string", "description": "ID of the knowledge entry to delete"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["id"]
-                }),
-            },
-            ToolDefinition {
-                name: "search_knowledge".to_string(),
-                description: "Tier: advanced. Search all knowledge entries by keyword. Filters by knowledge type and environment. Matches both title and content fields. Returns matching entries with titles, content snippets, and metadata.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query (keyword in title)"},
-                        "knowledge_type": {"type": "string", "enum": ["business", "domain", "architecture", "prd_mapping", "debugging", "general"], "description": "Optional: filter by knowledge type"},
-                        "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming"], "description": "Optional: filter by environment"},
-                        "limit": {"type": "integer", "description": "Max results (default: 20, max: 50)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-            ToolDefinition {
-                name: "add_annotation".to_string(),
-                description: "Tier: advanced. Add or update a business logic annotation for a code element. Links a description (and optionally a user story or feature) to a code element.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "element": {"type": "string", "description": "Qualified name of the code element (e.g., src/auth/login.rs::handle_login)"},
-                        "description": {"type": "string", "description": "Business logic description"},
-                        "user_story": {"type": "string", "description": "Optional: user story ID"},
-                        "feature": {"type": "string", "description": "Optional: feature ID"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["element", "description"]
-                }),
-            },
-            ToolDefinition {
-                name: "link_element".to_string(),
-                description: "Tier: advanced. Link a code element to a user story or feature ID.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "element": {"type": "string", "description": "Qualified name of the code element"},
-                        "id": {"type": "string", "description": "User story or feature ID"},
-                        "kind": {"type": "string", "enum": ["story", "feature"], "description": "Type of link: 'story' for user story, 'feature' for feature"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["element", "id", "kind"]
-                }),
-            },
-            ToolDefinition {
-                name: "add_documentation".to_string(),
-                description: "Tier: advanced. Index a single documentation file into the knowledge graph. Extracts code references and creates documented_by/references relationships.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "file_path": {"type": "string", "description": "Path to the documentation file to index"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["file_path"]
-                }),
-            },
-
-            // ========================================================================
-            // Dynamic Ontology Tools (agent memory)
-            // ========================================================================
-
-            ToolDefinition {
-                name: "add_ontology_concept".to_string(),
-                description: "Tier: advanced. Add a dynamic ontology concept at runtime. Agent discoveries about code semantics, architecture, bugs, or domain logic are persisted as searchable ontology concepts. These survive YAML re-syncs and appear in concept_search results.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Concise name for the concept (e.g., 'order_refund_flow', 'auth_token_cache_bug')"},
-                        "type_": {"type": "string", "enum": ["domain_entity", "service", "api_endpoint", "data_store", "known_issue", "playbook", "team_knowledge"], "description": "Concept element type"},
-                        "description": {"type": "string", "description": "What the agent learned — context, decision rationale, bug details, or system design insight"},
-                        "aliases": {"type": "array", "items": {"type": "string"}, "description": "Alternative names/aliases for searchability"},
-                        "code_refs": {"type": "array", "items": {"type": "string"}, "description": "Code elements this concept relates to (e.g., ['src/api/orders.rs::refund'])"},
-                        "docs": {"type": "array", "items": {"type": "string"}, "description": "Related documentation paths"},
-                        "env": {"type": "string", "default": "local", "description": "Environment scope for the concept"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["name", "type_", "description"]
-                }),
-            },
-            ToolDefinition {
-                name: "add_ontology_workflow".to_string(),
-                description: "Tier: advanced. Add a dynamic procedural workflow at runtime. Captures step-by-step processes the agent discovers: debugging procedures, release processes, fix sequences, CI/CD flows, or decision trees. Workflow steps can reference code elements and failure modes.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Workflow name (e.g., 'hotfix_release_process', 'debug_auth_token_failure')"},
-                        "description": {"type": "string", "description": "What this workflow is for — when to use it, what problem it solves"},
-                        "steps": {"type": "array", "items": {"type": "object", "properties": {
-                            "name": {"type": "string", "description": "Step name"},
-                            "description": {"type": "string", "description": "What this step does"},
-                            "code_refs": {"type": "array", "items": {"type": "string"}, "description": "Code elements used in this step"},
-                            "failure_modes": {"type": "array", "items": {"type": "string"}, "description": "Known failure modes for this step"}
-                        }, "required": ["name"]}, "description": "Ordered steps in the workflow"},
-                        "aliases": {"type": "array", "items": {"type": "string"}, "description": "Alternative names for searchability"},
-                        "env": {"type": "string", "default": "local", "description": "Environment scope for the workflow"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["name", "description", "steps"]
-                }),
-            },
-            ToolDefinition {
-                name: "delete_ontology_concept".to_string(),
-                description: "Tier: advanced. Remove a dynamically-added ontology concept or workflow. Only deletes rows with source:dynamic in metadata — never touches YAML-derived concepts. Also removes orphaned workflow steps and failure modes.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "gid": {"type": "string", "description": "Global ID (GID) of the concept or workflow to delete"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["gid"]
-                }),
-            },
-
-            // Version/Branch Tagging Tools
-            ToolDefinition {
-                name: "get_upcoming_changes".to_string(),
-                description: "Tier: advanced. Get knowledge entries and code elements tagged as 'upcoming' (feature branch changes not yet in main). Shows what's coming in the next release.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "branch": {"type": "string", "description": "Optional: filter by specific branch name"},
-                        "limit": {"type": "integer", "description": "Max results (default: 20)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "promote_environment".to_string(),
-                description: "Tier: advanced. Promote knowledge entries and code elements from one environment to another (e.g., upcoming -> production). Used when a feature branch merges to main.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "branch": {"type": "string", "description": "Branch name to promote entries from"},
-                        "target_environment": {"type": "string", "enum": ["production", "staging", "dev"], "description": "Target environment (default: production)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["branch"]
-                }),
-            },
-            ToolDefinition {
-                name: "query_incidents".to_string(),
-                description: "Tier: advanced. Find past incidents matching a pattern or service. Returns structured incident records with root cause, resolution, and prevention advice.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "service": {"type": "string", "description": "Service name to filter incidents"},
-                        "pattern": {"type": "string", "description": "Text pattern to search in title or root cause"},
-                        "env": {"type": "string", "enum": ["production", "staging", "local"], "description": "Environment to query (default: local)"},
-                        "limit": {"type": "integer", "default": 5, "description": "Maximum number of incidents to return"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "find_env_conflicts".to_string(),
-                description: "Tier: advanced. Surface mismatches between local, staging, and production environments for a service. Detects schema version drift, config differences, and missing deployments.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "service": {"type": "string", "description": "Service name to check for conflicts"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["service"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_service_context".to_string(),
-                description: "Tier: advanced. Get a complete snapshot of a service in a given environment: dependencies, callers, open incidents, and recent incident history.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "service": {"type": "string", "description": "Service name"},
-                        "env": {"type": "string", "enum": ["production", "staging", "local"], "default": "local", "description": "Environment"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["service"]
-                }),
-            },
-            ToolDefinition {
-                name: "semantic_search".to_string(),
-                description: "Tier: core. Natural language semantic discovery with pagination. Dual path: when an embedding index exists (embeddings feature + leankg embed), uses pgvector HNSW vector retrieval with cross-encoder rerank; otherwise falls back to ontology-first safe_discover (concept ontology then bounded name search). Safe on mega-graphs / nested multi-repo workspaces (never loads full element tables). Prefer-order (search): after concept_search; before search_code. Prefer-order (semantic): try first; then kg_semantic_context; then kg_context.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Natural language query (e.g., 'service that handles refunds')"},
-                        "env": {"type": "string", "enum": ["production", "staging", "local"], "default": "local", "description": "Environment to search"},
-                        "limit": {"type": "integer", "default": 20, "description": "Page size (default: 20, max: 50)"},
-                        "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
-                        "kind": {"type": "string", "enum": ["all", "code", "docs"], "default": "all", "description": "Filter results by kind: 'all' (code + docs), 'code' (functions, classes, methods, etc.), 'docs' (documents and doc_sections only)"},
-                        "path_prefix": {"type": "string", "description": "Corpus scope gate: only return hits whose file_path contains this prefix (e.g. 'platform-food/be-merchant-group', 'Android/', 'ios/'). Hits outside the prefix are hard-dropped; if none survive, the tool returns an empty page with empty_reason=path_prefix so agents know that corpus is not indexed. Pass for multi-tree / monorepo work."},
-                        "model": {"type": "string", "description": "Embedding model to query for this request (hot-switch). Registered: bge-small-en-v1.5-384 (default, local), qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072 (remote). Queries that model's collection; empty results if it has no index yet."},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-
-            // Ontology Semantic Search Tools
-            ToolDefinition {
-                name: "kg_context".to_string(),
-                description: "Tier: core. Get ontology-aware context for a semantic query. Returns matched concept nodes, expanded code context, workflows, docs, tests, and confidence scores. Use for agentic semantic questions like 'where is checkout refund failure handled?' Prefer-order (semantic): try after semantic_search / kg_semantic_context when ontology expand without vectors is enough.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Natural language query (e.g., 'checkout refund failure')"},
-                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Environment to search"},
-                        "depth": {"type": "integer", "default": 2, "description": "Expansion depth (default: 2)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-            ToolDefinition {
-                name: "kg_trace_workflow".to_string(),
-                description: "Tier: advanced. Get an ordered procedural trace for a workflow. Useful for debugging user flows, understanding what code runs before/after a step, and identifying missing tests or failure handling.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "workflow_id_or_query": {"type": "string", "description": "Workflow name, ID, or search query"},
-                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Environment"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["workflow_id_or_query"]
-                }),
-            },
-            ToolDefinition {
-                name: "kg_ontology_status".to_string(),
-                description: "Tier: advanced. Get ontology coverage status: counts of concept and procedural nodes by type, relationships by type, nodes missing aliases, and workflows without failure modes.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "ontology_control".to_string(),
-                description: "Tier: advanced. FR-ONT-PROC-03: Sync or inspect procedural/domain ontology YAML into the served DB. Actions: sync (load ontology/concepts.yaml + workflows.yaml, touch .leankg/ontology_synced), status (YAML mtimes, marker, procedural counts). Prefer auto-update via YAML watcher; use sync after manual edits if watcher is off. Admin-only.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "action": {"type": "string", "enum": ["sync", "status"], "description": "sync=load YAML into DB; status=mtimes/marker/counts"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["action"]
-                }),
-            },
-            #[cfg(feature = "embeddings")]
-            ToolDefinition {
-                name: "kg_semantic_context".to_string(),
-                description: "Tier: advanced. Vector retrieval + cross-encoder rerank + adaptive KG traversal. Use for natural-language queries where keyword search misses: 'where do we validate access rights', 'how does the refund flow work'. Returns ranked seed nodes plus 1-2 hop graph context (related code, tests, docs, workflows). Requires the `embeddings` cargo feature and an embedding index built via `cargo run --release -- embed`. Prefer-order (semantic): after semantic_search; before kg_context. Requires embeddings.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Natural language query"},
-                        "env": {"type": "string", "enum": ["local", "staging", "production"], "default": "local", "description": "Environment to search"},
-                        "top_k": {"type": "integer", "default": 50, "description": "ANN retrieve depth (candidates before rerank)"},
-                        "rerank_top_n": {"type": "integer", "default": 10, "description": "Final seed count after cross-encoder rerank"},
-                        "traverse": {"type": "boolean", "default": true, "description": "Toggle Stage 4 graph enrichment (1-2 hop neighbors via ontology + code edges)"},
-                        "model": {"type": "string", "description": "Embedding model to query for this request (hot-switch). Registered: bge-small-en-v1.5-384 (default, local), qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072 (remote). Collections are created on demand if absent."},
-                        "include_worktrees": {"type": "boolean", "default": false, "description": "Include paths under .worktrees/ / .claude/worktrees/ / .opencode/worktrees/ (filtered by default to dedupe agent scratch copies)"},
-                        "debug": {"type": "boolean", "default": false, "description": "Include diagnostics: candidate counts, latency per stage, reranker status"},
-                        "project": {"type": "string", "description": "Optional: project path (defaults to current working directory)"}
-                    },
-                    "required": ["query"]
-                }),
-            },
-            #[cfg(feature = "embeddings")]
-            ToolDefinition {
-                name: "embed_control".to_string(),
-                description: "Tier: advanced. US-EMBED-05 / FR-EMBED-TOGGLE-01: Arm or disarm in-process day-2 embedding when LEANKG_EMBED_ON_BOOT/BACKGROUND are off. Actions: on (idle-gated Incremental resume, default mode=partial with RSS fraction), off (cooperative cancel, Docker PID-1 safe), status (armed/phase/skipped_fresh/vectors_existing). Never wipes existing RocksDB vectors. Mega graphs refuse full unless force_full=true.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "action": {"type": "string", "enum": ["on", "off", "status"], "description": "on=arm idle-gated partial resume; off=cancel+disarm; status=progress"},
-                        "mode": {"type": "string", "enum": ["partial", "continuous"], "default": "partial"},
-                        "full": {"type": "boolean", "default": false, "description": "Force full rebuild (ignored on mega unless force_full)"},
-                        "force_full": {"type": "boolean", "default": false},
-                        "workers": {"type": "integer", "default": 1},
-                        "batch_size": {"type": "integer", "default": 32},
-                        "rss_fraction": {"type": "number", "default": 0.4},
-                        "types": {"type": "string", "description": "Optional type filter, e.g. function,method"},
-                        "project": {"type": "string"}
-                    },
-                    "required": ["action"]
-                }),
-            },
-            #[cfg(feature = "embeddings")]
-            ToolDefinition {
-                name: "set_embed_model".to_string(),
-                description: "Tier: advanced. Set the runtime-active embedding model for this MCP process. Subsequent semantic_search / kg_semantic_context calls default to this model (per-request `model` arg still overrides). With persist=true the choice is saved to .leankg/embed-model.json and restored on the next boot. Registered models: bge-small-en-v1.5-384 (default, local), qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, gemini-embedding-001-3072 (remote).".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "model_id": {"type": "string", "description": "Registered model id, e.g. qwen3-emb-4b-2560, jina-embeddings-v3-1024, gemini-embedding-2-3072, bge-small-en-v1.5-384"},
-                        "persist": {"type": "boolean", "default": false, "description": "Persist to .leankg/embed-model.json so the next boot restores it as the default"},
-                        "project": {"type": "string", "description": "Optional: project root for persistence (defaults to the served project)"}
-                    },
-                    "required": ["model_id"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_architecture".to_string(),
-                description: "Tier: advanced. Get architecture overview: languages, packages, entry points, routes, hotspots, clusters, knowledge counts, relationship summary. Single-call alternative to running multiple individual queries. Supports max_items to cap each section for token budget control.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "max_items": {"type": "integer", "description": "Optional: per-section item cap. When set, each array section (languages, entry_points, routes, clusters, hotspots, relationship_summary) is truncated to this many entries. truncated_sections reports which were trimmed."},
-                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                    },
-                    "required": []
-                }),
-            },
-            // PRD-in-KG Traceability Tools
-            ToolDefinition {
-                name: "index_prd".to_string(),
-                description: "Tier: advanced. Parse a PRD markdown document into structured knowledge graph entries. Extracts FR-* (feature requirements) and US-* (user stories), creates knowledge_entries, and auto-links features to ontology workflows by matching code paths.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "source_doc": {"type": "string", "description": "Path to the PRD markdown file (default: docs/prd.md)"},
-                        "environment": {"type": "string", "enum": ["production", "staging", "dev", "upcoming"], "description": "Environment tag (default: production)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": []
-                }),
-            },
-            ToolDefinition {
-                name: "get_feature_flow".to_string(),
-                description: "Tier: advanced. Given a feature requirement ID (e.g. FR-ONT-PROC-01), returns the full implementation chain: FR → linked ontology workflows → ordered steps with code_refs and failure_modes → annotated code elements. Reverse traceability for devs.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "feature_id": {"type": "string", "description": "Feature requirement ID to trace (e.g., FR-ONT-PROC-01)"},
-                        "env": {"type": "string", "description": "Ontology environment (default: local)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": ["feature_id"]
-                }),
-            },
-            ToolDefinition {
-                name: "get_traceability_matrix".to_string(),
-                description: "Tier: advanced. Returns a PO-facing traceability matrix: all feature requirements (FR-*) with their workflow count, annotated code element count, and documentation coverage. Filter by feature_id or status tag.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "feature_id": {"type": "string", "description": "Optional: filter by specific feature ID"},
-                        "status": {"type": "string", "description": "Optional: filter by status tag (e.g., Must-Have, P0)"},
-                        "limit": {"type": "integer", "description": "Max results (default: 50, max: 100)"},
-                        "project": {"type": "string", "description": "Optional: project path"}
-                    },
-                    "required": []
-                }),
-            },
-        ]
+        vec![ToolDefinition {
+            name: "leankg_context".to_string(),
+            description: "Tier: core. The one LeanKG tool. Ask any question about the indexed codebase — intent is auto-classified (semantic | lexical | impact | graph | files) and served by a capability ladder: L3 vector (ANN + rerank), L2 keyword (trigram fuzzy + ontology), L1 exact (identifier/regex + did-you-mean), L0 cold (guidance + background index). Degrades ranking, never availability; every response carries retrieval {rung, reason, freshness}. Direct capability access: pass `verb` with any former tool name (e.g. \"get_impact_radius\", \"query_graph\", \"mcp_status\") plus its usual arguments; omit `verb` for natural-language routing.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural-language question, identifier, path, or graph/impact question (router path; omit when using verb)"},
+                    "verb": {"type": "string", "description": "Optional direct capability (any former LeanKG tool name, e.g. get_impact_radius, query_graph, search_code, mcp_status); remaining arguments are passed to that capability unchanged"},
+                    "intent": {"type": "string", "enum": ["semantic", "lexical", "impact", "graph", "files"], "description": "Optional explicit intent; defaults to auto-classification from the query shape (router path only)"},
+                    "limit": {"type": "integer", "default": 20, "description": "Max results (1-50) for the router path"},
+                    "full": {"type": "boolean", "default": false, "description": "Router path: file/impact intents return full compressed context instead of a page"},
+                    "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                },
+                "required": []
+            }),
+        }]
     }
 }
 
@@ -1087,6 +49,161 @@ pub fn nearest_tool_name(unknown: &str) -> String {
     match best {
         Some((name, score)) if score >= 3 => name,
         _ => "leankg_context".to_string(),
+    }
+}
+
+/// The one registered MCP tool (hard one-tool cutover, FR-ZCP-03 end-state).
+pub const ONE_TOOL: &str = "leankg_context";
+
+/// The capability (verb) catalog: every former tool name is now a verb on
+/// `leankg_context`. The verb namespace IS the legacy tool namespace, so
+/// existing docs/hints that name a tool remain valid as verb references.
+pub fn verb_catalog() -> Vec<&'static str> {
+    #[allow(unused_mut)] // mut only used under the `embeddings` feature
+    let mut verbs: Vec<&'static str> = vec![
+        "mcp_init",
+        "mcp_index",
+        "mcp_index_docs",
+        "mcp_install",
+        "mcp_status",
+        "detect_changes",
+        "get_dependencies",
+        "get_dependents",
+        "get_impact_radius",
+        "get_review_context",
+        "get_context",
+        "ctx_read",
+        "explain_node",
+        "get_god_nodes",
+        "temporal_query",
+        "check_consistency",
+        "timeline",
+        "find_tunnels",
+        "resolve_with_lsp",
+        "get_cluster_skill",
+        "agent_focus",
+        "agent_diary_write",
+        "agent_diary_read",
+        "report_query_outcome",
+        "get_team_map",
+        "get_overview_context",
+        "get_pr_impact",
+        "export_graph_snapshot",
+        "export_html",
+        "query_graph",
+        "shortest_path",
+        "get_call_graph",
+        "search_code",
+        "concept_search",
+        "semantic_search",
+        "generate_doc",
+        "find_large_functions",
+        "get_tested_by",
+        "get_files_for_doc",
+        "get_traceability",
+        "get_doc_tree",
+        "get_code_tree",
+        "find_related_docs",
+        "get_clusters",
+        "run_raw_query",
+        "get_service_graph",
+        "get_nav_graph",
+        "find_route",
+        "get_screen_args",
+        "get_nav_callers",
+        "add_knowledge",
+        "update_knowledge",
+        "delete_knowledge",
+        "search_knowledge",
+        "add_annotation",
+        "link_element",
+        "add_documentation",
+        "add_ontology_concept",
+        "add_ontology_workflow",
+        "delete_ontology_concept",
+        "get_upcoming_changes",
+        "promote_environment",
+        "query_incidents",
+        "find_env_conflicts",
+        "get_service_context",
+        "kg_context",
+        "kg_trace_workflow",
+        "kg_ontology_status",
+        "get_architecture",
+        "index_prd",
+        "get_feature_flow",
+        "get_traceability_matrix",
+        "embed_control",
+        "ontology_control",
+    ];
+    #[cfg(feature = "embeddings")]
+    {
+        verbs.push("kg_semantic_context");
+        verbs.push("set_embed_model");
+    }
+    verbs
+}
+
+/// True when `verb` is a dispatchable capability on the one tool.
+pub fn is_valid_verb(verb: &str) -> bool {
+    verb == ONE_TOOL || verb_catalog().contains(&verb)
+}
+
+pub fn resolve_envelope(
+    tool_name: &str,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(String, serde_json::Map<String, serde_json::Value>), String> {
+    if tool_name != ONE_TOOL {
+        let nearest = nearest_verb_name(tool_name);
+        return Err(crate::errors::render(
+            crate::errors::UNKNOWN_TOOL.code,
+            &format!(
+                "tool '{tool_name}' is not registered — LeanKG exposes exactly one tool \
+                 (`{ONE_TOOL}`) and every capability rides it as a verb"
+            ),
+            &format!(
+                "call `{ONE_TOOL}` with {{\"verb\": \"{nearest}\", ...args}}; \
+                 or omit `verb` entirely for the natural-language router"
+            ),
+        ));
+    }
+    let Some(verb) = arguments
+        .get("verb")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+    else {
+        return Ok((ONE_TOOL.to_string(), arguments.clone()));
+    };
+    if !is_valid_verb(verb) {
+        let nearest = nearest_verb_name(verb);
+        return Err(crate::errors::render(
+            crate::errors::UNKNOWN_TOOL.code,
+            &format!("unknown verb '{verb}' — not a LeanKG capability"),
+            &format!(
+                "retry with {{\"verb\": \"{nearest}\"}} (nearest capability) or drop \
+                 `verb` entirely to use the natural-language router"
+            ),
+        ));
+    }
+    let mut inner = arguments.clone();
+    inner.remove("verb");
+    Ok((verb.to_string(), inner))
+}
+
+/// Nearest verb for an unknown capability/tool name — same LCS heuristic as
+/// `nearest_tool_name`, over the verb catalog.
+pub fn nearest_verb_name(unknown: &str) -> String {
+    let unknown_lower = unknown.to_lowercase();
+    let mut best: Option<(String, usize)> = None;
+    for verb in verb_catalog() {
+        let score = longest_common_substring_len(&unknown_lower, &verb.to_lowercase());
+        if best.as_ref().is_none_or(|(_, b)| score > *b) {
+            best = Some((verb.to_string(), score));
+        }
+    }
+    match best {
+        Some((name, score)) if score >= 3 => name,
+        _ => ONE_TOOL.to_string(),
     }
 }
 
@@ -1129,14 +246,33 @@ mod tests {
     }
 
     #[test]
-    fn test_list_tools_contains_expected() {
+    fn test_list_tools_is_exactly_one() {
         let tools = ToolRegistry::list_tools();
-        let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains(&"get_dependencies"));
-        assert!(names.contains(&"get_impact_radius"));
-        assert!(names.contains(&"find_related_docs"));
-        assert!(names.contains(&"query_graph"));
-        assert!(names.contains(&"shortest_path"));
+        assert_eq!(
+            tools.len(),
+            1,
+            "one-tool cutover: exactly one registered tool"
+        );
+        assert_eq!(tools[0].name, "leankg_context");
+    }
+
+    #[test]
+    fn test_verb_catalog_covers_core_capabilities() {
+        let verbs = verb_catalog();
+        for v in [
+            "get_dependencies",
+            "get_impact_radius",
+            "find_related_docs",
+            "query_graph",
+            "shortest_path",
+            "mcp_status",
+            "mcp_init",
+        ] {
+            assert!(
+                verbs.contains(&v),
+                "capability `{v}` must be a registered verb"
+            );
+        }
         for removed in [
             "mcp_hello",
             "mcp_impact",
@@ -1146,8 +282,8 @@ mod tests {
             "search_by_environment",
         ] {
             assert!(
-                !names.contains(&removed),
-                "removed tool `{removed}` must not be registered"
+                !verbs.contains(&removed),
+                "removed tool `{removed}` must not be a verb either"
             );
         }
     }
@@ -1188,55 +324,45 @@ mod tests {
                 "redundant tool `{tool_name}` must be removed (replaced by more general tools)"
             );
         }
-        // Verify core tools that replace them still exist
-        assert!(
-            names.contains(&"search_code"),
-            "search_code replaces query_file and find_function"
-        );
-        assert!(
-            names.contains(&"get_call_graph"),
-            "get_call_graph replaces get_callers"
-        );
-        assert!(
-            names.contains(&"get_cluster_skill"),
-            "get_cluster_skill replaces get_cluster_context"
-        );
-        assert!(
-            names.contains(&"kg_context"),
-            "kg_context replaces kg_concept_map"
-        );
-        assert!(
-            names.contains(&"get_architecture"),
-            "get_architecture is the primary overview tool"
-        );
-        // Exact count: 87 - 11 = 76, then H6 round 2 removes 3 more → 73
-        // base tools; the `embeddings` feature registers 3 more
-        // (semantic_search / leankg embed tooling) → 76.
-        // FR-ZCP-03 adds the feature-independent `leankg_context` router →
-        // 77 with embeddings / 74 without.
-        let expected = if cfg!(feature = "embeddings") { 77 } else { 74 };
+        // Verify the replacing capabilities survive as verbs.
+        for v in [
+            "search_code",
+            "get_call_graph",
+            "get_cluster_skill",
+            "kg_context",
+            "get_architecture",
+        ] {
+            assert!(
+                verb_catalog().contains(&v),
+                "`{v}` must remain a registered verb"
+            );
+        }
+        // One-tool cutover (FR-ZCP-03 end-state): the registry holds exactly
+        // one tool regardless of feature flags; the removed names survive
+        // only as verbs.
         assert_eq!(
             names.len(),
-            expected,
-            "unexpected tool-count drift (removed-tools regression?)"
+            1,
+            "unexpected tool-count drift (one-tool cutover regression?)"
         );
     }
 
     #[test]
-    fn test_query_graph_tool_schema() {
+    fn test_query_graph_is_a_verb() {
+        // query_graph lost its dedicated registry row in the one-tool
+        // cutover; its schema contract lives in the verb dispatcher, so the
+        // pinned surface here is verb-catalog membership + the router's
+        // pass-through mechanism.
+        assert!(verb_catalog().contains(&"query_graph"));
         let tools = ToolRegistry::list_tools();
         let tool = tools
             .iter()
-            .find(|t| t.name == "query_graph")
-            .expect("query_graph must be registered");
-        assert!(tool.description.contains("US-GF-03"));
-        let schema = tool.input_schema.as_object().unwrap();
-        let props = schema["properties"].as_object().unwrap();
-        assert!(props.contains_key("question"));
-        assert!(props.contains_key("token_budget"));
-        assert!(props.contains_key("max_depth"));
-        let required = schema["required"].as_array().unwrap();
-        assert!(required.iter().any(|v| v.as_str() == Some("question")));
+            .find(|t| t.name == "leankg_context")
+            .expect("leankg_context must be registered");
+        assert!(
+            tool.description.contains("verb"),
+            "router description must document the verb mechanism"
+        );
     }
 
     /// FR-ZCP-12 T3 accounting (FR-ZCP-03): every tool description carries
@@ -1269,10 +395,9 @@ mod tests {
             );
             *counts.entry(tier).or_insert(0usize) += 1;
         }
-        // The router is the headline core tool; core stays within the
-        // budget territory (router + 11 essentials).
-        assert_eq!(counts.get("core").copied().unwrap_or(0), 12);
-        assert_eq!(counts.get("setup").copied().unwrap_or(0), 5);
+        // One-tool cutover: the single tool is the router and is core.
+        assert_eq!(counts.get("core").copied().unwrap_or(0), 1);
+        assert_eq!(counts.get("setup").copied().unwrap_or(0), 0);
         // leankg_context must be marked core.
         let router = tools
             .iter()
@@ -1291,155 +416,115 @@ mod tests {
     }
 
     #[test]
-    fn test_list_tools_contains_v2_tools() {
-        let tools = ToolRegistry::list_tools();
-        let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains(&"query_incidents"));
-        assert!(names.contains(&"find_env_conflicts"));
-        assert!(names.contains(&"get_service_context"));
-    }
-
-    #[test]
-    fn test_v2_tool_schemas_are_valid() {
-        let tools = ToolRegistry::list_tools();
-        let v2_tools = [
+    fn test_verb_catalog_contains_v2_capabilities() {
+        let verbs = verb_catalog();
+        for v in [
             "query_incidents",
             "find_env_conflicts",
             "get_service_context",
-        ];
-        for tool in &tools {
-            if v2_tools.contains(&tool.name.as_str()) {
-                assert!(!tool.description.is_empty());
-                assert!(tool.input_schema.is_object());
-                let schema = tool.input_schema.as_object().unwrap();
-                assert!(schema.contains_key("type"));
-                assert!(schema.contains_key("properties"));
-                assert!(schema.contains_key("required"));
-            }
+        ] {
+            assert!(
+                verbs.contains(&v),
+                "capability `{v}` must be a registered verb"
+            );
         }
     }
 
     #[test]
-    fn test_semantic_search_tool_exists() {
+    fn test_one_tool_schema_is_valid() {
         let tools = ToolRegistry::list_tools();
-        let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains(&"semantic_search"));
+        for tool in &tools {
+            assert!(!tool.description.is_empty());
+            assert!(tool.input_schema.is_object());
+            let schema = tool.input_schema.as_object().unwrap();
+            assert!(schema.contains_key("type"));
+            assert!(schema.contains_key("properties"));
+        }
+    }
 
-        let tool = tools.iter().find(|t| t.name == "semantic_search").unwrap();
-        assert!(tool.description.contains("Natural language"));
-        assert!(tool.input_schema.is_object());
-        let schema = tool.input_schema.as_object().unwrap();
-        assert!(schema.contains_key("properties"));
-        let properties = schema["properties"].as_object().unwrap();
+    #[test]
+    fn test_semantic_search_is_a_verb() {
+        assert!(verb_catalog().contains(&"semantic_search"));
+        let tools = ToolRegistry::list_tools();
+        let tool = tools.iter().find(|t| t.name == "leankg_context").unwrap();
+        assert!(tool.description.contains("capability ladder"));
+        let properties = tool.input_schema["properties"].as_object().unwrap();
         assert!(properties.contains_key("query"));
-        assert!(properties.contains_key("env"));
+        assert!(properties.contains_key("verb"));
         assert!(properties.contains_key("limit"));
     }
-
     #[test]
-    fn test_semantic_search_description_documents_dual_path() {
+    fn test_semantic_search_description_contract_lives_in_verb_doc() {
+        // The per-tool descriptions moved out of the registry in the
+        // one-tool cutover; the capability docs now live in the verb
+        // dispatcher's handler docs. Pin the mechanism the agent sees:
+        assert!(verb_catalog().contains(&"semantic_search"));
         let tools = ToolRegistry::list_tools();
-        let tool = tools
-            .iter()
-            .find(|t| t.name == "semantic_search")
-            .expect("semantic_search tool must exist");
-
-        let desc = tool.description.to_lowercase();
+        let tool = tools.iter().find(|t| t.name == "leankg_context").unwrap();
         assert!(
-            desc.contains("hnsw") || desc.contains("embedding") || desc.contains("rerank"),
-            "description must mention HNSW/embeddings/rerank path: {}",
-            tool.description
-        );
-        assert!(
-            desc.contains("ontology-first") || desc.contains("safe_discover"),
-            "description must mention ontology-first/safe_discover fallback: {}",
-            tool.description
-        );
-    }
-
-    fn assert_prefer_order_hint(tool_name: &str, description: &str) {
-        assert!(
-            description.to_lowercase().contains("prefer-order"),
-            "{tool_name} description must include prefer-order hint: {description}"
+            tool.description.contains("L3 vector"),
+            "router description must document the L3 vector rung (the semantic_search path)"
         );
     }
 
     #[test]
-    fn test_search_and_semantic_tools_include_prefer_order_hints() {
+    fn test_one_tool_description_carries_prefer_order() {
         let tools = ToolRegistry::list_tools();
-        let always_present = [
-            "concept_search",
-            "search_code",
-            "semantic_search",
-            "kg_context",
-        ];
-        for name in always_present {
-            let tool = tools
-                .iter()
-                .find(|t| t.name == name)
-                .unwrap_or_else(|| panic!("{name} tool must exist"));
-            assert_prefer_order_hint(name, &tool.description);
-        }
-
-        if let Some(tool) = tools.iter().find(|t| t.name == "kg_semantic_context") {
-            assert_prefer_order_hint("kg_semantic_context", &tool.description);
-        }
+        let tool = tools.iter().find(|t| t.name == "leankg_context").unwrap();
+        // The router teaches the ladder + verb mechanism; per-tool prefer-
+        // order copy lives in the one description now.
+        assert!(tool
+            .description
+            .contains("Degrades ranking, never availability"));
+        assert!(tool.description.contains("verb"));
     }
 
     #[cfg(feature = "embeddings")]
     #[test]
-    fn test_embed_control_tool_exists() {
-        let tools = ToolRegistry::list_tools();
-        let tool = tools
-            .iter()
-            .find(|t| t.name == "embed_control")
-            .expect("embed_control tool must exist when embeddings feature is on");
-        assert!(
-            tool.description.contains("US-EMBED-05") || tool.description.contains("idle"),
-            "description should cite US-EMBED-05 / idle gate: {}",
-            tool.description
-        );
-        let props = tool.input_schema.get("properties").expect("properties");
-        assert!(props.get("action").is_some());
-        assert!(props.get("mode").is_some());
-        let required = tool
-            .input_schema
-            .get("required")
-            .and_then(|v| v.as_array())
-            .expect("required");
-        assert!(required.iter().any(|v| v.as_str() == Some("action")));
+    fn test_embed_control_is_a_verb() {
+        assert!(verb_catalog().contains(&"embed_control"));
     }
 
     #[cfg(feature = "embeddings")]
     #[test]
-    fn test_set_embed_model_tool_exists() {
-        let tools = ToolRegistry::list_tools();
-        let tool = tools
-            .iter()
-            .find(|t| t.name == "set_embed_model")
-            .expect("set_embed_model tool must exist when embeddings feature is on");
-        assert!(tool.description.contains("runtime-active embedding model"));
-        let props = tool.input_schema.get("properties").expect("properties");
-        assert!(props.get("model_id").is_some());
-        assert!(props.get("persist").is_some());
-        let required = tool
-            .input_schema
-            .get("required")
-            .and_then(|v| v.as_array())
-            .expect("required");
-        assert!(required.iter().any(|v| v.as_str() == Some("model_id")));
+    fn test_set_embed_model_is_a_verb() {
+        assert!(verb_catalog().contains(&"set_embed_model"));
     }
 
     #[test]
-    fn test_ontology_control_tool_exists() {
-        let tools = ToolRegistry::list_tools();
-        let tool = tools
-            .iter()
-            .find(|t| t.name == "ontology_control")
-            .expect("ontology_control tool must exist");
-        assert_eq!(
-            tool.input_schema["properties"]["action"]["enum"],
-            serde_json::json!(["sync", "status"])
-        );
+    fn test_ontology_control_is_a_verb() {
+        assert!(verb_catalog().contains(&"ontology_control"));
+    }
+
+    #[test]
+    fn test_resolve_envelope_contract() {
+        use serde_json::map::Map as Args;
+
+        // Legacy tool name → hard refusal with catalog code + nearest verb.
+        let err = resolve_envelope("get_impact_radius", &Args::new()).unwrap_err();
+        assert!(err.contains("LEANKG_ERROR_UNKNOWN_TOOL"), "{err}");
+        assert!(err.contains("verb"), "{err}");
+
+        // Envelope with valid verb → capability + stripped verb key.
+        let mut args = Args::new();
+        args.insert("verb".into(), serde_json::json!("get_impact_radius"));
+        args.insert("file".into(), serde_json::json!("src/main.rs"));
+        let (cap, inner) = resolve_envelope("leankg_context", &args).unwrap();
+        assert_eq!(cap, "get_impact_radius");
+        assert!(!inner.contains_key("verb"));
+        assert_eq!(inner["file"], "src/main.rs");
+
+        // No verb → natural-language router path, args unchanged.
+        let mut args = Args::new();
+        args.insert("query".into(), serde_json::json!("auth flow"));
+        let (cap, inner) = resolve_envelope("leankg_context", &args).unwrap();
+        assert_eq!(cap, "leankg_context");
+        assert_eq!(inner["query"], "auth flow");
+
+        // Unknown verb → refusal with nearest suggestion.
+        let mut args = Args::new();
+        args.insert("verb".into(), serde_json::json!("get_impract_radius"));
+        let err = resolve_envelope("leankg_context", &args).unwrap_err();
+        assert!(err.contains("LEANKG_ERROR_UNKNOWN_TOOL"), "{err}");
     }
 }

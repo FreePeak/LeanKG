@@ -167,7 +167,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 | Ops & ownership | `get_service_graph`, `query_incidents`, `get_team_map` |
 | Req ↔ code | `index_prd`, `get_traceability`, `get_traceability_matrix` |
 | Mega-graph | Frontier-local queries; 100k–700k+ elements |
-| Agent surface | **77** MCP tools (76 with embeddings, 74 without; peers typically ~1–17) |
+| Agent surface | **1** MCP tool (`leankg_context`) serving ~76 capabilities as verbs; peers typically ~1–17 raw tools |
 | Cost | A/B **−65% tokens**, **−85% tool calls**, **2.5×** vs grep/cat |
 
 | Capability | LeanKG | GitNexus | Graphify | Codanna | Context7 |

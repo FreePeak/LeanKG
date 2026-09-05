@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.3.0-one-tool-ladder
-**Date:** 2026-09-04 (v4.1.0/v4.1.1/v4.2.0/v4.3.0 all same day)
+**Version:** 4.3.1-one-tool-envelope
+**Date:** 2026-09-05 (v4.3.1 hard cutover; v4.3.0 2026-09-04)
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.27.0
 **Storage:** PostgreSQL + pgvector only (`LEANKG_PG_URL`)
@@ -9,6 +9,17 @@
 ---
 
 ## Changelog
+
+### v4.3.1-one-tool-envelope — Hard one-tool cutover (2026-09-05)
+
+> **Trigger:** user decision superseding the T3 budget path — hard-delete every registered tool except `leankg_context`; all capabilities ride it as verbs. Envelope = `{verb: "<capability>", ...args}`; omitting `verb` uses the natural-language router. The verb namespace IS the legacy tool namespace (all docs/hints naming a tool remain valid as verb references). Envelope resolution happens **before** read-only gate / write-lock serialization / audit recording, so verb-scoped security decisions cannot be bypassed by hiding a write verb inside a read-named envelope (audit records the effective capability).
+
+**Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-ZCP-03` | **P0** | End-state enforced: registry = exactly 1 tool (`leankg_context`); `resolve_envelope` unwraps/hard-refuses; legacy names are gone, not deprecated (catalog error names the verb mechanism) | **DONE** |
+| 2 | `FR-ZCP-12` | **P1** | T3 re-scoped: "≤ 12 + full opt-in" replaced by the CI-enforced one-tool invariant (`list_tools().len() == 1` + verb-catalog membership lint); T2 unchanged | folded |
 
 ### v4.3.0-one-tool-ladder — Single router + capability degradation ladder + first-run setup contract (2026-09-04)
 
@@ -179,7 +190,7 @@
   - **L0 — cold rung** (nothing indexed): guidance + background index kick (FR-ZCP-02), `freshness: cold`, non-error.
   - Every response carries `retrieval: {rung, reason}` beside the `freshness` flag (FR-ZCP-06); capability loss downgrades **ranking, never availability** — the `kg_semantic_context` hard error today (`handler.rs:3975-4036`) is the pattern to delete.
 - **Single source of recommendations:** tool-hint copy moves into the router — today `safe_discover.rs:105-113` still recommends the **pruned** `find_function`/`query_file` (claim rot exactly of the kind FR-ZCP-12 T1 lints), and `search_code`'s stale `recommended_tools` copy duplicates fallback logic. After FR-ZCP-03, exactly one component owns "what to try next"; every other tool references it.
-- Full catalog behind `full` opt-in (CLI flag / env / config); default-set session passes the v3.8.5 probe suite with zero tool-selection errors.
+- **Hard one-tool envelope (v4.3.1 end-state, DONE):** the registry exposes exactly one tool; every capability rides `{verb}` (legacy tool names are the verb namespace — existing hints stay valid); envelope unwrapped before the read-only gate, write-lock, and audit; unknown tool/verb hard-refuses with a catalog error naming the verb mechanism.
 - AC: fresh-session probes resolve via the router with ≤1 tool call for intent + ≤1 follow-up for detail.
 - AC (ladder): deleting a project's vectors and re-asking the same query returns L2-ranked results with `retrieval: {rung: "keyword"}` — never an error; with no index at all the response is L0 guidance + a started background index, still non-error.
 
@@ -265,10 +276,10 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 
 - **T1 — Error & config honesty (cheap; ship first).** Every user-facing CLI + MCP error carries a **stable code, a human cause clause, and a runnable fix** naming the concrete command/flag/env var, plus a doc anchor — Stripe's `code`+`doc_url` model; clig.dev's "what went wrong + how do I fix it". Immediate victims from the audit: `Unauthorized` (say which env/flag sets the token), `Unknown tool` (suggest the nearest match + the `full` catalog hint), low-confidence empty pages (link the fallback tool). CI lints: error variants enumerated from source vs a catalog (100% coverage); fix-clause lint on every error string (allowlist shrinks, never grows). Config surface: one copy-paste JSON block per client (FR-ZCP-04), docs snippet byte-identical to generated (snapshot test); every "zero-config" claim maps to a named script/CI job that runs it literally (Vercel pattern) — unverified claims get deleted, not footnoted.
 - **T2 — Published, CI-timed time-to-first-value.** The happy path (`install → leankg init → leankg mcp-http → one JSON config block → first useful query`) is measured in CI on a fresh cold environment and the number is **published** in README + quickstart. Target: **first useful MCP query ≤ 5 minutes** (embeddings stay out of the promise; Supabase's "under 2 minutes" and Convex's 7-step one-command path are the reference bar; zg publishes no TTFV number at all — publishing one wins mindshare). If measurement says worse, the PRD number changes, not the test.
-- **T3 — CI-pinned default-tool budget (rides FR-ZCP-03).** The default MCP surface is a **numbered budget**, not an accident: ≤ **12 tools** at default `initialize` (5 lifecycle/setup: init, index, status, install, doctor; ~7 core query tools), everything else behind `full` opt-in. The existing exact-count drift test (`src/mcp/tools.rs:1156-1160`) is extended from "no drift" to "budgeted tiering" — interim step (cheap, no behavior change): every tool description carries a `Tier:` marker; tiered `initialize` advertisement per client capability follows FR-ZCP-03's router (expensive; gated on the interim accounting proving out).
+- **T3 — CI-pinned one-tool invariant (v4.3.1 re-scope; the ≤ 12 budget + `full` opt-in is superseded by the hard cutover).** CI enforces `ToolRegistry::list_tools().len() == 1` and verb-catalog membership for every capability; the single tool description documents the verb mechanism. Audit/read-only/write-lock decisions resolve the effective capability from the envelope **before** any gate.
 - AC-T1: 100% of error variants resolve to a catalog entry with doc anchor; every error string contains cause + runnable fix; docs config block == generated block (CI snapshot); zero unverifiable zero-config claims.
 - AC-T2: CI times the cold happy path end-to-end; README publishes the measured number; a regression above 5 min fails the gate.
-- AC-T3: tool count at default `initialize` ≤ 12 (CI-enforced); every tool has a tier assignment (missing tier fails CI); `full` opt-in restores today's complete catalog.
+- AC-T3 (v4.3.1): registry length == 1 (CI-enforced); every legacy capability resolvable as a verb (catalog lint); unknown names refused with `LEANKG_ERROR_UNKNOWN_TOOL` naming the nearest verb; audit records the effective capability.
 
 
 ---
@@ -280,7 +291,7 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 | Transport | axum HTTP MCP (`/mcp`) + stdio; Bearer + DB token store; `?project=` routing | Resolution layer **in front of** routing (FR-ZCP-01); `?project=` demoted to escape hatch |
 | Storage | PostgreSQL + pgvector, **one database, schema-per-project** (`leankg_p_<hex(canonical root)>`; per-connection `search_path` pin, per-schema migrations + HNSW) | Registry table + portfolio scope + cross-schema portfolio queries (FR-ZCP-09); fleet reconciliation (FR-ZCP-10) |
 | Indexing/embeddings | tree-sitter graph + optional embeddings (`--features embeddings`), incremental watcher — single-project-per-process, inline `ensure_project_indexed`; per-model collections exist but **no model stamp/guard** on the vectors | Lazy auto-attach + **background** first index (FR-ZCP-02); tiers T0/T1/T2 + one indexer slot + hot-set LRU (FR-ZCP-09); pinned catalog + model-stamped vectors + rebuild guard + single-flight (FR-ZCP-11) |
-| Tools | **76/73 MCP tools** exact-count CI-pinned (`src/mcp/tools.rs:1156-1160`), no router tool registered; no TTFV number published; no error catalog; README says "85+" | Default toolset = 1 router (FR-ZCP-03); simplicity contract: tiered budget ≤ 12 default tools, published TTFV, error code+fix catalog (FR-ZCP-12); portfolio-scoped answers from T0 manifests |
+| Tools | Was 76/73 raw tools exact-count CI-pinned; v4.3.1 hard cutover → **1 tool** (`leankg_context`) with ~76 capabilities as verbs | One-tool envelope (FR-ZCP-03 end-state); published TTFV (FR-ZCP-12 T2); error code+fix catalog (FR-ZCP-12 T1, DONE); portfolio-scoped answers from T0 manifests |
 | Memory | RecallStore = **JSONL files** under `<project>/.leankg/` (read path complete; write path dead — v3.8.8 audit); `knowledge_entries` per-schema PG | `session_retain` + auto-recall live (FR-ZCP-07, rides FR-SMA-01..04); portfolio memory federation (FR-ZCP-09) |
 
 **Trust boundaries unchanged:** loopback-only HTTP by default; Bearer auth independent of any remote embedding (LeanKG has no remote embedding).
@@ -312,8 +323,8 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (e
 | First-query-on-unindexed-repo | Non-error response < 500 ms; background index per existing SLA |
 | Router capability probe | < 10 ms per request (limit-1 probe + catalog reads; cached per connection between cwd changes) |
 | Ladder degradation | Same query returns non-error results at every rung L0–L3; `retrieval: {rung, reason}` on 100% of index-backed responses; zero "not initialized"/no-vector hard errors in the default toolset |
-| Default toolset surface | ≤ 1 tool in `agent` toolset; full catalog behind explicit opt-in |
-| Default toolset surface (T3) | ≤ 12 tools at default `initialize` (CI-enforced budget); every tool tier-tagged; `full` opt-in restores the complete catalog (FR-ZCP-03's router is the end-state: ≤ 1) |
+| Default toolset surface | **1 tool** (`leankg_context`) — hard cutover, CI-enforced; capabilities ride the `{verb}` envelope |
+| One-tool envelope (T3, v4.3.1) | `list_tools().len() == 1` CI-enforced; envelope resolved before RO-gate/write-lock/audit; unknown verb → catalog refusal with nearest-verb fix |
 | Storage | PostgreSQL + pgvector only — one database, schema-per-project; the registry is the project SoT |
 | MCP HTTP | loopback by default; Bearer + DB-backed access-token store |
 | Portfolio attach (T0) | One registry INSERT + depth-limited manifest scan; zero eager indexing |
@@ -339,4 +350,4 @@ All superseded material is preserved and linked, not deleted:
 - **Simplicity research sprint (2026-09-04, three parallel scouts):** repo friction audit (file:line — 76/73 tools, 103 CLI verbs, 116 env names, 10-step walkthrough, error-copy gaps); competitor mechanics (zg, context7, serena, Desktop Commander, gitleaks — live-fetched URLs); onboarding playbooks (Supabase/Convex TTFV, Stripe error codes, clig.dev, Vercel, Stack Overflow 2025) → findings folded into §2.6, §3.9 (FR-ZCP-12), §5 M8, §6
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 
-*Last updated: 2026-09-04 (v4.3.0 — one-tool degradation ladder (L0–L3, `retrieval` provenance) + first-run setup contract FR-ZCP-13 (auto/manual + `leankg add`) + FR-ZCP-05 bridge tier; v4.2.0 — measured-simplicity contract → FR-ZCP-12 T1/T2/T3 + M8 + D-2026-09-04-3; v4.1.1 — OMP memory-backend audit + zvec-grep embedding-correctness audit → FR-ZCP-11)*
+*Last updated: 2026-09-05 (v4.3.1 — hard one-tool cutover: registry = `leankg_context` only, ~76 capabilities as `{verb}` envelope args, envelope resolved before RO-gate/write-lock/audit; v4.3.0 — one-tool degradation ladder (L0–L3, `retrieval` provenance) + first-run setup contract FR-ZCP-13 (auto/manual + `leankg add`) + FR-ZCP-05 bridge tier; v4.2.0 — measured-simplicity contract → FR-ZCP-12 T1/T2/T3 + M8 + D-2026-09-04-3; v4.1.1 — OMP memory-backend audit + zvec-grep embedding-correctness audit → FR-ZCP-11)*
