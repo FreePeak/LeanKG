@@ -52,7 +52,7 @@
 
 | ID | Title | Priority | Milestone | Supersedes |
 |----|-------|----------|-----------|------------|
-| FR-ZCP-04 | `leankg install --target opencode\|claude\|codex\|cursor\|omp` — project-less URLs + `--register-cwd` hook | P1 | M2 | FR-ZG-04, US-ZG-04 |
+| FR-ZCP-04 | `leankg install --target opencode\|claude\|codex\|cursor\|omp` — project-less URLs + `--register-cwd` hook — scope: extends existing `connect` writers with opencode+omp targets; `--register-cwd` = session-start hook running `leankg add <cwd>` (persistent cwd→project table stays FR-ZCP-01 clause 3, out of scope); Docker `?project=` is the documented exception; env inventory table + byte-identical config-block snapshot tests per PRD §3.4 | P1 | M2 | FR-ZG-04, US-ZG-04 |
 | FR-ZCP-06 | Freshness contract: `freshness: fresh\|possibly_stale\|cold` on every index-backed response; reconciliation off the query path | P1 | M3 | FR-ZG-03, US-ZG-03 |
 | FR-ZCP-07 | Memory-backend adjacency: mnemopi-compatible bank naming (`<basename>-<wyhash36(cwd)>`, cwd-only), 3-mode scoping, `retained_through_user_turn` cursor, `session_retain`/`session_recall` + `<memories>`-equivalent injection; hindsight-shaped HTTP memory API as upstream `memory.backend: "mcp"` evidence | P1 | M4 | FR-SMA-04, US-SMA-04, US-SM-02 |
 | FR-ZCP-08 | Cross-tool harness hardening: pinned SHAs/prompts, ≥3 trials/arm, judge-blind scorer, zg pitfalls checklist | P2 | M5 | FR-ZG-05, US-ZG-05, FR-B05 |

@@ -199,9 +199,32 @@
 
 ### 3.4 Agent Onboarding (FR-ZCP-04) — **P1**
 
-- `leankg install --target opencode|claude|codex|cursor|omp`: idempotent MCP-config writer — **URL contains no `?project=`** (FR-ZCP-01 makes it unnecessary); Docker deployments emit container-mount guidance; optional `--register-cwd` writes the session-registration hook.
-- AC: install in a repo → fresh agent session → tools work, correct project, zero manual URL edits.
-- Claims + env hygiene (FR-ZCP-12 T1): the install path publishes **zero unverifiable claims** — every "zero-config"/"no-setup" sentence in README/docs names the script or CI job that executes it literally; the `LEANKG_*` env inventory (116 names today: 88 runtime + 28 script-only + 1 docs-only) is documented in one table and the happy path requires **zero** of them beyond the one hard prerequisite (`LEANKG_PG_URL`); `mcp_install`/`connect` emit **exactly one JSON block** per client, byte-identical to the docs snippet (snapshot-tested).
+**Narrative.** Onboarding is one command per harness, writing that harness's own config format, with **no project path in the emitted URL** — FR-ZCP-01's contextual resolution (stdio process cwd; HTTP `roots/list`) makes `?project=` unnecessary in the happy path, and shipping it by default is the dead-end this FR exists to kill. Implementation extends the existing `connect` writers (`src/connect/`) with the two missing targets; `install --target` is the global-config surface, `connect <client>` stays as its alias.
+
+**Command.** `leankg install --target opencode|claude|codex|cursor|omp [--remote URL] [--project PATH] [--register-cwd] [--remove]`
+
+**Per-target config writers** (entry name `leankg`; merge-or-replace that key only, atomic tmp+rename write, never clobber siblings; parse errors abort with the file path — existing `connect` semantics):
+
+| Target | File | Entry shape | Status |
+|--------|------|-------------|--------|
+| `claude-code` | `~/.claude.json` | `mcpServers.leankg` — stdio `{command,args}` (no `type` key); http `{type:"http",url}` | exists |
+| `cursor` | `~/.cursor/mcp.json` | `mcpServers.leankg` — `{command,args}` | exists |
+| `codex` | `~/.codex/config.toml` | `[mcp_servers.leankg]` table via `toml_edit` (comments/order preserved) | exists |
+| `gemini` | `~/.gemini/settings.json` | `mcpServers.leankg` | exists |
+| `opencode` | `~/.config/opencode/opencode.json` | `mcp.leankg` — `{type:"local",command:[…],enabled:true}` / `{type:"remote",url,enabled:true}` | **new writer** |
+| `omp` | `~/.omp/agent/mcp.json` | `mcpServers.leankg` — `{type:"stdio",command,args,enabled:true}` / `{type:"http",url,enabled:true}` | **new writer** |
+
+**URL contract.** Default stdio entry: `<current exe> mcp-stdio` — **no `--project` flag** (server resolves from process cwd, FR-ZCP-01 clause 1). `--remote URL` emits the bare `URL` (e.g. `http://localhost:9699/mcp`) — **no `?project=` suffix** (clause 2, landed 87e18287). `--project PATH` remains the explicit escape hatch and is the only way a `--project`/`?project=` gets emitted. **Docker is the one documented exception:** the container cannot see host cwds, so `--docker` (or `--remote` to a Docker-hosted server) emits `?project=<container-mount>` and prints the mount table (`/workspace` = this repo; per-repo mounts per local `.dockerfile`) instead of guessing.
+
+**`--register-cwd`.** Writes a per-client session-start hook that runs `leankg add <cwd>` (FR-ZCP-13, landed b251046c) — real effect: attaches the project, persists setup mode, kicks the background indexer. It does **not** write a cwd→project table: the persistent session-registration table is FR-ZCP-01 clause 3, explicitly out of scope here. Clients with no hook mechanism get a printed note naming the manual command (zero dead ends).
+
+**Zero dead ends.** `install` output always prints the next step: if the cwd project is unregistered, print `leankg add <cwd>`; always print "restart the client". The MCP `mcp_install` verb keeps its project-local behavior (`.mcp.json` + instructions) and gains the same project-less URL contract.
+
+**Env hygiene (FR-ZCP-12 T1).** The `LEANKG_*` inventory (116 names today: 88 runtime + 28 script-only + 1 docs-only) is documented in one table, generated from source and CI-pinned; the happy path requires **zero** env vars beyond the one hard prerequisite (`LEANKG_PG_URL`). Every "zero-config"/"no-setup" sentence in README/docs names the script or CI job that executes it literally.
+
+**Config-block parity.** `install`/`connect`/`mcp_install` emit **exactly one JSON (or TOML) block** per client, byte-identical to the docs snippet — snapshot-tested per target.
+
+- AC: fresh clone → `leankg install --target omp` → open omp in a repo → tools work, correct project, zero manual URL edits; no emitted config contains `?project=` outside the documented Docker exception; re-run is idempotent (entry replaced, siblings byte-identical); `--remove` deletes only the `leankg` key; snapshot tests pin each target's exact block.
 
 ### 3.5 Memory-Backend Adjacency (FR-ZCP-07) — **P1**
 
