@@ -585,6 +585,44 @@ impl MCPServer {
         self.transport
     }
 
+    /// Audit + dispatch for an ALREADY-RESOLVED capability. Used by the
+    /// JSON-RPC `tools/call` arm, which resolves the envelope itself
+    /// (before RBAC) and must not re-enter `resolve_envelope` — a resolved
+    /// verb is a legacy capability name, and re-resolving it would
+    /// hard-refuse it as "not registered".
+    pub(crate) async fn execute_capability_audited(
+        &self,
+        capability: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        agent_client: Option<String>,
+        actor: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        let started = std::time::Instant::now();
+        let result = self.execute_capability(capability, arguments.clone()).await;
+        if let Some(recorder) = &self.audit {
+            let project = arguments
+                .get("project")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            recorder.record(crate::audit::AuditRecord {
+                ts: std::time::SystemTime::now(),
+                actor: actor.unwrap_or_else(|| "local".to_string()),
+                agent_client: agent_client.unwrap_or_else(|| self.transport.to_string()),
+                tool: capability.to_string(),
+                project,
+                args_hash: crate::audit::hash_args(&serde_json::Value::Object(arguments)),
+                result_status: if result.is_ok() { "ok" } else { "error" }.to_string(),
+            });
+        }
+        tracing::debug!(
+            tool = %capability,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            status = %if result.is_ok() { "ok" } else { "error" },
+            "tool dispatch complete"
+        );
+        result
+    }
+
     /// FR-ENT-1: THE audit choke point. Every tool dispatch — rmcp
     /// `ServerHandler::call_tool` (stdio + streamable HTTP) and the raw
     /// JSON-RPC `tools/call` arm — goes through here, producing exactly one
@@ -4544,7 +4582,7 @@ async fn process_jsonrpc_request(
 
             let result = tokio::time::timeout(
                 tool_timeout_for(&capability),
-                mcp_server.execute_tool_audited(
+                mcp_server.execute_capability_audited(
                     &capability,
                     arguments,
                     // FR-ENT-1: authenticated HTTP callers get their token
