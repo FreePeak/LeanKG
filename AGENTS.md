@@ -103,7 +103,7 @@ For 3+ independent tasks: dispatch to `.worktree/<feature>/` worktrees with feat
 
 ## Cursor Cloud specific instructions
 
-Single Rust binary (`leankg`); all modes are subcommands. Storage is PostgreSQL-only — set `LEANKG_PG_URL` (remote managed Postgres works; see `.env`). The VM snapshot already has the toolchain and system libs below; the startup update script only runs `cargo fetch`.
+Single Rust binary (`leankg`); all modes are subcommands. Storage is PostgreSQL-only — set `LEANKG_PG_URL` (local Docker Postgres: `docker start leankg-pg-500mb`, then `postgres://postgres:postgres@localhost:5433/leankg`; no remote Postgres is configured anymore — removed 2026-09-05). The VM snapshot already has the toolchain and system libs below; the startup update script only runs `cargo fetch`.
 
 - **Toolchain**: build requires Rust **stable ≥ 1.85** (transitive deps use edition2024). The base image's 1.83 is too old; the snapshot ships `rustup default stable`. README's "Rust 1.75+" badge is outdated for building from source.
 - **Native build deps**: native extensions compiled via the `cxx`/C++ toolchain need C++ stdlib headers. `clang`/`cc` select GCC 14, so `libstdc++-14-dev` (plus `g++`) must be present or the build fails with `fatal error: 'algorithm' file not found`. These are installed in the snapshot.
@@ -116,4 +116,4 @@ Single Rust binary (`leankg`); all modes are subcommands. Storage is PostgreSQL-
 
 ---
 
-*Last updated: 2026-08-01*
+*Last updated: 2026-09-05 (storage = local Docker Postgres only; remote Postgres configs removed)*
