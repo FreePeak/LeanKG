@@ -12,7 +12,7 @@
 |--------|------:|
 | IN_PROGRESS | 1 |
 | TODO | 35 (9 live + 26 carry-forward) |
-| DONE | 7 |
+| DONE | 9 |
 | Open work | 36 |
 
 **Inventory note (ID-level accounting):** the archived tracker holds **40 open inventory items** (35 master-table `NOT_DONE`/`PENDING`/`PARTIAL`/`OPEN` IDs + 5 `FR-HEA-*` section-table rows). All 40 are accounted for below: FR IDs appear as named rows; each paired `US-*` tracks with its FR (the archive itself pairs them `US-X / FR-X` as one work item); `FR-ZG-01..05` + `US-ZG-01..05` + `FR-B05` are superseded inside the live `FR-ZCP-*` rows (Supersedes column); `FR-HEA-05` is DONE (v4.0.0 §1 cutover). `FR-ZCP-09/10/11/12/13` are **new in v4.1.x–v4.3.0** (no archive IDs). Row-level open work = 1 IN_PROGRESS + 9 live + 26 carry-forward = 36. (The 26 carry-forward rows cover 35 archived open IDs: 3 rows pair multiple US stories with their FR; the inventory not…
@@ -100,6 +100,6 @@
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
 
-*Last updated: 2026-09-05 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (7 rows); open inventory: 1 IN_PROGRESS + 35 TODO (9 live incl. FR-ZCP-05/12 remainders + 26 carry-forward) = 36 open; full 585-ID history in archive.*
+*Last updated: 2026-09-05 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (6 sprint rows; 9 DONE total incl. 3 prior); open inventory: 1 IN_PROGRESS + 35 TODO (9 live incl. FR-ZCP-05/12 remainders + 26 carry-forward) = 36 open; full 585-ID history in archive.*
 
 
