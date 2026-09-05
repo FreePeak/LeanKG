@@ -1,14 +1,41 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.1.1-omp-embed-ground-truth
-**Date:** 2026-09-04 (v4.1.1 audit revision; v4.1.0 same day)
+**Version:** 4.3.0-one-tool-ladder
+**Date:** 2026-09-04 (v4.1.0/v4.1.1/v4.2.0/v4.3.0 all same day)
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
-**Codebase Version:** 0.26.1
+**Codebase Version:** 0.27.0
 **Storage:** PostgreSQL + pgvector only (`LEANKG_PG_URL`)
 
 ---
 
 ## Changelog
+
+### v4.3.0-one-tool-ladder — Single router + capability degradation ladder + first-run setup contract (2026-09-04)
+
+> **Trigger:** user direction (2026-09-04): "turn LeanKG into 1 tool that fits every scenario — if there are no embedding vectors, use exact or fuzzy search," plus first-run setup requirements (auto init/index/embed choice, simple repo add). Two-scout ground-truth audit (search handlers + DB capabilities): a 4-tier retrieval ladder already exists inside separate tools — exact/regex (`search_code`, `translate.rs` regex/LIKE), ontology keyword (`safe_discover.rs:104-211`), pgvector ANN + rerank + traverse (`retrieval/pipeline.rs:272-293`), graph BFS — but only `semantic_search` degrades silently (`handler.rs:1918-2001`); `kg_semantic_context` hard-errors without vectors (`:3975-4036`); no tool exposes machine-readable capabilities; and the `QueryOrchestrator` (intent parser + hot-path cache, `orchestrator/mod.rs:26-46`) is **built but never registered as an MCP tool** (zero references under `src/mcp`) — FR-ZCP-03 has a seed implementation waiting for registration. Schema has zero FTS primitives (no tsvector/GIN/pg_trgm, `schema.sql`); pgvector supports exact-distance fallback (plain `ORDER BY vec <-> $1`, `translate.rs:2133-2168`).
+
+> **Decision (D-2026-09-04-4):** one tool, many rungs. `leankg_context` (FR-ZCP-03) probes per-project capabilities once per request (< 10 ms: `state.has_any` limit-1 vector probe, `::relations` HNSW check, `index_inventory.total_vectors`) and routes each query down the best rung the data supports: **L3** vectors → ANN + rerank + traverse; **L2** no vectors → FTS/trigram fuzzy + ontology concepts; **L1** no index → exact identifier/regex + suggestions; **L0** cold → guidance + auto-index kick (FR-ZCP-02). Every response carries `retrieval: {rung, reason}` + `freshness`; the ladder never errors — capability loss degrades ranking, not availability. The attach side gets the same treatment (FR-ZCP-13): one auto/manual setup question, `leankg add` for coverage growth.
+
+**Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-ZCP-03` | **P0** | Rewritten as the ladder router: capability probe + L0–L3 rungs + `retrieval` provenance block; registers the unregistered `orchestrate` parser | **NOT_DONE** |
+| 2 | `FR-ZCP-13` | **P1** | First-run setup contract: one auto/manual question (init + index + embed vs manual) persisted in `.leankg/config.json`; `leankg add <path> [--embed]` one-command repo registration; embeddings are a preference, never a prerequisite | **NOT_DONE** |
+| 3 | `FR-ZCP-05` | folded | Bridge tier spec: `pg_trgm` GIN + `text_pattern_ops` prefixes as the L2 fuzzy baseline before FTS lands | folded |
+
+### v4.2.0-simplicity-first — Measured-simplicity contract for a young product (2026-09-04)
+
+> **Trigger:** three-track research sprint (2026-09-04, three parallel scouts). **(1) Repo friction audit (file:line):** **76/73 MCP tools** exact-count CI-pinned (`src/mcp/tools.rs:1156-1160`, already pruned 87→76) vs the winning 1–2-tool norm (zg = 1 default + 6 full; context7 = 2; serena ≈ 48); **103 CLI verbs** (61 top-level + 42 nested, `src/cli/mod.rs`); **116 distinct `LEANKG_*` env-var names** (88 runtime in `src/`, 28 script-only, 1 docs-only; only ~5 first-run relevant); a **10-step / 8-decision** first-value walkthrough (README Get Started) vs Supabase's published "under 2 minutes"; error copy without remediation (`Unauthorized` — which env sets the token? `server.rs:3372-3374`; `Unknown tool` with no nearest-match hint, `handler.rs:299`); README claims "85+ tools" (README.md:170,179) vs the code-verified 76. **(2) Competitor mechanics (live-fetched URLs):** zg's 1-tool default + try-it tour + docs that match shipped behavior; context7's OAuth one-liner; Desktop Commander's fuzzy-match error feedback; gitleaks' zero-config default rules. **(3) Onboarding playbooks (URLs verified):** Supabase/Convex publish wall-clock TTFV numbers; Stripe's error objects carry `code` + `doc_url` (~200-code catalog); clig.dev: suggest the next command, never dead-end, <100 ms first feedback; Vercel's "zero configuration" is a script-verifiable per-framework claim; Stack Overflow 2025: 46% of developers actively distrust AI-tool accuracy — LeanKG's consumers are verification-hungry agents.
+
+> **Decision (D-2026-09-04-3):** simplicity is a **measured contract, not a vibe** — every simplicity claim must be a number a CI job can verify (tool-count budget, TTFV wall-clock, error-catalog coverage, claim-to-script mapping). Tiered cheap-first: **T1** error/config/claim honesty (docs-and-strings cheap — ship immediately), **T2** published CI-timed TTFV (the number itself wins mindshare — zg publishes none), **T3** CI-pinned default-tool budget riding FR-ZCP-03's router. The audit's *unclaimed* hotspots (env-var surface, error-copy contract, docs split-brain, semantic-path default-off UX) are absorbed here; already-claimed ones stay in their FRs.
+
+**Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-ZCP-12` | **P1** | Measured-simplicity contract, three tiers: T1 error catalog (stable code + cause + runnable fix + doc anchor, 100% CI-linted) + single copy-paste config block + claim hygiene; T2 CI-timed published TTFV ≤ 5 min; T3 CI-pinned default-tool budget (≤ 12 default, tier-tagged) riding FR-ZCP-03 | **NOT_DONE** |
+| 2 | — | folded | §1.1 zg row extended; §2.6 new problem line (unclaimed friction, quantified); §3.4 AC additions; §4/§5/§6 anchored on audit numbers | folded |
 
 ### v4.1.1-omp-embed-ground-truth — OMP memory + zvec-grep embedding audits (2026-09-04)
 
@@ -81,7 +108,7 @@
 
 | Source | What they teach | LeanKG adoption |
 |---|---|---|
-| [zvec-grep](https://github.com/zvec-ai/zvec-grep) | One default MCP tool with intent-expressing params; `fresh`/`possibly_stale` on every response; `zg install --target`; `root`-based workspace addressing | `FR-ZCP-03..06`, `FR-ZCP-08` |
+| [zvec-grep](https://github.com/zvec-ai/zvec-grep) | One default MCP tool with intent-expressing params; `fresh`/`possibly_stale` on every response; `zg install --target`; `root`-based workspace addressing; every error carries a stable code + doc URL + runnable fix; try-it-yourself tour and a short numbered CLI (8 commands) whose docs verifiably match shipped behavior | `FR-ZCP-03..06`, `FR-ZCP-08`, `FR-ZCP-12` |
 | [OMP mnemopi + Hindsight backends](https://github.com/can1357/oh-my-pi) (installed-source audit, 2026-09-04) | Closed `memory.backend` enum (`off\|local\|hindsight\|mnemopi`, no pluggable MCP backend); hindsight = remote HTTP banks (`POST /banks/{id}/memories` + `/recall`, `hindsight.apiUrl`); mnemopi banks = `<basename(cwd)>-<wyhash36(cwd)>` ≤64 chars, **cwd only, never git root** (stability contract #2412); 3-mode scoping (`per-project` default; tagged = project write bank + [project, shared] recall); retain every N user turns (default 4) with a `retained_through_user_turn` cursor — **not prefix-hash**; recall injected once on first turn as a `<memories>` block (injectionTokenLimit 5000); OMP's MCP client answers `roots/list` with `file://<cwd>` | `FR-ZCP-01` (roots/list channel), `FR-ZCP-07` (bank/scoping/cursor/injection contract) |
 | Harness-native primitives | Glob/Grep/LSP win raw search; don't fight them | positioning §1 |
 
@@ -101,12 +128,13 @@
 3. **First-use latency** — `leankg index ./src` takes minutes on large repos; requiring it before first query is a dead-end for lazy adoption.
 4. **Tool sprawl** — ~76 MCP tools inflate agent triage; v3.8.5 live audit found 50% failing.
 5. **No freshness honesty** — responses carry no staleness signal; agents cannot distinguish current from drifted data.
+6. **Simplicity debt beyond config (this revision)** — what the friction audit quantified: **76/73 MCP tools** (exact-count CI-pinned, `src/mcp/tools.rs:1156-1160`) vs the 1–2-tool norm (zg=1, context7=2); **103 CLI verbs**; **116 `LEANKG_*` env-var names** with only ~5 first-run relevant; a 10-step/8-decision first-value path vs Supabase's published "under 2 minutes"; error copy that fails "what went wrong + how do I fix it" (`Unauthorized` `server.rs:3372-3374`; `Unknown tool` `handler.rs:299`); README claims ("85+ tools") diverging from the code-verified count. FR-ZCP-12 turns these into measured contracts.
 
 ---
 
 ## 3. Functional Requirements
 
-### 3.1 Zero-Config Project Resolution (FR-ZCP-01/02) — **P0, this revision's core**
+### 3.1 Zero-Config Project Resolution (FR-ZCP-01/02/13) — **P0, this revision's core**
 
 **Narrative.** Like mnemopi's banks and zg's `root`: the project is derived from context, never typed by the user. The connection IS the scope.
 
@@ -132,18 +160,35 @@
 - Watcher lifecycle: the watcher is single-project-per-process today (`server.rs:1585-1596`/`:2015-2026`); multi-project attach requires per-project watcher tasks bounded by the same one-indexer-slot budget as FR-ZCP-09.
 - AC: `rm -rf .leankg && query "where is auth handled?"` → immediate non-error response + background index completes within existing SLA; second query hits the graph; a query naming a never-seen repo never returns another repo's data.
 
+**FR-ZCP-13 — First-run setup contract + `leankg add` (Should Have, P1)**
+
+- **One question, asked once.** The first time a user touches a repo with no `.leankg` config (install wizard, first `leankg` CLI call, or the router's L0 response), LeanKG asks exactly one question: **auto or manual?** Auto = init + index + embed (catalog default model) proceed unattended (index/embed always background); manual = `init` only, with `index`/`embed` as explicit commands. The choice persists in `.leankg/config.json` (`{"setup": "auto"|"manual", "embed": bool}`) and governs every later attach; `--auto`/`--manual` flags and `LEANKG_SETUP_MODE` override per invocation for scripts/CI. No silent re-prompting; `leankg setup --reset` re-asks.
+- **Embeddings are a preference, not a prerequisite.** Choosing auto-with-embed on a non-`--features` build (or a machine without the model cache) stores the preference and serves L2/L1 results (the ladder, FR-ZCP-03) while `embed` is pending or unavailable — the answer changes what is *eventually* indexed, never whether queries work.
+- **`leankg add <path> [--embed]`** — the one-command way to grow coverage: registers the repo (registry row once FR-ZCP-09 lands; `.leankg` init today), applies the persisted setup choice (or the flag), returns immediately with `mcp_status`-shaped per-project status. `leankg add .` inside a portfolio parent registers children without indexing them (T0 manifests, FR-ZCP-09). `leankg status` lists everything added with freshness + rung.
+- **Zero dead ends**: `install --target` (FR-ZCP-04) prints the `add`/`index` commands in its output; the L0 router response names the exact next command; error strings carry runnable fixes (FR-ZCP-12 T1).
+- AC: fresh machine + fresh repo → one auto/manual answer → queries work during indexing (`freshness: cold`, L0/L1) → embeddings arrive later with no further user action; `leankg add ../other-repo --embed` from an indexed repo returns < 2 s and other-repo appears in `leankg status` with its own schema; manual-mode users are never auto-indexed.
+
 ### 3.2 Default Toolset (FR-ZCP-03) — **P0**
 
-- One default tool (`leankg_context` — router) whose parameters express intent (`semantic`, `lexical`, `impact`, `graph`, `files`); reuses `orchestrate`'s parser + hot-path cache.
+- One default tool (`leankg_context` — router) whose parameters express intent (`semantic`, `lexical`, `impact`, `graph`, `files`). The router classifies intent **itself** — the existing `QueryOrchestrator` (`src/orchestrator/mod.rs:26-110`, never wired to MCP) covers only 5 file-centric intents (context/impact/dependencies/search/doc) and is demoted to one rung's executor, not the ladder's brain.
 - Portfolio-aware (rides FR-ZCP-09): a query resolved to portfolio scope routes to a child when unambiguous, else answers from T0 manifests with per-child freshness — the router is the single surface for both project and portfolio answers.
+- **Capability probe + degradation ladder (router = the ladder executor):** the rungs already exist as per-tool honest hints — `embeddings_index_available` gating (`handler.rs:4417-4421`, applied `:1934-1935`), `vectors_missing_hint` pointing at `search_code` (`:4800-4811`), low-confidence empty-page fallback with `rejected_reason` (`:4866-4886`) — but no single tool executes them server-side. The router consolidates them: it probes per-project capabilities in < 10 ms (`state.has_any` limit-1 probe `src/embeddings/state.rs:373-381`; HNSW presence via `::relations` `src/db/pg/translate.rs:3209-3227`; `index_inventory.total_vectors`) and runs the best rung the data supports:
+  - **L3 — vector rung** (vectors present): pgvector ANN (`ORDER BY vec <-> $1`) + cross-encoder rerank + BFS traversal — today's `semantic_search` dual path.
+  - **L2 — keyword rung** (no vectors): FTS + trigram/prefix fuzzy (FR-ZCP-05 bridge tier) fused with ontology concepts (`safe_discover.rs:104-211`) — never a bare `ILIKE` dead end.
+  - **L1 — exact rung** (no/cold index): exact identifier + regex over existing graph remnants + nearest-match suggestions.
+  - **L0 — cold rung** (nothing indexed): guidance + background index kick (FR-ZCP-02), `freshness: cold`, non-error.
+  - Every response carries `retrieval: {rung, reason}` beside the `freshness` flag (FR-ZCP-06); capability loss downgrades **ranking, never availability** — the `kg_semantic_context` hard error today (`handler.rs:3975-4036`) is the pattern to delete.
+- **Single source of recommendations:** tool-hint copy moves into the router — today `safe_discover.rs:105-113` still recommends the **pruned** `find_function`/`query_file` (claim rot exactly of the kind FR-ZCP-12 T1 lints), and `search_code`'s stale `recommended_tools` copy duplicates fallback logic. After FR-ZCP-03, exactly one component owns "what to try next"; every other tool references it.
 - Full catalog behind `full` opt-in (CLI flag / env / config); default-set session passes the v3.8.5 probe suite with zero tool-selection errors.
 - AC: fresh-session probes resolve via the router with ≤1 tool call for intent + ≤1 follow-up for detail.
+- AC (ladder): deleting a project's vectors and re-asking the same query returns L2-ranked results with `retrieval: {rung: "keyword"}` — never an error; with no index at all the response is L0 guidance + a started background index, still non-error.
 
 ### 3.3 Search Discipline (FR-ZCP-05/06) — **P1**
 
 **FR-ZCP-05 — Postgres FTS + RRF fusion (Should Have, P1)**
 
 - `tsvector` + GIN on `code_elements(name, qualified_name)` + `knowledge_entries(title, content)`; `websearch_to_tsquery`; RRF-fused with vector scores in `semantic_search`'s dual path (single parameterized `k`); substring/`ILIKE` only as exact escape hatch.
+- **Bridge tier (no FTS required)**: `pg_trgm` GIN on `code_elements(name, qualified_name)` + b-tree `text_pattern_ops` prefixes give L2 fuzzy/prefix matching before FTS ships; trigram similarity powers "did you mean" suggestions; `websearch_to_tsquery` upgrades L2 to ranked FTS when FR-ZCP-05 lands — the ladder (FR-ZCP-03) targets the best tier available per schema.
 - AC: lexical anchor queries rank real identifiers above noise; no F1 regression on the cross-tool suite.
 
 **FR-ZCP-06 — Freshness contract (Should Have, P1)**
@@ -156,6 +201,7 @@
 
 - `leankg install --target opencode|claude|codex|cursor|omp`: idempotent MCP-config writer — **URL contains no `?project=`** (FR-ZCP-01 makes it unnecessary); Docker deployments emit container-mount guidance; optional `--register-cwd` writes the session-registration hook.
 - AC: install in a repo → fresh agent session → tools work, correct project, zero manual URL edits.
+- Claims + env hygiene (FR-ZCP-12 T1): the install path publishes **zero unverifiable claims** — every "zero-config"/"no-setup" sentence in README/docs names the script or CI job that executes it literally; the `LEANKG_*` env inventory (116 names today: 88 runtime + 28 script-only + 1 docs-only) is documented in one table and the happy path requires **zero** of them beyond the one hard prerequisite (`LEANKG_PG_URL`); `mcp_install`/`connect` emit **exactly one JSON block** per client, byte-identical to the docs snippet (snapshot-tested).
 
 ### 3.5 Memory-Backend Adjacency (FR-ZCP-07) — **P1**
 
@@ -211,6 +257,19 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 - **Single-flight indexing** (zg: `JobScheduler.activeByRoot` coalescing + cross-process `{pid, hostname, instanceToken}` lease file with heartbeat/stale-PID adoption): one index/embed job per project root; concurrent MCP queries attach to the running job instead of duplicating it (FR-ZCP-02's background indexer + FR-ZCP-09's one-indexer-slot budget).
 - AC: flipping the model stamp in a project's DB without re-embedding → next `semantic_search` errors with the rebuild hint (never mixed-model results); `touch`-ing a file without content change → rehash confirms fresh, zero re-embed; truncation counter appears in `mcp_status` after indexing a file with an over-budget chunk; two concurrent `embed` runs on one project → one runs, one coalesces.
 
+### 3.9 Measured Simplicity (FR-ZCP-12) — **P1, young-product adoption contract**
+
+**Narrative.** LeanKG is young; adoption is won by products that are simple *and measurably* simple. The friction audit (2026-09-04) put numbers on the debt: **76/73 MCP tools** (exact-count CI-pinned, `src/mcp/tools.rs:1156-1160` — two pruning rounds already went 87→76, so the momentum exists), **103 CLI verbs** (`src/cli/mod.rs`), **116 `LEANKG_*` env names** (~5 first-run relevant), a **10-step / 8-decision** first-value walkthrough, error copy that fails the two-question rule (`Unauthorized`, `Unknown tool`), and a README saying "85+ tools" while the registry pins 76. Competitors set the bar: zg = 1 default tool (6 full) + freshness + install; context7 = 2 tools; Supabase publishes "under 2 minutes"; Stripe ships ~200 error codes each with `code` + `doc_url`; clig.dev: suggest the next command, never dead-end. Per the 2025 Stack Overflow survey, 46% of developers actively distrust AI-tool accuracy — LeanKG's consumers are verification-hungry agents that reward deterministic, low-friction surfaces.
+
+**FR-ZCP-12 — Measured-simplicity contract (Should Have, P1)** — three tiers, ordered cheap-first:
+
+- **T1 — Error & config honesty (cheap; ship first).** Every user-facing CLI + MCP error carries a **stable code, a human cause clause, and a runnable fix** naming the concrete command/flag/env var, plus a doc anchor — Stripe's `code`+`doc_url` model; clig.dev's "what went wrong + how do I fix it". Immediate victims from the audit: `Unauthorized` (say which env/flag sets the token), `Unknown tool` (suggest the nearest match + the `full` catalog hint), low-confidence empty pages (link the fallback tool). CI lints: error variants enumerated from source vs a catalog (100% coverage); fix-clause lint on every error string (allowlist shrinks, never grows). Config surface: one copy-paste JSON block per client (FR-ZCP-04), docs snippet byte-identical to generated (snapshot test); every "zero-config" claim maps to a named script/CI job that runs it literally (Vercel pattern) — unverified claims get deleted, not footnoted.
+- **T2 — Published, CI-timed time-to-first-value.** The happy path (`install → leankg init → leankg mcp-http → one JSON config block → first useful query`) is measured in CI on a fresh cold environment and the number is **published** in README + quickstart. Target: **first useful MCP query ≤ 5 minutes** (embeddings stay out of the promise; Supabase's "under 2 minutes" and Convex's 7-step one-command path are the reference bar; zg publishes no TTFV number at all — publishing one wins mindshare). If measurement says worse, the PRD number changes, not the test.
+- **T3 — CI-pinned default-tool budget (rides FR-ZCP-03).** The default MCP surface is a **numbered budget**, not an accident: ≤ **12 tools** at default `initialize` (5 lifecycle/setup: init, index, status, install, doctor; ~7 core query tools), everything else behind `full` opt-in. The existing exact-count drift test (`src/mcp/tools.rs:1156-1160`) is extended from "no drift" to "budgeted tiering" — interim step (cheap, no behavior change): every tool description carries a `Tier:` marker; tiered `initialize` advertisement per client capability follows FR-ZCP-03's router (expensive; gated on the interim accounting proving out).
+- AC-T1: 100% of error variants resolve to a catalog entry with doc anchor; every error string contains cause + runnable fix; docs config block == generated block (CI snapshot); zero unverifiable zero-config claims.
+- AC-T2: CI times the cold happy path end-to-end; README publishes the measured number; a regression above 5 min fails the gate.
+- AC-T3: tool count at default `initialize` ≤ 12 (CI-enforced); every tool has a tier assignment (missing tier fails CI); `full` opt-in restores today's complete catalog.
+
 
 ---
 
@@ -221,7 +280,7 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 | Transport | axum HTTP MCP (`/mcp`) + stdio; Bearer + DB token store; `?project=` routing | Resolution layer **in front of** routing (FR-ZCP-01); `?project=` demoted to escape hatch |
 | Storage | PostgreSQL + pgvector, **one database, schema-per-project** (`leankg_p_<hex(canonical root)>`; per-connection `search_path` pin, per-schema migrations + HNSW) | Registry table + portfolio scope + cross-schema portfolio queries (FR-ZCP-09); fleet reconciliation (FR-ZCP-10) |
 | Indexing/embeddings | tree-sitter graph + optional embeddings (`--features embeddings`), incremental watcher — single-project-per-process, inline `ensure_project_indexed`; per-model collections exist but **no model stamp/guard** on the vectors | Lazy auto-attach + **background** first index (FR-ZCP-02); tiers T0/T1/T2 + one indexer slot + hot-set LRU (FR-ZCP-09); pinned catalog + model-stamped vectors + rebuild guard + single-flight (FR-ZCP-11) |
-| Tools | ~76 tools, `orchestrate` router exists | Default toolset = 1 router (FR-ZCP-03); portfolio-scoped answers from T0 manifests |
+| Tools | **76/73 MCP tools** exact-count CI-pinned (`src/mcp/tools.rs:1156-1160`), no router tool registered; no TTFV number published; no error catalog; README says "85+" | Default toolset = 1 router (FR-ZCP-03); simplicity contract: tiered budget ≤ 12 default tools, published TTFV, error code+fix catalog (FR-ZCP-12); portfolio-scoped answers from T0 manifests |
 | Memory | RecallStore = **JSONL files** under `<project>/.leankg/` (read path complete; write path dead — v3.8.8 audit); `knowledge_entries` per-schema PG | `session_retain` + auto-recall live (FR-ZCP-07, rides FR-SMA-01..04); portfolio memory federation (FR-ZCP-09) |
 
 **Trust boundaries unchanged:** loopback-only HTTP by default; Bearer auth independent of any remote embedding (LeanKG has no remote embedding).
@@ -232,15 +291,16 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 
 | Milestone | Scope | Gate |
 |---|---|---|
-| **M1 — Zero-config attach** | FR-ZCP-01, FR-ZCP-02 | New repo, zero config → correct answers; no "not initialized" failures |
-| **M2 — One-tool surface** | FR-ZCP-03 (+04) | Default set = 1 tool; v3.8.5 probe suite passes; `install --target` writes project-less URLs |
+| **M1 — Zero-config attach** | FR-ZCP-01, FR-ZCP-02, FR-ZCP-13 | New repo, zero config → correct answers; no "not initialized" failures; one setup question (auto/manual) honored everywhere; `leankg add` returns instantly with status |
+| **M2 — One-tool surface** | FR-ZCP-03 (+04) | Default set = 1 router tool; ladder degrades L3→L0 with `retrieval` provenance and zero hard errors; v3.8.5 probe suite passes; `install --target` writes project-less URLs |
 | **M3 — Honest search** | FR-ZCP-05, FR-ZCP-06 | FTS ranking + freshness in every response; no F1 regression |
 | **M4 — Harness memory** | FR-ZCP-07 (rides FR-SMA-01..04) | retain → recall round-trip works in OMP + OpenCode sessions; mnemopi-compatible bank/cursor contract verified against OMP session resume |
 | **M5 — Defensible evidence** | FR-ZCP-08 | Pinned, ≥3-trial, judge-blind cross-tool report published |
 | **M6 — Org-scale portfolio** | FR-ZCP-09, FR-ZCP-10 | 100-repo parent: registry rows ≠ indexed repos; portfolio queries answer from manifests; no eager indexing; `doctor --deep` reports fleet drift |
 | **M7 — Embedding correctness** | FR-ZCP-11 | Model-stamp mismatch → explicit rebuild error, never mixed-model results; rehash-confirms-fresh; truncation accounting in `mcp_status` |
+| **M8 — Measured simplicity** | FR-ZCP-12 (T1 immediately; T2/T3 after M1/M2) | Error catalog 100% + fix clauses CI-linted; README publishes the CI-timed TTFV; default-tool budget CI-enforced |
 
-Order: M1 → M2 → M3 → M4 → M5 → M6 → M7. M1 and M2 are the adoption blockers; M3/M4 are quality gates; M5 is evidence; M6 is the org-scale moat; M7 hardens the embedding layer that M6's tiers depend on.
+Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (error/config honesty) pulled forward immediately — it is docs-and-strings-cheap and multiplies every later milestone's adoption. M1 and M2 are the adoption blockers; M3/M4 are quality gates; M5 is evidence; M6 is the org-scale moat; M7 hardens the embedding layer that M6's tiers depend on; M8 keeps the young product honest about its own surface. The router ladder (M2) and the setup contract (M1) are the "fits every scenario" story: any repo, any capability state, one tool, no dead ends.
 
 ---
 
@@ -250,8 +310,10 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7. M1 and M2 are the adoption 
 |---|---|
 | Project resolution overhead | < 5 ms per connection (cached) |
 | First-query-on-unindexed-repo | Non-error response < 500 ms; background index per existing SLA |
+| Router capability probe | < 10 ms per request (limit-1 probe + catalog reads; cached per connection between cwd changes) |
+| Ladder degradation | Same query returns non-error results at every rung L0–L3; `retrieval: {rung, reason}` on 100% of index-backed responses; zero "not initialized"/no-vector hard errors in the default toolset |
 | Default toolset surface | ≤ 1 tool in `agent` toolset; full catalog behind explicit opt-in |
-| Freshness honesty | 100% of index-backed responses carry `freshness` |
+| Default toolset surface (T3) | ≤ 12 tools at default `initialize` (CI-enforced budget); every tool tier-tagged; `full` opt-in restores the complete catalog (FR-ZCP-03's router is the end-state: ≤ 1) |
 | Storage | PostgreSQL + pgvector only — one database, schema-per-project; the registry is the project SoT |
 | MCP HTTP | loopback by default; Bearer + DB-backed access-token store |
 | Portfolio attach (T0) | One registry INSERT + depth-limited manifest scan; zero eager indexing |
@@ -259,6 +321,10 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7. M1 and M2 are the adoption 
 | Model-stamp integrity | 100% of vector collections carry `{model_id, revision, dimensions, distance, provider}`; mismatch → explicit rebuild error on query/append, never mixed-model results |
 | Embedding batch validation | 100% of embed/import batches validated (count, dimension, finiteness); truncations counted and surfaced via `mcp_status` |
 | Single-flight indexing | ≤1 active index/embed job per project root; concurrent requests coalesce |
+| Error contract (T1) | 100% of CLI+MCP error variants: stable code + cause clause + runnable fix + doc anchor; CI lints every string; allowlisted exceptions shrink, never grow |
+| Time-to-first-value (T2) | Cold happy path (install → init → serve → one JSON config block → first useful query) ≤ 5 min, CI-timed on a fresh environment, number published in README |
+| Claim hygiene (T1) | Every "zero-config"-class README/docs claim maps to a named script or CI job that executes it literally; claims without a passing script are deleted |
+| Setup friction (FR-ZCP-13) | Exactly one auto/manual question per user, persisted; `leankg add` returns < 2 s; manual mode never auto-indexes |
 
 ## 7. Historical Record
 
@@ -270,5 +336,7 @@ All superseded material is preserved and linked, not deleted:
 - **OMP memory-integration draft (2026-09-03):** [`archive/planning/2026-09-03-leankg-omp-memory-integration-draft.md`](archive/planning/2026-09-03-leankg-omp-memory-integration-draft.md)
 - **Design/ERD/architecture docs:** [`archive/design/`](archive/design/), [`archive/erd.md`](archive/erd.md), [`archive/architecture.md`](archive/architecture.md)
 - **OMP memory-backend + zvec-grep embedding audits (2026-09-04, installed-source @ `node_modules/@oh-my-pi/*`, zvec-grep main@d756cc7):** findings folded into this PRD (§3.1, §3.5, §3.8); full citations inline
+- **Simplicity research sprint (2026-09-04, three parallel scouts):** repo friction audit (file:line — 76/73 tools, 103 CLI verbs, 116 env names, 10-step walkthrough, error-copy gaps); competitor mechanics (zg, context7, serena, Desktop Commander, gitleaks — live-fetched URLs); onboarding playbooks (Supabase/Convex TTFV, Stripe error codes, clig.dev, Vercel, Stack Overflow 2025) → findings folded into §2.6, §3.9 (FR-ZCP-12), §5 M8, §6
+- **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 
-*Last updated: 2026-09-04 (v4.1.1 — OMP memory-backend audit (closed enum; mnemopi bank/cursor/injection contract; roots/list cwd channel) + zvec-grep embedding-correctness audit → FR-ZCP-11; FR-ZCP-01/07 rewritten on installed-source evidence)*
+*Last updated: 2026-09-04 (v4.3.0 — one-tool degradation ladder (L0–L3, `retrieval` provenance) + first-run setup contract FR-ZCP-13 (auto/manual + `leankg add`) + FR-ZCP-05 bridge tier; v4.2.0 — measured-simplicity contract → FR-ZCP-12 T1/T2/T3 + M8 + D-2026-09-04-3; v4.1.1 — OMP memory-backend audit + zvec-grep embedding-correctness audit → FR-ZCP-11)*
