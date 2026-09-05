@@ -100,6 +100,13 @@
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
 
-*Last updated: 2026-09-05 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (6 sprint rows; 9 DONE total incl. 3 prior); open inventory: 1 IN_PROGRESS + 35 TODO (9 live incl. FR-ZCP-05/12 remainders + 26 carry-forward) = 36 open; full 585-ID history in archive.*
+*Last updated: 2026-09-05 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (6 sprint rows; 9 DONE total incl. 3 prior); v4.3.1 hard one-tool cutover (commit 72ee5fc9, PR #268): registry = 1 tool, FR-ZCP-03 end-state DONE, FR-ZCP-12 T3 re-scoped to the one-tool CI invariant; open inventory: 1 IN_PROGRESS + 35 TODO (9 live incl. FR-ZCP-05/12 remainders + 26 carry-forward) = 36 open; full 585-ID history in archive.*
+
+## Repo hygiene (non-PRD)
+
+| Item | Detail |
+|------|--------|
+| Dependabot backlog | 22 vulnerabilities flagged on default branch (14 high, 7 moderate, 1 low) as of 2026-09-05 — https://github.com/FreePeak/LeanKG/security/dependabot; PR #264 remediated the Cargo-side set, the remainder are npm/ui-v2-side; not tied to a FR |
+| Pre-existing integration-test hangs | `test_mcp_index`, `test_mcp_index_docs` (tests/mcp_tools_full_tests.rs) and `handle_reuse_tests::index_tool_keeps_shared_handle` (tests/mcp_tests.rs) hang at baseline HEAD too (verified via clean worktree 2026-09-05) — full-index-in-test family; CI gates on `cargo test --lib` so they never block CI; separate fix (TempDir-seeded rewrite or `#[ignore]`) queued outside the cutover |
 
 
