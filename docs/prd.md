@@ -231,7 +231,7 @@
 
 **Zero dead ends.** `install` output always prints the next step: if the cwd project is unregistered, print `leankg add <cwd>`; always print "restart the client". The MCP `mcp_install` verb keeps its project-local behavior (`.mcp.json` + instructions) and gains the same project-less URL contract.
 
-**Env hygiene (FR-ZCP-12 T1).** The `LEANKG_*` inventory (116 names today: 88 runtime + 28 script-only + 1 docs-only) is documented in one table, generated from source and CI-pinned; the happy path requires **zero** env vars beyond the one hard prerequisite (`LEANKG_PG_URL`). Every "zero-config"/"no-setup" sentence in README/docs names the script or CI job that executes it literally.
+**Env hygiene (FR-ZCP-12 T1).** The `LEANKG_*` inventory is documented in one table, generated from source and CI-pinned — the table itself is the single source of truth for the count (a hand-typed total here would be exactly the unverifiable claim this AC polices; the last manual figure, "116 = 88+28+1", summed to 117 and matched no derivation). The happy path requires **zero** env vars beyond the one hard prerequisite (`LEANKG_PG_URL`). Every "zero-config"/"no-setup" sentence in README/docs names the script or CI job that executes it literally.
 
 **Config-block parity.** `install`/`connect`/`mcp_install` emit **exactly one JSON (or TOML) block** per client, byte-identical to the docs snippet — snapshot-tested per target.
 
