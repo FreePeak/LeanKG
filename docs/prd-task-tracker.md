@@ -11,11 +11,11 @@
 | Status | Count |
 |--------|------:|
 | IN_PROGRESS | 1 |
-| TODO | 34 (8 live + 26 carry-forward) |
+| TODO | 35 (9 live + 26 carry-forward) |
 | DONE | 7 |
-| Open work | 35 |
+| Open work | 36 |
 
-**Inventory note (ID-level accounting):** the archived tracker holds **40 open inventory items** (35 master-table `NOT_DONE`/`PENDING`/`PARTIAL`/`OPEN` IDs + 5 `FR-HEA-*` section-table rows). All 40 are accounted for below: FR IDs appear as named rows; each paired `US-*` tracks with its FR (the archive itself pairs them `US-X / FR-X` as one work item); `FR-ZG-01..05` + `US-ZG-01..05` + `FR-B05` are superseded inside the live `FR-ZCP-*` rows (Supersedes column); `FR-HEA-05` is DONE (v4.0.0 §1 cutover). `FR-ZCP-09/10/11/12/13` are **new in v4.1.x–v4.3.0** (no archive IDs). Row-level open work = 1 IN_PROGRESS + 8 live + 26 carry-forward = 35. (The 26 carry-forward rows cover 35 archived open IDs: 3 rows pair multiple US stories with their FR; the inventory not…
+**Inventory note (ID-level accounting):** the archived tracker holds **40 open inventory items** (35 master-table `NOT_DONE`/`PENDING`/`PARTIAL`/`OPEN` IDs + 5 `FR-HEA-*` section-table rows). All 40 are accounted for below: FR IDs appear as named rows; each paired `US-*` tracks with its FR (the archive itself pairs them `US-X / FR-X` as one work item); `FR-ZG-01..05` + `US-ZG-01..05` + `FR-B05` are superseded inside the live `FR-ZCP-*` rows (Supersedes column); `FR-HEA-05` is DONE (v4.0.0 §1 cutover). `FR-ZCP-09/10/11/12/13` are **new in v4.1.x–v4.3.0** (no archive IDs). Row-level open work = 1 IN_PROGRESS + 9 live + 26 carry-forward = 36. (The 26 carry-forward rows cover 35 archived open IDs: 3 rows pair multiple US stories with their FR; the inventory not…
 
 | Milestone | Live items | Carry-forward items | Status |
 |---|---|---|---|
@@ -59,6 +59,8 @@
 | FR-ZCP-09 | Project registry (`public.leankg_projects`) + portfolio scope (T0 manifest inventory, per-child freshness) + cross-schema portfolio queries + memory federation; one indexer slot, hot-set cap, LRU detach-to-cold | **P1** | M6 | — |
 | FR-ZCP-10 | Per-schema migration fleet reconciliation + `doctor --deep` drift check (per-schema ledgers today, nothing fleet-wide) | P2 | M6 | — |
 | FR-ZCP-11 | Embedding correctness ported from zvec-grep: pinned model catalog (commit revision + query/document prefixes), model-stamped vectors + hard rebuild guard, chunker-version coupling, 3-signal change detection, per-file atomic replace + truncation accounting, watcher reconciliation, single-flight indexing | **P1** | M7 | FR-EMBED-R4 (supersedes the aspirational perf-only goal with a correctness contract) |
+| FR-ZCP-05 (remainder) | Postgres FTS: `tsvector` + GIN, `websearch_to_tsquery`, RRF fusion in `semantic_search` — the L2 rung's FTS half beyond the landed trgm bridge | P1 | M3 | FR-ZG-02, US-ZG-02 |
+| FR-ZCP-12 (remainder) | Measured-simplicity T2 (CI-timed published TTFV ≤ 5 min) + T3 (CI-pinned default-tool budget ≤ 12, tier-tagged) — T1 error catalog already DONE | P1 | M8 | — |
 
 ## Todo — carry-forward from archive (original IDs preserved)
 
@@ -98,7 +100,6 @@
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
 
----
+*Last updated: 2026-09-05 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (7 rows); open inventory: 1 IN_PROGRESS + 35 TODO (9 live incl. FR-ZCP-05/12 remainders + 26 carry-forward) = 36 open; full 585-ID history in archive.*
 
-*Last updated: 2026-09-04 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (7 rows); open inventory: 1 IN_PROGRESS + 34 TODO (8 live + 26 carry-forward) = 35 open; full 585-ID history in archive.*
 
