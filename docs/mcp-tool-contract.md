@@ -2,7 +2,7 @@
 
 # MCP Tool Contract
 
-Regenerated from `src/mcp/tools.rs` (`ToolRegistry::list_tools`). **1 tools.**
+Regenerated from `src/mcp/tools.rs` (`ToolRegistry::list_tools`). **3 tools.**
 To change the surface: edit the registry, run `scripts/gen_tool_contract.sh`, commit both.
 
 ## Stability tiers
@@ -31,4 +31,6 @@ Removed tools, their removal release, and the surviving replacement surface.
 
 | Tool | Tier | Since | Purpose | Input schema |
 |------|------|-------|---------|--------------|
-| `leankg_context` | unreleased | beta | Tier: core. The one LeanKG tool. Ask any question about the indexed codebase — intent is auto-classified (semantic \| lexical \| impact \| graph \| files) and served by a capability ladder: L3 vector (ANN + rerank), L2 keyword (trigram fuzzy + ontology), L1 exact (identifier/regex + did-you-mean), L0 cold (guidance + background index). Degrades ranking, never availability; every response carries retrieval {rung, reason, freshness}. Direct capability access: pass `verb` with any former tool name (e.g. \"get_impact_radius\", \"query_graph\", \"mcp_status\") plus its usual arguments; omit `verb` for natural-language routing. | (none) |
+| `set` | unreleased | beta | Tier: core. Import a repository (or a directory of nested repos) into the knowledge graph and manage writes. Actions: `index` (full index of path, default when omitted), `incremental` (delta re-index), `attach` (register an already-indexed repo), `index_docs`, `install` (write client config), `add_knowledge`, `update_knowledge`, `delete_knowledge`, `add_annotation`, `add_documentation`, `link_element`, `add_ontology_concept`, `add_ontology_workflow`, `delete_ontology_concept`, `promote_environment`, `embed` (build HNSW vectors), `set_embed_model`, `agent_diary_write`, `report_query_outcome`, `agent_focus`, `index_prd`, `export_graph_snapshot`, `export_html`, `generate_doc`. Pass action-specific arguments as top-level fields. | `action:string, path:string, project:string` |
+| `get` | unreleased | beta | Tier: core. Query the knowledge graph with multiple layers — the capability ladder auto-selects: L3 vector (ANN + rerank), L2 keyword (trigram fuzzy + ontology), L1 exact (identifier/regex + did-you-mean), L0 cold (guidance). Degrades ranking, never availability; every response carries retrieval {rung, reason, freshness}. With no `query`/`action`, serves the natural-language router. Direct capability access: pass `action` with any read capability (e.g. \"search_code\", \"get_impact_radius\", \"query_graph\", \"get_architecture\", \"explain_node\", \"kg_context\", \"temporal_query\") plus its usual arguments. | `query:string, action:string, layer:string, limit:integer, full:boolean, project:string` |
+| `status` | unreleased | beta | Tier: core. Knowledge-graph health and inventory: index freshness, element/relationship counts, embedding coverage + model, indexing state (idle/indexing), storage backend (sqlite\|postgres), watch/vacuum status. Read-only; safe on cold or missing indexes. | `project:string` |
