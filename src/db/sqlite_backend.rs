@@ -1162,6 +1162,87 @@ impl DbBackend for SqliteBackend {
         Ok(())
     }
 
+    // Knowledge CRUD on Cozo relations — same Datalog the pre-v0.20 codebase
+    // ran natively; SQLite storage just persists it to the .db file.
+    fn upsert_knowledge_entry(
+        &self,
+        entry: &crate::db::models::KnowledgeEntry,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tags = entry.tags.replace('"', "\\\"");
+        let script = format!(
+            r#"?[knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <-
+                [["{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", {}, {}]] :put knowledge_entries {{id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}}"#,
+            entry.id,
+            entry.knowledge_type,
+            entry.title.replace('"', "\\\""),
+            entry.element_qualified.as_deref().unwrap_or(""),
+            entry.user_story_id.as_deref().unwrap_or(""),
+            entry.feature_id.as_deref().unwrap_or(""),
+            tags,
+            entry.environment,
+            entry.branch.as_deref().unwrap_or(""),
+            entry.author.replace('"', "\\\""),
+            entry.created_at,
+            entry.updated_at
+        );
+        run_script(&self.db, &script, Default::default())?;
+        Ok(())
+    }
+
+    fn find_knowledge_entry(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        let script = format!(
+            r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] :=
+                *knowledge_entries{{id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}},
+                id = "{}""#,
+            id
+        );
+        let rows = run_script(&self.db, &script, Default::default())?;
+        if rows.rows.is_empty() {
+            return Ok(None);
+        }
+        let r = &rows.rows[0];
+        let g = |i: usize| {
+            r.get(i)
+                .and_then(|v| match v {
+                    crate::db::value::DataValue::Str(s) => Some(s.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+        let n = |i: usize| {
+            r.get(i)
+                .and_then(|v| match v {
+                    crate::db::value::DataValue::Num(crate::db::value::Num::Int(x)) => Some(*x),
+                    _ => None,
+                })
+                .unwrap_or(0)
+        };
+        Ok(Some(crate::db::models::KnowledgeEntry {
+            id: g(0),
+            knowledge_type: g(1),
+            title: g(2),
+            content: g(3),
+            element_qualified: (!g(4).is_empty()).then(|| g(4)),
+            user_story_id: (!g(5).is_empty()).then(|| g(5)),
+            feature_id: (!g(6).is_empty()).then(|| g(6)),
+            tags: g(7),
+            environment: g(8),
+            branch: (!g(9).is_empty()).then(|| g(9)),
+            author: g(10),
+            created_at: n(11),
+            updated_at: n(12),
+        }))
+    }
+
+    fn delete_knowledge_entry_by_id(&self, id: &str) -> Result<bool, Box<dyn std::error::Error>> {
+        let script = format!(r#":rm knowledge_entries {{"{id}"}}"#);
+        run_script(&self.db, &script, Default::default())?;
+        Ok(true)
+    }
+
     // FR-ZCP-05 on SQLite: CozoDB's `regex_matches` provides the same
     // name-recall the PG trgm/ILIKE path gives; ranking by name is a
     // deliberate simplification (trigram ranking is PG-only for now).

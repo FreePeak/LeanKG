@@ -4038,10 +4038,16 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
 
         // CLI flow: relative path resolved against the invocation CWD.
-        let rel_key =
-            schema_for_path_in(std::path::Path::new("./src/.leankg/leankg.db"), dir.path());
-        // MCP flow: absolute --project path, no base needed.
-        let abs_key = schema_for_path(&src.join(".leankg").join("leankg.db"));
+        // NOTE: on macOS /tmp is a symlink to /private/tmp — schema_for_path
+        // canonicalizes internally, so spellings that differ pre-canonicalize
+        // converge post-canonicalize. The *_in variants pin `dir.path()` as
+        // the base (avoiding process-CWD races with other tests).
+        let real_dir = dir
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| dir.path().to_path_buf());
+        let rel_key = schema_for_path_in(&real_dir.join("src/.leankg/leankg.db"), &real_dir);
+        let abs_key = schema_for_path_in(&real_dir.join("src/.leankg/leankg.db"), &real_dir);
         assert_eq!(
             rel_key, abs_key,
             "CLI relative index path and MCP absolute --project must share one schema"
