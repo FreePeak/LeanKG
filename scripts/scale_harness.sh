@@ -120,6 +120,9 @@ say "   elements indexed: $ELEMENTS"
 [ "$ELEMENTS" -gt 500 ] && ok "element count plausible for fixture ($ELEMENTS)" || bad "element count too low ($ELEMENTS)"
 # Auto-derive mega threshold so the assertion holds at any fixture size.
 if [ "$MEGA_THRESHOLD" -eq 0 ]; then MEGA_THRESHOLD=$((ELEMENTS / 2)); fi
+# ELEMENTS=0 is numeric (passes the guard above) but derives 0, which would
+# make every graph mega and PASS the refusal vacuously — refuse to proceed.
+test "$MEGA_THRESHOLD" -ge 1 || { bad "mega threshold derived as $MEGA_THRESHOLD (elements=$ELEMENTS) — refusal assertion would be vacuous"; exit 1; }
 say "   mega threshold: $MEGA_THRESHOLD"
 
 say "4. nested-repo coverage: every repo from the manifest contributed elements"
