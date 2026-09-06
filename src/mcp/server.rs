@@ -3413,7 +3413,7 @@ impl MCPServer {
         // The envelope is unwrapped BEFORE any gate (read-only, write-lock,
         // audit) so verb-scoped security decisions cannot be bypassed by
         // hiding a write verb inside a read-named envelope.
-        let (capability, inner) = crate::mcp::tools::resolve_envelope(tool_name, &arguments)?;
+        let (capability, inner) = crate::mcp::tools::resolve_3tool(tool_name, &arguments)?;
         self.execute_capability(&capability, inner).await
     }
 
@@ -4528,7 +4528,7 @@ async fn process_jsonrpc_request(
             // verb by hiding it inside the read-named `leankg_context`
             // envelope. Unknown names/verbs fail here with the catalog error.
             let (capability, mut arguments) =
-                match crate::mcp::tools::resolve_envelope(
+                match crate::mcp::tools::resolve_3tool(
                     tool_name,
                     params_obj
                         .get("arguments")
@@ -6045,7 +6045,7 @@ mod tests {
             serde_json::Value::String(tmp.path().join("nope").to_string_lossy().to_string()),
         );
         let result = server
-            .execute_tool("leankg_context", verb_args(args, "mcp_status"))
+            .execute_tool("status", verb_args(args, "mcp_status"))
             .await;
         std::env::remove_var("LEANKG_AUTO_ATTACH");
         let err = result.expect_err("unknown project under opt-out must error");
@@ -6105,7 +6105,7 @@ mod tests {
             serde_json::Value::String(repo.to_string_lossy().to_string()),
         );
         let result = server
-            .execute_tool("leankg_context", verb_args(args, "mcp_status"))
+            .execute_tool("status", verb_args(args, "mcp_status"))
             .await;
         let v = result.expect("first query in a fresh repo must NOT error");
         assert_eq!(v["freshness"], serde_json::json!("cold"), "{v}");

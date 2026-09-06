@@ -4,29 +4,173 @@ use serde_json::Value;
 pub struct ToolRegistry;
 
 impl ToolRegistry {
-    /// Hard one-tool cutover (FR-ZCP-03 end-state): exactly one registered
-    /// MCP tool. Every capability (all former tool names) rides the envelope
-    /// as an optional `verb` argument; omitting `verb` uses the
-    /// natural-language router. Verb dispatch is enforced by
-    /// `resolve_envelope` at the server boundary.
+    /// Three-tool surface (FR-3T-01, v4.4.0): `set` / `get` / `status`.
+    /// The verb namespace (legacy tool names) survives as per-tool `action`
+    /// values; `get` with no `action` uses the natural-language router.
     pub fn list_tools() -> Vec<ToolDefinition> {
-        vec![ToolDefinition {
-            name: "leankg_context".to_string(),
-            description: "Tier: core. The one LeanKG tool. Ask any question about the indexed codebase — intent is auto-classified (semantic | lexical | impact | graph | files) and served by a capability ladder: L3 vector (ANN + rerank), L2 keyword (trigram fuzzy + ontology), L1 exact (identifier/regex + did-you-mean), L0 cold (guidance + background index). Degrades ranking, never availability; every response carries retrieval {rung, reason, freshness}. Direct capability access: pass `verb` with any former tool name (e.g. \"get_impact_radius\", \"query_graph\", \"mcp_status\") plus its usual arguments; omit `verb` for natural-language routing.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Natural-language question, identifier, path, or graph/impact question (router path; omit when using verb)"},
-                    "verb": {"type": "string", "description": "Optional direct capability (any former LeanKG tool name, e.g. get_impact_radius, query_graph, search_code, mcp_status); remaining arguments are passed to that capability unchanged"},
-                    "intent": {"type": "string", "enum": ["semantic", "lexical", "impact", "graph", "files"], "description": "Optional explicit intent; defaults to auto-classification from the query shape (router path only)"},
-                    "limit": {"type": "integer", "default": 20, "description": "Max results (1-50) for the router path"},
-                    "full": {"type": "boolean", "default": false, "description": "Router path: file/impact intents return full compressed context instead of a page"},
-                    "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
-                },
-                "required": []
-            }),
-        }]
+        vec![
+            ToolDefinition {
+                name: "set".to_string(),
+                description: "Tier: core. Import a repository (or a directory of nested repos) into the knowledge graph and manage writes. Actions: `index` (full index of path, default when omitted), `incremental` (delta re-index), `attach` (register an already-indexed repo), `index_docs`, `install` (write client config), `add_knowledge`, `update_knowledge`, `delete_knowledge`, `add_annotation`, `add_documentation`, `link_element`, `add_ontology_concept`, `add_ontology_workflow`, `delete_ontology_concept`, `promote_environment`, `embed` (build HNSW vectors), `set_embed_model`, `agent_diary_write`, `report_query_outcome`, `agent_focus`, `index_prd`, `export_graph_snapshot`, `export_html`, `generate_doc`. Pass action-specific arguments as top-level fields.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "description": "What to do (default: index the repo/path). Legacy capability names are accepted as actions."},
+                        "path": {"type": "string", "description": "Repository or nested directory of repos to import/index"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "get".to_string(),
+                description: "Tier: core. Query the knowledge graph with multiple layers — the capability ladder auto-selects: L3 vector (ANN + rerank), L2 keyword (trigram fuzzy + ontology), L1 exact (identifier/regex + did-you-mean), L0 cold (guidance). Degrades ranking, never availability; every response carries retrieval {rung, reason, freshness}. With no `query`/`action`, serves the natural-language router. Direct capability access: pass `action` with any read capability (e.g. \"search_code\", \"get_impact_radius\", \"query_graph\", \"get_architecture\", \"explain_node\", \"kg_context\", \"temporal_query\") plus its usual arguments.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Natural-language question, identifier, path, or graph/impact question"},
+                        "action": {"type": "string", "description": "Optional direct read capability (any read verb, e.g. search_code, get_impact_radius, query_graph, get_architecture); remaining arguments pass through unchanged"},
+                        "layer": {"type": "string", "enum": ["auto", "exact", "keyword", "semantic", "graph"], "description": "Optional layer override; defaults to auto-classification from the query shape"},
+                        "limit": {"type": "integer", "default": 20, "description": "Max results (1-50) for the router path"},
+                        "full": {"type": "boolean", "default": false, "description": "Router path: return full compressed context instead of a page"},
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": []
+                }),
+            },
+            ToolDefinition {
+                name: "status".to_string(),
+                description: "Tier: core. Knowledge-graph health and inventory: index freshness, element/relationship counts, embedding coverage + model, indexing state (idle/indexing), storage backend (sqlite|postgres), watch/vacuum status. Read-only; safe on cold or missing indexes.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "project": {"type": "string", "description": "Optional: project path (resolves to nearest .leankg directory)"}
+                    },
+                    "required": []
+                }),
+            },
+        ]
     }
+}
+
+/// The 3-tool surface (FR-3T-01).
+pub const TOOL_SET: &str = "set";
+pub const TOOL_GET: &str = "get";
+pub const TOOL_STATUS: &str = "status";
+
+/// Route a legacy capability name to its owning tool. Everything not
+/// classified as a set-mutation or status verb lands in `get` (reads).
+pub fn owning_tool(capability: &str) -> &'static str {
+    match capability {
+        "mcp_init"
+        | "mcp_index"
+        | "mcp_index_docs"
+        | "mcp_install"
+        | "embed_control"
+        | "set_embed_model"
+        | "add_knowledge"
+        | "update_knowledge"
+        | "delete_knowledge"
+        | "add_annotation"
+        | "link_element"
+        | "add_documentation"
+        | "promote_environment"
+        | "add_ontology_concept"
+        | "add_ontology_workflow"
+        | "delete_ontology_concept"
+        | "agent_diary_write"
+        | "report_query_outcome"
+        | "agent_focus"
+        | "index_prd"
+        | "export_graph_snapshot"
+        | "export_html"
+        | "generate_doc" => TOOL_SET,
+        "mcp_status" => TOOL_STATUS,
+        _ => TOOL_GET,
+    }
+}
+
+/// Map (tool, action-or-legacy-verb) to the effective capability.
+///
+/// Resolution order per tool:
+/// * `set`:   `action` (default "index") — legacy verbs accepted as actions.
+/// * `get`:   `action` if present, else the natural-language router
+///   (`leankg_context` capability — the multi-layer ladder).
+/// * `status`: always `mcp_status` (its only capability).
+///
+/// Returns the effective capability name + arguments with routing keys
+/// (`action`/`verb`) stripped.
+pub fn resolve_3tool(
+    tool_name: &str,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(String, serde_json::Map<String, serde_json::Value>), String> {
+    let mut inner = arguments.clone();
+    let capability = match tool_name {
+        TOOL_SET => {
+            let a = inner
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("mcp_index")
+                .to_string();
+            let canonical = if is_valid_verb(&a) {
+                a
+            } else if a == "index" || a == "incremental" || a == "attach" || a == "embed" {
+                match a.as_str() {
+                    "index" | "attach" => "mcp_index".to_string(),
+                    "incremental" => "mcp_index".to_string(),
+                    "embed" => "embed_control".to_string(),
+                    _ => a,
+                }
+            } else {
+                let nearest = nearest_verb_name(&a);
+                return Err(crate::errors::render(
+                    crate::errors::UNKNOWN_TOOL.code,
+                    &format!("unknown set action '{a}'"),
+                    &format!("use action \"{nearest}\" (nearest capability) or list actions in the set tool description"),
+                ));
+            };
+            inner.remove("action");
+            canonical
+        }
+        TOOL_GET => {
+            let a = inner
+                .get("action")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            inner.remove("action");
+            match a {
+                Some(a) => {
+                    if !is_valid_verb(&a) {
+                        let nearest = nearest_verb_name(&a);
+                        return Err(crate::errors::render(
+                            crate::errors::UNKNOWN_TOOL.code,
+                            &format!("unknown get action '{a}'"),
+                            &format!("use action \"{nearest}\" (nearest capability) or omit `action` for the multi-layer router"),
+                        ));
+                    }
+                    a
+                }
+                None => "leankg_context".to_string(), // NL router (multi-layer)
+            }
+        }
+        TOOL_STATUS => {
+            inner.remove("action");
+            "mcp_status".to_string()
+        }
+        _ => {
+            let nearest = nearest_verb_name(tool_name);
+            return Err(crate::errors::render(
+                crate::errors::UNKNOWN_TOOL.code,
+                &format!(
+                    "tool '{tool_name}' is not registered — LeanKG exposes exactly 3 tools: `set`, `get`, `status`"
+                ),
+                &format!(
+                    "call `get` with {{\"query\": ...}} for questions, `set` with {{\"action\": ...}} for imports/writes, `status` for health; nearest capability: {nearest}"
+                ),
+            ));
+        }
+    };
+    Ok((capability, inner))
 }
 
 /// FR-ZCP-12 T1: nearest registered tool name for an unknown-tool error —
@@ -246,14 +390,13 @@ mod tests {
     }
 
     #[test]
-    fn test_list_tools_is_exactly_one() {
+    fn test_list_tools_is_exactly_three() {
         let tools = ToolRegistry::list_tools();
         assert_eq!(
-            tools.len(),
-            1,
-            "one-tool cutover: exactly one registered tool"
+            tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            vec!["set", "get", "status"],
+            "3-tool surface: set / get / status"
         );
-        assert_eq!(tools[0].name, "leankg_context");
     }
 
     #[test]
@@ -337,13 +480,12 @@ mod tests {
                 "`{v}` must remain a registered verb"
             );
         }
-        // One-tool cutover (FR-ZCP-03 end-state): the registry holds exactly
-        // one tool regardless of feature flags; the removed names survive
-        // only as verbs.
+        // v4.4.0: the registry holds exactly the 3-tool surface regardless
+        // of feature flags; removed names survive only as actions.
         assert_eq!(
             names.len(),
-            1,
-            "unexpected tool-count drift (one-tool cutover regression?)"
+            3,
+            "unexpected tool-count drift (3-tool surface regression?)"
         );
     }
 
@@ -355,13 +497,13 @@ mod tests {
         // pass-through mechanism.
         assert!(verb_catalog().contains(&"query_graph"));
         let tools = ToolRegistry::list_tools();
-        let tool = tools
+        let get = tools
             .iter()
-            .find(|t| t.name == "leankg_context")
-            .expect("leankg_context must be registered");
+            .find(|t| t.name == "get")
+            .expect("get must be registered");
         assert!(
-            tool.description.contains("verb"),
-            "router description must document the verb mechanism"
+            get.description.contains("action"),
+            "get description must document the action mechanism"
         );
     }
 
@@ -395,15 +537,15 @@ mod tests {
             );
             *counts.entry(tier).or_insert(0usize) += 1;
         }
-        // One-tool cutover: the single tool is the router and is core.
-        assert_eq!(counts.get("core").copied().unwrap_or(0), 1);
+        // v4.4.0: set/get/status are all core.
+        assert_eq!(counts.get("core").copied().unwrap_or(0), 3);
         assert_eq!(counts.get("setup").copied().unwrap_or(0), 0);
-        // leankg_context must be marked core.
-        let router = tools
+        // status must be marked core.
+        let status = tools
             .iter()
-            .find(|t| t.name == "leankg_context")
-            .expect("leankg_context must be registered");
-        assert!(router.description.starts_with("Tier: core. "));
+            .find(|t| t.name == "status")
+            .expect("status must be registered");
+        assert!(status.description.starts_with("Tier: core. "));
     }
 
     #[test]
@@ -446,11 +588,11 @@ mod tests {
     fn test_semantic_search_is_a_verb() {
         assert!(verb_catalog().contains(&"semantic_search"));
         let tools = ToolRegistry::list_tools();
-        let tool = tools.iter().find(|t| t.name == "leankg_context").unwrap();
-        assert!(tool.description.contains("capability ladder"));
-        let properties = tool.input_schema["properties"].as_object().unwrap();
+        let get = tools.iter().find(|t| t.name == "get").unwrap();
+        assert!(get.description.contains("capability ladder"));
+        let properties = get.input_schema["properties"].as_object().unwrap();
         assert!(properties.contains_key("query"));
-        assert!(properties.contains_key("verb"));
+        assert!(properties.contains_key("action"));
         assert!(properties.contains_key("limit"));
     }
     #[test]
@@ -460,23 +602,21 @@ mod tests {
         // dispatcher's handler docs. Pin the mechanism the agent sees:
         assert!(verb_catalog().contains(&"semantic_search"));
         let tools = ToolRegistry::list_tools();
-        let tool = tools.iter().find(|t| t.name == "leankg_context").unwrap();
+        let get = tools.iter().find(|t| t.name == "get").unwrap();
         assert!(
-            tool.description.contains("L3 vector"),
-            "router description must document the L3 vector rung (the semantic_search path)"
+            get.description.contains("L3 vector"),
+            "get description must document the L3 vector rung (the semantic_search path)"
         );
     }
 
     #[test]
-    fn test_one_tool_description_carries_prefer_order() {
+    fn test_get_description_carries_prefer_order() {
         let tools = ToolRegistry::list_tools();
-        let tool = tools.iter().find(|t| t.name == "leankg_context").unwrap();
-        // The router teaches the ladder + verb mechanism; per-tool prefer-
-        // order copy lives in the one description now.
-        assert!(tool
+        let get = tools.iter().find(|t| t.name == "get").unwrap();
+        assert!(get
             .description
             .contains("Degrades ranking, never availability"));
-        assert!(tool.description.contains("verb"));
+        assert!(get.description.contains("action"));
     }
 
     #[cfg(feature = "embeddings")]

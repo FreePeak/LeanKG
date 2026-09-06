@@ -1072,6 +1072,276 @@ fn validate_relationships_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// DbBackend impl (v4.4.0) — wraps the resurrected Cozo machinery
+// ---------------------------------------------------------------------------
+
+/// SQLite-backed [`DbBackend`]: one `cozo::DbInstance` per project rooted at
+/// `<project>/.leankg/leankg.db`.
+pub struct SqliteBackend {
+    db: CozoDb,
+    path: PathBuf,
+    read_only: bool,
+}
+
+impl SqliteBackend {
+    pub fn open(db_path: &Path, read_only: bool) -> Result<Self, Box<dyn std::error::Error>> {
+        let storage = resolve_storage_config(db_path);
+        if let Some(parent) = storage.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let db = if read_only {
+            init_db_readonly(db_path)?
+        } else {
+            init_db(db_path)?
+        };
+        Ok(Self {
+            db,
+            path: storage.path,
+            read_only,
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl DbBackend for SqliteBackend {
+    fn run_script(
+        &self,
+        query: &str,
+        params: BTreeMap<String, serde_json::Value>,
+    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
+        if self.read_only && mutability_for(query) != ScriptMutability::Immutable {
+            return Err(crate::errors::render(
+                crate::errors::READ_ONLY.code,
+                "sqlite backend is read-only",
+                "restart the server without --read-only, or point writes at a writable instance",
+            )
+            .into());
+        }
+        Ok(run_script(&self.db, query, params)?)
+    }
+
+    fn redacted_url(&self) -> String {
+        format!("sqlite://{}", self.path.display())
+    }
+    fn mutability_for(&self, query: &str) -> crate::db::pg::mutability::ScriptMutability {
+        use crate::db::pg::mutability::ScriptMutability as SM;
+        match mutability_for(query) {
+            cozo::ScriptMutability::Mutable => SM::Mutable,
+            _ => SM::Immutable,
+        }
+    }
+    fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Bulk-load named rows into a Cozo relation via `:insert`.
+    fn import_relations(
+        &self,
+        data: BTreeMap<String, NamedRows>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for (relation, rows) in &data {
+            if rows.rows.is_empty() {
+                continue;
+            }
+            let cols = rows.headers.join(", ");
+            let mut script = format!("?[{cols}] <- [[");
+            for (i, row) in rows.rows.iter().enumerate() {
+                if i > 0 {
+                    script.push_str(", ");
+                }
+                let vals: Vec<String> = row.iter().map(datavalue_literal_cozo).collect();
+                script.push_str(&format!("[{}]", vals.join(", ")));
+            }
+            script.push_str(format!("]] :insert {relation}").as_str());
+            run_script(&self.db, &script, Default::default())?;
+        }
+        Ok(())
+    }
+
+    // FR-ZCP-05 on SQLite: CozoDB's `regex_matches` provides the same
+    // name-recall the PG trgm/ILIKE path gives; ranking by name is a
+    // deliberate simplification (trigram ranking is PG-only for now).
+    fn fuzzy_find_elements(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let limit = limit.clamp(1, 100);
+        let script = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata],
+               regex_matches(lowercase(name), "{}")
+             :limit {}"#,
+            q.replace(['"', '\\'], ""),
+            limit
+        );
+        let rows = run_script(&self.db, &script, Default::default())?;
+        Ok(rows
+            .rows
+            .iter()
+            .map(|row| {
+                let g = |i: usize| {
+                    row.get(i)
+                        .and_then(|v| match v {
+                            crate::db::value::DataValue::Str(s) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_default()
+                };
+                let n = |i: usize| {
+                    row.get(i)
+                        .and_then(|v| match v {
+                            crate::db::value::DataValue::Num(crate::db::value::Num::Int(x)) => {
+                                Some(*x as u32)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(0)
+                };
+                crate::db::models::CodeElement {
+                    qualified_name: g(0),
+                    element_type: g(1),
+                    name: g(2),
+                    file_path: g(3),
+                    line_start: n(4),
+                    line_end: n(5),
+                    language: g(6),
+                    parent_qualified: (!g(7).is_empty()).then(|| g(7)),
+                    cluster_id: (!g(8).is_empty()).then(|| g(8)),
+                    cluster_label: (!g(9).is_empty()).then(|| g(9)),
+                    metadata: serde_json::from_str(&g(10)).unwrap_or(serde_json::json!({})),
+                    ..Default::default()
+                }
+            })
+            .collect())
+    }
+
+    fn suggest_element_names(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let limit = limit.clamp(1, 100);
+        let script = format!(
+            r#"?[name] := *code_elements{{name}},
+               regex_matches(lowercase(name), "{}")
+             :limit {}"#,
+            q.replace(['"', '\\'], ""),
+            limit
+        );
+        let rows = run_script(&self.db, &script, Default::default())?;
+        Ok(rows
+            .rows
+            .iter()
+            .filter_map(|r| {
+                r.first().and_then(|v| match v {
+                    crate::db::value::DataValue::Str(s) => Some(s.to_string()),
+                    _ => None,
+                })
+            })
+            .collect())
+    }
+}
+
+impl SqliteBackend {
+    /// Standalone migration entry for the CLI (`leankg migrate`).
+    pub fn run_migrations_standalone(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let existing: std::collections::HashSet<String> = {
+            let res = run_script(&self.db, "::relations", Default::default())?;
+            res.rows
+                .iter()
+                .filter_map(|r| {
+                    r.first().and_then(|v| match v {
+                        crate::db::value::DataValue::Str(s) => Some(s.to_string()),
+                        _ => None,
+                    })
+                })
+                .collect()
+        };
+        run_migrations(&self.db, &existing)?;
+        Ok(format!(
+            "migrations applied (sqlite backend at {})",
+            self.path.display()
+        ))
+    }
+}
+
+/// Convert a CozoDB row value into the backend-neutral `value::DataValue`.
+fn datavalue_from_cozo(v: &cozo::DataValue) -> crate::db::value::DataValue {
+    use crate::db::value::DataValue as V;
+    match v {
+        cozo::DataValue::Null => V::Null,
+        cozo::DataValue::Bool(b) => V::Bool(*b),
+        cozo::DataValue::Num(n) => {
+            let txt = n.to_string();
+            match txt.parse::<i64>() {
+                Ok(i) => V::Num(crate::db::value::Num::Int(i)),
+                Err(_) => match txt.parse::<f64>() {
+                    Ok(f) => V::Num(crate::db::value::Num::Float(f)),
+                    Err(_) => V::Json(txt),
+                },
+            }
+        }
+        cozo::DataValue::Str(s) => V::Str(s.to_string()),
+        cozo::DataValue::Bytes(b) => V::Bytes(b.clone()),
+        cozo::DataValue::List(items) => {
+            let converted: Vec<crate::db::value::DataValue> =
+                items.iter().map(datavalue_from_cozo).collect();
+            V::List(converted)
+        }
+        other => V::Json(other.to_string()),
+    }
+}
+
+/// Render a `value::DataValue` as an inline Datalog literal (for :insert).
+fn datavalue_literal_cozo(v: &crate::db::value::DataValue) -> String {
+    use crate::db::value::DataValue as V;
+    match v {
+        V::Null => "null".to_string(),
+        V::Bool(b) => b.to_string(),
+        V::Num(crate::db::value::Num::Int(i)) => i.to_string(),
+        V::Num(crate::db::value::Num::Float(f)) => f.to_string(),
+        V::Str(s) => format!(
+            "\"{}\"",
+            s.replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+        ),
+        V::Bytes(b) => format!("<bytes:{}>", b.len()),
+        V::List(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(datavalue_literal_cozo)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        V::Json(s) => format!("\"{}\"", s.replace('"', "\\\"")),
+        V::Bot => "null".to_string(),
+    }
+}
+
+/// Open as a trait object for `SharedDb` seams.
+pub fn open_shared(
+    db_path: &Path,
+    read_only: bool,
+) -> Result<std::sync::Arc<dyn DbBackend>, Box<dyn std::error::Error>> {
+    Ok(std::sync::Arc::new(SqliteBackend::open(
+        db_path, read_only,
+    )?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1463,274 +1733,4 @@ mod tests {
         assert!(schema.canonical);
         assert!(schema.columns.contains(&"env".to_string()));
     }
-}
-
-// ---------------------------------------------------------------------------
-// DbBackend impl (v4.4.0) — wraps the resurrected Cozo machinery
-// ---------------------------------------------------------------------------
-
-/// SQLite-backed [`DbBackend`]: one `cozo::DbInstance` per project rooted at
-/// `<project>/.leankg/leankg.db`.
-pub struct SqliteBackend {
-    db: CozoDb,
-    path: PathBuf,
-    read_only: bool,
-}
-
-impl SqliteBackend {
-    pub fn open(db_path: &Path, read_only: bool) -> Result<Self, Box<dyn std::error::Error>> {
-        let storage = resolve_storage_config(db_path);
-        if let Some(parent) = storage.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let db = if read_only {
-            init_db_readonly(db_path)?
-        } else {
-            init_db(db_path)?
-        };
-        Ok(Self {
-            db,
-            path: storage.path,
-            read_only,
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl DbBackend for SqliteBackend {
-    fn run_script(
-        &self,
-        query: &str,
-        params: BTreeMap<String, serde_json::Value>,
-    ) -> Result<NamedRows, Box<dyn std::error::Error>> {
-        if self.read_only && mutability_for(query) != ScriptMutability::Immutable {
-            return Err(crate::errors::render(
-                crate::errors::READ_ONLY.code,
-                "sqlite backend is read-only",
-                "restart the server without --read-only, or point writes at a writable instance",
-            )
-            .into());
-        }
-        Ok(run_script(&self.db, query, params)?)
-    }
-
-    fn redacted_url(&self) -> String {
-        format!("sqlite://{}", self.path.display())
-    }
-    fn mutability_for(&self, query: &str) -> crate::db::pg::mutability::ScriptMutability {
-        use crate::db::pg::mutability::ScriptMutability as SM;
-        match mutability_for(query) {
-            cozo::ScriptMutability::Mutable => SM::Mutable,
-            _ => SM::Immutable,
-        }
-    }
-    fn is_read_only(&self) -> bool {
-        self.read_only
-    }
-
-    /// Bulk-load named rows into a Cozo relation via `:insert`.
-    fn import_relations(
-        &self,
-        data: BTreeMap<String, NamedRows>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        for (relation, rows) in &data {
-            if rows.rows.is_empty() {
-                continue;
-            }
-            let cols = rows.headers.join(", ");
-            let mut script = format!("?[{cols}] <- [[");
-            for (i, row) in rows.rows.iter().enumerate() {
-                if i > 0 {
-                    script.push_str(", ");
-                }
-                let vals: Vec<String> = row.iter().map(datavalue_literal_cozo).collect();
-                script.push_str(&format!("[{}]", vals.join(", ")));
-            }
-            script.push_str(format!("]] :insert {relation}").as_str());
-            run_script(&self.db, &script, Default::default())?;
-        }
-        Ok(())
-    }
-
-    // FR-ZCP-05 on SQLite: CozoDB's `regex_matches` provides the same
-    // name-recall the PG trgm/ILIKE path gives; ranking by name is a
-    // deliberate simplification (trigram ranking is PG-only for now).
-    fn fuzzy_find_elements(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
-        let q = query.trim();
-        if q.is_empty() {
-            return Ok(Vec::new());
-        }
-        let limit = limit.clamp(1, 100);
-        let script = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata],
-               regex_matches(lowercase(name), "{}")
-             :limit {}"#,
-            q.replace(['"', '\\'], ""),
-            limit
-        );
-        let rows = run_script(&self.db, &script, Default::default())?;
-        Ok(rows
-            .rows
-            .iter()
-            .map(|row| {
-                let g = |i: usize| {
-                    row.get(i)
-                        .and_then(|v| match v {
-                            crate::db::value::DataValue::Str(s) => Some(s.to_string()),
-                            _ => None,
-                        })
-                        .unwrap_or_default()
-                };
-                let n = |i: usize| {
-                    row.get(i)
-                        .and_then(|v| match v {
-                            crate::db::value::DataValue::Num(crate::db::value::Num::Int(x)) => {
-                                Some(*x as u32)
-                            }
-                            _ => None,
-                        })
-                        .unwrap_or(0)
-                };
-                crate::db::models::CodeElement {
-                    qualified_name: g(0),
-                    element_type: g(1),
-                    name: g(2),
-                    file_path: g(3),
-                    line_start: n(4),
-                    line_end: n(5),
-                    language: g(6),
-                    parent_qualified: (!g(7).is_empty()).then(|| g(7)),
-                    cluster_id: (!g(8).is_empty()).then(|| g(8)),
-                    cluster_label: (!g(9).is_empty()).then(|| g(9)),
-                    metadata: serde_json::from_str(&g(10)).unwrap_or(serde_json::json!({})),
-                    ..Default::default()
-                }
-            })
-            .collect())
-    }
-
-    fn suggest_element_names(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let q = query.trim();
-        if q.is_empty() {
-            return Ok(Vec::new());
-        }
-        let limit = limit.clamp(1, 100);
-        let script = format!(
-            r#"?[name] := *code_elements{{name}},
-               regex_matches(lowercase(name), "{}")
-             :limit {}"#,
-            q.replace(['"', '\\'], ""),
-            limit
-        );
-        let rows = run_script(&self.db, &script, Default::default())?;
-        Ok(rows
-            .rows
-            .iter()
-            .filter_map(|r| {
-                r.first().and_then(|v| match v {
-                    crate::db::value::DataValue::Str(s) => Some(s.to_string()),
-                    _ => None,
-                })
-            })
-            .collect())
-    }
-}
-
-impl SqliteBackend {
-    /// Standalone migration entry for the CLI (`leankg migrate`).
-    pub fn run_migrations_standalone(&self) -> Result<String, Box<dyn std::error::Error>> {
-        let existing: std::collections::HashSet<String> = {
-            let res = run_script(&self.db, "::relations", Default::default())?;
-            res.rows
-                .iter()
-                .filter_map(|r| {
-                    r.first().and_then(|v| match v {
-                        crate::db::value::DataValue::Str(s) => Some(s.to_string()),
-                        _ => None,
-                    })
-                })
-                .collect()
-        };
-        run_migrations(&self.db, &existing)?;
-        Ok(format!(
-            "migrations applied (sqlite backend at {})",
-            self.path.display()
-        ))
-    }
-}
-
-/// Convert a CozoDB row value into the backend-neutral `value::DataValue`.
-fn datavalue_from_cozo(v: &cozo::DataValue) -> crate::db::value::DataValue {
-    use crate::db::value::DataValue as V;
-    match v {
-        cozo::DataValue::Null => V::Null,
-        cozo::DataValue::Bool(b) => V::Bool(*b),
-        cozo::DataValue::Num(n) => {
-            let txt = n.to_string();
-            match txt.parse::<i64>() {
-                Ok(i) => V::Num(crate::db::value::Num::Int(i)),
-                Err(_) => match txt.parse::<f64>() {
-                    Ok(f) => V::Num(crate::db::value::Num::Float(f)),
-                    Err(_) => V::Json(txt),
-                },
-            }
-        }
-        cozo::DataValue::Str(s) => V::Str(s.to_string()),
-        cozo::DataValue::Bytes(b) => V::Bytes(b.clone()),
-        cozo::DataValue::List(items) => {
-            let converted: Vec<crate::db::value::DataValue> =
-                items.iter().map(datavalue_from_cozo).collect();
-            V::List(converted)
-        }
-        other => V::Json(other.to_string()),
-    }
-}
-
-/// Render a `value::DataValue` as an inline Datalog literal (for :insert).
-fn datavalue_literal_cozo(v: &crate::db::value::DataValue) -> String {
-    use crate::db::value::DataValue as V;
-    match v {
-        V::Null => "null".to_string(),
-        V::Bool(b) => b.to_string(),
-        V::Num(crate::db::value::Num::Int(i)) => i.to_string(),
-        V::Num(crate::db::value::Num::Float(f)) => f.to_string(),
-        V::Str(s) => format!(
-            "\"{}\"",
-            s.replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-        ),
-        V::Bytes(b) => format!("<bytes:{}>", b.len()),
-        V::List(items) => format!(
-            "[{}]",
-            items
-                .iter()
-                .map(datavalue_literal_cozo)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        V::Json(s) => format!("\"{}\"", s.replace('"', "\\\"")),
-        V::Bot => "null".to_string(),
-    }
-}
-
-/// Open as a trait object for `SharedDb` seams.
-pub fn open_shared(
-    db_path: &Path,
-    read_only: bool,
-) -> Result<std::sync::Arc<dyn DbBackend>, Box<dyn std::error::Error>> {
-    Ok(std::sync::Arc::new(SqliteBackend::open(
-        db_path, read_only,
-    )?))
 }
