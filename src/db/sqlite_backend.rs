@@ -1170,8 +1170,9 @@ impl DbBackend for SqliteBackend {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let tags = entry.tags.replace('"', "\\\"");
         let script = format!(
-            r#"?[knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <-
-                [["{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", {}, {}]] :put knowledge_entries {{id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}}"#,
+            r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <-
+                [["{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", {}, {}]] :put knowledge_entries {{id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}}"#,
+            entry.id,
             entry.id,
             entry.knowledge_type,
             entry.title.replace('"', "\\\""),
@@ -1333,6 +1334,53 @@ impl DbBackend for SqliteBackend {
             })
             .collect())
     }
+
+    fn search_knowledge_entries(
+        &self,
+        query: &str,
+        knowledge_type: Option<&str>,
+        environment: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        let q = query.trim().replace('"', "");
+        let lim = limit.clamp(1, 100);
+        let mut script = format!(
+            r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] :=
+                *knowledge_entries{{id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}},
+                regex_matches(lowercase(title), "{}")"#,
+            q.to_lowercase().replace('"', "")
+        );
+        if let Some(kt) = knowledge_type {
+            script.push_str(&format!(", knowledge_type = \"{kt}\""));
+        }
+        if let Some(env) = environment {
+            script.push_str(&format!(", environment = \"{env}\""));
+        }
+        script.push_str(&format!(" :limit {lim}"));
+        let rows = run_script(&self.db, &script, Default::default())?;
+        Ok(rows
+            .rows
+            .iter()
+            .map(|r| rows_to_knowledge_entry(r))
+            .collect())
+    }
+
+    fn list_knowledge_by_element(
+        &self,
+        element_qualified: &str,
+    ) -> Result<Vec<crate::db::models::KnowledgeEntry>, Box<dyn std::error::Error>> {
+        let script = format!(
+            r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] :=
+                *knowledge_entries{{id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}},
+                element_qualified = "{element_qualified}""#
+        );
+        let rows = run_script(&self.db, &script, Default::default())?;
+        Ok(rows
+            .rows
+            .iter()
+            .map(|r| rows_to_knowledge_entry(r))
+            .collect())
+    }
 }
 
 impl SqliteBackend {
@@ -1355,6 +1403,45 @@ impl SqliteBackend {
             "migrations applied (sqlite backend at {})",
             self.path.display()
         ))
+    }
+}
+
+impl SqliteBackend {}
+
+/// Convert NamedRows rows (13 cols) into KnowledgeEntry.
+fn rows_to_knowledge_entry(
+    row: &[crate::db::value::DataValue],
+) -> crate::db::models::KnowledgeEntry {
+    let g = |i: usize| {
+        row.get(i)
+            .and_then(|v| match v {
+                crate::db::value::DataValue::Str(s) => Some(s.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    let n = |i: usize| {
+        row.get(i)
+            .and_then(|v| match v {
+                crate::db::value::DataValue::Num(crate::db::value::Num::Int(x)) => Some(*x),
+                _ => None,
+            })
+            .unwrap_or(0)
+    };
+    crate::db::models::KnowledgeEntry {
+        id: g(0),
+        knowledge_type: g(1),
+        title: g(2),
+        content: g(3),
+        element_qualified: (!g(4).is_empty()).then(|| g(4)),
+        user_story_id: (!g(5).is_empty()).then(|| g(5)),
+        feature_id: (!g(6).is_empty()).then(|| g(6)),
+        tags: g(7),
+        environment: g(8),
+        branch: (!g(9).is_empty()).then(|| g(9)),
+        author: g(10),
+        created_at: n(11),
+        updated_at: n(12),
     }
 }
 
