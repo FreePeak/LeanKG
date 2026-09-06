@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.3.1-one-tool-envelope
+**Version:** 4.4.0-three-tools-dual-backend
 **Date:** 2026-09-05 (v4.3.1 hard cutover; v4.3.0 2026-09-04)
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.27.0
@@ -9,6 +9,23 @@
 ---
 
 ## Changelog
+
+### v4.4.0-three-tools-dual-backend — 3-tool surface + SQLite dual-backend (2026-09-06)
+
+> **Trigger:** user decision evolving the one-tool envelope into a **3-tool surface** — `set` (import repo / nested dir of repos), `get` (query with multiple layers via the L0–L3 ladder), `status` (health/inventory) — plus **dual-backend storage**: PostgreSQL *and* SQLite (vector-capable), with **SQLite as the session default**.
+
+> **Design (D-2026-09-06-1):** the verb namespace survives as the *action* namespace inside each tool — `set {action}`, `get {action?}` (omitted = NL router), `status`. Legacy verb names remain valid as actions (zero-loss migration). Envelope resolution order is preserved: (tool, action) → effective capability resolved **before** read-only gate / write-lock / RBAC / audit.
+>
+> **Design (D-2026-09-06-2):** SQLite lands by resurrecting the pre-v0.20 CozoDB layer on the `storage-sqlite` engine (`cozo = 0.7.6`, feature-gated). All 216 Datalog call sites run natively on cozo-sqlite — zero translation — and HNSW vectors come from CozoDB's own `::hnsw` (cosine, dim 384). One SQLite file per project (`<project>/.leankg/leankg.db`) preserves per-project isolation. Selection: `LEANKG_DB_ENGINE=sqlite|postgres`, **default sqlite**; `LEANKG_PG_URL` opts back into PG.
+
+**Product actions this revision:**
+
+| # | ID | Focus | Intent | Status |
+|--:|----|-------|--------|--------|
+| 1 | `FR-3T-01` | **P0** | Registry: exactly 3 tools (`set`/`get`/`status`); per-tool action namespaces; legacy verbs as actions (aliases) | **IN_PROGRESS** |
+| 2 | `FR-3T-02` | **P0** | SQLite backend: cozo-sqlite engine, per-project `.leankg/leankg.db`, HNSW vectors, audit ledger, migrations | **IN_PROGRESS** |
+| 3 | `FR-3T-03` | **P0** | Session default: SQLite engaged when `LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset; `leankg migrate`/`index`/serve run on SQLite | **IN_PROGRESS** |
+| 4 | `FR-3T-04` | **P1** | Live validation: this repo indexed into SQLite, 3-tool smoke (search/status/router), persistence across restart | **NOT_DONE** |
 
 ### v4.3.1-one-tool-envelope — Hard one-tool cutover (2026-09-05)
 
