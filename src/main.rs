@@ -1456,6 +1456,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_ontology_command(command)?;
         }
         cli::CLICommand::Migrate {} => {
+            // v4.4.0 dual-backend: SQLite is the session default — schema DDL
+            // runs through the Cozo layer on the sqlite file, no PG needed.
+            if db::backend::sqlite_backend_requested() {
+                let db_path =
+                    db::backend::canonical_project_root(&find_project_root()?).join(".leankg");
+                let backend = db::sqlite_backend::SqliteBackend::open(&db_path, false)?;
+                let report = backend.run_migrations_standalone()?;
+                println!("{report}");
+                return Ok(());
+            }
             // postgres::Client is sync and builds its own tokio runtime; the
             // whole connect+apply must run off the ambient tokio runtime.
             let report = tokio::task::spawn_blocking(move || {

@@ -3040,13 +3040,43 @@ fn redact_url(url: &str) -> String {
 /// schema (see [`test_scratch_schema`]): unit tests call `init_db` with a
 /// temp path and get a real, isolated Postgres schema in the dev container
 /// instead of the pre-migration sqlite shim.
+/// SQLite backend selection (v4.4.0 dual-backend).
+///
+/// SQLite is the DEFAULT storage engine: it engages when
+/// `LEANKG_DB_ENGINE=sqlite` is set OR when `LEANKG_PG_URL` is unset/empty.
+/// PostgreSQL stays reachable by exporting `LEANKG_PG_URL` (any value) —
+/// or by forcing `LEANKG_DB_ENGINE=postgres`.
+pub fn sqlite_backend_requested() -> bool {
+    match std::env::var("LEANKG_DB_ENGINE")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("sqlite") => true,
+        Some("postgres") | Some("postgresql") => false,
+        _ => std::env::var("LEANKG_PG_URL")
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true),
+    }
+}
+
 pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
     #[cfg(test)]
     {
+        // Unit tests pin FakeBackend semantics; a real SQLite file here would
+        // silently change what "test backend" means. Only an EXPLICIT
+        // LEANKG_DB_ENGINE=sqlite opts a test into the live engine.
         return test_init_db(db_path);
     }
     #[allow(unreachable_code)]
     {
+        if sqlite_backend_requested() {
+            tracing::info!(
+                "DB engine = sqlite: {}",
+                db_path.join("leankg.db").display()
+            );
+            return crate::db::sqlite_backend::open_shared(db_path, false);
+        }
         let schema = pick_schema_for_init(db_path);
         // Writer path: ALWAYS create + pin to the per-project schema. The
         // writer owns schema creation; it never falls back to `public` (that
@@ -3400,6 +3430,10 @@ pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn s
         return test_init_db(db_path);
     }
     #[allow(unreachable_code)]
+    if sqlite_backend_requested() {
+        return crate::db::sqlite_backend::open_shared(db_path, true);
+    }
+    #[allow(unreachable_code)]
     {
         let schema = pick_schema_for_init(db_path);
         let pg = if schema_exists(&schema) {
@@ -3566,6 +3600,12 @@ pub fn index_advisory_lock(
     // lock on a different session would deadlock against the first.
     let mut held = INDEX_LOCK_HELD.lock().unwrap();
     if *held {
+        return Ok(None);
+    }
+    // SQLite serializes writers through its own file lock — no PG advisory
+    // lock needed (and PostgresBackend::from_env would fail on a sqlite
+    // session where LEANKG_PG_URL is unset).
+    if sqlite_backend_requested() {
         return Ok(None);
     }
     let pg = PostgresBackend::from_env()?;
