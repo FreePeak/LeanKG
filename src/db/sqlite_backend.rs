@@ -1195,18 +1195,56 @@ impl DbBackend for SqliteBackend {
                 continue;
             }
             let cols = rows.headers.join(", ");
-            // Rows arrive pre-bracketed (`[v1, v2, ...]`), so the data
-            // literal is `[ [row], [row], ... ]` — ONE bracket layer of
-            // wrapping. Emitting `[[` here produced `[[[row]]]`, and the
-            // Constant fixed rule then read arity from the wrong nesting
-            // level ("Fixed rule head arity mismatch") on every call —
-            // embed's vector import was its first real caller.
+            // Column-type-aware value rendering. A CozoScript array literal
+            // is a LIST, but `<F32; N>` vector columns need a `vec([...])`
+            // expression — plain arrays fail at execution ("when executing
+            // against relation ..."). Resolve column types once per
+            // relation, then wrap List values headed for vector columns.
+            let col_type_by_name: std::collections::BTreeMap<String, String> = match run_script(
+                &self.db,
+                &format!("::columns {relation}"),
+                Default::default(),
+            ) {
+                Ok(schema) => schema
+                    .rows
+                    .iter()
+                    .filter_map(|r| match (r.first(), r.get(3)) {
+                        (
+                            Some(crate::db::value::DataValue::Str(n)),
+                            Some(crate::db::value::DataValue::Str(t)),
+                        ) => Some((n.clone(), t.clone())),
+                        _ => None,
+                    })
+                    .collect(),
+                Err(_) => Default::default(),
+            };
             let mut script = format!("?[{cols}] <- [");
             for (i, row) in rows.rows.iter().enumerate() {
                 if i > 0 {
                     script.push_str(", ");
                 }
-                let vals: Vec<String> = row.iter().map(datavalue_literal_cozo).collect();
+                let vals: Vec<String> = row
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        let is_vector_column = rows
+                            .headers
+                            .get(i)
+                            .and_then(|h| col_type_by_name.get(h))
+                            .is_some_and(|t| t.starts_with("<F32"));
+                        match (is_vector_column, v) {
+                            (true, crate::db::value::DataValue::List(items)) => {
+                                let inner = items
+                                    .iter()
+                                    .map(datavalue_literal_cozo)
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                format!("vec([{inner}])")
+                            }
+                            _ => datavalue_literal_cozo(v),
+                        }
+                    })
+                    .collect();
                 script.push_str(&format!("[{}]", vals.join(", ")));
             }
             script.push_str(format!("] :insert {relation}").as_str());
