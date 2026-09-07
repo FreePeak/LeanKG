@@ -1354,13 +1354,17 @@ impl DbBackend for SqliteBackend {
         if q.is_empty() {
             return Ok(Vec::new());
         }
+        // Substring semantics: escape regex metacharacters so real symbol
+        // names (Vec<String>, a::b, fn(...)) can't break or over-match the
+        // pattern — the whole L2 tier errors on an invalid regex today.
+        let q = regex::escape(&q);
         let limit = limit.clamp(1, 100);
         let script = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
                *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}},
                regex_matches(lowercase(name), "{}")
              :limit {}"#,
-            q.replace(['"', '\\'], ""),
+            q.replace('"', "\\\""),
             limit
         );
         let rows = run_script(&self.db, &script, Default::default())?;
@@ -2158,14 +2162,11 @@ mod tests {
         assert_eq!(beta.env, "ci", "per-row env must survive the join");
     }
 
-    /// Regression: `import_relations` wrapped rows in an extra bracket layer
-    /// (`?[] <- [[[row]]]`), so every import failed with "Fixed rule head
-    /// arity mismatch" — the embed vector writer was the first real caller.
-    #[test]
     /// Regression: full re-embeds replay existing qualified_names; Cozo
     /// :insert rejects duplicates ("when executing against relation ...")
     /// while the PG lowering is INSERT .. ON CONFLICT. import_relations
-    /// must upsert (:put), so the second import overwrites the first.
+    /// must upsert (:put), so the second import overwrites the first —
+    /// and List values must land as vec([...]) literals for <F32; N> cols.
     #[test]
     fn import_relations_upserts_duplicate_keys() {
         use crate::db::value::DataValue as DV;
@@ -2215,6 +2216,10 @@ mod tests {
         );
     }
 
+    /// Regression: `import_relations` wrapped rows in an extra bracket layer
+    /// (`?[] <- [[[row]]]`), so every import failed with "Fixed rule head
+    /// arity mismatch" — the embed vector writer was the first real caller.
+    #[test]
     fn import_relations_roundtrips_rows() {
         let tmp = TempDir::new().unwrap();
         let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
@@ -2325,9 +2330,20 @@ mod tests {
         );
         backend.import_relations(data).unwrap();
 
+        // Case-insensitive substring match (query folded too).
         let got = backend.fuzzy_find_elements("ALPH", 10).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "alpha");
+        // Regex metacharacters in real symbol queries must not error the
+        // call or over-match — they are literal after escaping.
+        assert!(backend
+            .fuzzy_find_elements("al(h)a", 10)
+            .unwrap()
+            .is_empty());
+        assert!(backend
+            .fuzzy_find_elements("(alpha", 10)
+            .unwrap()
+            .is_empty());
         assert!(backend
             .fuzzy_find_elements("zzz_no_match", 10)
             .unwrap()
