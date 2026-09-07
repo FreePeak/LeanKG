@@ -1,14 +1,34 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.4.0-three-tools-dual-backend
-**Date:** 2026-09-05 (v4.3.1 hard cutover; v4.3.0 2026-09-04)
+**Version:** 4.4.1-three-tools-live
+**Date:** 2026-09-07
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.27.0
-**Storage:** PostgreSQL + pgvector only (`LEANKG_PG_URL`)
+**Storage:** Dual-backend — SQLite default (`LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset), PostgreSQL + pgvector via `LEANKG_PG_URL`
 
 ---
 
 ## Changelog
+
+### v4.4.1-three-tools-live — live-tested SQLite server + Datalog repairs (2026-09-07, PR #284)
+
+> **Trigger:** live 3-tool SQLite MCP server testing on this repo (index + embed + router queries on `:9799`) surfaced five Datalog/dispatch gaps between the PG-shaped code paths and raw Cozo.
+
+**Fixes (PR #284, `fix/sqlite-l3-hydration`):**
+
+| Bug | Fix |
+|-----|-----|
+| rmcp dispatch arm still resolved the one-tool envelope — `set`/`get`/`status` refused on stdio while JSON-RPC worked | single `resolve_3tool` resolver on both arms; legacy `leankg_context` envelope kept as back-compat; `action`/`verb` aliases |
+| `import_relations` wrapped rows in an extra bracket layer → every import failed `Fixed rule head arity mismatch` | single bracket layer (`?[] <- [rows]`) |
+| Cozo `:insert` rejects duplicate keys — full re-embeds replaying existing QNs died | upsert via `:put rel {cols}` (parity with PG `INSERT .. ON CONFLICT`); regression test `import_relations_upserts_duplicate_keys` |
+| `fuzzy_find_elements` script had no relation reference (unparseable) + case-sensitive pattern | proper `:= *code_elements{...}` + lowercased pattern |
+| short-positional rule application `*rel[col]` invalid on raw Cozo for multi-column relations | attribute form `*rel{col}` (doctor probes, embed counts) |
+| L3 ANN hydration (`elements_by_qualified_names` / `find_element_by_key` / `find_element_by_name_col`) was PG-only | Datalog ports on `SqliteBackend` |
+| `embed_control` sub-command (`on|off|status`) collided with the routing `action` key — `set {action:"embed"}` silently returned status | routing priority: control capabilities keep their payload `action`; friendly `embed` alias arms the builder |
+
+**Open bugs filed:** #286 (server exit code 1, no panic trace, during concurrent embed+queries — suspected FFI abort), #287 (fuzzy pattern not regex-escaped), #288 (audit remaining short-positional rule applications).
+
+**Live validation (this repo, sqlite):** index 581 files; full embed 9522/9522 vectors (`total_vectors` 9522, storage_engine sqlite); router ladder L1 exact / L2 fuzzy / L3 `hnsw+ontology-traverse` runs end-to-end with graceful below-confidence-floor degradation; ANN distance sanity 0.25 (relevant) vs 0.43 (random).
 
 ### v4.4.0-three-tools-dual-backend — 3-tool surface + SQLite dual-backend (2026-09-06)
 
@@ -390,4 +410,4 @@ All superseded material is preserved and linked, not deleted:
 - **Simplicity research sprint (2026-09-04, three parallel scouts):** repo friction audit (file:line — 76/73 tools, 103 CLI verbs, 116 env names, 10-step walkthrough, error-copy gaps); competitor mechanics (zg, context7, serena, Desktop Commander, gitleaks — live-fetched URLs); onboarding playbooks (Supabase/Convex TTFV, Stripe error codes, clig.dev, Vercel, Stack Overflow 2025) → findings folded into §2.6, §3.9 (FR-ZCP-12), §5 M8, §6
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 
-*Last updated: 2026-09-05 (v4.3.1 — hard one-tool cutover: registry = `leankg_context` only, ~76 capabilities as `{verb}` envelope args, envelope resolved before RO-gate/write-lock/audit; v4.3.0 — one-tool degradation ladder (L0–L3, `retrieval` provenance) + first-run setup contract FR-ZCP-13 (auto/manual + `leankg add`) + FR-ZCP-05 bridge tier; v4.2.0 — measured-simplicity contract → FR-ZCP-12 T1/T2/T3 + M8 + D-2026-09-04-3; v4.1.1 — OMP memory-backend audit + zvec-grep embedding-correctness audit → FR-ZCP-11)*
+*Last updated: 2026-09-07 (v4.4.1 — live-tested 3-tool SQLite server: dispatch unification across rmcp+JSON-RPC arms, Datalog repairs — import :put upsert / bracket nesting / fuzzy relation ref / positional→attribute rule forms / L3 hydration ports; issues #286–#288 open. v4.4.0 — 3-tool registry `set`/`get`/`status` + SQLite dual-backend; v4.3.1 — hard one-tool cutover: registry = `leankg_context` only, ~76 capabilities as `{verb}` envelope args, envelope resolved before RO-gate/write-lock/audit; v4.3.0 — one-tool degradation ladder (L0–L3, `retrieval` provenance) + first-run setup contract FR-ZCP-13 (auto/manual + `leankg add`) + FR-ZCP-05 bridge tier; v4.2.0 — measured-simplicity contract → FR-ZCP-12 T1/T2/T3 + M8 + D-2026-09-04-3; v4.1.1 — OMP memory-backend audit + zvec-grep embedding-correctness audit → FR-ZCP-11)*
