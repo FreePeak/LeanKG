@@ -1177,9 +1177,9 @@ impl DbBackend for SqliteBackend {
             r#"?[id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at] <-
                 [["{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", {}, {}]] :put knowledge_entries {{id, knowledge_type, title, content, element_qualified, user_story_id, feature_id, tags, environment, branch, author, created_at, updated_at}}"#,
             entry.id,
-            entry.id,
             entry.knowledge_type,
             entry.title.replace('"', "\\\""),
+            entry.content.replace('"', "\\\""),
             entry.element_qualified.as_deref().unwrap_or(""),
             entry.user_story_id.as_deref().unwrap_or(""),
             entry.feature_id.as_deref().unwrap_or(""),
