@@ -485,6 +485,31 @@ pub fn route(
 
     match select_rung(&caps).rung {
         RUNG_VECTOR => {
+            // L1 first for identifier-shaped queries: a bare symbol is an
+            // exact lookup, not a semantic one — the vector space ranks
+            // vendor/minified noise and loosely-related names above the
+            // exact symbol (#290). Fall through to L3/L2 only when the
+            // exact rung misses.
+            if intent == Intent::Lexical {
+                let (results, suggestions) = exact_search(engine, query, limit)?;
+                if !results.is_empty() || !suggestions.is_empty() {
+                    let reason = if results.is_empty() {
+                        "no exact identifier matched; returning nearest-name suggestions"
+                    } else {
+                        "exact/regex identifier search"
+                    };
+                    return Ok(json!({
+                        "query": query,
+                        "results": results,
+                        "suggestions": suggestions,
+                        "count": results.len(),
+                        "retrieval": retrieval_block(
+                            &Rung::new(RUNG_EXACT, reason),
+                            freshness,
+                        ),
+                    }));
+                }
+            }
             // L3: delegate to the existing semantic pipeline. If it returns
             // nothing usable (below-confidence empty page), fall down the
             // ladder to L2 instead of serving a bare empty result.
@@ -1118,6 +1143,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body["retrieval"]["rung"], json!(RUNG_COLD));
+    }
+
+    /// Regression (#290): an identifier-shaped query with vectors present
+    /// must answer from the L1 exact rung, not the vector rung. The vector
+    /// space ranks vendor/minified noise above the exact symbol, so L3
+    /// delegation must not preempt the exact lookup when the intent is
+    /// lexical and the symbol is indexed.
+    #[test]
+    fn test_lexical_intent_with_vectors_answers_from_exact_rung() {
+        let (engine, _tmp) = seeded_engine();
+        let exec = RouterExec {
+            // The pipeline must NOT run: L1 answers first.
+            semantic: &|_, _| panic!("vector rung must not run for lexical intent"),
+            index_kick: &|| Ok(json!({"indexing": false})),
+        };
+        // Seed vector state so select_rung picks RUNG_VECTOR.
+        engine
+            .db()
+            .run_script(
+                r#"?[qualified_name, usearch_key, content_hash, state, embedded_at] <- [["auth::validate_token", "k1", "h1", "fresh", "0"]] :put embedding_state { qualified_name, usearch_key, content_hash, state, embedded_at }"#,
+                Default::default(),
+            )
+            .unwrap();
+        let body = route(&engine, "validate_token", &json!({}), &exec).unwrap();
+        assert_eq!(
+            body["retrieval"]["rung"],
+            json!(RUNG_EXACT),
+            "identifier query with vectors present must answer from L1 exact: {body}"
+        );
+        let names: Vec<&str> = body["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["name"].as_str())
+            .collect();
+        assert!(
+            names.contains(&"validate_token"),
+            "exact hit missing: {body}"
+        );
     }
 
     #[test]
