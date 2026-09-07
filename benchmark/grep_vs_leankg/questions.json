@@ -1,118 +1,168 @@
 {
-  "description": "Question dataset: leankg 3-tool surface vs grep baseline over this repo (sqlite backend, 18.7k elements / 9.5k vectors)",
-  "top_k": 5,
-  "questions": [
-    {
-      "id": "exact-symbol",
-      "category": "exact",
-      "question": "resolve_3tool",
-      "leankg_mode": "router",
-      "ground_truth": ["src/mcp/tools.rs::resolve_3tool"]
-    },
-    {
-      "id": "exact-audit",
-      "category": "exact",
-      "question": "AuditRecorder",
-      "leankg_mode": "router",
-      "ground_truth": ["src/audit/mod.rs::AuditRecorder"]
-    },
-    {
-      "id": "exact-scheduler",
-      "category": "exact",
-      "question": "spawn_embed_idle_scheduler",
-      "leankg_mode": "router",
-      "ground_truth": ["src/mcp/server.rs::spawn_embed_idle_scheduler"]
-    },
-    {
-      "id": "exact-hnsw",
-      "category": "exact",
-      "question": "create_hnsw_index",
-      "leankg_mode": "router",
-      "ground_truth": ["src/embeddings/state.rs::create_hnsw_index"]
-    },
-    {
-      "id": "concept-readonly",
-      "category": "concept",
-      "question": "how does the MCP read-only gate work",
-      "leankg_mode": "router",
-      "ground_truth": ["src/mcp/server.rs::is_ro_hidden_tool", "src/mcp/server.rs::is_write_tool"]
-    },
-    {
-      "id": "concept-embed-arm",
-      "category": "concept",
-      "question": "how does the embed idle scheduler decide when to start embedding",
-      "leankg_mode": "router",
-      "ground_truth": ["src/mcp/server.rs::spawn_embed_idle_scheduler", "src/embeddings/control.rs::mcp_is_idle_for_embed"]
-    },
-    {
-      "id": "concept-router",
-      "category": "concept",
-      "question": "how does the multi-layer retrieval ladder fuse keyword and ontology results",
-      "leankg_mode": "router",
-      "ground_truth": ["src/mcp/router.rs::fuse_l2"]
-    },
-    {
-      "id": "concept-upsert",
-      "category": "concept",
-      "question": "how are bulk vector imports written to the sqlite backend",
-      "leankg_mode": "router",
-      "ground_truth": ["src/db/sqlite_backend.rs::import_relations", "src/embeddings/build.rs::upsert_pairs_to_db"]
-    },
-    {
-      "id": "structure-schema",
-      "category": "structure",
-      "question": "where is the per-project sqlite schema name computed",
-      "leankg_mode": "router",
-      "ground_truth": ["src/db/backend.rs::project_identity_keys_in"]
-    },
-    {
-      "id": "structure-inventory",
-      "category": "structure",
-      "question": "where is the index inventory refreshed",
-      "leankg_mode": "router",
-      "ground_truth": ["src/graph/inventory.rs::refresh_index_inventory"]
-    },
-    {
-      "id": "structure-watcher",
-      "category": "structure",
-      "question": "where does the file watcher get started",
-      "leankg_mode": "router",
-      "ground_truth": ["src/mcp/watcher.rs::start_watcher"]
-    },
-    {
-      "id": "structure-hydration",
-      "category": "structure",
-      "question": "where do ANN search hits get hydrated into elements",
-      "leankg_mode": "router",
-      "ground_truth": ["src/graph/query.rs::get_elements_by_qualified_names"]
-    },
-    {
-      "id": "impact-import",
-      "category": "impact",
-      "question": "what does the import_relations function do and who calls it",
-      "leankg_mode": "router",
-      "ground_truth": ["src/db/backend.rs::import_relations", "src/embeddings/build.rs::upsert_pairs_to_db"]
-    },
-    {
-      "id": "impact-status",
-      "category": "impact",
-      "question": "what does the mcp_status handler report",
-      "leankg_mode": "router",
-      "ground_truth": ["src/mcp/handler.rs::mcp_status"]
-    },
-    {
-      "id": "concept-doctor",
-      "category": "concept",
-      "question": "how does doctor deep diagnose deployment problems",
-      "leankg_mode": "router",
-      "ground_truth": ["src/doctor/deep.rs"]
-    },
-    {
-      "id": "concept-roots",
-      "category": "concept",
-      "question": "how does the server resolve the project for an HTTP request",
-      "leankg_mode": "router",
-      "ground_truth": ["src/mcp/roots.rs", "src/mcp/server.rs::resolve_serve_project"]
-    }
-  ]
+ "description": "Question dataset: leankg 3-tool surface vs grep baseline over this repo (sqlite backend, 18.7k elements / 9.5k vectors)",
+ "top_k": 5,
+ "questions": [
+  {
+   "id": "exact-symbol",
+   "category": "exact",
+   "question": "resolve_3tool",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/mcp/tools.rs::resolve_3tool"
+   ]
+  },
+  {
+   "id": "exact-audit",
+   "category": "exact",
+   "question": "AuditRecorder",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/audit/mod.rs::AuditRecorder"
+   ]
+  },
+  {
+   "id": "exact-scheduler",
+   "category": "exact",
+   "question": "spawn_embed_idle_scheduler",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/mcp/server.rs::spawn_embed_idle_scheduler"
+   ]
+  },
+  {
+   "id": "exact-hnsw",
+   "category": "exact",
+   "question": "create_hnsw_index",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/embeddings/state.rs::create_hnsw_index"
+   ]
+  },
+  {
+   "id": "concept-readonly",
+   "category": "concept",
+   "question": "how does the MCP read-only gate work",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/mcp/server.rs::is_ro_hidden_tool",
+    "src/mcp/server.rs::is_write_tool"
+   ]
+  },
+  {
+   "id": "concept-embed-arm",
+   "category": "concept",
+   "question": "how does the embed idle scheduler decide when to start embedding",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/mcp/server.rs::spawn_embed_idle_scheduler",
+    "src/embeddings/control.rs::mcp_is_idle_for_embed"
+   ]
+  },
+  {
+   "id": "concept-router",
+   "category": "concept",
+   "question": "how does the multi-layer retrieval ladder fuse keyword and ontology results",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/mcp/router.rs::fuse_l2"
+   ]
+  },
+  {
+   "id": "concept-upsert",
+   "category": "concept",
+   "question": "how are bulk vector imports written to the sqlite backend",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/db/sqlite_backend.rs::import_relations",
+    "src/embeddings/build.rs::upsert_pairs_to_db"
+   ]
+  },
+  {
+   "id": "structure-schema",
+   "category": "structure",
+   "question": "where is the per-project sqlite schema name computed",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/db/backend.rs::project_identity_keys_in"
+   ]
+  },
+  {
+   "id": "structure-inventory",
+   "category": "structure",
+   "question": "where is the index inventory refreshed",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/graph/inventory.rs::refresh_index_inventory"
+   ]
+  },
+  {
+   "id": "structure-watcher",
+   "category": "structure",
+   "question": "where does the file watcher get started",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/mcp/watcher.rs::start_watcher"
+   ]
+  },
+  {
+   "id": "structure-hydration",
+   "category": "structure",
+   "question": "where do ANN search hits get hydrated into elements",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/graph/query.rs::get_elements_by_qualified_names"
+   ]
+  },
+  {
+   "id": "impact-import",
+   "category": "impact",
+   "question": "what does the import_relations function do and who calls it",
+   "leankg_mode": "exact",
+   "ground_truth": [
+    "src/db/backend.rs::import_relations",
+    "src/db/sqlite_backend.rs::import_relations"
+   ],
+   "leankg_symbol": "import_relations"
+  },
+  {
+   "id": "impact-status",
+   "category": "impact",
+   "question": "what does the mcp_status handler report",
+   "leankg_mode": "exact",
+   "ground_truth": [
+    "src/mcp/handler.rs::mcp_status"
+   ],
+   "leankg_symbol": "mcp_status"
+  },
+  {
+   "id": "concept-doctor",
+   "category": "concept",
+   "question": "how does doctor deep diagnose deployment problems",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/doctor/deep.rs"
+   ]
+  },
+  {
+   "id": "concept-roots",
+   "category": "concept",
+   "question": "how does the server resolve the project for an HTTP request",
+   "leankg_mode": "router",
+   "ground_truth": [
+    "src/mcp/roots.rs",
+    "src/mcp/server.rs::resolve_serve_project"
+   ]
+  }
+ ],
+ "corpus": "this repo @ main 526135bf",
+ "excludes": [
+  "src/benchmark/**",
+  "*.min.js",
+  "ui-v2/public/**",
+  "src/embed/**",
+  ".leankg/**",
+  "target/**"
+ ],
+ "scoring": "grep: file-level (returned file contains ground-truth file); leankg: file-level (returned QN stripped of repo prefix contains ground-truth file). Both arms exclude the paths above.",
+ "notes": "impact questions drive search_code on the symbol (the action an agent would use); import_relations ground truth accepts BOTH backend.rs and sqlite_backend.rs (PG vs sqlite implementations)."
 }
