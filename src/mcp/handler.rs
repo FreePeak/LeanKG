@@ -714,8 +714,9 @@ impl ToolHandler {
     fn mcp_status(&self, args: &Value) -> Result<Value, String> {
         let db_path = &self.db_path;
         let include_counts = args["include_counts"].as_bool().unwrap_or(false);
-        // Post-migration (Phase 8, D4): Postgres is the only engine.
-        let storage_engine = "postgres";
+        // v4.4.0 dual-backend: label reflects the ACTUAL engine (sqlite |
+        // postgres) instead of a hardcoded value.
+        let storage_engine = self.graph_engine.db().engine_name();
         let storage_path = self.graph_engine.db().redacted_url();
 
         // FR-ZCP-02: server-side indexing state, injected by the dispatch

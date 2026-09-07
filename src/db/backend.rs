@@ -176,6 +176,16 @@ pub trait DbBackend: Send + Sync {
     /// Safe-to-log connection URL (password masked).
     fn redacted_url(&self) -> String;
 
+    /// Storage engine label for the `status` surface ("sqlite" | "postgres").
+    /// Default derives from [`Self::redacted_url`]; backends may override.
+    fn engine_name(&self) -> String {
+        if self.redacted_url().starts_with("sqlite://") {
+            "sqlite".to_string()
+        } else {
+            "postgres".to_string()
+        }
+    }
+
     /// Classify a script as read/write/DDL.
     fn mutability_for(&self, query: &str) -> mutability::ScriptMutability;
 
