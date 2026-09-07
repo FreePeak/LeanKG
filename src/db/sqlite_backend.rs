@@ -1359,16 +1359,23 @@ impl DbBackend for SqliteBackend {
         // pattern — the whole L2 tier errors on an invalid regex today.
         let q = regex::escape(&q);
         let limit = limit.clamp(1, 100);
+        // Fetch a wider candidate pool, then rank in Rust: (a) non-test
+        // symbols outrank test symbols (#293 — test fns named after the
+        // handler outranked the real one), (b) exact-name matches outrank
+        // substring matches, (c) shorter names outrank longer ones
+        // (specificity proxy — #294).
+        let pool = limit.saturating_mul(4);
         let script = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
                *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}},
                regex_matches(lowercase(name), "{}")
              :limit {}"#,
             q.replace('"', "\\\""),
-            limit
+            pool
         );
         let rows = run_script(&self.db, &script, Default::default())?;
-        Ok(rows
+        let q_folded = query.trim().to_lowercase();
+        let mut ranked: Vec<(crate::db::models::CodeElement, bool, bool, usize)> = rows
             .rows
             .iter()
             .map(|row| {
@@ -1390,7 +1397,7 @@ impl DbBackend for SqliteBackend {
                         })
                         .unwrap_or(0)
                 };
-                crate::db::models::CodeElement {
+                let el = crate::db::models::CodeElement {
                     qualified_name: g(0),
                     element_type: g(1),
                     name: g(2),
@@ -1403,8 +1410,29 @@ impl DbBackend for SqliteBackend {
                     cluster_label: (!g(9).is_empty()).then(|| g(9)),
                     metadata: serde_json::from_str(&g(10)).unwrap_or(serde_json::json!({})),
                     ..Default::default()
-                }
+                };
+                let name_l = el.name.to_lowercase();
+                let last_seg = el.qualified_name.rsplit("::").next().unwrap_or("");
+                let is_test = last_seg.starts_with("test_")
+                    || last_seg.ends_with("_test")
+                    || last_seg == "test"
+                    || el.qualified_name.contains("::tests::")
+                    || el.file_path.contains("/tests/");
+                let exact = name_l == q_folded;
+                let specificity = name_l.len();
+                (el, is_test, exact, specificity)
             })
+            .collect();
+        ranked.sort_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then(b.2.cmp(&a.2))
+                .then(a.3.cmp(&b.3))
+                .then(a.0.qualified_name.cmp(&b.0.qualified_name))
+        });
+        Ok(ranked
+            .into_iter()
+            .take(limit)
+            .map(|(el, _, _, _)| el)
             .collect())
     }
 
@@ -2271,6 +2299,86 @@ mod tests {
     /// `:= *code_elements{…}` relation ref) — unparseable Cozo, so the L2
     /// fuzzy tier silently degraded on SQLite.
     #[test]
+    /// Regression (#293/#294): test symbols are demoted below the real
+    /// implementation, and exact-name matches outrank longer substring
+    /// matches within the same demotion tier.
+    #[test]
+    fn fuzzy_find_elements_ranks_tests_last_and_exact_first() {
+        use crate::db::value::{DataValue as DV, Num as DVNum};
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
+        let mut data = BTreeMap::new();
+        let row = |qn: &str, name: &str, file: &str| {
+            vec![
+                DV::Str(qn.into()),
+                DV::Str("function".into()),
+                DV::Str(name.into()),
+                DV::Str(file.into()),
+                DV::Num(DVNum::Int(1)),
+                DV::Num(DVNum::Int(10)),
+                DV::Str("rust".into()),
+                DV::Str("".into()),
+                DV::Str("".into()),
+                DV::Str("".into()),
+                DV::Str("{}".into()),
+                DV::Str("local".into()),
+            ]
+        };
+        data.insert(
+            "code_elements".to_string(),
+            NamedRows::new(
+                vec![
+                    "qualified_name",
+                    "element_type",
+                    "name",
+                    "file_path",
+                    "line_start",
+                    "line_end",
+                    "language",
+                    "parent_qualified",
+                    "cluster_id",
+                    "cluster_label",
+                    "metadata",
+                    "env",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+                vec![
+                    row(
+                        "/src/tests.rs::mcp_status_test",
+                        "mcp_status_test",
+                        "/src/tests.rs",
+                    ),
+                    row(
+                        "/src/handler.rs::mcp_status_longer_name",
+                        "mcp_status_longer_name",
+                        "/src/handler.rs",
+                    ),
+                    row(
+                        "/src/handler.rs::mcp_status",
+                        "mcp_status",
+                        "/src/handler.rs",
+                    ),
+                ],
+            ),
+        );
+        backend.import_relations(data).unwrap();
+        let got = backend
+            .fuzzy_find_elements("mcp_status", 3)
+            .expect("fuzzy must not error");
+        let names: Vec<String> = got.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "mcp_status".to_string(),
+                "mcp_status_longer_name".to_string(),
+                "mcp_status_test".to_string(),
+            ],
+            "real handler first, longer substring second, test symbol last"
+        );
+    }
+
     fn fuzzy_find_elements_matches_substring() {
         let tmp = TempDir::new().unwrap();
         let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
