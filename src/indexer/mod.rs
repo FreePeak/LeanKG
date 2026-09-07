@@ -421,10 +421,16 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         let ext_lower = ext.to_lowercase();
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-        let is_valid_file = config_files.contains(&file_name)
-            || (path.to_string_lossy().contains("/res/") && ext == "xml")
-            || extensions.contains(&ext_lower.as_str())
-            || is_cicd_yaml_file(path);
+        // #291: minified/vendor bundles (vis-network.min.js et al.) are
+        // indexed and embedded otherwise — thousands of 1-2 char
+        // identifiers dominate ANN hits and pollute the vector space.
+        let is_minified = is_minified_asset(path);
+
+        let is_valid_file = !is_minified
+            && (config_files.contains(&file_name)
+                || (path.to_string_lossy().contains("/res/") && ext == "xml")
+                || extensions.contains(&ext_lower.as_str())
+                || is_cicd_yaml_file(path));
 
         if is_valid_file {
             files.push(path.to_string_lossy().to_string());
@@ -432,6 +438,18 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
     }
 
     Ok(files)
+}
+
+/// #291: minified/vendor bundles (`.min.js`, generated asset copies) are
+/// excluded from indexing — their 1-2 char identifiers pollute the ANN
+/// vector space and outrank real code.
+fn is_minified_asset(path: &Path) -> bool {
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if file_name.contains(".min.") {
+        return true;
+    }
+    let s = path.to_string_lossy();
+    s.contains("/src/embed/")
 }
 
 fn is_default_ignored_entry(root: &Path, path: &Path) -> bool {
@@ -2884,6 +2902,34 @@ mod tests {
     }
 
     #[test]
+    /// Regression (#291): minified/vendor bundles must be skipped at
+    /// collection time — vis-network.min.js was indexed and embedded, and
+    /// its 1-2 char identifiers dominated ANN hits (see
+    /// benchmark/grep_vs_leankg).
+    #[test]
+    fn test_minified_and_embed_assets_are_skipped() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+        let cases = [
+            ("src/embed/vis-network.min.js", true),
+            ("ui-v2/public/vis-network.min.js", true),
+            ("ui/dist/app.min.js", true),
+            ("src/mcp/tools.rs", false),
+            ("ui-v2/src/main.ts", false),
+        ];
+        for (rel, want_skip) in cases {
+            let abs = root.join(&rel);
+            if let Some(parent) = abs.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&abs, "var a=1;").unwrap();
+            let got = is_minified_asset(&abs);
+            assert_eq!(got, want_skip, "path {rel}: skip={want_skip}");
+            let _ = root.join(&rel);
+        }
+        let _ = &root;
+    }
+
     fn test_default_index_ignored_dirs_covers_common_build_dirs() {
         // Regression guard: the default exclude set must keep growing to cover
         // common monorepo build outputs, otherwise the indexer drags in
