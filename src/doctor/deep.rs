@@ -279,7 +279,7 @@ impl BackendProbes {
 
 impl DeepProbes for BackendProbes {
     fn ping_ms(&self) -> Result<u64, String> {
-        const PROBE: &str = "?[id] := *migrations[id] :limit 1";
+        const PROBE: &str = "?[id] := *migrations{id} :limit 1";
         // Warm-up round trip: excludes lazy connect + TLS handshake from
         // the timed measurement so remote deployments report true
         // steady-state query latency, not one-time session setup.
@@ -294,15 +294,15 @@ impl DeepProbes for BackendProbes {
     }
 
     fn applied_migrations(&self) -> Result<Vec<String>, String> {
-        self.strings("?[id] := *migrations[id]")
+        self.strings("?[id] := *migrations{id}")
     }
 
     fn indexed_files(&self) -> Result<Vec<String>, String> {
-        self.strings("?[file_path] := *code_elements[file_path]")
+        self.strings("?[file_path] := *code_elements{file_path}")
     }
 
     fn qualified_names(&self) -> Result<Vec<String>, String> {
-        self.strings("?[qualified_name] := *code_elements[qualified_name]")
+        self.strings("?[qualified_name] := *code_elements{qualified_name}")
     }
 
     fn relationship_edges(&self) -> Result<Vec<(String, String, String)>, String> {
@@ -311,7 +311,7 @@ impl DeepProbes for BackendProbes {
             .run_script(
                 &format!(
                     "?[source_qualified, target_qualified, rel_type] := \
-                     *relationships[source_qualified, target_qualified, rel_type] :limit {ORPHAN_SAMPLE_LIMIT}"
+                     *relationships{{source_qualified, target_qualified, rel_type}} :limit {ORPHAN_SAMPLE_LIMIT}"
                 ),
                 BTreeMap::new(),
             )
@@ -329,7 +329,7 @@ impl DeepProbes for BackendProbes {
     }
 
     fn embedded_names(&self) -> Result<Option<Vec<String>>, String> {
-        match self.strings("?[qualified_name] := *embedding_state[qualified_name]") {
+        match self.strings("?[qualified_name] := *embedding_state{qualified_name}") {
             Ok(names) => Ok(Some(names)),
             Err(e) if table_absent(&e) => Ok(None),
             Err(e) => Err(e),

@@ -1726,7 +1726,7 @@ pub(crate) fn count_vectors(
     // is handled by the translator, but COUNT is far cheaper here.
     let vectors_rel = active_vectors_relation()?;
     let result = db.run_script(
-        &format!("?[count(qn)] := *{vectors_rel}[qn]"),
+        &format!("?[count(qualified_name)] := *{vectors_rel}{{qualified_name}}"),
         Default::default(),
     )?;
     Ok(result
@@ -2006,7 +2006,7 @@ pub fn spawn_background_embed(
                             .db()
                             .run_script(
                                 &format!(
-                                    "?[qualified_name] := *{}[qualified_name]",
+                                    "?[qualified_name] := *{}{{qualified_name}}",
                                     active_vectors_relation().unwrap_or_default()
                                 ),
                                 std::collections::BTreeMap::new(),
