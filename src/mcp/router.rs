@@ -493,21 +493,7 @@ pub fn route(
             if intent == Intent::Lexical {
                 let (results, suggestions) = exact_search(engine, query, limit)?;
                 if !results.is_empty() || !suggestions.is_empty() {
-                    let reason = if results.is_empty() {
-                        "no exact identifier matched; returning nearest-name suggestions"
-                    } else {
-                        "exact/regex identifier search"
-                    };
-                    return Ok(json!({
-                        "query": query,
-                        "results": results,
-                        "suggestions": suggestions,
-                        "count": results.len(),
-                        "retrieval": retrieval_block(
-                            &Rung::new(RUNG_EXACT, reason),
-                            freshness,
-                        ),
-                    }));
+                    return Ok(exact_response(query, results, suggestions, freshness));
                 }
             }
             // L3: delegate to the existing semantic pipeline. If it returns
@@ -562,6 +548,29 @@ pub fn route(
     }
 }
 
+/// Shared L1-exact response construction — used by the vector arm's
+/// lexical pre-check AND by `route_lexical`. One builder so the two arms
+/// cannot drift on shape, reason strings, or the rung tag.
+fn exact_response(
+    query: &str,
+    results: Vec<Value>,
+    suggestions: Vec<String>,
+    freshness: &str,
+) -> Value {
+    let reason = if results.is_empty() {
+        "no exact identifier matched; returning nearest-name suggestions"
+    } else {
+        "exact/regex identifier search"
+    };
+    json!({
+        "query": query,
+        "results": results,
+        "suggestions": suggestions,
+        "count": results.len(),
+        "retrieval": retrieval_block(&Rung::new(RUNG_EXACT, reason), freshness),
+    })
+}
+
 /// Lexical intent: L1 exact first (identifier-shaped), L2 on zero hits.
 fn route_lexical(
     engine: &GraphEngine,
@@ -572,18 +581,7 @@ fn route_lexical(
 ) -> Result<Value, String> {
     let (results, suggestions) = exact_search(engine, query, limit)?;
     if !results.is_empty() || !suggestions.is_empty() {
-        let reason = if results.is_empty() {
-            "no exact identifier matched; returning nearest-name suggestions"
-        } else {
-            "exact/regex identifier search"
-        };
-        return Ok(json!({
-            "query": query,
-            "results": results,
-            "suggestions": suggestions,
-            "count": results.len(),
-            "retrieval": retrieval_block(&Rung::new(RUNG_EXACT, reason), freshness),
-        }));
+        return Ok(exact_response(query, results, suggestions, freshness));
     }
     // L1 empty → L2 fusion as final fallback.
     let (results, method) = fuse_l2(engine, query, "local", limit)?;
