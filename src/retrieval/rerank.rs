@@ -9,8 +9,21 @@ use crate::embeddings::{models::Reranker, RerankScore, RerankerStatus};
 /// Wraps an optional `Reranker`. Constructed once at pipeline startup; if
 /// construction fails, `inner` stays None and every `rerank` call returns
 /// `RerankerStatus::Fallback` with the input order unchanged.
+#[derive(Clone)]
 pub struct RerankStage {
-    inner: Option<Reranker>,
+    inner: std::sync::Arc<Option<Reranker>>,
+}
+
+/// Process-global shared cross-encoder stage. Loading `Reranker::new()`
+/// downloads/loads the ONNX cross-encoder — doing that per request made
+/// every router query pay a multi-second init (#292). One instance is
+/// shared by every pipeline in the process; `RerankStage::rerank` is
+/// `&self` and the inner fastembed reranker is internally synchronized.
+pub fn shared_rerank_stage() -> std::sync::Arc<RerankStage> {
+    static SHARED: std::sync::OnceLock<std::sync::Arc<RerankStage>> = std::sync::OnceLock::new();
+    SHARED
+        .get_or_init(|| std::sync::Arc::new(RerankStage::try_new()))
+        .clone()
 }
 
 impl RerankStage {
@@ -18,13 +31,17 @@ impl RerankStage {
     /// works, just without Stage 3.
     pub fn try_new() -> Self {
         match Reranker::new() {
-            Ok(r) => Self { inner: Some(r) },
+            Ok(r) => Self {
+                inner: std::sync::Arc::new(Some(r)),
+            },
             Err(e) => {
                 tracing::warn!(
                     "reranker load failed; pipeline will run in ANN-only fallback mode: {}",
                     e
                 );
-                Self { inner: None }
+                Self {
+                    inner: std::sync::Arc::new(None),
+                }
             }
         }
     }
@@ -43,7 +60,7 @@ impl RerankStage {
         documents: Vec<String>,
     ) -> (Vec<RerankScore>, RerankerStatus) {
         let n = documents.len();
-        let Some(reranker) = &self.inner else {
+        let Some(reranker) = &*self.inner else {
             return (ann_order(n), RerankerStatus::Fallback);
         };
         match reranker.rerank(query, documents) {

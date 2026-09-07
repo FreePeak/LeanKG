@@ -23,7 +23,7 @@ pub struct SemanticRetrievalPipeline {
     /// Active model's vectors relation (`embedding_vectors` for the default
     /// BGE model; `embedding_vectors_<model_id>` otherwise) — the ANN target.
     active_vectors_relation: String,
-    rerank_stage: RerankStage,
+    rerank_stage: std::sync::Arc<RerankStage>,
     db: SharedDb,
     /// Most recent query embedding from [`Self::retrieve`], stashed so
     /// downstream stages (e.g. ontology-guided composite scoring in
@@ -220,7 +220,8 @@ impl SemanticRetrievalPipeline {
         provider: Arc<dyn EmbedProvider>,
         vectors_relation: String,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let rerank_stage = RerankStage::try_new();
+        let rerank_stage: std::sync::Arc<RerankStage> =
+            crate::retrieval::rerank::shared_rerank_stage().clone();
         Ok(Self {
             provider,
             active_vectors_relation: vectors_relation,
@@ -248,13 +249,40 @@ impl SemanticRetrievalPipeline {
             })?,
             None => crate::embeddings::registry::resolve_active_model()?,
         };
-        let provider = create_provider_for_entry(&entry)?;
+        // Process-global provider cache keyed by model id (#292): loading
+        // the ONNX session per request made every router query pay a
+        // multi-second init. The provider is Send+Sync and stateless w.r.t.
+        // projects — the DB handle stays per-request (passed in), so no
+        // cross-project leakage is possible. The vectors relation is
+        // derived from the same entry, so it is always consistent with the
+        // cached provider.
+        static PROVIDER_CACHE: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::HashMap<String, Arc<dyn EmbedProvider>>>,
+        > = std::sync::OnceLock::new();
+        let cache = PROVIDER_CACHE.get_or_init(|| std::sync::Mutex::new(Default::default()));
+        let provider = {
+            let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+            match guard.get(&entry.model_id) {
+                Some(p) => p.clone(),
+                None => {
+                    let p = create_provider_for_entry(&entry)?;
+                    guard.insert(entry.model_id.clone(), p.clone());
+                    p
+                }
+            }
+        };
         let active_vectors_relation = entry.vectors_relation();
         Self::with_provider(db, provider, active_vectors_relation)
     }
 
     pub fn provider(&self) -> &dyn EmbedProvider {
         self.provider.as_ref()
+    }
+
+    /// Arc handle to the cached provider (for identity assertions in tests
+    /// and diagnostics).
+    pub fn provider_arc(&self) -> &Arc<dyn EmbedProvider> {
+        &self.provider
     }
 
     pub fn reranker_active(&self) -> bool {
@@ -470,6 +498,27 @@ fn truncate(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (#292): for_model must reuse the cached provider for the
+    /// same model id instead of loading a fresh ONNX session per request.
+    /// Two pipelines for the same model point at one provider instance
+    /// (cheap Arc clone), while a different db handle per call keeps the
+    /// pipeline per-project.
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn for_model_reuses_cached_provider_for_same_model() {
+        let db1: SharedDb = Arc::new(crate::db::fake::FakeBackend::new());
+        let db2: SharedDb = Arc::new(crate::db::fake::FakeBackend::new());
+        let p1 = SemanticRetrievalPipeline::for_model(db1, None).expect("pipeline 1");
+        let p2 = SemanticRetrievalPipeline::for_model(db2, None).expect("pipeline 2");
+        // Same provider instance (Arc::ptr_eq on the trait object).
+        assert!(
+            Arc::ptr_eq(p1.provider_arc(), p2.provider_arc(),),
+            "same model must share one cached provider"
+        );
+        // Different db handles (per-project isolation preserved).
+        assert!(!std::sync::Arc::ptr_eq(&p1.db, &p2.db));
+    }
 
     #[test]
     fn worktree_filter_matches_q2_patterns() {
