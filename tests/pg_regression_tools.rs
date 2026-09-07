@@ -308,7 +308,6 @@ fn seed_knowledge(db: &leankg::db::backend::PostgresBackend) {
 
 /// 384-dim unit vectors for the fixture elements (dim must match the
 /// schema's vector(384) + the embedder dimension).
-
 fn seed_fixture(db: &leankg::db::backend::PostgresBackend) {
     for stmt in [
         ("elements", FIXTURE_ELEMENTS),
@@ -413,7 +412,6 @@ fn fixture_repo(tmp: &tempfile::TempDir) {
 }
 
 /// Normalise volatile fields before comparing JSON responses.
-
 /// Run one tool against one handler, return (ok, latency ms).
 async fn run_tool(handler: &ToolHandler, tool: &str, args: &Value) -> (Result<Value, String>, f64) {
     let start = std::time::Instant::now();

@@ -54,12 +54,11 @@ pub fn mega_graph_refusal(tool: &str, element_count: usize) -> Value {
         "max_full_scan": max,
         "hint": "Use concept_search, semantic_search, or search_code (ontology-first, paginated with limit/offset). Avoid get_clusters / full-tree scans on mega-graphs.",
         "recommended_tools": [
+            "leankg_context",
             "concept_search",
             "semantic_search",
             "search_code",
-            "kg_context",
-            "find_function",
-            "query_file"
+            "kg_context"
         ]
     })
 }

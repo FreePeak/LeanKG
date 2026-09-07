@@ -65,6 +65,10 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+# SQLite storage backend (FR: dual-backend — sqlite default for this session).
+# CozoDB 0.7.6 speaks the same Datalog the PG backend translates, so the
+# pre-v0.20 script corpus runs natively; HNSW vectors via ::hnsw (cosine).
+cozo = { version = "0.7.6", features = ["storage-sqlite"] }
 # FR-PLG-1 `connect`: format-preserving TOML edits for ~/.codex/config.toml
 toml_edit = "0.22"
 thiserror = "2"

@@ -245,6 +245,105 @@ pub struct MCPServer {
     /// FR-ENT-1: transport tag used as the agent_client fallback when the
     /// client did not send clientInfo ("stdio" | "http").
     transport: &'static str,
+    /// FR-ZCP-01 clause 2: per-session cwd root cache fed by the
+    /// server-initiated `roots/list` probe over HTTP.
+    http_session_roots: crate::mcp::roots::SessionRootCache,
+    /// FR-ZCP-02: shared progress/state of the single background index job
+    /// (single-flight per process). Read by `mcp_status`; flipped by the
+    /// spawned indexing task.
+    indexing: Arc<IndexingShared>,
+}
+
+/// FR-ZCP-02: process-wide single-flight state for background first-index
+/// jobs. One job at a time (the watcher remains single-project-per-process;
+/// multi-project is FR-ZCP-09 scope). `run_id` increments on every spawn so
+/// a stale task cannot clobber a newer job's counters.
+#[derive(Debug, Default)]
+pub struct IndexingShared {
+    running: std::sync::atomic::AtomicBool,
+    files_done: std::sync::atomic::AtomicUsize,
+    files_total: std::sync::atomic::AtomicUsize,
+    /// 0 = unknown/none; usize::MAX = unbounded (incremental run).
+    files_total_sentinel: std::sync::atomic::AtomicUsize,
+    run_id: std::sync::atomic::AtomicU64,
+}
+
+impl IndexingShared {
+    fn start_run(&self) -> u64 {
+        self.files_done
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.files_total
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.files_total_sentinel
+            .store(UNBOUNDED_TOTAL, std::sync::atomic::Ordering::Relaxed);
+        self.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.run_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+
+    fn end_run(&self) {
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn snapshot(&self) -> IndexingState {
+        if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            return IndexingState::Idle;
+        }
+        let done = self.files_done.load(std::sync::atomic::Ordering::Relaxed);
+        let sentinel = self
+            .files_total_sentinel
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let total = if sentinel == usize::MAX {
+            None
+        } else {
+            Some(self.files_total.load(std::sync::atomic::Ordering::Relaxed))
+        };
+        IndexingState::Indexing {
+            files_done: done,
+            files_total: total,
+        }
+    }
+}
+
+const UNBOUNDED_TOTAL: usize = usize::MAX;
+
+/// Clears the running flag when the spawned index task ends (including
+/// panics/early returns) so `mcp_status` never reports a phantom job.
+struct RunGuard<'a> {
+    shared: &'a IndexingShared,
+    run_id: u64,
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        if self.shared.run_id.load(std::sync::atomic::Ordering::SeqCst) == self.run_id {
+            self.shared.end_run();
+        }
+    }
+}
+
+/// FR-ZCP-02: freshness of the graph at `db_path` from cheap local facts
+/// (element count, latest inventory snapshot, last commit time). Shared by
+/// `mcp_status` enrichment and the auto-attach cold responses.
+fn engine_freshness(engine: &GraphEngine, db_path: &std::path::Path) -> Freshness {
+    let count = engine.count_elements().unwrap_or(0);
+    let computed_at = crate::graph::inventory::load_latest_inventory(engine.db())
+        .ok()
+        .flatten()
+        .and_then(|inv| inv.computed_at.parse::<i64>().ok());
+    let project_root = db_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| db_path.to_path_buf());
+    let last_commit = crate::indexer::git_workspace::workspace_last_commit_time(&project_root).ok();
+    match crate::setup_config::freshness_label(count, computed_at, last_commit) {
+        "cold" => Freshness::Cold,
+        "fresh" => Freshness::Fresh,
+        _ => Freshness::PossiblyStale,
+    }
 }
 
 impl std::fmt::Debug for MCPServer {
@@ -293,6 +392,8 @@ impl Clone for MCPServer {
             read_only: self.read_only,
             audit: self.audit.clone(),
             transport: self.transport,
+            http_session_roots: self.http_session_roots.clone(),
+            indexing: self.indexing.clone(),
         }
     }
 }
@@ -311,6 +412,78 @@ pub enum AutoIndexDecision {
     SkippedNoGit,
     /// Incremental (or fallback full) index ran.
     Indexed,
+}
+
+/// FR-ZCP-02: live indexing state surfaced by `mcp_status`. `Idle` = no
+/// background index running; `Indexing` carries cheap counters from the
+/// shared progress atomics (`files_total` is unknown for incremental runs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexingState {
+    Idle,
+    Indexing {
+        files_done: usize,
+        files_total: Option<usize>,
+    },
+}
+
+impl IndexingState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IndexingState::Idle => "idle",
+            IndexingState::Indexing { .. } => "indexing",
+        }
+    }
+
+    pub fn to_json(self) -> serde_json::Value {
+        match self {
+            IndexingState::Idle => serde_json::json!({ "state": "idle" }),
+            IndexingState::Indexing {
+                files_done,
+                files_total,
+            } => serde_json::json!({
+                "state": "indexing",
+                "files_done": files_done,
+                "files_total": files_total,
+            }),
+        }
+    }
+}
+
+/// FR-ZCP-02 freshness vocabulary (FR-ZCP-06 contract). `cold` = attached
+/// but not yet indexed (first query in a never-indexed repo); `cold` queries
+/// are served as zero-verbosity successes, never "not initialized" errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    Fresh,
+    PossiblyStale,
+    Cold,
+}
+
+impl Freshness {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Freshness::Fresh => "fresh",
+            Freshness::PossiblyStale => "possibly_stale",
+            Freshness::Cold => "cold",
+        }
+    }
+}
+
+/// FR-ZCP-02 freshness of a resolved route. `Unknown` when no engine is
+/// open for the route (the JSON field then reads `"unknown"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineFreshness {
+    Known(Freshness),
+    Unknown,
+}
+
+impl EngineFreshness {
+    pub fn to_json(self) -> serde_json::Value {
+        match self {
+            EngineFreshness::Known(f) => serde_json::Value::String(f.as_str().to_string()),
+            EngineFreshness::Unknown => serde_json::Value::String("unknown".to_string()),
+        }
+    }
 }
 
 impl MCPServer {
@@ -344,6 +517,8 @@ impl MCPServer {
             read_only: false,
             audit: None,
             transport: "stdio",
+            http_session_roots: crate::mcp::roots::SessionRootCache::new(),
+            indexing: Arc::new(IndexingShared::default()),
         }
     }
 
@@ -370,6 +545,8 @@ impl MCPServer {
             read_only: false,
             audit: None,
             transport: "stdio",
+            http_session_roots: crate::mcp::roots::SessionRootCache::new(),
+            indexing: Arc::new(IndexingShared::default()),
         }
     }
 
@@ -408,6 +585,44 @@ impl MCPServer {
         self.transport
     }
 
+    /// Audit + dispatch for an ALREADY-RESOLVED capability. Used by the
+    /// JSON-RPC `tools/call` arm, which resolves the envelope itself
+    /// (before RBAC) and must not re-enter `resolve_3tool` — a resolved
+    /// verb is a legacy capability name, and re-resolving it would
+    /// hard-refuse it as "not registered".
+    pub(crate) async fn execute_capability_audited(
+        &self,
+        capability: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        agent_client: Option<String>,
+        actor: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        let started = std::time::Instant::now();
+        let result = self.execute_capability(capability, arguments.clone()).await;
+        if let Some(recorder) = &self.audit {
+            let project = arguments
+                .get("project")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            recorder.record(crate::audit::AuditRecord {
+                ts: std::time::SystemTime::now(),
+                actor: actor.unwrap_or_else(|| "local".to_string()),
+                agent_client: agent_client.unwrap_or_else(|| self.transport.to_string()),
+                tool: capability.to_string(),
+                project,
+                args_hash: crate::audit::hash_args(&serde_json::Value::Object(arguments)),
+                result_status: if result.is_ok() { "ok" } else { "error" }.to_string(),
+            });
+        }
+        tracing::debug!(
+            tool = %capability,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            status = %if result.is_ok() { "ok" } else { "error" },
+            "tool dispatch complete"
+        );
+        result
+    }
+
     /// FR-ENT-1: THE audit choke point. Every tool dispatch — rmcp
     /// `ServerHandler::call_tool` (stdio + streamable HTTP) and the raw
     /// JSON-RPC `tools/call` arm — goes through here, producing exactly one
@@ -421,11 +636,46 @@ impl MCPServer {
         actor: Option<String>,
     ) -> Result<serde_json::Value, String> {
         let started = std::time::Instant::now();
-        let result = self.execute_tool(tool_name, arguments.clone()).await;
+        // 3-tool surface (FR-3T-01): resolve the envelope (set/get/status
+        // plus the legacy `leankg_context` verb envelope) BEFORE any gate
+        // (read-only, write-lock, audit) so verb-scoped security decisions
+        // cannot be bypassed by hiding a write verb inside a read-named
+        // tool. Audit the effective capability, not the envelope tool name
+        // — otherwise every call would ledger as `get` and write verbs
+        // would be indistinguishable from reads in the audit trail.
+        let (capability, inner_args) = match crate::mcp::tools::resolve_3tool(tool_name, &arguments)
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                // Envelope refusals (unknown tool/verb) are dispatch errors:
+                // record them under the raw name so the audit trail shows
+                // the refused call, then return.
+                if let Some(recorder) = &self.audit {
+                    recorder.record(crate::audit::AuditRecord {
+                        ts: std::time::SystemTime::now(),
+                        actor: actor.unwrap_or_else(|| "local".to_string()),
+                        agent_client: agent_client.unwrap_or_else(|| self.transport.to_string()),
+                        tool: tool_name.to_string(),
+                        project: arguments
+                            .get("project")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
+                        args_hash: crate::audit::hash_args(&serde_json::Value::Object(
+                            arguments.clone(),
+                        )),
+                        result_status: "error".to_string(),
+                    });
+                }
+                return Err(e);
+            }
+        };
+        let result = self
+            .execute_capability(&capability, inner_args.clone())
+            .await;
         if let Some(recorder) = &self.audit {
             // args_hash covers the serialized parameters only (NFR-2): raw
             // arguments are never persisted.
-            let project = arguments
+            let project = inner_args
                 .get("project")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
@@ -433,15 +683,15 @@ impl MCPServer {
                 ts: std::time::SystemTime::now(),
                 actor: actor.unwrap_or_else(|| "local".to_string()),
                 agent_client: agent_client.unwrap_or_else(|| self.transport.to_string()),
-                tool: tool_name.to_string(),
+                tool: capability.clone(),
                 project,
-                args_hash: crate::audit::hash_args(&serde_json::Value::Object(arguments)),
+                args_hash: crate::audit::hash_args(&serde_json::Value::Object(inner_args)),
                 result_status: if result.is_ok() { "ok" } else { "error" }.to_string(),
             };
             recorder.record(record);
         }
         tracing::debug!(
-            tool = tool_name,
+            tool = %capability,
             elapsed_ms = started.elapsed().as_millis() as u64,
             status = %if result.is_ok() { "ok" } else { "error" },
             "tool dispatch complete"
@@ -467,13 +717,14 @@ impl MCPServer {
         names
     }
 
-    /// Tool names exposed to MCP clients. In read-only mode, mutators from
-    /// [`Self::write_tool_names`] are omitted.
+    /// Tool names exposed to MCP clients. In read-only mode, tools hidden
+    /// by [`Self::is_ro_hidden_tool`] (write capabilities and `set`) are
+    /// omitted.
     pub fn list_tool_names(&self) -> Vec<String> {
         ToolRegistry::list_tools()
             .into_iter()
             .map(|t| t.name)
-            .filter(|name| !(self.read_only && Self::is_write_tool(name)))
+            .filter(|name| !(self.read_only && Self::is_ro_hidden_tool(name)))
             .collect()
     }
 
@@ -488,6 +739,273 @@ impl MCPServer {
         project_path: &str,
     ) -> Result<AutoIndexDecision, String> {
         self.ensure_project_indexed(project_path).await
+    }
+
+    /// FR-ZCP-02: `LEANKG_AUTO_ATTACH` gate. Default ON for local single-user
+    /// deployments; `0`/`false` opts out (read-only / shared deployments) —
+    /// unresolved projects then error with cause + fix instead of attaching.
+    pub fn auto_attach_enabled() -> bool {
+        match std::env::var("LEANKG_AUTO_ATTACH") {
+            Ok(v) => !matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off" | "no"
+            ),
+            Err(_) => true,
+        }
+    }
+
+    /// FR-ZCP-02: freshness label for the graph backing `project_db_path`,
+    /// computed from cheap local facts (element count + inventory snapshot
+    /// vs last commit). `Cold` when the graph holds no elements (attached,
+    /// index still building); `Unknown` when no engine is open.
+    pub fn engine_freshness_for_path(&self, project_db_path: &std::path::Path) -> EngineFreshness {
+        let engine = {
+            let cache = self.graph_engine_cache.lock();
+            cache.get(project_db_path).cloned()
+        };
+        let Some(engine) = engine else {
+            return EngineFreshness::Unknown;
+        };
+        EngineFreshness::Known(engine_freshness(&engine, project_db_path))
+    }
+
+    /// Live indexing state of the single background index job.
+    pub fn indexing_state(&self) -> IndexingState {
+        self.indexing.snapshot()
+    }
+
+    /// FR-ZCP-02 public hook for the router tool (FR-ZCP-03): idempotently
+    /// kick a background first-index for `project_root` without ever
+    /// blocking the caller. Returns a small JSON status; the router embeds
+    /// it in its L0 preamble so the agent can watch `mcp_status`.
+    pub fn kick_background_index(
+        &self,
+        project_root: &std::path::Path,
+    ) -> Result<serde_json::Value, String> {
+        if self.read_only {
+            return Ok(serde_json::json!({
+                "indexing": false,
+                "project": project_root.display().to_string(),
+                "message": "read-only server: background indexing disabled",
+            }));
+        }
+        let leankg_dir = project_root.join(".leankg");
+        if !leankg_dir.is_dir() {
+            return Err(crate::errors::render(
+                crate::errors::PROJECT_NOT_INITIALIZED.code,
+                &format!("no .leankg directory at {}", leankg_dir.display()),
+                &format!(
+                    "run `leankg add {}` or mcp_init with that path first",
+                    project_root.display()
+                ),
+            ));
+        }
+        match self.spawn_background_index(project_root.to_path_buf(), leankg_dir) {
+            Some(()) => Ok(serde_json::json!({
+                "indexing": true,
+                "project": project_root.display().to_string(),
+                "message": "background index started; query results are freshness:cold \
+                    until it completes (see mcp_status)",
+            })),
+            None => Ok(serde_json::json!({
+                "indexing": true,
+                "project": project_root.display().to_string(),
+                "message": "background index already running for this project",
+            })),
+        }
+    }
+
+    /// FR-ZCP-02: spawn the background first-index job (single-flight).
+    /// Returns `None` when a job is already running. The spawned task owns
+    /// the whole index pipeline: parser init → incremental-or-full index →
+    /// call edges → ontology refresh → engine-cache drop so the next query
+    /// reopens against the populated graph.
+    fn spawn_background_index(&self, project_root: PathBuf, leankg_dir: PathBuf) -> Option<()> {
+        if self
+            .indexing
+            .running
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return None;
+        }
+        let run_id = self.indexing.start_run();
+        let shared = Arc::clone(&self.indexing);
+        let me = self.clone();
+        tokio::spawn(async move {
+            let _guard = RunGuard {
+                shared: &shared,
+                run_id,
+            };
+            // 1) leankg.yaml bootstrap (mirrors mcp_init: merge, never
+            //    overwrite — dropping project.project_path re-scopes the
+            //    project identity on the next boot).
+            let config_path = leankg_dir.join("leankg.yaml");
+            if !config_path.exists() {
+                if let Err(e) = crate::config::write_config_preserving_existing(
+                    &config_path,
+                    &crate::config::ProjectConfig::default(),
+                ) {
+                    tracing::warn!(
+                        "AutoAttach: failed to write {} config: {}",
+                        project_root.display(),
+                        e
+                    );
+                }
+            }
+            // 2) Index.
+            match me.run_index_pipeline(&project_root, run_id).await {
+                Ok(decision) => {
+                    if decision == AutoIndexDecision::Indexed {
+                        me.refresh_ontology_after_index();
+                        // Drop the per-project engine so the next query
+                        // reopens against the freshly populated graph
+                        // instead of the pre-index empty handle. The L1
+                        // caches must go too — they may hold pre-index
+                        // empty results (same invalidation mcp_index does).
+                        let key = leankg_dir.canonicalize().unwrap_or(leankg_dir.clone());
+                        me.graph_engine_cache.lock().remove(&key);
+                        me.invalidate_l1_caches_public().await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "AutoAttach: background index for {} failed: {}",
+                        project_root.display(),
+                        e
+                    );
+                }
+            }
+        });
+        Some(())
+    }
+
+    /// FR-ZCP-02: the actual index work for a project root. Prefers the
+    /// incremental sync; for a never-indexed clean repo (empty git diff)
+    /// falls back to a full pass so the graph actually populates. File
+    /// progress streams into the shared atomics for `mcp_status`.
+    async fn run_index_pipeline(
+        &self,
+        project_root: &std::path::Path,
+        run_id: u64,
+    ) -> Result<AutoIndexDecision, String> {
+        // Config gates: reuse the same leankg.yaml knobs as the other
+        // auto-index paths so operators have one way to say "don't".
+        let config_path = project_root.join(".leankg/leankg.yaml");
+        let config = if config_path.exists() {
+            let content = std::fs::read_to_string(&config_path)
+                .map_err(|e| format!("Failed to read config: {}", e))?;
+            serde_yaml::from_str::<crate::config::ProjectConfig>(&content)
+                .map_err(|e| format!("Failed to parse config: {}", e))?
+        } else {
+            crate::config::ProjectConfig::default()
+        };
+        if !config.mcp.auto_index_on_start {
+            return Ok(AutoIndexDecision::SkippedDisabled);
+        }
+        if std::env::var("LEANKG_SKIP_FRESHNESS_CHECK")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            return Ok(AutoIndexDecision::SkippedDisabled);
+        }
+
+        let graph_engine = self
+            .get_graph_engine_for_path(Some(&project_root.to_string_lossy().to_string()))
+            .map_err(|e| format!("Database error: {}", e))?;
+        let mut parser_manager = crate::indexer::ParserManager::new();
+        parser_manager
+            .init_parsers()
+            .map_err(|e| format!("Parser init error: {}", e))?;
+
+        let root_str = project_root.to_string_lossy().to_string();
+        let mut indexed = false;
+        match crate::indexer::incremental_index_sync(&graph_engine, &mut parser_manager, &root_str)
+            .await
+        {
+            Ok(result) => {
+                tracing::info!(
+                    "AutoAttach: incremental index for {}: {} files, {} elements",
+                    project_root.display(),
+                    result.total_files_processed,
+                    result.elements_indexed
+                );
+                indexed = true;
+            }
+            Err(e) => {
+                tracing::info!(
+                    "AutoAttach: incremental unavailable for {} ({}); running full index",
+                    project_root.display(),
+                    e
+                );
+            }
+        }
+
+        // The full pass populates a never-indexed clean repo (empty git
+        // diff). Skip it under the test-only FakeBackend: unrelated tests
+        // share one cwd-ancestor resolution, and walking the real host repo
+        // with tree-sitter turns a ms test into minutes.
+        if (!indexed || !graph_engine.has_elements().unwrap_or(false))
+            && !graph_engine.db().redacted_url().starts_with("fake://")
+        {
+            // Full pass with progress accounting.
+            let files = crate::indexer::find_files_sync(&root_str)
+                .map_err(|e| format!("Find files error: {}", e))?;
+            let total = files.len();
+            self.indexing
+                .files_total
+                .store(total, std::sync::atomic::Ordering::Relaxed);
+            self.indexing
+                .files_total_sentinel
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            let shared = Arc::clone(&self.indexing);
+            let mut indexed_count = 0usize;
+            for file_path in &files {
+                if crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path)
+                    .is_ok()
+                {
+                    indexed_count += 1;
+                }
+                shared
+                    .files_done
+                    .store(indexed_count, std::sync::atomic::Ordering::Relaxed);
+                if !shared.running.load(std::sync::atomic::Ordering::SeqCst)
+                    || shared.run_id.load(std::sync::atomic::Ordering::SeqCst) != run_id
+                {
+                    return Ok(AutoIndexDecision::SkippedDisabled);
+                }
+            }
+            tracing::info!(
+                "AutoAttach: full index for {}: {} files",
+                project_root.display(),
+                indexed_count
+            );
+            indexed = true;
+        }
+
+        if let Err(e) = graph_engine.resolve_call_edges() {
+            tracing::warn!("AutoAttach: failed to resolve call edges: {}", e);
+        }
+
+        // Parity with the legacy auto-index path: docs/ under the project
+        // root is indexed too (best-effort).
+        if let Ok(true) = project_root.join("docs").try_exists() {
+            if let Ok(doc_result) = crate::doc_indexer::index_docs_directory(
+                project_root.join("docs").as_path(),
+                &graph_engine,
+            ) {
+                tracing::info!(
+                    "AutoAttach: indexed {} documents for {}",
+                    doc_result.documents.len(),
+                    project_root.display()
+                );
+            }
+        }
+
+        if indexed {
+            Ok(AutoIndexDecision::Indexed)
+        } else {
+            Ok(AutoIndexDecision::SkippedNoGit)
+        }
     }
 
     /// Read leankg.yaml and resolve project root with fallback chain:
@@ -662,16 +1180,23 @@ impl MCPServer {
 
     fn get_graph_engine_for_path(&self, file_path: Option<&String>) -> Result<GraphEngine, String> {
         let project_db_path = if let Some(fp) = file_path {
-            if let Some(leankg_path) = Self::resolve_project_db_path(fp.as_str()) {
-                tracing::debug!(
-                    "Routing query for '{}' to database at {}",
-                    fp,
-                    leankg_path.display()
-                );
-                leankg_path
-            } else {
-                tracing::debug!("No .leankg found for '{}', using default db_path", fp);
-                self.get_db_path()
+            match Self::resolve_project_db_path(fp.as_str()) {
+                Some(leankg_path) => {
+                    tracing::debug!(
+                        "Routing query for '{}' to database at {}",
+                        fp,
+                        leankg_path.display()
+                    );
+                    leankg_path
+                }
+                // FR-ZCP-02: an explicit route key that resolves to no
+                // project marker must NEVER silently open the server-default
+                // schema — that is the wrong-project-data bug this FR kills.
+                // Error with cause + runnable fix; callers with graceful
+                // fallbacks (embed status) treat it as "project not ready".
+                None => {
+                    return Err(Self::unknown_project_error(fp));
+                }
             }
         } else {
             Self::resolve_project_db_path(".")
@@ -690,10 +1215,19 @@ impl MCPServer {
         // Phase 8 (D4): Postgres is the only engine — no central RocksDB
         // index to probe.
         if !project_db_path.exists() {
-            return Err(
-                "LeanKG not initialized. No .leankg directory found. Run 'leankg init' first."
-                    .to_string(),
-            );
+            // FR-ZCP-02: the server's own default project (no explicit route
+            // key) with a missing marker is auto-initialized — a query must
+            // not die with "not initialized" when auto-attach is on.
+            if file_path.is_none() && Self::auto_attach_enabled() {
+                let _ = std::fs::create_dir_all(&project_db_path);
+            }
+            if !project_db_path.exists() {
+                return Err(crate::errors::render(
+                    crate::errors::PROJECT_NOT_INITIALIZED.code,
+                    &format!("no .leankg directory at {}", project_db_path.display()),
+                    "run `leankg add <path>` or `leankg init` first",
+                ));
+            }
         }
 
         // Single critical section: cache check + init_db + cache insert.
@@ -1331,7 +1865,11 @@ impl MCPServer {
                     }
                 }))
             }
-            other => Err(format!("unknown embed_control action '{}'", other)),
+            other => Err(crate::errors::render(
+                crate::errors::UNKNOWN_ACTION.code,
+                &format!("embed_control received action '{other}'"),
+                "use action=on|off|status (see embed_control's inputSchema in tools/list)",
+            )),
         }
     }
 
@@ -1447,7 +1985,11 @@ impl MCPServer {
                     }
                 }))
             }
-            other => Err(format!("unknown ontology_control action '{}'", other)),
+            other => Err(crate::errors::render(
+                crate::errors::UNKNOWN_ACTION.code,
+                &format!("ontology_control received action '{other}'"),
+                "use action=sync|status (see ontology_control's inputSchema in tools/list)",
+            )),
         }
     }
 
@@ -2157,9 +2699,9 @@ impl MCPServer {
                 tracing::warn!("Failed to acquire port lock: {}, proceeding anyway", e);
             }
         }
-
         // Bind with SO_REUSEADDR to handle TIME_WAIT and prevent "Address already in use"
         let std_listener = std::net::TcpListener::bind(addr)?;
+
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
@@ -2341,9 +2883,10 @@ impl MCPServer {
         let test_file = project_root.join(".leankg_write_test");
         if std::fs::write(&test_file, "test").is_err() {
             std::fs::remove_file(test_file).ok();
-            return Err(format!(
-                "Filesystem at {} is not writable: Read-only file system",
-                project_root.display()
+            return Err(crate::errors::render(
+                crate::errors::AUTO_ATTACH_FAILED.code,
+                &format!("Filesystem at {} is not writable: Read-only file system", project_root.display()),
+                "mount the project root read-write (Docker: add the workspace as a rw volume) and retry mcp_init",
             ));
         }
         std::fs::remove_file(test_file).ok();
@@ -2867,14 +3410,32 @@ impl MCPServer {
         tool_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
+        // Hard one-tool cutover (FR-ZCP-03 end-state): `leankg_context` is
+        // the only registered tool. Legacy tool names are hard-refused;
+        // every capability rides the envelope as `{"verb": "<capability>"}`.
+        // The envelope is unwrapped BEFORE any gate (read-only, write-lock,
+        // audit) so verb-scoped security decisions cannot be bypassed by
+        // hiding a write verb inside a read-named envelope.
+        let (capability, inner) = crate::mcp::tools::resolve_3tool(tool_name, &arguments)?;
+        self.execute_capability(&capability, inner).await
+    }
+
+    /// The legacy dispatch body, now keyed by the resolved capability
+    /// (verb) rather than the advertised tool name.
+    async fn execute_capability(
+        &self,
+        tool_name: &str,
+        mut arguments: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
         // Read-only enforcement: short-circuit before acquiring any locks or
         // touching the DB. The set of write tools here MUST match the set
         // Subagent A uses to invalidate the L1 cache (`requires_write_lock`
         // below) — duplicates are fine, missing tools are not.
         if self.read_only && Self::is_write_tool(tool_name) {
-            return Err(format!(
-                "server is in read-only mode (tool '{}' is a write tool)",
-                tool_name
+            return Err(crate::errors::render(
+                crate::errors::READ_ONLY.code,
+                &format!("server is in read-only mode (tool '{}' is a write tool)", tool_name),
+                "restart the server without --read-only or route writes through a writable instance",
             ));
         }
         let project_root = self.find_project_root()?;
@@ -2973,6 +3534,14 @@ impl MCPServer {
         // or wrong-project lock).
         let routing_key = Self::resolve_db_route(&arguments);
 
+        // FR-ZCP-02: a project resolves via its nearest `.leankg` marker.
+        // The old behavior silently routed unresolved projects to the
+        // server-default schema — wrong-project data with no error. Now:
+        //   * auto-attach ON (default): attach the nearest marker root,
+        //     serve freshness:cold, and kick a BACKGROUND first index;
+        //   * opt-out (`LEANKG_AUTO_ATTACH=0`): structured error with the
+        //     runnable fix; never the default schema.
+        let mut attached_cold = false;
         let project_db_path = match &routing_key {
             Some(key) => match Self::resolve_project_db_path(key) {
                 Some(leankg_path) => {
@@ -2984,46 +3553,105 @@ impl MCPServer {
                     leankg_path
                 }
                 None => {
-                    tracing::debug!("No .leankg found for '{}', using default db_path", key);
-                    self.get_db_path()
+                    let (p, attached) = self.attach_or_reject(key)?;
+                    attached_cold = attached;
+                    p
                 }
             },
-            None => Self::resolve_project_db_path(".")
+            None => match Self::resolve_project_db_path(".")
                 .or_else(|| Self::find_leankg_for_path("."))
-                .unwrap_or_else(|| self.get_db_path()),
+            {
+                Some(found) => found,
+                // No routing key and no project marker: preserve the legacy
+                // server-default behavior (the server was started IN a
+                // project — its own db_path IS the resolution).
+                None => self.get_db_path(),
+            },
         };
 
         let graph_engine = self.get_graph_engine_for_path(routing_key.as_ref())?;
 
-        // On-demand auto-indexing: if the project has no indexed elements
-        // yet (Phase 8 — Postgres holds the data, so "has an index" is a
-        // populated-graph check, not a file check). Read-only MCP never
-        // indexes — worker owns that pipeline.
+        // FR-ZCP-02: never block a query on indexing. The pre-existing
+        // empty-graph check used to run `ensure_project_indexed` inline in
+        // the request (tens of minutes on real trees). Now a first query in
+        // a never-indexed repo is served cold (zero-verbosity) and the index
+        // pipeline runs in a spawned single-flight task.
         if !self.read_only
             && tool_name != "mcp_index"
             && tool_name != "mcp_init"
             && tool_name != "mcp_index_docs"
             && !graph_engine.has_elements().unwrap_or(false)
         {
-            tracing::info!(
-                "Project at {} has no indexed elements, triggering auto-index",
-                project_db_path.display()
-            );
-            let _ = self
-                .ensure_project_indexed(
-                    project_db_path
-                        .parent()
-                        .unwrap_or(&project_db_path)
-                        .to_string_lossy()
-                        .as_ref(),
-                )
-                .await;
+            let project_root = project_db_path
+                .parent()
+                .unwrap_or(&project_db_path)
+                .to_path_buf();
+            match self.spawn_background_index(project_root.clone(), project_db_path.clone()) {
+                Some(()) => tracing::info!(
+                    "AutoAttach: project {} has no indexed elements; background index started",
+                    project_root.display()
+                ),
+                None => tracing::debug!(
+                    "AutoAttach: background index already running for {}",
+                    project_root.display()
+                ),
+            }
         }
 
-        let handler = ToolHandler::new(graph_engine, project_db_path);
+        let handler = ToolHandler::new(graph_engine, project_db_path.clone());
+        // FR-ZCP-02: mcp_status is the indexing-status surface. The handler
+        // has no MCPServer handle, so the dispatch layer injects the live
+        // state (single background job + this route's freshness) into the
+        // args; mcp_status consumes and strips it.
+        if tool_name == "mcp_status" {
+            arguments.insert(
+                "_server_indexing".to_string(),
+                self.indexing_state().to_json(),
+            );
+            arguments.insert(
+                "_server_freshness".to_string(),
+                self.engine_freshness_for_path(&project_db_path).to_json(),
+            );
+        }
+        // FR-ZCP-03: the router's L0 rung reports the background-index kick
+        // in its guidance. The dispatch layer auto-kicked the index above
+        // (FR-ZCP-02 empty-graph branch); inject its live state so the
+        // handler's leankg_context can embed it without a server handle.
+        if tool_name == "leankg_context" {
+            arguments.insert(
+                "_server_index_kick".to_string(),
+                serde_json::json!({
+                    "indexing": self.indexing.running.load(std::sync::atomic::Ordering::SeqCst),
+                    "hook": "fr-zcp-02-auto-attach",
+                }),
+            );
+        }
         let arguments_obj = arguments.clone();
         let args_value = serde_json::Value::Object(arguments);
-        let result = handler.execute_tool(tool_name, &args_value).await;
+        let mut result = handler.execute_tool(tool_name, &args_value).await;
+
+        // FR-ZCP-02: attach provenance + freshness on every index-backed
+        // response. Cold = attached this request with an empty graph; the
+        // agent learns why results are empty instead of guessing. Auth and
+        // parameter errors stay errors — only index state is decorated.
+        if attached_cold {
+            if let Ok(ref mut v) = result {
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert(
+                        "freshness".into(),
+                        serde_json::json!(Freshness::Cold.as_str()),
+                    );
+                    obj.insert("indexing".into(), self.indexing_state().to_json());
+                    obj.insert(
+                        "_note".into(),
+                        serde_json::json!(
+                            "project auto-attached with an empty index; background \
+                             indexing is running — re-run shortly for full results"
+                        ),
+                    );
+                }
+            }
+        }
 
         if tool_name == "mcp_index" && result.is_ok() {
             self.refresh_ontology_after_index();
@@ -3063,6 +3691,112 @@ impl MCPServer {
         result
     }
 
+    /// FR-ZCP-02: the canonical "unknown project" error — stable code,
+    /// cause, runnable fix (FR-ZCP-12 T1 style). Mentions the auto-attach
+    /// opt-out only when it is actually set.
+    fn unknown_project_error(key: &str) -> String {
+        if Self::auto_attach_enabled() {
+            crate::errors::render(
+                crate::errors::UNKNOWN_PROJECT.code,
+                &format!("no .leankg project found for '{key}'"),
+                "run `leankg add <path>` (or mcp_init with path) for that project, then \
+                 retry; queries never fall back to another project's data",
+            )
+        } else {
+            crate::errors::render(
+                crate::errors::UNKNOWN_PROJECT.code,
+                &format!("no .leankg project found for '{key}'"),
+                "run `leankg add <path>` (or mcp_init with path) for that project, or \
+                 remove LEANKG_AUTO_ATTACH=0 to allow auto-attach",
+            )
+        }
+    }
+
+    /// FR-ZCP-02: resolve `key` to its project, attaching when the nearest
+    /// `.leankg` marker exists (auto-attach ON) or rejecting with cause+fix
+    /// (opt-out / no marker). NEVER falls back to the server-default schema
+    /// — that fallback served wrong-project data silently.
+    fn attach_or_reject(&self, key: &str) -> Result<(PathBuf, bool), String> {
+        if !Self::auto_attach_enabled() {
+            return Err(Self::unknown_project_error(key));
+        }
+        if self.read_only && Self::find_leankg_for_path(key).is_none() {
+            return Err(crate::errors::render(
+                crate::errors::UNKNOWN_PROJECT.code,
+                &format!(
+                    "no .leankg project found for '{key}' and this server is read-only \
+                     (RO deployments never auto-initialize)"
+                ),
+                "initialize the project out-of-band (`leankg add <path>`) and retry",
+            ));
+        }
+        if let Some(leankg_path) = Self::find_leankg_for_path(key) {
+            tracing::info!(
+                "AutoAttach: resolved '{}' to project marker {}",
+                key,
+                leankg_path.display()
+            );
+            return Ok((leankg_path, true));
+        }
+        // No `.leankg` marker yet: attach the nearest repo root (`.git`) and
+        // de-facto init it (mkdir + default config — the same contract
+        // `mcp_init` has always honored). PRD FR-ZCP-02: "today a de-facto
+        // .leankg init" is the attach primitive until FR-ZCP-09's registry.
+        match Self::find_repo_root_for_path(key) {
+            Some(repo_root) => {
+                let leankg_dir = repo_root.join(".leankg");
+                std::fs::create_dir_all(&leankg_dir).map_err(|e| {
+                    format!(
+                        "{} (details: {e})",
+                        crate::errors::render(
+                            crate::errors::AUTO_ATTACH_FAILED.code,
+                            &format!("cannot create {}", leankg_dir.display()),
+                            "check write permission on the project directory and run \
+                             `leankg add <path>` once, then retry",
+                        )
+                    )
+                })?;
+                let config_path = leankg_dir.join("leankg.yaml");
+                if !config_path.exists() {
+                    if let Err(e) = crate::config::write_config_preserving_existing(
+                        &config_path,
+                        &crate::config::ProjectConfig::default(),
+                    ) {
+                        tracing::warn!(
+                            "AutoAttach: failed to write {} config: {}",
+                            repo_root.display(),
+                            e
+                        );
+                    }
+                }
+                tracing::info!(
+                    "AutoAttach: attached fresh repo root {} for '{}'",
+                    repo_root.display(),
+                    key
+                );
+                Ok((leankg_dir, true))
+            }
+            None => Err(Self::unknown_project_error(key)),
+        }
+    }
+
+    /// FR-ZCP-02: nearest repo root (`.git` marker — directory or worktree
+    /// gitfile) walking up from `path`. Mirrors [`Self::find_leankg_for_path`]
+    /// but keys on the repo instead of the LeanKG marker.
+    fn find_repo_root_for_path(path: &str) -> Option<PathBuf> {
+        let path = if path.starts_with('/') {
+            PathBuf::from(path)
+        } else {
+            std::env::current_dir().ok()?.join(path)
+        };
+        for ancestor in path.ancestors() {
+            if ancestor.join(".git").exists() {
+                return Some(ancestor.to_path_buf());
+            }
+        }
+        None
+    }
+
     fn requires_write_lock(tool_name: &str) -> bool {
         WRITE_TOOLS.contains(tool_name)
     }
@@ -3073,6 +3807,13 @@ impl MCPServer {
     /// for any tool this returns true for.
     pub fn is_write_tool(tool_name: &str) -> bool {
         Self::requires_write_lock(tool_name)
+    }
+
+    /// Tools hidden from `tools/list` in read-only mode: every legacy write
+    /// capability plus the `set` tool (all of its actions mutate state —
+    /// `get`/`status` are pure reads and stay visible).
+    pub fn is_ro_hidden_tool(tool_name: &str) -> bool {
+        Self::is_write_tool(tool_name) || tool_name == crate::mcp::tools::TOOL_SET
     }
 
     /// Public wrapper for `execute_tool` so integration tests can drive the
@@ -3126,7 +3867,7 @@ impl ServerHandler for MCPServer {
         let tools = ToolRegistry::list_tools();
         let rmcp_tools: Vec<Tool> = tools
             .into_iter()
-            .filter(|t| !(self.read_only && Self::is_write_tool(&t.name)))
+            .filter(|t| !(self.read_only && Self::is_ro_hidden_tool(&t.name)))
             .map(|t| {
                 Tool::new(
                     t.name,
@@ -3359,6 +4100,14 @@ async fn handle_mcp_request(
             result
         });
 
+    // FR-ZCP-01 clause 2: session id for per-session root caching. The
+    // server allocates one at initialize (below) and streamable-HTTP
+    // clients echo it back on every subsequent call.
+    let session_id = headers
+        .get("Mcp-Session-Id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     // Extract Authorization header
     let auth_value = headers
         .get(header::AUTHORIZATION)
@@ -3370,7 +4119,10 @@ async fn handle_mcp_request(
         Err(status) => {
             return Response::builder()
                 .status(status)
-                .body(Body::from(r#"{"error": "Unauthorized"}"#))
+                .body(Body::from(format!(
+                    r#"{{"error": "{}"}}"#,
+                    crate::errors::UNAUTHORIZED.message()
+                )))
                 .unwrap();
         }
     };
@@ -3408,11 +4160,28 @@ async fn handle_mcp_request(
     // Check if this is a notification (no id) - notifications must not receive a response
     let is_notification = request.id.is_none();
 
+    // FR-ZCP-01 clause 2: resolution order for the DB-routing key.
+    // 1. Session root learned from the server-initiated `roots/list`
+    //    probe (per-session cache) — the client's cwd IS the scope.
+    // 2. Legacy `?project=` query param (compat, deprecated).
+    let session_root: Option<PathBuf> = session_id
+        .as_deref()
+        .and_then(|sid| server.mcp_server.http_session_roots.root_for_session(sid));
+    if let Some(root) = &session_root {
+        if project_param.is_none() {
+            tracing::debug!("Routing via session roots/list root: {}", root.display());
+        }
+    }
+    let effective_project: Option<String> = session_root
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| project_param.clone());
+
     // Apply project override from query param. Inject "project" for DB routing,
     // but only absolutize arguments for tools that read the filesystem. Graph
     // query tools expect stored project-relative paths like "./src/main.rs";
     // rewriting those to absolute paths forces expensive full-graph scans.
-    let request = if let Some(ref project) = project_param {
+    let request = if let Some(ref project) = effective_project {
         let project_path = std::path::PathBuf::from(project);
         let mut req = request.clone();
         if let Some(ref mut params) = req.params {
@@ -3460,15 +4229,22 @@ async fn handle_mcp_request(
     };
 
     if is_notification {
-        // Process the notification but don't send a response
+        // Process the notification but don't send a response.
+        // FR-ZCP-01 clause 2: notifications still carry the session id so
+        // `notifications/roots/list_changed` can invalidate the cached root.
+        let session_ctx = session_id.as_deref().map(|sid| SessionContext {
+            session_id: sid,
+            is_initialize: false,
+        });
         let _ = process_jsonrpc_request(
             &server.mcp_server,
             &request,
-            project_param.as_deref(),
+            effective_project.as_deref(),
             crate::db::models::AuthContext {
                 client_id: "anonymous".to_string(),
                 role: crate::db::models::Role::Admin,
             },
+            session_ctx.as_ref(),
         )
         .await;
         return Response::builder()
@@ -3477,12 +4253,33 @@ async fn handle_mcp_request(
             .unwrap();
     }
 
+    // Allocate / identify the session BEFORE dispatch: the initialize
+    // arm needs the session id to register the roots probe, and the
+    // answer arm needs it to store the client's root.
+    let is_initialize = request.method == "initialize";
+    let sid = match &session_id {
+        Some(sid) => sid.clone(),
+        None if is_initialize => {
+            // First request on the connection: allocate a session id
+            // (Mcp-Session-Id per the MCP Streamable-HTTP spec). The
+            // client echoes it on subsequent calls; the server accepts
+            // any value on follow-ups.
+            Uuid::new_v4().to_string()
+        }
+        None => String::new(),
+    };
+    let session_ctx = (!sid.is_empty()).then(|| SessionContext {
+        session_id: &sid,
+        is_initialize,
+    });
+
     // Process the request, passing project param for routing
     let result = process_jsonrpc_request(
         &server.mcp_server,
         &request,
-        project_param.as_deref(),
+        effective_project.as_deref(),
         auth_context,
+        session_ctx.as_ref(),
     )
     .await;
 
@@ -3507,52 +4304,146 @@ async fn handle_mcp_request(
         },
     };
     let body_json = serde_json::to_string(&response).unwrap();
-    let mut builder = Response::builder()
-        .status(StatusCode::OK)
-        // Streamable-HTTP clients expect an SSE envelope. Wrap the JSON-RPC
-        // payload as a single `event: message` frame so `Accept:
-        // application/json, text/event-stream` is honored either way.
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .header(header::CACHE_CONTROL, "no-cache");
-    if request.method == "initialize" {
-        // Mcp-Session-Id per the MCP Streamable-HTTP spec. The client will
-        // echo this on subsequent calls; the server is currently stateless
-        // across requests, so we accept any value (including none) on
-        // follow-ups. Allocating one is the minimum needed to stop the
-        // Streamable-HTTP client from tearing the transport down on the
-        // first reconnect.
-        let sid = Uuid::new_v4().to_string();
-        builder = builder.header("Mcp-Session-Id", sid);
+    let mut frames = format!("event: message\ndata: {body_json}\n\n");
+
+    // FR-ZCP-01 clause 2: after replying to initialize, append a
+    // server-to-client `roots/list` request as a second SSE frame on the
+    // SAME response stream. Streamable-HTTP clients route any request
+    // frame inside a POST response to their request handler and answer
+    // via a normal POST /mcp (echoing Mcp-Session-Id), so no bidirectional
+    // channel is needed. Clients that never answer simply leave the
+    // session pending; `settle` expires it and resolution falls through
+    // to `?project=`.
+    let mut probe_pending = false;
+    if is_initialize {
+        let roots_capable = crate::mcp::roots::client_supports_roots(
+            request.params.as_ref().and_then(|p| p.get("capabilities")),
+        );
+        if roots_capable {
+            let probe = crate::mcp::roots::build_roots_list_request();
+            frames.push_str(&format!(
+                "event: message\ndata: {}\n\n",
+                serde_json::to_string(&probe).unwrap()
+            ));
+            probe_pending = true;
+        }
     }
 
-    let sse_body = format!("event: message\ndata: {body_json}\n\n");
-    builder.body(Body::from(sse_body)).unwrap()
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        // Streamable-HTTP clients expect an SSE envelope. One or more
+        // `event: message` frames (initialize result + optional roots
+        // probe) so `Accept: application/json, text/event-stream` is
+        // honored either way.
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache");
+    if is_initialize {
+        builder = builder.header("Mcp-Session-Id", &sid);
+    }
+    if probe_pending {
+        // Arm the expiry: if no answer lands within the window, the
+        // pending entry is dropped and `?project=` routing resumes.
+        let server_for_probe = Arc::clone(&server);
+        let sid_for_probe = sid.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(crate::mcp::roots::ROOTS_ANSWER_WINDOW).await;
+            server_for_probe
+                .mcp_server
+                .http_session_roots
+                .settle(&sid_for_probe);
+        });
+    }
+
+    builder.body(Body::from(frames)).unwrap()
 }
 
-/// Process a JSON-RPC request and return the result
+/// FR-ZCP-01 clause 2: per-connection context threaded into
+/// `process_jsonrpc_request` so the initialize arm can register the
+/// session and advertise the roots probe.
+struct SessionContext<'a> {
+    /// `Mcp-Session-Id` the server allocated for this connection.
+    session_id: &'a str,
+    /// Whether this is the first request on the session (initialize).
+    is_initialize: bool,
+}
+
 async fn process_jsonrpc_request(
     mcp_server: &MCPServer,
     request: &JsonRpcRequest,
     project_param: Option<&str>,
     auth_context: crate::db::models::AuthContext,
+    session: Option<&SessionContext<'_>>,
 ) -> Result<serde_json::Value, String> {
     let method = &request.method;
     let params = request.params.as_ref();
 
     match method.as_str() {
-        "initialize" => Ok(serde_json::json!({
-            "protocolVersion": "2025-06-18",
-            "capabilities": {
-                "tools": { "listChanged": true },
-                "resources": {}
-            },
-            "serverInfo": {
-                "name": "leankg",
-                "version": env!("CARGO_PKG_VERSION")
+        "initialize" => {
+            // FR-ZCP-01 clause 2: when the client advertises the `roots`
+            // capability, register the session as roots-pending so the
+            // HTTP layer appends a server-to-client `roots/list` probe to
+            // the initialize response stream. Clients without the
+            // capability (or with no session id) are never probed and
+            // resolution falls through to `?project=` unchanged.
+            let roots_capable = session.map(|s| s.is_initialize).unwrap_or(false)
+                && crate::mcp::roots::client_supports_roots(
+                    params.and_then(|p| p.get("capabilities")),
+                );
+            if let Some(session) = session.filter(|_| roots_capable) {
+                let list_changed = crate::mcp::roots::client_supports_roots_list_changed(
+                    params.and_then(|p| p.get("capabilities")),
+                );
+                mcp_server
+                    .http_session_roots
+                    .register_session(session.session_id, list_changed);
             }
-        })),
+            Ok(serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                    "tools": { "listChanged": true },
+                    "resources": {}
+                },
+                "serverInfo": {
+                    "name": "leankg",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }))
+        }
         "notifications/initialized" => {
             // Client is done initializing, no response needed
+            Ok(serde_json::Value::Null)
+        }
+        "roots/list" => {
+            // FR-ZCP-01 clause 2: the client's ANSWER to our server-to-
+            // client roots/list probe. Same JSON-RPC method name, riding
+            // the normal POST /mcp direction (request→response). Store
+            // the first usable root on the session cache.
+            if let Some(session) = session {
+                let root = crate::mcp::roots::project_root_from_roots_response(
+                    params.unwrap_or(&serde_json::Value::Null),
+                );
+                mcp_server
+                    .http_session_roots
+                    .set_root(session.session_id, root);
+            }
+            // This arm exists so a roots-capable client's answer is
+            // recognized; the probe itself never originates from this
+            // method dispatcher.
+            Ok(serde_json::Value::Null)
+        }
+        "notifications/roots/list_changed" => {
+            // FR-ZCP-01 clause 2 (listChanged clients): drop the cached
+            // root so the session re-probes / re-resolves. Only clients
+            // that declared `roots.listChanged` are invalidated; others
+            // cache for the connection lifetime.
+            if let Some(session) = session {
+                if mcp_server
+                    .http_session_roots
+                    .wants_list_changed(session.session_id)
+                {
+                    mcp_server.http_session_roots.invalidate(session.session_id);
+                }
+            }
             Ok(serde_json::Value::Null)
         }
         "resources/list" => {
@@ -3574,7 +4465,11 @@ async fn process_jsonrpc_request(
             let uri = params
                 .and_then(|p| p.get("uri"))
                 .and_then(|v| v.as_str())
-                .ok_or("Missing uri for resources/read")?;
+                .ok_or(crate::errors::render(
+                    crate::errors::MISSING_PARAM.code,
+                    "resources/read requires a uri parameter",
+                    "supply the uri from resources/list (e.g. leankg://overview)",
+                ))?;
             let project_ref = project_param.map(|s| s.to_string());
             let engine = mcp_server
                 .get_graph_engine_for_path(project_ref.as_ref())
@@ -3587,7 +4482,13 @@ async fn process_jsonrpc_request(
                     let wake = engine.wake_up_summary().unwrap_or_default();
                     format!("{}\n{}\n{}", l0, l1, wake)
                 }
-                _ => return Err(format!("unknown resource URI: {uri}")),
+                _ => {
+                    return Err(crate::errors::render(
+                        crate::errors::METHOD_NOT_FOUND.code,
+                        &format!("resource URI '{uri}' is not served by this server"),
+                        "pick a uri from resources/list (leankg://overview)",
+                    ));
+                }
             };
             Ok(serde_json::json!({
                 "contents": [{
@@ -3603,7 +4504,7 @@ async fn process_jsonrpc_request(
             let tools = ToolRegistry::list_tools();
             let rmcp_tools: Vec<serde_json::Value> = tools
                 .into_iter()
-                .filter(|t| !(mcp_server.is_read_only() && MCPServer::is_write_tool(&t.name)))
+                .filter(|t| !(mcp_server.is_read_only() && MCPServer::is_ro_hidden_tool(&t.name)))
                 .map(|t| {
                     serde_json::json!({
                         "name": t.name,
@@ -3617,31 +4518,53 @@ async fn process_jsonrpc_request(
         "tools/call" => {
             let params_obj = params
                 .and_then(|p| p.as_object())
-                .ok_or("Missing params for tools/call")?;
+                .ok_or(crate::errors::render(
+                    crate::errors::MISSING_PARAM.code,
+                    "tools/call requires a params object",
+                    "send JSON-RPC params {\"name\": <tool>, \"arguments\": {...}} per tools/list",
+                ))?;
 
             let tool_name = params_obj
                 .get("name")
                 .and_then(|v| v.as_str())
-                .ok_or("Missing tool name")?;
+                .ok_or(crate::errors::render(
+                    crate::errors::MISSING_PARAM.code,
+                    "tools/call requires a tool name",
+                    "send JSON-RPC params {\"name\": <tool>, \"arguments\": {...}} per tools/list",
+                ))?;
 
-            // RBAC: Check if user has permission to call this tool
+            // FR-ZCP-03 one-tool envelope: resolve the effective capability
+            // BEFORE the RBAC gate — a Viewer token must not reach a write
+            // verb by hiding it inside the read-named `leankg_context`
+            // envelope. Unknown names/verbs fail here with the catalog error.
+            let (capability, mut arguments) =
+                match crate::mcp::tools::resolve_3tool(
+                    tool_name,
+                    params_obj
+                        .get("arguments")
+                        .and_then(|v| v.as_object())
+                        .unwrap_or(&serde_json::Map::new()),
+                ) {
+                    Ok(pair) => pair,
+                    Err(e) => return Err(e),
+                };
+
+            // RBAC: Check if user has permission to call this capability
             if let Err(e) = mcp_server
                 .auth_manager
                 .read()
                 .await
-                .check_permission(&auth_context, tool_name)
+                .check_permission(&auth_context, &capability)
             {
-                return Err(format!("Permission denied: {}", e));
+                return Err(crate::errors::render(
+                    crate::errors::PERMISSION_DENIED.code,
+                    &format!("the authenticated account's role is not allowed to call {capability}: {e}"),
+                    "retry with an access token whose role covers this capability (DB-backed access-token store), or ask an admin to grant the role",
+                ));
             }
 
-            let mut arguments = params_obj
-                .get("arguments")
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
-
             // Inject project from URL query param if not already in arguments
-            if let Some(ref project) = project_param {
+            if let Some(project) = &project_param {
                 arguments
                     .entry("project".to_string())
                     .or_insert(serde_json::Value::String(project.to_string()));
@@ -3668,9 +4591,9 @@ async fn process_jsonrpc_request(
             };
 
             let result = tokio::time::timeout(
-                tool_timeout_for(tool_name),
-                mcp_server.execute_tool_audited(
-                    tool_name,
+                tool_timeout_for(&capability),
+                mcp_server.execute_capability_audited(
+                    &capability,
                     arguments,
                     // FR-ENT-1: authenticated HTTP callers get their token
                     // identity; anonymous ones record "local".
@@ -3689,7 +4612,7 @@ async fn process_jsonrpc_request(
             .await
             .map_err(|_| {
                 format!(
-                    "tool {tool_name} timed out after {}s",
+                    "capability {capability} timed out after {}s",
                     tool_timeout().as_secs()
                 )
             })?
@@ -3701,14 +4624,18 @@ async fn process_jsonrpc_request(
             let content_str = if let Some(s) = result.as_str() {
                 s.to_string()
             } else {
-                crate::mcp::toon::wrap_response(tool_name, &result, true)
+                crate::mcp::toon::wrap_response(&capability, &result, true)
             };
 
             Ok(serde_json::json!({
                 "content": [{ "type": "text", "text": content_str }]
             }))
         }
-        _ => Err(format!("Method not found: {}", method)),
+        _ => Err(crate::errors::render(
+            crate::errors::METHOD_NOT_FOUND.code,
+            &format!("JSON-RPC method '{method}' is not implemented by this server"),
+            "use initialize, tools/list, tools/call, resources/list, or ping; re-initialize the session after upgrading the server",
+        )),
     }
 }
 
@@ -3810,7 +4737,10 @@ async fn handle_sse_stream(
         Err(status) => {
             return Response::builder()
                 .status(status)
-                .body(Body::from(r#"event: error\ndata: Unauthorized\n\n"#))
+                .body(Body::from(format!(
+                    "event: error\ndata: {}\n\n",
+                    crate::errors::UNAUTHORIZED.message()
+                )))
                 .unwrap();
         }
     };
@@ -3861,6 +4791,330 @@ mod tests {
         assert!(!should_resolve_tool_paths("get_context"));
         assert!(!should_resolve_tool_paths("search_code"));
         assert!(!should_resolve_tool_paths("find_function"));
+    }
+
+    // ---------------------------------------------------------------------
+    // FR-ZCP-01 clause 2: server-initiated `roots/list` project resolution.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fr_zcp01_initialize_without_roots_capability_gets_no_probe() {
+        // OMP sends `capabilities: {}` — no roots capability, no probe
+        // frame, and the session cache stays untouched. Resolution must
+        // be unchanged (falls through to `?project=` / FS walk).
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        let init_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "omp", "version": "1.0"}
+            }
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            HeaderMap::new(),
+            init_body.to_string(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let (parts, body) = response.into_parts();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        // Exactly ONE frame: the initialize result. No roots probe.
+        let frames: Vec<&str> = text.split("\n\n").filter(|f| !f.is_empty()).collect();
+        assert_eq!(frames.len(), 1, "no probe frame without roots capability");
+        assert!(frames[0].contains("\"method\"") == false);
+        assert!(frames[0].contains("serverInfo"));
+        // Session id is still allocated (streamable-HTTP transport needs it).
+        assert!(parts.headers.contains_key("Mcp-Session-Id"));
+        assert!(
+            server
+                .mcp_server
+                .http_session_roots
+                .root_for_session(parts.headers["Mcp-Session-Id"].to_str().unwrap())
+                .is_none(),
+            "no root cached for a client without roots capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_initialize_with_roots_capability_appends_probe_frame() {
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        let init_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"roots": {"listChanged": true}},
+                "clientInfo": {"name": "pi-coding-agent", "version": "1.0"}
+            }
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            HeaderMap::new(),
+            init_body.to_string(),
+        )
+        .await;
+        let (parts, body) = response.into_parts();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        // TWO frames: initialize result + server-to-client roots/list.
+        let frames: Vec<&str> = text.split("\n\n").filter(|f| !f.is_empty()).collect();
+        assert_eq!(frames.len(), 2, "initialize result + roots/list probe");
+        let probe: serde_json::Value = frames[1]
+            .strip_prefix("event: message\ndata: ")
+            .expect("SSE frame shape")
+            .parse()
+            .unwrap();
+        assert_eq!(probe["jsonrpc"], "2.0");
+        assert_eq!(probe["method"], "roots/list");
+        assert!(probe["id"].is_i64());
+        // Session registered as pending with listChanged declared.
+        let sid = parts.headers["Mcp-Session-Id"].to_str().unwrap();
+        assert!(
+            server.mcp_server.http_session_roots.wants_list_changed(sid),
+            "listChanged must be recorded for the session"
+        );
+        // The answer arm stores the first file:// root for the session.
+        let answer = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "roots/list",
+            "params": {"result": {"roots": [
+                {"uri": "file:///Users/dev/repo", "name": "repo"},
+                {"uri": "file:///other"}
+            ]}}
+        });
+        // The client's answer arrives as a normal POST (request-shaped
+        // envelope carrying the result — see answer arm).
+        let answer_response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    "Mcp-Session-Id",
+                    axum::http::HeaderValue::from_str(sid).unwrap(),
+                );
+                h
+            },
+            answer.to_string(),
+        )
+        .await;
+        assert_eq!(answer_response.status(), StatusCode::OK);
+        assert_eq!(
+            server.mcp_server.http_session_roots.root_for_session(sid),
+            Some(PathBuf::from("/Users/dev/repo")),
+            "first file:// root wins and is cached for the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_session_root_precedes_query_param_but_yields_to_it_when_present() {
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        // Seed a session root.
+        server
+            .mcp_server
+            .http_session_roots
+            .register_session("sid-roots", false);
+        server
+            .mcp_server
+            .http_session_roots
+            .set_root("sid-roots", Some(PathBuf::from("/Users/dev/repo-roots")));
+        assert_eq!(
+            server
+                .mcp_server
+                .http_session_roots
+                .root_for_session("sid-roots"),
+            Some(PathBuf::from("/Users/dev/repo-roots"))
+        );
+        // The `?project=` query param, when present, still wins only when
+        // no session root exists — here the session root must take
+        // precedence in `effective_project` (roots before legacy param).
+        let effective_from_roots: Option<String> = server
+            .mcp_server
+            .http_session_roots
+            .root_for_session("sid-roots")
+            .map(|p| p.to_string_lossy().into_owned());
+        assert_eq!(
+            effective_from_roots.as_deref(),
+            Some("/Users/dev/repo-roots")
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_list_changed_notification_invalidates_cached_root() {
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        server
+            .mcp_server
+            .http_session_roots
+            .register_session("sid-lc", true);
+        server
+            .mcp_server
+            .http_session_roots
+            .set_root("sid-lc", Some(PathBuf::from("/Users/dev/repo-a")));
+        // Client changed cwd: notification arrives (no id).
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/roots/list_changed"
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    "Mcp-Session-Id",
+                    axum::http::HeaderValue::from_str("sid-lc").unwrap(),
+                );
+                h
+            },
+            notification.to_string(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        // Cached root is gone; next resolution falls through / re-probes.
+        assert_eq!(
+            server
+                .mcp_server
+                .http_session_roots
+                .root_for_session("sid-lc"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_list_changed_ignored_for_non_listchanged_clients() {
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        server
+            .mcp_server
+            .http_session_roots
+            .register_session("sid-static", false);
+        server
+            .mcp_server
+            .http_session_roots
+            .set_root("sid-static", Some(PathBuf::from("/Users/dev/repo-a")));
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/roots/list_changed"
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    "Mcp-Session-Id",
+                    axum::http::HeaderValue::from_str("sid-static").unwrap(),
+                );
+                h
+            },
+            notification.to_string(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        // Connection-lifetime cache: notification has no effect.
+        assert_eq!(
+            server
+                .mcp_server
+                .http_session_roots
+                .root_for_session("sid-static"),
+            Some(PathBuf::from("/Users/dev/repo-a"))
+        );
+    }
+
+    #[tokio::test]
+    async fn fr_zcp01_roots_answer_via_full_http_initialize_flow() {
+        // End-to-end smoke: a roots-capable streamable-HTTP client
+        // (initialize → probe frame in stream → answer POST) resolves the
+        // session root; then the session root routes a later request even
+        // without `?project=`.
+        let server = Arc::new(HttpMcpServer {
+            mcp_server: MCPServer::new(std::path::PathBuf::from(".leankg")),
+            auth_token: None,
+            auth_manager: AuthManager::with_default_token(),
+            token_store: None,
+        });
+        let init_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"roots": {}},
+                "clientInfo": {"name": "test", "version": "0"}
+            }
+        });
+        let response = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            HeaderMap::new(),
+            init_body.to_string(),
+        )
+        .await;
+        let (parts, body) = response.into_parts();
+        let sid = parts.headers["Mcp-Session-Id"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        let frames: Vec<&str> = text.split("\n\n").filter(|f| !f.is_empty()).collect();
+        assert_eq!(frames.len(), 2);
+        // Client answers via POST, echoing the session id.
+        let answer = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "roots/list",
+            "params": {"roots": [{"uri": "file:///Users/dev/my-repo"}]}
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Mcp-Session-Id",
+            axum::http::HeaderValue::from_str(&sid).unwrap(),
+        );
+        let _ = handle_mcp_request(
+            State(Arc::clone(&server)),
+            axum::http::Uri::from_static("/mcp"),
+            headers,
+            answer.to_string(),
+        )
+        .await;
+        assert_eq!(
+            server.mcp_server.http_session_roots.root_for_session(&sid),
+            Some(PathBuf::from("/Users/dev/my-repo"))
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -4590,6 +5844,60 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execute_tool_audited_resolves_3tool_surface() {
+        // The rmcp `call_tool` arm (stdio / streamable HTTP) must resolve
+        // through the SAME 3-tool registry as the JSON-RPC arm:
+        // set/get/status dispatch on every transport, the legacy
+        // `leankg_context` verb envelope stays accepted, and the audit
+        // ledger records the effective capability — not the envelope name.
+        let fake = Arc::new(FakeBackend::new());
+        let (server, recorder) = audited_server(&fake);
+
+        // `status` tool → mcp_status capability through the audited chain.
+        let result = server
+            .execute_tool_audited("status", Default::default(), None, None)
+            .await;
+        assert!(result.is_ok(), "status tool must dispatch: {result:?}");
+        recorder.flush().await;
+        let entries = fake.audit_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].tool, "mcp_status",
+            "audit records the capability"
+        );
+
+        // Legacy `leankg_context` envelope resolves on the same arm.
+        let mut env = serde_json::Map::new();
+        env.insert("verb".into(), serde_json::json!("mcp_status"));
+        let result = server
+            .execute_tool_audited("leankg_context", env, None, None)
+            .await;
+        assert!(result.is_ok(), "legacy envelope must dispatch: {result:?}");
+        recorder.flush().await;
+        let entries = fake.audit_entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].tool, "mcp_status");
+    }
+
+    #[test]
+    fn read_only_hides_set_tool_from_listings() {
+        let ro = MCPServer::new(std::path::PathBuf::from("/tmp/opencode/ro1/.leankg"))
+            .with_read_only(true);
+        let names = ro.list_tool_names();
+        assert!(
+            !names.contains(&"set".to_string()),
+            "RO listing must hide `set`: {names:?}"
+        );
+        assert!(names.contains(&"get".to_string()));
+        assert!(names.contains(&"status".to_string()));
+
+        let rw = MCPServer::new(std::path::PathBuf::from("/tmp/opencode/rw1/.leankg"));
+        let names = rw.list_tool_names();
+        assert_eq!(names.len(), 3, "writable listing exposes all 3 tools");
+        assert!(names.contains(&"set".to_string()));
+    }
+
     #[test]
     fn transport_tag_defaults_to_stdio_and_is_settable() {
         let s = MCPServer::new(std::path::PathBuf::from("/tmp/opencode/t1/.leankg"));
@@ -4597,5 +5905,274 @@ mod tests {
         let h = MCPServer::new(std::path::PathBuf::from("/tmp/opencode/t2/.leankg"))
             .with_transport("http");
         assert_eq!(h.transport(), "http");
+    }
+
+    // ---------------------------------------------------------------------
+    // FR-ZCP-02: lazy auto-attach + background first index + no silent
+    // wrong-project fallback.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn fr_zcp02_auto_attach_default_on_and_opt_out_parsing() {
+        let _g = ENV_LOCK.lock().unwrap();
+        // Default (env unset): ON.
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+        assert!(MCPServer::auto_attach_enabled());
+        // Explicit opt-outs.
+        for v in ["0", "false", "off", "no"] {
+            std::env::set_var("LEANKG_AUTO_ATTACH", v);
+            assert!(!MCPServer::auto_attach_enabled(), "value {v} must opt out");
+        }
+        // Explicit opt-ins.
+        for v in ["1", "true", "yes"] {
+            std::env::set_var("LEANKG_AUTO_ATTACH", v);
+            assert!(MCPServer::auto_attach_enabled(), "value {v} must opt in");
+        }
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+    }
+
+    #[test]
+    fn fr_zcp02_attach_or_reject_attaches_nearest_marker() {
+        // Holds ENV_LOCK: auto_attach_enabled() reads process env.
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mount = tmp.path().join("proj-a");
+        std::fs::create_dir_all(mount.join(".leankg")).unwrap();
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+
+        let (resolved, attached) = server
+            .attach_or_reject(mount.to_str().unwrap())
+            .expect("existing marker must attach");
+        assert!(attached);
+        assert_eq!(resolved, mount.join(".leankg"));
+    }
+
+    #[test]
+    fn fr_zcp02_attach_or_reject_never_returns_server_default() {
+        // Holds ENV_LOCK: auto_attach_enabled() reads process env.
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        // A path with NO .leankg and NO .git anywhere above it.
+        let orphan = tmp.path().join("no-project-here");
+        std::fs::create_dir_all(&orphan).unwrap();
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+
+        let err = server
+            .attach_or_reject(orphan.to_str().unwrap())
+            .expect_err("unresolvable project must error, never fall back");
+        assert!(
+            err.contains("LEANKG_ERROR_UNKNOWN_PROJECT"),
+            "error must carry the stable code: {err}"
+        );
+    }
+
+    #[test]
+    fn fr_zcp02_opt_out_error_names_leankg_auto_attach_with_fix() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let orphan = tmp.path().join("no-project-here");
+        std::fs::create_dir_all(&orphan).unwrap();
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LEANKG_AUTO_ATTACH", "0");
+        let err = server
+            .attach_or_reject(orphan.to_str().unwrap())
+            .expect_err("opt-out must reject unresolved projects");
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+
+        assert!(err.contains("LEANKG_ERROR_UNKNOWN_PROJECT"), "{err}");
+        assert!(err.contains("LEANKG_AUTO_ATTACH=0"), "{err}");
+        assert!(
+            err.contains("leankg add"),
+            "error must carry a runnable fix: {err}"
+        );
+    }
+
+    #[test]
+    fn fr_zcp02_fresh_repo_auto_inits_marker() {
+        // Holds ENV_LOCK: auto_attach_enabled() reads process env.
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        // A repo root with .git but no .leankg.
+        let repo = tmp.path().join("fresh-repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let server = MCPServer::new(std::path::PathBuf::from(".leankg"));
+
+        let (resolved, attached) = server
+            .attach_or_reject(repo.to_str().unwrap())
+            .expect("fresh repo must de-facto init and attach");
+        assert!(attached);
+        assert!(
+            resolved.is_dir(),
+            "marker dir must exist: {}",
+            resolved.display()
+        );
+        assert!(
+            resolved.join("leankg.yaml").exists(),
+            "config must be written"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fr_zcp02_kick_background_index_single_flight_and_state() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let leankg = tmp.path().join(".leankg");
+        std::fs::create_dir_all(&leankg).unwrap();
+        let server = MCPServer::new(leankg.clone());
+
+        // Idle before kick.
+        assert_eq!(server.indexing_state(), IndexingState::Idle);
+
+        // kick requires the marker dir; missing marker → structured error.
+        let bare = tempfile::TempDir::new().unwrap();
+        let err = server
+            .kick_background_index(bare.path())
+            .expect_err("kick without .leankg must error with code");
+        assert!(
+            err.contains("LEANKG_ERROR_PROJECT_NOT_INITIALIZED"),
+            "{err}"
+        );
+
+        // kick with marker → job runs (or has run) and reports via state.
+        let kicked = server.kick_background_index(tmp.path()).unwrap();
+        assert_eq!(kicked["indexing"], serde_json::json!(true));
+        // Wait for the tiny empty project to finish, then state returns to
+        // idle and the single-flight slot is free again.
+        for _ in 0..100 {
+            if server.indexing_state() == IndexingState::Idle {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(server.indexing_state(), IndexingState::Idle);
+    }
+
+    #[test]
+    fn fr_zcp02_indexing_state_json_shapes() {
+        assert_eq!(
+            IndexingState::Idle.to_json(),
+            serde_json::json!({ "state": "idle" })
+        );
+        let v = IndexingState::Indexing {
+            files_done: 3,
+            files_total: Some(10),
+        }
+        .to_json();
+        assert_eq!(v["state"], serde_json::json!("indexing"));
+        assert_eq!(v["files_done"], serde_json::json!(3));
+        assert_eq!(v["files_total"], serde_json::json!(10));
+        let unbounded = IndexingState::Indexing {
+            files_done: 1,
+            files_total: None,
+        }
+        .to_json();
+        assert!(unbounded["files_total"].is_null());
+    }
+
+    #[test]
+    fn fr_zcp02_freshness_vocabulary_strings() {
+        assert_eq!(Freshness::Cold.as_str(), "cold");
+        assert_eq!(Freshness::Fresh.as_str(), "fresh");
+        assert_eq!(Freshness::PossiblyStale.as_str(), "possibly_stale");
+        assert_eq!(
+            EngineFreshness::Known(Freshness::Cold).to_json(),
+            serde_json::json!("cold")
+        );
+        assert_eq!(
+            EngineFreshness::Unknown.to_json(),
+            serde_json::json!("unknown")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fr_zcp02_unknown_explicit_project_never_opens_default_engine() {
+        // With an explicit project arg that resolves nowhere and auto-attach
+        // opt-out, execute_tool must fail with the structured code instead of
+        // routing to the server-default db_path.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let server = MCPServer::new(tmp.path().join(".leankg"));
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LEANKG_AUTO_ATTACH", "0");
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "project".to_string(),
+            serde_json::Value::String(tmp.path().join("nope").to_string_lossy().to_string()),
+        );
+        let result = server.execute_tool("status", args).await;
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+        let err = result.expect_err("unknown project under opt-out must error");
+        assert!(err.contains("LEANKG_ERROR_UNKNOWN_PROJECT"), "{err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fr_zcp02_first_query_auto_attaches_and_serves_cold() {
+        // a NON-ERROR freshness:cold response, and start the background
+        // index — the pre-FR behavior served the default schema silently.
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LEANKG_AUTO_ATTACH");
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path().join("fresh-repo");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(
+            repo.join("src").join("lib.py"),
+            "def auth_check():\n    return True\n",
+        )
+        .unwrap();
+        let git_ok = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&repo)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !git_ok {
+            // git unavailable in the sandbox: attach must still work because
+            // the de-facto init does not require git.
+            eprintln!("git init unavailable; exercising non-git attach path");
+        } else {
+            let _ = std::process::Command::new("git")
+                .args(["add", "."])
+                .current_dir(&repo)
+                .status();
+            let _ = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.email=t@e.com",
+                    "-c",
+                    "user.name=t",
+                    "commit",
+                    "-m",
+                    "init",
+                ])
+                .current_dir(&repo)
+                .status();
+        }
+
+        let server = MCPServer::new(tmp.path().join(".leankg"));
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "project".to_string(),
+            serde_json::Value::String(repo.to_string_lossy().to_string()),
+        );
+        let result = server.execute_tool("status", args).await;
+        let v = result.expect("first query in a fresh repo must NOT error");
+        assert_eq!(v["freshness"], serde_json::json!("cold"), "{v}");
+        assert_eq!(v["initialized"], serde_json::json!(false), "{v}");
+        // Background index was kicked (single-flight slot visible).
+        let kicked = server.kick_background_index(&repo).unwrap();
+        assert_eq!(kicked["indexing"], serde_json::json!(true));
+
+        // Wait for the tiny index to finish, then the marker dir exists with
+        // a config and state returns to idle.
+        for _ in 0..150 {
+            if server.indexing_state() == IndexingState::Idle {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(
+            repo.join(".leankg").is_dir(),
+            ".leankg must exist after attach"
+        );
     }
 }

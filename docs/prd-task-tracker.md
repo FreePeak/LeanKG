@@ -1,6 +1,6 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-04 — v4.3.0-one-tool-ladder rewrites FR-ZCP-03 as the capability-probe router with an L0–L3 degradation ladder (vectors → FTS/trigram fuzzy → exact/regex → cold guidance; `retrieval: {rung, reason}` provenance; registers the unregistered `orchestrate` parser) and adds FR-ZCP-13 (first-run setup contract: one auto/manual question persisted in `.leankg/config.json`, `leankg add <path> [--embed]` one-command repo registration, embeddings = preference never prerequisite) + FR-ZCP-05 bridge tier (pg_trgm GIN + text_pattern_ops before FTS). Prior: v4.2.0 (2026-09-04) added FR-ZCP-12 (M8); v4.1.1 added FR-ZCP-11; v4.1.0 added FR-ZCP-09/10; the 2026-09-03 reset (v4.0.0) preserved 585 unique IDs verbatim in [`archive/prd-task-tracker.md`](archive/prd-task-tracker.md) + machine copy [`archive/prd-task-tracker.json`](archive/prd-task-tracker.json).
+**Last synced:** 2026-09-06 — v4.4.0-three-tools-dual-backend: 3-tool surface (`set`/`get`/`status`, FR-3T-01..04) + SQLite dual-backend (cozo-sqlite engine, HNSW vectors, per-project file, session default) + tracker hygiene (Dependabot backlog, pre-existing test hangs). Prior: v4.3.1-one-tool-envelope v4.3.1-one-tool-envelope hard cutover: registry = exactly 1 tool (`leankg_context`), all ~76 capabilities ride the `{verb}` envelope (verb namespace = legacy tool namespace), envelope resolved before RO-gate/write-lock/audit; FR-ZCP-03 end-state DONE; FR-ZCP-12 T3 re-scoped to the one-tool CI invariant (T2 outstanding). Prior: v4.3.0-one-tool-ladder rewrites FR-ZCP-03 as the capability-probe router with an L0–L3 degradation ladder (vectors → FTS/trigram fuzzy → exact/regex → cold guidance; `retrieval: {rung, reason}` provenance; registers the unregistered `orchestrate` parser) and adds FR-ZCP-13 (first-run setup contract: one auto/manual question persisted in `.leankg/config.json`, `leankg add <path> [--embed]` one-command repo registration, embeddings = preference never prerequisite) + FR-ZCP-05 bridge tier (pg_trgm GIN + text_pattern_ops before FTS). Prior: v4.2.0 (2026-09-04) added FR-ZCP-12 (M8); v4.1.1 added FR-ZCP-11; v4.1.0 added FR-ZCP-09/10; the 2026-09-03 reset (v4.0.0) preserved 585 unique IDs verbatim in [`archive/prd-task-tracker.md`](archive/prd-task-tracker.md) + machine copy [`archive/prd-task-tracker.json`](archive/prd-task-tracker.json).
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 
@@ -20,13 +20,14 @@
 | Milestone | Live items | Carry-forward items | Status |
 |---|---|---|---|
 | M1 — Zero-config attach | 3 | — | **IN_PROGRESS** (FR-ZCP-01 clause-2 roots/list DONE 87e18287; FR-ZCP-02 DONE 0aba41ad+d9ccd8b5; FR-ZCP-13 DONE b251046c) |
-| M2 — One-tool surface | 2 | — | **IN_PROGRESS** (FR-ZCP-03 router+ladder DONE 4231d256 — T3 CI budget test outstanding) |
+| M2 — One-tool surface | 2 | — | **IN_PROGRESS** (FR-ZCP-03 router+ladder DONE 4231d256; **v4.3.1 hard cutover DONE** — registry 1 tool + verb envelope; FR-ZCP-04 install --target outstanding) |
 | M3 — Honest search | 2 | FR-HEA-02, FR-HEA-04 | **IN_PROGRESS** (FR-ZCP-05 bridge tier DONE 7d902461+3a68d571 — tsvector FTS + RRF outstanding) |
 | M4 — Harness memory | 1 | FR-SMA-01..03, FR-SM-04/05, US-SM-02 | TODO |
 | M5 — Defensible evidence | 1 | FR-HEA-01, FR-HEA-03 | TODO |
 | M6 — Org-scale portfolio | 2 | — | TODO |
 | M7 — Embedding correctness | 1 | — | TODO |
-| M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991 — T2/T3 outstanding) |
+| M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991; T3 re-scoped to one-tool CI invariant — landed with v4.3.1; T2 TTFV outstanding) |
+| M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 — SQLite backend + selection seam landed 2f58e83c; 3-tool registry cut + live validation outstanding) |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
@@ -60,7 +61,11 @@
 | FR-ZCP-10 | Per-schema migration fleet reconciliation + `doctor --deep` drift check (per-schema ledgers today, nothing fleet-wide) | P2 | M6 | — |
 | FR-ZCP-11 | Embedding correctness ported from zvec-grep: pinned model catalog (commit revision + query/document prefixes), model-stamped vectors + hard rebuild guard, chunker-version coupling, 3-signal change detection, per-file atomic replace + truncation accounting, watcher reconciliation, single-flight indexing | **P1** | M7 | FR-EMBED-R4 (supersedes the aspirational perf-only goal with a correctness contract) |
 | FR-ZCP-05 (remainder) | Postgres FTS: `tsvector` + GIN, `websearch_to_tsquery`, RRF fusion in `semantic_search` — the L2 rung's FTS half beyond the landed trgm bridge | P1 | M3 | FR-ZG-02, US-ZG-02 |
-| FR-ZCP-12 (remainder) | Measured-simplicity T2 (CI-timed published TTFV ≤ 5 min) + T3 (CI-pinned default-tool budget ≤ 12, tier-tagged) — T1 error catalog already DONE | P1 | M8 | — |
+| FR-3T-01 | Registry: exactly 3 tools — `set` (import repo / nested dir of repos), `get` (query, multi-layer L0–L3 ladder + legacy actions), `status` (health/inventory/freshness); legacy verbs remain valid as per-tool actions | **P0** | M9 | Supersedes FR-ZCP-03 one-tool end-state (verb namespace preserved as actions) |
+| FR-3T-02 | SQLite storage backend: cozo-sqlite engine (storage-sqlite feature), per-project `.leankg/leankg.db`, HNSW vectors (cosine dim 384), audit ledger on Cozo relations, migrations standalone | **P0** | M9 | — |
+| FR-3T-03 | Session default: SQLite engaged when `LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset; migrate/index/serve run on SQLite; PG reachable via `LEANKG_PG_URL` | **P0** | M9 | — |
+| FR-3T-04 | Live validation: this repo indexed into SQLite; 3-tool smoke (search/status/router) over MCP HTTP; persistence across restart | **P1** | M9 | — |
+| FR-ZCP-12 (remainder) | Measured-simplicity T2 (CI-timed published TTFV ≤ 5 min) — T1 error catalog DONE; T3 superseded by v4.3.1's CI-enforced one-tool invariant (landed) | P1 | M8 | — |
 
 ## Todo — carry-forward from archive (original IDs preserved)
 
@@ -100,6 +105,13 @@
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
 
-*Last updated: 2026-09-05 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (6 sprint rows; 9 DONE total incl. 3 prior); open inventory: 1 IN_PROGRESS + 35 TODO (9 live incl. FR-ZCP-05/12 remainders + 26 carry-forward) = 36 open; full 585-ID history in archive.*
+*Last updated: 2026-09-05 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (6 sprint rows; 9 DONE total incl. 3 prior); v4.3.1 hard one-tool cutover (commit 72ee5fc9, PR #268): registry = 1 tool, FR-ZCP-03 end-state DONE, FR-ZCP-12 T3 re-scoped to the one-tool CI invariant; v4.4.0 dual-backend + 3-tool surface in flight (FR-3T-01..04); open inventory: 1 IN_PROGRESS + 39 TODO (13 live incl. FR-3T-01..04 + FR-ZCP-05/12 remainders + 26 carry-forward) = 40 open; full 585-ID history in archive.*
+
+## Repo hygiene (non-PRD)
+
+| Item | Detail |
+|------|--------|
+| Dependabot backlog | 22 vulnerabilities flagged on default branch (14 high, 7 moderate, 1 low) as of 2026-09-05 — https://github.com/FreePeak/LeanKG/security/dependabot; PR #264 remediated the Cargo-side set, the remainder are npm/ui-v2-side; not tied to a FR |
+| Pre-existing integration-test hangs | `test_mcp_index`, `test_mcp_index_docs` (tests/mcp_tools_full_tests.rs) and `handle_reuse_tests::index_tool_keeps_shared_handle` (tests/mcp_tests.rs) hang at baseline HEAD too (verified via clean worktree 2026-09-05) — full-index-in-test family; CI gates on `cargo test --lib` so they never block CI; separate fix (TempDir-seeded rewrite or `#[ignore]`) queued outside the cutover |
 
 
