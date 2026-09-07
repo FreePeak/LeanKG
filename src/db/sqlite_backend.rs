@@ -1311,7 +1311,8 @@ impl DbBackend for SqliteBackend {
         }
         let limit = limit.clamp(1, 100);
         let script = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata],
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+               *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}},
                regex_matches(lowercase(name), "{}")
              :limit {}"#,
             q.replace(['"', '\\'], ""),
@@ -1439,7 +1440,7 @@ impl DbBackend for SqliteBackend {
                 .map(|qn| format!(r#"["{}", "{}"]"#, esc(qn), esc(qn)))
                 .collect();
             let script = format!(
-                r#"want[qn, qn2] <- [[{}]]
+                r#"want[qn, qn2] <- [{}]
                    ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :=
                       want[qn, qn2],
                       *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}},
