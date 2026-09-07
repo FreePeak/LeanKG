@@ -1150,6 +1150,9 @@ mod tests {
     /// space ranks vendor/minified noise above the exact symbol, so L3
     /// delegation must not preempt the exact lookup when the intent is
     /// lexical and the symbol is indexed.
+    // The precondition (select_rung == RUNG_VECTOR) requires the
+    // embeddings feature — has_any_vectors is compiled out without it.
+    #[cfg(feature = "embeddings")]
     #[test]
     fn test_lexical_intent_with_vectors_answers_from_exact_rung() {
         let (engine, _tmp) = seeded_engine();
@@ -1158,7 +1161,9 @@ mod tests {
             semantic: &|_, _| panic!("vector rung must not run for lexical intent"),
             index_kick: &|| Ok(json!({"indexing": false})),
         };
-        // Seed vector state so select_rung picks RUNG_VECTOR.
+        // Seed vector state so select_rung picks RUNG_VECTOR — prove the
+        // precondition or the test can pass vacuously on a keyword-rung
+        // engine (which never reaches the fixed code path).
         engine
             .db()
             .run_script(
@@ -1166,6 +1171,12 @@ mod tests {
                 Default::default(),
             )
             .unwrap();
+        let caps = probe_capabilities(&engine);
+        assert_eq!(
+            select_rung(&caps).rung,
+            RUNG_VECTOR,
+            "precondition: vector rung must be selected for this regression"
+        );
         let body = route(&engine, "validate_token", &json!({}), &exec).unwrap();
         assert_eq!(
             body["retrieval"]["rung"],
