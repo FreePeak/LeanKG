@@ -54,3 +54,6 @@
 - Single-symbol file-level ground truth (no line spans); several questions legitimately have multiple answering files.
 - 16 questions is small; win deltas of 1-2 are not significant.
 - leankg latency includes per-query ONNX model load (#292) — not intrinsic retrieval cost.
+
+## Post-fix validation (PR #298 branch build, live :9799)
+- `create_hnsw_index` (exact-symbol query): was rung=vector + vendor top-hit → now **rung=exact, real symbol `src/embeddings/state.rs::create_hnsw_index`**, vendor absent. #290 confirmed fixed on the branch.
