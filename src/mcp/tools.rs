@@ -121,22 +121,52 @@ pub fn resolve_3tool(
     let mut inner = arguments.clone();
     let capability = match tool_name {
         TOOL_SET => {
-            let a = action_or_verb(&inner).unwrap_or_else(|| "mcp_index".to_string());
-            inner.remove("action");
+            let act = inner
+                .get("action")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let vrb = inner
+                .get("verb")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let friendly = |a: &str| matches!(a, "index" | "incremental" | "attach" | "embed");
+            // Routing key: `action` when it names a capability or friendly
+            // alias; otherwise `verb` — which leaves `action` intact as the
+            // capability's own payload (control capabilities consume an
+            // `action` sub-command of their own: on|off|status).
+            let route = match (&act, &vrb) {
+                (Some(a), _) if is_valid_verb(a) || friendly(a) => a.clone(),
+                (_, Some(v)) if is_valid_verb(v) => v.clone(),
+                (Some(a), _) => a.clone(), // unknown → nearest-suggestion error
+                (None, Some(v)) => v.clone(),
+                (None, None) => "mcp_index".to_string(),
+            };
+            let routed_via_action = act.as_deref() == Some(route.as_str());
             inner.remove("verb");
-            if is_valid_verb(&a) {
-                a
-            } else if a == "index" || a == "incremental" || a == "attach" || a == "embed" {
-                match a.as_str() {
-                    "index" | "attach" | "incremental" => "mcp_index".to_string(),
-                    "embed" => "embed_control".to_string(),
-                    _ => a,
+            if routed_via_action {
+                inner.remove("action");
+            }
+            if route == "embed" {
+                // Friendly alias = arm the background builder (CLI
+                // `leankg embed` parity).
+                inner.insert("action".into(), serde_json::json!("on"));
+                "embed_control".to_string()
+            } else if is_valid_verb(&route) {
+                if (route == "embed_control" || route == "ontology_control")
+                    && !inner.contains_key("action")
+                {
+                    // No sub-command given: default to the read-only one,
+                    // never an implicit arm.
+                    inner.insert("action".into(), serde_json::json!("status"));
                 }
+                route
+            } else if friendly(&route) {
+                "mcp_index".to_string() // index | incremental | attach
             } else {
-                let nearest = nearest_verb_name(&a);
+                let nearest = nearest_verb_name(&route);
                 return Err(crate::errors::render(
                     crate::errors::UNKNOWN_TOOL.code,
-                    &format!("unknown set action '{a}'"),
+                    &format!("unknown set action '{route}'"),
                     &format!("use action \"{nearest}\" (nearest capability) or list actions in the set tool description"),
                 ));
             }
@@ -695,11 +725,33 @@ mod tests {
         assert_eq!(cap, "mcp_index");
         assert!(!inner.contains_key("action"));
 
-        // `set` friendly actions normalize to capabilities.
+        // `set` friendly actions normalize to capabilities; the friendly
+        // `embed` alias carries its sub-command through as the payload
+        // `action` so the background builder actually arms (regression:
+        // routing used to strip `action` and embed_control silently fell
+        // back to a status read).
         let mut args = Args::new();
         args.insert("action".into(), serde_json::json!("embed"));
-        let (cap, _) = resolve_3tool("set", &args).unwrap();
+        let (cap, inner) = resolve_3tool("set", &args).unwrap();
         assert_eq!(cap, "embed_control");
+        assert_eq!(inner["action"], "on");
+
+        // Direct control verbs keep their payload action intact: routing
+        // key via `verb`, sub-command via `action`.
+        let mut args = Args::new();
+        args.insert("verb".into(), serde_json::json!("embed_control"));
+        args.insert("action".into(), serde_json::json!("off"));
+        let (cap, inner) = resolve_3tool("set", &args).unwrap();
+        assert_eq!(cap, "embed_control");
+        assert_eq!(inner["action"], "off");
+
+        // Direct control verb without payload action defaults to `status`
+        // (read-only), never to an implicit arm.
+        let mut args = Args::new();
+        args.insert("verb".into(), serde_json::json!("embed_control"));
+        let (cap, inner) = resolve_3tool("set", &args).unwrap();
+        assert_eq!(cap, "embed_control");
+        assert_eq!(inner["action"], "status");
     }
 
     #[test]

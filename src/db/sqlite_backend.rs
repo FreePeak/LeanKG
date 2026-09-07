@@ -1111,6 +1111,49 @@ impl SqliteBackend {
     }
 }
 
+/// Map a Cozo `code_elements` row to a `CodeElement`. `with_env` selects the
+/// trailing `env` column (parity with PG's `code_element_from_row_env`).
+fn cozo_row_to_code_element(
+    row: &[crate::db::value::DataValue],
+    with_env: bool,
+) -> crate::db::models::CodeElement {
+    let g = |i: usize| {
+        row.get(i)
+            .and_then(|v| match v {
+                crate::db::value::DataValue::Str(s) => Some(s.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    let n = |i: usize| {
+        row.get(i)
+            .and_then(|v| match v {
+                crate::db::value::DataValue::Num(crate::db::value::Num::Int(x)) => Some(*x as u32),
+                _ => None,
+            })
+            .unwrap_or(0)
+    };
+    let env_last = if with_env {
+        g(row.len().saturating_sub(1))
+    } else {
+        String::new()
+    };
+    crate::db::models::CodeElement {
+        qualified_name: g(0),
+        element_type: g(1),
+        name: g(2),
+        file_path: g(3),
+        line_start: n(4),
+        line_end: n(5),
+        language: g(6),
+        parent_qualified: (!g(7).is_empty()).then(|| g(7)),
+        cluster_id: (!g(8).is_empty()).then(|| g(8)),
+        cluster_label: (!g(9).is_empty()).then(|| g(9)),
+        metadata: serde_json::from_str(&g(10)).unwrap_or(serde_json::json!({})),
+        env: env_last,
+    }
+}
+
 impl DbBackend for SqliteBackend {
     fn run_script(
         &self,
@@ -1152,7 +1195,13 @@ impl DbBackend for SqliteBackend {
                 continue;
             }
             let cols = rows.headers.join(", ");
-            let mut script = format!("?[{cols}] <- [[");
+            // Rows arrive pre-bracketed (`[v1, v2, ...]`), so the data
+            // literal is `[ [row], [row], ... ]` — ONE bracket layer of
+            // wrapping. Emitting `[[` here produced `[[[row]]]`, and the
+            // Constant fixed rule then read arity from the wrong nesting
+            // level ("Fixed rule head arity mismatch") on every call —
+            // embed's vector import was its first real caller.
+            let mut script = format!("?[{cols}] <- [");
             for (i, row) in rows.rows.iter().enumerate() {
                 if i > 0 {
                     script.push_str(", ");
@@ -1160,7 +1209,7 @@ impl DbBackend for SqliteBackend {
                 let vals: Vec<String> = row.iter().map(datavalue_literal_cozo).collect();
                 script.push_str(&format!("[{}]", vals.join(", ")));
             }
-            script.push_str(format!("]] :insert {relation}").as_str());
+            script.push_str(format!("] :insert {relation}").as_str());
             run_script(&self.db, &script, Default::default())?;
         }
         Ok(())
@@ -1337,6 +1386,70 @@ impl DbBackend for SqliteBackend {
                 })
             })
             .collect())
+    }
+
+    /// Keyed lookup by `qualified_name` (Datalog port of the W8 wave-2
+    /// SQL-first read) — keeps the L3 ANN hydration path working on SQLite.
+    fn find_element_by_key(
+        &self,
+        qualified_name: &str,
+    ) -> Result<Option<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let script = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+               *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}},
+               qualified_name = "{}""#,
+            qualified_name.replace(['"', '\\'], "")
+        );
+        let rows = run_script(&self.db, &script, Default::default())?;
+        Ok(rows
+            .rows
+            .first()
+            .map(|r| cozo_row_to_code_element(r, false)))
+    }
+
+    /// First row whose `name` matches exactly (legacy 11-col projection).
+    fn find_element_by_name_col(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let script = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+               *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}},
+               name = "{}"
+             :limit 1"#,
+            name.replace(['"', '\\'], "")
+        );
+        let rows = run_script(&self.db, &script, Default::default())?;
+        Ok(rows
+            .rows
+            .first()
+            .map(|r| cozo_row_to_code_element(r, false)))
+    }
+
+    /// Keyed hydration for a set of ANN hits (FR-SEM-07). `env` IS selected.
+    fn elements_by_qualified_names(
+        &self,
+        qualified_names: &[String],
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        let mut out = Vec::with_capacity(qualified_names.len());
+        for chunk in qualified_names.chunks(500) {
+            let parts: Vec<String> = chunk
+                .iter()
+                .map(|qn| format!(r#"["{}", "{}"]"#, esc(qn), esc(qn)))
+                .collect();
+            let script = format!(
+                r#"want[qn, qn2] <- [[{}]]
+                   ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :=
+                      want[qn, qn2],
+                      *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}},
+                      qualified_name = qn"#,
+                parts.join(", ")
+            );
+            let rows = run_script(&self.db, &script, Default::default())?;
+            out.extend(rows.rows.iter().map(|r| cozo_row_to_code_element(r, true)));
+        }
+        Ok(out)
     }
 
     fn search_knowledge_entries(
