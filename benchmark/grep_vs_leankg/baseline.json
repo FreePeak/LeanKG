@@ -1,0 +1,335 @@
+{
+ "tool": "rg",
+ "top_k": 5,
+ "results": [
+  {
+   "id": "exact-symbol",
+   "category": "exact",
+   "question": "resolve_3tool",
+   "tool": "rg",
+   "elapsed_s": 0.0428,
+   "raw_matches": 17,
+   "returned_files": [
+    "src/mcp/tools.rs",
+    "src/mcp/server.rs"
+   ],
+   "terms": [
+    "resolve_3tool"
+   ]
+  },
+  {
+   "id": "exact-audit",
+   "category": "exact",
+   "question": "AuditRecorder",
+   "tool": "rg",
+   "elapsed_s": 0.0109,
+   "raw_matches": 19,
+   "returned_files": [
+    "src/audit/mod.rs",
+    "src/web/mod.rs",
+    "src/main.rs",
+    "src/mcp/server.rs"
+   ],
+   "terms": [
+    "AuditRecorder"
+   ]
+  },
+  {
+   "id": "exact-scheduler",
+   "category": "exact",
+   "question": "spawn_embed_idle_scheduler",
+   "tool": "rg",
+   "elapsed_s": 0.0118,
+   "raw_matches": 4,
+   "returned_files": [
+    "src/mcp/server.rs"
+   ],
+   "terms": [
+    "spawn_embed_idle_scheduler"
+   ]
+  },
+  {
+   "id": "exact-hnsw",
+   "category": "exact",
+   "question": "create_hnsw_index",
+   "tool": "rg",
+   "elapsed_s": 0.012,
+   "raw_matches": 9,
+   "returned_files": [
+    "src/embeddings/offsite.rs",
+    "src/embeddings/mod.rs",
+    "src/embeddings/build.rs",
+    "src/embeddings/state.rs",
+    "src/db/fake.rs"
+   ],
+   "terms": [
+    "create_hnsw_index"
+   ]
+  },
+  {
+   "id": "concept-readonly",
+   "category": "concept",
+   "question": "how does the MCP read-only gate work",
+   "tool": "rg",
+   "elapsed_s": 0.012,
+   "raw_matches": 279,
+   "returned_files": [
+    "src/indexer/file_summary.rs",
+    "src/indexer/git_workspace.rs",
+    "src/indexer/android_workmanager.rs",
+    "src/indexer/content_hash.rs",
+    "src/errors.rs"
+   ],
+   "terms": [
+    "does",
+    "read-only",
+    "gate",
+    "work"
+   ]
+  },
+  {
+   "id": "concept-embed-arm",
+   "category": "concept",
+   "question": "how does the embed idle scheduler decide when to start embedding",
+   "tool": "rg",
+   "elapsed_s": 0.014,
+   "raw_matches": 1497,
+   "returned_files": [
+    "src/session/mod.rs",
+    "src/orchestrator/mod.rs",
+    "src/orchestrator/intent.rs",
+    "src/indexer/objc.rs",
+    "src/indexer/file_summary.rs"
+   ],
+   "terms": [
+    "does",
+    "embed",
+    "idle",
+    "scheduler",
+    "decide",
+    "when",
+    "start",
+    "embedding"
+   ]
+  },
+  {
+   "id": "concept-router",
+   "category": "concept",
+   "question": "how does the multi-layer retrieval ladder fuse keyword and ontology results",
+   "tool": "rg",
+   "elapsed_s": 0.0374,
+   "raw_matches": 843,
+   "returned_files": [
+    "src/session/mod.rs",
+    "src/errors.rs",
+    "src/indexer/objc.rs",
+    "src/orchestrator/mod.rs",
+    "src/indexer/file_summary.rs"
+   ],
+   "terms": [
+    "does",
+    "multi-layer",
+    "retrieval",
+    "ladder",
+    "fuse",
+    "keyword",
+    "ontology",
+    "results"
+   ]
+  },
+  {
+   "id": "concept-upsert",
+   "category": "concept",
+   "question": "how are bulk vector imports written to the sqlite backend",
+   "tool": "rg",
+   "elapsed_s": 0.013,
+   "raw_matches": 1127,
+   "returned_files": [
+    "src/session/mod.rs",
+    "src/orchestrator/mod.rs",
+    "src/indexer/objc.rs",
+    "src/errors.rs",
+    "src/indexer/file_summary.rs"
+   ],
+   "terms": [
+    "bulk",
+    "vector",
+    "imports",
+    "written",
+    "sqlite",
+    "backend"
+   ]
+  },
+  {
+   "id": "structure-schema",
+   "category": "structure",
+   "question": "where is the per-project sqlite schema name computed",
+   "tool": "rg",
+   "elapsed_s": 0.0142,
+   "raw_matches": 3093,
+   "returned_files": [
+    "src/session/mod.rs",
+    "src/orchestrator/mod.rs",
+    "src/orchestrator/intent.rs",
+    "src/indexer/xml_generic.rs",
+    "src/indexer/objc.rs"
+   ],
+   "terms": [
+    "where",
+    "per-project",
+    "sqlite",
+    "schema",
+    "name",
+    "computed"
+   ]
+  },
+  {
+   "id": "structure-inventory",
+   "category": "structure",
+   "question": "where is the index inventory refreshed",
+   "tool": "rg",
+   "elapsed_s": 0.0114,
+   "raw_matches": 938,
+   "returned_files": [
+    "src/session/mod.rs",
+    "src/orchestrator/intent.rs",
+    "src/indexer/objc.rs",
+    "src/indexer/git_workspace.rs",
+    "src/indexer/swift.rs"
+   ],
+   "terms": [
+    "where",
+    "index",
+    "inventory",
+    "refreshed"
+   ]
+  },
+  {
+   "id": "structure-watcher",
+   "category": "structure",
+   "question": "where does the file watcher get started",
+   "tool": "rg",
+   "elapsed_s": 0.0124,
+   "raw_matches": 1446,
+   "returned_files": [
+    "src/session/mod.rs",
+    "src/orchestrator/mod.rs",
+    "src/orchestrator/intent.rs",
+    "src/indexer/xml_generic.rs",
+    "src/indexer/objc.rs"
+   ],
+   "terms": [
+    "where",
+    "does",
+    "file",
+    "watcher",
+    "started"
+   ]
+  },
+  {
+   "id": "structure-hydration",
+   "category": "structure",
+   "question": "where do ANN search hits get hydrated into elements",
+   "tool": "rg",
+   "elapsed_s": 0.014,
+   "raw_matches": 3202,
+   "returned_files": [
+    "src/session/mod.rs",
+    "src/orchestrator/mod.rs",
+    "src/orchestrator/intent.rs",
+    "src/indexer/xml_generic.rs",
+    "src/indexer/objc.rs"
+   ],
+   "terms": [
+    "where",
+    "search",
+    "hits",
+    "hydrated",
+    "into",
+    "elements"
+   ]
+  },
+  {
+   "id": "impact-import",
+   "category": "impact",
+   "question": "what does the import_relations function do and who calls it",
+   "tool": "rg",
+   "elapsed_s": 0.0104,
+   "raw_matches": 48,
+   "returned_files": [
+    "src/embeddings/state.rs",
+    "src/db/backend.rs",
+    "src/db/sqlite_backend.rs",
+    "src/embeddings/build.rs",
+    "src/db/fake.rs"
+   ],
+   "terms": [
+    "import_relations"
+   ]
+  },
+  {
+   "id": "impact-status",
+   "category": "impact",
+   "question": "what does the mcp_status handler report",
+   "tool": "rg",
+   "elapsed_s": 0.0113,
+   "raw_matches": 34,
+   "returned_files": [
+    "src/cli/mod.rs",
+    "src/mcp/router.rs",
+    "src/mcp/handler.rs",
+    "src/mcp/server.rs",
+    "src/mcp/tools.rs"
+   ],
+   "terms": [
+    "mcp_status"
+   ]
+  },
+  {
+   "id": "concept-doctor",
+   "category": "concept",
+   "question": "how does doctor deep diagnose deployment problems",
+   "tool": "rg",
+   "elapsed_s": 0.0117,
+   "raw_matches": 141,
+   "returned_files": [
+    "src/indexer/file_summary.rs",
+    "src/errors.rs",
+    "src/doctor/mod.rs",
+    "src/indexer/content_hash.rs",
+    "src/indexer/cicd.rs"
+   ],
+   "terms": [
+    "does",
+    "doctor",
+    "deep",
+    "diagnose",
+    "deployment",
+    "problems"
+   ]
+  },
+  {
+   "id": "concept-roots",
+   "category": "concept",
+   "question": "how does the server resolve the project for an HTTP request",
+   "tool": "rg",
+   "elapsed_s": 0.0131,
+   "raw_matches": 1694,
+   "returned_files": [
+    "src/session/mod.rs",
+    "src/orchestrator/mod.rs",
+    "src/indexer/file_summary.rs",
+    "src/indexer/gradle_module_extractor.rs",
+    "src/indexer/xml_layout.rs"
+   ],
+   "terms": [
+    "does",
+    "server",
+    "resolve",
+    "project",
+    "http",
+    "request"
+   ]
+  }
+ ]
+}

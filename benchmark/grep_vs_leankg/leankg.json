@@ -1,0 +1,228 @@
+{
+ "tool": "leankg",
+ "top_k": 5,
+ "results": [
+  {
+   "id": "exact-symbol",
+   "question": "resolve_3tool",
+   "tool": "leankg",
+   "elapsed_s": 16.915,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/mcp/tools.rs::resolve_3tool",
+    "src/mcp/tools.rs::test_resolve_3tool_action_and_verb_alias"
+   ]
+  },
+  {
+   "id": "exact-audit",
+   "question": "AuditRecorder",
+   "tool": "leankg",
+   "elapsed_s": 18.461,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/audit/mod.rs::AuditRecorder"
+   ]
+  },
+  {
+   "id": "exact-scheduler",
+   "question": "spawn_embed_idle_scheduler",
+   "tool": "leankg",
+   "elapsed_s": 11.834,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/mcp/server.rs::spawn_embed_idle_scheduler",
+    "src/mcp/server.rs::spawn_embed_idle_scheduler#2"
+   ]
+  },
+  {
+   "id": "exact-hnsw",
+   "question": "create_hnsw_index",
+   "tool": "leankg",
+   "elapsed_s": 16.024,
+   "ok": true,
+   "rung": "vector",
+   "returned_qns": [
+    "ui-v2/public/vis-network.min.js::Hx",
+    "src/embed/vis-network.min.js::Hx",
+    "tests/pg_phase0_spike.rs::hnsw_index_build_time",
+    "ui-v2/public/vis-network.min.js::Hx::setOptions",
+    "ui-v2/public/vis-network.min.js::parseWS"
+   ]
+  },
+  {
+   "id": "concept-readonly",
+   "question": "how does the MCP read-only gate work",
+   "tool": "leankg",
+   "elapsed_s": 20.9,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/mcp/server.rs::HttpMcpServer",
+    "src/mcp/server.rs::HttpMcpServer::auth_manager",
+    "src/mcp/server.rs::IndexingShared",
+    "src/mcp/server.rs::JsonRpcError",
+    "src/mcp/server.rs::JsonRpcRequest"
+   ]
+  },
+  {
+   "id": "concept-embed-arm",
+   "question": "how does the embed idle scheduler decide when to start embedding",
+   "tool": "leankg",
+   "elapsed_s": 14.486,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/embed.rs::Assets",
+    "src/embed.rs::get",
+    "src/embed.rs::get_404",
+    "src/web/mod.rs::serve_embedded_file",
+    "src/web/handlers.rs::api_ui_build"
+   ]
+  },
+  {
+   "id": "concept-router",
+   "question": "how does the multi-layer retrieval ladder fuse keyword and ontology results",
+   "tool": "leankg",
+   "elapsed_s": 20.032,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/api/mod.rs::ApiResponse",
+    "src/api/mod.rs::ApiState",
+    "src/api/mod.rs::HealthResponse",
+    "src/api/mod.rs::data",
+    "src/api/mod.rs::db"
+   ]
+  },
+  {
+   "id": "concept-upsert",
+   "question": "how are bulk vector imports written to the sqlite backend",
+   "tool": "leankg",
+   "elapsed_s": 15.917,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/api/mod.rs::ApiResponse",
+    "src/api/mod.rs::ApiState",
+    "src/api/mod.rs::HealthResponse",
+    "src/api/mod.rs::data",
+    "src/api/mod.rs::db"
+   ]
+  },
+  {
+   "id": "structure-schema",
+   "question": "where is the per-project sqlite schema name computed",
+   "tool": "leankg",
+   "elapsed_s": 18.798,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/indexer/mod.rs::index_files_parallel",
+    "src/indexer/mod.rs::index_files_parallel_with_typed_resolve",
+    "src/indexer/mod.rs::index_file_sync",
+    "src/indexer/mod.rs::reindex_file_sync",
+    "src/indexer/mod.rs::reindex_file_sync_inner"
+   ]
+  },
+  {
+   "id": "structure-inventory",
+   "question": "where is the index inventory refreshed",
+   "tool": "leankg",
+   "elapsed_s": 19.776,
+   "ok": true,
+   "rung": "vector",
+   "returned_qns": [
+    "src/graph/inventory.rs::refresh_index_inventory",
+    "tests/embed_doc_inventory.rs::index_inventory_updates_after_code_index",
+    "src/graph/inventory.rs::load_latest_inventory",
+    "src/graph/inventory.rs::upsert_inventory",
+    "tests/embed_doc_inventory.rs::index_inventory_persists_after_doc_index"
+   ]
+  },
+  {
+   "id": "structure-watcher",
+   "question": "where does the file watcher get started",
+   "tool": "leankg",
+   "elapsed_s": 17.156,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/indexer/mod.rs::index_files_parallel",
+    "src/indexer/mod.rs::index_files_parallel_with_typed_resolve",
+    "src/indexer/mod.rs::index_file_sync",
+    "src/indexer/mod.rs::reindex_file_sync",
+    "src/indexer/mod.rs::reindex_file_sync_inner"
+   ]
+  },
+  {
+   "id": "structure-hydration",
+   "question": "where do ANN search hits get hydrated into elements",
+   "tool": "leankg",
+   "elapsed_s": 21.456,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/mcp/tools.rs::test_semantic_search_description_contract_lives_in_verb_doc",
+    "src/mcp/tools.rs::test_semantic_search_is_a_verb",
+    "src/db/mod.rs::search_knowledge",
+    "src/indexer/mod.rs::index_files_parallel",
+    "src/indexer/mod.rs::index_files_parallel_with_typed_resolve"
+   ]
+  },
+  {
+   "id": "impact-import",
+   "question": "what does the import_relations function do and who calls it",
+   "tool": "leankg",
+   "elapsed_s": 0.02,
+   "ok": true,
+   "rung": null,
+   "returned_qns": [
+    "src/db/backend.rs::import_relations",
+    "src/db/backend.rs::import_relations#2",
+    "src/db/backend.rs::import_relations_sync"
+   ]
+  },
+  {
+   "id": "impact-status",
+   "question": "what does the mcp_status handler report",
+   "tool": "leankg",
+   "elapsed_s": 0.032,
+   "ok": true,
+   "rung": null,
+   "returned_qns": [
+    "src/mcp/handler.rs::fr_zcp02_mcp_status_empty_graph_is_cold_not_error",
+    "src/mcp/handler.rs::fr_zcp02_mcp_status_missing_dir_reports_state_not_error",
+    "src/mcp/handler.rs::fr_zcp02_mcp_status_populated_carries_freshness_and_indexing"
+   ]
+  },
+  {
+   "id": "concept-doctor",
+   "question": "how does doctor deep diagnose deployment problems",
+   "tool": "leankg",
+   "elapsed_s": 21.773,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "render.yaml::<cicd>"
+   ]
+  },
+  {
+   "id": "concept-roots",
+   "question": "how does the server resolve the project for an HTTP request",
+   "tool": "leankg",
+   "elapsed_s": 21.477,
+   "ok": true,
+   "rung": "keyword",
+   "returned_qns": [
+    "src/mcp/server.rs::HttpMcpServer",
+    "src/mcp/server.rs::HttpMcpServer::auth_manager",
+    "src/mcp/server.rs::IndexingShared",
+    "src/mcp/server.rs::JsonRpcError",
+    "src/mcp/server.rs::JsonRpcRequest"
+   ]
+  }
+ ]
+}
