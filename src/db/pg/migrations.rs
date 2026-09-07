@@ -48,8 +48,8 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("migrations/005_hnsw_dims_cleanup.sql"),
     ),
     (
-        "006_audit_log",
-        include_str!("migrations/006_audit_log.sql"),
+        "007_trgm_fuzzy",
+        include_str!("migrations/007_trgm_fuzzy.sql"),
     ),
 ];
 

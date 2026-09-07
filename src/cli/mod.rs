@@ -67,6 +67,26 @@ pub enum CLICommand {
         #[command(subcommand)]
         command: AuditCommand,
     },
+    /// FR-ZCP-13: register a project and resolve its first-run setup mode
+    /// (auto/manual) in one command. Runs the de-facto `.leankg` init,
+    /// persists the resolved choice to `.leankg/config.json`, prints an
+    /// mcp_status-shaped summary, and — under `auto` — kicks indexing (and
+    /// optionally embedding) in the background. Returns in <2s; heavy work
+    /// never runs inline.
+    Add {
+        /// Path to the project to register (defaults to the current directory).
+        path: Option<String>,
+        /// Resolve to auto setup (background index [+ embed]) and persist it.
+        #[arg(long)]
+        auto: bool,
+        /// Resolve to manual setup (print next commands) and persist it.
+        #[arg(long, conflicts_with = "auto")]
+        manual: bool,
+        /// Under auto setup, also chain a background embedding pass after
+        /// indexing completes.
+        #[arg(long)]
+        embed: bool,
+    },
     /// Initialize a new LeanKG project
     Init {
         #[arg(long, default_value = ".leankg")]
@@ -400,9 +420,18 @@ pub enum CLICommand {
         /// discovered project root).
         #[arg(long)]
         project: Option<String>,
+        /// Require API key authentication
+        #[arg(long)]
+        auth: bool,
     },
-    /// Show index status
-    Status,
+    /// Show index status. Lists every known project (LEANKG_PROJECT_DIRS
+    /// plus the current project) with freshness and element/vector counts
+    /// when Postgres is reachable. `--json` prints one JSON document.
+    Status {
+        /// Print a single machine-readable JSON document.
+        #[arg(long)]
+        json: bool,
+    },
     /// Start file watcher for incremental re-indexing.
     /// Supports local filesystem watching OR remote source polling.
     /// For remote sources use --source URI --interval SECONDS.
@@ -816,6 +845,11 @@ pub enum CLICommand {
     /// or legacy client-side setup (register MCP + Claude hooks) when no
     /// pipeline flags are given.
     Setup {
+        /// Clear the stored setup choice (<project>/.leankg/config.json
+        /// `setup` field) so the next `leankg add` re-asks. With no other
+        /// flag, this is the whole command.
+        #[arg(long)]
+        reset: bool,
         /// Clone the repo list (LEANKG_REPOS) into LEANKG_CLONE_ROOT before indexing.
         #[arg(long)]
         clone: bool,

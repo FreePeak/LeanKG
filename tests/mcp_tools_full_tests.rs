@@ -713,7 +713,7 @@ mod error_handling {
         assert!(result.is_err(), "Unknown tool should error");
         let err = result.unwrap_err();
         assert!(
-            err.contains("Unknown") || err.contains("not found") || err.contains("Unknown tool"),
+            err.contains("Unknown") || err.contains("LEANKG_ERROR_UNKNOWN_TOOL"),
             "Error should mention unknown tool: {}",
             err
         );

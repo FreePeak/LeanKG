@@ -167,7 +167,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 | Ops & ownership | `get_service_graph`, `query_incidents`, `get_team_map` |
 | Req ↔ code | `index_prd`, `get_traceability`, `get_traceability_matrix` |
 | Mega-graph | Frontier-local queries; 100k–700k+ elements |
-| Agent surface | **85+** MCP tools (peers typically ~1–17) |
+| Agent surface | **1** MCP tool (`leankg_context`) serving ~76 capabilities as verbs; peers typically ~1–17 raw tools |
 | Cost | A/B **−65% tokens**, **−85% tool calls**, **2.5×** vs grep/cat |
 
 | Capability | LeanKG | GitNexus | Graphify | Codanna | Context7 |
@@ -176,7 +176,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 | Env / incidents / team map | Yes | No | No | No | No |
 | PRD traceability | Yes | No | Partial | No | No |
 | Mega-graph (100k+) | Yes | Partial | Viz capped | Varies | n/a |
-| MCP depth | 85+ | ~17 | ~10 | ~5 | docs only |
+| MCP depth | 77 | ~17 | ~10 | ~5 | docs only |
 
 Deep dives (archived): [ROI vs Graphify](docs/archive/reports/leankg-vs-graphify-company-roi-2026-07-21.md) · [Competitive one-pager](docs/archive/competitive-analysis.md) · [Research matrix](docs/archive/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md)
 
@@ -210,12 +210,13 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 
 Discover first — do **not** open with `query_graph`:
 
-`get_overview_context` → `mcp_status` → `concept_search` → `semantic_search` → `search_code` / `find_function` → impact / deps / `get_context`
+`leankg_context` → `get_overview_context` → `mcp_status` → `concept_search` / `semantic_search` / `search_code` → impact / deps / `get_context`
 
 | Question | First tools |
 | -------- | ----------- |
+| Any question (default) | `leankg_context` (intent is auto-classified; degrades L3→L0 instead of erroring) |
 | Fuzzy / domain NL | `concept_search` → `semantic_search` → `search_code` |
-| Exact symbol / file | `find_function` / `search_code` / `query_file` |
+| Exact symbol / file | `search_code` |
 | How A↔B? | `shortest_path` |
 | Expand after seeds | `query_graph` |
 

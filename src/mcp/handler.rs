@@ -238,6 +238,7 @@ impl ToolHandler {
             "query_graph" => self.query_graph(arguments),
             "shortest_path" => self.shortest_path(arguments),
             "get_call_graph" => self.get_call_graph(arguments),
+            "leankg_context" => self.leankg_context(arguments),
             "search_code" => self.search_code(arguments),
             "concept_search" => self.concept_search(arguments),
             "semantic_search" => self.semantic_search(arguments),
@@ -296,7 +297,16 @@ impl ToolHandler {
             "ontology_control" => Err(
                 "ontology_control is handled by MCPServer; unreachable via ToolHandler".into(),
             ),
-            _ => Err(format!("Unknown tool: {}", tool_name)),
+            _ => Err(format!(
+                "{} Nearest registry match: '{}'.",
+                crate::errors::render(
+                    crate::errors::UNKNOWN_TOOL.code,
+                    &format!("tool '{tool_name}' is not in this server's registry"),
+                    "call leankg_context (the default router that serves every intent) or \
+                     re-read tools/list for the complete catalog and retry with the corrected name",
+                ),
+                crate::mcp::tools::nearest_tool_name(tool_name),
+            )),
         };
 
         // US-GF-06 / FR-GF-13: auto-write GRAPH_REPORT.md after successful index
@@ -704,17 +714,36 @@ impl ToolHandler {
     fn mcp_status(&self, args: &Value) -> Result<Value, String> {
         let db_path = &self.db_path;
         let include_counts = args["include_counts"].as_bool().unwrap_or(false);
-        // Post-migration (Phase 8, D4): Postgres is the only engine.
-        let storage_engine = "postgres";
+        // v4.4.0 dual-backend: label reflects the ACTUAL engine (sqlite |
+        // postgres) instead of a hardcoded value.
+        let storage_engine = self.graph_engine.db().engine_name();
         let storage_path = self.graph_engine.db().redacted_url();
 
+        // FR-ZCP-02: server-side indexing state, injected by the dispatch
+        // layer (ToolHandler has no MCPServer handle). Consumed + stripped
+        // so it never leaks into echoed args.
+        let server_indexing = args
+            .get("_server_indexing")
+            .cloned()
+            .unwrap_or_else(|| json!({ "state": "idle" }));
+        let server_freshness = args
+            .get("_server_freshness")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Never-report "not initialized": mcp_status is the status surface —
+        // it reports state (incl. freshness + indexing), it does not error.
         if !db_path.exists() {
             return Ok(json!({
                 "initialized": false,
+                "freshness": server_freshness,
+                "indexing": server_indexing,
                 "storage_engine": storage_engine,
                 "storage_path": storage_path,
                 "counts_included": false,
-                "message": "LeanKG not initialized. Run mcp_init first."
+                "message": "No .leankg directory at this path yet. Fix: run `leankg add <path>` or mcp_init(path=<path>); auto-attach (LEANKG_AUTO_ATTACH, default on) also initializes on first query.",
+                "fix": "leankg add <path>"
             }));
         }
 
@@ -723,7 +752,13 @@ impl ToolHandler {
         if !has_elements {
             return Ok(json!({
                 "initialized": false,
-                "message": "LeanKG directory exists but database not initialized. Run mcp_index to populate index.",
+                "freshness": "cold",
+                "indexing": server_indexing,
+                "message": if server_indexing["state"] == json!("indexing") {
+                    "Index is empty; background indexing is running — results are freshness:cold until it completes."
+                } else {
+                    "Index is empty. Fix: run `leankg add <path>` or mcp_index(path=<path>); auto-attach triggers a background index on the next query."
+                },
                 "database_exists": false,
                 "storage_engine": storage_engine,
                 "storage_path": storage_path.clone(),
@@ -737,6 +772,8 @@ impl ToolHandler {
                 "index_populated": true,
                 "database_exists": true,
                 "database": db_path.to_string_lossy(),
+                "freshness": server_freshness,
+                "indexing": server_indexing,
                 "storage_engine": storage_engine,
                 "storage_path": storage_path.clone(),
                 "counts_included": false,
@@ -764,6 +801,8 @@ impl ToolHandler {
             "index_populated": true,
             "database_exists": true,
             "database": db_path.to_string_lossy(),
+            "freshness": server_freshness,
+            "indexing": server_indexing,
             "storage_engine": storage_engine,
             "storage_path": storage_path.clone(),
             "counts_included": true,
@@ -1913,6 +1952,58 @@ impl ToolHandler {
             "fallback_used": result.fallback_used,
             "fallback_results": fallback_results,
         })
+    }
+
+    /// FR-ZCP-03: the one-tool capability router. `crate::mcp::router`
+    /// owns intent classification, capability probing, and the L0-L3
+    /// degradation ladder; this handler wires the ladder's capability-backed
+    /// executors to the existing pipelines.
+    fn leankg_context(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"]
+            .as_str()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .ok_or("Missing 'query'")?
+            .to_string();
+        // Background-index kick (FR-ZCP-02 via FR-ZCP-03). The dispatcher
+        // already auto-kicks the single-flight background index for any
+        // tool on an empty graph (server.rs dispatch, FR-ZCP-02) BEFORE the
+        // handler runs, and injects the live state via _server_index_kick.
+        // This closure therefore REPORTS that kick in the L0 guidance
+        // (never re-triggers, never errors) and falls back to pointing at
+        // `leankg index .` when no server is present (tests, direct use).
+        // L3 executor: the existing semantic pipeline (HNSW+rerank when
+        // vectors exist, ontology-first dual path otherwise). Also reused
+        // by the impact/graph/files intents' graph-backed executors.
+        let engine = self.graph_engine.clone();
+        let semantic_exec = |q: &str, limit: usize| -> Result<Value, String> {
+            self.semantic_search(&serde_json::json!({ "query": q, "limit": limit }))
+        };
+
+        let server_kick = args
+            .get("_server_index_kick")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let server_kick = &server_kick;
+        let index_kick = || -> Result<Value, String> {
+            match server_kick {
+                Value::Null => {
+                    tracing::info!(
+                        target: "leankg::mcp",
+                        "FR-ZCP-02 background index kick requested (no server dispatch; run `leankg index .`)"
+                    );
+                    Ok(serde_json::json!(
+                        { "indexing": false, "hook": "no-server-dispatch-run-leankg-index" }
+                    ))
+                }
+                kicked => Ok(kicked.clone()),
+            }
+        };
+        let exec = crate::mcp::router::RouterExec {
+            semantic: &semantic_exec,
+            index_kick: &index_kick,
+        };
+        crate::mcp::router::route(&engine, &query, args, &exec)
     }
 
     fn semantic_search(&self, args: &Value) -> Result<Value, String> {
@@ -4023,16 +4114,40 @@ impl ToolHandler {
                 String::new(),
             ),
         };
+        // FR-ZCP-03: capability loss downgrades ranking, never availability.
+        // The pre-router behavior hard-errored here, which is exactly the
+        // pattern the ladder deletes: degrade to the keyword rung (trigram
+        // fuzzy + ontology fusion) with a structured hint instead of an error.
         if !has_vectors {
-            return Err(format!(
-                "No embedded vectors found{} (collection `{target_rel}`). Run `leankg embed` \
-                 with the matching LEANKG_EMBED_ACTIVE_MODEL to build the index.",
-                if model.is_some() {
-                    " for the requested model"
+            let hint = crate::errors::render(
+                crate::errors::NO_VECTORS.code,
+                &if model.is_some() {
+                    format!(
+                        "no embedded vectors for the requested model (collection `{target_rel}`)"
+                    )
                 } else {
-                    ""
-                }
-            ));
+                    "no embedding vectors exist for this project".to_string()
+                },
+                "run `leankg embed` (requires the embeddings cargo feature) to build the \
+                 vectors; leankg_context serves keyword-rung results meanwhile",
+            );
+            let (results, method) =
+                crate::mcp::router::fuse_l2(&self.graph_engine, query, &env, top_k.min(50))?;
+            return Ok(serde_json::json!({
+                "query": query,
+                "env": env,
+                "seeds": [],
+                "traversed": [],
+                "functions": results,
+                "degraded": true,
+                "hint": hint,
+                "method": method,
+                "retrieval": {
+                    "rung": "keyword",
+                    "reason": "no embedding vectors; keyword rung (trigram fuzzy + ontology)",
+                    "freshness": "cold",
+                },
+            }));
         }
 
         let t0 = std::time::Instant::now();
@@ -4802,13 +4917,11 @@ pub(crate) fn should_check_vectors_missing(
 /// vector index, and agents abandon the graph instead of falling through to
 /// the name-based tools that still work.
 #[cfg(feature = "embeddings")]
-pub(crate) fn vectors_missing_hint(total_vectors: usize) -> Option<&'static str> {
+pub(crate) fn vectors_missing_hint(total_vectors: usize) -> Option<String> {
     if total_vectors == 0 {
-        Some(
-            "no embedding vectors for this project, so semantic_search cannot match anything; \
-             use search_code instead, and run \
-             embed_control action=on force_full=true to build the vectors",
-        )
+        // FR-ZCP-12 T1: hint carries the stable NO_VECTORS code + cause +
+        // fix + doc anchor from the catalog.
+        Some(crate::errors::NO_VECTORS.message())
     } else {
         None
     }
@@ -4873,15 +4986,15 @@ fn semantic_low_confidence(query: &str, rerank_fallback: bool) -> Value {
         (
             "reranker-fallback",
             "semantic_search ran without the cross-encoder reranker (ANN-only fallback); \
-             matches may be token/substring coincidences. Use search_code \
-             for exact-name lookups, or rg on disk.",
+             matches may be token/substring coincidences. Use leankg_context \
+             (exact rung) for exact-name lookups, or rg on disk.",
         )
     } else {
         (
             "below-confidence-floor",
             "no semantic_search hit reached the relevance floor; matches were token \
-             collisions, not intent. Use search_code for exact names, \
-             or rg on disk.",
+             collisions, not intent. Use leankg_context (exact rung) for exact \
+             names, or rg on disk.",
         )
     };
     json!({
@@ -4911,7 +5024,8 @@ fn semantic_no_corpus_hit(query: &str, prefix: &str) -> Value {
         "path_prefix": prefix,
         "hint": format!(
             "no indexed element under path_prefix \"{}\" — this corpus is not in the index. \
-             Re-index it (leankg index <tree>) or run rg on disk.",
+             Re-index it (leankg index <tree>), or run rg on disk; leankg_context \
+             reports index state.",
             prefix
         ),
     })
@@ -4961,6 +5075,82 @@ mod tests {
         let shared = crate::db::backend::init_db(&tmp.path().join("leankg.db")).unwrap();
         let graph = GraphEngine::new(shared);
         (ToolHandler::new(graph, tmp.path().to_path_buf()), tmp)
+    }
+
+    // -------------------------------------------------------------------
+    // FR-ZCP-02: mcp_status carries indexing state + freshness and never
+    // errors with "not initialized".
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn fr_zcp02_mcp_status_missing_dir_reports_state_not_error() {
+        let (base_handler, tmp) = handler_in_temp_project();
+        // db_path that does not exist on disk (missing .leankg marker).
+        let handler = ToolHandler::new(
+            base_handler.graph_engine.clone(),
+            tmp.path().join("no-such-leankg"),
+        );
+        let v = handler
+            .mcp_status(&serde_json::json!({ "_server_indexing": {
+                "state": "indexing", "files_done": 2, "files_total": null },
+            "_server_freshness": "cold" }))
+            .unwrap();
+        assert_eq!(v["initialized"], serde_json::json!(false));
+        assert_eq!(v["freshness"], serde_json::json!("cold"));
+        assert_eq!(v["indexing"]["state"], serde_json::json!("indexing"));
+        assert!(v["fix"].is_string(), "must carry runnable fix: {v}");
+        assert!(!v.to_string().contains("Run mcp_init first."));
+    }
+
+    #[test]
+    fn fr_zcp02_mcp_status_empty_graph_is_cold_not_error() {
+        let (handler, tmp) = handler_in_temp_project();
+        // Marker dir exists (as auto-attach creates it) but graph is empty.
+        std::fs::create_dir_all(tmp.path().join(".leankg")).unwrap();
+        let v = handler
+            .mcp_status(
+                &serde_json::json!({ "_server_indexing": { "state": "indexing",
+                "files_done": 0, "files_total": 12 }, "_server_freshness": "cold" }),
+            )
+            .unwrap();
+        assert_eq!(v["initialized"], serde_json::json!(false));
+        assert_eq!(v["freshness"], serde_json::json!("cold"));
+        assert_eq!(v["indexing"]["state"], serde_json::json!("indexing"));
+        assert_eq!(v["indexing"]["files_total"], serde_json::json!(12));
+        assert!(
+            v["message"]
+                .as_str()
+                .unwrap()
+                .contains("background indexing is running"),
+            "message must explain the running index: {v}"
+        );
+    }
+
+    #[test]
+    fn fr_zcp02_mcp_status_populated_carries_freshness_and_indexing() {
+        let (handler, tmp) = handler_in_temp_project();
+        std::fs::create_dir_all(tmp.path().join(".leankg")).unwrap();
+        // Populate the graph with one element so has_elements() is true.
+        let el = crate::db::models::CodeElement {
+            element_type: "function".into(),
+            name: "auth_check".into(),
+            file_path: "./src/lib.py".into(),
+            qualified_name: "./src/lib.py::auth_check".into(),
+            language: "python".into(),
+            line_start: 1,
+            line_end: 2,
+            ..Default::default()
+        };
+        handler.graph_engine.insert_elements(&[el]).unwrap();
+        let v = handler
+            .mcp_status(
+                &serde_json::json!({ "_server_indexing": { "state": "idle" },
+                "_server_freshness": "possibly_stale" }),
+            )
+            .unwrap();
+        assert_eq!(v["initialized"], serde_json::json!(true));
+        assert_eq!(v["freshness"], serde_json::json!("possibly_stale"));
+        assert_eq!(v["indexing"]["state"], serde_json::json!("idle"));
     }
 
     /// N1 (cycle-2 R2a): the `mcp_init` tool used to overwrite leankg.yaml
@@ -5187,7 +5377,8 @@ mod tests {
         // P0: `status: ok` + `results: []` is indistinguishable from a broken
         // vector index. Callers need to know a name-based tool would work.
         let hint = vectors_missing_hint(0).expect("empty vector table must hint");
-        assert!(hint.contains("search_code"));
+        assert!(hint.contains("LEANKG_ERROR_NO_VECTORS"));
+        assert!(hint.contains("search_code") || hint.contains("leankg_context"));
         assert!(vectors_missing_hint(1).is_none());
     }
 

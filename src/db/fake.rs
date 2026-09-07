@@ -154,6 +154,9 @@ pub struct FakeBackend {
     /// FR-ENT-1: buffered audit ledger so recorder unit tests run without a
     /// live Postgres. Shared across clones like `store`.
     audit: Arc<Mutex<Vec<crate::audit::AuditEntry>>>,
+    /// FR-ZCP-03: test-flippable pg_trgm availability for the router's L2
+    /// rung (the in-memory fake has no real trigram index).
+    trgm_available: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FakeBackend {
@@ -161,12 +164,20 @@ impl FakeBackend {
         Self {
             store: Arc::new(Mutex::new(BTreeMap::new())),
             audit: Arc::new(Mutex::new(Vec::new())),
+            trgm_available: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
     /// Snapshot of the buffered audit ledger (FR-ENT-1 tests).
     pub fn audit_entries(&self) -> Vec<crate::audit::AuditEntry> {
         self.audit.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// FR-ZCP-03: flip the trigram-availability flag the
+    /// `DbBackend::trgm_available` override reports.
+    pub fn set_trgm_available(&self, available: bool) {
+        self.trgm_available
+            .store(available, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// A fake whose store is keyed by a test `db_path`, so `init_db(path)`
@@ -187,7 +198,128 @@ impl FakeBackend {
         Self {
             store,
             audit: Arc::new(Mutex::new(Vec::new())),
+            trgm_available: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Trigram word similarity used by `suggest_element_names` when the
+    /// test flips `trgm_available` on. Small ordered-subset metric — not
+    /// pg_trgm's real trigram math, just deterministic test ordering.
+    fn fake_word_similarity(needle: &str, name: &str) -> f64 {
+        let needle = needle.to_lowercase();
+        let name_l = name.to_lowercase();
+        if name_l == needle {
+            return 1.0;
+        }
+        if name_l.contains(&needle) {
+            return 0.8;
+        }
+        // Longest common subsequence ratio, good enough for assertions.
+        let n: Vec<char> = needle.chars().collect();
+        let m: Vec<char> = name_l.chars().collect();
+        let mut dp = vec![vec![0usize; m.len() + 1]; n.len() + 1];
+        for i in 1..=n.len() {
+            for j in 1..=m.len() {
+                dp[i][j] = if n[i - 1] == m[j - 1] {
+                    dp[i - 1][j - 1] + 1
+                } else {
+                    dp[i - 1][j].max(dp[i][j - 1])
+                };
+            }
+        }
+        dp[n.len()][m.len()] as f64 / n.len().max(1) as f64
+    }
+
+    fn fake_trigram_similarity(a: &str, b: &str) -> f64 {
+        Self::fake_word_similarity(a, b)
+    }
+
+    /// FR-ZCP-03: in-memory fuzzy recall mirroring the seam contract —
+    /// degraded ILIKE-substring by default; trigram ranking when the test
+    /// flips `trgm_available` on. Never a hard error.
+    fn fake_fuzzy_find(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let limit = limit.clamp(1, 100);
+        let i_qn = col_index("code_elements", "qualified_name").unwrap_or(0);
+        let i_name = col_index("code_elements", "name").unwrap_or(2);
+        let q_lower = query.to_lowercase();
+        let mut scored: Vec<(f64, crate::db::models::CodeElement)> = Vec::new();
+        for row in self.rows("code_elements") {
+            let qn = row[i_qn].get_str().unwrap_or("").to_string();
+            let name = row[i_name].get_str().unwrap_or("").to_string();
+            let name_l = name.to_lowercase();
+            let qn_l = qn.to_lowercase();
+            let hit = if self.trgm_available() {
+                self.trgm_score_of(&q_lower, &name_l, &qn_l) > 0.0
+            } else {
+                name_l.contains(&q_lower) || qn_l.contains(&q_lower)
+            };
+            if !hit {
+                continue;
+            }
+            let element = code_element_from_cells(&row, true);
+            let score = if self.trgm_available() {
+                self.trgm_score_of(&q_lower, &name_l, &qn_l)
+            } else {
+                0.0
+            };
+            scored.push((score, element));
+        }
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.name.cmp(&b.1.name))
+        });
+        Ok(scored.into_iter().take(limit).map(|(_, e)| e).collect())
+    }
+
+    fn trgm_score_of(&self, needle: &str, name: &str, qn: &str) -> f64 {
+        Self::fake_trigram_similarity(needle, name).max(Self::fake_trigram_similarity(needle, qn))
+    }
+
+    fn fake_suggest(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let limit = limit.clamp(1, 100);
+        let i_name = col_index("code_elements", "name").unwrap_or(2);
+        let q_lower = query.to_lowercase();
+        let mut scored: Vec<(f64, String)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for row in self.rows("code_elements") {
+            let name = row[i_name].get_str().unwrap_or("").to_string();
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let name_l = name.to_lowercase();
+            let score = Self::fake_word_similarity(&q_lower, &name_l);
+            let hit = if self.trgm_available() {
+                score >= 0.5
+            } else {
+                name_l.contains(&q_lower)
+            };
+            if hit {
+                scored.push((score, name));
+            }
+        }
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.cmp(&b.1))
+        });
+        Ok(scored.into_iter().take(limit).map(|(_, n)| n).collect())
     }
 
     fn tables(&self) -> Vec<String> {
@@ -221,6 +353,34 @@ impl Default for FakeBackend {
 }
 
 impl DbBackend for FakeBackend {
+    /// FR-ZCP-03 test seam: the in-memory fake has no pg_trgm, so the
+    /// router's L2 rung must exercise its ILIKE-only degradation path
+    /// against this backend. Flip via `FakeBackend::set_trgm_available`.
+    fn trgm_available(&self) -> bool {
+        self.trgm_available
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn fuzzy_find_elements(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        self.fake_fuzzy_find(query, limit)
+    }
+
+    fn suggest_element_names(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        self.fake_suggest(query, limit)
+    }
+
+    #[cfg(test)]
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     /// FR-ENT-1: buffer entries; assign sequential ids like the BIGSERIAL.
     fn insert_audit_batch(
         &self,

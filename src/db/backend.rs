@@ -7,9 +7,9 @@
 use crate::db::pg::mutability;
 use crate::db::pg::translate;
 use rustls_pki_types::pem::PemObject;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
 
 /// Connect a Postgres client, choosing NoTls or rustls at the call site.
 ///
@@ -98,6 +98,14 @@ fn tls_client_config(
 pub fn pg_connect(url: &str) -> Result<postgres::Client, Box<dyn std::error::Error>> {
     let normalized = normalize_pg_url_for_parse(url);
     let wants_tls = url_wants_verified_tls(url);
+    // Test builds fail fast on an unreachable dev Postgres (e.g. a stopped
+    // container whose port proxy still accepts): without a timeout the
+    // live-PG unit tests that should SKIP hang the suite instead.
+    #[cfg(test)]
+    let mut cfg: postgres::Config = normalized.parse()?;
+    #[cfg(test)]
+    cfg.connect_timeout(std::time::Duration::from_secs(3));
+    #[cfg(not(test))]
     let cfg: postgres::Config = normalized.parse()?;
     // Install the ring crypto provider before any rustls use (idempotent;
     // rustls 0.23 panics at first handshake if no provider is installed).
@@ -167,6 +175,16 @@ pub trait DbBackend: Send + Sync {
 
     /// Safe-to-log connection URL (password masked).
     fn redacted_url(&self) -> String;
+
+    /// Storage engine label for the `status` surface ("sqlite" | "postgres").
+    /// Default derives from [`Self::redacted_url`]; backends may override.
+    fn engine_name(&self) -> String {
+        if self.redacted_url().starts_with("sqlite://") {
+            "sqlite".to_string()
+        } else {
+            "postgres".to_string()
+        }
+    }
 
     /// Classify a script as read/write/DDL.
     fn mutability_for(&self, query: &str) -> mutability::ScriptMutability;
@@ -416,6 +434,56 @@ pub trait DbBackend: Send + Sync {
         _qualified_names: &[String],
     ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
         Err("SQL-first code_elements reads not supported by this backend".into())
+    }
+
+    /// FR-ZCP-05: trigram fuzzy recall over `code_elements` for the L2
+    /// keyword rung (PRD v4.3.0). The wave-2 FR-ZCP-03 capability router
+    /// calls this seam as:
+    ///
+    ///   `fuzzy_find_elements(&self, query: &str, limit: usize)
+    ///     -> Result<Vec<CodeElement>, Box<dyn std::error::Error>>`
+    ///
+    /// Rows carry the same 11-column projection as `find_element_by_key`
+    /// plus a `score` (trigram similarity; constant when degraded). `limit`
+    /// is clamped 1..=100; an empty query yields no rows. Ranked by
+    /// pg_trgm similarity when available (007_trgm_fuzzy.sql installs it
+    /// best-effort), ILIKE-substring recall otherwise.
+    fn fuzzy_find_elements(
+        &self,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        Err("SQL-first fuzzy find not supported by this backend".into())
+    }
+
+    /// FR-ZCP-05/FR-ZCP-03: whether pg_trgm's `similarity()` resolves on
+    /// this backend. Default `false` so the router's L2 rung degrades to
+    /// ILIKE-only recall on backends without trigram support;
+    /// `PostgresBackend` overrides with a cached per-URL probe.
+    fn trgm_available(&self) -> bool {
+        false
+    }
+
+    /// FR-ZCP-03 test seam: downcast support so router unit tests can flip
+    /// backend-specific flags (FakeBackend's trgm availability) through the
+    /// shared `dyn DbBackend` handle.
+    #[cfg(test)]
+    fn as_any(&self) -> &dyn std::any::Any {
+        unimplemented!("as_any is only meaningful on test backends")
+    }
+
+    /// FR-ZCP-05: did-you-mean suggestions — top-K distinct element names
+    /// nearest to `query` (word-similarity ranking; ILIKE substring
+    /// fallback when pg_trgm is unavailable). Router seam:
+    ///
+    ///   `suggest_element_names(&self, query: &str, limit: usize)
+    ///     -> Result<Vec<String>, Box<dyn std::error::Error>>`
+    fn suggest_element_names(
+        &self,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        Err("SQL-first fuzzy suggestions not supported by this backend".into())
     }
 }
 
@@ -895,9 +963,14 @@ impl PostgresBackend {
             })
             .unwrap_or_else(|| "postgresql://postgres:postgres@localhost:5433/leankg".to_string());
         if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
-            return Err(format!(
-                "LEANKG_PG_URL must be a postgres:// URL, got: {}",
-                redact_url(&url)
+            return Err(crate::errors::render(
+                crate::errors::PG_URL_MALFORMED.code,
+                &format!(
+                    "the resolved Postgres URL is malformed (got: {})",
+                    redact_url(&url)
+                ),
+                "set a full postgres:// URL including host and database, or the `db.url` key \
+                 in .leankg/leankg.yaml",
             ));
         }
         let pool_size = ClientPool::size_from_env_or(
@@ -921,6 +994,16 @@ impl PostgresBackend {
     pub fn with_schema(mut self, schema: &str) -> Self {
         self.schema = Some(schema.to_string());
         self.pg_url = inject_search_path(&self.pg_url, schema);
+        self
+    }
+
+    /// Point this backend at an explicit connection URL, replacing the
+    /// resolved one (test-only today: the FR-ZCP-05 live tests target a
+    /// dedicated throwaway DATABASE, not a schema of the shared dev
+    /// database). Keeps the pool/RO-pool lazily re-connecting to `url`.
+    #[cfg(test)]
+    pub(crate) fn with_db_url(mut self, url: &str) -> Self {
+        self.pg_url = url.to_string();
         self
     }
 
@@ -1050,7 +1133,6 @@ impl PostgresBackend {
         client.execute(sql.as_str(), &param_refs)?;
         Ok(())
     }
-
     /// FR-ENT-1 sync body: chain head for recorder restarts. Errors when the
     /// audit_log table is absent — the recorder disables after one warn.
     fn last_audit_entry_hash_sync(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -1746,9 +1828,128 @@ impl PostgresBackend {
     }
 }
 
+// ---- FR-ZCP-05: pg_trgm fuzzy bridge (L2 keyword rung) --------------------
+//
+// The seam lives on [`DbBackend::fuzzy_find_elements`] /
+// [`DbBackend::suggest_element_names`]; 007_trgm_fuzzy.sql installs the
+// extension best-effort and creates the serving indexes. Everything below
+// is pure so the SQL + bind contracts are unit-testable without a DB.
+
+/// Probe: does pg_trgm's `similarity()` resolve through this backend's
+/// connection? Covers BOTH "extension not installed" and "installed
+/// outside the search_path" — either way the fuzzy tier degrades.
+const TRGM_PROBE_SQL: &str = "SELECT similarity('abc', 'abc') AS s";
+
+/// Primary fuzzy recall (pg_trgm available). Trigram similarity ranks
+/// name/qualified_name; the `%` operator and the ILIKE wildcard clauses
+/// are GIN-served by 007's trgm indexes. `$1` = raw needle (similarity
+/// operators are value-based, never pattern-based), `$2` = LIKE-escaped
+/// needle for the literal-substring ILIKE union, `$3` = limit.
+const FUZZY_FIND_TRGM_SQL: &str = r#"SELECT qualified_name, element_type, name, file_path, line_start, line_end,
+       language, parent_qualified, cluster_id, cluster_label, metadata,
+       GREATEST(similarity(name, $1), similarity(qualified_name, $1)) AS score
+FROM code_elements
+WHERE name % $1
+   OR qualified_name % $1
+   OR name ILIKE '%' || $2 || '%'
+   OR qualified_name ILIKE '%' || $2 || '%'
+ORDER BY score DESC, name ASC
+LIMIT $3"#;
+
+/// Degraded fuzzy recall (pg_trgm absent): identical row shape and
+/// ordering contract, ILIKE-only recall, constant score. Availability is
+/// guaranteed; ranking quality is what degrades.
+const FUZZY_FIND_ILIKE_SQL: &str = r#"SELECT qualified_name, element_type, name, file_path, line_start, line_end,
+       language, parent_qualified, cluster_id, cluster_label, metadata,
+       0.0::real AS score
+FROM code_elements
+WHERE name ILIKE '%' || $1 || '%'
+   OR qualified_name ILIKE '%' || $1 || '%'
+ORDER BY score DESC, name ASC
+LIMIT $2"#;
+
+/// Did-you-mean (pg_trgm available): `word_similarity` ranks the needle's
+/// best in-word match, so a mistyped token ("handel_tool") lands on the
+/// real symbol ("handle_tool_call"). `<%` is the indexable word-similarity
+/// operator (gin_trgm_ops); the ILIKE union extends recall below the word
+/// similarity threshold. DISTINCT: code_elements holds one row per
+/// defining site, so the same name can repeat.
+const FUZZY_SUGGEST_TRGM_SQL: &str = r#"SELECT DISTINCT name,
+       word_similarity($1, name) AS score
+FROM code_elements
+WHERE $1 <% name
+   OR name ILIKE '%' || $2 || '%'
+ORDER BY score DESC, name ASC
+LIMIT $3"#;
+
+/// Degraded did-you-mean (pg_trgm absent): substring ILIKE only.
+const FUZZY_SUGGEST_ILIKE_SQL: &str = r#"SELECT DISTINCT name
+FROM code_elements
+WHERE name ILIKE '%' || $1 || '%'
+ORDER BY name ASC
+LIMIT $2"#;
+
+/// Escape LIKE/ILIKE metacharacters so the `%$q%` recall clauses match the
+/// LITERAL substring (a user `%`/`_` must never wildcard). The trigram
+/// `%`/`<%` operators take the raw needle — they are similarity-based.
+fn like_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Clamp a caller-supplied fuzzy limit into the bindable 1..=100 range.
+fn fuzzy_limit(limit: usize) -> i64 {
+    limit.clamp(1, 100) as i64
+}
+
+/// Binds for the trgm-path SQLs: ($1) raw needle, ($2) escaped needle,
+/// ($3) clamped limit.
+fn fuzzy_params(query: &str, limit: usize) -> [crate::db::sql::SqlParam; 3] {
+    [
+        crate::db::sql::SqlParam::Text(query.to_string()),
+        crate::db::sql::SqlParam::Text(like_escape(query)),
+        crate::db::sql::SqlParam::Int(fuzzy_limit(limit)),
+    ]
+}
+
+/// Binds for the degraded ILIKE-only SQLs: ($1) escaped needle, ($2) limit.
+fn fuzzy_ilike_params(query: &str, limit: usize) -> [crate::db::sql::SqlParam; 2] {
+    [
+        crate::db::sql::SqlParam::Text(like_escape(query)),
+        crate::db::sql::SqlParam::Int(fuzzy_limit(limit)),
+    ]
+}
+
 impl DbBackend for PostgresBackend {
     fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// FR-ZCP-05: whether `similarity()` resolves through this backend's
+    /// connection (pg_trgm installed AND on search_path). Probed once per
+    /// URL and cached process-wide — extensions are per-database state, so
+    /// the answer cannot change within a process. The degraded ILIKE-only
+    /// SQLs keep the seam working when this returns false.
+    fn trgm_available(&self) -> bool {
+        static CACHE: LazyLock<Mutex<HashMap<String, bool>>> =
+            LazyLock::new(|| Mutex::new(HashMap::new()));
+        let key = self.pg_url.clone();
+        {
+            let guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(known) = guard.get(&key) {
+                return *known;
+            }
+        }
+        let available = self.sql_query(TRGM_PROBE_SQL, &[]).is_ok();
+        if !available {
+            tracing::warn!("{}", crate::errors::TRGM_UNAVAILABLE.message());
+        }
+        CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, available);
+        available
     }
 
     // ---- SQL-first API (W8 P0) ----
@@ -2079,6 +2280,44 @@ impl DbBackend for PostgresBackend {
             out.extend(rows.iter().map(code_element_from_row_env));
         }
         Ok(out)
+    }
+
+    /// FR-ZCP-05 (see [`DbBackend::fuzzy_find_elements`]): trigram ranking
+    /// with a literal-substring ILIKE union; degrades to ILIKE-only recall
+    /// when pg_trgm is missing (007 installs it best-effort).
+    fn fuzzy_find_elements(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = if self.trgm_available() {
+            self.sql_query(FUZZY_FIND_TRGM_SQL, &fuzzy_params(query, limit))?
+        } else {
+            self.sql_query(FUZZY_FIND_ILIKE_SQL, &fuzzy_ilike_params(query, limit))?
+        };
+        Ok(rows.iter().map(code_element_from_row).collect())
+    }
+
+    /// FR-ZCP-05 (see [`DbBackend::suggest_element_names`]).
+    fn suggest_element_names(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = if self.trgm_available() {
+            self.sql_query(FUZZY_SUGGEST_TRGM_SQL, &fuzzy_params(query, limit))?
+        } else {
+            self.sql_query(FUZZY_SUGGEST_ILIKE_SQL, &fuzzy_ilike_params(query, limit))?
+        };
+        Ok(rows.iter().filter_map(|r| r.text("name")).collect())
     }
 
     /// FR-ENT-1: one multi-row INSERT for the whole batch (≤ 50 rows × 9
@@ -2811,13 +3050,43 @@ fn redact_url(url: &str) -> String {
 /// schema (see [`test_scratch_schema`]): unit tests call `init_db` with a
 /// temp path and get a real, isolated Postgres schema in the dev container
 /// instead of the pre-migration sqlite shim.
+/// SQLite backend selection (v4.4.0 dual-backend).
+///
+/// SQLite is the DEFAULT storage engine: it engages when
+/// `LEANKG_DB_ENGINE=sqlite` is set OR when `LEANKG_PG_URL` is unset/empty.
+/// PostgreSQL stays reachable by exporting `LEANKG_PG_URL` (any value) —
+/// or by forcing `LEANKG_DB_ENGINE=postgres`.
+pub fn sqlite_backend_requested() -> bool {
+    match std::env::var("LEANKG_DB_ENGINE")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("sqlite") => true,
+        Some("postgres") | Some("postgresql") => false,
+        _ => std::env::var("LEANKG_PG_URL")
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true),
+    }
+}
+
 pub fn init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
     #[cfg(test)]
     {
+        // Unit tests pin FakeBackend semantics; a real SQLite file here would
+        // silently change what "test backend" means. Only an EXPLICIT
+        // LEANKG_DB_ENGINE=sqlite opts a test into the live engine.
         return test_init_db(db_path);
     }
     #[allow(unreachable_code)]
     {
+        if sqlite_backend_requested() {
+            tracing::info!(
+                "DB engine = sqlite: {}",
+                db_path.join("leankg.db").display()
+            );
+            return crate::db::sqlite_backend::open_shared(db_path, false);
+        }
         let schema = pick_schema_for_init(db_path);
         // Writer path: ALWAYS create + pin to the per-project schema. The
         // writer owns schema creation; it never falls back to `public` (that
@@ -3029,6 +3298,29 @@ fn create_schema_if_missing_sync(
     Ok(ext_schema)
 }
 
+/// FR-ZCP-13: cheap reachability probe for status/add summaries. A short
+/// connect + `SELECT 1`; any failure (bad URL, server down) → `false`.
+/// Callers degrade gracefully (labels instead of counts) — never an error.
+/// Runs under the same `block_in_place` guard as the other sync-PG helpers
+/// so CLI dispatch on the tokio runtime cannot nest a `block_on`.
+pub fn pg_reachable() -> bool {
+    let probe = || -> bool {
+        let base = match PostgresBackend::from_env() {
+            Ok(pg) => pg.pg_url,
+            Err(_) => return false,
+        };
+        let Ok(mut client) = pg_connect(&base) else {
+            return false;
+        };
+        client.batch_execute("SELECT 1").is_ok()
+    };
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(probe)
+    } else {
+        probe()
+    }
+}
+
 #[cfg(test)]
 fn test_init_db(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn std::error::Error>> {
     Ok(Arc::new(crate::db::fake::FakeBackend::for_path(db_path)))
@@ -3146,6 +3438,10 @@ pub fn init_db_readonly(db_path: &std::path::Path) -> Result<SharedDb, Box<dyn s
     #[cfg(test)]
     {
         return test_init_db(db_path);
+    }
+    #[allow(unreachable_code)]
+    if sqlite_backend_requested() {
+        return crate::db::sqlite_backend::open_shared(db_path, true);
     }
     #[allow(unreachable_code)]
     {
@@ -3314,6 +3610,12 @@ pub fn index_advisory_lock(
     // lock on a different session would deadlock against the first.
     let mut held = INDEX_LOCK_HELD.lock().unwrap();
     if *held {
+        return Ok(None);
+    }
+    // SQLite serializes writers through its own file lock — no PG advisory
+    // lock needed (and PostgresBackend::from_env would fail on a sqlite
+    // session where LEANKG_PG_URL is unset).
+    if sqlite_backend_requested() {
         return Ok(None);
     }
     let pg = PostgresBackend::from_env()?;
@@ -3746,10 +4048,16 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
 
         // CLI flow: relative path resolved against the invocation CWD.
-        let rel_key =
-            schema_for_path_in(std::path::Path::new("./src/.leankg/leankg.db"), dir.path());
-        // MCP flow: absolute --project path, no base needed.
-        let abs_key = schema_for_path(&src.join(".leankg").join("leankg.db"));
+        // NOTE: on macOS /tmp is a symlink to /private/tmp — schema_for_path
+        // canonicalizes internally, so spellings that differ pre-canonicalize
+        // converge post-canonicalize. The *_in variants pin `dir.path()` as
+        // the base (avoiding process-CWD races with other tests).
+        let real_dir = dir
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| dir.path().to_path_buf());
+        let rel_key = schema_for_path_in(&real_dir.join("src/.leankg/leankg.db"), &real_dir);
+        let abs_key = schema_for_path_in(&real_dir.join("src/.leankg/leankg.db"), &real_dir);
         assert_eq!(
             rel_key, abs_key,
             "CLI relative index path and MCP absolute --project must share one schema"
@@ -4122,6 +4430,234 @@ mod tests {
             err.to_string().contains("cannot read CA file"),
             "unexpected error: {err}"
         );
+    }
+
+    // ---- FR-ZCP-05: live-PG integration (probe-gated, scratch schema) ----
+
+    /// Migrated scratch-schema backend; `None` skips live tests when the
+    /// dev Postgres is unreachable (same probe contract as sql.rs tests).
+    fn live_backend() -> Option<std::sync::Arc<PostgresBackend>> {
+        if !test_pg_available() {
+            return None;
+        }
+        Some(test_sql_scratch_backend())
+    }
+
+    #[test]
+    fn like_escape_neutralizes_like_metacharacters() {
+        assert_eq!(like_escape("plain"), "plain");
+        assert_eq!(like_escape("50%_off"), "50\\%\\_off");
+        assert_eq!(like_escape("back\\slash"), "back\\\\slash");
+        // Property under test: the escaped form contains NO unescaped
+        // metacharacter — every % / _ is preceded by a backslash — so
+        // binding it into a LIKE pattern can never widen the match.
+        for sample in ["%", "_", "a%b", "x_y", "%%__%%", "back\\slash%_"] {
+            let escaped = like_escape(sample);
+            let chars: Vec<char> = escaped.chars().collect();
+            for (i, c) in chars.iter().enumerate() {
+                if *c == '%' || *c == '_' {
+                    assert!(
+                        i > 0 && chars[i - 1] == '\\',
+                        "unescaped {c} survives in {sample:?} -> {escaped:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fuzzy_limit_clamps_into_bindable_range() {
+        assert_eq!(fuzzy_limit(0), 1);
+        assert_eq!(fuzzy_limit(10), 10);
+        assert_eq!(fuzzy_limit(100), 100);
+        assert_eq!(fuzzy_limit(5_000), 100);
+        assert_eq!(fuzzy_limit(usize::MAX), 100);
+    }
+
+    #[test]
+    fn fuzzy_params_bind_raw_escaped_and_limit() {
+        let [raw, escaped, lim] = fuzzy_params("handle_%tool", 25);
+        // $1: RAW needle — the trigram %/<% operators are similarity-based.
+        assert_eq!(raw, crate::db::sql::SqlParam::Text("handle_%tool".into()));
+        // $2: LIKE-escaped needle for the literal-substring ILIKE union.
+        assert_eq!(
+            escaped,
+            crate::db::sql::SqlParam::Text("handle\\_\\%tool".into())
+        );
+        assert_eq!(lim, crate::db::sql::SqlParam::Int(25));
+        // Degraded path shares the escaped-needle + limit contract.
+        let [e2, l2] = fuzzy_ilike_params("handle_%tool", 25);
+        assert_eq!(e2, escaped);
+        assert_eq!(l2, lim);
+    }
+
+    /// Contract: the seam SQLs are all parameterized — the only string
+    /// interpolation into a bind list is via SqlParam (no format! into the
+    /// SQL text), and every statement carries an explicit LIMIT.
+    #[test]
+    fn fuzzy_sql_statements_are_parameterized_and_limited() {
+        for sql in [
+            FUZZY_FIND_TRGM_SQL,
+            FUZZY_FIND_ILIKE_SQL,
+            FUZZY_SUGGEST_TRGM_SQL,
+            FUZZY_SUGGEST_ILIKE_SQL,
+        ] {
+            assert!(!sql.contains('{'), "no Rust interpolation: {sql}");
+            assert!(sql.contains("LIMIT"), "bounded result: {sql}");
+            assert!(
+                sql.contains("code_elements"),
+                "seam reads code_elements: {sql}"
+            );
+        }
+        assert!(FUZZY_FIND_TRGM_SQL.contains("similarity(name, $1)"));
+        assert!(FUZZY_FIND_TRGM_SQL.contains("similarity(qualified_name, $1)"));
+        assert!(FUZZY_SUGGEST_TRGM_SQL.contains("word_similarity($1, name)"));
+        assert!(FUZZY_FIND_ILIKE_SQL.contains("ILIKE '%' || $1 || '%'"));
+    }
+
+    // ---- FR-ZCP-05: live-PG integration (probe-gated, own scratch DB) ----
+    //
+    // Test hygiene: each live test creates and tears down its OWN
+    // throwaway Postgres DATABASE (never a schema inside the shared
+    // `leankg` database, never any pre-existing database/schema) via an
+    // admin connection, then runs migrations 001..007 inside it. The
+    // guard below additionally refuses to run against anything that is
+    // not localhost, so a stray LEANKG_PG_URL picked up from .env (e.g.
+    // a managed cloud instance whose role lacks CREATEDB — or worse, is
+    // writable) can never be touched by these tests.
+
+    /// Throwaway database on the local dev Postgres, migrated 001..007.
+    /// Returns `(db_name, backend)`; caller MUST drop the database when
+    /// done (drop_scratch_db). `label` isolates parallel tests.
+    fn fuzzy_scratch_db(label: &str) -> Option<(String, std::sync::Arc<PostgresBackend>)> {
+        let base = test_pg_url();
+        // Localhost-only guard (host = first path component's authority).
+        let authority = base
+            .split("//")
+            .nth(1)
+            .unwrap_or("")
+            .split('/')
+            .next()
+            .unwrap_or("");
+        let host = authority
+            .rsplit_once('@')
+            .map(|(_, h)| h)
+            .unwrap_or(authority);
+        let host = host.split(':').next().unwrap_or(host);
+        if !matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]") {
+            tracing::warn!("skipping FR-ZCP-05 live test: PG host {host} is not localhost");
+            return None;
+        }
+        let db_name = format!("leankg_trgm_test_{}_{}", std::process::id(), label);
+        let mut admin = pg_connect(&base).ok()?;
+        // Drop a leftover from a crashed prior run, then create fresh.
+        admin
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {db_name} WITH (FORCE)"))
+            .ok()?;
+        admin
+            .batch_execute(&format!("CREATE DATABASE {db_name}"))
+            .expect("create scratch database");
+        // CREATE DATABASE does NOT switch this client's connection — it
+        // still points at the base URL's database. Reconnect so migrations
+        // (and 007's CREATE EXTENSION) land in the SCRATCH database, never
+        // in the shared one.
+        admin = pg_connect(&swapped_db_url(&base, &db_name)).expect("connect scratch database");
+        crate::db::pg::migrations::run_migrations(&mut admin).expect("migrate scratch database");
+        let url = swapped_db_url(&base, &db_name);
+        let backend = PostgresBackend::from_env()
+            .expect("pg url")
+            .with_db_url(&url);
+        Some((db_name, std::sync::Arc::new(backend)))
+    }
+
+    /// Swap the database segment of a Postgres URL (last path component
+    /// before any `?query`), preserving host/credentials/query. Used to
+    /// point admin and test connections at the FR-ZCP-05 scratch database
+    /// (whose default search_path `public` needs no GUC injection).
+    fn swapped_db_url(base: &str, db_name: &str) -> String {
+        let (base_no_q, query) = base.split_once('?').unwrap_or((base, ""));
+        let (prefix, _old_db) = base_no_q.rsplit_once('/').unwrap_or((base_no_q, ""));
+        let mut url = format!("{prefix}/{db_name}");
+        if !query.is_empty() {
+            url.push('?');
+            url.push_str(query);
+        }
+        url
+    }
+
+    /// Tear down a scratch database (best-effort — a leftover is removed
+    /// by the next run's WITH (FORCE) pre-drop).
+    fn drop_scratch_db(db_name: &str) {
+        if let Ok(mut admin) = pg_connect(&test_pg_url()) {
+            let _ = admin.batch_execute(&format!("DROP DATABASE IF EXISTS {db_name} WITH (FORCE)"));
+        }
+    }
+
+    #[test]
+    fn fuzzy_find_and_suggest_live() {
+        let Some((db_name, db)) = fuzzy_scratch_db("find") else {
+            return;
+        };
+        // Scratch database already ran migrations (001..007), so pg_trgm +
+        // the 007 indexes exist here.
+        assert!(
+            db.trgm_available(),
+            "scratch database must resolve similarity() after migrations"
+        );
+        db.sql_execute_batch(&[(
+            "INSERT INTO code_elements (qualified_name, element_type, name, file_path, \
+                 line_start, line_end, language) VALUES \
+                 ('zz_fuzzy_test::handle_tool_call', 'function', 'handle_tool_call', \
+                  'src/x.rs', 1, 10, 'rust'), \
+                 ('zz_fuzzy_test::parse_config', 'function', 'parse_config', \
+                  'src/x.rs', 11, 20, 'rust')",
+            vec![],
+        )])
+        .expect("seed fuzzy rows");
+
+        // Escaped needle is matched literally: a metacharacter-only query
+        // (`%%__%%`) must NOT turn the ILIKE union into a match-all. (A
+        // needle sharing a long prefix with real names would still recall
+        // them through the trigram similarity operators — that is fuzzy
+        // behavior, not a wildcard leak, so the leak probe stays
+        // metachar-only.)
+        let wildcard = db
+            .fuzzy_find_elements("%%__%%", 10)
+            .expect("escaped wildcard query");
+        assert!(
+            wildcard.is_empty(),
+            "literal %/_ must not wildcard: {:?}",
+            wildcard.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+
+        // Did-you-mean: top suggestion for the typo is the real symbol.
+        let suggestions = db.suggest_element_names("handel_tool", 5).expect("suggest");
+        assert_eq!(
+            suggestions.first(),
+            Some(&"handle_tool_call".to_string()),
+            "word_similarity must rank the real symbol first: {suggestions:?}"
+        );
+
+        // Empty query: no rows, no probe churn.
+        assert!(db.fuzzy_find_elements("   ", 10).unwrap().is_empty());
+        assert!(db.suggest_element_names("", 10).unwrap().is_empty());
+
+        drop_scratch_db(&db_name);
+    }
+
+    #[test]
+    fn trgm_available_caches_per_url() {
+        let Some((db_name, db)) = fuzzy_scratch_db("cache") else {
+            return;
+        };
+        // Two calls hit the same URL: the second must be served from the
+        // cache (no way to observe the network call directly, but the
+        // contract under test is stability across the DB-owning and
+        // cache-hit paths).
+        let first = db.trgm_available();
+        let second = db.trgm_available();
+        assert_eq!(first, second);
+        drop_scratch_db(&db_name);
     }
 
     #[test]

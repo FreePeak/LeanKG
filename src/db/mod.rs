@@ -5,6 +5,7 @@ pub mod models;
 pub mod pg;
 pub mod schema;
 pub mod sql;
+pub mod sqlite_backend;
 pub mod value;
 pub mod versioning;
 pub mod write_bus;

@@ -56,3 +56,35 @@ jobs:
         with:
           name: perf-gate-output
           path: perf-gate-output.txt
+
+  # Tier 2/3: nested-repo + mega-graph live harness. Complements the perf
+  # gate: proves scale *behaviour* (nested discovery, noise skip, mega-mode
+  # refusal, verb envelope) at a deterministic fixture size, not just timing.
+  scale-harness:
+    runs-on: ubuntu-latest
+    needs: perf-gate
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: leankg
+          POSTGRES_PASSWORD: leankg
+          POSTGRES_DB: leankg
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LEANKG_SCALE_PG_MODE: direct
+      LEANKG_SCALE_PG_URL: postgres://leankg:leankg@localhost:5432/leankg
+      LEANKG_BIN: ${{ github.workspace }}/target/release/leankg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build --release
+      - name: Run scale + nested-repo harness
+        run: bash scripts/scale_harness.sh --port 9798

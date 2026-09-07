@@ -3,6 +3,17 @@ use leankg::graph::GraphEngine;
 use leankg::mcp::auth::{hash_token, LegacyAuthConfig};
 use leankg::mcp::handler::ToolHandler;
 use leankg::mcp::server::MCPServer;
+
+/// One-tool envelope helper (FR-ZCP-03 end-state): wrap legacy args in the
+/// `{"verb": <capability>}` envelope for server-level calls.
+fn verb_args(
+    mut args: serde_json::Map<String, serde_json::Value>,
+    verb: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    args.insert("verb".into(), serde_json::json!(verb));
+    args
+}
+
 use leankg::mcp::tools::ToolRegistry;
 use serde_json::json;
 use tempfile::TempDir;
@@ -257,7 +268,7 @@ mod handler_tests {
         let result = handler.execute_tool("nonexistent_tool", &json!({})).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown tool"));
+        assert!(result.unwrap_err().contains("LEANKG_ERROR_UNKNOWN_TOOL"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -509,7 +520,7 @@ mod handle_reuse_tests {
         args.insert("title".into(), json!("rc02 probe"));
         args.insert("content".into(), json!("handle reuse test"));
         let result = server
-            .execute_tool_pub("add_knowledge", args)
+            .execute_tool_pub("leankg_context", verb_args(args, "add_knowledge"))
             .await
             .expect("add_knowledge must succeed");
         assert!(result.get("id").is_some(), "write should return an id");
@@ -535,7 +546,9 @@ mod handle_reuse_tests {
         // mcp_index (no path → uses cwd/project root) would clear the engine
         // slot + cache in the old code. Running it must keep the handle.
         let args = serde_json::Map::new();
-        let _ = server.execute_tool_pub("mcp_index", args).await;
+        let _ = server
+            .execute_tool_pub("leankg_context", verb_args(args, "mcp_index"))
+            .await;
 
         let ptr_after = engine_ptr(&server);
         assert_eq!(

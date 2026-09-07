@@ -604,7 +604,7 @@ fn test_cli_install() {
 fn test_cli_status() {
     let args = TestArgs::try_parse_from(["leankg", "status"]).unwrap();
     match args.command {
-        CLICommand::Status => {}
+        CLICommand::Status { .. } => {}
         _ => panic!("expected Status command"),
     }
 }

@@ -50,6 +50,20 @@ CREATE INDEX IF NOT EXISTS code_elements_qualified_name_index ON code_elements (
 CREATE INDEX IF NOT EXISTS code_elements_element_type_index ON code_elements (element_type);
 CREATE INDEX IF NOT EXISTS code_elements_parent_qualified_index ON code_elements (parent_qualified);
 
+-- FR-ZCP-05 bridge tier (mirrors 007_trgm_fuzzy.sql): trigram fuzzy +
+-- anchored-prefix matching for the L2 keyword rung. The extension install
+-- is degradation-safe; here it is assumed present (same stance as the
+-- pgvector install above), and the runtime seam falls back to ILIKE-only
+-- when the operators are missing.
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
+CREATE INDEX IF NOT EXISTS code_elements_name_text_pattern_idx
+    ON code_elements (name text_pattern_ops);
+CREATE INDEX IF NOT EXISTS code_elements_name_trgm_idx
+    ON code_elements USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS code_elements_qualified_name_trgm_idx
+    ON code_elements USING gin (qualified_name gin_trgm_ops);
+
 -- ---------------------------------------------------------------------------
 -- relationships — not keyed in the legacy engine. No PK. Indexes mirror the
 -- legacy ::index create statements (rel_type, target_qualified, source_qualified).
@@ -229,6 +243,13 @@ CREATE INDEX IF NOT EXISTS knowledge_entries_author_index ON knowledge_entries (
 -- intent to a real constraint; it also makes ON CONFLICT (id) DO UPDATE
 -- viable if a future writer ever double-puts.
 CREATE UNIQUE INDEX IF NOT EXISTS knowledge_entries_id_uniq ON knowledge_entries (id);
+
+-- FR-ZCP-05 bridge tier (mirrors 007_trgm_fuzzy.sql): trigram indexes over
+-- knowledge content for the L2 fuzzy/prefix rung.
+CREATE INDEX IF NOT EXISTS knowledge_entries_title_trgm_idx
+    ON knowledge_entries USING gin (title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS knowledge_entries_content_trgm_idx
+    ON knowledge_entries USING gin (content gin_trgm_ops);
 
 -- ---------------------------------------------------------------------------
 -- feature_workflow_links — no PK in the legacy engine (composite tuple key), none here.

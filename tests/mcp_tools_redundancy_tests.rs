@@ -111,10 +111,27 @@ async fn call(handler: &ToolHandler, tool: &str, args: Value) -> Result<Value, S
 // ---------------------------------------------------------------------------
 
 #[test]
-fn every_tested_tool_is_registered() {
-    let registered: HashSet<String> = ToolRegistry::list_tools()
+fn every_tested_tool_is_a_registered_verb() {
+    // FR-ZCP-03 end-state: the registry exposes exactly ONE tool; every
+    // former tool name is a verb on it. These tests call the inner
+    // ToolHandler directly with legacy names, so the contract they pin is
+    // verb-catalog membership, not registry rows.
+    let registry: HashSet<String> = ToolRegistry::list_tools()
         .into_iter()
         .map(|t| t.name)
+        .collect();
+    assert_eq!(
+        registry.len(),
+        1,
+        "the one-tool cutover must not regress: registry = {registry:?}"
+    );
+    assert!(
+        registry.contains("leankg_context"),
+        "leankg_context must be the single registered tool"
+    );
+    let verbs: HashSet<String> = leankg::mcp::tools::verb_catalog()
+        .into_iter()
+        .map(String::from)
         .collect();
     let required: &[&str] = &[
         "add_annotation",
@@ -159,16 +176,16 @@ fn every_tested_tool_is_registered() {
         "timeline",
         "update_knowledge",
     ];
-    for name in required {
+    for verb in required {
         // `kg_semantic_context` is `#[cfg(feature = "embeddings")]`-gated; only
-        // present in the registry when that feature is enabled.
-        if *name == "kg_semantic_context" && !registered.contains(*name) {
+        // in the catalog when that feature is enabled.
+        if *verb == "kg_semantic_context" && !verbs.contains(*verb) {
             continue;
         }
         assert!(
-            registered.contains(*name),
-            "MCP tool `{}` is exercised by these tests but is not in ToolRegistry::list_tools()",
-            name
+            verbs.contains(*verb),
+            "MCP verb `{}` is exercised by these tests but is not in verb_catalog()",
+            verb
         );
     }
 }
@@ -845,6 +862,7 @@ mod ontology {
                     || e.contains("not registered")
                     || e.contains("not implemented")
                     || e.contains("Unknown tool")
+                    || e.contains("LEANKG_ERROR_UNKNOWN_TOOL")
                     || e.contains("No embedded vectors")
                     || e.contains("leankg embed"),
                 "expected graceful error: {e}"
