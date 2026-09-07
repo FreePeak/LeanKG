@@ -1,0 +1,291 @@
+{
+ "tool": "grep",
+ "top_k": 5,
+ "results": [
+  {
+   "id": "exact-symbol",
+   "category": "exact",
+   "question": "resolve_3tool",
+   "tool": "grep",
+   "elapsed_s": 0.1567,
+   "raw_matches": 18,
+   "returned_files": [
+    "src/mcp/tools.rs",
+    "src/mcp/server.rs"
+   ],
+   "ground_truth": [
+    "src/mcp/tools.rs::resolve_3tool"
+   ]
+  },
+  {
+   "id": "exact-audit",
+   "category": "exact",
+   "question": "AuditRecorder",
+   "tool": "grep",
+   "elapsed_s": 0.1108,
+   "raw_matches": 19,
+   "returned_files": [
+    "src/web/mod.rs",
+    "src/mcp/server.rs",
+    "src/audit/mod.rs",
+    "src/main.rs"
+   ],
+   "ground_truth": [
+    "src/audit/mod.rs::AuditRecorder"
+   ]
+  },
+  {
+   "id": "exact-scheduler",
+   "category": "exact",
+   "question": "spawn_embed_idle_scheduler",
+   "tool": "grep",
+   "elapsed_s": 0.1193,
+   "raw_matches": 4,
+   "returned_files": [
+    "src/mcp/server.rs"
+   ],
+   "ground_truth": [
+    "src/mcp/server.rs::spawn_embed_idle_scheduler"
+   ]
+  },
+  {
+   "id": "exact-hnsw",
+   "category": "exact",
+   "question": "create_hnsw_index",
+   "tool": "grep",
+   "elapsed_s": 0.1149,
+   "raw_matches": 9,
+   "returned_files": [
+    "src/embeddings/build.rs",
+    "src/embeddings/mod.rs",
+    "src/embeddings/state.rs",
+    "src/embeddings/offsite.rs",
+    "src/db/fake.rs"
+   ],
+   "ground_truth": [
+    "src/embeddings/state.rs::create_hnsw_index"
+   ]
+  },
+  {
+   "id": "concept-readonly",
+   "category": "concept",
+   "question": "how does the MCP read-only gate work",
+   "tool": "grep",
+   "elapsed_s": 0.1105,
+   "raw_matches": 77,
+   "returned_files": [
+    "src/benchmark/live.rs",
+    "src/embeddings/models.rs",
+    "src/embeddings/build.rs",
+    "src/embeddings/mod.rs",
+    "src/embeddings/state.rs"
+   ],
+   "ground_truth": [
+    "src/mcp/server.rs::is_ro_hidden_tool",
+    "src/mcp/server.rs::is_write_tool"
+   ]
+  },
+  {
+   "id": "concept-embed-arm",
+   "category": "concept",
+   "question": "how does the embed idle scheduler decide when to start embedding",
+   "tool": "grep",
+   "elapsed_s": 0.0953,
+   "raw_matches": 86,
+   "returned_files": [
+    "src/benchmark/live.rs",
+    "src/embeddings/runtime.rs",
+    "src/embeddings/switch.rs",
+    "src/embeddings/registry.rs",
+    "src/embeddings/control.rs"
+   ],
+   "ground_truth": [
+    "src/mcp/server.rs::spawn_embed_idle_scheduler",
+    "src/embeddings/control.rs::mcp_is_idle_for_embed"
+   ]
+  },
+  {
+   "id": "concept-router",
+   "category": "concept",
+   "question": "how does the multi-layer retrieval ladder fuse keyword and ontology results",
+   "tool": "grep",
+   "elapsed_s": 0.1254,
+   "raw_matches": 63,
+   "returned_files": [
+    "src/benchmark/live.rs",
+    "src/embeddings/models.rs",
+    "src/embeddings/build.rs",
+    "src/embeddings/mod.rs",
+    "src/embeddings/state.rs"
+   ],
+   "ground_truth": [
+    "src/mcp/router.rs::fuse_l2"
+   ]
+  },
+  {
+   "id": "concept-upsert",
+   "category": "concept",
+   "question": "how are bulk vector imports written to the sqlite backend",
+   "tool": "grep",
+   "elapsed_s": 0.0985,
+   "raw_matches": 69,
+   "returned_files": [
+    "src/benchmark/live.rs",
+    "src/compress/litm.rs",
+    "src/compress/reader.rs",
+    "src/embeddings/runtime.rs",
+    "src/embeddings/registry.rs"
+   ],
+   "ground_truth": [
+    "src/db/sqlite_backend.rs::import_relations",
+    "src/embeddings/build.rs::upsert_pairs_to_db"
+   ]
+  },
+  {
+   "id": "structure-schema",
+   "category": "structure",
+   "question": "where is the per-project sqlite schema name computed",
+   "tool": "grep",
+   "elapsed_s": 0.1145,
+   "raw_matches": 56,
+   "returned_files": [
+    "src/benchmark/unified.rs",
+    "src/compress/symbol_map.rs",
+    "src/embeddings/switch.rs",
+    "src/embeddings/models.rs",
+    "src/embeddings/build.rs"
+   ],
+   "ground_truth": [
+    "src/db/backend.rs::project_identity_keys_in"
+   ]
+  },
+  {
+   "id": "structure-inventory",
+   "category": "structure",
+   "question": "where is the index inventory refreshed",
+   "tool": "grep",
+   "elapsed_s": 0.0693,
+   "raw_matches": 112,
+   "returned_files": [
+    "src/benchmark/unified.rs",
+    "src/benchmark/live.rs",
+    "src/benchmark/tool_bench.rs",
+    "src/compress/git_diff.rs",
+    "src/compress/litm.rs"
+   ],
+   "ground_truth": [
+    "src/graph/inventory.rs::refresh_index_inventory"
+   ]
+  },
+  {
+   "id": "structure-watcher",
+   "category": "structure",
+   "question": "where does the file watcher get started",
+   "tool": "grep",
+   "elapsed_s": 0.0379,
+   "raw_matches": 167,
+   "returned_files": [
+    "src/benchmark/unified.rs",
+    "src/benchmark/runner.rs",
+    "src/benchmark/mod.rs",
+    "src/benchmark/data.rs",
+    "src/benchmark/ab_test.rs"
+   ],
+   "ground_truth": [
+    "src/mcp/watcher.rs::start_watcher"
+   ]
+  },
+  {
+   "id": "structure-hydration",
+   "category": "structure",
+   "question": "where do ANN search hits get hydrated into elements",
+   "tool": "grep",
+   "elapsed_s": 0.0947,
+   "raw_matches": 81,
+   "returned_files": [
+    "src/benchmark/unified.rs",
+    "src/benchmark/ab_test.rs",
+    "src/benchmark/live.rs",
+    "src/benchmark/tool_bench.rs",
+    "src/compress/response.rs"
+   ],
+   "ground_truth": [
+    "src/graph/query.rs::get_elements_by_qualified_names"
+   ]
+  },
+  {
+   "id": "impact-import",
+   "category": "impact",
+   "question": "what does the import_relations function do and who calls it",
+   "tool": "grep",
+   "elapsed_s": 0.1234,
+   "raw_matches": 67,
+   "returned_files": [
+    "src/benchmark/live.rs",
+    "src/embeddings/switch.rs",
+    "src/embeddings/control.rs",
+    "src/embeddings/models.rs",
+    "src/embeddings/build.rs"
+   ],
+   "ground_truth": [
+    "src/db/backend.rs::import_relations",
+    "src/embeddings/build.rs::upsert_pairs_to_db"
+   ]
+  },
+  {
+   "id": "impact-status",
+   "category": "impact",
+   "question": "what does the mcp_status handler report",
+   "tool": "grep",
+   "elapsed_s": 0.1212,
+   "raw_matches": 67,
+   "returned_files": [
+    "src/benchmark/live.rs",
+    "src/embeddings/switch.rs",
+    "src/embeddings/control.rs",
+    "src/embeddings/models.rs",
+    "src/embeddings/build.rs"
+   ],
+   "ground_truth": [
+    "src/mcp/handler.rs::mcp_status"
+   ]
+  },
+  {
+   "id": "concept-doctor",
+   "category": "concept",
+   "question": "how does doctor deep diagnose deployment problems",
+   "tool": "grep",
+   "elapsed_s": 0.1192,
+   "raw_matches": 66,
+   "returned_files": [
+    "src/benchmark/live.rs",
+    "src/embeddings/models.rs",
+    "src/embeddings/build.rs",
+    "src/embeddings/state.rs",
+    "src/embeddings/text_blob.rs"
+   ],
+   "ground_truth": [
+    "src/doctor/deep.rs"
+   ]
+  },
+  {
+   "id": "concept-roots",
+   "category": "concept",
+   "question": "how does the server resolve the project for an HTTP request",
+   "tool": "grep",
+   "elapsed_s": 0.0786,
+   "raw_matches": 110,
+   "returned_files": [
+    "src/benchmark/runner.rs",
+    "src/benchmark/live.rs",
+    "src/compress/reader.rs",
+    "src/embeddings/runtime.rs",
+    "src/embeddings/switch.rs"
+   ],
+   "ground_truth": [
+    "src/mcp/roots.rs",
+    "src/mcp/server.rs::resolve_serve_project"
+   ]
+  }
+ ]
+}

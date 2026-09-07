@@ -1,0 +1,327 @@
+{
+ "tool": "leankg",
+ "top_k": 5,
+ "results": [
+  {
+   "id": "exact-symbol",
+   "category": "exact",
+   "question": "resolve_3tool",
+   "tool": "leankg",
+   "elapsed_s": 17.159,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(semantic+name_fallback)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/tools.rs::resolve_3tool",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/tools.rs::test_resolve_3tool_action_and_verb_alias"
+   ],
+   "ground_truth": [
+    "src/mcp/tools.rs::resolve_3tool"
+   ]
+  },
+  {
+   "id": "exact-audit",
+   "category": "exact",
+   "question": "AuditRecorder",
+   "tool": "leankg",
+   "elapsed_s": 17.626,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(semantic+name_fallback)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/audit/mod.rs::AuditRecorder"
+   ],
+   "ground_truth": [
+    "src/audit/mod.rs::AuditRecorder"
+   ]
+  },
+  {
+   "id": "exact-scheduler",
+   "category": "exact",
+   "question": "spawn_embed_idle_scheduler",
+   "tool": "leankg",
+   "elapsed_s": 11.021,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(semantic+name_fallback)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::spawn_embed_idle_scheduler",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::spawn_embed_idle_scheduler#2"
+   ],
+   "ground_truth": [
+    "src/mcp/server.rs::spawn_embed_idle_scheduler"
+   ]
+  },
+  {
+   "id": "exact-hnsw",
+   "category": "exact",
+   "question": "create_hnsw_index",
+   "tool": "leankg",
+   "elapsed_s": 14.605,
+   "ok": true,
+   "error": null,
+   "rung": "vector",
+   "method": "hnsw+ontology-traverse",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/ui-v2/public/vis-network.min.js::Hx",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/embed/vis-network.min.js::Hx",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/tests/pg_phase0_spike.rs::hnsw_index_build_time",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/ui-v2/public/vis-network.min.js::Hx::setOptions",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/ui-v2/public/vis-network.min.js::parseWS"
+   ],
+   "ground_truth": [
+    "src/embeddings/state.rs::create_hnsw_index"
+   ]
+  },
+  {
+   "id": "concept-readonly",
+   "category": "concept",
+   "question": "how does the MCP read-only gate work",
+   "tool": "leankg",
+   "elapsed_s": 17.858,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::HttpMcpServer",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::HttpMcpServer::auth_manager",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::IndexingShared",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::JsonRpcError",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::JsonRpcRequest"
+   ],
+   "ground_truth": [
+    "src/mcp/server.rs::is_ro_hidden_tool",
+    "src/mcp/server.rs::is_write_tool"
+   ]
+  },
+  {
+   "id": "concept-embed-arm",
+   "category": "concept",
+   "question": "how does the embed idle scheduler decide when to start embedding",
+   "tool": "leankg",
+   "elapsed_s": 13.839,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/embed.rs::Assets",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/embed.rs::get",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/embed.rs::get_404",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/web/mod.rs::serve_embedded_file",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/web/handlers.rs::api_ui_build"
+   ],
+   "ground_truth": [
+    "src/mcp/server.rs::spawn_embed_idle_scheduler",
+    "src/embeddings/control.rs::mcp_is_idle_for_embed"
+   ]
+  },
+  {
+   "id": "concept-router",
+   "category": "concept",
+   "question": "how does the multi-layer retrieval ladder fuse keyword and ontology results",
+   "tool": "leankg",
+   "elapsed_s": 15.493,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/api/mod.rs::ApiResponse",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/api/mod.rs::ApiState",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/api/mod.rs::HealthResponse",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/api/mod.rs::data",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/api/mod.rs::db"
+   ],
+   "ground_truth": [
+    "src/mcp/router.rs::fuse_l2"
+   ]
+  },
+  {
+   "id": "concept-upsert",
+   "category": "concept",
+   "question": "how are bulk vector imports written to the sqlite backend",
+   "tool": "leankg",
+   "elapsed_s": 16.214,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel_with_typed_resolve",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_file_sync",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::reindex_file_sync",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::reindex_file_sync_inner"
+   ],
+   "ground_truth": [
+    "src/db/sqlite_backend.rs::import_relations",
+    "src/embeddings/build.rs::upsert_pairs_to_db"
+   ]
+  },
+  {
+   "id": "structure-schema",
+   "category": "structure",
+   "question": "where is the per-project sqlite schema name computed",
+   "tool": "leankg",
+   "elapsed_s": 20.141,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/web/handlers.rs::api_graph_expand_service",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/graph/query.rs::get_elements_in_folder",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/ui-v2/src/lib/graph-merge.ts::mergeKnowledgeGraphs",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/ui-v2/src/lib/graph-merge.ts::nextExpandOffset",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel"
+   ],
+   "ground_truth": [
+    "src/db/backend.rs::project_identity_keys_in"
+   ]
+  },
+  {
+   "id": "structure-inventory",
+   "category": "structure",
+   "question": "where is the index inventory refreshed",
+   "tool": "leankg",
+   "elapsed_s": 16.467,
+   "ok": true,
+   "error": null,
+   "rung": "vector",
+   "method": "hnsw+ontology-traverse",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/graph/inventory.rs::refresh_index_inventory",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/tests/embed_doc_inventory.rs::index_inventory_updates_after_code_index",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/graph/inventory.rs::load_latest_inventory",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/graph/inventory.rs::upsert_inventory",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/tests/embed_doc_inventory.rs::index_inventory_persists_after_doc_index"
+   ],
+   "ground_truth": [
+    "src/graph/inventory.rs::refresh_index_inventory"
+   ]
+  },
+  {
+   "id": "structure-watcher",
+   "category": "structure",
+   "question": "where does the file watcher get started",
+   "tool": "leankg",
+   "elapsed_s": 16.614,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel_with_typed_resolve",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_file_sync",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::reindex_file_sync",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::reindex_file_sync_inner"
+   ],
+   "ground_truth": [
+    "src/mcp/watcher.rs::start_watcher"
+   ]
+  },
+  {
+   "id": "structure-hydration",
+   "category": "structure",
+   "question": "where do ANN search hits get hydrated into elements",
+   "tool": "leankg",
+   "elapsed_s": 20.807,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/tools.rs::test_semantic_search_description_contract_lives_in_verb_doc",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/tools.rs::test_semantic_search_is_a_verb",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/db/mod.rs::search_knowledge",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel_with_typed_resolve"
+   ],
+   "ground_truth": [
+    "src/graph/query.rs::get_elements_by_qualified_names"
+   ]
+  },
+  {
+   "id": "impact-import",
+   "category": "impact",
+   "question": "what does the import_relations function do and who calls it",
+   "tool": "leankg",
+   "elapsed_s": 13.547,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "hnsw+ontology-traverse",
+   "returned_qns": [],
+   "ground_truth": [
+    "src/db/backend.rs::import_relations",
+    "src/embeddings/build.rs::upsert_pairs_to_db"
+   ]
+  },
+  {
+   "id": "impact-status",
+   "category": "impact",
+   "question": "what does the mcp_status handler report",
+   "tool": "leankg",
+   "elapsed_s": 22.528,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_files_parallel_with_typed_resolve",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::index_file_sync",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::reindex_file_sync",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/indexer/mod.rs::reindex_file_sync_inner"
+   ],
+   "ground_truth": [
+    "src/mcp/handler.rs::mcp_status"
+   ]
+  },
+  {
+   "id": "concept-doctor",
+   "category": "concept",
+   "question": "how does doctor deep diagnose deployment problems",
+   "tool": "leankg",
+   "elapsed_s": 22.087,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/render.yaml::<cicd>"
+   ],
+   "ground_truth": [
+    "src/doctor/deep.rs"
+   ]
+  },
+  {
+   "id": "concept-roots",
+   "category": "concept",
+   "question": "how does the server resolve the project for an HTTP request",
+   "tool": "leankg",
+   "elapsed_s": 30.894,
+   "ok": true,
+   "error": null,
+   "rung": "keyword",
+   "method": "fuzzy(ilike-degraded)+ontology(ontology+concept)",
+   "returned_qns": [
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::HttpMcpServer",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::HttpMcpServer::auth_manager",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::IndexingShared",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::JsonRpcError",
+    "/Users/linh.doan/work/harvey/freepeak/leankg/src/mcp/server.rs::JsonRpcRequest"
+   ],
+   "ground_truth": [
+    "src/mcp/roots.rs",
+    "src/mcp/server.rs::resolve_serve_project"
+   ]
+  }
+ ]
+}
