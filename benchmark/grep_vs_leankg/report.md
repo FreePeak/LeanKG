@@ -45,6 +45,9 @@
 - #293 test-symbol pollution in search_code ranking
 - #294 keyword rung has no similarity ordering
 
+## Summary correction
+- The exact-* rows ran through the **router** (keyword/vector rungs), not `search_code` — only the impact rows used `search_code`. Exact lookups are 3/4 via router with the one loss being #290's misclassification; `search_code`'s fast+accurate result applies to the impact rows only.
+
 ## Limitations
 - Impact rows use a different leankg protocol (`search_code` direct) than the 14 router rows — they are evidence for #292's latency contrast and for direct-mode accuracy, but the 8 vs 6 headline mixes two protocols. Router-mode impact queries are a separate question the router currently fails.
 - Embedding quality is NOT validated by this run: only 2/16 questions reached the vector rung and both returned vendor noise (#291). A clean semantic evaluation requires re-indexing with the excludes above.
