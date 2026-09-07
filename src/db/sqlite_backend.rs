@@ -546,14 +546,9 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Embedding-state table (only when the `embeddings` feature is compiled in).
-    // Without the feature, the table is never created and `embeddings::*`
-    // calls are absent from the binary — keeps default builds lean.
-    #[cfg(feature = "embeddings")]
-    {
-        crate::embeddings::state::ensure_embedding_state_table(db)?;
-    }
-
+    // NOTE: the embedding-state tables are ensured in `SqliteBackend::open`
+    // (they need a `DbBackend` handle, not the raw `CozoDb` this free
+    // function receives).
     Ok(())
 }
 
@@ -1095,11 +1090,20 @@ impl SqliteBackend {
         } else {
             init_db(db_path)?
         };
-        Ok(Self {
+        let backend = Self {
             db,
             path: storage.path,
             read_only,
-        })
+        };
+        // Embedding-state tables (only when the `embeddings` feature is
+        // compiled in) need a `DbBackend` handle, so they are ensured here —
+        // after construction, on the writable path only. Read-only opens
+        // never write schema.
+        #[cfg(feature = "embeddings")]
+        if !read_only {
+            crate::embeddings::state::ensure_embedding_state_table(&backend)?;
+        }
+        Ok(backend)
     }
 
     pub fn path(&self) -> &Path {

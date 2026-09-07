@@ -281,6 +281,7 @@ fn e2e_procedural_workflow_step_links_to_parent_workflow() {
         "authorize_payment",
         2,
         "Authorize payment via /payments/authorize",
+        "Authorize payment",
     );
     assert_eq!(
         meta.workflow_gid,

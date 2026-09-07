@@ -90,16 +90,30 @@ pub fn owning_tool(capability: &str) -> &'static str {
     }
 }
 
-/// Map (tool, action-or-legacy-verb) to the effective capability.
+/// Map (tool, action-or-verb) to the effective capability.
 ///
 /// Resolution order per tool:
 /// * `set`:   `action` (default "index") — legacy verbs accepted as actions.
-/// * `get`:   `action` if present, else the natural-language router
+/// * `get`:   `action`/`verb` if present, else the natural-language router
 ///   (`leankg_context` capability — the multi-layer ladder).
 /// * `status`: always `mcp_status` (its only capability).
+/// * `leankg_context` (legacy envelope, accepted everywhere): `verb` unwraps
+///   to the legacy capability; absent = the router itself.
 ///
 /// Returns the effective capability name + arguments with routing keys
 /// (`action`/`verb`) stripped.
+/// Envelope key for the 3-tool surface: `action` preferred, `verb` accepted
+/// as the one-tool-era alias so `leankg_context`-style callers migrate
+/// without breaking. Neither present = default routing.
+fn action_or_verb(arguments: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    arguments
+        .get("action")
+        .and_then(|v| v.as_str())
+        .or_else(|| arguments.get("verb").and_then(|v| v.as_str()))
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 pub fn resolve_3tool(
     tool_name: &str,
     arguments: &serde_json::Map<String, serde_json::Value>,
@@ -107,17 +121,14 @@ pub fn resolve_3tool(
     let mut inner = arguments.clone();
     let capability = match tool_name {
         TOOL_SET => {
-            let a = inner
-                .get("action")
-                .and_then(|v| v.as_str())
-                .unwrap_or("mcp_index")
-                .to_string();
-            let canonical = if is_valid_verb(&a) {
+            let a = action_or_verb(&inner).unwrap_or_else(|| "mcp_index".to_string());
+            inner.remove("action");
+            inner.remove("verb");
+            if is_valid_verb(&a) {
                 a
             } else if a == "index" || a == "incremental" || a == "attach" || a == "embed" {
                 match a.as_str() {
-                    "index" | "attach" => "mcp_index".to_string(),
-                    "incremental" => "mcp_index".to_string(),
+                    "index" | "attach" | "incremental" => "mcp_index".to_string(),
                     "embed" => "embed_control".to_string(),
                     _ => a,
                 }
@@ -128,16 +139,12 @@ pub fn resolve_3tool(
                     &format!("unknown set action '{a}'"),
                     &format!("use action \"{nearest}\" (nearest capability) or list actions in the set tool description"),
                 ));
-            };
-            inner.remove("action");
-            canonical
+            }
         }
         TOOL_GET => {
-            let a = inner
-                .get("action")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
+            let a = action_or_verb(&inner);
             inner.remove("action");
+            inner.remove("verb");
             match a {
                 Some(a) => {
                     if !is_valid_verb(&a) {
@@ -150,19 +157,48 @@ pub fn resolve_3tool(
                     }
                     a
                 }
-                None => "leankg_context".to_string(), // NL router (multi-layer)
+                None => ONE_TOOL.to_string(), // NL router (multi-layer)
             }
         }
         TOOL_STATUS => {
             inner.remove("action");
+            inner.remove("verb");
             "mcp_status".to_string()
+        }
+        // Legacy one-tool envelope (FR-ZCP-03): `leankg_context` stays
+        // accepted on every transport so existing verb-envelope callers
+        // survive the 3-tool cutover. `verb` unwraps to the legacy
+        // capability; no verb = the natural-language router itself.
+        ONE_TOOL => {
+            let Some(verb) = inner
+                .get("verb")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+            else {
+                return Ok((ONE_TOOL.to_string(), inner));
+            };
+            if !is_valid_verb(&verb) {
+                let nearest = nearest_verb_name(&verb);
+                return Err(crate::errors::render(
+                    crate::errors::UNKNOWN_TOOL.code,
+                    &format!("unknown verb '{verb}' — not a LeanKG capability"),
+                    &format!(
+                        "retry with {{\"verb\": \"{nearest}\"}} (nearest capability) or drop \
+                         `verb` entirely to use the natural-language router"
+                    ),
+                ));
+            }
+            inner.remove("verb");
+            verb
         }
         _ => {
             let nearest = nearest_verb_name(tool_name);
             return Err(crate::errors::render(
                 crate::errors::UNKNOWN_TOOL.code,
                 &format!(
-                    "tool '{tool_name}' is not registered — LeanKG exposes exactly 3 tools: `set`, `get`, `status`"
+                    "tool '{tool_name}' is not registered — LeanKG exposes exactly 3 tools: \
+                     `set`, `get`, `status` (`leankg_context` accepted as the legacy verb envelope)"
                 ),
                 &format!(
                     "call `get` with {{\"query\": ...}} for questions, `set` with {{\"action\": ...}} for imports/writes, `status` for health; nearest capability: {nearest}"
@@ -192,11 +228,12 @@ pub fn nearest_tool_name(unknown: &str) -> String {
     }
     match best {
         Some((name, score)) if score >= 3 => name,
-        _ => "leankg_context".to_string(),
+        _ => ONE_TOOL.to_string(),
     }
 }
 
-/// The one registered MCP tool (hard one-tool cutover, FR-ZCP-03 end-state).
+/// The natural-language router capability (`get` with no `action`); also
+/// accepted as the legacy one-tool envelope tool name on every transport.
 pub const ONE_TOOL: &str = "leankg_context";
 
 /// The capability (verb) catalog: every former tool name is now a verb on
@@ -291,47 +328,6 @@ pub fn verb_catalog() -> Vec<&'static str> {
 /// True when `verb` is a dispatchable capability on the one tool.
 pub fn is_valid_verb(verb: &str) -> bool {
     verb == ONE_TOOL || verb_catalog().contains(&verb)
-}
-
-pub fn resolve_envelope(
-    tool_name: &str,
-    arguments: &serde_json::Map<String, serde_json::Value>,
-) -> Result<(String, serde_json::Map<String, serde_json::Value>), String> {
-    if tool_name != ONE_TOOL {
-        let nearest = nearest_verb_name(tool_name);
-        return Err(crate::errors::render(
-            crate::errors::UNKNOWN_TOOL.code,
-            &format!(
-                "tool '{tool_name}' is not registered — LeanKG exposes exactly one tool \
-                 (`{ONE_TOOL}`) and every capability rides it as a verb"
-            ),
-            &format!(
-                "call `{ONE_TOOL}` with {{\"verb\": \"{nearest}\", ...args}}; \
-                 or omit `verb` entirely for the natural-language router"
-            ),
-        ));
-    }
-    let Some(verb) = arguments
-        .get("verb")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.is_empty())
-    else {
-        return Ok((ONE_TOOL.to_string(), arguments.clone()));
-    };
-    if !is_valid_verb(verb) {
-        let nearest = nearest_verb_name(verb);
-        return Err(crate::errors::render(
-            crate::errors::UNKNOWN_TOOL.code,
-            &format!("unknown verb '{verb}' — not a LeanKG capability"),
-            &format!(
-                "retry with {{\"verb\": \"{nearest}\"}} (nearest capability) or drop \
-                 `verb` entirely to use the natural-language router"
-            ),
-        ));
-    }
-    let mut inner = arguments.clone();
-    inner.remove("verb");
-    Ok((verb.to_string(), inner))
 }
 
 /// Nearest verb for an unknown capability/tool name — same LCS heuristic as
@@ -637,11 +633,11 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_envelope_contract() {
+    fn test_resolve_dispatch_contract() {
         use serde_json::map::Map as Args;
 
         // Legacy tool name → hard refusal with catalog code + nearest verb.
-        let err = resolve_envelope("get_impact_radius", &Args::new()).unwrap_err();
+        let err = resolve_3tool("get_impact_radius", &Args::new()).unwrap_err();
         assert!(err.contains("LEANKG_ERROR_UNKNOWN_TOOL"), "{err}");
         assert!(err.contains("verb"), "{err}");
 
@@ -649,7 +645,7 @@ mod tests {
         let mut args = Args::new();
         args.insert("verb".into(), serde_json::json!("get_impact_radius"));
         args.insert("file".into(), serde_json::json!("src/main.rs"));
-        let (cap, inner) = resolve_envelope("leankg_context", &args).unwrap();
+        let (cap, inner) = resolve_3tool(ONE_TOOL, &args).unwrap();
         assert_eq!(cap, "get_impact_radius");
         assert!(!inner.contains_key("verb"));
         assert_eq!(inner["file"], "src/main.rs");
@@ -657,14 +653,62 @@ mod tests {
         // No verb → natural-language router path, args unchanged.
         let mut args = Args::new();
         args.insert("query".into(), serde_json::json!("auth flow"));
-        let (cap, inner) = resolve_envelope("leankg_context", &args).unwrap();
+        let (cap, inner) = resolve_3tool(ONE_TOOL, &args).unwrap();
         assert_eq!(cap, "leankg_context");
         assert_eq!(inner["query"], "auth flow");
 
         // Unknown verb → refusal with nearest suggestion.
         let mut args = Args::new();
         args.insert("verb".into(), serde_json::json!("get_impract_radius"));
-        let err = resolve_envelope("leankg_context", &args).unwrap_err();
+        let err = resolve_3tool(ONE_TOOL, &args).unwrap_err();
         assert!(err.contains("LEANKG_ERROR_UNKNOWN_TOOL"), "{err}");
+    }
+
+    #[test]
+    fn test_resolve_3tool_action_and_verb_alias() {
+        use serde_json::map::Map as Args;
+
+        // `action` key (3-tool surface).
+        let mut args = Args::new();
+        args.insert("action".into(), serde_json::json!("search_code"));
+        args.insert("query".into(), serde_json::json!("auth"));
+        let (cap, inner) = resolve_3tool("get", &args).unwrap();
+        assert_eq!(cap, "search_code");
+        assert!(!inner.contains_key("action"));
+
+        // `verb` key (one-tool-era alias) accepted on the 3-tool surface.
+        let mut args = Args::new();
+        args.insert("verb".into(), serde_json::json!("search_code"));
+        let (cap, inner) = resolve_3tool("get", &args).unwrap();
+        assert_eq!(cap, "search_code");
+        assert!(!inner.contains_key("verb"));
+
+        // `status` ignores routing keys entirely.
+        let mut args = Args::new();
+        args.insert("verb".into(), serde_json::json!("mcp_status"));
+        let (cap, inner) = resolve_3tool("status", &args).unwrap();
+        assert_eq!(cap, "mcp_status");
+        assert!(!inner.contains_key("verb"));
+
+        // `set` default action = mcp_index (full import).
+        let (cap, inner) = resolve_3tool("set", &Args::new()).unwrap();
+        assert_eq!(cap, "mcp_index");
+        assert!(!inner.contains_key("action"));
+
+        // `set` friendly actions normalize to capabilities.
+        let mut args = Args::new();
+        args.insert("action".into(), serde_json::json!("embed"));
+        let (cap, _) = resolve_3tool("set", &args).unwrap();
+        assert_eq!(cap, "embed_control");
+    }
+
+    #[test]
+    fn test_get_without_action_routes_to_nl_router() {
+        use serde_json::map::Map as Args;
+        let mut args = Args::new();
+        args.insert("query".into(), serde_json::json!("auth flow"));
+        let (cap, inner) = resolve_3tool("get", &args).unwrap();
+        assert_eq!(cap, ONE_TOOL);
+        assert_eq!(inner["query"], "auth flow");
     }
 }
