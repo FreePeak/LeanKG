@@ -1195,21 +1195,63 @@ impl DbBackend for SqliteBackend {
                 continue;
             }
             let cols = rows.headers.join(", ");
-            // Rows arrive pre-bracketed (`[v1, v2, ...]`), so the data
-            // literal is `[ [row], [row], ... ]` — ONE bracket layer of
-            // wrapping. Emitting `[[` here produced `[[[row]]]`, and the
-            // Constant fixed rule then read arity from the wrong nesting
-            // level ("Fixed rule head arity mismatch") on every call —
-            // embed's vector import was its first real caller.
+            // Column-type-aware value rendering. A CozoScript array literal
+            // is a LIST, but `<F32; N>` vector columns need a `vec([...])`
+            // expression — plain arrays fail at execution ("when executing
+            // against relation ..."). Resolve column types once per
+            // relation, then wrap List values headed for vector columns.
+            let col_type_by_name: std::collections::BTreeMap<String, String> = match run_script(
+                &self.db,
+                &format!("::columns {relation}"),
+                Default::default(),
+            ) {
+                Ok(schema) => schema
+                    .rows
+                    .iter()
+                    .filter_map(|r| match (r.first(), r.get(3)) {
+                        (
+                            Some(crate::db::value::DataValue::Str(n)),
+                            Some(crate::db::value::DataValue::Str(t)),
+                        ) => Some((n.clone(), t.clone())),
+                        _ => None,
+                    })
+                    .collect(),
+                Err(_) => Default::default(),
+            };
             let mut script = format!("?[{cols}] <- [");
             for (i, row) in rows.rows.iter().enumerate() {
                 if i > 0 {
                     script.push_str(", ");
                 }
-                let vals: Vec<String> = row.iter().map(datavalue_literal_cozo).collect();
+                let vals: Vec<String> = row
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        let is_vector_column = rows
+                            .headers
+                            .get(i)
+                            .and_then(|h| col_type_by_name.get(h))
+                            .is_some_and(|t| t.starts_with("<F32"));
+                        match (is_vector_column, v) {
+                            (true, crate::db::value::DataValue::List(items)) => {
+                                let inner = items
+                                    .iter()
+                                    .map(datavalue_literal_cozo)
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                format!("vec([{inner}])")
+                            }
+                            _ => datavalue_literal_cozo(v),
+                        }
+                    })
+                    .collect();
                 script.push_str(&format!("[{}]", vals.join(", ")));
             }
-            script.push_str(format!("] :insert {relation}").as_str());
+            // Upsert semantics (:put) matching the PG lowering
+            // (INSERT .. ON CONFLICT): re-embeds and index refreshes replay
+            // existing keys, and Cozo :insert rejects duplicates.
+            let put_cols = rows.headers.join(", ");
+            script.push_str(format!("] :put {relation} {{{put_cols}}}").as_str());
             run_script(&self.db, &script, Default::default())?;
         }
         Ok(())
@@ -1305,16 +1347,24 @@ impl DbBackend for SqliteBackend {
         query: &str,
         limit: usize,
     ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
-        let q = query.trim();
+        // Lowercase BOTH sides: regex_matches is case-sensitive, so the
+        // query must be folded too or "ALPH" never matches "alpha" (the
+        // PG path is case-insensitive via ILIKE — this keeps parity).
+        let q = query.trim().to_lowercase();
         if q.is_empty() {
             return Ok(Vec::new());
         }
+        // Substring semantics: escape regex metacharacters so real symbol
+        // names (Vec<String>, a::b, fn(...)) can't break or over-match the
+        // pattern — the whole L2 tier errors on an invalid regex today.
+        let q = regex::escape(&q);
         let limit = limit.clamp(1, 100);
         let script = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata],
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
+               *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata}},
                regex_matches(lowercase(name), "{}")
              :limit {}"#,
-            q.replace(['"', '\\'], ""),
+            q.replace('"', "\\\""),
             limit
         );
         let rows = run_script(&self.db, &script, Default::default())?;
@@ -1439,7 +1489,7 @@ impl DbBackend for SqliteBackend {
                 .map(|qn| format!(r#"["{}", "{}"]"#, esc(qn), esc(qn)))
                 .collect();
             let script = format!(
-                r#"want[qn, qn2] <- [[{}]]
+                r#"want[qn, qn2] <- [{}]
                    ?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env] :=
                       want[qn, qn2],
                       *code_elements{{qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata, env}},
@@ -1597,10 +1647,15 @@ fn datavalue_literal_cozo(v: &crate::db::value::DataValue) -> String {
         V::Bool(b) => b.to_string(),
         V::Num(crate::db::value::Num::Int(i)) => i.to_string(),
         V::Num(crate::db::value::Num::Float(f)) => f.to_string(),
+        // Cozo 0.7.6's parser chokes on `\"` inside double-quoted literals
+        // (verified against the pest grammar's own escape production), so
+        // ANY string containing `"` — JSON metadata above all — produced an
+        // unparseable script through this path. Single-quoted literals with
+        // `\'` escaping parse cleanly and are what we emit instead.
         V::Str(s) => format!(
-            "\"{}\"",
+            "'{}'",
             s.replace('\\', "\\\\")
-                .replace('"', "\\\"")
+                .replace('\'', "\\'")
                 .replace('\n', "\\n")
         ),
         V::Bytes(b) => format!("<bytes:{}>", b.len()),
@@ -2017,5 +2072,281 @@ mod tests {
         assert_eq!(schema.arity, 6);
         assert!(schema.canonical);
         assert!(schema.columns.contains(&"env".to_string()));
+    }
+
+    /// Regression: `elements_by_qualified_names` built its data literal with
+    /// `want[qn, qn2] <- [[…]]`, producing `[[[row]]]` — the Constant fixed
+    /// rule read arity from the wrong nesting level and EVERY hydration
+    /// call failed ("Fixed rule head arity mismatch"). First surfaced by
+    /// the L3 ANN hydration path on SQLite. This bug regressed once through
+    /// the #283 squash; without this test it will again.
+    #[test]
+    fn elements_by_qualified_names_roundtrip_with_env_and_metadata() {
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
+        let mut data = BTreeMap::new();
+        data.insert(
+            "code_elements".to_string(),
+            NamedRows {
+                headers: [
+                    "qualified_name",
+                    "element_type",
+                    "name",
+                    "file_path",
+                    "line_start",
+                    "line_end",
+                    "language",
+                    "parent_qualified",
+                    "cluster_id",
+                    "cluster_label",
+                    "metadata",
+                    "env",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+                rows: vec![
+                    vec![
+                        crate::db::value::DataValue::Str("/src/a.rs::alpha".into()),
+                        crate::db::value::DataValue::Str("function".into()),
+                        crate::db::value::DataValue::Str("alpha".into()),
+                        crate::db::value::DataValue::Str("/src/a.rs".into()),
+                        crate::db::value::DataValue::Num(crate::db::value::Num::Int(1)),
+                        crate::db::value::DataValue::Num(crate::db::value::Num::Int(10)),
+                        crate::db::value::DataValue::Str("rust".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str(r#"{"key":"v1"}"#.into()),
+                        crate::db::value::DataValue::Str("local".into()),
+                    ],
+                    vec![
+                        crate::db::value::DataValue::Str("/src/a.rs::beta".into()),
+                        crate::db::value::DataValue::Str("function".into()),
+                        crate::db::value::DataValue::Str("beta".into()),
+                        crate::db::value::DataValue::Str("/src/a.rs".into()),
+                        crate::db::value::DataValue::Num(crate::db::value::Num::Int(11)),
+                        crate::db::value::DataValue::Num(crate::db::value::Num::Int(20)),
+                        crate::db::value::DataValue::Str("rust".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("{}".into()),
+                        crate::db::value::DataValue::Str("ci".into()),
+                    ],
+                ],
+                next: None,
+            },
+        );
+        backend.import_relations(data).unwrap();
+
+        // A missing qualified_name must be silently skipped, not error.
+        let qns = vec![
+            "/src/a.rs::alpha".to_string(),
+            "/src/a.rs::beta".to_string(),
+            "/src/missing.rs::ghost".to_string(),
+        ];
+        let got = backend.elements_by_qualified_names(&qns).unwrap();
+        assert_eq!(got.len(), 2, "missing qn must not appear");
+        let alpha = got
+            .iter()
+            .find(|e| e.qualified_name == "/src/a.rs::alpha")
+            .unwrap();
+        assert_eq!(alpha.element_type, "function");
+        assert_eq!(alpha.metadata["key"], serde_json::json!("v1"));
+        assert_eq!(alpha.env, "local");
+        let beta = got
+            .iter()
+            .find(|e| e.qualified_name == "/src/a.rs::beta")
+            .unwrap();
+        assert_eq!(beta.env, "ci", "per-row env must survive the join");
+    }
+
+    /// Regression: full re-embeds replay existing qualified_names; Cozo
+    /// :insert rejects duplicates ("when executing against relation ...")
+    /// while the PG lowering is INSERT .. ON CONFLICT. import_relations
+    /// must upsert (:put), so the second import overwrites the first —
+    /// and List values must land as vec([...]) literals for <F32; N> cols.
+    #[test]
+    fn import_relations_upserts_duplicate_keys() {
+        use crate::db::value::DataValue as DV;
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
+        backend
+            .run_script(
+                ":create embedding_vectors {qualified_name: String => vector: <F32; 384>}",
+                Default::default(),
+            )
+            .unwrap();
+        let v: Vec<f32> = (0..384).map(|i| i as f32 * 0.01).collect();
+        let mk = |offset: f32| {
+            let mut m = BTreeMap::new();
+            m.insert(
+                "embedding_vectors".to_string(),
+                NamedRows::new(
+                    vec!["qualified_name".to_string(), "vector".to_string()],
+                    vec![vec![
+                        DV::Str("q".into()),
+                        DV::List(v.iter().map(|&f| DV::from((f + offset) as f64)).collect()),
+                    ]],
+                ),
+            );
+            m
+        };
+        backend.import_relations(mk(0.0)).unwrap();
+        backend.import_relations(mk(1.0)).unwrap();
+        let r = backend
+            .run_script(
+                r#"?[qualified_name, vector] := *embedding_vectors{qualified_name, vector}, qualified_name = "q""#,
+                Default::default(),
+            )
+            .unwrap();
+        assert_eq!(r.rows.len(), 1, "upsert must not duplicate the row");
+        let stored = match r.rows[0].get(1) {
+            Some(crate::db::value::DataValue::Json(s)) => s
+                .trim_start_matches("vec([")
+                .trim_end_matches("])")
+                .to_string(),
+            other => panic!("unexpected vector repr {other:?}"),
+        };
+        let second: f64 = stored.split(',').nth(1).unwrap().trim().parse().unwrap();
+        assert!(
+            (second - 1.01).abs() < 1e-6,
+            "second import must overwrite the vector"
+        );
+    }
+
+    /// Regression: `import_relations` wrapped rows in an extra bracket layer
+    /// (`?[] <- [[[row]]]`), so every import failed with "Fixed rule head
+    /// arity mismatch" — the embed vector writer was the first real caller.
+    #[test]
+    fn import_relations_roundtrips_rows() {
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
+        let mut data = BTreeMap::new();
+        data.insert(
+            "relationships".to_string(),
+            NamedRows {
+                headers: vec![
+                    "source_qualified".into(),
+                    "target_qualified".into(),
+                    "rel_type".into(),
+                    "confidence".into(),
+                    "metadata".into(),
+                    "env".into(),
+                ],
+                rows: vec![
+                    vec![
+                        crate::db::value::DataValue::Str("/src/a.rs::alpha".into()),
+                        crate::db::value::DataValue::Str("/src/a.rs::beta".into()),
+                        crate::db::value::DataValue::Str("calls".into()),
+                        crate::db::value::DataValue::from(0.9f64),
+                        crate::db::value::DataValue::Str("{}".into()),
+                        crate::db::value::DataValue::Str("local".into()),
+                    ],
+                    vec![
+                        crate::db::value::DataValue::Str("/src/a.rs::beta".into()),
+                        crate::db::value::DataValue::Str("/src/a.rs::alpha".into()),
+                        crate::db::value::DataValue::Str("uses".into()),
+                        crate::db::value::DataValue::from(0.5f64),
+                        crate::db::value::DataValue::Str("{}".into()),
+                        crate::db::value::DataValue::Str("local".into()),
+                    ],
+                ],
+                next: None,
+            },
+        );
+        backend.import_relations(data).unwrap();
+
+        let out = backend
+            .run_script(
+                "?[source_qualified, target_qualified, rel_type] := *relationships{source_qualified, target_qualified, rel_type}",
+                Default::default(),
+            )
+            .unwrap();
+        assert_eq!(out.rows.len(), 2, "both rows must import");
+    }
+
+    /// Regression: `fuzzy_find_elements` was a headless projection (no
+    /// `:= *code_elements{…}` relation ref) — unparseable Cozo, so the L2
+    /// fuzzy tier silently degraded on SQLite.
+    #[test]
+    fn fuzzy_find_elements_matches_substring() {
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
+        let mut data = BTreeMap::new();
+        data.insert(
+            "code_elements".to_string(),
+            NamedRows {
+                headers: [
+                    "qualified_name",
+                    "element_type",
+                    "name",
+                    "file_path",
+                    "line_start",
+                    "line_end",
+                    "language",
+                    "parent_qualified",
+                    "cluster_id",
+                    "cluster_label",
+                    "metadata",
+                    "env",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+                rows: vec![
+                    vec![
+                        crate::db::value::DataValue::Str("/src/a.rs::alpha".into()),
+                        crate::db::value::DataValue::Str("function".into()),
+                        crate::db::value::DataValue::Str("alpha".into()),
+                        crate::db::value::DataValue::Str("/src/a.rs".into()),
+                        crate::db::value::DataValue::Num(crate::db::value::Num::Int(1)),
+                        crate::db::value::DataValue::Num(crate::db::value::Num::Int(10)),
+                        crate::db::value::DataValue::Str("rust".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("{}".into()),
+                        crate::db::value::DataValue::Str("local".into()),
+                    ],
+                    vec![
+                        crate::db::value::DataValue::Str("/src/a.rs::beta".into()),
+                        crate::db::value::DataValue::Str("function".into()),
+                        crate::db::value::DataValue::Str("beta".into()),
+                        crate::db::value::DataValue::Str("/src/a.rs".into()),
+                        crate::db::value::DataValue::Num(crate::db::value::Num::Int(11)),
+                        crate::db::value::DataValue::Num(crate::db::value::Num::Int(20)),
+                        crate::db::value::DataValue::Str("rust".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("".into()),
+                        crate::db::value::DataValue::Str("{}".into()),
+                        crate::db::value::DataValue::Str("local".into()),
+                    ],
+                ],
+                next: None,
+            },
+        );
+        backend.import_relations(data).unwrap();
+
+        // Case-insensitive substring match (query folded too).
+        let got = backend.fuzzy_find_elements("ALPH", 10).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "alpha");
+        // Regex metacharacters in real symbol queries must not error the
+        // call or over-match — they are literal after escaping.
+        assert!(backend
+            .fuzzy_find_elements("al(h)a", 10)
+            .unwrap()
+            .is_empty());
+        assert!(backend
+            .fuzzy_find_elements("(alpha", 10)
+            .unwrap()
+            .is_empty());
+        assert!(backend
+            .fuzzy_find_elements("zzz_no_match", 10)
+            .unwrap()
+            .is_empty());
     }
 }
