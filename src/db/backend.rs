@@ -3505,6 +3505,12 @@ pub fn init_db_readonly_strict(
 pub fn init_db_readonly_audit(
     db_path: &std::path::Path,
 ) -> Result<SharedDb, Box<dyn std::error::Error>> {
+    // #309 follow-up: sqlite projects store the audit ledger in their own
+    // .leankg/leankg.db — dispatch there before hitting the PG path.
+    if crate::db::backend::sqlite_backend_requested() {
+        let db = crate::db::sqlite_backend::open_shared(db_path, true)?;
+        return Ok(db);
+    }
     init_db_readonly_probed(db_path, "audit_log", "audit ledger")
 }
 
