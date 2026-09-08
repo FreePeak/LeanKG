@@ -1346,7 +1346,80 @@ impl DbBackend for SqliteBackend {
             .and_then(|r| r.get(1).and_then(|v| v.get_str().map(String::from))))
     }
 
+    /// FR-ENT-1: windowed ledger read for `leankg audit export|verify` on
+    /// sqlite (#309 follow-up). ts is stored as unix-nanos INTEGER; since/
+    /// until filters compare the same way.
+    fn query_audit(
+        &self,
+        since: Option<std::time::SystemTime>,
+        until: Option<std::time::SystemTime>,
+    ) -> Result<Vec<crate::audit::AuditEntry>, Box<dyn std::error::Error>> {
+        let mut clauses = Vec::new();
+        if let Some(t) = since {
+            let nanos = t
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0);
+            clauses.push(format!("ts >= {}", nanos));
+        }
+        if let Some(t) = until {
+            let nanos = t
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(i64::MAX);
+            clauses.push(format!("ts <= {}", nanos));
+        }
+        let filter = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", clauses.join(", "))
+        };
+        let script = format!(
+            r#"?[id, ts, actor, agent_client, tool, project, args_hash, result_status, prev_hash, entry_hash] :=
+               *audit_log{{id, ts, actor, agent_client, tool, project, args_hash, result_status, prev_hash, entry_hash}}{}
+            :sort id"#,
+            filter
+        );
+        let rows = run_script(&self.db, &script, Default::default())?;
+        Ok(rows
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let id = row.first().and_then(|v| match v {
+                    crate::db::value::DataValue::Num(crate::db::value::Num::Int(i)) => Some(*i),
+                    _ => None,
+                })?;
+                let g = |i: usize| {
+                    row.get(i)
+                        .and_then(|v| match v {
+                            crate::db::value::DataValue::Str(s) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_default()
+                };
+                let ts_nanos = row.get(1).and_then(|v| match v {
+                    crate::db::value::DataValue::Num(crate::db::value::Num::Int(i)) => Some(*i),
+                    _ => None,
+                })?;
+                Some(crate::audit::AuditEntry {
+                    id,
+                    ts: std::time::UNIX_EPOCH
+                        + std::time::Duration::from_nanos(ts_nanos.max(0) as u64),
+                    actor: g(2),
+                    agent_client: g(3),
+                    tool: g(4),
+                    project: (!g(5).is_empty()).then(|| g(5)),
+                    args_hash: g(6),
+                    result_status: g(7),
+                    prev_hash: g(8),
+                    entry_hash: g(9),
+                })
+            })
+            .collect())
+    }
+
     // Knowledge CRUD on Cozo relations — same Datalog the pre-v0.20 codebase
+    // ran natively; SQLite storage just persists it to the .db file.    // Knowledge CRUD on Cozo relations — same Datalog the pre-v0.20 codebase
     // ran natively; SQLite storage just persists it to the .db file.
     fn upsert_knowledge_entry(
         &self,
