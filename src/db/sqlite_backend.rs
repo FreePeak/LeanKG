@@ -1509,12 +1509,18 @@ impl DbBackend for SqliteBackend {
         &self,
         qualified_names: &[String],
     ) -> Result<Vec<crate::db::models::CodeElement>, Box<dyn std::error::Error>> {
-        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        // CozoScript string escaping must match the datavalue path: use
+        // single-quoted literals with \' (double-quoted strings do not
+        // support \" escapes in cozo 0.7.6 — see datavalue_literal_cozo).
+        let esc = |s: &str| {
+            let inner = s.replace('\\', "\\\\").replace('\'', "\\'");
+            format!("'{}'", inner)
+        };
         let mut out = Vec::with_capacity(qualified_names.len());
         for chunk in qualified_names.chunks(500) {
             let parts: Vec<String> = chunk
                 .iter()
-                .map(|qn| format!(r#"["{}", "{}"]"#, esc(qn), esc(qn)))
+                .map(|qn| format!("[{}, {}]", esc(qn), esc(qn)))
                 .collect();
             let script = format!(
                 r#"want[qn, qn2] <- [{}]
@@ -1524,7 +1530,15 @@ impl DbBackend for SqliteBackend {
                       qualified_name = qn"#,
                 parts.join(", ")
             );
-            let rows = run_script(&self.db, &script, Default::default())?;
+            let rows = run_script(&self.db, &script, Default::default()).map_err(|e| {
+                let dump = std::env::temp_dir().join("leankg-failing-script.txt");
+                let _ = std::fs::write(&dump, &script);
+                tracing::error!(
+                    "elements_by_qualified_names script failed: {e}; dumped to {}",
+                    dump.display()
+                );
+                e
+            })?;
             out.extend(rows.rows.iter().map(|r| cozo_row_to_code_element(r, true)));
         }
         Ok(out)
@@ -2302,6 +2316,61 @@ mod tests {
     /// Regression (#293/#294): test symbols are demoted below the real
     /// implementation, and exact-name matches outrank longer substring
     /// matches within the same demotion tier.
+    /// Regression (#290-followup): QNs containing literal double quotes
+    /// (markdown doc_section titles like `ctx_read("src/main.rs")`) broke
+    /// the want-rel literal — double-quoted cozo strings cannot carry \".
+    /// The hydration path now emits single-quoted literals with '' escaping.
+    #[test]
+    fn elements_by_qualified_names_handles_quotes_in_qn() {
+        use crate::db::value::{DataValue as DV, Num as DVNum};
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
+        let mut data = BTreeMap::new();
+        let qn = "/docs/report.md::6.2 ctx_read(\"src/main.rs\")";
+        data.insert(
+            "code_elements".to_string(),
+            NamedRows::new(
+                vec![
+                    "qualified_name",
+                    "element_type",
+                    "name",
+                    "file_path",
+                    "line_start",
+                    "line_end",
+                    "language",
+                    "parent_qualified",
+                    "cluster_id",
+                    "cluster_label",
+                    "metadata",
+                    "env",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+                vec![vec![
+                    DV::Str(qn.into()),
+                    DV::Str("doc_section".into()),
+                    DV::Str("ctx_read".into()),
+                    DV::Str("/docs/report.md".into()),
+                    DV::Num(DVNum::Int(1)),
+                    DV::Num(DVNum::Int(10)),
+                    DV::Str("md".into()),
+                    DV::Str("".into()),
+                    DV::Str("".into()),
+                    DV::Str("".into()),
+                    DV::Str("{}".into()),
+                    DV::Str("local".into()),
+                ]],
+            ),
+        );
+        backend.import_relations(data).unwrap();
+        let got = backend
+            .elements_by_qualified_names(&[qn.to_string()])
+            .unwrap();
+        assert_eq!(got.len(), 1, "quoted QN must hydrate");
+        assert_eq!(got[0].name, "ctx_read");
+    }
+
     #[test]
     fn fuzzy_find_elements_ranks_tests_last_and_exact_first() {
         use crate::db::value::{DataValue as DV, Num as DVNum};
