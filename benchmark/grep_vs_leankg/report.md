@@ -63,3 +63,11 @@
 - Remaining merge queue: #298 → #301 → #303 → #304 → #305 (independent; #305 diagnostics-only, merge first if you want crash evidence).
 - After merging #301 + #304: re-index + re-embed this repo, then re-run the benchmark — first clean-corpus validation of embeddings (#291) and the latency delta for #292 are both captured then.
 - Stash handoff: `stash@{0}` (b3402076) = another session's graft-docs WIP; restore on `docs/graft-vs-leankg-analysis`.
+
+## Post-merge delta (main @ 063bccdb, all 5 fix PRs merged, 2026-09-08)
+- Latency: router query 6.07s cold → 2.48s warm (was 14-31s per query pre-#301). #301 confirmed; residual is fuse_l2 + hydration, not model load.
+- Exact-symbol: rung=exact, real `create_hnsw_index`, vendor absent (#298 + #290 closed).
+- Vendor excludes: 578 files collected (was 581); `predefinedPosition` search no longer returns vis-network rows (#291/#304).
+- Ranking: `mcp_status` router query — fr_zcp02_* test fns no longer dominate (#303/#307).
+- Embeddings on clean corpus: re-embed 12,984/12,984 vectors post-re-index — first clean validation.
+- Remaining open: #286 (crash — #305 hook live, no reproduction since), #300-followups (PRD AC wording), #302 (embeddings CI job), #308-followups (relationship-sweep gap noted in review), #309-followups (audit export/verify PG-only).
