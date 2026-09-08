@@ -54,3 +54,10 @@
 - Single-symbol file-level ground truth (no line spans); several questions legitimately have multiple answering files.
 - 16 questions is small; win deltas of 1-2 are not significant.
 - leankg latency includes per-query ONNX model load (#292) — not intrinsic retrieval cost.
+
+## Post-merge validation (combined branch, live :9799, 2026-09-08)
+- Re-index with #291 excludes: 578 files (was 581), elements 18,748 → 18,552 (vendor symbols gone; `search_code("predefinedPosition")` no longer returns vis-network rows after cache refresh)
+- Full re-embed: 12,984/12,984 vectors (clean corpus)
+- `create_hnsw_index`: rung=exact, real symbol, vendor absent (#290 fixed)
+- `how does the MCP read-only gate work`: **fixed** — the last L3 failure was a NEW bug: hydration want-rel used `\"` escapes inside double-quoted cozo strings, which the 0.7.6 grammar rejects (same trap as #283's import fix); doc_section QNs like `6.2 ctx_read("src/main.rs")` terminated the literal mid-script. Now single-quoted with '' escaping. Regression test `elements_by_qualified_names_handles_quotes_in_qn`.
+- Remaining: rerank confidence floor still rejects some concept queries (by design); #293/#294 ranking PR (#303) needs merge + re-run to flip `impact-status`/`structure-hydration`.
