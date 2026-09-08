@@ -63,3 +63,20 @@ Non-goals (correctly out of scope, keep it that way): managed-rg reimplementatio
 ## 6. Bottom line
 
 zg is the strongest **search-layer** competitor to date and validates — with 1.4k stars of market evidence — the harness-era verdict already recorded in v3.8.7: retrieval-only value is eroding. It is also the best available template for three LeanKG weaknesses (tool sprawl, no freshness honesty in responses, benchmark rigor gaps). LeanKG's durable moat remains the graph: impact, traceability, incidents, ontology, org memory — a surface zg won't reach for a long time. Steal zg's *discipline*, not its *product*.
+
+---
+
+## Addendum — 2026-09-07 live re-scout (delta only)
+
+**zg:** 1,413 → **3,080 stars** in 4 days; no new release (still v0.2.0, 2026-08-27). Post-audit commits `d756cc7..52653951`: `52653951` (#81) embedding-failure containment — prepare models before queuing batches, surface failures once, no redundant retries, credential redaction (`redactErrorText`); maps onto LeanKG **#286**. `03ae9cbf` (#86) per-directory watchers on Linux (recursive `fs.watch` exhausted inotify: 64k watches on a 402-file index) + periodic reconciliation probe (`watch-manager.ts:16`, `reason: "watch"|"reconcile"`).
+
+**Corrections — this doc's head-to-head rows are stale on current main (`1a727a17`):**
+- §2 "Freshness: no freshness signal in tool responses" — **wrong now**: computed `engine_freshness` (server.rs:331-347) injected on every dispatch (server.rs:3611-3614); `retrieval{rung,reason,freshness}` on router responses (router.rs:292-297); `freshness_label` vocabulary (setup_config.rs:186-203).
+- §2 "MCP surface ~76 tools" — **wrong now**: v4.4.0 3-tool registry `set/get/status` (tools.rs:26-43).
+- §2 "Embedding catalog: single fastembed path" — **wrong now**: multi-model registry (registry.rs) + per-model collections (migrations 002/003) + `switch.rs`; default local path is `DirectEmbedder` (build.rs:937-940), fastembed is the fallback.
+- §2 "No tsvector/pg_trgm anywhere in src/" — **was already wrong at audit time**: pg_trgm bridge landed (migrations 007, `fuzzy_find_elements`); tsvector/GIN genuinely still absent (FR-ZCP-05 remainder).
+- §5-#4 install — landed as `leankg connect` (cli/mod.rs:366-385; claude-code|cursor|codex|gemini); opencode/omp targets tracked as FR-ZCP-04.
+
+**New verified deltas feeding #279 (FR-ZCP-11):** no prefix mechanism (DirectEmbedder tokenizes raw text, models.rs:361-364; `embed_query` raw, provider.rs:420-421; `EmbeddingModelEntry` lacks `revision`/prefixes, registry.rs:38-45); no persisted model stamp — dim-only guard (backend.rs:3279-3281); batch validation partial (dim unchecked models.rs:479; finiteness unchecked :485-490); no watcher reconciliation (debounce/burst-pause only, watcher.rs:187-269 — the vacuum scheduler, server.rs:1345-1377, is the only periodic task). Model-card nuance: `bge-*-en-v1.5` needs no query instruction (prefix is the v1/zh convention) — zg pins one anyway; settle per-model defaults by live ANN A/B, not assertion.
+
+**§5 steals still open:** #2 tsvector+GIN+RRF (FR-ZCP-05 remainder), #5 bench rigor (FR-ZCP-08), #6 second *local* catalog model (registry has 5 entries; only BGE is local).
