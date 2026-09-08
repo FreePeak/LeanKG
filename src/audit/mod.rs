@@ -454,6 +454,15 @@ impl AuditRecorder {
                 Ok(head) => {
                     *last_hash = Some(head.unwrap_or_else(|| GENESIS_HASH.to_string()));
                 }
+                Err(e) if e.to_string().contains("database is locked") => {
+                    // #321: transient cross-process contention on the shared
+                    // sqlite db — drop this batch but keep recording enabled;
+                    // the next batch will re-read the head.
+                    tracing::warn!(
+                        "cannot read audit chain head: {e}; dropping batch (recorder stays enabled)"
+                    );
+                    return;
+                }
                 Err(e) => {
                     Self::disable(inner, &format!("cannot read audit chain head: {e}"));
                     return;
@@ -468,12 +477,39 @@ impl AuditRecorder {
             .last()
             .map(|e| e.entry_hash.clone())
             .unwrap_or(start_prev);
-        if let Err(e) = inner.backend.insert_audit_batch(&entries) {
-            Self::disable(
-                inner,
-                &format!("cannot persist {} audit entries: {e}", entries.len()),
-            );
-            return;
+        // #321: SQLITE_BUSY ("database is locked (code 5)") is TRANSIENT
+        // cross-process contention on the shared .leankg/leankg.db — cozo's
+        // sqlite storage has no busy_timeout, so a concurrent writer (another
+        // leankg process on the same project) makes the write fail outright.
+        // Retrying a few times keeps audit recording alive; only non-transient
+        // errors permanently disable the recorder.
+        match inner.backend.insert_audit_batch(&entries) {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("database is locked") => {
+                let mut persisted = false;
+                for attempt in 1..=5u32 {
+                    std::thread::sleep(std::time::Duration::from_millis(50 * u64::from(attempt)));
+                    if inner.backend.insert_audit_batch(&entries).is_ok() {
+                        persisted = true;
+                        tracing::debug!("audit batch persisted after {attempt} busy-retry(ies)");
+                        break;
+                    }
+                }
+                if !persisted {
+                    tracing::warn!(
+                        "cannot persist {} audit entries: {e}; dropping batch (recorder stays enabled)",
+                        entries.len()
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                Self::disable(
+                    inner,
+                    &format!("cannot persist {} audit entries: {e}", entries.len()),
+                );
+                return;
+            }
         }
         *last_hash = Some(tail);
     }
@@ -520,6 +556,79 @@ mod tests {
             e.id = i as i64 + 1;
         }
         entries
+    }
+
+    /// #321: a transient "database is locked (code 5)" must NOT permanently
+    /// disable audit recording — the batcher retries and keeps the recorder
+    /// enabled once the contention clears.
+    #[tokio::test]
+    async fn busy_error_retries_and_keeps_recorder_enabled() {
+        use crate::db::backend::DbBackend;
+        use std::sync::atomic::{AtomicUsize, Ordering as AO};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Default)]
+        struct FlakyBackend {
+            busy_count: AtomicUsize,
+            entries: Mutex<Vec<crate::audit::AuditEntry>>,
+        }
+        impl DbBackend for FlakyBackend {
+            fn insert_audit_batch(
+                &self,
+                entries: &[crate::audit::AuditEntry],
+            ) -> Result<(), Box<dyn std::error::Error>> {
+                if self.busy_count.fetch_add(1, AO::SeqCst) < 3 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "eval::stored_relation_conflict: database is locked (code 5)",
+                    )
+                    .into());
+                }
+                self.entries.lock().unwrap().extend(entries.iter().cloned());
+                Ok(())
+            }
+            fn run_script(
+                &self,
+                _q: &str,
+                _p: std::collections::BTreeMap<String, serde_json::Value>,
+            ) -> Result<crate::db::backend::NamedRows, Box<dyn std::error::Error>> {
+                unimplemented!()
+            }
+            fn import_relations(
+                &self,
+                _data: std::collections::BTreeMap<String, crate::db::backend::NamedRows>,
+            ) -> Result<(), Box<dyn std::error::Error>> {
+                unimplemented!()
+            }
+            fn redacted_url(&self) -> String {
+                "flaky://busy-test".to_string()
+            }
+            fn last_audit_entry_hash(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+                Ok(None)
+            }
+            fn mutability_for(&self, query: &str) -> crate::db::pg::mutability::ScriptMutability {
+                crate::db::pg::mutability::mutability_for(query)
+            }
+        }
+
+        let flaky = Arc::new(FlakyBackend::default());
+        let backend: Arc<dyn DbBackend> = flaky.clone();
+        let recorder = AuditRecorder::shared(backend);
+        recorder.record(rec(1));
+        recorder.flush().await;
+        assert!(
+            recorder.is_enabled(),
+            "busy error must not permanently disable the recorder"
+        );
+        assert_eq!(
+            flaky.entries.lock().unwrap().len(),
+            1,
+            "entry persisted after busy retries"
+        );
+        assert!(
+            flaky.busy_count.load(AO::SeqCst) >= 4,
+            "expected initial busy failures + retries"
+        );
     }
 
     // -- Hash chain math ---------------------------------------------------

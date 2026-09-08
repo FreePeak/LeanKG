@@ -486,6 +486,55 @@ impl EngineFreshness {
     }
 }
 
+/// Wait for any shutdown signal and LOG which one arrived (#321):
+/// silent exit(1) deaths gave no evidence — a signal-driven death must
+/// at least name its signal in the log before the process goes away.
+pub(crate) async fn wait_for_shutdown_signal(mode: &'static str) {
+    #[cfg(unix)]
+    {
+        use signal::unix::{signal, SignalKind};
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("SIGTERM listener unavailable: {e}; falling back to ctrl_c");
+                signal::ctrl_c().await.ok();
+                return;
+            }
+        };
+        let mut sighup = match signal(SignalKind::hangup()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("SIGHUP listener unavailable: {e}");
+                signal::ctrl_c().await.ok();
+                return;
+            }
+        };
+        let mut sigint = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("SIGINT listener unavailable: {e}");
+                sigterm.recv().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = sigterm.recv() => {
+                tracing::error!("SIGTERM received in {mode} mode — shutting down");
+            }
+            _ = sighup.recv() => {
+                tracing::error!("SIGHUP received in {mode} mode — shutting down (supervisor/PTY teardown?)");
+            }
+            _ = sigint.recv() => {
+                tracing::error!("SIGINT received in {mode} mode — shutting down");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        signal::ctrl_c().await.ok();
+    }
+}
+
 impl MCPServer {
     pub fn new(db_path: std::path::PathBuf) -> Self {
         let effective_db_path = Self::resolve_project_root(db_path);
@@ -2165,7 +2214,7 @@ impl MCPServer {
         let shutdown_flag = self.shutdown_flag.clone();
         let server = self.clone();
         tokio::spawn(async move {
-            signal::ctrl_c().await.ok();
+            wait_for_shutdown_signal("stdio").await;
             tracing::info!("Shutdown signal received in stdio mode");
             shutdown_flag.store(true, Ordering::SeqCst);
             // For stdio, we just cleanup child processes - the transport will close naturally
@@ -2741,7 +2790,7 @@ impl MCPServer {
         let bound_port = port;
 
         tokio::spawn(async move {
-            signal::ctrl_c().await.ok();
+            wait_for_shutdown_signal("mcp-http").await;
             tracing::info!("Shutdown signal received, cleaning up...");
             shutdown_flag.store(true, Ordering::SeqCst);
             server.cleanup_on_shutdown(bound_port).await;
