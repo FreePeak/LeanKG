@@ -2309,14 +2309,19 @@ impl GraphEngine {
         // "/xa/by".
         for f in file_paths {
             let pattern = format!("^{}", regex::escape(f));
+            // Cozo 0.7.6 rejects \" inside double-quoted string literals
+            // (pest grammar), so interpolate as a SINGLE-quoted literal with
+            // \' escaping — file paths containing quotes or backslashes must
+            // not make the whole script unparseable.
+            let literal = pattern.replace('\\', "\\\\").replace('\'', "\\'");
             let script = format!(
                 r#"
             ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] :=
                 *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
-                regex_matches(source_qualified, "{}")
+                regex_matches(source_qualified, '{}')
             :rm relationships {{source_qualified, target_qualified, rel_type, confidence, metadata, env}}
         "#,
-                pattern.replace('"', "\\")
+                literal
             );
             self.db.run_script(&script, Default::default())?;
         }
@@ -6388,6 +6393,47 @@ mod tests {
     /// must match relationships by FILE PREFIX (source_qualified starts
     /// with the file path), not exact-match on the raw path — swept
     /// files' relationships were previously left orphaned.
+    /// Cozo 0.7.6 rejects \" inside double-quoted literals — paths with
+    /// quote characters must still be matchable (single-quoted literal
+    /// with \' escaping).
+    #[test]
+    fn remove_relationships_by_files_bulk_handles_quotes_in_paths() {
+        let (engine, _tmp) = make_test_engine();
+        let tricky = "/a/we\"ird'named.rs";
+        engine
+            .insert_relationships(&[
+                Relationship {
+                    id: None,
+                    source_qualified: format!("{tricky}::f"),
+                    target_qualified: "/b/x.rs::g".into(),
+                    rel_type: "imports".into(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({}),
+                    env: "local".into(),
+                },
+                Relationship {
+                    id: None,
+                    source_qualified: "/c/keep.rs::h".into(),
+                    target_qualified: "/b/y.rs::g".into(),
+                    rel_type: "imports".into(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({}),
+                    env: "local".into(),
+                },
+            ])
+            .unwrap();
+        engine
+            .remove_relationships_by_files_bulk(&[tricky.to_string()])
+            .expect("script must parse despite quotes in the path");
+        let (remaining, _total) = engine.get_relationships_paginated(10, 0).unwrap();
+        assert_eq!(
+            remaining.len(),
+            1,
+            "only /c/keep.rs relationship should remain: {remaining:?}"
+        );
+        assert_eq!(remaining[0].source_qualified, "/c/keep.rs::h");
+    }
+
     #[test]
     fn remove_relationships_by_files_bulk_matches_by_file_prefix() {
         let (engine, _tmp) = make_test_engine();

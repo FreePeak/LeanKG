@@ -978,8 +978,50 @@ fn is_string_literal(s: &str) -> bool {
     s.starts_with('"') || s.starts_with('\'')
 }
 
+/// Decode a cozo string literal per the pest grammar (cozoscript.pest):
+/// both quote styles share the same escape set — \' \" \\ \/ \b \f \n
+/// \r \t and \uXXXX. Keeping this faithful matters: unit tests pin
+/// FakeBackend semantics, and real cozo REJECTS any other backslash
+/// sequence outright (e.g. `\.` is a parse error, not a literal dot).
 fn unescape_str(s: &str) -> String {
-    s.trim_matches('"').trim_matches('\'').to_string()
+    let (quote, inner) = match s.chars().next() {
+        Some('"') if s.ends_with('"') && s.len() >= 2 => ('"', &s[1..s.len() - 1]),
+        Some('\'') if s.ends_with('\'') && s.len() >= 2 => ('\'', &s[1..s.len() - 1]),
+        _ => return s.to_string(),
+    };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(e @ ('\'' | '"' | '\\' | '/')) => out.push(e),
+            Some('b') => out.push('\u{0008}'),
+            Some('f') => out.push('\u{000C}'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('u') => {
+                let hex: String = chars.by_ref().take(4).collect();
+                if let Some(cp) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                    out.push(cp);
+                }
+            }
+            other => {
+                // Real cozo is a parse error here; the fake mirrors the
+                // rejection by emitting the sequence verbatim (callers see
+                // a no-match rather than a silent reinterpretation).
+                out.push('\\');
+                if let Some(e) = other {
+                    out.push(e);
+                }
+            }
+        }
+    }
+    let _ = quote;
+    out
 }
 
 fn parse_head(q: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
