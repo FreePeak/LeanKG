@@ -1941,6 +1941,39 @@ pub async fn incremental_index_sync(
         }
     }
 
+    // #308 stale-element sweep: the bulk-rm above only covers files touched
+    // by the git diff. Files that dropped out of the COLLECTION set (e.g. a
+    // new default exclude, or a file deleted outside a git window) keep
+    // their elements forever. Diff the indexed set against a fresh walk and
+    // remove anything the collector no longer returns.
+    match graph.list_indexed_file_paths() {
+        Ok(indexed_paths) => {
+            let collected: std::collections::HashSet<String> = match find_files_sync(root_path) {
+                Ok(f) => f.into_iter().collect(),
+                Err(e) => {
+                    tracing::warn!("stale-element sweep skipped: find_files failed: {e}");
+                    Default::default()
+                }
+            };
+            let stale: Vec<String> = indexed_paths
+                .into_iter()
+                .filter(|p| !collected.contains(p))
+                .collect();
+            if !stale.is_empty() {
+                tracing::info!(
+                    "stale-element sweep: removing {} orphaned files",
+                    stale.len()
+                );
+                if let Err(e) = graph.remove_elements_by_files_bulk(&stale) {
+                    tracing::warn!("stale-element sweep bulk remove failed: {}", e);
+                }
+                if let Err(e) = graph.remove_relationships_by_files_bulk(&stale) {
+                    tracing::warn!("stale-element sweep relationship rm failed: {}", e);
+                }
+            }
+        }
+        Err(e) => tracing::warn!("stale-element sweep skipped: list indexed paths failed: {e}"),
+    }
     // Inventory refresh: scans every code_elements + relationships row, so
     // do it ONCE at the end of the batch rather than per file.
     if let Err(e) = crate::graph::inventory::refresh_index_inventory(graph, "code_index") {

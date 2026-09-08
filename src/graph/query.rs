@@ -3616,6 +3616,27 @@ impl GraphEngine {
             .unwrap_or(0) as usize)
     }
 
+    /// All distinct file_paths currently in code_elements (#308 stale-element
+    /// sweep input: the incremental sync diffs this set against the
+    /// collection set and bulk-removes anything the collector no longer
+    /// returns — e.g. files excluded by a new default, or deleted between
+    /// git-diff windows).
+    pub fn list_indexed_file_paths(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"files[f] := *code_elements[n, a, b, f, c, d, e, g, h, i, j{tail}]
+?[f] := files[f]"#
+        );
+        let result = self
+            .db
+            .run_script(&query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .iter()
+            .filter_map(|r| r.first().and_then(|v| v.get_str().map(String::from)))
+            .collect())
+    }
+
     pub fn count_files(&self) -> Result<usize, Box<dyn std::error::Error>> {
         let tail = self.code_elements_tail();
         let query = format!(
