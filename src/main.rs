@@ -75,6 +75,48 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // #321: an Err escaping main prints "Error: {:?}" to stderr and exits 1 —
+    // the exact silent-death signature under investigation. Log the fatal
+    // error durably (same scheme as the panic hook) BEFORE returning, so any
+    // Err-path exit is attributable even when stderr is lost.
+    let res = run().await;
+    if let Err(e) = &res {
+        log_fatal(&e.to_string());
+    }
+    res
+}
+
+/// Durable fatal-error record (#321): same scheme as the panic hook — write
+/// to a pid-tagged temp file first, then mirror to stderr. Any Err escaping
+/// run() becomes attributable even when stderr is lost or captured late.
+fn log_fatal(err: &str) {
+    let msg = format!(
+        "FATAL at {} [pid {}]: {err}\n",
+        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"),
+        std::process::id()
+    );
+    let path = std::env::temp_dir().join(format!("leankg-fatal-{}.log", std::process::id()));
+    let _ = std::fs::write(&path, &msg);
+    eprintln!("{msg}");
+}
+
+#[cfg(test)]
+mod fatal_log_tests {
+    use super::log_fatal;
+
+    #[test]
+    fn log_fatal_writes_durable_file_and_stderr() {
+        let path = std::env::temp_dir().join(format!("leankg-fatal-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        log_fatal("probe: intentional fatal for test");
+        let body = std::fs::read_to_string(&path).expect("durable fatal log must exist");
+        assert!(body.contains("FATAL at "), "timestamped header: {body}");
+        assert!(body.contains("probe: intentional fatal for test"));
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // #286: the sqlite/live server died with exit code 1 and NO log output
     // — the signature of an FFI abort (cozo C++ / ONNX runtime) or a
     // non-Rust panic that bypasses panic hooks. Install a last-gasp hook
