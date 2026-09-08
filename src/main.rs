@@ -75,6 +75,24 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // #286: the sqlite/live server died with exit code 1 and NO log output
+    // — the signature of an FFI abort (cozo C++ / ONNX runtime) or a
+    // non-Rust panic that bypasses panic hooks. Install a last-gasp hook
+    // that writes to BOTH stderr and a durable file so a silent death
+    // leaves evidence of what ran last, and log the final exit for
+    // abnormal signals via the process-exit path below.
+    let crash_log = std::env::temp_dir().join(format!("leankg-crash-{}.log", std::process::id()));
+    let crash_log_for_hook = crash_log.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = format!(
+            "PANIC at {} [pid {}]: {info}\nbacktrace:\n{:?}\n",
+            chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"),
+            std::process::id(),
+            std::backtrace::Backtrace::force_capture()
+        );
+        eprintln!("{msg}");
+        let _ = std::fs::write(&crash_log_for_hook, &msg);
+    }));
     let args = Args::parse();
 
     if !matches!(
