@@ -2963,6 +2963,7 @@ mod tests {
         let _ = &root;
     }
 
+    #[test]
     fn test_default_index_ignored_dirs_covers_common_build_dirs() {
         // Regression guard: the default exclude set must keep growing to cover
         // common monorepo build outputs, otherwise the indexer drags in
