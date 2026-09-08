@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.4.1-three-tools-live
-**Date:** 2026-09-07
+**Version:** 4.4.2-harden-and-validate
+**Date:** 2026-09-08
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.27.0
 **Storage:** Dual-backend — SQLite default (`LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset), PostgreSQL + pgvector via `LEANKG_PG_URL`
@@ -9,6 +9,16 @@
 ---
 
 ## Changelog
+
+### v4.4.2-harden-and-validate — 8 PRs merged, live-validated (2026-09-08)
+
+> **Trigger:** fanout review of the 8 open fix PRs (scouts caught 4 blockers pre-merge), then one-by-one merge with post-merge live validation on the sqlite server.
+
+**Merged (each CI 6/6 green, reviewed):** #298 router L1-first (#290) — identifier queries answer from L1 exact before ANN; #301 embedder+rerank per-process cache (#292) — router latency 14-31s → 2.3s warm; #313 token budget post-truncation accounting (#300); #305 panic hook + durable crash log (#286 diagnostics); #312 sqlite audit ledger with review-blocker fixes (#309); #307 fuzzy ranking — test demotion, exact>substring, specificity (#293/#294) + hydration QN single-quote escaping (cozo 0.7.6 rejects \" in double-quoted strings); #304 vendor excludes (#291) — minified/embed assets skipped at collection; #311 stale-element sweep — incremental sync removes elements for files that dropped out of the collection set; #315 embeddings-feature test build green (1527/0) (#302); #314/#316 bench deltas.
+
+**Live-validated on this repo (sqlite, `:9799`):** 578 files, 10,202 elements, 12,984 vectors (vendor-free); `create_hnsw_index` → rung=exact, real symbol; router latency 6.07s cold → 2.31s warm; audit ledger recording enabled.
+
+**Still open:** #286 crash (hook live on main; worker isolation deferred until a crash reproduces with hook evidence), #308-followup (relationship sweep gap — swept files' relationships may persist), #309-followup (audit export/verify still PG-only), #300-followup (PRD AC wording), #302-followup (embeddings-feature CI job).
 
 ### v4.4.1-three-tools-live — live-tested SQLite server + Datalog repairs (2026-09-07, PR #284)
 
@@ -410,4 +420,4 @@ All superseded material is preserved and linked, not deleted:
 - **Simplicity research sprint (2026-09-04, three parallel scouts):** repo friction audit (file:line — 76/73 tools, 103 CLI verbs, 116 env names, 10-step walkthrough, error-copy gaps); competitor mechanics (zg, context7, serena, Desktop Commander, gitleaks — live-fetched URLs); onboarding playbooks (Supabase/Convex TTFV, Stripe error codes, clig.dev, Vercel, Stack Overflow 2025) → findings folded into §2.6, §3.9 (FR-ZCP-12), §5 M8, §6
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 
-*Last updated: 2026-09-07 (v4.4.1 — live-tested 3-tool SQLite server: dispatch unification across rmcp+JSON-RPC arms, Datalog repairs — import :put upsert / bracket nesting / fuzzy relation ref / positional→attribute rule forms / L3 hydration ports; issues #286–#288 open. v4.4.0 — 3-tool registry `set`/`get`/`status` + SQLite dual-backend; v4.3.1 — hard one-tool cutover: registry = `leankg_context` only, ~76 capabilities as `{verb}` envelope args, envelope resolved before RO-gate/write-lock/audit; v4.3.0 — one-tool degradation ladder (L0–L3, `retrieval` provenance) + first-run setup contract FR-ZCP-13 (auto/manual + `leankg add`) + FR-ZCP-05 bridge tier; v4.2.0 — measured-simplicity contract → FR-ZCP-12 T1/T2/T3 + M8 + D-2026-09-04-3; v4.1.1 — OMP memory-backend audit + zvec-grep embedding-correctness audit → FR-ZCP-11)*
+*Last updated: 2026-09-08 (v4.4.2 — 8 PRs merged + live-validated; see v4.4.2 changelog. v4.4.1 — live-tested 3-tool SQLite server: dispatch unification across rmcp+JSON-RPC arms, Datalog repairs — import :put upsert / bracket nesting / fuzzy relation ref / positional→attribute rule forms / L3 hydration ports; issues #286–#288 open. v4.4.0 — 3-tool registry `set`/`get`/`status` + SQLite dual-backend; v4.3.1 — hard one-tool cutover: registry = `leankg_context` only, ~76 capabilities as `{verb}` envelope args, envelope resolved before RO-gate/write-lock/audit; v4.3.0 — one-tool degradation ladder (L0–L3, `retrieval` provenance) + first-run setup contract FR-ZCP-13 (auto/manual + `leankg add`) + FR-ZCP-05 bridge tier; v4.2.0 — measured-simplicity contract → FR-ZCP-12 T1/T2/T3 + M8 + D-2026-09-04-3; v4.1.1 — OMP memory-backend audit + zvec-grep embedding-correctness audit → FR-ZCP-11)*
