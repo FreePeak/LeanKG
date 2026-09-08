@@ -930,15 +930,27 @@ fn parse_join_block(body: &str, primary: &str) -> Option<(String, Vec<PatCol>, S
 /// `*rel[qualified_name, element_type, ...]` -> (rel, pattern cols).
 fn parse_relation_block(body: &str) -> Result<(String, Vec<PatCol>), Box<dyn std::error::Error>> {
     let body = body.trim();
-    let (rel, rest) = body
-        .strip_prefix('*')
-        .and_then(|r| {
-            let (rel, rest) = r.split_once('[')?;
-            Some((rel.to_string(), rest))
-        })
-        .ok_or_else(|| fake_err("rule body must start with *relation[...]"))?;
-
-    let inner = rest.split_once(']').map(|(i, _)| i).unwrap_or(rest);
+    // Accept BOTH binding forms: positional `*rel[a, b]` and attribute
+    // `*rel{a, b}` — raw cozo accepts only the latter for some shapes and
+    // embeddings-gated scripts use the attribute form, so the fake must
+    // parse it too (attribute cols end at `}`; filters follow outside).
+    let (rel, inner) = if let Some(rest) = body.strip_prefix('*') {
+        if let Some((rel, rest)) = rest.split_once('[') {
+            let inner = rest.split_once(']').map(|(i, _)| i).unwrap_or(rest);
+            (rel.to_string(), inner.to_string())
+        } else if let Some((rel, rest)) = rest.split_once('{') {
+            let inner = rest
+                .split_once('}')
+                .map(|(i, _)| i)
+                .unwrap_or(rest)
+                .to_string();
+            (rel.to_string(), inner)
+        } else {
+            return Err(fake_err("rule body must start with *relation[...]"));
+        }
+    } else {
+        return Err(fake_err("rule body must start with *relation[...]"));
+    };
     let mut pat_cols = Vec::new();
     // Split on commas, but keep `{tail}` and `...` markers.
     for part in inner.split(',') {

@@ -5414,7 +5414,7 @@ mod tests {
         assert_eq!(v["rejected_reason"], "below-confidence-floor");
         let fb = semantic_low_confidence("cart", true);
         assert_eq!(fb["rejected_reason"], "reranker-fallback");
-        assert!(fb["hint"].as_str().unwrap().contains("search_code"));
+        assert!(fb["hint"].as_str().unwrap().contains("leankg_context"));
     }
 
     #[test]
