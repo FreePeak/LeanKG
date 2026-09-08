@@ -2300,30 +2300,26 @@ impl GraphEngine {
         if file_paths.is_empty() {
             return Ok(());
         }
-        let query = r#"
-            ?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
-                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, _], source_qualified in $sqs
-            :rm relationships {source_qualified, target_qualified, rel_type, confidence, metadata}
-        "#;
-        // source_qualified values are like "/path/to/file.go::func_name".
-        // To get all relationships FROM a file, match the prefix (everything
-        // before "::"). The legacy engine's `in $list` matched exact strings only, so we
-        // pass the full prefix-per-file as a regex/contains filter via `starts_with`.
-        // Actually the legacy engine had no starts_with — fall back to exact match on
-        // constructed prefix patterns. Simpler: caller pre-computes exact
-        // source_qualified prefixes per file. For now skip and rely on per-file
-        // rm as a follow-up if exact match isn't enough.
-        let mut params = std::collections::BTreeMap::new();
-        params.insert(
-            "sqs".to_string(),
-            serde_json::Value::Array(
-                file_paths
-                    .iter()
-                    .map(|f| serde_json::Value::String(f.clone()))
-                    .collect(),
-            ),
-        );
-        self.db.run_script(query, params)?;
+        // source_qualified values are like "/path/to/file.go::func_name" —
+        // a file's relationships are matched by FILE PREFIX (everything
+        // before the first "::"). The old exact-match on raw file paths
+        // matched nothing (the #308-review gap): swept files kept their
+        // relationships. One script per file: regex_matches with the file
+        // path regex-escaped and anchored (^prefix) so "/a/b" cannot match
+        // "/xa/by".
+        for f in file_paths {
+            let pattern = format!("^{}", regex::escape(f));
+            let script = format!(
+                r#"
+            ?[source_qualified, target_qualified, rel_type, confidence, metadata, env] :=
+                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
+                regex_matches(source_qualified, "{}")
+            :rm relationships {{source_qualified, target_qualified, rel_type, confidence, metadata, env}}
+        "#,
+                pattern.replace('"', "\\")
+            );
+            self.db.run_script(&script, Default::default())?;
+        }
         Ok(())
     }
 
@@ -6386,6 +6382,55 @@ mod tests {
         assert!(hub.is_some(), "hub_a should be a god node");
         assert_eq!(hub.unwrap().degree, 2, "hub_a degree should be 2");
         assert!(nodes.len() <= 5, "limit should be respected");
+    }
+
+    /// Regression (#308 follow-up): remove_relationships_by_files_bulk
+    /// must match relationships by FILE PREFIX (source_qualified starts
+    /// with the file path), not exact-match on the raw path — swept
+    /// files' relationships were previously left orphaned.
+    #[test]
+    fn remove_relationships_by_files_bulk_matches_by_file_prefix() {
+        let (engine, _tmp) = make_test_engine();
+        engine
+            .insert_relationships(&[
+                Relationship {
+                    id: None,
+                    source_qualified: "/a/one.rs::f".into(),
+                    target_qualified: "/b/one.rs::g".into(),
+                    rel_type: "imports".into(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({}),
+                    env: "local".into(),
+                },
+                Relationship {
+                    id: None,
+                    source_qualified: "/a/two.rs::f".into(),
+                    target_qualified: "/b/two.rs::g".into(),
+                    rel_type: "imports".into(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({}),
+                    env: "local".into(),
+                },
+                Relationship {
+                    id: None,
+                    source_qualified: "/c/other.rs::h".into(),
+                    target_qualified: "/b/other.rs::g".into(),
+                    rel_type: "imports".into(),
+                    confidence: 1.0,
+                    metadata: serde_json::json!({}),
+                    env: "local".into(),
+                },
+            ])
+            .unwrap();
+        engine
+            .remove_relationships_by_files_bulk(&["/a/one.rs".to_string(), "/a/two.rs".to_string()])
+            .unwrap();
+        let (remaining, _total) = engine.get_relationships_paginated(10, 0).unwrap();
+        assert_eq!(
+            remaining.len(),
+            1,
+            "only /c/other.rs relationship should remain: {remaining:?}"
+        );
     }
 
     #[test]
