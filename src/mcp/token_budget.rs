@@ -35,21 +35,27 @@ impl TokenBudget {
     /// Truncate a JSON value to fit within max_tokens
     pub fn apply(value: Value, tool_name: &str) -> Value {
         let max_tokens = Self::max_tokens_for_tool(tool_name);
-        let current = Self::count_tokens(&value);
-        if current <= max_tokens {
+        let pre_truncation = Self::count_tokens(&value);
+        if pre_truncation <= max_tokens {
             return value;
         }
 
         let mut result = value;
         let truncated = Self::truncate_value(&mut result, max_tokens);
 
-        // Add budget metadata
+        // #300: `actual` must be the POST-truncation size — the old value
+        // reported the pre-truncation count (actual > max with
+        // truncated: true, which misleads consumers sizing context).
+        // The pre-trim count is kept as pre_truncation_tokens for
+        // diagnostics.
+        let actual = Self::count_tokens(&result);
         if let Some(obj) = result.as_object_mut() {
             obj.insert(
                 "_token_budget".to_string(),
                 serde_json::json!({
                     "max": max_tokens,
-                    "actual": current,
+                    "actual": actual,
+                    "pre_truncation_tokens": pre_truncation,
                     "truncated": truncated
                 }),
             );
@@ -214,6 +220,35 @@ mod tests {
         let budget = result.get("_token_budget").unwrap();
         assert!(budget.get("truncated").unwrap().as_bool().unwrap());
         assert!(result.get("results").is_some());
+    }
+
+    /// Regression (#300): `actual` must never exceed `max` when
+    /// `truncated: true` — it is the POST-truncation size. The pre-trim
+    /// count moves to `pre_truncation_tokens`.
+    #[test]
+    fn test_actual_is_post_truncation_size() {
+        let v = json!({
+            "results": vec![json!({"id": "1", "data": "x".repeat(500)}); 20]
+        });
+        let result = TokenBudget::apply(v, "semantic_search");
+        let budget = result.get("_token_budget").unwrap();
+        let max = budget.get("max").unwrap().as_u64().unwrap();
+        let actual = budget.get("actual").unwrap().as_u64().unwrap();
+        let truncated = budget.get("truncated").unwrap().as_bool().unwrap();
+        assert!(truncated);
+        assert!(
+            actual <= max,
+            "actual ({actual}) must be <= max ({max}) when truncated"
+        );
+        assert!(
+            budget
+                .get("pre_truncation_tokens")
+                .unwrap()
+                .as_u64()
+                .unwrap()
+                > max,
+            "pre_truncation_tokens records the original size"
+        );
     }
 
     #[test]
