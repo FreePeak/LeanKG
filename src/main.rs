@@ -78,20 +78,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // #286: the sqlite/live server died with exit code 1 and NO log output
     // — the signature of an FFI abort (cozo C++ / ONNX runtime) or a
     // non-Rust panic that bypasses panic hooks. Install a last-gasp hook
-    // that writes to BOTH stderr and a durable file so a silent death
-    // leaves evidence of what ran last, and log the final exit for
-    // abnormal signals via the process-exit path below.
+    // that writes a durable crash file FIRST (broken-pipe stderr inside
+    // the hook would double-panic and skip the write), then mirrors to
+    // stderr. Thread name is included — thread identity matters for the
+    // concurrent embed+query crash class. Note the scope limit: FFI-level
+    // abort() still bypasses Rust panic hooks entirely.
     let crash_log = std::env::temp_dir().join(format!("leankg-crash-{}.log", std::process::id()));
     let crash_log_for_hook = crash_log.clone();
     std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>").to_string();
         let msg = format!(
-            "PANIC at {} [pid {}]: {info}\nbacktrace:\n{:?}\n",
+            "PANIC at {} [pid {}] [thread {thread_name}]: {info}\nbacktrace:\n{:?}\n",
             chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"),
             std::process::id(),
             std::backtrace::Backtrace::force_capture()
         );
-        eprintln!("{msg}");
         let _ = std::fs::write(&crash_log_for_hook, &msg);
+        eprintln!("{msg}");
     }));
     let args = Args::parse();
 
