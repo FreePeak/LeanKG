@@ -552,6 +552,26 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// FR-ENT-1 on sqlite: audit ledger DDL mirroring PG migration 006
+/// (append-only enforced at the app layer — cozo has no triggers here).
+pub fn ensure_audit_log_table(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
+    // Idempotent: cozo :create errors on an existing relation (RelNameConflict),
+    // which would brick every reopen of an existing project. Probe first.
+    let exists = run_script(db, "::columns audit_log", Default::default()).is_ok();
+    if exists {
+        return Ok(());
+    }
+    let ddl = r#"
+        :create audit_log {
+            id: Int => ts: Int, actor: String, agent_client: String?,
+            tool: String, project: String?, args_hash: String,
+            result_status: String, prev_hash: String?, entry_hash: String
+        }
+    "#;
+    run_script(db, ddl, Default::default())?;
+    Ok(())
+}
+
 fn run_migrations(
     db: &CozoDb,
     existing_relations: &std::collections::HashSet<String>,
@@ -1103,11 +1123,29 @@ impl SqliteBackend {
         if !read_only {
             crate::embeddings::state::ensure_embedding_state_table(&backend)?;
         }
+        if !read_only {
+            ensure_audit_log_table(&backend.db)?;
+        }
         Ok(backend)
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn next_audit_id(&self, offset: i64) -> Result<i64, Box<dyn std::error::Error>> {
+        let script = "?[max(id)] := *audit_log{id}";
+        let rows = run_script(&self.db, script, Default::default())?;
+        let max_id = rows
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|v| match v {
+                crate::db::value::DataValue::Num(crate::db::value::Num::Int(i)) => Some(*i),
+                _ => None,
+            })
+            .unwrap_or(0);
+        Ok(max_id + offset + 1)
     }
 }
 
@@ -1255,6 +1293,57 @@ impl DbBackend for SqliteBackend {
             run_script(&self.db, &script, Default::default())?;
         }
         Ok(())
+    }
+
+    // ---- FR-ENT-1 audit ledger on sqlite (#309) ----
+    // DDL mirrors PG migration 006; ts stored as unix-nanos INTEGER. The
+    // hash chain (prev_hash -> entry_hash) is identical to the PG path.
+    fn insert_audit_batch(
+        &self,
+        entries: &[crate::audit::AuditEntry],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // The recorder stamps id=0 placeholders (PG BIGSERIAL assigns real
+        // ids on insert); sqlite must assign them itself — otherwise every
+        // row shares key 0 and :put collapses the ledger to one row.
+        // Ids continue from the current chain head. Strings use cozo
+        // single-quoted literals with backslash-escaped quotes (the ''
+        // doubling form is invalid in cozo 0.7.6 — same grammar trap as
+        // datavalue_literal_cozo); backslashes are doubled first.
+        let esc = |v: &str| format!("'{}'", v.replace('\\', "\\\\").replace('\'', "\\'"));
+        for (offset, e) in entries.iter().enumerate() {
+            let id = self.next_audit_id(offset as i64)?;
+            let script = format!(
+                r#"?[id, ts, actor, agent_client, tool, project, args_hash, result_status, prev_hash, entry_hash] <-
+                [[{}, {}, {}, {}, {}, {}, {}, {}, {}, {}]] :put audit_log {{id, ts, actor, agent_client, tool, project, args_hash, result_status, prev_hash, entry_hash}}"#,
+                id,
+                e.ts.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as i64)
+                    .unwrap_or(0),
+                esc(&e.actor),
+                esc(&e.agent_client),
+                esc(&e.tool),
+                esc(e.project.as_deref().unwrap_or("")),
+                esc(&e.args_hash),
+                esc(&e.result_status),
+                esc(&e.prev_hash),
+                esc(&e.entry_hash),
+            );
+            run_script(&self.db, &script, Default::default())?;
+        }
+        Ok(())
+    }
+
+    fn last_audit_entry_hash(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        // cozo: latest id via sort-desc + limit (id must be in the head
+        // for :sort to see it; the caller only reads entry_hash).
+        let script = r#"?[id, entry_hash] := *audit_log{id, entry_hash}
+            :sort -id
+            :limit 1"#;
+        let rows = run_script(&self.db, script, Default::default())?;
+        Ok(rows
+            .rows
+            .first()
+            .and_then(|r| r.get(1).and_then(|v| v.get_str().map(String::from))))
     }
 
     // Knowledge CRUD on Cozo relations — same Datalog the pre-v0.20 codebase
@@ -2168,6 +2257,41 @@ mod tests {
     /// must upsert (:put), so the second import overwrites the first —
     /// and List values must land as vec([...]) literals for <F32; N> cols.
     #[test]
+    /// Regression (#309): the audit ledger works on sqlite — insert a
+    /// batch, read the chain head back, and confirm the fields roundtrip.
+    #[test]
+    fn audit_ledger_roundtrip_on_sqlite() {
+        use crate::audit::AuditEntry;
+        let tmp = TempDir::new().unwrap();
+        // open() (writable) already ensures the audit_log table.
+        let backend = SqliteBackend::open(&tmp.path().join(".leankg"), false).unwrap();
+
+        let mk = |prev: &str, eh: &str| AuditEntry {
+            id: 0, // recorder placeholder — the backend assigns real ids
+            ts: std::time::UNIX_EPOCH,
+            actor: "local".into(),
+            agent_client: "cursor".into(),
+            tool: "search_code".into(),
+            project: Some("/proj".into()),
+            args_hash: "ah".into(),
+            result_status: "ok".into(),
+            prev_hash: prev.into(),
+            entry_hash: eh.into(),
+        };
+        backend
+            .insert_audit_batch(&[mk("genesis", "eh1"), mk("eh1", "eh2")])
+            .unwrap();
+        let head = backend.last_audit_entry_hash().unwrap();
+        assert_eq!(
+            head.as_deref(),
+            Some("eh2"),
+            "chain head must be the latest entry"
+        );
+        // Distinct rows — the id=0 placeholder collapse is the #312 blocker.
+        let head2 = backend.last_audit_entry_hash().unwrap();
+        assert_eq!(head2.as_deref(), Some("eh2"));
+    }
+
     fn import_relations_upserts_duplicate_keys() {
         use crate::db::value::DataValue as DV;
         let tmp = TempDir::new().unwrap();
