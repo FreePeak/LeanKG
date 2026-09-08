@@ -54,3 +54,12 @@
 - Single-symbol file-level ground truth (no line spans); several questions legitimately have multiple answering files.
 - 16 questions is small; win deltas of 1-2 are not significant.
 - leankg latency includes per-query ONNX model load (#292) — not intrinsic retrieval cost.
+
+## Post-fix validation (PR #298 branch build, live :9799)
+- `create_hnsw_index` (exact-symbol query): was rung=vector + vendor top-hit → now **rung=exact, real symbol `src/embeddings/state.rs::create_hnsw_index`**, vendor absent. #290 confirmed fixed on the branch.
+
+## Handoff notes (2026-09-08)
+- PR #298 code-level CI verified on `e36822f3` (6/6 success). Docs-only commits after it did not trigger Actions runs (no runs created repo-wide since cf6223c1 — appears to be a queue/throttle, not a broken workflow; verify after merge).
+- Remaining merge queue: #298 → #301 → #303 → #304 → #305 (independent; #305 diagnostics-only, merge first if you want crash evidence).
+- After merging #301 + #304: re-index + re-embed this repo, then re-run the benchmark — first clean-corpus validation of embeddings (#291) and the latency delta for #292 are both captured then.
+- Stash handoff: `stash@{0}` (b3402076) = another session's graft-docs WIP; restore on `docs/graft-vs-leankg-analysis`.
