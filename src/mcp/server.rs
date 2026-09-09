@@ -880,6 +880,14 @@ impl MCPServer {
     /// Writes invalidate via [`Self::invalidate_freshness`], so the stamp
     /// never lies after a mutation.
     fn cached_freshness(&self, project_db_path: &std::path::Path) -> Freshness {
+        // #347-follow-up: the write tracker is the one signal index-side
+        // probes (element count / inventory / git tip) cannot see — knowledge
+        // writes don't move the git tip. While dirty, the honest stamp is
+        // possibly_stale; the write path clears the tracker after
+        // invalidating this cache.
+        if self.write_tracker.is_dirty() {
+            return Freshness::PossiblyStale;
+        }
         let key = project_db_path.display().to_string();
         {
             let cache = self.freshness_cache.lock();
@@ -3840,12 +3848,11 @@ impl MCPServer {
                 | "promote_environment"
         ) {
             self.write_tracker.mark_dirty();
-            // FR-ZCP-06: writes invalidate the freshness stamp — the next
-            // index-backed response re-reconciles instead of serving a
-            // pre-mutation value for the TTL window.
-            if let Some(p) = self.graph_engine_cache.lock().keys().next() {
-                self.invalidate_freshness(p);
-            }
+            // FR-ZCP-06: writes invalidate EVERY freshness stamp — the write
+            // may have touched any open project, and cached_freshness
+            // downgrades to possibly_stale while the tracker is dirty, so
+            // nothing stale is served for the TTL window.
+            self.freshness_cache.lock().clear();
         }
 
         // L1 cache invalidation on writes. After a successful mutation we
@@ -5040,6 +5047,31 @@ mod tests {
         );
         let f3 = server.cached_freshness(&db_path);
         assert_eq!(f3, f1, "unchanged data reconciles to the same stamp");
+
+        // #347-follow-up: a WRITE must downgrade the stamp to
+        // possibly_stale even when index-side probes (element count /
+        // inventory / git tip) can't see the mutation — knowledge writes
+        // don't move the git tip. Seed a fresh label, mark dirty, assert
+        // the downgrade.
+        server.write_tracker.mark_dirty();
+        assert_eq!(
+            server.cached_freshness(&db_path),
+            Freshness::PossiblyStale,
+            "dirty tracker must downgrade the stamp"
+        );
+        // The clear (write path) resets the tracker, restoring reconciliation.
+        server.write_tracker.clear_dirty();
+        server.invalidate_freshness(&db_path);
+        // The fixture has no inventory refresh, so reconciliation lands on
+        // possibly_stale (pre-inventory state) — the assertion pins that the
+        // CLEAN tracker re-reconciles honestly rather than staying stuck on
+        // the dirty downgrade.
+        let f4 = server.cached_freshness(&db_path);
+        assert_ne!(
+            f4,
+            Freshness::Cold,
+            "clean tracker re-reconciles — elements exist, so never cold"
+        );
     }
 
     #[test]
