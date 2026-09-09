@@ -283,6 +283,38 @@ fn insert_batch_size() -> usize {
         .unwrap_or(20_000)
 }
 
+/// #332: normalize a path for the stale-element sweep diff. Canonicalizes
+/// (resolves symlinks: /tmp vs /private/tmp on macOS, /var vs /private/var);
+/// falls back to the raw string when the path does not exist (deleted files
+/// must still normalize to themselves for the diff).
+pub(crate) fn normalize_path_for_sweep(p: &str) -> String {
+    std::fs::canonicalize(p)
+        .map(|c| c.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| p.to_string())
+}
+
+/// Pure stale-file diff: indexed entries missing from the collected set
+/// (after normalization) are stale. `normalize` is injected so tests can
+/// simulate symlink aliasing without touching the filesystem.
+pub(crate) fn select_stale_files(
+    indexed: Vec<String>,
+    collected: Vec<String>,
+    normalize: impl Fn(&str) -> String,
+) -> Vec<String> {
+    // An empty collected set means the collector failed or the root is
+    // empty — sweeping then would bulk-remove the entire index (#332
+    // class). The caller guards this too; keep the pure fn safe as well.
+    if collected.is_empty() {
+        return Vec::new();
+    }
+    let collected_norm: std::collections::HashSet<String> =
+        collected.iter().map(|p| normalize(p)).collect();
+    indexed
+        .into_iter()
+        .filter(|p| !collected_norm.contains(&normalize(p)))
+        .collect()
+}
+
 pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
     let extensions = [
@@ -1948,17 +1980,25 @@ pub async fn incremental_index_sync(
     // remove anything the collector no longer returns.
     match graph.list_indexed_file_paths() {
         Ok(indexed_paths) => {
-            let collected: std::collections::HashSet<String> = match find_files_sync(root_path) {
-                Ok(f) => f.into_iter().collect(),
+            let collected: Vec<String> = match find_files_sync(root_path) {
+                Ok(f) => f,
                 Err(e) => {
                     tracing::warn!("stale-element sweep skipped: find_files failed: {e}");
-                    Default::default()
+                    Vec::new()
                 }
             };
-            let stale: Vec<String> = indexed_paths
-                .into_iter()
-                .filter(|p| !collected.contains(p))
-                .collect();
+            // #332: normalize both sides — the collector prefixes paths
+            // with the exact `root` form the caller passed, and the stored
+            // forms may use a different form of the same directory (macOS
+            // /tmp vs /private/tmp; any symlinked index root). Without this
+            // the whole index looks orphaned and gets bulk-removed.
+            // An empty collected set means find_files failed (or an empty
+            // root) — skipping is the only safe move: sweeping would
+            // bulk-remove the entire index (#332 class).
+            if collected.is_empty() {
+                tracing::warn!("stale-element sweep skipped: collector returned no files");
+            }
+            let stale = select_stale_files(indexed_paths, collected, normalize_path_for_sweep);
             if !stale.is_empty() {
                 tracing::info!(
                     "stale-element sweep: removing {} orphaned files",
@@ -2624,6 +2664,53 @@ pub fn extract_microservice_relationships(project_path: &str) -> Vec<Relationshi
 
 #[cfg(test)]
 mod tests {
+
+    /// #332: symlink-aliased root forms (/tmp vs /private/tmp on macOS)
+    /// must NOT make the sweep treat a healthy index as orphaned. The diff
+    /// normalizes both sides; removals keep the stored forms.
+    #[test]
+    fn sweep_diff_normalizes_symlinked_root_forms() {
+        // simulate macOS /tmp -> /private/tmp symlink resolution:
+        // canonicalize resolves the SYMLINK PREFIX only when it starts the
+        // path (a real /private/tmp path canonicalizes to itself).
+        let alias = |p: &str| {
+            p.strip_prefix("/tmp/")
+                .map(|r| format!("/private/tmp/{r}"))
+                .unwrap_or_else(|| p.to_string())
+        };
+        let indexed = vec![
+            "/tmp/proj/src/m00.rs".to_string(),
+            "/tmp/proj/src/m01.rs".to_string(),
+        ];
+        let collected = vec![
+            "/private/tmp/proj/src/m00.rs".to_string(),
+            "/private/tmp/proj/src/m01.rs".to_string(),
+            "/private/tmp/proj/src/m02.rs".to_string(),
+        ];
+        let stale = super::select_stale_files(indexed.clone(), collected, alias);
+        assert!(
+            stale.is_empty(),
+            "aliased-but-present files must not be swept: {stale:?}"
+        );
+        // A genuinely deleted file IS stale, and keeps its stored form for
+        // the bulk-rm.
+        let indexed = vec![
+            "/tmp/proj/src/m00.rs".to_string(),
+            "/tmp/proj/src/m59.rs".to_string(),
+        ];
+        // Empty collected = caller skipped the sweep — never stale.
+        let stale = super::select_stale_files(indexed.clone(), vec![], alias);
+        assert!(stale.is_empty(), "empty collected must not sweep anything");
+        // A genuinely deleted file IS stale when the collector is healthy,
+        // and keeps its stored form for the bulk-rm.
+        let stale = super::select_stale_files(
+            indexed,
+            vec!["/private/tmp/proj/src/m00.rs".to_string()],
+            alias,
+        );
+        assert_eq!(stale, vec!["/tmp/proj/src/m59.rs".to_string()]);
+    }
+
     use super::*;
 
     // Serialize tests that mutate process-wide environment variables.
