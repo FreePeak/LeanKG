@@ -165,6 +165,7 @@ function createPr() {
     bumpCargoToml(next),
     bumpCargoLock(next),
     bumpManifest(next),
+    bumpNpmWrapper(next),
     prependChangelog(next, prev),
   ].some(Boolean);
 
@@ -173,7 +174,7 @@ function createPr() {
     return;
   }
 
-  run(`git add Cargo.toml Cargo.lock manifest.json CHANGELOG.md`);
+  run(`git add Cargo.toml Cargo.lock manifest.json CHANGELOG.md npm/leankg/package.json`);
   run(`git -c user.name='leankg-release[bot]' -c user.email='noreply@github.com' commit -m 'release: v${next}'`);
 
   run(`git push origin ${branch}`);
@@ -226,6 +227,18 @@ function bumpManifest(v) {
   fs.writeFileSync(f, JSON.stringify(m, null, 2) + '\n');
   return true;
 }
+function bumpNpmWrapper(v) {
+  // FR-PLG-6: the npm wrapper must never lag the crate — bump it here so
+  // the auto-generated release PR passes the npm-parity gate.
+  const f = 'npm/leankg/package.json';
+  if (!fs.existsSync(f)) return false;
+  const m = JSON.parse(fs.readFileSync(f, 'utf8'));
+  if (m.version === v) return false;
+  m.version = v;
+  fs.writeFileSync(f, JSON.stringify(m, null, 2) + '\n');
+  return true;
+}
+
 function prependChangelog(v, prev) {
   const f = 'CHANGELOG.md';
   const src = fs.readFileSync(f, 'utf8');
