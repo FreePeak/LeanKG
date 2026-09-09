@@ -21,7 +21,7 @@
 |---|---|---|---|
 | M1 — Zero-config attach | 3 | — | **IN_PROGRESS** (FR-ZCP-01 clause-2 roots/list DONE 87e18287; FR-ZCP-02 DONE 0aba41ad+d9ccd8b5; FR-ZCP-13 DONE b251046c) |
 | M2 — One-tool surface | 2 | — | **IN_PROGRESS** (FR-ZCP-03 router+ladder DONE 4231d256; **v4.3.1 hard cutover DONE** — registry 1 tool + verb envelope; FR-ZCP-04 install --target outstanding) |
-| M3 — Honest search | 2 | FR-HEA-02, FR-HEA-04 | **IN_PROGRESS** (FR-ZCP-05 bridge tier DONE 7d902461+3a68d571 — tsvector FTS + RRF outstanding) |
+| M3 — Honest search | 2 | FR-HEA-02, FR-HEA-04 | **IN_PROGRESS** (FR-ZCP-06 freshness contract DONE #347; FR-ZCP-05 bridge tier DONE 7d902461+3a68d571 — tsvector FTS + RRF outstanding) |
 | M4 — Harness memory | 1 | FR-SMA-01..03, FR-SM-04/05, US-SM-02 | TODO |
 | M5 — Defensible evidence | 1 | FR-HEA-01, FR-HEA-03 | TODO |
 | M6 — Org-scale portfolio | 2 | — | TODO |
@@ -54,7 +54,7 @@
 | ID | Title | Priority | Milestone | Supersedes |
 |----|-------|----------|-----------|------------|
 | FR-ZCP-04 | `leankg install --target opencode\|claude\|codex\|cursor\|omp` — project-less URLs + `--register-cwd` hook — scope: extends existing `connect` writers with opencode+omp targets; `--register-cwd` = session-start hook running `leankg add <cwd>` (persistent cwd→project table stays FR-ZCP-01 clause 3, out of scope); Docker `?project=` is the documented exception; env inventory table + byte-identical config-block snapshot tests per PRD §3.4 | P1 | M2 | FR-ZG-04, US-ZG-04 |
-| FR-ZCP-06 | Freshness contract: `freshness: fresh\|possibly_stale\|cold` on every index-backed response; reconciliation off the query path | P1 | M3 | FR-ZG-03, US-ZG-03 |
+| FR-ZCP-06 | Freshness contract: `freshness: fresh\|possibly_stale\|cold` on every index-backed response; reconciliation off the query path | P1 | M3 | FR-ZG-03, US-ZG-03 | — **DONE** (#347: 30s TTL cache off the query path, write-invalidated; is_index_backed_tool covers 38 graph-reading verbs) |
 | FR-ZCP-07 | Memory-backend adjacency: mnemopi-compatible bank naming (`<basename>-<wyhash36(cwd)>`, cwd-only), 3-mode scoping, `retained_through_user_turn` cursor, `session_retain`/`session_recall` + `<memories>`-equivalent injection; hindsight-shaped HTTP memory API as upstream `memory.backend: "mcp"` evidence | P1 | M4 | FR-SMA-04, US-SMA-04, US-SM-02 |
 | FR-ZCP-08 | Cross-tool harness hardening: pinned SHAs/prompts, ≥3 trials/arm, judge-blind scorer, zg pitfalls checklist | P2 | M5 | FR-ZG-05, US-ZG-05, FR-B05 |
 | FR-ZCP-09 | Project registry (`public.leankg_projects`) + portfolio scope (T0 manifest inventory, per-child freshness) + cross-schema portfolio queries + memory federation; one indexer slot, hot-set cap, LRU detach-to-cold | **P1** | M6 | — |
