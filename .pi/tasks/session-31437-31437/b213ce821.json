@@ -1,0 +1,17 @@
+{
+  "id": "b213ce821",
+  "name": "Wait leankg OMP idle",
+  "command": "~/.local/bin/herdr agent wait w1:p7Q --until idle --timeout 3540000",
+  "description": "Wait for OMP leankg agent to finish current turn",
+  "status": "running",
+  "outputPath": ".pi/tasks/session-31437-31437/b213ce821.output",
+  "cwd": "/Users/linh.doan/work/harvey/freepeak/leankg",
+  "startTime": 1788602512467,
+  "pid": 54384,
+  "bytesWritten": 0,
+  "isAgent": false,
+  "notified": false,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 3600
+}

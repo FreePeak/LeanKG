@@ -5786,18 +5786,6 @@ mod tests {
         std::env::remove_var("LEANKG_EMBED_AUTO_ARM");
     }
 
-    #[test]
-    fn dockerfile_sets_embed_auto_arm_zero_default() {
-        // Serving image default must be 0 so an embed scheduler never arms
-        // itself on boot.
-        let dockerfile =
-            std::fs::read_to_string("Dockerfile").expect("Dockerfile must exist at repo root");
-        assert!(
-            dockerfile.contains("LEANKG_EMBED_AUTO_ARM=0"),
-            "Dockerfile must set LEANKG_EMBED_AUTO_ARM=0"
-        );
-    }
-
     // ---------------------------------------------------------------------
     // FR-ENT-1: the ONE audit choke-point seam around tool dispatch. Both
     // transports (rmcp ServerHandler::call_tool for stdio/streamable-HTTP,

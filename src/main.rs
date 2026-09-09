@@ -3184,10 +3184,12 @@ fn show_status_multi(json: bool) -> Result<(), Box<dyn std::error::Error>> {
     roots.push(current.clone());
     let roots = setup_config::merge_project_roots(&roots);
 
-    let pg_up = db::backend::pg_reachable();
+    // sqlite is the default engine: never probe Postgres on the sqlite path.
+    let sqlite_default = db::backend::sqlite_backend_requested();
+    let pg_up = !sqlite_default && db::backend::pg_reachable();
     let mut projects: Vec<serde_json::Value> = Vec::new();
     for root in &roots {
-        let entry = collect_project_status(root, pg_up);
+        let entry = collect_project_status(root, pg_up, sqlite_default);
         if json {
             projects.push(entry);
         } else {
@@ -3197,19 +3199,20 @@ fn show_status_multi(json: bool) -> Result<(), Box<dyn std::error::Error>> {
 
     if json {
         let doc = serde_json::json!({
+            "engine": if sqlite_default { "sqlite" } else { "postgres" },
             "postgres": pg_up,
             "projects": projects,
         });
         println!("{}", serde_json::to_string_pretty(&doc)?);
-    } else if !pg_up {
+    } else if !pg_up && !sqlite_default {
         println!();
         println!(
             "{}",
             errors::render(
                 crate::errors::PG_UNREACHABLE.code,
                 "Postgres is not reachable at the configured URL (element/vector counts unavailable)",
-                "start Postgres (`docker compose up -d postgres`) or point LEANKG_PG_URL at \
-                 your instance, then check `leankg doctor`",
+                "Postgres counts are only probed when LEANKG_DB_ENGINE=postgres; \
+                 unset it (and LEANKG_PG_URL) to use the sqlite default, then check `leankg doctor`",
             )
         );
     }
@@ -3223,7 +3226,11 @@ fn web_file_resolve_project_dirs() -> Vec<std::path::PathBuf> {
 /// Cheap per-project status snapshot: freshness label from local facts +
 /// counts from the per-project schema when PG is reachable. Never errors —
 /// degraded projects report `error` instead of failing the whole listing.
-fn collect_project_status(root: &std::path::Path, pg_up: bool) -> serde_json::Value {
+fn collect_project_status(
+    root: &std::path::Path,
+    pg_up: bool,
+    sqlite_default: bool,
+) -> serde_json::Value {
     let leankg_dir = root.join(".leankg");
     let initialized = leankg_dir.exists();
     let (setup_cfg, _outcome) = setup_config::load(root);
@@ -3235,7 +3242,8 @@ fn collect_project_status(root: &std::path::Path, pg_up: bool) -> serde_json::Va
     });
 
     let mut inventory_at: Option<String> = None;
-    if initialized && pg_up {
+    // sqlite engine: read counts from the fixture-local db directly (no PG).
+    if initialized && (pg_up || sqlite_default) {
         match db::backend::init_db_readonly(&leankg_dir) {
             Ok(db) => {
                 let graph = graph::GraphEngine::new(db.clone());

@@ -25,13 +25,11 @@ Commands:
   gemini        Install and configure LeanKG for Gemini CLI
   kilo          Install and configure LeanKG for Kilo Code
   antigravity   Install and configure LeanKG for Anti Gravity
-  docker        Docker-only setup: index + embed + MCP (no Rust)
   update        Update LeanKG to the latest version
   version       Show installed and latest available version
 
 Examples:
   curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- opencode
-  curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- docker
   curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- update
   curl -fsSL $GITHUB_RAW/scripts/install.sh | bash -s -- version
 EOF
@@ -355,10 +353,10 @@ configure_cursor() {
 
     mkdir -p "$config_dir"
 
-    # HTTP MCP: project is routed via ?project=. For Docker RocksDB the value
-    # must be the *container* mount (e.g. /workspace), not a Mac host path.
-    # Override with LEANKG_MCP_PROJECT when using a secondary mount.
-    local mcp_project="${LEANKG_MCP_PROJECT:-/workspace}"
+    # HTTP MCP: project is routed via ?project=. sqlite default: point at
+    # the project checkout directory itself. Override with LEANKG_MCP_PROJECT
+    # when serving a different directory.
+    local mcp_project="${LEANKG_MCP_PROJECT:-$PROJECT_DIR}"
 
     # Remove leankg from global config (per-project config is used instead)
     if [ -f "$config_file" ]; then
@@ -384,7 +382,7 @@ configure_cursor() {
             current_url=$(jq -r '.mcpServers.leankg.url // empty' "$project_mcp_file" 2>/dev/null)
             if [ "$current_url" = "$mcp_url" ]; then
                 echo "LeanKG already configured in project .cursor/mcp.json"
-                echo "  project=$mcp_project (Docker container path; override LEANKG_MCP_PROJECT)"
+                echo "  project=$mcp_project (override LEANKG_MCP_PROJECT)"
                 return
             fi
             local tmp_file
@@ -405,8 +403,8 @@ EOF
         fi
         echo "Configured LeanKG for Cursor in project .cursor/mcp.json"
         echo "  URL: $mcp_url"
-        echo "  project=$mcp_project (container mount for Docker MCP)"
-        echo "  Override: LEANKG_MCP_PROJECT=/workspace-other"
+        echo "  project=$mcp_project"
+        echo "  Override: LEANKG_MCP_PROJECT=/path/to/project"
     else
         echo "No .cursor directory in project. Run this from a Cursor project root."
         echo "Or add to .cursor/mcp.json manually:"
@@ -585,7 +583,7 @@ const ROUTING_BLOCK = `
 
   Prefer-order (HTTP healthy) — discover BEFORE query_graph:
   0. get_overview_context(project=…) — session start; then optional get_architecture
-  1. mcp_status(project=…) — container path e.g. /workspace for Docker
+  1. mcp_status(project=…) — the project checkout directory (sqlite default)
   2. DISCOVER: concept_search → semantic_search → search_code / find_function
   3. CONNECTION (after seeds): shortest_path / explain_node / query_graph
   4. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
@@ -598,7 +596,7 @@ const ROUTING_BLOCK = `
 
 <forbidden_actions>
   - Do NOT call LeanKG when :9699 health failed
-  - Do NOT pass host Mac paths as project= against Docker MCP (use /workspace)
+  - Always pass the project checkout path as project= (sqlite default: the directory you installed into)
   - Do NOT use Grep for code search when LeanKG is healthy and returns hits
   - Do NOT open NL discovery with query_graph — run concept_search → semantic_search first
   - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment, load_layer, get_doc_structure)
@@ -972,7 +970,7 @@ function buildSessionContext(input) {
 
   Prefer-order: concept_search → semantic_search → search_code (before query_graph)
 
-  1. mcp_status(project=…) — Docker: /workspace (not host Mac path)
+  1. mcp_status(project=…) — the project checkout directory (sqlite default)
   2. DISCOVER: concept_search → semantic_search → search_code / find_function
   3. CONNECTION (after seeds): shortest_path / explain_node / query_graph
   4. EXACT: get_context / get_impact_radius / get_dependencies / get_dependents
@@ -984,7 +982,7 @@ function buildSessionContext(input) {
 
 <forbidden_actions>
   - Do NOT call LeanKG when :9699 health failed
-  - Do NOT pass host Mac paths as project= against Docker MCP
+  - Always pass the project checkout path as project= (not a parent directory)
   - Do NOT use Grep when LeanKG is healthy and returns hits
   - Do NOT open NL discovery with query_graph — run semantic_search first
   - Do NOT call removed tools (get_doc_for_file, mcp_hello, mcp_impact, find_clones, wake_up, search_by_environment, load_layer, get_doc_structure)
@@ -1157,7 +1155,7 @@ LeanKG uses a single HTTP server that supports multiple projects. Each tool acce
 
 **IMPORTANT:** Always pass `project="/path/to/project/root"` when calling LeanKG tools. This ensures the server queries the correct project database.
 
-Example: `search_code(query="main", project="/workspace")`  # Docker container mount
+Example: `search_code(query="main", project="/path/to/checkout")`
 
 **Auto-Activated Tools (all accept `project` parameter):**
 - `mcp_status` - Check if LeanKG is initialized
@@ -1269,7 +1267,7 @@ LeanKG uses a single HTTP server that supports multiple projects. Each tool acce
 
 **IMPORTANT:** Always pass `project="/path/to/project/root"` when calling LeanKG tools. This ensures the server queries the correct project database.
 
-Example: `search_code(query="main", project="/workspace")`  # Docker container mount
+Example: `search_code(query="main", project="/path/to/checkout")`
 
 **Auto-Activated Tools (all accept `project` parameter):**
 - `mcp_status` - Check if LeanKG is initialized
@@ -1602,7 +1600,7 @@ Gate: `curl -sf --max-time 2 http://localhost:9699/health`
   concept_search → semantic_search → search_code / find_function
   then (after seeds): query_graph / explain_node / shortest_path → get_context
 
-Docker MCP: pass container project= (`/workspace`), not a host Mac path.
+MCP: pass the project checkout directory as project= (sqlite default engine).
 BAN: Do not open NL discovery with query_graph when semantic_search may answer.
 EOF
         fi
@@ -1646,7 +1644,7 @@ curl -sf --max-time 2 http://localhost:9699/health
 ### When HTTP is healthy
 
 0. `get_overview_context(project=…)` — session start (optional `get_architecture` follow-on)
-1. `mcp_status(project=…)` — Docker: container mount (`/workspace`), not a host Mac path
+1. `mcp_status(project=…)` — the project checkout directory (sqlite default)
 2. Prefer-order discover: `concept_search` → `semantic_search` → `search_code` / `find_function`
 3. Exact follow-up: `get_context` / `get_impact_radius` / `get_dependencies` / `get_dependents` / `get_tested_by`
 4. Environment filter: `env=` on search / `kg_*` (never `search_by_environment` — removed)
@@ -1732,12 +1730,6 @@ main() {
             ;;
         version)
             show_version
-            exit 0
-            ;;
-        docker)
-            # No binary install — pull Hub image, offline embed, start MCP.
-            echo "Docker-only setup (no Rust). Fetching scripts/docker-up.sh..."
-            curl -fsSL "$GITHUB_RAW/scripts/docker-up.sh" | bash
             exit 0
             ;;
         opencode|cursor|claude|gemini|kilo|antigravity)

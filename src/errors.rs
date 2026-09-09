@@ -40,7 +40,7 @@ impl ErrorCode {
 pub const PG_UNREACHABLE: ErrorCode = ErrorCode {
     code: "LEANKG_ERROR_PG_UNREACHABLE",
     cause: "Postgres is not reachable at the configured URL (connection refused or timed out)",
-    fix: "start Postgres (`docker compose up -d postgres`) or point LEANKG_PG_URL at your instance (`export LEANKG_PG_URL=postgresql://user:pass@host:5432/db`), then check `leankg doctor`",
+    fix: "Postgres is only used when explicitly requested (LEANKG_DB_ENGINE=postgres + LEANKG_PG_URL); ensure the instance is reachable, or drop back to the sqlite default by unsetting LEANKG_DB_ENGINE/LEANKG_PG_URL, then check `leankg doctor`",
     doc_anchor: "README.md#get-started",
 };
 
