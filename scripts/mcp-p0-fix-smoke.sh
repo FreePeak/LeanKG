@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# FR-P0-MCP-RC-01..04 + FR-P0-EMBED-LOCK live smoke against Docker MCP :9699.
+# FR-P0-MCP-RC-01..04 + FR-P0-EMBED-LOCK live smoke against a local MCP server.
 #
-# Exercises the acceptance criteria on the /workspace-be mega-graph. Prints a
-# PASS/FAIL line per check. Exit 0 = all checks pass.
+# Exercises the acceptance criteria on a running server (default: the local
+# sqlite mcp-http on :9699). Prints a PASS/FAIL line per check. Exit 0 = all
+# checks pass.
 #
 # Usage:  ./scripts/mcp-p0-fix-smoke.sh
 # Env:    LEANKG_SMOKE_URL (default http://localhost:9699/mcp)
-#         LEANKG_SMOKE_PROJECT (default /workspace-be)
+#         LEANKG_SMOKE_PROJECT (default: this repo checkout)
 
 set -u
 URL="${LEANKG_SMOKE_URL:-http://localhost:9699/mcp}"

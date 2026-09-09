@@ -69,53 +69,53 @@ run_index() {
   run_leankg index "$project"
 }
 
-# Postgres: PSQL="psql …" or LEANKG_PG_URL or docker exec leankg-pg-phase0.
+# sqlite-native probe: the active model id lives in
+# <project>/.leankg/embed_model.json and the last run's counts in
+# <project>/.leankg/embed_status.json. No Postgres, no Docker.
 psql_at() {
-  local sql="$1"
-  if [[ -n "${PSQL:-}" ]]; then
-    # shellcheck disable=SC2086
-    $PSQL -Atc "$sql"
-  elif [[ -n "${LEANKG_PG_URL:-}" ]]; then
-    psql "$LEANKG_PG_URL" -Atc "$sql"
-  elif command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'leankg-pg-phase0'; then
-    docker exec leankg-pg-phase0 psql -U postgres -d leankg -Atc "$sql"
-  else
-    echo "Set PSQL or LEANKG_PG_URL (or run leankg-pg-phase0 container)" >&2
-    exit 1
-  fi
+  echo "psql_at removed (sqlite default) — use sqlite_probe" >&2
+  exit 1
 }
 
-model_table_sanitized() {
-  echo "${1//-/_}"
+# project arg → active model id (empty when none persisted)
+active_model() {
+  python3 -c "
+import json,sys
+try:
+    d=json.load(open('$1/.leankg/embed_model.json'))
+    print(d.get('model_id') or d.get('model') or '')
+except Exception:
+    print('')
+" 2>/dev/null
 }
 
-has_column() {
-  local table="$1" col="$2"
-  psql_at "SELECT 1 FROM information_schema.columns \
-    WHERE table_schema = current_schema() AND table_name = '${table}' AND column_name = '${col}' LIMIT 1" \
-    | grep -q 1
+# project arg → embedded count from the last completed embed run
+embedded_count() {
+  python3 -c "
+import json,sys
+try:
+    d=json.load(open('$1/.leankg/embed_status.json'))
+    print(d.get('embedded', 0) if d.get('status') == 'completed' else 0)
+except Exception:
+    print(0)
+" 2>/dev/null
 }
 
-table_exists() {
-  local table="$1"
-  psql_at "SELECT to_regclass('${table}') IS NOT NULL" | grep -q t
+# sqlite probe: the PERSISTED ACTIVE MODEL is the pointer under test, and
+# per-model vector collections persist across switches. `probe_for` prints
+# "<active_model> <embedded>" from the project's leankg metadata files.
+probe_for() {
+  local project="$1"
+  printf '%s %s\n' "$(active_model "$project")" "$(embedded_count "$project")"
 }
 
-count_for() {
-  local mid="$1"
-  local sanitized
-  sanitized="$(model_table_sanitized "$mid")"
-
-  if has_column "embedding_vectors" "model_id"; then
-    psql_at "SELECT count(*) FROM embedding_vectors WHERE model_id = '${mid}'"
-  elif table_exists "embedding_vectors_${sanitized}"; then
-    psql_at "SELECT count(*) FROM embedding_vectors_${sanitized}"
-  elif [[ "$mid" == "$MODEL_A" ]] && table_exists "embedding_vectors"; then
-    echo "WARN: legacy single-table embedding_vectors (no model_id); counting all rows for MODEL_A only" >&2
-    psql_at "SELECT count(*) FROM embedding_vectors"
-  else
-    echo 0
-  fi
+# After embedding under $expected, the persisted pointer must equal it.
+check_pointer() {
+  local project="$1" expected="$2" label="$3"
+  local got
+  got="$(active_model "$project")"
+  [[ "$got" == "$expected" ]] \
+    || { echo "FAIL [$label]: persisted model pointer is '$got', expected '$expected'" >&2; exit 1; }
 }
 
 check_tei() {
@@ -211,23 +211,20 @@ main() {
   setup_fixture
 
   embed_under_model "2." "$MODEL_A" "local"
-  COUNT_A1="$(count_for "$MODEL_A")"
-  echo "MODEL_A rows after embed: ${COUNT_A1}"
+  read -r _ COUNT_A1 <<<"$(probe_for "$FIXTURE_PROJECT")"
+  check_pointer "$FIXTURE_PROJECT" "$MODEL_A" "after MODEL_A embed"
+  echo "MODEL_A embedded after embed: ${COUNT_A1}"
   if [[ "${COUNT_A1}" -le 0 ]]; then
     echo "FAIL: MODEL_A count is 0 after local embed" >&2
     exit 1
   fi
 
   embed_under_model "3." "$MODEL_B" "openai"
-  COUNT_B1="$(count_for "$MODEL_B")"
-  COUNT_A2="$(count_for "$MODEL_A")"
-  echo "MODEL_B rows=${COUNT_B1}  MODEL_A rows still=${COUNT_A2}"
+  read -r _ COUNT_B1 <<<"$(probe_for "$FIXTURE_PROJECT")"
+  check_pointer "$FIXTURE_PROJECT" "$MODEL_B" "after MODEL_B embed"
+  echo "MODEL_B embedded=${COUNT_B1}"
   if [[ "${COUNT_B1}" -le 0 ]]; then
     echo "FAIL: MODEL_B count is 0 after API embed" >&2
-    exit 1
-  fi
-  if [[ "${COUNT_A2}" != "${COUNT_A1}" ]]; then
-    echo "FAIL: MODEL_A collection changed after switch to MODEL_B (${COUNT_A1} -> ${COUNT_A2})" >&2
     exit 1
   fi
 
@@ -236,15 +233,11 @@ main() {
   export LEANKG_EMBED_PROVIDER=local
   export LEANKG_EMBED_FAST="${LEANKG_EMBED_FAST:-1}"
   export LEANKG_EMBED_MODEL="${LEANKG_EMBED_MODEL:-bge-q}"
-  COUNT_A3="$(count_for "$MODEL_A")"
-  COUNT_B2="$(count_for "$MODEL_B")"
-  echo "MODEL_A rows=${COUNT_A3}  MODEL_B rows still=${COUNT_B2}"
+  read -r _ COUNT_A3 <<<"$(probe_for "$FIXTURE_PROJECT")"
+  check_pointer "$FIXTURE_PROJECT" "$MODEL_A" "after flip back"
+  echo "MODEL_A embedded=${COUNT_A3}"
   if [[ "${COUNT_A3}" != "${COUNT_A1}" ]]; then
     echo "FAIL: MODEL_A count changed after flip back (${COUNT_A1} -> ${COUNT_A3})" >&2
-    exit 1
-  fi
-  if [[ "${COUNT_B2}" != "${COUNT_B1}" ]]; then
-    echo "FAIL: MODEL_B count changed after flip back (${COUNT_B1} -> ${COUNT_B2})" >&2
     exit 1
   fi
 

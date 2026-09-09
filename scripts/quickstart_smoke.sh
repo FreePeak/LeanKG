@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # quickstart_smoke.sh — H5 / FR-PLG-7: timed "< 5 min to first query result" smoke.
 #
-# Simulates a brand-new user end-to-end against LEANKG_PG_URL:
+# Simulates a brand-new user end-to-end on the sqlite default engine:
 #   init -> migrate -> index -> mcp-http up -> first search_code hit -> doctor -> cleanup
 #
 # Usage:
-#   set -a; source .env; set +a          # provides LEANKG_PG_URL (remote PG; never Docker locally)
+#   no environment needed — sqlite is the default storage engine
 #   scripts/quickstart_smoke.sh
 #
 # Env:
-#   LEANKG_PG_URL            required in real mode (Postgres only, no Docker)
+#   LEANKG_DB_ENGINE         optional override (default: sqlite)
 #   QUICKSTART_DRY_RUN=1     print the step plan without executing anything
 #   QUICKSTART_SMOKE_PORT    MCP HTTP port (default 9711)
 #   QUICKSTART_BUDGET        wall-clock budget seconds (default 300)
@@ -120,7 +120,10 @@ fi
 # ---------------------------------------------------------------- preflight
 command -v python3 >/dev/null 2>&1 || fail_setup "python3 is required for timing/json checks"
 command -v curl    >/dev/null 2>&1 || fail_setup "curl is required"
-[ -n "${LEANKG_PG_URL:-}" ]       || fail_setup "LEANKG_PG_URL not set (source your .env: set -a; source .env; set +a)"
+# sqlite is the default engine — no PG configuration required. An inherited
+# LEANKG_PG_URL must not silently flip the engine: pin sqlite unless the
+# caller explicitly opted into another engine.
+export LEANKG_DB_ENGINE="${LEANKG_DB_ENGINE:-sqlite}"
 
 if [ -z "$BINARY" ]; then
     log "binary not found — building once (cargo build --release)..."
@@ -189,7 +192,7 @@ t0=$(now_s)
 # --project must match the root the indexer keyed its PG schema from
 # (<scratch>/src, since index was called with that path) or queries hit an
 # empty sibling schema and return 0 elements.
-( cd "$SCRATCH" && exec "$BINARY" mcp-http --port "$PORT" --project "$SCRATCH/src" ) >"/tmp/opencode/qs-smoke-$$-mcp.log" 2>&1 &
+( cd "$SCRATCH" && exec env LEANKG_DB_ENGINE="${LEANKG_DB_ENGINE:-sqlite}" "$BINARY" mcp-http --port "$PORT" --project "$SCRATCH/src" ) >"/tmp/opencode/qs-smoke-$$-mcp.log" 2>&1 &
 SERVER_PID=$!
 HEALTHY=0
 for _ in $(seq 1 60); do
