@@ -522,3 +522,152 @@ mod tests {
         );
     }
 }
+
+// ============================================================================
+// #257: batch-resolved variants. The `*_with` fns mirror the graph-backed
+// logic above but answer from a pre-loaded [`super::RefResolver`]; anything
+// the maps cannot answer returns None (the caller may fall back to the
+// per-ref graph path for correctness on rare misses).
+// ============================================================================
+
+/// Resolve using the batch-loaded maps. Mirrors resolve_code_ref_uncached's
+/// decision tree: file::symbol upgrade when the symbol is unique AND its
+/// file matches the mention; otherwise file-level resolution.
+pub fn resolve_code_ref_with(resolver: &super::RefResolver, raw_ref: &str) -> Option<String> {
+    if let Some((file_part, sym_part)) = split_file_symbol(raw_ref) {
+        if let Some(symbols) = resolver.elements_by_name(&sym_part) {
+            let code_syms: Vec<_> = symbols
+                .iter()
+                .filter(|e| is_code_symbol(&e.element_type))
+                .collect();
+            if code_syms.len() == 1 {
+                let el = code_syms[0];
+                if file_matches_mention(&el.file_path, &file_part) {
+                    return Some(el.qualified_name.clone());
+                }
+            }
+        }
+        if let Some(file_qn) = resolve_file_ref_with(resolver, &file_part) {
+            return Some(file_qn);
+        }
+    }
+    resolve_file_ref_with(resolver, raw_ref)
+}
+
+/// File-level resolution from the batch maps.
+pub fn resolve_file_ref_with(resolver: &super::RefResolver, raw_ref: &str) -> Option<String> {
+    let candidates = code_ref_path_candidates(raw_ref);
+    for path in &candidates {
+        if let Some(file_qn) = lookup_file_by_path_with(resolver, path) {
+            return Some(file_qn);
+        }
+    }
+
+    if !raw_ref.contains('/') {
+        return resolve_basename_file_with(resolver, raw_ref);
+    }
+
+    let normalized = slash_normalize(&strip_anchor(raw_ref));
+    if let Some(file_path) = lookup_file_by_symbol_suffix_with(resolver, &normalized) {
+        return Some(file_path);
+    }
+    None
+}
+
+fn lookup_file_by_path_with(resolver: &super::RefResolver, path: &str) -> Option<String> {
+    let normalized = slash_normalize(&strip_anchor(path));
+    for fp in path_match_endings(&normalized) {
+        if let Some(elements) = resolver.elements_by_file(&fp) {
+            if let Some(file_elem) = elements.iter().find(|e| e.element_type == "file") {
+                return Some(file_elem.qualified_name.clone());
+            }
+            if let Some(file_path) = unique_file_path_from_elements(elements) {
+                return Some(file_path);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_basename_file_with(resolver: &super::RefResolver, basename: &str) -> Option<String> {
+    let name = slash_normalize(&strip_anchor(basename));
+    if name.is_empty() || name.contains('/') {
+        return None;
+    }
+    if let Some(files) = resolver.elements_by_name(&name) {
+        let file_elems: Vec<_> = files.iter().filter(|e| e.element_type == "file").collect();
+        let unique_paths: HashSet<_> = file_elems.iter().map(|e| e.file_path.clone()).collect();
+        if file_elems.len() == 1 && unique_paths.len() == 1 {
+            return file_elems[0].qualified_name.clone().into();
+        }
+    }
+    lookup_file_by_symbol_suffix_with(resolver, &name)
+}
+
+fn lookup_file_by_symbol_suffix_with(
+    resolver: &super::RefResolver,
+    normalized: &str,
+) -> Option<String> {
+    let stem = Path::new(normalized)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())?;
+    let endings = path_match_endings(normalized);
+    let elems = resolver.elements_by_name(stem)?;
+    let matching: Vec<crate::db::models::CodeElement> = elems
+        .iter()
+        .filter(|e| e.element_type == "function")
+        .filter(|e| {
+            endings
+                .iter()
+                .any(|end| e.file_path == *end || e.file_path.ends_with(end))
+        })
+        .cloned()
+        .collect();
+    if matching.is_empty() {
+        return None;
+    }
+    unique_file_path_from_elements(&matching)
+}
+
+/// Collect every name/file-path string the resolver should pre-load for a
+/// set of raw refs (one is_in query per kind afterwards).
+pub fn collect_ref_preload_keys(refs: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut names: std::collections::BTreeSet<String> = Default::default();
+    let mut files: std::collections::BTreeSet<String> = Default::default();
+    for raw in refs {
+        let cleaned = slash_normalize(&strip_anchor(raw));
+        if let Some((file_part, sym_part)) = split_file_symbol(raw) {
+            names.insert(sym_part);
+            for c in code_ref_path_candidates(&file_part) {
+                names.insert(
+                    Path::new(&slash_normalize(&strip_anchor(&c)))
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                );
+                for fp in path_match_endings(&slash_normalize(&strip_anchor(&c))) {
+                    files.insert(fp);
+                }
+            }
+        }
+        for c in code_ref_path_candidates(&cleaned) {
+            names.insert(
+                Path::new(&slash_normalize(&strip_anchor(&c)))
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+            for fp in path_match_endings(&slash_normalize(&strip_anchor(&c))) {
+                files.insert(fp);
+            }
+        }
+        if !raw.contains('/') {
+            names.insert(cleaned.clone());
+        }
+    }
+    names.retain(|n| !n.is_empty());
+    (names.into_iter().collect(), files.into_iter().collect())
+}

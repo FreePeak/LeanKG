@@ -44,11 +44,123 @@ fn doc_max_code_refs() -> usize {
         .unwrap_or(25)
 }
 
+/// #257: batch-resolved code-ref context. The doc join used to fire 2-6
+/// sequential sync round-trips PER unique ref (name-lookup + per-candidate
+/// path probes + per-file symbol fanout); over a high-RTT remote Postgres a
+/// docs tree turned into thousands of serialized round-trips — the >320s
+/// hang. The resolver pre-loads every candidate in O(kinds) batched queries
+/// (`is_in` list params) and answers lookups from memory.
+pub struct RefResolver {
+    /// exact symbol name -> elements with that name
+    by_name: std::collections::HashMap<String, Vec<CodeElement>>,
+    /// stored file_path -> elements in that file
+    by_file: std::collections::HashMap<String, Vec<CodeElement>>,
+    /// straggler fallback (prefix-match resolutions the maps cannot answer);
+    /// Arc clone — no extra open.
+    graph: GraphEngine,
+    /// memoized raw_ref -> resolved (per-process, mirrors FR-DOCJOIN-CACHE)
+    cache: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
+}
+
+impl RefResolver {
+    /// Build from one batched query per kind. `names` = symbol names mentioned
+    /// by refs (`file.rs::sym`), `file_paths` = file part + whole-ref file
+    /// candidates (already normalized by the caller).
+    pub fn load(
+        graph: &GraphEngine,
+        names: &[String],
+        file_paths: &[String],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let by_name = graph.find_elements_by_names_exact(names)?;
+        let by_file = graph.get_elements_by_files(file_paths)?;
+        Ok(Self {
+            by_name,
+            by_file,
+            graph: graph.clone(),
+            cache: std::cell::RefCell::new(Default::default()),
+        })
+    }
+
+    /// Resolve one raw ref: batch map first, prefix-match straggler
+    /// fallback through the graph (memoized) second — same results as the
+    /// per-ref path, ~O(1) round-trips overall.
+    pub fn resolve(&self, raw_ref: &str) -> Option<String> {
+        if let Some(hit) = self.cache.borrow().get(raw_ref) {
+            return hit.clone();
+        }
+        let resolved = match crate::doc_indexer::paths::resolve_code_ref_with(self, raw_ref) {
+            Some(qn) => Some(qn),
+            None => crate::doc_indexer::paths::resolve_code_ref(&self.graph, raw_ref),
+        };
+        self.cache
+            .borrow_mut()
+            .insert(raw_ref.to_string(), resolved.clone());
+        resolved
+    }
+
+    pub fn elements_by_name(&self, name: &str) -> Option<&[CodeElement]> {
+        self.by_name.get(name).map(|v| v.as_slice())
+    }
+
+    pub fn elements_by_file(&self, file_path: &str) -> Option<&[CodeElement]> {
+        self.by_file.get(file_path).map(|v| v.as_slice())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DocIndexResult {
     pub documents: Vec<CodeElement>,
     pub sections: Vec<CodeElement>,
     pub relationships: Vec<Relationship>,
+}
+
+/// #257: one regex-only pre-pass over the docs tree to collect every code
+/// ref, then ONE batched preload (2 is_in queries). Local file reads only —
+/// no database round-trips in this phase.
+fn build_resolver_for_walk(
+    graph: &GraphEngine,
+    docs_path: &Path,
+) -> Result<RefResolver, Box<dyn std::error::Error>> {
+    let indexer = DocIndexer::new(graph.db_arc().clone());
+    let mut refs: std::collections::BTreeSet<String> = Default::default();
+    for entry in WalkDir::new(docs_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() || path.is_symlink() {
+            continue;
+        }
+        let is_md = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| matches!(e, "md" | "markdown" | "mdown" | "mkd"))
+            .unwrap_or(false);
+        if !is_md {
+            continue;
+        }
+        if let Ok(meta) = std::fs::metadata(path) {
+            if meta.len() > doc_max_file_size() {
+                continue;
+            }
+        } else {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for (r, _) in indexer.extract_code_references(&content) {
+                refs.insert(r);
+            }
+        }
+    }
+    // Cap per-doc refs at extraction: the per-file pass only resolves up to
+    // doc_max_code_refs() refs per doc, so preloading more per doc is waste.
+    // We cannot know doc boundaries here cheaply — preload ALL unique refs
+    // (bounded: the whole tree's unique ref count is far below per-doc caps
+    // multiplied out) and let the per-doc cap apply during resolution.
+    let refs: Vec<String> = refs.into_iter().collect();
+    let (names, files) = crate::doc_indexer::paths::collect_ref_preload_keys(&refs);
+    RefResolver::load(graph, &names, &files)
 }
 
 pub struct DocIndexer {
@@ -85,6 +197,21 @@ impl DocIndexer {
             });
         }
 
+        // #257: pre-load the code-ref resolver so the per-file pass below
+        // answers every lookup from memory (2 batched is_in queries for the
+        // whole tree) instead of 2-6 sync round-trips per unique ref — the
+        // remote-Postgres >320s doc-join hang.
+        let resolver = match graph {
+            Some(g) => match build_resolver_for_walk(g, docs_path) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    tracing::warn!("doc-join resolver preload failed: {e}; using per-ref lookups");
+                    None
+                }
+            },
+            None => None,
+        };
+
         for entry in WalkDir::new(docs_path)
             // FR-INDEX-NO-HANG: don't follow symlinks (cycles hang the walk).
             .follow_links(false)
@@ -119,7 +246,7 @@ impl DocIndexer {
                                 continue;
                             }
                         }
-                        match self.parse_doc_file(path, docs_path, graph) {
+                        match self.parse_doc_file(path, docs_path, graph, resolver.as_ref()) {
                             Ok((doc, secs, rels, _children)) => {
                                 documents.push(doc);
                                 sections.extend(secs);
@@ -210,6 +337,7 @@ impl DocIndexer {
         path: &Path,
         docs_root: &Path,
         graph: Option<&GraphEngine>,
+        resolver: Option<&RefResolver>,
     ) -> Result<
         (
             CodeElement,
@@ -273,26 +401,63 @@ impl DocIndexer {
         // budget so a single doc can't blow the 10-min index budget on
         // thousands of database queries.
         for (target, context) in code_refs.into_iter().take(cap) {
-            let resolved_target = match graph {
-                Some(g) => match resolve_code_ref(g, &target) {
+            // #257: resolver-backed first (in-memory), per-ref graph probe
+            // as fallback for misses (rare: refs the preload keys cannot
+            // answer, e.g. prefix-match stragglers).
+            let resolved_target = match resolver {
+                Some(r) => match r.resolve(&target) {
                     Some(qn) => {
                         if qn != target {
                             resolved_count += 1;
                         }
                         qn
                     }
-                    None => {
-                        skipped_count += 1;
-                        tracing::debug!(
-                            target: "leankg::docjoin",
-                            doc = %qualified_name,
-                            raw_ref = %target,
-                            "doc join: unresolved markdown code ref"
-                        );
-                        continue;
-                    }
+                    None => match graph {
+                        Some(g) => match resolve_code_ref(g, &target) {
+                            Some(qn) => {
+                                if qn != target {
+                                    resolved_count += 1;
+                                }
+                                qn
+                            }
+                            None => {
+                                skipped_count += 1;
+                                tracing::debug!(
+                                    target: "leankg::docjoin",
+                                    doc = %qualified_name,
+                                    raw_ref = %target,
+                                    "doc join: unresolved markdown code ref"
+                                );
+                                continue;
+                            }
+                        },
+                        None => {
+                            skipped_count += 1;
+                            continue;
+                        }
+                    },
                 },
-                None => target.clone(),
+                None => match graph {
+                    Some(g) => match resolve_code_ref(g, &target) {
+                        Some(qn) => {
+                            if qn != target {
+                                resolved_count += 1;
+                            }
+                            qn
+                        }
+                        None => {
+                            skipped_count += 1;
+                            tracing::debug!(
+                                target: "leankg::docjoin",
+                                doc = %qualified_name,
+                                raw_ref = %target,
+                                "doc join: unresolved markdown code ref"
+                            );
+                            continue;
+                        }
+                    },
+                    None => target.clone(),
+                },
             };
 
             // FR-SEM-08 per-symbol fanout: capture the set of
@@ -302,28 +467,51 @@ impl DocIndexer {
             // docs that reference large files. Sorted by line_start so
             // the earliest definitions (most-likely-relevant) win when
             // the cap kicks in.
-            let per_symbol_targets: Vec<String> = match graph {
-                Some(g) => g
-                    .get_elements_by_file(&resolved_target)
-                    .ok()
-                    .map(|syms| {
-                        let mut fns: Vec<_> = syms
-                            .into_iter()
-                            .filter(|e| {
-                                matches!(
-                                    e.element_type.as_str(),
-                                    "function" | "method" | "constructor"
-                                )
-                            })
-                            .collect();
-                        fns.sort_by_key(|e| e.line_start);
-                        fns.into_iter()
-                            .take(PER_SYMBOL_FANOUT_CAP)
-                            .map(|e| e.qualified_name)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                None => Vec::new(),
+            // #257: fanout reads from the batch map when possible (same
+            // semantics: the resolved target is a file path).
+            let per_symbol_targets: Vec<String> = match resolver
+                .and_then(|r| r.elements_by_file(&resolved_target))
+                .map(|syms| {
+                    let mut fns: Vec<CodeElement> = syms
+                        .iter()
+                        .filter(|e| {
+                            matches!(
+                                e.element_type.as_str(),
+                                "function" | "method" | "constructor"
+                            )
+                        })
+                        .cloned()
+                        .collect();
+                    fns.sort_by_key(|e| e.line_start);
+                    fns.into_iter()
+                        .take(PER_SYMBOL_FANOUT_CAP)
+                        .map(|e| e.qualified_name)
+                        .collect()
+                }) {
+                Some(v) => v,
+                None => match graph {
+                    Some(g) => g
+                        .get_elements_by_file(&resolved_target)
+                        .ok()
+                        .map(|syms| {
+                            let mut fns: Vec<_> = syms
+                                .into_iter()
+                                .filter(|e| {
+                                    matches!(
+                                        e.element_type.as_str(),
+                                        "function" | "method" | "constructor"
+                                    )
+                                })
+                                .collect();
+                            fns.sort_by_key(|e| e.line_start);
+                            fns.into_iter()
+                                .take(PER_SYMBOL_FANOUT_CAP)
+                                .map(|e| e.qualified_name)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    None => Vec::new(),
+                },
             };
 
             let snippet: String = context.chars().take(100).collect();
@@ -824,6 +1012,71 @@ pub fn index_docs_directory(
 
 #[cfg(test)]
 mod tests {
+
+    use super::*;
+
+    fn file_element(qn: &str) -> CodeElement {
+        CodeElement {
+            qualified_name: qn.into(),
+            element_type: "file".into(),
+            name: qn.into(),
+            file_path: qn.into(),
+            language: "rust".into(),
+            ..Default::default()
+        }
+    }
+
+    fn fn_element(qn: &str, name: &str, line: u32) -> CodeElement {
+        CodeElement {
+            qualified_name: qn.into(),
+            element_type: "function".into(),
+            name: name.into(),
+            file_path: qn.split("::").next().unwrap().into(),
+            line_start: line,
+            language: "rust".into(),
+            ..Default::default()
+        }
+    }
+
+    fn engine_with_elements() -> (GraphEngine, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = crate::db::backend::init_db(&tmp.path().join("db")).unwrap();
+        let g = GraphEngine::new(db);
+        g.insert_elements(&[
+            file_element("./src/handler.rs"),
+            fn_element("./src/handler.rs::handle_req", "handle_req", 10),
+            file_element("src/unique.rs"),
+        ])
+        .unwrap();
+        (g, tmp)
+    }
+
+    /// #257: batch-loaded resolver must resolve identically to the per-ref
+    /// graph path (decision-tree parity), including the prefix-match
+    /// straggler fallback.
+    #[test]
+    fn batch_resolver_matches_single_lookups() {
+        let (g, _tmp) = engine_with_elements();
+        let (names, files) = crate::doc_indexer::paths::collect_ref_preload_keys(&[
+            "handler.rs::handle_req".into(),
+            "unique.rs".into(),
+            "./src/missing.rs".into(),
+        ]);
+        let resolver = RefResolver::load(&g, &names, &files).unwrap();
+        for q in [
+            "handler.rs::handle_req",
+            "unique.rs",
+            "./src/missing.rs",
+            "handler.rs",
+        ] {
+            assert_eq!(
+                resolve_code_ref(&g, q),
+                resolver.resolve(q),
+                "parity for {q}"
+            );
+        }
+    }
+
     use super::*;
     // Serialize env-var tests; std::env is not thread-safe.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

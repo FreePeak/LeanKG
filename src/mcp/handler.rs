@@ -1371,14 +1371,23 @@ impl ToolHandler {
             return Ok(refusal);
         }
         let at = args["at"].as_i64().ok_or("Missing 'at' (epoch seconds)")?;
-        let rels = self
+        // #256: bounded response — the default limit keeps the payload sane
+        // over high-RTT remote Postgres; `limit` opts into more.
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| (v as usize).min(1000))
+            .unwrap_or(100);
+        let result = self
             .graph_engine
-            .temporal_query(at)
+            .temporal_query(at, limit)
             .map_err(|e| e.to_string())?;
         Ok(json!({
-            "at": at,
-            "count": rels.len(),
-            "relationships": rels,
+            "at": result.as_of,
+            "count": result.total_relationships,
+            "returned": result.items.len(),
+            "has_more": result.total_relationships > result.items.len(),
+            "relationships": result.items,
         }))
     }
 

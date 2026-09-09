@@ -8,7 +8,7 @@
 //!
 //! Subset served:
 //! - `?[cols] <- $batch_data :put rel { cols }` and `<- [[...]]` literal rows
-//! - `?[cols] := *rel[...]` with equality / param / `or` / `regex_matches` /
+//! - `?[cols] := *rel[...]` with equality / param / `or` / `regex_matches` / `is_in` /
 //!   `lowercase` filters, `{tail}` column suffix, `:limit` / `:offset`
 //! - `?[node, count(node)] := *rel[...]` aggregate reads
 //! - `:rm rel { pk }` / `:rm rel` (delete all) / `:delete rel where ...`
@@ -1379,7 +1379,14 @@ fn apply_filters(
             continue;
         }
 
-        // Negation: `!regex_matches(col, "pat")`.
+        // Negation: `not <expr>` (cozo not_op) or the legacy
+        // `!regex_matches(col, "pat")` shorthand.
+        let c = if let Some(rest) = c.strip_prefix("not ") {
+            format!("!{}", rest.trim())
+        } else {
+            c.to_string()
+        };
+        let c = c.as_str();
         if c.starts_with('!') {
             let rest = c[1..].trim_start();
             if rest.contains("regex_matches") {
@@ -1399,6 +1406,40 @@ fn apply_filters(
                     .collect();
                 continue;
             }
+        }
+
+        // `is_in(col, $param)` / `is_in(col, ["a", "b"])` — list membership
+        // (cozo is_in op; mirrors the real grammar's is_in builtin).
+        if let Some(inner) = c.strip_prefix("is_in(").and_then(|s| s.strip_suffix(')')) {
+            let (col, list_src) = inner
+                .split_once(',')
+                .ok_or_else(|| fake_err("is_in needs (col, list)"))?;
+            let col_idx = resolve_col_idx(col.trim(), cols, pat_cols)
+                .ok_or_else(|| fake_err(&format!("is_in col {} not found", col.trim())))?;
+            let list_src = list_src.trim();
+            let values: Vec<serde_json::Value> = if let Some(p) = list_src.strip_prefix('$') {
+                match params.get(p.trim()) {
+                    Some(serde_json::Value::Array(items)) => items.clone(),
+                    _ => {
+                        return Err(fake_err(&format!("is_in param ${p} missing or not a list")));
+                    }
+                }
+            } else {
+                match serde_json::from_str(list_src) {
+                    Ok(serde_json::Value::Array(items)) => items,
+                    _ => return Err(fake_err("is_in list must be a JSON array or $param")),
+                }
+            };
+            let wanted: Vec<DataValue> = values.iter().map(json_to_dv).collect();
+            out = out
+                .into_iter()
+                .filter(|row| {
+                    row.get(col_idx)
+                        .map(|v| wanted.contains(v))
+                        .unwrap_or(false)
+                })
+                .collect();
+            continue;
         }
 
         // `str_includes(lowercase(col), "pat")` — case-insensitive substring.
