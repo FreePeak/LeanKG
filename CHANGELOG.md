@@ -1,5 +1,8 @@
 ## [0.28.0](https://github.com/FreePeak/LeanKG/compare/v0.27.0...v0.28.0) (2026-09-09)
 
+## [0.28.1](https://github.com/FreePeak/LeanKG/compare/v0.28.0...v0.28.1) (2026-09-09)
+
+
 ### Storage & platform
 
 - **sqlite is the default and only CI-tested storage engine** — no Docker, no Postgres in the default flow (#326); Postgres remains an explicit `LEANKG_DB_ENGINE=postgres` opt-in
