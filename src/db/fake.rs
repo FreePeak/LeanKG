@@ -22,6 +22,9 @@ use std::sync::{Arc, Mutex};
 /// Primary-key column per relation, mirroring `pg::translate::pk_for_table`
 /// so the fake's `:put` upserts on the same key the PG translator does.
 fn pk_for_table(rel: &str) -> Option<&'static str> {
+    if rel.starts_with("emb_stamp_") {
+        return Some("model_key");
+    }
     Some(match rel {
         "embedding_state" | "embedding_vectors" => "qualified_name",
         "index_inventory" => "key",
@@ -44,6 +47,11 @@ fn pk_for_table(rel: &str) -> Option<&'static str> {
 /// `schema.sql` / `models.rs` layout for `code_elements`, `relationships`,
 /// and `business_logic`.
 fn table_columns(rel: &str) -> Option<&'static [&'static str]> {
+    // FR-ZCP-11 stamp relations are dynamically named per model id
+    // (`emb_stamp_<sanitized>`) — all share the same 2-col shape.
+    if rel.starts_with("emb_stamp_") {
+        return Some(&["model_key", "stamp"]);
+    }
     Some(match rel {
         "code_elements" => &[
             "qualified_name",

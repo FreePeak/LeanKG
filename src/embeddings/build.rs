@@ -1815,6 +1815,19 @@ pub fn spawn_background_embed(
 ) -> Result<Option<BackgroundEmbedHandle>, String> {
     use std::io::IsTerminal;
 
+    // FR-ZCP-11: hard rebuild guard — refuse to embed when the persisted
+    // collection stamp conflicts with the active model identity (revision /
+    // dimensions / provider drift). Embedding into a mismatched collection
+    // would silently mix vectors from different model identities in one
+    // ANN space. Stamped here on Missing so a fresh collection carries its
+    // identity from the first build.
+    if !cfg.partial {
+        let entry = crate::embeddings::registry::resolve_active_model()
+            .map_err(|e| format!("embed guard: {e}"))?;
+        crate::embeddings::stamp::require_stamp_match(graph.db(), &entry)
+            .map_err(|e| format!("embed guard: {e}"))?;
+    }
+
     // Cap workers/batch against fractional / LEANKG_EMBED_MAX_MB budget.
     let budget = if cfg.rss_fraction > 0.0 {
         crate::embeddings::control::resolve_partial_embed_budget_mb(cfg.rss_fraction)

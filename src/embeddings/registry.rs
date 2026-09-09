@@ -42,6 +42,10 @@ pub struct EmbeddingModelEntry {
     pub model_name: String,
     pub dimensions: usize,
     pub distance: String,
+    /// FR-ZCP-11: pinned source identity (ONNX repo revision / API model
+    /// version). Part of the collection stamp — a revision change demands a
+    /// full rebuild (see `stamp::require_stamp_match`).
+    pub revision: String,
 }
 
 impl EmbeddingModelEntry {
@@ -69,6 +73,7 @@ pub fn builtin_registry() -> HashMap<String, EmbeddingModelEntry> {
             model_name: "bge-small-en-v1.5".to_string(),
             dimensions: 384,
             distance: "cosine".to_string(),
+            revision: "onnx:bge-small-en-v1.5@main".to_string(),
         },
     );
     m.insert(
@@ -79,6 +84,7 @@ pub fn builtin_registry() -> HashMap<String, EmbeddingModelEntry> {
             model_name: "Qwen/Qwen3-Embedding-4B".to_string(),
             dimensions: 2560,
             distance: "cosine".to_string(),
+            revision: "api:2026-01".to_string(),
         },
     );
     m.insert(
@@ -89,6 +95,7 @@ pub fn builtin_registry() -> HashMap<String, EmbeddingModelEntry> {
             model_name: "jina-embeddings-v3".to_string(),
             dimensions: 1024,
             distance: "cosine".to_string(),
+            revision: "api:2026-01".to_string(),
         },
     );
     m.insert(
@@ -99,6 +106,7 @@ pub fn builtin_registry() -> HashMap<String, EmbeddingModelEntry> {
             model_name: "gemini-embedding-2".to_string(),
             dimensions: 3072,
             distance: "cosine".to_string(),
+            revision: "api:2026-01".to_string(),
         },
     );
     m.insert(
@@ -109,6 +117,7 @@ pub fn builtin_registry() -> HashMap<String, EmbeddingModelEntry> {
             model_name: "gemini-embedding-001".to_string(),
             dimensions: 3072,
             distance: "cosine".to_string(),
+            revision: "api:2026-01".to_string(),
         },
     );
     m
