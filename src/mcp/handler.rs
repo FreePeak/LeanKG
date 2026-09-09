@@ -5201,6 +5201,61 @@ fn semantic_no_corpus_hit(query: &str, prefix: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    // FR-ZCP-07: the mnemopi-compatible memory verbs dispatch through the
+    // ToolHandler and honor the retained_through_user_turn cursor.
+    #[tokio::test]
+    async fn fr_zcp07_memory_verbs_retain_recall_invalidate() {
+        let (handler, tmp) = handler_in_temp_project();
+        let root = tmp.path().display().to_string();
+
+        let v = handler
+            .session_retain(&serde_json::json!({
+                "session_id": "sess-1",
+                "turns": ["lesson: always sync the PRD before merging"],
+                "retained_through_user_turn": 4,
+                "cwd": root,
+            }))
+            .unwrap();
+        assert_eq!(v["written"], serde_json::json!(1));
+
+        let v = handler
+            .session_recall(&serde_json::json!({
+                "query": "sync the PRD", "limit": 8,
+                "project": root,
+            }))
+            .unwrap();
+        assert_eq!(v["count"], serde_json::json!(1));
+        assert!(v["memories"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("sync the PRD"));
+
+        // Cursor: re-retain through the same turn → skipped, not duplicated.
+        let v = handler
+            .session_retain(&serde_json::json!({
+                "session_id": "sess-1",
+                "turns": ["lesson: always sync the PRD before merging"],
+                "retained_through_user_turn": 4,
+                "cwd": root,
+            }))
+            .unwrap();
+        assert_eq!(v["written"], serde_json::json!(0));
+        assert_eq!(v["skipped"], serde_json::json!(1));
+
+        // Invalidate: cursor and rows agree afterwards.
+        let v = handler
+            .memory_invalidate(&serde_json::json!({ "session_id": "sess-1" }))
+            .unwrap();
+        assert_eq!(v["removed"], serde_json::json!(1));
+        let v = handler
+            .session_recall(&serde_json::json!({
+                "query": "sync the PRD", "limit": 8, "project": root,
+            }))
+            .unwrap();
+        assert_eq!(v["count"], serde_json::json!(0));
+    }
+
     use super::*;
 
     /// DbBackend double that sleeps before every script — simulates the
