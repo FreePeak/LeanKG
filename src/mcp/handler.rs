@@ -3007,7 +3007,7 @@ impl ToolHandler {
         let project_bank = crate::memory::mnemopi_bank_name(&self.project_root());
         let shared = "leankg-shared";
         let write_bank = scope.write_bank(&project_bank, shared);
-        let store = crate::memory::MemoryStore::new(&self.project_root());
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
         let result = store
             .retain_transcript(&write_bank, session_id, &turns, through, &cwd)
             .map_err(|e| e.to_string())?;
@@ -3026,7 +3026,7 @@ impl ToolHandler {
         let scope = self.memory_scope(args);
         let project_bank = crate::memory::mnemopi_bank_name(&self.project_root());
         let shared = "leankg-shared";
-        let store = crate::memory::MemoryStore::new(&self.project_root());
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
         let entries = store.recall(&scope.read_banks(&project_bank, shared), query, limit);
         // OMP injection contract: ranked {id, content, source, timestamp, score}.
         Ok(json!({
@@ -3045,7 +3045,7 @@ impl ToolHandler {
 
     fn memory_get(&self, args: &Value) -> Result<Value, String> {
         let id = args["id"].as_str().ok_or("Missing 'id'")?;
-        let store = crate::memory::MemoryStore::new(&self.project_root());
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
         match store.get(id) {
             Some(e) => Ok(json!({ "status": "ok", "memory": e })),
             None => Ok(json!({ "status": "not_found", "id": id })),
@@ -3055,7 +3055,7 @@ impl ToolHandler {
     fn memory_update(&self, args: &Value) -> Result<Value, String> {
         let id = args["id"].as_str().ok_or("Missing 'id'")?;
         let content = args["content"].as_str().ok_or("Missing 'content'")?;
-        let store = crate::memory::MemoryStore::new(&self.project_root());
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
         match store.update(id, content) {
             Ok(true) => Ok(json!({ "status": "ok", "id": id })),
             Ok(false) => Ok(json!({ "status": "not_found", "id": id })),
@@ -3065,7 +3065,7 @@ impl ToolHandler {
 
     fn memory_forget(&self, args: &Value) -> Result<Value, String> {
         let id = args["id"].as_str().ok_or("Missing 'id'")?;
-        let store = crate::memory::MemoryStore::new(&self.project_root());
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
         match store.forget(id) {
             Ok(true) => Ok(json!({ "status": "ok", "id": id, "forgotten": true })),
             Ok(false) => Ok(json!({ "status": "not_found", "id": id })),
@@ -3075,7 +3075,7 @@ impl ToolHandler {
 
     fn memory_invalidate(&self, args: &Value) -> Result<Value, String> {
         let session_id = args["session_id"].as_str().ok_or("Missing 'session_id'")?;
-        let store = crate::memory::MemoryStore::new(&self.project_root());
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
         match store.invalidate_session(session_id) {
             Ok(removed) => Ok(json!({ "status": "ok", "removed": removed })),
             Err(e) => Err(e.to_string()),
@@ -5223,6 +5223,13 @@ mod tests {
             }))
             .unwrap();
         assert_eq!(v["written"], serde_json::json!(1));
+        // FR-ZCP-07 anchor guard: memory rows must live under the project's
+        // .leankg — NEVER in an ambient /tmp/.leankg (the /tmp/.leankg
+        // pollution made fr_a01's walk-up test fail on runners).
+        assert!(
+            !std::env::temp_dir().join(".leankg").exists(),
+            "memory rows leaked into the ambient temp root"
+        );
 
         let v = handler
             .session_recall(&serde_json::json!({
@@ -5302,7 +5309,9 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let shared = crate::db::backend::init_db(&tmp.path().join("leankg.db")).unwrap();
         let graph = GraphEngine::new(shared);
-        (ToolHandler::new(graph, tmp.path().to_path_buf()), tmp)
+        // Production shape: db_path IS the .leankg directory
+        // (<project>/.leankg) — memory stores anchor here, never above.
+        (ToolHandler::new(graph, tmp.path().join(".leankg")), tmp)
     }
 
     // -------------------------------------------------------------------

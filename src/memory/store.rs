@@ -45,6 +45,16 @@ impl MemoryStore {
         }
     }
 
+    /// FR-ZCP-07: production anchor — `db_path` IS the `.leankg` directory,
+    /// so a mis-shaped db_path can never escape into a parent directory
+    /// (the /tmp/.leankg pollution class). Banks live at
+    /// `<db_path>/memory/<bank>.jsonl`.
+    pub fn in_leankg_dir(db_path: &Path) -> Self {
+        Self {
+            root: db_path.join("memory"),
+        }
+    }
+
     fn bank_path(&self, bank: &str) -> PathBuf {
         self.root
             .join(format!("{}.jsonl", crate::memory::sanitize_bank(bank)))
