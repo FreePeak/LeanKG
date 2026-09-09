@@ -1,8 +1,8 @@
 #![allow(clippy::needless_borrow)]
 use crate::db::backend::{DbBackend, SharedDb};
 use crate::db::models::{
-    BusinessLogic, CodeElement, DependencyInfo, DocLink, Incident, Relationship, TraceabilityEntry,
-    TraceabilityReport,
+    BusinessLogic, CodeElement, DependencyInfo, DocLink, Incident, Relationship,
+    TemporalQueryResult, TraceabilityEntry, TraceabilityReport,
 };
 use crate::graph::cache::QueryCache;
 use serde::{Deserialize, Serialize};
@@ -3016,6 +3016,81 @@ impl GraphEngine {
         self.run_element_query(&query)
     }
 
+    /// #257 (remote-PG RTT batching): exact-name lookup for a WHOLE BATCH of
+    /// names in one `is_in` query — the doc join resolves dozens of refs per
+    /// docs tree; per-name round-trips over a high-RTT link are the >320s
+    /// hang. Returns name -> elements (possibly several per name).
+    pub fn find_elements_by_names_exact(
+        &self,
+        names: &[String],
+    ) -> Result<std::collections::HashMap<String, Vec<CodeElement>>, Box<dyn std::error::Error>>
+    {
+        let mut out: std::collections::HashMap<String, Vec<CodeElement>> =
+            std::collections::HashMap::new();
+        if names.is_empty() {
+            return Ok(out);
+        }
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]
+               := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+              is_in(name, $names)"#,
+            tail = tail,
+        );
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "names".to_string(),
+            serde_json::Value::Array(
+                names
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+        for el in self.run_element_query_with_params(&query, params)? {
+            out.entry(el.name.clone()).or_default().push(el);
+        }
+        Ok(out)
+    }
+
+    /// #257: file-path batch lookup in one `is_in` query — pairs with
+    /// [`Self::find_elements_by_names_exact`] to make the doc join
+    /// O(queries-per-kind) instead of O(refs).
+    pub fn get_elements_by_files(
+        &self,
+        file_paths: &[String],
+    ) -> Result<std::collections::HashMap<String, Vec<CodeElement>>, Box<dyn std::error::Error>>
+    {
+        let mut out: std::collections::HashMap<String, Vec<CodeElement>> =
+            std::collections::HashMap::new();
+        if file_paths.is_empty() {
+            return Ok(out);
+        }
+        let tail = self.code_elements_tail();
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]
+               := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata{tail}],
+              is_in(file_path, $fps)"#,
+            tail = tail,
+        );
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "fps".to_string(),
+            serde_json::Value::Array(
+                file_paths
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+        for el in self.run_element_query_with_params(&query, params)? {
+            out.entry(el.file_path.clone()).or_default().push(el);
+        }
+        Ok(out)
+    }
+
     /// FR-ONT-MEGA-01: keyed file-path prefix lookup (no `all_elements()`).
     pub fn find_elements_by_file_path_prefix(
         &self,
@@ -5530,14 +5605,97 @@ impl GraphEngine {
     pub fn temporal_query(
         &self,
         at_epoch: i64,
-    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
-        let rels = self.all_relationships()?;
-        Ok(rels
+        limit: usize,
+    ) -> Result<TemporalQueryResult, Box<dyn std::error::Error>> {
+        // #256: the old path pulled ALL relationships (all_relationships →
+        // deprecated full-scan + a secondary-index build whose result is
+        // thrown away) and filtered in Rust. On a remote PG over a
+        // high-RTT link that is the >300s hang. Dedicated bounded queries:
+        //   * always-live set: no temporal keys in metadata at all (capped)
+        //   * temporal set: metadata mentions valid_from/valid_to
+        // items = up to `limit` rows; total counts come from :group counters.
+        let always_q = format!(
+            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+               *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
+               not regex_matches(metadata, 'valid_(from|to)')
+            :limit {}"#,
+            limit
+        );
+        let always_count_q = r#"?[count(source_qualified)] :=
+               *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
+               not regex_matches(metadata, 'valid_(from|to)')"#;
+        let temporal_q = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
+               *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
+               regex_matches(metadata, 'valid_(from|to)')"#;
+        let temporal_count_q = r#"?[count(source_qualified)] :=
+               *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
+               regex_matches(metadata, 'valid_(from|to)')"#;
+        let always = self.run_relationship_query(&always_q)?;
+        let always_total = self
+            .db
+            .run_script(always_count_q, std::collections::BTreeMap::new())?
+            .rows
+            .first()
+            .and_then(|r| r.first().and_then(|v| v.get_int()))
+            .unwrap_or(0) as usize;
+        let temporal = self.run_relationship_query(&temporal_q)?;
+        let temporal_total = self
+            .db
+            .run_script(temporal_count_q, std::collections::BTreeMap::new())?
+            .rows
+            .first()
+            .and_then(|r| r.first().and_then(|v| v.get_int()))
+            .unwrap_or(0) as usize;
+
+        let live: Vec<Relationship> = always
             .into_iter()
             .filter(|r| {
-                let valid_from = Self::valid_from(r).unwrap_or(0);
-                let valid_to = Self::valid_to(r).unwrap_or(i64::MAX);
-                valid_from <= at_epoch && at_epoch <= valid_to
+                let vf = Self::valid_from(r).unwrap_or(0);
+                let vt = Self::valid_to(r).unwrap_or(i64::MAX);
+                vf <= at_epoch && at_epoch <= vt
+            })
+            .collect();
+        let temporal_valid: Vec<Relationship> = temporal
+            .into_iter()
+            .filter(|r| {
+                let vf = Self::valid_from(r).unwrap_or(0);
+                let vt = Self::valid_to(r).unwrap_or(i64::MAX);
+                vf <= at_epoch && at_epoch <= vt
+            })
+            .collect();
+        // Fill the page with temporal-valid edges after the always-live ones.
+        let temporal_stale = temporal_total - temporal_valid.len();
+        let mut items = live;
+        let take = limit.saturating_sub(items.len());
+        items.extend(temporal_valid.into_iter().take(take));
+        Ok(TemporalQueryResult {
+            as_of: at_epoch,
+            total_relationships: always_total + temporal_total - temporal_stale,
+            items,
+        })
+    }
+
+    /// Bounded relationship fetch used by #256's temporal_query — no
+    /// secondary-index build, no cache pollution, no deprecation warning.
+    fn run_relationship_query(
+        &self,
+        query: &str,
+    ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
+        let result = self
+            .db
+            .run_script(query, std::collections::BTreeMap::new())?;
+        Ok(result
+            .rows
+            .iter()
+            .map(|row| Relationship {
+                id: None,
+                source_qualified: row[0].get_str().unwrap_or("").to_string(),
+                target_qualified: row[1].get_str().unwrap_or("").to_string(),
+                rel_type: row[2].get_str().unwrap_or("").to_string(),
+                confidence: row[3].get_float().unwrap_or(1.0),
+                metadata: serde_json::from_str(row[4].get_str().unwrap_or("{}"))
+                    .unwrap_or(serde_json::json!({})),
+                ..Default::default()
             })
             .collect())
     }
@@ -6307,6 +6465,73 @@ fn chrono_unix() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// #256: temporal_query must be bounded — dedicated queries instead of
+    /// the deprecated all_relationships full-scan, items capped at `limit`,
+    /// total counts from SQL group counters.
+    #[test]
+    fn temporal_query_is_bounded_and_correct() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = crate::db::backend::init_db(&tmp.path().join("db")).unwrap();
+        let g = GraphEngine::new(db);
+        let mut elems = Vec::new();
+        for i in 0..7 {
+            elems.push(crate::db::models::CodeElement {
+                qualified_name: format!("f{i}.rs"),
+                element_type: "file".into(),
+                name: format!("f{i}"),
+                file_path: format!("f{i}.rs"),
+                language: "rust".into(),
+                ..Default::default()
+            });
+        }
+        g.insert_elements(&elems).unwrap();
+        let mk = |s: &str, t: &str, md: serde_json::Value| Relationship {
+            id: None,
+            source_qualified: s.into(),
+            target_qualified: t.into(),
+            rel_type: "calls".into(),
+            confidence: 1.0,
+            metadata: md,
+            env: "local".into(),
+        };
+        let rels = vec![
+            mk("f0.rs", "f1.rs", serde_json::json!({})),
+            mk("f1.rs", "f2.rs", serde_json::json!({})),
+            mk("f2.rs", "f3.rs", serde_json::json!({})),
+            mk("f3.rs", "f4.rs", serde_json::json!({})),
+            mk("f4.rs", "f5.rs", serde_json::json!({})),
+            mk(
+                "f5.rs",
+                "f6.rs",
+                serde_json::json!({"valid_from": 100, "valid_to": 200}),
+            ),
+            mk("f6.rs", "f0.rs", serde_json::json!({"valid_from": 300})),
+        ];
+        g.insert_relationships(&rels).unwrap();
+
+        let r = g.temporal_query(150, 3).unwrap();
+        assert_eq!(r.as_of, 150);
+        assert_eq!(
+            r.total_relationships, 6,
+            "5 always-live + 1 temporal-valid at t=150"
+        );
+        assert_eq!(r.items.len(), 3, "limit 3");
+        assert!(
+            r.items.iter().all(|x| x.source_qualified != "f6.rs"),
+            "temporal-invalid edge excluded"
+        );
+
+        let r2 = g.temporal_query(150, 1000).unwrap();
+        assert_eq!(r2.items.len(), 6, "high limit returns everything live");
+        // t=350: the first temporal edge (100..200) is invalid, the second
+        // (valid_from 300) is live.
+        let r3 = g.temporal_query(350, 1000).unwrap();
+        assert_eq!(r3.total_relationships, 6);
+        assert!(r3.items.iter().any(|x| x.source_qualified == "f6.rs"));
+    }
+
     use super::*;
     use crate::db::backend::init_db;
     use crate::db::models::CodeElement;

@@ -253,6 +253,15 @@ pub struct CodeElement {
     pub env: String,
 }
 
+/// #256: bounded temporal_query response — `items` capped, `total` for
+/// pagination, `as_of` echoed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalQueryResult {
+    pub as_of: i64,
+    pub total_relationships: usize,
+    pub items: Vec<Relationship>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relationship {
     #[serde(skip)]
