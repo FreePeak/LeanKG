@@ -18,6 +18,7 @@
 pub mod profile;
 pub mod provider;
 pub mod registry;
+pub mod stamp;
 
 // Re-exported only for `main.rs` embed/bench code (both feature-gated); the
 // feature-agnostic indexer path (file_summary) uses the full
