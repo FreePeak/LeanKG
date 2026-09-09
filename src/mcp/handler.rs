@@ -4134,19 +4134,11 @@ impl ToolHandler {
         if has_vectors {
             let model_entry = match model {
                 Some(id) => crate::embeddings::registry::lookup_model(id),
-                None => crate::embeddings::registry::lookup_model(
-                    &crate::embeddings::registry::active_model_id(),
-                )
-                .or_else(|| {
-                    crate::embeddings::registry::resolve_active_model()
-                        .ok()
-                        .map(|e| e)
-                })
-                .or(None),
+                None => crate::embeddings::registry::resolve_active_model().ok(),
             };
             if let Some(entry) = model_entry {
                 match crate::embeddings::stamp::stamp_mismatch_reason(
-                    self.graph_engine.db().as_ref(),
+                    self.graph_engine.db(),
                     &entry,
                 ) {
                     Ok(Some(reason)) => {

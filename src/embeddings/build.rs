@@ -816,7 +816,7 @@ pub fn run(
     let db = graph.db();
 
     // FR-ZCP-11: hard rebuild guard (all entry points must enforce it).
-    enforce_stamp(db, matches!(opts.mode, BuildMode::Full))?;
+    enforce_stamp(db, matches!(opts.mode, BuildMode::Full)).map_err(|e| e.to_string())?;
 
     // Cheap resume preflight before walking the graph.
     let preflight = crate::embeddings::control::embed_resume_preflight(db).ok();
@@ -1120,7 +1120,7 @@ pub fn build_index_parallel(
     let db = graph.db();
 
     // FR-ZCP-11: hard rebuild guard (all entry points must enforce it).
-    enforce_stamp(db, matches!(opts.mode, BuildMode::Full))?;
+    enforce_stamp(db, matches!(opts.mode, BuildMode::Full)).map_err(|e| e.to_string())?;
 
     // P0 self-heal (mirrors `run`): `embedding_state` rows that describe
     // vectors which no longer exist leave the Incremental dirty set

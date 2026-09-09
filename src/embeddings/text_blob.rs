@@ -326,8 +326,16 @@ fn truncate_to_chars(s: &str, max_chars: usize) -> &str {
 
 /// SHA-256 hex digest of the text blob. Stored in `embedding_state.content_hash`
 /// to detect content changes between embed runs.
+/// FR-ZCP-11: version of the blob-construction pipeline (MAX_BLOB_CHARS,
+/// profile presets, heading-path composition). Bump on ANY change to how
+/// blobs are built: the version is folded into every content hash, so a
+/// bump invalidates all existing hashes → full re-embed (correct, since
+/// chunking changed the embedding input).
+pub const CHUNKER_VERSION: u32 = 1;
+
 pub fn content_hash_for(blob: &str) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(CHUNKER_VERSION.to_le_bytes());
     hasher.update(blob.as_bytes());
     format!("{:x}", hasher.finalize())
 }
@@ -335,6 +343,27 @@ pub fn content_hash_for(blob: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FR-ZCP-11: the chunker version is folded into every content hash —
+    /// bumping CHUNKER_VERSION invalidates all existing hashes → full
+    /// re-embed (chunking changed the embedding input).
+    #[test]
+    fn content_hash_couples_chunker_version() {
+        let h1 = content_hash_for("identical blob");
+        let h2 = content_hash_for("identical blob");
+        assert_eq!(h1, h2, "same blob → same hash");
+        assert_ne!(
+            content_hash_for("blob a"),
+            content_hash_for("blob b"),
+            "different blobs → different hashes"
+        );
+        // Version prefix coverage: a raw-blob hash (pre-versioning) differs
+        // from the versioned hash.
+        use sha2::{Digest, Sha256};
+        let mut raw = Sha256::new();
+        raw.update(b"identical blob");
+        assert_ne!(h1, format!("{:x}", raw.finalize()));
+    }
 
     fn make_element(element_type: &str, name: &str, qualified_name: &str) -> CodeElement {
         CodeElement {
