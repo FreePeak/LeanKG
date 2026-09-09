@@ -5617,13 +5617,13 @@ impl GraphEngine {
         let always_q = format!(
             r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
-               not regex_matches(metadata, 'valid_(from|to)')
+               !regex_matches(metadata, 'valid_(from|to)')
             :limit {}"#,
             limit
         );
         let always_count_q = r#"?[count(source_qualified)] :=
                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
-               not regex_matches(metadata, 'valid_(from|to)')"#;
+               !regex_matches(metadata, 'valid_(from|to)')"#;
         let temporal_q = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] :=
                *relationships[source_qualified, target_qualified, rel_type, confidence, metadata, env],
                regex_matches(metadata, 'valid_(from|to)')"#;
