@@ -168,6 +168,26 @@ pub fn check_stamp(
     }
 }
 
+/// FR-ZCP-11 query-side guard: `Some(reason)` when the collection's stamp
+/// conflicts with the active model — the caller (semantic_search) degrades
+/// to the keyword rung with this reason instead of querying mixed-model
+/// vectors. `None` = stamp matches (or missing → not yet built).
+pub fn stamp_mismatch_reason(
+    db: &dyn DbBackend,
+    entry: &EmbeddingModelEntry,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    match check_stamp(db, entry)? {
+        StampCheck::Match | StampCheck::Missing => Ok(None),
+        StampCheck::Mismatch(detail) => Ok(Some(format!(
+            "collection `{}` was built by model identity {} ({}); active model is {} —              rebuild required (run `leankg embed --full`)",
+            entry.vectors_relation(),
+            detail.persisted.model_id,
+            detail.reason,
+            detail.active.model_id
+        ))),
+    }
+}
+
 /// Hard rebuild guard: `Err` with a rebuild directive when the persisted
 /// stamp conflicts with the active model. `Ok(())` on Match or Missing
 /// (a fresh collection gets stamped at build time).
