@@ -103,7 +103,7 @@ When MCP HTTP on `:9699` is healthy, for fuzzy / NL / “where is X?” question
 
 ### MANDATORY: Docker MCP project paths (not host paths)
 
-When Cursor's LeanKG MCP talks to the Docker HTTP server on `:9699`, RocksDB keys projects by **in-container** mount paths. Host Mac paths fail with "not initialized" even when the index exists.
+When Cursor's LeanKG MCP talks to the HTTP server on `:9699`, projects resolve by **checkout path**. Host paths must fail with "not initialized" even when the index exists.
 
 | Repo / mount | Pass `project=` (container path) | Do NOT pass |
 |--------------|-----------------------------------|-------------|
