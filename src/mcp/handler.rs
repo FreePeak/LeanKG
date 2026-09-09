@@ -2971,10 +2971,15 @@ impl ToolHandler {
     // ====================================================================
 
     fn project_root(&self) -> std::path::PathBuf {
-        self.db_path
+        // A relative db_path (".leankg") has no parent — anchor to the CWD so
+        // memory stores can never land in an ambient /tmp/.leankg (which the
+        // FR-A01 project walk would then resolve for unrelated tools).
+        let base = self
+            .db_path
             .parent()
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        std::fs::canonicalize(&base).unwrap_or(base)
     }
 
     fn memory_scope(&self, args: &Value) -> crate::memory::BankScope {
