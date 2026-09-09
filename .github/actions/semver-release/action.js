@@ -158,11 +158,20 @@ function createPr() {
     run(`git checkout -b ${branch}`);
   }
 
-  // Bump version metadata.
-  bumpCargoToml(next);
-  bumpCargoLock(next);
-  bumpManifest(next);
-  prependChangelog(next, prev);
+  // Bump version metadata. All four are idempotent: reruns after the
+  // release branch was cut (e.g. the release-PR merge itself re-triggers
+  // push→create-pr with a stale commit range) change nothing.
+  const changed = [
+    bumpCargoToml(next),
+    bumpCargoLock(next),
+    bumpManifest(next),
+    prependChangelog(next, prev),
+  ].some(Boolean);
+
+  if (!changed) {
+    console.log(`release/v${next} already at ${next} with its changelog — PR is up to date, nothing to commit`);
+    return;
+  }
 
   run(`git add Cargo.toml Cargo.lock manifest.json CHANGELOG.md`);
   run(`git -c user.name='leankg-release[bot]' -c user.email='noreply@github.com' commit -m 'release: v${next}'`);
@@ -183,33 +192,50 @@ function bumpCargoToml(v) {
   const f = 'Cargo.toml';
   const src = fs.readFileSync(f, 'utf8');
   const next = src.replace(/^version = "\d+\.\d+\.\d+"/m, `version = "${v}"`);
-  if (next === src) throw new Error(`No version line found in ${f}`);
+  if (next === src) {
+    // Either already at the target version (idempotent rerun after the
+    // release PR branch was cut) or the format drifted — distinguish:
+    if (new RegExp(`^version = "${v}"`, 'm').test(src)) {
+      console.log(`${f}: already at ${v} — no change`);
+      return false;
+    }
+    throw new Error(`No version line found in ${f}`);
+  }
   fs.writeFileSync(f, next);
+  return true;
 }
 function bumpCargoLock(v) {
   // Match only the root package block (first "name = "leankg"" occurrence).
   const f = 'Cargo.lock';
   const src = fs.readFileSync(f, 'utf8');
   const i = src.indexOf('name = "leankg"');
-  if (i === -1) return;
+  if (i === -1) return false;
   const j = src.indexOf('version = "', i);
-  if (j === -1 || j > i + 200) return;
+  if (j === -1 || j > i + 200) return false;
   const k = src.indexOf('"', j + 11);
-  fs.writeFileSync(f, src.slice(0, j + 11) + v + src.slice(k));
+  const next = src.slice(0, j + 11) + v + src.slice(k);
+  if (next === src) return false;
+  fs.writeFileSync(f, next);
+  return true;
 }
 function bumpManifest(v) {
   const f = 'manifest.json';
   const m = JSON.parse(fs.readFileSync(f, 'utf8'));
+  if (m['.'] === v) return false;
   m['.'] = v;
   fs.writeFileSync(f, JSON.stringify(m, null, 2) + '\n');
+  return true;
 }
 function prependChangelog(v, prev) {
   const f = 'CHANGELOG.md';
   const src = fs.readFileSync(f, 'utf8');
   const section = changelogSection(v, prev);
+  // Idempotent: the section header already present → no change.
+  if (src.includes(section)) return false;
   // Insert after the "# Changelog" header.
   const idx = src.indexOf('\n');
   fs.writeFileSync(f, src.slice(0, idx + 1) + '\n' + section + '\n\n' + src.slice(idx + 1));
+  return true;
 }
 
 // ---------------------------------------------------------------------------
