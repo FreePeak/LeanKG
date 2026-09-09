@@ -1200,7 +1200,7 @@ impl MCPServer {
             })
     }
 
-    /// Resolve `<project>/.leankg` for MCP `project=` routing (multi-mount RocksDB).
+    /// Resolve `<project>/.leankg` for MCP `project=` routing (multi-project).
     fn resolve_project_db_path(fp: &str) -> Option<PathBuf> {
         if let Some(found) = Self::find_leankg_for_path(fp) {
             return Some(found);
@@ -1219,7 +1219,7 @@ impl MCPServer {
             return None;
         }
         let candidate = project_root.join(".leankg");
-        // Phase 8 (D4): Postgres is the only engine — no central RocksDB
+        // Postgres is an opt-in engine — no central shared-storage registry
         // path to probe.
         if candidate.is_dir() {
             return Some(candidate);
@@ -1261,7 +1261,7 @@ impl MCPServer {
                 .map_err(|e| format!("Failed to resolve db path: {}", e))?,
         };
 
-        // Phase 8 (D4): Postgres is the only engine — no central RocksDB
+        // Postgres is an opt-in engine — no central shared-storage registry
         // index to probe.
         if !project_db_path.exists() {
             // FR-ZCP-02: the server's own default project (no explicit route
@@ -1281,7 +1281,7 @@ impl MCPServer {
 
         // Single critical section: cache check + init_db + cache insert.
         // The Mutex must be held across init_db so concurrent callers serialize
-        // the RocksDB open (one-writer-per-path) instead of racing.
+        // the DB open (one-writer-per-path) instead of racing.
         let mut cache = self.graph_engine_cache.lock();
         if let Some(ge) = cache.get(&project_db_path) {
             return Ok(ge.clone());
@@ -1307,7 +1307,7 @@ impl MCPServer {
         // Route through the path-keyed cache so request handlers and the
         // background auto-index share the SAME DbInstance handle. Without
         // this unification, two separate caches each open their own
-        // RocksDB handle to the same path and the second handle fails with
+        // DB handle to the same path and the second handle fails with
         // "lock hold by current process".
         self.get_graph_engine_for_path(None)
     }
@@ -1584,7 +1584,7 @@ impl MCPServer {
     fn spawn_embed_idle_scheduler(&self) {}
 
     /// FR-P0-EMBED-LOCK: whether the embed idle scheduler auto-arms. Default
-    /// `false` (serving containers must not take the RocksDB LOCK for a
+    /// `false` (serving containers must not take the DB write lock for a
     /// background embed). `LEANKG_EMBED_AUTO_ARM=1` opts in. Callers must
     /// also check `background_embed_allowed()` / `!read_only`.
     #[cfg(feature = "embeddings")]
@@ -1947,7 +1947,7 @@ impl MCPServer {
             }
         };
         if crate::ontology::spawn_ontology_yaml_watcher(project_root, graph, |stats| {
-            // FR-P0-MCP-RC-02: keep the shared per-project RocksDB handle. The
+            // FR-P0-MCP-RC-02: keep the shared per-project DB handle. The
             // old code cleared graph_engine + graph_engine_cache here, so the
             // next request re-opened the same path → `lock hold by current
             // process`. Ontology writes go through the single handle.
@@ -1985,7 +1985,7 @@ impl MCPServer {
                 );
                 // FR-P0-MCP-RC-02: keep the shared handle; only the L1 caches
                 // are invalidated by the caller (invalidate_l1_caches in
-                // execute_tool). Re-opening here would 2nd-open RocksDB.
+                // execute_tool). Re-opening here would 2nd-open the DB.
             }
             Err(e) => {
                 tracing::debug!("Ontology post-index sync skipped: {}", e);
@@ -2023,7 +2023,7 @@ impl MCPServer {
                 let stats = crate::ontology::sync_for_project(&project_root, &graph)
                     .map_err(|e| format!("ontology sync failed: {}", e))?;
                 // FR-P0-MCP-RC-02: keep the shared handle. Writes go through the
-                // single per-path handle; a re-open here would 2nd-open RocksDB.
+                // single per-path handle; a re-open here would 2nd-open the DB.
                 Ok(serde_json::json!({
                     "status": "ok",
                     "tool": "ontology_control",
@@ -2079,7 +2079,7 @@ impl MCPServer {
             }
         };
         // Mega-graphs: in-process background embed calls all_elements() and
-        // contends with MCP on RocksDB/memory, which makes search tools hang
+        // contends with MCP on the DB/memory, which makes search tools hang
         // or the container go unhealthy. Require an explicit opt-in.
         let force_mega = std::env::var("LEANKG_EMBED_BACKGROUND_MEGA")
             .ok()
@@ -2853,7 +2853,7 @@ impl MCPServer {
             }
         }
 
-        // 4. Drop cached GraphEngine handles so RocksDB LOCK can release.
+        // 4. Drop cached GraphEngine handles so the DB lock can release.
         // Give the watcher (~250ms poll) a moment to exit after shutdown_flag.
         tokio::time::sleep(Duration::from_millis(300)).await;
         {
@@ -2959,7 +2959,7 @@ impl MCPServer {
             .map_err(|e| format!("Failed to create db path: {}", e))?;
 
         // Share the handle via the path cache — do not call init_db here
-        // (RocksDB one-writer-per-path; watcher/tools must reuse this handle).
+        // (one-writer-per-path; watcher/tools must reuse this handle).
         let root_key = project_root.to_string_lossy().to_string();
         let graph_engine = self
             .get_graph_engine_for_path(Some(&root_key))
@@ -3706,7 +3706,7 @@ impl MCPServer {
             self.refresh_ontology_after_index();
             // FR-P0-MCP-RC-02: keep the shared per-project handle. Dropping it
             // here (and in the write-tool block below) forced a second
-            // `init_db` open of the same RocksDB path on the next request,
+            // `init_db` open of the same DB path on the next request,
             // which failed with `lock hold by current process`. The handle is
             // one-per-path; L1 caches are invalidated separately below.
         }
@@ -3879,7 +3879,7 @@ impl MCPServer {
     ///
     /// FR-P0-MCP-RC-02: tests assert that a write tool does NOT force a second
     /// `init_db` open of the same path (which is what produced
-    /// `RocksDB IO error: lock hold by current process`). Exposes the
+    /// `lock hold by current process`). Exposes the
     /// underlying `Arc` pointer address so tests can compare two calls.
     pub fn db_handle_ptr(&self) -> usize {
         self.get_graph_engine()
@@ -5167,7 +5167,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // FR-A01: MCP `project` resolves to the correct RocksDB project for
+    // FR-A01: MCP `project` resolves to the correct project for
     // multi-mount setups.
     //
     // The seam is `resolve_project_db_path(fp)` — used by every tool that
@@ -5189,7 +5189,7 @@ mod tests {
     fn fr_a01_project_mount_resolves_to_own_leankg() {
         let tmp = tempfile::TempDir::new().unwrap();
         // Two mounts side by side, each with its own .leankg — the MCP
-        // server keys RocksDB per project by that path (FR-A01).
+        // the server keys the graph per project by that path (FR-A01).
         let mount_a = make_project_mount(tmp.path(), "project-a");
         let mount_b = make_project_mount(tmp.path(), "project-b");
         assert_eq!(
@@ -5768,7 +5768,7 @@ mod tests {
     }
 
     // FR-P0-EMBED-LOCK: serving containers must not auto-arm embed (which
-    // holds the RocksDB LOCK). Default off; explicit opt-in only.
+    // holds the DB write lock). Default off; explicit opt-in only.
     #[cfg(feature = "embeddings")]
     #[test]
     fn auto_arm_default_disabled() {

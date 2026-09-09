@@ -3446,8 +3446,8 @@ pub async fn api_graph_layout3d(
 pub struct PathSwitchRequest {
     pub path: Option<String>,
     pub github_url: Option<String>,
-    /// When true, re-walk and index files after switch. Default false — Docker
-    /// multi-root UIs must open the existing RocksDB graph for `?project=`, not
+    /// When true, re-walk and index files after switch. Default false —
+    /// multi-root UIs must open the existing graph for `?project=`, not
     /// reindex the wrong tree into the active handle.
     #[serde(default)]
     pub reindex: bool,
@@ -3632,7 +3632,7 @@ pub async fn api_switch_path(
             success: false,
             data: None,
             error: Some(format!(
-                "Failed to open project '{}': {}. Another process may hold the RocksDB lock.",
+                "Failed to open project '{}': {}. Another process may hold the database lock.",
                 absolute_path, e
             )),
         };

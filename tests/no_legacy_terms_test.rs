@@ -1,15 +1,16 @@
-//! Guard: no legacy storage-engine or APM-vendor terms anywhere in the repo.
+//! Guard: no legacy APM-vendor or third-party telemetry terms anywhere in
+//! the repo.
 //!
-//! LeanKG is PostgreSQL-only (`PostgresBackend`, plan D4). References to the
-//! retired embedded engine ("cozo") or vendor-specific telemetry ("datadog")
-//! must not appear in code, configs, tool descriptions, UI text, or living
-//! documentation. Dated historical records are explicitly allowlisted below —
-//! they are audit evidence, not active surface.
+//! "datadog" is the only banned term: the storage engines ("cozo",
+//! "rocksdb", "sled") are LIVE code paths since the sqlite-default
+//! conversion (#326/#268) — banning them would fail the product itself.
+//! Dated historical records are explicitly allowlisted below — they are
+//! audit evidence, not active surface.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FORBIDDEN: &[&str] = &["cozo", "datadog"];
+const FORBIDDEN: &[&str] = &["datadog"];
 
 /// Historical / generated-record paths excluded from the scan.
 /// Everything else — src, tests, benches, examples, e2e, scripts, npm, ui,
@@ -18,7 +19,9 @@ const FORBIDDEN: &[&str] = &["cozo", "datadog"];
 const ALLOWLIST_PREFIXES: &[&str] = &[
     // release-please generated history
     "CHANGELOG.md",
-    // migration audit trail (dated engineering evidence)
+    // migration audit trail + dated root-cause records (audit evidence)
+    "docs/archive/",
+    "generated_docs/",
     "docs/plan-migrate-cozo-to-postgres-pgvector.md",
     // SQL-migration plan + dated cycle handoff records (historical evidence
     // of the engine removal itself — the terms ARE the subject matter)
@@ -107,7 +110,13 @@ fn collect_files(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) {
             .to_string_lossy()
             .replace('\\', "/");
         if meta.is_dir() {
-            if matches!(rel.as_str(), ".git" | "target" | "node_modules" | ".leankg") {
+            // Skip any component that is build output, vendored deps, or a
+            // hidden tooling dir (dotfile — .gitnexus/.cursor local state
+            // never holds product surface).
+            if rel.split('/').any(|c| {
+                matches!(c, ".git" | "target" | "node_modules" | ".leankg" | "vendor")
+                    || c.starts_with('.')
+            }) {
                 continue;
             }
             collect_files(&path, base, out);

@@ -1,7 +1,7 @@
 //! L1 read-cache wiring tests.
 //!
 //! Tests in this file cover two layers introduced for the
-//! `fix-rocksdb-lock-contention` plan:
+//! the shared-handle lock-contention plan:
 //!
 //! 1. `CachingGraphEngine` (moka-backed) — hit / miss / key stability /
 //!    `invalidate()`.

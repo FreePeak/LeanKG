@@ -35,7 +35,7 @@ When talking to Docker MCP on `:9699`, pass the **container mount** as `project=
 | This LeanKG repo | `/workspace` |
 | Extra bind (compose override) | `/workspace-other` (or the container side of the bind) |
 
-Do **not** pass a Mac host path (e.g. `/Users/.../leankg`) as `project` against Docker RocksDB.
+Do **not** pass a bare parent directory as `project` — pass the project checkout directory itself (sqlite default engine).
 
 ### Prefer-order (discover → exact)
 

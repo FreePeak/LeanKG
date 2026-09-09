@@ -224,8 +224,8 @@ mod knowledge {
             "add_knowledge",
             json!({
                 "knowledge_type": "design",
-                "title": "Why we use RocksDB",
-                "content": "RocksDB survives 256GB SSD writes without mmap thrash.",
+                "title": "Why we use sqlite",
+                "content": "sqlite WAL survives 256GB SSD writes without mmap thrash.",
                 "tags": "[\"storage\",\"design\"]",
                 "author": "oncall"
             }),
@@ -246,7 +246,7 @@ mod knowledge {
         .expect("update_knowledge");
         assert!(updated.get("id").is_some());
 
-        let hits = call(&handler, "search_knowledge", json!({"query": "RocksDB"}))
+        let hits = call(&handler, "search_knowledge", json!({"query": "sqlite WAL"}))
             .await
             .expect("search_knowledge");
         assert!(!hits.to_string().is_empty());

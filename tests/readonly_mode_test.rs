@@ -1,8 +1,8 @@
 //! Read-only mode tests.
 //!
-//! Phase 1 of the RocksDB lock-contention plan: query-only MCP servers should
-//! be able to open a `GraphEngine` without taking RocksDB's LOCK and reject
-//! any tool that mutates state. These tests exercise the public surface:
+//! Phase 1 of the shared-handle lock-contention plan: query-only MCP servers
+//! should be able to open a `GraphEngine` without forcing a second open and
+//! reject any tool that mutates state. These tests exercise the public surface:
 //!
 //! * `leankg::db::backend::init_db_readonly` — PG read-only connection
 //! * `leankg::graph::GraphEngine::open_readonly` — wraps the above
