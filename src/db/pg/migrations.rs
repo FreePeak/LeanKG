@@ -48,6 +48,14 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("migrations/005_hnsw_dims_cleanup.sql"),
     ),
     (
+        // #332-follow-up: re-added — dropped in the v4.4.0 sqlite-default
+        // sweep (#268), which left every fresh Postgres install without the
+        // audit ledger (FR-ENT-1 recording silently disabled, audit
+        // export/verify failing at open).
+        "006_audit_log",
+        include_str!("migrations/006_audit_log.sql"),
+    ),
+    (
         "007_trgm_fuzzy",
         include_str!("migrations/007_trgm_fuzzy.sql"),
     ),
@@ -205,6 +213,27 @@ fn reconcile_statements(desired: usize, m: usize, ef: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    /// #332-follow-up regression: 006_audit_log must stay in the PG
+    /// migration set — the v4.4.0 sqlite-default sweep dropped it and every
+    /// fresh Postgres install lost the audit ledger (FR-ENT-1).
+    #[test]
+    fn audit_log_migration_present_and_ordered() {
+        let pos = super::MIGRATIONS
+            .iter()
+            .position(|(id, _)| *id == "006_audit_log")
+            .expect("006_audit_log must be in MIGRATIONS");
+        assert_eq!(
+            super::MIGRATIONS[pos].1,
+            include_str!("migrations/006_audit_log.sql"),
+            "the registered 006 body must be the audit-log DDL"
+        );
+        // Ordering sanity: ids must be ascending (zero-padded → lexicographic
+        // equals numeric).
+        let ids: Vec<&str> = super::MIGRATIONS.iter().map(|(id, _)| *id).collect();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        assert_eq!(ids, sorted, "migrations must be ordered by id");
+    }
     use super::*;
 
     /// Serialize tests that mutate LEANKG_PG_URL (process-global env).
