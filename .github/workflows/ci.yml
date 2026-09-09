@@ -47,6 +47,12 @@ jobs:
             ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-target-
 
+      - name: Compile all test targets (integration suites must never rot)
+        # `--lib` alone lets integration tests (tests/*.rs) drift out of
+        # compilation — that happened with temporal_query's signature change
+        # (#331) and stayed broken for two releases. Compiling without
+        # running needs no PG container; runtime cost is build-cache only.
+        run: cargo test --no-run --release
       - name: Run unit tests
         run: cargo test --lib
 
