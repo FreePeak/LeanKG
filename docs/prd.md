@@ -1,14 +1,30 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.4.2-harden-and-validate
-**Date:** 2026-09-08
+**Version:** 4.4.3-dual-engine-verified
+**Date:** 2026-09-09
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
-**Codebase Version:** 0.27.0
-**Storage:** Dual-backend — SQLite default (`LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset), PostgreSQL + pgvector via `LEANKG_PG_URL`
+**Codebase Version:** 0.28.1
+**Storage:** Dual-backend, BOTH verified live — SQLite default (`LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset), PostgreSQL + pgvector via `LEANKG_PG_URL`
 
 ---
 
 ## Changelog
+
+### v4.4.3-dual-engine-verified — CI pipeline healed + Postgres path fixed + verified on both engines (2026-09-09)
+
+> **Trigger:** user report that CI was failing on GitHub, then a dual-engine (sqlite + Postgres) verification sweep.
+
+**CI pipeline healed (3 stacked semantic-release defects):** #336 idempotent bumps (release-PR merge re-entering create-pr treated already-at-target as a fatal throw); #337 event-race fix (merging any PR fired push+pull_request runs sharing one concurrency group — they cancelled each other; groups now per-event, release mode only for `release/*` head branches); #339 semantic-release now bumps the npm wrapper (auto release PRs pass the parity gate). Verified end-to-end: merge → auto release PR → CI green → merge → tag published automatically. **v0.28.0 (#335) and v0.28.1 (#338) shipped this way.**
+
+**Storage platform:** #326 sqlite is the default and only CI-tested engine — Docker/Postgres triggers removed (Dockerfiles, compose files, docker-* scripts, Makefile docker targets, install.sh docker subcommand); PG service containers dropped from all workflows (also fixed the week-long perf-gate red: the scale harness still asserted the pre-#283 one-tool registry). Postgres remains an explicit `LEANKG_DB_ENGINE=postgres` opt-in and was re-verified live on pgvector/pg18.
+
+**Postgres path fixed:** #342 restored `006_audit_log` to the PG MIGRATIONS array (dropped by the v4.4.0 sweep — fresh PG installs had no audit ledger: recording silently disabled, export/verify failing); #341 temporal_query uses `!regex_matches` (the `not` spelling parsed on sqlite but the PG translator has no top-level `not`); #343 integration suites updated to the 3-tool surface + bounded temporal_query API (they did not compile since #331 — CI runs `--lib` only, so this escaped CI).
+
+**Stale-surface cleanup:** no_legacy_terms guard resized (cozo is the live engine; FORBIDDEN = datadog only), hidden dirs + vendor/ + nested node_modules skipped in its walk, Makefile dead docker targets removed, ui-v2/CLAUDE.md/SKILL.md Docker-era guidance rewritten, 10+ RocksDB comments modernized.
+
+**Dual-engine live verification (same binary):** sqlite — get 7 hits, temporal_query 57,473 (bounded), audit chain 2 entries; PG — temporal_query 32ms/9, get green, audit chain intact (1 entry recorded + verified), migration 006 applies on fresh db; full PG integration suite 49/49 suites, 3,222 tests.
+
+### v4.4.2-harden-and-validate — 8 PRs merged, live-validated (2026-09-08)
 
 ### v4.4.2-harden-and-validate — 8 PRs merged, live-validated (2026-09-08)
 
@@ -18,7 +34,7 @@
 
 **Live-validated on this repo (sqlite, `:9799`):** 578 files, 10,202 elements, 12,984 vectors (vendor-free); `create_hnsw_index` → rung=exact, real symbol; router latency 6.07s cold → 2.31s warm; audit ledger recording enabled.
 
-**Still open:** #286 crash (hook live on main; worker isolation deferred until a crash reproduces with hook evidence), #308-followup (relationship sweep gap — swept files' relationships may persist), #309-followup (audit export/verify still PG-only), #300-followup (PRD AC wording), #302-followup (embeddings-feature CI job).
+**Still open (all closed since):** #308-followup + #309-followup + #300-followup landed in the v4.4.3 window; #302 closed via #315.
 
 ### v4.4.1-three-tools-live — live-tested SQLite server + Datalog repairs (2026-09-07, PR #284)
 
@@ -420,4 +436,4 @@ All superseded material is preserved and linked, not deleted:
 - **Simplicity research sprint (2026-09-04, three parallel scouts):** repo friction audit (file:line — 76/73 tools, 103 CLI verbs, 116 env names, 10-step walkthrough, error-copy gaps); competitor mechanics (zg, context7, serena, Desktop Commander, gitleaks — live-fetched URLs); onboarding playbooks (Supabase/Convex TTFV, Stripe error codes, clig.dev, Vercel, Stack Overflow 2025) → findings folded into §2.6, §3.9 (FR-ZCP-12), §5 M8, §6
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 
-*Last updated: 2026-09-08 (v4.4.2 — 8 PRs merged + live-validated; see v4.4.2 changelog. v4.4.1 — live-tested 3-tool SQLite server: dispatch unification across rmcp+JSON-RPC arms, Datalog repairs — import :put upsert / bracket nesting / fuzzy relation ref / positional→attribute rule forms / L3 hydration ports; issues #286–#288 open. v4.4.0 — 3-tool registry `set`/`get`/`status` + SQLite dual-backend; v4.3.1 — hard one-tool cutover: registry = `leankg_context` only, ~76 capabilities as `{verb}` envelope args, envelope resolved before RO-gate/write-lock/audit; v4.3.0 — one-tool degradation ladder (L0–L3, `retrieval` provenance) + first-run setup contract FR-ZCP-13 (auto/manual + `leankg add`) + FR-ZCP-05 bridge tier; v4.2.0 — measured-simplicity contract → FR-ZCP-12 T1/T2/T3 + M8 + D-2026-09-04-3; v4.1.1 — OMP memory-backend audit + zvec-grep embedding-correctness audit → FR-ZCP-11)*
+*Last updated: 2026-09-09 (v4.4.3 — CI pipeline healed (semantic-release ×3 defects), sqlite-default conversion shipped, Postgres path fixed (audit migration + temporal translator) and dual-engine verified live, integration suites re-pinned to the 3-tool surface)*
