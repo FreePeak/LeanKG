@@ -144,6 +144,68 @@ fn tool_timeout_for(tool: &str) -> std::time::Duration {
 /// Build the per-server dispatch JSON response cache. Sized and TTL'd
 /// independently of the engine-level caches inside `CachingGraphEngine` so
 /// they can be tuned per deployment.
+/// FR-ZCP-06: freshness is reconciled OFF the query path — one probe per
+/// project per TTL window (30s, cheap: element count + inventory + git tip)
+/// and invalidated by writes via the write tracker. `None` TTL = no expiry
+/// (only explicit invalidation).
+const FRESHNESS_TTL: Duration = Duration::from_secs(30);
+
+fn build_freshness_cache(
+) -> Arc<parking_lot::Mutex<HashMap<String, (Freshness, std::time::Instant)>>> {
+    Arc::new(parking_lot::Mutex::new(HashMap::new()))
+}
+
+/// Index-backed tools: every graph-reading surface whose response carries
+/// the FR-ZCP-06 freshness stamp. Write/meta tools (set, audit, diary,
+/// config, export builders) are excluded — they do not serve index results.
+impl MCPServer {
+    fn is_index_backed_tool(tool_name: &str) -> bool {
+        matches!(
+            tool_name,
+            "get"
+                | "leankg_context"
+                | "mcp_status"
+                | "search_code"
+                | "concept_search"
+                | "semantic_search"
+                | "get_dependencies"
+                | "get_dependents"
+                | "get_impact_radius"
+                | "get_review_context"
+                | "get_call_graph"
+                | "get_context"
+                | "find_large_functions"
+                | "get_tested_by"
+                | "get_files_for_doc"
+                | "get_traceability"
+                | "get_doc_tree"
+                | "get_code_tree"
+                | "find_related_docs"
+                | "get_clusters"
+                | "query_graph"
+                | "shortest_path"
+                | "explain_node"
+                | "get_god_nodes"
+                | "temporal_query"
+                | "timeline"
+                | "check_consistency"
+                | "find_tunnels"
+                | "get_overview_context"
+                | "get_pr_impact"
+                | "get_nav_graph"
+                | "get_nav_callers"
+                | "get_service_graph"
+                | "find_route"
+                | "run_raw_query"
+                | "ctx_read"
+                | "agent_focus"
+                | "get_team_map"
+                | "kg_context"
+                | "kg_ontology_status"
+        )
+    }
+}
+
 fn build_dispatch_cache() -> Cache<String, serde_json::Value> {
     let cap = std::env::var("LEANKG_L1_DISPATCH_SIZE")
         .ok()
@@ -214,6 +276,9 @@ pub struct MCPServer {
     /// `LEANKG_L1_DISPATCH_TTL` so it can be tuned independently of the
     /// engine-level caches inside `CachingGraphEngine`.
     dispatch_cache: Cache<String, serde_json::Value>,
+    /// FR-ZCP-06: per-project freshness, reconciled off the query path.
+    /// Value = (stamp, computed_at) for the 30s TTL window.
+    freshness_cache: Arc<parking_lot::Mutex<HashMap<String, (Freshness, std::time::Instant)>>>,
     watch_path: Option<PathBuf>,
     write_tracker: Arc<WriteTracker>,
     intent_parser: IntentParser,
@@ -380,6 +445,7 @@ impl Clone for MCPServer {
             graph_engine_cache: self.graph_engine_cache.clone(),
             caching_engine_cache: self.caching_engine_cache.clone(),
             dispatch_cache: self.dispatch_cache.clone(),
+            freshness_cache: self.freshness_cache.clone(),
             watch_path: self.watch_path.clone(),
             write_tracker: self.write_tracker.clone(),
             intent_parser: IntentParser::new(),
@@ -554,6 +620,7 @@ impl MCPServer {
             graph_engine_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             caching_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             dispatch_cache: build_dispatch_cache(),
+            freshness_cache: build_freshness_cache(),
             watch_path: None,
             write_tracker: Arc::new(WriteTracker::new()),
             intent_parser: IntentParser::new(),
@@ -582,6 +649,7 @@ impl MCPServer {
             graph_engine_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             caching_engine_cache: Arc::new(RwLock::new(HashMap::new())),
             dispatch_cache: build_dispatch_cache(),
+            freshness_cache: build_freshness_cache(),
             watch_path: Some(watch_path),
             write_tracker: Arc::new(WriteTracker::new()),
             intent_parser: IntentParser::new(),
@@ -807,6 +875,39 @@ impl MCPServer {
     /// computed from cheap local facts (element count + inventory snapshot
     /// vs last commit). `Cold` when the graph holds no elements (attached,
     /// index still building); `Unknown` when no engine is open.
+    /// FR-ZCP-06: freshness for the stamp, reconciled OFF the query path —
+    /// served from the 30s TTL cache; a miss computes once and populates.
+    /// Writes invalidate via [`Self::invalidate_freshness`], so the stamp
+    /// never lies after a mutation.
+    fn cached_freshness(&self, project_db_path: &std::path::Path) -> Freshness {
+        let key = project_db_path.display().to_string();
+        {
+            let cache = self.freshness_cache.lock();
+            if let Some((f, at)) = cache.get(&key) {
+                if at.elapsed() < FRESHNESS_TTL {
+                    return *f;
+                }
+            }
+        }
+        // Off-query-path reconciliation: one probe per TTL window.
+        let f = match self.engine_freshness_for_path(project_db_path) {
+            EngineFreshness::Known(f) => f,
+            EngineFreshness::Unknown => Freshness::Cold,
+        };
+        self.freshness_cache
+            .lock()
+            .insert(key, (f, std::time::Instant::now()));
+        f
+    }
+
+    /// FR-ZCP-06: drop the cached stamp so the next index-backed response
+    /// re-reconciles. Called when the write tracker goes dirty.
+    fn invalidate_freshness(&self, project_db_path: &std::path::Path) {
+        self.freshness_cache
+            .lock()
+            .remove(&project_db_path.display().to_string());
+    }
+
     pub fn engine_freshness_for_path(&self, project_db_path: &std::path::Path) -> EngineFreshness {
         let engine = {
             let cache = self.graph_engine_cache.lock();
@@ -3679,6 +3780,22 @@ impl MCPServer {
         let args_value = serde_json::Value::Object(arguments);
         let mut result = handler.execute_tool(tool_name, &args_value).await;
 
+        // FR-ZCP-06: freshness contract — every index-backed response
+        // carries the stamp. Reconciled off the query path (30s TTL cache,
+        // invalidated by writes), so this is a map lookup per request.
+        // mcp_status/leankg_context already carry freshness natively; the
+        // stamp fills the rest. Errors stay errors — only successful
+        // responses are decorated.
+        if Self::is_index_backed_tool(tool_name) {
+            if let Ok(ref mut v) = result {
+                if let Some(obj) = v.as_object_mut() {
+                    obj.entry("freshness".to_string()).or_insert_with(|| {
+                        serde_json::json!(self.cached_freshness(&project_db_path).as_str())
+                    });
+                }
+            }
+        }
+
         // FR-ZCP-02: attach provenance + freshness on every index-backed
         // response. Cold = attached this request with an empty graph; the
         // agent learns why results are empty instead of guessing. Auth and
@@ -3723,6 +3840,12 @@ impl MCPServer {
                 | "promote_environment"
         ) {
             self.write_tracker.mark_dirty();
+            // FR-ZCP-06: writes invalidate the freshness stamp — the next
+            // index-backed response re-reconciles instead of serving a
+            // pre-mutation value for the TTL window.
+            if let Some(p) = self.graph_engine_cache.lock().keys().next() {
+                self.invalidate_freshness(p);
+            }
         }
 
         // L1 cache invalidation on writes. After a successful mutation we
@@ -4813,6 +4936,47 @@ async fn health_check() -> Response {
 
 #[cfg(test)]
 mod tests {
+
+    /// FR-ZCP-06: the index-backed classifier must cover every graph-reading
+    /// verb (stamped) and exclude write/meta tools (set, audit, diary,
+    /// config) — those carry no index results.
+    #[test]
+    fn is_index_backed_tool_covers_reads_excludes_writes() {
+        for t in [
+            "get",
+            "leankg_context",
+            "mcp_status",
+            "search_code",
+            "semantic_search",
+            "get_impact_radius",
+            "query_graph",
+            "temporal_query",
+            "check_consistency",
+            "get_traceability",
+        ] {
+            assert!(
+                MCPServer::is_index_backed_tool(t),
+                "{t} is index-backed and must be stamped"
+            );
+        }
+        for t in [
+            "set",
+            "mcp_init",
+            "mcp_index",
+            "embed_control",
+            "ontology_control",
+            "agent_diary_write",
+            "report_query_outcome",
+            "export_graph_snapshot",
+            "generate_doc",
+        ] {
+            assert!(
+                !MCPServer::is_index_backed_tool(t),
+                "{t} is write/meta and must not be stamped"
+            );
+        }
+    }
+
     use super::*;
 
     // Serialize tests that mutate process-wide environment variables.
@@ -4831,6 +4995,51 @@ mod tests {
         let db_path = std::path::PathBuf::from("/custom/path/.leankg");
         let server = MCPServer::new(db_path.clone());
         assert!(server.auth_manager.try_read().is_ok());
+    }
+
+    /// FR-ZCP-06: the freshness cache serves the same stamp within the TTL
+    /// window (off-query-path reconciliation) and invalidation forces a
+    /// recompute. Uses a real sqlite fixture so the probe has data.
+    #[test]
+    fn freshness_cache_serves_ttl_and_invalidates() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_path = tmp.path().join(".leankg");
+        std::fs::create_dir_all(&db_path).unwrap();
+        let engine = crate::db::backend::init_db(&db_path).unwrap();
+        let g = crate::graph::GraphEngine::new(engine);
+        g.insert_elements(&[crate::db::models::CodeElement {
+            qualified_name: "a.rs::f".into(),
+            element_type: "function".into(),
+            name: "f".into(),
+            file_path: "a.rs".into(),
+            language: "rust".into(),
+            ..Default::default()
+        }])
+        .unwrap();
+        let server = MCPServer::new(db_path.clone());
+        {
+            server
+                .graph_engine_cache
+                .lock()
+                .insert(db_path.clone(), g.clone());
+        }
+
+        let f1 = server.cached_freshness(&db_path);
+        let f2 = server.cached_freshness(&db_path);
+        assert_eq!(f1, f2, "TTL window must serve the cached stamp");
+
+        // Invalidated → recomputed (same value on unchanged data, but the
+        // cache entry is gone first).
+        server.invalidate_freshness(&db_path);
+        assert!(
+            !server
+                .freshness_cache
+                .lock()
+                .contains_key(&db_path.display().to_string()),
+            "invalidate must drop the entry"
+        );
+        let f3 = server.cached_freshness(&db_path);
+        assert_eq!(f3, f1, "unchanged data reconciles to the same stamp");
     }
 
     #[test]
