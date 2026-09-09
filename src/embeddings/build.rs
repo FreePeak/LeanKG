@@ -815,6 +815,9 @@ pub fn run(
     }
     let db = graph.db();
 
+    // FR-ZCP-11: hard rebuild guard (all entry points must enforce it).
+    enforce_stamp(db, matches!(opts.mode, BuildMode::Full))?;
+
     // Cheap resume preflight before walking the graph.
     let preflight = crate::embeddings::control::embed_resume_preflight(db).ok();
     if let Some(ref pre) = preflight {
@@ -1115,6 +1118,9 @@ pub fn build_index_parallel(
     use std::sync::Arc;
 
     let db = graph.db();
+
+    // FR-ZCP-11: hard rebuild guard (all entry points must enforce it).
+    enforce_stamp(db, matches!(opts.mode, BuildMode::Full))?;
 
     // P0 self-heal (mirrors `run`): `embedding_state` rows that describe
     // vectors which no longer exist leave the Incremental dirty set
@@ -1604,6 +1610,23 @@ pub fn build_index_parallel(
 /// BGE model; `embedding_vectors_<model_id>` otherwise).
 fn active_vectors_relation() -> Result<String, Box<dyn std::error::Error>> {
     Ok(crate::embeddings::registry::resolve_active_model()?.vectors_relation())
+}
+
+/// FR-ZCP-11 hard rebuild guard — shared by ALL embed entry points (run,
+/// build_index_parallel, spawn_background_embed). On a persisted-stamp vs
+/// active-model mismatch this refuses to embed with a rebuild directive;
+/// a fresh collection is stamped here so the identity is set at first
+/// build. `full` rebuilds also (re)write the stamp on success.
+fn enforce_stamp(
+    db: &dyn crate::db::backend::DbBackend,
+    full: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let entry = crate::embeddings::registry::resolve_active_model()?;
+    crate::embeddings::stamp::require_stamp_match(db, &entry)?;
+    if full {
+        crate::embeddings::stamp::write_stamp(db, &entry)?;
+    }
+    Ok(())
 }
 
 /// Helper: write a batch of (qualified_name, vector) pairs to Postgres

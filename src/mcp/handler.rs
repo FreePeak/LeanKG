@@ -4127,6 +4127,56 @@ impl ToolHandler {
         // The pre-router behavior hard-errored here, which is exactly the
         // pattern the ladder deletes: degrade to the keyword rung (trigram
         // fuzzy + ontology fusion) with a structured hint instead of an error.
+        // FR-ZCP-11: hard rebuild guard on the QUERY side — if the
+        // collection's stamp conflicts with the active model, the vectors
+        // were built by a different model identity; degrade to L2 with a
+        // reason naming the drift. Never serve mixed-model results.
+        if has_vectors {
+            let model_entry = match model {
+                Some(id) => crate::embeddings::registry::lookup_model(id),
+                None => crate::embeddings::registry::lookup_model(
+                    &crate::embeddings::registry::active_model_id(),
+                )
+                .or_else(|| {
+                    crate::embeddings::registry::resolve_active_model()
+                        .ok()
+                        .map(|e| e)
+                })
+                .or(None),
+            };
+            if let Some(entry) = model_entry {
+                match crate::embeddings::stamp::stamp_mismatch_reason(
+                    self.graph_engine.db().as_ref(),
+                    &entry,
+                ) {
+                    Ok(Some(reason)) => {
+                        let (results, method) = crate::mcp::router::fuse_l2(
+                            &self.graph_engine,
+                            query,
+                            &env,
+                            top_k.min(50),
+                        )?;
+                        return Ok(serde_json::json!({
+                            "query": query,
+                            "env": env,
+                            "seeds": [],
+                            "traversed": [],
+                            "functions": results,
+                            "degraded": true,
+                            "hint": format!("model-stamp mismatch: {reason} — run `leankg embed --full` to rebuild"),
+                            "method": method,
+                            "retrieval": {
+                                "rung": "keyword",
+                                "reason": format!("model-stamp mismatch; keyword rung ({reason})"),
+                                "freshness": "possibly_stale",
+                            },
+                        }));
+                    }
+                    Ok(None) => {}
+                    Err(e) => return Err(format!("model-stamp check failed: {e}")),
+                }
+            }
+        }
         if !has_vectors {
             let hint = crate::errors::render(
                 crate::errors::NO_VECTORS.code,
