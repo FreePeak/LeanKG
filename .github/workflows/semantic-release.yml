@@ -34,7 +34,7 @@ permissions:
 
 # One release flow at a time; cancel duplicate runs racing on the same ref.
 concurrency:
-  group: semantic-release-${{ github.ref }}
+  group: semantic-release-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -47,7 +47,9 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
+       startsWith(github.event.pull_request.head.ref, 'release/'))
     steps:
       - uses: actions/checkout@v4
         with:
