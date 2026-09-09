@@ -1,6 +1,6 @@
 # LeanKG — Agent Context
 
-**Tech stack:** Rust + PostgreSQL/pgvector + tree-sitter + MCP
+**Tech stack:** Rust + SQLite (default; optional PostgreSQL/pgvector) + tree-sitter + MCP
 
 ## Build & Test
 
@@ -32,22 +32,20 @@ cargo fmt --all -- --check      # formatting check
 
 Embeddings require `--features embeddings` build flag (off by default). Without them, `semantic_search` / `kg_semantic_context` return "no vectors".
 
-## MANDATORY: Docker MCP project paths
+## Storage: sqlite default (no Docker, no Postgres by default)
 
-When MCP talks to Docker HTTP on `:9699`, **always** pass container mount paths as `project=`. Host paths return "not initialized".
+The default storage engine is **sqlite** (`<project>/.leankg/leankg.db`). MCP
+HTTP `project=` takes the **project checkout directory** — the same directory
+you would `cd` into.
 
 ```rust
-mcp_status(project="/workspace")              // OK
-search_code(query="fn main", project="/workspace")  // OK
-mcp_status(project="/Users/.../leankg")        // FAILS
+mcp_status(project="/path/to/checkout")                    // OK
+search_code(query="fn main", project="/path/to/checkout")  // OK
 ```
 
-| Mount | `project=` |
-|-------|-----------|
-| This repo | `/workspace` |
-| Side repo | `/workspace-other` (per local `.dockerfile`) |
-
-Health check: `curl http://localhost:9699/health`. If healthy → use Docker MCP. Else → fall back to stdio + host-path `mcp_init`.
+Health check: `curl http://localhost:9699/health`. Postgres remains available
+as an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) but
+nothing in the default flow triggers it.
 
 ## Tool discovery prefer-order
 
@@ -91,11 +89,9 @@ Do **not** open with `query_graph`. Discover first:
 
 ## Multi-project setup (side-by-side repos)
 
-Gitignored local files:
-- `.dockerfile` — copy from `.dockerfile.example`; set `LEANKG_PROJECT_DIRS=/workspace,/workspace-other`
-- `docker-compose.override.yml` — add bind mounts for side repos
-
-Never paste personal host paths into commits.
+Point MCP HTTP at each checkout directory via `project=` (sqlite default).
+Multi-project serving: set `LEANKG_PROJECT_DIRS` to a comma-separated list of
+checkout paths. Never paste personal host paths into commits.
 
 ## Parallel subagent workflow
 
@@ -103,7 +99,7 @@ For 3+ independent tasks: dispatch to `.worktree/<feature>/` worktrees with feat
 
 ## Cursor Cloud specific instructions
 
-Single Rust binary (`leankg`); all modes are subcommands. Storage is PostgreSQL-only — set `LEANKG_PG_URL` (local Docker Postgres: `docker start leankg-pg-500mb`, then `postgres://postgres:postgres@localhost:5433/leankg`; no remote Postgres is configured anymore — removed 2026-09-05). The VM snapshot already has the toolchain and system libs below; the startup update script only runs `cargo fetch`.
+Single Rust binary (`leankg`); all modes are subcommands. Storage is **sqlite by default** (`<project>/.leankg/leankg.db`) — no external database required. Postgres remains an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`). The VM snapshot already has the toolchain and system libs below; the startup update script only runs `cargo fetch`.
 
 - **Toolchain**: build requires Rust **stable ≥ 1.85** (transitive deps use edition2024). The base image's 1.83 is too old; the snapshot ships `rustup default stable`. README's "Rust 1.75+" badge is outdated for building from source.
 - **Native build deps**: native extensions compiled via the `cxx`/C++ toolchain need C++ stdlib headers. `clang`/`cc` select GCC 14, so `libstdc++-14-dev` (plus `g++`) must be present or the build fails with `fatal error: 'algorithm' file not found`. These are installed in the snapshot.
@@ -116,4 +112,4 @@ Single Rust binary (`leankg`); all modes are subcommands. Storage is PostgreSQL-
 
 ---
 
-*Last updated: 2026-09-05 (storage = local Docker Postgres only; remote Postgres configs removed)*
+*Last updated: 2026-09-09 (storage = sqlite default; Postgres is an explicit opt-in; Docker files removed)*

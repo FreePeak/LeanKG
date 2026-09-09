@@ -6,13 +6,10 @@ set -euo pipefail
 #
 # Works in two modes:
 #   1. Local stdio: uses `cargo run --` automatically (Rust + Cargo required)
-#   2. Docker/installed: set LEANKG_BIN=leankg (or put leankg in PATH)
 #
-# In Docker, also set PROJECT=/workspace (the container mount path).
 #
 # Usage:
 #   ./scripts/refresh-index-embed.sh                                # local
-#   LEANKG_BIN=leankg PROJECT=/workspace ./scripts/refresh-index-embed.sh  # Docker
 #
 #   ./scripts/refresh-index-embed.sh --source git+https://...  # remote git
 #   ./scripts/refresh-index-embed.sh --source gs://bucket/     # GCS

@@ -1,8 +1,6 @@
 # H5 / FR-PLG-7 — Quickstart < 5 min timed smoke test (weekly gate + manual dispatch).
-# Runs scripts/quickstart_smoke.sh against a real PostgreSQL with pgvector:
-# src/db/pg/schema.sql issues `CREATE EXTENSION IF NOT EXISTS vector`, so the plain
-# postgres:16 image would fail migrations. We use pgvector/pgvector:pg16 (the
-# maintained successor of the deprecated ankane/pgvector images).
+# Runs scripts/quickstart_smoke.sh on the sqlite default engine — no Postgres
+# service container, no Docker.
 name: quickstart-smoke
 
 on:
@@ -19,23 +17,6 @@ jobs:
     name: Quickstart < 5 min smoke
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: leankg
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      LEANKG_PG_URL: postgres://postgres:postgres@localhost:5432/leankg
 
     steps:
       - uses: actions/checkout@v4
