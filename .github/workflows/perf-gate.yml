@@ -1,7 +1,6 @@
 # Perf regression gate (CORE-6 / H8): fail when a deterministic workload
 # regresses >PERF_GATE_PCT% vs committed benchmarks/baseline.json.
-# NOTE: uses a Postgres SERVICE container for CI only — local dev always uses
-# the remote PG via LEANKG_PG_URL (never Docker).
+# Storage: sqlite only — no Postgres service container, no Docker.
 name: perf-gate
 on:
   workflow_dispatch:
@@ -14,30 +13,12 @@ on:
 jobs:
   perf-gate:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: leankg
-          POSTGRES_PASSWORD: leankg
-          POSTGRES_DB: leankg
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      LEANKG_PG_URL: postgres://leankg:leankg@localhost:5432/leankg
       PORT: "9797"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Enable pgvector extension
-        run: |
-          docker exec ${{ job.services.postgres.id }} psql -U leankg -d leankg \
-            -c "CREATE EXTENSION IF NOT EXISTS vector;"
       - name: Build release binary
         run: cargo build --release
       - name: Collect workload metrics + compare against baseline
@@ -63,22 +44,7 @@ jobs:
   scale-harness:
     runs-on: ubuntu-latest
     needs: perf-gate
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: leankg
-          POSTGRES_PASSWORD: leankg
-          POSTGRES_DB: leankg
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      LEANKG_SCALE_PG_MODE: direct
-      LEANKG_SCALE_PG_URL: postgres://leankg:leankg@localhost:5432/leankg
       LEANKG_BIN: ${{ github.workspace }}/target/release/leankg
     steps:
       - uses: actions/checkout@v4

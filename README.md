@@ -14,13 +14,11 @@
   ·
   <a href="docs/prd.md">Docs</a>
   ·
-  <a href="https://hub.docker.com/r/freepeak/leankg">Docker Hub</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/FreePeak/LeanKG/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
   <a href="https://crates.io/crates/leankg"><img src="https://img.shields.io/crates/v/leankg.svg" alt="crates.io"></a>
-  <a href="https://hub.docker.com/r/freepeak/leankg"><img src="https://img.shields.io/docker/v/freepeak/leankg?label=docker&logo=docker" alt="Docker Hub"></a>
   <a href="https://github.com/FreePeak/LeanKG/actions"><img src="https://img.shields.io/github/actions/workflow/status/FreePeak/LeanKG/ci.yml?branch=main&label=CI" alt="CI"></a>
 </p>
 
@@ -34,39 +32,16 @@
 
 ### Prerequisites
 
-Postgres + pgvector is required (only storage engine). From a LeanKG checkout:
+None — **sqlite is the default storage engine**. No Postgres, no Docker.
 
-```bash
-docker compose up -d postgres   # host :5433
-```
-
-Default URL: `postgresql://postgres:postgres@localhost:5433/leankg` (override with `LEANKG_PG_URL`).  
-One-liners below do **not** start Postgres — they fail if `:5433` is down.
+Postgres remains available as an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) for server-scale deployments, but nothing in the default flow touches it.
 
 ### One-liners
 
 ```bash
-# Docker — index + embed + MCP HTTP (Postgres must already be up)
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/docker-up.sh | bash
-
-# Agent — binary + MCP wiring (cursor | claude | opencode | gemini | kilo | antigravity | docker | update)
+# Agent — binary + MCP wiring (cursor | claude | opencode | gemini | kilo | antigravity | update)
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
 ```
-
-Skip cold embed: `LEANKG_SKIP_EMBED=1 curl -fsSL …/docker-up.sh | bash`
-
-### Docker (manual)
-
-```bash
-docker compose up -d          # Postgres :5433 + MCP :9699
-# or MCP only (bring your own PG via LEANKG_PG_URL):
-docker run -d --name leankg -p 9699:9699 \
-  -e LEANKG_PG_URL=postgresql://postgres:postgres@host.docker.internal:5433/leankg \
-  -v "$(pwd):/workspace" freepeak/leankg:latest
-curl http://localhost:9699/health
-```
-
-MCP URL: `http://localhost:9699/mcp`
 
 ### From source
 
@@ -80,10 +55,7 @@ cargo install leankg
 ## Get Started
 
 ```bash
-# 0. Postgres once — point at your instance (or: docker compose up -d postgres)
-export LEANKG_PG_URL="postgres://user:pass@host:5432/db"
-
-# 1. Per project: init -> migrate -> index
+# 1. Per project: init -> migrate -> index (sqlite default — zero config)
 cd your-project
 leankg init && leankg migrate && leankg index ./src
 
@@ -94,13 +66,13 @@ leankg connect claude-code           # add --remote http://host:9699 to reuse a 
 leankg mcp-http --port 9699          # GET /health returns 200 when ready
 ```
 
-Self-check any deployment: `leankg doctor --deep` — PG latency, migrations, index freshness,
-embedding coverage, pool env, orphan edges, duplicate names (exit 0 pass / 1 warn / 2 fail).
+Self-check any deployment: `leankg doctor --deep` — index freshness, migrations,
+embedding coverage, orphan edges, duplicate names (exit 0 pass / 1 warn / 2 fail).
 
 Measured timings (`scripts/quickstart_smoke.sh`, run weekly in CI): full e2e smoke **88 s**
 vs a 300 s budget; indexing a small repo takes well under 2 minutes.
 
-Docker MCP users: pass **container** paths as `project=` (e.g. `/workspace`), never host paths.
+MCP HTTP: pass the **project checkout directory** as `project=`.
 
 ### Server-side setup pipeline (clone -> index -> embed)
 
@@ -162,7 +134,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 
 | Pillar | Ships as |
 | ------ | -------- |
-| Multi-repo server | Docker MCP `:9699` + Postgres/pgvector; `LEANKG_PROJECT_DIRS` |
+| Multi-repo server | MCP HTTP `:9699` (sqlite default; PG opt-in); `LEANKG_PROJECT_DIRS` |
 | Env governance | `env=`, `promote_environment`, `find_env_conflicts` |
 | Ops & ownership | `get_service_graph`, `query_incidents`, `get_team_map` |
 | Req ↔ code | `index_prd`, `get_traceability`, `get_traceability_matrix` |
@@ -198,7 +170,7 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 ## Key Features
 
 - **MCP-native** — search, impact, call graphs, ontology, architecture, team knowledge
-- **Postgres + pgvector** — only storage engine; HNSW semantic search (`--features embeddings` / Docker)
+- **SQLite default** (zero-config, no Docker) with optional Postgres/pgvector backend; HNSW semantic search (`--features embeddings`)
 - **Procedural ontology** — hot-reload `ontology/workflows.yaml` → `kg_trace_workflow`
 - **Impact & deps** — `imports`, `calls`, `tested_by`, `http_calls`, `service_calls`
 - **Web UI v2** — Force / Tree / Circles explorer (`leankg serve` + `cd ui-v2 && npm run dev`)
@@ -255,7 +227,7 @@ The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/
 | [Benchmarks (archived)](docs/archive/benchmark.md) | Methodology (historical) |
 | [Embeddings](src/embeddings/EMBEDDINGS.md) | HNSW / ops |
 | [Postgres migration (archived)](docs/archive/analysis/pg-migration-report.md) | Engine notes (historical) |
-| [AGENTS.md](AGENTS.md) | Agent / Docker notes |
+| [AGENTS.md](AGENTS.md) | Agent notes |
 
 ---
 
