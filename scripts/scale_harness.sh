@@ -182,8 +182,11 @@ lines=[l[6:] for l in raw.splitlines() if l.startswith('data: ')]
 print(lines[-1] if lines else '{}')"; }
 
 TOOLS=$(curl -s -m 10 -X POST "$MCP" "${HDR[@]}" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | sse_json \
-  | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('result',{}).get('tools',[])))" 2>/dev/null)
-[ "${TOOLS:-0}" -eq 1 ] && ok "one-tool registry live at scale" || bad "tools/list returned '$TOOLS'"
+  | python3 -c "import json,sys; print(','.join(sorted(t['name'] for t in json.load(sys.stdin).get('result',{}).get('tools',[]))))" 2>/dev/null)
+# #283 3-tool surface: read-only mode hides the write set + `set`, exposing
+# exactly {get, status}. leankg_context stays callable via tools/call (the
+# verb queries below) even though it is not listed.
+[ "${TOOLS:-}" = "get,status" ] && ok "read-only tool registry live at scale (get,status)" || bad "tools/list returned '${TOOLS:-<none>}', expected 'get,status'"
 
 SEARCH=$(curl -s -m 10 -X POST "$MCP" "${HDR[@]}" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"leankg_context","arguments":{"verb":"search_code","query":"op_0","project":"'"$FIXTURE"'"}}}' | sse_json \
   | python3 -c "import json,sys,re; d=json.load(sys.stdin); t=d.get('result',{}).get('content',[{}])[0].get('text','') if 'error' not in d else 'ERR'; m=re.search(r'count: (\d+)',t); print(m.group(1) if m else t[:60])" 2>/dev/null)
