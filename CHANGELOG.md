@@ -1,3 +1,39 @@
+## [0.28.0](https://github.com/FreePeak/LeanKG/compare/v0.27.0...v0.28.0) (2026-09-09)
+
+### Storage & platform
+
+- **sqlite is the default and only CI-tested storage engine** — no Docker, no Postgres in the default flow (#326); Postgres remains an explicit `LEANKG_DB_ENGINE=postgres` opt-in
+- MCP HTTP `project=` takes the project checkout directory (sqlite default)
+
+### Retrieval & router
+
+- Router L1-first: identifier queries served exactly before any ANN hop (#298)
+- Embedder + rerank process-level caches: 16s/query → 2.3s warm (#301)
+- Fuzzy ranking: test-symbol demotion, exact > substring, specificity ordering; hydration quote-escaping (#307)
+- `leankg_context` token budget: post-truncation accounting (#313)
+
+### Indexer correctness
+
+- Stale-element sweep: path-form normalization — symlinked roots no longer mass-remove the index (#332)
+- Relationship bulk-rm matches by FILE prefix, not raw path (#319)
+- Doc join batched: one `is_in` query per lookup kind for the whole tree — remote-PG doc-index hang (320s+) → seconds (#257)
+- `temporal_query` bounded: dedicated queries, capped response with `limit`/`has_more` (#256)
+
+### Observability & ops
+
+- Crash diagnostics: panic hook with durable crash log, hardening (durable write first, thread name) (#305, #317)
+- Durable fatal-error log for Err exits from main (#324)
+- Signal-aware shutdown: SIGTERM/SIGHUP/SIGINT logged by name (#322)
+- Audit ledger on sqlite + `audit export`/`verify` (#312, #320)
+- Audit busy-retry: SQLITE_BUSY no longer disables recording (#322)
+- Stale-element sweep for files that dropped out of the collection set (#311)
+
+### CI
+
+- perf-gate/scale-harness rewritten for sqlite; stale tool-registry assertion fixed — gate green again after a week of red (#326)
+- embeddings-feature test build green (#315)
+
+
 # Changelog
 
 ## [0.26.1](https://github.com/FreePeak/LeanKG/compare/v0.26.0...v0.26.1) (2026-08-21)
