@@ -273,17 +273,22 @@ fn perf_c2_fixture_temporal_query_full_path_under_15s() {
     seed_fixture(&mut scratch, 200, 5_000);
 
     let t0 = Instant::now();
-    let rels = engine.temporal_query(1_800_000_000).expect("temporal");
+    let rels = engine
+        .temporal_query(1_800_000_000, 1_000)
+        .expect("temporal");
     let payload = json!({
-        "at": 1_800_000_000i64,
-        "count": rels.len(),
-        "relationships": rels,
+        "at": rels.as_of,
+        "count": rels.total_relationships,
+        "returned": rels.items.len(),
+        "has_more": rels.total_relationships > rels.items.len(),
+        "relationships": rels.items,
     });
     let out = TokenBudget::apply(payload, "temporal_query");
     let elapsed = t0.elapsed();
     eprintln!(
-        "fixture temporal_query full path: {} rels in {elapsed:?}",
-        rels.len()
+        "fixture temporal_query full path: {} of {} rels in {elapsed:?}",
+        rels.items.len(),
+        rels.total_relationships
     );
     assert!(out.get("relationships").is_some());
     assert!(
@@ -336,17 +341,22 @@ fn perf_c2_corpus_temporal_query_full_path_under_15s() {
         return;
     };
     let t0 = Instant::now();
-    let rels = engine.temporal_query(1_800_000_000).expect("temporal");
+    let rels = engine
+        .temporal_query(1_800_000_000, 1_000)
+        .expect("temporal");
     let payload = json!({
-        "at": 1_800_000_000i64,
-        "count": rels.len(),
-        "relationships": rels,
+        "at": rels.as_of,
+        "count": rels.total_relationships,
+        "returned": rels.items.len(),
+        "has_more": rels.total_relationships > rels.items.len(),
+        "relationships": rels.items,
     });
     let out = TokenBudget::apply(payload, "temporal_query");
     let elapsed = t0.elapsed();
     eprintln!(
-        "corpus temporal_query full path: {} rels in {elapsed:?}",
-        rels.len()
+        "corpus temporal_query full path: {} of {} rels in {elapsed:?}",
+        rels.items.len(),
+        rels.total_relationships
     );
     assert!(out.get("relationships").is_some());
     assert!(

@@ -166,8 +166,15 @@ fn bug_d_probe_temporal_query_latency() {
         return;
     };
     let t0 = std::time::Instant::now();
-    let rels = engine.temporal_query(1_800_000_000).expect("temporal");
-    eprintln!("temporal_query: {} rels in {:?}", rels.len(), t0.elapsed());
+    let rels = engine
+        .temporal_query(1_800_000_000, 1_000)
+        .expect("temporal");
+    eprintln!(
+        "temporal_query: {} of {} rels in {:?}",
+        rels.items.len(),
+        rels.total_relationships,
+        t0.elapsed()
+    );
     assert!(
         t0.elapsed().as_secs() < 10,
         "BUG-D: temporal_query took {:?} (>10s)",

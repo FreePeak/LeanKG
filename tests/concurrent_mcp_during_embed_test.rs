@@ -270,28 +270,36 @@ async fn concurrent_ro_mcp_queries_succeed_while_worker_holds_lock_and_writes() 
 
     while Instant::now() < deadline {
         let t0 = Instant::now();
-        let status = server.execute_tool_pub("mcp_status", Map::new()).await;
+        let status = server.execute_tool_pub("status", Map::new()).await;
         assert!(
             t0.elapsed() < query_timeout(),
-            "mcp_status exceeded {:?}: {:?}",
+            "status exceeded {:?}: {:?}",
             query_timeout(),
             t0.elapsed()
         );
-        assert_not_ro_or_conn_error("mcp_status", status);
+        assert_not_ro_or_conn_error("status", status);
         status_ok += 1;
 
         let mut args = Map::new();
         args.insert("query".into(), json!("helper"));
         args.insert("use_ontology".into(), json!(false));
         let t1 = Instant::now();
-        let search = server.execute_tool_pub("search_code", args).await;
+        let search = server
+            .execute_tool_pub("leankg_context", {
+                let mut a = Map::new();
+                a.insert("verb".into(), json!("search_code"));
+                a.insert("query".into(), json!("helper"));
+                a.insert("use_ontology".into(), json!(false));
+                a
+            })
+            .await;
         assert!(
             t1.elapsed() < query_timeout(),
-            "search_code exceeded {:?}: {:?}",
+            "search_code verb exceeded {:?}: {:?}",
             query_timeout(),
             t1.elapsed()
         );
-        assert_not_ro_or_conn_error("search_code", search);
+        assert_not_ro_or_conn_error("search_code verb", search);
         search_ok += 1;
     }
 
