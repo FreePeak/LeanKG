@@ -56,9 +56,9 @@ pub struct ChildrenResult {
 #[allow(clippy::type_complexity)]
 pub struct GraphEngine {
     // Wrapped in Arc so every clone of GraphEngine shares the SAME underlying
-    // DbInstance. Without this, each clone opens a fresh handle and RocksDB
-    // rejects with "lock hold by current process" because RocksDB only allows
-    // one handle per process per DB path.
+    // DbInstance. Without this, each clone opens a fresh handle, which
+    // rejects with "lock hold by current process" because only one handle
+    // per process per DB path is allowed.
     db: SharedDb,
     cache: QueryCache,
     elements_cache: std::sync::Arc<parking_lot::RwLock<Option<Vec<CodeElement>>>>,
@@ -109,7 +109,7 @@ impl GraphEngine {
     }
 
     /// Expose the shared `Arc` handle so tests can assert that two engines
-    /// resolve to the SAME underlying DB (no second RocksDB/SQLite open).
+    /// resolve to the SAME underlying DB (no second open).
     /// FR-P0-MCP-RC-02: one process-wide handle per DB path.
     pub fn db_arc(&self) -> &SharedDb {
         &self.db
@@ -127,7 +127,7 @@ impl GraphEngine {
     }
 
     /// Run SQLite `VACUUM` against the underlying SQLite store to
-    /// reclaim disk space after large deletes. No-op for RocksDB backends.
+    /// reclaim disk space after large deletes.
     /// The operation can be expensive (rewrites the entire DB file), so
     /// callers should gate it on a size check first.
     pub fn vacuum(&self) -> Result<(), Box<dyn std::error::Error>> {

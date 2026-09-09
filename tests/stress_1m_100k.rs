@@ -6,7 +6,7 @@
 //! ```
 //!
 //! Why `#[ignore]`: this materializes 1,000,000 `CodeElement` rows and
-//! 100,000 `embedding_state` rows in a temp RocksDB. On CI runners with
+//! 100,000 `embedding_state` rows in a temp backend dir. On CI runners with
 //! 7 GB RAM it OOMs; on the host Mac it takes minutes. The default
 //! `cargo test --release --lib` must stay green.
 //!

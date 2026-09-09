@@ -24,24 +24,19 @@ mod tool_registry_tests {
 
     #[test]
     fn test_list_tools_returns_all_required_tools() {
+        // 3-tool surface (#268): set/get/status; the capability verbs ride
+        // leankg_context (legacy verb names accepted at dispatch).
         let tools = ToolRegistry::list_tools();
-        let tool_names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+        let mut tool_names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+        tool_names.sort_unstable();
 
-        let required_tools = vec![
-            "get_dependencies",
-            "get_dependents",
-            "get_impact_radius",
-            "get_review_context",
-            "get_call_graph",
-            "search_code",
-            "get_context",
-            "generate_doc",
-            "find_large_functions",
-            "get_tested_by",
-        ];
+        let required_tools = vec!["get", "set", "status"];
 
         for tool in required_tools {
-            assert!(tool_names.contains(&tool), "Missing tool: {}", tool);
+            assert!(
+                tool_names.contains(&tool),
+                "Missing tool: {tool} (registry: {tool_names:?})"
+            );
         }
     }
 

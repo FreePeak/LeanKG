@@ -223,7 +223,7 @@ export default function App() {
       }
       const label = String(node.properties.name || node.label || nodeId);
       void (async () => {
-        // Re-assert serve RocksDB matches URL ?project= before expand (avoids
+        // Re-assert the served project matches URL ?project= before expand (avoids
         // expanding a sibling mount while the status bar still says /workspace).
         if (project) {
           try {
@@ -424,7 +424,7 @@ export default function App() {
         try {
           const switched = await switchProject(proj, false);
           setProject(switched.project_path || proj);
-          // Confirm serve actually opened this RocksDB (not a stale sibling mount).
+          // Confirm serve actually opened the requested project (not a stale sibling mount).
           const status = await fetchIndexStatus();
           if (status.project_path && status.project_path !== proj) {
             setError(

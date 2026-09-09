@@ -146,9 +146,9 @@ fn should_ignore(path: &Path) -> bool {
 /// File watcher that reindexes on change using a shared [`GraphEngine`].
 ///
 /// Must receive the same handle as the MCP server (`get_graph_engine()`), not
-/// open its own `init_db` — RocksDB allows only one writer per path per process.
+/// open its own `init_db` — the DB allows only one writer per path per process.
 /// When `shutdown` is set, the loop exits so the clone can drop cleanly before
-/// process exit (releases the RocksDB LOCK for the next start).
+/// process exit (releases the DB lock for the next start).
 pub async fn start_watcher(
     graph: GraphEngine,
     db_path: PathBuf,
@@ -271,7 +271,7 @@ pub async fn start_watcher(
             }
         }
     }
-    // `graph` drops here — shared Arc; last drop releases RocksDB LOCK.
+    // `graph` drops here — shared Arc; last drop releases the DB lock.
 }
 
 /// Check database size and trigger a VACUUM if over the configured limit.

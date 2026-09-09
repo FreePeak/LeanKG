@@ -18,8 +18,8 @@ use std::path::PathBuf;
 
 pub type CozoDb = cozo::DbInstance;
 
-/// Debug-only set of RocksDB paths already opened in this process.
-/// RocksDB allows one handle per process per directory — a second `init_db`
+/// Debug-only set of DB paths already opened in this process.
+/// The DB allows one handle per process per directory — a second `init_db`
 /// on the same path is a bug (use `get_graph_engine_for_path` to share).
 #[cfg(debug_assertions)]
 static OPENED_ROCKSDB_PATHS: std::sync::Mutex<Option<std::collections::HashSet<PathBuf>>> =

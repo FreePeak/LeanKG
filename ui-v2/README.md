@@ -38,9 +38,9 @@ rm -rf ../src/embed/*
 cp -r dist/* ../src/embed/
 ```
 
-## Docker (Option A — MCP + REST in one container)
+## One binary — MCP + REST
 
-RocksDB compose builds **ui-v2 into the binary**, publishes **both** ports, and starts `leankg serve` before MCP:
+`leankg serve` embeds the built UI v2 and serves both surfaces:
 
 | Port | Process | Clients |
 |------|---------|---------|
@@ -48,11 +48,12 @@ RocksDB compose builds **ui-v2 into the binary**, publishes **both** ports, and 
 | `8080` | `leankg serve` | **Embedded UI v2** + `/api` |
 
 ```bash
-docker compose -f docker-compose.rocksdb.yml --env-file .dockerfile up -d --build
+leankg serve
 # open http://127.0.0.1:8080/?path=src/cli
 ```
 
-Same RocksDB env (`LEANKG_DB_ENGINE`, `LEANKG_ROCKSDB_ROOT`) and `LEANKG_MCP_PROJECT` cwd — UI sees the Docker index. Disable REST with `LEANKG_SERVE_HTTP=0` in `.dockerfile` if you only need MCP.
+sqlite is the default storage engine — point the UI at any project
+checkout via `?path=` (same cwd `leankg serve` was started in).
 
 ## Screenshots
 

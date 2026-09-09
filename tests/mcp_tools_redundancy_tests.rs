@@ -32,7 +32,7 @@
 use leankg::db::backend::init_db;
 use leankg::graph::GraphEngine;
 use leankg::mcp::handler::ToolHandler;
-use leankg::mcp::tools::ToolRegistry;
+use leankg::mcp::tools::{verb_catalog, ToolRegistry};
 use leankg::session::{Lesson, RecallStore};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -120,15 +120,14 @@ fn every_tested_tool_is_a_registered_verb() {
         .into_iter()
         .map(|t| t.name)
         .collect();
+    // 3-tool surface (#268): set/get/status; the legacy verb envelope
+    // (leankg_context) stays accepted at dispatch for backward compat.
     assert_eq!(
-        registry.len(),
-        1,
-        "the one-tool cutover must not regress: registry = {registry:?}"
+        registry,
+        HashSet::from(["set".to_string(), "get".to_string(), "status".to_string()]),
+        "the 3-tool surface must not regress: registry = {registry:?}"
     );
-    assert!(
-        registry.contains("leankg_context"),
-        "leankg_context must be the single registered tool"
-    );
+
     let verbs: HashSet<String> = leankg::mcp::tools::verb_catalog()
         .into_iter()
         .map(String::from)
@@ -190,6 +189,25 @@ fn every_tested_tool_is_a_registered_verb() {
     }
 }
 
+/// The one-tool-era envelope stays accepted: leankg_context dispatches via
+/// the verb catalog (backward-compat contract from #268).
+#[tokio::test(flavor = "multi_thread")]
+async fn leankg_context_envelope_still_dispatches() {
+    let (handler, _tmp) = make_handler().await;
+    let args = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
+        r#"{"verb":"search_code","query":"alpha"}"#,
+    )
+    .unwrap();
+    let out = handler
+        .execute_tool("leankg_context", &args.into())
+        .await
+        .expect("leankg_context envelope must still dispatch legacy verbs");
+    assert!(
+        out.get("count").is_some() || out.get("status").is_some(),
+        "envelope output: {out}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Knowledge + annotation + documentation lifecycle tools
 // ---------------------------------------------------------------------------
@@ -206,8 +224,8 @@ mod knowledge {
             "add_knowledge",
             json!({
                 "knowledge_type": "design",
-                "title": "Why we use RocksDB",
-                "content": "RocksDB survives 256GB SSD writes without mmap thrash.",
+                "title": "Why we use sqlite",
+                "content": "sqlite WAL survives 256GB SSD writes without mmap thrash.",
                 "tags": "[\"storage\",\"design\"]",
                 "author": "oncall"
             }),
@@ -228,7 +246,7 @@ mod knowledge {
         .expect("update_knowledge");
         assert!(updated.get("id").is_some());
 
-        let hits = call(&handler, "search_knowledge", json!({"query": "RocksDB"}))
+        let hits = call(&handler, "search_knowledge", json!({"query": "sqlite WAL"}))
             .await
             .expect("search_knowledge");
         assert!(!hits.to_string().is_empty());

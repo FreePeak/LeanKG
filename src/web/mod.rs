@@ -143,7 +143,7 @@ impl AppState {
         let prev_project = self.current_project_path.read().await.clone();
         let prev_db_path = self.db_path.read().await.clone();
 
-        // Drop the open RocksDB handle first so we can open another project key.
+        // Drop the open DB handle first so we can open another project key.
         // Updating current_project_path before a successful open caused the UI to
         // show ?project=/workspace while expand still served a sibling mount's graph.
         {
