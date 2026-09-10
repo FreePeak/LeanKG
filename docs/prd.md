@@ -1,15 +1,33 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.5.0-go-rewrite-analysis
+**Version:** 4.5.1-go-rewrite-w1
 **Date:** 2026-09-10
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
-**Codebase Version:** 0.30.0
-**Storage:** Dual-backend, BOTH verified live — SQLite default (`LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset), PostgreSQL + pgvector via `LEANKG_PG_URL`
+**Codebase Version:** 0.30.0 (Rust, maintenance) + Go engine W1 (`go/`, module `github.com/FreePeak/LeanKG/go`)
+**Storage:** Rust line: dual-backend (SQLite default, PostgreSQL+pgvector opt-in). Go engine (W1): SQLite (WAL, FTS5, vector BLOBs); PG is W4.
 
 ---
 
 ## Changelog
-### v4.5.0-go-rewrite-analysis — Deep Rust→Go feasibility study (2026-09-10)
+### v4.5.1-go-rewrite-w1 — Go engine W1 delivered: `go/` greenfield engine + leankg-embed (#368) + full-markdown memory (#369) (2026-09-10)
+
+> **Trigger:** maintainer go-decision on the Rust→Go rewrite (#365 umbrella). This PR lands migration waves **W1 (core)** plus the two issue-scoped slices **#368 (embedding pipeline as an independent binary)** and **#369 (full-markdown memory)** — not full parity.
+
+**Delivered** (`go/` module, ~7 packages, all `go test ./...` green + live-smoked):
+
+| Slice | What landed |
+|---|---|
+| W1 store | SQLite WAL (`internal/store`): FTS5 L2 rung, float32-BLOB vectors + in-proc cosine (documented ceiling; sqlite-vec upgrade path), DB-resident `write_watermark` freshness (kills the C4 TOCTOU class), real PKs on `code_elements`/`relationships` (documented breaking fix) |
+| W1 core | 3-tool envelope (`import`/`query`/`status`, legacy `set`/`get` as tool names rejected over the wire; action aliases live) + L0→L1→L2→L3 ladder with `retrieval{rung,reason}` + `freshness` on every answer |
+| W1 indexer | regex extraction (go/rs/ts/tsx/js/jsx/py/md; documented ceiling until W2 tree-sitter), 3-signal change detection (size+mtime → SHA-256 confirm), calls/contains relationships |
+| W1 transports | MCP stdio + streamable HTTP via official `modelcontextprotocol/go-sdk` v1.7.0; REST `/health`, `/api/v1/{status,query,import}` (stdlib net/http) |
+| #368 | `cmd/leankg-embed` independent binary (`run`/`full`/`export`/`import`/`status`); shared `internal/embed` library; ModelStamp guard on EVERY vector writer — full+mismatch ⇒ clear+rebuild, **incremental+mismatch ⇒ hard fail with `leankg-embed full` directive** (flag-slip must not wipe a collection), first build stamps; NDJSON offsite export/import with dim-guard + resume; serving binary does zero inference (query-time embedding = HTTP client call, provider failure degrades to L2) |
+| #369 | Full-markdown memory (`internal/memory`): `MEMORY.md`/`USER.md` bounded 2,200 bytes with **error-not-truncate** overflow + usage-% snapshot header; `topics/*.md` unbounded; Claude-Code file commands (`view/create/str_replace/insert/delete/rename`) with path-traversal + symlink-escape rejection; Hermes `add/replace/remove` with unique-substring semantics (ambiguous ⇒ error); FTS5 `index.db` re-indexed on every write; mnemopi JSONL banks adapter (wyhash64 byte-exact port of the Rust wyhash 0.5 crate, `retained_through_user_turn` cursor) |
+
+**§9 decisions taken:** (1) tool rename `set`/`get` → `import`/`query` (breaking tool-name cutover; action aliases keep the verb namespace); (2) query-time embeddings provider-first — OpenAI-compatible API or llama.cpp sidecar share one HTTP shape; sidecar runtime itself is W6; (3) ui-v2 untouched (REST-compatible); (4) W1 scope = core + #368 + #369, NOT full parity. (5) project resolution: explicit `--project`/cwd first — roots/list stays available as a fallback but is not the only path (deprecated by SEP-2577 in the go-sdk); server-initiated roots/list lands when the HTTP surface needs remote resolution.
+
+**Waves remaining:** W2 (tree-sitter indexer), W4 (pgvector), W5 (ConnectRPC + hindsight memory e2e), W6 (local model runtime), W7 (parity fixtures + cutover). Tracker rows: FR-GO-W1, FR-GO-EMBED, FR-GO-MEM.
+
 
 > **Trigger:** user direction to evaluate replacing the Rust implementation with a Go engine: a lightweight agent-memory MCP server (just 3 tools — import/query/status), easy coding-tool integration, REST + RPC transports, layered storage (index → embedding), query ladder exact → fuzzy → semantic, SQLite default + PostgreSQL/pgvector, local (default) + API-provider embeddings, real writer/reader separation, and a comprehensive markdown analysis as the deliverable.
 
@@ -444,4 +462,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-10 (v4.5.0 — Rust→Go rewrite feasibility study delivered as docs/go-rewrite-analysis.md; no code changes)*
+*Last updated: 2026-09-10 (v4.5.1 — Go engine W1 + #368 leankg-embed + #369 full-markdown memory delivered under go/; Rust line in maintenance)*
