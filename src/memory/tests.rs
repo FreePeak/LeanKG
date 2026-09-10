@@ -136,15 +136,25 @@ fn get_update_forget_roundtrip() {
 
 #[test]
 fn bank_name_matches_across_cwd_forms() {
-    // Canonicalization: on macOS /tmp is a symlink to /private/tmp — both
-    // forms of the SAME directory must produce the same bank (canonicalize
-    // resolves the symlink before hashing).
-    let dir = std::path::PathBuf::from("/tmp/leankg-memory-cwd-forms-test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let via_tmp = mnemopi_bank_name(&dir);
-    let via_private = mnemopi_bank_name(&std::path::PathBuf::from(
-        "/private/tmp/leankg-memory-cwd-forms-test",
-    ));
-    assert_eq!(via_tmp, via_private);
-    let _ = Path::new(via_tmp.as_str());
+    // PRD-cited property (upstream bug #2412 class): hashing happens on
+    // the CANONICALIZED path, so symlinked routes to the same directory
+    // produce the same bank. Hermetic: tempdir + unix symlink, portable.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let real = tmp.path().join("real-project");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = tmp.path().join("link-to-real");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    #[cfg(not(unix))]
+    {
+        assert_eq!(
+            mnemopi_bank_name(&real),
+            mnemopi_bank_name(&real),
+            "deterministic on this platform"
+        );
+        return;
+    }
+    let via_real = mnemopi_bank_name(&real);
+    let via_link = mnemopi_bank_name(&link);
+    assert_eq!(via_real, via_link, "symlinked route must hash identically");
 }
