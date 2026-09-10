@@ -31,7 +31,7 @@
 | Android/Gradle/Maven extractors | ~9k | DEFERRED (analysis §8: mechanical, fixtures-first) | **DEFERRED** |
 | benchmark harness | 4.5k | `go/benchmark/ab` — Go benchmarks + **executed A/B REPORT.md** (fresh Rust 0.30.0 build from pre-removal commit vs v4.6.0: index parity 0.10s/0.11s, L1 53ms/50ms, Go 2× impact, 12.7× smaller binary; non-comparable cells 'not measured') | **DONE** |
 | audit/doctor/auth | ~3.3k | audit ledger (hash-chained, tamper-pinned) + RBAC middleware + doctor | **DONE** (doctor --deep fleet checks = PARTIAL) |
-| npm wrapper + manifest + release pipeline | — | removed with Rust; Go release engineering (binary artifacts, npm wrapper, semantic-release retarget) = **open follow-up** | **OPEN** |
+| npm wrapper + manifest + release pipeline | — | removed with Rust; Go release engineering: `go/cmd/leankg/VERSION` + `.github/workflows/release-go.yml` (4-target CGO_ENABLED=0 matrix → GitHub Release artifacts, manual `workflow_dispatch` until the maintainer opts into tag automation). npm wrapper intentionally not revived (no Node runtime in the Go engine) | **DONE** (manual-trigger release; auto-publish = maintainer choice) |
 
 **Validation:** `go build ./... && go vet ./... && go test ./...` — 15 packages green. Live smoke both engines: SQLite (index→embed→L1/L2/L3→memory→MCP 3-tool registry→RPC) AND PostgreSQL :5433 (index→embed with vectors physically in `leankg_*` schema→L1/L3 pgvector→graph verbs→status backend=postgres). Benchmarks: IndexDir 100 files 0.73s, L1 137µs, L2 375µs, 1k×384 cosine scan 4.4ms (exact scan ceiling vs HNSW documented).
 
