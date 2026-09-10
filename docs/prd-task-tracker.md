@@ -23,7 +23,7 @@
 | M2 — One-tool surface | 2 | — | **IN_PROGRESS** (FR-ZCP-03 router+ladder DONE 4231d256; **v4.3.1 hard cutover DONE** — registry 1 tool + verb envelope; FR-ZCP-04 install --target outstanding) |
 | M3 — Honest search | 2 | FR-HEA-02, FR-HEA-04 | **IN_PROGRESS** (FR-ZCP-06 freshness contract DONE #347; FR-ZCP-05 bridge tier DONE 7d902461+3a68d571 — tsvector FTS + RRF outstanding) |
 | M4 — Harness memory | 1 | FR-SMA-01..03, FR-SM-04/05, US-SM-02 | **IN_PROGRESS** (surface DONE #357: mnemopi bank naming/scoping/cursor, session_retain/recall + memory_* verbs; outstanding: hindsight-shaped HTTP API + OMP end-to-end injection AC) |
-| M5 — Defensible evidence | 1 | FR-HEA-01, FR-HEA-03 | TODO |
+| M5 — Defensible evidence | 1 | FR-HEA-01, FR-HEA-03 (FR-ZCP-08 harness DONE — pinned/≥3-trial/judge-blind) | TODO (health checks) |
 | M6 — Org-scale portfolio | 2 | — | TODO |
 | M7 — Embedding correctness | 1 | — | **IN_PROGRESS** (core DONE #351/#353/#355: pinned revisions, model-stamped collections, hard rebuild guard, query-side degrade to L2, entry-point guards, chunker_version hash coupling; outstanding §3.8: query/document prefixes in catalog, 3-signal size+mtime fast-path, per-file atomic replace + truncation accounting, watcher-miss insurance, single-flight leases) |
 | M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991; T3 re-scoped to one-tool CI invariant — landed with v4.3.1; T2 TTFV outstanding) |
