@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/go/internal/docindex"
@@ -597,7 +598,13 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 	}
 	switch req.Action {
 	case "impact":
-		hits, err := graph.Impact(e.st, req.Query, req.Limit)
+		// depth comes from args.depth (Rust --depth parity); limit is a
+		// result-count concept, not a traversal depth.
+		depth := 2
+		if d, err := strconv.Atoi(req.Args["depth"]); err == nil && d > 0 {
+			depth = d
+		}
+		hits, err := graph.Impact(e.st, req.Query, depth)
 		if err != nil {
 			return nil, err
 		}

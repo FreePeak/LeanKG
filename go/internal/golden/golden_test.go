@@ -200,11 +200,7 @@ func canon(t *testing.T, v any, project string) []byte {
 	if err := json.Unmarshal([]byte(s), &out); err != nil {
 		t.Fatalf("redaction produced invalid JSON: %v\n%s", err, s)
 	}
-	nb, err := json.Marshal(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return nb
+	return marshalCompact(t, out)
 }
 
 func compact(t *testing.T, raw []byte) []byte {
@@ -213,11 +209,20 @@ func compact(t *testing.T, raw []byte) []byte {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("golden file is not valid JSON: %v", err)
 	}
-	nb, err := json.Marshal(out)
-	if err != nil {
+	return marshalCompact(t, out)
+}
+
+// marshalCompact emits sorted-key compact JSON without HTML escaping so
+// placeholders like <PROJECT> stay literal and diffable.
+func marshalCompact(t *testing.T, v any) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		t.Fatal(err)
 	}
-	return nb
+	return bytes.TrimRight(buf.Bytes(), "\n")
 }
 
 func pretty(t *testing.T, compactJSON []byte) []byte {
