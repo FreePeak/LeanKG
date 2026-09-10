@@ -162,7 +162,7 @@
 | 1 | `FR-ZCP-01` | **P0** | Contextual project resolution: connection→project mapping (cwd / initialize workingDirectory / registered session), zero URL params | **NOT_DONE** |
 | 2 | `FR-ZCP-02` | **P0** | Lazy auto-attach + auto-index: first query in an unindexed repo attaches and indexes in background; queries serve stale-or-empty with freshness flag instead of failing "not initialized" | **NOT_DONE** |
 | 3 | `FR-ZCP-03` | **P0** | Default toolset: one intent-expressing router tool; full catalog behind `full` opt-in (merges `FR-ZG-01`) | **NOT_DONE** |
-| 4 | `FR-ZCP-04` | **P1** | `leankg install --target` agent wiring incl. URL **without** `?project=` (merges `FR-ZG-04`) | **NOT_DONE** |
+| 4 | `FR-ZCP-04` | **P1** | `leankg install --target` agent wiring incl. URL **without** `?project=` (merges `FR-ZG-04`) | **DONE** (opencode + omp writers, projectless URL contract — no ?project= by default; --register-cwd hook; six-client integration suite) |
 | 5 | `FR-ZCP-05` | **P1** | Postgres FTS ranking + RRF fusion (merges `FR-ZG-02`) | **NOT_DONE** |
 | 6 | `FR-ZCP-06` | **P1** | Freshness contract in every index-backed response (merges `FR-ZG-03`) | **DONE** (#347) |
 | 7 | `FR-ZCP-07` | **P1** | OMP memory-backend adjacency: recall/retain MCP surface (`session_retain`, auto-recall injection) so LeanKG can act as harness memory alongside code-graph memory (extends `FR-SMA-04`) | **IN_PROGRESS** — slice 1 DONE (#357: mnemopi-compatible bank naming via wyhash36 + canonicalize, scoping matrix, session_retain/session_recall with retained_through_user_turn cursor, memory_get/update/forget/invalidate mirrors, file-backed JSONL banks; outstanding: hindsight-shaped HTTP API, OMP end-to-end injection AC) |

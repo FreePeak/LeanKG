@@ -595,7 +595,10 @@ fn test_cli_find_by_domain() {
 fn test_cli_install() {
     let args = TestArgs::try_parse_from(["leankg", "install"]).unwrap();
     match args.command {
-        CLICommand::Install => {}
+        CLICommand::Install {
+            target: None,
+            register_cwd: false,
+        } => {}
         _ => panic!("expected Install command"),
     }
 }
