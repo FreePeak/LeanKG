@@ -35,7 +35,7 @@ type dirtyItem struct{ qn, text, hash string }
 // guard clears a mismatched collection). A provider transport error fails
 // the run; a batch failing validation (count/dims/finiteness) is counted in
 // Report.Failed and the run continues to status partial.
-func Run(ctx context.Context, st *store.Store, p Provider, mode string) (Report, error) {
+func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report, error) {
 	start := time.Now()
 	rep := Report{Mode: mode}
 	if mode != "incremental" && mode != "full" {
@@ -130,7 +130,7 @@ func Run(ctx context.Context, st *store.Store, p Provider, mode string) (Report,
 // embedBatches invokes the provider in batches of 32 and writes each
 // successful batch (vectors + embedding state) crash-consistently. A batch
 // failing validation is counted in rep.Failed and the run continues.
-func embedBatches(ctx context.Context, st *store.Store, p Provider, modelID string, dirty []dirtyItem, rep *Report) error {
+func embedBatches(ctx context.Context, st store.Backend, p Provider, modelID string, dirty []dirtyItem, rep *Report) error {
 	for i := 0; i < len(dirty); i += batchSize {
 		if err := ctx.Err(); err != nil {
 			return err

@@ -55,7 +55,7 @@ var extLang = map[string]string{
 // IndexDir walks dir, re-extracts changed/new files, drops deleted ones and
 // returns per-run counters. Files whose size+mtime match the stored record or
 // whose SHA-256 matches ContentHash are skipped without any writes.
-func IndexDir(ctx context.Context, st *store.Store, dir string) (Result, error) {
+func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error) {
 	var res Result
 
 	prev, err := st.Files()

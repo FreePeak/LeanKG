@@ -47,18 +47,18 @@ type QueryEmbedder interface {
 
 // Engine is the core service over one project's store.
 type Engine struct {
-	st       *store.Store
+	st       store.Backend
 	mem      *memory.Memory
 	embedder QueryEmbedder // optional; nil ⇒ L3 degrades with reason
 }
 
 // New builds an Engine. mem may be nil (memory actions then error).
-func New(st *store.Store, mem *memory.Memory, embedder QueryEmbedder) *Engine {
+func New(st store.Backend, mem *memory.Memory, embedder QueryEmbedder) *Engine {
 	return &Engine{st: st, mem: mem, embedder: embedder}
 }
 
-// Store exposes the underlying store (transports needing raw reads).
-func (e *Engine) Store() *store.Store { return e.st }
+// Store exposes the underlying backend (transports needing raw reads).
+func (e *Engine) Store() store.Backend { return e.st }
 
 // QueryEmbedderFromProvider adapts an embed.Provider to the L3 query
 // embedder port (query-time embedding is an HTTP client call — the serving
@@ -230,7 +230,7 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 		"backend":          "sqlite",
 		"healthy":          true,
 		"store":            e.st.Path(),
-		"mode":             e.st.Mode().String(),
+		"mode":             e.st.Engine(),
 		"elements":         els,
 		"files":            files,
 		"relationships":    rels,

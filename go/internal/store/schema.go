@@ -119,3 +119,21 @@ CREATE TABLE IF NOT EXISTS embed_runs (
 CREATE INDEX IF NOT EXISTS idx_embed_runs_model ON embed_runs (model_id, id);
 `},
 }
+
+func init() {
+	migrations = append(migrations, migration{6, "audit-ledger", `
+-- Hash-chained audit ledger (Rust audit/mod.rs parity): Hash =
+-- sha256(prev_hash|at|actor|action|target|details_json); VerifyAuditChain
+-- recomputes the chain to detect any tampering.
+CREATE TABLE IF NOT EXISTS audit_ledger (
+	seq        INTEGER PRIMARY KEY,
+	at         INTEGER NOT NULL,
+	actor      TEXT NOT NULL,
+	action     TEXT NOT NULL,
+	target     TEXT NOT NULL DEFAULT '',
+	details    TEXT NOT NULL DEFAULT '{}',
+	prev_hash  TEXT NOT NULL DEFAULT '',
+	hash       TEXT NOT NULL
+);
+`})
+}
