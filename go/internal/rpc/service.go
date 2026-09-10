@@ -8,8 +8,8 @@ import (
 	"context"
 	"encoding/json"
 
-	leankgv1 "github.com/FreePeak/LeanKG/go/internal/rpc/leankg/v1"
 	connect "connectrpc.com/connect"
+	leankgv1 "github.com/FreePeak/LeanKG/go/internal/rpc/leankg/v1"
 
 	"github.com/FreePeak/LeanKG/go/internal/core"
 )
@@ -61,6 +61,7 @@ func (s *LeanKGService) Query(ctx context.Context, req *connect.Request[leankgv1
 		Action: req.Msg.Action,
 		Query:  req.Msg.Query,
 		Limit:  int(req.Msg.Limit),
+		Args:   req.Msg.Args,
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)

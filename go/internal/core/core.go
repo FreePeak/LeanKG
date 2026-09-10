@@ -11,7 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/go/internal/docindex"
 	"github.com/FreePeak/LeanKG/go/internal/embed"
+	"github.com/FreePeak/LeanKG/go/internal/graph"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
 	"github.com/FreePeak/LeanKG/go/internal/store"
@@ -132,6 +134,20 @@ type ImportRequest struct {
 // Import handles the import tool: repo/dir indexing or memory curation writes.
 func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any, error) {
 	switch req.Action {
+	case "docs":
+		if req.Path == "" {
+			return nil, fmt.Errorf("import docs requires path")
+		}
+		res, err := docindex.IndexDocs(ctx, e.st, req.Path)
+		if err != nil {
+			return nil, fmt.Errorf("docindex %s: %w", req.Path, err)
+		}
+		if _, err := e.refreshInventory(); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"indexed": map[string]any{"files": res.Files, "elements": res.Elements, "skipped": res.Skipped},
+		}, nil
 	case "repo", "dir":
 		if req.Path == "" {
 			return nil, fmt.Errorf("import %s requires path", req.Action)
@@ -156,9 +172,9 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 	case "memory":
 		return e.memoryWrite(req)
 	case "":
-		return nil, fmt.Errorf("import requires action (repo, dir, memory)")
+		return nil, fmt.Errorf("import requires action (repo, dir, docs, memory)")
 	default:
-		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, memory)", req.Action)
+		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory)", req.Action)
 	}
 }
 
@@ -275,9 +291,10 @@ func (e *Engine) embeddingsState() []map[string]any {
 
 // QueryRequest is the query tool payload.
 type QueryRequest struct {
-	Action string `json:"action,omitempty"` // "" = ladder router
-	Query  string `json:"query"`
-	Limit  int    `json:"limit,omitempty"`
+	Action string            `json:"action,omitempty"` // "" = ladder router
+	Query  string            `json:"query"`
+	Limit  int               `json:"limit,omitempty"`
+	Args   map[string]string `json:"args,omitempty"` // action params (path: to=<qn>)
 }
 
 // Query handles the query tool. action "" routes down the ladder
@@ -289,9 +306,9 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "memory":
 		// Query-tool memory reads carry the command in Query.
 		return e.MemoryRead("search", "", req.Query, req.Limit)
-	case "", "search", "exact", "fuzzy", "semantic", "element":
+	case "", "search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain":
 	default:
-		return nil, fmt.Errorf("unknown query action %q (valid: search, exact, fuzzy, semantic, element, memory; empty = ladder router)", req.Action)
+		return nil, fmt.Errorf("unknown query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory; empty = ladder router)", req.Action)
 	}
 	if req.Query == "" {
 		return nil, fmt.Errorf("query requires query text")
@@ -312,6 +329,8 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		return e.rungFuzzy(req.Query, limit, resp, true)
 	case "semantic":
 		return e.rungSemantic(ctx, req.Query, limit, resp, true)
+	case "impact", "path", "callers", "callees", "context", "explain":
+		return e.graphAction(ctx, req, resp)
 	}
 
 	// Ladder router: L0 cold → L1 exact → L2 fuzzy → L3 semantic.
@@ -567,4 +586,71 @@ func looksLikeIdentifier(s string) bool {
 		}
 	}
 	return true
+}
+
+// graphAction routes the connection verbs (Rust graph/query.rs parity) to
+// internal/graph; the query string is the seed qualified name.
+func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
+	g := func() map[string]any {
+		resp["action"] = req.Action
+		return resp
+	}
+	switch req.Action {
+	case "impact":
+		hits, err := graph.Impact(e.st, req.Query, req.Limit)
+		if err != nil {
+			return nil, err
+		}
+		resp["hits"] = hits
+		return g(), nil
+	case "path":
+		if req.Args == nil || req.Args["to"] == "" {
+			return nil, fmt.Errorf("query path requires args.to (target qualified name)")
+		}
+		path, err := graph.ShortestPath(e.st, req.Query, req.Args["to"], req.Limit)
+		if err != nil {
+			return nil, err
+		}
+		if path == nil {
+			resp["path"] = []string{}
+			resp["reachable"] = false
+		} else {
+			resp["path"] = path
+			resp["reachable"] = true
+		}
+		return g(), nil
+	case "callers":
+		qns, err := graph.Callers(e.st, req.Query)
+		if err != nil {
+			return nil, err
+		}
+		resp["callers"] = qns
+		return g(), nil
+	case "callees":
+		qns, err := graph.Callees(e.st, req.Query)
+		if err != nil {
+			return nil, err
+		}
+		resp["callees"] = qns
+		return g(), nil
+	case "context":
+		out, err := graph.Context(e.st, req.Query, req.Limit)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range out {
+			resp[k] = v
+		}
+		return g(), nil
+	case "explain":
+		out, err := graph.Explain(e.st, req.Query)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range out {
+			resp[k] = v
+		}
+		return g(), nil
+	}
+	return nil, fmt.Errorf("unreachable graph action %q", req.Action)
 }
