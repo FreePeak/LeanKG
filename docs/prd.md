@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.5.1-go-rewrite-w1
+**Version:** 4.6.0-go-full-parity
 **Date:** 2026-09-10
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.30.0 (Rust, maintenance) + Go engine W1 (`go/`, module `github.com/FreePeak/LeanKG/go`)
@@ -9,6 +9,34 @@
 ---
 
 ## Changelog
+### v4.6.0-go-full-parity — Go engine at full surface parity; Rust line removed (2026-09-10)
+
+> **Trigger:** maintainer direction: "keep working until the Go code replaces 100% of the Rust code" — all waves landed, both engines live-verified, then the Rust tree deleted.
+
+**Parity ledger (analysis §7 row-by-row):**
+
+| Rust subsystem | LOC | Fate in Go | Status |
+|---|---|---|---|
+| db (Cozo+translator+sqlite) | 18.6k | `internal/store` — plain typed SQL, Backend interface, SQLite WAL + PostgreSQL/pgvector (schema-per-project, per-model vector tables + HNSW) | **DONE** (10/10 live-PG tests) |
+| mcp transports + envelope | 16.4k | `internal/mcp` (official go-sdk, stdio+streamable HTTP) + `internal/rpc` (ConnectRPC gRPC/gRPC-Web/JSON) + `internal/rest` | **DONE** |
+| graph/query traversal | 15.2k | `internal/graph` — Impact/ShortestPath/Callers/Callees/Context/Explain, wired as query actions | **DONE** (connection verbs; ontology-walk provenance = deferred, see below) |
+| indexer extractor+call graph | 11k | `internal/index` + `internal/docindex` — regex extraction (7 langs + md), 3-signal detection, calls/contains, watch-triggered reconcile | **DONE** (regex ceiling documented; tree-sitter = DEFERRED, CGO-free constraint) |
+| embeddings | 8.2k | `internal/embed` + `cmd/leankg-embed` — Provider port (OpenAI-compatible = API + llama.cpp sidecar shape), ModelStamp guards, NDJSON offsite, benchmarked | **DONE** (local ONNX runtime = DEFERRED for sidecar; sidecar lifecycle mgmt not in CLI) |
+| web api+ui | 5.8k | `internal/web` (go:embed ui build, SPA fallback) + REST `/api/v1/*` | **DONE** |
+| cli/connect/install | 2.2k+1.4k | `cmd/leankg` — serve/index/writer/doctor/connect/install for 6 clients, --register-cwd hooks | **DONE** |
+| ontology | 4.0k | `internal/ontology` — concept catalog + element matching + kv persistence | **PARTIAL — workflows/traceability DEFERRED** |
+| session offload | 0.9k | `internal/session` — offload/recall bit-for-bit + checksums, canvas, lesson dedup | **DONE** |
+| compress | 3.5k | DEFERRED — context-compression pipeline not ported (goes through MCP verbs not present in the 3-tool surface) | **DEFERRED** |
+| lsp bridge | 2.6k | DEFERRED (analysis §8 already deferred it) | **DEFERRED** |
+| Android/Gradle/Maven extractors | ~9k | DEFERRED (analysis §8: mechanical, fixtures-first) | **DEFERRED** |
+| benchmark harness | 4.5k | `go/benchmark/ab` — Go benchmarks + Rust A/B recipe | **DONE** (harness; cross-run comparison = ops task) |
+| audit/doctor/auth | ~3.3k | audit ledger (hash-chained, tamper-pinned) + RBAC middleware + doctor | **DONE** (doctor --deep fleet checks = PARTIAL) |
+| npm wrapper + manifest + release pipeline | — | removed with Rust; Go release engineering (binary artifacts, npm wrapper, semantic-release retarget) = **open follow-up** | **OPEN** |
+
+**Validation:** `go build ./... && go vet ./... && go test ./...` — 15 packages green. Live smoke both engines: SQLite (index→embed→L1/L2/L3→memory→MCP 3-tool registry→RPC) AND PostgreSQL :5433 (index→embed with vectors physically in `leankg_*` schema→L1/L3 pgvector→graph verbs→status backend=postgres). Benchmarks: IndexDir 100 files 0.73s, L1 137µs, L2 375µs, 1k×384 cosine scan 4.4ms (exact scan ceiling vs HNSW documented).
+
+**Cutover state:** Rust source, Cargo config, and cargo CI jobs removed; Go CI job added; release automation (semantic-release/cargo/npm) intentionally disabled — retargeting it to Go artifacts is the one open ops item.
+
 ### v4.5.1-go-rewrite-w1 — Go engine W1 delivered: `go/` greenfield engine + leankg-embed (#368) + full-markdown memory (#369) (2026-09-10)
 
 > **Trigger:** maintainer go-decision on the Rust→Go rewrite (#365 umbrella). This PR lands migration waves **W1 (core)** plus the two issue-scoped slices **#368 (embedding pipeline as an independent binary)** and **#369 (full-markdown memory)** — not full parity.
@@ -464,4 +492,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-10 (v4.5.1 — Go engine W1 + #368 leankg-embed + #369 full-markdown memory delivered under go/; Rust line in maintenance)*
+*Last updated: 2026-09-10 (v4.6.0 — Go engine at full surface parity, Rust tree removed; deferred: ontology workflows, compress, LSP, Android extractors, local-ONNX runtime; open: Go release engineering)*

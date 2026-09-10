@@ -103,6 +103,23 @@ jobs:
   # 0.26.0). Fails any build where npm/leankg/package.json drifted from
   # Cargo.toml. Release-time sync lives in release.yml (publish-npm job);
   # this guard catches manual edits and missed syncs between releases.
+
+  go-engine:
+    name: Go Engine (build + vet + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go/go.sum
+      - name: Build
+        run: cd go && go build ./...
+      - name: Vet
+        run: cd go && go vet ./...
+      - name: Test (sqlite; PG tests skip without LEANKG_TEST_PG_URL)
+        run: cd go && go test ./... -count=1 -timeout 300s
+
   npm-parity:
     name: npm/crate Version Parity
     runs-on: ubuntu-latest

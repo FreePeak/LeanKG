@@ -128,3 +128,23 @@ rebuild-mcp-http:
 	launchctl stop com.leankg.mcp-http 2>/dev/null || true
 	cargo build --release
 	launchctl start com.leankg.mcp-http 2>/dev/null || true
+
+# ---- Go engine (go/) ----
+
+.PHONY: go-build go-test go-bench go-ui-assets go-vet
+
+go-build: ## Build the Go engine binaries into go/bin/
+	cd go && go build -o bin/ ./cmd/leankg ./cmd/leankg-embed
+
+go-test: ## Run the Go engine test suite
+	cd go && go test ./... -count=1
+
+go-bench: ## Run the Go A/B benchmark suite
+	cd go && go test ./benchmark/ab/ -bench=. -benchmem -run='^$$'
+
+go-ui-assets: ## Sync the checked-in ui build into the Go embed dir
+	rm -rf go/internal/web/embed && cp -r src/embed go/internal/web/embed
+
+go-vet: ## Vet the Go engine
+	cd go && go vet ./...
+
