@@ -35,7 +35,7 @@
 
 **Validation:** `go build ./... && go vet ./... && go test ./...` — 15 packages green. Live smoke both engines: SQLite (index→embed→L1/L2/L3→memory→MCP 3-tool registry→RPC) AND PostgreSQL :5433 (index→embed with vectors physically in `leankg_*` schema→L1/L3 pgvector→graph verbs→status backend=postgres). Benchmarks: IndexDir 100 files 0.73s, L1 137µs, L2 375µs, 1k×384 cosine scan 4.4ms (exact scan ceiling vs HNSW documented).
 
-**Cutover state:** Rust source, Cargo config, and cargo CI jobs removed; Go CI job added; release automation (semantic-release/cargo/npm) intentionally disabled — retargeting it to Go artifacts is the one open ops item.
+**Cutover state:** Rust source, Cargo config, cargo CI jobs, npm wrapper and manifest removed; Go CI job added; release engineering retargeted to `release-go.yml` (4-target CGO_ENABLED=0 matrix, manual `workflow_dispatch` with an explicit version input — tag automation is the maintainer's opt-in).
 
 ### v4.5.1-go-rewrite-w1 — Go engine W1 delivered: `go/` greenfield engine + leankg-embed (#368) + full-markdown memory (#369) (2026-09-10)
 
@@ -492,4 +492,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-10 (v4.6.0 — Go engine at full surface parity, Rust tree removed; deferred: ontology workflows, compress, LSP, Android extractors, local-ONNX runtime; open: Go release engineering)*
+*Last updated: 2026-09-10 (v4.6.0 — Go engine at full surface parity, Rust tree removed; deferred: ontology workflows, compress, LSP, Android extractors, local-ONNX runtime)*
