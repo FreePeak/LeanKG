@@ -61,7 +61,26 @@ trap 'rm -f "${CONFIG_PATH}"' EXIT
 "${HERE}/install_leankg_mcp.sh" "${CONFIG_PATH}" "${ARM}" >/dev/null
 PROMPT="$("${PYTHON:-python3}" "${HERE}/get_prompt.py" --repos "${HERE}/repos.yaml" --slug "${SLUG}")"
 
-echo "=== arm=${ARM} repo=${SLUG} N=${N} model=${MODEL:-default} ==="
+# FR-ZCP-08 pinning: resolve repo SHA + prompt identity once per arm, export
+# to run_one.sh so every JSONL row carries its corpus + prompt fingerprint.
+REPO_SHA="$(git -C "${REPO_PATH}" rev-parse HEAD 2>/dev/null || echo "")"
+export REPO_SHA
+PROMPT_SHA="$(printf '%s' "${PROMPT}" | shasum -a 256 | cut -d' ' -f1)"
+export PROMPT_SHA
+PROMPT_VERSION="$("${PYTHON:-python3}" "${HERE}/get_prompt.py" --repos "${HERE}/repos.yaml" --slug "${SLUG}" --version 2>/dev/null || echo "1")"
+export PROMPT_VERSION
+
+# Like-for-like gate: refuse to run when the cloned corpus drifted off the
+# pinned lock (setup wrote repos.lock.yaml). Missing lock = warn + proceed.
+if [[ -n "${REPO_SHA}" && -f "${HERE}/repos.lock.yaml" ]]; then
+  LOCKED_SHA="$(awk "/^${SLUG}:/{f=1;next} f&&/sha:/{print \$2;exit}" "${HERE}/repos.lock.yaml")"
+  if [[ -n "${LOCKED_SHA}" && "${REPO_SHA}" != "${LOCKED_SHA}" ]]; then
+    echo "ERROR: ${SLUG} HEAD ${REPO_SHA:0:10} != locked ${LOCKED_SHA:0:10} (FR-ZCP-08 like-for-like). Re-run: make setup" >&2
+    exit 3
+  fi
+fi
+
+echo "=== arm=${ARM} repo=${SLUG} N=${N} model=${MODEL:-default} sha=${REPO_SHA:0:10} ==="
 
 for i in $(seq 1 "${N}"); do
   if [[ "${ARM}" == "with" ]]; then
