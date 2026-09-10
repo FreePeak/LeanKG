@@ -614,7 +614,13 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		if req.Args == nil || req.Args["to"] == "" {
 			return nil, fmt.Errorf("query path requires args.to (target qualified name)")
 		}
-		path, err := graph.ShortestPath(e.st, req.Query, req.Args["to"], req.Limit)
+		// maxDepth comes from args.depth (default 2) — Limit is a result
+		// count, not a traversal bound; paths are a single answer anyway.
+		maxDepth := 0 // 0 = graph default
+		if d, err := strconv.Atoi(req.Args["depth"]); err == nil && d > 0 {
+			maxDepth = d
+		}
+		path, err := graph.ShortestPath(e.st, req.Query, req.Args["to"], maxDepth)
 		if err != nil {
 			return nil, err
 		}
