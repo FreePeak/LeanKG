@@ -81,6 +81,26 @@ make with REPO=django N=8 MODEL=sonnet
 LEANKG_BIN=/abs/path/to/leankg bash run_repo.sh django 4 sonnet
 ```
 
+## Rigor (FR-ZCP-08)
+
+The harness hardens the codegraph methodology on five axes — the zg
+pitfalls checklist — and the report computes each gate from run metadata
+(see the **Rigor Checklist** section of any generated report):
+
+| Pitfall | Guard | Where |
+|---|---|---|
+| Corpus drift (leakage of "different codebase" into the comparison) | refs are resolved to **40-hex commit SHAs** at `make setup` and frozen in `repos.lock.yaml`; `run_arm.sh` refuses to run when the clone HEAD != locked SHA | `clone_repos.py`, `run_arm.sh` |
+| Prompt drift (like-for-like) | every prompt has a `prompt_version`; each JSONL row records the prompt's SHA-256; a report cell mixing prompt hashes is flagged | `repos.yaml`, `run_one.sh`, `aggregate.py` |
+| Stochasticity | **>=3 valid trials per arm** enforced by the trials gate (default N=4); IQR appendix makes variance visible; runs where the judge failed are excluded | `aggregate.py` |
+| Tool-access smoke | a WITH run is invalid unless the session init event shows **>=1 reachable `mcp__` tool** (not just a server attach); a WITHOUT run with any MCP server attached is void (`mcp_leaked_into_without_arm`) | `run_one.sh` |
+| Judge bias (answer quality) | `score.py` grades answers on a 0-6 rubric **judge-blind**: answers are shuffled, relabeled A/B/C..., and the judge prompt contains only the question + answers — never the arm label. Scores land in `results/scores/scores.jsonl` and merge into the report | `score.py` |
+
+```bash
+# after the arms:
+make score     # judge-blind quality scoring (needs claude CLI)
+make report    # medians + variance + quality + rigor checklist
+```
+
 ## Methodology notes
 
 - Same prompt per repo for both arms. Prompts are taken verbatim from the
@@ -95,7 +115,8 @@ LEANKG_BIN=/abs/path/to/leankg bash run_repo.sh django 4 sonnet
 - `claude -p --output-format json` returns a single JSON envelope with all
   metrics; `run_one.sh` parses it in Python for robustness against CLI
   version drift.
-- Median of N=4 runs is reported per arm per repo (matches codegraph).
+- Median of N=4 runs is reported per arm per repo (matches codegraph);
+  >=3 valid runs per arm are required for a row to pass the trials gate.
 - Cost and token numbers depend on the Claude model; the Makefile defaults to
   `sonnet` to keep total cost low. Switch to `opus` for direct comparability
   with codegraph's 2026-07-21 re-validation.

@@ -35,7 +35,7 @@ REPO ?=
 
 DATE := $(shell date +%Y-%m-%d)
 
-.PHONY: help setup index with without report clean all full check-leankg check-claude
+.PHONY: help setup index with without report score selftest clean all full check-leankg check-claude
 
 help:
 	@echo "Targets:"
@@ -81,6 +81,16 @@ without: check-claude
 
 report:
 	@$(PYTHON) $(CURDIR)/aggregate.py --results $(RESULTS_DIR) --repos $(CURDIR)/repos.yaml
+
+# FR-ZCP-08: judge-blind answer scoring (requires claude CLI; run AFTER the
+# arms, BEFORE report so the report merges the scores).
+score:
+	@$(PYTHON) $(CURDIR)/score.py --results $(RESULTS_DIR) --repos $(CURDIR)/repos.yaml
+
+selftest:
+	@$(PYTHON) $(CURDIR)/score.py --selftest
+	@$(PYTHON) -c "import ast; [ast.parse(open(f).read()) for f in ['aggregate.py','clone_repos.py','get_prompt.py','score.py']]; print('py-syntax OK')"
+	@bash -n run_one.sh && bash -n run_arm.sh && bash -n run_repo.sh && echo "bash-syntax OK"
 
 all: setup
 	@$(MAKE) with    REPO=$(REPO) N=$(N) MODEL=$(MODEL)
