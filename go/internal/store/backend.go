@@ -30,6 +30,15 @@ type Backend interface {
 	Files() ([]FileRecord, error)
 	DeleteByFile(path string) error
 	DeleteFileRecord(path string) error
+	// relationship reads (graph traversal seeds; pure-Go BFS lives in internal/graph)
+	Outgoing(source string) ([]Relationship, error)
+	Incoming(target string) ([]Relationship, error)
+	RelationshipsAll(limit int) ([]Relationship, error)
+
+	// generic namespaced kv (ontology catalogs, doctor state; not a document store)
+	KVSet(namespace, key, value string) error
+	KVGet(namespace, key string) (string, bool, error)
+
 	FindExact(name string) ([]Element, error)
 	FindFuzzy(query string, limit int) ([]FuzzyMatch, error)
 	ElementCount() (int, error)

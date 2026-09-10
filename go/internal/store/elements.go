@@ -372,3 +372,73 @@ func nullIfEmpty(s string) any {
 	}
 	return s
 }
+
+// Outgoing returns relationships sourced at `source`.
+func (s *Store) Outgoing(source string) ([]Relationship, error) {
+	rows, err := s.db.Query(`SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships WHERE source_qualified = ?`, source)
+	if err != nil {
+		return nil, err
+	}
+	return scanRelationships(rows)
+}
+
+// Incoming returns relationships targeting `target`.
+func (s *Store) Incoming(target string) ([]Relationship, error) {
+	rows, err := s.db.Query(`SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships WHERE target_qualified = ?`, target)
+	if err != nil {
+		return nil, err
+	}
+	return scanRelationships(rows)
+}
+
+// RelationshipsAll returns up to limit relationships ordered by id.
+func (s *Store) RelationshipsAll(limit int) ([]Relationship, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := s.db.Query(`SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships ORDER BY id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanRelationships(rows)
+}
+
+func scanRelationships(rows *sql.Rows) ([]Relationship, error) {
+	defer rows.Close()
+	var out []Relationship
+	for rows.Next() {
+		var r Relationship
+		var meta string
+		if err := rows.Scan(&r.Source, &r.Target, &r.RelType, &r.Confidence, &meta); err != nil {
+			return nil, err
+		}
+		if meta != "" && meta != "{}" {
+			_ = json.Unmarshal([]byte(meta), &r.Metadata)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// KVSet writes a namespaced key (upsert).
+func (s *Store) KVSet(namespace, key, value string) error {
+	_, err := s.db.Exec(`INSERT INTO kv (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, namespace+"\x1f"+key, value)
+	if err != nil {
+		return err
+	}
+	return s.BumpWatermark()
+}
+
+// KVGet reads a namespaced key.
+func (s *Store) KVGet(namespace, key string) (string, bool, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM kv WHERE key = ?`, namespace+"\x1f"+key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return v, true, nil
+}
