@@ -371,11 +371,7 @@ pub enum CLICommand {
         target: Option<crate::connect::Client>,
         /// Register the current working directory as the LeanKG project
         /// (runs `leankg add <cwd>` semantics).
-        /// FR-ZCP-04: register a session-start hook that runs
-        /// `leankg add <cwd>` when this client starts (Claude Code gets a
-        /// real SessionStart hook; other clients get the manual command
-        /// printed — zero dead ends).
-        #[arg(long, conflicts_with = "remove", default_value_t = false)]
+        #[arg(long, default_value_t = false)]
         register_cwd: bool,
     },
     /// FR-PLG-1: One-command MCP client setup — write (or remove) the
@@ -397,6 +393,11 @@ pub enum CLICommand {
         /// Project root passed as `mcp-stdio --project` (default: cwd)
         #[arg(long)]
         project: Option<String>,
+        /// FR-ZCP-04: write a Claude Code SessionStart hook (merge-or-create)
+        /// that runs `leankg add <cwd>` at client start; other clients get
+        /// the manual command printed (zero dead ends).
+        #[arg(long, conflicts_with = "remove", default_value_t = false)]
+        register_cwd: bool,
     },
     /// Diagnose stale leankg processes, mmap'd DB files, and current
     /// RSS. Prints `leankg daemon kill` to clean them up. Safe to run

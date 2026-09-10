@@ -730,7 +730,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // SessionStart hooks — write a real hook (merge-or-create
                 // the hooks key). Clients without hook mechanisms get the
                 // manual command printed instead (zero dead ends).
-                if matches!(client, crate::connect::Client::ClaudeCode) {
+                if matches!(target, Some(crate::connect::Client::ClaudeCode)) {
                     let hook_cfg =
                         std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
                             .join(".claude")
