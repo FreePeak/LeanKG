@@ -4,6 +4,10 @@
 
 <h1 align="center">LeanKG</h1>
 
+<p align="center"><strong>⚠️ Implementation: 100% Go (v4.6.0).</strong> The Rust implementation has been removed; the engine now lives in <a href="go/">go/</a> — see <a href="docs/prd.md">docs/prd.md</a> for the parity ledger. Build: <code>make go-build</code> · Test: <code>make go-test</code> · Bench: <code>make go-bench</code>. Rust-era sections below are historical.</p>
+
+
+
 <p align="center">
   <strong>Enterprise-ready code knowledge graph for AI coding agents</strong><br>
   Multi-repo · env governance · incidents &amp; services · req↔code · −65% tokens / −85% tool calls

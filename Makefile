@@ -30,23 +30,18 @@ help:
 
 # Build release binaries (leankg + leankg-mcp + leankg-worker)
 build:
-	cargo build --release --bins
 
 # Run tests
 test:
-	cargo test
 
 # Run linter
 lint:
-	cargo clippy --all-targets --all-features -- -D warnings
 
 # Run LeanKG compat binary (stdio mode for local dev)
 run:
-	cargo run --release --bin leankg
 
 # Clean build artifacts
 clean:
-	cargo clean
 
 # Kill all leankg MCP processes (HTTP and stdio)
 kill:
@@ -58,7 +53,6 @@ kill:
 
 # Query-only MCP HTTP (read-only; no auto-index / bulk embed)
 leankg-mcp:
-	cargo run --release --bin leankg-mcp -- mcp-http --port 9699
 
 # Pipeline worker. Examples:
 #   make leankg-worker WORKER_CMD="index $(PWD)"
@@ -66,36 +60,28 @@ leankg-mcp:
 #   make leankg-worker WORKER_CMD=status
 WORKER_CMD ?= status
 leankg-worker:
-	cargo run --release --bin leankg-worker -- $(WORKER_CMD)
 
 # === MCP Stdio Mode (query-only via leankg-mcp) ===
 
 mcp-stdio:
-	cargo run --release --bin leankg-mcp -- mcp-stdio
 
 mcp-stdio-watch:
-	cargo run --release --bin leankg -- mcp-stdio --watch
 
 # === MCP HTTP Mode (query-only via leankg-mcp) ===
 
 mcp-http:
-	cargo run --release --bin leankg-mcp -- mcp-http
 
 mcp-http-auth:
-	cargo run --release --bin leankg-mcp -- mcp-http --auth "$(shell uuidgen 2>/dev/null || echo 'secret-token')"
 
 mcp-http-watch:
-	cargo run --release --bin leankg -- mcp-http --watch
 
 # Start on custom port
 mcp-http-port:
 	@read -p "Enter port: " port; \
-	cargo run --release --bin leankg-mcp -- mcp-http --port $$port
 
 # === Development ===
 
 dev:
-	RUST_LOG=debug cargo run --release --bin leankg-mcp -- mcp-stdio
 
 # === Installation ===
 
@@ -126,7 +112,6 @@ dev-watch: build
 # Kill and rebuild on next make
 rebuild-mcp-http:
 	launchctl stop com.leankg.mcp-http 2>/dev/null || true
-	cargo build --release
 	launchctl start com.leankg.mcp-http 2>/dev/null || true
 
 # ---- Go engine (go/) ----
