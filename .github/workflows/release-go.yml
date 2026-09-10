@@ -1,6 +1,9 @@
-#name: Go Release
-# Disabled until maintainer approval (retargeted from the removed cargo
-# semantic-release pipeline). Enable by uncommenting; tag v* to publish.
+name: Go Release
+# Retargeted from the removed cargo semantic-release pipeline. PUBLISHES ON
+# TAG PUSH: pushing a v* tag builds the 4-target matrix and attaches binaries
+# to the GitHub Release. No automatic version bumping — cut tags manually
+# against go/VERSION (keep it + go/cmd/leankg/VERSION in sync; a future
+# release-notes automation can restore the old pipeline's polish).
 on:
   push:
     tags:
