@@ -708,8 +708,25 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             run_graph_query(&question, Some(token_budget), Some(max_depth), &db_path)?;
         }
-        cli::CLICommand::Install => {
+        cli::CLICommand::Install {
+            target,
+            register_cwd,
+        } => {
             install_mcp_config()?;
+            // FR-ZCP-04: --target also writes the client's MCP config via
+            // the connect writers (same transport as `leankg connect`
+            // projectless — the server resolves the project from cwd).
+            if let Some(client) = target {
+                let path = connect::run_with_home(client, None, false, None, None)?;
+                println!("MCP config written: {}", path.display());
+            }
+            // --register-cwd: register the CWD as the project (same
+            // semantics as `leankg add <cwd>`: init the .leankg marker).
+            if register_cwd {
+                let cwd = std::env::current_dir()?;
+                crate::init_project(cwd.to_str().unwrap_or("."), false)?;
+                println!("Project registered: {}", cwd.display());
+            }
             // FR-ZCP-13: point new users at the one-command project setup.
             println!("Register a project with `leankg add <path>` (auto or manual setup).");
         }

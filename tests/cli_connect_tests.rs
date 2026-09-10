@@ -40,11 +40,13 @@ fn read_json(path: &std::path::Path) -> serde_json::Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
-const CLIENTS: [(&str, Client); 4] = [
+const CLIENTS: [(&str, Client); 6] = [
     ("claude-code", Client::ClaudeCode),
     ("cursor", Client::Cursor),
     ("codex", Client::Codex),
     ("gemini", Client::Gemini),
+    ("opencode", Client::Opencode),
+    ("omp", Client::Omp),
 ];
 
 fn expected_config_path(home: &std::path::Path, client: Client) -> std::path::PathBuf {
@@ -53,6 +55,8 @@ fn expected_config_path(home: &std::path::Path, client: Client) -> std::path::Pa
         Client::Cursor => home.join(".cursor").join("mcp.json"),
         Client::Codex => home.join(".codex").join("config.toml"),
         Client::Gemini => home.join(".gemini").join("settings.json"),
+        Client::Opencode => home.join(".config").join("opencode").join("opencode.json"),
+        Client::Omp => home.join(".omp").join("agent").join("mcp.json"),
     }
 }
 
@@ -75,6 +79,31 @@ fn cli_connect_writes_config_for_every_client() {
                     "{name}: missing table in {raw}"
                 );
                 assert!(raw.contains(project_str), "{name}: project arg missing");
+            }
+            Client::Opencode => {
+                // FR-ZCP-04: opencode nests under `mcp` with a flat
+                // command array (local transport).
+                let root = read_json(&path);
+                let entry = &root["mcp"]["leankg"];
+                assert_eq!(entry["type"], "local", "{name}: {root}");
+                assert_eq!(entry["command"][0], entry["command"][0], "{name}");
+                assert!(
+                    entry["command"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|v| v.is_string()),
+                    "{name}: flat command array expected: {entry}"
+                );
+                assert_eq!(entry["enabled"], true, "{name}");
+            }
+            Client::Omp => {
+                // FR-ZCP-04: omp uses mcpServers with an explicit stdio type.
+                let root = read_json(&path);
+                let entry = &root["mcpServers"]["leankg"];
+                assert_eq!(entry["type"], "stdio", "{name}: {root}");
+                assert_eq!(entry["args"][0], "mcp-stdio", "{name}");
+                assert_eq!(entry["enabled"], true, "{name}");
             }
             _ => {
                 let root = read_json(&path);
@@ -104,7 +133,13 @@ fn cli_connect_is_idempotent_across_runs() {
             assert_eq!(first.matches("[mcp_servers.leankg]").count(), 1);
         } else {
             let root = read_json(&path);
-            assert_eq!(root["mcpServers"].as_object().unwrap().len(), 1);
+            // opencode nests under "mcp"; the rest under "mcpServers".
+            let container = if name == "opencode" {
+                "mcp"
+            } else {
+                "mcpServers"
+            };
+            assert_eq!(root[container].as_object().unwrap().len(), 1, "{name}");
         }
     }
 }
@@ -126,11 +161,18 @@ fn cli_connect_remove_preserves_sibling_servers() {
                 .unwrap();
             }
             _ => {
+                // Seed "other" in the SAME container the client's writer
+                // uses: opencode nests under "mcp" (FR-ZCP-04).
+                let container = if client == Client::Opencode {
+                    "mcp"
+                } else {
+                    "mcpServers"
+                };
                 std::fs::create_dir_all(path.parent().unwrap()).unwrap();
                 std::fs::write(
                     &path,
                     serde_json::to_string_pretty(&json!({
-                        "mcpServers": {"other": {"command": "keep"}, "leankg": {"command": "stale"}}
+                        container: {"other": {"command": "keep"}, "leankg": {"command": "stale"}}
                     }))
                     .unwrap(),
                 )
@@ -148,12 +190,18 @@ fn cli_connect_remove_preserves_sibling_servers() {
             assert!(raw.contains("\"keep\""), "{name}: {raw}");
         } else {
             let root = read_json(&path);
-            assert!(root["mcpServers"].get("leankg").is_none(), "{name}");
-            assert_eq!(
-                root["mcpServers"]["other"]["command"],
-                json!("keep"),
-                "{name}"
+            // Container key differs per client: opencode nests under "mcp",
+            // the rest under "mcpServers" (FR-ZCP-04).
+            let container = if client == Client::Opencode {
+                "mcp"
+            } else {
+                "mcpServers"
+            };
+            assert!(
+                root[container].get("leankg").is_none(),
+                "{name}: leankg entry must be removed from {container}: {root}"
             );
+            assert_eq!(root[container]["other"]["command"], json!("keep"), "{name}");
         }
     }
 }

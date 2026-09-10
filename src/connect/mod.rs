@@ -10,6 +10,8 @@ pub mod claude_code;
 pub mod codex;
 pub mod cursor;
 pub mod gemini;
+pub mod omp;
+pub mod opencode;
 
 use clap::ValueEnum;
 use std::path::{Path, PathBuf};
@@ -30,6 +32,10 @@ pub enum Client {
     Codex,
     /// Gemini CLI — `~/.gemini/settings.json` → `mcpServers.leankg`
     Gemini,
+    /// OpenCode — `~/.config/opencode/opencode.json` → `mcp.leankg`
+    Opencode,
+    /// OMP — `~/.omp/agent/mcp.json` → `mcpServers.leankg`
+    Omp,
 }
 
 /// Transport advertised in the client's leankg server entry.
@@ -73,7 +79,7 @@ fn resolve_home(explicit_home: Option<&Path>) -> PathBuf {
 
 /// Command path for stdio entries: the current executable when resolvable,
 /// else bare `leankg` (relying on PATH).
-fn current_command() -> String {
+pub fn current_command() -> String {
     std::env::current_exe()
         .map(|exe| exe.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "leankg".to_string())
@@ -92,17 +98,21 @@ fn absolutize(path: &Path) -> PathBuf {
 /// <abs project>` where the project defaults to the current working
 /// directory.
 fn stdio_transport(project: Option<&Path>) -> Transport {
-    let project_abs = match project {
-        Some(project) => absolutize(project),
-        None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    // FR-ZCP-04 URL contract: the default stdio entry carries NO --project
+    // flag — the server resolves the project from the process cwd
+    // (FR-ZCP-01 clause 1). --project PATH (explicit) remains the escape
+    // hatch and is the only way a --project flag is emitted.
+    let args = match project {
+        Some(project) => vec![
+            "mcp-stdio".to_string(),
+            "--project".to_string(),
+            absolutize(project).to_string_lossy().into_owned(),
+        ],
+        None => vec!["mcp-stdio".to_string()],
     };
     Transport::Stdio {
         command: current_command(),
-        args: vec![
-            "mcp-stdio".to_string(),
-            "--project".to_string(),
-            project_abs.to_string_lossy().into_owned(),
-        ],
+        args,
     }
 }
 
@@ -118,6 +128,8 @@ fn apply(
         Client::Cursor => cursor::apply(&home, transport),
         Client::Codex => codex::apply(&home, transport),
         Client::Gemini => gemini::apply(&home, transport),
+        Client::Opencode => opencode::apply(&home, transport),
+        Client::Omp => omp::apply(&home, transport),
     }
 }
 
@@ -130,6 +142,8 @@ fn remove(client: Client, explicit_home: Option<&Path>) -> Result<PathBuf, Strin
         Client::Cursor => cursor::remove(&home),
         Client::Codex => codex::remove(&home),
         Client::Gemini => gemini::remove(&home),
+        Client::Opencode => opencode::remove(&home),
+        Client::Omp => omp::remove(&home),
     }
 }
 
@@ -313,12 +327,24 @@ mod tests {
 
     #[test]
     fn stdio_transport_uses_cwd_when_project_missing() {
+        // FR-ZCP-04 URL contract: no --project flag when no explicit project —
+        // the server resolves from its process cwd (FR-ZCP-01 clause 1).
         match stdio_transport(None) {
             Transport::Stdio { command, args } => {
                 assert!(!command.is_empty());
-                assert_eq!(args.first().map(String::as_str), Some("mcp-stdio"));
-                let project = args.last().unwrap();
-                assert!(Path::new(project).is_absolute(), "project must be absolute");
+                assert_eq!(
+                    args.as_slice(),
+                    &["mcp-stdio"],
+                    "projectless: no --project flag"
+                );
+            }
+            other => panic!("expected stdio transport, got {other:?}"),
+        }
+        // Explicit --project still emits the flag (escape hatch).
+        match stdio_transport(Some(Path::new("/abs/proj"))) {
+            Transport::Stdio { args, .. } => {
+                assert_eq!(args.len(), 3, "--project flag present");
+                assert!(args[2].starts_with("/abs/proj"));
             }
             other => panic!("expected stdio transport, got {other:?}"),
         }
