@@ -24,12 +24,12 @@
 | embeddings | 8.2k | `internal/embed` + `cmd/leankg-embed` — Provider port (OpenAI-compatible = API + llama.cpp sidecar shape), ModelStamp guards, NDJSON offsite, benchmarked | **DONE** (local ONNX runtime = DEFERRED for sidecar; sidecar lifecycle mgmt not in CLI) |
 | web api+ui | 5.8k | `internal/web` (go:embed ui build, SPA fallback) + REST `/api/v1/*` | **DONE** |
 | cli/connect/install | 2.2k+1.4k | `cmd/leankg` — serve/index/writer/doctor/connect/install for 6 clients, --register-cwd hooks | **DONE** |
-| ontology | 4.0k | `internal/ontology` — concept catalog + element matching + kv persistence | **PARTIAL — workflows/traceability DEFERRED** |
-| session offload | 0.9k | `internal/session` — offload/recall bit-for-bit + checksums, canvas, lesson dedup | **DONE** |
-| compress | 3.5k | DEFERRED — context-compression pipeline not ported (goes through MCP verbs not present in the 3-tool surface) | **DEFERRED** |
+| ontology | 4.0k | `internal/ontology` — concept catalog + element matching + kv persistence; reachable via `Engine.OntologyMatch(catalogPath)` / `OntologyMatches()` (HTTP/MCP action exposure pending) | **PARTIAL — workflows/traceability + transport action DEFERRED** |
+| session offload | 0.9k | `internal/session` — offload/recall bit-for-bit + checksums, canvas, lesson dedup; reachable via `import{action:"session", command:offload|lesson}` + `SessionRead` (recall/canvas) | **DONE** |
+| compress | 3.5k | **DEFERRED** — `internal/compress` does not exist in Go; the Rust context-compression pipeline was not ported (its MCP verbs are outside the 3-tool surface) | **DEFERRED** |
 | lsp bridge | 2.6k | DEFERRED (analysis §8 already deferred it) | **DEFERRED** |
 | Android/Gradle/Maven extractors | ~9k | DEFERRED (analysis §8: mechanical, fixtures-first) | **DEFERRED** |
-| benchmark harness | 4.5k | `go/benchmark/ab` — Go benchmarks + **executed A/B REPORT.md** (fresh Rust 0.30.0 build from pre-removal commit vs v4.6.0: index parity 0.10s/0.11s, L1 53ms/50ms, Go 2× impact, 12.7× smaller binary; non-comparable cells 'not measured') | **DONE** |
+| benchmark harness | 4.5k | `go/benchmark/ab` — Go benchmarks + **executed A/B REPORT.md** (fresh Rust 0.30.0 build from pre-removal commit vs v4.6.0: index parity 0.10s/0.10s, L1 53ms/50ms, 12.7× smaller binary; impact marked NOT COMPARABLE — seed granularity differs (Rust=file, Go=element QN) and the two arms disagree on the same chained corpus; in-process Rust cells 'not measured') | **DONE** |
 | audit/doctor/auth | ~3.3k | audit ledger (hash-chained, tamper-pinned) + RBAC middleware + doctor | **DONE** (doctor --deep fleet checks = PARTIAL) |
 | npm wrapper + manifest + release pipeline | — | removed with Rust; Go release engineering: `go/cmd/leankg/VERSION` + `.github/workflows/release-go.yml` (4-target CGO_ENABLED=0 matrix → GitHub Release artifacts, manual `workflow_dispatch` until the maintainer opts into tag automation). npm wrapper intentionally not revived (no Node runtime in the Go engine) | **DONE** (manual-trigger release; auto-publish = maintainer choice) |
 

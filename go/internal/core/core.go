@@ -17,6 +17,8 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/graph"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
+	"github.com/FreePeak/LeanKG/go/internal/ontology"
+	"github.com/FreePeak/LeanKG/go/internal/session"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -50,10 +52,15 @@ type QueryEmbedder interface {
 
 // Engine is the core service over one project's store.
 type Engine struct {
-	st       store.Backend
-	mem      *memory.Memory
-	embedder QueryEmbedder // optional; nil ⇒ L3 degrades with reason
+	st         store.Backend
+	mem        *memory.Memory
+	projectDir string
+	embedder   QueryEmbedder // optional; nil ⇒ L3 degrades with reason
 }
+
+// SetProjectDir records the project directory (enable
+// import{action:"session"} for offloading bulky tool payloads).
+func (e *Engine) SetProjectDir(dir string) { e.projectDir = dir }
 
 // New builds an Engine. mem may be nil (memory actions then error).
 func New(st store.Backend, mem *memory.Memory, embedder QueryEmbedder) *Engine {
@@ -172,10 +179,12 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		}, nil
 	case "memory":
 		return e.memoryWrite(req)
+	case "session":
+		return e.sessionWrite(req)
 	case "":
-		return nil, fmt.Errorf("import requires action (repo, dir, docs, memory)")
+		return nil, fmt.Errorf("import requires action (repo, dir, docs, memory, session)")
 	default:
-		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory)", req.Action)
+		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory, session)", req.Action)
 	}
 }
 
@@ -666,4 +675,85 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	}
 	return nil, fmt.Errorf("unreachable graph action %q", req.Action)
+}
+
+// sessionWrite/read wire internal/session into the 3-tool surface: bulky tool
+// payloads are offloaded to .leankg/sessions/<id>/refs/<node>.md and restored
+// bit-for-bit by session_recall (Rust session/mod.rs parity).
+func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
+	if e.projectDir == "" {
+		return nil, fmt.Errorf("session offload requires a project directory")
+	}
+	s := session.New(e.projectDir)
+	get := func(key string) string {
+		s2, _ := req.Args[key].(string)
+		return s2
+	}
+	switch req.Command {
+	case "offload":
+		payload := get("payload")
+		ref, err := s.Offload(get("session_id"), get("node_id"), []byte(payload), get("summary"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"offloaded": ref}, nil
+	case "lesson":
+		deduped, err := s.AddLesson(get("session_id"), get("text"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"deduped": deduped}, nil
+	default:
+		return nil, fmt.Errorf("unknown session command %q (valid: offload, lesson)", req.Command)
+	}
+}
+
+// SessionRead restores offloaded payloads / lists a session canvas.
+func (e *Engine) SessionRead(command, sessionID, nodeID string) (map[string]any, error) {
+	if e.projectDir == "" {
+		return nil, fmt.Errorf("session access requires a project directory")
+	}
+	s := session.New(e.projectDir)
+	switch command {
+	case "recall":
+		payload, err := s.Recall(sessionID, nodeID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"command": "recall", "node_id": nodeID, "payload": string(payload)}, nil
+	case "canvas":
+		refs, err := s.Canvas(sessionID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"command": "canvas", "session_id": sessionID, "refs": refs}, nil
+	default:
+		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas)", command)
+	}
+}
+
+// OntologyMatch loads a concept catalog and matches it against indexed
+// elements (internal/ontology); matches are persisted in kv for later reads.
+func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
+	cat, err := ontology.LoadCatalog(catalogPath)
+	if err != nil {
+		return nil, err
+	}
+	matches, err := cat.MatchElements(e.st)
+	if err != nil {
+		return nil, err
+	}
+	if err := ontology.SaveMatches(e.st, matches); err != nil {
+		return nil, err
+	}
+	return map[string]any{"concepts": len(cat.Concepts), "matches": matches}, nil
+}
+
+// OntologyMatches returns the last persisted match set.
+func (e *Engine) OntologyMatches() (map[string]any, error) {
+	matches, err := ontology.LoadMatches(e.st)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"matches": matches}, nil
 }
