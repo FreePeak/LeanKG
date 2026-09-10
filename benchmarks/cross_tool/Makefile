@@ -89,6 +89,7 @@ score:
 
 selftest:
 	@$(PYTHON) $(CURDIR)/score.py --selftest
+	@$(PYTHON) $(CURDIR)/aggregate.py --selftest
 	@$(PYTHON) -c "import ast; [ast.parse(open(f).read()) for f in ['aggregate.py','clone_repos.py','get_prompt.py','score.py']]; print('py-syntax OK')"
 	@bash -n run_one.sh && bash -n run_arm.sh && bash -n run_repo.sh && echo "bash-syntax OK"
 
