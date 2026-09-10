@@ -107,6 +107,12 @@ MCP_SERVERS=""
 MCP_TOOLS="0"
 PROMPT_CHARS=$(printf '%s' "${PROMPT}" | wc -c | tr -d ' ')
 
+# FR-ZCP-08 pinning metadata (exported by run_arm.sh; may be empty for
+# direct invocations, which then record nulls rather than lying).
+REPO_SHA="${REPO_SHA:-}"
+PROMPT_SHA="${PROMPT_SHA:-$(printf '%s' "${PROMPT}" | shasum -a 256 | cut -d' ' -f1)}"
+PROMPT_VERSION="${PROMPT_VERSION:-1}"
+
 # Parse the JSON envelope. `claude -p --output-format json` returns a JSON
 # ARRAY of message events with a final `{"type":"result", ...}` element. The
 # CLI version has changed shape several times; we try several strategies and
@@ -242,7 +248,15 @@ output_tokens = num(usage.get("output_tokens", 0), 0)
 cache_read = num(usage.get("cache_read_input_tokens", 0), 0)
 num_turns = num(result.get("num_turns", 0), 0)
 stop_reason = str(result.get("stop_reason", "unknown"))
-result_chars = len(str(result.get("result", "")))
+result_text = str(result.get("result", ""))
+result_chars = len(result_text)
+
+# FR-ZCP-08: persist the answer text next to the envelope for the
+# judge-blind scorer (scorer reads answers, never arm labels).
+try:
+    pathlib.Path(f"{path}.answer.txt").write_text(result_text, encoding="utf-8")
+except OSError:
+    pass
 
 # Tool calls: prefer the explicit envelope field, else walk the transcript.
 tool_calls = num(result.get("tool_use_count", 0), 0)
@@ -306,6 +320,16 @@ fi
 if [[ "${ARM}" == "with" && -z "${MCP_SERVERS}" ]]; then
   INVALID_REASONS+=("no_mcp_attached")
 fi
+# FR-ZCP-08 tool-access smoke: the init event must show at least one
+# mcp__ tool actually reachable by the agent, not just a server attach.
+if [[ "${ARM}" == "with" && "${MCP_TOOLS}" == "0" ]]; then
+  INVALID_REASONS+=("no_mcp_tools_reachable")
+fi
+# Leakage guard: a WITHOUT run that somehow has MCP servers attached is
+# contaminated (global config leaked through) — the run is void.
+if [[ "${ARM}" == "without" && -n "${MCP_SERVERS}" ]]; then
+  INVALID_REASONS+=("mcp_leaked_into_without_arm")
+fi
 if [[ -n "${INVALID_REASONS[*]:-}" ]]; then
   VALID="false"
   INVALID_REASON="$(IFS='|'; echo "${INVALID_REASONS[*]}")"
@@ -320,17 +344,22 @@ python3 - "${REPO_PATH}" "${ARM}" "${RUN_IDX}" "${MODEL}" "${PROMPT_CHARS}" \
   "${OUTPUT_TOKENS}" "${CACHE_READ_TOKENS}" "${TOOL_CALLS}" "${FILE_READS}" \
   "${NUM_TURNS}" "${STOP_REASON}" "${RESULT_CHARS}" \
   "${ACTUAL_MODEL}" "${MCP_SERVERS}" "${MCP_TOOLS}" \
-  "${VALID}" "${INVALID_REASON}" "${OUTPUT_PATH}" <<'PY'
+  "${VALID}" "${INVALID_REASON}" "${REPO_SHA}" "${PROMPT_SHA}" "${PROMPT_VERSION}" "${OUTPUT_PATH}" <<'PY'
 import json, pathlib, sys
 
 (repo_path, arm, run_idx, model, prompt_chars, exit_code, duration_s,
  total_cost, input_tokens, output_tokens, cache_read, tool_calls, file_reads,
  num_turns, stop_reason, result_chars,
  actual_model, mcp_servers, mcp_tools,
- valid, invalid_reason, output_path) = sys.argv[1:]
+ valid, invalid_reason, repo_sha, prompt_sha, prompt_version,
+ output_path) = sys.argv[1:]
 
 record = {
     "repo": pathlib.Path(repo_path).name,
+    # FR-ZCP-08 pinning + like-for-like metadata.
+    "repo_sha": repo_sha or None,
+    "prompt_sha256": prompt_sha or None,
+    "prompt_version": int(prompt_version) if prompt_version else None,
     "arm": arm,
     "run_idx": int(run_idx),
     "model": model if model else None,

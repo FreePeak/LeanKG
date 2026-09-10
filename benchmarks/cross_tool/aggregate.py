@@ -101,6 +101,10 @@ def load_runs(results_root: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     dropped = 0
     for path in sorted(results_root.rglob("*.jsonl")):
+        # score.py output lives under results/scores/ — different schema,
+        # must never enter the run stream.
+        if "scores" in path.parts:
+            continue
         for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             line = raw.strip()
             if not line:
@@ -200,6 +204,7 @@ def fmt_pct(delta_with: float, delta_without: float) -> str:
 def build_report(
     repos_meta: list[dict[str, Any]],
     runs: list[dict[str, Any]],
+    results_root: Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
     by_repo: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in runs:
@@ -213,6 +218,7 @@ def build_report(
 
     rows: list[dict[str, Any]] = []
     avg_acc: dict[str, list[float]] = defaultdict(list)
+    checks: dict[str, dict[str, Any]] = {}  # FR-ZCP-08 rigor gates
 
     for meta in repos_meta:
         slug = meta["slug"]
@@ -268,6 +274,23 @@ def build_report(
             wo = row["without"][metric]
             if w is not None and wo is not None and wo != 0:
                 avg_acc[metric].append((w - wo) / wo * 100.0)
+
+        # FR-ZCP-08 rigor gates per repo (like-for-like, trials, pinning).
+        prompt_shas = {r.get("prompt_sha256") for r in repo_runs if r.get("prompt_sha256")}
+        models = {r.get("actual_model") for r in repo_runs if r.get("actual_model")}
+        shas = {r.get("repo_sha") for r in repo_runs if r.get("repo_sha")}
+        rigor = {
+            "trials_min3": len(with_runs) >= 3 and len(without_runs) >= 3,
+            "n_with": len(with_runs),
+            "n_without": len(without_runs),
+            "prompt_sha_uniform": len(prompt_shas) <= 1,
+            "model_uniform": len(models) <= 1,
+            "repo_sha_uniform": len(shas) <= 1,
+            "repo_sha": sorted(shas)[0][:10] if len(shas) == 1 and shas else None,
+            "prompt_version": next((r.get("prompt_version") for r in repo_runs if r.get("prompt_version")), None),
+            "tool_smoke": all(r.get("mcp_tool_count", 0) > 0 for r in with_runs) if with_runs else None,
+        }
+        checks[slug] = rigor
         rows.append(row)
 
     # Markdown
@@ -367,6 +390,68 @@ def build_report(
                 f"{r.get('dropped_reason') or 'invalid'} |"
             )
 
+    # FR-ZCP-08: judge-blind quality scores (from score.py), if present.
+    score_rows: list[dict[str, Any]] = []
+    if results_root is not None:
+        sp = results_root / "scores" / "scores.jsonl"
+        if sp.exists():
+            for line in sp.read_text(encoding="utf-8").splitlines():
+                try:
+                    score_rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    if score_rows:
+        scores_by_repo: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+        for sr in score_rows:
+            scores_by_repo[sr["repo"]][sr["arm"]].append(float(sr["score"]))
+        lines.append("")
+        lines.append("## Answer Quality (judge-blind, rubric 0-6)")
+        lines.append("")
+        lines.append("Median blind-rubric score per arm (judge never saw arm labels;")
+        lines.append("answers shuffled before grading). Higher is better.")
+        lines.append("")
+        lines.append("| Codebase | Quality WITH | Quality WITHOUT | Delta |")
+        lines.append("| --- | --- | --- | --- |")
+        for slug in sorted(scores_by_repo):
+            arms = scores_by_repo[slug]
+            w_vals = arms.get("with", [])
+            wo_vals = arms.get("without", [])
+            w_med = statistics.median(w_vals) if w_vals else None
+            wo_med = statistics.median(wo_vals) if wo_vals else None
+            delta = (
+                f"{w_med - wo_med:+.1f}"
+                if w_med is not None and wo_med is not None
+                else "N/A"
+            )
+            fmt = lambda v: f"{v:.1f}" if v is not None else "N/A"
+            lines.append(f"| {slug} | {fmt(w_med)} | {fmt(wo_med)} | {delta} |")
+
+    # FR-ZCP-08: the zg pitfalls checklist, computed from run metadata.
+    lines.append("")
+    lines.append("## Rigor Checklist (zg pitfalls, computed from run metadata)")
+    lines.append("")
+    lines.append("| Codebase | >=3 trials/arm | Prompt identical | Model uniform | Corpus pinned | MCP tools reachable |")
+    lines.append("| --- | --- | --- | --- | --- | --- |")
+    for meta_r in repos_meta:
+        slug = meta_r["slug"]
+        c = checks.get(slug)
+        # Only repos with at least one valid run appear (0/0 noise hides
+        # nothing but buries real rows).
+        if not c or (c["n_with"] == 0 and c["n_without"] == 0):
+            continue
+        mark = lambda ok: "PASS" if ok else ("FAIL" if ok is False else "n/a")
+        lines.append(
+            f"| {slug} | {mark(c['trials_min3'])} ({c['n_with']}/{c['n_without']}) | "
+            f"{mark(c['prompt_sha_uniform'])} (v{c['prompt_version']}) | "
+            f"{mark(c['model_uniform'])} | "
+            f"{mark(c['repo_sha_uniform'])} ({c['repo_sha'] or 'unpinned'}) | "
+            f"{mark(c['tool_smoke'])} |"
+        )
+    lines.append("")
+    lines.append("Leakage guard: WITHOUT-arm runs with any attached MCP server are")
+    lines.append("dropped at parse time (`mcp_leaked_into_without_arm`), so a")
+    lines.append("contaminated baseline can never reach the medians.")
+
     lines.append("")
     lines.append("## Methodology")
     lines.append("")
@@ -397,6 +482,7 @@ def build_report(
             {k: v for k, v in r.items() if k != "_source_path"}
             for r in invalid_runs
         ],
+        "rigor_checks": checks,
         "raw_runs": runs,
     }
     return md, json_payload
@@ -437,7 +523,7 @@ def main() -> int:
     if not runs:
         print(f"warn: no runs found under {args.results}", file=sys.stderr)
 
-    md, payload = build_report(repos_meta, runs)
+    md, payload = build_report(repos_meta, runs, results_root=args.results)
 
     date_stamp = args.date or dt.date.today().isoformat()
     base_name = args.name or f"cross_tool-{date_stamp}"
