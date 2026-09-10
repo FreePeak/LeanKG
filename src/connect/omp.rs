@@ -93,9 +93,9 @@ mod tests {
     #[test]
     fn apply_preserves_siblings() {
         let home = TempDir::new().unwrap();
-        std::fs::create_dir_all(config_path(home).parent().unwrap()).unwrap();
+        std::fs::create_dir_all(config_path(home.path()).parent().unwrap()).unwrap();
         std::fs::write(
-            config_path(home),
+            config_path(home.path()),
             json!({"mcpServers": {"other": {"type": "stdio", "command": "x"}}}).to_string(),
         )
         .unwrap();
@@ -110,7 +110,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         apply(home.path(), &sample_stdio()).unwrap();
         let path = remove(home.path()).unwrap();
-        let root = read(&path);
-        assert!(root["mcpServers"]["leankg"].is_null());
+        let root = read(home.path());
+        assert!(root["mcpServers"].get("leankg").is_none());
     }
 }

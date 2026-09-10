@@ -13,11 +13,15 @@ fn config_path(home: &Path) -> PathBuf {
 /// Build the opencode-shaped entry for a transport.
 fn entry(transport: &Transport) -> serde_json::Value {
     match transport {
-        Transport::Stdio { command, args } => serde_json::json!({
-            "type": "local",
-            "command": [command, ..args],
-            "enabled": true,
-        }),
+        Transport::Stdio { command, args } => {
+            let mut cmd = vec![command.clone()];
+            cmd.extend(args.clone());
+            serde_json::json!({
+                "type": "local",
+                "command": cmd,
+                "enabled": true,
+            })
+        }
         Transport::Http { url } => serde_json::json!({
             "type": "remote",
             "url": url,
@@ -85,10 +89,17 @@ mod tests {
                 .join("opencode")
                 .join("opencode.json")
         );
-        assert_eq!(
-            read(home.path())["mcp"]["leankg"],
-            json!({"type": "local", "command": ["/usr/local/bin/leankg", "mcp-stdio"], "enabled": true})
-        );
+        let entry = &read(home.path())["mcp"]["leankg"];
+        assert_eq!(entry["type"], "local");
+        // Flat string array — the json! spread bug produced nested objects.
+        assert!(entry["command"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v.is_string()));
+        assert_eq!(entry["command"][0], "/usr/local/bin/leankg");
+        assert_eq!(entry["command"][1], "mcp-stdio");
+        assert_eq!(entry["enabled"], true);
     }
 
     #[test]
@@ -110,9 +121,9 @@ mod tests {
     #[test]
     fn apply_preserves_siblings_and_replaces_leankg() {
         let home = TempDir::new().unwrap();
-        std::fs::create_dir_all(config_path(home).parent().unwrap()).unwrap();
+        std::fs::create_dir_all(config_path(home.path()).parent().unwrap()).unwrap();
         std::fs::write(
-            config_path(home),
+            config_path(home.path()),
             json!({"mcp": {"other-server": {"type": "local", "command": ["x"]}}}).to_string(),
         )
         .unwrap();
@@ -127,8 +138,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         apply(home.path(), &sample_stdio()).unwrap();
         let path = remove(home.path()).unwrap();
-        let root = read(path);
+        let root = read(home.path());
         assert!(root["mcp"]["leankg"].is_null());
-        assert!(root["mcp"]["other-server"].is_null() || root["mcp"]["other-server"].is_object());
     }
 }

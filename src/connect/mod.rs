@@ -327,12 +327,24 @@ mod tests {
 
     #[test]
     fn stdio_transport_uses_cwd_when_project_missing() {
+        // FR-ZCP-04 URL contract: no --project flag when no explicit project —
+        // the server resolves from its process cwd (FR-ZCP-01 clause 1).
         match stdio_transport(None) {
             Transport::Stdio { command, args } => {
                 assert!(!command.is_empty());
-                assert_eq!(args.first().map(String::as_str), Some("mcp-stdio"));
-                let project = args.last().unwrap();
-                assert!(Path::new(project).is_absolute(), "project must be absolute");
+                assert_eq!(
+                    args.as_slice(),
+                    &["mcp-stdio"],
+                    "projectless: no --project flag"
+                );
+            }
+            other => panic!("expected stdio transport, got {other:?}"),
+        }
+        // Explicit --project still emits the flag (escape hatch).
+        match stdio_transport(Some(Path::new("/abs/proj"))) {
+            Transport::Stdio { args, .. } => {
+                assert_eq!(args.len(), 3, "--project flag present");
+                assert!(args[2].starts_with("/abs/proj"));
             }
             other => panic!("expected stdio transport, got {other:?}"),
         }
