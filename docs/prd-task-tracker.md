@@ -22,12 +22,12 @@
 | M1 — Zero-config attach | 3 | — | **IN_PROGRESS** (FR-ZCP-01 clause-2 roots/list DONE 87e18287; FR-ZCP-02 DONE 0aba41ad+d9ccd8b5; FR-ZCP-13 DONE b251046c) |
 | M2 — One-tool surface | 2 | — | **IN_PROGRESS** (FR-ZCP-03 router+ladder DONE 4231d256; **v4.3.1 hard cutover DONE** — registry 1 tool + verb envelope; FR-ZCP-04 install --target outstanding) |
 | M3 — Honest search | 2 | FR-HEA-02, FR-HEA-04 | **IN_PROGRESS** (FR-ZCP-06 freshness contract DONE #347; FR-ZCP-05 bridge tier DONE 7d902461+3a68d571 — tsvector FTS + RRF outstanding) |
-| M4 — Harness memory | 1 | FR-SMA-01..03, FR-SM-04/05, US-SM-02 | TODO |
+| M4 — Harness memory | 1 | FR-SMA-01..03, FR-SM-04/05, US-SM-02 | **IN_PROGRESS** (surface DONE #357: mnemopi bank naming/scoping/cursor, session_retain/recall + memory_* verbs; outstanding: hindsight-shaped HTTP API + OMP end-to-end injection AC) |
 | M5 — Defensible evidence | 1 | FR-HEA-01, FR-HEA-03 | TODO |
 | M6 — Org-scale portfolio | 2 | — | TODO |
-| M7 — Embedding correctness | 1 | — | TODO |
+| M7 — Embedding correctness | 1 | — | **IN_PROGRESS** (core DONE #351/#353/#355: pinned revisions, model-stamped collections, hard rebuild guard, query-side degrade to L2, entry-point guards, chunker_version hash coupling; outstanding §3.8: query/document prefixes in catalog, 3-signal size+mtime fast-path, per-file atomic replace + truncation accounting, watcher-miss insurance, single-flight leases) |
 | M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991; T3 re-scoped to one-tool CI invariant — landed with v4.3.1; T2 TTFV outstanding) |
-| M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 DONE; FR-3T-04 live validation complete on this repo — 581 files, 9522 vectors, L1/L2/L3 verified; PR #284 open) |
+| M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 DONE; FR-3T-04 live validation complete on this repo — 581 files, 9522 vectors, L1/L2/L3 verified; PR #284 merged (v4.3.x)) |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
@@ -55,7 +55,7 @@
 |----|-------|----------|-----------|------------|
 | FR-ZCP-04 | `leankg install --target opencode\|claude\|codex\|cursor\|omp` — project-less URLs + `--register-cwd` hook — scope: extends existing `connect` writers with opencode+omp targets; `--register-cwd` = session-start hook running `leankg add <cwd>` (persistent cwd→project table stays FR-ZCP-01 clause 3, out of scope); Docker `?project=` is the documented exception; env inventory table + byte-identical config-block snapshot tests per PRD §3.4 | P1 | M2 | FR-ZG-04, US-ZG-04 |
 | FR-ZCP-06 | Freshness contract: `freshness: fresh\|possibly_stale\|cold` on every index-backed response; reconciliation off the query path | P1 | M3 | FR-ZG-03, US-ZG-03 — **DONE** (#347: 30s TTL cache off the query path, write-invalidated; is_index_backed_tool covers 38 graph-reading verbs) |
-| FR-ZCP-07 | Memory-backend adjacency: mnemopi-compatible bank naming (`<basename>-<wyhash36(cwd)>`, cwd-only), 3-mode scoping, `retained_through_user_turn` cursor, `session_retain`/`session_recall` + `<memories>`-equivalent injection; hindsight-shaped HTTP memory API as upstream `memory.backend: "mcp"` evidence | P1 | M4 | FR-SMA-04, US-SMA-04, US-SM-02 |
+| FR-ZCP-07 | Memory-backend adjacency: mnemopi-compatible bank naming (`<basename>-<wyhash36(cwd)>`, cwd-only), 3-mode scoping, `retained_through_user_turn` cursor, `session_retain`/`session_recall` + `<memories>`-equivalent injection; hindsight-shaped HTTP memory API as upstream `memory.backend: "mcp"` evidence | P1 | M4 | FR-SMA-04, US-SMA-04, US-SM-02 — **slice 1 DONE** (#357; hindsight HTTP API + OMP e2e outstanding) |
 | FR-ZCP-08 | Cross-tool harness hardening: pinned SHAs/prompts, ≥3 trials/arm, judge-blind scorer, zg pitfalls checklist | P2 | M5 | FR-ZG-05, US-ZG-05, FR-B05 |
 | FR-ZCP-09 | Project registry (`public.leankg_projects`) + portfolio scope (T0 manifest inventory, per-child freshness) + cross-schema portfolio queries + memory federation; one indexer slot, hot-set cap, LRU detach-to-cold | **P1** | M6 | — |
 | FR-ZCP-10 | Per-schema migration fleet reconciliation + `doctor --deep` drift check (per-schema ledgers today, nothing fleet-wide) | P2 | M6 | — |
@@ -105,7 +105,7 @@
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
 
-*Last updated: 2026-09-08 — implementation sprint merged: FR-ZCP-01/clause-2, 02, 03, 05-bridge, 12-T1, 13 DONE (6 sprint rows; 9 DONE total incl. 3 prior); v4.3.1 hard one-tool cutover (commit 72ee5fc9, PR #268): registry = 1 tool, FR-ZCP-03 end-state DONE, FR-ZCP-12 T3 re-scoped to the one-tool CI invariant; v4.4.0 dual-backend + 3-tool surface in flight (FR-3T-01..04); open inventory: 1 IN_PROGRESS + 39 TODO (13 live incl. FR-3T-01..04 + FR-ZCP-05/12 remainders + 26 carry-forward) = 40 open; full 585-ID history in archive.*
+*Last updated: 2026-09-09 (v0.29.0 released — FR-ZCP-06 freshness contract DONE #347+#350, FR-ZCP-07 slice 1 DONE #357, FR-ZCP-11 core DONE #351/#353/#355/#356, semantic-release pipeline healed and self-running)*
 
 ## Repo hygiene (non-PRD)
 
