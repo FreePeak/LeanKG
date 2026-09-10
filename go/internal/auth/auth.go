@@ -37,9 +37,10 @@ func (r Role) String() string {
 }
 
 // token -> role, built from env:
-//   LEANKG_TOKEN_ADMIN=<token>
-//   LEANKG_TOKEN_CONTRIBUTOR=<token>
-//   LEANKG_TOKEN_VIEWER=<token>
+//
+//	LEANKG_TOKEN_ADMIN=<token>
+//	LEANKG_TOKEN_CONTRIBUTOR=<token>
+//	LEANKG_TOKEN_VIEWER=<token>
 type registry struct{ byToken map[string]Role }
 
 func fromEnv() *registry {
