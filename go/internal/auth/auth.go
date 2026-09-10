@@ -81,16 +81,55 @@ func (reg *registry) classify(r *http.Request) (Role, error) {
 	return role, nil
 }
 
-// writeActions are the REST/RPC paths that mutate state.
-var writeActions = map[string]bool{
-	"/api/v1/import":                true,
-	"/leankg.v1.LeanKG/Import":      true, // ConnectRPC unary path
-	"/leankg.v1.LeanKG/MemoryWrite": true, // reserved (not yet a service method)
+// writePrefixes are path PREFIXES whose routes mutate state. Prefix matching
+// (not exact equality) is required: parameterized routes such as
+// /api/v1/memory/banks/{bank}/memories can never match a literal-path map,
+// which silently left hindsight memory retain open to Viewers.
+var writePrefixes = []string{
+	"/api/v1/import",
+	"/leankg.v1.LeanKG/Import",
 }
 
-// Middleware gates a handler tree. Reads are always allowed for any valid
-// role; writes require Contributor or Admin. 401 on missing token, 403 on
-// insufficient role.
+// isWritePath reports whether a request path targets a mutating route.
+// Hindsight memory retain is the parameterized exception: its route ends in
+// /memories (recall, a read, ends in /recall).
+func isWritePath(path string) bool {
+	for _, p := range writePrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return strings.HasPrefix(path, "/api/v1/memory/banks/") && strings.HasSuffix(path, "/memories")
+}
+
+// WriteTools are the MCP tool names that mutate state (all import actions).
+// Capability MUST be classified from the tool name in the JSON-RPC body —
+// `writeActions` paths cannot see it.
+var WriteTools = map[string]bool{"import": true}
+
+// RoleForRequest classifies the caller role from the Authorization header.
+// No configured tokens = Admin (local default); otherwise a missing/unknown
+// token is an error.
+func RoleForRequest(r *http.Request) (Role, error) {
+	return fromEnv().classify(r)
+}
+
+// AllowedTool reports whether role may invoke the MCP tool named tool.
+// Reads (query/status) are open to any valid role; writes need Contributor+.
+func AllowedTool(role Role, tool string) bool {
+	if WriteTools[tool] {
+		return role >= Contributor
+	}
+	return true
+}
+
+// Middleware gates a handler tree by request PATH. Reads are always allowed
+// for any valid role; path-level writes require Contributor or Admin. 401 on
+// missing token, 403 on insufficient role.
+//
+// NOTE: this cannot gate MCP — its capability lives in the JSON-RPC body.
+// MCP servers must call RoleForRequest/AllowedTool inside the tool handler
+// (see internal/mcp, which does).
 func Middleware(next http.Handler) http.Handler {
 	reg := fromEnv()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +138,7 @@ func Middleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		if writeActions[r.URL.Path] && role < Contributor {
+		if isWritePath(r.URL.Path) && role < Contributor {
 			http.Error(w, `{"error":"forbidden: writes require contributor or admin"}`, http.StatusForbidden)
 			return
 		}

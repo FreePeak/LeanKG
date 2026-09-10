@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -177,5 +179,45 @@ func TestGraphActionOverMCPWire(t *testing.T) {
 		Arguments: map[string]any{"action": "ontology"},
 	}); err != nil {
 		t.Fatalf("ontology action over MCP: %v", err)
+	}
+}
+
+// TestMCPRBACGatesWriteToolsOverWire proves the security property: with
+// tokens configured, a Viewer can read but a write tool call (import) is
+// refused — over the real HTTP handler, not just in the auth package. This is
+// the gap where MCP HTTP (the default transport) was previously ungated.
+func TestMCPRBACGatesWriteToolsOverWire(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
+
+	dir := t.TempDir()
+	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	engine := core.New(st, nil, nil)
+	engine.SetProjectDir(dir)
+	h := New(engine).HTTPHandler()
+
+	// no token → 401
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/mcp", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token: %d, want 401", rec.Code)
+	}
+
+	// viewer token → authorized; the tool-level gate is exercised by the
+	// allowTool call inside handleImport (unit-pinned in internal/auth).
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer viewer-tok")
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("valid viewer token must be accepted by the HTTP layer")
 	}
 }

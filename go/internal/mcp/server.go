@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/FreePeak/LeanKG/go/internal/auth"
 	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -39,9 +40,45 @@ func (s *Server) RunStdio(ctx context.Context) error {
 	return s.srv.Run(ctx, &mcp.StdioTransport{})
 }
 
-// HTTPHandler returns the streamable-HTTP MCP handler (mount under /mcp).
+// HTTPHandler returns the streamable-HTTP MCP handler (mount under /mcp)
+// wrapped in RBAC: the role is resolved from the Authorization header and
+// enforced per tool call inside the handlers (MCP carries capability in the
+// JSON-RPC body, so path middleware cannot see it).
 func (s *Server) HTTPHandler() http.Handler {
-	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.srv }, nil)
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.srv }, nil)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role, err := auth.RoleForRequest(r)
+		if err != nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		inner.ServeHTTP(w, r.WithContext(withRole(r.Context(), role)))
+	})
+}
+
+type ctxKey int
+
+const roleKey ctxKey = 0
+
+func withRole(ctx context.Context, role auth.Role) context.Context {
+	return context.WithValue(ctx, roleKey, role)
+}
+
+// roleOf returns the caller role (Admin when ungated, which is the local
+// default; stdio transport is inherently local).
+func roleOf(ctx context.Context) auth.Role {
+	if r, ok := ctx.Value(roleKey).(auth.Role); ok {
+		return r
+	}
+	return auth.Admin
+}
+
+// allowTool enforces RBAC per tool call (MCP body capability).
+func allowTool(ctx context.Context, tool string) error {
+	if !auth.AllowedTool(roleOf(ctx), tool) {
+		return fmt.Errorf("forbidden: tool %q requires contributor or admin role", tool)
+	}
+	return nil
 }
 
 // textResult marshals v as the tool's JSON text content.
@@ -107,6 +144,9 @@ func (s *Server) registerTools() {
 }
 
 func (s *Server) handleImport(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := allowTool(ctx, core.ToolImport); err != nil {
+		return nil, err
+	}
 	var in core.ImportRequest
 	if err := unmarshalArgs(req, &in); err != nil {
 		return nil, err
