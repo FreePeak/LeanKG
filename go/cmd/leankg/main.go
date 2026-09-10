@@ -46,6 +46,8 @@ func main() {
 		cmdServe(os.Args[2:])
 	case "index":
 		cmdIndex(os.Args[2:])
+	case "query":
+		cmdQuery(os.Args[2:])
 	case "writer":
 		cmdWriter(os.Args[2:])
 	case "connect":
@@ -67,6 +69,7 @@ func usage() {
 	fmt.Fprint(os.Stderr, `leankg — LeanKG Go engine
 
 Usage:
+  leankg query <text> [--kind name|impact] [--depth N]
   leankg serve  [--project DIR] [--stdio] [--http ADDR] [--rest ADDR] [--read-only] [--memory] [--embed-provider P]
   leankg index  [--project DIR] <dir>
   leankg doctor [--project DIR]

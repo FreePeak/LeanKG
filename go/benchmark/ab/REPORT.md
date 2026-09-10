@@ -11,31 +11,32 @@
 
 | Metric | Rust 0.30.0 | Go v4.6.0 | Ratio |
 |---|---|---|---|
-| Cold index, 100 files (process) | 0.10 s | 0.11 s | ≈1.0 |
-| L1 exact query (process) | 53 ms | 50 ms | ≈1.0 |
-| Impact radius, depth 2 (process) | 101 ms | 51 ms | Go 2.0× |
+| Cold index, 100 files (process, 5-run median) | 0.102 s | 0.103 s | ≈1.0 |
+| Index yield (same corpus) | 400 elements | 300 elements | rust ≈3,900 elem/s, go ≈2,900 elem/s⁴ |
+| L1 exact query (process, 5-run median) | 53 ms | 50 ms | ≈1.0 |
+| Impact radius, depth 2 (process) | 101 ms (file seed) | 51 ms (element-QN seed) | **not comparable**⁵ |
 | L1 exact, in-process (go bench, warm) | not measured¹ | 137 µs | — |
 | L2 fuzzy FTS5, in-process | not measured¹ | 375 µs | — |
 | Vector search 1k×384 top-10, in-process | not measured¹ | 4.4 ms (exact cosine scan²) | — |
 | L3 semantic end-to-end | not measured³ | not measured³ | — |
 | Binary size | 152 MB | ~12 MB | Go 12.7× smaller |
-| Index extraction yield (same corpus) | 400–503 elements | ~300 elements | Rust extracts consts/extra kinds⁴ |
-
 **Footnotes:**
 1. In-process Rust microbenches would require reviving the Rust bench harness (cargo benches removed with the Rust tree; historical cross-tool results live in `benchmark/results/`, July-era, different corpus — not comparable, marked *not measured* per the no-extrapolation rule).
 2. Go L3 is an **exact O(n) cosine scan** (`internal/store/vectors.go` ponytail ceiling); Rust sqlite/pgvector used HNSW ANN. Cells must never be labeled "ANN" for Go.
 3. L3 end-to-end requires the local ONNX model download on the Rust arm and a provider on the Go arm — out of scope for this report; both engines' L3 paths are covered by unit/live tests instead.
-4. Extraction yield difference is the documented W2 ceiling (Go regex extractor until tree-sitter; `go/internal/index` package doc). Rust counts include const/var kinds the Go extractor does not emit.
+4. Extraction yield: Rust 400 elements (its extractor also emits const/var kinds), Go 300 — the documented W2 ceiling (Go regex extractor until tree-sitter; `go/internal/index` package doc). Index TIME is at parity (~0.10 s both), so the yield gap is extraction coverage, not speed.
+5. Seed semantics differ: Rust `impact` seeds on a FILE (`impact src/mod42.go --depth 2`), Go's on an element QN (`query <qn> --kind impact --depth 2`). Both verified to return real hits (no error path); result sets differ (file = union over the file's symbols). The cells are therefore labeled not-comparable rather than quoted as a ratio.
 
 ## Raw runs
 
 ```
-rust index (3 cold runs):  0.11 0.10 0.10
-go   index (3 cold runs):  0.81 0.11 0.11   (first run includes filesystem cold-cache)
+rust index (5 cold runs, rm -rf inside timing): 0.103 0.102 0.101 0.100 0.106  → median 0.102
+go   index (5 cold runs, rm -rf inside timing): 0.103 0.103 0.103 0.102 0.104  → median 0.103
+  yields: rust "Indexed 100 files (400 elements)"; go "files=100 elements=300 relationships=200"
 rust L1   (5 runs):        0.053 0.052 0.054 0.053 0.051
 go   L1   (5 runs):        0.050 0.051 0.049 0.051 0.049
-rust impact (3 runs):      0.101 0.100 0.103
-go   impact (3 runs):      0.050 0.052 0.051
+rust impact (3 runs, file seed, depth 2):      0.101 0.100 0.103
+go   impact (3 runs, QN seed,  depth 2):       0.050 0.052 0.051  (verified: real hits, not an error path)
 ```
 
 ## How to reproduce
