@@ -14,7 +14,7 @@
 | Cold index, 100 files (process, 5-run median) | 0.102 s | 0.103 s | ≈1.0 |
 | Index yield (same corpus) | 400 elements | 300 elements | rust ≈3,900 elem/s, go ≈2,900 elem/s⁴ |
 | L1 exact query (process, 5-run median) | 53 ms | 50 ms | ≈1.0 |
-| Impact radius, depth 2 (process) | 101 ms (file seed) | 51 ms (element-QN seed) | **not comparable**⁵ |
+| Impact radius, chained corpus, depth 2 (process) | "No affected elements" under its file-seed semantics | 50 ms, verified 3-hit radius over the mod_i→mod_{i+1} call chain | **not comparable**⁵ |
 | L1 exact, in-process (go bench, warm) | not measured¹ | 137 µs | — |
 | L2 fuzzy FTS5, in-process | not measured¹ | 375 µs | — |
 | Vector search 1k×384 top-10, in-process | not measured¹ | 4.4 ms (exact cosine scan²) | — |
@@ -25,7 +25,7 @@
 2. Go L3 is an **exact O(n) cosine scan** (`internal/store/vectors.go` ponytail ceiling); Rust sqlite/pgvector used HNSW ANN. Cells must never be labeled "ANN" for Go.
 3. L3 end-to-end requires the local ONNX model download on the Rust arm and a provider on the Go arm — out of scope for this report; both engines' L3 paths are covered by unit/live tests instead.
 4. Extraction yield: Rust 400 elements (its extractor also emits const/var kinds), Go 300 — the documented W2 ceiling (Go regex extractor until tree-sitter; `go/internal/index` package doc). Index TIME is at parity (~0.10 s both), so the yield gap is extraction coverage, not speed.
-5. Seed semantics differ: Rust `impact` seeds on a FILE (`impact src/mod42.go --depth 2`), Go's on an element QN (`query <qn> --kind impact --depth 2`). Both verified to return real hits (no error path); result sets differ (file = union over the file's symbols). The cells are therefore labeled not-comparable rather than quoted as a ratio.
+5. Seed semantics differ AND the arms disagree on the same corpus: on the chained corpus (mod_i's next{i} calls Handler{i+1}, verified to give Go a 3-hit incoming-BFS radius from src/mod0.go::Handler0 at depth 2: next99@1, Handler99@2), Rust's file-seeded `impact src/mod0.go --depth 2` reports "No affected elements found" — its traversal direction/semantics do not surface the same dependents. Both arms verified functional (no error paths); a ratio would compare different questions, so the cell is not-comparable. Go's raw: 0.049/0.051/0.049 s (startup-dominated; traversal itself sub-ms).
 
 ## Raw runs
 
@@ -35,8 +35,8 @@ go   index (5 cold runs, rm -rf inside timing): 0.103 0.103 0.103 0.102 0.104  �
   yields: rust "Indexed 100 files (400 elements)"; go "files=100 elements=300 relationships=200"
 rust L1   (5 runs):        0.053 0.052 0.054 0.053 0.051
 go   L1   (5 runs):        0.050 0.051 0.049 0.051 0.049
-rust impact (3 runs, file seed, depth 2):      0.101 0.100 0.103
-go   impact (3 runs, QN seed,  depth 2):       0.050 0.052 0.051  (verified: real hits, not an error path)
+rust impact (3 runs, file seed, depth 2, chained corpus): "No affected elements found" / 0.062 0.054 0.052
+go   impact (3 runs, QN seed,   depth 2, chained corpus): verified 3-hit radius / 0.049 0.051 0.049
 ```
 
 ## How to reproduce
