@@ -1,14 +1,21 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.4.3-dual-engine-verified
-**Date:** 2026-09-09
+**Version:** 4.5.0-go-rewrite-analysis
+**Date:** 2026-09-10
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
-**Codebase Version:** 0.28.1
+**Codebase Version:** 0.30.0
 **Storage:** Dual-backend, BOTH verified live — SQLite default (`LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset), PostgreSQL + pgvector via `LEANKG_PG_URL`
 
 ---
 
 ## Changelog
+### v4.5.0-go-rewrite-analysis — Deep Rust→Go feasibility study (2026-09-10)
+
+> **Trigger:** user direction to evaluate replacing the Rust implementation with a Go engine: a lightweight agent-memory MCP server (just 3 tools — import/query/status), easy coding-tool integration, REST + RPC transports, layered storage (index → embedding), query ladder exact → fuzzy → semantic, SQLite default + PostgreSQL/pgvector, local (default) + API-provider embeddings, real writer/reader separation, and a comprehensive markdown analysis as the deliverable.
+
+**Delivered:** [`docs/go-rewrite-analysis.md`](go-rewrite-analysis.md) — full-source feasibility study (5 parallel deep-dive passes over mcp/db/indexer+graph/embeddings+memory/ops-CI plus first-hand verification of every load-bearing claim). Contents: measured inventory (168k LOC across 323 files, 3 tools / 83 verbs / 114 CLI verbs / 176 MB binary / 662 MB self-index), root-caused cons (Datalog translator tax, Cozo single-writer + FFI-abort class #286, per-process freshness/L1 cache races, unwired BLAKE3 content hash, sqlite L2 fuzzy asymmetry, sync-PG + block_in_place, surface sprawl), an honest pros list, a shipped-vs-vision gap table (≈90% of the stated target is already shipped and live-verified), and a Go target architecture: plain-SQL dual store (modernc sqlite WAL + pgx/pgvector), DB-resident freshness watermarks replacing TTL caches, MCP + REST + ConnectRPC from one core, providers-first embeddings with llama.cpp-sidecar default, 7-wave migration plan, risks, and 4 open questions for the user.
+
+**Status:** analysis only — no code changes landed. The Rust line (v0.30.0) stays released and in maintenance; the Go rewrite proceeds on user go/no-go and answers to §9 questions. Open questions: (1) sidecar vs in-process local ONNX, (2) rename `set`/`get` → `import`/`query` with aliases, (3) keep ui-v2 as-is, (4) timeline appetite (weeks core vs full parity).
 
 ### v4.4.3-dual-engine-verified — CI pipeline healed + Postgres path fixed + verified on both engines (2026-09-09)
 
@@ -380,7 +387,7 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 | Tools | Was 76/73 raw tools exact-count CI-pinned; v4.3.1 hard cutover → **1 tool** (`leankg_context`) with ~76 capabilities as verbs | One-tool envelope (FR-ZCP-03 end-state); published TTFV (FR-ZCP-12 T2); error code+fix catalog (FR-ZCP-12 T1, DONE); portfolio-scoped answers from T0 manifests |
 | Memory | RecallStore = **JSONL files** under `<project>/.leankg/` (read path complete; write path dead — v3.8.8 audit); `knowledge_entries` per-schema PG | `session_retain` + auto-recall live (FR-ZCP-07, rides FR-SMA-01..04); portfolio memory federation (FR-ZCP-09) |
 
-**Trust boundaries unchanged:** loopback-only HTTP by default; Bearer auth independent of any remote embedding (LeanKG has no remote embedding).
+**Trust boundaries:** loopback-only HTTP by default; Bearer auth independent of embedding egress — but note (v4.5.0 correction): **remote embedding now exists** (`LEANKG_EMBED_PROVIDER=openai`, `src/embeddings/provider.rs` `OpenAiCompatibleProvider`, usable without the `embeddings` feature; catalog: Qwen3-Embedding-4B / jina-v3 / gemini-embedding-2|001). Setting it ships embedding input blobs (element names + doc lines, not raw source bodies — `text_blob.rs`) to a third-party API; it is an explicit opt-in and the stale "no remote embedding" claim is hereby corrected.
 
 ---
 
@@ -435,5 +442,6 @@ All superseded material is preserved and linked, not deleted:
 - **OMP memory-backend + zvec-grep embedding audits (2026-09-04, installed-source @ `node_modules/@oh-my-pi/*`, zvec-grep main@d756cc7):** findings folded into this PRD (§3.1, §3.5, §3.8); full citations inline
 - **Simplicity research sprint (2026-09-04, three parallel scouts):** repo friction audit (file:line — 76/73 tools, 103 CLI verbs, 116 env names, 10-step walkthrough, error-copy gaps); competitor mechanics (zg, context7, serena, Desktop Commander, gitleaks — live-fetched URLs); onboarding playbooks (Supabase/Convex TTFV, Stripe error codes, clig.dev, Vercel, Stack Overflow 2025) → findings folded into §2.6, §3.9 (FR-ZCP-12), §5 M8, §6
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
+- **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-09 (v4.4.3 — CI pipeline healed (semantic-release ×3 defects), sqlite-default conversion shipped, Postgres path fixed (audit migration + temporal translator) and dual-engine verified live, integration suites re-pinned to the 3-tool surface)*
+*Last updated: 2026-09-10 (v4.5.0 — Rust→Go rewrite feasibility study delivered as docs/go-rewrite-analysis.md; no code changes)*
