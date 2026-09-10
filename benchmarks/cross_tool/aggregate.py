@@ -401,19 +401,25 @@ def build_report(
                 except json.JSONDecodeError:
                     continue
     if score_rows:
-        scores_by_repo: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+        # Key medians by (repo, judge_model): re-scoring the same runs with a
+        # different judge must surface as separate rows, never blend.
+        scores_by_repo: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         for sr in score_rows:
-            scores_by_repo[sr["repo"]][sr["arm"]].append(float(sr["score"]))
+            scores_by_repo[(sr["repo"], str(sr.get("judge_model") or "default"))][
+                sr["arm"]
+            ].append(float(sr["score"]))
         lines.append("")
         lines.append("## Answer Quality (judge-blind, rubric 0-6)")
         lines.append("")
         lines.append("Median blind-rubric score per arm (judge never saw arm labels;")
-        lines.append("answers shuffled before grading). Higher is better.")
+        lines.append("answers shuffled before grading). Higher is better. One row per")
+        lines.append("judge model — scores from different judges never blend.")
         lines.append("")
-        lines.append("| Codebase | Quality WITH | Quality WITHOUT | Delta |")
-        lines.append("| --- | --- | --- | --- |")
-        for slug in sorted(scores_by_repo):
-            arms = scores_by_repo[slug]
+        lines.append("| Codebase | Judge | Quality WITH | Quality WITHOUT | Delta |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for (slug, judge), arms in sorted(scores_by_repo.items()):
             w_vals = arms.get("with", [])
             wo_vals = arms.get("without", [])
             w_med = statistics.median(w_vals) if w_vals else None
@@ -424,7 +430,9 @@ def build_report(
                 else "N/A"
             )
             fmt = lambda v: f"{v:.1f}" if v is not None else "N/A"
-            lines.append(f"| {slug} | {fmt(w_med)} | {fmt(wo_med)} | {delta} |")
+            lines.append(
+                f"| {slug} | {judge} | {fmt(w_med)} | {fmt(wo_med)} | {delta} |"
+            )
 
     # FR-ZCP-08: the zg pitfalls checklist, computed from run metadata.
     lines.append("")
@@ -488,8 +496,106 @@ def build_report(
     return md, json_payload
 
 
+def build_selftest_tree(root: Path) -> None:
+    """Fabricate a minimal results tree exercising every rigor gate.
+
+    gin: 4 valid runs per arm (trials PASS), one WITHOUT run with an MCP
+    server attached (leakage guard must drop it), scores from two judge
+    models (must stay segmented), a foreign scores.jsonl row that must
+    never enter the run stream.
+    """
+    base = root / "runs" / "2026-01-01" / "gin"
+    for arm, mcp in (("with", ["leankg"]), ("without", [])):
+        d = base / arm
+        d.mkdir(parents=True, exist_ok=True)
+        rows = []
+        for i in range(1, 5):
+            rows.append(
+                {
+                    "repo": "gin", "arm": arm, "run_idx": i,
+                    "model": "sonnet", "actual_model": "claude-sonnet",
+                    "mcp_servers": mcp, "mcp_tool_count": 4 if arm == "with" else 0,
+                    "valid": True, "invalid_reason": None,
+                    "prompt_chars": 100, "exit_code": 0,
+                    "duration_s": 40.0 + i, "total_cost_usd": 0.30 + 0.01 * i,
+                    "input_tokens": 260000, "output_tokens": 4500,
+                    "cache_read_tokens": 200000,
+                    "tool_calls": 2 + i, "file_reads": 1, "num_turns": 1,
+                    "stop_reason": "end_turn", "result_chars": 1200,
+                    "repo_sha": "a" * 40, "prompt_sha256": "b" * 64,
+                    "prompt_version": 1,
+                }
+            )
+        if arm == "without":
+            leaked = dict(rows[0])
+            leaked.update(
+                {
+                    "run_idx": 5, "mcp_servers": ["leankg"],
+                    "valid": False,
+                    "invalid_reason": "mcp_leaked_into_without_arm",
+                }
+            )
+            rows.append(leaked)
+        (d / "runs.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
+        )
+    scores = root / "scores"
+    scores.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for judge in ("j1", "j2"):
+        for arm in ("with", "without"):
+            for i in range(1, 5):
+                lines.append(
+                    json.dumps(
+                        {
+                            "repo": "gin", "arm": arm, "run_idx": i,
+                            "judge_model": judge, "score": 5 if arm == "with" else 3,
+                        }
+                    )
+                )
+    # A row with run-schema keys must be ignored by load_runs (scores skip).
+    (scores / "scores.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+
+
+def selftest() -> int:
+    """Offline gate check: builds a fixture tree and asserts every rigor
+    gate computes the expected verdict. Exits 0 only if all gates hold."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_selftest_tree(root)
+        rows = load_runs(root)
+        leaked = [r for r in rows if not r.get("valid") and "leaked" in (r.get("dropped_reason") or "")]
+        assert len(leaked) == 1, f"leaked run not dropped: {len(leaked)}"
+        valid = [r for r in rows if r.get("valid")]
+        assert len(valid) == 8, f"valid count wrong: {len(valid)} (scores.jsonl leaked into runs?)"
+        by_arm = {arm: [r for r in valid if r["arm"] == arm] for arm in ("with", "without")}
+        assert all(len(v) == 4 for v in by_arm.values()), "trial counts wrong"
+        # Score rows never enter the run stream: every valid row has metrics.
+        assert all("tool_calls" in r for r in valid), "score row polluted runs"
+        md, payload = build_report([{"slug": "gin", "language": "Go"}], rows, results_root=root)
+        checks = payload["rigor_checks"]["gin"]
+        assert checks["trials_min3"] is True, checks
+        assert checks["tool_smoke"] is True, checks
+        assert checks["repo_sha"] == "a" * 10, checks
+        assert checks["prompt_sha_uniform"] is True, checks
+        assert "| gin | j1 | 5.0 | 3.0 | +2.0 |" in md, "judge j1 row missing"
+        assert "| gin | j2 | 5.0 | 3.0 | +2.0 |" in md, "judge j2 row missing (blended?)"
+        assert "mcp_leaked_into_without_arm" in md, "leak drop not surfaced"
+        print("aggregate selftest: OK (leak drop, trials gate, tool smoke, pinning, judge segmentation)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="offline: build a fixture tree in a tempdir and assert every rigor gate",
+    )
     parser.add_argument(
         "--results",
         type=Path,
@@ -515,6 +621,8 @@ def main() -> int:
         help="Override the base filename for outputs (default: cross_tool-YYYY-MM-DD)",
     )
     args = parser.parse_args()
+    if args.selftest:
+        return selftest()
 
     repos_data = load_yaml_fallback(args.repos)
     repos_meta = repos_data.get("repos", [])
