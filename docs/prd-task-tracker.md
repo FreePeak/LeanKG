@@ -28,7 +28,7 @@
 | M7 — Embedding correctness | 1 | — | **IN_PROGRESS** (core DONE #351/#353/#355: pinned revisions, model-stamped collections, hard rebuild guard, query-side degrade to L2, entry-point guards, chunker_version hash coupling; outstanding §3.8: query/document prefixes in catalog, 3-signal size+mtime fast-path, per-file atomic replace + truncation accounting, watcher-miss insurance, single-flight leases) |
 | M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991; T3 re-scoped to one-tool CI invariant — landed with v4.3.1; T2 TTFV outstanding) |
 | M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 DONE; FR-3T-04 live validation complete on this repo — 581 files, 9522 vectors, L1/L2/L3 verified; PR #284 merged (v4.3.x)) |
-| M-GO — Go engine rewrite (#365) | 3 | — | **IN_PROGRESS** (FR-GO-W1 core DONE on feat/go-rewrite: store/core/index/mcp/rest + live smoke; FR-GO-EMBED DONE: leankg-embed binary + stamp guards + NDJSON; FR-GO-MEM DONE: full-markdown memory + banks adapter; remaining waves W2/W4/W5/W6/W7 tracked in go/README.md) |
+| M-GO — Go engine rewrite (#365) | 3 | — | **IN_PROGRESS** (FR-GO-W1 core DONE on feat/go-rewrite: store/core/index/mcp/rest + live smoke; FR-GO-EMBED DONE: leankg-embed binary + stamp guards + NDJSON; FR-GO-MEM DONE: full-markdown memory + banks adapter; v4.6.0: ALL waves landed (W2 watcher/writer, W4 pgvector, W5 ConnectRPC+auth, session, graph verbs, goldens, benchmarks) and the Rust tree REMOVED — deferred ledger in docs/prd.md) |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
