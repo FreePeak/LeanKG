@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,8 +38,34 @@ func await(t *testing.T, timeout time.Duration, fn func() bool) {
 	t.Fatalf("condition not met within %s", timeout)
 }
 
+type eventLog struct {
+	mu  sync.Mutex
+	ks  map[string]bool
+	ch  <-chan WatchEvent
+	end chan struct{}
+}
+
+func newEventLog(w *Watcher) *eventLog {
+	el := &eventLog{ks: map[string]bool{}, ch: w.Events(), end: make(chan struct{})}
+	go func() {
+		defer close(el.end)
+		for ev := range el.ch {
+			el.mu.Lock()
+			el.ks[ev.Kind] = true
+			el.mu.Unlock()
+		}
+	}()
+	return el
+}
+
+func (el *eventLog) saw(kind string) bool {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	return el.ks[kind]
+}
+
 // TestWatchIndexOnWriteAndRemove covers the end-to-end trigger flow: write a
-// .go file -> element queryable; delete it -> gone; Events channel sees
+// .go file -> element queryable; delete it -> gone; Events channel saw
 // create+remove.
 func TestWatchIndexOnWriteAndRemove(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -47,20 +74,12 @@ func TestWatchIndexOnWriteAndRemove(t *testing.T) {
 	proj := t.TempDir()
 	name := "WatchedFunc"
 
-	events := make([]WatchEvent, 0, 8)
-	w, err := Start(ctx, st, proj, Options{
-		Debounce: 100 * time.Millisecond,
-		OnEvent:  func(path, kind string) { /* exercised via Events() */ },
-	})
+	w, err := Start(ctx, st, proj, Options{Debounce: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer w.Stop()
-	go func() {
-		for ev := range w.Events() {
-			events = append(events, ev) // test-local copy; Events is introspection
-		}
-	}()
+	el := newEventLog(w)
 
 	file := filepath.Join(proj, "sample.go")
 	if err := os.WriteFile(file, []byte("package sample\n\nfunc "+name+"() int { return 1 }\n"), 0o644); err != nil {
@@ -79,26 +98,12 @@ func TestWatchIndexOnWriteAndRemove(t *testing.T) {
 		return err == nil && len(els) == 0
 	})
 
-	sawCreate, sawRemove := false, false
-	for _, ev := range events {
-		switch ev.Kind {
-		case "create":
-			sawCreate = true
-		case "remove":
-			sawRemove = true
-		}
-	}
-	if !sawCreate {
-		t.Error("Events channel did not report a create event")
-	}
-	if !sawRemove {
-		t.Error("Events channel did not report a remove event")
-	}
+	await(t, time.Second, func() bool { return el.saw("create") && el.saw("remove") })
 }
 
-// TestSecondStartErrAlreadyWatching pins the single-flight lock: second Start
-// on the same root fails with ErrAlreadyWatching; after ctx cancel (and lock
-// release), a new Start on the same root succeeds.
+// TestSecondStartErrAlreadyWatching pins the single-flight lock: a second
+// Start on the same root fails with ErrAlreadyWatching; after ctx cancel
+// (loop exit releases the lock), a new Start on the same root succeeds.
 func TestSecondStartErrAlreadyWatching(t *testing.T) {
 	st := openStore(t)
 	proj := t.TempDir()
@@ -115,7 +120,7 @@ func TestSecondStartErrAlreadyWatching(t *testing.T) {
 	}
 
 	cancel()
-	w.Stop() // loop exit releases the lock
+	<-w.Done() // loop exit => stopOnce => flock released
 
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
@@ -126,40 +131,69 @@ func TestSecondStartErrAlreadyWatching(t *testing.T) {
 	w2.Stop()
 }
 
-// TestSkippedDirsNotWatched pins the index-identical skip list: directories
-// under node_modules/.git/.leankg etc. are never added to the notifier.
-func TestSkippedDirsNotWatched(t *testing.T) {
+// TestSkipDirsNotWatched pins the index-identical skip list at the WATCHER
+// level: node_modules contents never produce events (IndexDir would also
+// skip them — here the whole subtree is outside the notifier), while
+// normal nested dirs are watched.
+func TestSkipDirsNotWatched(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	st := openStore(t)
 	proj := t.TempDir()
-	for _, d := range []string{"node_modules/pkg", ".git/objects", ".leankg/cache", "vendor/x", "src/deep"} {
+	for _, d := range []string{"node_modules/pkg", "src/deep"} {
 		if err := os.MkdirAll(filepath.Join(proj, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Watching a directory in fsnotify fails on removed dirs but not here;
-	// we assert indirectly: writes inside node_modules must not trigger
-	// indexing of any element.
 	w, err := Start(ctx, st, proj, Options{Debounce: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer w.Stop()
 
-	if err := os.WriteFile(filepath.Join(proj, "node_modules/pkg/skip.go"), []byte("package pkg\n\nfunc SkipMe() {}\n"), 0o644); err != nil {
+	// Inside node_modules: no event must ever surface, so no re-index runs.
+	nm := filepath.Join(proj, "node_modules/pkg/skip.go")
+	if err := os.WriteFile(nm, []byte("package pkg\n\nfunc SkipMe() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	await(t, 2*time.Second, func() bool {
-		els, err := st.FindExact("SkipMe")
-		return err == nil && len(els) == 0
-	})
-	// And a normal file inside src/ is still picked up (walk added src/deep).
+	// Inside a watched dir: the write triggers the flow.
 	if err := os.WriteFile(filepath.Join(proj, "src/deep/keep.go"), []byte("package deep\n\nfunc KeepMe() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	await(t, 3*time.Second, func() bool {
 		els, err := st.FindExact("KeepMe")
+		return err == nil && len(els) > 0
+	})
+	// Give any (wrong) node_modules-triggered flush a chance to land, then
+	// assert the skip actually held.
+	time.Sleep(300 * time.Millisecond)
+	if els, _ := st.FindExact("SkipMe"); len(els) > 0 {
+		t.Error("node_modules file was indexed: skip list failed at watcher level")
+	}
+}
+
+// TestEventsChannelDropOnOverflow pins the never-blocks contract: with no
+// reader, 64+ events must not stall the loop.
+func TestEventsChannelDropOnOverflow(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := openStore(t)
+	proj := t.TempDir()
+	w, err := Start(ctx, st, proj, Options{Debounce: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer w.Stop()
+
+	for i := 0; i < 128; i++ {
+		if err := os.WriteFile(filepath.Join(proj, "many.go"),
+			[]byte("package p\n\nfunc Many() int { return "+string(rune('0'+i%10))+" }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// If the loop blocked on a full channel, this re-index would never run.
+	await(t, 3*time.Second, func() bool {
+		els, err := st.FindExact("Many")
 		return err == nil && len(els) > 0
 	})
 }

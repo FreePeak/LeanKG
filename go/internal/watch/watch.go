@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -56,10 +57,10 @@ type WatchEvent struct {
 // Watcher is the running watcher returned by Start; Cancel via its Stop or
 // the Start ctx.
 type Watcher struct {
-	events   chan WatchEvent
-	stop     func() // idempotent: closes fsnotify watcher, releases flock
-	stopOnce func()
-	done     chan struct{}
+	events       chan WatchEvent
+	stopOnce     sync.Once
+	stopInternal func()
+	done         chan struct{}
 }
 
 // Events returns the introspection channel (buffered 64, drops on overflow —
@@ -71,7 +72,9 @@ func (w *Watcher) Done() <-chan struct{} { return w.done }
 
 // Stop stops the watcher cleanly (idempotent) and waits for the loop to exit.
 func (w *Watcher) Stop() {
-	w.stopOnce()
+	w.stopOnce.Do(func() {
+		w.stopInternal()
+	})
 	<-w.done
 }
 
@@ -144,21 +147,15 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 		events: make(chan WatchEvent, 64),
 		done:   make(chan struct{}),
 	}
-	var once bool
-	w.stopOnce = func() {
-		if once {
-			return
-		}
-		once = true
+	w.stopInternal = func() {
 		notifier.Close()
 		syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 		lockFile.Close()
 	}
-	w.stop = w.stopOnce
 
 	go func() {
 		defer close(w.done)
-		defer w.stop()
+		defer w.stopOnce.Do(w.stopInternal)
 		pending := make(map[string]bool)
 		ticker := time.NewTicker(opts.Debounce)
 		defer ticker.Stop()
