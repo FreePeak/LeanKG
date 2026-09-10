@@ -62,6 +62,44 @@ func Handler(engine *core.Engine, mem *memory.Memory) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
+	mux.HandleFunc("POST /api/v1/session/read", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Command   string `json:"command"` // recall | canvas
+			SessionID string `json:"session_id"`
+			NodeID    string `json:"node_id"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		out, err := engine.SessionRead(body.Command, body.SessionID, body.NodeID)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+	mux.HandleFunc("POST /api/v1/ontology/match", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Catalog string `json:"catalog"` // path to the concept catalog JSON
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		out, err := engine.OntologyMatch(body.Catalog)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+	mux.HandleFunc("GET /api/v1/ontology/matches", func(w http.ResponseWriter, r *http.Request) {
+		out, err := engine.OntologyMatches()
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
 	if mem != nil {
 		mux.HandleFunc("POST /api/v1/memory/banks/{bank}/memories", func(w http.ResponseWriter, r *http.Request) {
 			bank := r.PathValue("bank")

@@ -2,6 +2,9 @@ package core
 
 import (
 	"context"
+	"github.com/FreePeak/LeanKG/go/internal/ontology"
+	"github.com/FreePeak/LeanKG/go/internal/session"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -325,5 +328,64 @@ func TestL3StampDriftDegrades(t *testing.T) {
 	r := out["retrieval"].(map[string]any)
 	if r["rung"] != "L2" || !strings.Contains(r["reason"].(string), "stamp mismatch") {
 		t.Fatalf("drifted collection must degrade with mismatch reason: %v", r)
+	}
+}
+
+// TestSessionOffloadRoundTripThroughCore proves internal/session is reachable
+// from the 3-tool surface (not dead code): import{action:"session"} offloads,
+// the query tool's session action recalls it bit-for-bit, and the canvas lists it.
+func TestSessionOffloadRoundTripThroughCore(t *testing.T) {
+	e, _ := newEngine(t)
+	e.SetProjectDir(t.TempDir())
+	ctx := context.Background()
+
+	if _, err := e.Import(ctx, ImportRequest{
+		Action: "session", Command: "offload",
+		Args: map[string]any{"session_id": "s1", "node_id": "node-1", "payload": "bulky payload text", "summary": "a summary"},
+	}); err != nil {
+		t.Fatalf("offload: %v", err)
+	}
+	out, err := e.SessionRead("recall", "s1", "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["payload"] != "bulky payload text" {
+		t.Fatalf("recall payload: %v", out["payload"])
+	}
+	out, err = e.SessionRead("canvas", "s1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refs, ok := out["refs"].([]session.Ref); !ok || len(refs) != 1 {
+		t.Fatalf("canvas: %+v", out)
+	}
+}
+
+// TestOntologyMatchThroughCore proves internal/ontology is reachable: a
+// catalog matched against indexed elements persists and reads back.
+func TestOntologyMatchThroughCore(t *testing.T) {
+	e, _ := newEngine(t)
+	if err := e.st.UpsertElements([]store.Element{
+		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catPath := filepath.Join(t.TempDir(), "concepts.json")
+	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.OntologyMatch(catPath)
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	if matches, ok := out["matches"].([]ontology.Match); !ok || len(matches) != 1 {
+		t.Fatalf("matches: %+v", out)
+	}
+	again, err := e.OntologyMatches()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matches, ok := again["matches"].([]ontology.Match); !ok || len(matches) != 1 {
+		t.Fatalf("persisted matches: %+v", again)
 	}
 }

@@ -316,6 +316,12 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "memory":
 		// Query-tool memory reads carry the command in Query.
 		return e.MemoryRead("search", "", req.Query, req.Limit)
+	case "session":
+		cmd := "recall"
+		if req.Args != nil && req.Args["command"] != "" {
+			cmd = req.Args["command"]
+		}
+		return e.SessionRead(cmd, req.Query, req.Args["node_id"])
 	case "", "search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain":
 	default:
 		return nil, fmt.Errorf("unknown query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory; empty = ladder router)", req.Action)
