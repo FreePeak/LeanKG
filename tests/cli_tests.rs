@@ -1,7 +1,7 @@
 use clap::Parser;
 use leankg::cli::CLICommand;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 struct TestArgs {
     #[command(subcommand)]
     command: CLICommand,
@@ -718,5 +718,33 @@ fn test_cli_index_with_gcs_source() {
             assert_eq!(auth.as_deref(), Some("ya29.token"));
         }
         _ => panic!("expected Index command"),
+    }
+}
+
+#[test]
+fn test_cli_register_cwd_conflicts_with_remove() {
+    use leankg::cli::CLICommand;
+    // FR-ZCP-04: --register-cwd is meaningless with --remove — clap must reject.
+    let err = TestArgs::try_parse_from([
+        "leankg",
+        "connect",
+        "claude-code",
+        "--remove",
+        "--register-cwd",
+    ])
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("cannot be used with"),
+        "expected conflicts_with rejection, got: {err}"
+    );
+
+    // Parse contract: register_cwd accepted standalone.
+    let ok =
+        TestArgs::try_parse_from(["leankg", "connect", "claude-code", "--register-cwd"]).unwrap();
+    match ok.command {
+        CLICommand::Connect {
+            register_cwd: true, ..
+        } => {}
+        other => panic!("expected Connect with register_cwd, got {other:?}"),
     }
 }

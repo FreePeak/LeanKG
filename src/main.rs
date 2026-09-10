@@ -726,6 +726,61 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let cwd = std::env::current_dir()?;
                 crate::init_project(cwd.to_str().unwrap_or("."), false)?;
                 println!("Project registered: {}", cwd.display());
+                // FR-ZCP-04: per-client hook mechanism. Claude Code supports
+                // SessionStart hooks — write a real hook (merge-or-create
+                // the hooks key). Clients without hook mechanisms get the
+                // manual command printed instead (zero dead ends).
+                if matches!(target, Some(crate::connect::Client::ClaudeCode)) {
+                    let hook_cfg =
+                        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                            .join(".claude")
+                            .join("settings.json");
+                    let mut root = match std::fs::read_to_string(&hook_cfg) {
+                        Ok(text) => serde_json::from_str(&text)
+                            .map_err(|e| format!("{} invalid JSON: {}", hook_cfg.display(), e))?,
+                        Err(_) => serde_json::json!({}),
+                    };
+                    let hook = serde_json::json!({
+                        "type": "command",
+                        "command": "leankg add $CLAUDE_PROJECT_DIR"
+                    });
+                    let session_start = root
+                        .get_mut("hooks")
+                        .and_then(|h| h.get_mut("SessionStart"))
+                        .and_then(|s| s.as_array_mut());
+                    match session_start {
+                        Some(list) => {
+                            // Merge-or-append: skip if our hook already present.
+                            let present = list.iter().any(|item| {
+                                item.get("hooks")
+                                    .and_then(|hs| hs.as_array())
+                                    .map(|hs| {
+                                        hs.iter().any(|h| {
+                                            h.get("command")
+                                                .and_then(|c| c.as_str())
+                                                .map(|c| c.contains("leankg add"))
+                                                .unwrap_or(false)
+                                        })
+                                    })
+                                    .unwrap_or(false)
+                            });
+                            if !present {
+                                list.push(serde_json::json!({
+                                    "hooks": [hook]
+                                }));
+                            }
+                        }
+                        None => {
+                            root["hooks"]["SessionStart"] =
+                                serde_json::json!([{ "hooks": [hook] }]);
+                        }
+                    }
+                    let body = serde_json::to_string_pretty(&root)?;
+                    std::fs::create_dir_all(hook_cfg.parent().unwrap())?;
+                    std::fs::write(&hook_cfg, body + "\n")
+                        .map_err(|e| format!("writing {}: {}", hook_cfg.display(), e))?;
+                    println!("SessionStart hook written: {}", hook_cfg.display());
+                }
             }
             // FR-ZCP-13: point new users at the one-command project setup.
             println!("Register a project with `leankg add <path>` (auto or manual setup).");
@@ -735,6 +790,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             remote,
             remove,
             project,
+            register_cwd,
         } => {
             let project_path = project.as_deref().map(std::path::PathBuf::from);
             let path = connect::run_with_home(
@@ -749,6 +805,53 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("Configured leankg for {client:?} at {}", path.display());
                 println!("Restart the client so it picks up the leankg MCP server.");
+                // FR-ZCP-04: Claude Code supports SessionStart hooks — write
+                // the hook (merge-or-create) so the project attaches
+                // automatically. Other clients get the manual command.
+                if register_cwd && matches!(client, crate::connect::Client::ClaudeCode) {
+                    let hook_cfg =
+                        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                            .join(".claude")
+                            .join("settings.json");
+                    if let Ok(mut root) = std::fs::read_to_string(&hook_cfg)
+                        .map_err(|e| format!("{}: {}", hook_cfg.display(), e))
+                        .and_then(|t| {
+                            serde_json::from_str::<serde_json::Value>(&t)
+                                .map_err(|e| format!("{} invalid JSON: {}", hook_cfg.display(), e))
+                        })
+                    {
+                        let hook = serde_json::json!({
+                            "type": "command",
+                            "command": "leankg add $CLAUDE_PROJECT_DIR"
+                        });
+                        let already = root
+                            .pointer("/hooks/SessionStart")
+                            .and_then(|s| s.as_array())
+                            .map(|list| {
+                                list.iter()
+                                    .any(|item| item.to_string().contains("leankg add"))
+                            })
+                            .unwrap_or(false);
+                        if !already {
+                            match root
+                                .pointer_mut("/hooks/SessionStart")
+                                .and_then(|s| s.as_array_mut())
+                            {
+                                Some(list) => list.push(serde_json::json!({"hooks": [hook]})),
+                                None => {
+                                    root["hooks"] =
+                                        serde_json::json!({"SessionStart": [{"hooks": [hook]}]});
+                                }
+                            }
+                            if let Ok(body) = serde_json::to_string_pretty(&root) {
+                                std::fs::write(&hook_cfg, body + "\n").ok();
+                                println!("SessionStart hook written: {}", hook_cfg.display());
+                            }
+                        } else {
+                            println!("SessionStart hook already present.");
+                        }
+                    }
+                }
             }
         }
         cli::CLICommand::Doctor {
@@ -3434,7 +3537,7 @@ fn show_status(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Erro
 
     println!("LeanKG Status:");
     println!("  Database: {}", db_path.display());
-    println!("  Storage Engine: postgres");
+    println!("  Storage Engine: {}", db.engine_name());
     println!("  Storage Path: {}", db.redacted_url());
     println!("  Elements: {}", elements.len());
     println!("  Relationships: {}", relationships.len());
