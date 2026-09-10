@@ -54,6 +54,8 @@ func main() {
 		cmdConnect(os.Args[2:])
 	case "install":
 		cmdInstall(os.Args[2:])
+	case "version":
+		fmt.Println("leankg " + Version())
 	case "doctor":
 		cmdDoctor(os.Args[2:])
 	case "-h", "--help", "help":

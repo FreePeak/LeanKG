@@ -1,5 +1,8 @@
 # Contributing to LeanKG
 
+> **v4.6.0:** the implementation is 100% Go (`go/`); Rust commands below are historical. Build: `make go-build` · Test: `make go-test` · See `AGENTS.md` for the current workflow.
+
+
 First off, thank you for considering contributing to LeanKG! It’s people like you who make LeanKG a powerful tool for the AI-assisted development ecosystem.
 
 As a project focused on **Lightweight Knowledge Graphs for AI**, we value contributions that improve indexing accuracy, reduce token overhead, and expand MCP capabilities.

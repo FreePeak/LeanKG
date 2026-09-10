@@ -44,6 +44,8 @@ func main() {
 		cmdImport(os.Args[2:])
 	case "status":
 		cmdStatus(os.Args[2:])
+	case "version":
+		fmt.Println("leankg-embed " + Version())
 	default:
 		usage()
 		os.Exit(2)

@@ -1,5 +1,8 @@
 # LeanKG MCP Server Setup - Lazy People's Guide
 
+> **v4.6.0:** the implementation is 100% Go (`go/`); Rust commands below are historical. Build: `make go-build` · Test: `make go-test` · See `AGENTS.md` for the current workflow.
+
+
 **TL;DR:** Copy-paste one command and you're done.
 
 ---
