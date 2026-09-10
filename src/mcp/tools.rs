@@ -326,6 +326,14 @@ pub fn verb_catalog() -> Vec<&'static str> {
         "update_knowledge",
         "delete_knowledge",
         "search_knowledge",
+        // FR-ZCP-07: harness memory-backend adjacency (mnemopi-compatible
+        // session verbs + id-stable memory mirrors).
+        "session_retain",
+        "session_recall",
+        "memory_get",
+        "memory_update",
+        "memory_forget",
+        "memory_invalidate",
         "add_annotation",
         "link_element",
         "add_documentation",

@@ -258,6 +258,12 @@ impl ToolHandler {
             "get_screen_args" => self.get_screen_args(arguments),
             "get_nav_callers" => self.get_nav_callers(arguments),
             // Knowledge contribution tools
+            "session_retain" => self.session_retain(arguments),
+            "session_recall" => self.session_recall(arguments),
+            "memory_get" => self.memory_get(arguments),
+            "memory_update" => self.memory_update(arguments),
+            "memory_forget" => self.memory_forget(arguments),
+            "memory_invalidate" => self.memory_invalidate(arguments),
             "add_knowledge" => self.add_knowledge(arguments),
             "update_knowledge" => self.update_knowledge(arguments),
             "delete_knowledge" => self.delete_knowledge(arguments),
@@ -2960,6 +2966,122 @@ impl ToolHandler {
     // Knowledge Contribution Tools
     // ========================================================================
 
+    // ====================================================================
+    // FR-ZCP-07: harness memory (mnemopi-compatible surface)
+    // ====================================================================
+
+    fn project_root(&self) -> std::path::PathBuf {
+        // A relative db_path (".leankg") has no parent — anchor to the CWD so
+        // memory stores can never land in an ambient /tmp/.leankg (which the
+        // FR-A01 project walk would then resolve for unrelated tools).
+        let base = self
+            .db_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        std::fs::canonicalize(&base).unwrap_or(base)
+    }
+
+    fn memory_scope(&self, args: &Value) -> crate::memory::BankScope {
+        crate::memory::BankScope::parse_scope(args["scope"].as_str().unwrap_or("per-project"))
+    }
+
+    fn session_retain(&self, args: &Value) -> Result<Value, String> {
+        let session_id = args["session_id"].as_str().ok_or("Missing 'session_id'")?;
+        let turns: Vec<String> = args["turns"]
+            .as_array()
+            .ok_or("Missing 'turns' (array of transcript turn texts)")?
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        let through = args["retained_through_user_turn"]
+            .as_u64()
+            .ok_or("Missing 'retained_through_user_turn' (integer cursor)")?
+            as usize;
+        let cwd = args["cwd"].as_str().map(String::from).unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        });
+        let scope = self.memory_scope(args);
+        let project_bank = crate::memory::mnemopi_bank_name(&self.project_root());
+        let shared = "leankg-shared";
+        let write_bank = scope.write_bank(&project_bank, shared);
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
+        let result = store
+            .retain_transcript(&write_bank, session_id, &turns, through, &cwd)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({
+            "status": "ok",
+            "bank": write_bank,
+            "written": result.written,
+            "skipped": result.skipped,
+            "retained_through_user_turn": result.retained_through_user_turn,
+        }))
+    }
+
+    fn session_recall(&self, args: &Value) -> Result<Value, String> {
+        let query = args["query"].as_str().ok_or("Missing 'query'")?;
+        let limit = args["limit"].as_u64().unwrap_or(8) as usize;
+        let scope = self.memory_scope(args);
+        let project_bank = crate::memory::mnemopi_bank_name(&self.project_root());
+        let shared = "leankg-shared";
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
+        let entries = store.recall(&scope.read_banks(&project_bank, shared), query, limit);
+        // OMP injection contract: ranked {id, content, source, timestamp, score}.
+        Ok(json!({
+            "status": "ok",
+            "banks": scope.read_banks(&project_bank, shared),
+            "count": entries.len(),
+            "memories": entries.iter().map(|e| json!({
+                "id": e.id,
+                "content": e.content,
+                "source": e.source,
+                "timestamp": e.timestamp,
+                "score": 0.0,
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
+    fn memory_get(&self, args: &Value) -> Result<Value, String> {
+        let id = args["id"].as_str().ok_or("Missing 'id'")?;
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
+        match store.get(id) {
+            Some(e) => Ok(json!({ "status": "ok", "memory": e })),
+            None => Ok(json!({ "status": "not_found", "id": id })),
+        }
+    }
+
+    fn memory_update(&self, args: &Value) -> Result<Value, String> {
+        let id = args["id"].as_str().ok_or("Missing 'id'")?;
+        let content = args["content"].as_str().ok_or("Missing 'content'")?;
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
+        match store.update(id, content) {
+            Ok(true) => Ok(json!({ "status": "ok", "id": id })),
+            Ok(false) => Ok(json!({ "status": "not_found", "id": id })),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn memory_forget(&self, args: &Value) -> Result<Value, String> {
+        let id = args["id"].as_str().ok_or("Missing 'id'")?;
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
+        match store.forget(id) {
+            Ok(true) => Ok(json!({ "status": "ok", "id": id, "forgotten": true })),
+            Ok(false) => Ok(json!({ "status": "not_found", "id": id })),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn memory_invalidate(&self, args: &Value) -> Result<Value, String> {
+        let session_id = args["session_id"].as_str().ok_or("Missing 'session_id'")?;
+        let store = crate::memory::MemoryStore::in_leankg_dir(&self.db_path);
+        match store.invalidate_session(session_id) {
+            Ok(removed) => Ok(json!({ "status": "ok", "removed": removed })),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     fn add_knowledge(&self, args: &Value) -> Result<Value, String> {
         let knowledge_type = args["knowledge_type"]
             .as_str()
@@ -5084,6 +5206,68 @@ fn semantic_no_corpus_hit(query: &str, prefix: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    // FR-ZCP-07: the mnemopi-compatible memory verbs dispatch through the
+    // ToolHandler and honor the retained_through_user_turn cursor.
+    #[tokio::test]
+    async fn fr_zcp07_memory_verbs_retain_recall_invalidate() {
+        let (handler, tmp) = handler_in_temp_project();
+        let root = tmp.path().display().to_string();
+
+        let v = handler
+            .session_retain(&serde_json::json!({
+                "session_id": "sess-1",
+                "turns": ["lesson: always sync the PRD before merging"],
+                "retained_through_user_turn": 4,
+                "cwd": root,
+            }))
+            .unwrap();
+        assert_eq!(v["written"], serde_json::json!(1));
+        // FR-ZCP-07 anchor guard: memory rows must live under the project's
+        // .leankg — NEVER in an ambient /tmp/.leankg (the /tmp/.leankg
+        // pollution made fr_a01's walk-up test fail on runners).
+        assert!(
+            !std::env::temp_dir().join(".leankg").exists(),
+            "memory rows leaked into the ambient temp root"
+        );
+
+        let v = handler
+            .session_recall(&serde_json::json!({
+                "query": "sync the PRD", "limit": 8,
+                "project": root,
+            }))
+            .unwrap();
+        assert_eq!(v["count"], serde_json::json!(1));
+        assert!(v["memories"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("sync the PRD"));
+
+        // Cursor: re-retain through the same turn → skipped, not duplicated.
+        let v = handler
+            .session_retain(&serde_json::json!({
+                "session_id": "sess-1",
+                "turns": ["lesson: always sync the PRD before merging"],
+                "retained_through_user_turn": 4,
+                "cwd": root,
+            }))
+            .unwrap();
+        assert_eq!(v["written"], serde_json::json!(0));
+        assert_eq!(v["skipped"], serde_json::json!(1));
+
+        // Invalidate: cursor and rows agree afterwards.
+        let v = handler
+            .memory_invalidate(&serde_json::json!({ "session_id": "sess-1" }))
+            .unwrap();
+        assert_eq!(v["removed"], serde_json::json!(1));
+        let v = handler
+            .session_recall(&serde_json::json!({
+                "query": "sync the PRD", "limit": 8, "project": root,
+            }))
+            .unwrap();
+        assert_eq!(v["count"], serde_json::json!(0));
+    }
+
     use super::*;
 
     /// DbBackend double that sleeps before every script — simulates the
@@ -5125,7 +5309,9 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let shared = crate::db::backend::init_db(&tmp.path().join("leankg.db")).unwrap();
         let graph = GraphEngine::new(shared);
-        (ToolHandler::new(graph, tmp.path().to_path_buf()), tmp)
+        // Production shape: db_path IS the .leankg directory
+        // (<project>/.leankg) — memory stores anchor here, never above.
+        (ToolHandler::new(graph, tmp.path().join(".leankg")), tmp)
     }
 
     // -------------------------------------------------------------------

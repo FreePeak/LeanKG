@@ -38,6 +38,7 @@ mod gc;
 mod graph;
 mod indexer;
 mod mcp;
+mod memory;
 mod obsidian;
 mod ontology;
 mod orchestrator;
