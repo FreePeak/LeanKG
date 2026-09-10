@@ -1,5 +1,11 @@
 ## [0.28.0](https://github.com/FreePeak/LeanKG/compare/v0.27.0...v0.28.0) (2026-09-09)
 
+## [0.29.0](https://github.com/FreePeak/LeanKG/compare/v0.28.1...v0.29.0) (2026-09-10)
+
+
+## [0.29.0](https://github.com/FreePeak/LeanKG/compare/v0.28.1...v0.29.0) (2026-09-09)
+
+
 ## [0.28.1](https://github.com/FreePeak/LeanKG/compare/v0.28.0...v0.28.1) (2026-09-09)
 
 
