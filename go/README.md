@@ -1,4 +1,6 @@
 # LeanKG Go Engine (W1)
+> **v4.6.0 status:** all migration waves have landed (W2 watcher/writer, W4 PostgreSQL+pgvector, W5 ConnectRPC + auth, session offload, graph verbs, doc indexing, parity goldens, benchmark harness). **The Rust tree has been removed — this module is the codebase.** Explicit deferred ledger: ontology procedural workflows/traceability, context compression, LSP bridge, Android specialist extractors, in-process local-ONNX runtime (use the llama.cpp sidecar via `LEANKG_EMBED_PROVIDER=local`). Open ops item: Go release engineering (binary artifacts, npm wrapper, semantic-release retarget).
+
 
 Greenfield Go rewrite of the LeanKG engine — the strangler-pattern successor
 described in [`../docs/go-rewrite-analysis.md`](../docs/go-rewrite-analysis.md)
