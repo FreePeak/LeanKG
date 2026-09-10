@@ -78,9 +78,10 @@ func projectDir(project string) string {
 	return dir
 }
 
-func openStore(project string) (*store.Store, error) {
+func openStore(project string) (store.Backend, error) {
 	dir := projectDir(project)
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), dir,
+		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), store.RW)
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +90,13 @@ func openStore(project string) (*store.Store, error) {
 		return nil, err
 	}
 	return st, nil
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // lock takes the single-flight flock for the PROJECT dir (not the process

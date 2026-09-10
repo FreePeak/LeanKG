@@ -29,7 +29,7 @@ type importLine struct {
 // {"qualified_name":..., "content_hash":..., "text":...} — the offsite
 // embedding workflow's input format (export → embed elsewhere → import).
 func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Writer) error {
-	elems, err := readElements(ctx, st.Path())
+	elems, err := readElements(st)
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Wr
 // has no live element counts as an orphan and is not written.
 func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, distance string, dims int, r io.Reader) (Report, error) {
 	start := time.Now()
-	rep := Report{Mode: "import"}
+	rep := Report{Mode: "import", Backend: st.Engine()}
 
 	want := store.ModelStamp{ModelID: modelID, Revision: revision, Dimensions: dims, Distance: distance, Provider: "ndjson"}
 	cur, err := st.Stamp(modelID)
@@ -77,7 +77,7 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 		}
 	}
 
-	elems, err := readElements(ctx, st.Path())
+	elems, err := readElements(st)
 	if err != nil {
 		return rep, err
 	}
@@ -169,7 +169,7 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 
 	// Add stored orphans (vectors whose element no longer exists) to any
 	// input orphans counted above — the two sets are disjoint.
-	covered, dbOrphans, err := readVectorCounts(ctx, st.Path(), modelID)
+	covered, dbOrphans, err := readVectorCounts(st, modelID)
 	if err != nil {
 		return fail(err)
 	}

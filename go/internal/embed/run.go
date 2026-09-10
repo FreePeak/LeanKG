@@ -15,6 +15,7 @@ const batchSize = 32
 // Report summarizes one embedding run.
 type Report struct {
 	Mode        string
+	Backend     string `json:"backend,omitempty"` // engine that produced the run
 	Dirty       int
 	Embedded    int
 	Skipped     int
@@ -37,7 +38,7 @@ type dirtyItem struct{ qn, text, hash string }
 // Report.Failed and the run continues to status partial.
 func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report, error) {
 	start := time.Now()
-	rep := Report{Mode: mode}
+	rep := Report{Mode: mode, Backend: st.Engine()}
 	if mode != "incremental" && mode != "full" {
 		return rep, fmt.Errorf("embed: unknown mode %q (want incremental|full)", mode)
 	}
@@ -73,7 +74,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 
 	// Plan: dirty = elements whose content hash differs from embedding_state
 	// (incremental) or all elements (full).
-	elems, err := readElements(ctx, st.Path())
+	elems, err := readElements(st)
 	if err != nil {
 		return rep, err
 	}
@@ -109,7 +110,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 		return rep, err
 	}
 
-	covered, orphans, err := readVectorCounts(ctx, st.Path(), modelID)
+	covered, orphans, err := readVectorCounts(st, modelID)
 	if err != nil {
 		rep.Duration = time.Since(start)
 		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)

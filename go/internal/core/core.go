@@ -243,7 +243,7 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	out := map[string]any{
-		"backend":          "sqlite",
+		"backend":          e.st.Engine(),
 		"healthy":          true,
 		"store":            e.st.Path(),
 		"mode":             e.st.Engine(),
