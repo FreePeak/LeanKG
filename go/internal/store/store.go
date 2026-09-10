@@ -74,6 +74,14 @@ func (s *Store) Path() string { return s.path }
 // Mode reports how the store was opened.
 func (s *Store) Mode() Mode { return s.mode }
 
+// String renders the mode for status output.
+func (m Mode) String() string {
+	if m == RO {
+		return "read-only"
+	}
+	return "read-write"
+}
+
 // Migrate applies all pending migrations (RW only). Migrations are applied in
 // order and recorded in schema_migrations; each runs inside one transaction.
 func (s *Store) Migrate() error {

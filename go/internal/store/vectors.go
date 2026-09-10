@@ -91,6 +91,24 @@ func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) err
 	return s.BumpWatermark()
 }
 
+// Stamps returns all persisted model stamps.
+func (s *Store) Stamps() ([]ModelStamp, error) {
+	rows, err := s.db.Query(`SELECT model_id, revision, dimensions, distance, provider FROM emb_stamp`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ModelStamp
+	for rows.Next() {
+		var st ModelStamp
+		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
 // UpsertVectors writes a batch of vectors for a model in ONE transaction:
 // a crash mid-run leaves the previous state consistent and reruns resume
 // (issue #368 AC: batch upsert semantics).
@@ -337,6 +355,21 @@ func (s *Store) FinishEmbedRun(id int64, status string, embedded, skipped, faile
 		embedded=?, skipped=?, failed=?, truncations=?, orphans=?, status=? WHERE id=?`,
 		embedded, skipped, failed, truncations, orphans, status, id)
 	return err
+}
+
+// LastEmbedRunAny returns the most recent embed run across all models.
+func (s *Store) LastEmbedRunAny() (*EmbedRun, error) {
+	row := s.db.QueryRow(`SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
+		FROM embed_runs ORDER BY id DESC LIMIT 1`)
+	var r EmbedRun
+	err := row.Scan(&r.ID, &r.ModelID, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Dirty, &r.Embedded, &r.Skipped, &r.Failed, &r.Truncations, &r.Orphans, &r.Status)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // LastEmbedRun returns the most recent run for a model; nil when none.
