@@ -361,8 +361,19 @@ pub enum CLICommand {
         #[arg(long)]
         files: Option<String>,
     },
-    /// Auto-install MCP config
-    Install,
+    /// Auto-install MCP config. With --target, ALSO writes the client's
+    /// MCP config via the connect writers (FR-ZCP-04); with
+    /// --register-cwd, registers the current directory as the project.
+    Install {
+        /// Client target for the MCP config write (FR-ZCP-04):
+        /// claude-code | cursor | codex | gemini | opencode | omp
+        #[arg(long, value_enum)]
+        target: Option<crate::connect::Client>,
+        /// Register the current working directory as the LeanKG project
+        /// (runs `leankg add <cwd>` semantics).
+        #[arg(long, default_value_t = false)]
+        register_cwd: bool,
+    },
     /// FR-PLG-1: One-command MCP client setup — write (or remove) the
     /// LeanKG server entry in an AI client's config file so agents can use
     /// LeanKG without hand-editing JSON/TOML. Idempotent; preserves every

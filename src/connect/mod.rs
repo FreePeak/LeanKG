@@ -79,7 +79,7 @@ fn resolve_home(explicit_home: Option<&Path>) -> PathBuf {
 
 /// Command path for stdio entries: the current executable when resolvable,
 /// else bare `leankg` (relying on PATH).
-fn current_command() -> String {
+pub fn current_command() -> String {
     std::env::current_exe()
         .map(|exe| exe.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "leankg".to_string())
