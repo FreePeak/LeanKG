@@ -25,6 +25,7 @@ fn dispatch_connect(argv: &[&str], home: &std::path::Path) -> Result<std::path::
             remote,
             remove,
             project,
+            ..
         } => connect::run_with_home(
             client,
             remote.as_deref(),

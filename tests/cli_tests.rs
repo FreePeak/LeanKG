@@ -1,7 +1,7 @@
 use clap::Parser;
 use leankg::cli::CLICommand;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 struct TestArgs {
     #[command(subcommand)]
     command: CLICommand,
