@@ -86,7 +86,7 @@ fn cli_connect_writes_config_for_every_client() {
                 let root = read_json(&path);
                 let entry = &root["mcp"]["leankg"];
                 assert_eq!(entry["type"], "local", "{name}: {root}");
-                assert_eq!(entry["command"][0], entry["command"][0], "{name}");
+                assert_eq!(entry["command"][1], "mcp-stdio", "{name}");
                 assert!(
                     entry["command"]
                         .as_array()

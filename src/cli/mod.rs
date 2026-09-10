@@ -371,7 +371,11 @@ pub enum CLICommand {
         target: Option<crate::connect::Client>,
         /// Register the current working directory as the LeanKG project
         /// (runs `leankg add <cwd>` semantics).
-        #[arg(long, default_value_t = false)]
+        /// FR-ZCP-04: register a session-start hook that runs
+        /// `leankg add <cwd>` when this client starts (Claude Code gets a
+        /// real SessionStart hook; other clients get the manual command
+        /// printed — zero dead ends).
+        #[arg(long, conflicts_with = "remove", default_value_t = false)]
         register_cwd: bool,
     },
     /// FR-PLG-1: One-command MCP client setup — write (or remove) the
