@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/go/internal/core"
@@ -28,7 +29,9 @@ func newTestServer(t *testing.T) *mcp.ClientSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := New(core.New(st, mem, nil))
+	engine := core.New(st, mem, nil)
+	engine.SetProjectDir(dir) // mirrors cmd/leankg serve
+	srv := New(engine)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	ctx := context.Background()
@@ -132,5 +135,47 @@ func TestLegacyToolNameRejected(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("legacy tool 'set' must be rejected over the wire")
+	}
+}
+
+// TestGraphActionOverMCPWire proves the graph verbs survive MCP schema
+// validation AND reach the engine (they were previously absent from the
+// query action enum, so go-sdk rejected them before core ran).
+func TestGraphActionOverMCPWire(t *testing.T) {
+	session := newTestServer(t)
+	ctx := context.Background()
+
+	// Seed a call chain through the import tool is not available for elements,
+	// so use the store directly via a query round-trip on an empty store first.
+	// The engine's legitimate ErrUnknownNode proves the call REACHED core —
+	// a schema rejection would read "invalid arguments"/"unexpected additional
+	// properties" instead. Assert on the distinction, not on absence of error.
+	_, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "query",
+		Arguments: map[string]any{
+			"action": "impact", "query": "does.not.exist",
+			"args": map[string]any{"depth": "2"},
+		},
+	})
+	if err == nil {
+		t.Fatal("impact on unknown node should surface ErrUnknownNode")
+	}
+	if !strings.Contains(err.Error(), "unknown node") {
+		t.Fatalf("impact must reach the engine (got %v) — a schema rejection means the enum/args are incomplete", err)
+	}
+
+	// session action must also be accepted by the schema.
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "query",
+		Arguments: map[string]any{"action": "session", "query": "s1", "args": map[string]any{"command": "canvas"}},
+	}); err != nil {
+		t.Fatalf("session action over MCP: %v", err)
+	}
+	// ontology read action.
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "query",
+		Arguments: map[string]any{"action": "ontology"},
+	}); err != nil {
+		t.Fatalf("ontology action over MCP: %v", err)
 	}
 }

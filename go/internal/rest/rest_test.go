@@ -242,3 +242,61 @@ func TestRetainRejectsEmptyContent(t *testing.T) {
 		t.Fatalf("rejected batch must not partially store: %s", res.body)
 	}
 }
+
+// TestSessionAndOntologyEndpoints covers the wiring for internal/session and
+// internal/ontology over REST (both parse bodies at the trust boundary).
+func TestSessionAndOntologyEndpoints(t *testing.T) {
+	e, _ := newEngine(t)
+	dir := t.TempDir()
+	e.SetProjectDir(dir)
+	srv := httptest.NewServer(Handler(e, nil))
+	defer srv.Close()
+
+	// session offload via the import tool, then recall via REST.
+	res, err := httpPost(srv.URL+"/api/v1/import", map[string]any{
+		"action": "session", "command": "offload",
+		"args": map[string]any{"session_id": "s1", "node_id": "node-1", "payload": "bulky", "summary": "s"},
+	})
+	if err != nil || res.status != 200 {
+		t.Fatalf("session offload: %d %v %s", res.status, err, res.body)
+	}
+	res, err = httpPost(srv.URL+"/api/v1/session/read", map[string]any{
+		"command": "recall", "session_id": "s1", "node_id": "node-1",
+	})
+	if err != nil || res.status != 200 {
+		t.Fatalf("session recall: %d %v %s", res.status, err, res.body)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(res.body, &out)
+	if out["payload"] != "bulky" {
+		t.Fatalf("recall payload: %s", res.body)
+	}
+	// unknown node is an error, not a 200 with empty payload.
+	res, _ = httpPost(srv.URL+"/api/v1/session/read", map[string]any{
+		"command": "recall", "session_id": "s1", "node_id": "missing-node",
+	})
+	if res.status == 200 {
+		t.Fatalf("missing node must error: %s", res.body)
+	}
+
+	// ontology: seed an element, match a catalog, read matches back.
+	_ = e.Store().UpsertElements([]store.Element{
+		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
+	})
+	catPath := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Auth","aliases":["login"]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err = httpPost(srv.URL+"/api/v1/ontology/match", map[string]any{"catalog": catPath})
+	if err != nil || res.status != 200 {
+		t.Fatalf("ontology match: %d %v %s", res.status, err, res.body)
+	}
+	res, err = httpGet(srv.URL + "/api/v1/ontology/matches")
+	if err != nil || res.status != 200 {
+		t.Fatalf("ontology matches: %d %v %s", res.status, err, res.body)
+	}
+	_ = json.Unmarshal(res.body, &out)
+	if matches, ok := out["matches"].([]any); !ok || len(matches) != 1 {
+		t.Fatalf("persisted matches: %s", res.body)
+	}
+}

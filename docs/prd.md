@@ -24,8 +24,8 @@
 | embeddings | 8.2k | `internal/embed` + `cmd/leankg-embed` — Provider port (OpenAI-compatible = API + llama.cpp sidecar shape), ModelStamp guards, NDJSON offsite, benchmarked | **DONE** (local ONNX runtime = DEFERRED for sidecar; sidecar lifecycle mgmt not in CLI) |
 | web api+ui | 5.8k | `internal/web` (go:embed ui build, SPA fallback) + REST `/api/v1/*` | **DONE** |
 | cli/connect/install | 2.2k+1.4k | `cmd/leankg` — serve/index/writer/doctor/connect/install for 6 clients, --register-cwd hooks | **DONE** |
-| ontology | 4.0k | `internal/ontology` — concept catalog + element matching + kv persistence; reachable via `import{action:"ontology"}` / `Engine.OntologyMatch(catalogPath)`, HTTP POST /api/v1/ontology/match + GET /api/v1/ontology/matches | **PARTIAL — workflows/traceability + transport action DEFERRED** |
-| session offload | 0.9k | `internal/session` — offload/recall bit-for-bit + checksums, canvas, lesson dedup; reachable via `import{action:"session", command:offload|lesson}` + query{action:"session"} + HTTP POST /api/v1/session/read; core tests pin the round-trip | **DONE** |
+| ontology | 4.0k | `internal/ontology` — concept catalog + element matching + kv persistence; reachable via `import{action:"ontology", path:<catalog.json>}` + `query{action:"ontology"}` over MCP/REST/CLI, POST /api/v1/ontology/match + GET /api/v1/ontology/matches | **PARTIAL — workflows/traceability + transport action DEFERRED** |
+| session offload | 0.9k | `internal/session` — offload/recall bit-for-bit + checksums, canvas, lesson dedup; reachable via `import{action:"session", command:offload|lesson}` + `query{action:"session"}` (canvas/recall) over MCP/REST/CLI, POST /api/v1/session/read; core + mcp + rest tests pin the round-trip | **DONE** |
 | compress | 3.5k | **DEFERRED** — `internal/compress` does not exist in Go; the Rust context-compression pipeline was not ported (its MCP verbs are outside the 3-tool surface) | **DEFERRED** |
 | lsp bridge | 2.6k | DEFERRED (analysis §8 already deferred it) | **DEFERRED** |
 | Android/Gradle/Maven extractors | ~9k | DEFERRED (analysis §8: mechanical, fixtures-first) | **DEFERRED** |

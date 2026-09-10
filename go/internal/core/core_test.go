@@ -389,3 +389,58 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 		t.Fatalf("persisted matches: %+v", again)
 	}
 }
+
+// TestOntologyImportAndQueryActions pins the ontology exposure through the
+// ACTUAL production paths (import{action:"ontology"} + query{action:"ontology"}),
+// not just the direct Engine methods — these fail if the switch cases vanish.
+func TestOntologyImportAndQueryActions(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	if err := e.st.UpsertElements([]store.Element{
+		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catPath := filepath.Join(t.TempDir(), "concepts.json")
+	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "ontology", Path: catPath}); err != nil {
+		t.Fatalf("import ontology: %v", err)
+	}
+	out, err := e.Query(ctx, QueryRequest{Action: "ontology"})
+	if err != nil {
+		t.Fatalf("query ontology: %v", err)
+	}
+	if matches, ok := out["matches"].([]ontology.Match); !ok || len(matches) != 1 {
+		t.Fatalf("query ontology matches: %+v", out)
+	}
+	// importing without a catalog path must error clearly, not silently pass.
+	if _, err := e.Import(ctx, ImportRequest{Action: "ontology"}); err == nil {
+		t.Fatal("ontology import without path must error")
+	}
+}
+
+// TestSessionQueryActionReachable pins query{action:"session"} (the production
+// read path) — it requires a project dir, which cmd sets via SetProjectDir.
+func TestSessionQueryActionReachable(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	if _, err := e.Query(ctx, QueryRequest{Action: "session", Query: "s1"}); err == nil {
+		t.Fatal("session query without a project dir must error (cmd must call SetProjectDir)")
+	}
+	e.SetProjectDir(t.TempDir())
+	if _, err := e.Import(ctx, ImportRequest{
+		Action: "session", Command: "offload",
+		Args: map[string]any{"session_id": "s1", "node_id": "node-1", "payload": "x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.Query(ctx, QueryRequest{Action: "session", Query: "s1", Args: map[string]string{"command": "canvas"}})
+	if err != nil {
+		t.Fatalf("session canvas via query action: %v", err)
+	}
+	if refs, ok := out["refs"].([]session.Ref); !ok || len(refs) != 1 {
+		t.Fatalf("canvas refs: %+v", out)
+	}
+}

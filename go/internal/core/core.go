@@ -181,10 +181,15 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		return e.memoryWrite(req)
 	case "session":
 		return e.sessionWrite(req)
+	case "ontology":
+		if req.Path == "" {
+			return nil, fmt.Errorf("import ontology requires path (concept catalog JSON)")
+		}
+		return e.OntologyMatch(req.Path)
 	case "":
-		return nil, fmt.Errorf("import requires action (repo, dir, docs, memory, session)")
+		return nil, fmt.Errorf("import requires action (repo, dir, docs, memory, session, ontology)")
 	default:
-		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory, session)", req.Action)
+		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory, session, ontology)", req.Action)
 	}
 }
 
@@ -316,6 +321,8 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "memory":
 		// Query-tool memory reads carry the command in Query.
 		return e.MemoryRead("search", "", req.Query, req.Limit)
+	case "ontology":
+		return e.OntologyMatches()
 	case "session":
 		cmd := "recall"
 		if req.Args != nil && req.Args["command"] != "" {
@@ -324,7 +331,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		return e.SessionRead(cmd, req.Query, req.Args["node_id"])
 	case "", "search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain":
 	default:
-		return nil, fmt.Errorf("unknown query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory; empty = ladder router)", req.Action)
+		return nil, fmt.Errorf("unknown query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology; empty = ladder router)", req.Action)
 	}
 	if req.Query == "" {
 		return nil, fmt.Errorf("query requires query text")

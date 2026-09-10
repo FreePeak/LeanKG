@@ -149,6 +149,7 @@ func cmdServe(args []string) {
 	}
 
 	engine := core.New(st, mem, embedder)
+	engine.SetProjectDir(dir) // enables the session actions
 
 	if *stdio {
 		if *httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "" {

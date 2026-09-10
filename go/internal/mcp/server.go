@@ -63,16 +63,20 @@ func (s *Server) registerTools() {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"action": {"type": "string", "enum": ["repo", "dir", "memory"], "description": "what to import"},
+				"action": {"type": "string", "enum": ["repo", "dir", "docs", "memory", "session", "ontology"], "description": "what to import"},
 				"path": {"type": "string", "description": "repository/directory to index, or memory file path (e.g. MEMORY.md, topics/x.md)"},
-				"command": {"type": "string", "enum": ["create", "str_replace", "insert", "delete", "rename", "add", "replace", "remove"], "description": "memory write command (action=memory)"},
+				"command": {"type": "string", "enum": ["create", "str_replace", "insert", "delete", "rename", "add", "replace", "remove", "offload", "lesson"], "description": "memory write command (action=memory) or session command (action=session: offload|lesson)"},
 				"content": {"type": "string"},
 				"old": {"type": "string"},
 				"new": {"type": "string"},
 				"insert_line": {"type": "integer"},
 				"new_path": {"type": "string"},
 				"file": {"type": "string", "description": "memory file for add/replace/remove"},
-				"text": {"type": "string"}
+				"text": {"type": "string"},
+				"session_id": {"type": "string", "description": "session id (action=session)"},
+				"node_id": {"type": "string", "description": "offload node id (action=session)"},
+				"payload": {"type": "string", "description": "payload to offload (action=session)"},
+				"summary": {"type": "string", "description": "offload summary (action=session)"}
 			}
 		}`),
 	}, s.handleImport)
@@ -82,13 +86,14 @@ func (s *Server) registerTools() {
 		Description: "Query LeanKG. Empty action routes down the ladder: L1 exact " +
 			"identifier → L2 fuzzy keyword → L3 semantic (vectors). Every answer carries " +
 			"retrieval{rung,reason} + freshness. action=memory searches agent memory; " +
-			"action=exact|fuzzy|semantic pins a rung. Legacy tool name 'get' is superseded.",
+			"action=exact|fuzzy|semantic pins a rung; graph verbs (impact/path/callers/callees/context/explain) and session/ontology reads are also available. Legacy tool name 'get' is superseded.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"query": {"type": "string", "description": "search text, identifier, or memory search text"},
-				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "memory"], "description": "empty = ladder router"},
-				"limit": {"type": "integer", "description": "max hits (default 10)"}
+				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path)"},
+				"limit": {"type": "integer", "description": "max hits (default 10; impact depth comes from args.depth)"},
+				"args": {"type": "object", "additionalProperties": {"type": "string"}, "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), bank (memory)"}
 			},
 			"required": []
 		}`),
