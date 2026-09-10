@@ -20,6 +20,8 @@ repos:
     language: TypeScript
     loc_band: "1.5M"
     prompt: "How does the extension host communicate with the main process?"
+    # FR-ZCP-08: bump when the prompt text changes (runs record the version).
+    prompt_version: 1
 
   - slug: excalidraw
     url: https://github.com/excalidraw/excalidraw.git
@@ -27,6 +29,8 @@ repos:
     language: TypeScript
     loc_band: "60k"
     prompt: "How does Excalidraw render and update canvas elements?"
+    # FR-ZCP-08: bump when the prompt text changes (runs record the version).
+    prompt_version: 1
 
   - slug: django
     url: https://github.com/django/django.git
@@ -34,6 +38,8 @@ repos:
     language: Python
     loc_band: "300k"
     prompt: "How does Django's ORM build and execute a query from a QuerySet?"
+    # FR-ZCP-08: bump when the prompt text changes (runs record the version).
+    prompt_version: 1
 
   - slug: tokio
     url: https://github.com/tokio-rs/tokio.git
@@ -41,6 +47,8 @@ repos:
     language: Rust
     loc_band: "100k"
     prompt: "How does tokio schedule and run async tasks on its runtime?"
+    # FR-ZCP-08: bump when the prompt text changes (runs record the version).
+    prompt_version: 1
 
   - slug: okhttp
     url: https://github.com/square/okhttp.git
@@ -48,6 +56,8 @@ repos:
     language: Java
     loc_band: "120k"
     prompt: "How does OkHttp process a request through its interceptor chain?"
+    # FR-ZCP-08: bump when the prompt text changes (runs record the version).
+    prompt_version: 1
 
   - slug: gin
     url: https://github.com/gin-gonic/gin.git
@@ -55,6 +65,8 @@ repos:
     language: Go
     loc_band: "20k"
     prompt: "How does gin route requests through its middleware chain?"
+    # FR-ZCP-08: bump when the prompt text changes (runs record the version).
+    prompt_version: 1
 
   - slug: alamofire
     url: https://github.com/Alamofire/Alamofire.git
@@ -62,3 +74,5 @@ repos:
     language: Swift
     loc_band: "20k"
     prompt: "How does Alamofire build, send, and validate a request?"
+    # FR-ZCP-08: bump when the prompt text changes (runs record the version).
+    prompt_version: 1
