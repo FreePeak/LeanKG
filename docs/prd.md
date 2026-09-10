@@ -29,7 +29,7 @@
 | compress | 3.5k | DEFERRED — context-compression pipeline not ported (goes through MCP verbs not present in the 3-tool surface) | **DEFERRED** |
 | lsp bridge | 2.6k | DEFERRED (analysis §8 already deferred it) | **DEFERRED** |
 | Android/Gradle/Maven extractors | ~9k | DEFERRED (analysis §8: mechanical, fixtures-first) | **DEFERRED** |
-| benchmark harness | 4.5k | `go/benchmark/ab` — Go benchmarks + Rust A/B recipe | **DONE** (harness; cross-run comparison = ops task) |
+| benchmark harness | 4.5k | `go/benchmark/ab` — Go benchmarks + **executed A/B REPORT.md** (fresh Rust 0.30.0 build from pre-removal commit vs v4.6.0: index parity 0.10s/0.11s, L1 53ms/50ms, Go 2× impact, 12.7× smaller binary; non-comparable cells 'not measured') | **DONE** |
 | audit/doctor/auth | ~3.3k | audit ledger (hash-chained, tamper-pinned) + RBAC middleware + doctor | **DONE** (doctor --deep fleet checks = PARTIAL) |
 | npm wrapper + manifest + release pipeline | — | removed with Rust; Go release engineering (binary artifacts, npm wrapper, semantic-release retarget) = **open follow-up** | **OPEN** |
 
