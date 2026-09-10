@@ -10,6 +10,8 @@ pub mod claude_code;
 pub mod codex;
 pub mod cursor;
 pub mod gemini;
+pub mod omp;
+pub mod opencode;
 
 use clap::ValueEnum;
 use std::path::{Path, PathBuf};
@@ -30,6 +32,10 @@ pub enum Client {
     Codex,
     /// Gemini CLI — `~/.gemini/settings.json` → `mcpServers.leankg`
     Gemini,
+    /// OpenCode — `~/.config/opencode/opencode.json` → `mcp.leankg`
+    Opencode,
+    /// OMP — `~/.omp/agent/mcp.json` → `mcpServers.leankg`
+    Omp,
 }
 
 /// Transport advertised in the client's leankg server entry.
@@ -92,17 +98,21 @@ fn absolutize(path: &Path) -> PathBuf {
 /// <abs project>` where the project defaults to the current working
 /// directory.
 fn stdio_transport(project: Option<&Path>) -> Transport {
-    let project_abs = match project {
-        Some(project) => absolutize(project),
-        None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    // FR-ZCP-04 URL contract: the default stdio entry carries NO --project
+    // flag — the server resolves the project from the process cwd
+    // (FR-ZCP-01 clause 1). --project PATH (explicit) remains the escape
+    // hatch and is the only way a --project flag is emitted.
+    let args = match project {
+        Some(project) => vec![
+            "mcp-stdio".to_string(),
+            "--project".to_string(),
+            absolutize(project).to_string_lossy().into_owned(),
+        ],
+        None => vec!["mcp-stdio".to_string()],
     };
     Transport::Stdio {
         command: current_command(),
-        args: vec![
-            "mcp-stdio".to_string(),
-            "--project".to_string(),
-            project_abs.to_string_lossy().into_owned(),
-        ],
+        args,
     }
 }
 
@@ -118,6 +128,8 @@ fn apply(
         Client::Cursor => cursor::apply(&home, transport),
         Client::Codex => codex::apply(&home, transport),
         Client::Gemini => gemini::apply(&home, transport),
+        Client::Opencode => opencode::apply(&home, transport),
+        Client::Omp => omp::apply(&home, transport),
     }
 }
 
@@ -130,6 +142,8 @@ fn remove(client: Client, explicit_home: Option<&Path>) -> Result<PathBuf, Strin
         Client::Cursor => cursor::remove(&home),
         Client::Codex => codex::remove(&home),
         Client::Gemini => gemini::remove(&home),
+        Client::Opencode => opencode::remove(&home),
+        Client::Omp => omp::remove(&home),
     }
 }
 
