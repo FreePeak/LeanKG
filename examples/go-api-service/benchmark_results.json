@@ -1,0 +1,31 @@
+{
+  "results": [
+    {
+      "scenario": "Code Review",
+      "before_tokens": 10534,
+      "after_tokens": 1526,
+      "savings_percent": 85.51357509018416,
+      "files_analyzed": 8
+    },
+    {
+      "scenario": "Impact Analysis",
+      "before_tokens": 66636,
+      "after_tokens": 682,
+      "savings_percent": 98.97652920343359,
+      "files_analyzed": 1
+    },
+    {
+      "scenario": "Full Feature Testing",
+      "before_tokens": 9596,
+      "after_tokens": 132,
+      "savings_percent": 98.62442684451855,
+      "files_analyzed": 12
+    }
+  ],
+  "features": {
+    "Status": "OK",
+    "Query": "OK",
+    "Impact": "OK",
+    "Dependencies": "OK"
+  }
+}

@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/FreePeak/LeanKG/go/internal/index"
+	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 	"github.com/FreePeak/LeanKG/go/internal/watch"
 )
@@ -43,7 +44,11 @@ func cmdWriter(args []string) {
 	if err := st.Migrate(); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
-	res, err := index.IndexDir(ctx, st, dir)
+	langReg := langs.DefaultRegistry()
+	if _, aerr := langReg.Activate(dir); aerr != nil {
+		log.Fatalf("language detection: %v", aerr)
+	}
+	res, err := index.IndexDirWith(ctx, st, dir, langReg)
 	if err != nil {
 		log.Fatalf("initial index: %v", err)
 	}
@@ -51,6 +56,7 @@ func cmdWriter(args []string) {
 		dir, res.Files, res.Elements, res.Relationships, res.Skipped)
 
 	w, err := watch.Start(ctx, st, dir, watch.Options{
+		Registry: langReg,
 		OnEvent: func(path, kind string) {
 			log.Printf("writer: %s %s", kind, path)
 		},

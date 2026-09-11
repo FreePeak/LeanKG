@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/go/internal/index"
+	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -49,7 +50,13 @@ func runIndex(project, target string) error {
 	if err := st.Migrate(); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	res, err := index.IndexDir(context.Background(), st, target)
+	// Lazy language activation governs what gets indexed: only the languages
+	// this target actually uses own their extensions.
+	reg := langs.DefaultRegistry()
+	if _, aerr := reg.Activate(target); aerr != nil {
+		return fmt.Errorf("language detection: %w", aerr)
+	}
+	res, err := index.IndexDirWith(context.Background(), st, target, reg)
 	if err != nil {
 		return fmt.Errorf("index %s: %w", target, err)
 	}

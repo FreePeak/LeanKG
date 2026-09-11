@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/FreePeak/LeanKG/go/internal/core"
+	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -45,6 +46,12 @@ func cmdStatus(args []string) {
 	defer st.Close()
 	engine := core.New(st, nil, nil)
 	engine.SetProjectDir(dir)
+	// Attach the language registry (activated for this project) so status
+	// reports the lazy activation state, not an empty list.
+	reg := langs.DefaultRegistry()
+	if _, aerr := reg.Activate(dir); aerr == nil {
+		engine.SetLangsRegistry(reg)
+	}
 	out, err := engine.Status(context.Background())
 	if err != nil {
 		log.Fatal(err)

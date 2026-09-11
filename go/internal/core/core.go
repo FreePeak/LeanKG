@@ -170,7 +170,14 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		if req.Path == "" {
 			return nil, fmt.Errorf("import %s requires path", req.Action)
 		}
-		res, err := index.IndexDir(ctx, e.st, req.Path)
+		// Index through the language registry: activation is per target, so
+		// importing another codebase re-detects its languages first.
+		if e.langsReg != nil {
+			if _, aerr := e.langsReg.Activate(req.Path); aerr != nil {
+				return nil, fmt.Errorf("language detection: %w", aerr)
+			}
+		}
+		res, err := index.IndexDirWith(ctx, e.st, req.Path, e.langsReg)
 		if err != nil {
 			return nil, fmt.Errorf("index %s: %w", req.Path, err)
 		}

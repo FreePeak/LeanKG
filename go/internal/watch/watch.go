@@ -22,6 +22,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/FreePeak/LeanKG/go/internal/index"
+	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -41,6 +42,8 @@ const defaultDebounce = 500 * time.Millisecond
 
 // Options configures Start.
 type Options struct {
+	// Registry, when non-nil, scopes re-indexed languages (lazy activation).
+	Registry *langs.Registry
 	// Debounce coalesces event paths into one IndexDir run per flush.
 	// Defaults to 500ms when zero or negative.
 	Debounce time.Duration
@@ -195,7 +198,7 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 					continue
 				}
 				pending = make(map[string]bool)
-				_, _ = index.IndexDir(ctx, st, abs)
+				_, _ = index.IndexDirWith(ctx, st, abs, opts.Registry)
 			}
 		}
 	}()

@@ -179,9 +179,22 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	}
 
 	// Changed/new files: 3-signal detection (size+mtime fast path, then
-	// SHA-256 confirmation), extract, batch-write per file.
-	names := map[string][]string{} // element name -> qualified names, this run
-	var extracted []fileElements
+	// SHA-256 confirmation). Extraction and writes are grouped PER DIRECTORY:
+	//   (a) memory stays bounded by one package at a time (a 40k-file tree
+	//       previously buffered every file's elements before writing);
+	//   (b) call targets are scoped to the same package — matching against a
+	//       run-global name map linked unrelated same-named elements across
+	//       projects (Start/New/String/Error), producing bogus cross-repo
+	//       edges on polyrepos.
+	// Ceiling: no import/type resolution, so cross-package calls are not
+	// linked (upgrade path: tree-sitter symbol tables).
+	type changedFile struct {
+		rel, abs, lang, hash string
+		size                 int64
+		mtimeNS              int64
+	}
+	byDir := map[string][]changedFile{}
+	var dirOrder []string
 	for _, c := range cands {
 		if err := ctx.Err(); err != nil {
 			return res, err
@@ -196,57 +209,72 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return res, err
 		}
 		if seen && rec.ContentHash == sum {
-			// Content identical despite size/mtime signal mismatch: skip,
-			// no writes (the stored record stays as-is per contract, so the
-			// next run re-hashes this file — acceptable).
+			// Content identical despite size/mtime signal mismatch: skip, no
+			// writes (the stored record stays as-is per contract, so the next
+			// run re-hashes this file — acceptable).
 			res.Skipped++
 			continue
 		}
-
-		fe, err := extractFileAs(c.rel, c.abs, c.lang)
-		if err != nil {
-			return res, err
+		d := dirOf(c.rel)
+		if _, ok := byDir[d]; !ok {
+			dirOrder = append(dirOrder, d)
 		}
-		extracted = append(extracted, fe)
-		for _, e := range fe.elements {
-			names[e.name] = append(names[e.name], e.qn)
-		}
+		byDir[d] = append(byDir[d], changedFile{
+			rel: c.rel, abs: c.abs, lang: c.lang, hash: sum,
+			size: c.size, mtimeNS: c.mtimeNS,
+		})
 	}
 
-	for _, fe := range extracted {
+	for _, d := range dirOrder {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		abs := filepath.Join(dir, filepath.FromSlash(fe.rel))
-		info, err := os.Stat(abs)
-		if err != nil {
-			return res, err
+		files := byDir[d]
+		extracted := make([]fileElements, 0, len(files))
+		names := map[string][]string{} // package-scoped call targets
+		for _, f := range files {
+			fe, err := extractFileAs(f.rel, f.abs, f.lang)
+			if err != nil {
+				return res, err
+			}
+			extracted = append(extracted, fe)
+			for _, e := range fe.elements {
+				names[e.name] = append(names[e.name], e.qn)
+			}
 		}
-		sum, err := fileSHA256(abs)
-		if err != nil {
-			return res, err
+		for i, fe := range extracted {
+			f := files[i]
+			if err := st.DeleteByFile(fe.rel); err != nil {
+				return res, err
+			}
+			if err := st.UpsertElements(fe.toStore()); err != nil {
+				return res, err
+			}
+			rels := relationships(fe.elements, names)
+			if err := st.UpsertRelationships(rels); err != nil {
+				return res, err
+			}
+			if err := st.UpsertFiles([]store.FileRecord{{
+				Path: fe.rel, Size: f.size, MtimeNS: f.mtimeNS,
+				ContentHash: f.hash,
+			}}); err != nil {
+				return res, err
+			}
+			res.Files++
+			res.Elements += len(fe.elements)
+			res.Relationships += len(rels)
 		}
-		if err := st.DeleteByFile(fe.rel); err != nil {
-			return res, err
-		}
-		if err := st.UpsertElements(fe.toStore()); err != nil {
-			return res, err
-		}
-		rels := relationships(fe.elements, names)
-		if err := st.UpsertRelationships(rels); err != nil {
-			return res, err
-		}
-		if err := st.UpsertFiles([]store.FileRecord{{
-			Path: fe.rel, Size: info.Size(), MtimeNS: info.ModTime().UnixNano(),
-			ContentHash: sum,
-		}}); err != nil {
-			return res, err
-		}
-		res.Files++
-		res.Elements += len(fe.elements)
-		res.Relationships += len(rels)
 	}
 	return res, nil
+}
+
+// dirOf returns the package directory of a repo-relative path ("." when the
+// file sits at the root).
+func dirOf(rel string) string {
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		return rel[:i]
+	}
+	return "."
 }
 
 func fileSHA256(path string) (string, error) {
