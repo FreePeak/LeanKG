@@ -337,7 +337,7 @@ func TestWriteClientConfigValidation(t *testing.T) {
 // TestRegisterCWDCreatesHook pins the fresh-settings.json shape.
 func TestRegisterCWDCreatesHook(t *testing.T) {
 	home := t.TempDir()
-	if err := RegisterCWD(home, ClientClaudeCode, t.TempDir()); err != nil {
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
 		t.Fatal(err)
 	}
 	got := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
@@ -347,7 +347,7 @@ func TestRegisterCWDCreatesHook(t *testing.T) {
 				map[string]any{
 					"matcher": "*",
 					"hooks": []any{
-						map[string]any{"type": "command", "command": "leankg index $CLAUDE_PROJECT_DIR"},
+						map[string]any{"type": "command", "command": testExe + ` index "$CLAUDE_PROJECT_DIR"`},
 					},
 				},
 			},

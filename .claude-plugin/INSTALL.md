@@ -54,7 +54,7 @@ LeanKG updates automatically when you update the plugin:
 
 ## Manual Installation
 
-If marketplace doesn't work, add to `~/.config/claude/settings.json`:
+If marketplace doesn't work, add to `~/.claude.json` (the file `leankg connect claude-code` writes):
 
 ```json
 {

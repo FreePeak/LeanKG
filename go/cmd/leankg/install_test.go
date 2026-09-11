@@ -129,7 +129,7 @@ func TestInstallRegisterCWD(t *testing.T) {
 	for _, item := range ss {
 		obj := item.(map[string]any)
 		for _, h := range obj["hooks"].([]any) {
-			if h.(map[string]any)["command"] == "leankg index $CLAUDE_PROJECT_DIR" {
+			if h.(map[string]any)["command"] == CurrentCommand()+` index "$CLAUDE_PROJECT_DIR"` {
 				found = true
 			}
 		}

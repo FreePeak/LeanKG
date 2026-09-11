@@ -37,7 +37,7 @@ func Install(homeDir, target string, opts InstallOptions) error {
 		return err
 	}
 	if opts.RegisterCWD {
-		return RegisterCWD(homeDir, target, "")
+		return RegisterCWD(homeDir, target, cfg.Exe)
 	}
 	return nil
 }

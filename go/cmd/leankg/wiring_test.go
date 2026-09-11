@@ -145,24 +145,25 @@ func TestStdioSpawnServesMCP(t *testing.T) {
 // fail the hook every session. The assertion is behavioral: run the expanded
 // hook and require the store it promises to create.
 func TestHookCommandRuns(t *testing.T) {
-	bin := buildLeanKG(t) // named "leankg", so the hook's argv[0] resolves here
-	proj := seedProject(t)
+	bin := buildLeanKG(t)
 
-	expanded := strings.ReplaceAll(hookCommand, "$CLAUDE_PROJECT_DIR", proj)
-	args := strings.Fields(expanded)
-	if len(args) < 2 {
-		t.Fatalf("hookCommand %q: no argv to run", hookCommand)
+	expanded := hookCommand(bin)
+	if !strings.Contains(expanded, ` index "$CLAUDE_PROJECT_DIR"`) {
+		t.Fatalf("hook %q: expected `index \"$CLAUDE_PROJECT_DIR\"` (quoted, shell-expanded)", expanded)
 	}
-	// exec.Command resolves argv[0] against the PARENT's PATH (where a stale
-	// developer `leankg` may live), so pin it to the fresh build.
-	args[0] = bin
-	if args[1] != "index" {
-		t.Fatalf("hook %q: expected `leankg index <dir>`, got argv %v", hookCommand, args[1:])
+	proj := seedProject(t)
+	// Claude Code executes the hook through a shell and expands the variable;
+	// mirror that, including a project path containing a space (the quoted
+	// variable must survive it).
+	projSpace := proj + " with space"
+	if err := os.Rename(proj, projSpace); err != nil {
+		t.Fatal(err)
 	}
-	if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
-		t.Fatalf("hook %q: %v\n%s", expanded, err, out)
+	script := strings.ReplaceAll(expanded, "$CLAUDE_PROJECT_DIR", projSpace)
+	if out, err := exec.Command("sh", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("hook %q: %v\n%s", script, err, out)
 	}
-	if _, err := os.Stat(filepath.Join(proj, ".leankg", "leankg.db")); err != nil {
-		t.Fatalf("hook ran but created no store under %s/.leankg: %v", proj, err)
+	if _, err := os.Stat(filepath.Join(projSpace, ".leankg", "leankg.db")); err != nil {
+		t.Fatalf("hook ran but created no store under %s/.leankg: %v", projSpace, err)
 	}
 }

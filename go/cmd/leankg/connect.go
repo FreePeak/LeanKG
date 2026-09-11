@@ -339,29 +339,35 @@ func replaceTOMLSection(text, header string, lines []string) string {
 // Claude Code SessionStart hook (register-cwd)
 // ---------------------------------------------------------------------------
 
-// hookCommand is the SessionStart hook the writer owns. $CLAUDE_PROJECT_DIR
-// is expanded by Claude Code at hook runtime, so the string is fixed and no
-// cwd is embedded in the file. The hook attaches-and-indexes the project the
-// way the Rust `add` verb did: `index` creates-or-updates that project's
+// hookCommand renders the SessionStart hook the writer owns. exe is the
+// resolved current executable (CurrentCommand()); bare "leankg" would depend
+// on the hook's PATH and silently no-op when it differs. $CLAUDE_PROJECT_DIR
+// is expanded by Claude Code at hook runtime and quoted, so project paths
+// with spaces survive the shell. The hook attaches-and-indexes the project
+// the way the Rust `add` verb did: `index` creates-or-updates that project's
 // store (incremental after the first run).
-const hookCommand = "leankg index $CLAUDE_PROJECT_DIR"
+func hookCommand(exe string) string {
+	if exe == "" {
+		exe = "leankg"
+	}
+	return exe + ` index "$CLAUDE_PROJECT_DIR"`
+}
 
 // RegisterCWD merges-or-creates the Claude Code SessionStart hook that
 // attaches the project on session start:
 //
-//	{"matcher": "*", "hooks": [{"type": "command", "command": "leankg index $CLAUDE_PROJECT_DIR"}]}
+//	{"matcher": "*", "hooks": [{"type": "command", "command": exe + ` index "$CLAUDE_PROJECT_DIR"`}]}
 //
 // under hooks.SessionStart in <homeDir>/.claude/settings.json, preserving
 // every other hook and setting. Idempotent: when the identical command is
 // already present the file is left untouched. Only claude-code supports
 // hooks today; other clients return an error wrapping ErrUnsupportedClient.
-// The cwd argument documents the registration target; the hook resolves the
-// project at runtime via $CLAUDE_PROJECT_DIR, so it is not embedded.
-func RegisterCWD(homeDir, client, cwd string) error {
+// exe is the resolved binary path to embed (empty falls back to "leankg");
+// the project itself is resolved at hook runtime via $CLAUDE_PROJECT_DIR.
+func RegisterCWD(homeDir, client, exe string) error {
 	if client != ClientClaudeCode {
 		return fmt.Errorf("register-cwd for %s: %w", client, ErrUnsupportedClient)
 	}
-	_ = cwd // resolved at hook runtime via $CLAUDE_PROJECT_DIR
 	path := filepath.Join(homeDir, ".claude", "settings.json")
 	root, err := readJSONConfig(path)
 	if err != nil {
@@ -396,14 +402,14 @@ func RegisterCWD(homeDir, client, cwd string) error {
 			if !ok {
 				continue
 			}
-			if cmd, _ := hook["command"].(string); cmd == hookCommand {
+			if cmd, _ := hook["command"].(string); cmd == hookCommand(exe) {
 				return nil // identical hook already present
 			}
 		}
 	}
 	sessionStart = append(sessionStart, map[string]any{
 		"matcher": "*",
-		"hooks":   []any{map[string]any{"type": "command", "command": hookCommand}},
+		"hooks":   []any{map[string]any{"type": "command", "command": hookCommand(exe)}},
 	})
 	hooks["SessionStart"] = sessionStart
 	return writeJSONFile(path, root)

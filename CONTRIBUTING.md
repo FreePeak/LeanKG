@@ -48,12 +48,12 @@ LeanKG uses `tree-sitter` for parsing. If you want to add a new language:
 3. Add testdata fixtures and define how code elements (functions, classes, imports) map to the graph schema.
 
 ### Improving MCP Tools
-We are constantly expanding the tools available to AI agents. If you have an idea for a new tool (e.g., `get_complexity_score` or `find_dead_code`):
-1. Define the tool in the MCP server module.
+The agent-facing registry is pinned at exactly three tools — `import`, `query`, `status` — with capabilities as actions/verbs inside that envelope. To extend it:
+1. Add the action in `go/internal/core` and wire it through the MCP/REST/CLI transports.
 2. Ensure the output is **token-optimized** (we aim for high signal-to-noise ratios).
 
 ### Benchmarking
-Performance is a core feature. If you contribute a feature, please run the benchmarks in the `benchmark/` folder to ensure no significant regression in indexing speed or token usage.
+Performance is a core feature. If you contribute a feature, please run the Go benchmarks in [`go/benchmark/ab`](go/benchmark/ab) (see its REPORT.md) to ensure no significant regression in indexing speed or token usage.
 
 ---
 
