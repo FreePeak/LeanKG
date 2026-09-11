@@ -1,14 +1,31 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.7.0-lazy-languages
-**Date:** 2026-09-10
+**Version:** 4.7.1-merge-truth
+**Date:** 2026-09-11
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
-**Codebase Version:** 0.30.0 (Rust, maintenance) + Go engine W1 (`go/`, module `github.com/FreePeak/LeanKG/go`)
-**Storage:** Rust line: dual-backend (SQLite default, PostgreSQL+pgvector opt-in). Go engine (W1): SQLite (WAL, FTS5, vector BLOBs); PG is W4.
+**Codebase Version:** 0.31.0 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
+**Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
 
 ---
 
 ## Changelog
+
+### v4.7.1-merge-truth — CI-green fixes + honest ledger for the Go cutover (2026-09-11)
+
+> **Trigger:** pre-merge audit of PR #370 — the one CI job gating the rewrite was red, and three shipped claims (dashboard done, install paths, tracked corpus) did not survive contact with the branch.
+
+**Fixed**
+- **ast-grep probe drops the deprecated `sg` alias** (`internal/astgrep`): `New()` resolves only `ast-grep`. The previous name-only probe of `sg` accepted util-linux's set-group command on Linux, so `query{action:"pattern"}` shelled out to a binary that prints no JSON and returned a hard error instead of the documented L2 degrade, while `internal/langs.astGrepPresent()` (the same name check) advertised a live ast-grep tier in `status`. `sg` is deprecated upstream and validating an alias would have cost a process spawn per probe — dropping it removes the whole impostor class without one. Regression tests: `TestNewIgnoresSgAlias` (rejects `sg` without executing it) + `TestAstGrepPresentIgnoresSgAlias` (tier stays dark).
+- **Client wiring spawned a command that does not exist** (`cmd/leankg`): `connect` and `install --target` wrote `["mcp-stdio"]` (± `--project`) as the stdio entry, but the Go binary has no `mcp-stdio` subcommand — the real mode is `serve --stdio`. Every wired client (claude-code, cursor, codex, gemini, opencode, omp) spawned a process that died before answering. The tests pinned the broken string, so the suite could not see it; `TestStdioSpawnServesMCP` now builds the binary and drives the emitted argv over stdio (initialize → initialized → tools/list = `import`/`query`/`status`), so future wiring regressions fail loudly. Stdio entries stay projectless by default (FR-ZCP-04 URL contract); `--project` remains the explicit escape hatch.
+- **SessionStart hook ran a verb that does not exist** (`cmd/leankg`): `install --register-cwd` wrote `leankg add $CLAUDE_PROJECT_DIR` into `~/.claude/settings.json`, and the Go binary has no `add` case — Claude Code would fail the hook every session. The Go attach-and-index equivalent is `index`, which is what the hook now runs (creating-or-updating that project's store, incremental after the first run); `TestHookCommandRuns` executes the expanded hook command and requires the store it promises.
+- **Dangling gitlink**: `benchmark/corpora/docs` was committed as a submodule reference with no `.gitmodules` entry — `git submodule update --init` and `--recurse-submodules` clones failed (`fatal: No url found for submodule path 'benchmark/corpora/docs'` in CI's own post-job). Removed.
+- **Install surface**: `scripts/release.sh` (drove the deleted `Cargo.toml`, referenced nowhere) removed; `scripts/install-go.sh` now clones over HTTPS instead of `git@github.com:` and prints the verified `install --target <client>` next step.
+- **Version stamp**: MCP `serverInfo` reported the stale marker `0.31.0-go-w1`; it reports `0.31.0` again, with `internal/mcp/version_test.go` failing if it drifts from `cmd/leankg/VERSION`.
+
+**Corrected claims**
+- Parity ledger `web api+ui`: **DONE → PARTIAL**. `internal/web` embeds and serves the ui-v2 build, but the dashboard's `/api/*` contract (11 endpoints: index status, search, query, query-graph, graph clusters/report/children/expand-service/service-topology, file, project switch) is not ported — the SPA fallback answers those calls with `index.html`, so the dashboard renders without data. Port tracked in **#371**.
+- README install/CLI/contributing sections rewritten to the Go surface: `cargo install`, the crates.io badge, and the Rust-era verbs (`init`, `update`, `path`, `explain`, `graph-query`, `embed --init`, `mcp-stdio`, `ontology sync`, `serve --port`) described binaries and subcommands this tree no longer contains.
+
 ### v4.7.0-lazy-languages — AST tiers + lazy per-codebase language activation (2026-09-11)
 
 > **Trigger:** user direction: support the default language set **go, rust, ts, tsx, js, jsx, py, md, java, kotlin, swift, objective-c, flutter(dart)** via ast-grep + tree-sitter + optional LSP; everything idle/lazy — activate per opened codebase (nested repos each activate their own slice); LSP consulted against the queried directory at query time.
@@ -36,7 +53,7 @@
 | graph/query traversal | 15.2k | `internal/graph` — Impact/ShortestPath/Callers/Callees/Context/Explain, wired as query actions | **DONE** (connection verbs; ontology-walk provenance = deferred, see below) |
 | indexer extractor+call graph | 11k | `internal/index` + `internal/docindex` — **13 default languages** (go, rust, ts, tsx, js, jsx, py, md, java, kotlin, swift, objective-c, flutter/dart) with **lazy per-codebase activation** (`internal/langs`): nested repos activate their own slice; \`IndexDirWith(reg)\` routes extraction through the registry. Extraction tiers: regex (all 13, always), tree-sitter (`tstree` build tag, 10 grammars — objc/dart treesitter absent in the bundled set), ast-grep (\`query{action:"pattern"}\`, degrades to L2 when the CLI is absent), LSP (\`query{action:"lsp"}\`, server pooled per (lang,dir), idle-evicted, consulted at query time). Live-verified indexing all 13 + runtime activation. vs Rust's 43 grammars | **DONE for the 13 defaults; broader language list = future tree-sitter grammar additions** |
 | embeddings | 8.2k | `internal/embed` + `cmd/leankg-embed` — Provider port (OpenAI-compatible = API + llama.cpp sidecar shape), ModelStamp guards, NDJSON offsite, benchmarked | **DONE** (local ONNX runtime = DEFERRED for sidecar; sidecar lifecycle mgmt not in CLI) |
-| web api+ui | 5.8k | `internal/web` (go:embed ui build, SPA fallback) + REST `/api/v1/*` | **DONE** |
+| web api+ui | 5.8k | `internal/web` (go:embed ui build, SPA fallback) + REST `/api/v1/*` | **PARTIAL** — assets embedded and served on `-ui`, REST v1 surface live on `-rest`; the dashboard's legacy `/api/*` contract (11 endpoints) is **not ported**, so the embedded ui-v2 renders without data (SPA fallback answers those calls with `index.html`). Port tracked in **#371** |
 | cli/connect/install | 2.2k+1.4k | `cmd/leankg` — serve/index/writer/doctor/connect/install for 6 clients, --register-cwd hooks | **DONE** |
 | ontology | 4.0k | `internal/ontology` — concept catalog + element matching + kv persistence; reachable via `import{action:"ontology", path:<catalog.json>}` + `query{action:"ontology"}` over MCP/REST/CLI, POST /api/v1/ontology/match + GET /api/v1/ontology/matches | **PARTIAL — workflows/traceability + transport action DEFERRED** |
 | session offload | 0.9k | `internal/session` — offload/recall bit-for-bit + checksums, canvas, lesson dedup; reachable via `import{action:"session", command:offload|lesson}` + `query{action:"session"}` (canvas/recall) over MCP/REST/CLI, POST /api/v1/session/read; core + mcp + rest tests pin the round-trip | **DONE** |
@@ -506,4 +523,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-10 (v4.6.0 — Go engine at full surface parity, Rust tree removed; deferred: ontology workflows, compress, LSP, Android extractors, local-ONNX runtime)*
+*Last updated: 2026-09-11 (v4.7.1 — pre-merge truth pass on PR #370: ast-grep identity probe fixes the deterministic CI failure, dangling gitlink removed, install surface repaired, `web api+ui` ledger corrected to PARTIAL with #371 tracking the dashboard API port)*

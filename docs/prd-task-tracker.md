@@ -1,6 +1,6 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-10 — Go engine W1 + FR-GO-EMBED (#368) + FR-GO-MEM (#369) delivered on feat/go-rewrite (see In Progress); everything through v0.30.0 merged to main (v4.4.3 PRD window: #326 sqlite-default conversion, #331 doc-join batching + bounded temporal_query [#257/#256], #333 sweep path-form normalization [#332], #336/#337/#339 semantic-release pipeline healed + auto releases live, #341 temporal PG translator fix, #342 006_audit_log PG migration restored, #343 integration suites re-pinned to the 3-tool surface). Open bugs: #286 (evidence-gated), #321 (evidence-gated, instrumentation live). User-held PRs: #328/#329/#330 (green), #299 (green), #295 superseded by v0.28.1, #262/#265/#266 need `@dependabot rebase`.
+**Last synced:** 2026-09-11 — v4.7.1 pre-merge truth pass on PR #370: ast-grep identity probe fixed (the deterministic CI failure), dangling `benchmark/corpora/docs` gitlink removed, install surface repaired (`install-go.sh` HTTPS + dead `release.sh` removed), MCP version stamp synced with a drift guard, README rewritten to the Go CLI surface, and the `web api+ui` ledger row corrected to PARTIAL with **#371** tracking the dashboard API port (new FR-GO-DASH row). Everything through v0.30.0 remains merged to main.
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 
@@ -10,10 +10,10 @@
 
 | Status | Count |
 |--------|------:|
-| IN_PROGRESS | 4 (FR-ZCP-01 + FR-GO-W1/EMBED/MEM) |
-| TODO | 35 (9 live + 26 carry-forward) — 3 Go-rewrite slices tracked as IN_PROGRESS above |
+| IN_PROGRESS | 1 (FR-ZCP-01) — the Go-rewrite slices (FR-GO-W1/EMBED/MEM/LANGS) are **DONE on `feat/go-rewrite`**, pending PR #370 merge |
+| TODO | 36 (9 live + 26 carry-forward + FR-GO-DASH #371) |
 | DONE | 9 |
-| Open work | 39 (36 archived-inventory + 3 Go-rewrite slices) |
+| Open work | 40 (36 archived-inventory + 3 Go-rewrite slices pending PR #370 merge + FR-GO-DASH #371) |
 
 **Inventory note (ID-level accounting):** the archived tracker holds **40 open inventory items** (35 master-table `NOT_DONE`/`PENDING`/`PARTIAL`/`OPEN` IDs + 5 `FR-HEA-*` section-table rows). All 40 are accounted for below: FR IDs appear as named rows; each paired `US-*` tracks with its FR (the archive itself pairs them `US-X / FR-X` as one work item); `FR-ZG-01..05` + `US-ZG-01..05` + `FR-B05` are superseded inside the live `FR-ZCP-*` rows (Supersedes column); `FR-HEA-05` is DONE (v4.0.0 §1 cutover). `FR-ZCP-09/10/11/12/13` are **new in v4.1.x–v4.3.0** (no archive IDs). Row-level open work = 1 IN_PROGRESS + 9 live + 26 carry-forward = 36. (The 26 carry-forward rows cover 35 archived open IDs: 3 rows pair multiple US stories with their FR; the inventory not…
 
@@ -30,6 +30,7 @@
 | M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 DONE; FR-3T-04 live validation complete on this repo — 581 files, 9522 vectors, L1/L2/L3 verified; PR #284 merged (v4.3.x)) |
 | M-GO — Go engine rewrite (#365) | 3 | — | **IN_PROGRESS** (FR-GO-W1 core DONE on feat/go-rewrite: store/core/index/mcp/rest + live smoke; FR-GO-EMBED DONE: leankg-embed binary + stamp guards + NDJSON; FR-GO-MEM DONE: full-markdown memory + banks adapter; v4.6.0: ALL waves landed (W2 watcher/writer, W4 pgvector, W5 ConnectRPC+auth, session, graph verbs, goldens, benchmarks + executed Rust-vs-Go A/B REPORT) and the Rust tree REMOVED — deferred ledger in docs/prd.md) |
 | FR-GO-LANGS | Lazy language wave (v4.7.0): 13-language registry + tstree/astgrep/lsp tiers + java/kotlin/swift/objc/dart extractors | **DONE** on feat/go-rewrite (objc/dart tree-sitter grammar gap documented) |
+| FR-GO-DASH | #371: port the ui-v2 dashboard data API — legacy `/api/*` (11 endpoints) or rebuild ui-v2 against `/api/v1/*`; today the SPA fallback answers those calls with `index.html`, so the embedded dashboard loads no data | 2026-09-11 | **TODO** — ledger row `web api+ui` corrected to PARTIAL in v4.7.1 |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
