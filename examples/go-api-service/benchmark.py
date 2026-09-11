@@ -15,6 +15,9 @@ import json
 import os
 import subprocess
 import time
+
+# The LeanKG engine binary (Go since v4.7.0). Override with LEANKG_BIN.
+LEANKG_BIN = os.environ.get("LEANKG_BIN", "leankg")
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any
@@ -42,7 +45,7 @@ def get_all_related_files(base_file: str, graph_dir: str) -> List[str]:
     """Get all files related to base file using LeanKG impact analysis"""
     try:
         result = subprocess.run(
-            ['../../target/release/leankg', 'impact', base_file, '--depth', '2'],
+            [LEANKG_BIN, 'query', base_file, '--kind', 'impact', '--depth', '2', '--compress'],
             cwd=graph_dir,
             capture_output=True,
             text=True,
@@ -84,15 +87,17 @@ def benchmark_impact_analysis(file_path: str, leankg_dir: str) -> BenchmarkResul
     
     try:
         result = subprocess.run(
-            ['../../target/release/leankg', 'query', 'dependencies'],
+            [LEANKG_BIN, 'impact', file_path, '--depth', '2', '--compress'],
             cwd=leankg_dir,
             capture_output=True,
             text=True,
             timeout=10
         )
-        after_tokens = estimate_tokens(result.stdout) if result.returncode == 0 else 100
-    except:
-        after_tokens = 100
+        if result.returncode != 0:
+            raise SystemExit(f"impact call failed: {result.stderr[:200]}")
+        after_tokens = estimate_tokens(result.stdout)
+    except subprocess.TimeoutExpired:
+        raise SystemExit("impact call timed out")
     
     return BenchmarkResult(
         scenario="Impact Analysis",
@@ -117,16 +122,17 @@ def benchmark_full_feature_testing(leankg_dir: str) -> BenchmarkResult:
     
     try:
         result = subprocess.run(
-            ['../../target/release/leankg', 'status'],
+            [LEANKG_BIN, 'status'],
             cwd=leankg_dir,
             capture_output=True,
             text=True,
             timeout=10
         )
-        leankg_summary = result.stdout if result.returncode == 0 else ""
-        leankg_tokens = estimate_tokens(leankg_summary)
-    except:
-        leankg_tokens = 200
+        if result.returncode != 0:
+            raise SystemExit(f"status call failed: {result.stderr[:200]}")
+        leankg_tokens = estimate_tokens(result.stdout)
+    except subprocess.TimeoutExpired:
+        raise SystemExit("status call timed out")
     
     return BenchmarkResult(
         scenario="Full Feature Testing",
@@ -138,7 +144,7 @@ def benchmark_full_feature_testing(leankg_dir: str) -> BenchmarkResult:
 
 def run_benchmarks():
     """Run all benchmark scenarios"""
-    leankg_dir = "/root/app/LeanKG/examples/go-api-service"
+    leankg_dir = str(Path(__file__).resolve().parent)
     results = []
     
     print("=" * 80)
@@ -182,7 +188,7 @@ def run_benchmarks():
 
 def get_leankg_features():
     """Get LeanKG feature capabilities"""
-    leankg_dir = "/root/app/LeanKG/examples/go-api-service"
+    leankg_dir = str(Path(__file__).resolve().parent)
     
     features = []
     
@@ -191,15 +197,15 @@ def get_leankg_features():
     
     commands = [
         ("Status", "status"),
-        ("Query", "query user"),
-        ("Impact", f"impact internal/api/handler.go --depth 1"),
-        ("Dependencies", "query imports"),
+        ("Query", "query user --compress"),
+        ("Impact", "impact internal/api/handler.go --depth 1 --compress"),
+        ("Dependencies", "query imports --compress"),
     ]
     
     for name, cmd in commands:
         try:
             result = subprocess.run(
-                f"../../target/release/leankg {cmd}".split(),
+                f"{LEANKG_BIN} {cmd}".split(),
                 cwd=leankg_dir,
                 capture_output=True,
                 text=True,
@@ -218,7 +224,7 @@ if __name__ == "__main__":
     results = run_benchmarks()
     features = get_leankg_features()
     
-    with open("/root/app/LeanKG/examples/go-api-service/benchmark_results.json", "w") as f:
+    with open(os.path.join(str(Path(__file__).resolve().parent), "benchmark_results.json"), "w") as f:
         json.dump({
             "results": [
                 {

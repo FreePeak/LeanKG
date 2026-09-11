@@ -51,6 +51,9 @@ func main() {
 		cmdIndex(os.Args[2:])
 	case "query":
 		cmdQuery(os.Args[2:])
+	case "impact":
+		cmdQuery(append([]string{os.Args[2], "--kind", "impact"}, os.Args[3:]...))
+		cmdQuery(os.Args[2:])
 	case "writer":
 		cmdWriter(os.Args[2:])
 	case "connect":
@@ -59,6 +62,8 @@ func main() {
 		cmdInstall(os.Args[2:])
 	case "version":
 		fmt.Println("leankg " + Version())
+	case "status":
+		cmdStatus(os.Args[2:])
 	case "doctor":
 		cmdDoctor(os.Args[2:])
 	case "-h", "--help", "help":
