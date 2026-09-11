@@ -23,9 +23,10 @@ type Server struct {
 	srv    *mcp.Server
 }
 
-// version is the Go engine's protocol version marker (engine, not the Rust
-// crate version).
-const version = "0.31.0-go-w1"
+// version is reported as the MCP serverInfo version. It must match the release
+// stamp in cmd/leankg/VERSION — the only version source in the Go tree —
+// because serverInfo is what clients log; version_test.go fails on drift.
+const version = "0.31.0"
 
 // New builds the MCP server with the 3-tool registry.
 func New(engine *core.Engine) *Server {

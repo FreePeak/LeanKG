@@ -6,7 +6,7 @@
 # Requires: Go >= 1.25 (https://go.dev/dl/), git.
 set -euo pipefail
 
-REPO_DEFAULT="git@github.com:FreePeak/LeanKG.git"
+REPO_DEFAULT="https://github.com/FreePeak/LeanKG.git"
 REPO_URL="${LEANKG_REPO_URL:-$REPO_DEFAULT}"
 PREFIX="${1:-$HOME/.local/bin}"
 
@@ -40,8 +40,8 @@ Installed:
   $PREFIX/leankg-embed  embedding pipeline (run/full/export/import/status)
 
 Next steps:
-  leankg install --target claude    # wire your coding tool (6 targets)
-  leankg index /path/to/repo        # build a knowledge index
-  leankg serve --http :9699 --rest :8080 --memory
+  leankg install --target claude-code   # wire your coding tool (claude-code | cursor | codex | gemini | opencode | omp)
+  leankg index .                        # build the knowledge index for this repo
+  leankg serve -http 127.0.0.1:9699 -rest 127.0.0.1:8080 -memory
 
 MSG
