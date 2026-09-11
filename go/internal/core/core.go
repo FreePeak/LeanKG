@@ -332,10 +332,10 @@ func (e *Engine) embeddingsState() []map[string]any {
 
 // QueryRequest is the query tool payload.
 type QueryRequest struct {
-	Action string            `json:"action,omitempty"` // "" = ladder router
-	Query  string            `json:"query"`
-	Limit  int               `json:"limit,omitempty"`
-	Args   map[string]string `json:"args,omitempty"` // action params (path: to=<qn>)
+	Action string         `json:"action,omitempty"` // "" = ladder router
+	Query  string         `json:"query"`
+	Limit  int            `json:"limit,omitempty"`
+	Args   map[string]any `json:"args,omitempty"` // action params (to, depth, command, lang, pattern…)
 }
 
 // Query handles the query tool. action "" routes down the ladder
@@ -356,11 +356,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "pattern":
 		return e.patternQuery(ctx, req, map[string]any{"query": req.Query})
 	case "session":
-		cmd := "recall"
-		if req.Args != nil && req.Args["command"] != "" {
-			cmd = req.Args["command"]
-		}
-		return e.SessionRead(cmd, req.Query, req.Args["node_id"])
+		return e.SessionRead(argStr(req.Args, "command"), req.Query, argStr(req.Args, "node_id"))
 	case "", "search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain":
 	default:
 		return nil, fmt.Errorf("unknown query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology; empty = ladder router)", req.Action)
@@ -654,10 +650,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 	case "impact":
 		// depth comes from args.depth (Rust --depth parity); limit is a
 		// result-count concept, not a traversal depth.
-		depth := 2
-		if d, err := strconv.Atoi(req.Args["depth"]); err == nil && d > 0 {
-			depth = d
-		}
+		depth := argInt(req.Args, "depth", 2)
 		hits, err := graph.Impact(e.st, req.Query, depth)
 		if err != nil {
 			return nil, err
@@ -665,16 +658,13 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		resp["hits"] = hits
 		return g(), nil
 	case "path":
-		if req.Args == nil || req.Args["to"] == "" {
+		if argStr(req.Args, "to") == "" {
 			return nil, fmt.Errorf("query path requires args.to (target qualified name)")
 		}
 		// maxDepth comes from args.depth (default 2) — Limit is a result
 		// count, not a traversal bound; paths are a single answer anyway.
-		maxDepth := 0 // 0 = graph default
-		if d, err := strconv.Atoi(req.Args["depth"]); err == nil && d > 0 {
-			maxDepth = d
-		}
-		path, err := graph.ShortestPath(e.st, req.Query, req.Args["to"], maxDepth)
+		maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
+		path, err := graph.ShortestPath(e.st, req.Query, argStr(req.Args, "to"), maxDepth)
 		if err != nil {
 			return nil, err
 		}
@@ -831,11 +821,11 @@ func (e *Engine) LanguagesStatus() map[string]any {
 // installed (lazy: probed per call, never spawned otherwise). Absence DEGRADES
 // to L2 keyword search with a reason — same posture as the L3 provider rules.
 func (e *Engine) patternQuery(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
-	pattern := req.Args["pattern"]
+	pattern := argStr(req.Args, "pattern")
 	if pattern == "" {
 		return nil, fmt.Errorf("query pattern requires args.pattern (AST pattern, e.g. \"func $F($A)\")")
 	}
-	lang := req.Args["lang"]
+	lang := argStr(req.Args, "lang")
 	if lang == "" {
 		// default to the sole active language when exactly one is on
 		if active := e.activeLanguages(); len(active) == 1 {
@@ -880,7 +870,7 @@ func (e *Engine) lspQuery(ctx context.Context, req QueryRequest, resp map[string
 	if e.langsReg == nil {
 		return nil, fmt.Errorf("no language registry attached")
 	}
-	langName := req.Args["lang"]
+	langName := argStr(req.Args, "lang")
 	prof, ok := e.langsReg.Lookup(langName)
 	if !ok {
 		return nil, fmt.Errorf("unknown language %q", langName)
@@ -904,12 +894,12 @@ func (e *Engine) lspQuery(ctx context.Context, req QueryRequest, resp map[string
 		return nil, err
 	}
 	command := "workspace"
-	if c := req.Args["command"]; c != "" {
+	if c := argStr(req.Args, "command"); c != "" {
 		command = c
 	}
 	switch command {
 	case "document":
-		path := req.Args["path"]
+		path := argStr(req.Args, "path")
 		if path == "" {
 			return nil, fmt.Errorf("lsp document requires args.path (file to inspect)")
 		}
@@ -931,4 +921,31 @@ func (e *Engine) lspQuery(ctx context.Context, req QueryRequest, resp map[string
 	}
 	resp["retrieval"] = map[string]any{"rung": "lsp", "reason": fmt.Sprintf("language server symbols (%s)", langName)}
 	return resp, nil
+}
+
+// argStr reads a string arg ("" when absent).
+func argStr(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	s, _ := m[key].(string)
+	return s
+}
+
+// argInt reads a numeric arg (fallback when absent/unparseable).
+func argInt(m map[string]any, key string, fb int) int {
+	if m == nil {
+		return fb
+	}
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fb
 }

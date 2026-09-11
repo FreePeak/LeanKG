@@ -437,7 +437,7 @@ func TestSessionQueryActionReachable(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := e.Query(ctx, QueryRequest{Action: "session", Query: "s1", Args: map[string]string{"command": "canvas"}})
+	out, err := e.Query(ctx, QueryRequest{Action: "session", Query: "s1", Args: map[string]any{"command": "canvas"}})
 	if err != nil {
 		t.Fatalf("session canvas via query action: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestPatternActionDegradedWithoutAstGrep(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	out, err := e.Query(context.Background(), QueryRequest{
 		Action: "pattern", Query: "anything",
-		Args: map[string]string{"pattern": "func $F($A)", "lang": "go"},
+		Args: map[string]any{"pattern": "func $F($A)", "lang": "go"},
 	})
 	if err != nil {
 		t.Fatalf("pattern without ast-grep must degrade, not error: %v", err)
@@ -487,7 +487,7 @@ func TestLSPQueryRequiresActiveLanguage(t *testing.T) {
 	// registry not activated for any codebase → everything idle
 	if _, err := e.Query(context.Background(), QueryRequest{
 		Action: "lsp", Query: "Handler",
-		Args: map[string]string{"lang": "go"},
+		Args: map[string]any{"lang": "go"},
 	}); err == nil || !strings.Contains(err.Error(), "not active") {
 		t.Fatalf("idle language must refuse LSP spawn: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestLSPQueryRequiresActiveLanguage(t *testing.T) {
 	// (ErrNoServer/timeout), never silently return empty symbols.
 	_, err := e.Query(context.Background(), QueryRequest{
 		Action: "lsp", Query: "Handler",
-		Args: map[string]string{"lang": "go"},
+		Args: map[string]any{"lang": "go"},
 	})
 	if err == nil {
 		t.Log("gopls present and answered — server path exercised")

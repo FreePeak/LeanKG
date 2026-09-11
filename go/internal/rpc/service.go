@@ -61,7 +61,7 @@ func (s *LeanKGService) Query(ctx context.Context, req *connect.Request[leankgv1
 		Action: req.Msg.Action,
 		Query:  req.Msg.Query,
 		Limit:  int(req.Msg.Limit),
-		Args:   req.Msg.Args,
+		Args:   protoArgs(req.Msg.Args),
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -95,4 +95,17 @@ func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[lea
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&leankgv1.MemoryReadResponse{Json: js}), nil
+}
+
+// protoArgs converts the proto map<string,string> into core's wider
+// map[string]any (clients may send typed values over other transports).
+func protoArgs(m map[string]string) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
