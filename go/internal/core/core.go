@@ -910,9 +910,24 @@ func (e *Engine) lspQuery(ctx context.Context, req QueryRequest, resp map[string
 		resp["symbols"] = syms
 		resp["server"] = client.Language()
 	case "workspace", "":
-		syms, err := client.WorkspaceSymbols(ctx, req.Query)
-		if err != nil {
-			return nil, err
+		// Real servers (gopls) index lazily after initialize — an immediate
+		// workspace/symbol returns empty. Poll briefly while ctx allows so
+		// the tier actually answers instead of always returning null.
+		var syms []lsp.Symbol
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			syms, err = client.WorkspaceSymbols(ctx, req.Query)
+			if err != nil {
+				return nil, err
+			}
+			if len(syms) > 0 {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(700 * time.Millisecond):
+			}
 		}
 		resp["symbols"] = syms
 		resp["server"] = client.Language()
