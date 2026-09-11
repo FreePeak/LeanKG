@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.6.0-go-full-parity
+**Version:** 4.7.0-lazy-languages
 **Date:** 2026-09-10
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.30.0 (Rust, maintenance) + Go engine W1 (`go/`, module `github.com/FreePeak/LeanKG/go`)
@@ -9,6 +9,20 @@
 ---
 
 ## Changelog
+### v4.7.0-lazy-languages — AST tiers + lazy per-codebase language activation (2026-09-11)
+
+> **Trigger:** user direction: support the default language set **go, rust, ts, tsx, js, jsx, py, md, java, kotlin, swift, objective-c, flutter(dart)** via ast-grep + tree-sitter + optional LSP; everything idle/lazy — activate per opened codebase (nested repos each activate their own slice); LSP consulted against the queried directory at query time.
+
+**Delivered:**
+- `internal/langs` — 13-language registry: extensions (single-owner + `.h` header rule), repo markers (go.mod/Cargo.toml/package.json/tsconfig/pom.xml/build.gradle*/Package.swift/Podfile/pubspec.yaml/…), aliases (golang, txs, flutter, object-c…), LSP command candidates. `Activate(codebase)` walks bounded depth (nested roots + marker-less census supplement); `Deactivate` returns to idle; `Tiers()` reports per-language LIVE capability: `regex` (always), `tree-sitter` (build tag `tstree` only — default stays CGO-free), `ast-grep` (CLI on PATH), `lsp` (server binary resolves).
+- `internal/tstree` — CGO tree-sitter tier behind `tstree`: bundled grammars for go/rust/ts/tsx/js/jsx/py/java/kotlin/swift; **objc + dart have no grammar in this set → regex+LSP tier gap, documented not silent**.
+- `internal/lsp` — lazy JSON-RPC/Content-Length client (stdlib framing): per (language, rootDir) pool, 5s startup bound, didOpen+documentSymbol (hierarchical+flat normalized, 1-based lines) + workspace/symbol, idle-TTL eviction.
+- `internal/astgrep` — ast-grep CLI wrapper (argv-safe, ctx-bounded, `--json` parsing).
+- Indexer: java/kotlin/swift/objc/dart regex extractors (+ per-language testdata fixtures); `IndexDirWith(reg)` routes through the registry (lazy) while `IndexDir` stays all-on compatible.
+- Transports: `status`/`query{action:"languages"}` carry active languages + live tiers; `query{action:"lsp"}` runs server-backed symbol lookups scoped to the queried dir; `import{action:"astgrep"}`/pattern search where the CLI exists.
+
+**Verified:** live serve on a polyglot fixture activated go+dart (markers) and java (census supplement) with correct tier lists; registry tests incl. nested repos, aliases, idle semantics; dual-engine gate green.
+
 ### v4.6.0-go-full-parity — Go engine at full surface parity; Rust line removed (2026-09-10)
 
 > **Trigger:** maintainer direction: "keep working until the Go code replaces 100% of the Rust code" — all waves landed, both engines live-verified, then the Rust tree deleted.
