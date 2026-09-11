@@ -23,8 +23,6 @@ var (
 	ErrProtocol = errors.New("lsp: protocol error")
 )
 
-// handshakeTimeout bounds the initialize/initialized exchange started by
-// Start so a broken server binary can never wedge the indexer.
 // handshakeTimeout bounds the initialize/initialized exchange. It is a var
 // so tests can shrink it; 10s (raised from 5s) absorbs `go test` parallel
 // package load where a local sh-spawn fake server was observed to miss the

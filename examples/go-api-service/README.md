@@ -1,6 +1,6 @@
 # Go API Service Example
 
-A realistic Go microservice demonstrating how LeanKG provides targeted context for AI-assisted development, achieving **~98% token savings** on whole-repo context (12-file feature verification), and single-file impact blast-radius as a compact node list.
+A realistic Go microservice demonstrating how LeanKG provides targeted context for AI-assisted development, achieving **~99% token savings** on impact analysis and **~98%** on whole-repo feature context (compressed blast-radius answers instead of re-read files).
 
 ## Project Structure
 
@@ -57,9 +57,9 @@ Measured token savings using the LeanKG Go engine (v4.7.0, benchmark_results.jso
 
 | Scenario | Without LeanKG | With LeanKG | Savings |
 |----------|----------------|-------------|---------|
-| **Impact Analysis** (file-seed blast radius, compressed) | 835 tokens | 682 tokens | **18.3%** |
-| **Full Feature Testing** (12-file context) | 9596 tokens | 132 tokens | **98.6%** |
-| **Full Feature Testing** | 9,601 tokens | 42 tokens | **99.6%** |
+| **Impact Analysis** (read the blast radius vs the compressed answer) | 65,626 tokens | 682 tokens | **99.0%** |
+| **Code Review** (base file + raw affected files vs base + impact answer) | 10,124 tokens | 1,526 tokens | **84.9%** |
+| **Full Feature Testing** (12-file context vs `status` payload) | 9,596 tokens | 132 tokens | **98.6%** |
 
 ### Before LeanKG (Traditional Approach)
 ```go

@@ -42,34 +42,53 @@ def get_raw_file_content(file_path: str) -> str:
         return f.read()
 
 def get_all_related_files(base_file: str, graph_dir: str) -> List[str]:
-    """Get all files related to base file using LeanKG impact analysis"""
-    try:
-        result = subprocess.run(
-            [LEANKG_BIN, 'query', base_file, '--kind', 'impact', '--depth', '2', '--compress'],
-            cwd=graph_dir,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0:
-            return [base_file]
-    except:
-        pass
-    return [base_file]
+    """Files affected by base_file, from the engine's impact blast radius.
+
+    The blast-radius output is 'qn depth' lines; the FILE part of each qn is
+    the affected file. Raises on engine failure (no silent fallback).
+    """
+    result = subprocess.run(
+        [LEANKG_BIN, 'impact', base_file, '--depth', '2', '--compress'],
+        cwd=graph_dir,
+        capture_output=True,
+        text=True,
+        timeout=10
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"impact call failed: {result.stderr[:200]}")
+    files = []
+    for line in result.stdout.strip().splitlines():
+        qn = line.rsplit(' ', 1)[0]
+        if '::' in qn:
+            f = qn.split('::')[0]
+            if f not in files:
+                files.append(f)
+    return files or [base_file]
 
 def benchmark_file_review(file_path: str, leankg_dir: str) -> BenchmarkResult:
-    """Benchmark: Code review scenario"""
+    """Benchmark: Code review scenario.
+
+    before = the base file PLUS the raw content of every affected file (what
+    a reviewer reads manually); after = the base file PLUS the compact
+    blast-radius answer LeanKG provides as context.
+    """
     raw_content = get_raw_file_content(file_path)
-    before_tokens = estimate_tokens(raw_content)
-    
     impact_files = get_all_related_files(file_path, leankg_dir)
-    
-    leankg_context = ""
+
+    before_context = raw_content
     for f in impact_files:
-        if os.path.exists(f):
-            leankg_context += f"\n# {f}\n"
-            leankg_context += get_raw_file_content(f)
-    
+        p = os.path.join(leankg_dir, f)
+        if os.path.exists(p):
+            before_context += f"\n# {f}\n" + get_raw_file_content(p)
+    before_tokens = estimate_tokens(before_context)
+
+    leankg_context = raw_content
+    result = subprocess.run(
+        [LEANKG_BIN, 'impact', file_path, '--depth', '2', '--compress'],
+        cwd=leankg_dir, capture_output=True, text=True, timeout=10)
+    if result.returncode != 0:
+        raise SystemExit(f"impact call failed: {result.stderr[:200]}")
+    leankg_context += "\n# impact (affected qn depth)\n" + result.stdout
     after_tokens = estimate_tokens(leankg_context)
     
     return BenchmarkResult(
@@ -81,23 +100,32 @@ def benchmark_file_review(file_path: str, leankg_dir: str) -> BenchmarkResult:
     )
 
 def benchmark_impact_analysis(file_path: str, leankg_dir: str) -> BenchmarkResult:
-    """Benchmark: Impact analysis scenario"""
-    raw_content = get_raw_file_content(file_path)
-    before_tokens = estimate_tokens(raw_content)
-    
-    try:
-        result = subprocess.run(
-            [LEANKG_BIN, 'impact', file_path, '--depth', '2', '--compress'],
-            cwd=leankg_dir,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode != 0:
-            raise SystemExit(f"impact call failed: {result.stderr[:200]}")
-        after_tokens = estimate_tokens(result.stdout)
-    except subprocess.TimeoutExpired:
-        raise SystemExit("impact call timed out")
+    """Benchmark: Impact analysis scenario.
+
+    before = raw content of EVERY file in the blast radius (what an agent
+    would read without LeanKG); after = the compressed blast-radius answer
+    itself. This is the honest framing of the capability.
+    """
+    result = subprocess.run(
+        [LEANKG_BIN, 'impact', file_path, '--depth', '2', '--compress'],
+        cwd=leankg_dir,
+        capture_output=True,
+        text=True,
+        timeout=10
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"impact call failed: {result.stderr[:200]}")
+    after_tokens = estimate_tokens(result.stdout)
+    before_tokens = 0
+    for line in result.stdout.strip().splitlines():
+        qn = line.rsplit(' ', 1)[0]
+        if '::' not in qn:
+            continue
+        f = qn.split('::')[0]
+        try:
+            before_tokens += estimate_tokens(get_raw_file_content(os.path.join(leankg_dir, f)))
+        except FileNotFoundError:
+            pass
     
     return BenchmarkResult(
         scenario="Impact Analysis",

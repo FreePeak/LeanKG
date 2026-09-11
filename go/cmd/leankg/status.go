@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/FreePeak/LeanKG/go/internal/store"
@@ -30,10 +31,16 @@ func cmdStatus(args []string) {
 	st, err := store.OpenBackend(context.Background(), dir,
 		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), store.RO)
 	if err != nil {
-		// Missing store: report cold, not an error — same posture as the
-		// L0 rung guiding first-run indexing.
-		fmt.Printf("{\"elements\":0,\"freshness\":\"cold\",\"note\":\"%s\"}\n", err.Error())
-		os.Exit(0)
+		// An uninitialized project is legitimately "cold" (exit 0); a store
+		// that EXISTS but cannot be opened is an operational failure and
+		// must exit nonzero (the silent-failure class that manufactured the
+		// old fake numbers).
+		if _, statErr := os.Lstat(filepath.Join(dir, ".leankg")); os.IsNotExist(statErr) {
+			fmt.Printf("{\"elements\":0,\"freshness\":\"cold\",\"note\":\"%s\"}\n", err.Error())
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "status: %v\n", err)
+		os.Exit(1)
 	}
 	defer st.Close()
 	engine := core.New(st, nil, nil)
