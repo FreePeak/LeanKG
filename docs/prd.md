@@ -15,7 +15,7 @@
 
 **Delivered:**
 - `internal/langs` — 13-language registry: extensions (single-owner + `.h` header rule), repo markers (go.mod/Cargo.toml/package.json/tsconfig/pom.xml/build.gradle*/Package.swift/Podfile/pubspec.yaml/…), aliases (golang, txs, flutter, object-c…), LSP command candidates. `Activate(codebase)` walks bounded depth (nested roots + marker-less census supplement); `Deactivate` returns to idle; `Tiers()` reports per-language LIVE capability: `regex` (always), `tree-sitter` (build tag `tstree` only — default stays CGO-free), `ast-grep` (CLI on PATH), `lsp` (server binary resolves).
-- `internal/tstree` — CGO tree-sitter tier behind `tstree`: bundled grammars for go/rust/ts/tsx/js/jsx/py/java/kotlin/swift; **objc + dart have no grammar in this set → regex+LSP tier gap, documented not silent**.
+- `internal/tstree` — CGO tree-sitter tier behind `tstree`: bundled grammars for go/rust/ts/tsx/js/jsx/py/java/kotlin/swift, **wired into the indexer** (`tstree_seam.go`: tree-sitter first with real block end lines, regex fallback per language; objc/dart/md have no bundled grammar → regex+LSP gap, documented). CI compiles+tests the tag (tstree job runs before the default suite) + tidy guard.
 - `internal/lsp` — lazy JSON-RPC/Content-Length client (stdlib framing): per (language, rootDir) pool, 5s startup bound, didOpen+documentSymbol (hierarchical+flat normalized, 1-based lines) + workspace/symbol, idle-TTL eviction.
 - `internal/astgrep` — ast-grep CLI wrapper (argv-safe, ctx-bounded, `--json` parsing).
 - Indexer: java/kotlin/swift/objc/dart regex extractors (+ per-language testdata fixtures); `IndexDirWith(reg)` routes through the registry (lazy) while `IndexDir` stays all-on compatible.
