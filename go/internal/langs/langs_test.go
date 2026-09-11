@@ -208,3 +208,19 @@ func TestExtOwnerInactiveSkips(t *testing.T) {
 		t.Fatal("inactive language must not own extensions")
 	}
 }
+
+// TestAstGrepPresentIgnoresSgAlias pins the tier side of the Linux name
+// collision: a bare `sg` on PATH is util-linux's set-group command there
+// (upstream deprecated the alias), so it must not light up the ast-grep tier.
+// Resolution goes through astgrep.New, which probes only `ast-grep`.
+func TestAstGrepPresentIgnoresSgAlias(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sg"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	if astGrepPresent() {
+		t.Fatal("astGrepPresent = true with only util-linux sg on PATH, want false")
+	}
+}

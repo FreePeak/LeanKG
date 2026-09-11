@@ -1,7 +1,14 @@
-// Package astgrep wraps the external ast-grep CLI (or its `sg` alias) for
-// pattern search over a directory. The binary is never assumed present:
-// probing lives in New, and the rest of the engine must treat the ast-grep
-// tier as capability-gated (see langs.Tiers).
+// Package astgrep wraps the external ast-grep CLI for pattern search over a
+// directory. The binary is never assumed present: probing lives in New, and
+// the rest of the engine must treat the ast-grep tier as capability-gated
+// (see langs.Tiers).
+//
+// Only the `ast-grep` name is probed, never the `sg` alias: upstream
+// deprecated `sg`, and on Linux a bare `sg` is util-linux's set-group command,
+// so a name-only probe accepted an impostor that prints no JSON (every pattern
+// query then hard-failed instead of degrading to L2, and the tier reported
+// live). Validating an alias would cost a process spawn per probe; probing one
+// unambiguous name costs nothing.
 //
 // Exec is argv-only (never a shell string) and always context-bounded with a
 // 10s ceiling, so a wedged binary can never stall a query.
@@ -32,8 +39,8 @@ type Match struct {
 }
 
 var (
-	// ErrNotInstalled means neither ast-grep nor sg resolved on PATH.
-	ErrNotInstalled = errors.New("astgrep: no ast-grep or sg binary on PATH")
+	// ErrNotInstalled means no ast-grep binary resolved on PATH.
+	ErrNotInstalled = errors.New("astgrep: no ast-grep binary on PATH")
 	// ErrTimeout means the exec was cut short by its context (10s ceiling or
 	// caller cancellation).
 	ErrTimeout = errors.New("astgrep: command timed out or was canceled")
@@ -55,14 +62,15 @@ type Runner struct {
 	Bin string
 }
 
-// New resolves the CLI on PATH: ast-grep first, then the sg alias.
+// New resolves the ast-grep binary on PATH. The deprecated `sg` alias is
+// deliberately not probed (see the package comment): on Linux that name is
+// util-linux's set-group command.
 func New() (*Runner, error) {
-	for _, name := range []string{"ast-grep", "sg"} {
-		if path, err := exec.LookPath(name); err == nil {
-			return &Runner{Bin: path}, nil
-		}
+	path, err := exec.LookPath("ast-grep")
+	if err != nil {
+		return nil, ErrNotInstalled
 	}
-	return nil, ErrNotInstalled
+	return &Runner{Bin: path}, nil
 }
 
 // RunPattern runs `<bin> run --pattern <pat> --lang <lang> <rootDir> --json`

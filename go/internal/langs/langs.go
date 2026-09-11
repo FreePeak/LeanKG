@@ -22,6 +22,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/FreePeak/LeanKG/go/internal/astgrep"
 )
 
 // Language identifies a supported language.
@@ -173,12 +175,12 @@ func DefaultRegistry() *Registry {
 	return builtins
 }
 
+// astGrepPresent reports the ast-grep tier live only when the CLI really is
+// ast-grep: bare `sg` on PATH is util-linux's set-group command on Linux, and
+// counting it as the alias would advertise a tier that cannot answer.
+// Resolution (and its identity check) lives in astgrep.New.
 func astGrepPresent() bool {
-	_, err := execLookPath("ast-grep")
-	if err == nil {
-		return true
-	}
-	_, err = execLookPath("sg")
+	_, err := astgrep.New()
 	return err == nil
 }
 

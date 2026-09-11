@@ -39,11 +39,9 @@ const realShape = `[{"text":"func main()","range":{"byteOffset":{"start":4,"end"
 
 func TestNewProbesPath(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"ast-grep", "sg"} {
-		body := "#!/bin/sh\nexit 0\n"
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	body := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "ast-grep"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
 
@@ -52,23 +50,35 @@ func TestNewProbesPath(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	if want := filepath.Join(dir, "ast-grep"); r.Bin != want {
-		t.Errorf("Bin = %q, want %q (ast-grep preferred over sg)", r.Bin, want)
-	}
-
-	if err := os.Remove(filepath.Join(dir, "ast-grep")); err != nil {
-		t.Fatal(err)
-	}
-	r, err = New()
-	if err != nil {
-		t.Fatalf("New with only sg: %v", err)
-	}
-	if want := filepath.Join(dir, "sg"); r.Bin != want {
 		t.Errorf("Bin = %q, want %q", r.Bin, want)
 	}
 
-	os.Remove(filepath.Join(dir, "sg"))
+	os.Remove(filepath.Join(dir, "ast-grep"))
 	if _, err := New(); !errors.Is(err, ErrNotInstalled) {
 		t.Errorf("New with empty PATH = %v, want ErrNotInstalled", err)
+	}
+}
+
+// TestNewIgnoresSgAlias pins the Linux name collision fix: a bare `sg` on PATH
+// is util-linux's set-group command there (upstream also deprecated the alias),
+// so resolution must consider ONLY `ast-grep` — and must not execute the
+// impostor to find out. Before the fix, New accepted it, pattern queries shelled
+// out to it, got no JSON, and hard-failed instead of degrading to L2, while
+// status advertised an ast-grep tier that could not answer.
+func TestNewIgnoresSgAlias(t *testing.T) {
+	dir := t.TempDir()
+	executed := filepath.Join(dir, "executed")
+	sg := "#!/bin/sh\ntouch \"" + executed + "\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "sg"), []byte(sg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	if _, err := New(); !errors.Is(err, ErrNotInstalled) {
+		t.Errorf("New with only sg on PATH = %v, want ErrNotInstalled", err)
+	}
+	if _, err := os.Stat(executed); !os.IsNotExist(err) {
+		t.Errorf("impostor sg was executed during resolution (marker %s exists)", executed)
 	}
 }
 
