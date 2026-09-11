@@ -181,7 +181,7 @@
 | # | ID | Focus | Intent | Status |
 |--:|----|-------|--------|--------|
 | 1 | `FR-ZCP-03` | **P0** | Rewritten as the ladder router: capability probe + L0–L3 rungs + `retrieval` provenance block; registers the unregistered `orchestrate` parser | **NOT_DONE** |
-| 2 | `FR-ZCP-13` | **P1** | First-run setup contract: one auto/manual question (init + index + embed vs manual) persisted in `.leankg/config.json`; `leankg add <path> [--embed]` one-command repo registration; embeddings are a preference, never a prerequisite | **NOT_DONE** |
+| 2 | `FR-ZCP-13` | **P1** | First-run setup contract: one auto/manual question (init + index + embed vs manual) persisted in `.leankg/config.json`; one-command repo registration (Go verb: `leankg index <path>`; the designed Rust name `leankg add` is superseded); embeddings are a preference, never a prerequisite | **NOT_DONE** |
 | 3 | `FR-ZCP-05` | folded | Bridge tier spec: `pg_trgm` GIN + `text_pattern_ops` prefixes as the L2 fuzzy baseline before FTS lands | folded |
 
 ### v4.2.0-simplicity-first — Measured-simplicity contract for a young product (2026-09-04)
@@ -320,13 +320,13 @@
 - Watcher lifecycle: the watcher is single-project-per-process today (`server.rs:1585-1596`/`:2015-2026`); multi-project attach requires per-project watcher tasks bounded by the same one-indexer-slot budget as FR-ZCP-09.
 - AC: `rm -rf .leankg && query "where is auth handled?"` → immediate non-error response + background index completes within existing SLA; second query hits the graph; a query naming a never-seen repo never returns another repo's data.
 
-**FR-ZCP-13 — First-run setup contract + `leankg add` (Should Have, P1)**
+**FR-ZCP-13 — First-run setup contract (Should Have, P1; registration verb `leankg add` superseded by `leankg index` in the Go engine)**
 
 - **One question, asked once.** The first time a user touches a repo with no `.leankg` config (install wizard, first `leankg` CLI call, or the router's L0 response), LeanKG asks exactly one question: **auto or manual?** Auto = init + index + embed (catalog default model) proceed unattended (index/embed always background); manual = `init` only, with `index`/`embed` as explicit commands. The choice persists in `.leankg/config.json` (`{"setup": "auto"|"manual", "embed": bool}`) and governs every later attach; `--auto`/`--manual` flags and `LEANKG_SETUP_MODE` override per invocation for scripts/CI. No silent re-prompting; `leankg setup --reset` re-asks.
 - **Embeddings are a preference, not a prerequisite.** Choosing auto-with-embed on a non-`--features` build (or a machine without the model cache) stores the preference and serves L2/L1 results (the ladder, FR-ZCP-03) while `embed` is pending or unavailable — the answer changes what is *eventually* indexed, never whether queries work.
-- **`leankg add <path> [--embed]`** — the one-command way to grow coverage: registers the repo (registry row once FR-ZCP-09 lands; `.leankg` init today), applies the persisted setup choice (or the flag), returns immediately with `mcp_status`-shaped per-project status. `leankg add .` inside a portfolio parent registers children without indexing them (T0 manifests, FR-ZCP-09). `leankg status` lists everything added with freshness + rung.
+- **Registration verb (Go engine: `leankg index <path>`; the designed-but-unbuilt Rust name `leankg add <path> [--embed]` is superseded)** — the one-command way to grow coverage: registers the repo (registry row once FR-ZCP-09 lands; store creation today), applies the persisted setup choice (or the flag), returns immediately with status-shaped per-project output. `leankg index .` inside a portfolio parent registers children without indexing them (T0 manifests, FR-ZCP-09). `leankg status` lists everything added with freshness + rung.
 - **Zero dead ends**: `install --target` (FR-ZCP-04) prints the `add`/`index` commands in its output; the L0 router response names the exact next command; error strings carry runnable fixes (FR-ZCP-12 T1).
-- AC: fresh machine + fresh repo → one auto/manual answer → queries work during indexing (`freshness: cold`, L0/L1) → embeddings arrive later with no further user action; `leankg add ../other-repo --embed` from an indexed repo returns < 2 s and other-repo appears in `leankg status` with its own schema; manual-mode users are never auto-indexed.
+- AC: fresh machine + fresh repo → one auto/manual answer → queries work during indexing (`freshness: cold`, L0/L1) → embeddings arrive later with no further user action; `leankg index ../other-repo` from an indexed repo returns < 2 s and other-repo appears in `leankg status` with its own schema; manual-mode users are never auto-indexed.
 
 ### 3.2 Default Toolset (FR-ZCP-03) — **P0**
 
@@ -361,7 +361,7 @@
 
 **Narrative.** Onboarding is one command per harness, writing that harness's own config format, with **no project path in the emitted URL** — FR-ZCP-01's contextual resolution (stdio process cwd; HTTP `roots/list`) makes `?project=` unnecessary in the happy path, and shipping it by default is the dead-end this FR exists to kill. Implementation extends the existing `connect` writers (`src/connect/`) with the two missing targets; `install --target` is the global-config surface, `connect <client>` stays as its alias.
 
-**Command.** `leankg install --target opencode|claude|codex|cursor|omp [--remote URL] [--project PATH] [--register-cwd] [--remove]`
+**Command.** `leankg install --target claude-code|cursor|codex|gemini|opencode|omp [--http --url URL] [--project PATH] [--register-cwd]` (Go flags; the Rust `--remote`/`--remove` do not exist)
 
 **Per-target config writers** (entry name `leankg`; merge-or-replace that key only, atomic tmp+rename write, never clobber siblings; parse errors abort with the file path — existing `connect` semantics):
 
@@ -374,7 +374,7 @@
 | `opencode` | `~/.config/opencode/opencode.json` | `mcp.leankg` — `{type:"local",command:[…],enabled:true}` / `{type:"remote",url,enabled:true}` | **new writer** |
 | `omp` | `~/.omp/agent/mcp.json` | `mcpServers.leankg` — `{type:"stdio",command,args,enabled:true}` / `{type:"http",url,enabled:true}` | **new writer** |
 
-**URL contract.** Default stdio entry: `<current exe> serve --stdio` — **no `--project` flag** (server resolves from process cwd, FR-ZCP-01 clause 1). `--remote URL` emits the bare `URL` (e.g. `http://localhost:9699/mcp`) — **no `?project=` suffix** (clause 2: server-initiated `roots/list` resolution, in review on PR #268). `--project PATH` remains the explicit escape hatch and is the only way a `--project`/`?project=` gets emitted. **Docker is the one documented exception:** the container cannot see host cwds, so `--docker` (or `--remote` to a Docker-hosted server) emits `?project=<container-mount>` and prints the mount table (`/workspace` = this repo; per-repo mounts per local `.dockerfile`) instead of guessing.
+**URL contract.** Default stdio entry: `<current exe> serve --stdio` — **no `--project` flag** (server resolves from process cwd, FR-ZCP-01 clause 1). `--http --url URL` emits the bare URL (e.g. `http://localhost:9699/mcp`) — no `?project=` suffix (server-initiated `roots/list` resolution; the Go `--remote` and `--docker` flags do not exist — Docker was a Rust-line exception with a container-mount table, and the Go engine has no Docker mode). `--project PATH` remains the explicit escape hatch and is the only way a `--project` flag gets emitted.
 
 **`--register-cwd`.** Writes a Claude Code session-start hook running `<exe> index "$CLAUDE_PROJECT_DIR"` (exe resolved via `CurrentCommand()`; the variable quoted for the shell) — real effect: attaches-and-indexes the project (`index` creates-or-updates that project's store, incremental after the first run). The Rust-era `leankg add` verb has no Go case. It does **not** write a cwd→project table: the persistent session-registration table is FR-ZCP-01 clause 3, explicitly out of scope here. Clients with no hook mechanism get a printed note naming the manual command (zero dead ends).
 
@@ -382,7 +382,7 @@
 
 **Env hygiene (FR-ZCP-12 T1).** The `LEANKG_*` inventory is documented in one table, generated from source and CI-pinned — the table itself is the single source of truth for the count (a hand-typed total here would be exactly the unverifiable claim this AC polices; the last manual figure, "116 = 88+28+1", summed to 117 and matched no derivation). The happy path requires **zero** env vars beyond the one hard prerequisite (`LEANKG_PG_URL`). Every "zero-config"/"no-setup" sentence in README/docs names the script or CI job that executes it literally.
 
-**Config-block parity.** `install`/`connect`/`mcp_install` emit **exactly one JSON (or TOML) block** per client, byte-identical to the docs snippet — snapshot-tested per target.
+**Config-block parity.** `install`/`connect` emit **exactly one JSON (or TOML) block** per client (the Rust `mcp_install` verb is not in the Go toolset), byte-identical to the docs snippet — snapshot-tested per target.
 
 - AC: fresh clone → `leankg install --target omp` → open omp in a repo → tools work, correct project, zero manual URL edits; no emitted config contains `?project=` outside the documented Docker exception; re-run is idempotent (entry replaced, siblings byte-identical); `--remove` deletes only the `leankg` key; snapshot tests pin each target's exact block.
 
@@ -474,7 +474,7 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 
 | Milestone | Scope | Gate |
 |---|---|---|
-| **M1 — Zero-config attach** | FR-ZCP-01, FR-ZCP-02, FR-ZCP-13 | New repo, zero config → correct answers; no "not initialized" failures; one setup question (auto/manual) honored everywhere; `leankg add` returns instantly with status |
+| **M1 — Zero-config attach** | FR-ZCP-01, FR-ZCP-02, FR-ZCP-13 | New repo, zero config → correct answers; no "not initialized" failures; one setup question (auto/manual) honored everywhere; the registration verb (Go: `leankg index`) returns instantly with status |
 | **M2 — One-tool surface** | FR-ZCP-03 (+04) | Default set = 1 router tool; ladder degrades L3→L0 with `retrieval` provenance and zero hard errors; v3.8.5 probe suite passes; `install --target` writes project-less URLs |
 | **M3 — Honest search** | FR-ZCP-05, FR-ZCP-06 | FTS ranking + freshness in every response; no F1 regression |
 | **M4 — Harness memory** | FR-ZCP-07 (rides FR-SMA-01..04) | retain → recall round-trip works in OMP + OpenCode sessions; mnemopi-compatible bank/cursor contract verified against OMP session resume |
@@ -507,7 +507,7 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (e
 | Error contract (T1) | 100% of CLI+MCP error variants: stable code + cause clause + runnable fix + doc anchor; CI lints every string; allowlisted exceptions shrink, never grow |
 | Time-to-first-value (T2) | Cold happy path (install → init → serve → one JSON config block → first useful query) ≤ 5 min, CI-timed on a fresh environment, number published in README |
 | Claim hygiene (T1) | Every "zero-config"-class README/docs claim maps to a named script or CI job that executes it literally; claims without a passing script are deleted |
-| Setup friction (FR-ZCP-13) | Exactly one auto/manual question per user, persisted; `leankg add` returns < 2 s; manual mode never auto-indexes |
+| Setup friction (FR-ZCP-13) | Exactly one auto/manual question per user, persisted; the registration verb (Go: `leankg index`) returns < 2 s; manual mode never auto-indexes |
 
 ## 7. Historical Record
 
