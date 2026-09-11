@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"io"
 	"io/fs"
 	"os"
@@ -50,12 +51,44 @@ var skipDirs = map[string]bool{
 var extLang = map[string]string{
 	".go": "go", ".rs": "rust", ".ts": "ts", ".tsx": "tsx",
 	".js": "js", ".jsx": "jsx", ".py": "py", ".md": "md",
+	".java": "java", ".kt": "kotlin", ".kts": "kotlin",
+	".swift": "swift", ".m": "objc", ".mm": "objc", ".dart": "dart",
+}
+
+// extOwner resolves a file extension to its language: through the registry
+// when given (lazy activation — only codebase-detected languages own their
+// extensions), else the static map (legacy all-on behavior).
+type extOwnerFunc func(ext string) (string, bool)
+
+func staticOwner(ext string) (string, bool) {
+	l, ok := extLang[ext]
+	return l, ok
 }
 
 // IndexDir walks dir, re-extracts changed/new files, drops deleted ones and
 // returns per-run counters. Files whose size+mtime match the stored record or
 // whose SHA-256 matches ContentHash are skipped without any writes.
 func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error) {
+	return IndexDirWith(ctx, st, dir, nil)
+}
+
+// IndexDirWith runs IndexDir through a language registry: when reg != nil,
+// only languages currently ACTIVE for the opened codebase own extensions
+// (lazy activation; a .kt file in a Go-only tree is skipped, not indexed),
+// and extraction routes by the owner language. reg == nil keeps the legacy
+// static behavior.
+func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.Registry) (Result, error) {
+	owner := staticOwner
+	if reg != nil {
+		owner = func(ext string) (string, bool) {
+			l, ok := reg.ExtOwner(ext)
+			return string(l), ok
+		}
+	}
+	return indexDir(ctx, st, dir, owner)
+}
+
+func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (Result, error) {
 	var res Result
 
 	prev, err := st.Files()
@@ -68,9 +101,9 @@ func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error)
 	}
 
 	type candidate struct {
-		rel, abs string
-		size     int64
-		mtimeNS  int64
+		rel, abs, lang string
+		size           int64
+		mtimeNS        int64
 	}
 	var cands []candidate
 	onDisk := make(map[string]bool)
@@ -95,7 +128,7 @@ func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error)
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		if _, ok := extLang[filepath.Ext(name)]; !ok {
+		if _, ok := owner(filepath.Ext(name)); !ok {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
@@ -108,8 +141,9 @@ func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error)
 			return err
 		}
 		onDisk[rel] = true
+		lang, _ := owner(filepath.Ext(name))
 		cands = append(cands, candidate{
-			rel: rel, abs: path,
+			rel: rel, abs: path, lang: lang,
 			size: info.Size(), mtimeNS: info.ModTime().UnixNano(),
 		})
 		return nil
@@ -159,7 +193,7 @@ func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error)
 			continue
 		}
 
-		fe, err := extractFile(c.rel, c.abs)
+		fe, err := extractFileAs(c.rel, c.abs, c.lang)
 		if err != nil {
 			return res, err
 		}

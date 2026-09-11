@@ -11,12 +11,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/FreePeak/LeanKG/go/internal/astgrep"
 	"github.com/FreePeak/LeanKG/go/internal/docindex"
 	"github.com/FreePeak/LeanKG/go/internal/embed"
 	"github.com/FreePeak/LeanKG/go/internal/graph"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
+	"github.com/FreePeak/LeanKG/go/internal/lsp"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
 	"github.com/FreePeak/LeanKG/go/internal/ontology"
 	"github.com/FreePeak/LeanKG/go/internal/session"
@@ -57,6 +60,7 @@ type Engine struct {
 	mem        *memory.Memory
 	projectDir string
 	langsReg   *langs.Registry // lazy language activation for the opened codebase
+	lspManager *lsp.Manager    // lazy per-(lang,dir) LSP server pool (query time only)
 	embedder   QueryEmbedder   // optional; nil ⇒ L3 degrades with reason
 }
 
@@ -347,6 +351,10 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		return e.OntologyMatches()
 	case "languages":
 		return e.LanguagesStatus(), nil
+	case "lsp":
+		return e.lspQuery(ctx, req, map[string]any{"query": req.Query})
+	case "pattern":
+		return e.patternQuery(ctx, req, map[string]any{"query": req.Query})
 	case "session":
 		cmd := "recall"
 		if req.Args != nil && req.Args["command"] != "" {
@@ -817,4 +825,110 @@ func (e *Engine) LanguagesStatus() map[string]any {
 		out = append(out, entry)
 	}
 	return map[string]any{"languages": out, "codebase": e.langsReg.Codebase()}
+}
+
+// patternQuery runs structural AST pattern search via the ast-grep CLI when
+// installed (lazy: probed per call, never spawned otherwise). Absence DEGRADES
+// to L2 keyword search with a reason — same posture as the L3 provider rules.
+func (e *Engine) patternQuery(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
+	pattern := req.Args["pattern"]
+	if pattern == "" {
+		return nil, fmt.Errorf("query pattern requires args.pattern (AST pattern, e.g. \"func $F($A)\")")
+	}
+	lang := req.Args["lang"]
+	if lang == "" {
+		// default to the sole active language when exactly one is on
+		if active := e.activeLanguages(); len(active) == 1 {
+			lang = string(active[0])
+		} else {
+			return nil, fmt.Errorf("query pattern requires args.lang when multiple languages are active")
+		}
+	}
+	runner, err := astgrep.New()
+	if err != nil {
+		resp["retrieval"] = map[string]any{"rung": "L2", "reason": "ast-grep CLI not installed; degraded to keyword search"}
+		return e.rungFuzzy(pattern, req.Limit, resp, false)
+	}
+	root := e.projectDir
+	if root == "" {
+		root = "."
+	}
+	matches, err := runner.RunPattern(ctx, lang, pattern, root, req.Limit)
+	if err != nil {
+		return nil, err
+	}
+	resp["hits"] = matches
+	resp["retrieval"] = map[string]any{"rung": "ast-grep", "reason": fmt.Sprintf("structural pattern match (%s)", lang)}
+	return resp, nil
+}
+
+// activeLanguages lists the currently active registry languages.
+func (e *Engine) activeLanguages() []langs.Language {
+	if e.langsReg == nil {
+		return nil
+	}
+	return e.langsReg.Active()
+}
+
+// lspQuery consults the language server for the QUERIED directory at query
+// time (user requirement: "check the lsp to the query directory when the user
+// or agent queries"). Args: lang (required; must be active), command
+// ("workspace"=default | "document"), path (file for document symbols),
+// query (symbol search text). The server is spawned lazily for
+// (lang, dir), pooled, and idle-evicted by the manager.
+func (e *Engine) lspQuery(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
+	if e.langsReg == nil {
+		return nil, fmt.Errorf("no language registry attached")
+	}
+	langName := req.Args["lang"]
+	prof, ok := e.langsReg.Lookup(langName)
+	if !ok {
+		return nil, fmt.Errorf("unknown language %q", langName)
+	}
+	if !e.langsReg.IsActive(prof.Language) {
+		return nil, fmt.Errorf("language %q is not active for this codebase (lazy: nothing spawned)", langName)
+	}
+	spec := e.langsReg.LSPSpec(prof.Language)
+	if spec == nil {
+		return nil, fmt.Errorf("language %q has no LSP tier", langName)
+	}
+	if e.lspManager == nil {
+		e.lspManager = lsp.NewManager(60 * time.Second)
+	}
+	dir := e.projectDir
+	if dir == "" {
+		dir = "."
+	}
+	client, err := e.lspManager.Get(ctx, prof.Language, spec, dir)
+	if err != nil {
+		return nil, err
+	}
+	command := "workspace"
+	if c := req.Args["command"]; c != "" {
+		command = c
+	}
+	switch command {
+	case "document":
+		path := req.Args["path"]
+		if path == "" {
+			return nil, fmt.Errorf("lsp document requires args.path (file to inspect)")
+		}
+		syms, err := client.DocumentSymbols(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		resp["symbols"] = syms
+		resp["server"] = client.Language()
+	case "workspace", "":
+		syms, err := client.WorkspaceSymbols(ctx, req.Query)
+		if err != nil {
+			return nil, err
+		}
+		resp["symbols"] = syms
+		resp["server"] = client.Language()
+	default:
+		return nil, fmt.Errorf("unknown lsp command %q (valid: workspace, document)", command)
+	}
+	resp["retrieval"] = map[string]any{"rung": "lsp", "reason": fmt.Sprintf("language server symbols (%s)", langName)}
+	return resp, nil
 }

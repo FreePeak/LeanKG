@@ -19,7 +19,7 @@
 - `internal/lsp` — lazy JSON-RPC/Content-Length client (stdlib framing): per (language, rootDir) pool, 5s startup bound, didOpen+documentSymbol (hierarchical+flat normalized, 1-based lines) + workspace/symbol, idle-TTL eviction.
 - `internal/astgrep` — ast-grep CLI wrapper (argv-safe, ctx-bounded, `--json` parsing).
 - Indexer: java/kotlin/swift/objc/dart regex extractors (+ per-language testdata fixtures); `IndexDirWith(reg)` routes through the registry (lazy) while `IndexDir` stays all-on compatible.
-- Transports: `status`/`query{action:"languages"}` carry active languages + live tiers; `query{action:"lsp"}` runs server-backed symbol lookups scoped to the queried dir; `import{action:"astgrep"}`/pattern search where the CLI exists.
+- Transports: `status`/`query{action:"languages"}` carry active languages + live tiers; `query{action:"lsp"}` runs server-backed workspace/document symbol lookups scoped to the queried directory (server spawned lazily, pooled, idle-evicted); `query{action:"pattern"}` runs ast-grep structural search and DEGRADES to L2 keywords when the CLI is absent.
 
 **Verified:** live serve on a polyglot fixture activated go+dart (markers) and java (census supplement) with correct tier lists; registry tests incl. nested repos, aliases, idle semantics; dual-engine gate green.
 

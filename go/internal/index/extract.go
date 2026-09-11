@@ -50,16 +50,37 @@ var (
 	tsFnExprRe = regexp.MustCompile(`^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*(?::[^=]+)?=\s*(?:async\s+)?function\b`)
 	// Markdown ATX headings (levels 1-4)
 	mdHeadingRe = regexp.MustCompile(`^(#{1,4})\s+(.*\S)\s*$`)
+	// Java
+	javaTypeRe   = regexp.MustCompile(`^\s*(?:(?:public|protected|private|static|final|abstract|sealed|strictfp|native|synchronized|default)\s+)*(class|interface|enum|record|@interface)\s+([A-Za-z_]\w*)`)
+	javaMethodRe = regexp.MustCompile(`^\s*(?:(?:public|protected|private|static|final|abstract|synchronized|native|default|strictfp)\s+)*(?:(?:<[^>]*>|[\w$<>\[\].]+)\s+)*([A-Za-z_$][\w$]*)\s*\([^;{)]*\)\s*(?:throws [\w,.\s]+)?\{`)
+	// Kotlin
+	ktTypeRe = regexp.MustCompile(`^\s*(?:(?:public|private|internal|protected|open|final|abstract|sealed|data|value|annotation|inner|enum)\s+)*(class|interface|object)\s+([A-Za-z_]\w*)`)
+	ktFuncRe = regexp.MustCompile(`^\s*(?:(?:public|private|internal|protected|open|final|abstract|override|inline|noinline|crossinline|operator|infix|tailrec|external|suspend|expect|actual)\s+)*fun\s+(?:<[^>]*>\s*)?(?:[\w.<>\[\]?]+\s*\.\s*)?([A-Za-z_]\w*)\s*\(`)
+	// Swift
+	swiftFuncRe = regexp.MustCompile(`^\s*(?:(?:public|private|internal|open|fileprivate|static|class|final|mutating|nonmutating|override|convenience|required|weak|unowned|lazy)\s+)*func\s+([A-Za-z_]\w*)\s*[(<]`)
+	swiftTypeRe = regexp.MustCompile(`^\s*(?:(?:public|private|internal|open|fileprivate|final|indirect)\s+)*(struct|class|enum|protocol|actor)\s+([A-Za-z_]\w*)`)
+	// Objective-C
+	objcTypeRe   = regexp.MustCompile(`^\s*@(interface|implementation|protocol)\s+([A-Za-z_]\w*)`)
+	objcMethodRe = regexp.MustCompile(`^\s*([+-])\s*\(([^)]*)\)\s*([A-Za-z_]\w*)`)
+	// Dart
+	dartTypeRe = regexp.MustCompile(`^\s*(?:(?:abstract|sealed|final|base|interface|mixin|external|required|const|covariant)\s+)*(class|enum|mixin)\s+([A-Za-z_]\w*)`)
+	dartFuncRe = regexp.MustCompile(`^\s*(?:[\w$<>,?\s]+\s+)?([A-Za-z_$][\w$]*)\s*\([^;{)]*\)\s*(?:(?:async|sync\s*\*)\s*)?(?:\{|=>)`)
 )
 
-// extractFile extracts elements from one file on disk.
+// extractFile extracts elements from one file on disk, tagging it with the
+// legacy static extension->language map.
 func extractFile(rel, abs string) (fileElements, error) {
+	return extractFileAs(rel, abs, extLang[extOf(rel)])
+}
+
+// extractFileAs extracts elements from one file on disk as the given
+// language tag (empty or unknown tags yield no elements).
+func extractFileAs(rel, abs, lang string) (fileElements, error) {
 	src, err := os.ReadFile(abs)
 	if err != nil {
 		return fileElements{}, err
 	}
 	lines := strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
-	lang := extLang[extOf(rel)]
 	var ms []match
 	switch lang {
 	case "go":
@@ -72,6 +93,16 @@ func extractFile(rel, abs string) (fileElements, error) {
 		ms = matchTS(lines)
 	case "md":
 		ms = matchMarkdown(lines)
+	case "java":
+		ms = matchJava(lines)
+	case "kotlin":
+		ms = matchKotlin(lines)
+	case "swift":
+		ms = matchSwift(lines)
+	case "objc":
+		ms = matchObjC(lines)
+	case "dart":
+		ms = matchDart(lines)
 	}
 	if len(ms) == 0 {
 		return fileElements{rel: rel}, nil
@@ -245,6 +276,96 @@ func matchMarkdown(lines []string) []match {
 		}
 	}
 	return ms
+}
+
+func matchJava(lines []string) []match {
+	var ms []match
+	for i, l := range lines {
+		if m := javaTypeRe.FindStringSubmatch(l); m != nil {
+			ms = append(ms, match{kind: "class", name: m[2], line: i + 1})
+			continue
+		}
+		if m := javaMethodRe.FindStringSubmatch(l); m != nil && !javaKeyword(m[1]) {
+			ms = append(ms, match{kind: "method", name: m[1], line: i + 1})
+		}
+	}
+	return ms
+}
+
+// javaKeyword rejects method-shaped Java keywords ("return", "throw", ...).
+func javaKeyword(name string) bool {
+	switch name {
+	case "if", "else", "for", "while", "do", "switch", "catch", "return",
+		"throw", "synchronized", "try", "new", "assert":
+		return true
+	}
+	return false
+}
+
+func matchKotlin(lines []string) []match {
+	var ms []match
+	for i, l := range lines {
+		if m := ktTypeRe.FindStringSubmatch(l); m != nil {
+			ms = append(ms, match{kind: "class", name: m[2], line: i + 1})
+			continue
+		}
+		if m := ktFuncRe.FindStringSubmatch(l); m != nil {
+			ms = append(ms, match{kind: "function", name: m[1], line: i + 1})
+		}
+	}
+	return ms
+}
+
+func matchSwift(lines []string) []match {
+	var ms []match
+	for i, l := range lines {
+		if m := swiftTypeRe.FindStringSubmatch(l); m != nil {
+			ms = append(ms, match{kind: "class", name: m[2], line: i + 1})
+			continue
+		}
+		if m := swiftFuncRe.FindStringSubmatch(l); m != nil {
+			ms = append(ms, match{kind: "method", name: m[1], line: i + 1})
+		}
+	}
+	return ms
+}
+
+func matchObjC(lines []string) []match {
+	var ms []match
+	for i, l := range lines {
+		if m := objcTypeRe.FindStringSubmatch(l); m != nil {
+			ms = append(ms, match{kind: "class", name: m[2], line: i + 1})
+			continue
+		}
+		if m := objcMethodRe.FindStringSubmatch(l); m != nil {
+			ms = append(ms, match{kind: "method", name: m[3], line: i + 1, recv: m[2]})
+		}
+	}
+	return ms
+}
+
+func matchDart(lines []string) []match {
+	var ms []match
+	for i, l := range lines {
+		if m := dartTypeRe.FindStringSubmatch(l); m != nil {
+			ms = append(ms, match{kind: "class", name: m[2], line: i + 1})
+			continue
+		}
+		if m := dartFuncRe.FindStringSubmatch(l); m != nil && !dartKeyword(m[1]) {
+			ms = append(ms, match{kind: "function", name: m[1], line: i + 1})
+		}
+	}
+	return ms
+}
+
+// dartKeyword rejects function-shaped Dart keywords ("if", "for", "while", ...).
+func dartKeyword(name string) bool {
+	switch name {
+	case "if", "else", "for", "while", "switch", "catch", "return", "throw",
+		"print", "new", "assert", "do":
+		return true
+	}
+	return false
 }
 
 // assignParents sets parent to the innermost enclosing element by line

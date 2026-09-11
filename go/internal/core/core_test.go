@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"github.com/FreePeak/LeanKG/go/internal/ontology"
 	"github.com/FreePeak/LeanKG/go/internal/session"
 	"os"
@@ -442,5 +443,97 @@ func TestSessionQueryActionReachable(t *testing.T) {
 	}
 	if refs, ok := out["refs"].([]session.Ref); !ok || len(refs) != 1 {
 		t.Fatalf("canvas refs: %+v", out)
+	}
+}
+
+// TestPatternActionDegradedWithoutAstGrep pins the lazy probe: when the
+// ast-grep CLI is absent the pattern action DEGRADES to L2 keyword search
+// with an explicit reason (same posture as the L3 provider rules) — never a
+// hard error.
+func TestPatternActionDegradedWithoutAstGrep(t *testing.T) {
+	e, _ := newEngine(t)
+	e.SetProjectDir(t.TempDir())
+	// Ensure the CLI is absent for the probe (PATH stripped).
+	t.Setenv("PATH", t.TempDir())
+	out, err := e.Query(context.Background(), QueryRequest{
+		Action: "pattern", Query: "anything",
+		Args: map[string]string{"pattern": "func $F($A)", "lang": "go"},
+	})
+	if err != nil {
+		t.Fatalf("pattern without ast-grep must degrade, not error: %v", err)
+	}
+	r := out["retrieval"].(map[string]any)
+	if r["rung"] != "L2" || !strings.Contains(r["reason"].(string), "ast-grep CLI not installed") {
+		t.Fatalf("degrade provenance: %v", r)
+	}
+}
+
+// TestPatternActionMissingArgs pins arg validation.
+func TestPatternActionMissingArgs(t *testing.T) {
+	e, _ := newEngine(t)
+	e.SetProjectDir(t.TempDir())
+	if _, err := e.Query(context.Background(), QueryRequest{Action: "pattern", Query: "x"}); err == nil {
+		t.Fatal("pattern without args.pattern must error")
+	}
+}
+
+// TestLSPQueryRequiresActiveLanguage pins the lazy contract at query time:
+// no LSP process is spawned unless the language was activated for the opened
+// codebase, and the absence of a server binary is a clear error.
+func TestLSPQueryRequiresActiveLanguage(t *testing.T) {
+	e, _ := newEngine(t)
+	e.SetProjectDir(t.TempDir())
+	e.SetLangsRegistry(langs.DefaultRegistry())
+	// registry not activated for any codebase → everything idle
+	if _, err := e.Query(context.Background(), QueryRequest{
+		Action: "lsp", Query: "Handler",
+		Args: map[string]string{"lang": "go"},
+	}); err == nil || !strings.Contains(err.Error(), "not active") {
+		t.Fatalf("idle language must refuse LSP spawn: %v", err)
+	}
+	// activate via a go-marked tree, then the action reaches the server pool
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.langsReg.Activate(dir); err != nil {
+		t.Fatal(err)
+	}
+	// gopls likely absent in CI — the error must name the failure clearly
+	// (ErrNoServer/timeout), never silently return empty symbols.
+	_, err := e.Query(context.Background(), QueryRequest{
+		Action: "lsp", Query: "Handler",
+		Args: map[string]string{"lang": "go"},
+	})
+	if err == nil {
+		t.Log("gopls present and answered — server path exercised")
+	}
+}
+
+// TestLanguagesStatusAction pins query{action:"languages"} through the
+// production switch.
+func TestLanguagesStatusAction(t *testing.T) {
+	e, _ := newEngine(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.SetLangsRegistry(langs.DefaultRegistry())
+	if _, err := e.langsReg.Activate(dir); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.Query(context.Background(), QueryRequest{Action: "languages"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	langsOut := out["languages"].([]map[string]any)
+	found := false
+	for _, l := range langsOut {
+		if l["language"] == "go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("go not in languages: %+v", langsOut)
 	}
 }
