@@ -54,7 +54,7 @@ func writeSeedJSON(t *testing.T, path string, root map[string]any) {
 // cursor/gemini entries carry NO "type" key — enforced by the full-map
 // comparison.
 func TestWriteClientStdioShapes(t *testing.T) {
-	stdio := map[string]any{"command": testExe, "args": []any{"mcp-stdio"}}
+	stdio := map[string]any{"command": testExe, "args": []any{"serve", "--stdio"}}
 	cases := []struct {
 		client string
 		rel    string
@@ -71,12 +71,12 @@ func TestWriteClientStdioShapes(t *testing.T) {
 		}},
 		{ClientOpencode, filepath.Join(".config", "opencode", "opencode.json"), map[string]any{
 			"mcp": map[string]any{"leankg": map[string]any{
-				"type": "local", "command": []any{testExe, "mcp-stdio"}, "enabled": true,
+				"type": "local", "command": []any{testExe, "serve", "--stdio"}, "enabled": true,
 			}},
 		}},
 		{ClientOmp, filepath.Join(".omp", "agent", "mcp.json"), map[string]any{
 			"mcpServers": map[string]any{"leankg": map[string]any{
-				"type": "stdio", "command": testExe, "args": []any{"mcp-stdio"}, "enabled": true,
+				"type": "stdio", "command": testExe, "args": []any{"serve", "--stdio"}, "enabled": true,
 			}},
 		}},
 	}
@@ -142,7 +142,7 @@ func TestWriteClientCodexStdio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[mcp_servers.leankg]\ncommand = [\"/usr/local/bin/leankg\", \"mcp-stdio\"]\n"
+	want := "[mcp_servers.leankg]\ncommand = [\"/usr/local/bin/leankg\", \"serve\", \"--stdio\"]\n"
 	if string(data) != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", data, want)
 	}
@@ -177,7 +177,7 @@ func TestWriteClientCodexAppendsSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "model = \"o3\"\n\n[mcp_servers.leankg]\ncommand = [\"/usr/local/bin/leankg\", \"mcp-stdio\"]\n"
+	want := "model = \"o3\"\n\n[mcp_servers.leankg]\ncommand = [\"/usr/local/bin/leankg\", \"serve\", \"--stdio\"]\n"
 	if string(data) != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", data, want)
 	}
@@ -196,7 +196,7 @@ func TestWriteClientCodexReplacesSectionPreservingSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# codex config\nmodel = \"o3\"\n\n[mcp_servers.leankg]\ncommand = [\"/usr/local/bin/leankg\", \"mcp-stdio\"]\n\n[other]\nx = 1\n"
+	want := "# codex config\nmodel = \"o3\"\n\n[mcp_servers.leankg]\ncommand = [\"/usr/local/bin/leankg\", \"serve\", \"--stdio\"]\n\n[other]\nx = 1\n"
 	if string(data) != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", data, want)
 	}
@@ -215,7 +215,7 @@ func TestWriteClientProjectEscapeHatch(t *testing.T) {
 	}
 	got := readJSON(t, filepath.Join(home, ".claude.json"))
 	args := got["mcpServers"].(map[string]any)["leankg"].(map[string]any)["args"].([]any)
-	if want := []any{"mcp-stdio", "--project", project}; !reflect.DeepEqual(args, want) {
+	if want := []any{"serve", "--stdio", "--project", project}; !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}
 
@@ -226,7 +226,7 @@ func TestWriteClientProjectEscapeHatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantLine := "command = [\"/usr/local/bin/leankg\", \"mcp-stdio\", \"--project\", \"" + project + "\"]\n"
+	wantLine := "command = [\"/usr/local/bin/leankg\", \"serve\", \"--stdio\", \"--project\", \"" + project + "\"]\n"
 	if !strings.Contains(string(data), wantLine) {
 		t.Fatalf("TOML missing %q:\n%s", wantLine, data)
 	}
@@ -250,7 +250,7 @@ func TestWriteClientPreservesSiblings(t *testing.T) {
 	want := map[string]any{
 		"mcpServers": map[string]any{
 			"other":  map[string]any{"command": "foo", "args": []any{"-x"}},
-			"leankg": map[string]any{"command": testExe, "args": []any{"mcp-stdio"}},
+			"leankg": map[string]any{"command": testExe, "args": []any{"serve", "--stdio"}},
 		},
 		"theme":  "dark",
 		"nested": map[string]any{"nums": []any{1.0, 2.0}},
@@ -347,7 +347,7 @@ func TestRegisterCWDCreatesHook(t *testing.T) {
 				map[string]any{
 					"matcher": "*",
 					"hooks": []any{
-						map[string]any{"type": "command", "command": "leankg add $CLAUDE_PROJECT_DIR"},
+						map[string]any{"type": "command", "command": "leankg index $CLAUDE_PROJECT_DIR"},
 					},
 				},
 			},
@@ -434,7 +434,7 @@ func TestWriteClientCodexEmptyExeFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	want := "[mcp_servers.leankg]\ncommand = [\"leankg\", \"mcp-stdio\"]\n"
+	want := "[mcp_servers.leankg]\ncommand = [\"leankg\", \"serve\", \"--stdio\"]\n"
 	if got != want {
 		t.Fatalf("codex section:\ngot:\n%s\nwant:\n%s", got, want)
 	}

@@ -1,9 +1,9 @@
 // `leankg install --target <client>` (FR-ZCP-04): one-shot client setup —
 // write the client's MCP config and optionally register the CWD hook.
 // The stdio entry contract matches `leankg connect` projectless: command is
-// the current executable + "mcp-stdio" with no --project flag (the server
-// resolves the project from its process cwd); opts.Project is the escape
-// hatch and the only way a --project flag is emitted.
+// the current executable + ["serve", "--stdio"] with no --project flag (the
+// server resolves the project from its process cwd); opts.Project is the
+// escape hatch and the only way a --project flag is emitted.
 package main
 
 import "os"

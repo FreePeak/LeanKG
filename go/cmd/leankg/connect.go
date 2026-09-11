@@ -141,13 +141,14 @@ func jsonEntry(client string, cfg Config) map[string]any {
 	}
 }
 
-// stdioArgs returns the spawn args after the entry command. Relative project
-// paths are made absolute against the current directory (Rust parity).
+// stdioArgs returns the spawn args after the entry command: `serve --stdio`,
+// this binary's MCP-over-stdio mode. Relative project paths are made absolute
+// against the current directory (Rust parity).
 func stdioArgs(project string) []string {
 	if project == "" {
-		return []string{"mcp-stdio"}
+		return []string{"serve", "--stdio"}
 	}
-	return []string{"mcp-stdio", "--project", absolutize(project)}
+	return []string{"serve", "--stdio", "--project", absolutize(project)}
 }
 
 // absolutize makes p absolute against the process working directory.
@@ -340,13 +341,15 @@ func replaceTOMLSection(text, header string, lines []string) string {
 
 // hookCommand is the SessionStart hook the writer owns. $CLAUDE_PROJECT_DIR
 // is expanded by Claude Code at hook runtime, so the string is fixed and no
-// cwd is embedded in the file.
-const hookCommand = "leankg add $CLAUDE_PROJECT_DIR"
+// cwd is embedded in the file. The hook attaches-and-indexes the project the
+// way the Rust `add` verb did: `index` creates-or-updates that project's
+// store (incremental after the first run).
+const hookCommand = "leankg index $CLAUDE_PROJECT_DIR"
 
 // RegisterCWD merges-or-creates the Claude Code SessionStart hook that
 // attaches the project on session start:
 //
-//	{"matcher": "*", "hooks": [{"type": "command", "command": "leankg add $CLAUDE_PROJECT_DIR"}]}
+//	{"matcher": "*", "hooks": [{"type": "command", "command": "leankg index $CLAUDE_PROJECT_DIR"}]}
 //
 // under hooks.SessionStart in <homeDir>/.claude/settings.json, preserving
 // every other hook and setting. Idempotent: when the identical command is

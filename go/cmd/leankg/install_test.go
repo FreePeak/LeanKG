@@ -10,7 +10,7 @@ import (
 )
 
 // TestInstallStdioAllClients: install --target X writes the same projectless
-// stdio entry shape connect produces (command = current exe + "mcp-stdio",
+// stdio entry shape connect produces (command = current exe + ["serve", "--stdio"],
 // NO --project flag) for every JSON client.
 func TestInstallStdioAllClients(t *testing.T) {
 	for _, client := range Clients() {
@@ -37,7 +37,7 @@ func TestInstallStdioAllClients(t *testing.T) {
 			exe := CurrentCommand()
 			switch client {
 			case ClientOpencode:
-				want := []any{exe, "mcp-stdio"}
+				want := []any{exe, "serve", "--stdio"}
 				if !reflect.DeepEqual(entry["command"], want) {
 					t.Fatalf("command = %#v, want %#v", entry["command"], want)
 				}
@@ -45,14 +45,14 @@ func TestInstallStdioAllClients(t *testing.T) {
 				if entry["command"] != exe {
 					t.Fatalf("command = %v, want %v", entry["command"], exe)
 				}
-				if want := []any{"mcp-stdio"}; !reflect.DeepEqual(entry["args"], want) {
+				if want := []any{"serve", "--stdio"}; !reflect.DeepEqual(entry["args"], want) {
 					t.Fatalf("args = %v, want %v", entry["args"], want)
 				}
 			default:
 				if entry["command"] != exe {
 					t.Fatalf("command = %v, want %v", entry["command"], exe)
 				}
-				if want := []any{"mcp-stdio"}; !reflect.DeepEqual(entry["args"], want) {
+				if want := []any{"serve", "--stdio"}; !reflect.DeepEqual(entry["args"], want) {
 					t.Fatalf("args = %v, want %v", entry["args"], want)
 				}
 			}
@@ -88,7 +88,7 @@ func TestInstallCodexStdio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[mcp_servers.leankg]\ncommand = [" + quoteTOML(CurrentCommand()) + ", \"mcp-stdio\"]\n"
+	want := "[mcp_servers.leankg]\ncommand = [" + quoteTOML(CurrentCommand()) + ", \"serve\", \"--stdio\"]\n"
 	if string(data) != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", data, want)
 	}
@@ -105,7 +105,7 @@ func TestInstallProjectEscapeHatch(t *testing.T) {
 	}
 	root := readJSON(t, filepath.Join(home, ".claude.json"))
 	args := root["mcpServers"].(map[string]any)["leankg"].(map[string]any)["args"].([]any)
-	want := []any{"mcp-stdio", "--project", filepath.Join(tmp, "rel", "proj")}
+	want := []any{"serve", "--stdio", "--project", filepath.Join(tmp, "rel", "proj")}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}
@@ -129,7 +129,7 @@ func TestInstallRegisterCWD(t *testing.T) {
 	for _, item := range ss {
 		obj := item.(map[string]any)
 		for _, h := range obj["hooks"].([]any) {
-			if h.(map[string]any)["command"] == "leankg add $CLAUDE_PROJECT_DIR" {
+			if h.(map[string]any)["command"] == "leankg index $CLAUDE_PROJECT_DIR" {
 				found = true
 			}
 		}
