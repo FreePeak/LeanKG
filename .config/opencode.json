@@ -24,8 +24,8 @@
       "type": "local",
       "command": [
         "/Users/linh.doan/.local/bin/leankg",
-        "mcp-stdio",
-        "--watch"
+        "serve",
+        "--stdio"
       ],
       "enabled": true
     }

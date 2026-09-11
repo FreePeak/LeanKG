@@ -1,6 +1,6 @@
 # LeanKG MCP Server Setup - Lazy People's Guide
 
-> **v4.6.0:** the implementation is 100% Go (`go/`); Rust commands below are historical. Build: `make go-build` · Test: `make go-test` · See `AGENTS.md` for the current workflow.
+> **v4.6.0:** the implementation is 100% Go (`go/`). Build: `make go-build` · Test: `make go-test` · See `AGENTS.md` for the current workflow.
 
 
 **TL;DR:** Copy-paste one command and you're done.
@@ -12,17 +12,14 @@
 Run this for your AI tool:
 
 ```bash
-# For Cursor
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
+# 1. Install the binary (builds leankg + leankg-embed from source; needs Go >= 1.25)
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install-go.sh | bash
 
-# For Claude Code
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- claude
-
-# For OpenCode
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- opencode
+# 2. Wire your AI tool's MCP config
+leankg install --target cursor      # claude-code | cursor | codex | gemini | opencode | omp
 ```
 
-That's it. The script does everything: installs binary, configures MCP, sets up hooks.
+That's it. The installer puts `leankg` in `~/.local/bin`; `leankg install` writes the stdio MCP entry for the client you name.
 
 ---
 
@@ -47,24 +44,32 @@ That's it. The script does everything: installs binary, configures MCP, sets up 
   "mcpServers": {
     "leankg": {
       "command": "leankg",
-      "args": ["mcp-stdio", "--watch", "."]
+      "args": ["serve", "--stdio"]
     }
   }
 }
 ```
 
-**3. Restart your AI tool or run `/reload`**
+**3. Build the index once, from the project root:**
+
+```bash
+leankg index .
+```
+
+`serve` does not watch files. Run `leankg writer` in a background terminal to keep the index fresh as you edit.
+
+**4. Restart your AI tool or run `/reload`**
 
 ---
 
-## Option 2: HTTP/SSE Transport
+## Option 2: HTTP Transport
 
 Use this if you want remote access or multiple tools sharing the same LeanKG instance.
 
 ### Step 1: Start the server (keep this terminal open)
 
 ```bash
-leankg mcp-http --port 9699
+leankg serve --http :9699
 ```
 
 ### Step 2: Configure your AI tool
@@ -152,10 +157,11 @@ rm -rf .leankg
 
 | What | Command |
 |------|---------|
-| Start stdio mode | `leankg mcp-stdio` |
-| Start HTTP mode | `leankg mcp-http --port 9699` |
+| Start stdio mode | `leankg serve --stdio` |
+| Start HTTP mode | `leankg serve --http :9699` |
 | Check status | `leankg status` |
-| Reindex | `leankg mcp-index` |
+| Index a directory | `leankg index <dir>` |
+| Keep index fresh (watcher) | `leankg writer` |
 | Kill all | `pkill -9 -f leankg` |
 
 ---
@@ -164,14 +170,13 @@ rm -rf .leankg
 
 **"command not found: leankg"**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- opencode
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install-go.sh | bash
 ```
 
 **"database is locked"**
 ```bash
 pkill -9 -f leankg
-pkill -9 -f vite
-leankg mcp-stdio
+leankg serve --stdio
 ```
 
 **"connection refused"** (HTTP mode)
@@ -180,7 +185,7 @@ leankg mcp-stdio
 lsof -i :9699
 
 # If not, start it
-leankg mcp-http --port 9699
+leankg serve --http :9699
 ```
 
 ---
@@ -190,19 +195,18 @@ leankg mcp-http --port 9699
 If you're an AI agent setting up LeanKG for a user:
 
 ```bash
-# 1. Run the install script
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- opencode
+# 1. Install the binary
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install-go.sh | bash
 
-# 2. Initialize in the project
+# 2. Build the index in the project (no separate init step; indexing creates the store)
 cd <project-path>
-leankg init
-leankg index ./src
+leankg index .
 
-# 3. Tell user to restart their AI tool
+# 3. Wire the MCP config, then tell the user to restart their AI tool
+leankg install --target opencode      # claude-code | cursor | codex | gemini | opencode | omp
 ```
 
-The install script automatically:
-- Installs the `leankg` binary
-- Creates MCP config for stdio transport
-- Sets up instructions for AI context
-- Configures session hooks (Claude Code only)
+What each step does:
+- `scripts/install-go.sh` builds and installs the `leankg` and `leankg-embed` binaries (default `~/.local/bin`)
+- `leankg index .` creates `.leankg/` and indexes the project
+- `leankg install --target <client>` writes the stdio MCP entry for that client

@@ -32,14 +32,14 @@ The plugin automatically injects LeanKG knowledge graph tools into your agent co
 ## Quick Usage
 
 ```
-# Check if LeanKG is ready
-mcp_status leankg
+# Check if LeanKG is ready and indexed
+status
 
-# Initialize for your project
-mcp_init leankg { path: "/path/to/your/project/.leankg" }
+# Index your project
+import { action: "repo", path: "/path/to/your/project" }
 
 # Ask questions like:
-# "What breaks if I change auth.rs?"
+# "What breaks if I change auth.go?"
 # "Where is the login function?"
 # "What tests cover the payment module?"
 ```
@@ -61,7 +61,7 @@ If marketplace doesn't work, add to `~/.config/claude/settings.json`:
   "mcpServers": {
     "leankg": {
       "command": "leankg",
-      "args": ["mcp-stdio", "--watch"]
+      "args": ["serve", "--stdio"]
     }
   }
 }
