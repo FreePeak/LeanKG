@@ -77,3 +77,24 @@ go build ./... && go test ./...   # 7 packages, incl.:
 
 Live smoke: index a real dir → embed run twice (second run skips) → serve →
 L1/L2/L3 queries over REST → memory create/search → MCP tools/list == 3.
+
+## Real-corpus dogfood (2026-09-11)
+
+| Corpus | Result |
+|---|---|
+| **this repo** (self-host) | 465 files · 6,255 elements · 8,510 relationships · **2.8s** |
+| freepeak/commitgen | 5 files · 117 elements · 132 relationships |
+| freepeak/code-context | 18 files · 323 elements · 344 relationships |
+| freepeak/token-lens | 89 files · 486 elements · 678 relationships |
+| freepeak/9router (JS/TS) | 1,314 files · 8,871 elements · 12,163 relationships — ts/tsx/js/jsx/md activated (regex + ast-grep tiers) |
+
+Verified queries on the self-index: L1 `graph.Impact` resolves; graph impact
+of `internal/watch/watch.go::Start` at depth 3 → 17 real same-package nodes.
+Call edges are **package-scoped** (no import/type resolution — upgrade path:
+tree-sitter symbol tables); files > 1 MB are skipped as vendored bundles and
+call targets shorter than 4 chars are ignored.
+
+Indexing a 12 GB *portfolio root* (freepeak: ~40 nested repos, 39.6k
+indexable files) is not the intended unit — index the individual repos. The
+engine's per-path lazy activation handles nested trees, but the store is
+per-project and a full-tree walk stays IO-bound.
