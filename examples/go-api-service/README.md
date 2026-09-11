@@ -55,11 +55,13 @@ This example demonstrates LeanKG's token optimization for AI-assisted developmen
 
 Measured token savings using the LeanKG Go engine (v4.7.0, benchmark_results.json regenerated):
 
+<!-- savings-table:start -->
 | Scenario | Without LeanKG | With LeanKG | Savings |
 |----------|----------------|-------------|---------|
 | **Impact Analysis** (read the blast radius vs the compressed answer) | 65,626 tokens | 682 tokens | **99.0%** |
 | **Code Review** (base file + raw affected files vs base + impact answer) | 10,124 tokens | 1,526 tokens | **84.9%** |
 | **Full Feature Testing** (12-file context vs `status` payload) | 9,596 tokens | 132 tokens | **98.6%** |
+<!-- savings-table:end -->
 
 ### Before LeanKG (Traditional Approach)
 ```go

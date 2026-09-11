@@ -2,16 +2,16 @@
   "results": [
     {
       "scenario": "Code Review",
-      "before_tokens": 10148,
+      "before_tokens": 10477,
       "after_tokens": 1526,
-      "savings_percent": 84.9625541978715,
+      "savings_percent": 85.43476185931087,
       "files_analyzed": 8
     },
     {
       "scenario": "Impact Analysis",
-      "before_tokens": 65794,
+      "before_tokens": 66522,
       "after_tokens": 682,
-      "savings_percent": 98.96343131592546,
+      "savings_percent": 98.97477526231924,
       "files_analyzed": 1
     },
     {

@@ -268,3 +268,27 @@ if __name__ == "__main__":
         }, f, indent=2)
     
     print("\nBenchmark results saved to benchmark_results.json")
+
+
+def update_readme_table(results):
+    """Regenerate the README savings table from THIS run so the README and
+    benchmark_results.json can never drift apart. The impact `before` varies
+    with the corpus (radius files are read raw), so the table also carries
+    the run date."""
+    readme = Path(__file__).resolve().parent / "README.md"
+    text = readme.read_text()
+    start = text.index("<!-- savings-table:start -->")
+    end = text.index("<!-- savings-table:end -->") + len("<!-- savings-table:end -->")
+    rows = "\n".join(
+        f"| **{r['scenario']}** | {r['before_tokens']:,} tokens | {r['after_tokens']:,} tokens | **{r['savings_percent']:.1f}%** |"
+        for r in results)
+    import datetime
+    stamp = datetime.date.today().isoformat()
+    block = (f"<!-- savings-table:start -->\n"
+             f"| Scenario | Without LeanKG | With LeanKG | Savings |\n"
+             f"|----------|----------------|-------------|---------|\n"
+             f"{rows}\n"
+             f"<!-- savings-table:end -->\n\n"
+             f"*Numbers from the {stamp} run of `benchmark.py` against the Go engine; "
+             f"the impact `before` varies with the radius corpus content at run time.*")
+    readme.write_text(text[:start] + block + text[end:])
