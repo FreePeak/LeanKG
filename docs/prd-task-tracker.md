@@ -29,6 +29,7 @@
 | M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991; T3 re-scoped to one-tool CI invariant — landed with v4.3.1; T2 TTFV outstanding) |
 | M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 DONE; FR-3T-04 live validation complete on this repo — 581 files, 9522 vectors, L1/L2/L3 verified; PR #284 merged (v4.3.x)) |
 | M-GO — Go engine rewrite (#365) | 3 | — | **IN_PROGRESS** (FR-GO-W1 core DONE on feat/go-rewrite: store/core/index/mcp/rest + live smoke; FR-GO-EMBED DONE: leankg-embed binary + stamp guards + NDJSON; FR-GO-MEM DONE: full-markdown memory + banks adapter; v4.6.0: ALL waves landed (W2 watcher/writer, W4 pgvector, W5 ConnectRPC+auth, session, graph verbs, goldens, benchmarks + executed Rust-vs-Go A/B REPORT) and the Rust tree REMOVED — deferred ledger in docs/prd.md) |
+| FR-GO-LANGS | Lazy language wave (v4.7.0): 13-language registry + tstree/astgrep/lsp tiers + java/kotlin/swift/objc/dart extractors | **DONE** on feat/go-rewrite (objc/dart tree-sitter grammar gap documented) |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
@@ -111,7 +112,7 @@
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
 
-*Last updated: 2026-09-10 (Go engine W1 + #368 leankg-embed + #369 full-markdown memory DONE on feat/go-rewrite; FR-GO-* rows added under M-GO)*
+*Last updated: 2026-09-11 (v4.7.0 lazy-languages wave: 13-language registry, AST tiers tstree/ast-grep/lsp, 5 new regex extractors — PR #370; prior v4.6.0 full parity + Rust tree removed)*
 
 ## Repo hygiene (non-PRD)
 

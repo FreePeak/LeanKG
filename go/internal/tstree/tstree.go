@@ -46,8 +46,8 @@ func Grammar(lang string) *sitter.Language {
 		return kotlin.GetLanguage()
 	case "swift":
 		return tsswift.GetLanguage()
-	// md: no GetLanguage exported by this grammar version — markdown stays
-	// on the regex/docindex tier.
+		// md: no GetLanguage exported by this grammar version — markdown stays
+		// on the regex/docindex tier.
 	}
 	return nil // objc, dart: no bundled grammar
 }
