@@ -32,6 +32,7 @@ import (
 
 // Result summarizes one IndexDir run.
 type Result struct {
+	SkippedLarge  int // files over maxIndexFileBytes (vendored bundles)
 	Files         int
 	Elements      int
 	Relationships int
@@ -54,6 +55,11 @@ var extLang = map[string]string{
 	".java": "java", ".kt": "kotlin", ".kts": "kotlin",
 	".swift": "swift", ".m": "objc", ".mm": "objc", ".dart": "dart",
 }
+
+// maxIndexFileBytes bounds the walker: larger files are counted and skipped
+// (minified/vendored bundles are ~1 MB and semantically flat; regex
+// extraction on them is slow and useless).
+const maxIndexFileBytes = 1 << 20
 
 // extOwner resolves a file extension to its language: through the registry
 // when given (lazy activation — only codebase-detected languages own their
@@ -129,6 +135,10 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return nil
 		}
 		if _, ok := owner(filepath.Ext(name)); !ok {
+			return nil
+		}
+		if info, err := d.Info(); err == nil && info.Size() > maxIndexFileBytes {
+			res.SkippedLarge++ // vendored/minified bundles: not index material
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)

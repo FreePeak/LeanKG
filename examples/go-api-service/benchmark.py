@@ -13,11 +13,16 @@ Benchmark scenarios:
 
 import json
 import os
+import shutil
 import subprocess
 import time
 
 # The LeanKG engine binary (Go since v4.7.0). Override with LEANKG_BIN.
 LEANKG_BIN = os.environ.get("LEANKG_BIN", "leankg")
+
+# Fail upfront with a clean message — never mid-run partial numbers.
+if shutil.which(LEANKG_BIN) is None:
+    raise SystemExit(f"LEANKG_BIN={LEANKG_BIN!r} not found — build it: make go-build (or set LEANKG_BIN)")
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any

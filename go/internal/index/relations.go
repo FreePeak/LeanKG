@@ -17,6 +17,20 @@ var wordRe = regexp.MustCompile(`\w+`)
 //
 // nameTargets maps every element name seen this run to its qualified names;
 // call targets may live in other files processed in this run.
+//
+// Heuristic guards (documented ceilings — the naive "every word vs every
+// name" match explodes on JS/TS corpora where thousands of short identifiers
+// (`id`, `get`, `map`, `use`) collide across files: a 12 GB polyrepo produced
+// ~870 edges per file, dominated by noise):
+//   - targets shorter than minCallNameLen are ignored (noise class);
+//   - at most maxEdgesPerElement outgoing calls per element;
+//   - at most maxEdgesPerFile calls per file.
+const (
+	minCallNameLen     = 4
+	maxEdgesPerElement = 40
+	maxEdgesPerFile    = 500
+)
+
 func relationships(els []indexedElem, nameTargets map[string][]string) []store.Relationship {
 	var out []store.Relationship
 	seen := map[[3]string]bool{}
@@ -39,10 +53,27 @@ func relationships(els []indexedElem, nameTargets map[string][]string) []store.R
 		if e.etype == "doc" {
 			continue
 		}
+		outgoing := 0
 		for _, w := range wordRe.FindAllString(e.content, -1) {
-			for _, target := range nameTargets[w] {
-				add(e.qn, target, "calls", 0.5)
+			if len(w) < minCallNameLen {
+				continue // short identifiers are noise, not call sites
 			}
+			for _, target := range nameTargets[w] {
+				if outgoing >= maxEdgesPerElement {
+					break
+				}
+				before := len(out)
+				add(e.qn, target, "calls", 0.5)
+				if len(out) > before {
+					outgoing++
+				}
+			}
+			if outgoing >= maxEdgesPerElement {
+				break
+			}
+		}
+		if len(out) >= maxEdgesPerFile {
+			break // per-file ceiling: stop scanning further elements
 		}
 	}
 	return out
