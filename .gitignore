@@ -68,3 +68,4 @@ __pycache__/
 # Go engine source dirs match the global "leankg" ignore pattern — re-include:
 !go/cmd/leankg/
 !go/internal/rpc/leankg/
+tmp-smoke/

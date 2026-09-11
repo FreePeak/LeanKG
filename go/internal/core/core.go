@@ -16,6 +16,7 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/embed"
 	"github.com/FreePeak/LeanKG/go/internal/graph"
 	"github.com/FreePeak/LeanKG/go/internal/index"
+	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
 	"github.com/FreePeak/LeanKG/go/internal/ontology"
 	"github.com/FreePeak/LeanKG/go/internal/session"
@@ -55,8 +56,13 @@ type Engine struct {
 	st         store.Backend
 	mem        *memory.Memory
 	projectDir string
-	embedder   QueryEmbedder // optional; nil ⇒ L3 degrades with reason
+	langsReg   *langs.Registry // lazy language activation for the opened codebase
+	embedder   QueryEmbedder   // optional; nil ⇒ L3 degrades with reason
 }
+
+// SetLangsRegistry attaches the language registry (lazy activation state) to
+// the engine. cmd activates it against the opened codebase at startup.
+func (e *Engine) SetLangsRegistry(reg *langs.Registry) { e.langsReg = reg }
 
 // SetProjectDir records the project directory (enable
 // import{action:"session"} for offloading bulky tool payloads).
@@ -275,6 +281,22 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 		modelID, provider := e.embedder.Describe()
 		out["query_embedder"] = map[string]any{"model_id": modelID, "provider": provider}
 	}
+	if e.langsReg != nil {
+		tiers := e.langsReg.Tiers()
+		langsOut := []map[string]any{}
+		for _, l := range e.langsReg.Active() {
+			entry := map[string]any{"language": string(l)}
+			if tt, ok := tiers[l]; ok {
+				names := make([]string, len(tt))
+				for i, x := range tt {
+					names[i] = string(x)
+				}
+				entry["tiers"] = names
+			}
+			langsOut = append(langsOut, entry)
+		}
+		out["languages"] = langsOut
+	}
 	if run, err := e.st.LastEmbedRunAny(); err == nil && run != nil {
 		out["last_embed_run"] = run
 	}
@@ -323,6 +345,8 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		return e.MemoryRead("search", "", req.Query, req.Limit)
 	case "ontology":
 		return e.OntologyMatches()
+	case "languages":
+		return e.LanguagesStatus(), nil
 	case "session":
 		cmd := "recall"
 		if req.Args != nil && req.Args["command"] != "" {
@@ -769,4 +793,28 @@ func (e *Engine) OntologyMatches() (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{"matches": matches}, nil
+}
+
+// LanguagesStatus reports the lazy activation state: which languages are
+// turned on for the opened codebase and which extraction/lookup tiers are
+// live for each (regex always; tree-sitter only under the tstree tag;
+// ast-grep only when the CLI exists; lsp only when a server resolves).
+func (e *Engine) LanguagesStatus() map[string]any {
+	if e.langsReg == nil {
+		return map[string]any{"languages": []any{}, "note": "no registry attached — all languages idle"}
+	}
+	tiers := e.langsReg.Tiers()
+	out := []map[string]any{}
+	for _, l := range e.langsReg.Active() {
+		entry := map[string]any{"language": string(l)}
+		if tt, ok := tiers[l]; ok {
+			names := make([]string, len(tt))
+			for i, x := range tt {
+				names[i] = string(x)
+			}
+			entry["tiers"] = names
+		}
+		out = append(out, entry)
+	}
+	return map[string]any{"languages": out, "codebase": e.langsReg.Codebase()}
 }

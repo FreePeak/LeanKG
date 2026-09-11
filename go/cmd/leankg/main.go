@@ -21,11 +21,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/FreePeak/LeanKG/go/internal/auth"
 	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/FreePeak/LeanKG/go/internal/embed"
+	"github.com/FreePeak/LeanKG/go/internal/langs"
 	leankgmcp "github.com/FreePeak/LeanKG/go/internal/mcp"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
 	"github.com/FreePeak/LeanKG/go/internal/rest"
@@ -150,6 +153,25 @@ func cmdServe(args []string) {
 
 	engine := core.New(st, mem, embedder)
 	engine.SetProjectDir(dir) // enables the session actions
+
+	// Lazy language activation: detect the languages this codebase (incl.
+	// nested repos) actually uses; everything else stays idle.
+	langReg := langs.DefaultRegistry()
+	if roots, err := langReg.Activate(dir); err != nil {
+		log.Printf("language detection failed: %v", err)
+	} else {
+		var summary []string
+		for root, ls := range roots {
+			names := make([]string, len(ls))
+			for i, l := range ls {
+				names[i] = string(l)
+			}
+			summary = append(summary, root+" ["+strings.Join(names, ",")+"]")
+		}
+		sort.Strings(summary)
+		log.Printf("languages active: %s", strings.Join(summary, "; "))
+	}
+	engine.SetLangsRegistry(langReg)
 
 	if *stdio {
 		if *httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "" {

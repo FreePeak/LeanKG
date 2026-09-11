@@ -225,19 +225,34 @@ func (r *Registry) Activate(codebase string) (map[string][]Language, error) {
 			r.active[l] = true
 		}
 	}
-	if len(out) == 0 {
-		// marker-less tree: census extensions at shallow depth
-		cens := censusExts(codebase)
-		for _, l := range r.order {
-			p := r.profiles[l]
-			for _, e := range append(append([]string{}, p.Exts...), p.HeaderExts...) {
-				if cens[e] > 0 {
-					r.active[l] = true
-					out[codebase] = append(out[codebase], l)
-					break
-				}
+	// Census ALWAYS supplements markers: a polyglot tree with one marker
+	// (e.g. pubspec.yaml) must not silence stray sources of other languages
+	// (stray .go files). Only census-hit languages activate here.
+	cens := censusExts(codebase)
+	for _, l := range r.order {
+		if r.active[l] {
+			continue
+		}
+		p := r.profiles[l]
+		for _, e := range append(append([]string{}, p.Exts...), p.HeaderExts...) {
+			if cens[e] > 0 {
+				r.active[l] = true
+				out[codebase] = append(out[codebase], l)
+				break
 			}
 		}
+	}
+	// dedupe out[codebase]
+	if lst, ok := out[codebase]; ok {
+		set := map[Language]bool{}
+		var uniq []Language
+		for _, l := range lst {
+			if !set[l] {
+				set[l] = true
+				uniq = append(uniq, l)
+			}
+		}
+		out[codebase] = uniq
 	}
 	return out, nil
 }
