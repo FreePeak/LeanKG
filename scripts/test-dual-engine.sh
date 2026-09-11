@@ -27,6 +27,12 @@ go vet ./...
 echo "== unit suite (sqlite) =="
 go test ./... -count=1 -timeout 300s
 
+# Fast-fail if the PG endpoint is unreachable (a wedged Docker daemon would
+# otherwise hang every probe for 120s+ and the gate would report a nameless FAIL).
+if ! timeout 5 psql "$PG_URL" -At -c "select 1" >/dev/null 2>&1; then
+  echo "FAIL: PostgreSQL unreachable at $PG_URL (start the pgvector container: docker compose -f docker-compose.500mb.yml up -d)" >&2
+  exit 1
+fi
 echo "== PG store tests =="
 LEANKG_TEST_PG_URL="$PG_URL" go test ./internal/store/ -run TestPG -count=1
 

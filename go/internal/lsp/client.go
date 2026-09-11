@@ -25,7 +25,11 @@ var (
 
 // handshakeTimeout bounds the initialize/initialized exchange started by
 // Start so a broken server binary can never wedge the indexer.
-const handshakeTimeout = 5 * time.Second
+// handshakeTimeout bounds the initialize/initialized exchange. It is a var
+// so tests can shrink it; 10s (raised from 5s) absorbs `go test` parallel
+// package load where a local sh-spawn fake server was observed to miss the
+// old 5s bound intermittently (3x gate flake, TestStartHandshakeAndClose).
+var handshakeTimeout = 10 * time.Second
 
 // Symbol is a normalized document or workspace symbol. Lines are 1-based
 // (LSP's 0-based line numbers are shifted on conversion); a hierarchical
