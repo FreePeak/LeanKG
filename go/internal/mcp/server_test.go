@@ -221,3 +221,57 @@ func TestMCPRBACGatesWriteToolsOverWire(t *testing.T) {
 		t.Fatalf("valid viewer token must be accepted by the HTTP layer")
 	}
 }
+
+// TestNewActionsOverMCPWire proves pattern/languages/lsp survive schema
+// validation AND reach the engine — the dead-action class this file already
+// caught once (graph verbs missing from the enum).
+func TestNewActionsOverMCPWire(t *testing.T) {
+	session := newTestServer(t)
+	ctx := context.Background()
+
+	// languages: must return an answer (empty registry state is fine).
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "query", Arguments: map[string]any{"action": "languages", "query": "x"},
+	}); err != nil {
+		t.Fatalf("languages over MCP: %v", err)
+	}
+
+	// pattern: numeric limit in args (the Args-widening regression class);
+	// ast-grep absent ⇒ engine answers with the L2 degrade, not a schema error.
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "query",
+		Arguments: map[string]any{
+			"action": "pattern", "query": "x",
+			"args": map[string]any{"pattern": "func $F($A)", "lang": "go", "limit": 5},
+		},
+	})
+	if err != nil {
+		t.Fatalf("pattern over MCP (schema or engine): %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(res.Content[0].(*mcp.TextContent).Text), &out); err != nil {
+		t.Fatal(err)
+	}
+	// ast-grep may be installed on this host (real run, rung=ast-grep) or not
+	// (degrade to L2) — BOTH prove the action reached the engine past schema
+	// validation, which is what this test pins.
+	r, ok := out["retrieval"].(map[string]any)
+	if !ok {
+		t.Fatalf("pattern retrieval missing: %v", out)
+	}
+	if r["rung"] != "ast-grep" && r["rung"] != "L2" {
+		t.Fatalf("pattern rung: %v", r)
+	}
+
+	// lsp: inactive language ⇒ clear engine error (schema accepted).
+	_, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "query",
+		Arguments: map[string]any{
+			"action": "lsp", "query": "Handler",
+			"args": map[string]any{"lang": "go"},
+		},
+	})
+	if err == nil || !(strings.Contains(err.Error(), "not active") || strings.Contains(err.Error(), "no language registry")) {
+		t.Fatalf("lsp must reach the engine and refuse (schema rejection would differ): %v", err)
+	}
+}

@@ -81,6 +81,28 @@ func extractFileAs(rel, abs, lang string) (fileElements, error) {
 		return fileElements{}, err
 	}
 	lines := strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
+
+	// Tree-sitter tier first (tstree build only): richer symbol extraction
+	// for the bundled grammars, with real end lines. No grammar for the
+	// language ⇒ nil ⇒ regex fallback below.
+	if defs, err := tsExtract(src, lang); err == nil && len(defs) > 0 {
+		fe := fileElements{rel: rel}
+		for _, d := range defs {
+			end := d.EndLine
+			if end < d.StartLine {
+				end = d.StartLine
+			}
+			fe.elements = append(fe.elements, indexedElem{
+				name: d.Name, etype: d.Kind, lang: lang,
+				start: d.StartLine, end: end, parent: -1,
+			})
+		}
+		assignParents(fe.elements)
+		qualify(fe)
+		boundContent(fe.elements, lines)
+		return fe, nil
+	}
+
 	var ms []match
 	switch lang {
 	case "go":

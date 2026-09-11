@@ -8,12 +8,14 @@ help:
 	@echo "  go-test         Run the Go engine test suite"
 	@echo "  go-bench        Run the Go A/B benchmark suite"
 	@echo "  go-vet          Vet the Go engine"
+	@echo "  go-build-tstree Build with the tree-sitter tier (CGO)"
+	@echo "  go-test-tstree  Test the tree-sitter tier"
 	@echo "  go-ui-assets    Sync the checked-in ui build into the Go embed dir"
 	@echo "  dual-engine     Run the dual-engine (sqlite + postgres) acceptance gate"
 	@echo "  clean           Remove Go build artifacts"
 	@echo "  install-go      Build-from-source installer (scripts/install-go.sh)"
 
-.PHONY: help go-build go-test go-bench go-vet go-ui-assets dual-engine clean install-go
+.PHONY: help go-build go-test go-bench go-vet go-ui-assets dual-engine clean install-go go-build-tstree go-test-tstree
 
 go-build:
 	cd go && CGO_ENABLED=0 go build -o bin/ ./cmd/leankg ./cmd/leankg-embed

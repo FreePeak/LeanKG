@@ -151,12 +151,34 @@ func TestTiersCapabilityGated(t *testing.T) {
 			t.Fatalf("%s tiers: %v", l, tiers[l])
 		}
 	}
-	// tree-sitter off in the default (CGO-free) build
-	for _, l := range []Language{Go, Dart} {
-		for _, tier := range tiers[l] {
+	// tree-sitter is present ONLY for bundled grammars under the tstree tag
+	// (go yes, dart no grammar in the set), absent entirely in the default build.
+	for _, tier := range tiers[Go] {
+		if tier == TierTreeSitter && !TreeSitterEnabled(Go) {
+			t.Fatalf("tree-sitter tier claimed while disabled: %v", tiers[Go])
+		}
+	}
+	if !TreeSitterEnabled(Go) {
+		for _, tier := range tiers[Go] {
 			if tier == TierTreeSitter {
-				t.Fatalf("tree-sitter must be absent in default build: %v", tiers[l])
+				t.Fatalf("tree-sitter must be absent in default build: %v", tiers[Go])
 			}
+		}
+	} else {
+		found := false
+		for _, tier := range tiers[Go] {
+			if tier == TierTreeSitter {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("tstree build must report tree-sitter for go: %v", tiers[Go])
+		}
+	}
+	// dart has no bundled grammar in either build
+	for _, tier := range tiers[Dart] {
+		if tier == TierTreeSitter {
+			t.Fatalf("dart must not claim a tree-sitter tier: %v", tiers[Dart])
 		}
 	}
 	// markdown has no AST tier even when active

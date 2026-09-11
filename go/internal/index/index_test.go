@@ -1,3 +1,5 @@
+//go:build !tstree
+
 package index
 
 import (

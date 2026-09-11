@@ -128,9 +128,9 @@ func (s *Server) registerTools() {
 			"type": "object",
 			"properties": {
 				"query": {"type": "string", "description": "search text, identifier, or memory search text"},
-				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path)"},
+				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "pattern", "languages", "lsp"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path)"},
 				"limit": {"type": "integer", "description": "max hits (default 10; impact depth comes from args.depth)"},
-				"args": {"type": "object", "additionalProperties": {"type": "string"}, "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), bank (memory)"}
+				"args": {"type": "object", "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), main (memory), pattern/lang/limit (pattern), lang (lsp)"}
 			},
 			"required": []
 		}`),

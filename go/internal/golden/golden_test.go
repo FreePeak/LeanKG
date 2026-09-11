@@ -27,6 +27,9 @@ const goldenDir = "../../testdata/golden"
 // watermark seq/at) is redacted to fixed strings BEFORE comparison, so the
 // goldens are byte-stable across runs and diffable by the W7 cutover.
 func TestGolden(t *testing.T) {
+	if skipGoldensUnderTstree() {
+		t.Skip("goldens capture the regex tier; tree-sitter extraction differs by design")
+	}
 	ctx := context.Background()
 	root := t.TempDir()
 	project := filepath.Join(root, "proj")

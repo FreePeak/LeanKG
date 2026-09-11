@@ -2,13 +2,18 @@
 
 package langs
 
-// TreeSitterEnabled reports whether the tree-sitter tier is compiled in.
-// Built with `-tags tstree` (CGO + bundled grammars).
-func TreeSitterEnabled(_ Language) bool { return true }
+// TreeSitterEnabled reports whether the tree-sitter tier is compiled in AND a
+// grammar is bundled for this language (objc/dart/md have none — they stay on
+// the regex tier even under the tag).
+func TreeSitterEnabled(l Language) bool {
+	switch l {
+	case Go, Rust, TypeScript, TSX, JavaScript, JSX, Python, Java, Kotlin, Swift:
+		return true
+	}
+	return false
+}
 
-// astGrepLang maps a language to its ast-grep language id ("" = no mapping).
-// ast-grep is a separate binary — availability is probed, not compiled —
-// so this mapping is independent of the build tag.
+// astGrepLang maps a language to its ast-grep language id ("" = no AST tier).
 func astGrepLang(l Language) string {
 	switch l {
 	case Go:
@@ -28,9 +33,9 @@ func astGrepLang(l Language) string {
 	case Swift:
 		return "swift"
 	case ObjC:
-		return "objc" // ast-grep id: "objc" (tree-sitter-objc)
+		return "c" // objc grammar absent; ast-grep supports c
 	case Dart:
-		return "dart"
+		return "" // ast-grep has no dart language
 	}
 	return "" // markdown has no AST tier
 }
