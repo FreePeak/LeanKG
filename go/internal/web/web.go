@@ -26,6 +26,15 @@ func Handler() http.Handler {
 			p = "index.html"
 		}
 		if _, err := fs.Stat(sub, p); err != nil {
+			// API paths must never fall back to the SPA shell: an unknown
+			// /api/* route is a JSON 404, so the dashboard's fetch handlers
+			// see an error envelope instead of index.html.
+			if strings.HasPrefix(p, "api/") {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"success":false,"data":null,"error":"not found"}`))
+				return
+			}
 			// SPA fallback: client-side routes resolve to index.html.
 			if !strings.HasPrefix(p, "assets/") {
 				serveFile(w, sub, "index.html")

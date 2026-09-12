@@ -17,10 +17,44 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Server wraps the go-sdk server over one core engine.
+// ProjectRouter resolves a per-request project selector to an engine
+// (multi-project serving: LEANKG_PROJECT_DIRS). Implemented by
+// internal/projects; nil keeps the single-engine behavior.
+type ProjectRouter interface {
+	EngineFor(ctx context.Context, project string) (*core.Engine, error)
+}
+
+// Server wraps the go-sdk server over one core engine. When router is set,
+// each tool call may name a project (args.project) and is served by that
+// project's engine; otherwise the wrapped engine answers.
 type Server struct {
 	engine *core.Engine
+	router ProjectRouter
 	srv    *mcp.Server
+}
+
+// SetProjectRouter enables per-call project routing. The router resolves a
+// directory path or project name and errors on unknown selectors (never
+// silently falls back to the default project).
+func (s *Server) SetProjectRouter(r ProjectRouter) { s.router = r }
+
+// engineFor picks the engine for one call: args.project when a router is
+// configured, else the wrapped engine.
+func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core.Engine, error) {
+	if s.router == nil {
+		return s.engine, nil
+	}
+	var args map[string]any
+	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
+		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+			return nil, err
+		}
+	}
+	p, _ := args["project"].(string)
+	if p == "" {
+		return s.engine, nil
+	}
+	return s.router.EngineFor(ctx, p)
 }
 
 // version is reported as the MCP serverInfo version. It must match the release
@@ -101,7 +135,7 @@ func (s *Server) registerTools() {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"action": {"type": "string", "enum": ["repo", "dir", "docs", "memory", "session", "ontology"], "description": "what to import"},
+				"action": {"type": "string", "enum": ["repo", "dir", "docs", "memory", "session", "ontology", "read"], "description": "what to import (read = compressed file read: args.mode/lines/fresh)"},
 				"path": {"type": "string", "description": "repository/directory to index, or memory file path (e.g. MEMORY.md, topics/x.md)"},
 				"command": {"type": "string", "enum": ["create", "str_replace", "insert", "delete", "rename", "add", "replace", "remove", "offload", "lesson"], "description": "memory write command (action=memory) or session command (action=session: offload|lesson)"},
 				"content": {"type": "string"},
@@ -114,7 +148,8 @@ func (s *Server) registerTools() {
 				"session_id": {"type": "string", "description": "session id (action=session)"},
 				"node_id": {"type": "string", "description": "offload node id (action=session)"},
 				"payload": {"type": "string", "description": "payload to offload (action=session)"},
-				"summary": {"type": "string", "description": "offload summary (action=session)"}
+				"summary": {"type": "string", "description": "offload summary (action=session)"},
+				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
 			}
 		}`),
 	}, s.handleImport)
@@ -129,9 +164,10 @@ func (s *Server) registerTools() {
 			"type": "object",
 			"properties": {
 				"query": {"type": "string", "description": "search text, identifier, or memory search text"},
-				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "pattern", "languages", "lsp"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path)"},
+				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "pattern", "languages", "lsp", "compress"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path)"},
 				"limit": {"type": "integer", "description": "max hits (default 10; impact depth comes from args.depth)"},
-				"args": {"type": "object", "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), main (memory), pattern/lang/limit (pattern), lang (lsp)"}
+				"args": {"type": "object", "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), main (memory), pattern/lang/limit (pattern), lang (lsp), mode/lines/fresh (read), cmd/tool/response (compress)"},
+				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
 			},
 			"required": []
 		}`),
@@ -140,7 +176,7 @@ func (s *Server) registerTools() {
 	s.srv.AddTool(&mcp.Tool{
 		Name:        core.ToolStatus,
 		Description: "LeanKG health: inventory, freshness (fresh|possibly_stale|cold), watermark, backend, embeddings state (stamped models, vectors), last embed run.",
-		InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+		InputSchema: json.RawMessage(`{"type": "object", "properties": {"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}}}`),
 	}, s.handleStatus)
 }
 
@@ -152,7 +188,11 @@ func (s *Server) handleImport(ctx context.Context, req *mcp.CallToolRequest) (*m
 	if err := unmarshalArgs(req, &in); err != nil {
 		return nil, err
 	}
-	out, err := s.engine.Import(ctx, in)
+	eng, err := s.engineFor(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out, err := eng.Import(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +204,11 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 	if err := unmarshalArgs(req, &in); err != nil {
 		return nil, err
 	}
-	out, err := s.engine.Query(ctx, in)
+	eng, err := s.engineFor(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out, err := eng.Query(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +216,11 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 }
 
 func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	out, err := s.engine.Status(ctx)
+	eng, err := s.engineFor(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out, err := eng.Status(ctx)
 	if err != nil {
 		return nil, err
 	}

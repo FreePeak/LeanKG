@@ -8,12 +8,14 @@ package core
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/FreePeak/LeanKG/go/internal/astgrep"
+	"github.com/FreePeak/LeanKG/go/internal/compress"
 	"github.com/FreePeak/LeanKG/go/internal/docindex"
 	"github.com/FreePeak/LeanKG/go/internal/embed"
 	"github.com/FreePeak/LeanKG/go/internal/graph"
@@ -59,9 +61,10 @@ type Engine struct {
 	st         store.Backend
 	mem        *memory.Memory
 	projectDir string
-	langsReg   *langs.Registry // lazy language activation for the opened codebase
-	lspManager *lsp.Manager    // lazy per-(lang,dir) LSP server pool (query time only)
-	embedder   QueryEmbedder   // optional; nil ⇒ L3 degrades with reason
+	langsReg   *langs.Registry            // lazy language activation for the opened codebase
+	lspManager *lsp.Manager               // lazy per-(lang,dir) LSP server pool (query time only)
+	embedder   QueryEmbedder              // optional; nil ⇒ L3 degrades with reason
+	compressor *compress.LeanKGCompressor // context compression (reader/cmd/response paths, Rust parity)
 }
 
 // SetLangsRegistry attaches the language registry (lazy activation state) to
@@ -74,7 +77,7 @@ func (e *Engine) SetProjectDir(dir string) { e.projectDir = dir }
 
 // New builds an Engine. mem may be nil (memory actions then error).
 func New(st store.Backend, mem *memory.Memory, embedder QueryEmbedder) *Engine {
-	return &Engine{st: st, mem: mem, embedder: embedder}
+	return &Engine{st: st, mem: mem, embedder: embedder, compressor: compress.New()}
 }
 
 // Store exposes the underlying backend (transports needing raw reads).
@@ -198,13 +201,22 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		return e.memoryWrite(req)
 	case "session":
 		return e.sessionWrite(req)
+	case "read":
+		return e.compressRead(req)
 	case "ontology":
 		if req.Path == "" {
-			return nil, fmt.Errorf("import ontology requires path (concept catalog JSON)")
+			return nil, fmt.Errorf("import ontology requires path (ontology dir or concept catalog JSON)")
+		}
+		if info, err := os.Stat(req.Path); err == nil && info.IsDir() {
+			stats, err := ontology.LoadWorkflows(e.st, req.Path)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"ontology": "synced", "stats": stats}, nil
 		}
 		return e.OntologyMatch(req.Path)
 	case "":
-		return nil, fmt.Errorf("import requires action (repo, dir, docs, memory, session, ontology)")
+		return nil, fmt.Errorf("import requires action (repo, dir, docs, memory, session, ontology, read)")
 	default:
 		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory, session, ontology)", req.Action)
 	}
@@ -355,7 +367,36 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		// Query-tool memory reads carry the command in Query.
 		return e.MemoryRead("search", "", req.Query, req.Limit)
 	case "ontology":
-		return e.OntologyMatches()
+		switch argStr(req.Args, "cmd") {
+		case "", "matches":
+			return e.OntologyMatches()
+		case "trace":
+			return ontology.TraceQuery(e.st, req.Query)
+		case "status":
+			st, err := ontology.OntologyStatus(e.st)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"status": st}, nil
+		case "concept_search":
+			res, err := ontology.ConceptSearch(e.st, req.Query, req.Limit)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"result": res}, nil
+		case "feature_flow":
+			return ontology.FeatureFlow(e.st, req.Query)
+		case "traceability":
+			m, err := ontology.TraceabilityMatrix(e.st)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"matrix": m}, nil
+		default:
+			return nil, fmt.Errorf("unknown ontology cmd (valid: matches, trace, status, concept_search, feature_flow, traceability)")
+		}
+	case "compress":
+		return e.compressRun(req)
 	case "languages":
 		return e.LanguagesStatus(), nil
 	case "lsp":
@@ -970,4 +1011,87 @@ func argInt(m map[string]any, key string, fb int) int {
 		}
 	}
 	return fb
+}
+
+// ---------------------------------------------------------------------------
+// Context compression (Rust src/compress parity, reached through the 3-tool
+// envelope so the registry stays at import/query/status)
+// ---------------------------------------------------------------------------
+
+// compressRead serves import{action:"read"}: reader-mode compression of one
+// file (the Rust ctx_read verb). args: mode, lines, fresh.
+func (e *Engine) compressRead(req ImportRequest) (map[string]any, error) {
+	if req.Path == "" {
+		return nil, fmt.Errorf("import read requires path")
+	}
+	modeName := argStr(req.Args, "mode")
+	mode, ok := compress.ParseMode(modeName)
+	if modeName != "" && !ok {
+		return nil, fmt.Errorf("invalid mode %q (valid: adaptive, full, map, signatures, diff, aggressive, entropy, lines)", modeName)
+	}
+	res, err := e.compressor.Reduce(compress.Request{
+		Path:      req.Path,
+		Mode:      mode,
+		LinesSpec: argStr(req.Args, "lines"),
+		Fresh:     argStr(req.Args, "fresh") == "true",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"path":            req.Path,
+		"mode":            res.Mode.String(),
+		"content":         res.Content,
+		"tokens":          res.Tokens,
+		"total_tokens":    res.TotalTokens,
+		"total_lines":     res.TotalLines,
+		"output_lines":    res.OutputLines,
+		"savings_percent": res.SavingsPercent,
+		"cached":          res.IsCached,
+		"lines_included":  res.LinesIncluded,
+	}, nil
+}
+
+// compressRun serves query{action:"compress"} — one dispatcher for the three
+// Rust compression paths: file reader (args.mode/lines), command output
+// (args.cmd + query text as the output body), and response shaping
+// (args.tool + args.response, the maybe_compress parity).
+func (e *Engine) compressRun(req QueryRequest) (map[string]any, error) {
+	if tool := argStr(req.Args, "tool"); tool != "" {
+		resp, _ := req.Args["response"].(map[string]any)
+		if resp == nil {
+			return nil, fmt.Errorf("query compress with args.tool requires args.response (object)")
+		}
+		res, err := e.compressor.Reduce(compress.Request{Tool: tool, Response: resp})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"tool":              tool,
+			"response":          res.Response,
+			"original_tokens":   res.Stats.OriginalTokens,
+			"compressed_tokens": res.Stats.CompressedTokens,
+			"savings_percent":   res.Stats.SavingsPercent,
+		}, nil
+	}
+	if cmd := argStr(req.Args, "cmd"); cmd != "" {
+		res, err := e.compressor.Reduce(compress.Request{Cmd: cmd, Output: req.Query})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"cmd":             cmd,
+			"content":         res.Content,
+			"tokens":          res.Tokens,
+			"total_tokens":    res.TotalTokens,
+			"total_lines":     res.TotalLines,
+			"output_lines":    res.OutputLines,
+			"savings_percent": res.SavingsPercent,
+		}, nil
+	}
+	if req.Query != "" {
+		// Treat the query text as the file path for reader-mode compression.
+		return e.compressRead(ImportRequest{Path: req.Query, Args: req.Args})
+	}
+	return nil, fmt.Errorf("query compress requires one of: args.tool+args.response, args.cmd (+ output in query), or a file path in query")
 }
