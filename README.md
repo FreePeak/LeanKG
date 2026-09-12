@@ -83,9 +83,9 @@ from the checkout or pass `--project DIR` to pin one.
 ### Web UI
 
 The embedded dashboard is served by `leankg serve --ui ADDR` (a ui-v2 build
-compiled into the binary). The Go engine's dashboard data API is not wired up
-yet — the REST surface on `--rest` exposes only `/health` and the `/api/v1/*`
-tool endpoints — so treat the dashboard as not yet functional.
+compiled into the binary). The dashboard's `/api/*` data endpoints are served
+on the same address; `serve --rest` exposes the `/api/v1/*` tool endpoints
+separately.
 
 For UI development, run the Vite dev server against a REST address (it proxies
 `/api` to `BACKEND_TARGET`, default `http://127.0.0.1:8080`):
@@ -111,12 +111,12 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 
 | Pillar | Ships as |
 | ------ | -------- |
-| Multi-repo server | MCP HTTP `:9699`, one project per server (`--project DIR`); sqlite default, PG opt-in |
-| Env governance | `env=`, `promote_environment`, `find_env_conflicts` |
-| Ops & ownership | `get_service_graph`, `query_incidents`, `get_team_map` |
-| Req ↔ code | `index_prd`, `get_traceability`, `get_traceability_matrix` |
+| Multi-repo server | MCP HTTP `:9699`; `LEANKG_PROJECT_DIRS` serves many projects with per-request `?project=` (REST) / `project` arg (MCP); sqlite default, PG opt-in |
+| Env governance | `query --action env_conflicts`, per-env snapshots, `leankg obsidian` |
+| Ops & ownership | `query --action service_context` / `incidents`, `leankg incident` / `note` / `team-map` |
+| Req ↔ code | `leankg prd` / `prd-trace`, `query --action prd`, ontology traceability matrix |
 | Mega-graph | Frontier-local queries; 100k–700k+ elements |
-| Agent surface | **1** MCP tool (`leankg_context`) serving ~76 capabilities as verbs; peers typically ~1–17 raw tools |
+| Agent surface | **3** MCP tools (`import` / `query` / `status`) serving 30 actions (22 query + 8 import); peers typically ~1–17 raw tools |
 | Cost | A/B **−65% tokens**, **−85% tool calls**, **2.5×** vs grep/cat |
 
 | Capability | LeanKG | GitNexus | Graphify | Codanna | Context7 |
@@ -125,7 +125,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 | Env / incidents / team map | Yes | No | No | No | No |
 | PRD traceability | Yes | No | Partial | No | No |
 | Mega-graph (100k+) | Yes | Partial | Viz capped | Varies | n/a |
-| MCP depth | 77 | ~17 | ~10 | ~5 | docs only |
+| MCP surface | 3 tools / 30 actions | ~17 | ~10 | ~5 | docs only |
 
 Deep dives (archived): [ROI vs Graphify](docs/archive/reports/leankg-vs-graphify-company-roi-2026-07-21.md) · [Competitive one-pager](docs/archive/competitive-analysis.md) · [Research matrix](docs/archive/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md)
 
@@ -157,19 +157,20 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 
 ## MCP prefer-order
 
-Discover first — do **not** open with `query_graph`:
+Discover with `query` — it routes down the ladder by default (L1 exact → L2 fuzzy → L3 semantic), degrades instead of erroring, and every answer carries `retrieval{rung,reason}` + `freshness`.
 
-`leankg_context` → `get_overview_context` → `mcp_status` → `concept_search` / `semantic_search` / `search_code` → impact / deps / `get_context`
+| Question | How |
+| -------- | --- |
+| Any identifier (default) | `query "Alpha"` (exact, then fuzzy fallback) |
+| Blast radius | `leankg impact <file>` or `query --action impact --to <qn>` |
+| Who calls X? | `query --action callers --to <qn>` |
+| How A↔B? | `query --action path --to <qn>` |
+| Element details | `query --action explain --to <qn>` |
+| Pattern search | `query --action pattern --pattern "func $_(...)"` |
+| PRD traceability | `leankg prd-trace FR-3T-01` |
+| File (compressed) | `query --action read --path src/main.go` |
 
-| Question | First tools |
-| -------- | ----------- |
-| Any question (default) | `leankg_context` (intent is auto-classified; degrades L3→L0 instead of erroring) |
-| Fuzzy / domain NL | `concept_search` → `semantic_search` → `search_code` |
-| Exact symbol / file | `search_code` |
-| How A↔B? | `shortest_path` |
-| Expand after seeds | `query_graph` |
-
-Catalog: [docs/archive/mcp-tools.md](docs/archive/mcp-tools.md) · Setup: [docs/archive/agentic-instructions.md](docs/archive/agentic-instructions.md)
+3 tools: `import` (index/PRD/memory/session/ontology/read) · `query` (ladder + graph verbs + actions) · `status` (inventory/freshness/config).
 
 ---
 
@@ -188,7 +189,7 @@ leankg install --target cursor          # same wiring, flag form (--register-cwd
 leankg serve --stdio                    # MCP over stdio (what harnesses spawn)
 leankg serve --http 127.0.0.1:9699      # MCP over streamable HTTP (/mcp, /health)
 leankg serve --rest 127.0.0.1:8080      # REST API (/health, /api/v1/*)
-leankg serve --ui 127.0.0.1:8081        # embedded dashboard (data API not wired yet)
+leankg serve --ui 127.0.0.1:8081        # embedded dashboard (/api/* data API served here)
 leankg serve --rpc 127.0.0.1:9090       # ConnectRPC (gRPC + gRPC-Web + JSON)
 leankg version
 ```
