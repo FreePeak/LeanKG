@@ -87,8 +87,11 @@ func TestAuthRoutesHappyPath(t *testing.T) {
 	if account["email"] != "api@example.com" || account["status"] != "active" {
 		t.Fatalf("registered account = %v", account)
 	}
-	if _, ok := account["password_hash"]; !ok {
-		t.Fatalf("account response lacks password_hash: %v", account)
+	// Security deviation from the Rust port (which serialized the field): a
+	// password verifier is credential material and must never leave the
+	// process. Pinned here so a future wire-type change cannot reintroduce it.
+	if _, ok := account["password_hash"]; ok {
+		t.Fatalf("account response leaks password_hash: %v", account)
 	}
 	accountID, _ := account["id"].(string)
 

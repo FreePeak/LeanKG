@@ -20,11 +20,17 @@ import (
 
 // Account is one registered account. PasswordHash is an encoded password
 // verifier (see internal/auth), never a plaintext or a reversible form.
+//
+// Deliberate deviation from the Rust port: Rust's Account serialized
+// password_hash, so /api/v1/auth/register and /login returned the verifier to
+// the caller. A password verifier (even a salted one) is credential material
+// and is not sent to clients here — `json:"-"` keeps it in-process only. The
+// field is still persisted and read back for verification.
 type Account struct {
 	ID           string `json:"id"`
 	Email        string `json:"email"`
 	Name         string `json:"name"`
-	PasswordHash string `json:"password_hash"`
+	PasswordHash string `json:"-"`
 	Status       string `json:"status"`
 	CreatedAt    int64  `json:"created_at"`
 	UpdatedAt    int64  `json:"updated_at"`

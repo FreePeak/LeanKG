@@ -27,6 +27,8 @@
 - **Obsidian**: vault init/status, push (store→notes), pull (notes→Note elements, wiki-links, annotations), debounced watcher.
 - **CLI parity**: `run`, `detect-clusters`, `report`, `gods`, `ctags`, `cost`, `migrate`, `audit export|verify`, `auth register|token …`, `export`, `pack`, `generate`, `annotate`, `link`, `search-annotations`, `show-annotations`, `register`, `unregister`, `list`, `status-repo`, `tunnels`, `quality`, `reflect`, `refresh`, plus `query --action` passthrough.
 
+**Security deviation from Rust (deliberate):** `/api/v1/auth/register` and `/login` no longer serialize `password_hash` — the Rust port returned the PBKDF2 verifier (salt + KDF params + digest) to the caller, which is credential material leaving the process; the field is now in-process only (`json:"-"`), pinned by a test. The Go engine also enforces the bearer middleware on `/api/v1/status`-class routes and requires a valid token for revoke, where Rust checked presence only.
+
 **Fixed while integrating** (found by the wave, not by tests): `CGO_ENABLED=0 go build ./...` was broken by untagged vendored C sources (CI could not see it — a CGO-free tree build step is now in `ci.yml`); `/api/v1/auth/*` was behind the bearer gate (bootstrap deadlock); the dashboard listener's unauthenticated API now warns when bound beyond loopback; the marker-less language census never looked deeper than two levels (silent zero-file indexing); `leankg impact` double-called its handler (panic); MCP `serverInfo` version drift; the `leankg add`/`mcp-stdio` dead wiring.
 
 **Audited, not assumed**: the per-verb disposition table (§6b) accounts for all 73 Rust CLI variants; the five capabilities that remain unimplemented are *new product milestones*, tracked as #372–#376.
