@@ -1,6 +1,6 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-11 — v4.7.1 pre-merge truth pass on PR #370: ast-grep identity probe fixed (the deterministic CI failure), dangling `benchmark/corpora/docs` gitlink removed, install surface repaired (`install-go.sh` HTTPS + dead `release.sh` removed), MCP version stamp synced with a drift guard, README rewritten to the Go CLI surface, and the `web api+ui` ledger row corrected to PARTIAL with **#371** tracking the dashboard API port (new FR-GO-DASH row). Everything through v0.30.0 remains merged to main.
+**Last synced:** 2026-09-12 — v4.8.0 full-parity wave: every deferred ledger item implemented (dashboard API #371 closed, ontology workflows/traceability, compression, LSP bridge, Android/Gradle/Maven extractors, embedding sidecar lifecycle, languages 13→40, objc/dart grammars, enterprise auth + DB tokens, multi-project serving, doctor --deep, obsidian, and the Rust CLI verb set incl. run/audit/migrate/export/pack/generate/annotations/registry/tunnels/quality/reflect/refresh). Per-verb disposition table in docs/prd.md §6b; the five remaining Rust-era capabilities are tracked as #372–#376.
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 
@@ -31,6 +31,13 @@
 | M-GO — Go engine rewrite (#365) | 3 | — | **IN_PROGRESS** (FR-GO-W1 core DONE on feat/go-rewrite: store/core/index/mcp/rest + live smoke; FR-GO-EMBED DONE: leankg-embed binary + stamp guards + NDJSON; FR-GO-MEM DONE: full-markdown memory + banks adapter; v4.6.0: ALL waves landed (W2 watcher/writer, W4 pgvector, W5 ConnectRPC+auth, session, graph verbs, goldens, benchmarks + executed Rust-vs-Go A/B REPORT) and the Rust tree REMOVED — deferred ledger in docs/prd.md) |
 | FR-GO-LANGS | Lazy language wave (v4.7.0): 13-language registry + tstree/astgrep/lsp tiers + java/kotlin/swift/objc/dart extractors | **DONE** on feat/go-rewrite (objc/dart tree-sitter grammar gap documented) |
 | FR-GO-DASH | #371: port the ui-v2 dashboard data API — legacy `/api/*` (11 endpoints) or rebuild ui-v2 against `/api/v1/*`; today the SPA fallback answers those calls with `index.html`, so the embedded dashboard loads no data | 2026-09-11 | **TODO** — ledger row `web api+ui` corrected to PARTIAL in v4.7.1 |
+| FR-GO-PARITY | v4.8.0 full-parity wave: dashboard API, ontology workflows/traceability, compression, LSP bridge (config-gated enrich), Android/Gradle/Maven specialists, embedding sidecar lifecycle, 40-language registry + objc/dart grammars, enterprise auth + token lifecycle, multi-project serving + doctor --deep, obsidian, Rust CLI verb set | 2026-09-12 | **DONE** — full gate green (build/vet/test ×2 tags, CGO=0 tree build in CI, tidy no-op); live-verified dashboard/multi-project/MCP routing/run/audit/auth/doctor |
+| FR-GO-371 | Dashboard legacy `/api/*` (11 endpoints) | 2026-09-12 | **DONE** — #371 closed with live route evidence |
+| FR-GO-372 | Federation push/pull shared-server sync | — | **TODO** — tracked #372 (new product milestone) |
+| FR-GO-373 | Conversation mining (US-MP-03) | — | **TODO** — tracked #373 |
+| FR-GO-374 | Org knowledge surfaces (incidents/notes/env-conflicts) | — | **TODO** — tracked #374 |
+| FR-GO-375 | Persisted usage metrics + `leankg metrics` | — | **TODO** — tracked #375 |
+| FR-GO-376 | FR-ZCP-09/10 registry portfolio + cross-schema + fleet doctor | — | **TODO** — tracked #376 |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---

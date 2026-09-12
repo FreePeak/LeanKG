@@ -28,6 +28,12 @@ jobs:
       # a drifted go.mod/go.sum fails here instead of at release time.
       - name: Tidy guard
         run: cd go && cp go.mod /tmp/go.mod.bak && cp go.sum /tmp/go.sum.bak && go mod tidy && diff -q go.mod /tmp/go.mod.bak && diff -q go.sum /tmp/go.sum.bak
+      # The release artifacts are CGO_ENABLED=0 (release-go.yml), and the
+      # default build claims to be CGO-free. Runner images default to cgo=1,
+      # so without this step a stray vendored C source (e.g. a grammar's .c
+      # without its build tag) breaks the shipped shape while CI stays green.
+      - name: Build (CGO_ENABLED=0 — the release shape)
+        run: cd go && CGO_ENABLED=0 go build ./...
       - name: Build
         run: cd go && go build ./...
       - name: Vet
