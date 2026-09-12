@@ -594,6 +594,23 @@ Audit of all 73 variants of the Rust `CLICommand` enum against the Go surface. `
 | budget.rs, mcp/token_budget.rs, errors.rs | **I** — `internal/budget` (per-action caps, `_token_budget` marker, RSS guard) and `internal/errs` (14-entry catalog, FR-ZCP-12 T1) wired through MCP/CLI/REST/auth |
 | cost_estimate / ctags_export / prd_indexer / sources / setup(clone) | **I/C** — `leankg cost`, `leankg ctags`, `internal/prdindex` (+ `prd\|prd-trace`), `internal/sources` (`index\|refresh --source`); the `setup --clone` pipeline itself is **D** (its per-repo clone spec is servable by `internal/sources` if wanted) |
 
+### Known remainders and unverified seams (truthful record)
+
+Everything below is *known*, with its consequence stated — none of it is a silent gap.
+
+| Item | State / consequence |
+|---|---|
+| PG migrations 008 (tokens), 009 (enterprise auth) | **Executed** on throwaway PostgreSQL clusters during the wave (their agents' reports). |
+| PG migrations 010 (org knowledge), 011 (context metrics) | **Written but not executed on PG here**: the local Docker/PG fixture was unavailable for this environment, and CI skips PG without `LEANKG_TEST_PG_URL`. Their DDL is validated by the sqlite path plus dialect review only. Run `LEANKG_TEST_PG_URL=… go test ./internal/store/` where a server exists to close this. |
+| `gc.rs` (Rust `MemoryGuard`) | **Go-native substitute, not a port**: Rust polled RSS and called `malloc_trim` per MCP request plus an idle-triggered vacuum scheduler; Go's runtime GC returns memory itself and the store has no vacuum step. The *idle-gated embedding* behaviour (`embeddings/control.rs`) has no Go counterpart — recorded as dropped, not forgotten. |
+| doc→code join (`doc_indexer` references/`documented_by` edges, `paths.go`, dir elements, 512K cap) | **Unported**: `internal/docindex` covers the doc walk and sections only, so import-hygiene questions that relied on doc→code edges return empty. |
+| Error catalog wiring | 6 of 14 catalog entries are wired into call sites; the rest have no Go emission point yet (the drift-audit test logs the uncovered set rather than hiding it). |
+| `env_snapshots` | Go stand-in for Rust's env-scoped `code_elements` (Go elements are keyed on `qualified_name`, single-env). Consequence: `calls`/`called_by`/`schemas` cannot be env-filtered. |
+| `leankg team` verb + `/api/teams` routes | Unported (membership/ownership live in the auth subsystem; the `team-map` read exists). |
+| Agent notes authority | `knowledge_entries` (migration 010) carries **scoped org facts** (per element/feature/environment, queryable); the markdown memory layer (#369: `MEMORY.md`/`USER.md`/`topics/`) remains the **agent-facing** substrate. Two substrates by design, one purpose each — not interchangeable. |
+| Embeddings single-flight + per-file atomic replace | Absent (see #279 comment): concurrent `leankg-embed` runs are not serialized, and a crash mid-write can leave a partially written file's vectors. |
+| `tmp-langs/` (29 MB probe dir, committed by an earlier session in `c4f55a5f`) | Left in place deliberately (not this wave's artifact): a cleanup candidate for the maintainer. |
+
 ### Environment inventory (build/runtime)
 
 | Variable | Default | Meaning |

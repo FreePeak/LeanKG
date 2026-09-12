@@ -41,12 +41,6 @@ var cliQueryActions = map[string]bool{
 // arguments do, so the CLI can reach path/callers/callees/context/explain/
 // pattern/lsp/compress/read without a server. --kind is untouched.
 func cmdQuery(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "query requires a query string")
-		os.Exit(2)
-	}
-	q := args[0]
-	rest := args[1:]
 	fs := flag.NewFlagSet("query", flag.ExitOnError)
 	kind := fs.String("kind", "name", "query type: name (exact+fuzzy fallback) | impact")
 	action := fs.String("action", "", "envelope action: "+queryActionList())
@@ -65,11 +59,23 @@ func cmdQuery(args []string) {
 	service := fs.String("service", "", "action incidents/env_conflicts/service_context: service name")
 	env := fs.String("env", "", "action incidents/service_context: environment (default production server-side)")
 	limit := fs.Int("limit", 0, "result limit (args.limit for --action)")
-	if err := fs.Parse(rest); err != nil {
-		os.Exit(2)
+	// clap semantics: flags may appear before or after the query text, and a
+	// second positional is rejected rather than silently dropped (previously
+	// `query --kind impact foo` looked up the literal "--kind").
+	positional := parseInterspersed("query", fs, args, 1)
+	q := ""
+	if len(positional) == 1 {
+		q = positional[0]
 	}
 	provided := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
+
+	// A query string is required for the local verbs; the envelope actions may
+	// take everything from flags (e.g. `query --action languages`).
+	if q == "" && *action == "" && *path == "" {
+		fmt.Fprintln(os.Stderr, "query requires a query string")
+		os.Exit(2)
+	}
 
 	dir := resolveProjectDir(*project)
 

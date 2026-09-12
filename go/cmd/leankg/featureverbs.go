@@ -24,9 +24,7 @@ func cmdTunnels(args []string) {
 	fs := flag.NewFlagSet("tunnels", flag.ExitOnError)
 	path := fs.String("path", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	limit := fs.Int("limit", 50, "maximum tunnels to print (0 = no cap)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("tunnels", fs, args, 0)
 	dir := resolveProjectDir(*path)
 	engine, err := openEngine(dir, store.RO)
 	if err != nil {
@@ -49,9 +47,7 @@ func cmdQuality(args []string) {
 	path := fs.String("path", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	minLines := fs.Int("min-lines", 50, "minimum line count")
 	lang := fs.String("lang", "", "filter by language (e.g. go, python)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("quality", fs, args, 0)
 	dir := resolveProjectDir(*path)
 	engine, err := openEngine(dir, store.RO)
 	if err != nil {
@@ -71,16 +67,12 @@ func cmdReflect(args []string) {
 	path := fs.String("path", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	nodes := fs.String("nodes", "", "comma-separated qualified names that were returned")
 	note := fs.String("note", "", "free-form note")
-	// Rust/clap accepted flags in any position; Go's flag package stops at the
-	// first positional, so the two required positionals come first by contract.
-	if len(args) < 2 {
+	positional := parseInterspersed("reflect", fs, args, 2)
+	if len(positional) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: leankg reflect <question> <outcome> [--nodes a,b] [--note text]")
 		os.Exit(2)
 	}
-	question, outcome := args[0], args[1]
-	if err := fs.Parse(args[2:]); err != nil {
-		os.Exit(2)
-	}
+	question, outcome := positional[0], positional[1]
 	dir := resolveProjectDir(*path)
 	var nodeList []string
 	if *nodes != "" {
@@ -99,7 +91,9 @@ func cmdReflect(args []string) {
 // cmdRegister registers the current directory in the global registry
 // (Rust `register` verb).
 func cmdRegister(args []string) {
-	if len(args) != 1 {
+	fs := flag.NewFlagSet("register", flag.ExitOnError)
+	positional := parseInterspersed("register", fs, args, 1)
+	if len(positional) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg register <name>")
 		os.Exit(2)
 	}
@@ -107,32 +101,32 @@ func cmdRegister(args []string) {
 	if err != nil {
 		fatalText(err)
 	}
-	if err := registry.Register(args[0], cwd); err != nil {
+	if err := registry.Register(positional[0], cwd); err != nil {
 		fatalText(err)
 	}
-	fmt.Print(registry.ConfirmRegister(args[0], cwd))
+	fmt.Print(registry.ConfirmRegister(positional[0], cwd))
 }
 
 // cmdUnregister removes a repository from the global registry (Rust
 // `unregister` verb).
 func cmdUnregister(args []string) {
-	if len(args) != 1 {
+	fs := flag.NewFlagSet("unregister", flag.ExitOnError)
+	positional := parseInterspersed("unregister", fs, args, 1)
+	if len(positional) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg unregister <name>")
 		os.Exit(2)
 	}
-	was, err := registry.Unregister(args[0])
+	was, err := registry.Unregister(positional[0])
 	if err != nil {
 		fatalText(err)
 	}
-	fmt.Print(registry.ConfirmUnregister(args[0], was))
+	fmt.Print(registry.ConfirmUnregister(positional[0], was))
 }
 
 // cmdListRepos lists globally registered repositories (Rust `list` verb).
 func cmdListRepos(args []string) {
-	if len(args) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: leankg list")
-		os.Exit(2)
-	}
+	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	parseInterspersed("list", fs, args, 0)
 	entries, err := registry.List()
 	if err != nil {
 		fatalText(err)
@@ -143,13 +137,15 @@ func cmdListRepos(args []string) {
 // cmdStatusRepo shows bookkeeping + live store counts for a registered
 // repository (Rust `status-repo` verb).
 func cmdStatusRepo(args []string) {
-	if len(args) != 1 {
+	fs := flag.NewFlagSet("status-repo", flag.ExitOnError)
+	positional := parseInterspersed("status-repo", fs, args, 1)
+	if len(positional) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg status-repo <name>")
 		os.Exit(2)
 	}
-	st, err := registry.Status(args[0])
+	st, err := registry.Status(positional[0])
 	if errors.Is(err, registry.ErrNotFound) {
-		fmt.Printf("Repository '%s' not found in registry\n", args[0])
+		fmt.Printf("Repository '%s' not found in registry\n", positional[0])
 		return
 	}
 	if err != nil {
@@ -171,9 +167,7 @@ func cmdMineConversations(args []string) {
 	format := fs.String("format", "", "export format: claude | chatgpt | slack")
 	project := fs.String("project", ".", "project root whose .leankg graph receives the mined nodes")
 	input := fs.String("input", "", "input file or directory of export JSON files")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("mine-conversations", fs, args, 0)
 	f := convo.ParseFormat(*format)
 	if f == convo.UnknownFormat {
 		fmt.Fprintf(os.Stderr, "Unknown format '%s'; use --format claude|chatgpt|slack\n", *format)

@@ -663,13 +663,19 @@ func TestProjectSwitch(t *testing.T) {
 		t.Errorf("root error = %v", env.Error)
 	}
 
-	// A different directory: the single-project engine refuses.
+	// A different directory: this single-project listener refuses — and the
+	// refusal must name the real fix, because multi-project serving DOES exist
+	// (LEANKG_PROJECT_DIRS); claiming switching is unsupported would be false.
+	// (TestProjectSwitchBehavior in api_switch_test.go covers the success path.)
 	other := t.TempDir()
 	if code := postJSON(t, srv.URL+"/api/project/switch", fmt.Sprintf(`{"path":%q}`, other), &env); code != 200 {
 		t.Fatalf("other status %d", code)
 	}
-	if env.Success || env.Error == nil || !strings.Contains(*env.Error, "not supported") {
-		t.Errorf("other-project env = %+v", env)
+	if env.Success || env.Error == nil {
+		t.Fatalf("other-project env = %+v", env)
+	}
+	if !strings.Contains(*env.Error, "LEANKG_PROJECT_DIRS") || !strings.Contains(*env.Error, "?project=") {
+		t.Errorf("refusal does not name the fix: %v", *env.Error)
 	}
 
 	// github_url is refused too (Rust cloned; Go is single-project).

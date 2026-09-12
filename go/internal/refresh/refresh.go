@@ -168,7 +168,11 @@ func Render(res Result) string {
 		fmt.Fprintf(&b, "Embedding skipped: %s\n", res.EmbedSkipped)
 	} else {
 		b.WriteString("Running embed...\n")
-		b.WriteString("[watch] Running incremental embed...\n")
+		mode := res.Embed.Mode
+		if mode == "" {
+			mode = "incremental"
+		}
+		fmt.Fprintf(&b, "[watch] Running %s embed...\n", mode)
 	}
 	b.WriteString("Refresh complete.\n")
 	return b.String()

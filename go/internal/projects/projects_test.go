@@ -163,3 +163,27 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 		t.Fatalf("seeded store must survive router.Close: %v", err)
 	}
 }
+
+// TestResolveDoesNotOpenStore pins the read-only contract of Resolve: the
+// dashboard's switch endpoint calls it on every POST, and Open would run
+// Migrate() (a write), open memory and activate languages on the target — a
+// UI action must not mutate a project it merely asks about.
+func TestResolveDoesNotOpenStore(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	r := NewRouter(a, Config{ExtraDirs: []string{b}})
+	defer r.Close()
+
+	dir, err := r.Resolve(b)
+	if err != nil {
+		t.Fatalf("Resolve(%q) = %v", b, err)
+	}
+	if dir == "" {
+		t.Fatal("Resolve returned an empty dir")
+	}
+	if _, err := os.Stat(filepath.Join(b, ".leankg")); !os.IsNotExist(err) {
+		t.Fatalf("Resolve created a store under %s (stat err = %v); it must not open", b, err)
+	}
+	if _, err := r.Resolve(filepath.Join(t.TempDir(), "unknown")); err == nil {
+		t.Fatal("Resolve accepted an unregistered path")
+	}
+}

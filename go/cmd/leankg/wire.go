@@ -22,9 +22,7 @@ import (
 func cmdWriter(args []string) {
 	fs := flag.NewFlagSet("writer", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
-	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
-	}
+	parseInterspersed("writer", fs, args, 0)
 	dir := *project
 	if dir == "" {
 		var err error
@@ -74,10 +72,8 @@ func cmdConnect(args []string) {
 	httpMode := fs.Bool("http", false, "write a remote (HTTP URL) entry instead of stdio")
 	url := fs.String("url", "", "remote MCP URL (with --http; default http://localhost:9699/mcp)")
 	project := fs.String("project", "", "explicit project path escape hatch (stdio only)")
-	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
-	}
-	if fs.NArg() != 1 {
+	positional := parseInterspersed("connect", fs, args, 1)
+	if len(positional) != 1 {
 		log.Fatalf("connect requires exactly one client: %s", strings.Join(Clients(), ", "))
 	}
 	home, err := os.UserHomeDir()
@@ -95,10 +91,10 @@ func cmdConnect(args []string) {
 		cfg.Mode = "stdio"
 		cfg.Project = *project
 	}
-	if err := WriteClient(home, fs.Arg(0), cfg); err != nil {
+	if err := WriteClient(home, positional[0], cfg); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("connected %s (%s)\n", fs.Arg(0), cfg.Mode)
+	fmt.Printf("connected %s (%s)\n", positional[0], cfg.Mode)
 }
 
 func cmdInstall(args []string) {
@@ -108,9 +104,7 @@ func cmdInstall(args []string) {
 	url := fs.String("url", "", "remote MCP URL (with --http)")
 	project := fs.String("project", "", "explicit project path (stdio escape hatch)")
 	registerCWD := fs.Bool("register-cwd", false, "write a session-start hook running `leankg index <project>` (claude-code)")
-	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
-	}
+	parseInterspersed("install", fs, args, 0)
 	if *target == "" {
 		log.Fatalf("install requires --target (%s)", strings.Join(Clients(), "|"))
 	}

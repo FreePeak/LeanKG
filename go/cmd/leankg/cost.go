@@ -52,9 +52,7 @@ func cmdCost(args []string) {
 	fs := flag.NewFlagSet("cost", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	format := fs.String("format", "text", "output format: text | json")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("cost", fs, args, 0)
 	dir := resolveProjectDir(*project)
 	engine, err := openEngine(dir, store.RO)
 	if err != nil {

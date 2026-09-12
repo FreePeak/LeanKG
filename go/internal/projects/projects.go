@@ -148,6 +148,13 @@ func (r *Router) Default() string { return r.def }
 //   - a filesystem path whose ancestor walk finds a registered project
 //     (a file inside a routed project routes to that project)
 //
+// Resolve maps a selector (dir path or name) to a registered project's
+// canonical directory WITHOUT opening it — no store open, no Migrate, no
+// language activation. Callers that only need "is this a project we serve"
+// (the dashboard's switch endpoint, routing decisions) must use this rather
+// than EngineFor/Open, which have write and startup side effects.
+func (r *Router) Resolve(selector string) (string, error) { return r.resolve(selector) }
+
 // Everything else errors (FR-ZCP-02): no silent default fallback.
 func (r *Router) resolve(selector string) (string, error) {
 	if selector == "" {

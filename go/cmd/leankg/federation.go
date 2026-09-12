@@ -27,9 +27,7 @@ func cmdPush(args []string) {
 	token := fs.String("token", "", "team token, sent as X-LeanKG-Token (required)")
 	env := fs.String("env", "local", "environment label")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("push", fs, args, 0)
 	if *remote == "" || *token == "" {
 		fmt.Fprintln(os.Stderr, "leankg push: --remote and --token are required")
 		os.Exit(2)
@@ -70,9 +68,7 @@ func cmdPull(args []string) {
 	remote := fs.String("remote", "", "shared server base URL (required)")
 	token := fs.String("token", "", "team token, sent as X-LeanKG-Token (required)")
 	env := fs.String("env", "production", "environment to pull")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("pull", fs, args, 0)
 	if *remote == "" || *token == "" {
 		fmt.Fprintln(os.Stderr, "leankg pull: --remote and --token are required")
 		os.Exit(2)

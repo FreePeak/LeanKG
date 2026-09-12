@@ -22,6 +22,11 @@ import (
 func cmdRun(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	compressOut := fs.Bool("compress", false, "RTK-style compression of the command's stdout")
+	// `run` is a trailing-var-arg verb (clap: flags, then `--`, then the child
+	// argv verbatim). Go's flag package already stops at the first positional and
+	// strips a `--` terminator, so its parse IS the clap semantics here — the
+	// interspersed walk must NOT be used: re-parsing after the first positional
+	// would strip the child's own flags (`run -- echo -n hi`) as leankg flags.
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}

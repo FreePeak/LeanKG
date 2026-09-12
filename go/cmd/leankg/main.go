@@ -144,6 +144,10 @@ func main() {
 		cmdServiceContext(os.Args[2:])
 	case "team-map":
 		cmdTeamMap(os.Args[2:])
+	case "push":
+		cmdPush(os.Args[2:])
+	case "pull":
+		cmdPull(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -408,9 +412,26 @@ func cmdServe(args []string) {
 		// everything else (web.Handler returns JSON 404 for unknown
 		// api/* paths). The API handler routes ?project= like the REST
 		// and MCP mounts, so the dashboard follows the selected project.
-		dash := routeByProject(ctx, router, web.APIHandler(engine, mem), func(p *projects.Project) http.Handler {
-			return web.APIHandler(p.Engine, p.Memory)
-		})
+		// The dashboard's project switcher is real only when this listener
+		// serves several projects: hand the handler a resolver bounded to the
+		// registered set (unknown selectors still refuse).
+		// Resolve, never Open: the switch endpoint must not migrate a store or
+		// start language servers just because the UI asked about a path.
+		switcher := func(path string) (string, bool) {
+			if router == nil {
+				return "", false
+			}
+			dir, err := router.Resolve(path)
+			if err != nil {
+				return "", false
+			}
+			return dir, true
+		}
+		dash := routeByProject(ctx, router,
+			web.APIHandler(engine, mem, web.WithProjectSwitcher(switcher)),
+			func(p *projects.Project) http.Handler {
+				return web.APIHandler(p.Engine, p.Memory, web.WithProjectDir(p.Dir), web.WithProjectSwitcher(switcher))
+			})
 		uiMux := http.NewServeMux()
 		uiMux.Handle("/api/", dash)
 		uiMux.Handle("/", web.Handler())
@@ -505,26 +526,11 @@ func cmdIndex(args []string) {
 	authFlag := fs.String("auth", "", "credential for --source (git token or GCS access token)")
 	auto := fs.Bool("auto", false, "first-run setup mode: index (and later embed) without asking again")
 	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
-	// Go's flag package stops at the first positional, so `index <dir> --flag`
-	// (the documented form, and what clap accepted) would leave the flag
-	// unparsed. Loop: parse, collect a positional, re-parse the remainder.
-	var positional []string
-	rest := args
-	for {
-		if err := fs.Parse(rest); err != nil {
-			log.Fatal(err)
-		}
-		rest = fs.Args()
-		if len(rest) == 0 {
-			break
-		}
-		positional = append(positional, rest[0])
-		rest = rest[1:]
-	}
+	positional := parseInterspersed("index", fs, args, 1)
 	if *auto && *manual {
 		log.Fatal("index: --auto and --manual are mutually exclusive")
 	}
-	if len(positional) > 1 || (len(positional) == 0 && *source == "") {
+	if len(positional) == 0 && *source == "" {
 		log.Fatal("index requires a directory argument (or --source)")
 	}
 	target := ""

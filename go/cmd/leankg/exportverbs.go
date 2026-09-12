@@ -63,9 +63,7 @@ func cmdExport(args []string) {
 	community := fs.String("community", "", "scope the export to a community/cluster id")
 	maxNodes := fs.Int("max-nodes", export.DefaultMaxNodes, "maximum nodes to include")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("export", fs, args, 0)
 
 	st, dir, err := openVerbStore(*project, store.RO)
 	if err != nil {
@@ -186,9 +184,7 @@ func cmdPack(args []string) {
 	maxNodes := fs.Int("max-nodes", pack.DefaultMaxNodes, "max elements (a pack refuses to truncate)")
 	revision := fs.String("revision", "", "source revision to record in the manifest (git sha / tag)")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("pack", fs, args, 0)
 
 	st, _, err := openVerbStore(*project, store.RO)
 	if err != nil {
@@ -222,9 +218,7 @@ func cmdGenerate(args []string) {
 	fs := flag.NewFlagSet("generate", flag.ExitOnError)
 	template := fs.String("template", "", "template name (accepted for CLI parity; the Rust generator never read it)")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("generate", fs, args, 0)
 	_ = template
 
 	st, _, err := openVerbStore(*project, store.RO)
@@ -247,20 +241,18 @@ func cmdGenerate(args []string) {
 
 // cmdAnnotate ports `leankg annotate <element> --description ...`.
 func cmdAnnotate(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: leankg annotate <element> --description TEXT [--user-story ID] [--feature ID]")
-		os.Exit(2)
-	}
-	element := args[0]
 	fs := flag.NewFlagSet("annotate", flag.ExitOnError)
 	description := fs.String("description", "", "business logic description")
 	fs.StringVar(description, "d", "", "business logic description (shorthand)")
 	userStory := fs.String("user-story", "", "user story id")
 	feature := fs.String("feature", "", "feature id")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args[1:]); err != nil {
+	positional := parseInterspersed("annotate", fs, args, 1)
+	if len(positional) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: leankg annotate <element> --description TEXT [--user-story ID] [--feature ID]")
 		os.Exit(2)
 	}
+	element := positional[0]
 
 	st, _, err := openVerbStore(*project, store.RW)
 	if err != nil {
@@ -288,17 +280,15 @@ func cmdAnnotate(args []string) {
 
 // cmdLink ports `leankg link <element> <id> [--kind story|feature]`.
 func cmdLink(args []string) {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: leankg link <element> <id> [--kind story|feature]")
-		os.Exit(2)
-	}
-	element, id := args[0], args[1]
 	fs := flag.NewFlagSet("link", flag.ExitOnError)
 	kind := fs.String("kind", "story", "link type: story or feature")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args[2:]); err != nil {
+	positional := parseInterspersed("link", fs, args, 2)
+	if len(positional) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: leankg link <element> <id> [--kind story|feature]")
 		os.Exit(2)
 	}
+	element, id := positional[0], positional[1]
 
 	st, _, err := openVerbStore(*project, store.RW)
 	if err != nil {
@@ -314,16 +304,14 @@ func cmdLink(args []string) {
 
 // cmdSearchAnnotations ports `leankg search-annotations <query>`.
 func cmdSearchAnnotations(args []string) {
-	if len(args) < 1 {
+	fs := flag.NewFlagSet("search-annotations", flag.ExitOnError)
+	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
+	positional := parseInterspersed("search-annotations", fs, args, 1)
+	if len(positional) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg search-annotations <query>")
 		os.Exit(2)
 	}
-	query := args[0]
-	fs := flag.NewFlagSet("search-annotations", flag.ExitOnError)
-	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args[1:]); err != nil {
-		os.Exit(2)
-	}
+	query := positional[0]
 
 	st, _, err := openVerbStore(*project, store.RO)
 	if err != nil {
@@ -354,16 +342,14 @@ func cmdSearchAnnotations(args []string) {
 
 // cmdShowAnnotations ports `leankg show-annotations <element>`.
 func cmdShowAnnotations(args []string) {
-	if len(args) < 1 {
+	fs := flag.NewFlagSet("show-annotations", flag.ExitOnError)
+	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
+	positional := parseInterspersed("show-annotations", fs, args, 1)
+	if len(positional) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg show-annotations <element>")
 		os.Exit(2)
 	}
-	element := args[0]
-	fs := flag.NewFlagSet("show-annotations", flag.ExitOnError)
-	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args[1:]); err != nil {
-		os.Exit(2)
-	}
+	element := positional[0]
 
 	st, _, err := openVerbStore(*project, store.RO)
 	if err != nil {

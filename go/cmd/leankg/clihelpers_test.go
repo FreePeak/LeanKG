@@ -60,8 +60,17 @@ func cliBinary(t *testing.T) string {
 
 // runCLI executes the CLI and returns stdout, stderr, and the exit code.
 func runCLI(t *testing.T, args ...string) (string, string, int) {
+	return runCLIIn(t, "", args...)
+}
+
+// runCLIIn is runCLI with an explicit working directory ("" inherits the test
+// process's). Verbs that resolve a project from the cwd — index's first-run
+// setup choice, setup --reset — need the process to actually run inside the
+// fixture instead of beside the repo's own .leankg.
+func runCLIIn(t *testing.T, dir string, args ...string) (string, string, int) {
 	t.Helper()
 	cmd := exec.Command(cliBinary(t), args...)
+	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

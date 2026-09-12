@@ -56,9 +56,7 @@ func cmdObsidian(args []string) {
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	vaultFlag := fs.String("vault", "", "custom vault path (default <project>/.leankg/obsidian/vault)")
 	debounce := fs.Int("debounce-ms", 1000, "watch debounce delay in milliseconds")
-	if err := fs.Parse(rest); err != nil {
-		log.Fatal(err)
-	}
+	parseInterspersed("obsidian "+verb, fs, rest, 0)
 
 	dir := *project
 	if dir == "" {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -135,4 +136,37 @@ func runIndex(project, target, source, refName, auth string) error {
 	fmt.Printf("indexed %s: files=%d elements=%d relationships=%d skipped=%d\n",
 		indexTarget, res.Files, res.Elements, res.Relationships, res.Skipped)
 	return nil
+}
+
+// parseInterspersed parses flags that may appear before OR after positionals
+// (clap semantics) and returns the positionals in order. verb names the
+// command in usage errors; max is how many positionals the verb accepts.
+//
+// Go's flag package stops at the first positional, so the documented
+// `verb <positional> --flag` form left the flag — and every token after it —
+// unparsed, producing a confidently wrong answer (`refresh . --full` ran
+// incrementally; `env-conflicts w2 --env production` reported on an empty
+// service). Re-parsing the remainder after each positional fixes the drop; the
+// bound is checked as tokens are collected, so a surplus positional fails with
+// "unexpected argument" before any trailing flag is parsed, and nothing is ever
+// silently ignored. Parse errors keep the flag package's exit-2 contract (every
+// verb builds its FlagSet with flag.ExitOnError).
+func parseInterspersed(verb string, fs *flag.FlagSet, args []string, max int) []string {
+	var positional []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			os.Exit(2)
+		}
+		rest = fs.Args()
+		if len(rest) == 0 {
+			return positional
+		}
+		positional = append(positional, rest[0])
+		if len(positional) > max {
+			fmt.Fprintf(os.Stderr, "%s: unexpected argument %q\n", verb, rest[0])
+			os.Exit(2)
+		}
+		rest = rest[1:]
+	}
 }

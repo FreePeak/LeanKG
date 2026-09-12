@@ -19,9 +19,7 @@ func cmdCtags(args []string) {
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	out := fs.String("out", "", "write the tags file to FILE instead of stdout (Rust's --output)")
 	format := fs.String("format", "ctags", "export format (only ctags is wired, like the Rust TagsFormat enum)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("ctags", fs, args, 0)
 	if *format != "ctags" {
 		fmt.Fprintf(os.Stderr, "ctags: unknown format %q (valid: ctags)\n", *format)
 		os.Exit(2)

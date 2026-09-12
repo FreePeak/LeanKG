@@ -29,9 +29,7 @@ func cmdSetup(args []string) {
 	index := fs.Bool("index", false, "run a full index per repo dir")
 	embed := fs.Bool("embed", false, "run the embedding build per repo dir")
 	status := fs.Bool("status", false, "report the resolved repo list without running")
-	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
-	}
+	parseInterspersed("setup", fs, args, 0)
 
 	if *reset {
 		root := projectcfg.FindProjectRoot(".")
@@ -57,6 +55,14 @@ func cmdSetup(args []string) {
 	})
 	if err != nil {
 		log.Fatalf("setup: %v", err)
+	}
+
+	// An empty resolution used to print an empty table — indistinguishable from
+	// success. The report is not an error (exit 0), but it must say so and name
+	// the knobs that fill it (internal/setup's ResolveRepos reads exactly these
+	// three, in this precedence order).
+	if (*status || !(*clone || *index || *embed)) && len(res.Specs) == 0 {
+		fmt.Println("No repositories resolved. Set LEANKG_WORKSPACE_DIR, LEANKG_PROJECT_DIRS or LEANKG_REPOS, then re-run.")
 	}
 	// Registry bookkeeping the pipeline deliberately left to the caller.
 	for _, repo := range res.IndexedRepos {

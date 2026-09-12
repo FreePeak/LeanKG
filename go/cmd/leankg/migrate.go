@@ -35,9 +35,7 @@ func cmdMigrate(args []string) {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	engineName := fs.String("engine", "", "storage engine: sqlite (default) | postgres")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("migrate", fs, args, 0)
 	eng := *engineName
 	if eng == "" {
 		eng = envOr("LEANKG_DB_ENGINE", "sqlite")

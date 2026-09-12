@@ -48,9 +48,7 @@ func cmdIncident(args []string) {
 		prevention := fs.String("prevention", "", "prevention advice")
 		env := fs.String("env", "production", "environment")
 		ticket := fs.String("ticket", "", "linked ticket id")
-		if err := fs.Parse(rest); err != nil {
-			os.Exit(2)
-		}
+		parseInterspersed("incident add", fs, rest, 0)
 		now := time.Now().Unix()
 		inc := store.Incident{
 			Env: *env, Title: *title, Severity: *severity, OccurredAt: now,
@@ -87,9 +85,7 @@ func cmdIncident(args []string) {
 		env := fs.String("env", "production", "environment")
 		pattern := fs.String("pattern", "", "search pattern (title or root cause)")
 		limit := fs.Int("limit", 10, "limit results")
-		if err := fs.Parse(rest); err != nil {
-			os.Exit(2)
-		}
+		parseInterspersed("incident list", fs, rest, 0)
 		withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
 			incidents, err := k.QueryIncidents(*service, *pattern, *env, *limit)
 			if err != nil {
@@ -118,16 +114,14 @@ func cmdIncident(args []string) {
 		})
 
 	case "show":
-		if len(rest) < 1 {
+		fs := flag.NewFlagSet("incident show", flag.ExitOnError)
+		project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
+		positional := parseInterspersed("incident show", fs, rest, 1)
+		if len(positional) < 1 {
 			fmt.Fprintln(os.Stderr, "usage: leankg incident show <id> [--project DIR]")
 			os.Exit(2)
 		}
-		id := rest[0]
-		fs := flag.NewFlagSet("incident show", flag.ExitOnError)
-		project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-		if err := fs.Parse(rest[1:]); err != nil {
-			os.Exit(2)
-		}
+		id := positional[0]
 		withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
 			inc, found, err := k.GetIncident(id)
 			if err != nil {
@@ -176,9 +170,7 @@ func cmdNote(args []string) {
 	target := fs.String("target", "", "target service or element qualified name")
 	content := fs.String("content", "", "note content")
 	env := fs.String("env", "local", "environment")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("note", fs, args, 0)
 	withOrgKnowledge(*project, store.RW, func(k *orgknowledge.Knowledge) error {
 		note, err := k.AddNote(*target, *content, *env, orgknowledge.AuthorFromEnv())
 		if err != nil {
@@ -195,9 +187,7 @@ func cmdEnvConflicts(args []string) {
 	fs := flag.NewFlagSet("env-conflicts", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	service := fs.String("service", "", "service name")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("env-conflicts", fs, args, 0)
 	withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
 		report, err := k.EnvConflictReport(*service)
 		if err != nil {
@@ -214,9 +204,7 @@ func cmdServiceContext(args []string) {
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	service := fs.String("service", "", "service name (element qualified name)")
 	env := fs.String("env", "production", "environment")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("service-context", fs, args, 0)
 	withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
 		ctx, err := k.ServiceContext(*service, *env)
 		if err != nil {
@@ -231,9 +219,7 @@ func cmdTeamMap(args []string) {
 	fs := flag.NewFlagSet("team-map", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	env := fs.String("env", "production", "environment")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("team-map", fs, args, 0)
 	withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
 		teams, err := k.TeamMap(*env)
 		if err != nil {

@@ -45,10 +45,31 @@ func writeEnvelope(w http.ResponseWriter, env apiEnvelope) {
 //	mux.Handle("/api/", web.APIHandler(engine, mem))
 //	mux.Handle("/", web.Handler())
 //
-// The Go engine is single-project: the project directory is derived from the
-// engine's store path (or the memory root) and never switched at runtime.
-func APIHandler(engine *core.Engine, mem *memory.Memory) http.Handler {
+// One handler serves one project: the directory is derived from the engine's
+// store path (or the memory root). Options let a multi-project server
+// (LEANKG_PROJECT_DIRS) teach the handler about the projects it serves, so
+// /api/project/switch answers truthfully instead of refusing by assumption.
+// APIOption configures an APIHandler.
+type APIOption func(*apiH)
+
+// WithProjectSwitcher makes POST /api/project/switch answer for the projects a
+// multi-project server actually serves: fn resolves an absolute path to that
+// project's canonical dir. Without it the handler keeps the single-project
+// posture (and says so accurately).
+func WithProjectSwitcher(fn func(path string) (string, bool)) APIOption {
+	return func(h *apiH) { h.switcher = fn }
+}
+
+// WithProjectDir overrides the served project directory (per-project mounts).
+func WithProjectDir(dir string) APIOption {
+	return func(h *apiH) { h.projectDir = dir }
+}
+
+func APIHandler(engine *core.Engine, mem *memory.Memory, opts ...APIOption) http.Handler {
 	h := &apiH{engine: engine, mem: mem, projectDir: deriveProjectDir(engine, mem)}
+	for _, opt := range opts {
+		opt(h)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/index/status", h.indexStatus)
 	mux.HandleFunc("POST /api/query", h.query)
@@ -71,6 +92,7 @@ func APIHandler(engine *core.Engine, mem *memory.Memory) http.Handler {
 
 // apiH carries the engine plus the single project root the dashboard serves.
 type apiH struct {
+	switcher   func(path string) (string, bool)
 	engine     *core.Engine
 	mem        *memory.Memory
 	projectDir string
@@ -331,9 +353,11 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.GithubURL != "" {
-		// The Rust engine cloned + indexed the repo; the single-project Go
-		// engine cannot switch, so surface that explicitly.
-		writeEnvelope(w, failEnvelope("project switching is not supported by this engine (single-project serve)"))
+		// The Rust engine cloned the repo here; the Go engine keeps repository
+		// acquisition in internal/sources, reachable from the CLI.
+		writeEnvelope(w, failEnvelope(fmt.Sprintf(
+			"github_url switching is not supported by this listener; acquire the repository with `leankg index --source git+%s --ref-name <ref> <dir>` and serve that directory",
+			req.GithubURL)))
 		return
 	}
 	if req.Path == "" {
@@ -353,11 +377,30 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, failEnvelope("Directory not found. Please check the path and try again."))
 		return
 	}
-	// Single-project engine: the dashboard keeps the served project; switching
-	// to a different root is unsupported (the Rust engine swapped its DB here).
+	// A different root is only reachable when this listener serves it: consult
+	// the injected switcher (multi-project mode), else refuse with the accurate
+	// fix rather than a claim that switching is impossible.
 	if h.projectDir != "" && !sameDir(abs, h.projectDir) {
+		if h.switcher != nil {
+			if dir, ok := h.switcher(abs); ok {
+				_, statErr := os.Stat(filepath.Join(dir, ".leankg"))
+				writeEnvelope(w, okEnvelope(map[string]any{
+					"is_directory":   true,
+					"has_database":   statErr == nil,
+					"needs_indexing": false,
+					"is_github":      false,
+					"project_path":   dir,
+					"project":        dir,
+					"element_count":  nil,
+					// Subsequent calls must select the project explicitly.
+					"select_with_project_param": true,
+				}))
+				return
+			}
+		}
 		writeEnvelope(w, failEnvelope(fmt.Sprintf(
-			"project switching is not supported by this engine; it serves %s", h.projectDir)))
+			"this listener serves %s; to serve several projects start it with LEANKG_PROJECT_DIRS=<dir>[,<dir>...] and select one per request with ?project=<dir|name>",
+			h.projectDir)))
 		return
 	}
 	els, err := h.engine.Store().ElementCount()

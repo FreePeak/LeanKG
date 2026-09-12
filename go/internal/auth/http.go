@@ -83,6 +83,15 @@ func Routes(st store.Backend) http.Handler {
 		if _, known := RoleFromString(req.Role); known {
 			role = req.Role
 		}
+		// Privilege ceiling: a caller that cannot write may not mint a role
+		// above its own. Without this a viewer bearer issues itself an admin
+		// token — the Rust handler had the identical hole while its own doc
+		// comment promised admin-only issuance.
+		if !ctx.CanWrite() {
+			if want, known := RoleFromString(role); !known || want > ctx.Role {
+				role = ctx.Role.String()
+			}
+		}
 		// ttl_secs is client input: convert through time.Duration only within
 		// its whole-second range. Beyond it the multiply wraps and a token
 		// meant to expire could be minted as never-expiring (TTL 0).

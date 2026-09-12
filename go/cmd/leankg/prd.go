@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"os"
 
 	"github.com/FreePeak/LeanKG/go/internal/prdindex"
 	"github.com/FreePeak/LeanKG/go/internal/store"
@@ -18,9 +17,7 @@ func cmdPRD(args []string) {
 	source := fs.String("source", "docs/prd.md", "PRD markdown path, relative to the project root")
 	environment := fs.String("environment", "local", "knowledge-entry environment")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("prd", fs, args, 0)
 	st, dir, err := openVerbStore(*project, store.RW)
 	if err != nil {
 		verbFatal(err)
@@ -44,12 +41,10 @@ func cmdPRD(args []string) {
 func cmdPRDTrace(args []string) {
 	fs := flag.NewFlagSet("prd-trace", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	positional := parseInterspersed("prd-trace", fs, args, 1)
 	featureID := ""
-	if fs.NArg() > 0 {
-		featureID = fs.Arg(0)
+	if len(positional) == 1 {
+		featureID = positional[0]
 	}
 	st, _, err := openVerbStore(*project, store.RO)
 	if err != nil {

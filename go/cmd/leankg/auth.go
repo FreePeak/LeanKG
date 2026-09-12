@@ -57,9 +57,7 @@ func authRegister(args []string) {
 	email := fs.String("email", "", "account email (required)")
 	password := fs.String("password", "", "account password (required, min 8 chars)")
 	name := fs.String("name", "", "account display name (required)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("auth register", fs, args, 0)
 	for _, missing := range []struct{ flag, value string }{
 		{"--email", *email}, {"--password", *password}, {"--name", *name},
 	} {
@@ -101,9 +99,7 @@ func authTokenCreate(args []string) {
 	orgID := fs.String("org-id", "", "org this token acts for (Rust --org-id)")
 	scopes := fs.String("scopes", "", "comma-separated opaque scope names")
 	ttl := fs.String("ttl", "", "token lifetime, e.g. 24h (default: never expires)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("auth token create", fs, args, 0)
 	if *name == "" {
 		fmt.Fprintln(os.Stderr, "auth token create: --name is required")
 		os.Exit(2)
@@ -156,9 +152,7 @@ func authTokenList(args []string) {
 	fs := flag.NewFlagSet("auth token list", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	accountID := fs.String("account-id", "", "only tokens issued for this account (Rust --account-id)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("auth token list", fs, args, 0)
 	dir := resolveProjectDir(*project)
 	engine, err := openEngine(dir, store.RO)
 	if err != nil {
@@ -203,9 +197,7 @@ func authTokenRevoke(args []string) {
 	fs := flag.NewFlagSet("auth token revoke", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	tokenID := fs.String("token-id", "", "token id to revoke (from `auth token list`)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("auth token revoke", fs, args, 0)
 	if *tokenID == "" {
 		fmt.Fprintln(os.Stderr, "auth token revoke: --token-id is required")
 		os.Exit(2)

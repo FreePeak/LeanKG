@@ -27,9 +27,7 @@ func cmdMetrics(args []string) {
 	retention := fs.Int("retention", 0, "retention period in days (default 30)")
 	cleanup := fs.Bool("cleanup", false, "delete records older than the retention window")
 	seed := fs.Bool("seed", false, "seed test metrics data")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("metrics", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
 	st, err := store.OpenBackend(context.Background(), dir,
@@ -67,9 +65,7 @@ func cmdDashboard(args []string) {
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	since := fs.String("since", "", "window: <N>h, <N>d or <N>w (e.g. 24h, 7d, 30d); default all time")
 	format := fs.String("format", "text", "output format: text|json")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("dashboard", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
 	st, err := store.OpenBackend(context.Background(), dir,

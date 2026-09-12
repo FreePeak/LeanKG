@@ -26,12 +26,10 @@ func cmdRefresh(args []string) {
 	refName := fs.String("ref-name", "", "git ref for --source git+... (default: main)")
 	authFlag := fs.String("auth", "", "credential for --source (git token or GCS access token)")
 	full := fs.Bool("full", false, "accepted for Rust CLI parity; refresh always embeds incrementally")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	positional := parseInterspersed("refresh", fs, args, 1)
 	path := ""
-	if fs.NArg() > 0 {
-		path = fs.Arg(0)
+	if len(positional) == 1 {
+		path = positional[0]
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

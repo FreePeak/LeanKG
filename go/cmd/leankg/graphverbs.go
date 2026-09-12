@@ -20,9 +20,7 @@ func cmdDetectClusters(args []string) {
 	// --min-hub-edges is registered for Rust CLI parity only: the Rust
 	// detector destructured `min_hub_edges: _` and never filtered on it.
 	fs.Int("min-hub-edges", 5, "minimum edges for a node to be considered a hub (Rust flag parity; the detector does not filter on it)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("detect-clusters", fs, args, 0)
 	dir := resolveProjectDir(*path)
 	engine, err := openEngine(dir, store.RO)
 	if err != nil {
@@ -45,9 +43,7 @@ func cmdGods(args []string) {
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	limit := fs.Int("limit", 20, "number of god nodes to list")
 	excludeHubs := fs.Int("exclude-hubs-percentile", 0, "exclude the top N% super-hubs (0 disables, matching the Rust Option::None default)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("gods", fs, args, 0)
 	dir := resolveProjectDir(*project)
 	engine, err := openEngine(dir, store.RO)
 	if err != nil {
@@ -72,9 +68,7 @@ func cmdReport(args []string) {
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	projectName := fs.String("project-name", "", "project display name (default: directory name)")
 	out := fs.String("out", "", "markdown output file (default <project>/.leankg/GRAPH_REPORT.md)")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("report", fs, args, 0)
 	dir := resolveProjectDir(*project)
 	engine, err := openEngine(dir, store.RO)
 	if err != nil {

@@ -47,9 +47,7 @@ func cmdAuditExport(args []string) {
 	until := fs.String("until", "", "only entries at/before T")
 	format := fs.String("format", "jsonl", "output format (only jsonl is wired, like the Rust AuditFormat enum)")
 	out := fs.String("out", "", "write to FILE instead of stdout")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("audit export", fs, args, 0)
 	if *format != "jsonl" {
 		fmt.Fprintf(os.Stderr, "audit export: unknown format %q (valid: jsonl)\n", *format)
 		os.Exit(2)
@@ -94,9 +92,7 @@ func cmdAuditVerify(args []string) {
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	since := fs.String("since", "", "count only entries at/after T (RFC3339 | epoch seconds | 90s|30m|24h|7d)")
 	until := fs.String("until", "", "count only entries at/before T")
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
-	}
+	parseInterspersed("audit verify", fs, args, 0)
 	window, err := parseAuditWindow(*since, *until)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "audit verify:", err)
