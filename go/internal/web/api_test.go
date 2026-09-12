@@ -817,3 +817,31 @@ func TestDetectCommunities(t *testing.T) {
 		}
 	}
 }
+
+// TestChildrenFilterElementTypes pins the multi-type OR filter: the Rust
+// handler carried an explicit TODO and applied only the first requested type,
+// silently dropping the rest — a comma-separated list must now match any of
+// the listed types (and an empty list must match everything).
+func TestChildrenFilterElementTypes(t *testing.T) {
+	els := []store.Element{
+		{QualifiedName: "src/a.go::A", ElementType: "function", FilePath: "src/a.go", Name: "A"},
+		{QualifiedName: "src/b.go::B", ElementType: "type", FilePath: "src/b.go", Name: "B"},
+		{QualifiedName: "src/c.go::C", ElementType: "import", FilePath: "src/c.go", Name: "C"},
+	}
+	snap := &snapshot{elements: els}
+	for _, tc := range []struct {
+		types map[string]bool
+		want  int
+	}{
+		{nil, 3},
+		{map[string]bool{"function": true}, 1},
+		{map[string]bool{"function": true, "type": true}, 2},
+		{map[string]bool{"function": true, "type": true, "import": true}, 3},
+		{map[string]bool{"nothing": true}, 0},
+	} {
+		got := childrenFiltered(snap, nil, "src", tc.types, 200, 0)
+		if len(got.elements) != tc.want {
+			t.Errorf("types=%v: got %d elements, want %d", tc.types, len(got.elements), tc.want)
+		}
+	}
+}

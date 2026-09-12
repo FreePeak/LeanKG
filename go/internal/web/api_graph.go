@@ -121,10 +121,12 @@ var nestedContentTypes = map[string]struct{}{
 	"property": {}, "struct": {}, "enum": {},
 }
 
-// childrenFiltered ports GraphEngine::get_children_filtered. The Rust
-// element_types filter only ever applied the first type (upstream TODO);
-// ported as-is. parent is project-relative ("" = root).
-func childrenFiltered(snap *snapshot, rels []store.Relationship, parent, elementType string, limit, offset int) folderPage {
+// childrenFiltered ports GraphEngine::get_children_filtered. parent is
+// project-relative ("" = root). elementTypes is a set: any listed type matches
+// (OR). Deliberate fix over the Rust original, which carried an explicit
+// "use only the first type if multiple specified / TODO: support multiple
+// types with proper OR logic" and silently dropped the rest.
+func childrenFiltered(snap *snapshot, rels []store.Relationship, parent string, elementTypes map[string]bool, limit, offset int) folderPage {
 	normalized := normalizePath(parent)
 	if normalized == "" {
 		// Root: structural direct children only; the Rust query pulled
@@ -143,12 +145,12 @@ func childrenFiltered(snap *snapshot, rels []store.Relationship, parent, element
 		return folderPage{elements: page, totalCount: len(rows), hasMore: len(page) == limit}
 	}
 
-	// Non-empty parent: unanchored "contains <parent>/" match, first type
-	// filter applied, then direct-child filter.
+	// Non-empty parent: unanchored "contains <parent>/" match, the type set
+	// applied when given, then the direct-child filter.
 	prefix := normalized + "/"
 	var matched []store.Element
 	for _, e := range snap.elements {
-		if elementType != "" && e.ElementType != elementType {
+		if len(elementTypes) > 0 && !elementTypes[e.ElementType] {
 			continue
 		}
 		if strings.Contains(stripDotSlash(e.FilePath), prefix) {
@@ -220,10 +222,14 @@ func upperFirst(s string) string {
 func (h *apiH) graphChildren(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	parent := q.Get("parent")
-	var elementType string
+	// element_types is a comma-separated list; every listed type matches.
+	elementTypes := map[string]bool{}
 	if v := strings.TrimSpace(q.Get("element_types")); v != "" {
-		// Rust quirk: only the first type was ever applied.
-		elementType = strings.TrimSpace(strings.Split(v, ",")[0])
+		for _, t := range strings.Split(v, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				elementTypes[t] = true
+			}
+		}
 	}
 	limit, offset := 200, 0
 	if v := q.Get("limit"); v != "" {
@@ -258,7 +264,7 @@ func (h *apiH) graphChildren(w http.ResponseWriter, r *http.Request) {
 		effective = ""
 	}
 
-	page := childrenFiltered(snap, rels, effective, elementType, limit, offset)
+	page := childrenFiltered(snap, rels, effective, elementTypes, limit, offset)
 
 	nodes := make([]graphNode, 0, len(page.elements))
 	existingFolders := map[string]struct{}{}
