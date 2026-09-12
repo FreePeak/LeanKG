@@ -1,13 +1,20 @@
-// Package ontology implements the ontology-lite layer of the Go engine: a
-// JSON concept catalog loaded from disk, matched case-insensitively against
-// indexed elements, with the match set persisted in the store's namespaced
-// KV ("ontology").
+// Package ontology implements the full ontology layer of the Go engine:
 //
-// PARITY GAP (honest scope): this package covers catalog loading and
-// matching only. The Rust engine's procedural layer — ontology workflows
-// with ordered steps and failure modes, feature-requirement traceability
-// (FR -> workflow -> code refs) and the traceability matrix — is NOT
-// implemented here and remains an open Go-parity gap.
+//   - concept catalog (JSON) loading and element matching, with the match
+//     set persisted in the store's namespaced KV ("ontology");
+//   - the procedural layer — workflow YAML loading and validation,
+//     workflow/step/failure-mode nodes with GID identity, procedural
+//     relationships (has_step / next_step / has_failure_mode), YAML →
+//     store sync with declarative replace, workflow trace
+//     (kg_trace_workflow), concept-gated search, feature traceability
+//     (FR → workflow → steps) and the traceability matrix;
+//   - the ontology-guided downward traversal that discovers implementing
+//     functions with full provenance (via_upper / via_edge / hop).
+//
+// Ported from the Rust implementation (src/ontology/{procedural,loader,
+// sync,query,concept,safe_discover}.rs and src/retrieval/
+// ontology_traversal.rs); Rust-only storage semantics (Cozo Datalog) are
+// re-expressed over store.Backend.
 package ontology
 
 import (

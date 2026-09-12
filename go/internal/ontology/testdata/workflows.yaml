@@ -1,0 +1,49 @@
+workflows:
+  - id: checkout
+    name: Checkout
+    env: local
+    aliases:
+      - place order
+    description: End-to-end checkout flow
+    entry_points:
+      - src/checkout/handler.rs::create_order
+    steps:
+      - id: create_order
+        name: Create Order
+        code_refs:
+          - src/order/service.rs::create
+        feature_ids:
+          - FR-CHK-01
+        user_story_ids:
+          - US-101
+      - id: authorize_payment
+        name: Authorize Payment
+        code_refs:
+          - src/payments/authorize.rs::authorize
+        failure_modes:
+          - card_declined
+        feature_ids:
+          - FR-CHK-01
+      - id: confirm
+        name: Confirm
+        code_refs:
+          - src/checkout/confirm.rs::run
+  - id: refund_flow
+    name: Refund Flow
+    env: local
+    aliases:
+      - money back
+    description: Refund processing
+    steps:
+      - id: validate
+        name: Validate
+        code_refs:
+          - src/refund/validate.rs::validate
+        failure_modes:
+          - already_refunded
+      - id: execute_refund
+        name: Execute Refund
+        code_refs:
+          - src/refund/handler.rs::process_refund
+        feature_ids:
+          - FR-REF-02

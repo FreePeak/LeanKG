@@ -88,6 +88,47 @@ func (m *Manager) Get(ctx context.Context, lang langs.Language, spec *langs.LSPS
 	return c, nil
 }
 
+// GetCommand is Get for a bridge-configured server: an explicit binary plus
+// args (catalog/leankg.yaml servers carry flags such as --stdio) and optional
+// initializationOptions. Pooling, idle eviction and shutdown semantics are
+// identical.
+func (m *Manager) GetCommand(ctx context.Context, lang langs.Language, bin string, args []string, rootDir string, initOpts any) (*Client, error) {
+	abs, err := filepath.Abs(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.evictLocked()
+	key := lspKey{lang, abs}
+	if c := m.clients[key]; c != nil {
+		return c, nil
+	}
+	c, err := StartCommand(ctx, lang, bin, args, abs, initOpts)
+	if err != nil {
+		return nil, err
+	}
+	m.clients[key] = c
+	return c, nil
+}
+
+// Evict closes and drops the pooled client for (lang, rootDir) so the next
+// Get spawns a fresh server. The Rust bridge did the same after a failed
+// request (entry = None) so one dead server never poisons the pool.
+func (m *Manager) Evict(lang langs.Language, rootDir string) {
+	abs, err := filepath.Abs(rootDir)
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	c := m.clients[lspKey{lang, abs}]
+	delete(m.clients, lspKey{lang, abs})
+	m.mu.Unlock()
+	if c != nil {
+		_ = c.Close()
+	}
+}
+
 // Len returns the number of live pooled clients.
 func (m *Manager) Len() int {
 	m.mu.Lock()

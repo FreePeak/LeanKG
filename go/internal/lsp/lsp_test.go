@@ -18,7 +18,9 @@ import (
 
 // fakeLSP is a POSIX-sh LSP server: it answers the handshake, serves canned
 // symbol payloads, and can be told to go mute on documentSymbol requests.
-// Behaviour is selected with FAKE_LSP_MODE: hier (default) | flat | silent.
+// Behaviour is selected with FAKE_LSP_MODE: hier (default) | flat | silent |
+// rich. rich mode answers per-URI documentSymbol payloads (with detail +
+// hierarchy) and hover docs, which the enrichment tests consume.
 const fakeLSP = `#!/bin/sh
 mode="${FAKE_LSP_MODE:-hier}"
 cr=$(printf '\r')
@@ -50,6 +52,9 @@ while :; do
     shutdown)
       send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":null}"
       ;;
+    textDocument/hover)
+      send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"server hover documentation\"}}}"
+      ;;
     textDocument/documentSymbol)
       if [ "$mode" = silent ]; then
         sleep 60
@@ -57,6 +62,15 @@ while :; do
       fi
       if [ "$mode" = flat ]; then
         send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":[{\"name\":\"flatFn\",\"kind\":12,\"location\":{\"range\":{\"start\":{\"line\":4},\"end\":{\"line\":8}}}}]}"
+      elif [ "$mode" = rich ]; then
+        case "$body" in
+          *a.go*)
+            send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":[{\"name\":\"Handle\",\"kind\":12,\"detail\":\"func Handle(x int) error\",\"range\":{\"start\":{\"line\":2},\"end\":{\"line\":6}}},{\"name\":\"Server\",\"kind\":5,\"range\":{\"start\":{\"line\":8},\"end\":{\"line\":20}},\"children\":[{\"name\":\"Serve\",\"kind\":6,\"range\":{\"start\":{\"line\":10},\"end\":{\"line\":16}}}]},{\"name\":\"Config\",\"kind\":23,\"range\":{\"start\":{\"line\":30},\"end\":{\"line\":34}}}]}"
+            ;;
+          *)
+            send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":[{\"name\":\"Helper2\",\"kind\":12,\"detail\":\"func Helper2()\",\"range\":{\"start\":{\"line\":10},\"end\":{\"line\":12}}}]}"
+            ;;
+        esac
       else
         send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":[{\"name\":\"Outer\",\"kind\":5,\"range\":{\"start\":{\"line\":2},\"end\":{\"line\":20}},\"children\":[{\"name\":\"inner\",\"kind\":12,\"range\":{\"start\":{\"line\":6},\"end\":{\"line\":9}}}]}]}"
       fi

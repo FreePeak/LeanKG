@@ -37,6 +37,10 @@ type Symbol struct {
 	Kind      int // LSP SymbolKind
 	StartLine int
 	EndLine   int
+	// Detail is the server's signature string for the symbol
+	// (DocumentSymbol.detail). Rust-bridge parity: it feeds element
+	// metadata.signature_doc at enrichment time.
+	Detail string
 }
 
 // Available reports whether any of spec's command candidates resolves on
@@ -107,13 +111,24 @@ func Start(ctx context.Context, lang langs.Language, spec *langs.LSPSpec, rootDi
 		return nil, fmt.Errorf("%w: none of the %d server commands for %s resolve on PATH",
 			ErrNoServer, len(spec.Commands), lang)
 	}
+	return StartCommand(ctx, lang, bin, nil, rootDir, nil)
+}
+
+// StartCommand launches an explicit server binary with args (bridge-configured
+// servers may require flags like --stdio) and performs the same bounded
+// initialize handshake as Start; initOpts, when non-nil, is sent as
+// initializationOptions. Failure semantics match Start.
+func StartCommand(ctx context.Context, lang langs.Language, bin string, args []string, rootDir string, initOpts any) (*Client, error) {
+	if bin == "" {
+		return nil, fmt.Errorf("%w: no server command for %s", ErrNoServer, lang)
+	}
 
 	abs, err := filepath.Abs(rootDir)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, args...)
 	cmd.Dir = abs
 	cmd.Stderr = io.Discard
 	// A server that spawns children inheriting stdout would hold the pipe
@@ -147,7 +162,7 @@ func Start(ctx context.Context, lang langs.Language, spec *langs.LSPSpec, rootDi
 	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 
-	if _, err := c.request(hctx, "initialize", map[string]any{
+	init := map[string]any{
 		"processId": os.Getpid(),
 		"rootURI":   uriOf(abs),
 		"capabilities": map[string]any{
@@ -155,7 +170,11 @@ func Start(ctx context.Context, lang langs.Language, spec *langs.LSPSpec, rootDi
 				"documentSymbol": map[string]any{"hierarchicalDocumentSymbolSupport": true},
 			},
 		},
-	}); err != nil {
+	}
+	if initOpts != nil {
+		init["initializationOptions"] = initOpts
+	}
+	if _, err := c.request(hctx, "initialize", init); err != nil {
 		c.forceStop()
 		return nil, err
 	}
@@ -261,6 +280,41 @@ func (c *Client) WorkspaceSymbols(ctx context.Context, query string) ([]Symbol, 
 		return nil, err
 	}
 	return normalizeSymbols(raw)
+}
+
+// Hover runs textDocument/hover at the position and returns the server's
+// documentation payload ("" when the server answers null). Handles both the
+// MarkedString plain form and MarkupContent {value} form. Rust-client
+// parity: LspRequest::Hover.
+func (c *Client) Hover(ctx context.Context, absPath string, line, character int) (string, error) {
+	abs, err := filepath.Abs(absPath)
+	if err != nil {
+		return "", err
+	}
+	raw, err := c.request(ctx, "textDocument/hover", map[string]any{
+		"textDocument": map[string]any{"uri": uriOf(abs)},
+		"position":     map[string]any{"line": line, "character": character},
+	})
+	if err != nil {
+		return "", err
+	}
+	var probe struct {
+		Contents json.RawMessage `json:"contents"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil || len(probe.Contents) == 0 {
+		return "", nil // null hover: no documentation
+	}
+	var plain string
+	if err := json.Unmarshal(probe.Contents, &plain); err == nil {
+		return plain, nil // MarkedString plain form
+	}
+	var h struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(probe.Contents, &h); err != nil {
+		return "", fmt.Errorf("%w: decode hover contents: %v", ErrProtocol, err)
+	}
+	return h.Value, nil
 }
 
 // request sends a JSON-RPC request and waits for the correlated response,
@@ -373,6 +427,7 @@ func uriOf(absPath string) string {
 
 type rawPos struct {
 	Line int `json:"line"`
+	Char int `json:"character"`
 }
 
 type rawRange struct {
@@ -386,6 +441,7 @@ type rawRange struct {
 type rawSym struct {
 	Name     string    `json:"name"`
 	Kind     int       `json:"kind"`
+	Detail   string    `json:"detail"`
 	Range    *rawRange `json:"range"`
 	Location *struct {
 		Range rawRange `json:"range"`
@@ -410,6 +466,7 @@ func normalizeSymbols(raw json.RawMessage) ([]Symbol, error) {
 				out = append(out, Symbol{
 					Name:      s.Name,
 					Kind:      s.Kind,
+					Detail:    s.Detail,
 					StartLine: r.Start.Line + 1, // LSP lines are 0-based; we store 1-based
 					EndLine:   r.End.Line + 1,
 				})
