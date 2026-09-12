@@ -7,14 +7,35 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/FreePeak/LeanKG/go/internal/graph"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
+// cliQueryActions are the envelope actions the CLI can reach through the same
+// wiring the MCP transports use. memory/session/ontology stay MCP-only: they
+// need the memory subsystem and session roots the CLI does not construct.
+var cliQueryActions = map[string]bool{
+	"search": true, "exact": true, "fuzzy": true, "semantic": true, "element": true,
+	"impact": true, "path": true, "callers": true, "callees": true, "context": true,
+	"explain": true, "languages": true, "lsp": true, "pattern": true, "compress": true,
+	"read": true, // import{action:"read"}: the reader-mode compression path
+}
+
 // cmdQuery is the direct CLI query path (Rust `leankg query` parity): name
 // lookup with fuzzy fallback, plus the impact verb. Results print as JSON.
+//
+// Two forms:
+//
+//	leankg query <text> [--kind name|impact] [--depth N]        (local verbs)
+//	leankg query <text> --action <a> [action flags]             (envelope passthrough)
+//
+// --action routes through core.Query/core.Import exactly like the MCP tool
+// arguments do, so the CLI can reach path/callers/callees/context/explain/
+// pattern/lsp/compress/read without a server. --kind is untouched.
 func cmdQuery(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "query requires a query string")
@@ -24,22 +45,85 @@ func cmdQuery(args []string) {
 	rest := args[1:]
 	fs := flag.NewFlagSet("query", flag.ExitOnError)
 	kind := fs.String("kind", "name", "query type: name (exact+fuzzy fallback) | impact")
-	depth := fs.Int("depth", 2, "impact traversal depth")
-	compress := fs.Bool("compress", false, "RTK-style compact output (one line per result)")
+	action := fs.String("action", "", "envelope action: "+queryActionList())
+	depth := fs.Int("depth", 2, "traversal depth (--kind impact, or args.depth for --action)")
+	compressOut := fs.Bool("compress", false, "RTK-style compact output (one line per result)")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
+	to := fs.String("to", "", "action path: target qualified name")
+	lang := fs.String("lang", "", "action pattern/lsp: language id")
+	pattern := fs.String("pattern", "", "action pattern: ast-grep pattern")
+	cmd := fs.String("cmd", "", "action compress: command string the output came from")
+	command := fs.String("command", "", "action lsp: workspace (default) | document")
+	path := fs.String("path", "", "action read: file to compress; action lsp: file to inspect")
+	mode := fs.String("mode", "", "action read: reader mode (adaptive, full, map, signatures, diff, aggressive, entropy, lines)")
+	lines := fs.String("lines", "", "action read: line spec for the lines mode")
+	fresh := fs.Bool("fresh", false, "action read: bypass the session cache")
+	limit := fs.Int("limit", 0, "result limit (args.limit for --action)")
 	if err := fs.Parse(rest); err != nil {
 		os.Exit(2)
 	}
+	provided := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 
-	dir := *project
-	if dir == "" {
-		dir = envOr("LEANKG_PROJECT", ".")
+	dir := resolveProjectDir(*project)
+
+	if *action != "" {
+		if !cliQueryActions[*action] {
+			fmt.Fprintf(os.Stderr, "query: unknown --action %q\nvalid: %s\n", *action, queryActionList())
+			os.Exit(2)
+		}
+		engine, err := openEngine(dir, store.RO)
+		if err != nil {
+			fatalJSON(err)
+		}
+		defer engine.Store().Close()
+		argMap := map[string]any{}
+		for _, kv := range []struct{ name, value string }{
+			{"to", *to}, {"lang", *lang}, {"pattern", *pattern}, {"cmd", *cmd},
+			{"command", *command}, {"path", *path}, {"mode", *mode}, {"lines", *lines},
+		} {
+			if provided[kv.name] {
+				argMap[kv.name] = kv.value
+			}
+		}
+		if provided["depth"] {
+			argMap["depth"] = *depth
+		}
+		if *fresh {
+			argMap["fresh"] = "true"
+		}
+		ctx := context.Background()
+		if *action == "read" {
+			target := *path
+			if target == "" {
+				target = q
+			}
+			out, err := engine.Import(ctx, core.ImportRequest{Action: "read", Path: target, Args: argMap})
+			if err != nil {
+				fatalJSON(err)
+			}
+			printJSON(out)
+			return
+		}
+		out, err := engine.Query(ctx, core.QueryRequest{
+			Action: *action,
+			Query:  q,
+			Limit:  *limit,
+			Args:   argMap,
+		})
+		if err != nil {
+			fatalJSON(err)
+		}
+		printJSON(out)
+		return
 	}
-	st, err := store.OpenBackend(context.Background(), dir, envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), store.RO)
+
+	engine, err := openEngine(dir, store.RO)
 	if err != nil {
 		fatalJSON(err)
 	}
-	defer st.Close()
+	defer engine.Store().Close()
+	st := engine.Store()
 
 	switch *kind {
 	case "impact":
@@ -47,7 +131,7 @@ func cmdQuery(args []string) {
 		if err != nil {
 			fatalJSON(err)
 		}
-		if *compress {
+		if *compressOut {
 			// RTK-style: one line per affected node — "qn depth"
 			for _, h := range hits {
 				fmt.Printf("%s %d\n", h.QN, h.Depth)
@@ -69,7 +153,7 @@ func cmdQuery(args []string) {
 				els = append(els, m.Element)
 			}
 		}
-		if *compress {
+		if *compressOut {
 			for _, el := range els {
 				fmt.Printf("%s (%s)\n", el.QualifiedName, el.ElementType)
 			}
@@ -80,6 +164,16 @@ func cmdQuery(args []string) {
 		fmt.Fprintf(os.Stderr, "query: unknown kind %q (want name|impact)\n", *kind)
 		os.Exit(2)
 	}
+}
+
+// queryActionList renders the sorted --action vocabulary for usage strings.
+func queryActionList() string {
+	out := make([]string, 0, len(cliQueryActions))
+	for a := range cliQueryActions {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return strings.Join(out, "|")
 }
 
 func printJSON(v any) {

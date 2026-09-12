@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"github.com/FreePeak/LeanKG/go/internal/store"
@@ -34,6 +35,33 @@ func serveHTTP(ctx context.Context, h http.Handler, addr string) {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "leankg: http %s: %v\n", addr, err)
 	}
+}
+
+// resolveProjectDir picks the project directory for a verb: the explicit
+// --project/--path value, then LEANKG_PROJECT, then the working directory.
+func resolveProjectDir(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return envOr("LEANKG_PROJECT", ".")
+}
+
+// openEngine opens a project's store and returns a query-ready engine with the
+// project directory and the lazily-activated language registry wired, exactly
+// like the serving transports. The caller closes engine.Store().
+func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
+	st, err := store.OpenBackend(context.Background(), dir,
+		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), mode)
+	if err != nil {
+		return nil, err
+	}
+	engine := core.New(st, nil, nil)
+	engine.SetProjectDir(dir)
+	reg := langs.DefaultRegistry()
+	if _, aerr := reg.Activate(dir); aerr == nil {
+		engine.SetLangsRegistry(reg)
+	}
+	return engine, nil
 }
 
 // runIndex performs a one-shot index run into the project store.
