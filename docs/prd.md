@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.9.1-parity-third-wave
+**Version:** 4.9.2-adversarial-audit
 **Date:** 2026-09-12
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.31.0 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
@@ -9,6 +9,15 @@
 ---
 
 ## Changelog
+
+### v4.9.2-adversarial-audit — silently-wrong results closed (2026-09-12)
+
+> **Trigger:** an adversarial audit of the merged wave found surfaces that were *quietly* wrong rather than red.
+
+**Fixed (each with a test):** flags after positionals (clap semantics) across 47 call sites — `env-conflicts w2 --env production` had reported an empty-service success, `refresh . --full` ran incremental, `query --kind impact foo` looked up the literal `--kind`, and surplus positionals are now rejected with `unexpected argument` (`run` keeps the raw parse deliberately; its child argv must not be re-parsed) · `push`/`pull` were advertised in help but missing from the dispatch switch · `/api/project/switch` refused switching *after* multi-project serving shipped, and now consults an injected **non-opening** resolver (`Router.Resolve` — no store open, no `Migrate`) returning success for a served project or a refusal naming `LEANKG_PROJECT_DIRS` + `?project=` (the old check passed on HTTP 200 because `failEnvelope` is also 200 — the new test asserts the payload) · **a viewer bearer could mint itself an admin token**; the requested role is clamped to the caller's role for non-writers · `refresh --full` labelled its embed step "incremental" · `setup --status` printed nothing on an empty workspace · FR-ZCP-13 gained the persistence test its AC had been claiming.
+
+**Remainders recorded** (§6b "Known remainders and unverified seams"): PG migrations 010/011 unexecuted on Postgres · `gc.rs` as a Go-native substitute (idle-gated embedding dropped) · the `doc_indexer` doc→code join unported · 8/14 error codes unwired · `env_snapshots` cannot env-filter calls/schemas · `team` verb + `/api/teams` unported · embeddings single-flight + per-file atomic replace absent (#279).
+
 
 ### v4.9.1-parity-third-wave — project config + the FR-ZCP-13 first-run contract (2026-09-12)
 
@@ -643,4 +652,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-12 (v4.9.1 — third parity wave: leankg.yaml project config wired end-to-end, FR-ZCP-13 setup choice + pipeline + auto-index gates; every Rust module and CLI verb now has a port or a recorded disposition)*
+*Last updated: 2026-09-12 (v4.9.2 — adversarial-audit corrections: clap-order flags + stray-positional rejection, push/pull dispatch, truthful project switching via a non-opening resolver, token privilege ceiling, refresh/setup output fixes; remainders tabled in §6b)*
