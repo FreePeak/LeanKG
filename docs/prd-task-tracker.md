@@ -33,11 +33,11 @@
 | FR-GO-DASH | #371: port the ui-v2 dashboard data API — legacy `/api/*` (11 endpoints) or rebuild ui-v2 against `/api/v1/*`; today the SPA fallback answers those calls with `index.html`, so the embedded dashboard loads no data | 2026-09-11 | **TODO** — ledger row `web api+ui` corrected to PARTIAL in v4.7.1 |
 | FR-GO-PARITY | v4.8.0 full-parity wave: dashboard API, ontology workflows/traceability, compression, LSP bridge (config-gated enrich), Android/Gradle/Maven specialists, embedding sidecar lifecycle, 40-language registry + objc/dart grammars, enterprise auth + token lifecycle, multi-project serving + doctor --deep, obsidian, Rust CLI verb set | 2026-09-12 | **DONE** — full gate green (build/vet/test ×2 tags, CGO=0 tree build in CI, tidy no-op); live-verified dashboard/multi-project/MCP routing/run/audit/auth/doctor |
 | FR-GO-371 | Dashboard legacy `/api/*` (11 endpoints) | 2026-09-12 | **DONE** — #371 closed with live route evidence |
-| FR-GO-372 | Federation push/pull shared-server sync | — | **TODO** — tracked #372 (new product milestone) |
-| FR-GO-373 | Conversation mining (US-MP-03) | — | **TODO** — tracked #373 |
-| FR-GO-374 | Org knowledge surfaces (incidents/notes/env-conflicts) | — | **TODO** — tracked #374 |
-| FR-GO-375 | Persisted usage metrics + `leankg metrics` | — | **TODO** — tracked #375 |
-| FR-GO-376 | FR-ZCP-09/10 registry portfolio + cross-schema + fleet doctor | — | **TODO** — tracked #376 |
+| FR-GO-372 | Federation push/pull shared-server sync | 2026-09-12 | **PARTIAL** — client ported (`internal/federation` + `push\|pull` verbs); Rust's `pull` was only a `/api/v2/status` probe and no server ever served `/api/v2/graph/push`, so the receiver + merge policy remain design work (#372 open) |
+| FR-GO-373 | Conversation mining (US-MP-03) | 2026-09-12 | **DONE** — `internal/convo` + `mine-conversations`; #373 closed (also fixes a Rust edge-loss defect) |
+| FR-GO-374 | Org knowledge surfaces (incidents/notes/env-conflicts) | 2026-09-12 | **DONE** — `internal/orgknowledge` + migration 010 + CLI verbs + `/api/v2/*`; #374 closed |
+| FR-GO-375 | Persisted usage metrics + `leankg metrics` | 2026-09-12 | **DONE** — `context_metrics` (migration 011) + `metrics`/`dashboard` verbs; #375 closed |
+| FR-GO-376 | FR-ZCP-09/10 registry portfolio + cross-schema + fleet doctor | — | **TODO** — tracked #376 (never built in Rust either: a new product milestone, not a port) |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
