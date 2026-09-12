@@ -58,6 +58,10 @@ type Result struct {
 	DocsResult  docindex.Result
 	DocsIndexed bool
 	Embed       embed.Report
+	// EmbedSkipped is non-empty when the embed stage could not run (no
+	// provider/sidecar): the refresh still succeeds, like Rust's
+	// maybe_run_embed printing the reason and returning Ok.
+	EmbedSkipped string
 }
 
 // Run executes the three refresh stages in Rust order and fails fast on the
@@ -122,7 +126,11 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	// local sidecar on demand.
 	provider, release, err := embed.StartProvider(ctx)
 	if err != nil {
-		return res, fmt.Errorf("refresh: embed provider: %w", err)
+		// Rust parity (main.rs maybe_run_embed): an unavailable embedder is a
+		// reported skip, not a failed refresh — code and docs are already
+		// indexed at this point, and the reason names the fix.
+		res.EmbedSkipped = err.Error()
+		return res, nil
 	}
 	defer release()
 	mode := "incremental"
@@ -152,8 +160,13 @@ func Render(res Result) string {
 		fmt.Fprintf(&b, "Indexing docs from %s...\n", res.DocsDir)
 		fmt.Fprintf(&b, "Indexed %d documents and %d sections\n", res.DocsResult.Files, res.DocsResult.Elements)
 	}
-	b.WriteString("Running embed...\n")
-	b.WriteString("[watch] Running incremental embed...\n")
+	if res.EmbedSkipped != "" {
+		// Rust parity: report the reason and finish (no hard failure).
+		fmt.Fprintf(&b, "Embedding skipped: %s\n", res.EmbedSkipped)
+	} else {
+		b.WriteString("Running embed...\n")
+		b.WriteString("[watch] Running incremental embed...\n")
+	}
 	b.WriteString("Refresh complete.\n")
 	return b.String()
 }

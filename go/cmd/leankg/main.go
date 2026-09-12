@@ -64,6 +64,8 @@ func main() {
 		cmdInstall(os.Args[2:])
 	case "version":
 		fmt.Println("leankg " + Version())
+	case "obsidian":
+		cmdObsidian(os.Args[2:])
 	case "status":
 		cmdStatus(os.Args[2:])
 	case "doctor":
@@ -152,6 +154,7 @@ Usage:
   leankg reflect <question> <outcome> [--nodes a,b] [--note TEXT]
   leankg refresh [PATH] [--project DIR] [--docs DIR] [--full]
   leankg register <name> | unregister <name> | list | status-repo <name>
+  leankg obsidian <init|push|pull|watch|status> [--project DIR] [--vault PATH] [--debounce-ms N]
   leankg export [--output FILE] [--format json|dot|mermaid] [--markdown] [--out FILE]
                 [--file F] [--depth N] [--path P] [--community C] [--max-nodes N]
   leankg pack   [--output DIR] [--path P] [--max-nodes N] [--revision REV] [--project DIR]

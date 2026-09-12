@@ -182,13 +182,24 @@ func TestRunRemoteSourceUnsupported(t *testing.T) {
 	}
 }
 
-func TestRunFailsFastOnBadProvider(t *testing.T) {
+// TestRunSkipsEmbedOnBadProvider pins the Rust parity (main.rs
+// maybe_run_embed): an unusable embedder is a REPORTED SKIP, not a refresh
+// failure — code and docs are already indexed when stage 3 starts, and the
+// reason must name the fix. (It previously failed the whole run, which is not
+// what the Rust verb did.)
+func TestRunSkipsEmbedOnBadProvider(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv("LEANKG_EMBED_PROVIDER", "bogus")
 	dir := newProject(t)
-	_, err := Run(context.Background(), Options{Project: dir, Path: dir})
-	if err == nil || !strings.Contains(err.Error(), "unknown LEANKG_EMBED_PROVIDER") {
-		t.Fatalf("error = %v, want provider failure", err)
+	res, err := Run(context.Background(), Options{Project: dir, Path: dir})
+	if err != nil {
+		t.Fatalf("Run = %v, want success with a recorded embed skip", err)
+	}
+	if res.EmbedSkipped == "" || !strings.Contains(res.EmbedSkipped, "unknown LEANKG_EMBED_PROVIDER") {
+		t.Fatalf("EmbedSkipped = %q, want the provider error text", res.EmbedSkipped)
+	}
+	if !strings.Contains(Render(res), "Embedding skipped:") {
+		t.Fatalf("Render = %q, want an explicit skip line", Render(res))
 	}
 	// Stages before the embed still landed (fail-fast is at stage 3).
 	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RO)
