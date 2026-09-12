@@ -22,7 +22,11 @@ var cliQueryActions = map[string]bool{
 	"search": true, "exact": true, "fuzzy": true, "semantic": true, "element": true,
 	"impact": true, "path": true, "callers": true, "callees": true, "context": true,
 	"explain": true, "languages": true, "lsp": true, "pattern": true, "compress": true,
-	"read": true, // import{action:"read"}: the reader-mode compression path
+	"read":            true, // import{action:"read"}: the reader-mode compression path
+	"prd":             true, // prdindex traceability rows (no extra subsystems needed)
+	"incidents":       true, // orgknowledge reads
+	"env_conflicts":   true,
+	"service_context": true,
 }
 
 // cmdQuery is the direct CLI query path (Rust `leankg query` parity): name
@@ -58,6 +62,8 @@ func cmdQuery(args []string) {
 	mode := fs.String("mode", "", "action read: reader mode (adaptive, full, map, signatures, diff, aggressive, entropy, lines)")
 	lines := fs.String("lines", "", "action read: line spec for the lines mode")
 	fresh := fs.Bool("fresh", false, "action read: bypass the session cache")
+	service := fs.String("service", "", "action incidents/env_conflicts/service_context: service name")
+	env := fs.String("env", "", "action incidents/service_context: environment (default production server-side)")
 	limit := fs.Int("limit", 0, "result limit (args.limit for --action)")
 	if err := fs.Parse(rest); err != nil {
 		os.Exit(2)
@@ -81,6 +87,7 @@ func cmdQuery(args []string) {
 		for _, kv := range []struct{ name, value string }{
 			{"to", *to}, {"lang", *lang}, {"pattern", *pattern}, {"cmd", *cmd},
 			{"command", *command}, {"path", *path}, {"mode", *mode}, {"lines", *lines},
+			{"service", *service}, {"env", *env},
 		} {
 			if provided[kv.name] {
 				argMap[kv.name] = kv.value

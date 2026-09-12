@@ -16,12 +16,16 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/go/internal/core"
+	"github.com/FreePeak/LeanKG/go/internal/errs"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
+	"github.com/FreePeak/LeanKG/go/internal/orgknowledge"
 )
 
 // Handler builds the REST mux over an engine.
@@ -100,6 +104,47 @@ func Handler(engine *core.Engine, mem *memory.Memory) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
+	// FR-ZCP org-knowledge reads (Rust /api/v2 routes; the Go envelope is the
+	// existing writeJSON payload shape). Param defaults follow the Rust
+	// handlers: env=production, limit=10.
+	org := orgknowledge.New(engine.Store())
+	mux.HandleFunc("GET /api/v2/incidents", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		env := q.Get("env")
+		if env == "" {
+			env = "production"
+		}
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		if limit == 0 {
+			limit = 10
+		}
+		incidents, err := org.QueryIncidents(q.Get("service"), q.Get("pattern"), env, limit)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"incidents": incidents})
+	})
+	mux.HandleFunc("GET /api/v2/env/diff", func(w http.ResponseWriter, r *http.Request) {
+		conflicts, err := org.FindEnvConflicts(r.URL.Query().Get("service"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"conflicts": conflicts})
+	})
+	mux.HandleFunc("GET /api/v2/service/context", func(w http.ResponseWriter, r *http.Request) {
+		env := r.URL.Query().Get("env")
+		if env == "" {
+			env = "production"
+		}
+		ctx, err := org.ServiceContext(r.URL.Query().Get("service"), env)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, ctx)
+	})
 	if mem != nil {
 		mux.HandleFunc("POST /api/v1/memory/banks/{bank}/memories", func(w http.ResponseWriter, r *http.Request) {
 			bank := r.PathValue("bank")
@@ -157,8 +202,16 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// writeErr renders a failed REST call. An error carrying a catalog code
+// (internal/errs) also exposes it as `code`, so clients branch on the stable
+// token instead of matching prose (FR-ZCP-12).
 func writeErr(w http.ResponseWriter, err error) {
-	writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+	body := map[string]any{"error": err.Error()}
+	var coded *errs.Error
+	if errors.As(err, &coded) {
+		body["code"] = coded.Code()
+	}
+	writeJSON(w, http.StatusBadRequest, body)
 }
 
 func decode[T any](w http.ResponseWriter, r *http.Request, into *T) bool {

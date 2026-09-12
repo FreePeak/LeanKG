@@ -18,12 +18,15 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/compress"
 	"github.com/FreePeak/LeanKG/go/internal/docindex"
 	"github.com/FreePeak/LeanKG/go/internal/embed"
+	"github.com/FreePeak/LeanKG/go/internal/errs"
 	"github.com/FreePeak/LeanKG/go/internal/graph"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
 	"github.com/FreePeak/LeanKG/go/internal/lsp"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
 	"github.com/FreePeak/LeanKG/go/internal/ontology"
+	"github.com/FreePeak/LeanKG/go/internal/orgknowledge"
+	"github.com/FreePeak/LeanKG/go/internal/prdindex"
 	"github.com/FreePeak/LeanKG/go/internal/session"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
@@ -75,6 +78,10 @@ func (e *Engine) SetLangsRegistry(reg *langs.Registry) { e.langsReg = reg }
 // import{action:"session"} for offloading bulky tool payloads).
 func (e *Engine) SetProjectDir(dir string) { e.projectDir = dir }
 
+// ProjectDir reports the project directory the engine is bound to (the metric
+// ledger records it as each row's project_path).
+func (e *Engine) ProjectDir() string { return e.projectDir }
+
 // New builds an Engine. mem may be nil (memory actions then error).
 func New(st store.Backend, mem *memory.Memory, embedder QueryEmbedder) *Engine {
 	return &Engine{st: st, mem: mem, embedder: embedder, compressor: compress.New()}
@@ -119,7 +126,8 @@ func ResolveEnvelope(tool string) (string, error) {
 	if canonical, ok := ToolAliases[tool]; ok {
 		return canonical, nil
 	}
-	return "", fmt.Errorf("unknown tool %q — valid tools: import, query, status (legacy aliases: set, get)", tool)
+	return "", errs.NewError(errs.UnknownTool,
+		fmt.Sprintf("tool %q is not in this server's registry — valid tools: import, query, status (legacy aliases: set, get)", tool), "")
 }
 
 // freshness derives the freshness label by comparing the current watermark
@@ -169,6 +177,22 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		return map[string]any{
 			"indexed": map[string]any{"files": res.Files, "elements": res.Elements, "skipped": res.Skipped},
 		}, nil
+	case "prd":
+		if req.Path == "" {
+			return nil, fmt.Errorf("import prd requires path (a PRD markdown document)")
+		}
+		env := argStr(req.Args, "environment")
+		if env == "" {
+			env = "local"
+		}
+		res, err := prdindex.IndexDocument(ctx, e.st, e.projectDir, req.Path, env)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := e.refreshInventory(); err != nil {
+			return nil, err
+		}
+		return map[string]any{"prd": res}, nil
 	case "repo", "dir":
 		if req.Path == "" {
 			return nil, fmt.Errorf("import %s requires path", req.Action)
@@ -216,9 +240,9 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		}
 		return e.OntologyMatch(req.Path)
 	case "":
-		return nil, fmt.Errorf("import requires action (repo, dir, docs, memory, session, ontology, read)")
+		return nil, fmt.Errorf("import requires action (repo, dir, docs, prd, memory, session, ontology, read)")
 	default:
-		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory, session, ontology)", req.Action)
+		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory, session, ontology, prd)", req.Action)
 	}
 }
 
@@ -405,9 +429,37 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		return e.patternQuery(ctx, req, map[string]any{"query": req.Query})
 	case "session":
 		return e.SessionRead(argStr(req.Args, "command"), req.Query, argStr(req.Args, "node_id"))
+	case "prd":
+		rows, err := prdindex.Trace(e.st, req.Query)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"requirements": rows, "count": len(rows)}, nil
+	case "incidents":
+		k := orgknowledge.New(e.st)
+		incidents, err := k.QueryIncidents(argStr(req.Args, "service"), argStr(req.Args, "pattern"), argStr(req.Args, "env"), req.Limit)
+		if err != nil {
+			return nil, err
+		}
+		if incidents == nil {
+			incidents = []store.Incident{}
+		}
+		return map[string]any{"incidents": incidents, "query": map[string]any{
+			"service": argStr(req.Args, "service"), "pattern": argStr(req.Args, "pattern"),
+			"env": argStr(req.Args, "env"), "limit": req.Limit,
+		}}, nil
+	case "env_conflicts":
+		conflicts, err := orgknowledge.New(e.st).FindEnvConflicts(argStr(req.Args, "service"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"conflicts": conflicts, "service": argStr(req.Args, "service")}, nil
+	case "service_context":
+		return orgknowledge.New(e.st).ServiceContextJSON(argStr(req.Args, "service"), argStr(req.Args, "env"))
 	case "", "search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain":
 	default:
-		return nil, fmt.Errorf("unknown query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology; empty = ladder router)", req.Action)
+		return nil, errs.NewError(errs.UnknownAction,
+			fmt.Sprintf("query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology, prd, incidents, env_conflicts, service_context; empty = ladder router)", req.Action), "")
 	}
 	if req.Query == "" {
 		return nil, fmt.Errorf("query requires query text")

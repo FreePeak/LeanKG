@@ -217,4 +217,126 @@ CREATE TABLE IF NOT EXISTS resource_ownership (
 CREATE INDEX IF NOT EXISTS idx_resource_ownership_owner ON resource_ownership (owner_account_id);
 CREATE INDEX IF NOT EXISTS idx_resource_ownership_resource ON resource_ownership (resource_type, resource_id);
 `})
+	migrations = append(migrations, migration{10, "org-knowledge", `
+-- Org/ops knowledge surfaces (Rust src/db/mod.rs parity): incidents,
+-- knowledge_entries (team notes / annotations), service_metadata (team,
+-- on-call, repo_url, language for the service-context read) and
+-- env_snapshots.
+--
+-- CEILING: Go's code_elements has no env column — it is keyed on
+-- qualified_name alone (schema.go migration 001), because the Go indexer
+-- indexes one environment at a time. The Rust env-scoped code_elements rows
+-- that find_env_conflicts compares are therefore re-expressed as
+-- env_snapshots: (env, qualified_name) -> captured element metadata. That is
+-- the whole input that detection needs (per-env presence + metadata compare);
+-- nothing else in the Go engine reads element envs today.
+-- JSON array/object values (affected_services, tags, metadata) are TEXT here,
+-- exactly as the Rust Cozo layout stored them.
+CREATE TABLE IF NOT EXISTS incidents (
+	id                TEXT PRIMARY KEY,
+	env               TEXT NOT NULL DEFAULT 'local',
+	title             TEXT NOT NULL,
+	severity          TEXT NOT NULL,
+	occurred_at       INTEGER NOT NULL,
+	resolved_at       INTEGER,
+	root_cause        TEXT NOT NULL,
+	resolution        TEXT NOT NULL,
+	affected_services TEXT NOT NULL DEFAULT '[]',
+	trigger_pattern   TEXT,
+	prevention        TEXT,
+	tags              TEXT NOT NULL DEFAULT '[]',
+	author            TEXT NOT NULL,
+	linked_ticket     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_env ON incidents (env);
+CREATE INDEX IF NOT EXISTS idx_incidents_occurred ON incidents (occurred_at);
+
+CREATE TABLE IF NOT EXISTS knowledge_entries (
+	id                TEXT PRIMARY KEY,
+	knowledge_type    TEXT NOT NULL DEFAULT 'general',
+	title             TEXT NOT NULL,
+	content           TEXT NOT NULL,
+	element_qualified TEXT,
+	user_story_id     TEXT,
+	feature_id        TEXT,
+	tags              TEXT NOT NULL DEFAULT '',
+	environment       TEXT NOT NULL DEFAULT 'local',
+	branch            TEXT,
+	author            TEXT NOT NULL,
+	created_at        INTEGER NOT NULL,
+	updated_at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_element ON knowledge_entries (element_qualified);
+CREATE INDEX IF NOT EXISTS idx_knowledge_feature ON knowledge_entries (feature_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge_entries (knowledge_type);
+CREATE INDEX IF NOT EXISTS idx_knowledge_env ON knowledge_entries (environment, updated_at);
+
+CREATE TABLE IF NOT EXISTS service_metadata (
+	service_name    TEXT NOT NULL,
+	env             TEXT NOT NULL DEFAULT 'local',
+	team            TEXT,
+	on_call         TEXT,
+	repo_url        TEXT,
+	language        TEXT,
+	health_endpoint TEXT,
+	slo_p99_ms      INTEGER,
+	incident_count  INTEGER NOT NULL DEFAULT 0,
+	last_incident   INTEGER,
+	tags            TEXT NOT NULL DEFAULT '',
+	version         TEXT,
+	deploy_envs     TEXT NOT NULL DEFAULT '',
+	created_at      INTEGER NOT NULL,
+	updated_at      INTEGER NOT NULL,
+	PRIMARY KEY (service_name, env)
+);
+
+CREATE TABLE IF NOT EXISTS env_snapshots (
+	env            TEXT NOT NULL,
+	qualified_name TEXT NOT NULL,
+	element_type   TEXT NOT NULL DEFAULT '',
+	name           TEXT NOT NULL DEFAULT '',
+	file_path      TEXT NOT NULL DEFAULT '',
+	metadata       TEXT NOT NULL DEFAULT '{}',
+	captured_at    INTEGER NOT NULL,
+	PRIMARY KEY (env, qualified_name)
+);
+CREATE INDEX IF NOT EXISTS idx_env_snapshots_qn ON env_snapshots (qualified_name);
+`})
+	migrations = append(migrations, migration{11, "context-metrics", `
+-- context_metrics: the persisted usage ledger (Rust src/db/pg/schema.sql
+-- CREATE TABLE context_metrics, from the Cozo ::create in
+-- src/db/sqlite_backend.rs): one row per served tool call.
+--
+-- No primary key: the Rust layout has none (Cozo has no key on this table),
+-- because the ledger is append-only — the same call recorded twice is two
+-- rows, and the readouts aggregate rather than deduplicate.
+-- timestamp is epoch SECONDS. The six nullable columns are the "not measured /
+-- not applicable" fields; every reader normalizes NULL to the zero value (see
+-- store_metrics.go), exactly like Rust's unwrap_or(0).
+-- The three indexes mirror the Rust ::index statements.
+CREATE TABLE IF NOT EXISTS context_metrics (
+	tool_name               TEXT NOT NULL,
+	timestamp               INTEGER NOT NULL,
+	project_path            TEXT NOT NULL,
+	input_tokens            INTEGER NOT NULL,
+	output_tokens           INTEGER NOT NULL,
+	output_elements         INTEGER NOT NULL,
+	execution_time_ms       INTEGER NOT NULL,
+	baseline_tokens         INTEGER NOT NULL,
+	baseline_lines_scanned  INTEGER NOT NULL,
+	tokens_saved            INTEGER NOT NULL,
+	savings_percent         REAL NOT NULL,
+	correct_elements        INTEGER,
+	total_expected          INTEGER,
+	f1_score                REAL,
+	query_pattern           TEXT,
+	query_file              TEXT,
+	query_depth             INTEGER,
+	success                 INTEGER NOT NULL,
+	is_deleted              INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_context_metrics_tool_name ON context_metrics (tool_name);
+CREATE INDEX IF NOT EXISTS idx_context_metrics_timestamp ON context_metrics (timestamp);
+CREATE INDEX IF NOT EXISTS idx_context_metrics_project_path ON context_metrics (project_path);
+`})
 }

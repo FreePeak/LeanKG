@@ -1,6 +1,6 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-12 — v4.8.0 full-parity wave: every deferred ledger item implemented (dashboard API #371 closed, ontology workflows/traceability, compression, LSP bridge, Android/Gradle/Maven extractors, embedding sidecar lifecycle, languages 13→40, objc/dart grammars, enterprise auth + DB tokens, multi-project serving, doctor --deep, obsidian, and the Rust CLI verb set incl. run/audit/migrate/export/pack/generate/annotations/registry/tunnels/quality/reflect/refresh). Per-verb disposition table in docs/prd.md §6b; the five remaining Rust-era capabilities are tracked as #372–#376.
+**Last synced:** 2026-09-12 — v4.9.0 second parity wave: federation client (push/pull; no server ever served the route → #372), conversation mining, persisted metrics + dashboard buckets, org knowledge (incidents/notes/env-conflicts/service-context + migration 010), PRD indexing (prd/prd-trace), remote sources (index|refresh --source), response token budget, error catalog. Full gate green (build ×3, vet ×2, tests ×2 tags, tidy). Per-verb + per-module disposition in docs/prd.md §6b.
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 

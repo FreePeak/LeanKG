@@ -22,7 +22,9 @@ func cmdRefresh(args []string) {
 	fs := flag.NewFlagSet("refresh", flag.ExitOnError)
 	project := fs.String("project", ".", "project root (the store lives at <project>/.leankg)")
 	docs := fs.String("docs", "", "docs directory (default <project>/docs when it exists)")
-	source := fs.String("source", "", "remote source URI (unsupported by the Go engine)")
+	source := fs.String("source", "", "remote source URI: git+<url>, gs://bucket/prefix, or a local path")
+	refName := fs.String("ref-name", "", "git ref for --source git+... (default: main)")
+	authFlag := fs.String("auth", "", "credential for --source (git token or GCS access token)")
 	full := fs.Bool("full", false, "accepted for Rust CLI parity; refresh always embeds incrementally")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
@@ -39,6 +41,8 @@ func cmdRefresh(args []string) {
 		Docs:    *docs,
 		Full:    *full,
 		Source:  *source,
+		RefName: *refName,
+		Auth:    sourceAuth(*authFlag),
 	})
 	if err != nil {
 		fatalText(err)

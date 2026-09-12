@@ -173,12 +173,29 @@ func TestRunDefaultPathIsDot(t *testing.T) {
 	}
 }
 
-func TestRunRemoteSourceUnsupported(t *testing.T) {
+func TestRunLocalSourceOverridesPath(t *testing.T) {
 	isolateEnv(t)
 	dir := newProject(t)
-	_, err := Run(context.Background(), Options{Project: dir, Path: dir, Source: "git+https://example.invalid/repo.git"})
-	if err == nil || !strings.Contains(err.Error(), "--source is not supported") {
-		t.Fatalf("Source error = %v, want ErrSourceUnsupported", err)
+	tree := filepath.Join(dir, "code")
+	if err := os.MkdirAll(tree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "main.go"), []byte("package code\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(context.Background(), Options{Project: dir, Source: tree})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want, werr := filepath.EvalSymlinks(tree)
+	if werr != nil {
+		t.Fatal(werr)
+	}
+	if res.Path != want {
+		t.Fatalf("Path = %q, want the source tree %q", res.Path, want)
+	}
+	if res.Code.Files == 0 {
+		t.Fatalf("code stage indexed nothing from the source tree: %+v", res.Code)
 	}
 }
 

@@ -206,6 +206,110 @@ CREATE TABLE IF NOT EXISTS resource_ownership (
 CREATE INDEX IF NOT EXISTS idx_resource_ownership_owner ON resource_ownership (owner_account_id);
 CREATE INDEX IF NOT EXISTS idx_resource_ownership_resource ON resource_ownership (resource_type, resource_id);
 `},
+	{10, "org-knowledge", nil, `
+-- Org/ops knowledge surfaces (Rust src/db/mod.rs parity) — mirror of the
+-- sqlite layout in schema.go migration 010; see that block for the
+-- env_snapshots ceiling note.
+CREATE TABLE IF NOT EXISTS incidents (
+	id                TEXT PRIMARY KEY,
+	env               TEXT NOT NULL DEFAULT 'local',
+	title             TEXT NOT NULL,
+	severity          TEXT NOT NULL,
+	occurred_at       BIGINT NOT NULL,
+	resolved_at       BIGINT,
+	root_cause        TEXT NOT NULL,
+	resolution        TEXT NOT NULL,
+	affected_services TEXT NOT NULL DEFAULT '[]',
+	trigger_pattern   TEXT,
+	prevention        TEXT,
+	tags              TEXT NOT NULL DEFAULT '[]',
+	author            TEXT NOT NULL,
+	linked_ticket     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_env ON incidents (env);
+CREATE INDEX IF NOT EXISTS idx_incidents_occurred ON incidents (occurred_at);
+
+CREATE TABLE IF NOT EXISTS knowledge_entries (
+	id                TEXT PRIMARY KEY,
+	knowledge_type    TEXT NOT NULL DEFAULT 'general',
+	title             TEXT NOT NULL,
+	content           TEXT NOT NULL,
+	element_qualified TEXT,
+	user_story_id     TEXT,
+	feature_id        TEXT,
+	tags              TEXT NOT NULL DEFAULT '',
+	environment       TEXT NOT NULL DEFAULT 'local',
+	branch            TEXT,
+	author            TEXT NOT NULL,
+	created_at        BIGINT NOT NULL,
+	updated_at        BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_element ON knowledge_entries (element_qualified);
+CREATE INDEX IF NOT EXISTS idx_knowledge_feature ON knowledge_entries (feature_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge_entries (knowledge_type);
+CREATE INDEX IF NOT EXISTS idx_knowledge_env ON knowledge_entries (environment, updated_at);
+
+CREATE TABLE IF NOT EXISTS service_metadata (
+	service_name    TEXT NOT NULL,
+	env             TEXT NOT NULL DEFAULT 'local',
+	team            TEXT,
+	on_call         TEXT,
+	repo_url        TEXT,
+	language        TEXT,
+	health_endpoint TEXT,
+	slo_p99_ms      INTEGER,
+	incident_count  INTEGER NOT NULL DEFAULT 0,
+	last_incident   BIGINT,
+	tags            TEXT NOT NULL DEFAULT '',
+	version         TEXT,
+	deploy_envs     TEXT NOT NULL DEFAULT '',
+	created_at      BIGINT NOT NULL,
+	updated_at      BIGINT NOT NULL,
+	PRIMARY KEY (service_name, env)
+);
+
+CREATE TABLE IF NOT EXISTS env_snapshots (
+	env            TEXT NOT NULL,
+	qualified_name TEXT NOT NULL,
+	element_type   TEXT NOT NULL DEFAULT '',
+	name           TEXT NOT NULL DEFAULT '',
+	file_path      TEXT NOT NULL DEFAULT '',
+	metadata       TEXT NOT NULL DEFAULT '{}',
+	captured_at    BIGINT NOT NULL,
+	PRIMARY KEY (env, qualified_name)
+);
+CREATE INDEX IF NOT EXISTS idx_env_snapshots_qn ON env_snapshots (qualified_name);
+`},
+	{11, "context-metrics", nil, `
+-- context_metrics: the persisted usage ledger — mirror of the sqlite layout in
+-- schema.go migration 011, which is the translation of the Rust PostgreSQL
+-- DDL (src/db/pg/schema.sql). See that block for the no-primary-key and
+-- nullable-column rationale.
+CREATE TABLE IF NOT EXISTS context_metrics (
+	tool_name               TEXT NOT NULL,
+	timestamp               BIGINT NOT NULL,
+	project_path            TEXT NOT NULL,
+	input_tokens            BIGINT NOT NULL,
+	output_tokens           BIGINT NOT NULL,
+	output_elements         BIGINT NOT NULL,
+	execution_time_ms       BIGINT NOT NULL,
+	baseline_tokens         BIGINT NOT NULL,
+	baseline_lines_scanned  BIGINT NOT NULL,
+	tokens_saved            BIGINT NOT NULL,
+	savings_percent         DOUBLE PRECISION NOT NULL,
+	correct_elements        BIGINT,
+	total_expected          BIGINT,
+	f1_score                DOUBLE PRECISION,
+	query_pattern           TEXT,
+	query_file              TEXT,
+	query_depth             BIGINT,
+	success                 BOOLEAN NOT NULL,
+	is_deleted              BOOLEAN NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_context_metrics_tool_name ON context_metrics (tool_name);
+CREATE INDEX IF NOT EXISTS idx_context_metrics_timestamp ON context_metrics (timestamp);
+CREATE INDEX IF NOT EXISTS idx_context_metrics_project_path ON context_metrics (project_path);
+`},
 }
 
 // Migrate applies all pending migrations (RW only). Migrations are applied in

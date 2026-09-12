@@ -4,12 +4,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/go/internal/convo"
 	"github.com/FreePeak/LeanKG/go/internal/graph"
 	"github.com/FreePeak/LeanKG/go/internal/registry"
 	"github.com/FreePeak/LeanKG/go/internal/session"
@@ -160,4 +162,47 @@ func cmdStatusRepo(args []string) {
 func fatalText(err error) {
 	fmt.Fprintln(os.Stderr, "leankg:", err)
 	os.Exit(1)
+}
+
+// cmdMineConversations mines Claude / ChatGPT / Slack export JSON into typed
+// conversation nodes (Rust `mine-conversations` verb, US-MP-03 / FR-MP-09..13).
+func cmdMineConversations(args []string) {
+	fs := flag.NewFlagSet("mine-conversations", flag.ExitOnError)
+	format := fs.String("format", "", "export format: claude | chatgpt | slack")
+	project := fs.String("project", ".", "project root whose .leankg graph receives the mined nodes")
+	input := fs.String("input", "", "input file or directory of export JSON files")
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
+	f := convo.ParseFormat(*format)
+	if f == convo.UnknownFormat {
+		fmt.Fprintf(os.Stderr, "Unknown format '%s'; use --format claude|chatgpt|slack\n", *format)
+		os.Exit(2)
+	}
+	if *input == "" {
+		fmt.Fprintln(os.Stderr, "usage: leankg mine-conversations --format claude|chatgpt|slack --input FILE_OR_DIR [--project DIR]")
+		os.Exit(2)
+	}
+	result, err := convo.MineIntoProject(context.Background(), *project, *input, f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mine-conversations failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(result.Summary())
+	for _, item := range result.Items {
+		fmt.Printf("  [%s] %s: %s\n", item.Kind.String(), item.QualifiedName(*project), truncateRunes(item.Verbatim, 120))
+	}
+	fmt.Println("Done.")
+}
+
+// truncateRunes bounds a CLI echo to n runes without splitting one.
+func truncateRunes(s string, n int) string {
+	count := 0
+	for pos := range s {
+		if count == n {
+			return s[:pos]
+		}
+		count++
+	}
+	return s
 }

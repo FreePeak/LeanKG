@@ -3,10 +3,9 @@
 // the existing Go flow — internal/index, internal/docindex, internal/embed —
 // composed in the Rust order over one store handle.
 //
-// Deliberate scope note: the Rust verb also accepted --source/--ref-name/--auth
-// to sync a remote (git/gcs) tree into .leankg/sources before indexing. The Go
-// engine has no sources subsystem (internal/sources was not ported), so remote
-// sources are rejected with an actionable error rather than silently ignored.
+// --source is a remote URI: the tree is synced into <project>/.leankg/sources
+// through internal/sources and that tree is indexed, exactly as in the Rust
+// handler (the store still lives at <project>/.leankg).
 package refresh
 
 import (
@@ -20,6 +19,7 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/embed"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
+	"github.com/FreePeak/LeanKG/go/internal/sources"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -42,13 +42,13 @@ type Options struct {
 	// incremental run; upgrade path = thread Full into embed.Run's mode and
 	// document the behavior change.
 	Full bool
-	// Source is the Rust remote-source URI. Unsupported: the Go engine has no
-	// sources subsystem, so a non-empty value fails with ErrSourceUnsupported.
+	// Source is a remote source URI (Rust --source). Non-empty overrides Path.
 	Source string
+	// RefName is the git ref for a git+ source ("" means main).
+	RefName string
+	// Auth is the credential for Source ("" falls back to the source's env vars).
+	Auth string
 }
-
-// ErrSourceUnsupported reports a --source request the Go engine cannot serve.
-var ErrSourceUnsupported = fmt.Errorf("refresh: --source is not supported by the Go engine (no sources subsystem; sync the tree locally and index that path)")
 
 // Result summarizes one refresh run.
 type Result struct {
@@ -68,9 +68,6 @@ type Result struct {
 // first stage error (the Rust handler used `?` on every stage).
 func Run(ctx context.Context, opts Options) (Result, error) {
 	var res Result
-	if opts.Source != "" {
-		return res, ErrSourceUnsupported
-	}
 	project := opts.Project
 	if project == "" {
 		cwd, err := os.Getwd()
@@ -80,7 +77,13 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		project = cwd
 	}
 	indexPath := opts.Path
-	if indexPath == "" {
+	if opts.Source != "" {
+		synced, err := sources.Resolve(ctx, project, opts.Source, opts.Auth, opts.RefName, sources.CLIProgress{})
+		if err != nil {
+			return res, fmt.Errorf("refresh: source sync: %w", err)
+		}
+		indexPath = synced
+	} else if indexPath == "" {
 		indexPath = "."
 	}
 	res.Path = indexPath

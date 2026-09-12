@@ -10,6 +10,7 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
+	"github.com/FreePeak/LeanKG/go/internal/sources"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -64,11 +65,26 @@ func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
 	return engine, nil
 }
 
-// runIndex performs a one-shot index run into the project store.
-func runIndex(project, target string) error {
+// runIndex performs a one-shot index run into the project store. A non-empty
+// source is a --source URI whose tree is synced into <project>/.leankg/sources
+// and indexed instead of target (Rust main.rs index path resolution).
+func runIndex(project, target, source, refName, auth string) error {
 	dir := project
 	if dir == "" {
 		dir = target
+	}
+	if dir == "" {
+		// `index --source <uri>` with no positional argument: the project root
+		// is the cwd (Rust find_project_root), never the filesystem root.
+		dir = "."
+	}
+	indexTarget := target
+	if source != "" {
+		synced, err := sources.Resolve(context.Background(), dir, source, auth, refName, sources.CLIProgress{})
+		if err != nil {
+			return err
+		}
+		indexTarget = synced
 	}
 	st, err := store.OpenBackend(context.Background(), dir, os.Getenv("LEANKG_DB_ENGINE"), os.Getenv("LEANKG_PG_URL"), store.RW)
 	if err != nil {
@@ -78,17 +94,15 @@ func runIndex(project, target string) error {
 	if err := st.Migrate(); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	// Lazy language activation governs what gets indexed: only the languages
-	// this target actually uses own their extensions.
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(target); aerr != nil {
+	if _, aerr := reg.Activate(indexTarget); aerr != nil {
 		return fmt.Errorf("language detection: %w", aerr)
 	}
-	res, err := index.IndexDirWith(context.Background(), st, target, reg)
+	res, err := index.IndexDirWith(context.Background(), st, indexTarget, reg)
 	if err != nil {
-		return fmt.Errorf("index %s: %w", target, err)
+		return fmt.Errorf("index %s: %w", indexTarget, err)
 	}
 	fmt.Printf("indexed %s: files=%d elements=%d relationships=%d skipped=%d\n",
-		target, res.Files, res.Elements, res.Relationships, res.Skipped)
+		indexTarget, res.Files, res.Elements, res.Relationships, res.Skipped)
 	return nil
 }

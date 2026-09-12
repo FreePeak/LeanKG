@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/go/internal/errs"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -167,11 +168,11 @@ func MiddlewareWithStore(st store.Backend, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, err := reg.classify(st, r)
 		if err != nil {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			http.Error(w, errs.Unauthorized.Message(), http.StatusUnauthorized)
 			return
 		}
 		if isWritePath(r.URL.Path) && role < Contributor {
-			http.Error(w, `{"error":"forbidden: writes require contributor or admin"}`, http.StatusForbidden)
+			http.Error(w, errs.PermissionDenied.Message(), http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)

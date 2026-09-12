@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.8.0-full-parity
+**Version:** 4.9.0-parity-second-wave
 **Date:** 2026-09-12
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.31.0 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
@@ -9,6 +9,19 @@
 ---
 
 ## Changelog
+
+### v4.9.0-parity-second-wave — the Rust internals nobody had ported (2026-09-12)
+
+> **Trigger:** after v4.8.0 closed the recorded deferred ledger, a systematic audit of the Rust tree (every `src/*` module and all 73 CLI variants) found capabilities the ledger never listed. All are now ported from `f7624143^`.
+
+**Delivered:** federation client (`push`/`pull`) · conversation mining (Claude/ChatGPT/Slack) · persisted usage metrics (`context_metrics`, `leankg metrics`, H10 buckets behind `leankg dashboard`) · org knowledge (incidents, team notes, env conflicts, service context, team map; store migration 010 + `/api/v2/*`) · PRD indexing (`FR/US/AC` → requirement entities + workflow edges; `leankg prd`, `prd-trace`) · remote sources (git+/GCS/local; `index|refresh --source`) · response token budget (`internal/budget`) · error catalog (`internal/errs`, FR-ZCP-12 T1).
+
+**Fixes found while porting (Rust defects not reproduced):** mining dropped every `decided_about` edge but the last per file; the PRD id regex silently dropped `FR-ZCP-13`/`FR-GE-01`-shaped ids; `pull` was never a data pull and no server ever served the push route (recorded in #372).
+
+**Not applicable / deliberate:** `gc.rs` (Rust-allocator `malloc_trim`/RSS workaround — Go's scavenger owns this); `setup --clone` pipeline (the `sources` package can serve each spec if it is wanted); Rust's `team`/`/api/teams` (the Go engine has membership + ownership in the auth subsystem, no teams table).
+
+**Verification:** `gofmt` clean · build ×3 (default, `CGO_ENABLED=0`, `-tags tstree`) · `go vet` ×2 · `go test ./...` green under both tags · `go mod tidy` no-op · live CLI smokes for the new verbs.
+
 
 ### v4.8.0-full-parity — every deferred item implemented; nothing silently missing (2026-09-12)
 
@@ -90,6 +103,14 @@
 | language registry | — | `internal/langs` — **40 languages** (13 defaults + 27 expanded: c/cpp/csharp/php/ruby/scala/perl/lua/haskell/elixir/crystal/cuda/cypher/elm/erlang/fsharp/glsl/hlsl/nim/ocaml/sql+plsql+tsql/powershell/qsharp/solidity/systemverilog/verilog/zig), each with regex extractors + fixtures; every directory under `examples/` extracts non-zero elements | **DONE** |
 | tree-sitter grammars | — | `internal/tstree` — bundled grammars incl. **objc (tree-sitter-objc 3.0.2, vendored C, tagged `tstree`) and dart (nielsenko 0.0.4, ABI-14)**; objc message-send call edges + dart constructor/factory/enum elements | **DONE** |
 | multi-project serving | — | `internal/projects` — `LEANKG_PROJECT_DIRS` registry, lazy per-project store+engine, routing by dir path or name on REST `?project=`, MCP tool arg `project` (stdio + HTTP), ConnectRPC and the dashboard; unknown selectors are errors, never a silent fallback; single-project behavior byte-identical when unset | **DONE** |
+| federation (client) | 0.1k | `internal/federation` — `leankg push`/`pull` ported as Rust had them (POST `/api/v2/graph/push` with `X-LeanKG-Token/-Engineer/-Env`; `pull` is a `/api/v2/status` connectivity probe). **Finding: no server — Rust's own Axum app included — ever served the push route**, so a real federation (receiver + auth + merge policy) remains a design task; tracked in #372 | **DONE** (client parity) |
+| conversation mining | 0.7k | `internal/convo` — Claude/ChatGPT/Slack export parsers, classify (decision/preference/milestone/problem), topic + code-target extraction, `decided_about` edges; `leankg mine-conversations --format … --input …`. Fixes a Rust defect where all but the last `decided_about` edge per file path were dropped | **DONE** |
+| persisted metrics | — | `context_metrics` ledger (migration 011, both backends) + `internal/metrics` — `leankg metrics` (since/tool/json/session/reset/retention/cleanup/seed) and the H10/FR-PLG-8 usage buckets behind `leankg dashboard`; recorded from the MCP dispatch like Rust (REST never recorded there either) | **DONE** |
+| org knowledge | — | `internal/orgknowledge` + store migration 010 (incidents, knowledge_entries, service_metadata, env_snapshots) — incident CRUD/query, team notes/annotations, env-conflict detection, service-context aggregate, team map; CLI `incident\|note\|env-conflicts\|service-context\|team-map` and `/api/v2/{incidents,env/diff,service/context}` | **DONE** |
+| PRD indexing | 0.3k | `internal/prdindex` — FR/US/AC extraction from a PRD document into requirement entities + knowledge rows + `implemented_by` edges to ontology workflows; `leankg prd` / `prd-trace` and `import{action:"prd"}` / `query{action:"prd"}`. Additive over Rust: AC lines are captured, and the id regex fix stops silently dropping `FR-ZCP-13`-shaped ids | **DONE** |
+| remote sources | 1.3k | `internal/sources` — git+ (shallow branch clone, full-clone+checkout fallback for tags/SHAs, fetch/advance), GCS (paginated listing, size cap), local tree; `index --source` / `refresh --source` now work (the old `--source is not supported` refusal is gone), with `--ref-name` and the `--auth` > `GITLAB_TOKEN` > `GIT_TOKEN` chain | **DONE** |
+| response token budget | 0.7k | `internal/budget` — per-action caps with the `_token_budget` marker, one-pass truncation, protected keys, RSS guard via `getrusage`, `LEANKG_TOOL_*`/`LEANKG_MAX_RSS_MB` knobs; applied on MCP responses | **DONE** |
+| error catalog (FR-ZCP-12 T1) | 0.4k | `internal/errs` — 14 Rust entries with code + cause + runnable fix + doc anchor, rendered through the CLI/store/MCP/REST/auth paths (the audit test fails on drift) | **DONE** |
 | obsidian | 0.7k | `internal/obsidian` — vault init/status, push (store→notes, Rust path/metadata/template parity), pull (notes→`Note` elements + `[[wiki-links]]` + frontmatter links + annotations), bounded debounced watcher; CLI `obsidian init\|push\|pull\|watch\|status` | **DONE** |
 | CLI verbs (Rust parity) | — | `run` (+`--compress`), `detect-clusters`, `report`, `gods`, `ctags`, `cost`, `migrate`, `audit export\|verify`, `auth register\|token create/list/revoke`, `export`, `pack`, `generate`, `annotate`, `link`, `search-annotations`, `show-annotations`, `register`, `unregister`, `list`, `status-repo`, `tunnels`, `quality`, `reflect`, `refresh` — all wrapper-level ports of shipped Rust features | **DONE** |
 | registry | 0.1k | `internal/registry` — global repo registry at `$HOME/.leankg/registry.json` (Rust schema/version parity, null-field semantics), register/unregister/list/status incl. live element counts | **DONE** |
@@ -551,14 +572,16 @@ Audit of all 73 variants of the Rust `CLICommand` enum against the Go surface. `
 | GraphQuery, Path, Explain, Gods, Report, DetectClusters, Tunnels, Quality, Reflect, Ctags, Cost, Audit, Migrate, Auth, ApiKey, Export, Pack, Generate, Annotate, Link, SearchAnnotations, ShowAnnotations, Register, Unregister, List, StatusRepo, Obsidian, Run | **I** — this wave (see ledger rows above) |
 | LspInstall, LspList | **D** — install hints deliberately unported (documented in `internal/lsp/registry.go`); resolution/query-time LSP is live |
 | SmokeTest, Benchmark, ToolBench, AbTest, BenchmarkUnified | **D** — harnesses live in Go tests + `go/benchmark/ab` + `scripts/` |
-| Metrics | **D** — neither implementation had a metrics store (no table/module in Rust either); savings are reported per response. Tracked in #375 |
+| Metrics, Dashboard(usage half) | **I** — `context_metrics` ledger (migration 011) + `internal/metrics`: `leankg metrics` (since/tool/json/session/reset/retention/cleanup/seed) and the H10 usage buckets behind `leankg dashboard`; recorded from the MCP dispatch as Rust did |
 | Update | **D** — self-update removed with the npm wrapper; releases come from `release-go.yml` |
 | Proc | **D** — dev process management (Leankg/Vite), out of the engine's scope |
-| MineConversations | **D** — #373 |
-| Incident, Note, EnvConflicts, Team | **D** — #374 (the account/org half of `team` landed with enterprise auth) |
-| Push, Pull | **D** — #372 |
+| MineConversations | **I** — `internal/convo` + `leankg mine-conversations` (Claude/ChatGPT/Slack; fixes the Rust edge-loss defect) |
+| Incident, Note, EnvConflicts, Team | **I** — `internal/orgknowledge` + `incident\|note\|env-conflicts\|service-context\|team-map` verbs and `/api/v2/*`; `team` = the team-map read (membership/ownership live in the auth subsystem — no teams table by design) |
+| Push, Pull | **I** (client parity) — `internal/federation`; note Rust's `pull` was only a `/api/v2/status` probe and **no server ever served `/api/v2/graph/push`**, so the receiver/merge policy is still a design task: #372 |
 | Prs | **D** — PR-impact analysis is a separate product backlog item, never part of the engine rewrite |
-| gc.rs, budget.rs, cost_estimate (library), ctags_export | **C/I** — Go equivalents: file/watermark lifecycle + `DeleteByFile`; per-response token accounting; `leankg cost`; `leankg ctags` |
+| gc.rs | **D** — Rust-allocator workaround (`malloc_trim`, RSS polling for glibc); Go's scavenger returns memory itself, so there is nothing to port |
+| budget.rs, mcp/token_budget.rs, errors.rs | **I** — `internal/budget` (per-action caps, `_token_budget` marker, RSS guard) and `internal/errs` (14-entry catalog, FR-ZCP-12 T1) wired through MCP/CLI/REST/auth |
+| cost_estimate / ctags_export / prd_indexer / sources / setup(clone) | **I/C** — `leankg cost`, `leankg ctags`, `internal/prdindex` (+ `prd\|prd-trace`), `internal/sources` (`index\|refresh --source`); the `setup --clone` pipeline itself is **D** (its per-repo clone spec is servable by `internal/sources` if wanted) |
 
 ### Environment inventory (build/runtime)
 
@@ -592,4 +615,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-12 (v4.8.0 — full-parity wave: every deferred ledger item implemented, dashboard API live (#371 closed), 40 languages, enterprise auth, obsidian, compression, LSP bridge, Android extractors, multi-project serving, and the per-verb CLI disposition table; the five remaining Rust-era capabilities are tracked as #372–#376)*
+*Last updated: 2026-09-12 (v4.9.0 — second parity wave: federation client, conversation mining, persisted metrics, org knowledge, PRD indexing, remote sources, token budget, error catalog; Rust defects found while porting are fixed rather than reproduced)*

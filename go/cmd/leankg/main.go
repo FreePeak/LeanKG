@@ -30,6 +30,7 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/FreePeak/LeanKG/go/internal/doctor"
 	"github.com/FreePeak/LeanKG/go/internal/embed"
+	"github.com/FreePeak/LeanKG/go/internal/errs"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
 	leankgmcp "github.com/FreePeak/LeanKG/go/internal/mcp"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
@@ -86,6 +87,10 @@ func main() {
 		cmdMigrate(os.Args[2:])
 	case "audit":
 		cmdAudit(os.Args[2:])
+	case "metrics":
+		cmdMetrics(os.Args[2:])
+	case "dashboard":
+		cmdDashboard(os.Args[2:])
 	case "auth":
 		cmdAuth(os.Args[2:])
 	case "tunnels":
@@ -112,12 +117,28 @@ func main() {
 		cmdGenerate(os.Args[2:])
 	case "annotate":
 		cmdAnnotate(os.Args[2:])
+	case "prd":
+		cmdPRD(os.Args[2:])
+	case "prd-trace":
+		cmdPRDTrace(os.Args[2:])
 	case "link":
 		cmdLink(os.Args[2:])
 	case "search-annotations":
 		cmdSearchAnnotations(os.Args[2:])
 	case "show-annotations":
 		cmdShowAnnotations(os.Args[2:])
+	case "mine-conversations":
+		cmdMineConversations(os.Args[2:])
+	case "incident":
+		cmdIncident(os.Args[2:])
+	case "note":
+		cmdNote(os.Args[2:])
+	case "env-conflicts":
+		cmdEnvConflicts(os.Args[2:])
+	case "service-context":
+		cmdServiceContext(os.Args[2:])
+	case "team-map":
+		cmdTeamMap(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -135,6 +156,7 @@ Usage:
   leankg query <text> --action <a> [--to QN] [--lang L] [--pattern P] [--cmd C]
                  [--command workspace|document] [--path FILE] [--mode M]
                  [--lines SPEC] [--fresh] [--limit N] [--depth N]
+                 [--service NAME] [--env E]
   leankg run [--compress] -- <command> [args...]
   leankg detect-clusters [--path DIR] [--min-hub-edges N]
   leankg report [--project DIR] [--project-name NAME] [--out FILE]
@@ -144,6 +166,9 @@ Usage:
   leankg migrate [--project DIR] [--engine sqlite|postgres]
   leankg audit export [--project DIR] [--since T] [--until T] [--format jsonl] [--out FILE]
   leankg audit verify [--project DIR] [--since T] [--until T]
+  leankg metrics [--project DIR] [--since N|Nd] [--tool NAME] [--json|-j] [--session]
+                 [--reset] [--cleanup] [--retention DAYS] [--seed]
+  leankg dashboard [--project DIR] [--since 24h|7d|30d|2w] [--format text|json]
   leankg auth register     [--project DIR] --email EMAIL --password PW --name NAME
   leankg auth token create [--project DIR] --name NAME [--role admin|contributor|viewer]
                            [--account-id ID] [--org-id ID] [--scopes a,b] [--ttl 24h]
@@ -152,7 +177,7 @@ Usage:
   leankg tunnels [--path DIR] [--limit N]
   leankg quality [--path DIR] [--min-lines N] [--lang L]
   leankg reflect <question> <outcome> [--nodes a,b] [--note TEXT]
-  leankg refresh [PATH] [--project DIR] [--docs DIR] [--full]
+  leankg refresh [PATH] [--project DIR] [--docs DIR] [--source URI] [--ref-name REF] [--auth TOKEN] [--full]
   leankg register <name> | unregister <name> | list | status-repo <name>
   leankg obsidian <init|push|pull|watch|status> [--project DIR] [--vault PATH] [--debounce-ms N]
   leankg export [--output FILE] [--format json|dot|mermaid] [--markdown] [--out FILE]
@@ -162,15 +187,28 @@ Usage:
   leankg annotate <element> --description TEXT [--user-story ID] [--feature ID]
   leankg link <element> <id> [--kind story|feature]
   leankg search-annotations <query> | show-annotations <element>
+  leankg mine-conversations --format claude|chatgpt|slack --input FILE_OR_DIR [--project DIR]
+  leankg incident add --title T --severity P0|P1|P2|P3 --affected A,B --root-cause R --resolution X
+                      [--prevention P] [--env production] [--ticket ID] [--project DIR]
+  leankg incident list --service NAME [--env production] [--pattern P] [--limit N] [--project DIR]
+  leankg incident show <id> [--project DIR]
+  leankg note --target SERVICE_OR_QN --content TEXT [--env local] [--project DIR]
+  leankg env-conflicts --service NAME [--project DIR]
+  leankg service-context --service NAME [--env production] [--project DIR]
+  leankg team-map [--env production] [--project DIR]
   leankg serve  [--project DIR] [--stdio] [--http ADDR] [--rest ADDR] [--read-only] [--memory] [--embed-provider P]
-  leankg index <dir>
+  leankg index <dir> [--source URI] [--ref-name REF] [--auth TOKEN]
+  leankg prd [--source docs/prd.md] [--environment local] [--project DIR]
+  leankg prd-trace [FEATURE_ID] [--project DIR]
+  leankg push --remote URL --token TOKEN [--env local] [--project DIR]
+  leankg pull --remote URL --token TOKEN [--env production]
   leankg doctor [--project DIR] [--deep] [--format text|json]
   leankg status [--project DIR]
   leankg version
 
 --action vocabulary: path|callers|callees|context|explain|pattern|lsp|compress|read|
-search|exact|fuzzy|semantic|element|impact|languages (queried through the
-same core wiring the MCP transports use).
+search|exact|fuzzy|semantic|element|impact|languages|prd|incidents|env_conflicts|
+service_context (queried through the same core wiring the MCP transports use).
 Time filters (audit --since/--until): RFC3339 | epoch seconds | 90s|30m|24h|7d.
 
 Defaults: --http :9699 (MCP streamable HTTP) and --rest :8080 (REST) when
@@ -217,7 +255,7 @@ func cmdServe(args []string) {
 	}
 	st, err := store.OpenBackend(ctx, dir, eng, os.Getenv("LEANKG_PG_URL"), mode)
 	if err != nil {
-		log.Fatalf("open store: %v", err)
+		log.Fatalf("open store: %s", storeErrText(eng, err))
 	}
 	defer st.Close()
 	if !*readOnly {
@@ -447,13 +485,16 @@ func doctorDeep(projectFlag, format string) int {
 func cmdIndex(args []string) {
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
+	source := fs.String("source", "", "remote source URI: git+<url>, gs://bucket/prefix, or a local path")
+	refName := fs.String("ref-name", "", "git ref for --source git+... (default: main)")
+	authFlag := fs.String("auth", "", "credential for --source (git token or GCS access token)")
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
 	}
-	if fs.NArg() != 1 {
-		log.Fatal("index requires exactly one directory argument")
+	if fs.NArg() > 1 || (fs.NArg() == 0 && *source == "") {
+		log.Fatal("index requires a directory argument (or --source)")
 	}
-	if err := runIndex(*project, fs.Arg(0)); err != nil {
+	if err := runIndex(*project, fs.Arg(0), *source, *refName, sourceAuth(*authFlag)); err != nil {
 		log.Fatalf("index: %v", err)
 	}
 }
@@ -463,4 +504,33 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// sourceAuth resolves the credential for --source: --auth, then GITLAB_TOKEN,
+// then GIT_TOKEN (Rust CLI chain). The GCS source also reads GCS_ACCESS_TOKEN
+// itself; the Rust watch verb was the only caller that added it to the chain.
+func sourceAuth(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if v := os.Getenv("GITLAB_TOKEN"); v != "" {
+		return v
+	}
+	return os.Getenv("GIT_TOKEN")
+}
+
+// storeErrText renders a store-open failure through the FR-ZCP-12 catalog:
+// a Postgres URL the driver cannot parse — or a missing one — is
+// PG_URL_MALFORMED, every other Postgres open failure is PG_UNREACHABLE (the
+// Rust engine rendered both at startup); other engines keep the driver's own
+// message, which the catalog has no code for.
+func storeErrText(engine string, err error) string {
+	if engine != store.EnginePostgres {
+		return err.Error()
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "parse pg dsn") || strings.Contains(msg, "requires LEANKG_PG_URL") {
+		return errs.PGURLMalformed.Render(msg, errs.PGURLMalformed.Fix)
+	}
+	return errs.PGUnreachable.Render(msg, errs.PGUnreachable.Fix)
 }

@@ -115,6 +115,53 @@ type Backend interface {
 	TeamMembers(teamID string) ([]TeamMember, error)
 	ResourceClaim(resourceType, resourceID, ownerAccountID, orgID string) error
 	IsResourceOwner(resourceType, resourceID, accountID string) (bool, error)
+
+	// org/ops knowledge (Rust db::mod.rs incidents / knowledge_entries /
+	// service_metadata plus the env-scoped code_elements reads behind
+	// find_env_conflicts). Typed table access only; validation and the
+	// aggregation policy live in internal/orgknowledge. See orgknowledge.go
+	// for the entity types and the env_snapshots ceiling note.
+	IncidentUpsert(inc Incident) error
+	IncidentByID(id string) (Incident, bool, error)
+	IncidentDelete(id string) error
+	IncidentsQuery(q IncidentQuery) ([]Incident, error)
+	KnowledgeEntryUpsert(e KnowledgeEntry) error
+	KnowledgeEntryByID(id string) (KnowledgeEntry, bool, error)
+	KnowledgeEntryDelete(id string) error
+	KnowledgeEntriesByElement(qualifiedName string) ([]KnowledgeEntry, error)
+	KnowledgeEntriesByFeature(featureID string) ([]KnowledgeEntry, error)
+	KnowledgeEntriesByEnvironment(environment string, limit int) ([]KnowledgeEntry, error)
+	KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error)
+	ServiceMetadataUpsert(m ServiceMetadata) error
+	ServiceMetadataGet(service, env string) (ServiceMetadata, bool, error)
+	// ServiceMetadataAll lists the profiles in one environment, ordered by
+	// service name (the Rust get_all_service_metadata read behind the team
+	// map).
+	ServiceMetadataAll(env string) ([]ServiceMetadata, error)
+	EnvSnapshotsPut(snaps []EnvSnapshot) error
+	EnvSnapshotGet(env, qualifiedName string) (EnvSnapshot, bool, error)
+	// EnvSnapshotConflictsWith lists conflicts_with relationships whose
+	// source or target matches `needle` case-insensitively (substring, like
+	// the Rust regex_matches(lowercase(...), ".*needle.*") report).
+	EnvSnapshotConflictsWith(needle string, limit int) ([]Relationship, error)
+	// EnvSnapshotEnvVariants lists qualified names having snapshots in more
+	// than one environment, case-insensitively containing `needle`.
+	EnvSnapshotEnvVariants(needle string, limit int) ([]EnvVariant, error)
+
+	// context-metrics ledger (Rust db::record_metric / get_metrics_summary /
+	// cleanup_old_metrics / reset_metrics over the context_metrics table, plus
+	// the H10/FR-PLG-8 usage buckets). See store_metrics.go for the fold rules,
+	// the Rust provenance and the documented ceilings.
+	// RecordMetric no-ops on a read-only backend (Rust's is_read_only guard);
+	// MetricsSummary windows by retentionDays and takes an optional tool filter
+	// ("" = every tool); UsageAggregates takes an epoch-second cutoff where 0
+	// means all time; CleanupMetrics/ResetMetrics return the number of rows
+	// removed.
+	RecordMetric(m Metric) error
+	MetricsSummary(tool string, retentionDays int) (MetricSummary, error)
+	UsageAggregates(sinceCutoff int64) (UsageAggregates, error)
+	CleanupMetrics(retentionDays int) (int64, error)
+	ResetMetrics() (int64, error)
 }
 
 // AuditEntry is one hash-chained audit record. Hash = sha256(prev_hash |
