@@ -30,7 +30,7 @@ Add to `~/.gemini/antigravity/mcp_config.json`:
       "name": "leankg",
       "transport": "stdio",
       "command": "leankg",
-      "args": ["mcp-stdio", "--watch"],
+      "args": ["serve", "--stdio"],
       "enabled": true
     }
   ]
@@ -44,7 +44,7 @@ Or for Gemini CLI directly, add to your config:
   "mcpServers": {
     "leankg": {
       "command": "leankg",
-      "args": ["mcp-stdio", "--watch"]
+      "args": ["serve", "--stdio"]
     }
   }
 }
@@ -125,7 +125,7 @@ gemini extensions install https://github.com/FreePeak/LeanKG
 
 ### MCP server not connecting
 
-1. Ensure LeanKG binary is installed: `cargo install leankg`
+1. Ensure LeanKG binary is installed: run `scripts/install-go.sh` (or `make go-build` and use `go/bin/leankg`)
 2. Check the binary is in your PATH: `which leankg`
 
 ### Empty results from LeanKG

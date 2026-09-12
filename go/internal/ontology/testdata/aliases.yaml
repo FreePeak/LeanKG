@@ -1,0 +1,3 @@
+aliases:
+  - gid: local:checkout-service:domain_entity:refund:v1
+    alias: money-back

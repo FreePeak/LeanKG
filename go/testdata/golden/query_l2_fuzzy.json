@@ -1,0 +1,33 @@
+{
+  "freshness": "possibly_stale",
+  "hits": [
+    {
+      "content": "func Beta() int {\n\treturn 41\n}",
+      "element_type": "function",
+      "file_path": "src/beta.go",
+      "language": "go",
+      "line_end": 8,
+      "line_start": 6,
+      "name": "Beta",
+      "qualified_name": "src/beta.go::Beta",
+      "score": -0.000001884721673904461
+    },
+    {
+      "content": "func Alpha() int {\n\treturn Beta() + 1\n}",
+      "element_type": "function",
+      "file_path": "src/alpha.go",
+      "language": "go",
+      "line_end": 3,
+      "line_start": 1,
+      "name": "Alpha",
+      "qualified_name": "src/alpha.go::Alpha",
+      "score": -9.869753979739507e-7
+    }
+  ],
+  "limit": 10,
+  "query": "beta",
+  "retrieval": {
+    "reason": "FTS5 keyword match",
+    "rung": "L2"
+  }
+}

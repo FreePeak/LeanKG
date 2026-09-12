@@ -7,130 +7,38 @@ on:
     # already ran CI. Skipping avoids a duplicate ~5m suite on every release.
     paths-ignore:
       - 'CHANGELOG.md'
-      - 'manifest.json'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
   pull_request:
     branches: [main]
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  test:
-    name: Test Suite
+  go-engine:
+    name: Go Engine (build + vet + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - uses: actions/setup-go@v5
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache target directory
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}-
-            ${{ runner.os }}-target-
-
-      - name: Compile all test targets (integration suites must never rot)
-        # `--lib` alone lets integration tests (tests/*.rs) drift out of
-        # compilation — that happened with temporal_query's signature change
-        # (#331) and stayed broken for two releases. Compiling without
-        # running needs no PG container. Dev profile: catches the same
-        # API-drift class (E0599/E0308) 3-4x faster than release — measured
-        # 13m10s with --release vs 56s for the job pre-step (#345).
-        run: cargo test --no-run
-      - name: Run unit tests
-        run: cargo test --lib
-
-  fmt:
-    name: Format Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy Lints
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-      - name: Run clippy
-        run: cargo clippy --all -- -D warnings
-
-  ui-v2:
-    name: UI v2 Typecheck
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: ui-v2/package-lock.json
-
-      - name: Install and build ui-v2
-        working-directory: ui-v2
-        run: npm ci && npm run build
-
-  # FR-PLG-6: npm wrapper must never lag the crate again (was 0.17.9 vs
-  # 0.26.0). Fails any build where npm/leankg/package.json drifted from
-  # Cargo.toml. Release-time sync lives in release.yml (publish-npm job);
-  # this guard catches manual edits and missed syncs between releases.
-  npm-parity:
-    name: npm/crate Version Parity
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Verify npm wrapper matches crate version
-        run: bash scripts/sync-npm-version.sh --check
-
-  # FR-PLG-5: the MCP tool surface is contractual. Regenerate the tool
-  # contract from src/mcp/tools.rs and fail when it drifted from the
-  # committed docs/mcp-tool-contract.md ("tool surface changed without
-  # contract update"). Also proves the generator is byte-deterministic.
-  tool-contract:
-    name: MCP Tool Contract Drift Guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Regenerate contract and diff against committed doc
-        run: |
-          bash scripts/gen_tool_contract.sh --stdout > /tmp/mcp-tool-contract.generated.md
-          if ! diff -u docs/mcp-tool-contract.md /tmp/mcp-tool-contract.generated.md; then
-            echo "::error::tool surface changed without contract update — run scripts/gen_tool_contract.sh and commit docs/mcp-tool-contract.md"
-            exit 1
-          fi
-
-      - name: Generator determinism check
-        run: |
-          bash scripts/gen_tool_contract.sh --stdout > /tmp/mcp-tool-contract.rerun.md
-          cmp /tmp/mcp-tool-contract.generated.md /tmp/mcp-tool-contract.rerun.md
+          go-version: "1.25"
+          cache-dependency-path: go/go.sum
+      - name: Build (tstree tag — exercises the CGO tier first)
+        run: cd go && go build -tags tstree ./...
+      - name: Test (tstree tag)
+        run: cd go && go test -tags tstree ./... -count=1 -timeout 300s
+      # Tidy scans tagged files too (smacker is imported only under tstree);
+      # a drifted go.mod/go.sum fails here instead of at release time.
+      - name: Tidy guard
+        run: cd go && cp go.mod /tmp/go.mod.bak && cp go.sum /tmp/go.sum.bak && go mod tidy && diff -q go.mod /tmp/go.mod.bak && diff -q go.sum /tmp/go.sum.bak
+      # The release artifacts are CGO_ENABLED=0 (release-go.yml), and the
+      # default build claims to be CGO-free. Runner images default to cgo=1,
+      # so without this step a stray vendored C source (e.g. a grammar's .c
+      # without its build tag) breaks the shipped shape while CI stays green.
+      - name: Build (CGO_ENABLED=0 — the release shape)
+        run: cd go && CGO_ENABLED=0 go build ./...
+      - name: Build
+        run: cd go && go build ./...
+      - name: Vet
+        run: cd go && go vet ./...
+      - name: Vet (tstree)
+        run: cd go && go vet -tags tstree ./...
+      - name: Test (sqlite; PG tests skip without LEANKG_TEST_PG_URL)
+        run: cd go && go test ./... -count=1 -timeout 300s

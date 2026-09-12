@@ -1,0 +1,16 @@
+{
+  "action": "impact",
+  "freshness": "possibly_stale",
+  "hits": [
+    {
+      "depth": 0,
+      "qn": "src/beta.go::Beta"
+    },
+    {
+      "depth": 1,
+      "qn": "src/alpha.go::Alpha"
+    }
+  ],
+  "limit": 10,
+  "query": "src/beta.go::Beta"
+}

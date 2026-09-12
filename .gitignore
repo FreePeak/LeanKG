@@ -64,3 +64,8 @@ actionlint/
 docker-compose.enterprise.local.yml
 .docker-compose-enterprise.local.yml
 __pycache__/
+
+# Go engine source dirs match the global "leankg" ignore pattern — re-include:
+!go/cmd/leankg/
+!go/internal/rpc/leankg/
+tmp-smoke/

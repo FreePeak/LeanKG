@@ -1,0 +1,37 @@
+{
+  "backend": "sqlite",
+  "elements": 2,
+  "elements_by_type": {
+    "function": 2
+  },
+  "embeddings": [
+    {
+      "dimensions": 8,
+      "distance": "cosine",
+      "model_id": "deterministic-8",
+      "provider": "deterministic",
+      "revision": "test:deterministic-v1",
+      "vectors": 1
+    }
+  ],
+  "files": 0,
+  "freshness": "possibly_stale",
+  "healthy": true,
+  "memory_root": "<PROJECT>/.leankg/memory",
+  "mode": "sqlite",
+  "query_embedder": {
+    "model_id": "deterministic-8",
+    "provider": "deterministic"
+  },
+  "relationships": 1,
+  "store": "<PROJECT>/.leankg/leankg.db",
+  "tools": [
+    "import",
+    "query",
+    "status"
+  ],
+  "watermark": {
+    "at": "<AT>",
+    "seq": "<SEQ>"
+  }
+}

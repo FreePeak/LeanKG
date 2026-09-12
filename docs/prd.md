@@ -1,14 +1,166 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.5.0-go-rewrite-analysis
-**Date:** 2026-09-10
+**Version:** 4.9.2-adversarial-audit
+**Date:** 2026-09-12
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
-**Codebase Version:** 0.30.0
-**Storage:** Dual-backend, BOTH verified live — SQLite default (`LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset), PostgreSQL + pgvector via `LEANKG_PG_URL`
+**Codebase Version:** 0.31.0 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
+**Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
 
 ---
 
 ## Changelog
+
+### v4.9.2-adversarial-audit — silently-wrong results closed (2026-09-12)
+
+> **Trigger:** an adversarial audit of the merged wave found surfaces that were *quietly* wrong rather than red.
+
+**Fixed (each with a test):** flags after positionals (clap semantics) across 47 call sites — `env-conflicts w2 --env production` had reported an empty-service success, `refresh . --full` ran incremental, `query --kind impact foo` looked up the literal `--kind`, and surplus positionals are now rejected with `unexpected argument` (`run` keeps the raw parse deliberately; its child argv must not be re-parsed) · `push`/`pull` were advertised in help but missing from the dispatch switch · `/api/project/switch` refused switching *after* multi-project serving shipped, and now consults an injected **non-opening** resolver (`Router.Resolve` — no store open, no `Migrate`) returning success for a served project or a refusal naming `LEANKG_PROJECT_DIRS` + `?project=` (the old check passed on HTTP 200 because `failEnvelope` is also 200 — the new test asserts the payload) · **a viewer bearer could mint itself an admin token**; the requested role is clamped to the caller's role for non-writers · `refresh --full` labelled its embed step "incremental" · `setup --status` printed nothing on an empty workspace · FR-ZCP-13 gained the persistence test its AC had been claiming.
+
+**Remainders recorded** (§6b "Known remainders and unverified seams"): PG migrations 010/011 unexecuted on Postgres · `gc.rs` as a Go-native substitute (idle-gated embedding dropped) · the `doc_indexer` doc→code join unported · 8/14 error codes unwired · `env_snapshots` cannot env-filter calls/schemas · `team` verb + `/api/teams` unported · embeddings single-flight + per-file atomic replace absent (#279).
+
+
+### v4.9.1-parity-third-wave — project config + the FR-ZCP-13 first-run contract (2026-09-12)
+
+> **Trigger:** the module audit's last two gaps: Rust's `leankg.yaml` project config (only the LSP block had been ported) and the first-run setup contract FR-ZCP-13 (setup choice, setup pipeline, auto-index gates).
+
+**Delivered**
+- **`internal/projectcfg`** — the full `ProjectConfig` shape + defaults (project/steer, indexer, mcp, documentation, microservice, auth, lsp, source, db), parse/absent postures, project-path resolution (nearest-config walk-up, `project.project_path` anchor, canonicalized), the `db:`/`auth:` walk-up readers, and the N1 read-modify-write migration helpers (existing keys — including unmodelled ones — win; missing keys are filled; idempotent).
+- **Wired, not just landed**: `resolveProjectDir` consults the anchor; `pgURLFor` applies Rust's precedence (env > `db:` yaml > default) at the store call sites; `index` self-heals a missing `project_path` before deriving the schema; `serve`/`doctor`/`status` resolve their store through `FindProjectRoot`/`ResolveProjectRoot`; `status` publishes the effective config (with `mcp.auth_token` redacted); `doctor --deep` adds the config `project_path` as a schema-identity candidate and gains a `config` check (WARN unreadable, FAIL dangling anchor); each `LEANKG_PROJECT_DIRS` project honors its own anchor.
+- **`internal/setupcfg` + `internal/setup` + `internal/indexgate`** — FR-ZCP-13 end to end: the auto/manual choice persisted at `<project>/.leankg/config.json` (unknown keys preserved), `leankg setup [--reset|--clone|--index|--embed|--status]` (repo resolution from `LEANKG_REPOS`/`LEANKG_PROJECT_DIRS`/`LEANKG_WORKSPACE_DIR`, cloning via `internal/sources`, the config template written through the preserving merge), and the auto-index decision table (`ReadOnly|Disabled|Fresh|NoGit|Index` + the `LEANKG_SKIP_FRESHNESS_CHECK` escape hatch) driven by the `mcp.auto_index_*` keys — with the question asked once on `index` (flags > `LEANKG_SETUP_MODE` > stored > TTY prompt > manual).
+
+**Deliberate choices:** `status` keeps the store-watermark `freshness` definition the v4.4.3 contract already publishes (the Rust git-commit variant would be a second, conflicting definition); an explicit `leankg index` always indexes — manual mode governs the automatic paths only; setup stages run in-process through a `Stages` seam rather than re-exec'ing the binary.
+
+### v4.9.0-parity-second-wave — the Rust internals nobody had ported (2026-09-12)
+
+> **Trigger:** after v4.8.0 closed the recorded deferred ledger, a systematic audit of the Rust tree (every `src/*` module and all 73 CLI variants) found capabilities the ledger never listed. All are now ported from `f7624143^`.
+
+**Delivered:** federation client (`push`/`pull`) · conversation mining (Claude/ChatGPT/Slack) · persisted usage metrics (`context_metrics`, `leankg metrics`, H10 buckets behind `leankg dashboard`) · org knowledge (incidents, team notes, env conflicts, service context, team map; store migration 010 + `/api/v2/*`) · PRD indexing (`FR/US/AC` → requirement entities + workflow edges; `leankg prd`, `prd-trace`) · remote sources (git+/GCS/local; `index|refresh --source`) · response token budget (`internal/budget`) · error catalog (`internal/errs`, FR-ZCP-12 T1).
+
+**Fixes found while porting (Rust defects not reproduced):** mining dropped every `decided_about` edge but the last per file; the PRD id regex silently dropped `FR-ZCP-13`/`FR-GE-01`-shaped ids; `pull` was never a data pull and no server ever served the push route (recorded in #372).
+
+**Not applicable / deliberate:** `gc.rs` (Rust-allocator `malloc_trim`/RSS workaround — Go's scavenger owns this); `setup --clone` pipeline (the `sources` package can serve each spec if it is wanted); Rust's `team`/`/api/teams` (the Go engine has membership + ownership in the auth subsystem, no teams table).
+
+**Verification:** `gofmt` clean · build ×3 (default, `CGO_ENABLED=0`, `-tags tstree`) · `go vet` ×2 · `go test ./...` green under both tags · `go mod tidy` no-op · live CLI smokes for the new verbs.
+
+
+### v4.8.0-full-parity — every deferred item implemented; nothing silently missing (2026-09-12)
+
+> **Trigger:** user direction — "implement all the missing part, I want everything not missing anything", fanned out across subagents with the deleted Rust tree as the contract.
+
+**Delivered (closed the whole v4.6.0/v4.7.0 deferred ledger, each ported from `f7624143^`)**
+- **Dashboard API (#371)**: all 11 legacy `/api/*` endpoints on the `-ui` address (index status, search, query, query-graph, file, graph children/expand-service/clusters/report/service-topology, project switch), SPA fallback now JSON-404s `api/*`; verified live on every route.
+- **Ontology**: procedural workflows (YAML loader/sync/marker), traceability (`trace`, `feature_flow`, `traceability_matrix`), concept search, safe-discover mega-graph path, ontology-guided downward traversal.
+- **Compression**: the full Rust pipeline in `internal/compress` (8 reader modes, cargo-test/git-diff/shell command compressors, 7 response shapers, session cache, entropy, symbol map, LITM), reachable through the 3-tool envelope (`import{action:"read"}`, `query{action:"compress"}`) and the CLI.
+- **LSP bridge**: project-configured server catalog + typed call-edge resolution + index-time enrichment, **gated on project config** so default indexing is unchanged; tag→catalog mapping spans every registry language.
+- **Android/Gradle/Maven**: 14 specialist extractors with fixtures, wired through the shared walk/doctor gate.
+- **Embeddings**: llama.cpp sidecar lifecycle (spawn, bounded health poll, process-group shutdown, attach-or-spawn, actionable failure — never fake vectors) + `leankg-embed` wiring.
+- **Languages**: registry 13 → **40** (all 27 remaining examples/ languages), objc/dart tree-sitter grammars vendored with objc message-send call edges and dart ctor/factory/enum elements.
+- **Enterprise**: accounts/orgs/memberships/team_members/resource_ownership + `/api/v1/auth/*` (public bootstrap mounted outside the bearer gate); DB-backed tokens with expiry/revocation/scopes/last-used.
+- **Multi-project serving**: `LEANKG_PROJECT_DIRS` with per-request `?project=` / MCP `project` routing; single-project behavior byte-identical when unset. **doctor --deep**: 8 fleet checks with Rust exit semantics.
+- **Obsidian**: vault init/status, push (store→notes), pull (notes→Note elements, wiki-links, annotations), debounced watcher.
+- **CLI parity**: `run`, `detect-clusters`, `report`, `gods`, `ctags`, `cost`, `migrate`, `audit export|verify`, `auth register|token …`, `export`, `pack`, `generate`, `annotate`, `link`, `search-annotations`, `show-annotations`, `register`, `unregister`, `list`, `status-repo`, `tunnels`, `quality`, `reflect`, `refresh`, plus `query --action` passthrough.
+
+**Security deviation from Rust (deliberate):** `/api/v1/auth/register` and `/login` no longer serialize `password_hash` — the Rust port returned the PBKDF2 verifier (salt + KDF params + digest) to the caller, which is credential material leaving the process; the field is now in-process only (`json:"-"`), pinned by a test. The Go engine also enforces the bearer middleware on `/api/v1/status`-class routes and requires a valid token for revoke, where Rust checked presence only.
+
+**Fixed while integrating** (found by the wave, not by tests): `CGO_ENABLED=0 go build ./...` was broken by untagged vendored C sources (CI could not see it — a CGO-free tree build step is now in `ci.yml`); `/api/v1/auth/*` was behind the bearer gate (bootstrap deadlock); the dashboard listener's unauthenticated API now warns when bound beyond loopback; the marker-less language census never looked deeper than two levels (silent zero-file indexing); `leankg impact` double-called its handler (panic); MCP `serverInfo` version drift; the `leankg add`/`mcp-stdio` dead wiring.
+
+**Audited, not assumed**: the per-verb disposition table (§6b) accounts for all 73 Rust CLI variants; the five capabilities that remain unimplemented are *new product milestones*, tracked as #372–#376.
+
+
+### v4.7.1-merge-truth — CI-green fixes + honest ledger for the Go cutover (2026-09-11)
+
+> **Trigger:** pre-merge audit of PR #370 — the one CI job gating the rewrite was red, and three shipped claims (dashboard done, install paths, tracked corpus) did not survive contact with the branch.
+
+**Fixed**
+- **ast-grep probe drops the deprecated `sg` alias** (`internal/astgrep`): `New()` resolves only `ast-grep`. The previous name-only probe of `sg` accepted util-linux's set-group command on Linux, so `query{action:"pattern"}` shelled out to a binary that prints no JSON and returned a hard error instead of the documented L2 degrade, while `internal/langs.astGrepPresent()` (the same name check) advertised a live ast-grep tier in `status`. `sg` is deprecated upstream and validating an alias would have cost a process spawn per probe — dropping it removes the whole impostor class without one. Regression tests: `TestNewIgnoresSgAlias` (rejects `sg` without executing it) + `TestAstGrepPresentIgnoresSgAlias` (tier stays dark).
+- **Client wiring spawned a command that does not exist** (`cmd/leankg`): `connect` and `install --target` wrote `["mcp-stdio"]` (± `--project`) as the stdio entry, but the Go binary has no `mcp-stdio` subcommand — the real mode is `serve --stdio`. Every wired client (claude-code, cursor, codex, gemini, opencode, omp) spawned a process that died before answering. The tests pinned the broken string, so the suite could not see it; `TestStdioSpawnServesMCP` now builds the binary and drives the emitted argv over stdio (initialize → initialized → tools/list = `import`/`query`/`status`), so future wiring regressions fail loudly. Stdio entries stay projectless by default (FR-ZCP-04 URL contract); `--project` remains the explicit escape hatch.
+- **SessionStart hook ran a verb that does not exist** (`cmd/leankg`): `install --register-cwd` wrote `leankg add $CLAUDE_PROJECT_DIR` into `~/.claude/settings.json`, and the Go binary has no `add` case — Claude Code would fail the hook every session. The Go attach-and-index equivalent is `index`, which is what the hook now runs (creating-or-updating that project's store, incremental after the first run); `TestHookCommandRuns` executes the expanded hook through a shell — with a space in the project path — and requires the store it promises; the hook embeds the resolved exe (`CurrentCommand()`) and quotes the variable, so neither PATH nor spaces can silently no-op it.
+- **Dangling gitlink**: `benchmark/corpora/docs` was committed as a submodule reference with no `.gitmodules` entry — `git submodule update --init` and `--recurse-submodules` clones failed (`fatal: No url found for submodule path 'benchmark/corpora/docs'` in CI's own post-job). Removed.
+- **Install surface**: `scripts/release.sh` (drove the deleted `Cargo.toml`, referenced nowhere) removed; `scripts/install-go.sh` now clones over HTTPS instead of `git@github.com:` and prints the verified `install --target <client>` next step.
+- **Version stamp**: MCP `serverInfo` reported the stale marker `0.31.0-go-w1`; it reports `0.31.0` again, with `internal/mcp/version_test.go` failing if it drifts from `cmd/leankg/VERSION`.
+
+**Corrected claims**
+- Parity ledger `web api+ui`: **DONE → PARTIAL**. `internal/web` embeds and serves the ui-v2 build, but the dashboard's `/api/*` contract (11 endpoints: index status, search, query, query-graph, graph clusters/report/children/expand-service/service-topology, file, project switch) is not ported — the SPA fallback answers those calls with `index.html`, so the dashboard renders without data. Port tracked in **#371**.
+- README install/CLI/contributing sections rewritten to the Go surface: `cargo install`, the crates.io badge, and the Rust-era verbs (`init`, `update`, `path`, `explain`, `graph-query`, `embed --init`, `mcp-stdio`, `ontology sync`, `serve --port`) described binaries and subcommands this tree no longer contains.
+
+### v4.7.0-lazy-languages — AST tiers + lazy per-codebase language activation (2026-09-11)
+
+> **Trigger:** user direction: support the default language set **go, rust, ts, tsx, js, jsx, py, md, java, kotlin, swift, objective-c, flutter(dart)** via ast-grep + tree-sitter + optional LSP; everything idle/lazy — activate per opened codebase (nested repos each activate their own slice); LSP consulted against the queried directory at query time.
+
+**Delivered:**
+- `internal/langs` — 13-language registry: extensions (single-owner + `.h` header rule), repo markers (go.mod/Cargo.toml/package.json/tsconfig/pom.xml/build.gradle*/Package.swift/Podfile/pubspec.yaml/…), aliases (golang, txs, flutter, object-c…), LSP command candidates. `Activate(codebase)` walks bounded depth (nested roots + marker-less census supplement); `Deactivate` returns to idle; `Tiers()` reports per-language LIVE capability: `regex` (always), `tree-sitter` (build tag `tstree` only — default stays CGO-free), `ast-grep` (CLI on PATH), `lsp` (server binary resolves).
+- `internal/tstree` — CGO tree-sitter tier behind `tstree`: bundled grammars for go/rust/ts/tsx/js/jsx/py/java/kotlin/swift, **wired into the indexer** (`tstree_seam.go`: tree-sitter first with real block end lines, regex fallback per language; objc/dart/md have no bundled grammar → regex+LSP gap, documented). CI compiles+tests the tag (tstree job runs before the default suite) + tidy guard.
+- `internal/lsp` — lazy JSON-RPC/Content-Length client (stdlib framing): per (language, rootDir) pool, 5s startup bound, didOpen+documentSymbol (hierarchical+flat normalized, 1-based lines) + workspace/symbol, idle-TTL eviction.
+- `internal/astgrep` — ast-grep CLI wrapper (argv-safe, ctx-bounded, `--json` parsing).
+- Indexer: java/kotlin/swift/objc/dart regex extractors (+ per-language testdata fixtures); `IndexDirWith(reg)` routes through the registry (lazy) while `IndexDir` stays all-on compatible.
+- Transports: `status`/`query{action:"languages"}` carry active languages + live tiers; `query{action:"lsp"}` runs server-backed workspace/document symbol lookups scoped to the queried directory (server spawned lazily, pooled, idle-evicted); `query{action:"pattern"}` runs ast-grep structural search and DEGRADES to L2 keywords when the CLI is absent.
+
+**Verified:** live serve on a polyglot fixture activated go+dart (markers) and java (census supplement) with correct tier lists; registry tests incl. nested repos, aliases, idle semantics; dual-engine gate green.
+
+### v4.6.0-go-full-parity — Go engine at full surface parity; Rust line removed (2026-09-10)
+
+> **Trigger:** maintainer direction: "keep working until the Go code replaces 100% of the Rust code" — all waves landed, both engines live-verified, then the Rust tree deleted.
+
+**Parity ledger (analysis §7 row-by-row):**
+
+| Rust subsystem | LOC | Fate in Go | Status |
+|---|---|---|---|
+| db (Cozo+translator+sqlite) | 18.6k | `internal/store` — plain typed SQL, Backend interface, SQLite WAL + PostgreSQL/pgvector (schema-per-project, per-model vector tables + HNSW) | **DONE** (10/10 live-PG tests) |
+| mcp transports + envelope | 16.4k | `internal/mcp` (official go-sdk, stdio+streamable HTTP) + `internal/rpc` (ConnectRPC gRPC/gRPC-Web/JSON) + `internal/rest` | **DONE** |
+| graph/query traversal | 15.2k | `internal/graph` — Impact/ShortestPath/Callers/Callees/Context/Explain, wired as query actions | **DONE** (connection verbs; ontology-walk provenance = deferred, see below) |
+| indexer extractor+call graph | 11k | `internal/index` + `internal/docindex` — **13 default languages** (go, rust, ts, tsx, js, jsx, py, md, java, kotlin, swift, objective-c, flutter/dart) with **lazy per-codebase activation** (`internal/langs`): nested repos activate their own slice; \`IndexDirWith(reg)\` routes extraction through the registry. Extraction tiers: regex (all 13, always), tree-sitter (`tstree` build tag, 10 grammars — objc/dart treesitter absent in the bundled set), ast-grep (\`query{action:"pattern"}\`, degrades to L2 when the CLI is absent), LSP (\`query{action:"lsp"}\`, server pooled per (lang,dir), idle-evicted, consulted at query time). Live-verified indexing all 13 + runtime activation. vs Rust's 43 grammars | **DONE for the 13 defaults; broader language list = future tree-sitter grammar additions** |
+| embeddings | 8.2k | `internal/embed` + `cmd/leankg-embed` — Provider port (OpenAI-compatible = API + llama.cpp sidecar), **sidecar lifecycle management** (`embed.StartProvider`: spawn `LEANKG_EMBED_SIDECAR_CMD` (default `llama-server`), bounded `/health` readiness poll, process-group SIGTERM→SIGKILL shutdown on cancel/release; `LEANKG_EMBED_BASE_URL` attaches instead of spawning; absent sidecar fails actionably — never fake vectors), ModelStamp guards, NDJSON offsite | **DONE** |
+| web api+ui | 5.8k | `internal/web` (go:embed ui build, SPA fallback) + `APIHandler` (all 11 legacy dashboard endpoints: index status, search, query, query-graph, file, graph children/expand-service/clusters/report/service-topology, project switch) + REST `/api/v1/*` | **DONE** — the `-ui` address mounts `/api/` ahead of the SPA; unknown `api/*` returns a JSON 404; verified live (every route JSON, SPA preserved). Port of `src/web/*` + `src/graph/{query,nl_query,clustering,provenance}.rs`; #371 closed |
+| cli/connect/install | 2.2k+1.4k | `cmd/leankg` — serve/index/writer/doctor/connect/install for 6 clients, --register-cwd hooks | **DONE** |
+| ontology | 4.0k | `internal/ontology` — concept catalog + element matching + kv persistence + **procedural workflows** (YAML loader/sync/marker), **traceability** (`trace`, `feature_flow`, `traceability_matrix`), concept search, safe-discover for mega-graphs, and the ontology-guided downward traversal; reachable via `import{action:"ontology"}` (dir = workflow sync) and `query{action:"ontology", args:{cmd: matches\|trace\|status\|concept_search\|feature_flow\|traceability}}` over MCP/REST/CLI | **DONE** |
+| session offload | 0.9k | `internal/session` — offload/recall bit-for-bit + checksums, canvas, lesson dedup; reachable via `import{action:"session", command:offload|lesson}` + `query{action:"session"}` (canvas/recall) over MCP/REST/CLI, POST /api/v1/session/read; core + mcp + rest tests pin the round-trip | **DONE** |
+| compress | 3.5k | `internal/compress` — reader modes (adaptive/full/map/signatures/diff/aggressive/entropy/lines), command compressors (cargo test, git diff, shell), response shapers (impact/call-graph/search/dependencies/context), session cache, symbol map, entropy, LITM; reachable through the envelope as `import{action:"read", args:{mode,lines,fresh}}` and `query{action:"compress", args:{cmd\|tool+response}}`, plus the CLI `query --compress` / `run --compress` paths | **DONE** |
+| lsp bridge | 2.6k | `internal/lsp` — bridge over the query-time client: per-project `leankg.yaml` config (servers/workspace_root/timeout_ms), server catalog + capability tiers, typed call-edge resolution (`indexer.typed_resolve`, default off), and the index-time enrichment pass (`lsp.Enrich`) **gated on project config** so a codebase without an LSP block indexes exactly as before; tag→catalog mapping covers all registry languages | **DONE** |
+| Android/Gradle/Maven extractors | ~9k | `internal/index` specialists — AndroidManifest (+ permissions/components), resources (string/color/style/dimen/bool/integer/array), Jetpack nav (XML + Kotlin DSL), fragment/leanback nav, Room, Hilt, WorkManager, resource refs/linking, Gradle (deps/module rels), Maven; wired through `SpecialistClaim`/`indexSpecialistFile`/`indexKotlinExtras` (walk + doctor agree on the same gate) | **DONE** |
+| benchmark harness | 4.5k | `go/benchmark/ab` — Go benchmarks + **executed A/B REPORT.md** (fresh Rust 0.30.0 build from pre-removal commit vs v4.6.0: index parity 0.10s/0.10s, L1 53ms/50ms, 12.7× smaller binary; impact marked NOT COMPARABLE — seed granularity differs (Rust=file, Go=element QN) and the two arms disagree on the same chained corpus; in-process Rust cells 'not measured') | **DONE** |
+| audit/doctor/auth | ~3.3k | audit ledger (hash-chained, tamper-verified) + RBAC middleware + **enterprise auth** (accounts/orgs/memberships/team_members/resource_ownership + `/api/v1/auth/*` handlers, public by design and mounted outside the bearer gate) + DB-backed tokens (expiry/revocation/scopes/last-used) + `doctor --deep` (8 checks, Rust exit semantics 0/1/2, `--format json`) + CLI `audit export\|verify`, `auth token …`, `migrate` | **DONE** |
+| npm wrapper + manifest + release pipeline | — | removed with Rust; Go release engineering: `go/cmd/leankg/VERSION` + `.github/workflows/release-go.yml` (4-target CGO_ENABLED=0 matrix → GitHub Release artifacts, manual `workflow_dispatch` until the maintainer opts into tag automation). npm wrapper intentionally not revived (no Node runtime in the Go engine) | **DONE** (manual-trigger release; auto-publish = maintainer choice) |
+| language registry | — | `internal/langs` — **40 languages** (13 defaults + 27 expanded: c/cpp/csharp/php/ruby/scala/perl/lua/haskell/elixir/crystal/cuda/cypher/elm/erlang/fsharp/glsl/hlsl/nim/ocaml/sql+plsql+tsql/powershell/qsharp/solidity/systemverilog/verilog/zig), each with regex extractors + fixtures; every directory under `examples/` extracts non-zero elements | **DONE** |
+| tree-sitter grammars | — | `internal/tstree` — bundled grammars incl. **objc (tree-sitter-objc 3.0.2, vendored C, tagged `tstree`) and dart (nielsenko 0.0.4, ABI-14)**; objc message-send call edges + dart constructor/factory/enum elements | **DONE** |
+| multi-project serving | — | `internal/projects` — `LEANKG_PROJECT_DIRS` registry, lazy per-project store+engine, routing by dir path or name on REST `?project=`, MCP tool arg `project` (stdio + HTTP), ConnectRPC and the dashboard; unknown selectors are errors, never a silent fallback; single-project behavior byte-identical when unset | **DONE** |
+| federation (client) | 0.1k | `internal/federation` — `leankg push`/`pull` ported as Rust had them (POST `/api/v2/graph/push` with `X-LeanKG-Token/-Engineer/-Env`; `pull` is a `/api/v2/status` connectivity probe). **Finding: no server — Rust's own Axum app included — ever served the push route**, so a real federation (receiver + auth + merge policy) remains a design task; tracked in #372 | **DONE** (client parity) |
+| conversation mining | 0.7k | `internal/convo` — Claude/ChatGPT/Slack export parsers, classify (decision/preference/milestone/problem), topic + code-target extraction, `decided_about` edges; `leankg mine-conversations --format … --input …`. Fixes a Rust defect where all but the last `decided_about` edge per file path were dropped | **DONE** |
+| persisted metrics | — | `context_metrics` ledger (migration 011, both backends) + `internal/metrics` — `leankg metrics` (since/tool/json/session/reset/retention/cleanup/seed) and the H10/FR-PLG-8 usage buckets behind `leankg dashboard`; recorded from the MCP dispatch like Rust (REST never recorded there either) | **DONE** |
+| org knowledge | — | `internal/orgknowledge` + store migration 010 (incidents, knowledge_entries, service_metadata, env_snapshots) — incident CRUD/query, team notes/annotations, env-conflict detection, service-context aggregate, team map; CLI `incident\|note\|env-conflicts\|service-context\|team-map` and `/api/v2/{incidents,env/diff,service/context}` | **DONE** |
+| PRD indexing | 0.3k | `internal/prdindex` — FR/US/AC extraction from a PRD document into requirement entities + knowledge rows + `implemented_by` edges to ontology workflows; `leankg prd` / `prd-trace` and `import{action:"prd"}` / `query{action:"prd"}`. Additive over Rust: AC lines are captured, and the id regex fix stops silently dropping `FR-ZCP-13`-shaped ids | **DONE** |
+| remote sources | 1.3k | `internal/sources` — git+ (shallow branch clone, full-clone+checkout fallback for tags/SHAs, fetch/advance), GCS (paginated listing, size cap), local tree; `index --source` / `refresh --source` now work (the old `--source is not supported` refusal is gone), with `--ref-name` and the `--auth` > `GITLAB_TOKEN` > `GIT_TOKEN` chain | **DONE** |
+| response token budget | 0.7k | `internal/budget` — per-action caps with the `_token_budget` marker, one-pass truncation, protected keys, RSS guard via `getrusage`, `LEANKG_TOOL_*`/`LEANKG_MAX_RSS_MB` knobs; applied on MCP responses | **DONE** |
+| error catalog (FR-ZCP-12 T1) | 0.4k | `internal/errs` — 14 Rust entries with code + cause + runnable fix + doc anchor, rendered through the CLI/store/MCP/REST/auth paths (the audit test fails on drift) | **DONE** |
+| obsidian | 0.7k | `internal/obsidian` — vault init/status, push (store→notes, Rust path/metadata/template parity), pull (notes→`Note` elements + `[[wiki-links]]` + frontmatter links + annotations), bounded debounced watcher; CLI `obsidian init\|push\|pull\|watch\|status` | **DONE** |
+| CLI verbs (Rust parity) | — | `run` (+`--compress`), `detect-clusters`, `report`, `gods`, `ctags`, `cost`, `migrate`, `audit export\|verify`, `auth register\|token create/list/revoke`, `export`, `pack`, `generate`, `annotate`, `link`, `search-annotations`, `show-annotations`, `register`, `unregister`, `list`, `status-repo`, `tunnels`, `quality`, `reflect`, `refresh` — all wrapper-level ports of shipped Rust features | **DONE** |
+| registry | 0.1k | `internal/registry` — global repo registry at `$HOME/.leankg/registry.json` (Rust schema/version parity, null-field semantics), register/unregister/list/status incl. live element counts | **DONE** |
+
+**Validation:** `gofmt` clean · `go build ./...` + `CGO_ENABLED=0 go build ./...` + `go build -tags tstree ./...` green · `go vet` both tags clean · full `go test ./...` green under BOTH the default and `-tags tstree` builds · `go mod tidy` a no-op. Live-verified this wave: dashboard JSON on every route, multi-project routing (`?project=`), MCP tool-arg routing, `run --compress` exit-code propagation, `audit verify` on a tampered chain, `auth token create/list/revoke` with revocation enforced, `detect-clusters`/`report`/`gods`/`tokens`…, obsidian push/pull idempotency, doctor `--deep` exit codes 0/1/2.
+
+**Remaining Rust-era capabilities, tracked as issues (never silently dropped):** federation push/pull (#372) · conversation mining (#373) · org knowledge surfaces: incidents, team notes, env conflicts (#374) · persisted usage metrics (#375) · FR-ZCP-09/10 portfolio registry + cross-schema queries + fleet doctor (#376). Each is a *new* product milestone rather than a port of live behavior; the per-verb disposition table below records the full audit. Live smoke both engines: SQLite (index→embed→L1/L2/L3→memory→MCP 3-tool registry→RPC) AND PostgreSQL :5433 (index→embed with vectors physically in `leankg_*` schema→L1/L3 pgvector→graph verbs→status backend=postgres). Benchmarks: IndexDir 100 files 0.73s, L1 137µs, L2 375µs, 1k×384 cosine scan 4.4ms (exact scan ceiling vs HNSW documented).
+
+**Cutover state:** Rust source, Cargo config, cargo CI jobs, npm wrapper and manifest removed; Go CI job added; release engineering retargeted to `release-go.yml` (4-target CGO_ENABLED=0 matrix, manual `workflow_dispatch` with an explicit version input — tag automation is the maintainer's opt-in).
+
+### v4.5.1-go-rewrite-w1 — Go engine W1 delivered: `go/` greenfield engine + leankg-embed (#368) + full-markdown memory (#369) (2026-09-10)
+
+> **Trigger:** maintainer go-decision on the Rust→Go rewrite (#365 umbrella). This PR lands migration waves **W1 (core)** plus the two issue-scoped slices **#368 (embedding pipeline as an independent binary)** and **#369 (full-markdown memory)** — not full parity.
+
+**Delivered** (`go/` module, ~7 packages, all `go test ./...` green + live-smoked):
+
+| Slice | What landed |
+|---|---|
+| W1 store | SQLite WAL (`internal/store`): FTS5 L2 rung, float32-BLOB vectors + in-proc cosine (documented ceiling; sqlite-vec upgrade path), DB-resident `write_watermark` freshness (kills the C4 TOCTOU class), real PKs on `code_elements`/`relationships` (documented breaking fix) |
+| W1 core | 3-tool envelope (`import`/`query`/`status`, legacy `set`/`get` as tool names rejected over the wire; action aliases live) + L0→L1→L2→L3 ladder with `retrieval{rung,reason}` + `freshness` on every answer |
+| W1 indexer | regex extraction (go/rs/ts/tsx/js/jsx/py/md; documented ceiling until W2 tree-sitter), 3-signal change detection (size+mtime → SHA-256 confirm), calls/contains relationships |
+| W1 transports | MCP stdio + streamable HTTP via official `modelcontextprotocol/go-sdk` v1.7.0; REST `/health`, `/api/v1/{status,query,import}` (stdlib net/http) |
+| #368 | `cmd/leankg-embed` independent binary (`run`/`full`/`export`/`import`/`status`); shared `internal/embed` library; ModelStamp guard on EVERY vector writer — full+mismatch ⇒ clear+rebuild, **incremental+mismatch ⇒ hard fail with `leankg-embed full` directive** (flag-slip must not wipe a collection), first build stamps; NDJSON offsite export/import with dim-guard + resume; serving binary does zero inference (query-time embedding = HTTP client call, provider failure degrades to L2) |
+| #369 | Full-markdown memory (`internal/memory`): `MEMORY.md`/`USER.md` bounded 2,200 bytes with **error-not-truncate** overflow + usage-% snapshot header; `topics/*.md` unbounded; Claude-Code file commands (`view/create/str_replace/insert/delete/rename`) with path-traversal + symlink-escape rejection; Hermes `add/replace/remove` with unique-substring semantics (ambiguous ⇒ error); FTS5 `index.db` re-indexed on every write; mnemopi JSONL banks adapter (wyhash64 byte-exact port of the Rust wyhash 0.5 crate, `retained_through_user_turn` cursor) |
+
+**§9 decisions taken:** (1) tool rename `set`/`get` → `import`/`query` (breaking tool-name cutover; action aliases keep the verb namespace); (2) query-time embeddings provider-first — OpenAI-compatible API or llama.cpp sidecar share one HTTP shape; sidecar runtime itself is W6; (3) ui-v2 untouched (REST-compatible); (4) W1 scope = core + #368 + #369, NOT full parity. (5) project resolution: explicit `--project`/cwd first — roots/list stays available as a fallback but is not the only path (deprecated by SEP-2577 in the go-sdk); server-initiated roots/list lands when the HTTP surface needs remote resolution.
+
+**Waves remaining:** W2 (tree-sitter indexer), W4 (pgvector), W5 (ConnectRPC + hindsight memory e2e), W6 (local model runtime), W7 (parity fixtures + cutover). Tracker rows: FR-GO-W1, FR-GO-EMBED, FR-GO-MEM.
+
+
 ### v4.5.0-go-rewrite-analysis — Deep Rust→Go feasibility study (2026-09-10)
 
 > **Trigger:** user direction to evaluate replacing the Rust implementation with a Go engine: a lightweight agent-memory MCP server (just 3 tools — import/query/status), easy coding-tool integration, REST + RPC transports, layered storage (index → embedding), query ladder exact → fuzzy → semantic, SQLite default + PostgreSQL/pgvector, local (default) + API-provider embeddings, real writer/reader separation, and a comprehensive markdown analysis as the deliverable.
@@ -102,7 +254,7 @@
 | # | ID | Focus | Intent | Status |
 |--:|----|-------|--------|--------|
 | 1 | `FR-ZCP-03` | **P0** | Rewritten as the ladder router: capability probe + L0–L3 rungs + `retrieval` provenance block; registers the unregistered `orchestrate` parser | **NOT_DONE** |
-| 2 | `FR-ZCP-13` | **P1** | First-run setup contract: one auto/manual question (init + index + embed vs manual) persisted in `.leankg/config.json`; `leankg add <path> [--embed]` one-command repo registration; embeddings are a preference, never a prerequisite | **NOT_DONE** |
+| 2 | `FR-ZCP-13` | **P1** | First-run setup contract: one auto/manual question (init + index + embed vs manual) persisted in `.leankg/config.json`; one-command repo registration (Go verb: `leankg index <path>`; the designed Rust name `leankg add` is superseded); embeddings are a preference, never a prerequisite | **NOT_DONE** |
 | 3 | `FR-ZCP-05` | folded | Bridge tier spec: `pg_trgm` GIN + `text_pattern_ops` prefixes as the L2 fuzzy baseline before FTS lands | folded |
 
 ### v4.2.0-simplicity-first — Measured-simplicity contract for a young product (2026-09-04)
@@ -241,13 +393,13 @@
 - Watcher lifecycle: the watcher is single-project-per-process today (`server.rs:1585-1596`/`:2015-2026`); multi-project attach requires per-project watcher tasks bounded by the same one-indexer-slot budget as FR-ZCP-09.
 - AC: `rm -rf .leankg && query "where is auth handled?"` → immediate non-error response + background index completes within existing SLA; second query hits the graph; a query naming a never-seen repo never returns another repo's data.
 
-**FR-ZCP-13 — First-run setup contract + `leankg add` (Should Have, P1)**
+**FR-ZCP-13 — First-run setup contract (Should Have, P1; registration verb `leankg add` superseded by `leankg index` in the Go engine)**
 
 - **One question, asked once.** The first time a user touches a repo with no `.leankg` config (install wizard, first `leankg` CLI call, or the router's L0 response), LeanKG asks exactly one question: **auto or manual?** Auto = init + index + embed (catalog default model) proceed unattended (index/embed always background); manual = `init` only, with `index`/`embed` as explicit commands. The choice persists in `.leankg/config.json` (`{"setup": "auto"|"manual", "embed": bool}`) and governs every later attach; `--auto`/`--manual` flags and `LEANKG_SETUP_MODE` override per invocation for scripts/CI. No silent re-prompting; `leankg setup --reset` re-asks.
 - **Embeddings are a preference, not a prerequisite.** Choosing auto-with-embed on a non-`--features` build (or a machine without the model cache) stores the preference and serves L2/L1 results (the ladder, FR-ZCP-03) while `embed` is pending or unavailable — the answer changes what is *eventually* indexed, never whether queries work.
-- **`leankg add <path> [--embed]`** — the one-command way to grow coverage: registers the repo (registry row once FR-ZCP-09 lands; `.leankg` init today), applies the persisted setup choice (or the flag), returns immediately with `mcp_status`-shaped per-project status. `leankg add .` inside a portfolio parent registers children without indexing them (T0 manifests, FR-ZCP-09). `leankg status` lists everything added with freshness + rung.
+- **Registration verb (Go engine: `leankg index <path>`; the designed-but-unbuilt Rust name `leankg add <path> [--embed]` is superseded)** — the one-command way to grow coverage: registers the repo (registry row once FR-ZCP-09 lands; store creation today), applies the persisted setup choice (or the flag), returns immediately with status-shaped per-project output. `leankg index .` inside a portfolio parent registers children without indexing them (T0 manifests, FR-ZCP-09). `leankg status` lists everything added with freshness + rung.
 - **Zero dead ends**: `install --target` (FR-ZCP-04) prints the `add`/`index` commands in its output; the L0 router response names the exact next command; error strings carry runnable fixes (FR-ZCP-12 T1).
-- AC: fresh machine + fresh repo → one auto/manual answer → queries work during indexing (`freshness: cold`, L0/L1) → embeddings arrive later with no further user action; `leankg add ../other-repo --embed` from an indexed repo returns < 2 s and other-repo appears in `leankg status` with its own schema; manual-mode users are never auto-indexed.
+- AC: fresh machine + fresh repo → one auto/manual answer → queries work during indexing (`freshness: cold`, L0/L1) → embeddings arrive later with no further user action; `leankg index ../other-repo` from an indexed repo returns < 2 s and other-repo appears in `leankg status` with its own schema; manual-mode users are never auto-indexed.
 
 ### 3.2 Default Toolset (FR-ZCP-03) — **P0**
 
@@ -282,7 +434,7 @@
 
 **Narrative.** Onboarding is one command per harness, writing that harness's own config format, with **no project path in the emitted URL** — FR-ZCP-01's contextual resolution (stdio process cwd; HTTP `roots/list`) makes `?project=` unnecessary in the happy path, and shipping it by default is the dead-end this FR exists to kill. Implementation extends the existing `connect` writers (`src/connect/`) with the two missing targets; `install --target` is the global-config surface, `connect <client>` stays as its alias.
 
-**Command.** `leankg install --target opencode|claude|codex|cursor|omp [--remote URL] [--project PATH] [--register-cwd] [--remove]`
+**Command.** `leankg install --target claude-code|cursor|codex|gemini|opencode|omp [--http --url URL] [--project PATH] [--register-cwd]` (Go flags; the Rust `--remote`/`--remove` do not exist)
 
 **Per-target config writers** (entry name `leankg`; merge-or-replace that key only, atomic tmp+rename write, never clobber siblings; parse errors abort with the file path — existing `connect` semantics):
 
@@ -295,15 +447,15 @@
 | `opencode` | `~/.config/opencode/opencode.json` | `mcp.leankg` — `{type:"local",command:[…],enabled:true}` / `{type:"remote",url,enabled:true}` | **new writer** |
 | `omp` | `~/.omp/agent/mcp.json` | `mcpServers.leankg` — `{type:"stdio",command,args,enabled:true}` / `{type:"http",url,enabled:true}` | **new writer** |
 
-**URL contract.** Default stdio entry: `<current exe> mcp-stdio` — **no `--project` flag** (server resolves from process cwd, FR-ZCP-01 clause 1). `--remote URL` emits the bare `URL` (e.g. `http://localhost:9699/mcp`) — **no `?project=` suffix** (clause 2: server-initiated `roots/list` resolution, in review on PR #268). `--project PATH` remains the explicit escape hatch and is the only way a `--project`/`?project=` gets emitted. **Docker is the one documented exception:** the container cannot see host cwds, so `--docker` (or `--remote` to a Docker-hosted server) emits `?project=<container-mount>` and prints the mount table (`/workspace` = this repo; per-repo mounts per local `.dockerfile`) instead of guessing.
+**URL contract.** Default stdio entry: `<current exe> serve --stdio` — **no `--project` flag** (server resolves from process cwd, FR-ZCP-01 clause 1). `--http --url URL` emits the bare URL (e.g. `http://localhost:9699/mcp`) — no `?project=` suffix (server-initiated `roots/list` resolution; the Go `--remote` and `--docker` flags do not exist — Docker was a Rust-line exception with a container-mount table, and the Go engine has no Docker mode). `--project PATH` remains the explicit escape hatch and is the only way a `--project` flag gets emitted.
 
-**`--register-cwd`.** Writes a per-client session-start hook that runs `leankg add <cwd>` (FR-ZCP-13 first-run setup contract, in review on PR #268) — real effect: attaches the project, persists setup mode, kicks the background indexer. It does **not** write a cwd→project table: the persistent session-registration table is FR-ZCP-01 clause 3, explicitly out of scope here. Clients with no hook mechanism get a printed note naming the manual command (zero dead ends).
+**`--register-cwd`.** Writes a Claude Code session-start hook running `<exe> index "$CLAUDE_PROJECT_DIR"` (exe resolved via `CurrentCommand()`; the variable quoted for the shell) — real effect: attaches-and-indexes the project (`index` creates-or-updates that project's store, incremental after the first run). The Rust-era `leankg add` verb has no Go case. It does **not** write a cwd→project table: the persistent session-registration table is FR-ZCP-01 clause 3, explicitly out of scope here. Clients with no hook mechanism get a printed note naming the manual command (zero dead ends).
 
-**Zero dead ends.** `install` output always prints the next step: if the cwd project is unregistered, print `leankg add <cwd>`; always print "restart the client". The MCP `mcp_install` verb keeps its project-local behavior (`.mcp.json` + instructions) and gains the same project-less URL contract.
+**Zero dead ends.** `install` output always prints the next step: if the cwd project is unindexed, print `leankg index <cwd>`; always print "restart the client". The `import` tool's repo action is the tool-form of the same registration.
 
 **Env hygiene (FR-ZCP-12 T1).** The `LEANKG_*` inventory is documented in one table, generated from source and CI-pinned — the table itself is the single source of truth for the count (a hand-typed total here would be exactly the unverifiable claim this AC polices; the last manual figure, "116 = 88+28+1", summed to 117 and matched no derivation). The happy path requires **zero** env vars beyond the one hard prerequisite (`LEANKG_PG_URL`). Every "zero-config"/"no-setup" sentence in README/docs names the script or CI job that executes it literally.
 
-**Config-block parity.** `install`/`connect`/`mcp_install` emit **exactly one JSON (or TOML) block** per client, byte-identical to the docs snippet — snapshot-tested per target.
+**Config-block parity.** `install`/`connect` emit **exactly one JSON (or TOML) block** per client (the Rust `mcp_install` verb is not in the Go toolset), byte-identical to the docs snippet — snapshot-tested per target.
 
 - AC: fresh clone → `leankg install --target omp` → open omp in a repo → tools work, correct project, zero manual URL edits; no emitted config contains `?project=` outside the documented Docker exception; re-run is idempotent (entry replaced, siblings byte-identical); `--remove` deletes only the `leankg` key; snapshot tests pin each target's exact block.
 
@@ -395,7 +547,7 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 
 | Milestone | Scope | Gate |
 |---|---|---|
-| **M1 — Zero-config attach** | FR-ZCP-01, FR-ZCP-02, FR-ZCP-13 | New repo, zero config → correct answers; no "not initialized" failures; one setup question (auto/manual) honored everywhere; `leankg add` returns instantly with status |
+| **M1 — Zero-config attach** | FR-ZCP-01, FR-ZCP-02, FR-ZCP-13 | New repo, zero config → correct answers; no "not initialized" failures; one setup question (auto/manual) honored everywhere; the registration verb (Go: `leankg index`) returns instantly with status |
 | **M2 — One-tool surface** | FR-ZCP-03 (+04) | Default set = 1 router tool; ladder degrades L3→L0 with `retrieval` provenance and zero hard errors; v3.8.5 probe suite passes; `install --target` writes project-less URLs |
 | **M3 — Honest search** | FR-ZCP-05, FR-ZCP-06 | FTS ranking + freshness in every response; no F1 regression |
 | **M4 — Harness memory** | FR-ZCP-07 (rides FR-SMA-01..04) | retain → recall round-trip works in OMP + OpenCode sessions; mnemopi-compatible bank/cursor contract verified against OMP session resume |
@@ -428,7 +580,63 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (e
 | Error contract (T1) | 100% of CLI+MCP error variants: stable code + cause clause + runnable fix + doc anchor; CI lints every string; allowlisted exceptions shrink, never grow |
 | Time-to-first-value (T2) | Cold happy path (install → init → serve → one JSON config block → first useful query) ≤ 5 min, CI-timed on a fresh environment, number published in README |
 | Claim hygiene (T1) | Every "zero-config"-class README/docs claim maps to a named script or CI job that executes it literally; claims without a passing script are deleted |
-| Setup friction (FR-ZCP-13) | Exactly one auto/manual question per user, persisted; `leankg add` returns < 2 s; manual mode never auto-indexes |
+| Setup friction (FR-ZCP-13) | Exactly one auto/manual question per user, persisted; the registration verb (Go: `leankg index`) returns < 2 s; manual mode never auto-indexes |
+
+## 6b. Rust CLI parity — per-verb disposition
+
+Audit of all 73 variants of the Rust `CLICommand` enum against the Go surface. `C` = covered by an existing Go surface · `I` = implemented in this wave · `D` = deliberate drop (with rationale).
+
+| Rust verb | Disposition |
+|---|---|
+| Version, Status, Serve, Web, Dashboard, ApiServe, McpStdio, McpHttp, Index, Add, Init, Impact, Embed, IndexDocs, Refresh(C+I), Query, SemanticContext, Ontology, Trace, FindByDomain, CheckConsistency, LspResolve, Doctor, Status, Watch, Setup(register half) | **C/I** — `version`, `status`, `serve`(-stdio/-http/-rest/-ui/-rpc), `index`, `impact`, `run`, `leankg-embed`, `query` (+`--action` passthrough for path/explain/callers/callees/context/pattern/lsp/compress/read), ontology actions (matches/trace/status/concept_search/feature_flow/traceability), `doctor [--deep]`, `writer`, `refresh` |
+| GraphQuery, Path, Explain, Gods, Report, DetectClusters, Tunnels, Quality, Reflect, Ctags, Cost, Audit, Migrate, Auth, ApiKey, Export, Pack, Generate, Annotate, Link, SearchAnnotations, ShowAnnotations, Register, Unregister, List, StatusRepo, Obsidian, Run | **I** — this wave (see ledger rows above) |
+| LspInstall, LspList | **D** — install hints deliberately unported (documented in `internal/lsp/registry.go`); resolution/query-time LSP is live |
+| SmokeTest, Benchmark, ToolBench, AbTest, BenchmarkUnified | **D** — harnesses live in Go tests + `go/benchmark/ab` + `scripts/` |
+| Metrics, Dashboard(usage half) | **I** — `context_metrics` ledger (migration 011) + `internal/metrics`: `leankg metrics` (since/tool/json/session/reset/retention/cleanup/seed) and the H10 usage buckets behind `leankg dashboard`; recorded from the MCP dispatch as Rust did |
+| Update | **D** — self-update removed with the npm wrapper; releases come from `release-go.yml` |
+| Proc | **D** — dev process management (Leankg/Vite), out of the engine's scope |
+| MineConversations | **I** — `internal/convo` + `leankg mine-conversations` (Claude/ChatGPT/Slack; fixes the Rust edge-loss defect) |
+| Incident, Note, EnvConflicts, Team | **I** — `internal/orgknowledge` + `incident\|note\|env-conflicts\|service-context\|team-map` verbs and `/api/v2/*`; `team` = the team-map read (membership/ownership live in the auth subsystem — no teams table by design) |
+| Push, Pull | **I** (client parity) — `internal/federation`; note Rust's `pull` was only a `/api/v2/status` probe and **no server ever served `/api/v2/graph/push`**, so the receiver/merge policy is still a design task: #372 |
+| Prs | **D** — PR-impact analysis is a separate product backlog item, never part of the engine rewrite |
+| gc.rs | **D** — Rust-allocator workaround (`malloc_trim`, RSS polling for glibc); Go's scavenger returns memory itself, so there is nothing to port |
+| budget.rs, mcp/token_budget.rs, errors.rs | **I** — `internal/budget` (per-action caps, `_token_budget` marker, RSS guard) and `internal/errs` (14-entry catalog, FR-ZCP-12 T1) wired through MCP/CLI/REST/auth |
+| cost_estimate / ctags_export / prd_indexer / sources / setup(clone) | **I/C** — `leankg cost`, `leankg ctags`, `internal/prdindex` (+ `prd\|prd-trace`), `internal/sources` (`index\|refresh --source`); the `setup --clone` pipeline itself is **D** (its per-repo clone spec is servable by `internal/sources` if wanted) |
+
+### Known remainders and unverified seams (truthful record)
+
+Everything below is *known*, with its consequence stated — none of it is a silent gap.
+
+| Item | State / consequence |
+|---|---|
+| PG migrations 008 (tokens), 009 (enterprise auth) | **Executed** on throwaway PostgreSQL clusters during the wave (their agents' reports). |
+| PG migrations 008–011 (tokens, enterprise auth, org knowledge, context metrics) | **Executed on PostgreSQL 18.6** (throwaway local cluster): all 17 gated PG tests green — round-trips for tokens (expiry/revocation/lifecycle), accounts/orgs/memberships/ownership, incidents/knowledge_entries/service_metadata/env_snapshots (arrays, nullable BIGINTs, jsonb metadata), metrics ledger, plus `Migrate` idempotency and schema isolation. Re-run anywhere with a PG server: `LEANKG_TEST_PG_URL=… go test ./internal/store/ ./internal/auth/ ./internal/orgknowledge/ ./internal/metrics/` |
+| `gc.rs` (Rust `MemoryGuard`) | **Go-native substitute, not a port**: Rust polled RSS and called `malloc_trim` per MCP request plus an idle-triggered vacuum scheduler; Go's runtime GC returns memory itself and the store has no vacuum step. The *idle-gated embedding* behaviour (`embeddings/control.rs`) has no Go counterpart — recorded as dropped, not forgotten. |
+| doc→code join (`doc_indexer` references/`documented_by` edges, `paths.go`, dir elements, 512K cap) | **Unported**: `internal/docindex` covers the doc walk and sections only, so import-hygiene questions that relied on doc→code edges return empty. |
+| Error catalog wiring | 6 of 14 catalog entries are wired into call sites; the rest have no Go emission point yet (the drift-audit test logs the uncovered set rather than hiding it). |
+| `env_snapshots` | Go stand-in for Rust's env-scoped `code_elements` (Go elements are keyed on `qualified_name`, single-env). Consequence: `calls`/`called_by`/`schemas` cannot be env-filtered. |
+| `leankg team` verb + `/api/teams` routes | Unported (membership/ownership live in the auth subsystem; the `team-map` read exists). |
+| Agent notes authority | `knowledge_entries` (migration 010) carries **scoped org facts** (per element/feature/environment, queryable); the markdown memory layer (#369: `MEMORY.md`/`USER.md`/`topics/`) remains the **agent-facing** substrate. Two substrates by design, one purpose each — not interchangeable. |
+| Embeddings single-flight + per-file atomic replace | Absent (see #279 comment): concurrent `leankg-embed` runs are not serialized, and a crash mid-write can leave a partially written file's vectors. |
+| `tmp-langs/` (29 MB probe dir, committed by an earlier session in `c4f55a5f`) | Left in place deliberately (not this wave's artifact): a cleanup candidate for the maintainer. |
+
+### Environment inventory (build/runtime)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LEANKG_DB_ENGINE` | `sqlite` | storage engine (`sqlite` \| `postgres`) |
+| `LEANKG_PG_URL` | — | PostgreSQL DSN (libpq params incl. `sslmode`/`sslrootcert` ride the URL) |
+| `LEANKG_PROJECT_DIRS` | — | comma-separated project dirs to serve (multi-project routing) |
+| `LEANKG_PROJECT` | cwd | project dir for `query`/`impact` when `--project` is absent |
+| `LEANKG_TOKEN_ADMIN` / `_CONTRIBUTOR` / `_VIEWER` | — | static bearer fallback (DB tokens take precedence) |
+| `LEANKG_EMBED_PROVIDER` | `local` | `local` \| `openai` \| `deterministic` |
+| `LEANKG_EMBED_BASE_URL` | — | attach to a running OpenAI-compatible endpoint (with `local`, skips the sidecar) |
+| `LEANKG_EMBED_API_KEY` | — | bearer for the embedding provider |
+| `LEANKG_EMBED_MODEL` / `_DIMS` / `_REVISION` | `local` / `384` / `local:<model>` | ModelStamp identity; a revision change invalidates the collection |
+| `LEANKG_EMBED_SIDECAR_CMD` / `_ARGS` / `_PORT` / `_READY_SECS` | `llama-server` / — / `8080` / `120` | sidecar spawn + bounded readiness |
+| `LEANKG_CACHE_MAX_TOKENS` | `500000` | compression session-cache budget |
+| `LEANKG_MAX_CACHE_ELEMENTS` | `50000` | mega-graph threshold (ontology-first discovery path) |
+| `PATH` | — | ast-grep / LSP server / sidecar discovery |
 
 ## 7. Historical Record
 
@@ -444,4 +652,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-10 (v4.5.0 — Rust→Go rewrite feasibility study delivered as docs/go-rewrite-analysis.md; no code changes)*
+*Last updated: 2026-09-12 (v4.9.2 — adversarial-audit corrections: clap-order flags + stray-positional rejection, push/pull dispatch, truthful project switching via a non-opening resolver, token privilege ceiling, refresh/setup output fixes; remainders tabled in §6b)*

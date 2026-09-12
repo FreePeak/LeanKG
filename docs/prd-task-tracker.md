@@ -1,6 +1,6 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-10 — everything through v0.30.0 merged to main (v4.4.3 PRD window: #326 sqlite-default conversion, #331 doc-join batching + bounded temporal_query [#257/#256], #333 sweep path-form normalization [#332], #336/#337/#339 semantic-release pipeline healed + auto releases live, #341 temporal PG translator fix, #342 006_audit_log PG migration restored, #343 integration suites re-pinned to the 3-tool surface). Open bugs: #286 (evidence-gated), #321 (evidence-gated, instrumentation live). User-held PRs: #328/#329/#330 (green), #299 (green), #295 superseded by v0.28.1, #262/#265/#266 need `@dependabot rebase`.
+**Last synced:** 2026-09-12 — v4.9.0 second parity wave: federation client (push/pull; no server ever served the route → #372), conversation mining, persisted metrics + dashboard buckets, org knowledge (incidents/notes/env-conflicts/service-context + migration 010), PRD indexing (prd/prd-trace), remote sources (index|refresh --source), response token budget, error catalog. Full gate green (build ×3, vet ×2, tests ×2 tags, tidy). Per-verb + per-module disposition in docs/prd.md §6b.
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 
@@ -10,10 +10,10 @@
 
 | Status | Count |
 |--------|------:|
-| IN_PROGRESS | 1 |
-| TODO | 35 (9 live + 26 carry-forward) |
+| IN_PROGRESS | 1 (FR-ZCP-01) — the Go-rewrite slices (FR-GO-W1/EMBED/MEM/LANGS) are **DONE on `feat/go-rewrite`**, pending PR #370 merge |
+| TODO | 36 (9 live + 26 carry-forward + FR-GO-DASH #371) |
 | DONE | 9 |
-| Open work | 36 |
+| Open work | 40 (36 archived-inventory + 3 Go-rewrite slices pending PR #370 merge + FR-GO-DASH #371) |
 
 **Inventory note (ID-level accounting):** the archived tracker holds **40 open inventory items** (35 master-table `NOT_DONE`/`PENDING`/`PARTIAL`/`OPEN` IDs + 5 `FR-HEA-*` section-table rows). All 40 are accounted for below: FR IDs appear as named rows; each paired `US-*` tracks with its FR (the archive itself pairs them `US-X / FR-X` as one work item); `FR-ZG-01..05` + `US-ZG-01..05` + `FR-B05` are superseded inside the live `FR-ZCP-*` rows (Supersedes column); `FR-HEA-05` is DONE (v4.0.0 §1 cutover). `FR-ZCP-09/10/11/12/13` are **new in v4.1.x–v4.3.0** (no archive IDs). Row-level open work = 1 IN_PROGRESS + 9 live + 26 carry-forward = 36. (The 26 carry-forward rows cover 35 archived open IDs: 3 rows pair multiple US stories with their FR; the inventory not…
 
@@ -28,6 +28,16 @@
 | M7 — Embedding correctness | 1 | — | **IN_PROGRESS** (core DONE #351/#353/#355: pinned revisions, model-stamped collections, hard rebuild guard, query-side degrade to L2, entry-point guards, chunker_version hash coupling; outstanding §3.8: query/document prefixes in catalog, 3-signal size+mtime fast-path, per-file atomic replace + truncation accounting, watcher-miss insurance, single-flight leases) |
 | M8 — Measured simplicity | 1 | — | **IN_PROGRESS** (FR-ZCP-12 T1 DONE c5b4b991; T3 re-scoped to one-tool CI invariant — landed with v4.3.1; T2 TTFV outstanding) |
 | M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 DONE; FR-3T-04 live validation complete on this repo — 581 files, 9522 vectors, L1/L2/L3 verified; PR #284 merged (v4.3.x)) |
+| M-GO — Go engine rewrite (#365) | 3 | — | **IN_PROGRESS** (FR-GO-W1 core DONE on feat/go-rewrite: store/core/index/mcp/rest + live smoke; FR-GO-EMBED DONE: leankg-embed binary + stamp guards + NDJSON; FR-GO-MEM DONE: full-markdown memory + banks adapter; v4.6.0: ALL waves landed (W2 watcher/writer, W4 pgvector, W5 ConnectRPC+auth, session, graph verbs, goldens, benchmarks + executed Rust-vs-Go A/B REPORT) and the Rust tree REMOVED — deferred ledger in docs/prd.md) |
+| FR-GO-LANGS | Lazy language wave (v4.7.0): 13-language registry + tstree/astgrep/lsp tiers + java/kotlin/swift/objc/dart extractors | **DONE** on feat/go-rewrite (objc/dart tree-sitter grammar gap documented) |
+| FR-GO-DASH | #371: port the ui-v2 dashboard data API — legacy `/api/*` (11 endpoints) or rebuild ui-v2 against `/api/v1/*`; today the SPA fallback answers those calls with `index.html`, so the embedded dashboard loads no data | 2026-09-11 | **TODO** — ledger row `web api+ui` corrected to PARTIAL in v4.7.1 |
+| FR-GO-PARITY | v4.8.0 full-parity wave: dashboard API, ontology workflows/traceability, compression, LSP bridge (config-gated enrich), Android/Gradle/Maven specialists, embedding sidecar lifecycle, 40-language registry + objc/dart grammars, enterprise auth + token lifecycle, multi-project serving + doctor --deep, obsidian, Rust CLI verb set | 2026-09-12 | **DONE** — full gate green (build/vet/test ×2 tags, CGO=0 tree build in CI, tidy no-op); live-verified dashboard/multi-project/MCP routing/run/audit/auth/doctor |
+| FR-GO-371 | Dashboard legacy `/api/*` (11 endpoints) | 2026-09-12 | **DONE** — #371 closed with live route evidence |
+| FR-GO-372 | Federation push/pull shared-server sync | 2026-09-12 | **PARTIAL** — client ported (`internal/federation` + `push\|pull` verbs); Rust's `pull` was only a `/api/v2/status` probe and no server ever served `/api/v2/graph/push`, so the receiver + merge policy remain design work (#372 open) |
+| FR-GO-373 | Conversation mining (US-MP-03) | 2026-09-12 | **DONE** — `internal/convo` + `mine-conversations`; #373 closed (also fixes a Rust edge-loss defect) |
+| FR-GO-374 | Org knowledge surfaces (incidents/notes/env-conflicts) | 2026-09-12 | **DONE** — `internal/orgknowledge` + migration 010 + CLI verbs + `/api/v2/*`; #374 closed |
+| FR-GO-375 | Persisted usage metrics + `leankg metrics` | 2026-09-12 | **DONE** — `context_metrics` (migration 011) + `metrics`/`dashboard` verbs; #375 closed |
+| FR-GO-376 | FR-ZCP-09/10 registry portfolio + cross-schema + fleet doctor | — | **TODO** — tracked #376 (never built in Rust either: a new product milestone, not a port) |
 | Unmilestoned (P3) | — | FR-B16, FR-B51, FR-SURF-06, US-SURF-05, US-GF-10, US-GF-12, FR-EMBED-R4, FR-SMA-05/06, US-SMA-05/06, FR-ZG-06 | TODO |
 
 ---
@@ -37,6 +47,10 @@
 | ID | Title | Started | Notes |
 |----|-------|---------|-------|
 | FR-ZCP-01 | Contextual project resolution — connection→project mapping (cwd / server-initiated `roots/list` / session registration); `?project=` demoted to escape hatch | 2026-09-03 | **Clause 2 (HTTP roots/list) DONE 2026-09-04** — commit 87e18287: probe rides the initialize SSE response as a second `event: message` frame, answer via POST /mcp with Mcp-Session-Id (mechanism chosen because LeanKG's custom axum dispatcher has no server-to-client channel; streamable-HTTP spec allows request frames in POST response bodies — matches OMP's TS-SDK client behavior); per-connection SessionRootCache; capability-gated (roots object) + list_changed invalidation; 24 tests. Remaining clauses: stdio cwd (clause 1, already works), session registration table (clause 3, partially via leankg install --register-cwd follow-up). Resolution order + cache design in prd.md §3.1; verified anchors: `find_leankg_for_path` `src/mcp/server.rs:588-605`, `resolve_project_db_path` `:637-661`, silent default-schema fallback `:2987-2989` (KILLED by FR-ZCP-02), no `X-LeanKG-Project` header in `src/`, identity = canonical root via `project_identity_keys_in` `src/db/backend.rs:2613-2675` |
+| FR-GO-W1 | Go engine core (W1 of #365): SQLite WAL store + FTS5 + watermark freshness, 3-tool envelope (import/query/status), L0-L3 ladder with provenance, regex indexer + 3-signal detection, MCP (go-sdk) + REST | 2026-09-10 | **W1 DONE** on feat/go-rewrite — 7 packages, go test ./... green, live-smoked (index→embed→serve→L1/L2/L3→memory→MCP tools/list==3). Remaining: W2 tree-sitter, W4 pgvector, W5 ConnectRPC, W7 cutover (see go/README.md) |
+| FR-GO-EMBED | #368: embedding pipeline as independent binary — internal/embed shared library, ModelStamp guard on every vector writer, cmd/leankg-embed run/full/export/import/status, NDJSON offsite flow | 2026-09-10 | **DONE** on feat/go-rewrite — stamp guards pinned by tests (fresh-store stamps; incremental-mismatch HARD-FAILS with `leankg-embed full` directive, vectors untouched; full clears+rebuilds); provider port (OpenAI-compatible/llama-sidecar shape + deterministic); serving binary does zero inference |
+| FR-GO-MEM | #369: full-markdown memory — MEMORY.md/USER.md bounded 2200B error-not-truncate, topics/, Claude-Code file commands + traversal rejection, Hermes substring sugar, FTS5 reindex-on-write, mnemopi banks adapter (wyhash64 port) | 2026-09-10 | **DONE** on feat/go-rewrite — 11 tests incl. exact snapshot-header pin, symlink escape, overflow, ambiguous match, cursor resume, zero-match filter; hindsight HTTP endpoints landed in internal/rest |
+
 
 ## Done — 2026-09-04 implementation sprint (v4.3.0 wave 1–3)
 
@@ -106,7 +120,7 @@
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
 
-*Last updated: 2026-09-09 (v0.29.0 released — FR-ZCP-06 freshness contract DONE #347+#350, FR-ZCP-07 slice 1 DONE #357, FR-ZCP-11 core DONE #351/#353/#355/#356, semantic-release pipeline healed and self-running)*
+*Last updated: 2026-09-11 (v4.7.0 lazy-languages wave: 13-language registry, AST tiers tstree/ast-grep/lsp, 5 new regex extractors — PR #370; prior v4.6.0 full parity + Rust tree removed)*
 
 ## Repo hygiene (non-PRD)
 

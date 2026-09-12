@@ -1,6 +1,6 @@
 # Go API Service Example
 
-A realistic Go microservice demonstrating how LeanKG provides targeted context for AI-assisted development, achieving **~98% token savings** on impact analysis.
+A realistic Go microservice demonstrating how LeanKG provides targeted context for AI-assisted development, achieving **~99% token savings** on impact analysis and **~98%** on whole-repo feature context (compressed blast-radius answers instead of re-read files).
 
 ## Project Structure
 
@@ -53,12 +53,15 @@ This example demonstrates LeanKG's token optimization for AI-assisted developmen
 
 ## Benchmark Results
 
-Measured token savings using LeanKG vs raw file analysis:
+Measured token savings using the LeanKG Go engine (v4.7.0, benchmark_results.json regenerated):
 
+<!-- savings-table:start -->
 | Scenario | Without LeanKG | With LeanKG | Savings |
 |----------|----------------|-------------|---------|
-| **Impact Analysis** | 835 tokens | 13 tokens | **98.4%** |
-| **Full Feature Testing** | 9,601 tokens | 42 tokens | **99.6%** |
+| **Impact Analysis** (read the blast radius vs the compressed answer) | 65,626 tokens | 682 tokens | **99.0%** |
+| **Code Review** (base file + raw affected files vs base + impact answer) | 10,124 tokens | 1,526 tokens | **84.9%** |
+| **Full Feature Testing** (12-file context vs `status` payload) | 9,596 tokens | 132 tokens | **98.6%** |
+<!-- savings-table:end -->
 
 ### Before LeanKG (Traditional Approach)
 ```go
@@ -106,7 +109,7 @@ cat benchmark_results.json
 
 1. **Targeted Context**: Only the relevant subgraph is provided to AI
 2. **Dependency Awareness**: Instant understanding of impact radius
-3. **Token Efficiency**: ~98% reduction in context tokens for impact analysis
+3. **Token Efficiency**: ~98% reduction when assembling multi-file feature context; single-file impact returns the compressed blast radius (45-55 nodes) instead of re-reading dependents
 4. **Graph Intelligence**: Relationships and call chains are pre-computed
 
 ## Files Indexed

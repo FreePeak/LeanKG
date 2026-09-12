@@ -4,6 +4,10 @@
 
 <h1 align="center">LeanKG</h1>
 
+<p align="center"><strong>⚠️ Implementation: 100% Go (v4.6.0).</strong> The Rust implementation has been removed; the engine now lives in <a href="go/">go/</a> — see <a href="docs/prd.md">docs/prd.md</a> for the parity ledger. Build: <code>make go-build</code> · Test: <code>make go-test</code> · Bench: <code>make go-bench</code>. Rust-era sections below are historical.</p>
+
+
+
 <p align="center">
   <strong>Enterprise-ready code knowledge graph for AI coding agents</strong><br>
   Multi-repo · env governance · incidents &amp; services · req↔code · −65% tokens / −85% tool calls
@@ -18,7 +22,6 @@
 
 <p align="center">
   <a href="https://github.com/FreePeak/LeanKG/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
-  <a href="https://crates.io/crates/leankg"><img src="https://img.shields.io/crates/v/leankg.svg" alt="crates.io"></a>
   <a href="https://github.com/FreePeak/LeanKG/actions"><img src="https://img.shields.io/github/actions/workflow/status/FreePeak/LeanKG/ci.yml?branch=main&label=CI" alt="CI"></a>
 </p>
 
@@ -36,94 +39,68 @@ None — **sqlite is the default storage engine**. No Postgres, no Docker.
 
 Postgres remains available as an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) for server-scale deployments, but nothing in the default flow touches it.
 
-### One-liners
+### Install
+
+Requires [Go 1.25+](https://go.dev/dl/) and git. Builds two binaries: `leankg`
+(server + CLI) and `leankg-embed` (embedding pipeline).
 
 ```bash
-# Agent — binary + MCP wiring (cursor | claude | opencode | gemini | kilo | antigravity | update)
-curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- cursor
+# From a checkout — installs to ~/.local/bin (pass a PREFIX to change it)
+git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG
+scripts/install-go.sh                # or: make install-go
+
+# Or fetch and run the installer directly (clones over HTTPS, same behavior):
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install-go.sh | bash
 ```
 
-### From source
-
-```bash
-cargo install leankg
-# or: git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG && cargo build --release
-```
+Release archives (`leankg-<os>-<arch>.tgz`, both binaries inside) are produced
+by the manual [Go Release](.github/workflows/release-go.yml) workflow — it is
+`workflow_dispatch`-only and **no Go release has been published yet**, so build
+from source for now.
 
 ---
 
 ## Get Started
 
 ```bash
-# 1. Per project: init -> migrate -> index (sqlite default — zero config)
+# 1. Per project: one-shot index (sqlite default — zero config, store at .leankg/leankg.db)
 cd your-project
-leankg init && leankg migrate && leankg index ./src
+leankg index .
 
-# 2a. Wire up an AI client — one command (also: cursor | codex | gemini)
-leankg connect claude-code           # add --remote http://host:9699 to reuse a shared server
+# 2. Wire up an AI client — one command (claude-code | cursor | codex | gemini | opencode | omp)
+leankg connect claude-code           # stdio entry; --http --url http://host:9699/mcp to reuse a shared server
 
-# 2b. ...or serve MCP over HTTP yourself
-leankg mcp-http --port 9699          # GET /health returns 200 when ready
+# 3. ...or serve MCP over HTTP yourself (endpoint /mcp; GET /health returns 200 when ready)
+leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080
 ```
 
-Self-check any deployment: `leankg doctor --deep` — index freshness, migrations,
-embedding coverage, orphan edges, duplicate names (exit 0 pass / 1 warn / 2 fail).
+Self-check any deployment: `leankg doctor` — prints the store path, element and
+file counts and the write watermark (exit 0 pass / 2 fail).
 
-Measured timings (`scripts/quickstart_smoke.sh`, run weekly in CI): full e2e smoke **88 s**
-vs a 300 s budget; indexing a small repo takes well under 2 minutes.
-
-MCP HTTP: pass the **project checkout directory** as `project=`.
-
-### Server-side setup pipeline (clone -> index -> embed)
-
-`leankg setup` with no flags keeps the legacy client-side behavior (register
-MCP + hooks). Pass pipeline flags to instead clone a list of repos and index
-each one server-side:
-
-```bash
-# Status: print the resolved repo list without running anything
-LEANKG_REPOS="github.com/org/repo-a,github.com/org/repo-b" leankg setup --status
-
-# Clone + index + embed each repo under LEANKG_CLONE_ROOT (default: cwd)
-LEANKG_REPOS="github.com/org/repo-a,github.com/org/repo-b" \
-  LEANKG_GIT_REF=main \
-  LEANKG_CLONE_ROOT=/srv/repos \
-  leankg setup --clone --index --embed
-```
-
-Repo sources:
-
-- `LEANKG_REPOS` — comma-separated `host/namespace` paths to clone.
-- `LEANKG_PROJECT_DIRS` — comma-separated dirs already mounted on disk
-  (skips clone; falls back to indexing what exists when no git token is set).
-
-Env knobs: `LEANKG_GIT_HOST` (default `github.com`), `LEANKG_GIT_REF`
-(default `main`), `LEANKG_CLONE_ROOT` / `CLONE_ROOT`, `LEANKG_ENV` (default
-`local`), git token via `GITLAB_TOKEN` / `GIT_TOKEN` / `GITHUB_TOKEN`.
-Each cloned repo gets a minimal `.leankg/leankg.yaml`, then `leankg index`
-and `leankg embed --wait` run inside it. A `setup.done` marker prevents
-re-runs.
-
-Set `LEANKG_SETUP=1` on `leankg mcp-http` to run the same pipeline once after
-the server binds (spawned as a background task; the server stays healthy).
+MCP over HTTP: the server resolves the project from its process cwd — run it
+from the checkout or pass `--project DIR` to pin one.
 
 ### Web UI
 
-UI talks REST (`:8080`), not MCP (`:9699`). Start the API, then the Vite app in `ui-v2/`:
+The embedded dashboard is served by `leankg serve --ui ADDR` (a ui-v2 build
+compiled into the binary). The dashboard's `/api/*` data endpoints are served
+on the same address; `serve --rest` exposes the `/api/v1/*` tool endpoints
+separately.
+
+For UI development, run the Vite dev server against a REST address (it proxies
+`/api` to `BACKEND_TARGET`, default `http://127.0.0.1:8080`):
 
 ```bash
-# Terminal A — REST API (+ embedded UI if assets are in src/embed/)
-leankg serve --port 8080
-# open http://127.0.0.1:8080/
+# Terminal A — REST API
+leankg serve --rest 127.0.0.1:8080
 
-# Terminal B — hot-reload explorer (recommended for local UI work)
+# Terminal B — hot-reload dev server
 cd ui-v2
 npm install
 npm run dev
-# open http://127.0.0.1:5173/?path=src
+# open http://127.0.0.1:5173
 ```
 
-Vite proxies `/api` → `127.0.0.1:8080`. Status should show **connected**.  
 Details: [ui-v2/README.md](ui-v2/README.md) · [docs/archive/web-ui.md](docs/archive/web-ui.md)
 
 ---
@@ -134,12 +111,12 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 
 | Pillar | Ships as |
 | ------ | -------- |
-| Multi-repo server | MCP HTTP `:9699` (sqlite default; PG opt-in); `LEANKG_PROJECT_DIRS` |
-| Env governance | `env=`, `promote_environment`, `find_env_conflicts` |
-| Ops & ownership | `get_service_graph`, `query_incidents`, `get_team_map` |
-| Req ↔ code | `index_prd`, `get_traceability`, `get_traceability_matrix` |
+| Multi-repo server | MCP HTTP `:9699`; `LEANKG_PROJECT_DIRS` serves many projects with per-request `?project=` (REST) / `project` arg (MCP); sqlite default, PG opt-in |
+| Env governance | `query --action env_conflicts`, per-env snapshots, `leankg obsidian` |
+| Ops & ownership | `query --action service_context` / `incidents`, `leankg incident` / `note` / `team-map` |
+| Req ↔ code | `leankg prd` / `prd-trace`, `query --action prd`, ontology traceability matrix |
 | Mega-graph | Frontier-local queries; 100k–700k+ elements |
-| Agent surface | **1** MCP tool (`leankg_context`) serving ~76 capabilities as verbs; peers typically ~1–17 raw tools |
+| Agent surface | **3** MCP tools (`import` / `query` / `status`) serving 30 actions (22 query + 8 import); peers typically ~1–17 raw tools |
 | Cost | A/B **−65% tokens**, **−85% tool calls**, **2.5×** vs grep/cat |
 
 | Capability | LeanKG | GitNexus | Graphify | Codanna | Context7 |
@@ -148,7 +125,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 | Env / incidents / team map | Yes | No | No | No | No |
 | PRD traceability | Yes | No | Partial | No | No |
 | Mega-graph (100k+) | Yes | Partial | Viz capped | Varies | n/a |
-| MCP depth | 77 | ~17 | ~10 | ~5 | docs only |
+| MCP surface | 3 tools / 30 actions | ~17 | ~10 | ~5 | docs only |
 
 Deep dives (archived): [ROI vs Graphify](docs/archive/reports/leankg-vs-graphify-company-roi-2026-07-21.md) · [Competitive one-pager](docs/archive/competitive-analysis.md) · [Research matrix](docs/archive/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md)
 
@@ -170,46 +147,57 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 ## Key Features
 
 - **MCP-native** — search, impact, call graphs, ontology, architecture, team knowledge
-- **SQLite default** (zero-config, no Docker) with optional Postgres/pgvector backend; HNSW semantic search (`--features embeddings`)
-- **Procedural ontology** — hot-reload `ontology/workflows.yaml` → `kg_trace_workflow`
-- **Impact & deps** — `imports`, `calls`, `tested_by`, `http_calls`, `service_calls`
-- **Web UI v2** — Force / Tree / Circles explorer (`leankg serve` + `cd ui-v2 && npm run dev`)
-- **Languages** — Rust, Go, C/C++, Java, Kotlin, TS/JS, Python, Ruby*, PHP*, Dart, Swift*, ObjC*, Terraform, CI YAML (*depth varies)
+- **SQLite default** (zero-config, no Docker) with an opt-in Postgres/pgvector backend (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`)
+- **Ontology** — concept-catalog matching (`POST /api/v1/ontology/match`); procedural workflows and req↔code traceability are not implemented in the Go engine yet
+- **Impact & deps** — `contains`, `calls`, `imports` edges; BFS blast radius (`leankg impact`)
+- **Web UI v2** — Force / Tree / Circles explorer (`cd ui-v2 && npm run dev`; the embedded build is served by `leankg serve --ui`)
+- **Languages** — 13 built-in profiles: Go, Rust, TypeScript/TSX, JavaScript/JSX, Python, Markdown, Java, Kotlin, Swift, Objective-C, Dart
 
 ---
 
 ## MCP prefer-order
 
-Discover first — do **not** open with `query_graph`:
+Discover with `query` — it routes down the ladder by default (L1 exact → L2 fuzzy → L3 semantic), degrades instead of erroring, and every answer carries `retrieval{rung,reason}` + `freshness`.
 
-`leankg_context` → `get_overview_context` → `mcp_status` → `concept_search` / `semantic_search` / `search_code` → impact / deps / `get_context`
+| Question | How |
+| -------- | --- |
+| Any identifier (default) | `query "Alpha"` (exact, then fuzzy fallback) |
+| Blast radius | `leankg impact <file>` or `query --action impact --to <qn>` |
+| Who calls X? | `query --action callers --to <qn>` |
+| How A↔B? | `query --action path --to <qn>` |
+| Element details | `query --action explain --to <qn>` |
+| Pattern search | `query --action pattern --pattern "func $_(...)"` |
+| PRD traceability | `leankg prd-trace FR-3T-01` |
+| File (compressed) | `query --action read --path src/main.go` |
 
-| Question | First tools |
-| -------- | ----------- |
-| Any question (default) | `leankg_context` (intent is auto-classified; degrades L3→L0 instead of erroring) |
-| Fuzzy / domain NL | `concept_search` → `semantic_search` → `search_code` |
-| Exact symbol / file | `search_code` |
-| How A↔B? | `shortest_path` |
-| Expand after seeds | `query_graph` |
-
-Catalog: [docs/archive/mcp-tools.md](docs/archive/mcp-tools.md) · Setup: [docs/archive/agentic-instructions.md](docs/archive/agentic-instructions.md)
+3 tools: `import` (index/PRD/memory/session/ontology/read) · `query` (ladder + graph verbs + actions) · `status` (inventory/freshness/config).
 
 ---
 
 ## CLI
 
 ```bash
-leankg init | index ./src | status | update
-leankg impact <file> --depth 3
-leankg path <from> <to> | explain <symbol> | graph-query "<q>"
-leankg embed --init && leankg embed   # --features embeddings
-leankg mcp-stdio --watch | mcp-http --port 9699 | serve --port 8080
-leankg ontology sync | ontology trace <workflow>
+leankg index .                          # one-shot index -> .leankg/leankg.db
+leankg writer                           # index once, then watch + re-index
+leankg query "parseConfig"              # name lookup (exact, then fuzzy) — JSON out
+leankg query "parseConfig" --compress   # one line per result
+leankg impact src/main.go --depth 3     # blast radius of a file or element
+leankg status                           # health, inventory, freshness, embed state
+leankg doctor                           # store path, element/file counts, watermark
+leankg connect claude-code              # MCP entry: claude-code|cursor|codex|gemini|opencode|omp
+leankg install --target cursor          # same wiring, flag form (--register-cwd: claude-code hook)
+leankg serve --stdio                    # MCP over stdio (what harnesses spawn)
+leankg serve --http 127.0.0.1:9699      # MCP over streamable HTTP (/mcp, /health)
+leankg serve --rest 127.0.0.1:8080      # REST API (/health, /api/v1/*)
+leankg serve --ui 127.0.0.1:8081        # embedded dashboard (/api/* data API served here)
+leankg serve --rpc 127.0.0.1:9090       # ConnectRPC (gRPC + gRPC-Web + JSON)
+leankg version
 ```
 
 UI hot-reload: `cd ui-v2 && npm install && npm run dev` → http://127.0.0.1:5173
 
-Full reference: [docs/archive/cli-reference.md](docs/archive/cli-reference.md)
+Full usage: `leankg help` and `leankg <command> --help`. The archived Rust-era
+CLI reference: [docs/archive/cli-reference.md](docs/archive/cli-reference.md)
 
 ---
 
@@ -225,7 +213,6 @@ The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/
 | [MCP tools (archived)](docs/archive/mcp-tools.md) | Tool catalog (historical) |
 | [CLI (archived)](docs/archive/cli-reference.md) | All commands (historical) |
 | [Benchmarks (archived)](docs/archive/benchmark.md) | Methodology (historical) |
-| [Embeddings](src/embeddings/EMBEDDINGS.md) | HNSW / ops |
 | [Postgres migration (archived)](docs/archive/analysis/pg-migration-report.md) | Engine notes (historical) |
 | [AGENTS.md](AGENTS.md) | Agent notes |
 
@@ -235,11 +222,11 @@ The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/
 
 | Issue | Fix |
 | ----- | --- |
-| High RAM (macOS) | `LEANKG_MMAP_SIZE=134217728` — see [INSTRUCTION.md](INSTRUCTION.md) |
-| MCP “not initialized” in Docker | Use container `project=/workspace`, not the host path |
-| Embeddings / cold embed | [src/embeddings/EMBEDDINGS.md](src/embeddings/EMBEDDINGS.md) |
+| Wrong project served | Start the server with `--project DIR` (`query`/`impact` also honor `LEANKG_PROJECT`) |
+| Embeddings / cold embed | `leankg-embed status`, then `leankg-embed full` (provider env: `LEANKG_EMBED_*`) |
 
-**Requirements:** macOS or Linux · Docker recommended for teams · Rust 1.75+ only when building from source.
+**Requirements:** macOS or Linux · Go 1.25+ only when building from source. No
+Docker, no Postgres — sqlite is the default store.
 
 ---
 
@@ -247,7 +234,7 @@ The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/
 
 1. Fork + feature branch (prefer a worktree)
 2. Update docs when behavior changes
-3. `cargo build --release && cargo test`
+3. `cd go && go build ./... && go vet ./... && go test ./...`
 4. Open a PR with summary + test plan
 
 ## License
