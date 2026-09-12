@@ -16,7 +16,7 @@ func tsExtract(src []byte, lang string) ([]indexDef, error) {
 	}
 	out := make([]indexDef, len(defs))
 	for i, d := range defs {
-		out[i] = indexDef{Kind: d.Kind, Name: d.Name, StartLine: d.StartLine, EndLine: d.EndLine}
+		out[i] = indexDef{Kind: d.Kind, Name: d.Name, StartLine: d.StartLine, EndLine: d.EndLine, Owner: d.Parent}
 	}
 	return out, nil
 }

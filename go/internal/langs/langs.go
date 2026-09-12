@@ -30,7 +30,11 @@ import (
 type Language string
 
 // Default language set (user-specified): go, rust, ts, tsx, js, jsx, py, md,
-// java, kotlin, swift, objective-c, flutter (Dart).
+// java, kotlin, swift, objective-c, flutter (Dart), plus the expanded set
+// ported from the Rust indexer registry (src/indexer/lang/registry.rs at
+// f7624143^): c, cpp, csharp, php, ruby, scala, perl, lua, haskell, elixir,
+// crystal, cuda, cypher, elm, erlang, fsharp, glsl, hlsl, nim, ocaml, sql,
+// powershell, qsharp, solidity, systemverilog, verilog, zig.
 const (
 	Go         Language = "go"
 	Rust       Language = "rust"
@@ -45,6 +49,39 @@ const (
 	Swift      Language = "swift"
 	ObjC       Language = "objc"
 	Dart       Language = "dart" // flutter
+
+	// Expanded set (Rust indexer registry parity).
+	C       Language = "c"
+	Cpp     Language = "cpp"
+	CSharp  Language = "csharp"
+	PHP     Language = "php"
+	Ruby    Language = "ruby"
+	Scala   Language = "scala"
+	Perl    Language = "perl"
+	Lua     Language = "lua"
+	Haskell Language = "haskell"
+	Elixir  Language = "elixir"
+	// Language-expansion wave 2 (examples/ coverage): extensions and LSP
+	// rows mirror the Rust registry (src/indexer/lang/registry.rs) and LSP
+	// registry (src/lsp/registry.rs) at f7624143^. Cypher has no Rust row
+	// (.cyp graph-query files); sql carries the pgsql/tsql/plsql dialects.
+	Crystal       Language = "crystal"
+	Cuda          Language = "cuda"
+	Cypher        Language = "cypher"
+	Elm           Language = "elm"
+	Erlang        Language = "erlang"
+	FSharp        Language = "fsharp"
+	GLSL          Language = "glsl"
+	HLSL          Language = "hlsl"
+	Nim           Language = "nim"
+	OCaml         Language = "ocaml"
+	SQL           Language = "sql"
+	PowerShell    Language = "powershell"
+	QSharp        Language = "qsharp"
+	Solidity      Language = "solidity"
+	SystemVerilog Language = "systemverilog"
+	Verilog       Language = "verilog"
+	Zig           Language = "zig"
 )
 
 // Tier names an extraction/lookup mechanism, ordered by fidelity.
@@ -89,7 +126,9 @@ type Profile struct {
 	LSP *LSPSpec
 }
 
-// Default is the activation-priority order of the 13 default languages.
+// Default is the activation-priority order of the registry: the 13 default
+// languages first (their .h ownership order is load-bearing), then the
+// expanded sets ported from the Rust indexer registry.
 var Default = []Profile{
 	{Language: Go, Aliases: []string{"golang"}, Exts: []string{".go"},
 		RepoMarkers: []string{"go.mod"},
@@ -113,7 +152,9 @@ var Default = []Profile{
 		RepoMarkers: []string{"pyproject.toml", "requirements.txt", "setup.py", "Pipfile"},
 		LSP: &LSPSpec{Commands: []string{"pyright-langserver", "pylsp", "jedi-language-server"},
 			RootMarkers: []string{"pyproject.toml", "setup.py", "requirements.txt"}}},
-	{Language: Markdown, Aliases: []string{"markdown"}, Exts: []string{".md"}},
+	{Language: Markdown, Aliases: []string{"markdown"}, Exts: []string{".md"},
+		// Rust LSP registry parity (registry.rs marksman row).
+		LSP: &LSPSpec{Commands: []string{"marksman"}}},
 	{Language: Java, Aliases: []string{"java"}, Exts: []string{".java"},
 		RepoMarkers: []string{"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle"},
 		LSP:         &LSPSpec{Commands: []string{"jdtls", "java-language-server"}, RootMarkers: []string{"pom.xml", "build.gradle", "build.gradle.kts"}}},
@@ -131,7 +172,90 @@ var Default = []Profile{
 			RootMarkers: []string{"Podfile", ".clangd"}}},
 	{Language: Dart, Aliases: []string{"flutter", "dart"}, Exts: []string{".dart"},
 		RepoMarkers: []string{"pubspec.yaml"},
-		LSP:         &LSPSpec{Commands: []string{"dart", "dartls", "flutter"}, RootMarkers: []string{"pubspec.yaml"}}},
+		// Rust LSP registry parity: dart-language-server is registry.rs's
+		// command; the SDK-provided fallbacks (dart/dartls, flutter) stay as
+		// later candidates for hosts that only have the SDK on PATH.
+		LSP: &LSPSpec{Commands: []string{"dart-language-server", "dart", "dartls", "flutter"},
+			RootMarkers: []string{"pubspec.yaml"}}},
+	// Expanded set: extensions and config markers mirror the Rust indexer
+	// registry (src/indexer/lang/registry.rs at f7624143^); LSP commands mirror
+	// the Rust LSP registry (src/lsp/registry.rs at f7624143^). Languages with
+	// no Rust LSP row (csharp, perl) get no LSP spec. CMakeLists.txt activates
+	// both C and C++ — a CMake project is either; inactive extensions never
+	// route files, so over-activation is benign.
+	{Language: C, Exts: []string{".c", ".h"},
+		RepoMarkers: []string{"CMakeLists.txt"},
+		LSP:         &LSPSpec{Commands: []string{"clangd"}}},
+	{Language: Cpp, Aliases: []string{"c++", "cxx", "cc"},
+		Exts:       []string{".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx", ".h++"},
+		HeaderExts: []string{".h"}, RepoMarkers: []string{"CMakeLists.txt"},
+		LSP: &LSPSpec{Commands: []string{"clangd"}}},
+	{Language: CSharp, Aliases: []string{"c#", "cs", "dotnet"}, Exts: []string{".cs"},
+		RepoMarkers: []string{"Project.toml"}},
+	{Language: PHP, Aliases: []string{"php"}, Exts: []string{".php", ".phtml"},
+		RepoMarkers: []string{"composer.json"},
+		LSP:         &LSPSpec{Commands: []string{"intelephense"}}},
+	{Language: Ruby, Aliases: []string{"rb"}, Exts: []string{".rb", ".ruby", ".rake", ".gemspec"},
+		RepoMarkers: []string{"Gemfile"},
+		LSP:         &LSPSpec{Commands: []string{"solargraph"}}},
+	{Language: Scala, Aliases: []string{"sc"}, Exts: []string{".scala", ".sc"},
+		RepoMarkers: []string{"build.sbt"},
+		LSP:         &LSPSpec{Commands: []string{"metals"}}},
+	{Language: Perl, Aliases: []string{"pl", "pm"}, Exts: []string{".pl", ".pm", ".t"},
+		RepoMarkers: []string{"cpanfile", "Makefile.PL"}},
+	{Language: Lua, Aliases: []string{"lua"}, Exts: []string{".lua"},
+		LSP: &LSPSpec{Commands: []string{"lua-language-server"}}},
+	{Language: Haskell, Aliases: []string{"hs"}, Exts: []string{".hs", ".lhs"},
+		RepoMarkers: []string{"stack.yaml", "cabal.project"},
+		LSP:         &LSPSpec{Commands: []string{"haskell-language-server-wrapper"}}},
+	{Language: Elixir, Aliases: []string{"ex", "exs"}, Exts: []string{".ex", ".exs"},
+		RepoMarkers: []string{"mix.exs"},
+		LSP:         &LSPSpec{Commands: []string{"elixir-ls"}}},
+	// Language-expansion wave 2: extensions, aliases, markers and LSP rows
+	// mirror the Rust registries (src/indexer/lang/registry.rs,
+	// src/lsp/registry.rs at f7624143^). Rust config_files were empty for
+	// these languages (activation fell back to an extension census), so the
+	// markers below are the languages' own build manifests — they make
+	// activation exact instead of census-guessed. cuda/glsl/hlsl/verilog/
+	// systemverilog/cypher/qsharp have no Rust LSP row and get none here.
+	{Language: Crystal, Aliases: []string{"cr"}, Exts: []string{".cr"},
+		RepoMarkers: []string{"shard.yml"},
+		LSP:         &LSPSpec{Commands: []string{"crystalline"}, RootMarkers: []string{"shard.yml"}}},
+	{Language: Cuda, Aliases: []string{"cu"}, Exts: []string{".cu", ".cuh"}},
+	{Language: Cypher, Aliases: []string{"neo4j"}, Exts: []string{".cyp"}},
+	{Language: Elm, Exts: []string{".elm"},
+		RepoMarkers: []string{"elm.json"},
+		LSP:         &LSPSpec{Commands: []string{"elm-language-server"}, RootMarkers: []string{"elm.json"}}},
+	{Language: Erlang, Aliases: []string{"erl", "hrl"}, Exts: []string{".erl", ".hrl"},
+		RepoMarkers: []string{"rebar.config", "rebar.lock"},
+		LSP:         &LSPSpec{Commands: []string{"erlang_ls", "erlang-language-server"}}},
+	{Language: FSharp, Aliases: []string{"f#", "fs"}, Exts: []string{".fs", ".fsi", ".fsx"},
+		LSP: &LSPSpec{Commands: []string{"fsautocomplete"}}},
+	{Language: GLSL, Aliases: []string{"shader"},
+		Exts: []string{".glsl", ".vert", ".frag", ".geom", ".tesc", ".tese", ".comp"}},
+	{Language: HLSL, Aliases: []string{"hlsli"}, Exts: []string{".hlsl", ".fx", ".fxh", ".hlsli"}},
+	{Language: Nim, Exts: []string{".nim", ".nims"},
+		LSP: &LSPSpec{Commands: []string{"nimlangserver"}}},
+	{Language: OCaml, Aliases: []string{"ml"}, Exts: []string{".ml", ".mli"},
+		RepoMarkers: []string{"dune-project"},
+		LSP:         &LSPSpec{Commands: []string{"ocamllsp"}, RootMarkers: []string{"dune-project"}}},
+	// One language id for all three SQL dialects: pgsql (.sql), tsql (.sql)
+	// and plsql (.pls) share the extractor and differ only by dialect
+	// syntax the regex tier treats uniformly.
+	{Language: SQL, Aliases: []string{"plsql", "pgsql", "tsql", "postgres"},
+		Exts: []string{".sql", ".pls"},
+		LSP:  &LSPSpec{Commands: []string{"sqls"}}},
+	{Language: PowerShell, Aliases: []string{"ps1", "pwsh"}, Exts: []string{".ps1", ".psm1", ".psd1"},
+		LSP: &LSPSpec{Commands: []string{"powershell-es"}}},
+	{Language: QSharp, Aliases: []string{"q#", "qsharp"}, Exts: []string{".qs"}},
+	{Language: Solidity, Aliases: []string{"sol"}, Exts: []string{".sol"},
+		RepoMarkers: []string{"foundry.toml", "hardhat.config.js", "hardhat.config.ts", "truffle-config.js"},
+		LSP:         &LSPSpec{Commands: []string{"solidity-ls"}}},
+	{Language: SystemVerilog, Aliases: []string{"sv"}, Exts: []string{".sv", ".svh"}},
+	{Language: Verilog, Exts: []string{".v", ".vh"}},
+	{Language: Zig, Exts: []string{".zig"},
+		RepoMarkers: []string{"build.zig", "build.zig.zon"},
+		LSP:         &LSPSpec{Commands: []string{"zls"}, RootMarkers: []string{"build.zig"}}},
 }
 
 // Registry holds profiles at REST (all of them) and the set currently ACTIVE
@@ -448,32 +572,34 @@ func detectRoots(codebase string) (map[string][]Language, error) {
 	return out, nil
 }
 
-// censusExts counts known extensions one level below dir (marker-less trees).
+// censusExts counts known extensions in a bounded subtree below dir
+// (marker-less trees). The walk honors skipDirs and dot-dirs and is depth-
+// bounded like detectRoots (baseDepth+4): a marker-less tree whose sources
+// sit several directories down still activates its languages. Files deeper
+// than the bound stay unseen — a repo marker is the exact signal for those.
 func censusExts(dir string) map[string]int {
 	counts := map[string]int{}
-	entries, err := os.ReadDir(dir)
+	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return counts
 	}
-	for _, e := range entries {
-		if e.IsDir() {
-			if skipDirs[e.Name()] || strings.HasPrefix(e.Name(), ".") {
-				continue
-			}
-			// one level of nesting is enough for a census
-			sub, err := os.ReadDir(filepath.Join(dir, e.Name()))
-			if err != nil {
-				continue
-			}
-			for _, s := range sub {
-				if !s.IsDir() {
-					counts[filepath.Ext(s.Name())]++
-				}
-			}
-			continue
+	baseDepth := strings.Count(abs, string(os.PathSeparator))
+	filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable subtrees: skip, never abort detection
 		}
-		counts[filepath.Ext(e.Name())]++
-	}
+		if d.IsDir() {
+			if path != abs && (skipDirs[d.Name()] || strings.HasPrefix(d.Name(), ".")) {
+				return filepath.SkipDir
+			}
+			if strings.Count(path, string(os.PathSeparator)) > baseDepth+4 {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		counts[filepath.Ext(d.Name())]++
+		return nil
+	})
 	return counts
 }
 

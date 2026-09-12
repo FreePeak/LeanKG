@@ -19,12 +19,12 @@ func TestTreeSitterExtractionLanguages(t *testing.T) {
 		src  string
 		want []string
 	}{
-		"go":     {src: "package p\n\nfunc Handler() {}\nfunc helper() {}\n", want: []string{"Handler", "helper"}},
-		"rust":   {src: "fn helper() {}\nstruct Config {}\n", want: []string{"helper", "Config"}},
-		"py":     {src: "def parse():\n    pass\n\nclass Repo:\n    pass\n", want: []string{"parse", "Repo"}},
-		"java":   {src: "class Greeter { void greet() {} }\n", want: []string{"Greeter"}},
-		"kotlin": {src: "fun helper() {}\nclass Config {}\n", want: []string{"helper", "Config"}},
-		"swift":  {src: "func hello() {}\nclass Widget {}\n", want: []string{"hello", "Widget"}},
+		"go":    {src: "package p\n\nfunc Handler() {}\nfunc helper() {}\n", want: []string{"Handler", "helper"}},
+		"rust":  {src: "fn helper() {}\nstruct Config {}\n", want: []string{"helper", "Config"}},
+		"py":    {src: "def parse():\n    pass\n\nclass Repo:\n    pass\n", want: []string{"parse", "Repo"}},
+		"swift": {src: "func hello() {}\nclass Widget {}\n", want: []string{"hello", "Widget"}},
+		"objc":  {src: "#import <UIKit.h>\n\n@interface Greeter : NSObject\n@end\n\n@implementation Greeter\n@end\n\nint main(void) { return 0; }\n", want: []string{"Greeter", "main"}},
+		"dart":  {src: "import 'dart:math';\n\nclass Repo {\n  int size() { return 1; }\n}\n\nint add(int a, int b) { return a + b; }\n", want: []string{"Repo", "size", "add"}},
 	}
 	for lang, tc := range samples {
 		defs, err := tsExtract([]byte(tc.src), lang)
@@ -46,10 +46,10 @@ func TestTreeSitterExtractionLanguages(t *testing.T) {
 	}
 }
 
-// TestTreeSitterNoGrammarFallsBack pins the per-language fallback: objc/dart/md
-// have no bundled grammar, so tsExtract returns nil and the regex tier runs.
+// TestTreeSitterNoGrammarFallsBack pins the per-language fallback: md has no
+// bundled grammar, so tsExtract returns nil and the regex tier runs.
 func TestTreeSitterNoGrammarFallsBack(t *testing.T) {
-	for _, lang := range []string{"objc", "dart", "md"} {
+	for _, lang := range []string{"md"} {
 		defs, err := tsExtract([]byte("class App {}\n"), lang)
 		if err != nil {
 			t.Fatalf("%s: %v", lang, err)

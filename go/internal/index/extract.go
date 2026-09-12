@@ -10,7 +10,7 @@ import (
 
 // match is one raw regex hit before line-range resolution.
 type match struct {
-	kind   string // "function", "method", "type", "class", "doc"
+	kind   string // "function", "method", "type", "class", "constructor", "constant", "doc"
 	name   string
 	line   int    // 1-based
 	recv   string // Go receiver type
@@ -20,14 +20,15 @@ type match struct {
 // indexedElem is an extracted element before conversion to store.Element.
 type indexedElem struct {
 	name    string
-	etype   string // function | method | type | class | doc
+	etype   string // function | method | type | class | constructor | constant | doc
 	lang    string
 	start   int // 1-based
 	end     int
 	content string
 	parent  int // index into the same slice, -1 = none
 	qn      string
-	recv    string // Go method receiver type
+	recv    string   // Go method receiver type
+	calls   []string // grammar-derived call targets (objc message sends)
 }
 
 // Package-level compiled regexes (documented ceiling: regex extraction,
@@ -65,6 +66,15 @@ var (
 	// Dart
 	dartTypeRe = regexp.MustCompile(`^\s*(?:(?:abstract|sealed|final|base|interface|mixin|external|required|const|covariant)\s+)*(class|enum|mixin)\s+([A-Za-z_]\w*)`)
 	dartFuncRe = regexp.MustCompile(`^\s*(?:[\w$<>,?\s]+\s+)?([A-Za-z_$][\w$]*)\s*\([^;{)]*\)\s*(?:(?:async|sync\s*\*)\s*)?(?:\{|=>)`)
+	// Dart constructors: "Factory()", "Factory.named(int x)", "const
+	// Factory.zero()", "factory Factory.create() => ...". The class name is
+	// UpperCamel in Dart, which keeps ordinary lower-case call statements
+	// ("setState(...)") out; a static-method call statement looks identical
+	// to a named-constructor declaration, so those stay a documented ceiling
+	// of the regex tier (the tstree build is exact).
+	dartCtorRe = regexp.MustCompile(`^\s*(?:(?:const|factory|external)\s+)*([A-Z]\w*)(?:\.(\w+))?\s*\(`)
+	// dartEnumConstantRe accepts exactly one enum value name.
+	dartEnumConstantRe = regexp.MustCompile(`^[A-Za-z_$][\w$]*$`)
 )
 
 // extractFile extracts elements from one file on disk, tagging it with the
@@ -92,14 +102,25 @@ func extractFileAs(rel, abs, lang string) (fileElements, error) {
 			if end < d.StartLine {
 				end = d.StartLine
 			}
-			fe.elements = append(fe.elements, indexedElem{
+			e := indexedElem{
 				name: d.Name, etype: d.Kind, lang: lang,
 				start: d.StartLine, end: end, parent: -1,
-			})
+			}
+			if d.Kind == "constructor" || d.Kind == "constant" {
+				// The grammar names a constructor after the constructor, not the
+				// class (and an enum value carries no type at all); recv carries
+				// the owning type so qualify() spells "<file>::Class.ctor" and
+				// "<file>::Enum.value" without depending on line-based parent
+				// detection (a one-line body has none).
+				e.recv = d.Owner
+			}
+			fe.elements = append(fe.elements, e)
 		}
 		assignParents(fe.elements)
 		qualify(fe)
 		boundContent(fe.elements, lines)
+		// Grammar-derived call sites seed "calls" edges in relationships().
+		tsAttributeCalls(src, lang, fe.elements)
 		return fe, nil
 	}
 
@@ -125,6 +146,10 @@ func extractFileAs(rel, abs, lang string) (fileElements, error) {
 		ms = matchObjC(lines)
 	case "dart":
 		ms = matchDart(lines)
+	default:
+		// Expanded language set (extract_langexp.go); claims only its own ids
+		// and reports ok=false otherwise, so built-ins above are untouched.
+		ms, _ = matchLangExp(lang, lines)
 	}
 	if len(ms) == 0 {
 		return fileElements{rel: rel}, nil
@@ -366,11 +391,45 @@ func matchObjC(lines []string) []match {
 	return ms
 }
 
+// matchDart extracts dart classes, mixins, enums, functions, constructors
+// (default, named, factory and const — named without the class, matching the
+// tree-sitter tier) and enum values. Constructors and values carry their
+// owning type in recv (see qualify), which keeps their qualified names stable
+// whether or not the class or enum body spans several lines.
 func matchDart(lines []string) []match {
 	var ms []match
+	inEnum, enumName := false, ""
 	for i, l := range lines {
 		if m := dartTypeRe.FindStringSubmatch(l); m != nil {
 			ms = append(ms, match{kind: "class", name: m[2], line: i + 1})
+			if m[1] == "enum" {
+				// Values sit on the declaration line for the one-line form and
+				// in the body lines below otherwise, up to the closing brace.
+				enumName = m[2]
+				ms = append(ms, dartEnumValues(l, i+1, enumName)...)
+				inEnum = !strings.Contains(l, "}")
+			}
+			continue
+		}
+		if inEnum {
+			if vals := dartEnumValues(l, i+1, enumName); len(vals) > 0 {
+				ms = append(ms, vals...)
+				continue
+			}
+			if strings.Contains(l, "}") {
+				inEnum, enumName = false, ""
+			}
+			continue
+		}
+		if m := dartCtorRe.FindStringSubmatch(l); m != nil {
+			name := m[2] // named/factory constructor: the part after the dot
+			if name == "" {
+				name = m[1]
+			}
+			// The class name rides in recv so a default constructor's qualified
+			// name ("<file>::Factory.Factory") cannot collide with the class
+			// element's own row, whatever the heuristic end line resolved to.
+			ms = append(ms, match{kind: "constructor", name: name, recv: m[1], line: i + 1})
 			continue
 		}
 		if m := dartFuncRe.FindStringSubmatch(l); m != nil && !dartKeyword(m[1]) {
@@ -378,6 +437,35 @@ func matchDart(lines []string) []match {
 		}
 	}
 	return ms
+}
+
+// dartEnumValues extracts the value names carried by one line of a dart enum:
+// the value list is everything up to the ";" that separates it from the
+// members, so a member line (a field, a constructor, a method body) yields
+// nothing. The enum's own name rides in recv, giving "<file>::Color.red".
+func dartEnumValues(line string, lineNo int, enumName string) []match {
+	s := line
+	if p := strings.IndexByte(s, '}'); p >= 0 {
+		s = s[:p]
+	}
+	if p := strings.IndexByte(s, '{'); p >= 0 {
+		s = s[p+1:]
+	}
+	if p := strings.IndexByte(s, ';'); p >= 0 {
+		s = s[:p]
+	}
+	var out []match
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if i := strings.IndexAny(part, "(="); i >= 0 { // "ok(1)", "red = 1"
+			part = strings.TrimSpace(part[:i])
+		}
+		if !dartEnumConstantRe.MatchString(part) {
+			continue
+		}
+		out = append(out, match{kind: "constant", name: part, recv: enumName, line: lineNo})
+	}
+	return out
 }
 
 // dartKeyword rejects function-shaped Dart keywords ("if", "for", "while", ...).
@@ -408,7 +496,11 @@ func assignParents(els []indexedElem) {
 }
 
 // qualify assigns element kinds (Python def-in-class becomes a method) and
-// qualified names: `<rel>::<name>`, methods `<rel>::<Type>.<name>`.
+// qualified names: `<rel>::<name>`, class and enum members
+// `<rel>::<Type>.<name>` (methods and constructors; enum values, whose recv
+// holds the enum name — named members keep their owning type even when the
+// declaring body sits on a single line, where line-based parent detection
+// finds no parent).
 func qualify(fe fileElements) {
 	for i := range fe.elements {
 		e := &fe.elements[i]
@@ -417,7 +509,7 @@ func qualify(fe fileElements) {
 			e.etype = "method"
 		}
 		base := fe.rel + "::"
-		if e.etype == "method" {
+		if e.etype == "method" || e.etype == "constructor" || e.etype == "constant" {
 			typeName := e.recv
 			if typeName == "" && e.parent >= 0 {
 				pqn := fe.elements[e.parent].qn

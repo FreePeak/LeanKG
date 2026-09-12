@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TV App</string>
+    <string name="greeting">Hello World!</string>
+    <color name="primary">#FF6200EE</color>
+    <dimen name="padding_medium">16dp</dimen>
+    <bool name="is_tablet">false</bool>
+    <integer name="max_retries">3</integer>
+    <style name="AppTheme" parent="Theme.MaterialComponents.Light.DarkActionBar">
+        <item name="colorPrimary">@color/primary</item>
+    </style>
+    <style name="AppTheme.NoActionBar">
+        <item name="windowActionBar">false</item>
+    </style>
+</resources>

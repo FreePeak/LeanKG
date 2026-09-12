@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
+	"github.com/FreePeak/LeanKG/go/internal/lsp"
 	"io"
 	"io/fs"
 	"os"
@@ -54,6 +55,35 @@ var extLang = map[string]string{
 	".js": "js", ".jsx": "jsx", ".py": "py", ".md": "md",
 	".java": "java", ".kt": "kotlin", ".kts": "kotlin",
 	".swift": "swift", ".m": "objc", ".mm": "objc", ".dart": "dart",
+	// expanded set (extract_langexp.go)
+	".c": "c", ".h": "c",
+	".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp", ".h++": "cpp",
+	".cs":  "csharp",
+	".php": "php", ".phtml": "php",
+	".rb": "ruby", ".ruby": "ruby", ".rake": "ruby", ".gemspec": "ruby",
+	".scala": "scala", ".sc": "scala",
+	".pl": "perl", ".pm": "perl", ".t": "perl",
+	".lua": "lua",
+	".hs":  "haskell", ".lhs": "haskell",
+	".ex": "elixir", ".exs": "elixir",
+	// language-expansion wave 2 (extract_langexp2.go)
+	".cr": "crystal",
+	".cu": "cuda", ".cuh": "cuda",
+	".cyp": "cypher",
+	".elm": "elm",
+	".erl": "erlang", ".hrl": "erlang",
+	".fs": "fsharp", ".fsi": "fsharp", ".fsx": "fsharp",
+	".glsl": "glsl", ".vert": "glsl", ".frag": "glsl", ".geom": "glsl", ".tesc": "glsl", ".tese": "glsl", ".comp": "glsl",
+	".hlsl": "hlsl", ".fx": "hlsl", ".fxh": "hlsl", ".hlsli": "hlsl",
+	".nim": "nim", ".nims": "nim",
+	".ml": "ocaml", ".mli": "ocaml",
+	".sql": "sql", ".pls": "sql",
+	".ps1": "powershell", ".psm1": "powershell", ".psd1": "powershell",
+	".qs":  "qsharp",
+	".sol": "solidity",
+	".sv":  "systemverilog", ".svh": "systemverilog",
+	".v": "verilog", ".vh": "verilog",
+	".zig": "zig",
 }
 
 // maxIndexFileBytes bounds the walker: larger files are counted and skipped
@@ -91,7 +121,31 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 			return string(l), ok
 		}
 	}
-	return indexDir(ctx, st, dir, owner)
+	res, err := indexDir(ctx, st, dir, owner)
+	if err != nil {
+		return res, err
+	}
+	// Post-index LSP enrichment (Rust lsp/bridge parity): merge server symbols
+	// into the stored elements and upgrade typed call edges. Absent servers are
+	// recorded as reasons on the result, never errors — a codebase with no LSP
+	// server indexes exactly as before.
+	// Opt-in, like Rust (indexer.typed_resolve defaults to "off" and the bridge
+	// is configured per project): a codebase without leankg.yaml lsp/indexer
+	// config indexes exactly as before, spawning nothing. With config present,
+	// servers merge their symbols and typed call edges into the store.
+	if res.Files > 0 {
+		if _, _, configured := lsp.LoadProject(dir); configured {
+			er, err := lsp.Enrich(st, dir, activeLangTags(reg))
+			if err != nil {
+				return res, err
+			}
+			if er.Enabled {
+				res.Elements += er.NewElements
+				res.Relationships += er.CallsUpgraded
+			}
+		}
+	}
+	return res, nil
 }
 
 func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (Result, error) {
@@ -134,18 +188,23 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		if _, ok := owner(filepath.Ext(name)); !ok {
-			return nil
-		}
-		if info, err := d.Info(); err == nil && info.Size() > maxIndexFileBytes {
-			res.SkippedLarge++ // vendored/minified bundles: not index material
-			return nil
-		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		if _, ok := owner(filepath.Ext(name)); !ok {
+			// Specialist-claimed files (AndroidManifest.xml, build.gradle,
+			// pom.xml, …) are indexed by their own extractor even though no
+			// language owns their extension.
+			if !SpecialistClaim(rel) {
+				return nil
+			}
+		}
+		if info, err := d.Info(); err == nil && info.Size() > maxIndexFileBytes {
+			res.SkippedLarge++ // vendored/minified bundles: not index material
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err
@@ -233,6 +292,11 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		extracted := make([]fileElements, 0, len(files))
 		names := map[string][]string{} // package-scoped call targets
 		for _, f := range files {
+			if handled, err := indexSpecialistFile(st, f.rel, f.abs, f.size, f.mtimeNS, f.hash, &res); err != nil {
+				return res, err
+			} else if handled {
+				continue // the specialist own its extraction AND its writes
+			}
 			fe, err := extractFileAs(f.rel, f.abs, f.lang)
 			if err != nil {
 				return res, err
@@ -263,9 +327,28 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			res.Files++
 			res.Elements += len(fe.elements)
 			res.Relationships += len(rels)
+			if f.lang == "kotlin" {
+				if err := indexKotlinExtras(st, f.rel, f.abs, &res); err != nil {
+					return res, err
+				}
+			}
 		}
 	}
 	return res, nil
+}
+
+// activeLangTags lists registry-active language ids for LSP enrichment; nil
+// (legacy static path) lets the enrich pass consider every language present.
+func activeLangTags(reg *langs.Registry) []string {
+	if reg == nil {
+		return nil
+	}
+	active := reg.Active()
+	out := make([]string, 0, len(active))
+	for _, l := range active {
+		out = append(out, string(l))
+	}
+	return out
 }
 
 // dirOf returns the package directory of a repo-relative path ("." when the
