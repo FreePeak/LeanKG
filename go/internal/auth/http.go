@@ -72,25 +72,23 @@ func Routes(st store.Backend) http.Handler {
 		if !ok {
 			return
 		}
-		// Only writers may issue for another account; a reader may issue for
-		// itself. `role` falls back to viewer for an unknown or missing value
-		// (Rust Role::from_str(..).unwrap_or(Viewer)).
-		if !ctx.CanWrite() && req.AccountID != ctx.AccountID {
-			writeFail(w, "insufficient permission to issue token")
+		// Issuing for ANOTHER account is an admin action; issuing for yourself
+		// needs only a valid bearer. (`role` falls back to viewer for an unknown
+		// or missing value — Rust Role::from_str(..).unwrap_or(Viewer).)
+		if req.AccountID != ctx.AccountID && !ctx.CanAdmin() {
+			writeFail(w, "insufficient permission to issue a token for another account (admin required)")
 			return
 		}
 		role := "viewer"
 		if _, known := RoleFromString(req.Role); known {
 			role = req.Role
 		}
-		// Privilege ceiling: a caller that cannot write may not mint a role
-		// above its own. Without this a viewer bearer issues itself an admin
-		// token — the Rust handler had the identical hole while its own doc
-		// comment promised admin-only issuance.
-		if !ctx.CanWrite() {
-			if want, known := RoleFromString(role); !known || want > ctx.Role {
-				role = ctx.Role.String()
-			}
+		// Privilege ceiling for EVERY caller: nobody mints above their own role.
+		// Guarding only non-writers was not enough — a contributor bearer could
+		// still mint itself admin. The Rust handler had the same hole while its
+		// doc comment promised admin-only issuance.
+		if want, known := RoleFromString(role); !known || want > ctx.Role {
+			role = ctx.Role.String()
 		}
 		// ttl_secs is client input: convert through time.Duration only within
 		// its whole-second range. Beyond it the multiply wraps and a token

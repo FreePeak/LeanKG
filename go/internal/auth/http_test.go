@@ -241,7 +241,9 @@ func TestAuthRoutesDenied(t *testing.T) {
 		code, resp := doJSON(t, h, "POST", "/api/v1/auth/token", viewerSecret, map[string]any{
 			"account_id": ownerID, "name": "escalation", "role": "admin",
 		})
-		if code != http.StatusBadRequest || !strings.Contains(errString(t, resp), "insufficient permission to issue token") {
+		// Message updated when cross-account issuance was tightened to admin
+		// (the behavior asserted here — refusal — is unchanged).
+		if code != http.StatusBadRequest || !strings.Contains(errString(t, resp), "insufficient permission to issue a token for another account") {
 			t.Fatalf("= %d %v", code, resp)
 		}
 	})

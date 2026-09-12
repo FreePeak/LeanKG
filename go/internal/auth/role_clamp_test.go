@@ -68,3 +68,68 @@ func TestViewerCannotMintAboveItsRole(t *testing.T) {
 		t.Fatalf("resolved role = %v, want Viewer", g.Role)
 	}
 }
+
+// TestContributorCannotMintAdminOrForOthers closes the rest of the escalation:
+// clamping only non-writers left a contributor able to mint itself admin, and
+// the old account check let any writer issue a token bound to another account.
+func TestContributorCannotMintAdminOrForOthers(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	mine, err := Register(st, "contrib@example.com", "password123", "C")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := Register(st, "other@example.com", "password123", "O")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contrib, _, err := Mint(st, MintRequest{Name: "c", Role: "contributor", AccountID: mine.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issue := func(body string) (bool, string, string) {
+		t.Helper()
+		req := httptest.NewRequest("POST", "/api/v1/auth/token", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+contrib)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		Routes(st).ServeHTTP(rec, req)
+		var env struct {
+			Success bool    `json:"success"`
+			Error   *string `json:"error"`
+			Data    struct {
+				Role string `json:"role"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode %q: %v", rec.Body.String(), err)
+		}
+		msg := ""
+		if env.Error != nil {
+			msg = *env.Error
+		}
+		return env.Success, env.Data.Role, msg
+	}
+
+	// 1. Self-issuance is allowed, but the role is clamped to contributor.
+	ok, role, msg := issue(`{"account_id":"` + mine.ID + `","role":"admin","name":"esc"}`)
+	if !ok {
+		t.Fatalf("self-issuance refused outright: %s", msg)
+	}
+	if role != "contributor" {
+		t.Fatalf("issued role = %q, want contributor (no escalation)", role)
+	}
+	// 2. Issuing for another account requires admin.
+	if ok, _, msg := issue(`{"account_id":"` + other.ID + `","role":"contributor"}`); ok {
+		t.Fatal("contributor issued a token for another account")
+	} else if !strings.Contains(msg, "admin required") {
+		t.Fatalf("refusal does not explain the requirement: %s", msg)
+	}
+}
