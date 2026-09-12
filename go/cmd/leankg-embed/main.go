@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 
@@ -62,9 +63,12 @@ Usage:
   leankg-embed import [--project DIR] [--model M] [--revision R] [--dims N] [--in FILE]
   leankg-embed status [--project DIR]                  last run / stamps / element count
 
-Providers (env): LEANKG_EMBED_PROVIDER=local|openai|deterministic (default local,
-llama.cpp sidecar shape http://127.0.0.1:8080/v1), LEANKG_EMBED_BASE_URL,
-LEANKG_EMBED_API_KEY, LEANKG_EMBED_MODEL, LEANKG_EMBED_DIMS.
+Providers (env): LEANKG_EMBED_PROVIDER=local|openai|deterministic (default local).
+local spawns the llama.cpp sidecar: LEANKG_EMBED_SIDECAR_CMD (default llama-server),
+LEANKG_EMBED_SIDECAR_ARGS (shell-quoted), LEANKG_EMBED_SIDECAR_PORT (default 8080),
+LEANKG_EMBED_SIDECAR_READY_SECS (default 120). Attach instead with LEANKG_EMBED_BASE_URL.
+Remote: LEANKG_EMBED_BASE_URL, LEANKG_EMBED_API_KEY, LEANKG_EMBED_MODEL,
+LEANKG_EMBED_DIMS, LEANKG_EMBED_REVISION.
 `)
 }
 
@@ -133,11 +137,14 @@ func cmdRun(args []string, mode string) {
 		log.Fatalf("store: %v", err)
 	}
 	defer st.Close()
-	p, err := embed.FromEnv()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	p, release, err := embed.StartProvider(ctx)
 	if err != nil {
 		log.Fatalf("provider: %v", err)
 	}
-	report, err := embed.Run(context.Background(), st, p, mode)
+	defer release()
+	report, err := embed.Run(ctx, st, p, mode)
 	if err != nil {
 		log.Fatalf("run: %v (status recorded)", err)
 	}

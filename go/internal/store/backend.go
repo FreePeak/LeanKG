@@ -81,6 +81,40 @@ type Backend interface {
 	AppendAudit(e *AuditEntry) error
 	AuditTail(limit int) ([]AuditEntry, error)
 	VerifyAuditChain() (ok bool, brokenAt int64, err error)
+
+	// auth tokens (DB-backed bearer tokens; Rust auth/tokens.rs parity).
+	// TokenUpsert and TokenFind take the PLAINTEXT secret and store/match
+	// only its SHA-256 hash; returned Tokens carry the at-rest hash.
+	// TokenFind rejects revoked and expired rows with ErrTokenRevoked /
+	// ErrTokenExpired; TokenRevoke is the soft (revoked_at) counterpart of
+	// the hard TokenDelete; TokenTouch records a successful authentication's
+	// last_used_at, coalesced to one write per TokenTouchWindowSecs.
+	TokenUpsert(tok Token) error
+	TokenList() ([]Token, error)
+	TokenDelete(id string) error
+	TokenRevoke(id string, at int64) error
+	TokenTouch(id string, at int64) error
+	TokenFind(secret string) (Token, bool, error)
+
+	// enterprise auth (Rust auth/accounts.rs + 004_auth.sql parity):
+	// accounts, orgs, org memberships, team members and resource ownership.
+	// Role POLICY lives in internal/auth (hierarchy, bootstrap orgs, ownership
+	// precedence); these are typed table accesses. Upserts replace the whole
+	// row on the primary key, and membership writes are keyed on the pair, so
+	// a re-add re-roles instead of duplicating.
+	AccountUpsert(a Account) error
+	AccountByEmail(email string) (Account, bool, error)
+	OrgUpsert(o Org) error
+	OrgByID(id string) (Org, bool, error)
+	OrgsByOwner(ownerAccountID string) ([]Org, error)
+	OrgMembershipUpsert(m OrgMember) error
+	OrgMemberOf(orgID, accountID string) (OrgMember, bool, error)
+	OrgMembers(orgID string) ([]OrgMember, error)
+	TeamMemberUpsert(m TeamMember) error
+	TeamMemberOf(teamID, accountID string) (TeamMember, bool, error)
+	TeamMembers(teamID string) ([]TeamMember, error)
+	ResourceClaim(resourceType, resourceID, ownerAccountID, orgID string) error
+	IsResourceOwner(resourceType, resourceID, accountID string) (bool, error)
 }
 
 // AuditEntry is one hash-chained audit record. Hash = sha256(prev_hash |

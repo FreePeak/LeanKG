@@ -430,18 +430,31 @@ func TestFromEnv(t *testing.T) {
 		}
 	})
 
-	t.Run("local defaults to sidecar", func(t *testing.T) {
+	t.Run("local attaches to an explicit base URL", func(t *testing.T) {
 		t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+		// Attach constructor: without a base URL there is nothing to attach
+		// to and it must fail with an actionable error, never silently
+		// produce vectors.
+		if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "sidecar") {
+			t.Fatalf("want actionable sidecar error, got %v", err)
+		}
+		t.Setenv("LEANKG_EMBED_BASE_URL", "http://127.0.0.1:9101/v1")
 		p, err := FromEnv()
 		if err != nil {
 			t.Fatal(err)
 		}
-		o, ok := p.(*openaiCompatible)
-		if !ok {
-			t.Fatalf("want *openaiCompatible, got %T", p)
+		if p.Provider() != "local" {
+			t.Fatalf("Provider: got %q, want local", p.Provider())
 		}
-		if o.baseURL != "http://127.0.0.1:8080/v1" {
+		o, ok := p.(*localProvider)
+		if !ok {
+			t.Fatalf("want *localProvider, got %T", p)
+		}
+		if o.baseURL != "http://127.0.0.1:9101/v1" {
 			t.Fatalf("base URL: got %q", o.baseURL)
+		}
+		if o.ModelID() != "local" || o.Revision() != "local:local" {
+			t.Fatalf("stamp defaults: got %s/%s", o.ModelID(), o.Revision())
 		}
 	})
 

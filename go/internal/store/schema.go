@@ -136,4 +136,85 @@ CREATE TABLE IF NOT EXISTS audit_ledger (
 	hash       TEXT NOT NULL
 );
 `})
+	migrations = append(migrations, migration{7, "auth-tokens", `
+-- DB-backed bearer tokens (Rust auth/tokens.rs + 004_auth.sql access_tokens
+-- parity): only the SHA-256 hex of each secret is ever stored.
+CREATE TABLE IF NOT EXISTS tokens (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    secret     TEXT NOT NULL UNIQUE,
+    role       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tokens_created ON tokens (created_at);
+`})
+	migrations = append(migrations, migration{8, "auth-token-lifecycle", `
+-- Additive lifecycle columns for the tokens table (Rust auth/tokens.rs
+-- AccessToken parity): expiry, soft revocation, last-use tracking, scopes,
+-- and the Rust ownership labels. ALTER-only so databases created by
+-- migration 007 (or its Rust-era layout) migrate in place; fresh databases
+-- get the same result because 007 still runs first.
+ALTER TABLE tokens ADD COLUMN expires_at   INTEGER;
+ALTER TABLE tokens ADD COLUMN revoked_at   INTEGER;
+ALTER TABLE tokens ADD COLUMN last_used_at INTEGER;
+ALTER TABLE tokens ADD COLUMN scopes       TEXT NOT NULL DEFAULT '';
+ALTER TABLE tokens ADD COLUMN account_id   TEXT NOT NULL DEFAULT '';
+ALTER TABLE tokens ADD COLUMN org_id       TEXT NOT NULL DEFAULT '';
+`})
+	migrations = append(migrations, migration{9, "enterprise-auth", `
+-- Enterprise auth (Rust src/auth/accounts.rs + 004_auth.sql parity):
+-- accounts, orgs, org memberships, team members and resource ownership.
+-- Access tokens live in the tokens table (migrations 007/008).
+CREATE TABLE IF NOT EXISTS accounts (
+	id            TEXT PRIMARY KEY,
+	email         TEXT NOT NULL UNIQUE,
+	name          TEXT NOT NULL,
+	password_hash TEXT NOT NULL,
+	status        TEXT NOT NULL DEFAULT 'active',
+	created_at    INTEGER NOT NULL,
+	updated_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts (status);
+
+CREATE TABLE IF NOT EXISTS orgs (
+	id               TEXT PRIMARY KEY,
+	name             TEXT NOT NULL,
+	owner_account_id TEXT NOT NULL,
+	created_at       INTEGER NOT NULL,
+	updated_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orgs_owner ON orgs (owner_account_id);
+
+-- UNIQUE (org_id, account_id) so re-adds upsert instead of duplicating.
+CREATE TABLE IF NOT EXISTS org_memberships (
+	org_id     TEXT NOT NULL,
+	account_id TEXT NOT NULL,
+	role       TEXT NOT NULL,
+	joined_at  INTEGER NOT NULL,
+	PRIMARY KEY (org_id, account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_org_memberships_account ON org_memberships (account_id);
+
+CREATE TABLE IF NOT EXISTS team_members (
+	team_id    TEXT NOT NULL,
+	account_id TEXT NOT NULL,
+	role       TEXT NOT NULL,
+	joined_at  INTEGER NOT NULL,
+	PRIMARY KEY (team_id, account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_team_members_account ON team_members (account_id);
+
+-- Ownership index for permission checks: which account owns a resource.
+-- The PK makes a re-claim an update; IsResourceOwner reads it either way.
+CREATE TABLE IF NOT EXISTS resource_ownership (
+	resource_type    TEXT NOT NULL,
+	resource_id      TEXT NOT NULL,
+	owner_account_id TEXT NOT NULL,
+	org_id           TEXT,
+	created_at       INTEGER NOT NULL,
+	PRIMARY KEY (resource_type, resource_id, owner_account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_resource_ownership_owner ON resource_ownership (owner_account_id);
+CREATE INDEX IF NOT EXISTS idx_resource_ownership_resource ON resource_ownership (resource_type, resource_id);
+`})
 }

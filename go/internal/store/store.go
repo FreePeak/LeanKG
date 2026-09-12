@@ -118,3 +118,72 @@ func (s *Store) Migrate() error {
 	}
 	return nil
 }
+
+// MigrationStep is one embedded schema migration, identified by its
+// ordinal version and name.
+type MigrationStep struct {
+	Version int
+	Name    string
+}
+
+// Migrations returns the embedded migration list (version + name, oldest
+// first) as a read-only view. Doctor --deep and other tooling compare it
+// against the applied schema_migrations ledger for drift, without any
+// write access to the store.
+func Migrations() []MigrationStep {
+	out := make([]MigrationStep, 0, len(migrations))
+	for _, m := range migrations {
+		out = append(out, MigrationStep{Version: m.version, Name: m.name})
+	}
+	return out
+}
+
+// AppliedMigrations returns the versions recorded in the store's
+// schema_migrations ledger, ascending. It is the read side of Migrate for
+// tooling that reports the applied/pending split (the `leankg migrate` verb);
+// doctor --deep reads the same table through its own probes. A store that was
+// never migrated fails with the driver's "no such table" error.
+func AppliedMigrations(b Backend) ([]int, error) {
+	const query = `SELECT version FROM schema_migrations ORDER BY version`
+	switch st := b.(type) {
+	case *Store:
+		rows, err := st.db.Query(query)
+		if err != nil {
+			return nil, fmt.Errorf("store: applied migrations: %w", err)
+		}
+		defer rows.Close()
+		return collectVersions(rows)
+	case *PGStore:
+		rows, err := st.pool.Query(pgCtx, query)
+		if err != nil {
+			return nil, fmt.Errorf("store: applied migrations: %w", err)
+		}
+		defer rows.Close()
+		return collectVersions(rows)
+	}
+	return nil, fmt.Errorf("store: applied migrations: unknown backend %T", b)
+}
+
+// versionRows is the read side shared by database/sql and pgx rows (Close is
+// excluded: its signature differs between the two).
+type versionRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
+// collectVersions drains a version column; the caller owns closing rows.
+func collectVersions(rows versionRows) ([]int, error) {
+	var out []int
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("store: applied migrations: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: applied migrations: %w", err)
+	}
+	return out, nil
+}
