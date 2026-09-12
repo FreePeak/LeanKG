@@ -1,0 +1,64 @@
+project:
+  name: .leankg
+  root: ./src
+  languages:
+  - javascript
+  - rust
+  steer:
+    priority_paths: []
+    ignore_paths: []
+    languages:
+      items: []
+    notes: []
+indexer:
+  exclude:
+  - '**/node_modules/**'
+  - '**/vendor/**'
+  include:
+  - '*.go'
+  - '*.ts'
+  - '*.py'
+  - '*.java'
+  - '*.kt'
+  - '*.xml'
+  - '*.rs'
+  - '*.dart'
+  - '*.swift'
+  - '*.m'
+  - '*.mm'
+  - '*.c'
+  - '*.h'
+  - '*.cpp'
+  - '*.hpp'
+  - '*.rb'
+  - '*.php'
+  - '*.pl'
+  - '*.pm'
+  - '*.r'
+  - '*.ex'
+  - '*.exs'
+  - '*.sh'
+  - '*.lua'
+  - '*.scala'
+  - '*.zig'
+  - '*.sol'
+  - '*.cs'
+  typed_resolve: off
+mcp:
+  enabled: true
+  port: 3000
+  auth_token: ''
+  auto_index_on_start: true
+  auto_index_threshold_minutes: 5
+  auto_index_on_db_write: false
+  require_git_for_auto_index: true
+documentation:
+  output: ./docs
+  templates:
+  - agents
+  - claude
+microservice: null
+auth:
+  enabled: false
+  provider: static
+  tokens: []

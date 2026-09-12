@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -34,10 +35,12 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/langs"
 	leankgmcp "github.com/FreePeak/LeanKG/go/internal/mcp"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
+	"github.com/FreePeak/LeanKG/go/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/go/internal/projects"
 	"github.com/FreePeak/LeanKG/go/internal/rest"
 	"github.com/FreePeak/LeanKG/go/internal/rpc"
 	leankgv1connect "github.com/FreePeak/LeanKG/go/internal/rpc/leankg/v1/leankgv1connect"
+	"github.com/FreePeak/LeanKG/go/internal/setupcfg"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 	"github.com/FreePeak/LeanKG/go/internal/web"
 )
@@ -67,6 +70,8 @@ func main() {
 		fmt.Println("leankg " + Version())
 	case "obsidian":
 		cmdObsidian(os.Args[2:])
+	case "setup":
+		cmdSetup(os.Args[2:])
 	case "status":
 		cmdStatus(os.Args[2:])
 	case "doctor":
@@ -197,6 +202,7 @@ Usage:
   leankg service-context --service NAME [--env production] [--project DIR]
   leankg team-map [--env production] [--project DIR]
   leankg serve  [--project DIR] [--stdio] [--http ADDR] [--rest ADDR] [--read-only] [--memory] [--embed-provider P]
+  leankg setup [--reset] [--clone] [--index] [--embed] [--status]
   leankg index <dir> [--source URI] [--ref-name REF] [--auth TOKEN]
   leankg prd [--source docs/prd.md] [--environment local] [--project DIR]
   leankg prd-trace [FEATURE_ID] [--project DIR]
@@ -244,6 +250,18 @@ func cmdServe(args []string) {
 			log.Fatalf("resolve cwd: %v", err)
 		}
 	}
+	// leankg.yaml project.project_path / project.root anchor, canonicalized
+	// before use: this process serves the anchored project's schema (Rust
+	// MCPServer::resolve_project_root, N3).
+	if dbDir := filepath.Join(dir, ".leankg"); projectcfg.ResolveProjectDBDir(dbDir) != dbDir {
+		dir = filepath.Dir(projectcfg.ResolveProjectRoot(dbDir))
+	}
+
+	// FR-ZCP-13: the auto-index gates the mcp.auto_index_* keys configure, and
+	// the LEANKG_SETUP=1 post-bind setup trigger. Both run in the background so
+	// the listener binds immediately.
+	go maybeAutoIndexOnStart(ctx, dir, *readOnly)
+	go maybeRunServeSetup(ctx, dir)
 
 	mode := store.RW
 	if *readOnly {
@@ -253,7 +271,7 @@ func cmdServe(args []string) {
 	if eng == "" {
 		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
 	}
-	st, err := store.OpenBackend(ctx, dir, eng, os.Getenv("LEANKG_PG_URL"), mode)
+	st, err := store.OpenBackend(ctx, dir, eng, pgURLFor(dir), mode)
 	if err != nil {
 		log.Fatalf("open store: %s", storeErrText(eng, err))
 	}
@@ -420,7 +438,12 @@ func cmdDoctor(args []string) int {
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RO)
+	// find_project_root (nearest .leankg OR leankg.yaml), then the config's
+	// project_path anchor: doctor must inspect the store the server serves
+	// (Rust main.rs find_project_root + MCPServer::resolve_project_root).
+	dir = projectcfg.FindProjectRoot(dir)
+	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
+	st, err := store.Open(filepath.Join(dbDir, "leankg.db"), store.RO)
 	if err != nil {
 		fmt.Printf("FAIL store: %v\n", err)
 		return 2
@@ -443,22 +466,14 @@ func doctorDeep(projectFlag, format string) int {
 	dir := projectFlag
 	if dir == "" {
 		dir, _ = os.Getwd()
-		// find_project_root parity: walk up to the nearest dir owning a
-		// .leankg directory before giving up.
-		for {
-			if info, err := os.Stat(filepath.Join(dir, ".leankg")); err == nil && info.IsDir() {
-				break
-			}
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
 	}
+	// find_project_root parity: walk up to the nearest dir owning a .leankg
+	// entry or a leankg.yaml — the hand-rolled walk missed the config-only
+	// case, and the config's project_path anchor is applied inside RunDeep.
+	dir = projectcfg.FindProjectRoot(dir)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	report, err := doctor.RunDeep(ctx, dir, envOr("LEANKG_DB_ENGINE", ""), os.Getenv("LEANKG_PG_URL"), nil)
+	report, err := doctor.RunDeep(ctx, dir, envOr("LEANKG_DB_ENGINE", ""), pgURLFor(dir), nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "leankg doctor --deep: %v\n", err)
 		return 2
@@ -488,14 +503,74 @@ func cmdIndex(args []string) {
 	source := fs.String("source", "", "remote source URI: git+<url>, gs://bucket/prefix, or a local path")
 	refName := fs.String("ref-name", "", "git ref for --source git+... (default: main)")
 	authFlag := fs.String("auth", "", "credential for --source (git token or GCS access token)")
+	auto := fs.Bool("auto", false, "first-run setup mode: index (and later embed) without asking again")
+	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
+	}
+	if *auto && *manual {
+		log.Fatal("index: --auto and --manual are mutually exclusive")
 	}
 	if fs.NArg() > 1 || (fs.NArg() == 0 && *source == "") {
 		log.Fatal("index requires a directory argument (or --source)")
 	}
+
+	// FR-ZCP-13 first-run contract: exactly one auto/manual question per user,
+	// persisted. Precedence: flags > LEANKG_SETUP_MODE > the stored choice >
+	// the interactive prompt (TTY only) > manual. Registration is `index` —
+	// the Rust `add` verb this travelled with does not exist here.
+	root := projectcfg.FindProjectRoot(*project)
+	var flagMode *setupcfg.SetupMode
+	if *auto {
+		m := setupcfg.ModeAuto
+		flagMode = &m
+	} else if *manual {
+		m := setupcfg.ModeManual
+		flagMode = &m
+	}
+	envMode, envOK := setupcfg.ModeFromEnv()
+	var envPtr *setupcfg.SetupMode
+	if envOK {
+		envPtr = &envMode
+	}
+	stored, _ := setupcfg.Load(root)
+	decision := setupcfg.ResolveMode(flagMode, envPtr, stored.Setup, setupcfg.Interactive(), promptSetupMode)
+	if decision.Source == setupcfg.SourcePrompt {
+		log.Printf("setup mode: %s (asked once, stored in %s)", decision.Mode, setupcfg.PathFor(root))
+	} else if decision.Source != setupcfg.SourceStored {
+		log.Printf("setup mode: %s (%s)", decision.Mode, decision.Source)
+	}
+	mode := decision.Mode
+	if err := setupcfg.Save(root, setupcfg.Config{Setup: &mode, Embed: stored.Embed}); err != nil {
+		log.Printf("setup mode: cannot persist choice: %v", err)
+	}
+	// An explicit `index` always indexes, whatever the mode: manual mode governs
+	// the AUTOMATIC paths (serve's auto-index gate, the setup pipeline), not a
+	// command the user typed.
+	_ = mode
+
 	if err := runIndex(*project, fs.Arg(0), *source, *refName, sourceAuth(*authFlag)); err != nil {
 		log.Fatalf("index: %v", err)
+	}
+}
+
+// promptSetupMode asks the one first-run question (Rust setup_config prompt):
+// empty input keeps the Rust default (manual).
+func promptSetupMode() *setupcfg.SetupMode {
+	fmt.Print("First-run setup: index and embed automatically in the background? [y/N] ")
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes", "auto", "a":
+		m := setupcfg.ModeAuto
+		return &m
+	case "n", "no", "manual", "m", "":
+		m := setupcfg.ModeManual
+		return &m
+	default:
+		return nil
 	}
 }
 

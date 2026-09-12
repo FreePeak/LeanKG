@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.9.0-parity-second-wave
+**Version:** 4.9.1-parity-third-wave
 **Date:** 2026-09-12
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
 **Codebase Version:** 0.31.0 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
@@ -9,6 +9,17 @@
 ---
 
 ## Changelog
+
+### v4.9.1-parity-third-wave — project config + the FR-ZCP-13 first-run contract (2026-09-12)
+
+> **Trigger:** the module audit's last two gaps: Rust's `leankg.yaml` project config (only the LSP block had been ported) and the first-run setup contract FR-ZCP-13 (setup choice, setup pipeline, auto-index gates).
+
+**Delivered**
+- **`internal/projectcfg`** — the full `ProjectConfig` shape + defaults (project/steer, indexer, mcp, documentation, microservice, auth, lsp, source, db), parse/absent postures, project-path resolution (nearest-config walk-up, `project.project_path` anchor, canonicalized), the `db:`/`auth:` walk-up readers, and the N1 read-modify-write migration helpers (existing keys — including unmodelled ones — win; missing keys are filled; idempotent).
+- **Wired, not just landed**: `resolveProjectDir` consults the anchor; `pgURLFor` applies Rust's precedence (env > `db:` yaml > default) at the store call sites; `index` self-heals a missing `project_path` before deriving the schema; `serve`/`doctor`/`status` resolve their store through `FindProjectRoot`/`ResolveProjectRoot`; `status` publishes the effective config (with `mcp.auth_token` redacted); `doctor --deep` adds the config `project_path` as a schema-identity candidate and gains a `config` check (WARN unreadable, FAIL dangling anchor); each `LEANKG_PROJECT_DIRS` project honors its own anchor.
+- **`internal/setupcfg` + `internal/setup` + `internal/indexgate`** — FR-ZCP-13 end to end: the auto/manual choice persisted at `<project>/.leankg/config.json` (unknown keys preserved), `leankg setup [--reset|--clone|--index|--embed|--status]` (repo resolution from `LEANKG_REPOS`/`LEANKG_PROJECT_DIRS`/`LEANKG_WORKSPACE_DIR`, cloning via `internal/sources`, the config template written through the preserving merge), and the auto-index decision table (`ReadOnly|Disabled|Fresh|NoGit|Index` + the `LEANKG_SKIP_FRESHNESS_CHECK` escape hatch) driven by the `mcp.auto_index_*` keys — with the question asked once on `index` (flags > `LEANKG_SETUP_MODE` > stored > TTY prompt > manual).
+
+**Deliberate choices:** `status` keeps the store-watermark `freshness` definition the v4.4.3 contract already publishes (the Rust git-commit variant would be a second, conflicting definition); an explicit `leankg index` always indexes — manual mode governs the automatic paths only; setup stages run in-process through a `Stages` seam rather than re-exec'ing the binary.
 
 ### v4.9.0-parity-second-wave — the Rust internals nobody had ported (2026-09-12)
 
@@ -615,4 +626,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-12 (v4.9.0 — second parity wave: federation client, conversation mining, persisted metrics, org knowledge, PRD indexing, remote sources, token budget, error catalog; Rust defects found while porting are fixed rather than reproduced)*
+*Last updated: 2026-09-12 (v4.9.1 — third parity wave: leankg.yaml project config wired end-to-end, FR-ZCP-13 setup choice + pipeline + auto-index gates; every Rust module and CLI verb now has a port or a recorded disposition)*

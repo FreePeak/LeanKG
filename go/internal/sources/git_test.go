@@ -263,3 +263,59 @@ func TestSyncedCloneIsIndexableAndHidesGit(t *testing.T) {
 		t.Fatalf("walker files = %v, want code.go", files)
 	}
 }
+
+// CloneRepo is the exported runner the setup pipeline uses: it clones into the
+// caller's directory (no staging layout) and checks the ref out.
+func TestCloneRepoIntoCallerDirectory(t *testing.T) {
+	hermeticGit(t)
+	origin := newOriginRepo(t)
+	dest := filepath.Join(t.TempDir(), "clone-target")
+	progress := &recorder{}
+
+	if err := CloneRepo(context.Background(), origin, dest, "main", progress); err != nil {
+		t.Fatalf("CloneRepo: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, ".git")); err != nil {
+		t.Fatalf("no clone at %s: %v", dest, err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "code.go")); err != nil {
+		t.Fatalf("worktree not checked out: %v", err)
+	}
+}
+
+// FetchAndCheckout is the exported refresh path for an existing clone: a new
+// commit on the origin must land in the destination.
+func TestFetchAndCheckoutAdvancesExistingClone(t *testing.T) {
+	hermeticGit(t)
+	origin := newOriginRepo(t)
+	dest := filepath.Join(t.TempDir(), "clone-target")
+	if err := CloneRepo(context.Background(), origin, dest, "main", &recorder{}); err != nil {
+		t.Fatalf("CloneRepo: %v", err)
+	}
+
+	commitFile(t, origin, "second.go", "package fixture\n")
+	if err := FetchAndCheckout(context.Background(), dest, "main", &recorder{}); err != nil {
+		t.Fatalf("FetchAndCheckout: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "second.go")); err != nil {
+		t.Fatalf("the fetched commit did not land: %v", err)
+	}
+}
+
+// A tag ref: the shallow branch clone serves it directly against a local
+// remote, and the checkout must still land the tagged worktree. (The
+// full-clone fallback arm is covered by the pre-existing SyncToLocal test on
+// a bare-SHA ref.)
+func TestCloneRepoChecksOutTagRef(t *testing.T) {
+	hermeticGit(t)
+	origin := newOriginRepo(t)
+	gitOut(t, origin, "tag", "v1.0.0")
+	dest := filepath.Join(t.TempDir(), "tag-clone")
+
+	if err := CloneRepo(context.Background(), origin, dest, "v1.0.0", &recorder{}); err != nil {
+		t.Fatalf("CloneRepo(tag): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "code.go")); err != nil {
+		t.Fatalf("tag worktree not checked out: %v", err)
+	}
+}

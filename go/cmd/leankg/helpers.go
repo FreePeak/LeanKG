@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
+	"github.com/FreePeak/LeanKG/go/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/go/internal/sources"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
@@ -39,12 +41,30 @@ func serveHTTP(ctx context.Context, h http.Handler, addr string) {
 }
 
 // resolveProjectDir picks the project directory for a verb: the explicit
-// --project/--path value, then LEANKG_PROJECT, then the working directory.
+// --project/--path value, then LEANKG_PROJECT, then the working directory,
+// then the leankg.yaml project.project_path / project.root anchor
+// (canonicalized before use — Rust MCPServer::resolve_project_root, N3).
 func resolveProjectDir(flagValue string) string {
-	if flagValue != "" {
-		return flagValue
+	dir := flagValue
+	if dir == "" {
+		dir = envOr("LEANKG_PROJECT", ".")
 	}
-	return envOr("LEANKG_PROJECT", ".")
+	if dbDir := filepath.Join(dir, ".leankg"); projectcfg.ResolveProjectDBDir(dbDir) != dbDir {
+		dir = filepath.Dir(projectcfg.ResolveProjectRoot(dbDir))
+	}
+	return dir
+}
+
+// pgURLFor applies Rust's POSTGRES precedence: the LEANKG_PG_URL environment
+// variable > the nearest leankg.yaml `db:` block > empty (driver default).
+func pgURLFor(dir string) string {
+	if v := os.Getenv("LEANKG_PG_URL"); v != "" {
+		return v
+	}
+	if db := projectcfg.DBConfigFromDir(dir); db != nil {
+		return db.URL
+	}
+	return ""
 }
 
 // openEngine opens a project's store and returns a query-ready engine with the
@@ -52,7 +72,7 @@ func resolveProjectDir(flagValue string) string {
 // like the serving transports. The caller closes engine.Store().
 func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
 	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), mode)
+		envOr("LEANKG_DB_ENGINE", "sqlite"), pgURLFor(dir), mode)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +106,17 @@ func runIndex(project, target, source, refName, auth string) error {
 		}
 		indexTarget = synced
 	}
-	st, err := store.OpenBackend(context.Background(), dir, os.Getenv("LEANKG_DB_ENGINE"), os.Getenv("LEANKG_PG_URL"), store.RW)
+	// N1 self-heal: refill a missing project.project_path anchor before
+	// deriving the schema, using THIS run's canonical identity (Rust
+	// config::project::ensure_identity_fields_for_db).
+	if abs, err := filepath.Abs(indexTarget); err == nil {
+		if resolved, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+			abs = resolved
+		}
+		projectcfg.EnsureIdentityFieldsForDB(filepath.Join(dir, ".leankg"), abs)
+	}
+	st, err := store.OpenBackend(context.Background(), dir,
+		os.Getenv("LEANKG_DB_ENGINE"), pgURLFor(dir), store.RW)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

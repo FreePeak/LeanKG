@@ -27,6 +27,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
+	"github.com/FreePeak/LeanKG/go/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -432,6 +433,13 @@ type Env struct {
 	DiskFiles []string
 	// Registry is the language registry for the disk walk (nil = default).
 	Registry *langs.Registry
+	// Config is the project's leankg.yaml, loaded and parsed (nil when the
+	// document is absent or unreadable); the config check reports it and
+	// validates the project_path anchor.
+	Config *projectcfg.ProjectConfig
+	// ConfigErr is the load/parse failure behind a nil Config (nil when the
+	// document is simply absent).
+	ConfigErr error
 }
 
 // Check is one named diagnosis over the deployment.
@@ -459,6 +467,7 @@ func Defaults() []Check {
 		checkFunc{"orphaned-relationships", checkOrphanedRelationships},
 		checkFunc{"duplicate-names", checkDuplicateNames},
 		checkFunc{"leankg-dir", checkLeankgDir},
+		checkFunc{"config", checkProjectConfig},
 	}
 }
 
@@ -901,6 +910,98 @@ func checkLeankgDir(_ Probes, env Env) Finding {
 			"(`cat <lock>` shows the owning PID)."}
 }
 
+// checkProjectConfig: the project's leankg.yaml is its schema-identity
+// contract. A project.project_path anchor declares that the store lives
+// elsewhere (the anchor resolveProjectDir/cmdServe/status honor); when it
+// dangles, every reader silently falls back to this directory's own .leankg
+// and the deployment ends up keyed on the wrong schema. FAIL on a dangling
+// anchor, WARN on an unreadable config, otherwise report the identity and the
+// effective Postgres URL tier. No leankg.yaml at all is normal (defaults).
+func checkProjectConfig(_ Probes, env Env) Finding {
+	const check = "config"
+	if env.ConfigErr != nil {
+		return Finding{check, StatusWarn, fmt.Sprintf("unreadable leankg.yaml: %v", env.ConfigErr),
+			"Fix the YAML syntax: leankg.yaml carries the project identity " +
+				"(project.project_path) and the db block the backend reads."}
+	}
+	if env.Config == nil {
+		return Finding{check, StatusPass, "no leankg.yaml (built-in defaults in effect)", ""}
+	}
+	// Which tier of the backend URL precedence (env > `db:` yaml > built-in)
+	// supplies the connection this run uses.
+	tier := "default"
+	if os.Getenv("LEANKG_PG_URL") != "" {
+		tier = "env (LEANKG_PG_URL)"
+	} else if db := projectcfg.DBConfigFromDir(env.ProjectRoot); db != nil && db.URL != "" {
+		tier = "yaml (db.url)"
+	}
+	anchor := env.Config.Project.ProjectPath
+	detail := fmt.Sprintf("name=%s project_path=%q pg_url=%s", env.Config.Project.Name, anchor, tier)
+	if anchor == "" {
+		return Finding{check, StatusPass, detail + " — no project_path anchor", ""}
+	}
+	// Canonicalize exactly like the resolver does (N3): a relative or
+	// symlinked anchor must be judged against the dir the schema keys on.
+	resolved := canonicalProjectRootIn(anchor, env.ProjectRoot)
+	if info, err := os.Stat(filepath.Join(resolved, ".leankg")); err != nil || !info.IsDir() {
+		return Finding{check, StatusFail,
+			fmt.Sprintf("project_path %s owns no .leankg", resolved),
+			"Point project.project_path at the indexed project (its .leankg store " +
+				"must exist), or drop the anchor so this project opens its own store."}
+	}
+	return Finding{check, StatusPass, detail, ""}
+}
+
+// loadProjectConfig reads the project config from either conventional
+// location — the repo-root leankg.yaml (Rust main.rs find_project_root and
+// doctor/deep.rs read that one) or the <root>/.leankg/leankg.yaml the setup
+// pipeline writes and MCPServer::resolve_project_root_raw reads. A missing
+// file yields (nil, nil): no config is not an error. A present-but-unreadable
+// file yields (nil, err) so the config check can WARN on it.
+func loadProjectConfig(root string) (*projectcfg.ProjectConfig, error) {
+	for _, dir := range []string{root, filepath.Join(root, ".leankg")} {
+		if _, err := os.Stat(projectcfg.ConfigPath(dir)); err != nil {
+			continue
+		}
+		cfg, err := projectcfg.Load(dir)
+		if err != nil {
+			return nil, err
+		}
+		return &cfg, nil
+	}
+	return nil, nil
+}
+
+// canonicalProjectRootIn resolves a config-declared project path the way Rust
+// config→backend→canonical_project_root_in did: canonicalize when the path
+// exists, else join a relative path onto base, cleaning `.`/`..` lexically
+// (canonicalize fails while an ancestor is a symlink and leaf dirs don't
+// exist yet — macOS /var/folders).
+func canonicalProjectRootIn(path, base string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(base, path)
+}
+
+// dedupDirs keeps the first spelling of each directory: the candidate
+// identity list routinely repeats the project root.
+func dedupDirs(dirs []string) []string {
+	seen := make(map[string]bool, len(dirs))
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // Run entry point
 // ---------------------------------------------------------------------------
@@ -924,12 +1025,31 @@ func RunDeep(ctx context.Context, projectRoot, engineName, pgURL string, checks 
 	if engineName == "" {
 		engineName = os.Getenv("LEANKG_DB_ENGINE")
 	}
-	probes, perr := openProbes(ctx, root, engineName, pgURL)
-	if perr != nil {
+	// The indexer keys the store off the INDEXED directory — not always the
+	// project root (`leankg index ./src`) and not always this dir either (a
+	// project.project_path anchor). Probe the likely identities in order and
+	// take the first that opens: the shared public fallback is never one of
+	// them (Rust doctor/deep.rs run_deep).
+	cfg, cfgErr := loadProjectConfig(root)
+	candidates := []string{root, filepath.Join(root, "src")}
+	if cfg != nil && cfg.Project.ProjectPath != "" {
+		candidates = append(candidates, canonicalProjectRootIn(cfg.Project.ProjectPath, root))
+	}
+	var probes Probes
+	var lastErr error
+	for _, cand := range dedupDirs(candidates) {
+		p, err := openProbes(ctx, cand, engineName, pgURL)
+		if err == nil {
+			probes = p
+			break
+		}
+		lastErr = err
+	}
+	if probes == nil {
 		// Graceful degradation: a doctor run against an absent/unreachable
 		// backend still produces the structured report — the DB-backed
 		// checks FAIL with the cause, the file checks still run.
-		probes = unreachableProbes{perr}
+		probes = unreachableProbes{lastErr}
 	}
 	// The probe handle closes when it has one (the unreachable stub does
 	// not); a close failure never invalidates the report.
@@ -951,5 +1071,7 @@ func RunDeep(ctx context.Context, projectRoot, engineName, pgURL string, checks 
 		LeankgDir:   leankgDir,
 		Pool:        PoolEnvFromEnv(),
 		Registry:    reg,
+		Config:      cfg,
+		ConfigErr:   cfgErr,
 	}), nil
 }

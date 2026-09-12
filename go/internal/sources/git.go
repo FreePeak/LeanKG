@@ -44,7 +44,7 @@ func (g *GitSource) SyncToLocal(ctx context.Context, stagingRoot string, progres
 	}
 	if info, statErr := os.Stat(filepath.Join(localDir, ".git")); statErr == nil && info.IsDir() {
 		report(progress, fmt.Sprintf("git repo exists at %s, pulling %s...", localDir, g.RefName))
-		if err := fetchAndCheckout(ctx, localDir, g.RefName, progress); err != nil {
+		if err := FetchAndCheckout(ctx, localDir, g.RefName, progress); err != nil {
 			return "", err
 		}
 		return localDir, nil
@@ -53,7 +53,7 @@ func (g *GitSource) SyncToLocal(ctx context.Context, stagingRoot string, progres
 		return "", err
 	}
 	report(progress, fmt.Sprintf("cloning %s (ref: %s)...", g.URL, g.RefName))
-	if err := cloneRepo(ctx, injectAuth(g.URL, g.Auth), localDir, g.RefName, progress); err != nil {
+	if err := CloneRepo(ctx, injectAuth(g.URL, g.Auth), localDir, g.RefName, progress); err != nil {
 		return "", err
 	}
 	return localDir, nil
@@ -95,7 +95,7 @@ func (g *GitSource) MaterializeEphemeral(ctx context.Context, stagingRoot string
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		return "", err
 	}
-	if err := cloneRepo(ctx, fetchURL, localDir, g.RefName, progress); err != nil {
+	if err := CloneRepo(ctx, fetchURL, localDir, g.RefName, progress); err != nil {
 		return "", err
 	}
 	return localDir, nil
@@ -116,9 +116,11 @@ func injectAuth(url, auth string) string {
 	return url
 }
 
-// cloneRepo does a shallow, branch-pinned clone and falls back to a full clone
-// plus checkout when the ref is not a branch tip (a tag or a bare SHA).
-func cloneRepo(ctx context.Context, url, dir, refName string, progress ProgressReporter) error {
+// CloneRepo clones url into dir: a shallow, branch-pinned clone, falling back
+// to a full clone plus checkout when the ref is not a branch tip (a tag or a
+// bare SHA). Exported because the setup pipeline clones its repo list with the
+// same runner (Rust src/setup/mod.rs shelled out to `git clone` directly).
+func CloneRepo(ctx context.Context, url, dir, refName string, progress ProgressReporter) error {
 	report(progress, fmt.Sprintf("git clone --depth 1 --branch %s ...", refName))
 	if _, stderr, err := runGit(ctx, "", "clone", "--depth", "1", "--branch", refName, url, dir); err != nil {
 		// Fallback: clone the default branch, then check the ref out.
@@ -129,13 +131,14 @@ func cloneRepo(ctx context.Context, url, dir, refName string, progress ProgressR
 			return gitError("git clone fallback failed", stderr2, err2)
 		}
 	}
-	return fetchAndCheckout(ctx, dir, refName, progress)
+	return FetchAndCheckout(ctx, dir, refName, progress)
 }
 
-// fetchAndCheckout fetches every remote ref, checks the requested ref out
+// FetchAndCheckout fetches every remote ref, checks the requested ref out
 // (branch, then origin/<ref>), and fast-forwards an existing branch. The
 // pull/merge/reset tail is non-fatal in Rust and stays non-fatal here.
-func fetchAndCheckout(ctx context.Context, repoDir, refName string, progress ProgressReporter) error {
+// Exported for the setup pipeline's existing-clone refresh.
+func FetchAndCheckout(ctx context.Context, repoDir, refName string, progress ProgressReporter) error {
 	if _, stderr, err := runGit(ctx, repoDir, "fetch", "--all", "--prune"); err != nil {
 		return gitError("git fetch failed", stderr, err)
 	}
