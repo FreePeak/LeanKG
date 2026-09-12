@@ -505,14 +505,31 @@ func cmdIndex(args []string) {
 	authFlag := fs.String("auth", "", "credential for --source (git token or GCS access token)")
 	auto := fs.Bool("auto", false, "first-run setup mode: index (and later embed) without asking again")
 	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
-	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
+	// Go's flag package stops at the first positional, so `index <dir> --flag`
+	// (the documented form, and what clap accepted) would leave the flag
+	// unparsed. Loop: parse, collect a positional, re-parse the remainder.
+	var positional []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			log.Fatal(err)
+		}
+		rest = fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		rest = rest[1:]
 	}
 	if *auto && *manual {
 		log.Fatal("index: --auto and --manual are mutually exclusive")
 	}
-	if fs.NArg() > 1 || (fs.NArg() == 0 && *source == "") {
+	if len(positional) > 1 || (len(positional) == 0 && *source == "") {
 		log.Fatal("index requires a directory argument (or --source)")
+	}
+	target := ""
+	if len(positional) == 1 {
+		target = positional[0]
 	}
 
 	// FR-ZCP-13 first-run contract: exactly one auto/manual question per user,
@@ -549,7 +566,7 @@ func cmdIndex(args []string) {
 	// command the user typed.
 	_ = mode
 
-	if err := runIndex(*project, fs.Arg(0), *source, *refName, sourceAuth(*authFlag)); err != nil {
+	if err := runIndex(*project, target, *source, *refName, sourceAuth(*authFlag)); err != nil {
 		log.Fatalf("index: %v", err)
 	}
 }
