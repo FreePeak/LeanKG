@@ -27,6 +27,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
+	"github.com/FreePeak/LeanKG/go/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/go/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 	"github.com/jackc/pgx/v5"
@@ -191,6 +192,10 @@ type Probes interface {
 	AppliedMigrations() ([]int, error)
 	// IndexedFiles lists the distinct file paths currently indexed.
 	IndexedFiles() ([]string, error)
+	// RecordedFiles lists every path in the file bookkeeping table
+	// (code_files) — the set the index walk itself maintains. The
+	// file-coverage check compares the two (#332 tripwire).
+	RecordedFiles() ([]string, error)
 	// QualifiedNames lists every qualified_name, duplicates preserved
 	// (duplicate detection depends on them).
 	QualifiedNames() ([]string, error)
@@ -300,9 +305,23 @@ func (p *dbProbes) AppliedMigrations() ([]int, error) {
 	return out, rows.Err()
 }
 
-// IndexedFiles reads the distinct file paths of indexed elements.
+// IndexedFiles reads the distinct file paths of locally indexed elements.
+// Rows imported by the federation receiver (#372) carry federation_source in
+// their metadata and their files live in the SOURCE project — counting them
+// would make index-freshness and file-coverage fire on every federated store.
+// Synthetic markers (prd://, note/, conversations/) stay visible here; each
+// caller filters what it must not treat as a file on disk.
 func (p *dbProbes) IndexedFiles() ([]string, error) {
-	return p.strings(`SELECT DISTINCT file_path FROM code_elements ORDER BY file_path`)
+	// CAST keeps the predicate engine-portable: metadata is JSONB on
+	// PostgreSQL (LIKE needs text) and TEXT on sqlite.
+	return p.strings(`SELECT DISTINCT file_path FROM code_elements
+		WHERE COALESCE(CAST(metadata AS text), '') NOT LIKE '%"federation_source"%'
+		ORDER BY file_path`)
+}
+
+// RecordedFiles reads the file bookkeeping table.
+func (p *dbProbes) RecordedFiles() ([]string, error) {
+	return p.strings(`SELECT path FROM code_files ORDER BY path`)
 }
 
 // QualifiedNames enumerates every qualified_name; duplicates preserved.
@@ -351,6 +370,7 @@ type unreachableProbes struct{ cause error }
 func (u unreachableProbes) PingMS() (int64, error)                 { return 0, u.cause }
 func (u unreachableProbes) AppliedMigrations() ([]int, error)      { return nil, u.cause }
 func (u unreachableProbes) IndexedFiles() ([]string, error)        { return nil, u.cause }
+func (u unreachableProbes) RecordedFiles() ([]string, error)       { return nil, u.cause }
 func (u unreachableProbes) QualifiedNames() ([]string, error)      { return nil, u.cause }
 func (u unreachableProbes) RelationshipEdges() ([]Edge, error)     { return nil, u.cause }
 func (u unreachableProbes) EmbeddedNames() ([]string, bool, error) { return nil, false, u.cause }
@@ -440,6 +460,13 @@ type Env struct {
 	// ConfigErr is the load/parse failure behind a nil Config (nil when the
 	// document is simply absent).
 	ConfigErr error
+	// Fleet is the portfolio-registry seam behind the `fleet` check (#376):
+	// per-project migration drift, freshness and totals across every
+	// registered project. nil = the check reports PASS "not wired", which is
+	// what a single-project deployment gets from RunDeep when no registry
+	// exists (RunDeep always wires a source; the source reports its own
+	// absence). See fleet.go.
+	Fleet FleetSource
 }
 
 // Check is one named diagnosis over the deployment.
@@ -465,9 +492,11 @@ func Defaults() []Check {
 		checkFunc{"embedding-coverage", checkEmbeddingCoverage},
 		checkFunc{"pool-env", checkPoolEnv},
 		checkFunc{"orphaned-relationships", checkOrphanedRelationships},
+		checkFunc{"file-coverage", checkFileCoverage},
 		checkFunc{"duplicate-names", checkDuplicateNames},
 		checkFunc{"leankg-dir", checkLeankgDir},
 		checkFunc{"config", checkProjectConfig},
+		checkFunc{"fleet", checkFleet},
 	}
 }
 
@@ -1073,5 +1102,65 @@ func RunDeep(ctx context.Context, projectRoot, engineName, pgURL string, checks 
 		Registry:    reg,
 		Config:      cfg,
 		ConfigErr:   cfgErr,
+		Fleet:       fleetProbe{ctx: ctx, opts: portfolioreg.Options{Engine: engineName, PGURL: pgURL}},
 	}), nil
+}
+
+// ---------------------------------------------------------------------------
+// File coverage — the #332 tripwire
+// ---------------------------------------------------------------------------
+
+// syntheticFilePrefixes mark element rows that are not produced by the file
+// walk (requirement stores, ontology nodes, mined conversations, vault notes):
+// they legitimately have no code_files row. `://` covers prd://,
+// ontology:// and any future scheme.
+func isSyntheticElementPath(path string) bool {
+	return strings.Contains(path, "://") ||
+		strings.HasPrefix(path, "note/") ||
+		strings.HasPrefix(path, "conversations/")
+}
+
+// checkFileCoverage is the durable regression guard for #332: the Rust sweep
+// mass-deleted elements whenever the project root arrived through a different
+// path form (macOS /tmp vs /private/tmp), leaving elements whose file had no
+// bookkeeping row (and files whose elements had vanished). The Go store keeps
+// relative paths so the bug cannot reproduce through that door — but any future
+// divergence between the element set and the file set is exactly the same
+// silent-corruption class, so doctor fails on it.
+func checkFileCoverage(p Probes, _ Env) Finding {
+	const check = "file-coverage"
+	elementPaths, err := p.IndexedFiles()
+	if err != nil {
+		return Finding{check, StatusFail, fmt.Sprintf("cannot read element file paths: %v", err),
+			"File coverage needs code_elements; verify the store opens read-only."}
+	}
+	recorded, err := p.RecordedFiles()
+	if err != nil {
+		return Finding{check, StatusFail, fmt.Sprintf("cannot read code_files: %v", err),
+			"The file bookkeeping table is created by the migrations; re-run `leankg index`."}
+	}
+	have := make(map[string]bool, len(recorded))
+	for _, f := range recorded {
+		have[f] = true
+	}
+	var dangling []string
+	for _, f := range elementPaths {
+		if f == "" || isSyntheticElementPath(f) || have[f] {
+			continue
+		}
+		dangling = append(dangling, f)
+	}
+	if len(dangling) == 0 {
+		return Finding{check, StatusPass, fmt.Sprintf(
+			"%d file-backed element paths all covered by %d bookkeeping rows", len(elementPaths), len(recorded)), ""}
+	}
+	const sample = 10
+	shown := dangling
+	suffix := ""
+	if len(shown) > sample {
+		shown, suffix = shown[:sample], fmt.Sprintf(" (+%d more)", len(dangling)-sample)
+	}
+	return Finding{check, StatusFail, fmt.Sprintf(
+		"%d element file paths have no code_files row: %s%s", len(dangling), strings.Join(shown, ", "), suffix),
+		"Element/file bookkeeping diverged (the #332 sweep-collapse signature). Re-index the project: `leankg index <project>`; if counts dropped without files being deleted, report the path forms used."}
 }

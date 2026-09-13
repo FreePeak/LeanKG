@@ -109,11 +109,14 @@ func TestPushSendsRustPayload(t *testing.T) {
 	if rec.req.URL.Path != PushPath {
 		t.Errorf("path = %s, want %s", rec.req.URL.Path, PushPath)
 	}
+	// The Go auth middleware reads only the bearer; Rust's X-LeanKG-Token stays
+	// for shared servers that gate on it alone.
 	for header, want := range map[string]string{
-		HeaderToken:    "lkg_team_token",
-		HeaderEnv:      "local",
-		HeaderEngineer: "linh.doan",
-		"Content-Type": "application/json",
+		HeaderToken:     "lkg_team_token",
+		HeaderEnv:       "local",
+		HeaderEngineer:  "linh.doan",
+		"Authorization": "Bearer lkg_team_token",
+		"Content-Type":  "application/json",
 	} {
 		if got := rec.req.Header.Get(header); got != want {
 			t.Errorf("%s = %q, want %q", header, got, want)
@@ -342,58 +345,230 @@ func TestPushUnreachableRemote(t *testing.T) {
 	}
 }
 
-// TestPullIsAStatusProbe pins pull_from_remote: GET /api/v2/status with the
-// token and env headers, no engineer header, and no local effect — the body is
-// never inspected beyond being carried on the result.
-func TestPullIsAStatusProbe(t *testing.T) {
-	rec := &recorder{}
-	envelope := `{"success":true,"data":{"total_elements":2,"total_relationships":2,"service":"demo","version":"4.6.0"}}`
-	srv := fakeRemote(t, http.StatusOK, envelope, rec)
+// servedRequest records what a fake shared server received.
+type servedRequest struct {
+	method string
+	path   string
+	header http.Header
+}
 
-	res, err := Pull(context.Background(), Options{Remote: srv.URL + "/", Token: "lkg_team_token", Env: "production"})
+// remoteRoute is one path a fake remote answers; status 0 means 200.
+type remoteRoute struct {
+	status int
+	body   string
+}
+
+// remoteRoutes serves a remote that only implements the paths listed: anything
+// else answers 404, exactly like a router with no such route registered.
+func remoteRoutes(t *testing.T, routes map[string]remoteRoute, seen *[]servedRequest) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if seen != nil {
+			*seen = append(*seen, servedRequest{method: r.Method, path: r.URL.Path, header: r.Header.Clone()})
+		}
+		route, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if route.status != 0 {
+			w.WriteHeader(route.status)
+		}
+		_, _ = io.WriteString(w, route.body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// graphBody renders the envelope a Go receiver publishes for st, so the client
+// tests speak the real wire format instead of hand-written JSON.
+func graphBody(t *testing.T, st *store.Store, env, service string) string {
+	t.Helper()
+	els, err := st.Elements()
+	if err != nil {
+		t.Fatalf("elements: %v", err)
+	}
+	rels, err := st.RelationshipsAll(maxRelationships)
+	if err != nil {
+		t.Fatalf("relationships: %v", err)
+	}
+	body, err := json.Marshal(pushPayload{
+		Env: env, Service: service,
+		Elements: wireElements(els), Relationships: wireRelationships(rels),
+	})
+	if err != nil {
+		t.Fatalf("encode graph: %v", err)
+	}
+	return string(body)
+}
+
+// TestPullAppliesRemoteGraph is the #372 contract: the fetched graph goes
+// through the same policy a push uses — rows upserted by key, rows the document
+// never mentions left alone, provenance recorded in metadata, and local element
+// content preserved because the wire format carries none.
+func TestPullAppliesRemoteGraph(t *testing.T) {
+	source := openStore(t)
+	seedGraph(t, source)
+
+	local := openStore(t)
+	if err := local.UpsertElements([]store.Element{
+		// Same qualified name the remote also publishes.
+		{QualifiedName: "pkg.Svc.Handle", ElementType: "method", Name: "Stale", FilePath: "stale.go", Language: "go", Content: "LOCAL CONTENT"},
+		// A row the remote never mentions: must survive untouched.
+		{QualifiedName: "pkg.KeepMe", ElementType: "function", Name: "KeepMe", FilePath: "keep.go", Language: "go", Content: "KEEP"},
+	}); err != nil {
+		t.Fatalf("seed local: %v", err)
+	}
+
+	srv := remoteRoutes(t, map[string]remoteRoute{
+		GraphPath: {body: graphBody(t, source, "production", "shared-service")},
+	}, nil)
+	res, err := Pull(context.Background(), local, Options{Remote: srv.URL + "/", Token: "lkg_team_token", Env: "production"})
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
-	if rec.req.Method != http.MethodGet {
-		t.Errorf("method = %s, want GET", rec.req.Method)
+	if res.Failed() || !res.Applied {
+		t.Fatalf("result = %+v, want an applied 2xx", res)
 	}
-	if rec.req.URL.Path != StatusPath {
-		t.Errorf("path = %s, want %s", rec.req.URL.Path, StatusPath)
+	if res.Elements != 2 || res.Relationships != 2 {
+		t.Errorf("applied = %d elements / %d relationships, want 2/2", res.Elements, res.Relationships)
 	}
-	if got := rec.req.Header.Get(HeaderToken); got != "lkg_team_token" {
-		t.Errorf("%s = %q", HeaderToken, got)
+	if res.Body != "" {
+		t.Errorf("Body = %q, want the graph left out of a successful result", res.Body)
 	}
-	if got := rec.req.Header.Get(HeaderEnv); got != "production" {
-		t.Errorf("%s = %q", HeaderEnv, got)
-	}
-	if got := rec.req.Header.Get(HeaderEngineer); got != "" {
-		t.Errorf("pull must not send %s (Rust sent it on push only): %q", HeaderEngineer, got)
-	}
-	if len(rec.body) != 0 {
-		t.Errorf("pull body = %q, want empty", rec.body)
-	}
-	if res.Failed() {
-		t.Fatalf("Failed() = true for a 200 status: %+v", res)
-	}
-	if res.Body != envelope {
-		t.Errorf("Body = %q, want the remote document %q", res.Body, envelope)
-	}
-	want := fmt.Sprintf("Successfully connected to %s (env: production)", srv.URL+"/")
+	want := fmt.Sprintf("Pulled 2 elements and 2 relationships from %s (env: production)", srv.URL+"/")
 	if got := res.Message(); got != want {
 		t.Errorf("Message() = %q, want %q", got, want)
 	}
 
-	var stdout, stderr bytes.Buffer
-	res.Report(&stdout, &stderr)
-	if strings.TrimSpace(stdout.String()) != want || stderr.Len() != 0 {
-		t.Errorf("Report: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	got := elementsByQN(t, local)
+	if _, ok := got["pkg.KeepMe"]; !ok {
+		t.Error("a row the document never mentioned was deleted")
+	}
+	handle, ok := got["pkg.Svc.Handle"]
+	if !ok {
+		t.Fatal("pkg.Svc.Handle missing after apply")
+	}
+	// Last-write-wins on the wire fields…
+	if handle.Name != "Handle" || handle.FilePath != "svc.go" || handle.LineStart != 10 {
+		t.Errorf("conflict not resolved to the incoming row: %+v", handle)
+	}
+	// …and content preserved: the envelope has no content slot.
+	if handle.Content != "LOCAL CONTENT" {
+		t.Errorf("content = %q, want the local text carried forward", handle.Content)
+	}
+	fresh, ok := got["pkg.parse"]
+	if !ok {
+		t.Fatal("pkg.parse missing after apply")
+	}
+	if fresh.Content != "" {
+		t.Errorf("a newly synced element must not invent content, got %q", fresh.Content)
+	}
+	for qn, e := range got {
+		if qn == "pkg.KeepMe" {
+			if _, stamped := e.Metadata[MetaSource]; stamped {
+				t.Error("an unmentioned row was stamped with provenance")
+			}
+			continue
+		}
+		assertProvenance(t, e.Metadata, "shared-service", "production")
+	}
+
+	rels, err := local.RelationshipsAll(maxRelationships)
+	if err != nil {
+		t.Fatalf("relationships: %v", err)
+	}
+	if len(rels) != 2 {
+		t.Fatalf("local relationships = %d, want 2", len(rels))
+	}
+	for _, r := range rels {
+		assertProvenance(t, r.Metadata, "shared-service", "production")
+	}
+}
+
+// TestPullFallsBackToTheRustProbe keeps `leankg pull` honest against a server
+// that has no graph route: it degrades to Rust's /api/v2/status connectivity
+// probe, prints the exact Rust line, and applies nothing.
+func TestPullFallsBackToTheRustProbe(t *testing.T) {
+	statusEnvelope := `{"success":true,"data":{"total_elements":0,"service":"demo","version":"4.6.0"}}`
+
+	for name, tc := range map[string]struct {
+		routes map[string]remoteRoute
+	}{
+		// A Rust shared server, or any pre-#372 build: the route is absent.
+		"no such route": {routes: map[string]remoteRoute{StatusPath: {body: statusEnvelope}}},
+		// The graph path exists but refuses a read — the other way a remote
+		// says it has no graph to give.
+		"read not allowed": {routes: map[string]remoteRoute{
+			GraphPath:  {status: http.StatusMethodNotAllowed},
+			StatusPath: {body: statusEnvelope},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var seen []servedRequest
+			srv := remoteRoutes(t, tc.routes, &seen)
+
+			st := openStore(t)
+			seedGraph(t, st)
+			before := elementCount(t, st)
+
+			res, err := Pull(context.Background(), st, Options{
+				Remote: srv.URL + "/", Token: "lkg_team_token", Env: "production",
+			})
+			if err != nil {
+				t.Fatalf("pull: %v", err)
+			}
+			if res.Failed() || res.Applied {
+				t.Fatalf("result = %+v, want a successful probe", res)
+			}
+			if res.Body != statusEnvelope {
+				t.Errorf("Body = %q, want the status document", res.Body)
+			}
+			want := fmt.Sprintf("Successfully connected to %s (env: production)", srv.URL+"/")
+			if got := res.Message(); got != want {
+				t.Errorf("Message() = %q, want the Rust connectivity line %q", got, want)
+			}
+			var stdout, stderr bytes.Buffer
+			res.Report(&stdout, &stderr)
+			if strings.TrimSpace(stdout.String()) != want || stderr.Len() != 0 {
+				t.Errorf("Report: stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+
+			// The fallback is a probe, not a rewrite: nothing applied locally.
+			if after := elementCount(t, st); after != before {
+				t.Errorf("element count changed from %d to %d", before, after)
+			}
+
+			// Graph first, then the legacy probe; neither sends the engineer
+			// header (Rust sent it on push only).
+			if len(seen) != 2 {
+				t.Fatalf("requests = %v, want the graph fetch then the probe", seen)
+			}
+			for i, path := range []string{GraphPath, StatusPath} {
+				if seen[i].method != http.MethodGet || seen[i].path != path {
+					t.Errorf("request %d = %s %s, want GET %s", i, seen[i].method, seen[i].path, path)
+				}
+				if got := seen[i].header.Get(HeaderToken); got != "lkg_team_token" {
+					t.Errorf("%s on request %d = %q", HeaderToken, i, got)
+				}
+				if got := seen[i].header.Get("Authorization"); got != "Bearer lkg_team_token" {
+					t.Errorf("bearer on request %d = %q", i, got)
+				}
+				if got := seen[i].header.Get(HeaderEnv); got != "production" {
+					t.Errorf("%s on request %d = %q", HeaderEnv, i, got)
+				}
+				if got := seen[i].header.Get(HeaderEngineer); got != "" {
+					t.Errorf("request %d must not send %s: %q", i, HeaderEngineer, got)
+				}
+			}
+		})
 	}
 }
 
 func TestPullErrors(t *testing.T) {
 	t.Run("rejected", func(t *testing.T) {
 		srv := fakeRemote(t, http.StatusUnauthorized, "Missing X-LeanKG-Token header", nil)
-		res, err := Pull(context.Background(), Options{Remote: srv.URL, Token: "", Env: "production"})
+		res, err := Pull(context.Background(), openStore(t), Options{Remote: srv.URL, Token: "", Env: "production"})
 		if err != nil {
 			t.Fatalf("pull returned an error for a 401 (Rust exited 0): %v", err)
 		}
@@ -413,12 +588,44 @@ func TestPullErrors(t *testing.T) {
 
 	t.Run("unreachable", func(t *testing.T) {
 		remote := deadRemote(t)
-		if _, err := Pull(context.Background(), Options{Remote: remote, Env: "production"}); err == nil {
+		if _, err := Pull(context.Background(), openStore(t), Options{Remote: remote, Env: "production"}); err == nil {
 			t.Fatal("pull from a dead remote must fail")
 		} else if !strings.Contains(err.Error(), remote) {
 			t.Fatalf("error = %v, want it to name %s", err, remote)
 		}
 	})
+
+	t.Run("no store", func(t *testing.T) {
+		// Pull now writes: without a store there is nothing to apply into, and
+		// silently dropping the graph would report a successful pull.
+		if _, err := Pull(context.Background(), nil, Options{Remote: "http://127.0.0.1:1"}); err == nil {
+			t.Fatal("pull without a store must fail")
+		}
+	})
+
+	// A 2xx that is not a usable graph document is a hard failure, never a
+	// silent "Successfully connected": an older server 404s this path, so a 200
+	// here is a broken remote, and a broken remote must say so.
+	for name, body := range map[string]string{
+		"not a graph":       `{"success":true,"data":{"service":"demo"}}`,
+		"undecodable row":   `{"elements":[{"qualified_name":"a","line_start":"not-a-number"}],"relationships":[]}`,
+		"identity-less row": `{"elements":[{"element_type":"function"}],"relationships":[]}`,
+		"truncated json":    `{"elements":[{"qualified_name":"a"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := remoteRoutes(t, map[string]remoteRoute{GraphPath: {body: body}}, nil)
+			st := openStore(t)
+			seedGraph(t, st)
+			before := elementCount(t, st)
+
+			if _, err := Pull(context.Background(), st, Options{Remote: srv.URL, Token: "t", Env: "local"}); err == nil {
+				t.Fatalf("pull of a %s body must fail, not report success", name)
+			}
+			if after := elementCount(t, st); after != before {
+				t.Errorf("element count changed from %d to %d on a rejected document", before, after)
+			}
+		})
+	}
 }
 
 // deadRemote returns a URL nothing is listening on.

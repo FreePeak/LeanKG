@@ -25,21 +25,25 @@ func shortHash(s string) string {
 // migrations, two indexed/fresh files, full embedding coverage, clean
 // edges. Every failure mode flips one field.
 type stubProbes struct {
-	ping       int64
-	pingErr    error
-	applied    []int
-	appliedErr error
-	indexed    []string
-	indexedErr error
-	names      []string
-	namesErr   error
-	edges      []Edge
-	edgesErr   error
-	embedded   []string
-	tablesAbs  bool
+	ping        int64
+	pingErr     error
+	applied     []int
+	appliedErr  error
+	indexed     []string
+	indexedErr  error
+	recorded    []string
+	recordedErr error
+	names       []string
+	namesErr    error
+	edges       []Edge
+	edgesErr    error
+	embedded    []string
+	tablesAbs   bool
 }
 
-func (s *stubProbes) PingMS() (int64, error) { return s.ping, s.pingErr }
+func (s *stubProbes) PingMS() (int64, error)           { return s.ping, s.pingErr }
+func (s *stubProbes) RecordedFiles() ([]string, error) { return s.recorded, s.recordedErr }
+
 func (s *stubProbes) AppliedMigrations() ([]int, error) {
 	return s.applied, s.appliedErr
 }
@@ -64,11 +68,12 @@ func embeddedVersions() []int {
 
 func healthyStub() *stubProbes {
 	return &stubProbes{
-		ping:    3,
-		applied: embeddedVersions(),
-		indexed: []string{"src/a.go", "src/b.go"},
-		names:   []string{"pkg.A", "pkg.B"},
-		edges:   []Edge{{"pkg.A", "pkg.B", "calls"}},
+		ping:     3,
+		applied:  embeddedVersions(),
+		indexed:  []string{"src/a.go", "src/b.go"},
+		recorded: []string{"src/a.go", "src/b.go"},
+		names:    []string{"pkg.A", "pkg.B"},
+		edges:    []Edge{{"pkg.A", "pkg.B", "calls"}},
 	}
 }
 
@@ -363,6 +368,11 @@ func TestRunDeepSqlite(t *testing.T) {
 	if err := st.UpsertElements(els); err != nil {
 		t.Fatal(err)
 	}
+	// The real index pass records the file too; without it the new
+	// file-coverage check correctly reports divergence.
+	if err := st.UpsertFiles([]store.FileRecord{{Path: "a.go", Size: 33, MtimeNS: 1, ContentHash: "x"}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.UpsertRelationships([]store.Relationship{{Source: "a.A", Target: "a.Ghost", RelType: "calls"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -431,5 +441,74 @@ func TestPGSchemaForDirMatchesStoreDerivation(t *testing.T) {
 	want := "leankg_" + shortHash(real)
 	if got, err := pgSchemaForDir(dir); err != nil || got != want {
 		t.Fatalf("pgSchemaForDir(%s) = %s,%v want %s", dir, got, err, want)
+	}
+}
+
+// TestFileCoverageCheck pins the #332 tripwire across its states: clean passes,
+// a diverging element path fails naming the file, synthetic requirement/vault
+// paths never fail, and an unreadable bookkeeping table fails rather than hides.
+func TestFileCoverageCheck(t *testing.T) {
+	cases := []struct {
+		name     string
+		indexed  []string
+		recorded []string
+		recErr   error
+		want     CheckStatus
+		contains string
+	}{
+		{"clean", []string{"src/a.go", "src/b.go"}, []string{"src/a.go", "src/b.go"}, nil, StatusPass, "all covered"},
+		{"divergence fails", []string{"src/a.go", "src/gone.go"}, []string{"src/a.go"}, nil, StatusFail, "src/gone.go"},
+		{"synthetic excluded", []string{"src/a.go", "prd://docs/prd.md", "ontology://w1", "note/topic.md", "conversations/p/decision"}, []string{"src/a.go"}, nil, StatusPass, ""},
+		{"unreadable bookkeeping", []string{"src/a.go"}, nil, fmt.Errorf("no such table"), StatusFail, "cannot read code_files"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &stubProbes{indexed: tc.indexed, recorded: tc.recorded, recordedErr: tc.recErr}
+			f := checkFileCoverage(p, Env{})
+			if f.Check != "file-coverage" {
+				t.Fatalf("check = %q", f.Check)
+			}
+			if f.Status != tc.want {
+				t.Fatalf("status = %s (%s), want %s", f.Status, f.Detail, tc.want)
+			}
+			if tc.contains != "" && !strings.Contains(f.Detail, tc.contains) {
+				t.Fatalf("detail = %q, want it to contain %q", f.Detail, tc.contains)
+			}
+		})
+	}
+}
+
+// TestFileCoverageRealSqlite proves the guard fires on a real store when the
+// bookkeeping diverges (the #332 shape) and passes on a healthy one.
+func TestFileCoverageRealSqlite(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertElements([]store.Element{{QualifiedName: "a.A", ElementType: "func", Name: "A", FilePath: "a.go", Language: "go"}}); err != nil {
+		t.Fatal(err)
+	}
+	pb, err := openProbes(context.Background(), dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := pb.(interface{ Close() error }); ok {
+		defer c.Close()
+	}
+
+	f := checkFileCoverage(pb, Env{})
+	if f.Status != StatusFail || !strings.Contains(f.Detail, "a.go") {
+		t.Fatalf("element without a file row = %s (%s), want FAIL naming a.go", f.Status, f.Detail)
+	}
+	if err := st.UpsertFiles([]store.FileRecord{{Path: "a.go", Size: 10, MtimeNS: 1, ContentHash: "h"}}); err != nil {
+		t.Fatal(err)
+	}
+	if f := checkFileCoverage(pb, Env{}); f.Status != StatusPass {
+		t.Fatalf("after bookkeeping caught up = %s (%s), want PASS", f.Status, f.Detail)
 	}
 }

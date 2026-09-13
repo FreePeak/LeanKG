@@ -1,48 +1,70 @@
-// Package federation ports the Rust shared-server graph sync commands
-// (`leankg push` / `leankg pull`; src/main.rs push_to_remote /
-// pull_from_remote, rev f7624143^).
+// Package federation is the shared-server graph sync: `leankg push` and
+// `leankg pull`, both client and server. Rust shipped only the client half
+// (src/main.rs push_to_remote / pull_from_remote, rev f7624143^); its Axum
+// server never registered the routes, so the protocol here is the client's
+// payload plus the apply policy a partial sync needs (server.go).
 //
-// The protocol is defined by the Rust client alone:
+// One document moves in both directions:
 //
-//	POST {remote}/api/v2/graph/push
-//	  headers: X-LeanKG-Token, X-LeanKG-Engineer, X-LeanKG-Env
+//	POST {remote}/api/v2/graph/push   upsert a graph into the receiver
+//	  headers: Authorization: Bearer, X-LeanKG-Token, X-LeanKG-Engineer, X-LeanKG-Env
 //	  body:    {"env":…,"service":…,"elements":[…],"relationships":[…]}
 //
-//	GET  {remote}/api/v2/status
-//	  headers: X-LeanKG-Token, X-LeanKG-Env
+//	GET  {remote}/api/v2/graph        publish the receiver's own graph
+//	  headers: Authorization: Bearer, X-LeanKG-Token, X-LeanKG-Env
+//	  answer:  the same envelope, plus applied_elements/applied_relationships
 //
-// Deliberate port decisions, all observable in the Rust source:
+// Both ends apply through the same applyGraph, so a push and a pull cannot
+// disagree about what "synced" means: rows are upserted by identity key
+// (qualified_name; source/target/rel_type), arrival order wins, rows the
+// document does not mention are never deleted, and each applied row records
+// MetaSource/MetaEnv/MetaPushedAt in its metadata. Provenance lives in metadata
+// rather than a column, so a graph merged from several services stays
+// separable with no schema change.
 //
-//   - pull is a connectivity probe, not a data pull. It applies nothing
-//     locally and prints only "Successfully connected to …"; the body of
-//     /api/v2/status (the Rust ApiResponse envelope) is ignored.
+// Deliberate deviations from the Rust source:
+//
+//   - Pull is a data pull. It fetches /api/v2/graph and applies it locally. A
+//     remote without that route (404/405 — a Rust shared server or any
+//     pre-#372 build) degrades to Rust's original behavior: probe
+//     /api/v2/status, print "Successfully connected to …", apply nothing, so
+//     the command keeps working against an older server. A 2xx that is not a
+//     graph document is a hard error instead: an older server 404s that path,
+//     so a 200 there means a broken remote and reporting connectivity would
+//     hide it.
+//   - The client also sends Authorization: Bearer. Rust sent X-LeanKG-Token
+//     alone, which the Go auth middleware does not read; the receiver accepts
+//     either, so one client talks to both generations of server.
+//   - A push response is parsed for nothing (Rust read it only on failure),
+//     and the graph envelope carries no element content, so applying a
+//     document preserves the content already stored for a qualified name
+//     rather than blanking the text the FTS index reads.
 //   - A rejected request is not an error: Rust printed "Push failed (…)" /
 //     "Pull failed (…)" to stderr and still exited 0, while a transport
-//     failure propagated through `?` and exited 1. PushResult.StatusResult
+//     failure propagated through `?` and exited 1. PushResult and PullResult
 //     carry that distinction; Failed() is reported, not returned.
-//   - Responses are never parsed, so a malformed response body cannot fail a
-//     push or a pull — it only appears verbatim in the failure line.
 //   - Element/relationship JSON is the Rust CodeElement/Relationship
 //     serialization. cluster_id/cluster_label are always null (the Go store
 //     has no cluster column, exactly as internal/export documents), metadata
 //     is an empty object where the Rust row read fell back to `{}`, and the
 //     per-row env is "local" — the Rust column default, which its indexer
 //     never overrode; the Go store has no per-row env column.
-//
-// No server in this repo registers /api/v2/graph/push (the Rust Axum server did
-// not either): the endpoint contract is the client's payload and headers.
+//   - maxRelationships caps a local read that would otherwise publish a
+//     silently truncated graph; the cap refuses rather than truncating.
 package federation
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
@@ -54,7 +76,8 @@ const (
 	HeaderEnv      = "X-LeanKG-Env"
 )
 
-// Routes the Rust client called.
+// Routes the Rust client called, plus GraphPath: the read route #372 added so
+// pull carries a graph instead of a status line.
 const (
 	PushPath   = "/api/v2/graph/push"
 	StatusPath = "/api/v2/status"
@@ -142,32 +165,47 @@ func (r PushResult) Report(stdout, stderr io.Writer) {
 	fmt.Fprintln(stdout, r.Message())
 }
 
-// StatusResult is the outcome of the pull probe.
-type StatusResult struct {
+// PullResult is the outcome of one pull: a graph applied locally, or the
+// connectivity probe an older server was degraded to.
+type PullResult struct {
 	StatusCode int
 	Status     string
-	// Body is the remote's status document. Rust ignored it: pull reports
-	// connectivity only and applies nothing locally.
+	// Body is the raw response document. It is carried only when nothing was
+	// applied — a rejection, or the older-server probe — because a successful
+	// pull's body is the whole graph and duplicating it serves nobody.
 	Body string
+	// Applied reports that {remote}/api/v2/graph served a graph this process
+	// upserted locally. False means the pull degraded to the Rust
+	// /api/v2/status connectivity probe and applied nothing.
+	Applied bool
+	// Elements and Relationships are the rows the pull applied.
+	Elements      int
+	Relationships int
 
 	remote string
 	env    string
 }
 
 // Failed reports a non-2xx response. Rust printed those and exited 0.
-func (r StatusResult) Failed() bool { return r.StatusCode < 200 || r.StatusCode >= 300 }
+func (r PullResult) Failed() bool { return r.StatusCode < 200 || r.StatusCode >= 300 }
 
-// Message is the exact line the Rust command printed.
-func (r StatusResult) Message() string {
-	if r.Failed() {
+// Message is the line the command prints: Rust's exact connectivity line for a
+// probe or a rejection, and an applied-graph summary for a real pull.
+func (r PullResult) Message() string {
+	switch {
+	case r.Failed():
 		return fmt.Sprintf("Pull failed (%s): %s", r.Status, r.Body)
+	case !r.Applied:
+		return fmt.Sprintf("Successfully connected to %s (env: %s)", r.remote, r.env)
+	default:
+		return fmt.Sprintf("Pulled %d elements and %d relationships from %s (env: %s)",
+			r.Elements, r.Relationships, r.remote, r.env)
 	}
-	return fmt.Sprintf("Successfully connected to %s (env: %s)", r.remote, r.env)
 }
 
 // Report writes Message where the Rust command wrote it: stdout on success,
 // stderr on failure.
-func (r StatusResult) Report(stdout, stderr io.Writer) {
+func (r PullResult) Report(stdout, stderr io.Writer) {
 	if r.Failed() {
 		fmt.Fprintln(stderr, r.Message())
 		return
@@ -206,8 +244,7 @@ func Push(ctx context.Context, st store.Backend, opts Options) (PushResult, erro
 		return PushResult{}, fmt.Errorf("federation: build push request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderToken, opts.Token)
-	req.Header.Set(HeaderEnv, opts.Env)
+	authHeaders(req, opts)
 	req.Header.Set(HeaderEngineer, engineer(opts.Engineer))
 
 	resp, err := client(opts.Client).Do(req)
@@ -234,25 +271,108 @@ func Push(ctx context.Context, st store.Backend, opts Options) (PushResult, erro
 	return res, nil
 }
 
-// Pull probes the shared server's /api/v2/status, exactly as the Rust command
-// did: it reads and writes nothing locally and prints a connectivity line. The
-// status body is not inspected.
-func Pull(ctx context.Context, opts Options) (StatusResult, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint(opts.Remote, StatusPath), nil)
-	if err != nil {
-		return StatusResult{}, fmt.Errorf("federation: build pull request: %w", err)
+// Pull fetches the shared server's graph via GET {remote}/api/v2/graph and
+// applies it locally with applyGraph — the same upsert policy a push's
+// receiver uses, so one rule defines "synced" in both directions.
+//
+// A remote without that route (a Rust shared server, or an older LeanKG) is
+// not an error: Pull degrades to the Rust pull_from_remote probe — GET
+// /api/v2/status, connectivity line, nothing applied — exactly as before the
+// route existed. Only a local transport fault or a malformed graph document is
+// an error (Rust's `?`, exit 1); a rejected request is a PullResult with
+// Failed() set, matching Rust's exit 0 on "Pull failed (…)".
+func Pull(ctx context.Context, st store.Backend, opts Options) (PullResult, error) {
+	if st == nil {
+		return PullResult{}, errors.New("federation: pull needs a store to apply into")
 	}
-	req.Header.Set(HeaderToken, opts.Token)
-	req.Header.Set(HeaderEnv, opts.Env)
+
+	text, status, err := fetchGraph(ctx, opts)
+	if err != nil {
+		return PullResult{}, err
+	}
+
+	switch {
+	case status.StatusCode == http.StatusNotFound || status.StatusCode == http.StatusMethodNotAllowed:
+		// No such route: a Rust shared server, or any pre-#372 build. Fall back
+		// to the probe rather than failing an upgrade-in-place deployment.
+		return probeStatus(ctx, opts)
+	case status.Failed():
+		// A rejection is reported, not retried: 401/500 is not "no such
+		// route", and probing again would only print the second error.
+		status.Body = string(text)
+		return status, nil
+	case !isGraphEnvelope(text):
+		// 2xx without a graph is a broken remote, not an old one — an old one
+		// 404s here. Reporting connectivity instead would hide the damage.
+		return PullResult{}, fmt.Errorf("federation: %s answered %s with no graph document", opts.Remote, status.Status)
+	}
+
+	var payload pushPayload
+	if err := json.Unmarshal(text, &payload); err != nil {
+		return PullResult{}, fmt.Errorf("federation: decode graph from %s: %w", opts.Remote, err)
+	}
+	elements, relationships, err := applyGraph(st, payload, time.Now().UTC())
+	if err != nil {
+		return PullResult{}, err
+	}
+	status.Applied = true
+	status.Elements = elements
+	status.Relationships = relationships
+	status.env = firstNonEmpty(payload.Env, opts.Env)
+	// The graph body stays out of the result: it is the whole document, and it
+	// is already in the store.
+	status.Body = ""
+	return status, nil
+}
+
+// fetchGraph GETs {remote}/api/v2/graph with the Rust headers plus the bearer
+// token the Go auth middleware resolves. The body comes back undecoded: the
+// caller sniffs it for the envelope, decodes it, and reports it verbatim only
+// when the request was rejected.
+func fetchGraph(ctx context.Context, opts Options) ([]byte, PullResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint(opts.Remote, GraphPath), nil)
+	if err != nil {
+		return nil, PullResult{}, fmt.Errorf("federation: build pull request: %w", err)
+	}
+	authHeaders(req, opts)
 
 	resp, err := client(opts.Client).Do(req)
 	if err != nil {
-		return StatusResult{}, fmt.Errorf("federation: pull from %s: %w", opts.Remote, err)
+		return nil, PullResult{}, fmt.Errorf("federation: pull from %s: %w", opts.Remote, err)
 	}
 	defer resp.Body.Close()
 
 	text, rerr := io.ReadAll(resp.Body)
-	res := StatusResult{
+	res := PullResult{
+		StatusCode: resp.StatusCode,
+		Status:     resp.Status,
+		remote:     opts.Remote,
+		env:        opts.Env,
+	}
+	if rerr != nil {
+		return nil, PullResult{}, fmt.Errorf("federation: read pull response: %w", rerr)
+	}
+	return text, res, nil
+}
+
+// probeStatus is the Rust pull_from_remote fallback: GET /api/v2/status with
+// the token and env headers, connectivity line, nothing applied. It keeps
+// Rust's semantics exactly, including the exit-0 report of a rejection.
+func probeStatus(ctx context.Context, opts Options) (PullResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint(opts.Remote, StatusPath), nil)
+	if err != nil {
+		return PullResult{}, fmt.Errorf("federation: build pull request: %w", err)
+	}
+	authHeaders(req, opts)
+
+	resp, err := client(opts.Client).Do(req)
+	if err != nil {
+		return PullResult{}, fmt.Errorf("federation: pull from %s: %w", opts.Remote, err)
+	}
+	defer resp.Body.Close()
+
+	text, rerr := io.ReadAll(resp.Body)
+	res := PullResult{
 		StatusCode: resp.StatusCode,
 		Status:     resp.Status,
 		Body:       string(text),
@@ -260,9 +380,33 @@ func Pull(ctx context.Context, opts Options) (StatusResult, error) {
 		env:        opts.Env,
 	}
 	if rerr != nil && res.Failed() {
-		return StatusResult{}, fmt.Errorf("federation: read pull response: %w", rerr)
+		return PullResult{}, fmt.Errorf("federation: read pull response: %w", rerr)
 	}
 	return res, nil
+}
+
+// authHeaders sends both credentials a Go receiver accepts: the bearer the
+// auth middleware resolves, and Rust's X-LeanKG-Token for shared servers that
+// still gate on it alone. One client therefore talks to either generation.
+func authHeaders(req *http.Request, opts Options) {
+	req.Header.Set(HeaderToken, opts.Token)
+	req.Header.Set(HeaderEnv, opts.Env)
+	if opts.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+opts.Token)
+	}
+}
+
+// isGraphEnvelope distinguishes a graph document from any other 2xx JSON the
+// route could return. Both envelope array keys must be present; a Rust
+// /api/v2/status ApiResponse ({"success":…}) has neither and is correctly
+// treated as "no graph here". Presence is enough — the full decode still
+// validates every row.
+func isGraphEnvelope(body []byte) bool {
+	var keys struct {
+		Elements      *[]json.RawMessage `json:"elements"`
+		Relationships *[]json.RawMessage `json:"relationships"`
+	}
+	return json.Unmarshal(body, &keys) == nil && keys.Elements != nil && keys.Relationships != nil
 }
 
 // readRelationships reads every local relationship, refusing to publish a
