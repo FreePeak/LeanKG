@@ -537,9 +537,7 @@ func boundContent(els []indexedElem, lines []string) {
 			e = len(lines)
 		}
 		els[i].content = strings.Join(lines[s-1:e], "\n")
-		if len(els[i].content) > maxContent {
-			els[i].content = els[i].content[:maxContent]
-		}
+		els[i].content = store.ClipUTF8(els[i].content, maxContent)
 	}
 }
 

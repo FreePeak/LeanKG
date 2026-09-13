@@ -33,8 +33,15 @@ import (
 
 // Result summarizes one IndexDir run.
 type Result struct {
-	SkippedLarge  int // files over maxIndexFileBytes (vendored bundles)
-	Files         int
+	SkippedLarge int // files over maxIndexFileBytes (vendored bundles)
+	Files        int
+	// DeletedFiles counts previously indexed files the reconcile removed
+	// because the walk did not see them. Reported (not just performed) because
+	// a walk root that is not the store's own root makes every outside file look
+	// deleted — the failure mode that cost this repo's index 4,525 elements
+	// during dogfooding. A nonzero value on an unchanged tree means the caller
+	// pointed the index at the wrong root.
+	DeletedFiles  int
 	Elements      int
 	Relationships int
 	Skipped       int
@@ -235,6 +242,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		if err := st.DeleteFileRecord(rel); err != nil {
 			return res, err
 		}
+		res.DeletedFiles++
 	}
 
 	// Changed/new files: 3-signal detection (size+mtime fast path, then

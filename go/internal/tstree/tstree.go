@@ -7,9 +7,9 @@
 // extraction for the bundled languages.
 //
 // Coverage: go, rust, ts, tsx, js/jsx, py, java, kotlin and swift come from
-// smacker/go-tree-sitter; objective-c and dart from the vendored grammars in
-// this directory. Every other registry language (markdown included) has no
-// grammar here and stays on the regex tier.
+// smacker/go-tree-sitter; objective-c, dart and perl from the vendored
+// grammars in this directory. Every other registry language (markdown
+// included) has no grammar here and stays on the regex tier.
 package tstree
 
 import (
@@ -18,6 +18,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/go/internal/tstree/dart"
 	tsobjc "github.com/FreePeak/LeanKG/go/internal/tstree/objc"
+	tsperl "github.com/FreePeak/LeanKG/go/internal/tstree/perl"
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/golang"
 	"github.com/smacker/go-tree-sitter/java"
@@ -56,6 +57,8 @@ func Grammar(lang string) *sitter.Language {
 		return tsobjc.GetLanguage()
 	case "dart":
 		return dart.GetLanguage()
+	case "perl":
+		return tsperl.GetLanguage()
 	}
 	return nil // md
 }
@@ -111,12 +114,23 @@ var kindSpec = map[string]string{
 	"redirecting_factory_constructor_signature": "constructor",
 	"enum_constant":                             "constant",
 	"constructor_declaration":                   "constructor", // java, kotlin
-	"annotation_type_declaration":               "type",
-	"object_declaration":                        "type",     // kotlin
-	"func_declaration":                          "function", // swift
-	"struct_declaration":                        "type",
-	"protocol_declaration":                      "type", // swift, objc
-	"actor_declaration":                         "type",
+	// perl (ts-parser-perl node names, issue #61). A package/class head is a
+	// type like every other grammar's class construct; `sub` is a definition
+	// even with no body (a forward declaration). use/require are the imports
+	// the regex tier already reports, kept so the tree tier does not lose
+	// them.
+	"package_statement":                "type",
+	"class_statement":                  "type",
+	"subroutine_declaration_statement": "function",
+	"method_declaration_statement":     "method",
+	"use_statement":                    "import",
+	"require_expression":               "import",
+	"annotation_type_declaration":      "type",
+	"object_declaration":               "type",     // kotlin
+	"func_declaration":                 "function", // swift
+	"struct_declaration":               "type",
+	"protocol_declaration":             "type", // swift, objc
+	"actor_declaration":                "type",
 }
 
 var (
@@ -206,13 +220,21 @@ func suppressed(parentType, nodeType string) bool {
 }
 
 // nameOf extracts the definition name: dart constructors resolve through
-// dartConstructorName, everything else prefers the named "name" field, else
-// the first identifier-like child.
+// dartConstructorName, perl use-statements through their "module" field,
+// everything else prefers the named "name" field, else the first
+// identifier-like child.
 func nameOf(n *sitter.Node, src []byte) string {
 	switch n.Type() {
 	case "constructor_signature", "constant_constructor_signature",
 		"factory_constructor_signature", "redirecting_factory_constructor_signature":
 		return dartConstructorName(n, src)
+	case "use_statement":
+		// perl fields the module in its own "module" field; the generic
+		// "name" lookup below would miss it.
+		if m := n.ChildByFieldName("module"); m != nil {
+			return strings.TrimSpace(m.Content(src))
+		}
+		return ""
 	}
 	if name := n.ChildByFieldName("name"); name != nil {
 		return strings.TrimSpace(name.Content(src))

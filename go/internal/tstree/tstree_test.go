@@ -3,17 +3,21 @@
 package tstree
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+
+	sitter "github.com/smacker/go-tree-sitter"
 )
 
-// TestGrammarCoverage pins the bundled grammar set. objc and dart arrive from
-// the vendored grammars in this directory (smacker ships neither); markdown
-// has no definition-kind grammar and must stay on the regex tier.
+// TestGrammarCoverage pins the bundled grammar set. objc, dart and perl arrive
+// from the vendored grammars in this directory (smacker ships none of them);
+// markdown has no definition-kind grammar and must stay on the regex tier.
 func TestGrammarCoverage(t *testing.T) {
-	for _, lang := range []string{"go", "rust", "ts", "tsx", "js", "jsx", "py", "java", "kotlin", "swift", "objc", "dart"} {
+	for _, lang := range []string{"go", "rust", "ts", "tsx", "js", "jsx", "py", "java", "kotlin", "swift", "objc", "dart", "perl"} {
 		if Grammar(lang) == nil {
 			t.Errorf("no grammar bundled for %s", lang)
 		}
@@ -140,6 +144,100 @@ func TestExtractDart(t *testing.T) {
 		{Kind: "function", Name: "add", StartLine: 27, EndLine: 29},
 	}
 	assertDefs(t, defs, want)
+}
+
+// Perl fixtures live in testdata/perl rather than inline: the modern one is
+// built around a multi-line heredoc, whose terminator lines make both
+// embedding it in a raw string and counting spans inside one confusing.
+//
+// inventory.pm is classic Perl (packages, use, subs, nested blocks).
+// modern.pm is the issue-#61 set of constructs the previous (ganezdragon)
+// grammar mis-parsed: subroutine attributes and prototypes, an experimental
+// signature, a `method` with a defaulting parameter, a versioned package and
+// a versioned `use`, postfix dereferencing, a heredoc with interpolation,
+// `//` defined-or and a body-less forward declaration.
+func TestExtractPerl(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("testdata", "perl", "inventory.pm"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs, err := Extract(src, "perl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No ERROR/MISSING nodes: a clean parse is the core of issue #61 — an
+	// ERROR node hides every sub/package under it from the walk.
+	want := []Def{
+		{Kind: "type", Name: "Warehouse::Inventory", StartLine: 1, EndLine: 1},
+		{Kind: "import", Name: "strict", StartLine: 3, EndLine: 3},
+		{Kind: "import", Name: "warnings", StartLine: 4, EndLine: 4},
+		{Kind: "import", Name: "List::Util", StartLine: 5, EndLine: 5},
+		{Kind: "function", Name: "new", StartLine: 7, EndLine: 10},
+		{Kind: "function", Name: "total_value", StartLine: 12, EndLine: 16},
+		{Kind: "type", Name: "Warehouse::Report", StartLine: 18, EndLine: 18},
+		{Kind: "function", Name: "format_line", StartLine: 20, EndLine: 28},
+	}
+	assertDefs(t, defs, want)
+}
+
+// TestExtractPerlModernConstructs pins the shapes the previous grammar could
+// not parse (issue #61): the fixture parses clean with the vendored
+// ts-parser-perl grammar and every definition survives with real end lines,
+// including the body-less forward declaration (end == start) and a sub whose
+// body contains a multi-line heredoc.
+func TestExtractPerlModernConstructs(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("testdata", "perl", "modern.pm"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs, err := Extract(src, "perl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bad := firstBadNode(src, "perl"); bad != "" {
+		t.Fatalf("grammar produced %s; extraction would silently drop definitions under it", bad)
+	}
+	want := []Def{
+		{Kind: "type", Name: "Billing::Invoice", StartLine: 8, EndLine: 8},
+		{Kind: "import", Name: "strict", StartLine: 10, EndLine: 10},
+		{Kind: "import", Name: "warnings", StartLine: 11, EndLine: 11},
+		{Kind: "import", Name: "List::Util", StartLine: 12, EndLine: 12},
+		{Kind: "import", Name: "experimental", StartLine: 13, EndLine: 13},
+		{Kind: "function", Name: "_fmt_amount", StartLine: 17, EndLine: 20},
+		{Kind: "function", Name: "legacy_total", StartLine: 22, EndLine: 26},
+		{Kind: "method", Name: "render", StartLine: 28, EndLine: 35},
+		{Kind: "function", Name: "render_all", StartLine: 37, EndLine: 37},
+	}
+	assertDefs(t, defs, want)
+}
+
+// firstBadNode returns the first ERROR or MISSING node of a parse, "" when
+// the tree is clean.
+func firstBadNode(src []byte, lang string) string {
+	p := parserFor(lang)
+	if p == nil {
+		return ""
+	}
+	tree := p.Parse(nil, src)
+	if tree == nil {
+		return ""
+	}
+	var bad string
+	var walk func(n *sitter.Node)
+	walk = func(n *sitter.Node) {
+		if n == nil || bad != "" {
+			return
+		}
+		if n.Type() == "ERROR" || n.IsMissing() {
+			bad = n.Type()
+			return
+		}
+		for i := 0; i < int(n.ChildCount()); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(tree.RootNode())
+	return bad
 }
 
 // assertDefs compares the extracted set as a whole, so a fixture that grows an
