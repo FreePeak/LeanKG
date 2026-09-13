@@ -95,3 +95,34 @@ HNSW (~4 ms top-50 at 10k x 384, sublinear). These numbers are therefore
 sqlite-brute-force-vs-HNSW tradeoff measurable instead of hiding it.
 When filling the table, compare at matched n (1k vs 1k), and label the
 Go cell "exact cosine scan" — never "ANN".
+
+## A/B record + score harness (FR-ZCP-08)
+
+`harness.go` + `abrun/` (CLI) harden the cross-tool runners
+(`run_kilo_ab_final.sh`, `run_kilo_ab_test.sh`, shared
+`scripts/kilo_ab_common.sh`):
+
+- **Pinned provenance** — every trial row carries the 40-hex corpus
+  commit, per-tool commit SHAs, and the 64-hex prompt-template hash;
+  `abrun record` refuses unpinned rows (the run aborts, nothing is
+  recorded).
+- **>=3 trials/arm** — `MinTrialsPerArm = 3`; `Aggregate` fails any arm
+  (overall or per task) below the floor; arm figures are
+  median-of-per-task-medians.
+- **Judge-blind scorer** — `BlindGroups`/`JudgePrompt` build the judge
+  view from question + shuffled anonymized answers only; arm identity
+  is structurally unexpressible. `JudgeBlind` unblinds only at report
+  time. `JudgeFunc` is a scripted seam — tests stub it, the CLI execs
+  any `-judge` command reading the prompt on stdin and answering a
+  JSON `{"A": n, ...}` of 0-6 rubric totals.
+- **zg pitfalls checklist** — `Checklist` computes trials_min3,
+  prompt_identical, corpus_pinned, model_uniform, pins_recorded,
+  tool_access_smoke, no_leakage from run metadata; the results JSON
+  carries provenance + per-arm prompt hashes + medians + checklist.
+
+```sh
+# runner flow (see scripts/kilo_ab_common.sh):
+ab_resolve_pins <ver> <baseline-tmpl> <leankg-tmpl>   # or ABORT
+ab_record_trial runs.jsonl <arm> <task> <n> <tokens> <question> <answer-file> <raw-out>
+ab_score runs.jsonl report.json                       # fails below the trial floor
+```

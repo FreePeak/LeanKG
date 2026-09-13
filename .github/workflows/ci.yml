@@ -42,3 +42,33 @@ jobs:
         run: cd go && go vet -tags tstree ./...
       - name: Test (sqlite; PG tests skip without LEANKG_TEST_PG_URL)
         run: cd go && go test ./... -count=1 -timeout 300s
+
+  # Issue #280: CI-timed published TTFV. Measures the Go cold happy path
+  # (build -> index pinned fixture -> serve bind -> first query over REST and
+  # over MCP) end-to-end and FAILS over 300s. The budget assert lives in
+  # scripts/ttfv_smoke.sh so the number is a measurement, not a timeout: the
+  # generous job cap (12m > 5m budget + cold-cache build worst case) means a
+  # breach surfaces as a failed gate with the number printed, never as an
+  # opaque runner timeout. GOCACHE/GOMODCACHE warm via setup-go's cache; a
+  # cold miss is still covered by the budget (macOS cold-cache measurement:
+  # 17.8s total, 16.1s of it the build).
+  ttfv:
+    name: Cold TTFV Gate (Go, < 300s)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go/go.sum
+      - name: Timed cold happy path
+        run: bash scripts/ttfv_smoke.sh --json ttfv.json
+        timeout-minutes: 10
+      - name: Upload timing artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ttfv-go-cold
+          path: ttfv.json
+          if-no-files-found: warn

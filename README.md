@@ -80,6 +80,10 @@ file counts and the write watermark (exit 0 pass / 2 fail).
 MCP over HTTP: the server resolves the project from its process cwd — run it
 from the checkout or pass `--project DIR` to pin one.
 
+### Measured timings
+
+- **Go cold time-to-first-value (build → index → serve bind → first REST + MCP query): CI budget 300s, gate [Cold TTFV](.github/workflows/ci.yml), per-run numbers in the `ttfv-go-cold` artifact** — local cold-cache measurement 17.8s (macOS arm64); replaces the Rust-era `quickstart_smoke.sh`.
+
 ### Web UI
 
 The embedded dashboard is served by `leankg serve --ui ADDR` (a ui-v2 build

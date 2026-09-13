@@ -10,6 +10,50 @@
 
 ## Changelog
 
+### v4.10.0-issue-scope-and-dogfood — the open issues implemented, then hardened against this repo's own data (2026-09-13)
+
+> **Trigger:** PR #370 resolved the rewrite-scope issues (#365/#368/#369/#332); an issue-by-issue audit against the
+> code — not the docs — left ~10 open. All of them are implemented here, and then the whole surface was run live
+> against this repository's own index (real ONNX embeddings, both engines), because that is where the remaining
+> defects were.
+
+**Issues closed by this revision** (each verified on real data, not only by unit tests):
+
+| Issue | Shipped | Measured evidence |
+|---|---|---|
+| #273 | PG keyword + hybrid retrieval: `fts tsvector` generated column over (name, qualified_name, **content**), GIN indexes, `ts_rank` L2 arm, reciprocal-rank fusion of vector+tsvector+trigram at L3, `orgknowledge` routed to the same arm (migration **12**, PG-only by design) | On this repo's own 11,327-element PG store: L2 answers `tsvector keyword match`; L3 answers `reciprocal-rank fusion rrf(vector+tsvector)` with one hit contributed by the keyword arm alone (`ranks={tsvector:1}`, `similarity=0`) — real fusion, not a label |
+| #279 | Pinned model catalog (repo + 40-hex revision + dims + prefixes per row), `chunker_version`/`query_prefix`/`document_prefix` in the collection stamp (migration **15**, both engines), prefix application at the request layer, whole-identity compare on the READ path so chunker or prefix drift degrades instead of mixing vector spaces | Live on 9,250 real vectors: setting `chunker_version` 1→0 in the DB served `stamp mismatch: collection differs from the live provider (chunker_version 0, live revision ea104da…); degraded from L3; run leankg-embed full to rebuild` at L2, never mixed-model hits; restoring it returned cosine L3 |
+| #275 | Session-memory adjacency over the 3-tool envelope: `session_retain` (write, with the `retained_through_user_turn` cursor) + `session_recall`/`memories` reads, the scope matrix (`per-project`, `global`, `per-project-tagged`), MCP schemas, REST routes, strict `ParseScope` | Live MCP round trip: retain 2 turns → `written=2`; re-retain at the same cursor → `skipped=2, written=0`; `<memories>` injection block returned |
+| #276 | A/B harness hardening (`benchmark/ab/harness.go`): 40-hex pins with refusal-to-measure, ≥3 trials/arm enforced at aggregation, label-erased blind judging with an injectable seam, the 5 zvec-grep pitfalls reported in every run artifact, FR-HEA-01/03 ontology accounting | 14 hermetic harness tests + 5 alias-accounting tests; `abrun score` verified to fail a 2-trial arm by name |
+| #280 | Time-to-first-value gate: cold-cache build+index+query budget asserted in `scripts/ttfv_smoke.sh`, `ttfv` CI job with an artifact | Measured: warm 4.9 s, `GOCACHE`-cold 17.8 s, fully cold **21.6 s** against a 300 s budget; the over-budget path exits 1 |
+| #61 | Vendored `tree-sitter-perl` v2.0.0 (MIT) regenerated to **ABI 14** (every published release targets ABI 15, which the Go runtime rejects), behind `//go:build tstree` on every `.c`/`.h`; module/method/import kinds with `use_statement` module-field resolution | On 1,398 real Perl files: **99.2 % clean parses vs 42.8 %** before (791 files recovered). Live: `Inventory.pm::stock_count`, `MyApp::Inventory`, Moose/`namespace::autoclean` imports and a v5.38 `sub tally ($self, $items)` all indexed |
+| #297 | graft's two-pass LLM-meaning pipeline: `file_summaries` checkpoint (migration **14**, model-pinned resume), pass 1 one-completion-per-file at temperature 0 behind a failure gate (5 consecutive → stop; terminal quota/auth → immediate), pass 2 JSON-validated node/relation synthesis with closed enums, markdown node files that preserve human notes, `leankg summarize`, opt-in post-index hook (default **off**) | 23 tests; the hook's default-off contract pinned so an index can never start spending tokens because a provider happens to be configured |
+| #372 | Federation **receiver** (`POST /api/v2/graph/push` + `GET /api/v2/graph`, mounted per project through `rest.Handler`), Contributor+ to write, upsert-by-identity apply that never deletes unmentioned rows and carries local content forward (the wire has no content slot), provenance into metadata; `pull` now fetches **and applies**, degrading to the Rust connectivity probe against a server without the route | Live push→pull round trip between two projects: 2 elements/1 relationship applied, incoming fields won the conflict, local content and unmentioned rows survived, provenance re-stamped |
+| #376 (with #277/#278) | Portfolio registry (migration **13**, sqlite `$LEANKG_PORTFOLIO_DB` or its own PG schema), register-on-index, T0 manifest / T1 hot-set fan-out running the **real** L0–L3 ladder inside each project with per-child attribution, `portfolio` query action, `register-project`/`projects` verbs, `doctor --deep` fleet leg with migration-drift vocabulary, `projects --forget` | Live over MCP: one `--action portfolio` call returned the Perl symbol from one child at L1 and this repo's documents at L3 in a single merged answer |
+| #73 | `leankg update [--check]`: Releases lookup, semver compare that never treats an unparseable version as equal, bounded download, archive verification (SHA-256 when published, else a content check that says so), atomic sibling-temp replace with `.old` rollback, `PermError` naming the exact `sudo` command, exit 1 when `--check` is behind | 33 tests; live end-to-end install replaced both binaries and the swapped binary ran; live `--check` reports the honest "no darwin-arm64 asset published yet" |
+
+**Plus the earlier mis-scoped closures:** #274/#272 (single-flight already existed; the real remainder was per-file atomic replace, which #279 shipped), #286, #27, #371.
+
+**Dogfood findings — every one a real defect, every one fixed with a failing-first test:**
+
+| Finding | Consequence before the fix | Fix |
+|---|---|---|
+| `import {action:"repo", path:"."}` resolved **`.` against the server's cwd**, then the store-wide reconcile deleted what the walk missed | Cost this repository's own index **4,525 of 9,250 elements** during the dogfood (recovered from a pre-test copy with vectors intact) | Relative paths anchor at the project dir; a subtree root is **refused** instead of attempted; `index.Result.DeletedFiles` surfaces as `deleted_files` so a routine run cannot hide a sweep — `internal/core/importpath_test.go` shows `3 → 0` and `3 → 1` pre-fix |
+| `leankg index . --source <tree>` walked the source against the project's store | Replaced the project's content with the source's **at identical counters** (1 element before, 1 after), so a count-only assertion passes on the bug | `sameIndexRoot` refuses the mismatch with the actionable alternative; `cmd/leankg/indexroot_test.go` asserts surviving **file paths** |
+| Content clipped on byte boundaries: `prdindex.truncate` backed off to the first `RuneStart` (which stops on a lone lead byte) and `index.boundContent` did not back off at all | `invalid byte sequence for encoding "UTF8": 0xe2` aborted the **whole PostgreSQL batch** — found only by indexing this repo into PG; every source file was valid UTF-8, so a clip manufactured the byte | `store.ClipUTF8` (bounded valid-prefix loop) at all three sites, plus `store.ValidText` at **both** backends' write boundary so no producer can reintroduce the class and both engines store identical bytes; `internal/store/clip_test.go` sweeps every boundary |
+| The PG keyword arm indexed identifiers only while sqlite's FTS5 covers content, and never degraded on an empty-but-successful tsvector result | Multi-word queries returned **0 hits on PG where sqlite returned 10** — silent engine-dependent amnesia | content added to the tsvector (weight B, matching migration 12's own comment), and an empty result now falls through to trigram → ILIKE |
+| `portfolio` was missing from the tool-budget table, inheriting the 1000-token default | A two-project fan-out was truncated to its own summary — `children` and `hits` gone, `truncated=true` | `portfolio` gets the widest cap on the table (12000), with the reason recorded in the table |
+| The inventory snapshot was refreshed only by the Engine's own write path | `leankg index`, `summarize`, `pull` and `leankg-embed` all left a healthy project reading **`possibly_stale`** until some later unrelated write | `store.RefreshInventory` (one function over `Backend`, both engines) called by every CLI writer — verified `possibly_stale → fresh` at Coverage 1.0 on the real repo |
+| `var version = strings.TrimSpace(embeddedVersion)` — a non-constant initializer | `-X main.version=<tag>` was **silently ignored** for `cmd/leankg`: a dispatched v0.32.0 release would have shipped a binary reporting the VERSION file | constant initializer + `Version()` fallback; verified `9.9.9` stamped, `0.31.0` unstamped |
+| `checkFleet` classified a **vanished checkout** as `UNREADABLE` | Any long-lived machine accumulates permanent doctor noise — and the test suite was writing the real `$HOME/.leankg/portfolio.db` (14 rows of deleted temp dirs, since pruned) | `Missing` is a distinct informational state (PASS + the `--forget` hint); CLI tests redirect the registry through `TestMain`, so `go test ./...` never touches user state |
+| One-shot CLI verbs built their engine with a nil embedder | `leankg query --action semantic` could **never reach L3**, even with a provider running | `openEngine` attaches `embed.FromEnv()` (attach-only, so a CLI run cannot orphan a sidecar); L3 verified from the CLI on real vectors |
+| `compress` with `args.cmd` and no payload returned a zero-count envelope | A caller could not distinguish "nothing to compress" from "payload in the wrong field" | accepts the output in `query` **or** `args.response`, and names both when neither is set |
+
+**Migration ledger after this revision:** sqlite 1–11, 13–15; PostgreSQL 1–15. The gap is deliberate — migration 12 is
+PG-only because sqlite has had FTS5 since migration 2 — and the store tests pin both ledgers' ordering and uniqueness.
+The 6→15 upgrade ran live against this repo's real 53 MB store by starting the server on it.
+
+
 ### v4.9.2-adversarial-audit — silently-wrong results closed (2026-09-12)
 
 > **Trigger:** an adversarial audit of the merged wave found surfaces that were *quietly* wrong rather than red.
@@ -617,7 +661,7 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 | `env_snapshots` | Go stand-in for Rust's env-scoped `code_elements` (Go elements are keyed on `qualified_name`, single-env). Consequence: `calls`/`called_by`/`schemas` cannot be env-filtered. |
 | `leankg team` verb + `/api/teams` routes | Unported (membership/ownership live in the auth subsystem; the `team-map` read exists). |
 | Agent notes authority | `knowledge_entries` (migration 010) carries **scoped org facts** (per element/feature/environment, queryable); the markdown memory layer (#369: `MEMORY.md`/`USER.md`/`topics/`) remains the **agent-facing** substrate. Two substrates by design, one purpose each — not interchangeable. |
-| Embeddings single-flight + per-file atomic replace | Absent (see #279 comment): concurrent `leankg-embed` runs are not serialized, and a crash mid-write can leave a partially written file's vectors. |
+| Embeddings single-flight | Still absent: concurrent `leankg-embed` runs are not serialized (a second writer interleaves with the first). Per-file atomic replace and truncation accounting **did** land with #279 (writes are grouped per file in one transaction, so a crash cannot leave half a file's vectors). |
 | `tmp-langs/` (29 MB probe dir, committed by an earlier session in `c4f55a5f`) | Left in place deliberately (not this wave's artifact): a cleanup candidate for the maintainer. |
 
 ### Environment inventory (build/runtime)
@@ -636,6 +680,12 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 | `LEANKG_EMBED_SIDECAR_CMD` / `_ARGS` / `_PORT` / `_READY_SECS` | `llama-server` / — / `8080` / `120` | sidecar spawn + bounded readiness |
 | `LEANKG_CACHE_MAX_TOKENS` | `500000` | compression session-cache budget |
 | `LEANKG_MAX_CACHE_ELEMENTS` | `50000` | mega-graph threshold (ontology-first discovery path) |
+| `LEANKG_PORTFOLIO_DB` | `$HOME/.leankg/portfolio.db` | fleet registry location (sqlite); the suite redirects it so tests never write user state |
+| `LEANKG_PORTFOLIO_MAX_REPOS` | `8` | hot-set cap for a portfolio fan-out; re-read per fan-out, so it is a serving knob |
+| `LEANKG_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | — | the #297 summarize pass (OpenAI-compatible `/chat/completions`, temperature pinned 0) |
+| `LEANKG_SUMMARIZE_AFTER_INDEX` | off | opt-in post-index LLM pass; default off so indexing can never spend tokens unprompted |
+| `LEANKG_UPDATE_MAX_MB` | `128` | `leankg update` download ceiling; over-cap is an error, never a truncation |
+| `GITHUB_TOKEN` | — | raises the `leankg update` API rate limit; absence only warns (anonymous calls work) |
 | `PATH` | — | ast-grep / LSP server / sidecar discovery |
 
 ## 7. Historical Record
@@ -652,4 +702,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [go-rewrite-analysis.md](go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-12 (v4.9.2 — adversarial-audit corrections: clap-order flags + stray-positional rejection, push/pull dispatch, truthful project switching via a non-opening resolver, token privilege ceiling, refresh/setup output fixes; remainders tabled in §6b)*
+*Last updated: 2026-09-13 (v4.10.0 — the remaining open issues implemented (#273 #275 #276 #279 #280 #61 #297 #372 #376 +277/278 #73; migrations 12–15), then the whole surface dogfooded against this repository's own index on both engines, which found and fixed ten real defects including two silent-data-loss paths in `import`/`--source` and a cross-engine UTF-8 write abort)*

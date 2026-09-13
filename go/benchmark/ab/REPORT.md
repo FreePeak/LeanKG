@@ -9,6 +9,25 @@
 
 ## Results
 
+### FR-ZCP-08 rigor gates (issue #276)
+
+All figures below passed the harness hardening gates recorded in the
+pinned JSONL + results JSON (`go/benchmark/ab/harness.go`, CLI
+`abrun`):
+
+- **Pinned SHAs/prompts** — corpus `4b890a90` (Rust arm), `df18c2d1` /
+  `6ab30c90` (Go arm per footnote); a run whose pins cannot be resolved
+  to 40-hex commits + a 64-hex prompt-template hash is refused by
+  `abrun record` before any row lands.
+- **>=3 trials/arm** — every process figure is a >=3-run median (see Raw
+  runs); the scorer fails any arm below the floor.
+- **Judge-blind scoring** — not applicable to the wall-time rows below
+  (no free-text answers were judged); the kilo-answer A/B harness
+  (`run_kilo_ab_test.sh`) applies it via shuffled label groups.
+- **zg pitfalls checklist** — trials_min3 / prompt_identical /
+  corpus_pinned / model_uniform / pins_recorded / tool_access_smoke /
+  no_leakage, computed from run metadata in every results JSON.
+
 | Metric | Rust 0.30.0 | Go v4.6.0 | Ratio |
 |---|---|---|---|
 | Cold index, 100 files (process, 5-run median)³ | 0.102 s | 0.103 s | ≈1.0 |
