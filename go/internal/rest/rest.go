@@ -24,6 +24,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/go/internal/core"
 	"github.com/FreePeak/LeanKG/go/internal/errs"
+	"github.com/FreePeak/LeanKG/go/internal/federation"
 	"github.com/FreePeak/LeanKG/go/internal/memory"
 	"github.com/FreePeak/LeanKG/go/internal/orgknowledge"
 )
@@ -145,6 +146,10 @@ func Handler(engine *core.Engine, mem *memory.Memory) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, ctx)
 	})
+	// Federation receiver (#372): POST /api/v2/graph/push + GET /api/v2/graph,
+	// per-project (routeByProject wraps each project handler), caller-authenticated
+	// with Contributor+ required to write.
+	federation.Register(mux, engine.Store(), engine.ProjectDir())
 	if mem != nil {
 		mux.HandleFunc("POST /api/v1/memory/banks/{bank}/memories", func(w http.ResponseWriter, r *http.Request) {
 			bank := r.PathValue("bank")
@@ -191,6 +196,75 @@ func Handler(engine *core.Engine, mem *memory.Memory) http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+		})
+		// FR-ZCP-07 session surface (hindsight-shaped): retain with a
+		// session-keyed cursor, recall merged across the scope's banks, and the
+		// first-turn <memories> injection read. (Mem275 proposed
+		// `memories:inject`; Go ServeMux segments keep no colon convention, so
+		// the read lives at /inject — same semantics, cleaner route.)
+		mux.HandleFunc("POST /api/v1/memory/session/retain", func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				SessionID               string   `json:"session_id"`
+				Turns                   []string `json:"turns"`
+				RetainedThroughUserTurn int      `json:"retained_through_user_turn"`
+				Scope                   string   `json:"scope"`
+				CWD                     string   `json:"cwd"`
+				Bank                    string   `json:"bank"`
+			}
+			if !decode(w, r, &body) {
+				return
+			}
+			scope, err := memory.ParseScope(body.Scope)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			res, err := mem.SessionRetain(scope, body.CWD, body.Bank, body.SessionID, body.Turns, body.RetainedThroughUserTurn)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, res)
+		})
+		mux.HandleFunc("POST /api/v1/memory/session/recall", func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Query string `json:"query"`
+				Limit int    `json:"limit"`
+				Scope string `json:"scope"`
+				CWD   string `json:"cwd"`
+				Bank  string `json:"bank"`
+			}
+			if !decode(w, r, &body) {
+				return
+			}
+			scope, err := memory.ParseScope(body.Scope)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			banks, entries, err := mem.SessionRecall(scope, body.CWD, body.Bank, body.Query, body.Limit)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"banks": banks, "count": len(entries), "memories": memory.RankEntries(entries),
+			})
+		})
+		mux.HandleFunc("GET /api/v1/memory/banks/{bank}/inject", func(w http.ResponseWriter, r *http.Request) {
+			bank := r.PathValue("bank")
+			q := r.URL.Query()
+			scope, err := memory.ParseScope(q.Get("scope"))
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			text, entries, err := mem.FirstTurnMemories(scope, q.Get("cwd"), bank, q.Get("query"))
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"count": len(entries), "text": text})
 		})
 	}
 	return mux

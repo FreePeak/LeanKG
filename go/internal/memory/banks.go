@@ -173,42 +173,198 @@ func wyhash64(b []byte, seed uint64) uint64 {
 	return mum(seed, uint64(n)^p5)
 }
 
-// Retain appends a transcript batch to a bank as JSONL, tagging every row's
-// metadata with the retained_through_user_turn cursor. Idempotent: when
-// throughUserTurn is at or below the bank's stored cursor the write is
-// skipped entirely (resume-safety; the Rust side keys this per session, the
-// Go contract keys it per bank).
-func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error {
-	if err := os.MkdirAll(filepath.Join(m.root, "banks"), 0o755); err != nil {
-		return fmt.Errorf("memory: create banks dir: %w", err)
+// TranscriptSource and TranscriptImportance mirror the Rust retain
+// contract (store.rs:16-17): harness transcript rows carry a fixed source
+// tag and importance.
+const (
+	TranscriptSource     = "coding-agent-transcript"
+	TranscriptImportance = 0.65
+)
+
+// RetainResult reports one transcript batch (Rust RetainResult,
+// store.rs:291-296).
+type RetainResult struct {
+	Bank                    string `json:"bank"`
+	Written                 int    `json:"written"`
+	Skipped                 int    `json:"skipped"`
+	RetainedThroughUserTurn int    `json:"retained_through_user_turn"`
+}
+
+// SessionRetain ports the reference session_retain tool
+// (mcp/handler.rs:2989-3019): frame transcript turns into mnemopi rows and
+// append them to the bank the (scope, cwd, bank) triple selects. Resolution
+// order: a non-empty bank names one bank exactly (the REST /banks/{bank}
+// mode); otherwise scope.WriteBank maps the cwd's mnemopi bank (bank.rs
+// write_bank; Global targets the shared bank instead). An empty cwd falls
+// back to this store's own project dir. The batch is idempotent per session
+// (store.rs:92-108): a retained_through_user_turn at or below the session's
+// stored cursor skips the whole batch.
+func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int) (RetainResult, error) {
+	if sessionID == "" {
+		return RetainResult{}, fmt.Errorf("memory: session_retain requires session_id")
 	}
+	if len(turns) == 0 {
+		return RetainResult{}, fmt.Errorf("memory: session_retain requires turns (array of transcript turn texts)")
+	}
+	if throughUserTurn < 0 {
+		return RetainResult{}, fmt.Errorf("memory: retained_through_user_turn must be >= 0")
+	}
+	target := bank
+	if target == "" {
+		target = scope.WriteBank(BankName(m.scopeCwd(cwd)))
+	}
+	if seen, ok := m.sessionCursor(sessionID); ok && throughUserTurn <= seen {
+		return RetainResult{Bank: target, Skipped: len(turns), RetainedThroughUserTurn: seen}, nil
+	}
+	ms := time.Now().UnixMilli()
+	sourceID := fmt.Sprintf("%s-%d", sessionID, ms)
+	entries := make([]Entry, 0, len(turns))
+	for i, turn := range turns {
+		// Trust boundary: an empty row is permanently unrecallable
+		// (zero-match filtering) — reject rather than swallow (same
+		// contract the REST retain route enforces).
+		if strings.TrimSpace(turn) == "" {
+			return RetainResult{}, fmt.Errorf("memory: turns[%d] is empty — empty entries would be unrecallable", i)
+		}
+		entries = append(entries, Entry{
+			ID:         fmt.Sprintf("%s-%d", sourceID, i),
+			Content:    turn,
+			Source:     TranscriptSource,
+			Timestamp:  ms / 1000,
+			Importance: TranscriptImportance,
+			Cwd:        cwd,
+			Metadata: map[string]any{
+				"session_id":                 sessionID,
+				"source_id":                  sourceID,
+				"message_count":              len(turns),
+				"retained_through_user_turn": throughUserTurn,
+				"cwd":                        cwd,
+			},
+		})
+	}
+	if err := m.appendBank(target, entries); err != nil {
+		return RetainResult{}, err
+	}
+	return RetainResult{Bank: target, Written: len(entries), RetainedThroughUserTurn: throughUserTurn}, nil
+}
+
+// SessionRecall ports the reference session_recall tool
+// (mcp/handler.rs:3023-3043): merged ranked recall across the read banks
+// the (scope, cwd, bank) triple selects. Resolution order matches
+// SessionRetain: a non-empty bank reads that bank only; otherwise
+// scope.ReadBanks merges in matrix order (project first, shared appended
+// in tagged mode; bank.rs:88-95). Returns the consulted banks plus the
+// ranked rows; limit <= 0 means 8 (the OMP recallLimit).
+func (m *Memory) SessionRecall(scope Scope, cwd, bank, query string, limit int) (banks []string, entries []Entry, err error) {
+	banks = m.sessionReadBanks(scope, cwd, bank)
+	entries, err = m.RecallBanks(banks, query, limit)
+	return banks, entries, err
+}
+
+// sessionReadBanks resolves the read-bank list for the (scope, cwd, bank)
+// triple: a non-empty bank names one bank exactly (bank-name mode — the
+// REST /banks/{bank} contract); otherwise the scope matrix maps the cwd's
+// mnemopi bank.
+func (m *Memory) sessionReadBanks(scope Scope, cwd, bank string) []string {
+	if bank != "" {
+		return []string{bank}
+	}
+	return scope.ReadBanks(BankName(m.scopeCwd(cwd)))
+}
+
+// scopeCwd applies the reference's cwd default (handler.rs:3004-3008: an
+// absent cwd falls back to the process dir; on this side the store's own
+// project dir is the equivalent anchor).
+func (m *Memory) scopeCwd(cwd string) string {
+	if cwd != "" {
+		return cwd
+	}
+	return filepath.Dir(filepath.Dir(m.root))
+}
+
+// sessionCursor reports the highest retained_through_user_turn stored for a
+// session across every bank (Rust retained_through_user_turn, store.rs:64-87
+// — session-keyed, so concurrent sessions sharing one bank never suppress
+// each other's batches; the REST Retain contract stays per-bank by design).
+func (m *Memory) sessionCursor(sessionID string) (int, bool) {
+	files, err := os.ReadDir(filepath.Join(m.root, "banks"))
+	if err != nil {
+		return 0, false
+	}
+	best, found := 0, false
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(m.root, "banks", f.Name()))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if line == "" {
+				continue
+			}
+			var e Entry
+			if json.Unmarshal([]byte(line), &e) != nil {
+				continue
+			}
+			if e.Metadata["session_id"] != sessionID {
+				continue
+			}
+			if n, ok := e.Metadata["retained_through_user_turn"].(float64); ok && (!found || int(n) > best) {
+				best, found = int(n), true
+			}
+		}
+	}
+	return best, found
+}
+
+// Retain appends a transcript batch to a bank as JSONL, tagging every row's
+// metadata with the retained_through_user_turn cursor. Idempotent per bank:
+// when throughUserTurn is at or below the bank's stored cursor the write is
+// skipped entirely (resume-safety; the REST/mnemopi contract keys it per
+// bank — SessionRetain below keys the same check per session, matching the
+// reference handler).
+func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error {
 	if throughUserTurn <= m.bankCursor(bank) {
 		return nil
 	}
-	path := m.bankPath(bank)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	for i := range entries {
+		if entries[i].Metadata == nil {
+			entries[i].Metadata = map[string]any{}
+		}
+		entries[i].Metadata["retained_through_user_turn"] = throughUserTurn
+		if entries[i].ID == "" {
+			// Batch-indexed: bare UnixNano collides within a tight loop
+			// (coarse clock) and merged recall dedupes by id.
+			entries[i].ID = fmt.Sprintf("%d-%d", time.Now().UnixNano(), i)
+		}
+		if entries[i].Source == "" {
+			entries[i].Source = TranscriptSource
+		}
+		if entries[i].Timestamp == 0 {
+			entries[i].Timestamp = time.Now().Unix()
+		}
+		if entries[i].Importance == 0 {
+			entries[i].Importance = TranscriptImportance
+		}
+	}
+	return m.appendBank(bank, entries)
+}
+
+// appendBank writes rows to the bank's JSONL, creating the banks dir on
+// first use. Raw append, no cursor logic — callers own idempotency.
+func (m *Memory) appendBank(bank string, entries []Entry) error {
+	if err := os.MkdirAll(filepath.Join(m.root, "banks"), 0o755); err != nil {
+		return fmt.Errorf("memory: create banks dir: %w", err)
+	}
+	f, err := os.OpenFile(m.bankPath(bank), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("memory: open bank %s: %w", bank, err)
 	}
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	for _, e := range entries {
-		if e.Metadata == nil {
-			e.Metadata = map[string]any{}
-		}
-		e.Metadata["retained_through_user_turn"] = throughUserTurn
-		if e.ID == "" {
-			e.ID = fmt.Sprintf("%d", time.Now().UnixNano())
-		}
-		if e.Source == "" {
-			e.Source = "coding-agent-transcript"
-		}
-		if e.Timestamp == 0 {
-			e.Timestamp = time.Now().Unix()
-		}
-		if e.Importance == 0 {
-			e.Importance = 0.65
-		}
 		if err := enc.Encode(e); err != nil {
 			return fmt.Errorf("memory: encode entry: %w", err)
 		}
@@ -239,18 +395,21 @@ func (m *Memory) bankCursor(bank string) int {
 	return max
 }
 
-// Recall returns up to limit entries scored by query-token overlap.
-// Zero-match entries never surface. limit <= 0 means 8 (OMP recall limit).
+// Recall returns up to limit entries scored by query-token overlap from one
+// bank. Zero-match entries never surface. limit <= 0 means 8 (OMP recall
+// limit).
 func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
+	return m.RecallBanks([]string{bank}, query, limit)
+}
+
+// RecallBanks merges ranked recall across banks in order (Rust
+// MemoryStore::recall, store.rs:150-188): rows are deduped by id, scored by
+// unique-query-token overlap, zero-match rows never surface, and the merged
+// set is ranked score-descending (stable — bank order breaks ties, matching
+// the reference's append-then-sort). Missing banks read as empty.
+func (m *Memory) RecallBanks(banks []string, query string, limit int) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 8
-	}
-	data, err := os.ReadFile(m.bankPath(bank))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
 	}
 	// unique query tokens, lowercased
 	qSeen := map[string]bool{}
@@ -269,28 +428,42 @@ func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
 		score int
 	}
 	var matched []scored
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
-			continue
-		}
-		var e Entry
-		if json.Unmarshal([]byte(line), &e) != nil {
-			continue
-		}
-		seen := map[string]bool{}
-		for _, t := range tokenize(e.Content) {
-			seen[t] = true
-		}
-		score := 0
-		for _, t := range qTokens {
-			if seen[t] {
-				score++
+	seenIDs := map[string]bool{}
+	for _, bank := range banks {
+		data, err := os.ReadFile(m.bankPath(bank))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
 			}
+			return nil, err
 		}
-		if score == 0 {
-			continue // zero-match entries never surface
+		for _, line := range strings.Split(string(data), "\n") {
+			if line == "" {
+				continue
+			}
+			var e Entry
+			if json.Unmarshal([]byte(line), &e) != nil {
+				continue
+			}
+			if seenIDs[e.ID] {
+				continue
+			}
+			seenIDs[e.ID] = true
+			seen := map[string]bool{}
+			for _, t := range tokenize(e.Content) {
+				seen[t] = true
+			}
+			score := 0
+			for _, t := range qTokens {
+				if seen[t] {
+					score++
+				}
+			}
+			if score == 0 {
+				continue // zero-match entries never surface
+			}
+			matched = append(matched, scored{e, score})
 		}
-		matched = append(matched, scored{e, score})
 	}
 	if len(matched) == 0 {
 		return nil, nil
@@ -304,6 +477,104 @@ func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
 		entries = append(entries, s.e)
 	}
 	return entries, nil
+}
+
+// recentBanks returns the newest limit rows across the given banks — the
+// cold-snapshot read when there is no query to rank on (FirstTurnMemories'
+// empty-query case). Rows are deduped by id in merge order (project before
+// shared), ranked newest-first with stable bank/file order on equal
+// timestamps; empty-content rows are skipped (never recallable).
+func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
+	var rows []Entry
+	seenIDs := map[string]bool{}
+	for _, bank := range banks {
+		data, err := os.ReadFile(m.bankPath(bank))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if line == "" {
+				continue
+			}
+			var e Entry
+			if json.Unmarshal([]byte(line), &e) != nil {
+				continue
+			}
+			if seenIDs[e.ID] || strings.TrimSpace(e.Content) == "" {
+				continue
+			}
+			seenIDs[e.ID] = true
+			rows = append(rows, e)
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Timestamp > rows[j].Timestamp })
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
+// InjectBlock renders ranked recall rows as the <memories>-equivalent
+// injection block (PRD FR-ZCP-07 recall/injection contract,
+// mnemopi/state.ts:914-922): one `- ` line per row, caller's rank order
+// preserved, capped to limit entries and a total token budget. When the
+// budget is exhausted mid-entry the remaining entries are dropped whole
+// (never a truncated half-memory). An empty result returns "" so callers
+// skip the block entirely.
+func InjectBlock(entries []Entry, limit, tokenBudget int) string {
+	if limit <= 0 {
+		limit = 8 // OMP recallLimit
+	}
+	if tokenBudget <= 0 {
+		tokenBudget = 5000 // OMP injectionTokenLimit
+	}
+	var b strings.Builder
+	b.WriteString("<memories>\n")
+	used := 0
+	n := 0
+	for _, e := range entries {
+		if n == limit {
+			break
+		}
+		line := "- " + e.Content
+		cost := (len(line) + 1) / 4 // compress.EstimateTokens shape: bytes/4
+		if used+cost > tokenBudget {
+			break
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+		used += cost
+		n++
+	}
+	if n == 0 {
+		return ""
+	}
+	b.WriteString("</memories>")
+	return b.String()
+}
+
+// RankedMemory is one row of the OMP recall/injection contract
+// {id, content, source, timestamp, score} (Rust handler.rs:3031-3041).
+// Score is the reference's constant 0.0 — the rank is carried by the list
+// order and OMP does not consume the value.
+type RankedMemory struct {
+	ID        string  `json:"id"`
+	Content   string  `json:"content"`
+	Source    string  `json:"source"`
+	Timestamp int64   `json:"timestamp"`
+	Score     float64 `json:"score"`
+}
+
+// RankEntries renders recall rows into the OMP injection contract shape.
+func RankEntries(entries []Entry) []RankedMemory {
+	out := make([]RankedMemory, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, RankedMemory{ID: e.ID, Content: e.Content, Source: e.Source, Timestamp: e.Timestamp})
+	}
+	return out
 }
 
 // tokenize lowercases and splits on non-letter/digit runes.

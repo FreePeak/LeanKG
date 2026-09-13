@@ -1,7 +1,9 @@
 package memory
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -357,5 +359,286 @@ func TestRecallZeroMatchFiltered(t *testing.T) {
 	// limit applies.
 	if got, _ = m.Recall("cook", "pasta", 1); len(got) != 1 {
 		t.Errorf("limit=1 returned %d", len(got))
+	}
+}
+
+// --- FR-ZCP-07 remainder: session verbs, scoping matrix, injection ---
+
+func TestParseScopeModes(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want Scope
+	}{
+		{"", ScopePerProject},
+		{"per-project", ScopePerProject},
+		{"global", ScopeGlobal},
+		{"per-project-tagged", ScopePerProjectTagged},
+	} {
+		got, err := ParseScope(tc.in)
+		if err != nil || got != tc.want {
+			t.Fatalf("ParseScope(%q) = %v, %v; want %v", tc.in, got, err, tc.want)
+		}
+	}
+	// An unknown scope must error, not silently retarget (the reference's
+	// fallthrough-to-default was the hazard).
+	if _, err := ParseScope("gobal"); err == nil {
+		t.Fatal("unknown scope must error")
+	}
+	// Matrix behavior, bank.rs:81-95 semantics with bank "proj".
+	if got := ScopeGlobal.WriteBank("proj"); got != SharedBank {
+		t.Errorf("global write bank = %q, want %q", got, SharedBank)
+	}
+	if got := ScopePerProject.WriteBank("proj"); got != "proj" {
+		t.Errorf("per-project write bank = %q", got)
+	}
+	if got := ScopePerProjectTagged.WriteBank("proj"); got != "proj" {
+		t.Errorf("tagged write bank = %q", got)
+	}
+	if got := ScopeGlobal.ReadBanks("proj"); len(got) != 1 || got[0] != SharedBank {
+		t.Errorf("global read banks = %v", got)
+	}
+	if got := ScopePerProject.ReadBanks("proj"); len(got) != 1 || got[0] != "proj" {
+		t.Errorf("per-project read banks = %v", got)
+	}
+	if got := ScopePerProjectTagged.ReadBanks("proj"); len(got) != 2 || got[0] != "proj" || got[1] != SharedBank {
+		t.Errorf("tagged read banks = %v, want [proj %s]", got, SharedBank)
+	}
+}
+
+func TestSessionRetainRoundTripAndCursor(t *testing.T) {
+	m := openTest(t)
+	turns := []string{"user asked about kubernetes deploys", "assistant explained rolling updates"}
+	res, err := m.SessionRetain(ScopePerProject, "", "", "sess-1", turns, 4)
+	if err != nil {
+		t.Fatalf("SessionRetain: %v", err)
+	}
+	if res.Written != 2 || res.Skipped != 0 || res.RetainedThroughUserTurn != 4 {
+		t.Fatalf("result = %+v", res)
+	}
+	// Default scope wrote the store's own project bank.
+	wantBank := BankName(m.scopeCwd(""))
+	if res.Bank != wantBank {
+		t.Errorf("bank = %q, want %q", res.Bank, wantBank)
+	}
+	// Row shape: mnemopi metadata, source, importance, id prefix.
+	data, _ := os.ReadFile(m.bankPath(res.Bank))
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("bank rows = %d, want 2", len(lines))
+	}
+	var row Entry
+	if err := json.Unmarshal([]byte(lines[0]), &row); err != nil {
+		t.Fatalf("row json: %v", err)
+	}
+	if row.Source != "coding-agent-transcript" || row.Importance != 0.65 {
+		t.Errorf("row source/importance = %q/%v", row.Source, row.Importance)
+	}
+	if row.Metadata["session_id"] != "sess-1" || row.Metadata["retained_through_user_turn"].(float64) != 4 {
+		t.Errorf("row metadata = %#v", row.Metadata)
+	}
+	if row.Metadata["message_count"].(float64) != 2 {
+		t.Errorf("message_count = %v", row.Metadata["message_count"])
+	}
+	if !strings.HasPrefix(row.ID, "sess-1-") {
+		t.Errorf("row id %q must derive from session", row.ID)
+	}
+	// Recall merges the same bank and ranks the match.
+	banks, got, err := m.SessionRecall(ScopePerProject, "", "", "kubernetes deploys", 8)
+	if err != nil {
+		t.Fatalf("SessionRecall: %v", err)
+	}
+	if len(banks) != 1 || banks[0] != wantBank {
+		t.Errorf("recall banks = %v", banks)
+	}
+	if len(got) != 1 || got[0].Content != turns[0] {
+		t.Errorf("recall got = %+v", got)
+	}
+	// Idempotency is session-keyed: cursor 4 (or lower) skips the batch.
+	res, err = m.SessionRetain(ScopePerProject, "", "", "sess-1", []string{"duplicate"}, 4)
+	if err != nil {
+		t.Fatalf("re-retain: %v", err)
+	}
+	if res.Written != 0 || res.Skipped != 1 || res.RetainedThroughUserTurn != 4 {
+		t.Fatalf("re-retain result = %+v", res)
+	}
+	// A different session in the SAME bank is not suppressed.
+	res, err = m.SessionRetain(ScopePerProject, "", "", "sess-2", []string{"other session kubernetes note"}, 1)
+	if err != nil {
+		t.Fatalf("sess-2 retain: %v", err)
+	}
+	if res.Written != 1 {
+		t.Fatalf("sess-2 result = %+v", res)
+	}
+	_, got, _ = m.SessionRecall(ScopePerProject, "", "", "kubernetes", 8)
+	if len(got) != 2 {
+		t.Errorf("merged recall = %d rows, want 2", len(got))
+	}
+	// Validation errors.
+	if _, err := m.SessionRetain(ScopePerProject, "", "", "", turns, 1); err == nil {
+		t.Error("missing session_id must error")
+	}
+	if _, err := m.SessionRetain(ScopePerProject, "", "", "s", nil, 1); err == nil {
+		t.Error("missing turns must error")
+	}
+	if _, err := m.SessionRetain(ScopePerProject, "", "", "s", []string{"ok", "  "}, 1); err == nil {
+		t.Error("empty turn must error (unrecallable row)")
+	}
+}
+
+func TestSessionScopesEndToEnd(t *testing.T) {
+	proj := openTest(t) // cwd falls back to proj's own dir
+	cwd := proj.scopeCwd("")
+	projBank := BankName(cwd)
+
+	// global: writes + reads the shared bank only.
+	res, err := proj.SessionRetain(ScopeGlobal, cwd, "", "s-g", []string{"global memory about postgres"}, 1)
+	if err != nil {
+		t.Fatalf("global retain: %v", err)
+	}
+	if res.Bank != SharedBank {
+		t.Fatalf("global write bank = %q, want %q", res.Bank, SharedBank)
+	}
+	// per-project write stays out of the shared bank.
+	if _, err := proj.SessionRetain(ScopePerProject, cwd, "", "s-p", []string{"project memory about redis"}, 1); err != nil {
+		t.Fatalf("project retain: %v", err)
+	}
+	if _, err := os.Stat(proj.bankPath(SharedBank)); err != nil {
+		t.Fatalf("shared bank must hold only the global write: %v", err)
+	}
+	sharedData, _ := os.ReadFile(proj.bankPath(SharedBank))
+	if strings.Contains(string(sharedData), "redis") {
+		t.Error("per-project write leaked into shared bank")
+	}
+	if _, err := os.Stat(proj.bankPath(projBank)); err != nil {
+		t.Fatalf("project bank missing: %v", err)
+	}
+
+	// per-project read: shared rows invisible.
+	_, got, _ := proj.SessionRecall(ScopePerProject, cwd, "", "postgres", 8)
+	if len(got) != 0 {
+		t.Errorf("per-project recall saw shared rows: %+v", got)
+	}
+	// global read: project rows invisible.
+	_, got, _ = proj.SessionRecall(ScopeGlobal, cwd, "", "redis", 8)
+	if len(got) != 0 {
+		t.Errorf("global recall saw project rows: %+v", got)
+	}
+	// tagged read: both, project rows first on rank ties.
+	banks, got, _ := proj.SessionRecall(ScopePerProjectTagged, cwd, "", "memory", 8)
+	if len(banks) != 2 || banks[0] != projBank || banks[1] != SharedBank {
+		t.Fatalf("tagged banks = %v", banks)
+	}
+	if len(got) != 2 {
+		t.Fatalf("tagged recall = %d rows, want 2", len(got))
+	}
+	if !strings.Contains(got[0].Content, "redis") || !strings.Contains(got[1].Content, "postgres") {
+		t.Errorf("tagged merge order broken: %q then %q", got[0].Content, got[1].Content)
+	}
+
+	// bank-name mode: explicit bank overrides scope routing entirely.
+	res, err = proj.SessionRetain(ScopeGlobal, cwd, "custom-bank", "s-b", []string{"custom bank memory"}, 1)
+	if err != nil {
+		t.Fatalf("custom retain: %v", err)
+	}
+	if res.Bank != "custom-bank" {
+		t.Errorf("explicit bank ignored: %+v", res)
+	}
+	banks, got, _ = proj.SessionRecall(ScopePerProject, cwd, "custom-bank", "custom", 8)
+	if len(banks) != 1 || banks[0] != "custom-bank" || len(got) != 1 {
+		t.Errorf("bank-mode recall = %v %+v", banks, got)
+	}
+}
+
+func TestFirstTurnMemoriesInjection(t *testing.T) {
+	m := openTest(t)
+	cwd := m.scopeCwd("")
+	if _, err := m.SessionRetain(ScopePerProject, cwd, "", "s1", []string{"kubernetes rolling update lesson"}, 1); err != nil {
+		t.Fatalf("retain: %v", err)
+	}
+	if _, err := m.SessionRetain(ScopePerProject, cwd, "", "s2", []string{"redis cache lesson"}, 2); err != nil {
+		t.Fatalf("retain 2: %v", err)
+	}
+	// Ranked case: query selects + ranks.
+	block, entries, err := m.FirstTurnMemories(ScopePerProject, cwd, "", "kubernetes lesson")
+	if err != nil {
+		t.Fatalf("FirstTurnMemories: %v", err)
+	}
+	if len(entries) != 2 || entries[0].Content != "kubernetes rolling update lesson" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if !strings.HasPrefix(block, "<memories>\n") || !strings.HasSuffix(block, "</memories>") {
+		t.Fatalf("block not framed: %q", block)
+	}
+	if !strings.Contains(block, "- kubernetes rolling update lesson") {
+		t.Fatalf("block = %q", block)
+	}
+	// Cold case: empty query returns the newest rows instead of nothing.
+	block, entries, _ = m.FirstTurnMemories(ScopePerProject, cwd, "", "")
+	if len(entries) != 2 {
+		t.Fatalf("cold entries = %d, want 2", len(entries))
+	}
+	if !strings.Contains(block, "redis cache lesson") || !strings.Contains(block, "kubernetes rolling update lesson") {
+		t.Fatalf("cold block = %q", block)
+	}
+	// Empty bank: no block at all ("" — callers skip it).
+	block, entries, _ = m.FirstTurnMemories(ScopeGlobal, cwd, "", "")
+	if block != "" || len(entries) != 0 {
+		t.Errorf("empty recall must render \"\", got %q %+v", block, entries)
+	}
+}
+
+func TestInjectBlockBudgets(t *testing.T) {
+	// limit applies.
+	es := make([]Entry, 12)
+	for i := range es {
+		es[i] = Entry{Content: fmt.Sprintf("note %d", i)}
+	}
+	if got := InjectBlock(es, 3, 0); strings.Count(got, "- note") != 3 {
+		t.Errorf("limit 3 rendered %d lines", strings.Count(got, "- note"))
+	}
+	// Token budget: entries that do not fit whole are dropped whole.
+	big := []Entry{
+		{Content: strings.Repeat("a", 40)},  // ~11 tokens
+		{Content: strings.Repeat("b", 200)}, // ~51 tokens
+	}
+	got := InjectBlock(big, 8, 12)
+	if strings.Contains(got, "bbb") {
+		t.Errorf("over-budget entry must be dropped whole: %q", got)
+	}
+	if !strings.Contains(got, strings.Repeat("a", 40)) {
+		t.Errorf("fitting entry missing: %q", got)
+	}
+	// Zero-budget entry (empty content) never renders a bare "- ".
+	if got := InjectBlock(nil, 8, 100); got != "" {
+		t.Errorf("no entries must render \"\", got %q", got)
+	}
+}
+
+func TestSessionHermeticNoHomeWrites(t *testing.T) {
+	// The session verbs derive banks from cwd; they must never consult
+	// $HOME. Pin that by pointing HOME at a canary dir and asserting it
+	// stays empty after retain+recall through every scope.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := t.TempDir()
+	m, err := Open(t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer m.Close()
+	for _, scope := range []Scope{ScopePerProject, ScopeGlobal, ScopePerProjectTagged} {
+		if _, err := m.SessionRetain(scope, cwd, "", "herm", []string{"hermetic kubernetes memory"}, 1); err != nil {
+			t.Fatalf("retain %v: %v", scope, err)
+		}
+		if _, _, err := m.SessionRecall(scope, cwd, "", "kubernetes", 8); err != nil {
+			t.Fatalf("recall %v: %v", scope, err)
+		}
+	}
+	if _, _, err := m.FirstTurnMemories(ScopePerProjectTagged, cwd, "", ""); err != nil {
+		t.Fatalf("first-turn: %v", err)
+	}
+	entries, _ := os.ReadDir(home)
+	if len(entries) != 0 {
+		t.Errorf("HOME canary dir polluted: %v", entries)
 	}
 }

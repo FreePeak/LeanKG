@@ -142,7 +142,7 @@ func (s *Server) registerTools() {
 			"properties": {
 				"action": {"type": "string", "enum": ["repo", "dir", "docs", "prd", "memory", "session", "ontology", "read"], "description": "what to import (prd = index a PRD markdown document; read = compressed file read: args.mode/lines/fresh)"},
 				"path": {"type": "string", "description": "repository/directory to index, or memory file path (e.g. MEMORY.md, topics/x.md)"},
-				"command": {"type": "string", "enum": ["create", "str_replace", "insert", "delete", "rename", "add", "replace", "remove", "offload", "lesson"], "description": "memory write command (action=memory) or session command (action=session: offload|lesson)"},
+				"command": {"type": "string", "enum": ["create", "str_replace", "insert", "delete", "rename", "add", "replace", "remove", "session_retain", "offload", "lesson"], "description": "memory write command (action=memory; session_retain carries transcript turns in args), or session command (action=session: offload|lesson)"},
 				"content": {"type": "string"},
 				"old": {"type": "string"},
 				"new": {"type": "string"},
@@ -150,10 +150,11 @@ func (s *Server) registerTools() {
 				"new_path": {"type": "string"},
 				"file": {"type": "string", "description": "memory file for add/replace/remove"},
 				"text": {"type": "string"},
-				"session_id": {"type": "string", "description": "session id (action=session)"},
+				"session_id": {"type": "string", "description": "session id (action=session; also action=memory command=session_retain)"},
 				"node_id": {"type": "string", "description": "offload node id (action=session)"},
 				"payload": {"type": "string", "description": "payload to offload (action=session)"},
 				"summary": {"type": "string", "description": "offload summary (action=session)"},
+				"args": {"type": "object", "description": "action params: turns[]/session_id/retained_through_user_turn/scope/cwd/bank (memory session_retain); content/old/new (memory curation); mode/lines/fresh (read)"},
 				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
 			}
 		}`),
@@ -169,9 +170,9 @@ func (s *Server) registerTools() {
 			"type": "object",
 			"properties": {
 				"query": {"type": "string", "description": "search text, identifier, or memory search text"},
-				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "prd", "incidents", "env_conflicts", "service_context", "pattern", "languages", "lsp", "compress"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path); org reads take args.service/args.pattern/args.env"},
+				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "prd", "incidents", "env_conflicts", "service_context", "portfolio", "pattern", "languages", "lsp", "compress"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path); org reads take args.service/args.pattern/args.env; action=portfolio is the cross-project fleet read (args.cmd=summary selects the T0 manifest, args.action pins each child's action)"},
 				"limit": {"type": "integer", "description": "max hits (default 10; impact depth comes from args.depth)"},
-				"args": {"type": "object", "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), main (memory), pattern/lang/limit (pattern), lang (lsp), mode/lines/fresh (read), cmd/tool/response (compress)"},
+				"args": {"type": "object", "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), main (memory); command session_recall|memories + scope/cwd/bank (memory session reads); pattern/lang/limit (pattern), lang (lsp), mode/lines/fresh (read), cmd/tool/response (compress), cmd/action (portfolio)"},
 				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
 			},
 			"required": []

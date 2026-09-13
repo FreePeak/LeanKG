@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,6 +58,12 @@ type QueryEmbedder interface {
 	// against the stored collection stamp on every L3 query (query-side
 	// degrade on drift — FR-ZCP-11 part 2 port).
 	Revision() string
+	// Stamp returns the FULL collection identity this embedder writes with:
+	// model, revision, dimensions, distance, provider, chunker version and the
+	// query/document prefix pair (issue #279). L3 compares it whole against the
+	// stored stamp, so a chunker or prefix drift degrades with the rebuild hint
+	// instead of mixing vector spaces.
+	Stamp() store.ModelStamp
 }
 
 // Engine is the core service over one project's store.
@@ -77,6 +84,11 @@ func (e *Engine) SetLangsRegistry(reg *langs.Registry) { e.langsReg = reg }
 // SetProjectDir records the project directory (enable
 // import{action:"session"} for offloading bulky tool payloads).
 func (e *Engine) SetProjectDir(dir string) { e.projectDir = dir }
+
+// SetEmbedder wires the query-time embedder after construction. The CLI's
+// one-shot verbs build an engine before they know whether a provider endpoint
+// is configured; serve passes it to New directly.
+func (e *Engine) SetEmbedder(em QueryEmbedder) { e.embedder = em }
 
 // ProjectDir reports the project directory the engine is bound to (the metric
 // ledger records it as each row's project_path).
@@ -109,6 +121,9 @@ func (a providerEmbedder) EmbedQuery(ctx context.Context, text string) ([]float3
 	}
 	return vecs[0], nil
 }
+
+// Stamp exposes the provider's full collection identity (issue #279).
+func (a providerEmbedder) Stamp() store.ModelStamp { return embed.StampOf(a.p) }
 
 func (a providerEmbedder) Describe() (string, string) {
 	return a.p.ModelID(), a.p.Provider()
@@ -197,30 +212,37 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		if req.Path == "" {
 			return nil, fmt.Errorf("import %s requires path", req.Action)
 		}
+		target, terr := e.resolveIndexTarget(req.Path)
+		if terr != nil {
+			return nil, terr
+		}
 		// Index through the language registry: activation is per target, so
 		// importing another codebase re-detects its languages first.
 		if e.langsReg != nil {
-			if _, aerr := e.langsReg.Activate(req.Path); aerr != nil {
+			if _, aerr := e.langsReg.Activate(target); aerr != nil {
 				return nil, fmt.Errorf("language detection: %w", aerr)
 			}
 		}
-		res, err := index.IndexDirWith(ctx, e.st, req.Path, e.langsReg)
+		res, err := index.IndexDirWith(ctx, e.st, target, e.langsReg)
 		if err != nil {
-			return nil, fmt.Errorf("index %s: %w", req.Path, err)
+			return nil, fmt.Errorf("index %s: %w", target, err)
 		}
 		if _, err := e.refreshInventory(); err != nil {
 			return nil, err
 		}
 		status, _ := e.Status(ctx)
-		return map[string]any{
-			"indexed": map[string]any{
-				"files":         res.Files,
-				"elements":      res.Elements,
-				"relationships": res.Relationships,
-				"skipped":       res.Skipped,
-			},
-			"status": status,
-		}, nil
+		indexed := map[string]any{
+			"files":         res.Files,
+			"elements":      res.Elements,
+			"relationships": res.Relationships,
+			"skipped":       res.Skipped,
+		}
+		// Name the reconcile's deletions: on an unchanged tree any nonzero count
+		// means the walk root did not cover the store's paths (see DeletedFiles).
+		if res.DeletedFiles > 0 {
+			indexed["deleted_files"] = res.DeletedFiles
+		}
+		return map[string]any{"indexed": indexed, "status": status}, nil
 	case "memory":
 		return e.memoryWrite(req)
 	case "session":
@@ -246,43 +268,12 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 	}
 }
 
-// refreshInventory recomputes and persists the inventory snapshot.
+// refreshInventory recomputes and persists the inventory snapshot. The logic
+// lives in the store package (store.RefreshInventory) so the CLI writer verbs
+// keep the same bookkeeping — an index that only the Engine refreshed left
+// readers reporting possibly_stale forever.
 func (e *Engine) refreshInventory() (store.Inventory, error) {
-	els, err := e.st.ElementCount()
-	if err != nil {
-		return store.Inventory{}, err
-	}
-	rels, err := e.st.RelationshipCount()
-	if err != nil {
-		return store.Inventory{}, err
-	}
-	files, err := e.st.FileCount()
-	if err != nil {
-		return store.Inventory{}, err
-	}
-	byType, err := e.st.ElementsByType()
-	if err != nil {
-		return store.Inventory{}, err
-	}
-	vectors := 0
-	if stamps, err := e.st.Stamps(); err == nil {
-		for _, st := range stamps {
-			if n, err := e.st.VectorCount(st.ModelID); err == nil {
-				vectors += n
-			}
-		}
-	}
-	inv := store.Inventory{
-		TotalElements:      els,
-		TotalFiles:         files,
-		TotalRelationships: rels,
-		TotalVectors:       vectors,
-		ElementsByType:     byType,
-	}
-	if err := e.st.SaveInventory(inv); err != nil {
-		return store.Inventory{}, err
-	}
-	return inv, nil
+	return store.RefreshInventory(e.st)
 }
 
 // Status is the status tool: health, inventory, freshness, backend, and the
@@ -323,6 +314,12 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 		"freshness":        e.freshness(els),
 		"tools":            []string{ToolImport, ToolQuery, ToolStatus},
 		"embeddings":       e.embeddingsState(),
+	}
+	// FR-HEA-03: mega-graph full-scan advisory banner. Below the
+	// LEANKG_MAX_CACHE_ELEMENTS cap (default 50k) the map is empty, so normal
+	// graphs keep byte-identical status payloads.
+	for k, v := range ontology.MegaGraphBanner(els) {
+		out[k] = v
 	}
 	if e.embedder != nil {
 		modelID, provider := e.embedder.Describe()
@@ -383,15 +380,35 @@ type QueryRequest struct {
 
 // Query handles the query tool. action "" routes down the ladder
 // L1 exact → L2 fuzzy → L3 semantic (provider wired). Explicit actions pin a
-// rung; "memory" routes to memory reads. Every answer carries
-// retrieval{rung,reason} + freshness.
+// rung. Index-backed answers (ladder rungs + graph verbs) carry
+// retrieval{rung,reason} + freshness; memory/ontology/portfolio reads answer
+// with their own payload shape (command/banks/count) and do not.
+// "memory" additionally dispatches on args.command (session_recall, memories).
 func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, error) {
 	switch req.Action {
 	case "memory":
-		// Query-tool memory reads carry the command in Query.
-		return e.MemoryRead("search", "", req.Query, req.Limit)
+		switch cmd := argStr(req.Args, "command"); cmd {
+		case "session_recall", "memories":
+			return e.SessionMemoryRead(cmd, req.Query, req.Limit, req.Args)
+		default:
+			// Query-tool memory reads carry the command in Query.
+			return e.MemoryRead("search", "", req.Query, req.Limit)
+		}
 	case "ontology":
-		switch argStr(req.Args, "cmd") {
+		cmd := argStr(req.Args, "cmd")
+		// FR-HEA-03: the four full-table cmds (trace/status/feature_flow/
+		// traceability) reach Elements() wholesale; on a mega-graph they are
+		// refused with the paginated escape hatch named, exactly as Rust's
+		// handler returned Ok(refusal). concept_search/matches stay unguarded
+		// (KV read / the paginated path itself).
+		if ontology.IsFullScanOntologyCmd(cmd) {
+			if refusal, err := ontology.RefuseFullScanIfMega(e.st, "ontology/"+cmd); err != nil {
+				return nil, err
+			} else if refusal != nil {
+				return refusal, nil
+			}
+		}
+		switch cmd {
 		case "", "matches":
 			return e.OntologyMatches()
 		case "trace":
@@ -456,10 +473,15 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		return map[string]any{"conflicts": conflicts, "service": argStr(req.Args, "service")}, nil
 	case "service_context":
 		return orgknowledge.New(e.st).ServiceContextJSON(argStr(req.Args, "service"), argStr(req.Args, "env"))
+	case "portfolio":
+		// Issue #376: the fleet read. The registry, the hot-set cap, the merge
+		// and the T0 manifest live in internal/portfolioreg; portfolio.go (this
+		// package) runs the REAL ladder inside each hot project.
+		return e.portfolioQuery(ctx, req)
 	case "", "search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain":
 	default:
 		return nil, errs.NewError(errs.UnknownAction,
-			fmt.Sprintf("query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology, prd, incidents, env_conflicts, service_context; empty = ladder router)", req.Action), "")
+			fmt.Sprintf("query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology, prd, incidents, env_conflicts, service_context, portfolio; empty = ladder router)", req.Action), "")
 	}
 	if req.Query == "" {
 		return nil, fmt.Errorf("query requires query text")
@@ -495,8 +517,9 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 		return resp, nil
 	}
-	if _, err := e.rungFuzzy(req.Query, limit, resp, false); err == nil && len(hitsOf(resp)) > 0 {
-		resp["retrieval"] = map[string]any{"rung": "L2", "reason": "FTS5 keyword match"}
+	// pin=true: the rung knows which keyword arm served the hits, so it owns
+	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
+	if _, err := e.rungFuzzy(req.Query, limit, resp, true); err == nil && len(hitsOf(resp)) > 0 {
 		return resp, nil
 	}
 	return e.rungSemantic(ctx, req.Query, limit, resp, true)
@@ -520,15 +543,30 @@ func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool) (
 	return resp, nil
 }
 
-// rungFuzzy is L2: FTS5 keyword match (sqlite's fuzzy rung; trigram is the
-// other engine's PG story).
+// rungFuzzy is L2, the keyword rung. sqlite ranks it with FTS5/bm25; the
+// PostgreSQL backend ranks its migration-012 tsvector with ts_rank and degrades
+// through pg_trgm similarity to ILIKE substring recall (issue #273). The type
+// assertion is the only engine branch: *Store does not implement
+// store.FTSBackend, so the SQLite call is unchanged in source and behavior.
 func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (map[string]any, error) {
 	matches, err := e.st.FindFuzzy(q, limit)
+	reason := "FTS5 keyword match"
+	if fts, ok := e.st.(store.FTSBackend); ok {
+		var arm string
+		matches, arm, err = fts.SearchElementsFTS(q, limit)
+		switch arm {
+		case store.ArmTrigram:
+			reason = "trigram keyword match (tsvector degraded)"
+		case store.ArmILIKE:
+			reason = "substring keyword match (tsvector+trigram degraded)"
+		default:
+			reason = "tsvector keyword match"
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
 	if pin {
-		reason := "FTS5 keyword match"
 		if len(matches) == 0 {
 			reason = "no keyword match"
 		}
@@ -566,12 +604,40 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil || stamp == nil {
 		return degrade(fmt.Sprintf("no vector collection for model %s; degraded from L3", modelID))
 	}
-	if stamp.Revision != e.embedder.Revision() {
-		return degrade(fmt.Sprintf("stamp mismatch: collection %q vs provider %q; degraded from L3", stamp.Revision, e.embedder.Revision()))
+	if want := e.embedder.Stamp(); *stamp != want {
+		// Whole-identity comparison (issue #279): a chunker or prefix change is
+		// the same class of drift as a model change — mixed vector spaces must
+		// never be served, and the hint names the fix.
+		return degrade(fmt.Sprintf("stamp mismatch: collection differs from the live provider (%s); degraded from L3; run `leankg-embed full` to rebuild",
+			stampDriftForLog(*stamp, want)))
 	}
 	qvec, err := e.embedder.EmbedQuery(ctx, q)
 	if err != nil {
 		return degrade(fmt.Sprintf("embedding provider failed (%v); degraded from L3", err))
+	}
+	// Issue #273: the PostgreSQL L3 rung fuses the cosine ranking with its
+	// tsvector and trigram rankings by reciprocal rank fusion, because the
+	// three scores live on unrelated scales (cosine, ts_rank, similarity) and
+	// only their ranks are comparable. sqlite keeps the plain cosine rung
+	// below; an empty fusion also falls through to it.
+	if fts, ok := e.st.(store.FTSBackend); ok {
+		fused, arms, ferr := fts.HybridSearch(modelID, q, qvec, limit)
+		if ferr != nil {
+			return degrade(fmt.Sprintf("hybrid fusion failed (%v); degraded from L3", ferr))
+		}
+		if len(fused) > 0 {
+			out := make([]map[string]any, 0, len(fused))
+			for _, h := range fused {
+				m := shapeElement(h.Element)
+				m["similarity"] = h.Similarity
+				m["score"] = h.Score // the fused RRF score, not a single-arm score
+				m["ranks"] = h.Ranks
+				out = append(out, m)
+			}
+			resp["hits"] = out
+			resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
+			return resp, nil
+		}
 	}
 	hits, err := e.st.SearchVectors(modelID, qvec, limit)
 	if err != nil {
@@ -610,6 +676,20 @@ func (e *Engine) memoryWrite(req ImportRequest) (map[string]any, error) {
 	}
 	var err error
 	switch req.Command {
+	case "session_retain":
+		scope, serr := memory.ParseScope(get("scope"))
+		if serr != nil {
+			return nil, serr
+		}
+		cwd := get("cwd")
+		if cwd == "" {
+			cwd = e.projectDir
+		}
+		res, serr := e.mem.SessionRetain(scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"))
+		if serr != nil {
+			return nil, serr
+		}
+		return map[string]any{"ok": true, "command": "session_retain", "bank": res.Bank, "written": res.Written, "skipped": res.Skipped, "retained_through_user_turn": res.RetainedThroughUserTurn}, nil
 	case "create":
 		err = e.mem.Create(get("path"), get("content"))
 	case "str_replace":
@@ -627,7 +707,7 @@ func (e *Engine) memoryWrite(req ImportRequest) (map[string]any, error) {
 	case "remove":
 		err = e.mem.Remove(get("file"), get("text"))
 	default:
-		return nil, fmt.Errorf("unknown memory command %q (valid: create, str_replace, insert, delete, rename, add, replace, remove)", req.Command)
+		return nil, fmt.Errorf("unknown memory command %q (valid: create, str_replace, insert, delete, rename, add, replace, remove, session_retain)", req.Command)
 	}
 	if err != nil {
 		return nil, err
@@ -1127,7 +1207,18 @@ func (e *Engine) compressRun(req QueryRequest) (map[string]any, error) {
 		}, nil
 	}
 	if cmd := argStr(req.Args, "cmd"); cmd != "" {
-		res, err := e.compressor.Reduce(compress.Request{Cmd: cmd, Output: req.Query})
+		// The captured output rides `query` (the shell-tool convention) but
+		// clients naturally reach for args.response, which the schema names for
+		// the tool form; accept either, and never answer a no-input call with a
+		// silent zero-count envelope.
+		output := req.Query
+		if output == "" {
+			output = argStr(req.Args, "response")
+		}
+		if output == "" {
+			return nil, fmt.Errorf("query compress with args.cmd requires the captured output in query (or args.response as a string)")
+		}
+		res, err := e.compressor.Reduce(compress.Request{Cmd: cmd, Output: output})
 		if err != nil {
 			return nil, err
 		}
@@ -1146,4 +1237,127 @@ func (e *Engine) compressRun(req QueryRequest) (map[string]any, error) {
 		return e.compressRead(ImportRequest{Path: req.Query, Args: req.Args})
 	}
 	return nil, fmt.Errorf("query compress requires one of: args.tool+args.response, args.cmd (+ output in query), or a file path in query")
+}
+
+// SessionMemoryRead serves the FR-ZCP-07 harness reads on the query tool:
+// session_recall (merged ranked recall across the scope's read banks) and
+// memories (the <memories> first-turn injection text). args: scope, cwd
+// (default the project dir), bank (bank-name mode override).
+func (e *Engine) SessionMemoryRead(command, query string, limit int, args map[string]any) (map[string]any, error) {
+	if e.mem == nil {
+		return nil, fmt.Errorf("memory not initialized")
+	}
+	scope, err := memory.ParseScope(argStr(args, "scope"))
+	if err != nil {
+		return nil, err
+	}
+	cwd := argStr(args, "cwd")
+	if cwd == "" {
+		cwd = e.projectDir
+	}
+	switch command {
+	case "session_recall":
+		banks, entries, err := e.mem.SessionRecall(scope, cwd, argStr(args, "bank"), query, limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"command": "session_recall", "banks": banks, "count": len(entries), "memories": memory.RankEntries(entries)}, nil
+	case "memories":
+		text, entries, err := e.mem.FirstTurnMemories(scope, cwd, argStr(args, "bank"), query)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"command": "memories", "count": len(entries), "text": text}, nil
+	default:
+		return nil, fmt.Errorf("unknown memory session command %q (valid: session_recall, memories)", command)
+	}
+}
+
+// argStrs reads a string-array arg (nil-safe). MCP turns arrive JSON-decoded
+// as []any of strings.
+func argStrs(m map[string]any, key string) []string {
+	if m == nil {
+		return nil
+	}
+	list, _ := m[key].([]any)
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		if sv, ok := v.(string); ok {
+			out = append(out, sv)
+		}
+	}
+	return out
+}
+
+// stampDriftForLog names the differing stamp components (revision plus any
+// #279 identity field) so a degraded L3 query tells you WHAT drifted — the
+// model, the chunker, or the prefix pair.
+func stampDriftForLog(stored, want store.ModelStamp) string {
+	var diffs []string
+	if stored.Revision != want.Revision {
+		diffs = append(diffs, fmt.Sprintf("revision %q", stored.Revision))
+	}
+	if stored.ModelID != want.ModelID {
+		diffs = append(diffs, fmt.Sprintf("model %q", stored.ModelID))
+	}
+	if stored.Dimensions != want.Dimensions {
+		diffs = append(diffs, fmt.Sprintf("dimensions %d", stored.Dimensions))
+	}
+	if stored.Distance != want.Distance {
+		diffs = append(diffs, fmt.Sprintf("distance %q", stored.Distance))
+	}
+	if stored.Provider != want.Provider {
+		diffs = append(diffs, fmt.Sprintf("provider %q", stored.Provider))
+	}
+	if stored.ChunkerVersion != want.ChunkerVersion {
+		diffs = append(diffs, fmt.Sprintf("chunker_version %d", stored.ChunkerVersion))
+	}
+	if stored.QueryPrefix != want.QueryPrefix || stored.DocumentPrefix != want.DocumentPrefix {
+		diffs = append(diffs, "prefixes")
+	}
+	if len(diffs) == 0 {
+		return "identity differs"
+	}
+	if want.Revision != "" {
+		diffs = append(diffs, fmt.Sprintf("live revision %s", want.Revision))
+	}
+	return strings.Join(diffs, ", ")
+}
+
+// resolveIndexTarget turns an import path into the directory to index.
+//
+// Two hazards, both from the #332 class the doctor tripwire guards:
+//
+//  1. A RELATIVE path used to resolve against the server process's working
+//     directory, so an MCP client sending "." indexed whatever the daemon
+//     happened to be started in. A client means "this project" — anchor at it.
+//  2. index.IndexDir reconciles the store against the walk, and the store's
+//     paths are relative to the walk root. Pointing that at a SUBTREE of the
+//     project therefore reads every file outside the subtree as deleted and
+//     sweeps it. Dogfooding this engine cost 4,525 elements that way before the
+//     guard existed, so a subtree root is refused instead of attempted.
+func (e *Engine) resolveIndexTarget(path string) (string, error) {
+	abs := path
+	if !filepath.IsAbs(abs) {
+		base := e.projectDir
+		if base == "" {
+			base = "."
+		}
+		abs = filepath.Join(base, abs)
+	}
+	abs = filepath.Clean(abs)
+	if r, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = r
+	}
+	if e.projectDir != "" {
+		root := e.projectDir
+		if r, err := filepath.EvalSymlinks(root); err == nil {
+			root = r
+		}
+		if abs != root && strings.HasPrefix(abs, root+string(filepath.Separator)) {
+			return "", fmt.Errorf("import %s: %q is a subdirectory of the project %q; indexing a subtree would delete every element outside it (the store reconciles against the walk root) — run `leankg index %s` as its own project, or index the project root",
+				"repo|dir", path, root, abs)
+		}
+	}
+	return abs, nil
 }

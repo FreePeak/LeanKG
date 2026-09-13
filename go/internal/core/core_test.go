@@ -131,7 +131,7 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 	if err := st.UpsertElements(els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(store.ModelStamp{ModelID: p.ModelID(), Revision: p.Revision(), Dimensions: p.Dimensions(), Distance: p.Distance(), Provider: p.Provider()}); err != nil {
+	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	qvec, err := p.Embed(context.Background(), embed.Query, []string{"alpha code"})
