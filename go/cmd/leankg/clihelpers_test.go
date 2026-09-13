@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/go/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -20,6 +21,17 @@ var cliBin string
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// Hermeticity: `leankg index` stamps the fleet registry (#376), whose
+	// default location is $HOME/.leankg/portfolio.db. A test suite must never
+	// write real user state — and a shared registry is cross-test coupled,
+	// because whichever project registers last poisons every later reader.
+	// Point it at a throwaway file; spawned CLI children inherit the env.
+	regDir, rerr := os.MkdirTemp("", "leankg-cli-registry")
+	if rerr != nil {
+		fmt.Fprintf(os.Stderr, "cli test registry dir: %v\n", rerr)
+		os.Exit(1)
+	}
+	os.Setenv(portfolioreg.DBPathEnv, filepath.Join(regDir, "portfolio.db"))
 	buildDir := ""
 	if !testing.Short() {
 		var err error
@@ -42,6 +54,7 @@ func TestMain(m *testing.M) {
 	if buildDir != "" {
 		_ = os.RemoveAll(buildDir)
 	}
+	_ = os.RemoveAll(regDir)
 	os.Exit(code)
 }
 

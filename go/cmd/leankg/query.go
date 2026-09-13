@@ -27,6 +27,7 @@ var cliQueryActions = map[string]bool{
 	"incidents":       true, // orgknowledge reads
 	"env_conflicts":   true,
 	"service_context": true,
+	"portfolio":       true, // #376 fleet read; --cmd summary picks the T0 manifest
 }
 
 // cmdQuery is the direct CLI query path (Rust `leankg query` parity): name

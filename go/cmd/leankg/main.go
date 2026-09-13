@@ -148,6 +148,14 @@ func main() {
 		cmdPush(os.Args[2:])
 	case "pull":
 		cmdPull(os.Args[2:])
+	case "update":
+		os.Exit(cmdUpdate(os.Args[2:]))
+	case "summarize":
+		cmdSummarize(os.Args[2:])
+	case "register-project":
+		cmdRegisterProject(os.Args[2:])
+	case "projects":
+		cmdProjects(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -188,6 +196,8 @@ Usage:
   leankg reflect <question> <outcome> [--nodes a,b] [--note TEXT]
   leankg refresh [PATH] [--project DIR] [--docs DIR] [--source URI] [--ref-name REF] [--auth TOKEN] [--full]
   leankg register <name> | unregister <name> | list | status-repo <name>
+  leankg register-project <dir> [--name N] [--project DIR] [--engine sqlite|postgres]
+  leankg projects [--json] [--forget DIR] [--project DIR] [--engine sqlite|postgres]
   leankg obsidian <init|push|pull|watch|status> [--project DIR] [--vault PATH] [--debounce-ms N]
   leankg export [--output FILE] [--format json|dot|mermaid] [--markdown] [--out FILE]
                 [--file F] [--depth N] [--path P] [--community C] [--max-nodes N]
@@ -214,11 +224,14 @@ Usage:
   leankg pull --remote URL --token TOKEN [--env production]
   leankg doctor [--project DIR] [--deep] [--format text|json]
   leankg status [--project DIR]
+  leankg update [--check] [--repo OWNER/NAME]
+  leankg summarize [--project DIR] [--force] [--dry-run] [--concurrency N]
   leankg version
 
 --action vocabulary: path|callers|callees|context|explain|pattern|lsp|compress|read|
 search|exact|fuzzy|semantic|element|impact|languages|prd|incidents|env_conflicts|
-service_context (queried through the same core wiring the MCP transports use).
+service_context|portfolio (portfolio = #376 fleet read via the registry;
+queried through the same core wiring the MCP transports use).
 Time filters (audit --since/--until): RFC3339 | epoch seconds | 90s|30m|24h|7d.
 
 Defaults: --http :9699 (MCP streamable HTTP) and --rest :8080 (REST) when

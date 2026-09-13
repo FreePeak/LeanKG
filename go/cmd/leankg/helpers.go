@@ -10,11 +10,14 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/go/internal/core"
+	"github.com/FreePeak/LeanKG/go/internal/embed"
 	"github.com/FreePeak/LeanKG/go/internal/index"
 	"github.com/FreePeak/LeanKG/go/internal/langs"
+	"github.com/FreePeak/LeanKG/go/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/go/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/go/internal/sources"
 	"github.com/FreePeak/LeanKG/go/internal/store"
+	"github.com/FreePeak/LeanKG/go/internal/summarize"
 )
 
 // httpMux wraps the MCP handler with a /health endpoint for supervision.
@@ -79,6 +82,17 @@ func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
 	}
 	engine := core.New(st, nil, nil)
 	engine.SetProjectDir(dir)
+	// Query-time embedding for one-shot verbs: attach only (embed.FromEnv never
+	// spawns), so a CLI run can never orphan a sidecar. Without this,
+	// `leankg query --action semantic` could never reach L3 even with a
+	// provider running — found dogfooding the real repo.
+	if os.Getenv("LEANKG_EMBED_PROVIDER") != "" || os.Getenv("LEANKG_EMBED_BASE_URL") != "" {
+		if p, perr := embed.FromEnv(); perr == nil {
+			engine.SetEmbedder(core.QueryEmbedderFromProvider(p))
+		} else {
+			fmt.Fprintf(os.Stderr, "embed provider: %v (L3 degraded)\n", perr)
+		}
+	}
 	reg := langs.DefaultRegistry()
 	if _, aerr := reg.Activate(dir); aerr == nil {
 		engine.SetLangsRegistry(reg)
@@ -106,6 +120,15 @@ func runIndex(project, target, source, refName, auth string) error {
 			return err
 		}
 		indexTarget = synced
+	}
+	// The store reconciles its file set against the walk: paths are relative to
+	// the walk root, so walking anything other than the project root reads every
+	// file outside it as deleted and sweeps it. `index . --source <path>` did
+	// exactly that (the source replaced the project's own elements), so the two
+	// roots must agree. Index the source as its own project instead.
+	if same, serr := sameIndexRoot(dir, indexTarget); serr == nil && !same {
+		return fmt.Errorf("refusing to index %s into the store of %s: the store's paths are relative to its project root, so reconciling against a different tree would delete every element outside it — run `leankg index %s` as its own project",
+			indexTarget, dir, indexTarget)
 	}
 	// N1 self-heal: refill a missing project.project_path anchor before
 	// deriving the schema, using THIS run's canonical identity (Rust
@@ -135,6 +158,34 @@ func runIndex(project, target, source, refName, auth string) error {
 	}
 	fmt.Printf("indexed %s: files=%d elements=%d relationships=%d skipped=%d\n",
 		indexTarget, res.Files, res.Elements, res.Relationships, res.Skipped)
+
+	// Issue #376: stamp the project in the fleet registry. Best-effort by
+	// contract — a fleet-bookkeeping failure must never turn a successful index
+	// into a failed command, and an unreachable registry (a Postgres fleet the
+	// CLI cannot see) is exactly that. dir, not indexTarget: dir is the store's
+	// project identity, which is what a portfolio child opens.
+	if rerr := portfolioreg.RegisterAfterIndex(context.Background(),
+		portfolioreg.Options{Engine: os.Getenv("LEANKG_DB_ENGINE"), PGURL: pgURLFor(dir)},
+		st, dir); rerr != nil {
+		fmt.Fprintf(os.Stderr, "index: portfolio registry: %v\n", rerr)
+	}
+
+	// Optional LLM-meaning pass (issue #297): OFF unless opted in —
+	// summarizing spends tokens and indexing must never start calling an
+	// LLM just because one is configured for the query tier.
+	if sr, ran, serr := summarize.RunAfterIndex(context.Background(), st, dir); ran {
+		if serr != nil {
+			fmt.Fprintf(os.Stderr, "index: post-index summarize skipped: %v\n", serr)
+		} else {
+			fmt.Println(sr.Summary())
+		}
+	}
+	// Freshness bookkeeping: status/doctor compare the watermark against this
+	// snapshot, and the CLI writer path bypasses the Engine — without it a
+	// freshly indexed project reads as possibly_stale forever.
+	if _, ierr := store.RefreshInventory(st); ierr != nil {
+		fmt.Fprintf(os.Stderr, "%s: inventory snapshot: %v\n", "index", ierr)
+	}
 	return nil
 }
 
@@ -169,4 +220,33 @@ func parseInterspersed(verb string, fs *flag.FlagSet, args []string, max int) []
 		}
 		rest = rest[1:]
 	}
+}
+
+// sameIndexRoot reports whether two index roots are the same directory after
+// absolutising and resolving symlinks (macOS /tmp vs /private/tmp is the classic
+// mismatch). An unreadable path yields an error, which callers treat as "do not
+// block the run" — the write itself will surface a real path problem.
+func sameIndexRoot(a, b string) (bool, error) {
+	norm := func(p string) (string, error) {
+		if p == "" {
+			p = "."
+		}
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return "", err
+		}
+		if r, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = r
+		}
+		return abs, nil
+	}
+	na, err := norm(a)
+	if err != nil {
+		return false, err
+	}
+	nb, err := norm(b)
+	if err != nil {
+		return false, err
+	}
+	return na == nb, nil
 }

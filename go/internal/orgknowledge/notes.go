@@ -106,10 +106,17 @@ func (k *Knowledge) AnnotationsForEnvironment(environment string, limit int) ([]
 	return k.st.KnowledgeEntriesByEnvironment(environment, limit)
 }
 
-// SearchAnnotations is the Rust db::search_knowledge lookup: substring over
-// title or content, optional exact knowledge type and environment, newest
-// first.
+// SearchAnnotations is the Rust db::search_knowledge lookup: keyword search
+// over title or content, optional exact knowledge type and environment.
+// SQLite answers it with the substring search (newest first, no relevance
+// signal); the PostgreSQL backend ranks its migration-012 tsvector with
+// ts_rank and degrades to that same substring search internally, so an error
+// from it is already its final answer (issue #273). *Store does not implement
+// store.FTSBackend, so the SQLite path is unchanged in source and behavior.
 func (k *Knowledge) SearchAnnotations(query, knowledgeType, environment string, limit int) ([]store.KnowledgeEntry, error) {
+	if fts, ok := k.st.(store.FTSBackend); ok {
+		return fts.SearchKnowledgeFTS(query, knowledgeType, environment, limit)
+	}
 	return k.st.KnowledgeEntriesSearch(query, knowledgeType, environment, limit)
 }
 

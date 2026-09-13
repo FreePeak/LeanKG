@@ -44,6 +44,15 @@ func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 		if err := st.UpsertElements(els); err != nil {
 			t.Fatal(err)
 		}
+		// Bookkeeping row too: a real indexed file always has one, and
+		// doctor's file-coverage check (#332 guard) FAILS a store whose
+		// elements have no code_files row — that divergence is the bug it
+		// exists to catch, so fixtures must not model it as healthy.
+		if err := st.UpsertFiles([]store.FileRecord{{
+			Path: "a.go", Size: 64, MtimeNS: time.Now().UnixNano(), ContentHash: "seed",
+		}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
