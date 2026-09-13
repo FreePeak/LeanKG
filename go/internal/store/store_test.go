@@ -250,3 +250,122 @@ func TestReadOnlyMode(t *testing.T) {
 		t.Fatal("migrate on RO must fail")
 	}
 }
+
+// TestStampIdentityColumns pins the full stamp round-trip (issue #279):
+// chunker version and both prefix halves are persisted, compared as part of
+// the identity, and a pre-migration row still reads back as the zero identity
+// (chunker 0 = unversioned) so writers treat it as a mismatch demanding a
+// rebuild rather than silently accepting it.
+func TestStampIdentityColumns(t *testing.T) {
+	s := openTestStore(t)
+	want := ModelStamp{
+		ModelID: "m-4B", Revision: "abc123", Dimensions: 4, Distance: "cosine",
+		Provider: "openai", ChunkerVersion: 3,
+		QueryPrefix: "query: ", DocumentPrefix: "doc: ",
+	}
+	if err := s.WriteStamp(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Stamp(want.ModelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || *got != want {
+		t.Fatalf("stamp round-trip = %+v, want %+v", got, want)
+	}
+	// The identity is compared as a whole: changing only the chunker version
+	// makes the stored stamp unequal (what the write guard keys on).
+	drifted := want
+	drifted.ChunkerVersion++
+	if *got == drifted {
+		t.Fatal("chunker version must participate in stamp equality")
+	}
+	drifted = want
+	drifted.QueryPrefix = ""
+	if *got == drifted {
+		t.Fatal("query prefix must participate in stamp equality")
+	}
+
+	// Legacy row shape (pre-migration columns only): defaults must make it
+	// readable and unambiguously not-current.
+	if _, err := s.db.Exec(`INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider)
+		VALUES ('legacy', 'old-rev', 8, 'cosine', 'local')`); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := s.Stamp("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy == nil || legacy.ChunkerVersion != 0 || legacy.QueryPrefix != "" || legacy.DocumentPrefix != "" {
+		t.Fatalf("legacy stamp = %+v, want zero chunker/prefixes", legacy)
+	}
+	stamps, err := s.Stamps()
+	if err != nil || len(stamps) != 2 {
+		t.Fatalf("Stamps() = %+v, %v; want 2 rows", stamps, err)
+	}
+}
+
+// TestReplaceFileVectorsIsOneAtomicUnit pins the per-file write contract:
+// vectors and their embedding_state rows land together, a repeated call
+// replaces (never duplicates) a qualified name, an empty set is refused, and
+// the whole unit advances the freshness watermark exactly once — the
+// observable difference between one transaction and the previous
+// vectors-then-state pair.
+func TestReplaceFileVectorsIsOneAtomicUnit(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.UpsertElements([]Element{
+		{QualifiedName: "a.go::f1", ElementType: "function", Name: "f1", FilePath: "a.go", Language: "go"},
+		{QualifiedName: "a.go::f2", ElementType: "function", Name: "f2", FilePath: "a.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows := []VectorRow{
+		{QualifiedName: "a.go::f1", Vec: []float32{1, 0, 0, 0}},
+		{QualifiedName: "a.go::f2", Vec: []float32{0, 1, 0, 0}},
+	}
+	states := map[string]string{"a.go::f1": "h1", "a.go::f2": "h2"}
+	before, _, err := s.Watermark()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFileVectors("m", rows, states); err != nil {
+		t.Fatal(err)
+	}
+	after, _, err := s.Watermark()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before+1 {
+		t.Fatalf("watermark %d -> %d; one write unit must bump once", before, after)
+	}
+	if n, err := s.VectorCount("m"); err != nil || n != 2 {
+		t.Fatalf("VectorCount = %d, %v; want 2", n, err)
+	}
+	if st, err := s.EmbeddingStateMap("m"); err != nil || st["a.go::f1"] != "h1" || st["a.go::f2"] != "h2" {
+		t.Fatalf("embedding state = %+v, %v", st, err)
+	}
+
+	// Re-run with a changed vector for one element: replaced in place, no
+	// duplicate row, state re-stamped.
+	if err := s.ReplaceFileVectors("m",
+		[]VectorRow{{QualifiedName: "a.go::f1", Vec: []float32{0, 0, 1, 0}}},
+		map[string]string{"a.go::f1": "h1b"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.VectorCount("m"); n != 2 {
+		t.Fatalf("vector count after replace = %d, want 2 (no duplicate)", n)
+	}
+	hits, err := s.SearchVectors("m", []float32{0, 0, 1, 0}, 1)
+	if err != nil || len(hits) != 1 || hits[0].Element.QualifiedName != "a.go::f1" {
+		t.Fatalf("replaced vector not searchable: %+v, %v", hits, err)
+	}
+	if st, _ := s.EmbeddingStateMap("m"); st["a.go::f1"] != "h1b" {
+		t.Fatalf("state after replace = %+v", st)
+	}
+
+	// An empty unit is a caller bug, not a no-op: it would carry no rows for
+	// the file it claims to replace.
+	if err := s.ReplaceFileVectors("m", nil, nil); err == nil {
+		t.Fatal("empty vector set must be refused")
+	}
+}

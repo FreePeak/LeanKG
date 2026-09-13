@@ -1,9 +1,12 @@
-// Versioned PostgreSQL migrations. Mirror of schema.go's sqlite layout minus
-// FTS5 (PostgreSQL L2 uses ILIKE + pg_trgm). Each migration runs inside one
-// transaction and is recorded in a schema_migrations table INSIDE the
-// project's schema. Optional statements (extensions, trgm indexes) run
-// outside the transaction with errors ignored — a failed statement inside a
-// PostgreSQL transaction aborts it, so "best-effort" must stay outside.
+// Versioned PostgreSQL migrations. Mirror of schema.go's sqlite layout, except
+// for the keyword rung: sqlite keeps an FTS5 shadow table over
+// (name, qualified_name, content) that ftsSync maintains by hand, PostgreSQL
+// carries tsvector generated columns (migration 012) that need no sync code at
+// all. Each migration runs inside one transaction and is recorded in a
+// schema_migrations table INSIDE the project's schema. Optional statements
+// (extensions, trgm indexes) run outside the transaction with errors ignored —
+// a failed statement inside a PostgreSQL transaction aborts it, so
+// "best-effort" must stay outside.
 package store
 
 import "fmt"
@@ -309,6 +312,134 @@ CREATE TABLE IF NOT EXISTS context_metrics (
 CREATE INDEX IF NOT EXISTS idx_context_metrics_tool_name ON context_metrics (tool_name);
 CREATE INDEX IF NOT EXISTS idx_context_metrics_timestamp ON context_metrics (timestamp);
 CREATE INDEX IF NOT EXISTS idx_context_metrics_project_path ON context_metrics (project_path);
+`},
+	{12, "fts-tsvector-l2", []string{
+		// Repair pg_trgm's namespace before the trigram arm is used by
+		// pg_fts.go. Migration 001 runs CREATE EXTENSION with search_path
+		// pinned to whichever project schema migrated first, so the extension
+		// lands inside that one project's schema and similarity() resolves
+		// nowhere else — every other project's trigram arm then dies with
+		// 42883 and silently degrades to ILIKE. `IF NOT EXISTS` cannot fix
+		// that (the extension exists), so move it to public, the one schema in
+		// every connection's search_path. Best-effort by design: a host
+		// without the contrib package keeps the ILIKE degrade, and an
+		// unowned extension just logs.
+		`DO $$
+BEGIN
+	PERFORM similarity('abc', 'abc');
+EXCEPTION WHEN undefined_function THEN
+	BEGIN
+		ALTER EXTENSION pg_trgm SET SCHEMA public;
+	EXCEPTION WHEN OTHERS THEN
+		RAISE NOTICE 'pg_trgm not repairable (%); trigram ranking stays ILIKE-only', SQLERRM;
+		RETURN;
+	END;
+	RAISE NOTICE 'pg_trgm moved to public: it was installed inside another project''s schema';
+END
+$$`,
+	}, `
+-- Issue #273: full-text search for the PostgreSQL keyword rung. One tsvector
+-- column per searched table, both STORED generated columns: PostgreSQL
+-- recomputes the lexemes inside the row, so every existing INSERT/UPSERT keeps
+-- its column list unchanged and there is no shadow table to sync (the sqlite
+-- design's ftsSync is exactly what this replaces).
+--
+-- The lexing config is 'simple' and it MUST be passed explicitly:
+-- to_tsvector(text) resolves through default_text_search_config, which is
+-- STABLE and per-database mutable — both disqualifying for a generated column
+-- and for cross-version determinism — while to_tsvector(regconfig, text) is
+-- IMMUTABLE. 'simple' lowercases and splits on word boundaries only: no
+-- stemming and no stopword lists, so identical text lexes identically on every
+-- PostgreSQL version. The documented cost is morphological: "running" never
+-- matches "run". The trigram arm (migration 002's pg_trgm indexes) covers what
+-- the tokenizer splits away — a dotted path like internal/store.Store.Query
+-- lexes as ONE word, so it is found by ILIKE/similarity, not by tsquery.
+--
+-- Weights: name/title 'A', qualified_name/content 'B', so ts_rank puts a hit
+-- in the short field above a hit buried in the body of the long one.
+--
+-- ORDERING INVARIANT: this step alters code_elements (migration 001) and
+-- knowledge_entries (migration 010); it must never be reordered ahead of them.
+-- Both ALTERs rewrite their table once (a stored generated column is computed
+-- for existing rows at add time) — the one-time cost of getting the index.
+ALTER TABLE code_elements ADD COLUMN IF NOT EXISTS fts tsvector
+	GENERATED ALWAYS AS (
+		setweight(to_tsvector('simple', name), 'A') ||
+		setweight(to_tsvector('simple', qualified_name), 'B') ||
+		setweight(to_tsvector('simple', coalesce(content, '')), 'B')
+	) STORED;
+CREATE INDEX IF NOT EXISTS idx_code_elements_fts ON code_elements USING gin (fts);
+
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS fts tsvector
+	GENERATED ALWAYS AS (
+		setweight(to_tsvector('simple', title), 'A') ||
+		setweight(to_tsvector('simple', content), 'B')
+	) STORED;
+CREATE INDEX IF NOT EXISTS idx_knowledge_entries_fts ON knowledge_entries USING gin (fts);
+`},
+	{13, "portfolio-registry", nil, `
+-- Issue #376: the server-side project registry, PostgreSQL mirror of sqlite
+-- migration 013 (schema.go). One row per registered project, keyed on the
+-- canonical absolute project DIRECTORY — the same identity pgSchemaForDir
+-- hashes into this schema's own name, so the registry rows and the schemas
+-- they point at can never disagree about identity.
+--
+-- This is deliberately NOT internal/registry's ~/.leankg/registry.json: that
+-- file stays the CLI's local, per-user list of NAMED repos (leankg register
+-- <name>). Both exist: the JSON file answers "what is blogs?", this table
+-- answers "what does this server serve?". See portfolioreg.Register for how
+-- a project gets into this table from either surface.
+--
+-- last_indexed is NULL until the first index stamps the row (the
+-- registry.json Option shape). file_count exists so the projects verb can
+-- report files as well as elements WITHOUT opening a per-project store.
+CREATE TABLE IF NOT EXISTS projects (
+	dir            TEXT PRIMARY KEY,
+	name           TEXT NOT NULL,
+	registered_at  TEXT NOT NULL,
+	last_indexed   TEXT,
+	element_count  INTEGER NOT NULL DEFAULT 0,
+	file_count     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_projects_name ON projects (name);
+`},
+	{14, "file-summaries", nil, `
+-- Issue #297 (graft's deterministic LLM-meaning pipeline): the pass-1
+-- checkpoint, mirror of the sqlite layout in schema.go migration 014 — one
+-- row per source file holding the prose summary an LLM wrote for it, the
+-- SHA-256 of the exact bytes that produced it, and the model that produced
+-- it. The hash is the resume key (an unchanged file costs zero LLM calls on
+-- the next run) and the model is part of the match for the same reason
+-- emb_stamp exists: switching provider/model changes the meaning tier's
+-- vocabulary, so the old prose stops matching and the file is re-summarized.
+CREATE TABLE IF NOT EXISTS file_summaries (
+	path         TEXT PRIMARY KEY,
+	content_hash TEXT NOT NULL,
+	model        TEXT NOT NULL,
+	summary      TEXT NOT NULL,
+	updated_at   TEXT NOT NULL
+);
+`},
+	{15, "embed-stamp-identity", nil, `
+-- Issue #279 (FR-ZCP-11 remainder): the collection stamp records the whole
+-- vector-production identity, not just the model. Mirror of sqlite migration
+-- 015 (schema.go); see that block for each component and why the defaults are
+-- the zero values (pre-migration rows then mismatch every live provider, which
+-- is the rebuild directive the guard is meant to emit).
+--
+-- CREATE-empty-then-ALTER like 006-009: a synthetic legacy ledger can claim
+-- migration 003 without having created emb_stamp, and ALTER on a missing table
+-- is the one error CREATE TABLE IF NOT EXISTS absorbs.
+CREATE TABLE IF NOT EXISTS emb_stamp (
+	model_id   TEXT PRIMARY KEY,
+	revision   TEXT NOT NULL,
+	dimensions INTEGER NOT NULL,
+	distance   TEXT NOT NULL,
+	provider   TEXT NOT NULL
+);
+ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS chunker_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS query_prefix TEXT NOT NULL DEFAULT '';
+ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS document_prefix TEXT NOT NULL DEFAULT '';
 `},
 }
 

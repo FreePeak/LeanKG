@@ -52,9 +52,10 @@ func (s *Store) UpsertElements(els []Element) error {
 	defer func() { _ = tx.Rollback() }()
 	for _, e := range els {
 		meta := "{}"
+		e = e.sanitize()
 		if e.Metadata != nil {
-			if b, err := json.Marshal(e.Metadata); err == nil {
-				meta = string(b)
+			if bb, err := json.Marshal(e.Metadata); err == nil {
+				meta = ValidText(string(bb))
 			}
 		}
 		if _, err := tx.Exec(`INSERT INTO code_elements
@@ -95,10 +96,7 @@ func ftsContent(e Element) string {
 	// Bound the indexed text: content is the source snippet already; cap it so
 	// the FTS index does not balloon on generated files.
 	const maxContent = 8000
-	c := e.Content
-	if len(c) > maxContent {
-		c = c[:maxContent]
-	}
+	c := ClipUTF8(e.Content, maxContent)
 	return e.Name + " " + e.QualifiedName + " " + c
 }
 

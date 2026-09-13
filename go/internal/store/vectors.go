@@ -10,14 +10,24 @@ import (
 )
 
 // ModelStamp pins a vector collection to one embedding model. Ported from
-// FR-ZCP-11: dimension-only checks are insufficient; the full stamp must
-// match or the query side degrades to L2 and writers hard-fail.
+// FR-ZCP-11 (issue #279): dimension-only checks are insufficient; the full
+// stamp must match or the query side degrades to L2 and writers hard-fail.
+//
+// ChunkerVersion couples the collection to the text-blob construction
+// pipeline: a blob-logic change invalidates every content hash, so it must
+// invalidate the collection the same way a revision change does. QueryPrefix
+// and DocumentPrefix record the asymmetric-model prefixes the vectors were
+// built with — a prefix change re-embeds into a different vector space, so a
+// query embedded with a different prefix must never match this collection.
 type ModelStamp struct {
-	ModelID    string `json:"model_id"`
-	Revision   string `json:"revision"`
-	Dimensions int    `json:"dimensions"`
-	Distance   string `json:"distance"` // cosine
-	Provider   string `json:"provider"`
+	ModelID        string `json:"model_id"`
+	Revision       string `json:"revision"`
+	Dimensions     int    `json:"dimensions"`
+	Distance       string `json:"distance"` // cosine
+	Provider       string `json:"provider"`
+	ChunkerVersion int    `json:"chunker_version"`
+	QueryPrefix    string `json:"query_prefix"`
+	DocumentPrefix string `json:"document_prefix"`
 }
 
 // VectorRow is one vector to persist: qualified name plus float32 components.
@@ -27,22 +37,32 @@ type VectorRow struct {
 }
 
 // WriteStamp upserts the stamp for a model (writer side, after validation).
+// The full identity — model, revision, dims, distance, provider, chunker
+// version and the query/document prefix pair — is what a reader compares, so
+// every component is persisted.
 func (s *Store) WriteStamp(st ModelStamp) error {
-	if _, err := s.db.Exec(`INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider)
-		VALUES (?,?,?,?,?)
+	if _, err := s.db.Exec(`INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider, chunker_version, query_prefix, document_prefix)
+		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(model_id) DO UPDATE SET revision=excluded.revision,
-			dimensions=excluded.dimensions, distance=excluded.distance, provider=excluded.provider`,
-		st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider); err != nil {
+			dimensions=excluded.dimensions, distance=excluded.distance, provider=excluded.provider,
+			chunker_version=excluded.chunker_version, query_prefix=excluded.query_prefix,
+			document_prefix=excluded.document_prefix`,
+		st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider,
+		st.ChunkerVersion, st.QueryPrefix, st.DocumentPrefix); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
 	return s.BumpWatermark()
 }
 
 // Stamp returns the persisted stamp for a model; nil when none exists.
+// chunker_version/prefix columns are read through COALESCE so a database
+// migrated before they existed still yields a usable stamp (chunker 0 =
+// "unversioned", which every writer treats as a mismatch demanding a rebuild).
 func (s *Store) Stamp(modelID string) (*ModelStamp, error) {
 	var st ModelStamp
-	err := s.db.QueryRow(`SELECT model_id, revision, dimensions, distance, provider FROM emb_stamp WHERE model_id = ?`, modelID).
-		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider)
+	err := s.db.QueryRow(stampSelect+` WHERE model_id = ?`, modelID).
+		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
+			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -91,9 +111,15 @@ func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) err
 	return s.BumpWatermark()
 }
 
+// stampSelect is the shared read shape of emb_stamp (see Store.Stamp for the
+// COALESCE rationale).
+const stampSelect = `SELECT model_id, revision, dimensions, distance, provider,
+	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, '')
+	FROM emb_stamp`
+
 // Stamps returns all persisted model stamps.
 func (s *Store) Stamps() ([]ModelStamp, error) {
-	rows, err := s.db.Query(`SELECT model_id, revision, dimensions, distance, provider FROM emb_stamp`)
+	rows, err := s.db.Query(stampSelect)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +127,8 @@ func (s *Store) Stamps() ([]ModelStamp, error) {
 	var out []ModelStamp
 	for rows.Next() {
 		var st ModelStamp
-		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider); err != nil {
+		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
+			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix); err != nil {
 			return nil, err
 		}
 		out = append(out, st)
@@ -109,9 +136,56 @@ func (s *Store) Stamps() ([]ModelStamp, error) {
 	return out, rows.Err()
 }
 
+// ReplaceFileVectors atomically replaces one file's embedding rows for a
+// model: the vectors of the qualified names in `rows` are deleted and
+// re-inserted together with their embedding_state rows, in ONE transaction.
+// That is the per-file atomic unit of issue #279 — the Rust reference commits
+// vectors + state per write call (its `import_relations` is a single
+// transaction per call, build.rs:1686), and the Go engine narrows that unit to
+// one file so a crash mid-embed can never leave half a file's vectors, nor a
+// vector without the state row that proves which content produced it.
+// (SQLite gives this durability through the WAL commit rather than
+// tmp+fsync+rename because the rows live in the database file, which is the
+// same atomic-replace boundary the reference relies on.)
+//
+// Callers pass a file's complete vector set; an empty set is a caller bug.
+func (s *Store) ReplaceFileVectors(modelID string, rows []VectorRow, states map[string]string) error {
+	if len(rows) == 0 {
+		return fmt.Errorf("store: ReplaceFileVectors %s: no vectors", modelID)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, r := range rows {
+		if _, err := tx.Exec(`DELETE FROM embedding_vectors WHERE model_id = ? AND qualified_name = ?`, modelID, r.QualifiedName); err != nil {
+			return fmt.Errorf("store: replace vector %s: %w", r.QualifiedName, err)
+		}
+		if _, err := tx.Exec(`INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)`,
+			modelID, r.QualifiedName, encodeVec(r.Vec)); err != nil {
+			return fmt.Errorf("store: replace vector %s: %w", r.QualifiedName, err)
+		}
+	}
+	for qn, h := range states {
+		if _, err := tx.Exec(`INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
+			VALUES (?,?,?,'embedded',strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(model_id, qualified_name) DO UPDATE SET content_hash=excluded.content_hash,
+				state='embedded', embedded_at=excluded.embedded_at`, modelID, qn, h); err != nil {
+			return fmt.Errorf("store: replace embedding state %s: %w", qn, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.BumpWatermark()
+}
+
 // UpsertVectors writes a batch of vectors for a model in ONE transaction:
 // a crash mid-run leaves the previous state consistent and reruns resume
-// (issue #368 AC: batch upsert semantics).
+// (issue #368 AC: batch upsert semantics). The embed pipeline's live path is
+// the per-file ReplaceFileVectors; UpsertVectors stays for batch-style
+// callers (NDJSON import) and direct vector injection.
 func (s *Store) UpsertVectors(modelID string, rows []VectorRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -385,4 +459,48 @@ func (s *Store) LastEmbedRun(modelID string) (*EmbedRun, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// RefreshInventory recomputes the inventory snapshot from the live counts and
+// persists it with the current watermark. It is a free function over Backend
+// (not a method on either store) because every writer path needs the same
+// bookkeeping and the counts are already interface methods: an engine that
+// indexes, summarizes, or applies a federation pull must not leave readers
+// reporting possibly_stale forever.
+func RefreshInventory(st Backend) (Inventory, error) {
+	els, err := st.ElementCount()
+	if err != nil {
+		return Inventory{}, err
+	}
+	rels, err := st.RelationshipCount()
+	if err != nil {
+		return Inventory{}, err
+	}
+	files, err := st.FileCount()
+	if err != nil {
+		return Inventory{}, err
+	}
+	byType, err := st.ElementsByType()
+	if err != nil {
+		return Inventory{}, err
+	}
+	vectors := 0
+	if stamps, err := st.Stamps(); err == nil {
+		for _, ms := range stamps {
+			if n, err := st.VectorCount(ms.ModelID); err == nil {
+				vectors += n
+			}
+		}
+	}
+	inv := Inventory{
+		TotalElements:      els,
+		TotalFiles:         files,
+		TotalRelationships: rels,
+		TotalVectors:       vectors,
+		ElementsByType:     byType,
+	}
+	if err := st.SaveInventory(inv); err != nil {
+		return Inventory{}, err
+	}
+	return inv, nil
 }

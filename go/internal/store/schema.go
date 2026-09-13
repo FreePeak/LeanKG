@@ -339,4 +339,84 @@ CREATE INDEX IF NOT EXISTS idx_context_metrics_tool_name ON context_metrics (too
 CREATE INDEX IF NOT EXISTS idx_context_metrics_timestamp ON context_metrics (timestamp);
 CREATE INDEX IF NOT EXISTS idx_context_metrics_project_path ON context_metrics (project_path);
 `})
+	migrations = append(migrations, migration{13, "portfolio-registry", `
+-- Issue #376: the server-side project registry. One row per registered
+-- project, keyed on the canonical absolute project DIRECTORY — the same
+-- identity the PG backend hashes into its schema-per-project name
+-- (store_pg.go pgSchemaForDir), which is what makes a fleet query addressable
+-- across users sharing one database.
+--
+-- This is deliberately NOT internal/registry's ~/.leankg/registry.json: that
+-- file stays the CLI's local, per-user list of NAMED repos (leankg register
+-- <name>). Both exist: the JSON file answers "what is blogs?", this table
+-- answers "what does this server serve?". See portfolioreg.Register for how a
+-- project gets into this table from either surface.
+--
+-- last_indexed is NULL until the first index stamps the row (the
+-- registry.json Option shape). file_count exists so the projects verb can
+-- report files as well as elements WITHOUT opening a per-project store.
+CREATE TABLE IF NOT EXISTS projects (
+	dir            TEXT PRIMARY KEY,
+	name           TEXT NOT NULL,
+	registered_at  TEXT NOT NULL,
+	last_indexed   TEXT,
+	element_count  INTEGER NOT NULL DEFAULT 0,
+	file_count     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_projects_name ON projects (name COLLATE NOCASE);
+`})
+	migrations = append(migrations, migration{14, "file-summaries", `
+-- Issue #297 (graft's deterministic LLM-meaning pipeline): the pass-1
+-- checkpoint. One row per source file holding the prose summary the LLM wrote
+-- for it, plus the SHA-256 of the exact bytes that produced it and the model
+-- that produced it.
+--
+-- The hash is the resume key: a summarize run skips a file whose stored
+-- hash matches its current bytes, so an interrupted or repeated pass costs
+-- nothing for completed files and never loses more than the row in flight.
+-- Model is part of the check for the same reason internal/embed stamps
+-- collections: switching provider/model changes the meaning tier's vocabulary,
+-- so the old prose stops matching and the file is re-summarized.
+CREATE TABLE IF NOT EXISTS file_summaries (
+	path         TEXT PRIMARY KEY,
+	content_hash TEXT NOT NULL,
+	model        TEXT NOT NULL,
+	summary      TEXT NOT NULL,
+	updated_at   TEXT NOT NULL
+);
+`})
+	migrations = append(migrations, migration{15, "embed-stamp-identity", `
+-- Issue #279 (FR-ZCP-11 remainder): the collection stamp records the whole
+-- vector-production identity, not just the model.
+--
+--   chunker_version   which build of the embed text pipeline produced the
+--                     vectors (internal/embed.ChunkerVersion). Bumping it is
+--                     treated exactly like a revision bump: rebuild, never mix.
+--   query_prefix / document_prefix: the asymmetric-model text prefixes
+--                     (internal/embed catalog) the vectors were embedded with.
+--                     One-sided or changed prefixing re-embeds into a different
+--                     vector space, so the stamp has to catch it too.
+--
+-- Defaults are the ZERO values, deliberately: rows written before this step
+-- carried no such identity, so they read back as chunker 0 / prefix-free and
+-- mismatch against any live provider — the rebuild directive the guard is
+-- supposed to emit, not a silent accept.
+--
+-- 12 is the PostgreSQL-only FTS step, 13 the portfolio registry, 14
+-- file-summaries; this step is 15 so the sqlite and PostgreSQL ledgers stay
+-- comparable. The CREATE-empty-then-ALTER shape (instead of bare ALTERs)
+-- matches migration 006-009 precedent: a synthetic pre-migration ledger may
+-- have skipped the table entirely (see the upgrade tests), and ALTER on a
+-- missing table is the one error CREATE TABLE IF NOT EXISTS absorbs.
+CREATE TABLE IF NOT EXISTS emb_stamp (
+	model_id   TEXT PRIMARY KEY,
+	revision   TEXT NOT NULL,
+	dimensions INTEGER NOT NULL,
+	distance   TEXT NOT NULL,
+	provider   TEXT NOT NULL
+);
+ALTER TABLE emb_stamp ADD COLUMN chunker_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE emb_stamp ADD COLUMN query_prefix TEXT NOT NULL DEFAULT '';
+ALTER TABLE emb_stamp ADD COLUMN document_prefix TEXT NOT NULL DEFAULT '';
+`})
 }

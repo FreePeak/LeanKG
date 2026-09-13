@@ -57,6 +57,12 @@ var ToolBudgets = []ToolBudget{
 	{MaxTokens: 2000, Actions: []string{"languages"}},
 	{MaxTokens: 4000, Actions: []string{"explain"}},
 	{MaxTokens: 4000, Actions: []string{"lsp"}},
+	// A portfolio answer is the union of up to MaxRepos children's own results
+	// (issue #376), so its natural size is N times a single-project response.
+	// Under the 1000-token default a two-project fan-out was truncated to its
+	// summary with zero hits carried — the fleet read is useless without the
+	// children, so it gets the widest cap on the table.
+	{MaxTokens: 12000, Actions: []string{"portfolio"}},
 	// Envelope tool names are unbounded: they carry the caller's chosen action,
 	// and the action name is what the table caps. Leaving them unlisted would
 	// silently hold every router call to the 1000-token default and re-truncate

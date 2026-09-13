@@ -56,6 +56,10 @@ type Backend interface {
 	EmbeddingStateMap(modelID string) (map[string]string, error)
 	SetEmbeddingStates(modelID string, states map[string]string) error
 	UpsertVectors(modelID string, rows []VectorRow) error
+	// ReplaceFileVectors atomically replaces one file's embedding rows for a
+	// model: delete + insert + state in one transaction (issue #279 per-file
+	// atomic replace). rows must carry the file's complete vector set.
+	ReplaceFileVectors(modelID string, rows []VectorRow, states map[string]string) error
 	ClearVectors(modelID string) error
 	VectorCount(modelID string) (int, error)
 	// VectorCoverage reports (covered, orphans): vector rows whose QN still
@@ -162,6 +166,22 @@ type Backend interface {
 	UsageAggregates(sinceCutoff int64) (UsageAggregates, error)
 	CleanupMetrics(retentionDays int) (int64, error)
 	ResetMetrics() (int64, error)
+	// Portfolio registry (issue #376, migration 013): the server-side list of
+	// registered projects, keyed on the canonical project dir. Separate from
+	// internal/registry's JSON file — that one is the CLI's per-user list of
+	// named repos. ProjectUpsert keeps the first registered_at;
+	// ProjectForget is the inverse and reports whether a row went.
+	ProjectUpsert(p ProjectRecord) error
+	ProjectGet(dir string) (ProjectRecord, bool, error)
+	ProjectList() ([]ProjectRecord, error)
+	ProjectForget(dir string) (bool, error)
+	// File summaries (issue #297, migration 014): the pass-1 checkpoint of the
+	// LLM-meaning pipeline. SummaryUpsert replaces the row for a path (the row
+	// IS the resume state); SummaryGet reports it; SummariesAll lists the tier
+	// ordered by path (pass 2 reads it to batch synthesis).
+	SummaryUpsert(sum FileSummary) error
+	SummaryGet(path string) (FileSummary, bool, error)
+	SummariesAll() ([]FileSummary, error)
 }
 
 // AuditEntry is one hash-chained audit record. Hash = sha256(prev_hash |

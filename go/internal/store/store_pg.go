@@ -121,8 +121,9 @@ func pgMarshalMeta(m map[string]any) string {
 }
 
 // UpsertElements writes a batch of elements in one transaction. Qualified
-// names already present are replaced. (No FTS sync needed: PostgreSQL L2
-// fuzzy search uses ILIKE + pg_trgm, not a shadow table.)
+// names already present are replaced. (No FTS sync needed: the keyword index
+// is the STORED generated tsvector column of migration 012, which PostgreSQL
+// recomputes per row; ILIKE + pg_trgm is its fallback, not a shadow table.)
 func (s *PGStore) UpsertElements(els []Element) error {
 	if len(els) == 0 {
 		return nil
@@ -133,6 +134,7 @@ func (s *PGStore) UpsertElements(els []Element) error {
 	}
 	defer func() { _ = tx.Rollback(pgCtx) }()
 	for _, e := range els {
+		e = e.sanitize() // same write-boundary guard as sqlite: engines store identical bytes
 		if _, err := tx.Exec(pgCtx, `INSERT INTO code_elements
 			(qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, content, metadata)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
@@ -141,7 +143,7 @@ func (s *PGStore) UpsertElements(els []Element) error {
 				line_start=excluded.line_start, line_end=excluded.line_end, language=excluded.language,
 				parent_qualified=excluded.parent_qualified, content=excluded.content, metadata=excluded.metadata`,
 			e.QualifiedName, e.ElementType, e.Name, e.FilePath, e.LineStart, e.LineEnd, e.Language,
-			nullIfEmpty(e.ParentQualified), e.Content, pgMarshalMeta(e.Metadata)); err != nil {
+			nullIfEmpty(e.ParentQualified), e.Content, ValidText(pgMarshalMeta(e.Metadata))); err != nil {
 			return fmt.Errorf("store: upsert element %s: %w", e.QualifiedName, err)
 		}
 	}
@@ -282,12 +284,15 @@ func (s *PGStore) FindExact(name string) ([]Element, error) {
 	return pgScanElements(rows)
 }
 
-// FindFuzzy implements the L2 rung.
-// Divergence from sqlite (documented): FTS5 provides bm25 ranking, which
-// PostgreSQL has no equivalent for over a plain LIKE search. Hits rank by
-// ascending qualified-name length and Score = -length(qualified_name) so
-// shorter (more specific) names come first; the ordering parity is kept, but
-// absolute Score values are not comparable across engines.
+// FindFuzzy implements the L2 rung's degraded arm: literal-substring recall
+// over name/qualified_name with no ranking signal at all.
+// Divergence from sqlite (documented): FTS5 provides bm25 ranking, which a
+// plain LIKE search has no equivalent for. Hits rank by ascending
+// qualified-name length and Score = -length(qualified_name) so shorter (more
+// specific) names come first; the ordering parity is kept, but absolute Score
+// values are not comparable across engines. The PG keyword rung prefers
+// tsvector ranking, then pg_trgm similarity, and only lands here (see
+// SearchElementsFTS in pg_fts.go).
 func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
@@ -303,6 +308,11 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	return scanFuzzyMatches(rows)
+}
+
+// scanFuzzyMatches reads the element columns plus a trailing score column.
+func scanFuzzyMatches(rows pgx.Rows) ([]FuzzyMatch, error) {
 	defer rows.Close()
 	var out []FuzzyMatch
 	for rows.Next() {
@@ -479,16 +489,21 @@ func (s *PGStore) vecTable(modelID string) string {
 }
 
 // WriteStamp upserts the stamp for a model (writer side, after validation)
-// and ensures the per-model tables exist.
+// and ensures the per-model tables exist. The full identity — model,
+// revision, dims, distance, provider, chunker version and the
+// query/document prefix pair — is persisted.
 func (s *PGStore) WriteStamp(st ModelStamp) error {
 	if err := s.ensureModelTables(st); err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(pgCtx, `INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider)
-		VALUES ($1,$2,$3,$4,$5)
+	if _, err := s.pool.Exec(pgCtx, `INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider, chunker_version, query_prefix, document_prefix)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		ON CONFLICT (model_id) DO UPDATE SET revision=excluded.revision,
-			dimensions=excluded.dimensions, distance=excluded.distance, provider=excluded.provider`,
-		st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider); err != nil {
+			dimensions=excluded.dimensions, distance=excluded.distance, provider=excluded.provider,
+			chunker_version=excluded.chunker_version, query_prefix=excluded.query_prefix,
+			document_prefix=excluded.document_prefix`,
+		st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider,
+		st.ChunkerVersion, st.QueryPrefix, st.DocumentPrefix); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
 	return s.BumpWatermark()
@@ -533,12 +548,18 @@ func (s *PGStore) ensureModelTables(st ModelStamp) error {
 	return nil
 }
 
+// pgStampSelect is the shared read shape of emb_stamp; COALESCE keeps
+// pre-migration rows readable (chunker 0 = unversioned, empty prefixes).
+const pgStampSelect = `SELECT model_id, revision, dimensions, distance, provider,
+	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, '')
+	FROM emb_stamp`
+
 // Stamp returns the persisted stamp for a model; nil when none exists.
 func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
 	var st ModelStamp
-	err := s.pool.QueryRow(pgCtx,
-		`SELECT model_id, revision, dimensions, distance, provider FROM emb_stamp WHERE model_id = $1`, modelID).
-		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider)
+	err := s.pool.QueryRow(pgCtx, pgStampSelect+` WHERE model_id = $1`, modelID).
+		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
+			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -550,7 +571,7 @@ func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
 
 // Stamps returns all persisted model stamps.
 func (s *PGStore) Stamps() ([]ModelStamp, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT model_id, revision, dimensions, distance, provider FROM emb_stamp`)
+	rows, err := s.pool.Query(pgCtx, pgStampSelect)
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +579,8 @@ func (s *PGStore) Stamps() ([]ModelStamp, error) {
 	var out []ModelStamp
 	for rows.Next() {
 		var st ModelStamp
-		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider); err != nil {
+		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
+			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix); err != nil {
 			return nil, err
 		}
 		out = append(out, st)

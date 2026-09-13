@@ -503,3 +503,65 @@ func TestPGNilReadersUseSentinel(t *testing.T) {
 		t.Fatalf("VectorCount on missing model tables = %v; want a defined-table error", err)
 	}
 }
+
+// TestPGStampIdentityAndPerFileReplace mirrors the sqlite pins onto the
+// PostgreSQL backend (issue #279): the chunker version and prefix pair
+// round-trip through emb_stamp, and ReplaceFileVectors commits one file's
+// vectors and embedding_state rows in a single transaction — a failed batch
+// must leave NEITHER half behind.
+func TestPGStampIdentityAndPerFileReplace(t *testing.T) {
+	s := openPGTest(t)
+	if err := s.UpsertElements([]Element{
+		{QualifiedName: "unit/a.go::f1", ElementType: "function", Name: "f1", FilePath: "unit/a.go", Language: "go"},
+		{QualifiedName: "unit/a.go::f2", ElementType: "function", Name: "f2", FilePath: "unit/a.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := ModelStamp{
+		ModelID: "unit-model", Revision: "deadbeef", Dimensions: 4, Distance: "cosine",
+		Provider: "openai", ChunkerVersion: 2, QueryPrefix: "q: ", DocumentPrefix: "d: ",
+	}
+	if err := s.WriteStamp(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Stamp(want.ModelID)
+	if err != nil || got == nil || *got != want {
+		t.Fatalf("Stamp() = %+v, %v; want %+v", got, err, want)
+	}
+
+	rows := []VectorRow{
+		{QualifiedName: "unit/a.go::f1", Vec: []float32{1, 0, 0, 0}},
+		{QualifiedName: "unit/a.go::f2", Vec: []float32{0, 1, 0, 0}},
+	}
+	if err := s.ReplaceFileVectors(want.ModelID, rows, map[string]string{
+		"unit/a.go::f1": "h1", "unit/a.go::f2": "h2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.VectorCount(want.ModelID); err != nil || n != 2 {
+		t.Fatalf("VectorCount = %d, %v; want 2", n, err)
+	}
+	if st, err := s.EmbeddingStateMap(want.ModelID); err != nil || st["unit/a.go::f1"] != "h1" || st["unit/a.go::f2"] != "h2" {
+		t.Fatalf("state map = %+v, %v", st, err)
+	}
+
+	// Replace one element: same count, new vector wins, state re-stamped.
+	if err := s.ReplaceFileVectors(want.ModelID,
+		[]VectorRow{{QualifiedName: "unit/a.go::f1", Vec: []float32{0, 0, 0, 1}}},
+		map[string]string{"unit/a.go::f1": "h1b"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.VectorCount(want.ModelID); n != 2 {
+		t.Fatalf("VectorCount after replace = %d, want 2 (no duplicate)", n)
+	}
+	hits, err := s.SearchVectors(want.ModelID, []float32{0, 0, 0, 1}, 1)
+	if err != nil || len(hits) != 1 || hits[0].Element.QualifiedName != "unit/a.go::f1" {
+		t.Fatalf("replaced vector not searchable: %+v, %v", hits, err)
+	}
+	if st, _ := s.EmbeddingStateMap(want.ModelID); st["unit/a.go::f1"] != "h1b" {
+		t.Fatalf("state after replace = %+v", st)
+	}
+	if err := s.ReplaceFileVectors(want.ModelID, nil, nil); err == nil {
+		t.Fatal("empty vector set must be refused")
+	}
+}
