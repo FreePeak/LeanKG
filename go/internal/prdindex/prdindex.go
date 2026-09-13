@@ -36,7 +36,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
@@ -979,14 +978,7 @@ func sortedKeys(m map[string]string) []string {
 func strPtr(s string) *string { return &s }
 
 func truncate(s string) string {
-	if len(s) <= maxContent {
-		return s
-	}
-	cut := s[:maxContent]
-	for len(cut) > 0 && !utf8.RuneStart(cut[len(cut)-1]) {
-		cut = cut[:len(cut)-1]
-	}
-	return cut
+	return store.ClipUTF8(s, maxContent)
 }
 
 // unfencedText drops fenced code blocks from a markdown document so scanners

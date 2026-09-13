@@ -157,10 +157,9 @@ func seed(t *testing.T, ctx context.Context, st *store.Store) {
 	}
 
 	prov := embed.Deterministic(8)
-	if err := st.WriteStamp(store.ModelStamp{
-		ModelID: prov.ModelID(), Revision: prov.Revision(),
-		Dimensions: prov.Dimensions(), Distance: prov.Distance(), Provider: prov.Provider(),
-	}); err != nil {
+	// embed.StampOf is what the writer records, so the reader's whole-identity
+	// guard (#279) sees a matching collection instead of degrading.
+	if err := st.WriteStamp(embed.StampOf(prov)); err != nil {
 		t.Fatal(err)
 	}
 	vecs, err := prov.Embed(ctx, embed.Document, []string{els[0].Content})
