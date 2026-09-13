@@ -5,6 +5,13 @@
 // index.IndexDir(ctx, st, root) once — IndexDir already 3-signal-skips
 // unchanged files and handles deletions.
 //
+// Event delivery is best-effort (fsnotify drops events under load, and a
+// missed directory-create event leaves that subtree unwatched), so the loop
+// also runs a periodic full-tree reconciliation pass: re-add any directories
+// the notifier lost, then run the same incremental index pass. Unchanged
+// files cost only a stat there, so the pass is cheap insurance (issue #279
+// "watcher-miss insurance").
+//
 // Integration: `leankg writer` (wired by cmd) = index once + Start; pairs
 // with `leankg serve --read-only`.
 package watch
@@ -15,6 +22,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -40,6 +49,63 @@ var skipDirs = map[string]bool{
 
 const defaultDebounce = 500 * time.Millisecond
 
+// DefaultReconcileInterval is the periodic full-tree reconciliation cadence
+// when neither Options.Reconcile nor LEANKG_WATCH_RECONCILE_SECS says
+// otherwise, and minReconcileInterval floors the resolved value so a tiny
+// configuration cannot turn the loop into a busy re-walk.
+const (
+	DefaultReconcileInterval = 5 * time.Minute
+	minReconcileInterval     = time.Second
+)
+
+// kindReconcile is the synthetic event kind reported for a reconciliation
+// pass (the reference probes use the same reason split: "watch" | "reconcile").
+const kindReconcile = "reconcile"
+
+// ReconcileIntervalFromEnv resolves LEANKG_WATCH_RECONCILE_SECS: unset means
+// DefaultReconcileInterval; "0" (or "off"/"disabled") disables the pass; any
+// other value must parse as a positive number of seconds. An unparsable value
+// is an error rather than a silent default — a typo must not disable
+// watcher-miss insurance without saying so.
+func ReconcileIntervalFromEnv() (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv("LEANKG_WATCH_RECONCILE_SECS"))
+	switch strings.ToLower(raw) {
+	case "":
+		return DefaultReconcileInterval, nil
+	case "0", "off", "disabled", "none":
+		return 0, nil
+	}
+	secs, err := strconv.Atoi(raw)
+	if err != nil || secs < 0 {
+		return 0, fmt.Errorf("watch: invalid LEANKG_WATCH_RECONCILE_SECS %q (want seconds, 0 to disable)", raw)
+	}
+	if secs == 0 {
+		return 0, nil
+	}
+	return clampReconcile(time.Duration(secs) * time.Second), nil
+}
+
+// resolveReconcile applies the documented precedence: a negative Options
+// value disables the pass, a positive one wins over the environment, and zero
+// defers to LEANKG_WATCH_RECONCILE_SECS / DefaultReconcileInterval.
+func resolveReconcile(opt time.Duration) (time.Duration, error) {
+	if opt < 0 {
+		return 0, nil
+	}
+	if opt > 0 {
+		return clampReconcile(opt), nil
+	}
+	return ReconcileIntervalFromEnv()
+}
+
+// clampReconcile floors a positive interval at minReconcileInterval.
+func clampReconcile(d time.Duration) time.Duration {
+	if d < minReconcileInterval {
+		return minReconcileInterval
+	}
+	return d
+}
+
 // Options configures Start.
 type Options struct {
 	// Registry, when non-nil, scopes re-indexed languages (lazy activation).
@@ -47,8 +113,14 @@ type Options struct {
 	// Debounce coalesces event paths into one IndexDir run per flush.
 	// Defaults to 500ms when zero or negative.
 	Debounce time.Duration
-	// OnEvent is called per raw event before coalescing. Errors are ignored.
-	OnEvent func(path, kind string) // kind: create|write|remove|rename
+	// Reconcile is the periodic full-tree reconciliation interval. Precedence:
+	// this field when positive; otherwise LEANKG_WATCH_RECONCILE_SECS;
+	// otherwise DefaultReconcileInterval. A negative value disables the pass
+	// outright (the watcher then relies purely on fsnotify events).
+	Reconcile time.Duration
+	// OnEvent is called per raw event before coalescing, and once per
+	// reconciliation pass with kind "reconcile". Errors are ignored.
+	OnEvent func(path, kind string) // kind: create|write|remove|rename|reconcile
 }
 
 // WatchEvent is one raw fsnotify event surfaced on the Events channel.
@@ -145,6 +217,13 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 	if opts.Debounce <= 0 {
 		opts.Debounce = defaultDebounce
 	}
+	reconcileInterval, err := resolveReconcile(opts.Reconcile)
+	if err != nil {
+		notifier.Close()
+		syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		lockFile.Close()
+		return nil, err
+	}
 
 	w := &Watcher{
 		events: make(chan WatchEvent, 64),
@@ -162,6 +241,12 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 		pending := make(map[string]bool)
 		ticker := time.NewTicker(opts.Debounce)
 		defer ticker.Stop()
+		var reconcileC <-chan time.Time
+		if reconcileInterval > 0 {
+			rt := time.NewTicker(reconcileInterval)
+			defer rt.Stop()
+			reconcileC = rt.C
+		}
 		for {
 			select {
 			case <-ctx.Done():
@@ -199,6 +284,25 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 				}
 				pending = make(map[string]bool)
 				_, _ = index.IndexDirWith(ctx, st, abs, opts.Registry)
+			case <-reconcileC:
+				// The pass covers every queued path, so pending is dropped
+				// rather than flushed first. Only one pass runs at a time —
+				// this goroutine owns both triggers.
+				pending = make(map[string]bool)
+				if err := addDirs(notifier, abs); err != nil {
+					_ = err // a lost subtree is retried next pass
+				}
+				if _, err := index.IndexDirWith(ctx, st, abs, opts.Registry); err != nil {
+					_ = err // transient (e.g. mid-rename file); next pass retries
+					continue
+				}
+				select {
+				case w.events <- WatchEvent{Path: abs, Kind: kindReconcile}:
+				default:
+				}
+				if opts.OnEvent != nil {
+					opts.OnEvent(abs, kindReconcile)
+				}
 			}
 		}
 	}()

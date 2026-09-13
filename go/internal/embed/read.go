@@ -4,8 +4,10 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
-// elementText is one embeddable code element: qualified name plus content.
+// elementText is one embeddable code element: the file it came from (the
+// atomic write unit of the pipeline), its qualified name and its content.
 type elementText struct {
+	File    string
 	QN      string
 	Content string
 }
@@ -20,7 +22,7 @@ func readElements(st store.Backend) ([]elementText, error) {
 	}
 	out := make([]elementText, 0, len(els))
 	for _, e := range els {
-		out = append(out, elementText{QN: e.QualifiedName, Content: e.Content})
+		out = append(out, elementText{File: e.FilePath, QN: e.QualifiedName, Content: e.Content})
 	}
 	return out, nil
 }

@@ -9,6 +9,20 @@ import (
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
+// ChunkerVersion versions the pipeline that turns a stored element into the
+// text a model embeds: per-element chunks keyed on qualified_name, the
+// maxContentChars rune cap, and the catalog's query/document prefix pair
+// applied at the provider boundary.
+//
+// Bump it on ANY change to that construction. The value is carried on every
+// collection stamp, so a bump is a rebuild directive (incremental writers hard
+// fail, `leankg-embed full` clears and re-embeds) rather than a silent mix of
+// vectors built from differently-cut text — the same rule the reference applies
+// (src/embeddings/text_blob.rs CHUNKER_VERSION), enforced through the stamp
+// here instead of the content hash because Go's content_hash is also the
+// NDJSON export/resume key and must stay stable.
+const ChunkerVersion = 1
+
 // batchSize is the number of texts sent to the provider per call.
 const batchSize = 32
 
@@ -26,16 +40,93 @@ type Report struct {
 	Duration    time.Duration
 }
 
-// dirtyItem is one element queued for embedding: qualified name, the
-// (possibly truncated) text to send, and the full-content hash to record.
-type dirtyItem struct{ qn, text, hash string }
+// dirtyItem is one element queued for embedding: the file it came from (the
+// atomic write unit), its qualified name, the (possibly truncated) text to
+// send, and the full-content hash to record.
+type dirtyItem struct{ file, qn, text, hash string }
+
+// StampOf composes the collection identity provider p writes with: p's five
+// identity fields plus the two pipeline components a provider does not carry
+// itself — the chunker version and the catalog prefix pair resolved from the
+// model id. Every vector writer AND the L3 query guard compare this value, so
+// chunker or prefix drift is caught exactly like a revision change.
+func StampOf(p Provider) store.ModelStamp {
+	q, d := Prefixes(p.ModelID())
+	return store.ModelStamp{
+		ModelID:        p.ModelID(),
+		Revision:       p.Revision(),
+		Dimensions:     p.Dimensions(),
+		Distance:       p.Distance(),
+		Provider:       p.Provider(),
+		ChunkerVersion: ChunkerVersion,
+		QueryPrefix:    q,
+		DocumentPrefix: d,
+	}
+}
+
+// stampFor is the writer-side stamp for an explicit identity (the NDJSON
+// import path, which has no live provider but must produce the identical stamp
+// a provider run would for the same model).
+func stampFor(modelID, revision, distance, provider string, dims int) store.ModelStamp {
+	q, d := Prefixes(modelID)
+	return store.ModelStamp{
+		ModelID:        modelID,
+		Revision:       revision,
+		Dimensions:     dims,
+		Distance:       distance,
+		Provider:       provider,
+		ChunkerVersion: ChunkerVersion,
+		QueryPrefix:    q,
+		DocumentPrefix: d,
+	}
+}
+
+// stampDrift names the stamp components that differ, so the rebuild directive
+// says WHY the collection is unusable rather than dumping two structs.
+func stampDrift(cur, want store.ModelStamp) string {
+	var why []string
+	if cur.Revision != want.Revision {
+		why = append(why, fmt.Sprintf("revision %q -> %q", cur.Revision, want.Revision))
+	}
+	if cur.Dimensions != want.Dimensions {
+		why = append(why, fmt.Sprintf("dimensions %d -> %d", cur.Dimensions, want.Dimensions))
+	}
+	if cur.Distance != want.Distance {
+		why = append(why, fmt.Sprintf("distance %q -> %q", cur.Distance, want.Distance))
+	}
+	if cur.Provider != want.Provider {
+		why = append(why, fmt.Sprintf("provider %q -> %q", cur.Provider, want.Provider))
+	}
+	if cur.ChunkerVersion != want.ChunkerVersion {
+		why = append(why, fmt.Sprintf("chunker_version %d -> %d", cur.ChunkerVersion, want.ChunkerVersion))
+	}
+	if cur.QueryPrefix != want.QueryPrefix || cur.DocumentPrefix != want.DocumentPrefix {
+		why = append(why, "query/document prefix pair")
+	}
+	if len(why) == 0 {
+		return "identity"
+	}
+	return fmt.Sprintf("%s", join(why, ", "))
+}
+
+func join(parts []string, sep string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += sep
+		}
+		out += p
+	}
+	return out
+}
 
 // Run executes the embedding pipeline against st with provider p.
 // mode is "incremental" (embed elements whose content SHA-256 differs from
 // the stored embedding state) or "full" (embed everything, after the stamp
 // guard clears a mismatched collection). A provider transport error fails
 // the run; a batch failing validation (count/dims/finiteness) is counted in
-// Report.Failed and the run continues to status partial.
+// Report.Failed and the run continues to status partial. Vectors and state
+// land per file in one transaction (see embedFiles).
 func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report, error) {
 	start := time.Now()
 	rep := Report{Mode: mode, Backend: st.Engine()}
@@ -43,9 +134,10 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 		return rep, fmt.Errorf("embed: unknown mode %q (want incremental|full)", mode)
 	}
 	modelID := p.ModelID()
-	want := store.ModelStamp{ModelID: modelID, Revision: p.Revision(), Dimensions: p.Dimensions(), Distance: p.Distance(), Provider: p.Provider()}
+	want := StampOf(p)
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the
-	// same hard-rebuild rule.
+	// same hard-rebuild rule over the WHOLE identity — model, revision,
+	// dims, distance, provider, chunker version and prefix pair.
 	//   full        + mismatch ⇒ clear + re-stamp (rebuild, never mixed)
 	//   incremental + mismatch ⇒ HARD FAIL with a rebuild directive — a
 	//                 flag slip (provider A full, provider B incremental)
@@ -58,8 +150,8 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	if cur != nil && *cur != want {
 		if mode != "full" {
 			return rep, fmt.Errorf(
-				"embed: stamp mismatch for %s (stored revision %q, provider stamp revision %q) — run `leankg-embed full` to rebuild the collection",
-				modelID, cur.Revision, want.Revision)
+				"embed: stamp mismatch for %s (%s) — run `leankg-embed full` to rebuild the collection",
+				modelID, stampDrift(*cur, want))
 		}
 		if err := st.ClearVectors(modelID); err != nil {
 			return rep, err
@@ -94,7 +186,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 			rep.Truncations++
 			text = truncateRunes(text, maxContentChars)
 		}
-		dirty = append(dirty, dirtyItem{qn: e.QN, text: text, hash: h})
+		dirty = append(dirty, dirtyItem{file: e.File, qn: e.QN, text: text, hash: h})
 	}
 	rep.Dirty = len(dirty)
 
@@ -104,7 +196,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	}
 
 	status := "ok"
-	if err := embedBatches(ctx, st, p, modelID, dirty, &rep); err != nil {
+	if err := embedFiles(ctx, st, p, modelID, groupByFile(dirty), &rep); err != nil {
 		rep.Duration = time.Since(start)
 		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
@@ -125,46 +217,73 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	if err := st.FinishEmbedRun(runID, status, rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
 		return rep, err
 	}
+	// The inventory snapshot carries TotalVectors, and this writer just moved
+	// the watermark past it: without the refresh a fully embedded project is
+	// reported possibly_stale until the next index. (Found by dogfooding the
+	// embedding pipeline on this repo itself.)
+	if _, err := store.RefreshInventory(st); err != nil {
+		return rep, fmt.Errorf("embed: inventory snapshot: %w", err)
+	}
 	return rep, nil
 }
 
-// embedBatches invokes the provider in batches of 32 and writes each
-// successful batch (vectors + embedding state) crash-consistently. A batch
-// failing validation is counted in rep.Failed and the run continues.
-func embedBatches(ctx context.Context, st store.Backend, p Provider, modelID string, dirty []dirtyItem, rep *Report) error {
-	for i := 0; i < len(dirty); i += batchSize {
-		if err := ctx.Err(); err != nil {
-			return err
+// groupByFile partitions the dirty plan into per-file write units, preserving
+// the element order (Elements() is ordered by qualified_name, so a file's
+// elements are contiguous). readElements drops elements with no file (a
+// malformed row) into the "" group, which the store still writes atomically.
+func groupByFile(dirty []dirtyItem) [][]dirtyItem {
+	var groups [][]dirtyItem
+	for i := 0; i < len(dirty); {
+		j := i + 1
+		for j < len(dirty) && dirty[j].file == dirty[i].file {
+			j++
 		}
-		end := min(i+batchSize, len(dirty))
-		batch := dirty[i:end]
+		groups = append(groups, dirty[i:j])
+		i = j
+	}
+	return groups
+}
 
-		texts := make([]string, len(batch))
-		for j, d := range batch {
-			texts[j] = d.text
+// embedFiles embeds each file group and commits it in ONE transaction
+// (store.ReplaceFileVectors): a crash mid-run can never leave a file with new
+// vectors and stale state, or half its elements written. Provider calls are
+// still capped at batchSize texts; a group larger than that is embedded in
+// sub-batches and committed as one unit. A batch failing validation
+// (count/dims/finiteness) is counted in rep.Failed and its items are simply
+// not committed, so the file stays dirty and the run continues to partial.
+func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
+	for _, group := range groups {
+		rows := make([]store.VectorRow, 0, len(group))
+		states := make(map[string]string, len(group))
+		for i := 0; i < len(group); i += batchSize {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			batch := group[i:min(i+batchSize, len(group))]
+			texts := make([]string, len(batch))
+			for j, d := range batch {
+				texts[j] = d.text
+			}
+			vecs, err := p.Embed(ctx, Document, texts)
+			if err != nil {
+				return fmt.Errorf("embed: provider %s: %w", modelID, err)
+			}
+			if err := validateBatch(vecs, len(texts), p.Dimensions()); err != nil {
+				rep.Failed += len(batch)
+				continue
+			}
+			for j, d := range batch {
+				rows = append(rows, store.VectorRow{QualifiedName: d.qn, Vec: vecs[j]})
+				states[d.qn] = d.hash
+			}
 		}
-		vecs, err := p.Embed(ctx, Document, texts)
-		if err != nil {
-			return fmt.Errorf("embed: provider %s: %w", modelID, err)
-		}
-		if err := validateBatch(vecs, len(texts), p.Dimensions()); err != nil {
-			rep.Failed += len(batch)
+		if len(rows) == 0 {
 			continue
 		}
-
-		rows := make([]store.VectorRow, len(batch))
-		states := make(map[string]string, len(batch))
-		for j, d := range batch {
-			rows[j] = store.VectorRow{QualifiedName: d.qn, Vec: vecs[j]}
-			states[d.qn] = d.hash
-		}
-		if err := st.UpsertVectors(modelID, rows); err != nil {
+		if err := st.ReplaceFileVectors(modelID, rows, states); err != nil {
 			return err
 		}
-		if err := st.SetEmbeddingStates(modelID, states); err != nil {
-			return err
-		}
-		rep.Embedded += len(batch)
+		rep.Embedded += len(rows)
 	}
 	return nil
 }

@@ -11,9 +11,15 @@ import (
 )
 
 // OpenAICompatible talks the OpenAI /embeddings wire shape, which also covers
-// the llama.cpp llama-server sidecar. kind is accepted for interface parity;
-// query/document prefixes are a model-catalog concern (FR-ZCP-11), the wire
-// shape is identical.
+// the llama.cpp llama-server sidecar.
+//
+// The kind argument is NOT parity-only: an asymmetric model must see its
+// pinned query prefix on queries and its document prefix on documents, so
+// Embed applies the catalog pair (Prefixes) for the model at the provider
+// boundary — the single place both the embed pipeline (Document) and the L3
+// query rung (Query) pass through. The collection stamp carries the same pair
+// (see StampOf), so a prefix change is a stamp mismatch, never a mixed
+// collection.
 func OpenAICompatible(baseURL, apiKey, model string, dims int, revision string) Provider {
 	return &openaiCompatible{
 		baseURL:  baseURL,
@@ -37,8 +43,30 @@ type openaiCompatible struct {
 func (o *openaiCompatible) ModelID() string  { return o.model }
 func (o *openaiCompatible) Revision() string { return o.revision }
 func (o *openaiCompatible) Dimensions() int  { return o.dims }
-func (o *openaiCompatible) Distance() string { return "cosine" }
+func (o *openaiCompatible) Distance() string { return Distance }
 func (o *openaiCompatible) Provider() string { return "openai" }
+
+// prefixFor returns the pinned text prefix paired with kind for this model.
+func (o *openaiCompatible) prefixFor(kind TextKind) string {
+	query, document := Prefixes(o.model)
+	if kind == Query {
+		return query
+	}
+	return document
+}
+
+// prefixTexts prepends prefix to every text (nil when prefix is empty, which
+// is the common symmetric-model case: no copy, no allocation).
+func prefixTexts(prefix string, texts []string) []string {
+	if prefix == "" {
+		return texts
+	}
+	out := make([]string, len(texts))
+	for i, t := range texts {
+		out[i] = prefix + t
+	}
+	return out
+}
 
 type embeddingsRequest struct {
 	Model string   `json:"model"`
@@ -52,7 +80,8 @@ type embeddingsResponse struct {
 }
 
 func (o *openaiCompatible) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
-	body, err := json.Marshal(embeddingsRequest{Model: o.model, Input: texts})
+	sent := prefixTexts(o.prefixFor(kind), texts)
+	body, err := json.Marshal(embeddingsRequest{Model: o.model, Input: sent})
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +108,6 @@ func (o *openaiCompatible) Embed(ctx context.Context, kind TextKind, texts []str
 		return nil, fmt.Errorf("embed: POST %s/embeddings: status %d: %s",
 			o.baseURL, resp.StatusCode, snippet(respBody))
 	}
-
 	var out embeddingsResponse
 	if err := json.Unmarshal(respBody, &out); err != nil {
 		return nil, fmt.Errorf("embed: decode response: %w (body: %s)", err, snippet(respBody))

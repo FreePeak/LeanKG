@@ -28,18 +28,31 @@ type importLine struct {
 // ExportNDJSON writes every element as one JSON line
 // {"qualified_name":..., "content_hash":..., "text":...} — the offsite
 // embedding workflow's input format (export → embed elsewhere → import).
+//
+// text is the EXACT string the live provider would send, i.e. the model's
+// pinned document prefix is applied here (issue #279 part 2). Otherwise an
+// offsite embedder would build unprefixed vectors that then land in a
+// collection whose queries are embedded WITH the prefix — the one-sided
+// prefixing that silently degrades recall. content_hash stays the hash of the
+// raw element content: it is the resume key shared with Run, not a hash of
+// the transmitted text.
 func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Writer) error {
 	elems, err := readElements(st)
 	if err != nil {
 		return err
 	}
+	_, documentPrefix := Prefixes(modelID)
 	bw := bufio.NewWriter(w)
 	enc := json.NewEncoder(bw)
 	for _, e := range elems {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := enc.Encode(exportLine{QualifiedName: e.QN, ContentHash: contentHashHex(e.Content), Text: e.Content}); err != nil {
+		text := e.Content
+		if documentPrefix != "" {
+			text = documentPrefix + text
+		}
+		if err := enc.Encode(exportLine{QualifiedName: e.QN, ContentHash: contentHashHex(e.Content), Text: text}); err != nil {
 			return fmt.Errorf("embed: export %s: %w", e.QN, err)
 		}
 	}
@@ -60,7 +73,7 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 	start := time.Now()
 	rep := Report{Mode: "import", Backend: st.Engine()}
 
-	want := store.ModelStamp{ModelID: modelID, Revision: revision, Dimensions: dims, Distance: distance, Provider: "ndjson"}
+	want := stampFor(modelID, revision, distance, "ndjson", dims)
 	cur, err := st.Stamp(modelID)
 	if err != nil {
 		return rep, err

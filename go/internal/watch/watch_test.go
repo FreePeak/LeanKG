@@ -197,3 +197,155 @@ func TestEventsChannelDropOnOverflow(t *testing.T) {
 		return err == nil && len(els) > 0
 	})
 }
+
+// --- periodic reconciliation (issue #279 part 5) -----------------------------
+
+func TestReconcileIntervalFromEnv(t *testing.T) {
+	t.Run("unset means default", func(t *testing.T) {
+		got, err := ReconcileIntervalFromEnv()
+		if err != nil || got != DefaultReconcileInterval {
+			t.Fatalf("ReconcileIntervalFromEnv() = %v, %v; want %v", got, err, DefaultReconcileInterval)
+		}
+	})
+	t.Run("seconds honored", func(t *testing.T) {
+		t.Setenv("LEANKG_WATCH_RECONCILE_SECS", "90")
+		got, err := ReconcileIntervalFromEnv()
+		if err != nil || got != 90*time.Second {
+			t.Fatalf("ReconcileIntervalFromEnv() = %v, %v; want 90s", got, err)
+		}
+	})
+	t.Run("zero and words disable", func(t *testing.T) {
+		for _, v := range []string{"0", "off", "disabled"} {
+			t.Setenv("LEANKG_WATCH_RECONCILE_SECS", v)
+			got, err := ReconcileIntervalFromEnv()
+			if err != nil || got != 0 {
+				t.Fatalf("ReconcileIntervalFromEnv(%q) = %v, %v; want disabled", v, got, err)
+			}
+		}
+	})
+	t.Run("floor", func(t *testing.T) {
+		t.Setenv("LEANKG_WATCH_RECONCILE_SECS", "1")
+		got, err := ReconcileIntervalFromEnv()
+		if err != nil || got != time.Second {
+			t.Fatalf("ReconcileIntervalFromEnv() = %v, %v; want 1s", got, err)
+		}
+	})
+	t.Run("negative seconds are an error", func(t *testing.T) {
+		// Disablement is spelled 0/off/disabled; a negative value is a typo and
+		// must be reported rather than silently turned into "off".
+		t.Setenv("LEANKG_WATCH_RECONCILE_SECS", "-5")
+		if _, err := ReconcileIntervalFromEnv(); err == nil {
+			t.Fatal("negative interval must be refused")
+		}
+	})
+	t.Run("garbage is an error", func(t *testing.T) {
+		t.Setenv("LEANKG_WATCH_RECONCILE_SECS", "soon")
+		if _, err := ReconcileIntervalFromEnv(); err == nil {
+			t.Fatal("unparsable interval must error, not silently default")
+		}
+	})
+}
+
+func TestResolveReconcilePrecedence(t *testing.T) {
+	// Options value positive wins over the environment.
+	t.Setenv("LEANKG_WATCH_RECONCILE_SECS", "600")
+	if got := mustResolve(t, 30*time.Second); got != 30*time.Second {
+		t.Fatalf("option wins = %v, want 30s", got)
+	}
+	// Negative option disables outright.
+	if got := mustResolve(t, -1); got != 0 {
+		t.Fatalf("negative option = %v, want disabled", got)
+	}
+	// Zero defers to the env / default.
+	if got := mustResolve(t, 0); got != 600*time.Second {
+		t.Fatalf("env fallback = %v, want 600s", got)
+	}
+}
+
+func mustResolve(t *testing.T, opt time.Duration) time.Duration {
+	t.Helper()
+	d, err := resolveReconcile(opt)
+	if err != nil {
+		t.Fatalf("resolveReconcile(%v): %v", opt, err)
+	}
+	return d
+}
+
+// TestReconcilePassRecoversMissedEvent is the watcher-miss insurance contract:
+// a file written WITHOUT producing a (delivered) fsnotify event — simulated by
+// writing while the watcher is stopped from delivering, i.e. outside the
+// notifier's watch set via an unwatched directory created after Start... — is
+// simpler here to pin via the pass itself: with Reconcile set to 1s, a file
+// created in a NEW subdirectory (whose directory-add event may be missed) still
+// becomes queryable within one reconcile interval, and the Events channel
+// reports one kindReconcile pass.
+func TestReconcilePassRecoversMissedEvent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := openStore(t)
+	proj := t.TempDir()
+
+	var reconciles int
+	w, err := Start(ctx, st, proj, Options{
+		Debounce:  100 * time.Millisecond,
+		Reconcile: time.Second,
+		OnEvent: func(path, kind string) {
+			if kind == "reconcile" {
+				reconciles++
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer w.Stop()
+	el := newEventLog(w)
+
+	// A nested directory created after Start: even if the notifier missed the
+	// directory-create event (the miss this pass insures), the reconciler
+	// re-adds directories and re-runs the incremental index.
+	sub := filepath.Join(proj, "nested")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(sub, "reconciled.go")
+	if err := os.WriteFile(file, []byte("package nested\n\nfunc MissedFunc() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	await(t, 8*time.Second, func() bool {
+		els, err := st.FindExact("MissedFunc")
+		return err == nil && len(els) > 0
+	})
+	await(t, 8*time.Second, func() bool { return el.saw("reconcile") && reconciles >= 1 })
+}
+
+// TestReconcileDisabledByOption pins that a negative Options.Reconcile really
+// turns the pass off: the loop runs long enough for several debounce ticks
+// with no reconcile event emitted.
+func TestReconcileDisabledByOption(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := openStore(t)
+	proj := t.TempDir()
+	w, err := Start(ctx, st, proj, Options{Debounce: 100 * time.Millisecond, Reconcile: -1})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer w.Stop()
+	el := newEventLog(w)
+
+	// Generate ordinary activity so the loop demonstrably runs.
+	if err := os.WriteFile(filepath.Join(proj, "activity.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	await(t, 3*time.Second, func() bool { return el.saw("create") })
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !el.saw("reconcile") {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if el.saw("reconcile") {
+		t.Fatal("reconcile pass ran though Options.Reconcile < 0 disables it")
+	}
+}
