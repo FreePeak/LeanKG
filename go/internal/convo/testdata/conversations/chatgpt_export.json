@@ -1,0 +1,38 @@
+{
+  "title": "ChatGPT Export",
+  "mapping": {
+    "conv1": {
+      "id": "conv1",
+      "title": "Migrate to PostgreSQL",
+      "create_time": 1752570000.0,
+      "mapping": {
+        "m1": {
+          "id": "m1",
+          "message": {
+            "id": "m1",
+            "author": { "role": "user" },
+            "create_time": 1752570000.0,
+            "content": {
+              "content_type": "text",
+              "parts": ["We should migrate the storage layer to PostgreSQL."]
+            }
+          }
+        },
+        "m2": {
+          "id": "m2",
+          "message": {
+            "id": "m2",
+            "author": { "role": "assistant" },
+            "create_time": 1752570100.0,
+            "content": {
+              "content_type": "text",
+              "parts": [
+                "Milestone: migration completed by end of Q3. Decision: use managed RDS with read replicas."
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

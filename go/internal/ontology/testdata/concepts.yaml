@@ -1,0 +1,28 @@
+concepts:
+  - id: refund
+    type: domain_entity
+    name: Refund
+    env: local
+    aliases:
+      - reversal
+      - chargeback
+    description: Money returned to the customer
+    owned_by:
+      - checkout-service
+    code_refs:
+      - src/refund/handler.rs
+      - src/refund/handler.rs::process_refund
+    docs:
+      - docs/refund.md
+  - id: payments
+    type: service
+    name: Payments
+    env: local
+    description: Payment processing service
+    owned_by:
+      - billing
+    code_refs:
+      - src/payments
+  - id: mystery
+    name: Mystery
+    description: Concept with an unknown type, defaults to domain_entity

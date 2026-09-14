@@ -1,0 +1,22 @@
+{
+  "freshness": "possibly_stale",
+  "hits": [
+    {
+      "content": "func Alpha() int {\n\treturn Beta() + 1\n}",
+      "element_type": "function",
+      "file_path": "src/alpha.go",
+      "language": "go",
+      "line_end": 3,
+      "line_start": 1,
+      "name": "Alpha",
+      "qualified_name": "src/alpha.go::Alpha",
+      "similarity": -0.3505250911615613
+    }
+  ],
+  "limit": 1,
+  "query": "compute the answer",
+  "retrieval": {
+    "reason": "vector similarity (cosine)",
+    "rung": "L3"
+  }
+}

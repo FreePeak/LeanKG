@@ -15,8 +15,8 @@
 
 <!-- How was this tested? -->
 
-- [ ] Unit tests pass (`cargo test`)
-- [ ] Integration tests pass
+- [ ] Unit tests pass (`make go-test`)
+- [ ] Dual-engine gate passes (`make dual-engine`) when storage changed
 - [ ] Manual verification
 
 ## Checklist

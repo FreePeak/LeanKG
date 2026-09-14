@@ -1,36 +1,39 @@
 # Contributing to LeanKG
 
+> **v4.6.0:** the implementation is 100% Go (`go/`); Rust commands below are historical. Build: `make go-build` · Test: `make go-test` · See `AGENTS.md` for the current workflow.
+
+
 First off, thank you for considering contributing to LeanKG! It’s people like you who make LeanKG a powerful tool for the AI-assisted development ecosystem.
 
 As a project focused on **Lightweight Knowledge Graphs for AI**, we value contributions that improve indexing accuracy, reduce token overhead, and expand MCP capabilities.
 
 ## 🛠 Tech Stack
-- **Language:** Rust (Latest Stable)
-- **Database:** PostgreSQL + pgvector (graph store + ANN)
-- **Parsers:** tree-sitter (for Go, Rust, TS, Python, etc.)
-- **Protocol:** Model Context Protocol (MCP)
+- **Language:** Go 1.25 (`go/`)
+- **Database:** SQLite (WAL + FTS5, default) and PostgreSQL + pgvector (schema-per-project)
+- **Parsers:** tiered — regex, ast-grep, tree-sitter (optional CGO build tag), LSP
+- **Protocol:** Model Context Protocol (MCP), plus REST and ConnectRPC
 
 ---
 
 ## 🚀 How to Get Started
 
 ### 1. Setup Your Environment
-Clone the repository and ensure you have the Rust toolchain installed:
+Clone the repository and ensure you have [Go 1.25+](https://go.dev/dl/) installed:
 ```bash
 git clone https://github.com/FreePeak/LeanKG.git
-cd LeanKG
-cargo build
+cd LeanKG/go
+go build ./...
 ```
 
 ### 2. Local Development & Testing
-We use a `Makefile` to simplify common development tasks:
-- **Run tests:** `cargo test`
-- **Build release:** `cargo build --release`
-- **Local MCP Testing:** Use the `mcp-stdio` command to test changes with your local AI tools (Cursor, Claude Code, etc.).
+The Go module lives under `go/`; CI runs the same gates:
+- **Run tests:** `cd go && go test ./...` (add `-tags tstree` to exercise the CGO tree-sitter tier)
+- **Vet:** `cd go && go vet ./...`
+- **Local MCP Testing:** `go run ./cmd/leankg serve --stdio` from any project directory, and wire a client with `go run ./cmd/leankg install --target cursor` (claude-code | cursor | codex | gemini | opencode | omp).
 
 ### 3. Project Structure
-- `/src`: Core logic, graph schema, and indexing engine.
-- `/npm-package`: Wrappers for distribution.
+- `/go`: The engine — `cmd/leankg` (server + CLI), `cmd/leankg-embed` (embedding pipeline), `internal/*` (store, core, index, mcp, rest, rpc, graph, langs, embed, memory, session, web), `proto/` (ConnectRPC contract).
+- `/ui-v2`: Dashboard SPA (served embedded by the engine).
 - `/examples`: Sample codebases used for benchmarking.
 - `/instructions`: Agent-specific instructions (`CLAUDE.md`, `AGENTS.md`).
 
@@ -40,17 +43,17 @@ We use a `Makefile` to simplify common development tasks:
 
 ### Adding Language Support
 LeanKG uses `tree-sitter` for parsing. If you want to add a new language:
-1. Add the corresponding tree-sitter dependency in `Cargo.toml`.
-2. Implement the parser logic in `src/indexer/`.
-3. Define how code elements (functions, classes, imports) map to the graph schema.
+1. Register the language in `go/internal/langs` (extensions, repo markers, extraction tier).
+2. Implement the extractor in `go/internal/index` (regex baseline; tree-sitter grammar under the `tstree` tag when a bundled one exists).
+3. Add testdata fixtures and define how code elements (functions, classes, imports) map to the graph schema.
 
 ### Improving MCP Tools
-We are constantly expanding the tools available to AI agents. If you have an idea for a new tool (e.g., `get_complexity_score` or `find_dead_code`):
-1. Define the tool in the MCP server module.
+The agent-facing registry is pinned at exactly three tools — `import`, `query`, `status` — with capabilities as actions/verbs inside that envelope. To extend it:
+1. Add the action in `go/internal/core` and wire it through the MCP/REST/CLI transports.
 2. Ensure the output is **token-optimized** (we aim for high signal-to-noise ratios).
 
 ### Benchmarking
-Performance is a core feature. If you contribute a feature, please run the benchmarks in the `benchmark/` folder to ensure no significant regression in indexing speed or token usage.
+Performance is a core feature. If you contribute a feature, please run the Go benchmarks in [`go/benchmark/ab`](go/benchmark/ab) (see its REPORT.md) to ensure no significant regression in indexing speed or token usage.
 
 ---
 

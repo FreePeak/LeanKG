@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0a0e27"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="9" fill="url(#bg)"/>
+  <polygon points="24,4 41,14 41,34 24,44 7,34 7,14"
+           fill="none" stroke="#22d3ee" stroke-width="0.8" stroke-dasharray="1.6 1.6" opacity="0.8"/>
+  <polygon points="24,8 37,15.5 37,32.5 24,40 11,32.5 11,15.5"
+           fill="none" stroke="#22d3ee" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="24,14 35,32 13,32"
+           fill="none" stroke="#f59e0b" stroke-width="1.6" stroke-linejoin="round"/>
+  <circle cx="24" cy="14" r="3.2" fill="url(#cyan)" stroke="#fff" stroke-width="0.6"/>
+  <circle cx="35" cy="32" r="3.2" fill="url(#cyan)" stroke="#fff" stroke-width="0.6"/>
+  <circle cx="13" cy="32" r="3.2" fill="url(#cyan)" stroke="#fff" stroke-width="0.6"/>
+  <polygon points="24,18 31,22 31,28 24,32 17,28 17,22"
+           fill="none" stroke="#22d3ee" stroke-width="0.4" opacity="0.3"/>
+</svg>

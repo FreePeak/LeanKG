@@ -1,0 +1,59 @@
+PARSER_SOURCE — provenance of internal/tstree/perl
+
+Grammar   : tree-sitter-perl/tree-sitter-perl (published on crates.io as the
+            `ts-parser-perl` crate) — the org Perl grammar, NOT
+            ganezdragon/tree-sitter-perl (the crate the Rust engine pinned;
+            issue #61 measures it at 40.2% clean parses on 8,342 real files
+            against this grammar's 95.4%).
+Release   : v2.0.0 (2026-09-06), commit 50904961d6a87c5191e611276aa2ecb9d66ca4ff
+License   : MIT, Copyright 2025 Avishai "Veesh" Goldman (see LICENSE)
+Retrieved : crates.io artifact ts-parser-perl-2.0.0.crate (static.crates.io).
+            Every vendored upstream file is byte-identical to the v2.0.0 git
+            tag (verified with cmp against the GitHub archive tarball); the
+            crate ships grammar.json/scanner.c/headers because the repo
+            gitignores parser.c and generates it at package time.
+
+Files
+  upstream verbatim : scanner.c, bsearch.h, tsp_keywords.h, tsp_unicode.h,
+                      tsp_intuit_keywords.h, tsp_intuit_more.h,
+                      tsp_intuit_readline.h, grammar.json, LICENSE
+  generated         : parser.c, tree_sitter/parser.h, tree_sitter/array.h,
+                      tree_sitter/alloc.h
+
+Why generated: the published parser.c declares LANGUAGE_VERSION 15, and the
+tree-sitter runtime bundled by smacker/go-tree-sitter accepts ABI 13-14 only
+(api.h: TREE_SITTER_LANGUAGE_VERSION 14), so ts_parser_set_language would
+reject it and Perl would silently fall back to the regex tier — the same wall
+that forced the older pin in ../dart/binding.go. No ts-parser-perl release is
+ABI 14 (checked 1.0.0 through 2.0.0), so parser.c is regenerated rather than
+the grammar down-pinned:
+
+  $ tree-sitter --version
+  tree-sitter 0.23.2 (d97db6d63507eb62c536bcb2c4ac7d70c8ec665e)
+  $ tree-sitter generate --abi 14 --no-bindings src/grammar.json
+
+0.23.2 is the last release line that emits ABI 14. grammar.json is untouched
+by the command (still byte-identical to the tag) and is vendored so the
+regeneration is reproducible offline.
+
+Verification of the regeneration (throwaway harness, not a committed test):
+this parser and the previous grammar (ganezdragon/tree-sitter-perl 1.1.2, the
+Rust engine's pin, regenerated at ABI 14 the same way) loaded side by side
+under the smacker runtime and parsed 1,398 real-world Perl files (Mojolicious
+9.39, DBIx-Class master, SpamAssassin master), counting files with no
+ERROR/MISSING node:
+
+  ganezdragon 1.1.2    :  800 failures   42.8% clean
+  ts-parser-perl 2.0.0 :   11 failures   99.2% clean   (72.7x fewer failures)
+
+which independently corroborates issue #61's 8,342-file benchmark
+(40.2% vs 95.4%). The 11 remaining failures are the corpora's deliberate
+syntax-error fixtures (t/lib/DBICTest/SyntaxErrorComponent{1,2,3}.pm,
+t/mojo/lib/Mojo/Loader*Exception.pm, MojoliciousTest/SyntaxError.pm) and a few
+preprocessor-shaped test files. The grammar's own 283-case upstream corpus
+passes identically from the ABI-14 generation and from the published ABI-15
+one (282/283 both, the same single "Double dollar edge cases" node-kind
+difference), so regenerating introduces no behavioral change.
+
+The Go tier under -tags tstree pins the extraction behavior on the fixtures in
+../testdata/perl (TestExtractPerl, TestExtractPerlModernConstructs).

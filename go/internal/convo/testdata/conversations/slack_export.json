@@ -1,0 +1,26 @@
+{
+  "channel": {
+    "name": "platform-eng",
+    "id": "C123"
+  },
+  "messages": [
+    {
+      "type": "message",
+      "user": "U1",
+      "ts": "1752570000.000000",
+      "text": "Decision: we will use gRPC for inter-service communication."
+    },
+    {
+      "type": "message",
+      "user": "U2",
+      "ts": "1752570100.000000",
+      "text": "Problem: the batch job keeps timing out at 5 minutes."
+    },
+    {
+      "type": "message",
+      "user": "U1",
+      "ts": "1752570200.000000",
+      "text": "Preference: prefer protobuf over JSON for internal APIs."
+    }
+  ]
+}
