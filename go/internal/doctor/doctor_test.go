@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/go/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
@@ -346,6 +347,13 @@ func TestLeankgDir(t *testing.T) {
 
 func TestRunDeepSqlite(t *testing.T) {
 	dir := t.TempDir()
+	// Isolate the portfolio registry: --deep also probes the fleet, and the
+	// registry defaults to $HOME/.leankg/portfolio.db — a machine-global file.
+	// Without this, any project ever indexed on the host (an earlier smoke test,
+	// a leftover /tmp fixture) lands in the fleet and the "everything but the
+	// dangling edge must PASS" assertion fails on a perfectly healthy store.
+	// Same isolation the portfolio tests in internal/core already use.
+	t.Setenv(portfolioreg.DBPathEnv, filepath.Join(dir, "portfolio.db"))
 	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatal(err)
