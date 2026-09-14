@@ -36,6 +36,14 @@ type Backend interface {
 	// their source file is re-indexed, which incremental index never
 	// revisits). Returns the number of edges removed.
 	DeleteOrphanRelationships() (int, error)
+	// DeleteOrphanVectors purges embedding_vectors + embedding_state rows
+	// whose qualified_name no longer belongs to any element, across every
+	// model collection (a dangling QN dangles in all of them). This is the
+	// residue `leankg-embed` reports as Orphans: DeleteByFile owns elements
+	// and edges, so until #411 nothing owned vector rows, and every deleted
+	// file left its vectors behind forever. Returns the number of vector
+	// rows removed.
+	DeleteOrphanVectors() (int, error)
 	// relationship reads (graph traversal seeds; pure-Go BFS lives in internal/graph)
 	Outgoing(source string) ([]Relationship, error)
 	Incoming(target string) ([]Relationship, error)

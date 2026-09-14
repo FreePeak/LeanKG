@@ -221,6 +221,42 @@ func (s *Store) ClearVectors(modelID string) error {
 	return s.BumpWatermark()
 }
 
+// DeleteOrphanVectors removes vector + state rows for elements that no
+// longer exist, every model at once — the anti-join VectorCoverage reports,
+// made repairable (gc). The watermark bumps only when rows actually go.
+func (s *Store) DeleteOrphanVectors() (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	vres, err := tx.Exec(`DELETE FROM embedding_vectors
+		WHERE qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
+	if err != nil {
+		return 0, err
+	}
+	nv, err := vres.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	sres, err := tx.Exec(`DELETE FROM embedding_state
+		WHERE qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
+	if err != nil {
+		return 0, err
+	}
+	ns, err := sres.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if nv == 0 && ns == 0 {
+		return 0, nil // rollback via defer: a no-op purges nothing, not even the watermark
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(nv), s.BumpWatermark()
+}
+
 // VectorCount returns the vector count for a model.
 func (s *Store) VectorCount(modelID string) (int, error) {
 	var n int

@@ -1,15 +1,20 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.11.3-doctor-truth
+**Version:** 4.11.4-vector-reclaim
 **Date:** 2026-09-14
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
-**Codebase Version:** 0.31.3 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
+**Codebase Version:** 0.32.0 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
 
 ---
 
 ## Changelog
 
+
+### v4.11.4-vector-reclaim — `gc` now reclaims vectors too (#411 closed); the loop's fixes shipped as v0.32.0 (2026-09-14)
+
+- **#411 fixed:** `DeleteByFile` owns elements + edges, so vectors of deleted elements were permanent residue (`Orphans: 11` on this repo, forever). New `store.DeleteOrphanVectors` (both engines — PG walks the per-model stamped collections, skipping vanished tables; watermark bumps only when rows go, a no-op never touches it) wired into `leankg gc` as one repair printing both counts. Store regression test pins the setup→bug→reclaim sequence, live-row preservation, and the idempotence clauses. Live on this repo: `gc` reclaimed exactly the 11; the next `leankg-embed run` reports **`Orphans: 0`, Coverage 1.0**; `freshness: fresh` throughout.
+- **The loop shipped:** release-please cut **v0.32.0** (waves #401→#410) with all four platform tarballs verified on the release — FR-SELF-04's "engine fixes ship via release-please" clause demonstrated end to end.
 
 ### v4.11.3-doctor-truth — the loop audits its own auditor (#406 closed)
 
@@ -853,4 +858,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-14 (v4.11.2 — the self-host ran on itself: dynamic HTTP server (`--http 9699 --rest 9700 --ui 9701 --memory --embed-provider local`) with the pinned `bge-small-en-v1.5-384` sidecar over this repo's own index (9,025 elements, 8,989 vectors, coverage 0.9984), all five S1 gates verified live (health ×3, L1/L2/L3 with provenance, retain→recall across restart, doctor 0-fail); the run's four dogfood defects fixed failing-first — local text budget + chunker v2, per-item provider-failure fallback, the long-advertised `leankg gc` verb implemented (5,810 dangling edges purged live), held-lock doctor probe + PID stamping; test-layer policy codified: unit in-process+fast, real calls integration/e2e-gated, benchmarks never in CI. Prior wave: v4.11.1 ship-surface — brand mark, published module, restored container deploy)*
+*Last updated: 2026-09-14 (v4.11.4-vector-reclaim — `leankg gc` reclaims orphaned vectors too (#411 closed; live: the repo's 11 residue purged, `Orphans: 0` after, coverage 1.0, freshness kept), and the loop's first three waves shipped as **v0.32.0** with all four platform tarballs. Prior waves: v4.11.3 doctor-truth (#406: index-freshness bookkeeping source, T0 MANIFEST/not_indexed classification, inventory refresh on gc + writer — doctor now 10 pass / 1 honest warn / 0 fail); v4.11.2 selfhost-validated (S1 all five gates green on this repo's own index+embeddings+memory; 6 dogfood defects fixed). The loop continues: scale one child at a time, fix what the data surfaces)*
