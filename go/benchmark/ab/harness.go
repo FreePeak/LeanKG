@@ -21,8 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -248,7 +250,7 @@ func Aggregate(trials []Trial) (Report, error) {
 		return Report{}, fmt.Errorf("need at least two arms for an A/B report, got %d", len(byArm))
 	}
 	promptByArm := map[string]string{}
-	for _, arm := range sortedKeys(byArm) {
+	for _, arm := range slices.Sorted(maps.Keys(byArm)) {
 		n := len(byArm[arm])
 		if n < MinTrialsPerArm {
 			return Report{}, fmt.Errorf("arm %q has %d trial(s), scorer requires >=%d per arm", arm, n, MinTrialsPerArm)
@@ -262,21 +264,21 @@ func Aggregate(trials []Trial) (Report, error) {
 		promptByArm[arm] = sha
 	}
 	if len(uniqueValues(promptByArm)) == 1 {
-		prov.PromptSHA256 = promptByArm[sortedKeys(promptByArm)[0]]
+		prov.PromptSHA256 = promptByArm[slices.Sorted(maps.Keys(promptByArm))[0]]
 	} else {
 		prov.PromptSHA256 = "" // arms differ legitimately; per-arm map is the stamp
 	}
 	report := Report{Provenance: prov, PromptSHA256ByArm: promptByArm, MinTrials: MinTrialsPerArm, Arms: map[string]*ArmSummary{}}
-	arms := sortedKeys(byArm)
+	arms := slices.Sorted(maps.Keys(byArm))
 	for _, arm := range arms {
 		report.Arms[arm] = &ArmSummary{Trials: len(byArm[arm])}
 	}
-	taskNames := sortedKeys(byTaskArm)
+	taskNames := slices.Sorted(maps.Keys(byTaskArm))
 	perArmTaskMeds := map[string][]float64{}
 	perArmTaskJudge := map[string][]int{}
 	for _, task := range taskNames {
 		row := TaskRow{Task: task, Arms: map[string]ArmTask{}}
-		for _, arm := range sortedKeys(byTaskArm[task]) {
+		for _, arm := range slices.Sorted(maps.Keys(byTaskArm[task])) {
 			ts := byTaskArm[task][arm]
 			if len(ts) < MinTrialsPerArm {
 				return Report{}, fmt.Errorf("arm %q has %d trial(s) for task %q, scorer requires >=%d per arm", arm, len(ts), task, MinTrialsPerArm)
@@ -383,7 +385,7 @@ func BlindGroups(trials []Trial, rng *rand.Rand) []BlindGroup {
 		byTask[t.Task] = append(byTask[t.Task], slot{t.Answer, i})
 		questions[t.Task] = t.Question
 	}
-	tasks := sortedKeys(byTask)
+	tasks := slices.Sorted(maps.Keys(byTask))
 	groups := make([]BlindGroup, 0, len(tasks))
 	for _, task := range tasks {
 		slots := byTask[task]
@@ -546,7 +548,7 @@ func Checklist(trials []Trial) []Check {
 	// Tool-access smoke + leakage guard. Candidate arm = last in sorted
 	// arm order when >=2 arms (mirrors Aggregate's savings convention:
 	// baseline first alphabetically, leankg second).
-	arms := sortedKeys(byArm)
+	arms := slices.Sorted(maps.Keys(byArm))
 	if len(arms) >= 2 {
 		cand, refArm := arms[len(arms)-1], arms[0]
 		candTrials, refTrials := 0, 0
@@ -619,15 +621,6 @@ func sameTools(a, b map[string]string) bool {
 		}
 	}
 	return true
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	ks := make([]string, 0, len(m))
-	for k := range m {
-		ks = append(ks, k)
-	}
-	sort.Strings(ks)
-	return ks
 }
 
 func uniqueValues(m map[string]string) map[string]bool {

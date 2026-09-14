@@ -243,17 +243,14 @@ func (c *ResponseCompressor) CompressContext(response map[string]any) map[string
 func (c *ResponseCompressor) EstimateSavings(original, compressed any) CompressionStats {
 	originalBytes, _ := json.Marshal(original)
 	compressedBytes, _ := json.Marshal(compressed)
-	originalTokens := len(originalBytes) / 4
-	compressedTokens := len(compressedBytes) / 4
-
-	savingsPercent := 0.0
-	if originalTokens > 0 {
-		savingsPercent = float64(originalTokens-compressedTokens) / float64(originalTokens) * 100.0
-	}
+	// Byte length over the package constant, not a literal 4: this is the same
+	// heuristic EstimateTokens applies, and it shadowed savingsPercent below.
+	originalTokens := len(originalBytes) / CharsPerToken
+	compressedTokens := len(compressedBytes) / CharsPerToken
 	return CompressionStats{
 		OriginalTokens:   originalTokens,
 		CompressedTokens: compressedTokens,
-		SavingsPercent:   savingsPercent,
+		SavingsPercent:   percentSaved(originalTokens, compressedTokens),
 	}
 }
 
