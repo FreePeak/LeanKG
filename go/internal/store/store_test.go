@@ -103,6 +103,56 @@ func TestDeleteByFile(t *testing.T) {
 	}
 }
 
+// The reconcile ceiling that `leankg gc` repairs: DeleteByFile removes edges
+// SOURCED by a file's elements, but edges pointing INTO the deleted file
+// from surviving files remain — and incremental index never revisits them.
+// gc purges exactly the dangling edges and leaves fully live ones alone.
+func TestDeleteOrphanRelationships(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.UpsertElements([]Element{
+		{QualifiedName: "a.A", ElementType: "function", Name: "A", FilePath: "a.go", Language: "go"},
+		{QualifiedName: "b.B", ElementType: "function", Name: "B", FilePath: "b.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertRelationships([]Relationship{
+		{Source: "b.B", Target: "a.A", RelType: "calls"}, // into a.go: survives DeleteByFile as a dangling edge
+		{Source: "b.B", Target: "b.B", RelType: "uses"},  // fully live: must survive gc
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteByFile("a.go"); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.DeleteOrphanRelationships()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("purged %d edges, want 1", n)
+	}
+	rels, err := s.RelationshipsAll(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rels) != 1 || rels[0].Source != "b.B" || rels[0].Target != "b.B" {
+		t.Fatalf("live survivor missing: %+v", rels)
+	}
+
+	// Idempotent, and the watermark must not move when nothing went:
+	// a no-op gc may not mark a fresh project possibly_stale.
+	seq1, _, _ := s.Watermark()
+	n2, err := s.DeleteOrphanRelationships()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq2, _, _ := s.Watermark()
+	if n2 != 0 || seq2 != seq1 {
+		t.Fatalf("second gc: purged %d, seq %d->%d; want 0 and no bump", n2, seq1, seq2)
+	}
+}
+
 func TestWatermarkBumpsOnWrite(t *testing.T) {
 	s := openTestStore(t)
 	seq0, _, _ := s.Watermark()

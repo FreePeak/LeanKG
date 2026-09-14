@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/FreePeak/LeanKG/go/internal/index"
@@ -898,7 +899,8 @@ func checkDuplicateNames(p Probes, _ Env) Finding {
 			"and reinserts per env, clearing them."}
 }
 
-// checkLeankgDir: .leankg directory writability + stray lock files.
+// checkLeankgDir: .leankg directory writability + lock state: idle single-
+// flight tokens are normal, only a held flock is reported.
 func checkLeankgDir(_ Probes, env Env) Finding {
 	const check = "leankg-dir"
 	dir := env.LeankgDir
@@ -925,18 +927,53 @@ func checkLeankgDir(_ Probes, env Env) Finding {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot list %s: %v", dir, err),
 			"Fix filesystem permissions on the .leankg directory."}
 	}
-	var locks []string
+	// Lock files are PERSISTENT single-flight tokens (embed.lock/watch.lock):
+	// they are created once, guarded by an OS-level flock, and intentionally
+	// left in place when the holder exits — the kernel releases the flock.
+	// Existence therefore means nothing; only a HELD lock is live activity.
+	// Probing with LOCK_EX|LOCK_NB tells the two apart (found dogfooding
+	// doctor --deep on this repo: every successful embed left a "stray lock
+	// file" WARN behind forever).
+	var held []string
+	idle := 0
 	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".lock") {
-			locks = append(locks, e.Name())
+		if !strings.HasSuffix(e.Name(), ".lock") {
+			continue
+		}
+		if pid := lockHolder(filepath.Join(dir, e.Name())); pid != "" {
+			held = append(held, fmt.Sprintf("%s held by pid %s", e.Name(), pid))
+		} else {
+			idle++
 		}
 	}
-	if len(locks) == 0 {
-		return Finding{check, StatusPass, "writable, no stray lock files", ""}
+	if len(held) == 0 {
+		return Finding{check, StatusPass, fmt.Sprintf("writable, no held locks (%d idle token(s))", idle), ""}
 	}
-	return Finding{check, StatusWarn, fmt.Sprintf("stray lock file(s): %s", strings.Join(locks, ", ")),
-		"Locks are written by embed/watch runs; delete them if no such process is alive " +
-			"(`cat <lock>` shows the owning PID)."}
+	return Finding{check, StatusWarn, fmt.Sprintf("lock(s) in use: %s", strings.Join(held, ", ")),
+		"A live embed/watch run holds these — single-flight by design. Wait for " +
+			"it or stop that process; the files are safe to leave in place."}
+}
+
+// lockHolder probes one lock file: it returns the stamped owning PID (the
+// stamp is bookkeeping — mutual exclusion is the flock itself) when the lock
+// is HELD, and "" when it is free. A file that cannot be opened at all is
+// reported as held with an unknown owner, so a permissions surprise never
+// reads as clean.
+func lockHolder(path string) string {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return "?"
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		pid, _ := os.ReadFile(path)
+		if s := strings.TrimSpace(string(pid)); s != "" {
+			return s
+		}
+		return "?"
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return ""
 }
 
 // checkProjectConfig: the project's leankg.yaml is its schema-identity

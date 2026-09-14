@@ -206,6 +206,25 @@ func (s *Store) DeleteFileRecord(path string) error {
 	return s.BumpWatermark()
 }
 
+// DeleteOrphanRelationships removes every edge whose endpoint is no longer a
+// live element. The watermark bumps only when something actually went.
+func (s *Store) DeleteOrphanRelationships() (int, error) {
+	res, err := s.db.Exec(`DELETE FROM relationships
+		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements)
+		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements)`)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	return int(n), s.BumpWatermark()
+}
+
 // FindExact implements the L1 rung: exact (case-insensitive) match on element
 // name or qualified name.
 func (s *Store) FindExact(name string) ([]Element, error) {
