@@ -70,6 +70,11 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 - `.release-please-manifest.json` is keyed by package **path** (`"."`). A key of
   `main` is never read, and any non-version value (e.g. a `$schema` key) makes
   release-please throw while loading the manifest.
+- The simple release strategy's releasable commit types exclude `chore`/`refactor`/`docs`:
+  a merged `refactor!`/`BREAKING CHANGE` squash opens **no** release PR ("No user facing
+  commits found" in the version job). When the cut must ride such a commit — e.g. the
+  #403 module-root move, shipped as v0.33.0 — declare the version deliberately with an
+  empty `Release-As: X.Y.Z` trailer commit; it forces the release PR on the next push.
 - `leankg update` polls `releases/latest`, so the release must be non-draft and
   marked latest; asset names and the archive layout are a contract with
   `internal/update`. `--latest` is claimed only when the version is at least
