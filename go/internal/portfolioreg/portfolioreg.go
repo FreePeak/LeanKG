@@ -117,18 +117,14 @@ func (o Options) engine() string {
 	return store.EngineSQLite
 }
 
-// pgURL resolves the shared-Postgres dsn for one project dir.
+// pgURL resolves the shared-Postgres dsn for one project dir: an explicit
+// Options.PGURL wins, otherwise the engine-wide precedence lives in
+// projectcfg.PGURL.
 func (o Options) pgURL(dir string) string {
 	if o.PGURL != "" {
 		return o.PGURL
 	}
-	if v := os.Getenv("LEANKG_PG_URL"); v != "" {
-		return v
-	}
-	if db := projectcfg.DBConfigFromDir(dir); db != nil {
-		return db.URL
-	}
-	return ""
+	return projectcfg.PGURL(dir)
 }
 
 // Open opens the registry store itself. RW creates and migrates it on first

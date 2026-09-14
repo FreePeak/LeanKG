@@ -30,6 +30,8 @@ package store
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -408,7 +410,7 @@ func summarizeMetrics(rows []Metric, retentionDays int) MetricSummary {
 	if correctCalls > 0 {
 		sum.AverageCorrectnessPercent = sumCorrect / float64(correctCalls)
 	}
-	for _, name := range sortedKeys(tools) {
+	for _, name := range slices.Sorted(maps.Keys(tools)) {
 		t := tools[name]
 		tm := ToolMetrics{ToolName: name, Calls: t.calls, TotalSaved: t.totalSaved}
 		if t.calls > 0 {
@@ -419,7 +421,7 @@ func summarizeMetrics(rows []Metric, retentionDays int) MetricSummary {
 		}
 		sum.ByTool = append(sum.ByTool, tm)
 	}
-	for _, day := range sortedKeys(days) {
+	for _, day := range slices.Sorted(maps.Keys(days)) {
 		d := days[day]
 		dm := DailyMetrics{Date: day, Calls: d.calls, Savings: d.savings}
 		if d.correctCalls > 0 {
@@ -499,7 +501,7 @@ func aggregateUsage(rows []Metric) UsageAggregates {
 		}
 	}
 
-	for _, tool := range sortedKeys(tools) {
+	for _, tool := range slices.Sorted(maps.Keys(tools)) {
 		t := tools[tool]
 		agg.Tools = append(agg.Tools, ToolUsage{
 			Tool:        tool,
@@ -516,7 +518,7 @@ func aggregateUsage(rows []Metric) UsageAggregates {
 			TokensSaved: d.saved,
 		})
 	}
-	for _, project := range sortedKeys(projects) {
+	for _, project := range slices.Sorted(maps.Keys(projects)) {
 		p := projects[project]
 		agg.Projects = append(agg.Projects, ProjectUsage{
 			Project:     project,
@@ -524,7 +526,7 @@ func aggregateUsage(rows []Metric) UsageAggregates {
 			TokensSaved: p.saved,
 		})
 	}
-	for _, pattern := range sortedKeys(patterns) {
+	for _, pattern := range slices.Sorted(maps.Keys(patterns)) {
 		q := patterns[pattern]
 		agg.Patterns = append(agg.Patterns, PatternUsage{
 			Pattern:     pattern,
@@ -562,16 +564,6 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
-}
-
-// sortedKeys returns a string-keyed map's keys ascending.
-func sortedKeys[T any](m map[string]T) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // sortedIntKeys returns an int64-keyed map's keys ascending.

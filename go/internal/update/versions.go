@@ -2,7 +2,7 @@
 // binary with the newest GitHub Release for this platform.
 //
 // Flow: resolve the latest release (tags are `v<version>`, matching
-// .github/workflows/release-go.yml) → compare against the embedded version →
+// .github/workflows/release.yml) → compare against the embedded version →
 // download the platform asset `leankg-<goos>-<goarch>.tgz` with a hard size
 // ceiling → verify (SHA256 when the release publishes one; otherwise the tar
 // contents: both binaries present, executable, stamped with the requested

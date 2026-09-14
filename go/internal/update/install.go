@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-// binaryNames are the members release-go.yml packs at the archive root —
+// binaryNames are the members release.yml packs at the archive root —
 // `tar -czf leankg-<goos>-<goarch>.tgz -C out leankg leankg-embed`.
 var binaryNames = []string{"leankg", "leankg-embed"}
 
@@ -120,17 +120,19 @@ func verifySum(got, want string) error {
 	return fmt.Errorf("checksum mismatch: the release published %s, the download hashed to %s", want, got)
 }
 
-// verifyMembers is the evidence a release provides when it ships no checksum for
-// the asset (release-go.yml uploads only the .tgz): the archive must hold both
-// binaries and each must be stamped with the requested version. It returns the
-// notice the caller shows the user, which says out loud what was verified and
-// what was not.
+// verifyMembers is the evidence a release provides when it ships no checksum of
+// its own: the archive must hold both binaries and each must be stamped with the
+// requested version. It returns the notice the caller shows the user, which says
+// out loud what was verified and what was not.
+//
+// release.yml publishes the SHA256 of every tarball (as a body table naming each
+// asset, and via GitHub's own asset digest), so the checksum branch in
+// internal/update/github.go is the normal path; this remains the fallback for a
+// release that omits both.
 //
 // ponytail: the stamp check is a substring scan of the binary, so it can
 // false-positive on an unrelated embedded string of the same shape (the ceiling).
-// The upgrade path is publishing a checksum: once release-go.yml also uploads a
-// `.sha256` asset (or the API records a digest), the checksum branch verifies the
-// whole archive and this scan is moot.
+// The checksum branch above verifies the whole archive and supersedes it.
 func verifyMembers(members map[string][]byte, wantVersion string) (string, error) {
 	for _, name := range binaryNames {
 		data, ok := members[name]

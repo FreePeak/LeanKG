@@ -1,0 +1,179 @@
+name: Release
+# Semantic versioning for the Go engine, end to end, in ONE workflow run:
+#
+#   merge to main -> release-please opens/updates the release PR
+#   merge the release PR -> same run: tag vX.Y.Z + GitHub Release
+#                        -> then build the 4 CGO-free tarballs and attach them
+#
+# Why one run and not a `push: tags: [v*]` follower: release-please pushes the
+# tag with the run's GITHUB_TOKEN, and GitHub suppresses workflow runs caused by
+# GITHUB_TOKEN writes. That is not theory here — the Rust-era chain died exactly
+# this way: v0.28.1, v0.29.0 and v0.30.0 were tagged by leankg-release[bot] and
+# shipped with ZERO assets because the tag-triggered release workflow never ran.
+# So the asset jobs hang off the release-please job's outputs instead.
+#
+# `workflow_dispatch` re-publishes binaries for a release that already exists
+# (a failed/partial publish), which is the only case where no new version is cut.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Re-publish binaries for an existing release (e.g. 0.31.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  plan:
+    name: Cut the version (release-please)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release-please.outputs.release-tag-name }}
+      version: ${{ steps.release-please.outputs.release-version }}
+    steps:
+      - id: release-please
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  prepare:
+    name: Resolve what to publish
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result != 'failure' }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        env:
+          PLANNED_TAG: ${{ needs.plan.outputs.tag }}
+          PLANNED_VERSION: ${{ needs.plan.outputs.version }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "tag=v${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${PLANNED_TAG}" >> "$GITHUB_OUTPUT"
+            echo "version=${PLANNED_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    name: Version consistency gate
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go/go.sum
+      # ci.yml skips release-metadata commits, so the three version copies are
+      # otherwise never compared on the exact commit that gets shipped.
+      - name: Tag, go/cmd/leankg/VERSION and the MCP serverInfo must agree
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          stamp="$(awk '{print $1}' go/cmd/leankg/VERSION)"
+          if [ "$stamp" != "$VERSION" ]; then
+            echo "::error file=go/cmd/leankg/VERSION::stamped $stamp but releasing v$VERSION"
+            exit 1
+          fi
+          cd go && go test ./internal/mcp/ -run TestVersionMatchesReleaseStamp -count=1
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: [prepare, verify]
+    if: needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go/go.sum
+      # CGO_ENABLED=0 is the shipped shape (ci.yml guards it). The asset name is
+      # a contract: internal/update matches `leankg-<goos>-<goarch>.tgz` exactly
+      # and requires leankg + leankg-embed at the archive root, stamped with the
+      # version it is verifying.
+      - name: Build leankg + leankg-embed
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          (cd go && go build -ldflags "-s -w -X main.version=${VERSION}" \
+            -o ../out/ ./cmd/leankg ./cmd/leankg-embed)
+          tar -czf "leankg-${GOOS}-${GOARCH}.tgz" -C out leankg leankg-embed
+          sha256sum "leankg-${GOOS}-${GOARCH}.tgz" > "leankg-${GOOS}-${GOARCH}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            leankg-*.tgz
+            leankg-*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Attach binaries to the release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+      - name: Upload assets and the SHA256 table
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" leankg-*.tgz --clobber
+          # internal/update reads a checksum from the API digest or, failing
+          # that, from a release-body line that also names the asset. One line
+          # per platform, each carrying its own filename.
+          {
+            echo ""
+            echo "## SHA256"
+            echo ""
+            cat leankg-*.sha256
+          } > checksums.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            { gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body
+              cat checksums.md; } > notes.md
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          else
+            # workflow_dispatch for a tag that has no release yet.
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --notes-file checksums.md --latest
+          fi
+          # A draft is invisible to `releases/latest`, which is what
+          # `leankg update` polls (v0.27.0 sat drafted with assets nobody got).
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

@@ -19,13 +19,14 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/go/internal/portfolioreg"
+	"github.com/FreePeak/LeanKG/go/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
 
 // portfolioOptions builds the registry location for a CLI verb: the deployment
 // engine selection, with the dsn resolved the way every other verb resolves it.
 func portfolioOptions(engineFlag, dir string) portfolioreg.Options {
-	o := portfolioreg.Options{Engine: engineFlag, PGURL: pgURLFor(dir)}
+	o := portfolioreg.Options{Engine: engineFlag, PGURL: projectcfg.PGURL(dir)}
 	if o.Engine == "" {
 		o.Engine = envOr("LEANKG_DB_ENGINE", "")
 	}

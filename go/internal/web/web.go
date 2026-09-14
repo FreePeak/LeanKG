@@ -1,6 +1,7 @@
-// Package web serves the ui-v2 dashboard (the same checked-in build the
-// Rust engine embeds under src/embed/) with go:embed — CGO-free, no build
-// step needed. Re-sync with `make go-ui-assets` after a ui-v2 rebuild.
+// Package web serves the ui-v2 dashboard with go:embed — CGO-free, no build
+// step needed at engine build time. The checked-in build under `embed/` is
+// re-synced from a ui-v2 production build by `make go-ui-assets` (see
+// embed/ui-build.json for which revision is in the tree).
 package web
 
 import (
