@@ -54,16 +54,26 @@ jobs:
     steps:
       - id: resolve
         env:
+          EVENT: ${{ github.event_name }}
           PLANNED_TAG: ${{ needs.plan.outputs.tag }}
           PLANNED_VERSION: ${{ needs.plan.outputs.version }}
           INPUT_VERSION: ${{ inputs.version }}
+        # Value-driven on purpose. An earlier revision branched on the
+        # GITHUB_EVENT_NAME shell variable and resolved to empty on a real
+        # workflow_dispatch run, so every downstream job skipped and the
+        # release published with no binaries — the exact defect this workflow
+        # exists to prevent. Whatever source filled the value wins instead.
         run: |
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            echo "tag=v${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
-            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+          version="${PLANNED_VERSION:-$INPUT_VERSION}"
+          tag="$PLANNED_TAG"
+          if [ -z "$tag" ] && [ -n "$version" ]; then
+            tag="v$version"
+          fi
+          echo "event=$EVENT planned=[$PLANNED_TAG/$PLANNED_VERSION] input=$INPUT_VERSION -> resolved [$tag/$version]"
+          if [ -n "$tag" ] && [ -n "$version" ]; then
+            printf 'tag=%s\nversion=%s\n' "$tag" "$version" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${PLANNED_TAG}" >> "$GITHUB_OUTPUT"
-            echo "version=${PLANNED_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "nothing to publish (no release was cut by this run)"
           fi
 
   verify:
