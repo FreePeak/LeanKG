@@ -29,6 +29,14 @@ go-bench:
 go-vet:
 	cd go && go vet ./...
 
+# The tree-sitter tier is opt-in: `tstree` guards the CGO grammar bindings, so
+# the default build stays CGO_ENABLED=0 (CI asserts both shapes).
+go-build-tstree:
+	cd go && go build -tags tstree ./...
+
+go-test-tstree:
+	cd go && go test -tags tstree ./... -count=1
+
 # Sync a fresh ui-v2 production build into the Go dashboard embed dir
 # (`go/internal/web/embed`, consumed by //go:embed all:embed in web.go). The
 # Rust-era source path `src/embed` is gone; ui-v2's vite `dist/` is the only
