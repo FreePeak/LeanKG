@@ -42,7 +42,7 @@ pinned JSONL + results JSON (`go/benchmark/ab/harness.go`, CLI
 **Footnotes:**
 3. Base corpus, Go arm @ `df18c2d1`.
 6. Chained corpus, Go arm @ `6ab30c90` (adds the `query --kind impact` CLI path used for this row).
-1. In-process Rust microbenches would require reviving the Rust bench harness (cargo benches removed with the Rust tree; historical cross-tool results live in `benchmark/results/`, July-era, different corpus — not comparable, marked *not measured* per the no-extrapolation rule).
+1. In-process Rust microbenches would require reviving the Rust bench harness (cargo benches removed with the Rust tree; the July-era cross-tool results that were quoted here lived in `benchmark/results/`, removed from the checkout in the post-cutover hygiene sweep — recoverable from git history, different corpus, not comparable, marked *not measured* per the no-extrapolation rule).
 2. Go L3 is an **exact O(n) cosine scan** (`internal/store/vectors.go` ponytail ceiling); Rust sqlite/pgvector used HNSW ANN. Cells must never be labeled "ANN" for Go.
 3. L3 end-to-end requires the local ONNX model download on the Rust arm and a provider on the Go arm — out of scope for this report; both engines' L3 paths are covered by unit/live tests instead.
 4. Extraction yield: Rust 400 elements (its extractor also emits const/var kinds), Go 300 — the documented W2 ceiling (Go regex extractor until tree-sitter; `go/internal/index` package doc). Index TIME is at parity (~0.10 s both), so the yield gap is extraction coverage, not speed.

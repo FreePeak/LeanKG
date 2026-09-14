@@ -17,7 +17,7 @@ const DefaultRepo = "FreePeak/LeanKG"
 // release from an httptest server instead of the network.
 const DefaultAPIBase = "https://api.github.com"
 
-// assetPrefix is the tarball stem that .github/workflows/release-go.yml uploads
+// assetPrefix is the tarball stem that .github/workflows/release.yml uploads
 // as `leankg-<goos>-<goarch>.tgz`, holding the `leankg` and `leankg-embed`
 // binaries at the archive root.
 const assetPrefix = "leankg"
@@ -41,7 +41,9 @@ type Asset struct {
 }
 
 // Version strips the leading `v` from the tag: tags are `v<version>` because
-// release-go.yml passes `tag_name: v${{ inputs.version }}`.
+// release-please-config.json sets include-v-in-tag with include-component-in-tag
+// off (and `.release-please-manifest.json` is keyed by package path, which is
+// what decides the next version — a key other than "." is never read).
 func (r Release) Version() string { return strings.TrimPrefix(strings.TrimSpace(r.TagName), "v") }
 
 // assetName builds the tarball name for one platform.

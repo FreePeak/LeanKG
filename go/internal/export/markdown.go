@@ -2,8 +2,10 @@ package export
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -152,7 +154,7 @@ func renderOverview(out *strings.Builder, doc *MarkdownDoc) {
 func writeCountTable(out *strings.Builder, heading string, counts map[string]int) {
 	out.WriteString(heading + "\n\n")
 	out.WriteString("| Type | Count |\n|---|---|\n")
-	for _, t := range sortedKeys(counts) {
+	for _, t := range slices.Sorted(maps.Keys(counts)) {
 		fmt.Fprintf(out, "| %s | %d |\n", t, counts[t])
 	}
 	out.WriteString("\n")
@@ -324,7 +326,7 @@ func renderTrie(node *trieNode, level int, lines *[]string) {
 		}
 		return
 	}
-	for _, name := range sortedKeys(node.dirs) {
+	for _, name := range slices.Sorted(maps.Keys(node.dirs)) {
 		*lines = append(*lines, fmt.Sprintf("%s- %s/", pad, name))
 		renderTrie(node.dirs[name], level+1, lines)
 	}
@@ -374,7 +376,7 @@ func folderClusters(elements []store.Element) []Cluster {
 		byFolder[folder] = append(byFolder[folder], e.QualifiedName)
 	}
 	out := make([]Cluster, 0, len(byFolder))
-	for _, folder := range sortedKeys(byFolder) {
+	for _, folder := range slices.Sorted(maps.Keys(byFolder)) {
 		members := append([]string(nil), byFolder[folder]...)
 		sort.Strings(members)
 		label := folder
@@ -404,7 +406,7 @@ func godNodes(els []store.Element, rels []store.Relationship, limit int) []GodNo
 	for _, e := range els {
 		byQN[e.QualifiedName] = e
 	}
-	qns := sortedKeys(degree)
+	qns := slices.Sorted(maps.Keys(degree))
 	sort.SliceStable(qns, func(i, j int) bool {
 		if degree[qns[i]] != degree[qns[j]] {
 			return degree[qns[i]] > degree[qns[j]]
@@ -436,15 +438,6 @@ func escapeInline(s string) string {
 // now_rfc3339_utc, which hand-rolled the civil-from-days conversion).
 func nowRFC3339UTC() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func dedupeSorted(sorted []string) []string {

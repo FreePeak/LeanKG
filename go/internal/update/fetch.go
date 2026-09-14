@@ -12,7 +12,7 @@ import (
 //
 // The read is capped at MaxBytes+1 so a wrong-content or hostile URL costs a
 // fixed amount, and going over the cap is an error rather than a silently
-// truncated archive. `release-go.yml` publishes ~20 MB gzipped per asset;
+// truncated archive. `release.yml` publishes ~20 MB gzipped per asset;
 // MaxBytes defaults to 128 MiB, which bounds the download and (with the archive
 // already in RAM) the peak.
 //

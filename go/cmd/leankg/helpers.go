@@ -59,24 +59,12 @@ func resolveProjectDir(flagValue string) string {
 	return dir
 }
 
-// pgURLFor applies Rust's POSTGRES precedence: the LEANKG_PG_URL environment
-// variable > the nearest leankg.yaml `db:` block > empty (driver default).
-func pgURLFor(dir string) string {
-	if v := os.Getenv("LEANKG_PG_URL"); v != "" {
-		return v
-	}
-	if db := projectcfg.DBConfigFromDir(dir); db != nil {
-		return db.URL
-	}
-	return ""
-}
-
 // openEngine opens a project's store and returns a query-ready engine with the
 // project directory and the lazily-activated language registry wired, exactly
 // like the serving transports. The caller closes engine.Store().
 func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
 	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), pgURLFor(dir), mode)
+		envOr("LEANKG_DB_ENGINE", "sqlite"), projectcfg.PGURL(dir), mode)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +128,7 @@ func runIndex(project, target, source, refName, auth string) error {
 		projectcfg.EnsureIdentityFieldsForDB(filepath.Join(dir, ".leankg"), abs)
 	}
 	st, err := store.OpenBackend(context.Background(), dir,
-		os.Getenv("LEANKG_DB_ENGINE"), pgURLFor(dir), store.RW)
+		os.Getenv("LEANKG_DB_ENGINE"), projectcfg.PGURL(dir), store.RW)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -165,7 +153,7 @@ func runIndex(project, target, source, refName, auth string) error {
 	// CLI cannot see) is exactly that. dir, not indexTarget: dir is the store's
 	// project identity, which is what a portfolio child opens.
 	if rerr := portfolioreg.RegisterAfterIndex(context.Background(),
-		portfolioreg.Options{Engine: os.Getenv("LEANKG_DB_ENGINE"), PGURL: pgURLFor(dir)},
+		portfolioreg.Options{Engine: os.Getenv("LEANKG_DB_ENGINE"), PGURL: projectcfg.PGURL(dir)},
 		st, dir); rerr != nil {
 		fmt.Fprintf(os.Stderr, "index: portfolio registry: %v\n", rerr)
 	}

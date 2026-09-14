@@ -32,7 +32,7 @@ type fake struct {
 }
 
 // newFake serves release `tag` with a leankg-linux-amd64.tgz asset that packs
-// `members` exactly as release-go.yml does (bare names at the archive root).
+// `members` exactly as release.yml does (bare names at the archive root).
 func newFake(t *testing.T, tag string, members map[string][]byte) *fake {
 	t.Helper()
 	f := &fake{tag: tag, tgz: makeTGZ(t, members)}
@@ -70,8 +70,8 @@ func (f *fake) asset() Asset {
 	}
 }
 
-// publishChecksum is what release-go.yml does not do today: record the SHA256 of
-// the archive it uploaded.
+// publishChecksum models a release that records the SHA256 of the archive it
+// uploaded — GitHub's asset digest, which release.yml's body table also feeds.
 func (f *fake) publishChecksum() { f.digest = "sha256:" + sumHex(f.tgz) }
 
 // opts is the Run input for this fake: an install dir in a temp tree holding both
@@ -334,9 +334,9 @@ func TestRunAtomicReplaceWithChecksum(t *testing.T) {
 	}
 }
 
-// TestRunContentFallbackWithoutPublishedChecksum is the release-go.yml reality: it
-// uploads only the .tgz, so the archive contents carry the verification and the
-// output must say which happened.
+// TestRunContentFallbackWithoutPublishedChecksum covers a release with neither
+// an asset digest nor a body checksum: the archive contents must carry the
+// verification, and the output has to say which of the two happened.
 func TestRunContentFallbackWithoutPublishedChecksum(t *testing.T) {
 	f := newFake(t, "v0.32.0", map[string][]byte{
 		"leankg":       stampedBin("0.32.0"),

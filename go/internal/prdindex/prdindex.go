@@ -30,9 +30,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -592,7 +594,7 @@ func linksFrom(steps []store.Element, res Result, docPath string) []store.Relati
 				}
 			}
 		}
-		for _, wf := range sortedKeys(matched) {
+		for _, wf := range slices.Sorted(maps.Keys(matched)) {
 			rels = append(rels, store.Relationship{
 				Source:     requirementQN(req.ID),
 				Target:     wf,
@@ -964,15 +966,6 @@ func mergeStrings(dst, add []string) []string {
 		}
 	}
 	return dst
-}
-
-func sortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func strPtr(s string) *string { return &s }
