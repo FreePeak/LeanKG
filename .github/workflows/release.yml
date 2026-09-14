@@ -10,17 +10,10 @@ name: Release
 # GITHUB_TOKEN writes. That is not theory here — the Rust-era chain died exactly
 # this way: v0.28.1, v0.29.0 and v0.30.0 were tagged by leankg-release[bot] and
 # shipped with ZERO assets because the tag-triggered release workflow never ran.
+# So the asset jobs hang off the release-please job's outputs instead.
 #
-# `workflow_dispatch` re-publishes binaries for a release that already exists (a
-# failed or partial publish), the only case where no new version is cut.
-#
-# Expressions in this file are chosen for what has been observed to work, not
-# what should: `inputs.*` reads empty in a job-level `if` on a real
-# workflow_dispatch run (runs 34805275505, 34806151322 — every downstream job
-# skipped while the same value was plainly present in a step's env), so
-# `inputs.version` is consumed by exactly one step below and everything else
-# keys off `needs.plan.outputs.version`. A release whose asset jobs silently skip
-# is not a loud failure, it is a v0.31.0 with no binaries to update to.
+# `workflow_dispatch` re-publishes binaries for a release that already exists
+# (a failed/partial publish), which is the only case where no new version is cut.
 on:
   push:
     branches: [main]
@@ -37,53 +30,48 @@ permissions:
 
 jobs:
   plan:
-    name: Resolve the release version
+    name: Cut the version (release-please)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.release-please.outputs.version || steps.manual.outputs.version }}
+      tag: ${{ steps.release-please.outputs.tag_name }}
+      version: ${{ steps.release-please.outputs.version }}
     steps:
-      # release-please's own outputs, read from the shipped bundle: for a
-      # root-path manifest it sets `tag_name`, `version`, `body`, `html_url`,
-      # `upload_url` (tagName -> tag_name etc). `release-tag-name` is not one of
-      # them, and gating on a name that never populates is how a release gets
-      # tagged with nothing attached to it.
-      - if: ${{ github.event_name != 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
-        id: release-please
+      - id: release-please
         uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-      - if: ${{ github.event_name == 'workflow_dispatch' }}
-        id: manual
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          if [ -z "$INPUT_VERSION" ]; then
-            echo "::error::workflow_dispatch needs an explicit version"
-            exit 1
-          fi
-          echo "re-publishing the existing release v${INPUT_VERSION}"
-          echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
 
+  # Downstream jobs read the version straight off `plan` (or the manual input)
+  # rather than through an intermediate resolver job: job-to-job outputs are the
+  # one link in this chain that has silently produced empty values before, which
+  # is how v0.31.0 ended up tagged with no binaries. `plan` itself is a plain
+  # `${{ steps.<id>.outputs.<name> }}` passthrough of release-please's own
+  # outputs, and that path is proven by the v0.31.1 release.
+  #
+  # On workflow_dispatch (re-publishing an existing release) `plan` is skipped,
+  # so `inputs.version` supplies the value instead.
   verify:
     name: Version consistency gate
     needs: plan
-    if: needs.plan.outputs.version != ''
+    if: ${{ needs.plan.outputs.version != '' || inputs.version != '' }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version || inputs.version }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ needs.plan.outputs.version }}
+          ref: v${{ needs.plan.outputs.version || inputs.version }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
           cache-dependency-path: go/go.sum
-      # ci.yml skips release-metadata commits, so the version copies are
+      # ci.yml skips release-metadata commits, so the three version copies are
       # otherwise never compared on the exact commit that gets shipped.
       - name: Tag, go/cmd/leankg/VERSION and the MCP serverInfo must agree
         env:
-          VERSION: ${{ needs.plan.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version || inputs.version }}
         run: |
           set -euo pipefail
           stamp="$(awk '{print $1}' go/cmd/leankg/VERSION)"
@@ -96,7 +84,9 @@ jobs:
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     needs: [plan, verify]
-    if: needs.plan.outputs.version != ''
+    if: ${{ needs.plan.outputs.version != '' || inputs.version != '' }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version || inputs.version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -109,7 +99,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ needs.plan.outputs.version }}
+          ref: v${{ needs.plan.outputs.version || inputs.version }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
@@ -123,7 +113,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-          VERSION: ${{ needs.plan.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version || inputs.version }}
         run: |
           set -euo pipefail
           mkdir -p out
@@ -142,7 +132,7 @@ jobs:
   publish:
     name: Attach binaries to the release
     needs: [plan, build]
-    if: needs.plan.outputs.version != ''
+    if: ${{ needs.plan.outputs.version != '' || inputs.version != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -152,8 +142,8 @@ jobs:
       - name: Upload assets and the SHA256 table
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.plan.outputs.version }}
-          TAG: v${{ needs.plan.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version || inputs.version }}
+          TAG: v${{ needs.plan.outputs.version || inputs.version }}
         run: |
           set -euo pipefail
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" leankg-*.tgz --clobber
@@ -176,8 +166,6 @@ jobs:
             cat leankg-*.sha256
           } > checksums.md
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # release-please published the tag with changelog notes already —
-            # keep them and append the checksum table.
             { gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body
               cat checksums.md; } > notes.md
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
