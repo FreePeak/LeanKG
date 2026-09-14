@@ -123,6 +123,50 @@ func TestPortfolioQueryReportsUnindexedProjectAsChildError(t *testing.T) {
 	}
 }
 
+// #406-2 on the QUERY path: a T0 manifest PARENT (registered never-indexed
+// with zero counts — children carry the stores) must render not_indexed, not
+// a store-open error, and must not count toward projects_failed. A ghost that
+// CLAIMS counts but has no store stays `error` (the test above) — the shape
+// is what distinguishes design from fault.
+func TestPortfolioQueryReportsT0ParentAsNotIndexed(t *testing.T) {
+	regDB := filepath.Join(t.TempDir(), "portfolio.db")
+	t.Setenv(portfolioreg.DBPathEnv, regDB)
+	ctx := context.Background()
+	opts := portfolioreg.Options{DBPath: regDB}
+
+	parent := filepath.Join(t.TempDir(), "games")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := portfolioreg.Register(ctx, opts, parent, "games", 0, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	child := t.TempDir()
+	seedFleetProject(t, child)
+	if _, err := portfolioreg.Register(ctx, opts, child, "the-game", 1, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	e, _ := newEngine(t)
+	out, err := e.portfolioQuery(ctx, QueryRequest{Query: "Shared", Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["projects_served"] != 1 || out["projects_failed"] != 0 || out["projects_not_indexed"] != 1 {
+		t.Fatalf("counts = %+v; want 1 served, 0 failed, 1 not_indexed", out)
+	}
+	children, _ := out["children"].([]portfolioreg.ChildResult)
+	for _, c := range children {
+		if c.Dir == parent && (c.Status != "not_indexed" || c.Error != "" || c.Reason == "") {
+			t.Fatalf("T0 parent = %+v; want not_indexed with a reason and no error", c)
+		}
+	}
+	// Reading the fleet created no store under the parent.
+	if _, err := os.Stat(filepath.Join(parent, ".leankg")); err == nil {
+		t.Fatal("portfolio query created .leankg under the T0 parent")
+	}
+}
+
 func TestPortfolioSummaryIsT0Manifest(t *testing.T) {
 	regDB := filepath.Join(t.TempDir(), "portfolio.db")
 	t.Setenv(portfolioreg.DBPathEnv, regDB)

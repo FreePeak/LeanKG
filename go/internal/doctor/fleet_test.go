@@ -4,8 +4,11 @@
 package doctor
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -152,6 +155,45 @@ func TestFleetCheckRunsInDefaultRegistry(t *testing.T) {
 	}
 	if !names["fleet"] {
 		t.Fatal("Defaults() must include the fleet check")
+	}
+}
+
+// #406-2: a T0 portfolio PARENT is registered with no store of its own by
+// design (its children carry the stores). It must render MANIFEST and stay
+// informational — never UNREADABLE with a store-open error.
+func TestFleetProbeClassifiesT0ParentAsManifest(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "games")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opts := portfolioreg.Options{DBPath: filepath.Join(dir, "portfolio.db")}
+	if _, err := portfolioreg.Register(context.Background(), opts, parent, "games", 0, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := fleetProbe{ctx: context.Background(), opts: opts}.Fleet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want the one T0 registration", rows)
+	}
+	if !rows[0].Manifest || rows[0].Unreadable != "" {
+		t.Fatalf("T0 parent = %+v, want Manifest=true, no Unreadable", rows[0])
+	}
+	// And the check itself stays green on a manifest-only fleet.
+	f := checkFleet(nil, fleetEnv(stubFleet{rows: rows}))
+	if f.Status != StatusPass || !strings.Contains(f.Detail, "MANIFEST") {
+		t.Fatalf("fleet = %+v; want PASS rendering the T0 parent as MANIFEST", f)
+	}
+	// A genuinely unreadable store (registered AFTER indexing, then broken)
+	// must still WARN — the manifest exemption is the never-indexed shape.
+	f = checkFleet(nil, fleetEnv(stubFleet{rows: []FleetStatus{
+		{Project: "games", Manifest: true},
+		{Project: "api", Unreadable: "no such file or directory", LastIndexed: "2026-09-14T00:00:00Z"},
+	}}))
+	if f.Status != StatusWarn || !strings.Contains(f.Detail, "UNREADABLE") {
+		t.Fatalf("mixed fleet = %+v; want WARN keeping real unreadables loud", f)
 	}
 }
 

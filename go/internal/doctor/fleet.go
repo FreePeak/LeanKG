@@ -36,10 +36,15 @@ type FleetStatus struct {
 	Fresh       string `json:"freshness,omitempty"`
 	Unreadable  string `json:"error,omitempty"`
 	// Missing marks a registration whose checkout no longer exists on disk.
-	// That is normal drift (a laptop, a CI cache, a deleted worktree), NOT a
-	// store failure — so it never raises the finding's status; it is reported
-	// with the cleanup command instead.
+	// Informational, like a T0 parent (Manifest below) — a vanished fixture
+	// must not drag the exit code.
 	Missing bool `json:"missing,omitempty"`
+	// Manifest marks a T0 portfolio registration the registry itself reports
+	// as never indexed with nothing counted (a manifest-only PARENT whose
+	// children carry the stores). By design it has no store of its own, so
+	// a failed store open must read MANIFEST (informational), never
+	// UNREADABLE (#406).
+	Manifest bool `json:"manifest_only,omitempty"`
 }
 
 // FleetSource is the fleet seam: enumerate the registered projects and read
@@ -78,6 +83,13 @@ func (f fleetProbe) Fleet() ([]FleetStatus, error) {
 		}
 		if _, err := os.Stat(p.Dir); errors.Is(err, os.ErrNotExist) {
 			st.Missing = true
+			out = append(out, st)
+			continue
+		}
+		if p.LastIndexed == nil && p.ElementCount == 0 && p.FileCount == 0 {
+			// The registry's own admission: never indexed, nothing counted —
+			// a T0 manifest row. No store to open is the designed state.
+			st.Manifest = true
 			out = append(out, st)
 			continue
 		}
@@ -124,7 +136,7 @@ func checkFleet(_ Probes, env Env) Finding {
 	}
 
 	embedded := store.Migrations()
-	var behind, ahead, unreadable, stale, missing int
+	var behind, ahead, unreadable, stale, missing, manifest int
 	var elements, files int
 	var lines []string
 	for _, p := range projects {
@@ -137,6 +149,13 @@ func checkFleet(_ Probes, env Env) Finding {
 			// machine with permanent doctor noise.
 			missing++
 			lines = append(lines, fmt.Sprintf("%s: MISSING (checkout gone: %s)", p.Project, p.Dir))
+			continue
+		case p.Manifest:
+			// Informational: a T0 parent answers portfolio queries through its
+			// children's stores; its own store appears only when something is
+			// indexed at/under it.
+			manifest++
+			lines = append(lines, fmt.Sprintf("%s: MANIFEST (T0 parent, no own store yet)", p.Project))
 			continue
 		case p.Unreadable != "":
 			unreadable++
@@ -176,10 +195,11 @@ func checkFleet(_ Probes, env Env) Finding {
 		return Finding{check, StatusWarn, detail,
 			"These projects were migrated by a newer leankg; upgrade this binary to match " +
 				"the database schema."}
-	case stale == 0 && missing > 0:
-		// Only vanished checkouts: healthy deployment, housekeeping pending.
+	case stale == 0 && missing+manifest > 0:
+		// Only vanished checkouts and/or T0 manifests: healthy deployment,
+		// housekeeping informational at most.
 		return Finding{check, StatusPass, detail,
-			"Drop stale registrations with `leankg projects --forget DIR`; they cost nothing but noise."}
+			"Drop stale registrations with `leankg projects --forget DIR`; index a T0 parent's child (or the parent) to give it a store."}
 	case stale > 0:
 		return Finding{check, StatusWarn, detail,
 			"Re-index the stale projects (`leankg index <dir>`) so the fleet answers from " +

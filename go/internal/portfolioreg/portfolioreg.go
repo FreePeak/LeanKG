@@ -570,7 +570,7 @@ type Child func(ctx context.Context, p store.ProjectRecord, q Query) (map[string
 type ChildResult struct {
 	Project   string           `json:"project"`
 	Dir       string           `json:"dir"`
-	Status    string           `json:"status"` // ok | error | not_hot
+	Status    string           `json:"status"` // ok | error | not_hot | not_indexed
 	Freshness string           `json:"freshness,omitempty"`
 	Rung      string           `json:"rung,omitempty"`
 	Hits      []map[string]any `json:"hits,omitempty"`
@@ -578,16 +578,21 @@ type ChildResult struct {
 	Reason    string           `json:"reason,omitempty"`
 }
 
-// Report is a portfolio answer: one ChildResult per registered project (never
+// Report is a portfolio fan-out answer: per-project standing (never silently
 // a dropped child) plus the merged, project-attributed hit list.
 type Report struct {
-	Query      string           `json:"query"`
-	Action     string           `json:"action,omitempty"`
-	HotLimit   int              `json:"hot_limit"`
-	Registered int              `json:"projects_registered"`
-	Served     int              `json:"projects_served"`
-	Failed     int              `json:"projects_failed"`
-	NotHot     int              `json:"projects_not_hot"`
+	Query      string `json:"query"`
+	Action     string `json:"action,omitempty"`
+	HotLimit   int    `json:"hot_limit"`
+	Registered int    `json:"projects_registered"`
+	Served     int    `json:"projects_served"`
+	Failed     int    `json:"projects_failed"`
+	NotHot     int    `json:"projects_not_hot"`
+	// NotIndexed counts T0 manifest PARENTS skipped without a store-open:
+	// registered never-indexed with zero counts (children carry the stores).
+	// Distinct from Failed — a manifest parent is not a fault, it is the
+	// designed pre-index state (#406-2, on the query path this time).
+	NotIndexed int              `json:"projects_not_indexed"`
 	Projects   []ChildResult    `json:"projects"`
 	Hits       []map[string]any `json:"hits"`
 }
@@ -634,6 +639,19 @@ func FanOut(ctx context.Context, o Options, q Query, hot *HotSet, child Child) (
 				Project: p.Name, Dir: p.Dir, Status: "error", Error: err.Error(),
 			})
 			rep.Failed++
+			continue
+		}
+		// A T0 manifest PARENT is registered with no store of its own by
+		// design (its children carry the stores) — opening one and reading
+		// the failure as `error` is the same lie #406-2 removed from the
+		// doctor fleet leg; class it here too, before touching the child
+		// executor.
+		if p.LastIndexed == nil && p.ElementCount == 0 && p.FileCount == 0 {
+			rep.Projects = append(rep.Projects, ChildResult{
+				Project: p.Name, Dir: p.Dir, Status: "not_indexed",
+				Reason: "T0 manifest parent — no own store yet; query its children or index the parent",
+			})
+			rep.NotIndexed++
 			continue
 		}
 		cr := ChildResult{Project: p.Name, Dir: p.Dir}
