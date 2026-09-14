@@ -702,6 +702,46 @@ func (s *PGStore) VectorCoverage(modelID string) (covered, orphans int, err erro
 	return covered, orphans, err
 }
 
+// DeleteOrphanVectors purges vector + state rows for elements that no longer
+// exist, per model collection (the per-stamp tables are PG's collection
+// layout; a stamped model whose tables vanished is skipped, not fatal). The
+// watermark bumps only when rows actually go.
+func (s *PGStore) DeleteOrphanVectors() (int, error) {
+	stamps, err := s.Stamps()
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, ms := range stamps {
+		var ok bool
+		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&ok); err != nil {
+			return total, err
+		}
+		if !ok {
+			continue
+		}
+		tag, err := s.pool.Exec(pgCtx, `DELETE FROM `+s.vecTable(ms.ModelID)+` v
+			WHERE v.qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
+		if err != nil {
+			return total, err
+		}
+		total += int(tag.RowsAffected())
+		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.stateTable(ms.ModelID)).Scan(&ok); err != nil {
+			return total, err
+		}
+		if ok {
+			if _, err := s.pool.Exec(pgCtx, `DELETE FROM `+s.stateTable(ms.ModelID)+` st
+				WHERE st.qualified_name NOT IN (SELECT qualified_name FROM code_elements)`); err != nil {
+				return total, err
+			}
+		}
+	}
+	if total == 0 {
+		return 0, nil
+	}
+	return total, s.BumpWatermark()
+}
+
 // SearchVectors performs the single ANN-equivalent shape: the model's vectors
 // ranked by cosine distance (HNSW index when present), hydrated against
 // code_elements. similarity = 1 - distance (the <=> operator's cosine distance).

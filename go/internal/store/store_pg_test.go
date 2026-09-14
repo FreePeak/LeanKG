@@ -159,6 +159,64 @@ func TestPGElementOps(t *testing.T) {
 	}
 }
 
+// TestPGOrphanPurges exercises both gc purges against the real PostgreSQL
+// backend (gated on LEANKG_TEST_PG_URL): the DeleteOrphanRelationships that
+// #409 merged without a PG mirror, and the new per-model DeleteOrphanVectors.
+func TestPGOrphanPurges(t *testing.T) {
+	s := openPGTest(t)
+	if err := s.UpsertElements([]Element{
+		{QualifiedName: "a.A", ElementType: "function", Name: "A", FilePath: "a.go", Language: "go"},
+		{QualifiedName: "b.B", ElementType: "function", Name: "B", FilePath: "b.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertRelationships([]Relationship{
+		{Source: "b.B", Target: "a.A", RelType: "calls"}, // into a.go: dangles after delete
+		{Source: "b.B", Target: "b.B", RelType: "uses"},  // fully live: survives
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := ModelStamp{ModelID: "pg-purge-model", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "unit"}
+	if err := s.WriteStamp(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertVectors(st.ModelID, []VectorRow{
+		{QualifiedName: "a.A", Vec: []float32{1, 0, 0, 0}},
+		{QualifiedName: "b.B", Vec: []float32{0, 1, 0, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteByFile("a.go"); err != nil {
+		t.Fatal(err) // drops a.A + its edges; b.B->a.A and a.A's vector dangle
+	}
+
+	ne, err := s.DeleteOrphanRelationships()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ne != 1 {
+		t.Fatalf("orphan edges purged = %d, want 1", ne)
+	}
+	nv, err := s.DeleteOrphanVectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nv != 1 {
+		t.Fatalf("orphan vectors purged = %d, want 1", nv)
+	}
+	// The live survivor rows are untouched.
+	if n, _ := s.VectorCount(st.ModelID); n != 1 {
+		t.Fatalf("VectorCount after purge = %d, want 1 (live b.B kept)", n)
+	}
+	if rels, _ := s.Outgoing("b.B"); len(rels) != 1 || rels[0].Target != "b.B" {
+		t.Fatalf("live edge lost: %+v", rels)
+	}
+	// Idempotent: a second pass finds nothing.
+	if n, _ := s.DeleteOrphanVectors(); n != 0 {
+		t.Fatalf("second vector purge = %d, want 0", n)
+	}
+}
+
 func TestPGWatermarkBumps(t *testing.T) {
 	s := openPGTest(t)
 

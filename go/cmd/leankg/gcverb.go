@@ -42,7 +42,11 @@ func cmdGC(args []string) {
 	if err != nil {
 		fatalText(fmt.Errorf("gc: %w", err))
 	}
-	if n > 0 {
+	v, err := st.DeleteOrphanVectors()
+	if err != nil {
+		fatalText(fmt.Errorf("gc: vectors: %w", err))
+	}
+	if n > 0 || v > 0 {
 		// Same contract as every other CLI writer (index/pull/summarize):
 		// the purge bumped the watermark, and the freshness comparison reads
 		// the inventory snapshot — without this refresh a just-gc'd project
@@ -52,5 +56,5 @@ func cmdGC(args []string) {
 			fmt.Fprintf(os.Stderr, "gc: inventory snapshot: %v\n", ierr)
 		}
 	}
-	fmt.Printf("gc: purged %d orphan relationship(s) from %s\n", n, *project)
+	fmt.Printf("gc: purged %d orphan relationship(s), %d orphan vector(s) from %s\n", n, v, *project)
 }

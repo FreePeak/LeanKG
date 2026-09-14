@@ -153,6 +153,65 @@ func TestDeleteOrphanRelationships(t *testing.T) {
 	}
 }
 
+// #411: DeleteByFile owns elements + edges, so nothing used to reclaim the
+// vectors of deleted elements — VectorCoverage reported the orphans forever.
+// The purge is per-element-QN (applies to every model collection), keeps
+// live rows untouched, and never bumps the watermark on a no-op.
+func TestDeleteOrphanVectors(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.UpsertElements([]Element{
+		{QualifiedName: "a.A", ElementType: "function", Name: "A", FilePath: "a.go", Language: "go"},
+		{QualifiedName: "b.B", ElementType: "function", Name: "B", FilePath: "b.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stamp := ModelStamp{ModelID: "m1", Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "test", ChunkerVersion: 1}
+	if err := s.WriteStamp(stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertVectors("m1", []VectorRow{
+		{QualifiedName: "a.A", Vec: []float32{1, 0, 0, 0}},
+		{QualifiedName: "b.B", Vec: []float32{0, 1, 0, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetEmbeddingStates("m1", map[string]string{"a.A": "h1", "b.B": "h2"}); err != nil {
+		t.Fatal(err)
+	}
+	// The bug setup: delete b.B's element+edges (file removed); its vector and
+	// state row survive — that is the permanent residue.
+	if err := s.DeleteByFile("b.go"); err != nil {
+		t.Fatal(err)
+	}
+	if _, orphans, _ := s.VectorCoverage("m1"); orphans != 1 {
+		t.Fatalf("pre-purge orphans = %d, want 1 (the residue #411 describes)", orphans)
+	}
+
+	n, err := s.DeleteOrphanVectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("purged %d vectors, want 1", n)
+	}
+	if covered, orphans, _ := s.VectorCoverage("m1"); orphans != 0 || covered != 1 {
+		t.Fatalf("post-purge coverage = (%d,%d), want (1,0) — live row kept, orphan gone", covered, orphans)
+	}
+	if states, _ := s.EmbeddingStateMap("m1"); len(states) != 1 || states["a.A"] != "h1" {
+		t.Fatalf("state rows wrong after purge: %+v", states)
+	}
+
+	// No-op purge must not bump the watermark (a gc on a clean store leaves
+	// freshness exactly where it was).
+	seq1, _, _ := s.Watermark()
+	if n2, err := s.DeleteOrphanVectors(); err != nil || n2 != 0 {
+		t.Fatalf("second purge = (%d,%v), want (0,nil)", n2, err)
+	}
+	if seq2, _, _ := s.Watermark(); seq2 != seq1 {
+		t.Fatalf("no-op purge bumped the watermark %d -> %d", seq1, seq2)
+	}
+}
+
 func TestWatermarkBumpsOnWrite(t *testing.T) {
 	s := openTestStore(t)
 	seq0, _, _ := s.Watermark()
