@@ -288,9 +288,18 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 	return nil
 }
 
+// truncateRunes clips to n runes. Its only caller checks the rune count first,
+// but the slice form of this function panicked when that guard was ever missed,
+// so the walk makes the helper safe on its own terms.
 func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	return string(r[:n])
+	count := 0
+	for pos := range s {
+		if count == n {
+			return s[:pos]
+		}
+		count++
+	}
+	return s
 }
 
 // coverage is the fraction of live elements holding vectors; a store with
