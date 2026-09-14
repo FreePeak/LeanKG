@@ -446,11 +446,23 @@ func cmdServe(args []string) {
 				return web.APIHandler(p.Engine, p.Memory, web.WithProjectDir(p.Dir), web.WithProjectSwitcher(switcher))
 			})
 		uiMux := http.NewServeMux()
+		// Liveness for container/orchestrator probes on this listener: the
+		// SPA fallback would answer 200 for /health anyway, but with HTML,
+		// which makes a health check that cannot tell a serving dashboard from
+		// a broken one. Same envelope as rest.Handler's /health.
+		uiMux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		})
 		uiMux.Handle("/api/", dash)
 		uiMux.Handle("/", web.Handler())
 		log.Printf("leankg serve (UI) on %s", *uiAddr)
 		if host, _, err := net.SplitHostPort(*uiAddr); err == nil && host != "127.0.0.1" && host != "localhost" && host != "::1" {
-			log.Printf("warning: dashboard bound to %s — its API (query/file/import) is unauthenticated; bind loopback or front it with a proxy", host)
+			bound := host
+			if bound == "" {
+				bound = "all interfaces" // `--ui :PORT` — the container/PaaS shape
+			}
+			log.Printf("warning: dashboard bound to %s — its API (query/file/import) is unauthenticated; bind loopback or front it with a proxy", bound)
 		}
 		go serveHTTP(ctx, uiMux, *uiAddr)
 	}

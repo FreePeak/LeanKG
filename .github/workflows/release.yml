@@ -184,3 +184,35 @@ jobs:
             echo "::error::$TAG has $n asset(s); expected 4 platform tarballs"
             exit 1
           fi
+
+  # A module that lives in a subdirectory is versioned by a directory-prefixed
+  # tag: the module proxy only ever sees `go/vX.Y.Z` for
+  # github.com/FreePeak/LeanKG/go. The root `vX.Y.Z` tag release-please cuts is
+  # invisible to it, which is why the module resolved only as a pseudo-version
+  # and pkg.go.dev 404'd the unversioned URL. Mirroring each release tag is what
+  # makes `go get github.com/FreePeak/LeanKG/go@latest` (and `go install
+  # github.com/FreePeak/LeanKG/go/cmd/leankg@latest`, and the published docs)
+  # resolve a real version. Lightweight tag: no identity to configure, and the
+  # proxy reads it the same.
+  modtag:
+    name: Publish the go/ module tag
+    needs: plan
+    # Only when a version was actually cut; a workflow_dispatch re-publish has
+    # no new version to mirror, and `plan` is skipped there.
+    if: ${{ needs.plan.outputs.version != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.plan.outputs.version }}
+      - name: Tag go/v${{ needs.plan.outputs.version }} at the release commit
+        env:
+          MOD_TAG: go/v${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads --tags origin "refs/tags/$MOD_TAG" >/dev/null 2>&1; then
+            echo "::error::$MOD_TAG already exists; refusing to move a published module version"
+            exit 1
+          fi
+          git tag "$MOD_TAG"
+          git push origin "$MOD_TAG"

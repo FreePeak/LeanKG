@@ -1,7 +1,7 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-14 — v4.11.0 **self-host dogfood loop anchored** (PRD §3.10 + M10 + §5.1 runbook): FR-SELF-01..04 added — S1 bootstrap the dynamic HTTP server (MCP `--http` + REST `--rest` + dashboard `--ui` + `--memory`) over this repo once the in-flight refactor waves land (uncommitted: Docker/Render service, `go/vX.Y.Z` module-tag mirror, `serve` `/health`); S2 build LeanKG with LeanKG; S3 scale to small nested-repo parents (hot-set 8, never the 99,574-file `freepeak` root); S4 the keep-building/keep-fixing steady state. No existing FR status changed.
-**Previous sync:** 2026-09-14 — v4.10.1 hygiene + restructure + release wave (PR #377 plus the follow-up landed on `main`): no FR status changed. Repository sweep, Go-tree restructure, release pipeline now cuts vX.Y.Z with all four platform tarballs (v0.31.1/v0.31.2/0.31.3 verified).
+**Last synced:** 2026-09-14 — v4.11.1 **ship-surface wave landed**: the deploy/brand/module work FR-SELF-01 was gated on is done — Go [Dockerfile](../Dockerfile) restored (build-time demo graph, non-root runtime, WAL-directory fix) with a JSON `/health` on the `serve --ui` listener, `release.yml` mirrors every release as `go/vX.Y.Z` (and `go/v0.31.3` was cut, so the module is live on pkg.go.dev / `go install`), the graph-"K" mark replaced the 16 px hexagon+triangle icon, and the README regained its tag badges with the stale release/language/ontology claims corrected. Evidence: [§v4.11.1](prd.md#v4111-ship-surface--the-public-surfaces-brand-mark-readme-the-published-module-the-live-deploy-2026-09-14).
+**Previous sync:** 2026-09-14 — v4.11.0 self-host dogfood loop anchored (PRD §3.10 + M10 + §5.1 runbook): FR-SELF-01..04 added — S1 bootstrap the dynamic HTTP server over this repo, S2 build LeanKG with LeanKG, S3 nested-repo parents one at a time, S4 the loop is the end state.
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 
@@ -11,7 +11,7 @@
 
 | Status | Count |
 |--------|------:|
-| IN_PROGRESS | 2 (FR-ZCP-01; **FR-SELF-01** — M10 bootstrap, gated on the in-flight refactor waves landing) — the Go-rewrite slices (FR-GO-W1/EMBED/MEM/LANGS) are **DONE on `feat/go-rewrite`**, pending PR #370 merge |
+| IN_PROGRESS | 2 (FR-ZCP-01; **FR-SELF-01** — M10 bootstrap, gate satisfied by v4.11.1, the self-host run itself is the remaining work) — the Go-rewrite slices (FR-GO-W1/EMBED/MEM/LANGS) are **DONE on `feat/go-rewrite`**, pending PR #370 merge |
 | TODO | 39 (9 live + 26 carry-forward + FR-GO-DASH #371 + FR-SELF-02..04) |
 | DONE | 9 |
 | Open work | 43 (36 archived-inventory + 3 Go-rewrite slices pending PR #370 merge + FR-GO-DASH #371 + 4 M10 self-host loop items, of which FR-SELF-01 is IN_PROGRESS) |
@@ -29,7 +29,7 @@
 | M7 — Embedding correctness | 1 | — | **DONE** (FR-ZCP-11 closed by #279: pinned catalog with 40-hex revisions and query/document prefixes, whole-identity `ModelStamp` incl. `chunker_version`, hard rebuild guard on both write paths **and** the read path, 3-signal detection, per-file atomic replace + truncation accounting, watcher reconciliation. Remaining: single-flight indexing — see §6b remainders) |
 | M8 — Measured simplicity | 1 | — | **DONE** (FR-ZCP-12 T1 error catalog c5b4b991; T2 TTFV gate #280 — measured 21.6 s cold against a 300 s budget in CI; T3 superseded by v4.3.1's CI-enforced one-tool invariant) |
 | M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 DONE; FR-3T-04 live validation complete on this repo — 581 files, 9522 vectors, L1/L2/L3 verified; PR #284 merged (v4.3.x)) |
-| M10 — Self-host dogfood loop | 4 | — | **IN_PROGRESS** (FR-SELF-01 bootstrap gated on the in-flight refactor waves; FR-SELF-02..04 TODO behind it — see §M10 below) |
+| M10 — Self-host dogfood loop | 4 | — | **IN_PROGRESS** (FR-SELF-01 bootstrap — deploy gate satisfied v4.11.1; running the server + index/embed/memory is next; FR-SELF-02..04 TODO behind it — see §M10 below) |
 | M-GO — Go engine rewrite (#365) | 3 | — | **IN_PROGRESS** (FR-GO-W1 core DONE on feat/go-rewrite: store/core/index/mcp/rest + live smoke; FR-GO-EMBED DONE: leankg-embed binary + stamp guards + NDJSON; FR-GO-MEM DONE: full-markdown memory + banks adapter; v4.6.0: ALL waves landed (W2 watcher/writer, W4 pgvector, W5 ConnectRPC+auth, session, graph verbs, goldens, benchmarks + executed Rust-vs-Go A/B REPORT) and the Rust tree REMOVED — deferred ledger in docs/prd.md) |
 | FR-GO-LANGS | Lazy language wave (v4.7.0): 13-language registry + tstree/astgrep/lsp tiers + java/kotlin/swift/objc/dart extractors | **DONE** on feat/go-rewrite (objc/dart tree-sitter grammar gap documented) |
 | FR-GO-DASH | #371: port the ui-v2 dashboard data API — legacy `/api/*` (11 endpoints) or rebuild ui-v2 against `/api/v1/*`; today the SPA fallback answers those calls with `index.html`, so the embedded dashboard loads no data | 2026-09-11 | **TODO** — ledger row `web api+ui` corrected to PARTIAL in v4.7.1 |
@@ -58,10 +58,12 @@
 
 | ID | Title | Priority | Status | Gate / exit criteria |
 |----|-------|----------|--------|----------------------|
-| FR-SELF-01 | Bootstrap the self-host: dynamic `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` over this repo; index + embed (pinned `LEANKG_EMBED_*` identity) + memory live | **P0** | **IN_PROGRESS** (gated: the in-flight refactor waves — Docker/Render service, `go/` module-tag mirror, `serve` `/health` — land on `main` first) | `/health` on every listener; `status` fresh for this repo; L1/L2/L3 answered over `/mcp` on real elements; retain→recall survives restart; `doctor --deep` clean |
+| FR-SELF-01 | Bootstrap the self-host: dynamic `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` over this repo; index + embed (pinned `LEANKG_EMBED_*` identity) + memory live | **P0** | **IN_PROGRESS** (gate satisfied by v4.11.1 — Docker/Render service, `go/` module-tag mirror and `serve --ui` `/health` are on `main`; remaining: run the server + index/embed/memory here) | `/health` on every listener; `status` fresh for this repo; L1/L2/L3 live on its own elements; retain→recall survives restart; `doctor --deep` clean |
 | FR-SELF-02 | Build LeanKG with LeanKG: every exported-symbol change informed by `impact`/`callers`, every close by tested-by/traceability, every session-open by `session_recall`; wrong answers filed as engine defects, fixed failing-test-first against this repo's data, re-indexed, re-asked | **P0** | TODO (starts with S1) | PRs cite graph evidence; dogfood findings enter this tracker; zero regressions attributed to missing graph context |
 | FR-SELF-03 | Scale to nested-repo parents: add small parents one repo at a time via registry + `LEANKG_PROJECT_DIRS` (T0 manifest, T1 hot-set cap 8, zero eager indexing). Hard guard: never bulk-index the `freepeak` root (99,574 files, multi-GB store) | P1 | TODO (gate: S1+S2 smooth) | Portfolio fan-out attributes per child; per-child freshness honest; adding a repo = one register/index, no restart |
 | FR-SELF-04 | Keep building, keep fixing: the loop is the end state — every wave surfaces defects, engine fixes ship via release-please, this PRD + tracker stay the status ledger | **P0** | TODO (steady state after S1–S3) | Dogfood-found defect rate > 0 with fix rate keeping pace; no milestone regresses; self-host up whenever development happens |
+
+The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01..04` (§Done).
 
 ## Done — 2026-09-04 implementation sprint (v4.3.0 wave 1–3)
 
@@ -130,8 +132,12 @@
 | DOC-ARCHIVE-01 | Move all 66 historical docs to `docs/archive/`; README + AGENTS.md links updated | `docs/` now contains only `prd.md` + `prd-task-tracker.md` (+ `archive/`) |
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
+| REL-SHIP-01 | Go container deploy restored: three-stage CGO-free `Dockerfile` (engine binaries → demo graph baked at build time → unprivileged runtime serving it `--read-only`) + `.dockerignore` | `docker run --user leankg` → `/health` `{"ok":true}`, `/` embedded shell, `/favicon.svg` 200, `/api/search` + `/api/graph/clusters` answering the baked store (534 files, 4,641 elements, 14,727 relationships) |
+| REL-SHIP-02 | `serve --ui` JSON `/health` route, so the dashboard listener's health probe cannot be satisfied by the SPA fallback's `200 index.html` | `go test ./cmd/leankg/ -run TestDashboardListenerServesHealthAndShell` green |
+| REL-SHIP-03 | Go module published: `release.yml` `modtag` job mirrors each release as `go/vX.Y.Z`; `go/v0.31.3` cut for the current release | `proxy.golang.org/…/@v/list` → `v0.31.3`, `@latest` → `v0.31.3`, pkg.go.dev module page 200, `go install github.com/FreePeak/LeanKG/go/cmd/leankg@latest` → `leankg 0.31.3` |
+| REL-SHIP-04 | Brand mark redesigned as a graph-"K" (stem + two arms + hub) across `assets/icon.svg` and both favicons; README regained its platform/client tag badges and lost its stale claims (releases shipping, 40 language profiles, ontology procedural layer + traceability implemented, dead `release-go.yml` reference) | Mark rasterized and read at 16/32/128 px; all nine badge URLs fetched and their text checked |
 
-*Last updated: 2026-09-14 (v4.11.0 — self-host dogfood loop anchored: FR-SELF-01..04 / M10 added; S1 = dynamic HTTP server (MCP + REST + dashboard + memory) serving this repo once the pending refactor waves land, S2 = build LeanKG with LeanKG, S3 = small nested-repo parents scaled one at a time, S4 = keep building/fixing. Prior wave: v4.10.0 — #273 #275 #276 #279 #280 #61 #297 #372 #376 #73 implemented, migrations 12–15, then ten further defects found and fixed by dogfooding the live HTTP MCP server against this repository's own index on both engines with real ONNX embeddings)*
+*Last updated: 2026-09-14 (v4.11.1 — ship-surface wave: `REL-SHIP-01..04` closed (Go `Dockerfile` + Render rebuild, `serve --ui` `/health`, `go/vX.Y.Z` module tag + `go/v0.31.3`, brand mark + README badges/claims), which satisfies the FR-SELF-01 gate; running the self-host over this repo is the next action. Prior wave: v4.11.0 — self-host dogfood loop anchored, FR-SELF-01..04 / M10 added)*
 
 ## Repo hygiene (non-PRD)
 

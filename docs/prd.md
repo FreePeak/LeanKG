@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.11.0-selfhost-dogfood-loop
+**Version:** 4.11.1-ship-surface
 **Date:** 2026-09-14
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.31.3 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
@@ -9,6 +9,22 @@
 ---
 
 ## Changelog
+
+### v4.11.1-ship-surface — the public surfaces: brand mark, README, the published module, the live deploy (2026-09-14)
+
+**Trigger:** explicit user direction (redesign the favicon, update the README, publish the Go package, restore the tag badges, fix the Render deploy). This is the wave FR-SELF-01 named as its own gate — the pending deploy work is now landed, so S1's only remaining step is running the self-host.
+
+**Brand mark** — `assets/icon.svg` and both favicons (`ui-v2/public/favicon.svg`, and the embedded copy `go/internal/web/embed/favicon.svg`) are redesigned. The old mark (dashed hexagon + solid hexagon + triangle + three nodes) collapsed into noise at 16 px. The new mark is a **"K" drawn as a resolved graph**: a stem and two arms (three edges) meeting at a hub node, terminals capped with nodes, on the dark-tile/cyan/amber palette the banner already uses. The favicon cut drops the hub disc and the edge gradient — a zero-width bounding box (`M22 14V50`, a pure vertical) painted with an `objectBoundingBox` gradient renders **nothing at all**, and that silent failure, not the composition, is what killed the first attempts; the shipping cut uses `gradientUnits="userSpaceOnUse"` (brand) and flat high-contrast strokes (favicon), rasterized and checked at 16/32/128 px.
+
+**Published Go module** — a module in a subdirectory is versioned by a directory-prefixed tag, and only `vX.Y.Z` existed, so `github.com/FreePeak/LeanKG/go` had no release: `proxy.golang.org/…/@v/list` was empty and `pkg.go.dev/github.com/FreePeak/LeanKG/go` was a 404 (only a pseudo-version resolved). `release.yml` gains a `modtag` job that mirrors each release commit as `go/vX.Y.Z` (refusing to move a tag that already exists), and `go/v0.31.3` was cut by hand for the current release. Verified live: the proxy lists `v0.31.3` as `@latest`, pkg.go.dev serves the module page, and `go install github.com/FreePeak/LeanKG/go/cmd/leankg@latest` → `leankg 0.31.3`. The README's install section now leads with that command.
+
+**Container + Render deploy** — the Render service (`srv-d75ncl7fte5s73e6ro40`, runtime `docker`, `./Dockerfile`) has been building against a Dockerfile that PR #377 deleted with the Rust tree, which is why the live demo answered `/health` and `/mcp` from a stale August image and 404'd everything else — including the dashboard the README advertises. Restored: a three-stage CGO-free [Dockerfile](../Dockerfile) (engine binaries → **demo graph baked at build time** from a slice of this repo → unprivileged runtime serving it `--read-only`), plus a `.dockerignore`. `serve --ui` gains a JSON `/health` route on the dashboard listener (`TestDashboardListenerServesHealthAndShell`) — the SPA fallback would have answered a health probe with `200 index.html` forever, so a check that only wants a 200 could not tell a serving dashboard from a broken one. Two container-only defects surfaced while verifying and are fixed: SQLite cannot open a **WAL** database read-only unless it may create the `-shm` sidecar (so the store directory must be owned by the runtime user — `COPY --chown`, otherwise every query fails `attempt to write a readonly database (1544)`), and the "dashboard bound to" warning printed an empty host for the `:PORT` bind shape a PaaS uses.
+
+**README** — the tag badges PR #326 dropped are restored as rows for platform (macOS · Linux · Docker · Render) and wired clients (Claude Code · Cursor · Codex · Gemini CLI · OpenCode · omp — exactly `leankg connect`'s targets), joined by release / pkg.go.dev / CI / license and a Go / SQLite / Postgres / MCP-surface row. Every badge URL was fetched and checked for text, not assumed. Stale claims corrected: releases **do** ship (v0.31.1–0.31.3 with all four tarballs — the file the README named, `release-go.yml`, no longer exists), 40 language profiles (not 13 — `internal/langs.Default`), ontology procedural workflows + req↔code traceability implemented in the Go engine (the "not implemented yet" line predated the parity waves), and the previously dangling `Live Demo · Docs ·` link row now points at pkg.go.dev and the changelog.
+
+**Verification:** new dashboard-listener test green (`go test ./cmd/leankg/ -run TestDashboardListenerServes…`), `gofmt` + `go vet` clean · container run as the non-root user serving the baked store: `/health` → `{"ok":true}`, `/` → embedded shell, `/favicon.svg` → 200, `/api/search` + `/api/graph/clusters` returning real elements (4,641 elements / 14,727 relationships baked in 2.3 s) · module proxy + pkg.go.dev + `go install` checks above · Render deploy verified live at <https://leankg.onrender.com>.
+
+**Open, on the record:** `ConnectRPC` (`--rpc`) still has no `/health`, so FR-SELF-01's "`/health` on every listener" AC is met on the MCP, REST and dashboard listeners only. `docs/mcp-tool-contract.md` is still generated from the deleted `src/mcp/tools.rs` and documents the Rust-era `set`/`get` pair rather than `import`/`query`.
 
 ### v4.11.0-selfhost-dogfood-loop — the plan, anchored: LeanKG serves itself first (2026-09-14)
 
@@ -616,8 +632,8 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 
 **Narrative.** Everything shipped so far was validated against throwaway fixtures and ephemeral dogfood runs. From this revision the operating mode inverts: LeanKG's own repository is served by a long-lived dynamic HTTP front door — one binary, MCP streamable HTTP (`/mcp`) + REST (`/api/*`) + the embedded dashboard, with per-connection project resolution (`?project=` / nearest-`.leankg` walk / `LEANKG_PROJECT_DIRS`) — continuously indexed, embedded with a pinned provider, and memorizing. That self-host then becomes *the* tool used to build LeanKG. The stages are a ladder: each gates on the previous one reporting clean.
 
-**FR-SELF-01 — Bootstrap the self-host (P0; gate: the in-flight refactor wave lands on `main`)**
-- Land the pending deploy wave first (uncommitted: Dockerfile + Render service, the `go/vX.Y.Z` module-tag mirror in `release.yml`, the `serve` `/health` liveness route). Then run: `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` against this checkout (sqlite store in `.leankg/`).
+**FR-SELF-01 — Bootstrap the self-host (P0; gate **satisfied 2026-09-14 by v4.11.1**)**
+- The deploy wave this gate waited on has landed: [Dockerfile](../Dockerfile) + the Render service (rebuilt from the Go image), the `go/vX.Y.Z` module-tag mirror in `release.yml`, and the `serve` `/health` liveness route on the dashboard listener. Run: `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` against this checkout (sqlite store in `.leankg/`).
 - Index this repo (`leankg index .`), embed with the pinned identity (`leankg-embed run`; `LEANKG_EMBED_*` ModelStamp-guarded — L3 must answer with `retrieval` provenance, not degrade), and turn memory on: the markdown layer + `session_retain`/`session_recall`.
 - AC: `/health` on every listener; `status` shows `fresh` coverage for this repo; L1/L2/L3 verified live on its own elements; retain→recall round-trip survives a server restart; `doctor --deep` clean.
 
@@ -670,7 +686,7 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (e
 
 ### 5.1 M10 runbook (the anchored next actions, in order)
 
-1. **Wait for the refactor waves to land** on `main` (as of this revision, uncommitted work exists in-tree: Docker/Render deploy service, the `go/vX.Y.Z` module-tag mirror, `serve` `/health`). Pull rebase-clean `main` before touching anything.
+1. ~~Wait for the refactor waves to land~~ — **done in v4.11.1** (Docker/Render deploy service, `go/vX.Y.Z` module-tag mirror, `serve --ui` `/health`). Pull rebase-clean `main` before touching anything.
 2. **S1 — bootstrap the self-host** (this checkout, sqlite engine):
    ```bash
    cd go && go build ./... && ./bin/leankg index .. --auto       # index this repo into ../.leankg/leankg.db
@@ -782,4 +798,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-14 (v4.11.0 — the self-host dogfood loop anchored as §3.10 (FR-SELF-01..04) + milestone M10 + §5.1 runbook: after the in-flight refactor waves land, run the dynamic HTTP server (MCP + REST + dashboard + memory) over this repository — index, embed, memorize — use it to build LeanKG on itself, and only then scale to small nested-repo parents (never the 99,574-file portfolio root). Prior wave: v4.10.1 post-cutover hygiene sweep, Go-tree restructure, and the release pipeline that ships the four platform tarballs)*
+*Last updated: 2026-09-14 (v4.11.1 — ship-surface wave: brand mark redesigned as a graph-"K" (`assets/icon.svg` + both favicons, verified at 16/32/128 px), the Go module published (`go/vX.Y.Z` mirror job in `release.yml`, `go/v0.31.3` cut, pkg.go.dev + `go install …@latest` live), the container deploy restored ([Dockerfile](../Dockerfile) with a build-time demo graph, JSON `/health` on the dashboard listener, WAL-directory ownership fix), and the README re-badge with its stale claims corrected. FR-SELF-01's gate is therefore satisfied — S1 bootstrap is the next action. Prior wave: v4.11.0 anchored the self-host dogfood loop)*
