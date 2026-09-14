@@ -367,8 +367,8 @@ func ResolveProjectDBDir(dbDir string) string {
 // from dir (Rust config::project::db_config_from_cwd, parameterized on the
 // starting directory instead of the process cwd). The FIRST leankg.yaml found
 // is authoritative: if it cannot be read or parsed, or has no db block, the
-// result is nil — the walk never continues past it. Callers apply Rust's
-// precedence: LEANKG_PG_URL env > this block > built-in default.
+// result is nil — the walk never continues past it. Resolving the connection
+// string itself is PGURL below, not each caller re-deriving the ladder.
 func DBConfigFromDir(dir string) *DBConfig {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -393,6 +393,20 @@ func DBConfigFromDir(dir string) *DBConfig {
 		}
 		d = parent
 	}
+}
+
+// PGURL is the Postgres DSN for one project directory: the LEANKG_PG_URL
+// environment variable > the nearest leankg.yaml `db.url` > "" (the store's
+// built-in default). Empty means "no Postgres requested", never "connect
+// somewhere unknown".
+func PGURL(dir string) string {
+	if v := os.Getenv("LEANKG_PG_URL"); v != "" {
+		return v
+	}
+	if db := DBConfigFromDir(dir); db != nil {
+		return db.URL
+	}
+	return ""
 }
 
 func pathExists(p string) bool {

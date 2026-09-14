@@ -5,14 +5,16 @@ import (
 	"strings"
 )
 
-// embeddedVersion comes from go/cmd/leankg/VERSION (checked in; release-please
-// bumps it on release — the trailing marker comment is not part of the version).
+// embeddedVersion comes from go/cmd/leankg/VERSION, the one version source in
+// the tree. The release pipeline owns it: release-please-config.json declares
+// it as `version-file`, so a release rewrites the whole file to the new
+// version. Parsed by field so trailing whitespace can never become a version.
 //
 //go:embed VERSION
 var embeddedVersion string
 
 // version is the ldflags-overridable engine version
-// (-X main.version=<tag> in .github/workflows/release-go.yml).
+// (-X main.version=<version> in .github/workflows/release.yml).
 //
 // It MUST be initialized with a constant expression: the Go linker only
 // honours -X for a string variable whose initializer is constant, so the
