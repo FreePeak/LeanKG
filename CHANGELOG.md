@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.1](https://github.com/FreePeak/LeanKG/compare/v0.32.0...v0.32.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **store,gc:** gc reclaims orphaned embedding vectors too (closes [#411](https://github.com/FreePeak/LeanKG/issues/411)) ([#412](https://github.com/FreePeak/LeanKG/issues/412)) ([fe129e6](https://github.com/FreePeak/LeanKG/commit/fe129e61c3e41fe5c4e1be7a22efdce810391cad))
+
 ## [0.32.0](https://github.com/FreePeak/LeanKG/compare/v0.31.3...v0.32.0) (2026-09-14)
 
 
