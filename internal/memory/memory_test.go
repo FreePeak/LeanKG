@@ -330,6 +330,29 @@ func TestRetainCursorResume(t *testing.T) {
 	}
 }
 
+func TestRetainRawNoCursor(t *testing.T) {
+	m := openTest(t)
+	if err := m.RetainRaw("hb", []Entry{{Content: "first heartbeat row"}}); err != nil {
+		t.Fatalf("RetainRaw: %v", err)
+	}
+	// Contrast with the cursor-gated path: with no cursor (0) a plain Retain
+	// is a silent no-op — the hindsight wire has no cursor concept, so every
+	// compat retain must land.
+	if err := m.Retain("hb", []Entry{{Content: "dropped"}}, 0); err != nil {
+		t.Fatalf("Retain: %v", err)
+	}
+	if err := m.RetainRaw("hb", []Entry{{Content: "second heartbeat row"}}); err != nil {
+		t.Fatalf("RetainRaw: %v", err)
+	}
+	data, err := os.ReadFile(m.bankPath("hb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(strings.Split(strings.TrimSpace(string(data)), "\n")); n != 2 {
+		t.Fatalf("bank rows = %d, want 2 (RetainRaw twice, cursorless Retain dropped)", n)
+	}
+}
+
 func TestRecallZeroMatchFiltered(t *testing.T) {
 	m := openTest(t)
 	es := []Entry{
