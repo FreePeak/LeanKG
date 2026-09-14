@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.34.0](https://github.com/FreePeak/LeanKG/compare/v0.33.0...v0.34.0) (2026-09-14)
+
+
+### Features
+
+* **memory:** hindsight-wire compat mount on the REST surface ([#414](https://github.com/FreePeak/LeanKG/issues/414)) ([#423](https://github.com/FreePeak/LeanKG/issues/423)) ([bc92346](https://github.com/FreePeak/LeanKG/commit/bc92346d02e1b6d4028a8d03b4963c1100aed573))
+
+
+### Bug Fixes
+
+* **docker:** name the demo-stage COPY destinations so the grammar exclusion works ([#419](https://github.com/FreePeak/LeanKG/issues/419)) ([#421](https://github.com/FreePeak/LeanKG/issues/421)) ([1879ba4](https://github.com/FreePeak/LeanKG/commit/1879ba41a4a22ebd8a9470a9c8cd8c51ca7a0ea9))
+
 ## [0.33.0](https://github.com/FreePeak/LeanKG/compare/v0.32.1...v0.33.0) (2026-09-14)
 
 
