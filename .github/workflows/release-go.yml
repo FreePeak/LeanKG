@@ -1,20 +1,16 @@
 name: Go Release
-# Retargeted from the removed cargo semantic-release pipeline: builds a 4-target
-# CGO_ENABLED=0 matrix and attaches binaries to the GitHub Release for the
-# version you pass. No automatic version bumping — keep go/cmd/leankg/VERSION
-# in sync with what you release (a future release-notes automation can restore
-# the old pipeline's polish).
+# Builds the 4-target CGO_ENABLED=0 matrix and attaches the tarballs (plus a
+# SHA256 table that `leankg update` verifies against) to the GitHub Release for
+# the tag. Triggered by release-please: merging the release PR bumps
+# go/cmd/leankg/VERSION, tags vX.Y.Z, and that tag push starts this workflow.
+# workflow_dispatch remains for re-running a failed release.
 on:
-  # Manual only until the maintainer opts in: a tag-push trigger would publish
-  # releases unprompted (the cargo pipeline it replaces was approval-gated by
-  # semantic-release PRs). Switch to `push: tags: ["v*"]` to automate.
-  #
-  # Manual dispatch requires an explicit version: GITHUB_REF_NAME is the BRANCH
-  # on workflow_dispatch, so using it would stamp binaries with "main".
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (matches go/cmd/leankg/VERSION, e.g. 0.31.0)"
+        description: "Version to (re)release, without the leading v (e.g. 0.31.0)"
         required: true
         type: string
 
@@ -23,7 +19,7 @@ permissions:
 
 jobs:
   build:
-    name: Build release binaries
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -38,17 +34,66 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: go/go.sum
-      - name: Build leankg + leankg-embed (${{ matrix.goos }}/${{ matrix.goarch }})
+      - name: Resolve version
+        id: ver
+        run: |
+          v="${GITHUB_REF_NAME}"
+          [ "${{ github.event_name }}" = workflow_dispatch ] && v="v${{ inputs.version }}"
+          echo "version=${v#v}" >> "$GITHUB_OUTPUT"
+      - name: Build leankg + leankg-embed
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           mkdir -p out
-          (cd go && go build -ldflags "-s -w -X main.version=${{ inputs.version }}" -o ../out/ ./cmd/leankg ./cmd/leankg-embed)
-      - name: Archive
-        run: tar -czf leankg-${{ matrix.goos }}-${{ matrix.goarch }}.tgz -C out leankg leankg-embed
-      - uses: softprops/action-gh-release@v2
+          (cd go && go build -ldflags "-s -w -X main.version=${VERSION}" \
+            -o ../out/ ./cmd/leankg ./cmd/leankg-embed)
+          tar -czf "leankg-${GOOS}-${GOARCH}.tgz" -C out leankg leankg-embed
+          sha256sum "leankg-${GOOS}-${GOARCH}.tgz" > "leankg-${GOOS}-${GOARCH}.sha256"
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: v${{ inputs.version }}
-          files: leankg-${{ matrix.goos }}-${{ matrix.goarch }}.tgz
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            leankg-*.tgz
+            leankg-*.sha256
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+      - name: Resolve tag
+        id: tag
+        run: |
+          t="${GITHUB_REF_NAME}"
+          [ "${{ github.event_name }}" = workflow_dispatch ] && t="v${{ inputs.version }}"
+          echo "tag=$t" >> "$GITHUB_OUTPUT"
+      - name: Attach assets + checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          {
+            echo ""
+            echo "## SHA256"
+            echo ""
+            cat leankg-*.sha256
+          } > checksums.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # release-please already published the tag with changelog notes —
+            # keep them and append the checksum table.
+            { gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body
+              cat checksums.md; } > notes.md
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          else
+            # manual workflow_dispatch: no release exists yet
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --notes-file checksums.md --latest
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" leankg-*.tgz --clobber

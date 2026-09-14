@@ -220,10 +220,5 @@ func extractNumber(part string) (int, bool) {
 // EstimateSavings reports the token delta between two strings (Rust
 // CargoTestCompressor::estimate_savings).
 func (c *CargoTestCompressor) EstimateSavings(original, compressed string) float64 {
-	originalTokens := len(original) / 4
-	compressedTokens := len(compressed) / 4
-	if originalTokens == 0 {
-		return 0.0
-	}
-	return float64(originalTokens-compressedTokens) / float64(originalTokens) * 100.0
+	return savingsPercent(original, compressed)
 }

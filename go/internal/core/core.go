@@ -145,25 +145,10 @@ func ResolveEnvelope(tool string) (string, error) {
 		fmt.Sprintf("tool %q is not in this server's registry — valid tools: import, query, status (legacy aliases: set, get)", tool), "")
 }
 
-// freshness derives the freshness label by comparing the current watermark
-// against the inventory's last-computed seq. cold when nothing is indexed.
-// (DB-resident — there is no in-process TTL cache to race.)
+// freshness derives the status/query freshness label; the derivation itself is
+// the store's, shared with `doctor --deep`'s fleet probe.
 func (e *Engine) freshness(totalElements int) string {
-	if totalElements == 0 {
-		return "cold"
-	}
-	inv, err := e.st.LoadInventory()
-	if err != nil || inv == nil {
-		return "possibly_stale"
-	}
-	seq, _, err := e.st.Watermark()
-	if err != nil {
-		return "possibly_stale"
-	}
-	if seq == inv.LastInventorySeq {
-		return "fresh"
-	}
-	return "possibly_stale"
+	return store.Freshness(e.st, totalElements)
 }
 
 // ImportRequest is the import tool payload.
