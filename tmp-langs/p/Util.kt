@@ -1,2 +1,0 @@
-fun helper() {}
-class Config {}

@@ -1,2 +1,0 @@
-func hello() {}
-class Widget {}
