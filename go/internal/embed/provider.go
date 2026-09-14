@@ -24,6 +24,22 @@ const (
 // counts one truncation per element (contract §internal/embed).
 const maxContentChars = 8000
 
+// maxLocalTextChars is the embedding-text budget for the local sidecar
+// family: llama.cpp serving a BERT-size GGUF embedder (bge-small-en-v1.5,
+// all-MiniLM-L6-v2 — both 512-token training context) REJECTS longer inputs
+// with HTTP 500 instead of truncating the way the ONNX-era in-process
+// pipeline did. One oversized element otherwise aborts the whole run — found
+// dogfooding `leankg-embed run` on this repository (an 845-token element;
+// then 2000 runes of real Go code measured 733 tokens, ~2.7 chars/token on
+// WordPiece over code, well under the prose assumption).
+//
+// ponytail: a chars budget, not a tokenizer count — 1000 runes sits at
+// ~500 tokens even for dense code (worst realistic ~2 chars/token), just
+// inside the 512 wall. Elements pathological beyond that are counted in
+// Report.Failed by embedFiles' per-item fallback, never fatal to the run.
+// Upgrade path: a per-catalog-row MaxTokens plus a real tokenizer budget.
+const maxLocalTextChars = 1000
+
 // Provider produces embeddings for one pinned model.
 type Provider interface {
 	ModelID() string

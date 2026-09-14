@@ -106,6 +106,8 @@ func main() {
 		cmdReflect(os.Args[2:])
 	case "refresh":
 		cmdRefresh(os.Args[2:])
+	case "gc":
+		cmdGC(os.Args[2:])
 	case "register":
 		cmdRegister(os.Args[2:])
 	case "unregister":
@@ -181,6 +183,7 @@ Usage:
   leankg ctags [--project DIR] [--out FILE] [--format ctags]
   leankg cost [--project DIR] [--format text|json]
   leankg migrate [--project DIR] [--engine sqlite|postgres]
+  leankg gc [DIR] [--project DIR] [--engine sqlite|postgres]
   leankg audit export [--project DIR] [--since T] [--until T] [--format jsonl] [--out FILE]
   leankg audit verify [--project DIR] [--since T] [--until T]
   leankg metrics [--project DIR] [--since N|Nd] [--tool NAME] [--json|-j] [--session]

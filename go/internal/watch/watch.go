@@ -200,6 +200,9 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 		lockFile.Close()
 		return nil, fmt.Errorf("watch: %w (%s)", ErrAlreadyWatching, abs)
 	}
+	// Stamp the owning PID as bookkeeping for `doctor --deep` (see embed.lock).
+	_ = lockFile.Truncate(0)
+	_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
 
 	notifier, err := fsnotify.NewWatcher()
 	if err != nil {

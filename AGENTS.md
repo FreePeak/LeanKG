@@ -17,6 +17,15 @@ make go-ui-assets        # build ui-v2 and sync dist/ into go/internal/web/embed
 
 Store contract: `go/internal/store/backend.go` (Backend interface; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).
 
+Test-layer policy (owner decision, 2026-09-14): **unit tests stay in-process
+and fast** — no real provider/network calls, no sleeps; `go test ./...` is
+the gate. Anything making a real embedding/LLM/PG call or measuring timing is
+an **integration/e2e test** gated on an env var (`LEANKG_TEST_PG_URL`, live
+sidecar) or its own job (`ttfv`); **benchmarks (`make go-bench`,
+`benchmark/ab`) never run in CI** — they are explicit local/nightly tools.
+The `go-engine` CI job runs only the in-process suite (both tag sets) with a
+300 s budget.
+
 ## CLI Quick Reference
 
 |Command|Purpose|

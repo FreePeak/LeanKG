@@ -118,6 +118,10 @@ func lock(dir string) (func(), error) {
 		f.Close()
 		return nil, fmt.Errorf("another leankg-embed run holds %s (single-flight per project)", lockPath)
 	}
+	// Stamp the owning PID as bookkeeping (mutual exclusion is the flock
+	// itself): `cat embed.lock` and `doctor --deep` can then name the holder.
+	_ = f.Truncate(0)
+	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
 	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
 }
 

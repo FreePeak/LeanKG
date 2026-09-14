@@ -9,11 +9,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/FreePeak/LeanKG/go/internal/store"
 )
@@ -274,6 +276,107 @@ func TestRunTruncationCounted(t *testing.T) {
 	rep := mustRun(t, st, p, "full")
 	if rep.Truncations != 1 || rep.Embedded != 1 {
 		t.Fatalf("got %+v, want Truncations=1 Embedded=1", rep)
+	}
+}
+
+// recordProvider delegates to an inner provider, overrides the Provider()
+// family label (to exercise family-specific text budgets), and records every
+// text it was asked to embed.
+type recordProvider struct {
+	inner    Provider
+	provider string
+	texts    []string
+}
+
+func (r *recordProvider) ModelID() string  { return r.inner.ModelID() }
+func (r *recordProvider) Revision() string { return r.inner.Revision() }
+func (r *recordProvider) Dimensions() int  { return r.inner.Dimensions() }
+func (r *recordProvider) Distance() string { return r.inner.Distance() }
+func (r *recordProvider) Provider() string { return r.provider }
+
+func (r *recordProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
+	r.texts = append(r.texts, texts...)
+	return r.inner.Embed(ctx, kind, texts)
+}
+
+// The local sidecar family (llama.cpp serving BERT-size GGUF embedders) has a
+// 512-token model context and answers HTTP 500 for anything longer — unlike
+// the ONNX-era pipeline, which truncated. Found dogfooding `leankg-embed run`
+// on this repository: one 845-token element aborted the whole run.
+func TestRunLocalProviderTextBudget(t *testing.T) {
+	// local: a 4000-rune element is 512-token-safe-truncated and counted.
+	st := testStore(t)
+	seed(t, st, el("a::big", strings.Repeat("x", 4000)))
+	p := &recordProvider{inner: Deterministic(8), provider: "local"}
+	rep := mustRun(t, st, p, "full")
+	if rep.Truncations != 1 {
+		t.Fatalf("local run: Truncations=%d, want 1 (%+v)", rep.Truncations, rep)
+	}
+	if len(p.texts) != 1 || utf8.RuneCountInString(p.texts[0]) > maxLocalTextChars {
+		got := -1
+		if len(p.texts) == 1 {
+			got = utf8.RuneCountInString(p.texts[0])
+		}
+		t.Fatalf("local run: sent %d text(s), rune len %d, want exactly 1 <= %d",
+			len(p.texts), got, maxLocalTextChars)
+	}
+
+	st2 := testStore(t)
+	seed(t, st2, el("a::big", strings.Repeat("x", 4000)))
+	p2 := &recordProvider{inner: Deterministic(8), provider: "openai"}
+	rep2 := mustRun(t, st2, p2, "full")
+	if rep2.Truncations != 0 || len(p2.texts) != 1 || utf8.RuneCountInString(p2.texts[0]) != 4000 {
+		t.Fatalf("openai run: got truncations=%d texts=%+v, want 0 and the full 4000-rune text",
+			rep2.Truncations, p2.texts)
+	}
+}
+
+// longTextProvider fails any call containing a text over maxRunes, mimicking
+// a llama.cpp sidecar answering HTTP 500 for input beyond the model context.
+type longTextProvider struct {
+	inner    Provider
+	maxRunes int
+}
+
+func (l *longTextProvider) ModelID() string  { return l.inner.ModelID() }
+func (l *longTextProvider) Revision() string { return l.inner.Revision() }
+func (l *longTextProvider) Dimensions() int  { return l.inner.Dimensions() }
+func (l *longTextProvider) Distance() string { return l.inner.Distance() }
+func (l *longTextProvider) Provider() string { return l.inner.Provider() }
+
+func (l *longTextProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
+	for _, s := range texts {
+		if utf8.RuneCountInString(s) > l.maxRunes {
+			return nil, fmt.Errorf("input (%d runes) is too large to process", utf8.RuneCountInString(s))
+		}
+	}
+	return l.inner.Embed(ctx, kind, texts)
+}
+
+// A poison element the provider rejects must cost exactly itself: counted in
+// Failed, left dirty, and NOT abort the run — its healthy sibling in the same
+// file still gets vectors. Found dogfooding `leankg-embed` on this repo, where
+// one over-context element killed the whole pass.
+func TestRunPoisonItemDoesNotAbortRun(t *testing.T) {
+	st := testStore(t)
+	seed(t, st,
+		el("a::f1", "func f1() {}"),
+		el("a::poison", strings.Repeat("y", 1500)))
+	p := &longTextProvider{inner: Deterministic(8), maxRunes: 500}
+
+	rep, err := Run(context.Background(), st, p, "full")
+	if err != nil {
+		t.Fatalf("Run: %v — a rejected item must not abort the run", err)
+	}
+	if rep.Embedded != 1 || rep.Failed != 1 {
+		t.Fatalf("got %+v, want Embedded=1 Failed=1", rep)
+	}
+	if vectorCount(t, st, p.ModelID()) != 1 {
+		t.Fatal("healthy sibling lost its vector")
+	}
+	run, _ := st.LastEmbedRun(p.ModelID())
+	if run == nil || run.Status != "partial" {
+		t.Fatalf("run status: got %+v, want partial", run)
 	}
 }
 

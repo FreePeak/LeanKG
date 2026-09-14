@@ -295,11 +295,9 @@ func TestSidecarExitsDuringStartup(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho model load failed >&2\nexit 3\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The port must be free, not merely unused by this test: the health probe
-	// connecting to *anything* on it is what makes startup look successful. This
-	// assertion failed on any machine holding a listener on the previously
-	// hardcoded 18080 (an ssh tunnel here did), because StartSidecar returned no
-	// error at all. freeTCPPort is the pattern every neighbouring test uses.
+	// A free port, not a hardcoded one: an unrelated listener (this failed
+	// with a dev ssh tunnel answering /health on 18080) turns "the sidecar
+	// died" into a silent false pass — awaitHealthy gets 200 from a stranger.
 	port, err := freeTCPPort()
 	if err != nil {
 		t.Fatal(err)
