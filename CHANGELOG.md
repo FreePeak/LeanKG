@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/FreePeak/LeanKG/compare/v0.31.0...v0.31.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **ci:** read release-please v4 outputs by their real names ([#382](https://github.com/FreePeak/LeanKG/issues/382)) ([cd93b9f](https://github.com/FreePeak/LeanKG/commit/cd93b9f08e2823dbd9ea68a182e7b5fa7d556054))
+
 ## [0.31.0](https://github.com/FreePeak/LeanKG/compare/v0.30.0...v0.31.0) (2026-09-14)
 
 
