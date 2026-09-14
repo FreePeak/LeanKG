@@ -193,24 +193,32 @@ func TestIndexFreshness(t *testing.T) {
 	if f := checkIndexFreshness(allGood, healthyEnv()); f.Status != StatusPass {
 		t.Fatalf("fresh = %s (%s)", f.Status, f.Detail)
 	}
+	// #406 regression: a file that legitimately yields ZERO elements is still
+	// recorded in code_files, so it must NEVER read as "missing" — deriving
+	// this side from code_elements made 24 real files a permanent WARN.
+	zeroElem := healthyStub()
+	zeroElem.indexed = []string{"src/a.go"} // b.go extracted no elements
+	if f := checkIndexFreshness(zeroElem, healthyEnv()); f.Status != StatusPass {
+		t.Fatalf("zero-element recorded file = %s (%s), want PASS", f.Status, f.Detail)
+	}
 	// Synthetic URI entries never count as stale.
 	synth := healthyStub()
-	synth.indexed = []string{"src/a.go", "ontology://concept-1"}
+	synth.recorded = []string{"src/a.go", "ontology://concept-1"}
 	env := healthyEnv()
 	env.DiskFiles = []string{"src/a.go"}
 	if f := checkIndexFreshness(synth, env); f.Status != StatusPass {
-		t.Fatalf("synthetic = %s (%s)", f.Status, f.Detail)
+		t.Fatalf("synthetic = %s (%s), want PASS", f.Status, f.Detail)
 	}
 	// Empty index over a non-empty tree FAILs.
 	empty := healthyStub()
-	empty.indexed = nil
+	empty.recorded = nil
 	f := checkIndexFreshness(empty, env)
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "index is empty") {
 		t.Fatalf("empty = %s (%s)", f.Status, f.Detail)
 	}
 	// >50% stale paths FAIL.
 	moved := healthyStub()
-	moved.indexed = []string{"src/a.go", "src/old1.go", "src/old2.go"}
+	moved.recorded = []string{"src/a.go", "src/old1.go", "src/old2.go"}
 	f = checkIndexFreshness(moved, env)
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "no longer exist") {
 		t.Fatalf("moved = %s (%s)", f.Status, f.Detail)

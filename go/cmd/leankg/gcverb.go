@@ -42,5 +42,15 @@ func cmdGC(args []string) {
 	if err != nil {
 		fatalText(fmt.Errorf("gc: %w", err))
 	}
+	if n > 0 {
+		// Same contract as every other CLI writer (index/pull/summarize):
+		// the purge bumped the watermark, and the freshness comparison reads
+		// the inventory snapshot — without this refresh a just-gc'd project
+		// sits at possibly_stale until some later write (the bug #401's own
+		// live run exposed: fleet leg read "leankg: current, possibly_stale").
+		if _, ierr := store.RefreshInventory(st); ierr != nil {
+			fmt.Fprintf(os.Stderr, "gc: inventory snapshot: %v\n", ierr)
+		}
+	}
 	fmt.Printf("gc: purged %d orphan relationship(s) from %s\n", n, *project)
 }

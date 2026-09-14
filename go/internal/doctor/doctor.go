@@ -604,10 +604,18 @@ func checkMigrations(p Probes, _ Env) Finding {
 // checkIndexFreshness: indexed files vs on-disk indexable files.
 func checkIndexFreshness(p Probes, env Env) Finding {
 	const check = "index-freshness"
-	indexed, err := p.IndexedFiles()
+	// The bookkeeping table is the source of truth for "the indexer has seen
+	// this file": a supported file that legitimately yields ZERO elements
+	// (configs, entry stubs, header-only C) still carries a code_files row.
+	// Deriving the indexed side from code_elements instead — as this check
+	// once did — flags those files as permanently "missing", an un-clearable
+	// WARN that trains users to ignore the report. (Found dogfooding on this
+	// repo: 24 recorded, zero-element files — ui-v2 configs, build-tag stubs,
+	// calc.h — read as drift no matter how many times index ran. #406.)
+	indexed, err := p.RecordedFiles()
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read indexed file list: %v", err),
-			"code_elements should be readable after an index; verify connectivity and schema."}
+			"code_files should be readable after an index; verify connectivity and schema."}
 	}
 	disk := env.DiskFiles
 	if disk == nil {
