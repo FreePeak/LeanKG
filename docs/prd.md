@@ -3,7 +3,7 @@
 **Version:** 4.10.1-hygiene-and-release
 **Date:** 2026-09-14
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
-**Codebase Version:** 0.31.0 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
+**Codebase Version:** 0.31.2 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
 
 ---
@@ -32,9 +32,11 @@
 
 **Release pipeline** (`fix(ci)`, see §Release in `AGENTS.md`): `release-go.yml` was `workflow_dispatch`-only and had run **zero** times, so nothing had been released since v0.30.0. It is replaced by `.github/workflows/release.yml`: release-please cuts `vX.Y.Z` on a merged release PR, and the tag, GitHub Release and four `leankg-<goos>-<goarch>.tgz` assets happen in the **same run** — because a tag pushed with `GITHUB_TOKEN` cannot start a second workflow, which is exactly why v0.28.1/v0.29.0/v0.30.0 shipped with no assets (and v0.27.0 stayed a draft, invisible to the `releases/latest` that `leankg update` polls). Two configuration defects were caught by reading release-please's own source: `.release-please-manifest.json` carried a `$schema` key (its parser runs `Version.parse` over **every** value and throws) and keyed the version `"main"` where the lookup is by package path (`"."`); `go/cmd/leankg/VERSION` is bumped natively via `version-file` instead of a comment marker in a file that has no comment syntax. The release run gained a gate asserting tag == VERSION == the MCP `serverInfo` const, since `ci.yml` skips release-metadata commits.
 
-**Verification:** `gofmt` clean · `go build ./...`, `CGO_ENABLED=0 go build ./...`, `go build -tags tstree ./...` · `go vet` both tags · `go test ./... -count=1` green · release YAML parsed and job graph checked · manifest/config resolution replayed against the installed release-please library · workflow correctness is provable only by the next real release, so the first `v1.0.0` run must be read end to end.
+**Verification (live, not inferred):** `gofmt` clean · `go build ./...`, `CGO_ENABLED=0 go build ./...`, `go build -tags tstree ./...` · `go vet` both tags · `go test ./... -count=1` green — including from a **pristine `git clone`** (the guard against the global-`gitignore` `leankg` pattern that once hid `cmd/leankg` from every pushed commit) · CLI smoke of the refactored paths (`leankg version` → `index` → `status` reporting `"freshness": "fresh"` through the new `store.Freshness` → `doctor` exit 0) · manifest/config resolution replayed against the installed release-please library.
 
-**Known consequence to decide:** commits already on `main` include `feat(go)!`, so the first automatic release is **v1.0.0**, not v0.31.0.
+The pipeline then released for real: **v0.31.1 and v0.31.2 were cut automatically by release-please on merges to `main` and each published with all four `leankg-<goos>-<goarch>.tgz` assets** (verified by downloading `leankg-darwin-arm64.tgz`, running it — `leankg 0.31.1`, `leankg-embed 0.31.1` — and matching the published SHA256 against the download). The first automated release, v0.31.0, shipped with **zero** assets, which is how two further defects were found and fixed: the action's outputs are `tag_name`/`version` (read out of the shipped bundle, not the docs), and `inputs.version` resolves empty inside a job-level `if`, so both silent-skipped the whole asset chain while reporting success. `publish` now asserts the four tarballs exist and refuses to move `releases/latest` backwards, and v0.31.0 has been backfilled with its binaries.
+
+**Version math, for the record:** the `feat(go)!` cutover commit did **not** produce v1.0.0 — `bump-minor-pre-major: true` makes release-please treat a breaking change as a minor bump while the major is 0. The first 1.0.0 is therefore still a deliberate decision (`release-as` on a release PR), not an accident of the queue.
 
 ### v4.10.0-issue-scope-and-dogfood — the open issues implemented, then hardened against this repo's own data (2026-09-13)
 
