@@ -1,0 +1,23 @@
+# Build context for the container deploy (Dockerfile). Everything the image
+# needs is copied explicitly, so the context stays small and reproducible.
+.git
+**/.git
+.worktrees
+**/.leankg
+**/node_modules
+**/dist
+docs
+benchmarks
+examples/logs
+go/bin
+logs
+*.log
+.env
+.env.*
+certs
+.claude
+.cursor
+.cursor-plugin
+.opencode
+.leankg
+assets
