@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.3](https://github.com/FreePeak/LeanKG/compare/v0.31.2...v0.31.3) (2026-09-14)
+
+
+### Bug Fixes
+
+* **ci:** assert the four tarballs landed, and never move `latest` backwards ([#387](https://github.com/FreePeak/LeanKG/issues/387)) ([f679887](https://github.com/FreePeak/LeanKG/commit/f679887b301b3df5b24e47564922b2c4bda1a311))
+* **ci:** read the release version straight from plan, dropping the resolver hop ([#386](https://github.com/FreePeak/LeanKG/issues/386)) ([479e92c](https://github.com/FreePeak/LeanKG/commit/479e92c8d3383cbab514963b0284db2255d94735))
+
 ## [0.31.2](https://github.com/FreePeak/LeanKG/compare/v0.31.1...v0.31.2) (2026-09-14)
 
 
