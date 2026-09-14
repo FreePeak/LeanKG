@@ -31,7 +31,7 @@ permissions:
 jobs:
   plan:
     name: Cut the version (release-please)
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.release-please.outputs.release-tag-name }}
