@@ -781,11 +781,12 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (e
    go build ./... && ./bin/leankg index . --auto     # this repo -> .leankg/leankg.db
    env LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:8085/v1 \
        LEANKG_EMBED_MODEL=bge-small-en-v1.5-384 bin/leankg-embed full .
-   bin/leankg serve --http :9699 --rest :9700 --ui :9701 --memory --embed-provider local --project .
+   bin/leankg serve --http :9699 --rest :9700 --ui :9701 --memory --embed-provider local --hindsight-compat --project .
    ```
-   Ports 9700/9701, not 8080/8081: the live onegw gateway owns 8080 (pre-flight `lsof -iTCP -sTCP:LISTEN` first). `--embed-provider local` + `LEANKG_EMBED_BASE_URL` ATTACHes the sidecar — a serve process never orphans a spawned one.
+   Ports 9700/9701, not 8080/8081: the live onegw gateway owns 8080 (pre-flight `lsof -iTCP -sTCP:LISTEN` first) — including for the sidecar: `--embed-provider local` **without** `LEANKG_EMBED_BASE_URL` spawns a llama-server on :8080 and serve crash-loops. With it, serve ATTACHes the running sidecar — a serve process never orphans a spawned one.
+   `--hindsight-compat` (#414, v0.34.0+) additionally serves omp's Hindsight wire on the REST listener, so the harness's native agent memory points here: `memory.backend: hindsight` + `hindsight.apiUrl: http://127.0.0.1:9700` + `hindsight.mentalModelsEnabled: false` in `~/.omp/agent/config.yml` (e2e-proven 2026-09-14: a real `omp -p` session retained `zebra-cantaloupe-42` through the mount into bank `omp`, and a fresh session reproduced it from the recall injection).
    Verify (all ✅ 2026-09-14): `/health` → `{"ok":true}` ×3; L1/L2/L3 with `retrieval` provenance (L3 = cosine on 8,989 real vectors); retain→recall survives restart; `doctor --deep` 0-fail after the wave's gc run.
-3. **S2 — work through it**: impact/callers before exported-symbol edits, tested-by before closes, recall at session open; wrong answers become engine defects (failing test first), fixed in `go/`, then re-index and re-ask.
+3. **S2 — work through it**: impact/callers before exported-symbol edits, tested-by before closes, recall at session open; wrong answers become engine defects (failing test first), fixed in the root module, then re-index and re-ask.
 4. **S3 — scale carefully**: add small nested-repo parents one at a time via the registry / `LEANKG_PROJECT_DIRS` (hot-set cap 8, zero eager indexing). **Never** index the `freepeak` root (99,574 files).
 5. **S4 — loop**: build, fix, release via release-please; keep this PRD + tracker as the status ledger each cycle.
 
