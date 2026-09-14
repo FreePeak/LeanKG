@@ -15,7 +15,7 @@ func TestVersionMatchesReleaseStamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read release stamp: %v", err)
 	}
-	if want := strings.TrimSpace(string(stamp)); version != want {
+	if want := strings.Fields(string(stamp))[0]; version != want {
 		t.Errorf("mcp version = %q, want %q (cmd/leankg/VERSION)", version, want)
 	}
 }

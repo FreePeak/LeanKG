@@ -251,56 +251,6 @@ func Interactive() bool {
 	return isTerminal(os.Stdin) && isTerminal(os.Stdout)
 }
 
-// MergeProjectRoots dedupes project roots for a `status` listing:
-// canonicalize best-effort (a missing path is kept as written), first
-// occurrence wins.
-func MergeProjectRoots(roots []string) []string {
-	out := make([]string, 0, len(roots))
-	seen := map[string]bool{}
-	for _, root := range roots {
-		canon, err := filepath.EvalSymlinks(root)
-		if err != nil {
-			canon = root
-		}
-		if seen[canon] {
-			continue
-		}
-		seen[canon] = true
-		out = append(out, canon)
-	}
-	return out
-}
-
-// Freshness label vocabulary (FR-ZCP-06).
-const (
-	FreshnessFresh         = "fresh"
-	FreshnessPossiblyStale = "possibly_stale"
-	FreshnessCold          = "cold"
-)
-
-// FreshnessLabel derives the freshness label from cheap local facts only:
-//
-//   - no elements yet -> cold (initialized, index empty or still building);
-//   - an inventory snapshot taken at/after the last commit -> fresh;
-//   - everything else (commit newer than the snapshot, no git context, or no
-//     inventory to prove freshness) -> possibly_stale.
-func FreshnessLabel(elements int, inventoryComputedAt, lastCommitTime *int64) string {
-	if elements == 0 {
-		return FreshnessCold
-	}
-	if inventoryComputedAt == nil {
-		return FreshnessPossiblyStale
-	}
-	if lastCommitTime == nil {
-		// No git context — freshness cannot be proven.
-		return FreshnessPossiblyStale
-	}
-	if *lastCommitTime > *inventoryComputedAt {
-		return FreshnessPossiblyStale
-	}
-	return FreshnessFresh
-}
-
 // rawConfigIsObject reports whether raw decodes to a JSON object (the only
 // shape a setup config can have). Parse has already rejected a syntax error by
 // the time this runs, so a false result means a JSON array/string/number.
