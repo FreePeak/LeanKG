@@ -9,7 +9,7 @@
 docs
 benchmarks
 examples/logs
-go/bin
+bin
 logs
 *.log
 .env

@@ -1,21 +1,21 @@
 # LeanKG — Agent Context
 
-**Tech stack:** Go 1.25 (module `github.com/FreePeak/LeanKG/go`) + SQLite (WAL, default) + PostgreSQL/pgvector (opt-in) + official MCP go-sdk. The Rust tree is removed; `go/` is the codebase.
+**Tech stack:** Go 1.25 (module `github.com/FreePeak/LeanKG`) + SQLite (WAL, default) + PostgreSQL/pgvector (opt-in) + official MCP go-sdk. The Rust tree is removed; the repository root is the Go module.
 
 ## Build & Test
 
 ```bash
-make go-build            # CGO_ENABLED=0 binaries into go/bin/ (leankg, leankg-embed)
+make go-build            # CGO_ENABLED=0 binaries into bin/ (leankg, leankg-embed)
 make go-test             # go test ./... -count=1  (54 packages)
 make go-vet              # go vet ./...
 make go-bench            # benchmark/ab suite
 make go-build-tstree     # build with the tree-sitter tier (-tags tstree, CGO)
 make go-test-tstree      # test that same tier
 make dual-engine         # sqlite + live-PostgreSQL acceptance gate (needs :5433 pgvector)
-make go-ui-assets        # build ui-v2 and sync dist/ into go/internal/web/embed
+make go-ui-assets        # build ui-v2 and sync dist/ into internal/web/embed
 ```
 
-Store contract: `go/internal/store/backend.go` (Backend interface; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).
+Store contract: `internal/store/backend.go` (Backend interface; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).
 
 Test-layer policy (owner decision, 2026-09-14): **unit tests stay in-process
 and fast** — no real provider/network calls, no sleeps; `go test ./...` is
@@ -51,7 +51,7 @@ before scaling to small nested-repo parents. Never bulk-index the `freepeak` por
 ## Development workflow
 
 1. Update `docs/prd.md` + `docs/prd-task-tracker.md` (the only two live docs)
-2. Implement in `go/` — Backend consumers take `store.Backend`, never a concrete store
+2. Implement in `internal/` + `cmd/` — Backend consumers take `store.Backend`, never a concrete store
 3. `make go-build && make go-test && make go-vet`
 4. Commit (one feature per commit; no AI attribution); main is protected → PRs only
 5. `scripts/test-dual-engine.sh` for storage-layer changes
@@ -64,7 +64,7 @@ the GitHub Release and builds the four `leankg-<goos>-<goarch>.tgz` assets **in 
 same run** — deliberately, because a tag pushed with `GITHUB_TOKEN` cannot trigger a
 follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 
-- Version source of truth: `go/cmd/leankg/VERSION`, declared as release-please's
+- Version source of truth: `cmd/leankg/VERSION`, declared as release-please's
   `version-file`; `internal/mcp/server.go` keeps the `x-release-please-version`
   marker for its copy, and `internal/mcp/version_test.go` fails on drift.
 - `.release-please-manifest.json` is keyed by package **path** (`"."`). A key of
@@ -72,7 +72,7 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
   release-please throw while loading the manifest.
 - `leankg update` polls `releases/latest`, so the release must be non-draft and
   marked latest; asset names and the archive layout are a contract with
-  `go/internal/update`. `--latest` is claimed only when the version is at least
+  `internal/update`. `--latest` is claimed only when the version is at least
   the current latest, so re-publishing an older release cannot downgrade clients.
 - `scripts/release_workflow_guards.py` (a CI step) pins three invariants of that
   workflow: no job may gate on `inputs.*` (empty in a job-level `if` on
@@ -84,16 +84,16 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 
 |File|Purpose|
 |---|---|
-|`go/cmd/leankg/`|serve/index/writer/query/doctor/connect/install|
-|`go/cmd/leankg-embed/`|embedding pipeline binary|
-|`go/internal/store/`|Backend interface, SQLite + PostgreSQL implementations|
-|`go/internal/core/`|3-tool envelope + L0–L3 ladder|
-|`go/internal/index/`, `docindex/`, `prdindex/`|code / markdown-doc / PRD-requirement extractors (regex tier; tree-sitter behind `-tags tstree`)|
-|`go/internal/memory/`|full-markdown memory + mnemopi banks|
-|`go/internal/embed/`|Provider port, ModelStamp guards, pipeline|
-|`go/internal/graph/`|impact/path/callers/callees/context/explain|
-|`go/internal/mcp/`, `rest/`, `rpc/`, `web/`|transports + UI|
-|`go/internal/tstree/`|vendored generated grammars (objc/dart/perl) — build-tag gated|
+|`cmd/leankg/`|serve/index/writer/query/doctor/connect/install|
+|`cmd/leankg-embed/`|embedding pipeline binary|
+|`internal/store/`|Backend interface, SQLite + PostgreSQL implementations|
+|`internal/core/`|3-tool envelope + L0–L3 ladder|
+|`internal/index/`, `docindex/`, `prdindex/`|code / markdown-doc / PRD-requirement extractors (regex tier; tree-sitter behind `-tags tstree`)|
+|`internal/memory/`|full-markdown memory + mnemopi banks|
+|`internal/embed/`|Provider port, ModelStamp guards, pipeline|
+|`internal/graph/`|impact/path/callers/callees/context/explain|
+|`internal/mcp/`, `rest/`, `rpc/`, `web/`|transports + UI|
+|`internal/tstree/`|vendored generated grammars (objc/dart/perl) — build-tag gated|
 
 ## Multi-project setup
 

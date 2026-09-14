@@ -80,20 +80,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache-dependency-path: go/go.sum
+          cache-dependency-path: go.sum
       # ci.yml skips release-metadata commits, so the three version copies are
       # otherwise never compared on the exact commit that gets shipped.
-      - name: Tag, go/cmd/leankg/VERSION and the MCP serverInfo must agree
+      - name: Tag, cmd/leankg/VERSION and the MCP serverInfo must agree
         env:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          stamp="$(awk '{print $1}' go/cmd/leankg/VERSION)"
+          stamp="$(awk '{print $1}' cmd/leankg/VERSION)"
           if [ "$stamp" != "$VERSION" ]; then
-            echo "::error file=go/cmd/leankg/VERSION::stamped $stamp but releasing v$VERSION"
+            echo "::error file=cmd/leankg/VERSION::stamped $stamp but releasing v$VERSION"
             exit 1
           fi
-          cd go && go test ./internal/mcp/ -run TestVersionMatchesReleaseStamp -count=1
+          go test ./internal/mcp/ -run TestVersionMatchesReleaseStamp -count=1
 
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
@@ -117,7 +117,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache-dependency-path: go/go.sum
+          cache-dependency-path: go.sum
       # CGO_ENABLED=0 is the shipped shape (ci.yml guards it). The asset name is
       # a contract: internal/update matches `leankg-<goos>-<goarch>.tgz` exactly
       # and requires leankg + leankg-embed at the archive root, stamped with the
@@ -131,8 +131,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          (cd go && go build -ldflags "-s -w -X main.version=${VERSION}" \
-            -o ../out/ ./cmd/leankg ./cmd/leankg-embed)
+          go build -ldflags "-s -w -X main.version=${VERSION}" \
+            -o out/ ./cmd/leankg ./cmd/leankg-embed
           tar -czf "leankg-${GOOS}-${GOARCH}.tgz" -C out leankg leankg-embed
           sha256sum "leankg-${GOOS}-${GOARCH}.tgz" > "leankg-${GOOS}-${GOARCH}.sha256"
       - uses: actions/upload-artifact@v4
@@ -199,36 +199,3 @@ jobs:
             exit 1
           fi
 
-  # A module that lives in a subdirectory is versioned by a directory-prefixed
-  # tag: the module proxy only ever sees `go/vX.Y.Z` for
-  # github.com/FreePeak/LeanKG/go. The root `vX.Y.Z` tag release-please cuts is
-  # invisible to it, which is why the module resolved only as a pseudo-version
-  # and pkg.go.dev 404'd the unversioned URL. Mirroring each release tag is what
-  # makes `go get github.com/FreePeak/LeanKG/go@latest` (and `go install
-  # github.com/FreePeak/LeanKG/go/cmd/leankg@latest`, and the published docs)
-  # resolve a real version. Lightweight tag: no identity to configure, and the
-  # proxy reads it the same.
-  modtag:
-    name: Publish the go/ module tag
-    needs: plan
-    # A re-publish (workflow_dispatch) has no new version to mirror: `plan` now
-    # resolves a version for it as well, so this must exclude dispatch explicitly
-    # rather than relying on `plan` being skipped — otherwise it hits the
-    # "already exists, refusing to move a published module version" guard below.
-    if: ${{ github.event_name != 'workflow_dispatch' && needs.plan.outputs.version != '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: v${{ needs.plan.outputs.version }}
-      - name: Tag go/v${{ needs.plan.outputs.version }} at the release commit
-        env:
-          MOD_TAG: go/v${{ needs.plan.outputs.version }}
-        run: |
-          set -euo pipefail
-          if git ls-remote --exit-code --heads --tags origin "refs/tags/$MOD_TAG" >/dev/null 2>&1; then
-            echo "::error::$MOD_TAG already exists; refusing to move a published module version"
-            exit 1
-          fi
-          git tag "$MOD_TAG"
-          git push origin "$MOD_TAG"

@@ -4,7 +4,7 @@
 
 <h1 align="center">LeanKG</h1>
 
-<p align="center"><strong>⚡ Implementation: 100% Go.</strong> The Rust engine was removed at the parity cutover; everything now lives in <a href="go/">go/</a> and ships as the Go module <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG/go"><code>github.com/FreePeak/LeanKG/go</code></a>. See <a href="docs/prd.md">docs/prd.md</a> for the parity ledger. Build: <code>make go-build</code> · Test: <code>make go-test</code> · Bench: <code>make go-bench</code>.</p>
+<p align="center"><strong>⚡ Implementation: 100% Go.</strong> The Rust engine was removed at the parity cutover; the whole engine is the root Go module <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG"><code>github.com/FreePeak/LeanKG</code></a>. See <a href="docs/prd.md">docs/prd.md</a> for the parity ledger. Build: <code>make go-build</code> · Test: <code>make go-test</code> · Bench: <code>make go-bench</code>.</p>
 
 <p align="center">
   <strong>Enterprise-ready code knowledge graph for AI coding agents</strong><br>
@@ -16,14 +16,14 @@
   ·
   <a href="docs/prd.md">Docs</a>
   ·
-  <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG/go">pkg.go.dev</a>
+  <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG">pkg.go.dev</a>
   ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/FreePeak/LeanKG/releases/latest"><img src="https://img.shields.io/github/v/release/FreePeak/LeanKG?label=release&logo=github" alt="Latest release"></a>
-  <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG/go"><img src="https://img.shields.io/badge/pkg.go.dev-LeanKG%2Fgo-00ADD8?logo=go&logoColor=white" alt="Go module reference"></a>
+  <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG"><img src="https://img.shields.io/badge/pkg.go.dev-LeanKG-00ADD8?logo=go&logoColor=white" alt="Go module reference"></a>
   <a href="https://github.com/FreePeak/LeanKG/actions"><img src="https://img.shields.io/github/actions/workflow/status/FreePeak/LeanKG/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="https://github.com/FreePeak/LeanKG/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
@@ -68,11 +68,11 @@ Postgres remains available as an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + 
 ### Install
 
 **Published module** — the engine is a Go module, so the toolchain installs both
-binaries from [pkg.go.dev](https://pkg.go.dev/github.com/FreePeak/LeanKG/go) straight into `$(go env GOPATH)/bin`:
+binaries from [pkg.go.dev](https://pkg.go.dev/github.com/FreePeak/LeanKG) straight into `$(go env GOPATH)/bin`:
 
 ```bash
-go install github.com/FreePeak/LeanKG/go/cmd/leankg@latest         # server + CLI
-go install github.com/FreePeak/LeanKG/go/cmd/leankg-embed@latest   # embedding pipeline
+go install github.com/FreePeak/LeanKG/cmd/leankg@latest         # server + CLI
+go install github.com/FreePeak/LeanKG/cmd/leankg-embed@latest   # embedding pipeline
 ```
 
 **Prebuilt archives** — [releases](https://github.com/FreePeak/LeanKG/releases/latest)
@@ -96,7 +96,7 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/instal
 demo graph baked from a slice of this repo (the language `examples/`, the engine,
 the dashboard source), then an unprivileged runtime that serves that store
 read-only. The dashboard build is already embedded in the binary
-(`go/internal/web/embed`), so there is no Node stage.
+(`internal/web/embed`), so there is no Node stage.
 
 ```bash
 docker build -t leankg .
@@ -254,6 +254,73 @@ CLI reference: [docs/archive/cli-reference.md](docs/archive/cli-reference.md)
 
 ---
 
+## Go module
+
+The engine is the root module `github.com/FreePeak/LeanKG`, versioned by the
+root `vX.Y.Z` release tags — so the proxy and
+[pkg.go.dev](https://pkg.go.dev/github.com/FreePeak/LeanKG) resolve real
+versions and `go install github.com/FreePeak/LeanKG/cmd/leankg@latest` builds
+the server + CLI straight from source.
+
+| | |
+|---|---|
+| **Surface** | exactly 3 MCP tools — `import` / `query` / `status` (pinned by `internal/mcp/server_test.go`). `query` routes the ladder (L1 exact → L2 keyword/FTS → L3 semantic) and **degrades instead of erroring**, so every answer carries `retrieval{rung,reason}` + `freshness` |
+| **Storage** | SQLite (WAL, FTS5, float32-BLOB vectors, DB-resident watermark) by default; PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project and per-model HNSW — both behind `store.Backend` |
+| **Transports** | MCP stdio · MCP streamable HTTP (`--http`, `/mcp` + `/health`) · REST (`--rest`, `/health` + `/api/v1/*`) · ConnectRPC (`--rpc`) · embedded dashboard (`--ui`) |
+| **Indexing** | 40 language profiles (`internal/langs.Default`), AST tiers regex → ast-grep → tree-sitter (behind the `tstree` tag), 3-signal change detection, `writer` role with fsnotify reconcile |
+| **Embeddings** | `leankg-embed` binary + provider port (OpenAI-compatible / llama.cpp sidecar / deterministic). Every vector writer is `ModelStamp`-guarded, so a model change fails loudly instead of mixing vector spaces |
+
+### Layout
+
+```
+cmd/leankg/         serve (stdio | MCP HTTP | REST | RPC | dashboard) · index · writer
+                    query · impact · status · doctor · report · connect · install
+                    prd · prd-trace · incident · note · obsidian · push · pull · update
+cmd/leankg-embed/   run · full · export · import · status
+internal/store/     Backend interface + SQLite (WAL/FTS5/watermark) + PGStore (pgvector)
+internal/core/      3-tool envelope + L0–L3 ladder + memory/graph routing
+internal/index/     extractors, 3-signal detection, call-edge resolution
+internal/langs/     the 40 profiles, AST tiers, per-language LSP specs
+internal/graph/     impact · path · callers/callees · context · explain · clusters
+internal/ontology/  concept catalog + procedural workflows/traceability
+internal/mcp/       modelcontextprotocol/go-sdk adapters (stdio + streamable HTTP)
+internal/rest/      stdlib net/http REST surface
+internal/web/       ui-v2 dashboard via //go:embed (checked-in build) + its /api/*
+internal/embed/     provider port, ModelStamp guards, NDJSON export/import
+internal/memory/    full-markdown memory + mnemopi bank adapter
+internal/watch/     fsnotify reconcile (writer role)
+internal/golden/    Rust-vs-Go parity fixtures
+```
+
+### Build
+
+```bash
+go build ./... && go vet ./... && go test ./... -count=1   # CGO-free shape
+go build -tags tstree ./...                                # tree-sitter tier (CGO)
+```
+
+The dashboard build under `internal/web/embed` is checked in and re-synced by
+`make go-ui-assets`; its provenance marker is `embed/ui-build.json`.
+`scripts/test-dual-engine.sh` is the SQLite + live-PostgreSQL gate
+(`LEANKG_TEST_PG_URL` gates the PG half).
+
+### Known limits
+
+- **Call edges are package-scoped.** No import/type resolution, so a same-name
+  call in the same package resolves and cross-package dispatch is best-effort;
+  the upgrade path is tree-sitter symbol tables.
+- Heuristic guards, documented in `internal/index/relations.go`: files ≥ 1 MiB
+  are skipped as vendored/minified bundles, call targets shorter than 4
+  characters are dropped as noise, and outgoing calls are capped per element and
+  per file.
+- The **unit of scope is a repository.** A portfolio root (tens of thousands of
+  nested files) is not a project; register its children one at a time.
+- `--ui` binds an **unauthenticated** data API (`query`/`read`/import routes).
+  Bind it loopback or front it with a proxy — the public demo container serves
+  it `--read-only` against a disposable baked graph.
+
+---
+
 ## Docs
 
 The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/prd.md`) + task tracker (`docs/prd-task-tracker.md`). All historical design docs, analyses, reports, and plans are preserved under [`docs/archive/`](docs/archive/).
@@ -287,7 +354,7 @@ Docker, no Postgres — sqlite is the default store.
 
 1. Fork + feature branch (prefer a worktree)
 2. Update docs when behavior changes
-3. `cd go && go build ./... && go vet ./... && go test ./...`
+3. `go build ./... && go vet ./... && go test ./...`
 4. Open a PR with summary + test plan
 
 ## License

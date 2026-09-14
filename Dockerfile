@@ -1,16 +1,18 @@
 # LeanKG Go engine — container deploy (Render `leankg.onrender.com`, Docker runtime).
 #
 # One CGO-free binary, three stages. The ui-v2 dashboard is a checked-in build
-# under go/internal/web/embed consumed by //go:embed, so there is no Node stage
+# under internal/web/embed consumed by //go:embed, so there is no Node stage
 # here: `make go-ui-assets` is what re-syncs that directory, and this image
 # ships whatever revision the tree carries (see embed/ui-build.json).
 
 FROM golang:1.25-alpine AS build
 WORKDIR /src
-COPY go/ ./go/
+COPY go.mod go.sum ./
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 ENV CGO_ENABLED=0
-RUN go build -C go -trimpath -ldflags "-s -w" -o /out/leankg ./cmd/leankg \
- && go build -C go -trimpath -ldflags "-s -w" -o /out/leankg-embed ./cmd/leankg-embed
+RUN go build -trimpath -ldflags "-s -w" -o /out/leankg ./cmd/leankg \
+ && go build -trimpath -ldflags "-s -w" -o /out/leankg-embed ./cmd/leankg-embed
 
 # Demo graph: a public demo with an empty store shows an empty canvas, so the
 # sqlite store is built at image-build time and served `--read-only` at runtime.
@@ -22,11 +24,12 @@ FROM alpine:3.22 AS demo
 COPY --from=build /out/leankg /usr/local/bin/leankg
 COPY examples/  /demo/examples/
 COPY ui-v2/src/ /demo/web-ui/
-COPY go/        /demo/engine/
+COPY cmd/ internal/ /demo/engine/
 # Indexing the 60 MB of vendored tree-sitter grammars would add noise, not
-# signal, to a demo graph. `internal/index/testdata` stays on purpose: it is
-# the java/kotlin coverage the demo shows off.
-RUN rm -rf /demo/engine/internal/tstree /demo/engine/testdata \
+# signal, to a demo graph, and the top-level testdata is not copied.
+# `internal/index/testdata` stays on purpose: it is the java/kotlin coverage
+# the demo shows off.
+RUN rm -rf /demo/engine/internal/tstree \
  && leankg index /demo --auto
 
 FROM alpine:3.22

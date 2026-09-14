@@ -6,7 +6,7 @@
 # FR-ZCP-08 floor; runs below the floor are refused by the scorer)
 #
 # FR-ZCP-08 hardening (issue #276): every trial is recorded via
-# scripts/kilo_ab_common.sh + go/benchmark/ab/abrun with pinned corpus /
+# scripts/kilo_ab_common.sh + benchmark/ab/abrun with pinned corpus /
 # tool SHAs and per-arm prompt-template hashes; a run whose pins cannot
 # be resolved is refused, never recorded. The scorer enforces >=3
 # trials/arm, aggregates per-arm medians, and emits the results JSON

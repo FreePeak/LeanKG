@@ -66,12 +66,12 @@ docker-compose.enterprise.local.yml
 __pycache__/
 
 # Go engine source dirs match the global "leankg" ignore pattern — re-include:
-!go/cmd/leankg/
-!go/internal/rpc/leankg/
+!cmd/leankg/
+!internal/rpc/leankg/
 tmp-smoke/
 
 # --- 2026-09-14 repo hygiene: generated scratch, agent-local state, build output ---
-go/bin/
+bin/
 tmp-langs/
 generated_docs/
 .pi/

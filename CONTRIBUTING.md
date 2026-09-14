@@ -21,14 +21,14 @@ As a project focused on **Lightweight Knowledge Graphs for AI**, we value contri
 Clone the repository and ensure you have [Go 1.25+](https://go.dev/dl/) installed:
 ```bash
 git clone https://github.com/FreePeak/LeanKG.git
-cd LeanKG/go
+cd LeanKG
 go build ./...
 ```
 
 ### 2. Local Development & Testing
 The Go module lives under `go/`; CI runs the same gates:
-- **Run tests:** `cd go && go test ./...` (add `-tags tstree` to exercise the CGO tree-sitter tier)
-- **Vet:** `cd go && go vet ./...`
+- **Run tests:** `go test ./...` (add `-tags tstree` to exercise the CGO tree-sitter tier)
+- **Vet:** `go vet ./...`
 - **Local MCP Testing:** `go run ./cmd/leankg serve --stdio` from any project directory, and wire a client with `go run ./cmd/leankg install --target cursor` (claude-code | cursor | codex | gemini | opencode | omp).
 
 ### 3. Project Structure
@@ -43,17 +43,17 @@ The Go module lives under `go/`; CI runs the same gates:
 
 ### Adding Language Support
 LeanKG uses `tree-sitter` for parsing. If you want to add a new language:
-1. Register the language in `go/internal/langs` (extensions, repo markers, extraction tier).
-2. Implement the extractor in `go/internal/index` (regex baseline; tree-sitter grammar under the `tstree` tag when a bundled one exists).
+1. Register the language in `internal/langs` (extensions, repo markers, extraction tier).
+2. Implement the extractor in `internal/index` (regex baseline; tree-sitter grammar under the `tstree` tag when a bundled one exists).
 3. Add testdata fixtures and define how code elements (functions, classes, imports) map to the graph schema.
 
 ### Improving MCP Tools
 The agent-facing registry is pinned at exactly three tools — `import`, `query`, `status` — with capabilities as actions/verbs inside that envelope. To extend it:
-1. Add the action in `go/internal/core` and wire it through the MCP/REST/CLI transports.
+1. Add the action in `internal/core` and wire it through the MCP/REST/CLI transports.
 2. Ensure the output is **token-optimized** (we aim for high signal-to-noise ratios).
 
 ### Benchmarking
-Performance is a core feature. If you contribute a feature, please run the Go benchmarks in [`go/benchmark/ab`](go/benchmark/ab) (see its REPORT.md) to ensure no significant regression in indexing speed or token usage.
+Performance is a core feature. If you contribute a feature, please run the Go benchmarks in [`benchmark/ab`](benchmark/ab) (see its REPORT.md) to ensure no significant regression in indexing speed or token usage.
 
 ---
 

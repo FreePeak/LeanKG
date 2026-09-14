@@ -8,8 +8,8 @@ on:
     paths-ignore:
       - 'CHANGELOG.md'
       - '.release-please-manifest.json'
-      - 'go/cmd/leankg/VERSION'
-      - 'go/internal/mcp/server.go'
+      - 'cmd/leankg/VERSION'
+      - 'internal/mcp/server.go'
   pull_request:
     branches: [main]
 
@@ -22,15 +22,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache-dependency-path: go/go.sum
+          cache-dependency-path: go.sum
       - name: Build (tstree tag — exercises the CGO tier first)
-        run: cd go && go build -tags tstree ./...
+        run: go build -tags tstree ./...
       - name: Test (tstree tag)
-        run: cd go && go test -tags tstree ./... -count=1 -timeout 300s
+        run: go test -tags tstree ./... -count=1 -timeout 300s
       # Tidy scans tagged files too (smacker is imported only under tstree);
       # a drifted go.mod/go.sum fails here instead of at release time.
       - name: Tidy guard
-        run: cd go && cp go.mod /tmp/go.mod.bak && cp go.sum /tmp/go.sum.bak && go mod tidy && diff -q go.mod /tmp/go.mod.bak && diff -q go.sum /tmp/go.sum.bak
+        run: cp go.mod /tmp/go.mod.bak && cp go.sum /tmp/go.sum.bak && go mod tidy && diff -q go.mod /tmp/go.mod.bak && diff -q go.sum /tmp/go.sum.bak
       # Every failure this release path has had was a job silently skipping, so
       # these three invariants are each pinned to a defect that actually shipped.
       - name: Release workflow guards
@@ -45,15 +45,15 @@ jobs:
       # so without this step a stray vendored C source (e.g. a grammar's .c
       # without its build tag) breaks the shipped shape while CI stays green.
       - name: Build (CGO_ENABLED=0 — the release shape)
-        run: cd go && CGO_ENABLED=0 go build ./...
+        run: CGO_ENABLED=0 go build ./...
       - name: Build
-        run: cd go && go build ./...
+        run: go build ./...
       - name: Vet
-        run: cd go && go vet ./...
+        run: go vet ./...
       - name: Vet (tstree)
-        run: cd go && go vet -tags tstree ./...
+        run: go vet -tags tstree ./...
       - name: Test (sqlite; PG tests skip without LEANKG_TEST_PG_URL)
-        run: cd go && go test ./... -count=1 -timeout 300s
+        run: go test ./... -count=1 -timeout 300s
 
   # Issue #280: CI-timed published TTFV. Measures the Go cold happy path
   # (build -> index pinned fixture -> serve bind -> first query over REST and
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache-dependency-path: go/go.sum
+          cache-dependency-path: go.sum
       - name: Timed cold happy path
         run: bash scripts/ttfv_smoke.sh --json ttfv.json
         timeout-minutes: 10
