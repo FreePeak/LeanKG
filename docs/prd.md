@@ -3,7 +3,7 @@
 **Version:** 4.12.2-hindsight-compat
 **Date:** 2026-09-14
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
-**Codebase Version:** 0.33.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; first root-tagged release v0.33.0; the Rust tree was removed in f7624143)
+**Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
 
 ---
@@ -18,6 +18,7 @@
 - **Cursor trap (the #406 class, memory side):** the hindsight retain wire has no `retained_through_user_turn`, and `Memory.Retain` gates on `throughUserTurn <= bankCursor` — a cursorless 0 write would have been **silently dropped after the first batch**. New `memory.RetainRaw` shares Retain's id/source/timestamp/importance defaults but appends unconditionally; pinned by `TestRetainRawNoCursor`.
 - **Mapping policy:** client tags ride in entry metadata and filter recall (`all`/`all_strict` require every tag, else intersection; page = 8, the OMP recall limit); `update_mode:"replace"` is treated as append (JSONL has no per-document revision); documents/mental-models endpoints are deliberately not mounted — the wiring disables mental models client-side.
 - **Verified:** in-process httptest suite (wire walk + 404-without-flag) and a LIVE probe replaying `hindsight/client.ts` call shapes byte-for-byte against a scratch `serve --hindsight-compat` — bank ensure, 2-item retain + second-batch retain, ranked tag-scoped recall, disjoint-tag exclusion, reflect digest: all PASS. Harness wiring: `memory.backend="hindsight"`, `hindsight.apiUrl=<rest>`, `hindsight.mentalModelsEnabled=false`.
+- **Shipped as v0.34.0** (release PR #422, run `34871489633`): 4 platform tarballs, `latest` pointer correct, proxy origin resolves the tag, `go install github.com/FreePeak/LeanKG/cmd/leankg@v0.34.0` → `leankg 0.34.0`, zero `go/v0.34*` mirror tags (job retired in #415).
 
 ### v4.12.1-container-corpus — the demo image indexed what the `Dockerfile` says it excludes (#419) (2026-09-14)
 
