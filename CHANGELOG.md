@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.32.0](https://github.com/FreePeak/LeanKG/compare/v0.31.3...v0.32.0) (2026-09-14)
+
+
+### Features
+
+* ship the public surface — graph-K brand mark, published Go module, container deploy, README badges ([#392](https://github.com/FreePeak/LeanKG/issues/392)) ([2606baf](https://github.com/FreePeak/LeanKG/commit/2606baf639f8dce2e37768506636455ae0d7f8ca))
+
+
+### Bug Fixes
+
+* **ci:** make the workflow_dispatch re-publish path actually run ([#395](https://github.com/FreePeak/LeanKG/issues/395)) ([e7ff765](https://github.com/FreePeak/LeanKG/commit/e7ff7656d2f789f063b8050d295b9dd6327c1fb2))
+* **doctor,portfolio:** truthful classifications on every surface; inventory refresh on every writer ([#409](https://github.com/FreePeak/LeanKG/issues/409)) ([f34dd9e](https://github.com/FreePeak/LeanKG/commit/f34dd9e4037a5cf8ad91e1ea99d0eb707b71983f))
+* **embed:** shrink over-context items; honour the positional project dir (self-host loop, wave two) ([#405](https://github.com/FreePeak/LeanKG/issues/405)) ([4ad0f18](https://github.com/FreePeak/LeanKG/commit/4ad0f185b2067e3b10b409cb4031e00d2640b9cc))
+* **engine:** first dogfood wave from the live self-host - embed budget, poison-item fallback, leankg gc, held-lock probe; docs(prd): v4.11.2 ([#401](https://github.com/FreePeak/LeanKG/issues/401)) ([a9e19cc](https://github.com/FreePeak/LeanKG/commit/a9e19cc3009b86776d36c3f25eb41205ba0fd6e7))
+
 ## [0.31.3](https://github.com/FreePeak/LeanKG/compare/v0.31.2...v0.31.3) (2026-09-14)
 
 
