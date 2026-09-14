@@ -334,6 +334,29 @@ func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error
 			entries[i].Metadata = map[string]any{}
 		}
 		entries[i].Metadata["retained_through_user_turn"] = throughUserTurn
+	}
+	applyEntryDefaults(entries)
+	return m.appendBank(bank, entries)
+}
+
+// RetainRaw appends entries WITHOUT the user-turn cursor gate: same
+// id/source/timestamp/importance defaults as Retain, but every call writes.
+// The hindsight-compat mount (#414) uses this — the Hindsight retain wire has
+// no retained_through_user_turn concept, and routing it through Retain's
+// cursor would silently drop every write after the first (a missing cursor
+// is 0, and 0 <= 0 short-circuits).
+func (m *Memory) RetainRaw(bank string, entries []Entry) error {
+	applyEntryDefaults(entries)
+	return m.appendBank(bank, entries)
+}
+
+// applyEntryDefaults fills ID/Source/Timestamp/Importance exactly as the
+// session-retained path does (Retain's pre-append loop).
+func applyEntryDefaults(entries []Entry) {
+	for i := range entries {
+		if entries[i].Metadata == nil {
+			entries[i].Metadata = map[string]any{}
+		}
 		if entries[i].ID == "" {
 			// Batch-indexed: bare UnixNano collides within a tight loop
 			// (coarse clock) and merged recall dedupes by id.
@@ -349,7 +372,6 @@ func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error
 			entries[i].Importance = TranscriptImportance
 		}
 	}
-	return m.appendBank(bank, entries)
 }
 
 // appendBank writes rows to the bank's JSONL, creating the banks dir on

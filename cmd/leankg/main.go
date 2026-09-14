@@ -256,6 +256,7 @@ func cmdServe(args []string) {
 	embedProvider := fs.String("embed-provider", "", "query-time embedder: openai|local|deterministic (env LEANKG_EMBED_* configure it; empty = L3 degrades with reason)")
 	rpcAddr := fs.String("rpc", "", "ConnectRPC address (gRPC + gRPC-Web + JSON, e.g. :9090)")
 	uiAddr := fs.String("ui", "", "dashboard address serving the embedded ui-v2 build (e.g. :8080)")
+	hindsightCompat := fs.Bool("hindsight-compat", false, "on the REST listener, mount the Hindsight-wire compat aliases (/v1/default/banks/...) that omp's memory.backend=hindsight speaks; requires --memory")
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
 	}
@@ -400,10 +401,14 @@ func cmdServe(args []string) {
 		go serveHTTP(ctx, h, addr)
 	}
 	if *restAddr != "" {
+		var restOpts []rest.HandlerOption
+		if *hindsightCompat {
+			restOpts = append(restOpts, rest.WithHindsightCompat())
+		}
 		// Routing sits INSIDE the auth boundary: token gating applies
 		// before a selector is resolved or its name echoed back.
-		h := routeByProject(ctx, router, rest.Handler(engine, mem), func(p *projects.Project) http.Handler {
-			return rest.Handler(p.Engine, p.Memory)
+		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
+			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
 		// /api/v1/auth/* is public by design: register/login/token are the
 		// bootstrap (the handlers enforce their own caller/account checks), and

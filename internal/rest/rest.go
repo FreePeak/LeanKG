@@ -30,8 +30,12 @@ import (
 )
 
 // Handler builds the REST mux over an engine.
-func Handler(engine *core.Engine, mem *memory.Memory) http.Handler {
+func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) http.Handler {
 	mux := http.NewServeMux()
+	var cfg handlerConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -266,6 +270,9 @@ func Handler(engine *core.Engine, mem *memory.Memory) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"count": len(entries), "text": text})
 		})
+	}
+	if cfg.hindsightCompat && mem != nil {
+		registerHindsightCompat(mux, mem)
 	}
 	return mux
 }
