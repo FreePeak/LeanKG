@@ -31,7 +31,16 @@ jobs:
       # a drifted go.mod/go.sum fails here instead of at release time.
       - name: Tidy guard
         run: cd go && cp go.mod /tmp/go.mod.bak && cp go.sum /tmp/go.sum.bak && go mod tidy && diff -q go.mod /tmp/go.mod.bak && diff -q go.sum /tmp/go.sum.bak
-      # The release artifacts are CGO_ENABLED=0 (release-go.yml), and the
+      # Every failure this release path has had was a job silently skipping, so
+      # these three invariants are each pinned to a defect that actually shipped.
+      - name: Release workflow guards
+        run: |
+          # ubuntu runners ship PyYAML, but a guard must never be the reason CI
+          # goes red for the wrong cause — so it installs the one import if the
+          # image ever stops providing it.
+          python3 -c "import yaml" 2>/dev/null || pip3 install --quiet pyyaml
+          python3 scripts/release_workflow_guards.py
+      # The release artifacts are CGO_ENABLED=0 (release.yml), and the
       # default build claims to be CGO-free. Runner images default to cgo=1,
       # so without this step a stray vendored C source (e.g. a grammar's .c
       # without its build tag) breaks the shipped shape while CI stays green.
