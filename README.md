@@ -203,7 +203,7 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 - **Ontology** — concept catalog + procedural layer (workflows, steps, decision points, failure modes), `query --action ontology`, `POST /api/v1/ontology/match`, and req↔code traceability via `leankg prd` / `prd-trace`
 - **Impact & deps** — `contains`, `calls`, `imports` edges; BFS blast radius (`leankg impact`)
 - **Web UI v2** — Force / Tree / Circles explorer (`cd ui-v2 && npm run dev`; the embedded build is served by `leankg serve --ui`)
-- **Deploy** — single CGO-free binary; [Dockerfile](Dockerfile) + Render blueprint-free Docker runtime, `--read-only` demo mode, `/health` for probes
+- **Deploy** — single CGO-free binary, no runtime deps: [Dockerfile](Dockerfile) builds a read-only demo image for Render, `/health` answers container probes, and `--ui` / `--http` / `--rest` / `--rpc` each bind their own address
 - **Languages** — 40 profiles: Go, Rust, TypeScript/TSX, JavaScript/JSX, Python, Markdown, Java, Kotlin, Swift, Objective-C, Dart, C/C++, C#, PHP, Ruby, Scala, Perl, Lua, Haskell, Elixir, Crystal, CUDA, Cypher, Elm, Erlang, F#, GLSL, HLSL, Nim, OCaml, SQL, PowerShell, Q#, Solidity, SystemVerilog, Verilog, Zig
 
 ---
