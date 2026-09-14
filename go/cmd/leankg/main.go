@@ -288,7 +288,7 @@ func cmdServe(args []string) {
 	if eng == "" {
 		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
 	}
-	st, err := store.OpenBackend(ctx, dir, eng, pgURLFor(dir), mode)
+	st, err := store.OpenBackend(ctx, dir, eng, projectcfg.PGURL(dir), mode)
 	if err != nil {
 		log.Fatalf("open store: %s", storeErrText(eng, err))
 	}
@@ -507,7 +507,7 @@ func doctorDeep(projectFlag, format string) int {
 	dir = projectcfg.FindProjectRoot(dir)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	report, err := doctor.RunDeep(ctx, dir, envOr("LEANKG_DB_ENGINE", ""), pgURLFor(dir), nil)
+	report, err := doctor.RunDeep(ctx, dir, envOr("LEANKG_DB_ENGINE", ""), projectcfg.PGURL(dir), nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "leankg doctor --deep: %v\n", err)
 		return 2

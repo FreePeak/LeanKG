@@ -9,7 +9,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -160,20 +161,10 @@ func parseChatGPTExport(content []byte) ([]RawMessage, error) {
 	return out, nil
 }
 
-// sortedKeys returns the node ids in sorted order (Rust used a BTreeMap).
-func sortedKeys(m map[string]chatGPTNode) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 // collectChatGPTNodes walks the mapping in sorted key order and appends one
 // record per non-empty message.
 func collectChatGPTNodes(nodes map[string]chatGPTNode, out *[]RawMessage) {
-	for _, id := range sortedKeys(nodes) {
+	for _, id := range slices.Sorted(maps.Keys(nodes)) {
 		node := nodes[id]
 		if node.Message != nil && len(node.Message.Content) > 0 {
 			if text := extractTextParts(node.Message.Content); strings.TrimSpace(text) != "" {

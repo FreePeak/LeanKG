@@ -232,7 +232,7 @@ func (o *Options) applyDefaults() {
 }
 
 // defaultMaxBytes bounds a release download: the real assets are ~20 MB gzipped
-// (see .github/workflows/release-go.yml), 128 MiB leaves room to grow.
+// (see .github/workflows/release.yml), 128 MiB leaves room to grow.
 const defaultMaxBytes = 128 << 20
 
 // requireWritable proves the install directory accepts new files before anything
