@@ -34,6 +34,11 @@ Store contract: `go/internal/store/backend.go` (Backend interface; SQLite = *Sto
 
 Narrative + ACs: [`docs/prd.md`](docs/prd.md) (parity ledger + DEFERRED items). Statuses: [`docs/prd-task-tracker.md`](docs/prd-task-tracker.md).
 
+**Current milestone (2026-09-14, PRD v4.11.0): M10 — the self-host dogfood loop.** Once the in-flight
+refactor waves land, bring up the dynamic HTTP server (`leankg serve --http :9699 --rest :8080 --ui :8081 --memory`)
+over this repository — index + embed + memorize — and use it to build/fix LeanKG itself (PRD §3.10 + §5.1 runbook)
+before scaling to small nested-repo parents. Never bulk-index the `freepeak` portfolio root.
+
 ## Development workflow
 
 1. Update `docs/prd.md` + `docs/prd-task-tracker.md` (the only two live docs)

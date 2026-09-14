@@ -1,7 +1,7 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-09-14 — v4.10.1 hygiene + restructure + release wave (PR #377 plus the follow-up landed on `main`): no FR status changed. Repository sweep (~150 tracked files: build output, personal config, the superseded `ui/`/`e2e/`, Rust-era benchmark trees, one-off scripts), Go-tree restructure (dead `internal/budget` guard half + `setupcfg` exports; freshness / savings-percent / Postgres-DSN / `sortedKeys` duplication collapsed), `.gitattributes` so generated tree-sitter C stops masking Go, and `.github/workflows/release.yml` replacing the never-run manual release (release-please cuts `vX.Y.Z` and the four binaries publish in the same run).
-**Previous sync:** 2026-09-13 — v4.10.0 issue-scope wave on PR #370: the ten still-open issues implemented (#273 PG tsvector+GIN+RRF · #275 session-memory adjacency · #276 harness hardening · #279 embedding identity remainder · #280 TTFV gate · #61 vendored ABI-14 Perl grammar · #297 graft two-pass LLM-meaning pipeline · #372 federation receiver + real pull · #376 portfolio registry/fan-out/fleet doctor with #277/#278 · #73 `leankg update`), migrations 12–15 added, then the whole surface dogfooded against this repository's own index on **both engines with real ONNX vectors** — which found ten further real defects (two silent-data-loss paths, a cross-engine UTF-8 write abort, an engine-dependent keyword-recall gap, a dead version stamp, and five freshness/surface bugs), all fixed with failing-first tests. Final gate green: gofmt · 3 builds (default, `CGO_ENABLED=0`, `tstree`) · 2 vets · 45 packages with PG · 46 under `tstree` · `go mod tidy` no-op.
+**Last synced:** 2026-09-14 — v4.11.0 **self-host dogfood loop anchored** (PRD §3.10 + M10 + §5.1 runbook): FR-SELF-01..04 added — S1 bootstrap the dynamic HTTP server (MCP `--http` + REST `--rest` + dashboard `--ui` + `--memory`) over this repo once the in-flight refactor waves land (uncommitted: Docker/Render service, `go/vX.Y.Z` module-tag mirror, `serve` `/health`); S2 build LeanKG with LeanKG; S3 scale to small nested-repo parents (hot-set 8, never the 99,574-file `freepeak` root); S4 the keep-building/keep-fixing steady state. No existing FR status changed.
+**Previous sync:** 2026-09-14 — v4.10.1 hygiene + restructure + release wave (PR #377 plus the follow-up landed on `main`): no FR status changed. Repository sweep, Go-tree restructure, release pipeline now cuts vX.Y.Z with all four platform tarballs (v0.31.1/v0.31.2/0.31.3 verified).
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
 
@@ -11,10 +11,10 @@
 
 | Status | Count |
 |--------|------:|
-| IN_PROGRESS | 1 (FR-ZCP-01) — the Go-rewrite slices (FR-GO-W1/EMBED/MEM/LANGS) are **DONE on `feat/go-rewrite`**, pending PR #370 merge |
-| TODO | 36 (9 live + 26 carry-forward + FR-GO-DASH #371) |
+| IN_PROGRESS | 2 (FR-ZCP-01; **FR-SELF-01** — M10 bootstrap, gated on the in-flight refactor waves landing) — the Go-rewrite slices (FR-GO-W1/EMBED/MEM/LANGS) are **DONE on `feat/go-rewrite`**, pending PR #370 merge |
+| TODO | 39 (9 live + 26 carry-forward + FR-GO-DASH #371 + FR-SELF-02..04) |
 | DONE | 9 |
-| Open work | 40 (36 archived-inventory + 3 Go-rewrite slices pending PR #370 merge + FR-GO-DASH #371) |
+| Open work | 43 (36 archived-inventory + 3 Go-rewrite slices pending PR #370 merge + FR-GO-DASH #371 + 4 M10 self-host loop items, of which FR-SELF-01 is IN_PROGRESS) |
 
 **Inventory note (ID-level accounting):** the archived tracker holds **40 open inventory items** (35 master-table `NOT_DONE`/`PENDING`/`PARTIAL`/`OPEN` IDs + 5 `FR-HEA-*` section-table rows). All 40 are accounted for below: FR IDs appear as named rows; each paired `US-*` tracks with its FR (the archive itself pairs them `US-X / FR-X` as one work item); `FR-ZG-01..05` + `US-ZG-01..05` + `FR-B05` are superseded inside the live `FR-ZCP-*` rows (Supersedes column); `FR-HEA-05` is DONE (v4.0.0 §1 cutover). `FR-ZCP-09/10/11/12/13` are **new in v4.1.x–v4.3.0** (no archive IDs). Row-level open work = 1 IN_PROGRESS + 9 live + 26 carry-forward = 36. (The 26 carry-forward rows cover 35 archived open IDs: 3 rows pair multiple US stories with their FR; the inventory not…
 
@@ -29,6 +29,7 @@
 | M7 — Embedding correctness | 1 | — | **DONE** (FR-ZCP-11 closed by #279: pinned catalog with 40-hex revisions and query/document prefixes, whole-identity `ModelStamp` incl. `chunker_version`, hard rebuild guard on both write paths **and** the read path, 3-signal detection, per-file atomic replace + truncation accounting, watcher reconciliation. Remaining: single-flight indexing — see §6b remainders) |
 | M8 — Measured simplicity | 1 | — | **DONE** (FR-ZCP-12 T1 error catalog c5b4b991; T2 TTFV gate #280 — measured 21.6 s cold against a 300 s budget in CI; T3 superseded by v4.3.1's CI-enforced one-tool invariant) |
 | M9 — Three tools + dual backend | 4 | — | **IN_PROGRESS** (FR-3T-01/02/03 DONE; FR-3T-04 live validation complete on this repo — 581 files, 9522 vectors, L1/L2/L3 verified; PR #284 merged (v4.3.x)) |
+| M10 — Self-host dogfood loop | 4 | — | **IN_PROGRESS** (FR-SELF-01 bootstrap gated on the in-flight refactor waves; FR-SELF-02..04 TODO behind it — see §M10 below) |
 | M-GO — Go engine rewrite (#365) | 3 | — | **IN_PROGRESS** (FR-GO-W1 core DONE on feat/go-rewrite: store/core/index/mcp/rest + live smoke; FR-GO-EMBED DONE: leankg-embed binary + stamp guards + NDJSON; FR-GO-MEM DONE: full-markdown memory + banks adapter; v4.6.0: ALL waves landed (W2 watcher/writer, W4 pgvector, W5 ConnectRPC+auth, session, graph verbs, goldens, benchmarks + executed Rust-vs-Go A/B REPORT) and the Rust tree REMOVED — deferred ledger in docs/prd.md) |
 | FR-GO-LANGS | Lazy language wave (v4.7.0): 13-language registry + tstree/astgrep/lsp tiers + java/kotlin/swift/objc/dart extractors | **DONE** on feat/go-rewrite (objc/dart tree-sitter grammar gap documented) |
 | FR-GO-DASH | #371: port the ui-v2 dashboard data API — legacy `/api/*` (11 endpoints) or rebuild ui-v2 against `/api/v1/*`; today the SPA fallback answers those calls with `index.html`, so the embedded dashboard loads no data | 2026-09-11 | **TODO** — ledger row `web api+ui` corrected to PARTIAL in v4.7.1 |
@@ -52,6 +53,15 @@
 | FR-GO-EMBED | #368: embedding pipeline as independent binary — internal/embed shared library, ModelStamp guard on every vector writer, cmd/leankg-embed run/full/export/import/status, NDJSON offsite flow | 2026-09-10 | **DONE** on feat/go-rewrite — stamp guards pinned by tests (fresh-store stamps; incremental-mismatch HARD-FAILS with `leankg-embed full` directive, vectors untouched; full clears+rebuilds); provider port (OpenAI-compatible/llama-sidecar shape + deterministic); serving binary does zero inference |
 | FR-GO-MEM | #369: full-markdown memory — MEMORY.md/USER.md bounded 2200B error-not-truncate, topics/, Claude-Code file commands + traversal rejection, Hermes substring sugar, FTS5 reindex-on-write, mnemopi banks adapter (wyhash64 port) | 2026-09-10 | **DONE** on feat/go-rewrite — 11 tests incl. exact snapshot-header pin, symlink escape, overflow, ambiguous match, cursor resume, zero-match filter; hindsight HTTP endpoints landed in internal/rest |
 
+
+## M10 — self-host dogfood loop (v4.11.0, the operating plan)
+
+| ID | Title | Priority | Status | Gate / exit criteria |
+|----|-------|----------|--------|----------------------|
+| FR-SELF-01 | Bootstrap the self-host: dynamic `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` over this repo; index + embed (pinned `LEANKG_EMBED_*` identity) + memory live | **P0** | **IN_PROGRESS** (gated: the in-flight refactor waves — Docker/Render service, `go/` module-tag mirror, `serve` `/health` — land on `main` first) | `/health` on every listener; `status` fresh for this repo; L1/L2/L3 answered over `/mcp` on real elements; retain→recall survives restart; `doctor --deep` clean |
+| FR-SELF-02 | Build LeanKG with LeanKG: every exported-symbol change informed by `impact`/`callers`, every close by tested-by/traceability, every session-open by `session_recall`; wrong answers filed as engine defects, fixed failing-test-first against this repo's data, re-indexed, re-asked | **P0** | TODO (starts with S1) | PRs cite graph evidence; dogfood findings enter this tracker; zero regressions attributed to missing graph context |
+| FR-SELF-03 | Scale to nested-repo parents: add small parents one repo at a time via registry + `LEANKG_PROJECT_DIRS` (T0 manifest, T1 hot-set cap 8, zero eager indexing). Hard guard: never bulk-index the `freepeak` root (99,574 files, multi-GB store) | P1 | TODO (gate: S1+S2 smooth) | Portfolio fan-out attributes per child; per-child freshness honest; adding a repo = one register/index, no restart |
+| FR-SELF-04 | Keep building, keep fixing: the loop is the end state — every wave surfaces defects, engine fixes ship via release-please, this PRD + tracker stay the status ledger | **P0** | TODO (steady state after S1–S3) | Dogfood-found defect rate > 0 with fix rate keeping pace; no milestone regresses; self-host up whenever development happens |
 
 ## Done — 2026-09-04 implementation sprint (v4.3.0 wave 1–3)
 
@@ -121,7 +131,7 @@
 | OMP-ENABLE-01 | LeanKG MCP enabled in OMP `~/.omp/agent/mcp.json` (draft FR-OMP-01) | OMP draft §6 Phase 0, 2026-09-03 |
 | FR-HEA-05 | Positioning cutover — docs lead with org-memory substrate | v4.0.0 `docs/prd.md` §1 |
 
-*Last updated: 2026-09-13 (v4.10.0 issue-scope wave on PR #370: #273 #275 #276 #279 #280 #61 #297 #372 #376 #73 implemented, migrations 12–15, then ten further defects found and fixed by dogfooding the live HTTP MCP server against this repository's own index on both engines with real ONNX embeddings)*
+*Last updated: 2026-09-14 (v4.11.0 — self-host dogfood loop anchored: FR-SELF-01..04 / M10 added; S1 = dynamic HTTP server (MCP + REST + dashboard + memory) serving this repo once the pending refactor waves land, S2 = build LeanKG with LeanKG, S3 = small nested-repo parents scaled one at a time, S4 = keep building/fixing. Prior wave: v4.10.0 — #273 #275 #276 #279 #280 #61 #297 #372 #376 #73 implemented, migrations 12–15, then ten further defects found and fixed by dogfooding the live HTTP MCP server against this repository's own index on both engines with real ONNX embeddings)*
 
 ## Repo hygiene (non-PRD)
 

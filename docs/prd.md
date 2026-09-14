@@ -1,14 +1,27 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.10.1-hygiene-and-release
+**Version:** 4.11.0-selfhost-dogfood-loop
 **Date:** 2026-09-14
-**Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/))
-**Codebase Version:** 0.31.2 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
+**Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
+**Codebase Version:** 0.31.3 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
 
 ---
 
 ## Changelog
+
+### v4.11.0-selfhost-dogfood-loop — the plan, anchored: LeanKG serves itself first (2026-09-14)
+
+**Trigger:** explicit user direction. The rewrite, the parity waves and the release pipeline are done (v4.10.x); the next move is not a feature but an **operating mode**: run the dynamic HTTP server as a persistent self-host over *this repository*, and use it to build LeanKG before scaling to the portfolio.
+
+**Anchored as §3.10 (FR-SELF-01..04) and milestone M10:**
+
+1. **S1 — bootstrap.** Gate: the in-flight refactor wave lands on `main` (the uncommitted Docker/Render deploy service, the `go/vX.Y.Z` module-tag mirror job, the `serve` `/health` liveness route). Then `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` runs long-lived against this checkout; the repo is indexed, embedded with the pinned `LEANKG_EMBED_*` identity (ModelStamp-guarded, so L3 answers rather than degrades), and the memory layer is live (markdown + `session_retain`/`session_recall`).
+2. **S2 — dogfood.** All further LeanKG development flows through the self-host: impact/callers before touching an exported symbol, tested-by/traceability before closing, recall when reopening a session. Every wrong, stale or empty answer the loop produces is an engine defect — fixed failing-test-first, then reindex-and-re-ask. "LeanKG first" means the tool earns its claims on its own codebase before anyone else's.
+3. **S3 — scale.** When the loop is smooth, add **small parent directories with nested repos** to the same server (registry + `LEANKG_PROJECT_DIRS`, T0 manifest / T1 hot-set, cap 8, never eager). Measured guardrail stays in force: never bulk-index the `freepeak` portfolio root (99,574 files → multi-GB store); scale = repos added to the registry one at a time.
+4. **S4 — keep building, fixing.** The loop is the end state, not a phase to exit: each indexing/embedding/memory wave on real code surfaces defects; the PRD status tracks the cycle.
+
+No code changes ride this revision — it records the anchor and the gates.
 
 ### v4.10.1-hygiene-and-release — the post-cutover sweep, a smaller Go tree, and releases that actually ship binaries (2026-09-14)
 
@@ -599,6 +612,29 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 - AC-T3 (v4.3.1): registry length == 1 (CI-enforced); every legacy capability resolvable as a verb (catalog lint); unknown names refused with `LEANKG_ERROR_UNKNOWN_TOOL` naming the nearest verb; audit records the effective capability.
 
 
+### 3.10 Self-host dogfood loop (FR-SELF-01..04) — **P0, the operating plan (v4.11.0)**
+
+**Narrative.** Everything shipped so far was validated against throwaway fixtures and ephemeral dogfood runs. From this revision the operating mode inverts: LeanKG's own repository is served by a long-lived dynamic HTTP front door — one binary, MCP streamable HTTP (`/mcp`) + REST (`/api/*`) + the embedded dashboard, with per-connection project resolution (`?project=` / nearest-`.leankg` walk / `LEANKG_PROJECT_DIRS`) — continuously indexed, embedded with a pinned provider, and memorizing. That self-host then becomes *the* tool used to build LeanKG. The stages are a ladder: each gates on the previous one reporting clean.
+
+**FR-SELF-01 — Bootstrap the self-host (P0; gate: the in-flight refactor wave lands on `main`)**
+- Land the pending deploy wave first (uncommitted: Dockerfile + Render service, the `go/vX.Y.Z` module-tag mirror in `release.yml`, the `serve` `/health` liveness route). Then run: `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` against this checkout (sqlite store in `.leankg/`).
+- Index this repo (`leankg index .`), embed with the pinned identity (`leankg-embed run`; `LEANKG_EMBED_*` ModelStamp-guarded — L3 must answer with `retrieval` provenance, not degrade), and turn memory on: the markdown layer + `session_retain`/`session_recall`.
+- AC: `/health` on every listener; `status` shows `fresh` coverage for this repo; L1/L2/L3 verified live on its own elements; retain→recall round-trip survives a server restart; `doctor --deep` clean.
+
+**FR-SELF-02 — Build LeanKG with LeanKG (P0, continuous once S1 is up)**
+- Every subsequent change to this repo is informed by the self-host *before* it is made: `impact`/`callers` blast radius before touching an exported symbol, `get_tested_by`/traceability before closing an issue, `session_recall` when reopening a session, `explain`/path queries during RCA.
+- Every wrong, stale or empty answer the loop produces is an engine defect: filed as an issue, fixed failing-test-first against this repo's real data, then re-indexed and re-asked ("LeanKG first").
+- AC: PR descriptions cite graph evidence (impact/callers output) for exported-symbol changes; dogfood findings enter the tracker with the same rigor as unit-test failures; no regressions attributed to missing graph context.
+
+**FR-SELF-03 — Scale to nested-repo parents (P1; gate: S1 + S2 running smoothly)**
+- Add small parent directories with nested repos to the same server, one at a time: single-repo leaves first (measured per-project stores: 0.6–17 MB), then a 2–3-repo parent via the portfolio registry (register-on-index, T0 manifest, T1 hot-set fan-out, `LEANKG_PORTFOLIO_MAX_REPOS` = 8, zero eager indexing). Scale up only while `doctor --deep` and per-child freshness stay honest.
+- **Hard guard (measured 2026-09-11):** never bulk-index the `freepeak` portfolio root (99,574 files — a multi-GB, 30–60 min job); scaling means repos entering the registry one by one, never one recursive walk.
+- AC: portfolio queries answer with per-child attribution and honest freshness; adding a repo costs one `register-project`/`index`, no restart; memory banks stay per-project scoped.
+
+**FR-SELF-04 — Keep building, keep fixing (P0, the end state)**
+- The steady state after S1–S3: every indexing/embedding/memory wave on real code surfaces defects; defects are fixed in the engine, never worked around per-caller; release-please keeps shipping; this PRD's status tracks the cycle.
+- AC: dogfood-found issue rate stays > 0 while the fix rate keeps pace; no milestone regresses; the self-host is up whenever development happens.
+
 ---
 
 ## 4. Architecture (HLD Summary)
@@ -627,8 +663,24 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 | **M6 — Org-scale portfolio** | FR-ZCP-09, FR-ZCP-10 | 100-repo parent: registry rows ≠ indexed repos; portfolio queries answer from manifests; no eager indexing; `doctor --deep` reports fleet drift |
 | **M7 — Embedding correctness** | FR-ZCP-11 | Model-stamp mismatch → explicit rebuild error, never mixed-model results; rehash-confirms-fresh; truncation accounting in `mcp_status` |
 | **M8 — Measured simplicity** | FR-ZCP-12 (T1 immediately; T2/T3 after M1/M2) | Error catalog 100% + fix clauses CI-linted; README publishes the CI-timed TTFV; default-tool budget CI-enforced |
+| **M9 — Three tools + dual backend** | FR-3T-01..04 | 3-tool registry (`import`/`query`/`status`) + SQLite default with PG opt-in; this repo indexed live and L1/L2/L3 answered over MCP HTTP (v4.6.0–v4.10.x waves) |
+| **M10 — Self-host dogfood loop** | FR-SELF-01..04 | Persistent dynamic HTTP server (MCP + REST + dashboard) over **this repo**, index+embed+memory green; development flows through the self-host; then small nested-repo parents added one at a time (never the portfolio root); the loop is the steady state |
 
-Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (error/config honesty) pulled forward immediately — it is docs-and-strings-cheap and multiplies every later milestone's adoption. M1 and M2 are the adoption blockers; M3/M4 are quality gates; M5 is evidence; M6 is the org-scale moat; M7 hardens the embedding layer that M6's tiers depend on; M8 keeps the young product honest about its own surface. The router ladder (M2) and the setup contract (M1) are the "fits every scenario" story: any repo, any capability state, one tool, no dead ends.
+Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (error/config honesty) pulled forward immediately — it is docs-and-strings-cheap and multiplies every later milestone's adoption. M1 and M2 are the adoption blockers; M3/M4 are quality gates; M5 is evidence; M6 is the org-scale moat; M7 hardens the embedding layer that M6's tiers depend on; M8 keeps the young product honest about its friction. M9 (3-tool surface + dual backend) closed by the Go rewrite itself; **M10 is the current milestone** — every feature claim from M1–M9 is re-proved against the live self-host before anything scales past this repository.
+
+### 5.1 M10 runbook (the anchored next actions, in order)
+
+1. **Wait for the refactor waves to land** on `main` (as of this revision, uncommitted work exists in-tree: Docker/Render deploy service, the `go/vX.Y.Z` module-tag mirror, `serve` `/health`). Pull rebase-clean `main` before touching anything.
+2. **S1 — bootstrap the self-host** (this checkout, sqlite engine):
+   ```bash
+   cd go && go build ./... && ./bin/leankg index .. --auto       # index this repo into ../.leankg/leankg.db
+   LEANKG_EMBED_PROVIDER=local ./bin/leankg-embed run ..          # pinned-identity vectors; L3 live
+   ./bin/leankg serve --http :9699 --rest :8080 --ui :8081 --memory --project ..
+   ```
+   Verify: `/health` on each listener; `leankg status --project ..` → fresh; L1/L2/L3 over `:9699/mcp`; retain→recall survives restart; `doctor --deep` clean.
+3. **S2 — work through it**: impact/callers before exported-symbol edits, tested-by before closes, recall at session open; wrong answers become engine defects (failing test first), fixed in `go/`, then re-index and re-ask.
+4. **S3 — scale carefully**: add small nested-repo parents one at a time via the registry / `LEANKG_PROJECT_DIRS` (hot-set cap 8, zero eager indexing). **Never** index the `freepeak` root (99,574 files).
+5. **S4 — loop**: build, fix, release via release-please; keep this PRD + tracker as the status ledger each cycle.
 
 ---
 
@@ -730,4 +782,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-14 (v4.10.1 — post-cutover hygiene sweep (~150 tracked files removed: build output, personal/machine-local config, the superseded `ui/` dashboard + its `e2e/`, Rust-era benchmark trees, one-off scripts), Go-tree restructure (dead `internal/budget` guard half and `setupcfg` exports deleted; freshness, savings-percentage, Postgres-DSN and `sortedKeys` duplication each collapsed to one definition; `make go-ui-assets` and the two advertised-but-missing tstree targets repaired), `.gitattributes` so 62 MB of generated tree-sitter C stops masking Go in the language stats, stale `CLAUDE.md`/`GEMINI.md` Rust bodies rewritten, and an automatic semver release that cuts the tag and publishes the four binaries in the same run)*
+*Last updated: 2026-09-14 (v4.11.0 — the self-host dogfood loop anchored as §3.10 (FR-SELF-01..04) + milestone M10 + §5.1 runbook: after the in-flight refactor waves land, run the dynamic HTTP server (MCP + REST + dashboard + memory) over this repository — index, embed, memorize — use it to build LeanKG on itself, and only then scale to small nested-repo parents (never the 99,574-file portfolio root). Prior wave: v4.10.1 post-cutover hygiene sweep, Go-tree restructure, and the release pipeline that ships the four platform tarballs)*
