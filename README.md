@@ -4,9 +4,7 @@
 
 <h1 align="center">LeanKG</h1>
 
-<p align="center"><strong>⚠️ Implementation: 100% Go (v4.6.0).</strong> The Rust implementation has been removed; the engine now lives in <a href="go/">go/</a> — see <a href="docs/prd.md">docs/prd.md</a> for the parity ledger. Build: <code>make go-build</code> · Test: <code>make go-test</code> · Bench: <code>make go-bench</code>. Rust-era sections below are historical.</p>
-
-
+<p align="center"><strong>⚡ Implementation: 100% Go.</strong> The Rust engine was removed at the parity cutover; everything now lives in <a href="go/">go/</a> and ships as the Go module <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG/go"><code>github.com/FreePeak/LeanKG/go</code></a>. See <a href="docs/prd.md">docs/prd.md</a> for the parity ledger. Build: <code>make go-build</code> · Test: <code>make go-test</code> · Bench: <code>make go-bench</code>.</p>
 
 <p align="center">
   <strong>Enterprise-ready code knowledge graph for AI coding agents</strong><br>
@@ -18,11 +16,39 @@
   ·
   <a href="docs/prd.md">Docs</a>
   ·
+  <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG/go">pkg.go.dev</a>
+  ·
+  <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/FreePeak/LeanKG/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
+  <a href="https://github.com/FreePeak/LeanKG/releases/latest"><img src="https://img.shields.io/github/v/release/FreePeak/LeanKG?label=release&logo=github" alt="Latest release"></a>
+  <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG/go"><img src="https://img.shields.io/badge/pkg.go.dev-LeanKG%2Fgo-00ADD8?logo=go&logoColor=white" alt="Go module reference"></a>
   <a href="https://github.com/FreePeak/LeanKG/actions"><img src="https://img.shields.io/github/actions/workflow/status/FreePeak/LeanKG/ci.yml?branch=main&label=CI" alt="CI"></a>
+  <a href="https://github.com/FreePeak/LeanKG/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.25+">
+  <img src="https://img.shields.io/badge/SQLite-default-003B57?logo=sqlite&logoColor=white" alt="SQLite default">
+  <img src="https://img.shields.io/badge/PostgreSQL-opt--in-336791?logo=postgresql&logoColor=white" alt="PostgreSQL opt-in">
+  <img src="https://img.shields.io/badge/MCP-3%20tools%20/%2030%20actions-412991" alt="MCP surface">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-supported-blue.svg" alt="macOS">
+  <img src="https://img.shields.io/badge/Linux-supported-blue.svg" alt="Linux">
+  <img src="https://img.shields.io/badge/Docker-supported-2496ED?logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/Render-deployed-46e3b7?logo=render&logoColor=000000" alt="Deployed on Render">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Claude_Code-blueviolet.svg" alt="Claude Code">
+  <img src="https://img.shields.io/badge/Cursor-blueviolet.svg" alt="Cursor">
+  <img src="https://img.shields.io/badge/Codex-blueviolet.svg" alt="Codex">
+  <img src="https://img.shields.io/badge/Gemini_CLI-blueviolet.svg" alt="Gemini CLI">
+  <img src="https://img.shields.io/badge/OpenCode-blueviolet.svg" alt="OpenCode">
+  <img src="https://img.shields.io/badge/omp-blueviolet.svg" alt="omp">
 </p>
 
 <p align="center">
@@ -41,11 +67,22 @@ Postgres remains available as an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + 
 
 ### Install
 
-Requires [Go 1.25+](https://go.dev/dl/) and git. Builds two binaries: `leankg`
-(server + CLI) and `leankg-embed` (embedding pipeline).
+**Published module** — the engine is a Go module, so the toolchain installs both
+binaries from [pkg.go.dev](https://pkg.go.dev/github.com/FreePeak/LeanKG/go) straight into `$(go env GOPATH)/bin`:
 
 ```bash
-# From a checkout — installs to ~/.local/bin (pass a PREFIX to change it)
+go install github.com/FreePeak/LeanKG/go/cmd/leankg@latest         # server + CLI
+go install github.com/FreePeak/LeanKG/go/cmd/leankg-embed@latest   # embedding pipeline
+```
+
+**Prebuilt archives** — [releases](https://github.com/FreePeak/LeanKG/releases/latest)
+carry `leankg-<os>-<arch>.tgz` for linux/darwin × amd64/arm64, both binaries at the
+archive root plus a `.sha256`. `leankg update` follows the same channel.
+
+**From a checkout** — requires [Go 1.25+](https://go.dev/dl/) and git; installs to
+`~/.local/bin` (pass a `PREFIX` to change it):
+
+```bash
 git clone https://github.com/FreePeak/LeanKG.git && cd LeanKG
 scripts/install-go.sh                # or: make install-go
 
@@ -53,10 +90,21 @@ scripts/install-go.sh                # or: make install-go
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install-go.sh | bash
 ```
 
-Release archives (`leankg-<os>-<arch>.tgz`, both binaries inside) are produced
-by the manual [Go Release](.github/workflows/release-go.yml) workflow — it is
-`workflow_dispatch`-only and **no Go release has been published yet**, so build
-from source for now.
+### Container
+
+[Dockerfile](Dockerfile) is a three-stage CGO-free build: engine binaries, then a
+demo graph baked from a slice of this repo (the language `examples/`, the engine,
+the dashboard source), then an unprivileged runtime that serves that store
+read-only. The dashboard build is already embedded in the binary
+(`go/internal/web/embed`), so there is no Node stage.
+
+```bash
+docker build -t leankg .
+docker run --rm -p 8080:10000 -e PORT=10000 leankg   # dashboard + its /api on :8080
+```
+
+This is the image [leankg.onrender.com](https://leankg.onrender.com) runs: one
+container, one port, `leankg serve --read-only --ui :$PORT`.
 
 ---
 
@@ -151,11 +199,12 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 ## Key Features
 
 - **MCP-native** — search, impact, call graphs, ontology, architecture, team knowledge
-- **SQLite default** (zero-config, no Docker) with an opt-in Postgres/pgvector backend (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`)
-- **Ontology** — concept-catalog matching (`POST /api/v1/ontology/match`); procedural workflows and req↔code traceability are not implemented in the Go engine yet
+- **SQLite default** (zero-config — no Postgres, no Docker required) with an opt-in Postgres/pgvector backend (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`)
+- **Ontology** — concept catalog + procedural layer (workflows, steps, decision points, failure modes), `query --action ontology`, `POST /api/v1/ontology/match`, and req↔code traceability via `leankg prd` / `prd-trace`
 - **Impact & deps** — `contains`, `calls`, `imports` edges; BFS blast radius (`leankg impact`)
 - **Web UI v2** — Force / Tree / Circles explorer (`cd ui-v2 && npm run dev`; the embedded build is served by `leankg serve --ui`)
-- **Languages** — 13 built-in profiles: Go, Rust, TypeScript/TSX, JavaScript/JSX, Python, Markdown, Java, Kotlin, Swift, Objective-C, Dart
+- **Deploy** — single CGO-free binary; [Dockerfile](Dockerfile) + Render blueprint-free Docker runtime, `--read-only` demo mode, `/health` for probes
+- **Languages** — 40 profiles: Go, Rust, TypeScript/TSX, JavaScript/JSX, Python, Markdown, Java, Kotlin, Swift, Objective-C, Dart, C/C++, C#, PHP, Ruby, Scala, Perl, Lua, Haskell, Elixir, Crystal, CUDA, Cypher, Elm, Erlang, F#, GLSL, HLSL, Nim, OCaml, SQL, PowerShell, Q#, Solidity, SystemVerilog, Verilog, Zig
 
 ---
 
