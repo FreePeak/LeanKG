@@ -1,0 +1,21 @@
+{
+  "type": "claude",
+  "conversations": [
+    {
+      "id": "conv-targets",
+      "title": "Gateway auth decisions",
+      "messages": [
+        {
+          "id": "t1",
+          "role": "user",
+          "content": "Decision: wire `src/gateway.rs::handle_auth` to the RS256 verifier and keep src/auth/token.rs unchanged."
+        },
+        {
+          "id": "t2",
+          "role": "assistant",
+          "text": "Decision: refactor src/auth/token.rs::verify."
+        }
+      ]
+    }
+  ]
+}
