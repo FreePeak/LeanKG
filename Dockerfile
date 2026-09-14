@@ -24,12 +24,17 @@ FROM alpine:3.22 AS demo
 COPY --from=build /out/leankg /usr/local/bin/leankg
 COPY examples/  /demo/examples/
 COPY ui-v2/src/ /demo/web-ui/
-COPY cmd/ internal/ /demo/engine/
+COPY cmd/ /demo/engine/cmd/
+COPY internal /demo/engine/internal/
 # Indexing the 60 MB of vendored tree-sitter grammars would add noise, not
-# signal, to a demo graph, and the top-level testdata is not copied.
-# `internal/index/testdata` stays on purpose: it is the java/kotlin coverage
-# the demo shows off.
-RUN rm -rf /demo/engine/internal/tstree \
+# signal, and the top-level testdata is not copied. `internal/index/testdata`
+# stays on purpose: it is the java/kotlin coverage the demo shows off.
+# The `test -d` guard is load-bearing: a source with a trailing slash copies
+# CONTENTS, so `COPY cmd/ internal/ /demo/engine/` merged both trees flat into
+# the engine dir and the `rm` below matched nothing while still building green
+# (#419).
+RUN test -d /demo/engine/cmd/leankg && test -d /demo/engine/internal/store \
+ && rm -rf /demo/engine/internal/tstree \
  && leankg index /demo --auto
 
 FROM alpine:3.22
