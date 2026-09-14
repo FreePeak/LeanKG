@@ -21,15 +21,19 @@ func EstimateTokens(text string) int {
 	return len(text) / CharsPerToken
 }
 
-// savingsPercent is the one definition of the savings percentage every
-// compressor's EstimateSavings reports (Rust estimate_savings): 0.0 when there
-// is nothing to compare against.
-func savingsPercent(original, compressed string) float64 {
-	originalTokens := EstimateTokens(original)
+// percentSaved is the savings percentage from already-estimated token counts:
+// 0.0 when there is nothing to compare against.
+func percentSaved(originalTokens, compressedTokens int) float64 {
 	if originalTokens == 0 {
 		return 0.0
 	}
-	return float64(originalTokens-EstimateTokens(compressed)) / float64(originalTokens) * 100.0
+	return float64(originalTokens-compressedTokens) / float64(originalTokens) * 100.0
+}
+
+// savingsPercent is the one definition of the savings percentage every
+// compressor's EstimateSavings reports (Rust estimate_savings).
+func savingsPercent(original, compressed string) float64 {
+	return percentSaved(EstimateTokens(original), EstimateTokens(compressed))
 }
 
 // EstimateTokensPrecise counts whitespace-delimited word starts plus one for

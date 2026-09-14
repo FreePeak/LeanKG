@@ -1,6 +1,10 @@
 package budget
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"maps"
+	"slices"
+)
 
 // TokenBudget caps a JSON response by tool name, ported from
 // src/mcp/token_budget.rs. One token is approximated as 4 serialized bytes,
@@ -310,7 +314,7 @@ var protectedKeys = map[string]bool{
 // ever shows up, carry a running byte total like the Rust original.
 func truncateObject(obj map[string]any, maxTokens int) bool {
 	truncated := false
-	for _, key := range sortedKeys(obj) {
+	for _, key := range slices.Sorted(maps.Keys(obj)) {
 		child := obj[key]
 		if child == nil {
 			continue
@@ -327,7 +331,7 @@ func truncateObject(obj map[string]any, maxTokens int) bool {
 			removable = append(removable, k)
 		}
 	}
-	sortStrings(removable)
+	slices.Sort(removable)
 
 	budget := maxTokens * TokenCharsPerToken
 	for _, key := range removable {
@@ -338,25 +342,4 @@ func truncateObject(obj map[string]any, maxTokens int) bool {
 		truncated = true
 	}
 	return truncated
-}
-
-// sortedKeys returns obj's keys in sorted order.
-func sortedKeys(obj map[string]any) []string {
-	keys := make([]string, 0, len(obj))
-	for k := range obj {
-		keys = append(keys, k)
-	}
-	sortStrings(keys)
-	return keys
-}
-
-// sortStrings is a tiny insertion sort: key slices are at most the object
-// arity and normally near-sorted, and this keeps the package's imports to
-// encoding/json alone.
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }
