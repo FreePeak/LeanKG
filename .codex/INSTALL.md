@@ -23,7 +23,7 @@ Add to your Codex MCP configuration:
   "mcpServers": {
     "leankg": {
       "command": "leankg",
-      "args": ["mcp-stdio", "--watch"]
+      "args": ["serve", "--stdio"]
     }
   }
 }
@@ -93,14 +93,14 @@ Fetch and follow instructions from https://raw.githubusercontent.com/FreePeak/Le
 Or update the LeanKG binary:
 
 ```bash
-cargo install leankg
+curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install-go.sh | bash
 ```
 
 ## Troubleshooting
 
 ### MCP server not connecting
 
-1. Ensure LeanKG binary is installed: `cargo install leankg`
+1. Ensure LeanKG binary is installed: run `scripts/install-go.sh` (or `make go-build` and use `go/bin/leankg`)
 2. Check the binary is in your PATH: `which leankg`
 3. Verify MCP configuration is valid JSON
 

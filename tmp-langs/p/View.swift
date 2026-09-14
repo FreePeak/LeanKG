@@ -1,0 +1,2 @@
+func hello() {}
+class Widget {}

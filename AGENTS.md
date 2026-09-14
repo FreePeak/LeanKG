@@ -1,115 +1,62 @@
 # LeanKG — Agent Context
 
-**Tech stack:** Rust + SQLite (default; optional PostgreSQL/pgvector) + tree-sitter + MCP
+**Tech stack:** Go 1.25 (module `github.com/FreePeak/LeanKG/go`) + SQLite (WAL, default) + PostgreSQL/pgvector (opt-in) + official MCP go-sdk. v4.6.0: the Rust tree has been removed; this module is the codebase.
 
 ## Build & Test
 
 ```bash
-cargo build --release          # always --release; debug profile has debug=false
-cargo test --lib                # quick unit tests only (CI does this)
-cargo test                      # full suite including integration/e2e
-make lint                       # = cargo clippy --all-targets --all-features -- -D warnings
-cargo fmt --all -- --check      # formatting check
+make go-build            # CGO_ENABLED=0 binaries into go/bin/ (leankg, leankg-embed)
+make go-test             # go test ./... -count=1  (15 packages)
+make go-vet              # go vet ./...
+make go-bench            # benchmark/ab suite
+make dual-engine         # sqlite + live-PostgreSQL acceptance gate (needs :5433 pgvector)
+make go-ui-assets        # re-sync ui build into internal/web/embed after a ui-v2 rebuild
 ```
 
-`.opencode.json` auto-loads `instructions/leankg-tools.md` — detailed MCP tool reference.
+Store contract: `go/internal/store/backend.go` (Backend interface; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).
 
 ## CLI Quick Reference
 
-| Command | Purpose |
-|---------|---------|
-| `cargo run --release -- init` | Init project |
-| `cargo run --release -- index ./src` | Index codebase |
-| `cargo run --release -- mcp-stdio --watch` | MCP stdio (local AI tools) |
-| `cargo run --release -- mcp-http --port 9699` | MCP HTTP (remote clients) |
-| `cargo run --release -- embed` | Build embedding vectors (after index) |
-| `cargo run --release -- embed --dry-run` | Export embed queries to `.leankg/embed_export.jsonl` (offsite/GPU batch — pair with `scripts/embed_batch.py` + `embed --import`) |
-| `cargo run --release -- embed --import <file>` | Import vectors produced from a `--dry-run` export (resumable; `--no-verify` skips drift check) |
-| `cargo run --release -- serve` | REST API + embedded UI v2 on :8080 |
-| `cargo run --release -- impact <file> <depth>` | Blast radius calc |
-| `cargo run --release -- doctor` | Stale-process / mmap diagnostics |
-| `cargo run --release -- doctor --deep [--format json] [--project PATH]` | Deployment self-diagnosis (H9): PG latency, migrations, index freshness, embeddings coverage, pool env, orphan edges, duplicate names. Exit 0 pass / 1 warn / 2 fail |
+|Command|Purpose|
+|---|---|
+|`leankg serve --http :9699 --rest :8080 --memory`|MCP HTTP + REST + memory (add `--rpc :9090` ConnectRPC, `--ui :8081` dashboard, `--read-only` reader role)|
+|`leankg index <dir>`|Index a repository (3-signal incremental)|
+|`leankg writer --project <dir>`|Index-once + fsnotify reconcile loop (pairs with `serve --read-only`)|
+|`leankg query <text> [--kind name\|impact] [--depth N]`|CLI query (L1 exact → L2 fuzzy fallback; graph impact)|
+|`leankg-embed run\|full`|Incremental / stamp-guarded full embed (provider via `LEANKG_EMBED_*`)|
+|`leankg-embed export\|import`|NDJSON offsite flow (pairs with `scripts/embed_batch.py`)|
+|`leankg connect\|install --target claude\|cursor\|codex\|gemini\|opencode\|omp`|Client wiring (+ `--register-cwd` SessionStart hook)|
+|`leankg doctor --project <dir>`|Store diagnostics|
 
-Embeddings require `--features embeddings` build flag (off by default). Without them, `semantic_search` / `kg_semantic_context` return "no vectors".
+## SoT pairing
 
-## Storage: sqlite default (no Docker, no Postgres by default)
-
-The default storage engine is **sqlite** (`<project>/.leankg/leankg.db`). MCP
-HTTP `project=` takes the **project checkout directory** — the same directory
-you would `cd` into.
-
-```rust
-mcp_status(project="/path/to/checkout")                    // OK
-search_code(query="fn main", project="/path/to/checkout")  // OK
-```
-
-Health check: `curl http://localhost:9699/health`. Postgres remains available
-as an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) but
-nothing in the default flow triggers it.
-
-## Tool discovery prefer-order
-
-Do **not** open with `query_graph`. Discover first:
-
-`concept_search` → `semantic_search` → `search_code` / `find_function` → connection verbs (impact, deps, context).
-
-| Question | First tools |
-|----------|-------------|
-| Fuzzy / NL / domain | `concept_search` → `semantic_search` → `search_code` |
-| Exact symbol / file | `find_function` / `search_code` / `query_file` |
-| How A↔B? | `shortest_path` |
-| What is symbol? | `explain_node` |
-| Expand subgraph | `query_graph` (after seeds known) |
-
-**Dynamic ontology**: `add_ontology_concept` / `add_ontology_workflow` persist insights across sessions. `add_knowledge` for free-form notes. After YAML edits in `ontology/`, use `kg_trace_workflow` (auto-synced; no manual `leankg ontology sync` needed).
+Narrative + ACs: [`docs/prd.md`](docs/prd.md) (v4.6.0 parity ledger + DEFERRED items). Statuses: [`docs/prd-task-tracker.md`](docs/prd-task-tracker.md).
 
 ## Development workflow
 
-1. Update `docs/prd.md` (narrative + ACs) + `docs/prd-task-tracker.md` (task list) — the only two live docs; everything else is in `docs/archive/`
-2. Implement per `docs/archive/workflow-opencode-agent.md`
-3. `cargo build --release && cargo test`
-4. `git commit -m "feat: description"` (one feature per commit; **no** `Co-Authored-By` or AI attribution)
-5. `git pull --rebase && git push`
-6. Bump `version` in `Cargo.toml`
-7. `git tag -a v<version> -m "Release v<version>" && git push origin v<version>`
+1. Update `docs/prd.md` + `docs/prd-task-tracker.md` (the only two live docs)
+2. Implement in `go/` — Backend consumers take `store.Backend`, never a concrete store
+3. `make go-build && make go-test && make go-vet`
+4. Commit (one feature per commit; no AI attribution); main is protected → PRs only
+5. `scripts/test-dual-engine.sh` for storage-layer changes
 
 ## Key source files
 
-| File | Purpose |
-|------|---------|
-| `src/main.rs` | CLI entrypoint |
-| `src/lib.rs` | Module exports |
-| `src/cli/mod.rs` | Subcommand definitions |
-| `src/mcp/tools.rs` | MCP tool definitions |
-| `src/mcp/handler.rs` | MCP tool handlers |
-| `src/db/models.rs` | Data models |
-| `src/graph/query.rs` | Graph query engine |
-| `src/indexer/extractor.rs` | tree-sitter code parsing |
-| `src/embed.rs` | Embedding pipeline CLI |
+|File|Purpose|
+|---|---|
+|`go/cmd/leankg/`|serve/index/writer/query/doctor/connect/install|
+|`go/cmd/leankg-embed/`|embedding pipeline binary|
+|`go/internal/store/`|Backend interface, SQLite + PostgreSQL implementations|
+|`go/internal/core/`|3-tool envelope + L0–L3 ladder|
+|`go/internal/index/`, `docindex/`|extractors (regex ceiling until tree-sitter)|
+|`go/internal/memory/`|full-markdown memory + mnemopi banks|
+|`go/internal/embed/`|Provider port, ModelStamp guards, pipeline|
+|`go/internal/graph/`|impact/path/callers/callees/context/explain|
+|`go/internal/mcp/`, `rest/`, `rpc/`, `web/`|transports + UI|
+|`go/CONTRACTS.md`|original wave contracts (historical)|
 
-## Multi-project setup (side-by-side repos)
+## Multi-project setup
 
-Point MCP HTTP at each checkout directory via `project=` (sqlite default).
-Multi-project serving: set `LEANKG_PROJECT_DIRS` to a comma-separated list of
-checkout paths. Never paste personal host paths into commits.
+MCP HTTP `?project=` walks to the nearest `.leankg`; `LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL` switch storage. Never paste personal host paths into commits.
 
-## Parallel subagent workflow
-
-For 3+ independent tasks: dispatch to `.worktree/<feature>/` worktrees with feature branches. Verify isolation (`.gitignore` covers `.worktrees/`). Merge all feature branches after completion.
-
-## Cursor Cloud specific instructions
-
-Single Rust binary (`leankg`); all modes are subcommands. Storage is **sqlite by default** (`<project>/.leankg/leankg.db`) — no external database required. Postgres remains an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`). The VM snapshot already has the toolchain and system libs below; the startup update script only runs `cargo fetch`.
-
-- **Toolchain**: build requires Rust **stable ≥ 1.85** (transitive deps use edition2024). The base image's 1.83 is too old; the snapshot ships `rustup default stable`. README's "Rust 1.75+" badge is outdated for building from source.
-- **Native build deps**: native extensions compiled via the `cxx`/C++ toolchain need C++ stdlib headers. `clang`/`cc` select GCC 14, so `libstdc++-14-dev` (plus `g++`) must be present or the build fails with `fatal error: 'algorithm' file not found`. These are installed in the snapshot.
-- **Always `--release`**: the debug profile sets `debug=false`; use `cargo build --release` / `cargo run --release --` per `Makefile`. First release build ≈ 4–5 min; `cargo clippy --all -- -D warnings` ≈ 3 min.
-- **Verify commands** (all pass): `cargo fmt --all -- --check`, `cargo clippy --all -- -D warnings` (CI gate; `make lint` adds `--all-features` which pulls the heavy `embeddings`/ONNX stack), `cargo test --lib` (734 tests, ~4s). See `AGENTS.md` Build & Test and `.github/workflows/ci.yml`.
-- **Index step is slow**: `leankg index ./src` inserts ~8k elements / ~50k relationships into SQLite and takes ~4–5 min; it is not hung. Run `leankg init` first.
-- **CLI quirk**: `impact` takes `--depth N` (a flag), not a positional depth arg as some docs show, e.g. `leankg impact src/main.rs --depth 2`.
-- **MCP HTTP**: `leankg mcp-http --port 9699 --project /workspace`; health `GET /health`, JSON-RPC `POST /mcp?project=/workspace`. Pass the container path `/workspace` as `project` (see MANDATORY section above).
-- **Embeddings/semantic search** need `--features embeddings` (downloads ONNX models at runtime); off by default — `semantic_search` returns "no vectors" without them.
-
----
-
-*Last updated: 2026-09-09 (storage = sqlite default; Postgres is an explicit opt-in; Docker files removed)*
+*Last updated: 2026-09-10 (Go-only cutover; Rust commands removed)*

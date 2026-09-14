@@ -1,0 +1,14 @@
+project:
+  name: user-name
+  root: ./custom-src
+  project_path: /host/keep
+  languages:
+    - rust
+  vendor_probe: user-custom-value
+indexer:
+  exclude:
+    - "**/secret/**"
+  custom_indexer_key: 7
+mcp:
+  require_git_for_auto_index: false
+team_identity_probe: keep-me-through-reindex

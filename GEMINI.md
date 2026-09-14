@@ -1,5 +1,8 @@
 # LeanKG - AI Agent Context
 
+> **v4.6.0:** the implementation is 100% Go (`go/`); Rust commands below are historical. Build: `make go-build` · Test: `make go-test` · See `AGENTS.md` for the current workflow.
+
+
 ## Project Overview
 
 LeanKG is a lightweight knowledge graph for codebase understanding. It indexes code, builds dependency graphs, calculates impact radius, and exposes everything via MCP for AI tool integration.

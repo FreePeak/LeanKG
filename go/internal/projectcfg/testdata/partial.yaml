@@ -1,0 +1,9 @@
+project:
+  name: demo
+  root: ./src
+  languages:
+    - go
+db:
+  url: postgresql://u:p@host:9999/bar
+  pool_size: 12
+  lock: false

@@ -1,0 +1,2 @@
+fun helper() {}
+class Config {}
