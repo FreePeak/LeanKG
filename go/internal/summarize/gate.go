@@ -18,7 +18,7 @@ const MaxConsecutiveFailures = 5
 // asymmetry is kept: over-matching costs a run that was going to fail anyway,
 // under-matching falls back to the consecutive cutoff.
 var (
-	quotaRe = regexp.MustCompile(`quota|insufficient[_ ]funds|insufficient[_ ]quota|billing|payment required|402`)
+	quotaRe = regexp.MustCompile(`quota|insufficient[_ ]funds|insufficient[_ ]quota|billing|payment required|\b402\b`)
 	authRe  = regexp.MustCompile(`\b401\b|\b403\b|unauthorized|invalid api key|invalid_api_key|authentication`)
 )
 
