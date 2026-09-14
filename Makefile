@@ -29,8 +29,16 @@ go-bench:
 go-vet:
 	cd go && go vet ./...
 
+# Sync a fresh ui-v2 production build into the Go dashboard embed dir
+# (`go/internal/web/embed`, consumed by //go:embed all:embed in web.go). The
+# Rust-era source path `src/embed` is gone; ui-v2's vite `dist/` is the only
+# producer. ui-build.json is a hand-maintained provenance marker, so it is
+# kept across the sync.
 go-ui-assets:
-	rm -rf go/internal/web/embed && cp -r src/embed go/internal/web/embed
+	npm --prefix ui-v2 run build
+	@test -f ui-v2/dist/index.html || { echo "go-ui-assets: ui-v2 build produced no dist/"; exit 1; }
+	find go/internal/web/embed -mindepth 1 ! -name ui-build.json -delete
+	cp -R ui-v2/dist/. go/internal/web/embed/
 
 dual-engine:
 	bash scripts/test-dual-engine.sh

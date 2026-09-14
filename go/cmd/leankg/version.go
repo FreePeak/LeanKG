@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// embeddedVersion comes from go/cmd/leankg/VERSION (checked in, mirrors go/VERSION).
+// embeddedVersion comes from go/cmd/leankg/VERSION (checked in; release-please
+// bumps it on release — the trailing marker comment is not part of the version).
 //
 //go:embed VERSION
 var embeddedVersion string
@@ -21,10 +22,13 @@ var embeddedVersion string
 var version = ""
 
 // Version returns the engine version: the ldflags stamp when set, else the
-// checked-in VERSION file (local and CI builds).
+// first field of the checked-in VERSION file (local and CI builds).
 func Version() string {
 	if v := strings.TrimSpace(version); v != "" {
 		return v
 	}
-	return strings.TrimSpace(embeddedVersion)
+	if f := strings.Fields(embeddedVersion); len(f) > 0 {
+		return f[0]
+	}
+	return "dev"
 }

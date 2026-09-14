@@ -7,6 +7,9 @@ on:
     # already ran CI. Skipping avoids a duplicate ~5m suite on every release.
     paths-ignore:
       - 'CHANGELOG.md'
+      - '.release-please-manifest.json'
+      - 'go/cmd/leankg/VERSION'
+      - 'go/internal/mcp/server.go'
   pull_request:
     branches: [main]
 
