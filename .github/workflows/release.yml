@@ -30,39 +30,53 @@ permissions:
 
 jobs:
   plan:
-    name: Cut the version (release-please)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Resolve the release version
+    # Runs on every trigger, and never reads `inputs` outside a step: a
+    # job-level `if` sees `${{ inputs.version }}` as empty even when the value
+    # is present in a step's env (verified on runs 34805275505 and 34806151322,
+    # where every downstream job skipped and the run reported success having
+    # published nothing). The dispatch input is therefore turned into a step
+    # output here, and everything downstream compares only
+    # `needs.plan.outputs.version` — the form the v0.31.1/v0.31.2/v0.31.3
+    # releases proved end to end.
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.release-please.outputs.tag_name }}
-      version: ${{ steps.release-please.outputs.version }}
+      version: ${{ steps.release-please.outputs.version || steps.manual.outputs.version }}
     steps:
-      - id: release-please
+      - if: ${{ github.event_name != 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+        id: release-please
         uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - if: ${{ github.event_name == 'workflow_dispatch' }}
+        id: manual
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$INPUT_VERSION" ]; then
+            echo "::error::workflow_dispatch needs an explicit version"
+            exit 1
+          fi
+          echo "re-publishing the existing release v${INPUT_VERSION}"
+          echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
 
-  # Downstream jobs read the version straight off `plan` (or the manual input)
-  # rather than through an intermediate resolver job: job-to-job outputs are the
-  # one link in this chain that has silently produced empty values before, which
-  # is how v0.31.0 ended up tagged with no binaries. `plan` itself is a plain
-  # `${{ steps.<id>.outputs.<name> }}` passthrough of release-please's own
-  # outputs, and that path is proven by the v0.31.1 release.
-  #
-  # On workflow_dispatch (re-publishing an existing release) `plan` is skipped,
-  # so `inputs.version` supplies the value instead.
+  # Downstream jobs read the version only off `plan`. This chain has failed by
+  # silently producing empty values twice — through an intermediate resolver job
+  # and through `inputs` in a job-level `if` — and each time it looked green
+  # while the release shipped with no binaries.
   verify:
     name: Version consistency gate
     needs: plan
-    if: ${{ needs.plan.outputs.version != '' || inputs.version != '' }}
+    if: needs.plan.outputs.version != ''
     env:
-      VERSION: ${{ needs.plan.outputs.version || inputs.version }}
+      VERSION: ${{ needs.plan.outputs.version }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ needs.plan.outputs.version || inputs.version }}
+          ref: v${{ needs.plan.outputs.version }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
@@ -71,7 +85,7 @@ jobs:
       # otherwise never compared on the exact commit that gets shipped.
       - name: Tag, go/cmd/leankg/VERSION and the MCP serverInfo must agree
         env:
-          VERSION: ${{ needs.plan.outputs.version || inputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           stamp="$(awk '{print $1}' go/cmd/leankg/VERSION)"
@@ -84,9 +98,9 @@ jobs:
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     needs: [plan, verify]
-    if: ${{ needs.plan.outputs.version != '' || inputs.version != '' }}
+    if: needs.plan.outputs.version != ''
     env:
-      VERSION: ${{ needs.plan.outputs.version || inputs.version }}
+      VERSION: ${{ needs.plan.outputs.version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -99,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ needs.plan.outputs.version || inputs.version }}
+          ref: v${{ needs.plan.outputs.version }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
@@ -113,7 +127,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-          VERSION: ${{ needs.plan.outputs.version || inputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p out
@@ -132,7 +146,7 @@ jobs:
   publish:
     name: Attach binaries to the release
     needs: [plan, build]
-    if: ${{ needs.plan.outputs.version != '' || inputs.version != '' }}
+    if: needs.plan.outputs.version != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -142,8 +156,8 @@ jobs:
       - name: Upload assets and the SHA256 table
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.plan.outputs.version || inputs.version }}
-          TAG: v${{ needs.plan.outputs.version || inputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          TAG: v${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" leankg-*.tgz --clobber
@@ -197,9 +211,11 @@ jobs:
   modtag:
     name: Publish the go/ module tag
     needs: plan
-    # Only when a version was actually cut; a workflow_dispatch re-publish has
-    # no new version to mirror, and `plan` is skipped there.
-    if: ${{ needs.plan.outputs.version != '' }}
+    # A re-publish (workflow_dispatch) has no new version to mirror: `plan` now
+    # resolves a version for it as well, so this must exclude dispatch explicitly
+    # rather than relying on `plan` being skipped — otherwise it hits the
+    # "already exists, refusing to move a published module version" guard below.
+    if: ${{ github.event_name != 'workflow_dispatch' && needs.plan.outputs.version != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
