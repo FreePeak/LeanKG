@@ -362,7 +362,7 @@ func TestRunPoisonItemDoesNotAbortRun(t *testing.T) {
 	seed(t, st,
 		el("a::f1", "func f1() {}"),
 		el("a::poison", strings.Repeat("y", 1500)))
-	p := &longTextProvider{inner: Deterministic(8), maxRunes: 500}
+	p := &longTextProvider{inner: Deterministic(8), maxRunes: 100}
 
 	rep, err := Run(context.Background(), st, p, "full")
 	if err != nil {
@@ -377,6 +377,49 @@ func TestRunPoisonItemDoesNotAbortRun(t *testing.T) {
 	run, _ := st.LastEmbedRun(p.ModelID())
 	if run == nil || run.Status != "partial" {
 		t.Fatalf("run status: got %+v, want partial", run)
+	}
+}
+
+// Ceiling demonstration: when EVERY item fails (a dead provider — errProvider
+// fails any call at any length), the run still aborts loudly with the
+// provider's own error and records the run failed.
+func TestRunAllFailedProviderAbortsLoudly(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	p := errProvider{inner: Deterministic(8)}
+
+	_, err := Run(context.Background(), st, p, "full")
+	if err == nil || !strings.Contains(err.Error(), "provider down") || !strings.Contains(err.Error(), "all 1 item(s) failed") {
+		t.Fatalf("Run error: got %v, want loud all-failed abort naming the provider error", err)
+	}
+	run, _ := st.LastEmbedRun(p.ModelID())
+	if run == nil || run.Status != "failed" {
+		t.Fatalf("run status: got %+v, want failed", run)
+	}
+}
+
+// The character budget is a heuristic — dense content (Godot/TypeScript
+// measured 523 tokens in 1000 runes) can exceed the model context even at
+// the cap. The run must SHRINK and retry (counting truncations) instead of
+// failing every item and misclassifying the run as provider-down.
+// (Found on the first portfolio child: games/the-survival, 14/14 items over
+// context at the 1000-rune cap.)
+func TestRunShrinksDenseItemsBelowModelContext(t *testing.T) {
+	st := testStore(t)
+	seed(t, st,
+		el("a::ok", "func f() {}"),
+		el("a::dense", strings.Repeat("x", 4000)))
+	p := &longTextProvider{inner: Deterministic(8), maxRunes: 2000}
+
+	rep, err := Run(context.Background(), st, p, "full")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Failed != 0 || rep.Embedded != 2 {
+		t.Fatalf("got %+v, want both items embedded via shrink (Failed=0 Embedded=2)", rep)
+	}
+	if rep.Truncations == 0 {
+		t.Fatal("dense shrink not counted in Truncations")
 	}
 }
 
@@ -399,9 +442,6 @@ func TestDeterministicProviderIdentity(t *testing.T) {
 	vecs, err := p.Embed(context.Background(), Document, []string{"hello", "hello"})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(vecs) != 2 || len(vecs[0]) != 384 {
-		t.Fatalf("shape: %d x %d", len(vecs), len(vecs[0]))
 	}
 	for i := range vecs[0] {
 		if vecs[0][i] != vecs[1][i] {

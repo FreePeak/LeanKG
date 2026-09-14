@@ -284,21 +284,43 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 			}
 			vecs, err := p.Embed(ctx, Document, texts)
 			if err != nil {
-				// Per-item retry: commit what the provider accepts, count what
-				// it rejects. Costs extra calls only on the error path.
+				// Per-item retry with shrink: a batch the provider rejected
+				// is retried item by item (healthy siblings still commit),
+				// and an item the provider rejects is HALVED and retried
+				// (up to 3 times) — the character budget is a heuristic and
+				// dense content can exceed the model's token context even at
+				// the cap (measured 523 tokens in 1000 runes on real Godot/
+				// TS). Shrunk successes count as truncations; an item that
+				// fails at every size counts in Failed and stays dirty.
 				lastErr = err
 				for _, d := range batch {
-					v, ierr := p.Embed(ctx, Document, []string{d.text})
-					if ierr != nil {
-						lastErr = ierr
+					text := d.text
+					var vec []float32
+					shrunk := false
+					for range 4 {
+						v, ierr := p.Embed(ctx, Document, []string{text})
+						if ierr == nil && validateBatch(v, 1, p.Dimensions()) == nil {
+							vec = v[0]
+							break
+						}
+						if ierr != nil {
+							lastErr = ierr
+						}
+						n := len([]rune(text)) / 2
+						if n == 0 {
+							break
+						}
+						text = truncateRunes(text, n)
+						shrunk = true
+					}
+					if vec == nil {
 						rep.Failed++
 						continue
 					}
-					if validateBatch(v, 1, p.Dimensions()) != nil {
-						rep.Failed++
-						continue
+					if shrunk {
+						rep.Truncations++
 					}
-					rows = append(rows, store.VectorRow{QualifiedName: d.qn, Vec: v[0]})
+					rows = append(rows, store.VectorRow{QualifiedName: d.qn, Vec: vec})
 					states[d.qn] = d.hash
 				}
 				continue

@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/FreePeak/LeanKG/go/internal/embed"
@@ -105,6 +106,29 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// bindPositional lets the project dir be given as a bare positional
+// (matching `leankg index <dir>`): Go's flag package STOPS parsing at the
+// first non-flag arg, so `leankg-embed full <dir>` previously left <dir>
+// unparsed and silently embedded the CWD's store instead. That footgun was
+// hit dogfooding the portfolio (run /abs/child embedded the wrong project).
+// The positional wins only when --project was not also passed; more than one
+// positional is a hard error, never a silent drop.
+func bindPositional(verb string, args []string, project *string) {
+	var positional []string
+	for _, a := range args {
+		if len(a) > 1 && a[0] == '-' {
+			break
+		}
+		positional = append(positional, a)
+	}
+	if len(positional) > 1 {
+		log.Fatalf("%s: too many arguments (%s)", verb, strings.Join(positional, " "))
+	}
+	if len(positional) == 1 && *project == "" {
+		*project = positional[0]
+	}
+}
+
 // lock takes the single-flight flock for the PROJECT dir (not the process
 // cwd): concurrent invocations against one project serialize; abandoned
 // locks release with the process.
@@ -131,6 +155,7 @@ func cmdRun(args []string, mode string) {
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
 	}
+	bindPositional(mode, fs.Args(), project)
 	unlock, err := lock(projectDir(*project))
 	if err != nil {
 		log.Fatal(err)
@@ -164,6 +189,7 @@ func cmdExport(args []string) {
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
 	}
+	bindPositional("export", fs.Args(), project)
 	if *modelID == "" {
 		log.Fatal("export requires --model")
 	}
@@ -197,6 +223,7 @@ func cmdImport(args []string) {
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
 	}
+	bindPositional("import", fs.Args(), project)
 	if *modelID == "" || *revision == "" || *dims == 0 {
 		log.Fatal("import requires --model, --revision, --dims")
 	}
@@ -233,6 +260,7 @@ func cmdStatus(args []string) {
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
 	}
+	bindPositional("status", fs.Args(), project)
 	st, err := openStore(*project)
 	if err != nil {
 		log.Fatalf("store: %v", err)
