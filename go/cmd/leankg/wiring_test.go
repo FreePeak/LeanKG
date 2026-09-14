@@ -3,6 +3,9 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,5 +168,67 @@ func TestHookCommandRuns(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projSpace, ".leankg", "leankg.db")); err != nil {
 		t.Fatalf("hook ran but created no store under %s/.leankg: %v", projSpace, err)
+	}
+}
+
+// TestDashboardListenerServesHealthAndShell guards the container deploy shape:
+// `serve --ui :PORT` is the ONE listener the image exposes, and the platform
+// health check points at /health on it. The SPA fallback answers 200 + HTML for
+// any unknown path, so a health check that only wants a 200 would pass even
+// with a broken data API — /health must answer JSON instead, and the shell and
+// favicon must come from the embedded build. Store is indexed first because
+// the read-only role refuses to open a missing store.
+func TestDashboardListenerServesHealthAndShell(t *testing.T) {
+	bin := buildLeanKG(t)
+	proj := seedProject(t)
+	if out, err := exec.Command(bin, "index", proj, "--auto").CombinedOutput(); err != nil {
+		t.Fatalf("index: %v\n%s", err, out)
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(bin, "serve", "--read-only", "--ui", addr, "--project", proj)
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	get := func(path string) (int, string, string) {
+		t.Helper()
+		res, err := http.Get("http://" + addr + path)
+		if err != nil {
+			return 0, "", ""
+		}
+		defer res.Body.Close()
+		body, _ := io.ReadAll(res.Body)
+		return res.StatusCode, res.Header.Get("Content-Type"), string(body)
+	}
+
+	code := 0
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline) && code != 200; {
+		code, _, _ = get("/health")
+		if code != 200 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if code, ctype, body := get("/health"); code != 200 || !strings.Contains(ctype, "application/json") || body != `{"ok":true}` {
+		t.Fatalf("GET /health: %d %s %s (want 200 application/json {\"ok\":true})", code, ctype, body)
+	}
+	if code, ctype, body := get("/"); code != 200 || !strings.Contains(ctype, "text/html") || !strings.Contains(body, `id="root"`) {
+		t.Fatalf("GET /: %d %s (embedded dashboard shell not served)", code, ctype)
+	}
+	if code, ctype, _ := get("/favicon.svg"); code != 200 || !strings.Contains(ctype, "image/svg+xml") {
+		t.Fatalf("GET /favicon.svg: %d %s", code, ctype)
 	}
 }
