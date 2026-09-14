@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.12.0-module-root
+**Version:** 4.12.1-container-corpus
 **Date:** 2026-09-14
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.33.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; first root-tagged release v0.33.0; the Rust tree was removed in f7624143)
@@ -9,6 +9,22 @@
 ---
 
 ## Changelog
+
+
+### v4.12.1-container-corpus — the demo image indexed what the `Dockerfile` says it excludes (#419) (2026-09-14)
+
+**Trigger:** building the image to check the module-root cut for real — CI has no `docker` step, so `docker build` is the only gate the Render deploy has. #415 retargeted the build stage correctly (`COPY cmd/ ./cmd/`), but the demo stage became `COPY cmd/ internal/ /demo/engine/`, and BuildKit expands a trailing-slash source's **contents** into the destination: the two trees merged flat into `/demo/engine/{annot,astgrep,…,tstree,leankg}` instead of `/demo/engine/{cmd,internal}`.
+
+| Consequence | Evidence (origin/main image vs. fixed) |
+|---|---|
+| `RUN rm -rf /demo/engine/internal/tstree` matched nothing | `test -d /demo/engine/internal` → absent; the grammars sat at `/demo/engine/tstree` |
+| the ~60 MB of vendored tree-sitter grammars the stage comment excludes were shipped **and indexed** into the public demo store | baked graph `elements=4771 files=555` before, `4578/528` after — which is what the comment promises ("~530 files, ~4.6k elements") |
+| dashboard clusters stopped reading like repository paths | `/api/graph/clusters`: `engine/annot`, `engine/astgrep`, … → `engine/cmd/leankg` |
+| nothing failed | `docker build --target demo` exits 0 either way: a green build with the wrong corpus |
+
+**Fix:** name each destination (`COPY cmd/ /demo/engine/cmd/`, `COPY internal /demo/engine/internal/`) and make the stage self-checking — `test -d /demo/engine/cmd/leankg && test -d /demo/engine/internal/store` ahead of the `rm`, so a re-flatten fails the build instead of shipping a different graph.
+
+**Verified:** `docker build --target demo` passes the layout assertions with `tstree` gone; the full runtime image answers `/health` `{"ok":true}`, `/api/index/status` 4578 elements / 14889 relationships, `POST /api/query {"query":"authenticate"}` → `fresh` hits.
 
 
 ### v4.12.0-module-root — the engine IS the root module; the `go/` directory is gone (#403) (2026-09-14)
@@ -865,4 +881,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-14 (v4.12.0-module-root — the Go module moved to the repository root per #403: `cmd/`/`internal/`/`go.mod` at root, imports rewritten, `modtag` mirror job retired, `go/README.md` folded into the root README; pb seed go_package length repaired. Prior waves same day: v4.11.4-vector-reclaim (#411 gc orphan-vector reclaim; loop shipped as **v0.32.0** with all four tarballs), v4.11.3 doctor-truth (#406), v4.11.2-selfhost-validated, v4.11.1-ship-surface, v4.11.0-selfhost-dogfood-loop)*
+*Last updated: 2026-09-14 (v4.12.1-container-corpus — #419: the demo stage's `COPY cmd/ internal/ /demo/engine/` merged the two trees flat, so the `rm -rf .../internal/tstree` exclusion matched nothing and ~60 MB of vendored grammars shipped into the public graph; destinations named + a `test -d` layout guard, baked store now 4578 elements / 528 files as documented. Prior: v4.12.0-module-root — the Go module moved to the repository root per #403: `cmd/`/`internal/`/`go.mod` at root, imports rewritten, `modtag` mirror job retired, `go/README.md` folded into the root README; pb seed go_package length repaired. Prior waves same day: v4.11.4-vector-reclaim (#411 gc orphan-vector reclaim; loop shipped as **v0.32.0** with all four tarballs), v4.11.3 doctor-truth (#406), v4.11.2-selfhost-validated, v4.11.1-ship-surface, v4.11.0-selfhost-dogfood-loop)*
