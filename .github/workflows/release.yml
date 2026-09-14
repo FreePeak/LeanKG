@@ -10,10 +10,17 @@ name: Release
 # GITHUB_TOKEN writes. That is not theory here — the Rust-era chain died exactly
 # this way: v0.28.1, v0.29.0 and v0.30.0 were tagged by leankg-release[bot] and
 # shipped with ZERO assets because the tag-triggered release workflow never ran.
-# So the asset jobs hang off the release-please job's outputs instead.
 #
-# `workflow_dispatch` re-publishes binaries for a release that already exists
-# (a failed/partial publish), which is the only case where no new version is cut.
+# `workflow_dispatch` re-publishes binaries for a release that already exists (a
+# failed or partial publish), the only case where no new version is cut.
+#
+# Expressions in this file are chosen for what has been observed to work, not
+# what should: `inputs.*` reads empty in a job-level `if` on a real
+# workflow_dispatch run (runs 34805275505, 34806151322 — every downstream job
+# skipped while the same value was plainly present in a step's env), so
+# `inputs.version` is consumed by exactly one step below and everything else
+# keys off `needs.plan.outputs.version`. A release whose asset jobs silently skip
+# is not a loud failure, it is a v0.31.0 with no binaries to update to.
 on:
   push:
     branches: [main]
@@ -30,70 +37,53 @@ permissions:
 
 jobs:
   plan:
-    name: Cut the version (release-please)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Resolve the release version
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.release-please.outputs.tag_name }}
-      version: ${{ steps.release-please.outputs.version }}
+      version: ${{ steps.release-please.outputs.version || steps.manual.outputs.version }}
     steps:
-      - id: release-please
+      # release-please's own outputs, read from the shipped bundle: for a
+      # root-path manifest it sets `tag_name`, `version`, `body`, `html_url`,
+      # `upload_url` (tagName -> tag_name etc). `release-tag-name` is not one of
+      # them, and gating on a name that never populates is how a release gets
+      # tagged with nothing attached to it.
+      - if: ${{ github.event_name != 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+        id: release-please
         uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-
-  prepare:
-    name: Resolve what to publish
-    needs: plan
-    if: ${{ !cancelled() && needs.plan.result != 'failure' }}
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.resolve.outputs.tag }}
-      version: ${{ steps.resolve.outputs.version }}
-    steps:
-      - id: resolve
+      - if: ${{ github.event_name == 'workflow_dispatch' }}
+        id: manual
         env:
-          EVENT: ${{ github.event_name }}
-          PLANNED_TAG: ${{ needs.plan.outputs.tag }}
-          PLANNED_VERSION: ${{ needs.plan.outputs.version }}
           INPUT_VERSION: ${{ inputs.version }}
-        # Value-driven on purpose. An earlier revision branched on the
-        # GITHUB_EVENT_NAME shell variable and resolved to empty on a real
-        # workflow_dispatch run, so every downstream job skipped and the
-        # release published with no binaries — the exact defect this workflow
-        # exists to prevent. Whatever source filled the value wins instead.
         run: |
-          version="${PLANNED_VERSION:-$INPUT_VERSION}"
-          tag="$PLANNED_TAG"
-          if [ -z "$tag" ] && [ -n "$version" ]; then
-            tag="v$version"
+          set -euo pipefail
+          if [ -z "$INPUT_VERSION" ]; then
+            echo "::error::workflow_dispatch needs an explicit version"
+            exit 1
           fi
-          echo "event=$EVENT planned=[$PLANNED_TAG/$PLANNED_VERSION] input=$INPUT_VERSION -> resolved [$tag/$version]"
-          if [ -n "$tag" ] && [ -n "$version" ]; then
-            printf 'tag=%s\nversion=%s\n' "$tag" "$version" >> "$GITHUB_OUTPUT"
-          else
-            echo "nothing to publish (no release was cut by this run)"
-          fi
+          echo "re-publishing the existing release v${INPUT_VERSION}"
+          echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
 
   verify:
     name: Version consistency gate
-    needs: prepare
-    if: needs.prepare.outputs.tag != ''
+    needs: plan
+    if: needs.plan.outputs.version != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: v${{ needs.plan.outputs.version }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
           cache-dependency-path: go/go.sum
-      # ci.yml skips release-metadata commits, so the three version copies are
+      # ci.yml skips release-metadata commits, so the version copies are
       # otherwise never compared on the exact commit that gets shipped.
       - name: Tag, go/cmd/leankg/VERSION and the MCP serverInfo must agree
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           stamp="$(awk '{print $1}' go/cmd/leankg/VERSION)"
@@ -105,8 +95,8 @@ jobs:
 
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: [prepare, verify]
-    if: needs.prepare.outputs.tag != ''
+    needs: [plan, verify]
+    if: needs.plan.outputs.version != ''
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -119,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: v${{ needs.plan.outputs.version }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
@@ -133,7 +123,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p out
@@ -151,8 +141,8 @@ jobs:
 
   publish:
     name: Attach binaries to the release
-    needs: [prepare, build]
-    if: needs.prepare.outputs.tag != ''
+    needs: [plan, build]
+    if: needs.plan.outputs.version != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -162,10 +152,20 @@ jobs:
       - name: Upload assets and the SHA256 table
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          TAG: v${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" leankg-*.tgz --clobber
+          # `--latest` moves the pointer `leankg update` follows. Only claim it
+          # when this version is at least the current latest: re-publishing the
+          # binaries of an older release must not send every client backwards.
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          latest_flag=(--latest)
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]; then
+            latest_flag=()
+            echo "keeping $latest as latest (republishing older $TAG without assets moving the pointer)"
+          fi
           # internal/update reads a checksum from the API digest or, failing
           # that, from a release-body line that also names the asset. One line
           # per platform, each carrying its own filename.
@@ -176,14 +176,23 @@ jobs:
             cat leankg-*.sha256
           } > checksums.md
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # release-please published the tag with changelog notes already —
+            # keep them and append the checksum table.
             { gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body
               cat checksums.md; } > notes.md
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
           else
             # workflow_dispatch for a tag that has no release yet.
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "$TAG" --notes-file checksums.md --latest
+              --title "$TAG" --notes-file checksums.md "${latest_flag[@]}"
           fi
           # A draft is invisible to `releases/latest`, which is what
           # `leankg update` polls (v0.27.0 sat drafted with assets nobody got).
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false "${latest_flag[@]}"
+          # Fail loudly if the release we just targeted still has no assets:
+          # silent skips are what made three releases unusable before.
+          n="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets | length')"
+          if [ "${n:-0}" -lt 4 ]; then
+            echo "::error::$TAG has $n asset(s); expected 4 platform tarballs"
+            exit 1
+          fi
