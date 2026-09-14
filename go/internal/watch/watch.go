@@ -286,7 +286,7 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 					continue
 				}
 				pending = make(map[string]bool)
-				_, _ = index.IndexDirWith(ctx, st, abs, opts.Registry)
+				flushIndex(ctx, st, abs, opts)
 			case <-reconcileC:
 				// The pass covers every queued path, so pending is dropped
 				// rather than flushed first. Only one pass runs at a time —
@@ -295,7 +295,7 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 				if err := addDirs(notifier, abs); err != nil {
 					_ = err // a lost subtree is retried next pass
 				}
-				if _, err := index.IndexDirWith(ctx, st, abs, opts.Registry); err != nil {
+				if err := flushIndex(ctx, st, abs, opts); err != nil {
 					_ = err // transient (e.g. mid-rename file); next pass retries
 					continue
 				}
@@ -310,6 +310,22 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 		}
 	}()
 	return w, nil
+}
+
+// flushIndex runs one debounced/reconcile incremental index pass and then
+// refreshes the inventory snapshot — the same contract every other writer
+// path holds (cmd runIndex, leankg-embed Run, federation pull, gc). Without
+// it the watermark races ahead of the snapshot on every flush, so a project
+// under active watching reads possibly_stale forever: found on THIS repo's
+// fleet leg, where the live writer daemon made the WARN permanent, not
+// transient. Refresh errors are not surfaced — a snapshot hiccup must not
+// drop an index pass, and doctor reports the lag honestly meanwhile.
+func flushIndex(ctx context.Context, st store.Backend, abs string, opts Options) error {
+	if _, err := index.IndexDirWith(ctx, st, abs, opts.Registry); err != nil {
+		return err
+	}
+	_, _ = store.RefreshInventory(st)
+	return nil
 }
 
 // addDirs walks root adding every (non-skipped) directory to the notifier.

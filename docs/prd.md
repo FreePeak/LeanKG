@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.11.2-selfhost-validated
+**Version:** 4.11.3-doctor-truth
 **Date:** 2026-09-14
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.31.3 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
@@ -10,6 +10,21 @@
 
 ## Changelog
 
+
+### v4.11.3-doctor-truth — the loop audits its own auditor (#406 closed)
+
+**Trigger:** the live self-host's `doctor --deep` output itself — three permanently-wrong classifications (the #406 pair, plus the same T0 lie found on the portfolio **query** path while verifying the fix) and two inventory-refresh carry-ins of a class v4.10.0 had already fixed everywhere else (the `gc` verb from #401, and the writer daemon's flush path), caught by running the loop's own checks back against the fixes.
+
+| Finding | Consequence | Fix |
+|---|---|---|
+| `index-freshness` derived the indexed side from `code_elements` (`IndexedFiles`) | a supported file that legitimately yields **zero elements** (ui-v2 configs, build-tag stubs, `calc.h` — 24 on this repo) reads as permanently "missing": a WARN no amount of re-indexing clears, training users to ignore the report | compare the disk walk against the **bookkeeping** table (`RecordedFiles`) — the source of truth for "the indexer has seen this file"; pinned by a zero-element regression case, verified live (PASS 808/808) and E2E on a throwaway project |
+| fleet leg opened a **T0 manifest parent's** (never-indexed by design — children carry the stores) store and reported `UNREADABLE` | every portfolio parent registered via `register-project` dragged doctor --deep to WARN + exit 1 | the registry's own never-indexed shape (`LastIndexed==nil, elements=0, files=0`) classifies as `MANIFEST` — informational like MISSING; genuinely broken stores still WARN (both paths tested) |
+| the portfolio **fan-out** opened each hot child and marked store-open failures `error` — a T0 manifest parent can never succeed | `portfolio` queries reported `games: error` + `projects_failed`, the same design-read-as-fault #406-2 fixed in doctor but on the answering surface | FanOut pre-classifies the registry's never-indexed-zero-counts shape as `not_indexed` with a `reason` and a distinct `projects_not_indexed` count; a registration claiming counts but missing its store stays a genuine `error` (the existing test pins that half) |
+| `leankg gc` bumped the watermark without refreshing the inventory snapshot (#401 carry-in — the exact class v4.10.0 fixed for index/pull/summarize) | a just-gc'd project read `possibly_stale` until some later unrelated write | `cmdGC` calls `store.RefreshInventory` when rows went; E2E: index → delete callee → re-index → `gc` purges 1 → `status` **fresh** |
+| the writer daemon's debounced flush ran `index.IndexDirWith` (bumping the watermark) with no inventory refresh | same class as the gc row above, but worse: the project the loop exists to keep current — this repo, under a live writer — read `possibly_stale` on every fleet sample, so the freshness WARN was structurally un-clearable | `flushIndex` helper: one index pass then `store.RefreshInventory`, the contract every other writer holds. Proven by `TestFlushRefreshesInventorySnapshot` and live: after the fixed writer + one stamp, `fleet: leankg current, FRESH`, check PASS |
+
+
+No new capability; the point of M10 is that every surface — including the diagnostics surface — gets re-proved against this repo's real data, and "0-fail exit 1" noise is a defect class of its own. Live on this repo (wave binary + fixed writer restarted): `doctor --deep` = **9 pass, 2 warn, 0 fail**; `index-freshness` PASS (the 24 phantom "missing" → 0), `fleet` PASS rendering `games: MANIFEST` (not `UNREADABLE`) and `leankg: current, fresh`. The two remaining WARNs are **true statements**: `embedding-coverage` counts the honest over-context remainder (9025/9027 — items no shrink makes fit, reported not hidden), and `leankg-dir` names the live writer's held `watch.lock` with its PID — the designed single-flight report, correct exactly while a writer runs. Before this wave, both fleet staleness and the missing-file delta were lies no amount of re-indexing could clear.
 
 ### v4.11.2-selfhost-validated — the self-host ran on itself; every defect it found is fixed (2026-09-14)
 

@@ -88,17 +88,18 @@ func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest) (map[stri
 		return nil, err
 	}
 	resp := map[string]any{
-		"action":              PortfolioAction,
-		"query":               rep.Query,
-		"tier":                "T1 — hot set opened read-only; nothing was indexed",
-		"registry":            registryWhere(opts),
-		"hot_limit":           rep.HotLimit,
-		"projects_registered": rep.Registered,
-		"projects_served":     rep.Served,
-		"projects_failed":     rep.Failed,
-		"projects_not_hot":    rep.NotHot,
-		"children":            rep.Projects,
-		"hits":                rep.Hits,
+		"action":               PortfolioAction,
+		"query":                rep.Query,
+		"tier":                 "T1 — hot set opened read-only; nothing was indexed",
+		"registry":             registryWhere(opts),
+		"hot_limit":            rep.HotLimit,
+		"projects_registered":  rep.Registered,
+		"projects_served":      rep.Served,
+		"projects_failed":      rep.Failed,
+		"projects_not_hot":     rep.NotHot,
+		"projects_not_indexed": rep.NotIndexed,
+		"children":             rep.Projects,
+		"hits":                 rep.Hits,
 	}
 	if rep.Action != "" {
 		resp["child_action"] = rep.Action

@@ -320,6 +320,32 @@ func TestReconcilePassRecoversMissedEvent(t *testing.T) {
 	await(t, 8*time.Second, func() bool { return el.saw("reconcile") && reconciles >= 1 })
 }
 
+// The writer flush bumps the watermark (index.IndexDirWith) and MUST
+// refresh the inventory snapshot — the contract every other writer path
+// holds. Without it, a project under active watching reads possibly_stale
+// forever (found on this repo's own fleet leg with a live writer daemon).
+func TestFlushRefreshesInventorySnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := openStore(t)
+	proj := t.TempDir()
+	w, err := Start(ctx, st, proj, Options{Debounce: 100 * time.Millisecond, Reconcile: -1})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer w.Stop()
+	if err := os.WriteFile(filepath.Join(proj, "a.go"), []byte("package a\n\nfunc Snap() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	await(t, 8*time.Second, func() bool {
+		n, err := st.ElementCount()
+		if err != nil || n == 0 {
+			return false
+		}
+		return store.Freshness(st, n) == store.FreshnessFresh
+	})
+}
+
 // TestReconcileDisabledByOption pins that a negative Options.Reconcile really
 // turns the pass off: the loop runs long enough for several debounce ticks
 // with no reconcile event emitted.
