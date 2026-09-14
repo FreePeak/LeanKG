@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.2](https://github.com/FreePeak/LeanKG/compare/v0.31.1...v0.31.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* **ci:** resolve the release version by value, not by event name ([#384](https://github.com/FreePeak/LeanKG/issues/384)) ([0b5aa7c](https://github.com/FreePeak/LeanKG/commit/0b5aa7c938685c815092dcaaec327a155ab8ea6b))
+
 ## [0.31.1](https://github.com/FreePeak/LeanKG/compare/v0.31.0...v0.31.1) (2026-09-14)
 
 
