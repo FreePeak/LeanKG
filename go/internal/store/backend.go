@@ -234,3 +234,38 @@ func OpenBackend(ctx context.Context, projectDir, engine, pgURL string, mode Mod
 		return nil, fmt.Errorf("store: unknown engine %q (want sqlite|postgres)", engine)
 	}
 }
+
+// Freshness labels (FR-ZCP-06): the vocabulary every transport uses to say how
+// far behind the working tree the index is.
+const (
+	FreshnessFresh         = "fresh"
+	FreshnessPossiblyStale = "possibly_stale"
+	FreshnessCold          = "cold"
+)
+
+// Freshness derives the index-freshness label from two DB-resident facts: the
+// write watermark seq and the seq the last inventory snapshot was computed at.
+// An index with no elements is cold; anything whose watermark moved past the
+// snapshot — or whose snapshot/watermark cannot be read — is only
+// possibly_stale, because the label is a claim about being able to *prove*
+// freshness, not proof that the tree changed.
+//
+// totalElements is a parameter, not a lookup: `status` has already counted it,
+// so the shared helper must not add a second query per response.
+func Freshness(st Backend, totalElements int) string {
+	if totalElements == 0 {
+		return FreshnessCold
+	}
+	inv, err := st.LoadInventory()
+	if err != nil || inv == nil {
+		return FreshnessPossiblyStale
+	}
+	seq, _, err := st.Watermark()
+	if err != nil {
+		return FreshnessPossiblyStale
+	}
+	if seq == inv.LastInventorySeq {
+		return FreshnessFresh
+	}
+	return FreshnessPossiblyStale
+}

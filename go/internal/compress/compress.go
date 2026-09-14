@@ -21,6 +21,17 @@ func EstimateTokens(text string) int {
 	return len(text) / CharsPerToken
 }
 
+// savingsPercent is the one definition of the savings percentage every
+// compressor's EstimateSavings reports (Rust estimate_savings): 0.0 when there
+// is nothing to compare against.
+func savingsPercent(original, compressed string) float64 {
+	originalTokens := EstimateTokens(original)
+	if originalTokens == 0 {
+		return 0.0
+	}
+	return float64(originalTokens-EstimateTokens(compressed)) / float64(originalTokens) * 100.0
+}
+
 // EstimateTokensPrecise counts whitespace-delimited word starts plus one for
 // a trailing non-whitespace character (bug-for-bug port of
 // estimate_tokens_precise: the final word is counted twice).
@@ -88,12 +99,7 @@ func (c *LeanKGCompressor) Compress(cmd, output string) string {
 // EstimateSavings returns the percentage token saving of compressed vs
 // original.
 func (c *LeanKGCompressor) EstimateSavings(original, compressed string) float64 {
-	originalTokens := EstimateTokens(original)
-	compressedTokens := EstimateTokens(compressed)
-	if originalTokens == 0 {
-		return 0.0
-	}
-	return float64(originalTokens-compressedTokens) / float64(originalTokens) * 100.0
+	return savingsPercent(original, compressed)
 }
 
 // FileReader exposes the mode-based reader (shared session cache).

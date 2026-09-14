@@ -92,34 +92,13 @@ func (f fleetProbe) Fleet() ([]FleetStatus, error) {
 			st.Unreadable = err.Error()
 		} else {
 			st.Applied = applied
-			st.Fresh = fleetFreshness(child)
+			els, _ := child.ElementCount()
+			st.Fresh = store.Freshness(child, els)
 		}
 		_ = child.Close()
 		out = append(out, st)
 	}
 	return out, nil
-}
-
-// fleetFreshness labels one project's index by comparing its DB-resident
-// watermark against the last computed inventory — the same derivation
-// core.Engine.freshness uses, over a read-only handle.
-func fleetFreshness(st store.Backend) string {
-	els, err := st.ElementCount()
-	if err != nil || els == 0 {
-		return "cold"
-	}
-	inv, err := st.LoadInventory()
-	if err != nil || inv == nil {
-		return "possibly_stale"
-	}
-	seq, _, err := st.Watermark()
-	if err != nil {
-		return "possibly_stale"
-	}
-	if seq == inv.LastInventorySeq {
-		return "fresh"
-	}
-	return "possibly_stale"
 }
 
 // checkFleet folds the fleet into one finding: per-project migration drift
@@ -174,7 +153,7 @@ func checkFleet(_ Probes, env Env) Finding {
 			ahead++
 			lines = append(lines, fmt.Sprintf("%s ahead by %d (%s)", p.Project, len(unknown),
 				strings.Join(unknown, ", ")))
-		case p.Fresh == "possibly_stale" || p.Fresh == "cold":
+		case p.Fresh == store.FreshnessPossiblyStale || p.Fresh == store.FreshnessCold:
 			stale++
 			lines = append(lines, fmt.Sprintf("%s: current, %s", p.Project, p.Fresh))
 		default:

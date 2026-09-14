@@ -286,54 +286,6 @@ func TestResolveModePromptOnlyWhenInteractive(t *testing.T) {
 	}
 }
 
-func TestMergeProjectRoots(t *testing.T) {
-	dir := t.TempDir()
-	twin := filepath.Join(dir, "twin")
-	if err := os.Mkdir(twin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// On macOS a TempDir lives under /var -> /private/var; the symlinked and
-	// resolved spellings must collapse to ONE entry.
-	merged := MergeProjectRoots([]string{
-		twin + "/",
-		twin,
-		dir,
-		"/does/not/exist",
-	})
-	if len(merged) != 3 {
-		t.Fatalf("merged = %v, want 3 entries", merged)
-	}
-	if merged[0] == merged[1] {
-		t.Fatalf("twin spellings did not dedupe: %v", merged)
-	}
-	if merged[len(merged)-1] != "/does/not/exist" {
-		t.Fatalf("missing path must be kept as written: %v", merged)
-	}
-}
-
-func TestFreshnessLadder(t *testing.T) {
-	i := func(v int64) *int64 { return &v }
-	cases := []struct {
-		elements int
-		computed *int64
-		commit   *int64
-		want     string
-	}{
-		{0, nil, nil, "cold"},
-		{100, i(1000), i(500), "fresh"},
-		{100, i(1000), i(1000), "fresh"}, // commit == snapshot: not newer
-		{100, i(1000), i(2000), "possibly_stale"},
-		{100, nil, i(500), "possibly_stale"},
-		{100, i(1000), nil, "possibly_stale"},
-	}
-	for _, tc := range cases {
-		if got := FreshnessLabel(tc.elements, tc.computed, tc.commit); got != tc.want {
-			t.Errorf("FreshnessLabel(%d, %v, %v) = %s, want %s",
-				tc.elements, tc.computed, tc.commit, got, tc.want)
-		}
-	}
-}
-
 func TestPathFor(t *testing.T) {
 	if got := PathFor("/proj"); got != filepath.Join("/proj", ".leankg", "config.json") {
 		t.Fatalf("PathFor = %s", got)

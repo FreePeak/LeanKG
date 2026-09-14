@@ -1,2 +1,0 @@
-fn helper() {}
-struct Config {}
