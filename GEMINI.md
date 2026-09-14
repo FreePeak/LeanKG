@@ -1,6 +1,6 @@
 # LeanKG — AI Agent Context (Gemini)
 
-The implementation is 100% Go in `go/` (module `github.com/FreePeak/LeanKG/go`).
+The implementation is 100% Go at the repository root (module `github.com/FreePeak/LeanKG`).
 The Rust tree is gone; any command mentioning `cargo`, `src/`, `target/`, or
 CozoDB is historical and will not work. **[AGENTS.md](AGENTS.md) is the single
 source of truth** — read it for layout, workflow and the full CLI reference.
@@ -8,11 +8,11 @@ source of truth** — read it for layout, workflow and the full CLI reference.
 ## Commands that exist
 
 ```bash
-make go-build        # CGO_ENABLED=0 binaries into go/bin/ (leankg, leankg-embed)
+make go-build        # CGO_ENABLED=0 binaries into bin/ (leankg, leankg-embed)
 make go-test         # go test ./... -count=1
 make go-vet          # go vet ./...
 make go-build-tstree # the tree-sitter tier (-tags tstree, needs CGO)
-make go-ui-assets    # build ui-v2 and sync it into go/internal/web/embed
+make go-ui-assets    # build ui-v2 and sync it into internal/web/embed
 make dual-engine     # sqlite + live-PostgreSQL acceptance gate
 ```
 

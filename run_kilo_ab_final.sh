@@ -4,7 +4,7 @@
 #
 # FR-ZCP-08 hardening (issue #276): same pins-or-refuse gate as
 # run_kilo_ab_test.sh — every trial is recorded via
-# scripts/kilo_ab_common.sh + go/benchmark/ab/abrun with pinned corpus /
+# scripts/kilo_ab_common.sh + benchmark/ab/abrun with pinned corpus /
 # tool SHAs and prompt-template hashes; >=3 trials/arm; per-arm medians;
 # scorer-emitted zg pitfalls checklist in the results JSON.
 

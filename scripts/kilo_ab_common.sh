@@ -2,7 +2,7 @@
 # scripts/kilo_ab_common.sh — shared FR-ZCP-08 (issue #276) hardening for
 # the kilo A/B runners (run_kilo_ab_final.sh, run_kilo_ab_test.sh).
 #
-# Guarantees (the Go side of the harness, go/benchmark/ab/harness.go, is
+# Guarantees (the Go side of the harness, benchmark/ab/harness.go, is
 # the source of truth; this file only resolves pins and pipes rows):
 #   * PINNED SHAs/PROMPTS: every trial row carries the 40-hex corpus
 #     commit, 40-hex commit SHAs for each measured tool (leankg build
@@ -27,7 +27,7 @@
 # Unresolvable => the run is refused (never recorded unpinned).
 
 AB_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-AB_GO_DIR="$AB_SCRIPT_DIR/go"
+AB_GO_DIR="$AB_SCRIPT_DIR"
 AB_TRIALS_PER_ARM=${AB_TRIALS_PER_ARM:-3}
 if [ "$AB_TRIALS_PER_ARM" -lt 3 ]; then
     echo "ab_common: AB_TRIALS_PER_ARM=$AB_TRIALS_PER_ARM below the FR-ZCP-08 floor; using 3" >&2

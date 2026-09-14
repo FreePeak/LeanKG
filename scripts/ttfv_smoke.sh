@@ -98,7 +98,7 @@ if [ "$SKIP_BUILD" = "1" ]; then
     log "step install: 0.000s (TTFV_SKIP_BUILD=1, reusing $LEANKG)"
 else
     build_all() {
-        ( cd "$REPO_ROOT/go" \
+        ( cd "$REPO_ROOT" \
             && CGO_ENABLED=0 go build -o "$BIN/leankg" ./cmd/leankg \
             && CGO_ENABLED=0 go build -o "$BIN/leankg-embed" ./cmd/leankg-embed )
     }
