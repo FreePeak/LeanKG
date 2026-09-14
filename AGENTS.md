@@ -63,7 +63,13 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
   release-please throw while loading the manifest.
 - `leankg update` polls `releases/latest`, so the release must be non-draft and
   marked latest; asset names and the archive layout are a contract with
-  `go/internal/update`.
+  `go/internal/update`. `--latest` is claimed only when the version is at least
+  the current latest, so re-publishing an older release cannot downgrade clients.
+- `scripts/release_workflow_guards.py` (a CI step) pins three invariants of that
+  workflow: no job may gate on `inputs.*` (empty in a job-level `if` on
+  dispatch), publish must assert the asset count, and `--latest` must stay
+  conditional. Each maps to a defect that shipped a green run with zero
+  binaries — edit `release.yml` and CI will tell you which one you re-introduced.
 
 ## Key source files
 
@@ -84,4 +90,4 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 
 MCP HTTP `?project=` walks to the nearest `.leankg`; `LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL` switch storage. Never paste personal host paths into commits.
 
-*Last updated: 2026-09-14 (post-cutover hygiene sweep, Go tree restructure, single-run release pipeline)*
+*Last updated: 2026-09-14 (post-cutover hygiene sweep, Go tree restructure, single-run release pipeline + its CI guards)*
