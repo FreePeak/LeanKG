@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/FreePeak/LeanKG/compare/v0.32.1...v0.33.0) (2026-09-14)
+
+
+### Miscellaneous Chores
+
+* declare the module-root release version ([#417](https://github.com/FreePeak/LeanKG/issues/417)) ([4480c79](https://github.com/FreePeak/LeanKG/commit/4480c7975ac4c1462f19d4512f2ac448aa8e16b5))
+
 ## [0.32.1](https://github.com/FreePeak/LeanKG/compare/v0.32.0...v0.32.1) (2026-09-14)
 
 
