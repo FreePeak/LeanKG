@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/go/internal/portfolioreg"
@@ -336,12 +337,33 @@ func TestLeankgDir(t *testing.T) {
 	if f := checkLeankgDir(nil, env); f.Status != StatusPass {
 		t.Fatalf("writable = %s (%s)", f.Status, f.Detail)
 	}
-	if err := os.WriteFile(filepath.Join(env.LeankgDir, "embed.lock"), []byte("1"), 0o644); err != nil {
+	// An IDLE persistent lock token is the normal post-run state and must
+	// not warn; only a HELD flock (live embed/watch single-flight) does.
+	lockPath := filepath.Join(env.LeankgDir, "embed.lock")
+	lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if f := checkLeankgDir(nil, env); f.Status != StatusPass {
+		t.Fatalf("idle lock = %s (%s), want PASS", f.Status, f.Detail)
+	}
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(lf, "%d\n", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
 	f := checkLeankgDir(nil, env)
 	if f.Status != StatusWarn || !strings.Contains(f.Detail, "embed.lock") {
-		t.Fatalf("lock = %s (%s)", f.Status, f.Detail)
+		t.Fatalf("held lock = %s (%s), want WARN naming embed.lock", f.Status, f.Detail)
+	}
+	if !strings.Contains(f.Detail, fmt.Sprint(os.Getpid())) {
+		t.Fatalf("held lock detail must name the owning PID: %s", f.Detail)
+	}
+	_ = syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+	if f := checkLeankgDir(nil, env); f.Status != StatusPass {
+		t.Fatalf("released lock = %s (%s), want PASS", f.Status, f.Detail)
 	}
 }
 

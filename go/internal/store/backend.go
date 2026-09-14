@@ -30,6 +30,12 @@ type Backend interface {
 	Files() ([]FileRecord, error)
 	DeleteByFile(path string) error
 	DeleteFileRecord(path string) error
+	// DeleteOrphanRelationships purges edges whose source or target element
+	// no longer exists (leankg gc; the repair `doctor --deep` names for the
+	// documented reconcile ceiling — edges into a deleted file survive until
+	// their source file is re-indexed, which incremental index never
+	// revisits). Returns the number of edges removed.
+	DeleteOrphanRelationships() (int, error)
 	// relationship reads (graph traversal seeds; pure-Go BFS lives in internal/graph)
 	Outgoing(source string) ([]Relationship, error)
 	Incoming(target string) ([]Relationship, error)

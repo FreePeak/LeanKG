@@ -21,7 +21,12 @@ import (
 // (src/embeddings/text_blob.rs CHUNKER_VERSION), enforced through the stamp
 // here instead of the content hash because Go's content_hash is also the
 // NDJSON export/resume key and must stay stable.
-const ChunkerVersion = 1
+//
+// v2: the local provider family embeds under a model-context budget
+// (maxLocalTextChars) instead of the general cap — text a 512-token sidecar
+// can actually accept. Bumping the version rebuilds collections stamped v1,
+// where over-budget elements had no vectors at all (the run died on them).
+const ChunkerVersion = 2
 
 // batchSize is the number of texts sent to the provider per call.
 const batchSize = 32
@@ -182,9 +187,13 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 			continue
 		}
 		text := e.Content
-		if utf8.RuneCountInString(text) > maxContentChars {
+		textCap := maxContentChars
+		if p.Provider() == "local" {
+			textCap = min(textCap, maxLocalTextChars)
+		}
+		if utf8.RuneCountInString(text) > textCap {
 			rep.Truncations++
-			text = truncateRunes(text, maxContentChars)
+			text = truncateRunes(text, textCap)
 		}
 		dirty = append(dirty, dirtyItem{file: e.File, qn: e.QN, text: text, hash: h})
 	}
@@ -251,7 +260,16 @@ func groupByFile(dirty []dirtyItem) [][]dirtyItem {
 // sub-batches and committed as one unit. A batch failing validation
 // (count/dims/finiteness) is counted in rep.Failed and its items are simply
 // not committed, so the file stays dirty and the run continues to partial.
+//
+// A batch that fails at the PROVIDER (e.g. an element that slipped the local
+// text budget and is over the model's context — llama.cpp answers 500, it
+// does not truncate) retries the batch item by item: the poison element is
+// counted in rep.Failed and stays dirty, its healthy siblings are still
+// committed. An all-failed run is an unavailable provider — infra, not data —
+// and aborts with the provider's own error, preserving the pre-existing
+// fail-loud contract (found dogfooding `leankg-embed` on this repository).
 func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
+	var lastErr error
 	for _, group := range groups {
 		rows := make([]store.VectorRow, 0, len(group))
 		states := make(map[string]string, len(group))
@@ -266,7 +284,24 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 			}
 			vecs, err := p.Embed(ctx, Document, texts)
 			if err != nil {
-				return fmt.Errorf("embed: provider %s: %w", modelID, err)
+				// Per-item retry: commit what the provider accepts, count what
+				// it rejects. Costs extra calls only on the error path.
+				lastErr = err
+				for _, d := range batch {
+					v, ierr := p.Embed(ctx, Document, []string{d.text})
+					if ierr != nil {
+						lastErr = ierr
+						rep.Failed++
+						continue
+					}
+					if validateBatch(v, 1, p.Dimensions()) != nil {
+						rep.Failed++
+						continue
+					}
+					rows = append(rows, store.VectorRow{QualifiedName: d.qn, Vec: v[0]})
+					states[d.qn] = d.hash
+				}
+				continue
 			}
 			if err := validateBatch(vecs, len(texts), p.Dimensions()); err != nil {
 				rep.Failed += len(batch)
@@ -285,21 +320,18 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 		}
 		rep.Embedded += len(rows)
 	}
+	// Nothing embedded and everything failed: that is a dead/misconfigured
+	// provider, not a poison element — surface it loudly (wrapping the
+	// provider's own error) exactly as a batch failure used to.
+	if rep.Dirty > 0 && rep.Failed == rep.Dirty && rep.Embedded == 0 && lastErr != nil {
+		return fmt.Errorf("embed: all %d item(s) failed: %w", rep.Failed, lastErr)
+	}
 	return nil
 }
 
-// truncateRunes clips to n runes. Its only caller checks the rune count first,
-// but the slice form of this function panicked when that guard was ever missed,
-// so the walk makes the helper safe on its own terms.
 func truncateRunes(s string, n int) string {
-	count := 0
-	for pos := range s {
-		if count == n {
-			return s[:pos]
-		}
-		count++
-	}
-	return s
+	r := []rune(s)
+	return string(r[:n])
 }
 
 // coverage is the fraction of live elements holding vectors; a store with

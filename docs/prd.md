@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.11.1-ship-surface
+**Version:** 4.11.2-selfhost-validated
 **Date:** 2026-09-14
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.31.3 (Go engine, `go/`, module `github.com/FreePeak/LeanKG/go`; the Rust tree was removed in f7624143)
@@ -9,6 +9,30 @@
 ---
 
 ## Changelog
+
+
+### v4.11.2-selfhost-validated — the self-host ran on itself; every defect it found is fixed (2026-09-14)
+
+**Trigger:** M10/S1 executed for real on this repository. The dynamic HTTP server came up over this checkout (`leankg serve --http :9699 --rest :9700 --ui :9701 --memory --embed-provider local`) with a pinned local embedder (`llama-server` serving `bge-small-en-v1.5` GGUF, 384-d). All five S1 gates passed; the run then surfaced four real engine defects, each fixed with a failing-first test.
+
+**S1 self-host — verified live, not inferred:**
+- **Index:** this repo reconciled into sqlite (`9,025 elements`, `19,662 relationships`, `807 files`); `doctor --deep` → `orphaned-relationships PASS`, `duplicate-names PASS`, `migrations 14/14`.
+- **Embed:** 8,989 vectors from the pinned catalog model; `ChunkerVersion 2`; the `Failed`/`Truncations`/`Coverage` report surfaced honestly (`Coverage 0.9984`, 14 over-context items counted, not fatal). Stamp `bge-small-en-v1.5-384|local|384|cosine|ea104dace…|2` written to `emb_stamp`.
+- **Ladder:** L1 (`exact identifier match`), L2 (`FTS5 keyword match`), **L3 (`vector similarity (cosine)`)** all answered over REST `POST /api/v1/query` with `retrieval` provenance on the repo's own embeddings.
+- **Memory:** `session/retain` → `written=2`; `session/recall` round-trips; **survives a full server restart** (read back after re-launch).
+- **Health:** `/health` → `{"ok":true}` on MCP (9699), REST (9700), and UI (9701).
+
+**Dogfood defects found and fixed (each pinned failing-first):**
+
+| Finding | Consequence before the fix | Fix |
+|---|---|---|
+| `Run` clipped local-provider text at the general 8000-rune cap, but a 512-token GGUF embedder answers HTTP **500** (not truncate) beyond its context | One over-context element (`leankg-embed full` hit it immediately on this repo: an 845-token markdown/doc node) **aborted the whole pass** — a mass of good vectors lost to one bad item | local family embeds under `maxLocalTextChars = 1000` (~500 tokens at code density, measured 2.7 chars/token on real Go); `ChunkerVersion → 2` |
+| A PROVIDER-level batch failure returned fatal (`embedFiles`), distinct from a validation failure | a single poison element killed the run even after the budget, because llama.cpp rejects >512 tokens rather than truncating | `embedFiles` retries a provider-failed batch **item by item**: the rejected item is counted in `Report.Failed` and left dirty, its siblings still commit; only an **all-failed** run aborts (dead provider is infra, not data) |
+| `doctor --deep` orphan hint told users to purge leftovers with `leankg gc` — **a verb that did not exist** (it named the deliberately-dropped Rust `gc.rs`) | a mass deletion (v4.10.1) leaves dangling edges that incremental index never revisits, with no repair path | implemented `leankg gc` over a new `store.DeleteOrphanRelationships` (both engines; watermark bumps only when rows go) — purged 5,810 edges live, orphan check FAIL→PASS |
+| `checkLeankgDir` warned on any `*.lock` file's mere **existence**; `embed.lock`/`watch.lock` are persistent kernel-released flocks | every successful embed left a permanent "stray lock file" WARN, and the hint to `cat <lock>` for a PID was a lie (the PID was never written) | check now probes **HELD** via `LOCK_EX|LOCK_NB` (idle token → PASS); embed/watch stamp the owning PID so the WARN names it |
+| `TestSidecarExitsDuringStartup` hardcoded port `18080` | a dev ssh tunnel answering `/health` there made "the sidecar died" a silent **false pass** | use `freeTCPPort()` (the rest of the file already did); `TestLeankgDir` likewise rewritten to assert idle→PASS / held→WARN / released→PASS |
+
+**Test-layer policy (owner decision, codified in `AGENTS.md` + §6):** unit tests stay in-process and fast (no real provider/network/sleeps — `go test ./...` is the gate); anything making a real embed/LLM/PG call is an integration/e2e test gated on env (`LEANKG_TEST_PG_URL`, live sidecar) or its own job (`ttfv`); **benchmarks never run in CI**. The live self-host run above is the integration tier, executed by hand and recorded here, not a CI unit test.
 
 ### v4.11.1-ship-surface — the public surfaces: brand mark, README, the published module, the live deploy (2026-09-14)
 
@@ -692,13 +716,17 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (e
 ### 5.1 M10 runbook (the anchored next actions, in order)
 
 1. ~~Wait for the refactor waves to land~~ — **done in v4.11.1** (Docker/Render deploy service, `go/vX.Y.Z` module-tag mirror, `serve --ui` `/health`). Pull rebase-clean `main` before touching anything.
-2. **S1 — bootstrap the self-host** (this checkout, sqlite engine):
+2. **S1 — bootstrap the self-host** (this checkout, sqlite engine) — **DONE v4.11.2; the corrected commands as actually run:**
    ```bash
-   cd go && go build ./... && ./bin/leankg index .. --auto       # index this repo into ../.leankg/leankg.db
-   LEANKG_EMBED_PROVIDER=local ./bin/leankg-embed run ..          # pinned-identity vectors; L3 live
-   ./bin/leankg serve --http :9699 --rest :8080 --ui :8081 --memory --project ..
+   # one-time: brew install llama.cpp; download bge-small-en-v1.5 f16 GGUF to ~/.leankg/models/
+   llama-server -m ~/.leankg/models/bge-small-en-v1.5-f16.gguf --embeddings --host 127.0.0.1 --port 8085 -c 8192
+   cd go && go build ./... && ./bin/leankg index . --auto     # this repo -> .leankg/leankg.db
+   env LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:8085/v1 \
+       LEANKG_EMBED_MODEL=bge-small-en-v1.5-384 go/bin/leankg-embed full .
+   go/bin/leankg serve --http :9699 --rest :9700 --ui :9701 --memory --embed-provider local --project .
    ```
-   Verify: `/health` on each listener; `leankg status --project ..` → fresh; L1/L2/L3 over `:9699/mcp`; retain→recall survives restart; `doctor --deep` clean.
+   Ports 9700/9701, not 8080/8081: the live onegw gateway owns 8080 (pre-flight `lsof -iTCP -sTCP:LISTEN` first). `--embed-provider local` + `LEANKG_EMBED_BASE_URL` ATTACHes the sidecar — a serve process never orphans a spawned one.
+   Verify (all ✅ 2026-09-14): `/health` → `{"ok":true}` ×3; L1/L2/L3 with `retrieval` provenance (L3 = cosine on 8,989 real vectors); retain→recall survives restart; `doctor --deep` 0-fail after the wave's gc run.
 3. **S2 — work through it**: impact/callers before exported-symbol edits, tested-by before closes, recall at session open; wrong answers become engine defects (failing test first), fixed in `go/`, then re-index and re-ask.
 4. **S3 — scale carefully**: add small nested-repo parents one at a time via the registry / `LEANKG_PROJECT_DIRS` (hot-set cap 8, zero eager indexing). **Never** index the `freepeak` root (99,574 files).
 5. **S4 — loop**: build, fix, release via release-please; keep this PRD + tracker as the status ledger each cycle.
@@ -726,6 +754,7 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (e
 | Time-to-first-value (T2) | Cold happy path (install → init → serve → one JSON config block → first useful query) ≤ 5 min, CI-timed on a fresh environment, number published in README |
 | Claim hygiene (T1) | Every "zero-config"-class README/docs claim maps to a named script or CI job that executes it literally; claims without a passing script are deleted |
 | Setup friction (FR-ZCP-13) | Exactly one auto/manual question per user, persisted; the registration verb (Go: `leankg index`) returns < 2 s; manual mode never auto-indexes |
+| Test layering (v4.11.2 contract) | Unit tests in-process + fast (no real provider/network/sleeps; `go test ./...` is the whole gate, 300 s CI budget); real embed/LLM/PG calls live in env-gated integration/e2e (`LEANKG_TEST_PG_URL`, live sidecar, `ttfv` job); **benchmarks never run in CI** |
 
 ## 6b. Rust CLI parity — per-verb disposition
 
@@ -803,4 +832,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-14 (v4.11.1 — ship-surface wave: brand mark redesigned as a graph-"K" (`assets/icon.svg` + both favicons, verified at 16/32/128 px), the Go module published (`go/vX.Y.Z` mirror job in `release.yml`, `go/v0.31.3` cut, pkg.go.dev + `go install …@latest` live), the container deploy restored ([Dockerfile](../Dockerfile) with a build-time demo graph, JSON `/health` on the dashboard listener, WAL-directory ownership fix), and the README re-badge with its stale claims corrected. FR-SELF-01's gate is therefore satisfied — S1 bootstrap is the next action. Prior wave: v4.11.0 anchored the self-host dogfood loop)*
+*Last updated: 2026-09-14 (v4.11.2 — the self-host ran on itself: dynamic HTTP server (`--http 9699 --rest 9700 --ui 9701 --memory --embed-provider local`) with the pinned `bge-small-en-v1.5-384` sidecar over this repo's own index (9,025 elements, 8,989 vectors, coverage 0.9984), all five S1 gates verified live (health ×3, L1/L2/L3 with provenance, retain→recall across restart, doctor 0-fail); the run's four dogfood defects fixed failing-first — local text budget + chunker v2, per-item provider-failure fallback, the long-advertised `leankg gc` verb implemented (5,810 dangling edges purged live), held-lock doctor probe + PID stamping; test-layer policy codified: unit in-process+fast, real calls integration/e2e-gated, benchmarks never in CI. Prior wave: v4.11.1 ship-surface — brand mark, published module, restored container deploy)*

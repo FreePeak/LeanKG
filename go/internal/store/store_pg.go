@@ -251,6 +251,22 @@ func (s *PGStore) DeleteFileRecord(path string) error {
 	return s.BumpWatermark()
 }
 
+// DeleteOrphanRelationships removes every edge whose endpoint is no longer a
+// live element (leankg gc).
+func (s *PGStore) DeleteOrphanRelationships() (int, error) {
+	tag, err := s.pool.Exec(pgCtx, `DELETE FROM relationships
+		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements)
+		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements)`)
+	if err != nil {
+		return 0, err
+	}
+	n := int(tag.RowsAffected())
+	if n == 0 {
+		return 0, nil
+	}
+	return n, s.BumpWatermark()
+}
+
 const pgElementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path, ce.line_start, ce.line_end, ce.language, COALESCE(ce.parent_qualified,''), ce.content, COALESCE(ce.metadata::text,'{}')`
 
 func pgScanElements(rows pgx.Rows) ([]Element, error) {
