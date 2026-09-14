@@ -10,13 +10,10 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "go/cmd/leankg/VERSION"
-        },
-        {
-          "type": "generic",
           "path": "go/internal/mcp/server.go"
         }
       ]
     }
-  }
+  },
+  "version-file": "go/cmd/leankg/VERSION"
 }
