@@ -133,3 +133,64 @@ func TestParameterizedWriteRoutesGated(t *testing.T) {
 		}
 	}
 }
+
+// TestCompatMountWriteRoutesGated pins the same gate for the hindsight-compat
+// mount (#414), which spells retain as /v1/default/banks/{bank}/memories. The
+// mount is added by --hindsight-compat and lives on the REST listener, so it
+// passes through this middleware exactly like the native route — a Viewer who
+// cannot write /api/v1/memory/banks/{bank}/memories must not be able to write
+// the same row through the alias.
+func TestCompatMountWriteRoutesGated(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
+
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	calls := []struct {
+		name   string
+		method string
+		path   string
+		want   int
+	}{
+		{"compat retain", "POST", "/v1/default/banks/omp/memories", http.StatusForbidden},
+		{"compat bank ensure", "PUT", "/v1/default/banks/omp", http.StatusOK},
+		{"compat recall", "POST", "/v1/default/banks/omp/memories/recall", http.StatusOK},
+		{"compat stats", "GET", "/v1/default/banks/omp/stats", http.StatusOK},
+		{"compat list", "GET", "/v1/default/banks/omp/memories", http.StatusOK},
+		{"compat read by id", "GET", "/v1/default/banks/omp/memories/123-0", http.StatusOK},
+		{"compat reflect", "POST", "/v1/default/banks/omp/reflect", http.StatusOK},
+		{"native retain still gated", "POST", "/api/v1/memory/banks/omp/memories", http.StatusForbidden},
+	}
+	for _, c := range calls {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(c.method, c.path, nil)
+			req.Header.Set("Authorization", "Bearer viewer-tok")
+			h.ServeHTTP(rec, req)
+			if rec.Code != c.want {
+				t.Fatalf("%s %s as viewer: %d, want %d", c.method, c.path, rec.Code, c.want)
+			}
+		})
+	}
+}
+
+// TestCompatRetainAllowedForContributor is the other half: tightening the gate
+// must not lock a Contributor out of the compat mount.
+func TestCompatRetainAllowedForContributor(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "contrib-tok")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/default/banks/omp/memories", nil)
+	req.Header.Set("Authorization", "Bearer contrib-tok")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("contributor retain: %d, want 200", rec.Code)
+	}
+}

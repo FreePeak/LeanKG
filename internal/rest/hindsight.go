@@ -4,8 +4,11 @@
 //
 //	PUT  /v1/default/banks/{bank}                 bank ensure (always ok)
 //	POST /v1/default/banks/{bank}/memories        retain  {items:[{content,...}], async?}
+//	GET  /v1/default/banks/{bank}/memories        list    ?offset=&limit=
+//	GET  /v1/default/banks/{bank}/memories/{id}   read one row by id (or document_id)
 //	POST /v1/default/banks/{bank}/memories/recall recall  {query, tags?, tags_match?, budget?, max_tokens?}
 //	POST /v1/default/banks/{bank}/reflect         digest of top recall rows {text}
+//	GET  /v1/default/banks/{bank}/stats           store report (K4)
 //
 // Wire deltas this bridge absorbs (vs the native FR-ZCP-07 surface):
 // path prefix `/v1/default/banks` (not `/api/v1/memory/banks`), recall at
@@ -15,12 +18,12 @@
 // metadata and filter recall (`all`/`all_strict` require every requested
 // tag, anything else requires at least one). `update_mode:"replace"` is
 // treated as append (the JSONL store has no per-document revision), and the
-// documents / mental-models endpoints are deliberately not mounted — the
 // wiring disables mental models client-side.
 package rest
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,16 +127,7 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 			if !entryHasTags(e, body.Tags, body.TagsMatch) {
 				continue
 			}
-			row := map[string]any{
-				"text":         e.Content,
-				"id":           e.ID,
-				"type":         "observation",
-				"mentioned_at": time.Unix(e.Timestamp, 0).UTC().Format(time.RFC3339),
-			}
-			if tags := entryTags(e); len(tags) > 0 {
-				row["tags"] = tags
-			}
-			results = append(results, row)
+			results = append(results, hindsightRows([]memory.Entry{e})[0])
 			if len(results) == defaultRecallLimit {
 				break
 			}
@@ -163,6 +157,67 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"text": text})
 	})
+	// K4: the client's /memory stats calls this and printed "server
+	// unreachable" for a healthy server while it 404'd.
+	mux.HandleFunc("GET /v1/default/banks/{bank}/stats", func(w http.ResponseWriter, r *http.Request) {
+		stats, err := mem.Stats(r.PathValue("bank"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, stats)
+	})
+
+	// K3: read parity with the native mount's row access — by-id for the
+	// client's read-before-edit seam, and a list for indexing/export. Both
+	// are reads, so neither is in auth's write set.
+	mux.HandleFunc("GET /v1/default/banks/{bank}/memories", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		offset, _ := strconv.Atoi(q.Get("offset"))
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		entries, total, err := mem.List(r.PathValue("bank"), offset, limit)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"bank_id": r.PathValue("bank"), "object": "list", "total": total,
+			"results": hindsightRows(entries),
+		})
+	})
+	mux.HandleFunc("GET /v1/default/banks/{bank}/memories/{id}", func(w http.ResponseWriter, r *http.Request) {
+		e, found, err := mem.ByID(r.PathValue("bank"), r.PathValue("id"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"error": "no memory with id " + r.PathValue("id") + " in bank " + r.PathValue("bank"),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, hindsightRows([]memory.Entry{e})[0])
+	})
+}
+
+// hindsightRows renders entries in the client's recall/list row shape, so a
+// read-by-id returns byte-identically to the same row inside a recall.
+func hindsightRows(entries []memory.Entry) []map[string]any {
+	rows := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		row := map[string]any{
+			"text":         e.Content,
+			"id":           e.ID,
+			"type":         "observation",
+			"mentioned_at": time.Unix(e.Timestamp, 0).UTC().Format(time.RFC3339),
+		}
+		if tags := entryTags(e); len(tags) > 0 {
+			row["tags"] = tags
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 const defaultRecallLimit = 8
