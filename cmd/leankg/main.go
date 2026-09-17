@@ -257,6 +257,7 @@ func cmdServe(args []string) {
 	rpcAddr := fs.String("rpc", "", "ConnectRPC address (gRPC + gRPC-Web + JSON, e.g. :9090)")
 	uiAddr := fs.String("ui", "", "dashboard address serving the embedded ui-v2 build (e.g. :8080)")
 	hindsightCompat := fs.Bool("hindsight-compat", false, "on the REST listener, mount the Hindsight-wire compat aliases (/v1/default/banks/...) that omp's memory.backend=hindsight speaks; requires --memory")
+	memoryGlobal := fs.Bool("memory-global", false, "keep the memory layer in ~/.leankg/memory instead of <project>/.leankg/memory (shared/portfolio memory root; requires --memory)")
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
 	}
@@ -305,9 +306,16 @@ func cmdServe(args []string) {
 
 	var mem *memory.Memory
 	if *withMemory {
-		if mem, err = memory.Open(dir, false); err != nil {
+		// K1: --memory-global moves the bank root out of every indexed
+		// repository into ~/.leankg/memory, so several projects can share
+		// one memory service. Opt-in — the default stays per-project, so an
+		// existing deployment's banks never move underneath it. The root is
+		// logged because it is also the single-writer anchor: two servers on
+		// one root append to the same JSONL with no cross-process lock.
+		if mem, err = memory.Open(dir, *memoryGlobal); err != nil {
 			log.Fatalf("memory: %v", err)
 		}
+		log.Printf("leankg memory root %s", mem.Root())
 	}
 
 	var embedder core.QueryEmbedder

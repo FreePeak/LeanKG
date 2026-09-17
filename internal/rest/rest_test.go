@@ -300,3 +300,20 @@ func TestSessionAndOntologyEndpoints(t *testing.T) {
 		t.Fatalf("persisted matches: %s", res.body)
 	}
 }
+
+// getJSON GETs url (optionally decoding a JSON body into out) and returns the
+// status code — the read-side twin of postJSON.
+func getJSON(t *testing.T, url string, out any) int {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if out != nil && resp.StatusCode == http.StatusOK {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			t.Fatalf("decode %s response: %v", url, err)
+		}
+	}
+	return resp.StatusCode
+}

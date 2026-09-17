@@ -99,16 +99,34 @@ var writePrefixes = []string{
 	"/leankg.v1.LeanKG/Import",
 }
 
-// isWritePath reports whether a request path targets a mutating route.
-// Hindsight memory retain is the parameterized exception: its route ends in
-// /memories (recall, a read, ends in /recall).
-func isWritePath(path string) bool {
+// memoryWritePrefixes are the parameterized memory-retain route prefixes.
+// Both mounts spell retain as POST <prefix>{bank}/memories; the same path
+// answers GET with a listing (K3), and every other memory route is a read
+// (recall ends in /recall, read-by-id ends in the row id, stats ends in
+// /stats, and the bank ensure touches no store).
+var memoryWritePrefixes = []string{
+	"/api/v1/memory/banks/", // native FR-ZCP-07 mount
+	"/v1/default/banks/",    // hindsight-compat mount (#414)
+}
+
+// isWritePath reports whether a request mutates state. Path alone is not
+// enough: memory retain and memory list share one path, so the method decides
+// (GET /…/memories lists, POST /…/memories retains).
+func isWritePath(path, method string) bool {
 	for _, p := range writePrefixes {
 		if strings.HasPrefix(path, p) {
 			return true
 		}
 	}
-	return strings.HasPrefix(path, "/api/v1/memory/banks/") && strings.HasSuffix(path, "/memories")
+	if method != http.MethodPost || !strings.HasSuffix(path, "/memories") {
+		return false
+	}
+	for _, p := range memoryWritePrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // WriteTools are the MCP tool names that mutate state (all import actions).
@@ -171,7 +189,7 @@ func MiddlewareWithStore(st store.Backend, next http.Handler) http.Handler {
 			http.Error(w, errs.Unauthorized.Message(), http.StatusUnauthorized)
 			return
 		}
-		if isWritePath(r.URL.Path) && role < Contributor {
+		if isWritePath(r.URL.Path, r.Method) && role < Contributor {
 			http.Error(w, errs.PermissionDenied.Message(), http.StatusForbidden)
 			return
 		}
