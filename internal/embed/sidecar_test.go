@@ -405,6 +405,48 @@ func TestSplitArgs(t *testing.T) {
 	}
 }
 
+func TestSidecarConfigFromEnvDefaultsToLocalGGUF(t *testing.T) {
+	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", "")
+	t.Setenv("LEANKG_EMBED_SIDECAR_ARGS", "")
+	t.Setenv("LEANKG_EMBED_SIDECAR_PORT", "")
+	t.Setenv("LEANKG_EMBED_SIDECAR_READY_SECS", "")
+	cfg, err := SidecarConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(cfg.Args, " ")
+	if !strings.Contains(got, "--embeddings") {
+		t.Fatalf("default args miss --embeddings: %#v", cfg.Args)
+	}
+	// Pinned file present in ~/.leankg/models → served directly (-m).
+	if home, herr := os.UserHomeDir(); herr == nil && fileExists(filepath.Join(home, ".leankg", "models", DefaultLocalFile)) {
+		if !strings.Contains(got, "-m") || !strings.Contains(got, DefaultLocalFile) {
+			t.Fatalf("want -m <pinned file>, got %#v", cfg.Args)
+		}
+	} else {
+		// Otherwise the HF self-fetch fallback carries the pinned repo.
+		if !strings.Contains(got, DefaultLocalRepo) {
+			t.Fatalf("want -hf %s fallback, got %#v", DefaultLocalRepo, cfg.Args)
+		}
+	}
+	// An explicit ARGS always wins over the default.
+	t.Setenv("LEANKG_EMBED_SIDECAR_ARGS", "-m /custom/model.gguf --embeddings")
+	cfg, err = SidecarConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.Args, " ") != "-m /custom/model.gguf --embeddings" {
+		t.Fatalf("explicit args lost: %#v", cfg.Args)
+	}
+}
+
+func TestSidecarNotFoundNamesDownload(t *testing.T) {
+	_, err := StartSidecar(context.Background(), SidecarConfig{Command: "leankg-no-such-sidecar-binary"})
+	if err == nil || !strings.Contains(err.Error(), DefaultLocalRepo) {
+		t.Fatalf("want not-found error naming %s, got %v", DefaultLocalRepo, err)
+	}
+}
+
 func TestPortFlagPresent(t *testing.T) {
 	for _, args := range [][]string{{"--port", "9"}, {`--port=9`}, {"-m", "x", "--port=1"}} {
 		if !portFlagPresent(args) {

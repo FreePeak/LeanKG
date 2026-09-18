@@ -66,8 +66,11 @@ Usage:
 
 Providers (env): LEANKG_EMBED_PROVIDER=local|openai|deterministic (default local).
 local spawns the llama.cpp sidecar: LEANKG_EMBED_SIDECAR_CMD (default llama-server),
-LEANKG_EMBED_SIDECAR_ARGS (shell-quoted), LEANKG_EMBED_SIDECAR_PORT (default 8080),
-LEANKG_EMBED_SIDECAR_READY_SECS (default 120). Attach instead with LEANKG_EMBED_BASE_URL.
+LEANKG_EMBED_SIDECAR_ARGS (shell-quoted; default serves the pinned bge-small-en-v1.5 GGUF
+with --embeddings: -m ~/.leankg/models/bge-small-en-v1.5-f16.gguf when that file exists,
+otherwise -hf CompendiumLabs/bge-small-en-v1.5-gguf:f16 which self-downloads on first use),
+LEANKG_EMBED_SIDECAR_PORT (default 8080), LEANKG_EMBED_SIDECAR_READY_SECS (default 120).
+Attach instead with LEANKG_EMBED_BASE_URL.
 Remote: LEANKG_EMBED_BASE_URL, LEANKG_EMBED_API_KEY, LEANKG_EMBED_MODEL,
 LEANKG_EMBED_DIMS, LEANKG_EMBED_REVISION.
 `)

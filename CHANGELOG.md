@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+* **embed:** spawn path for `LEANKG_EMBED_PROVIDER=local` serves the pinned bge-small-en-v1.5 GGUF by default (`internal/embed/sidecar.go`): `-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf --embeddings` when the file exists, otherwise `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` which self-downloads into the llama.cpp cache on first use; the not-found error names the download step. `leankg-embed run/full/export/import/status` and `leankg serve --embed-provider local` work out of the box with no hand-written `LEANKG_EMBED_SIDECAR_ARGS`.
+
 ## [0.34.0](https://github.com/FreePeak/LeanKG/compare/v0.33.0...v0.34.0) (2026-09-14)
 
 
