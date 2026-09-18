@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,9 +36,16 @@ func envOrSidecar(key, fallback string) string {
 // Defaults for the sidecar environment (see SidecarConfigFromEnv).
 const (
 	defaultSidecarCommand = "llama-server"
-	defaultSidecarPort    = 8080
-	defaultReadyTimeout   = 120 * time.Second
-	defaultPollInterval   = 250 * time.Millisecond
+	// DefaultLocalRepo / DefaultLocalFile are the pinned local GGUF the
+	// spawn path serves when LEANKG_EMBED_SIDECAR_ARGS is unset: the
+	// same bge-small-en-v1.5 artifact the self-host runbook pins in
+	// ~/.leankg/models. llama-server ≥0.4 fetches it from HuggingFace on
+	// first use (-hf), so no separate download step exists.
+	DefaultLocalRepo    = "CompendiumLabs/bge-small-en-v1.5-gguf"
+	DefaultLocalFile    = "bge-small-en-v1.5-f16.gguf"
+	defaultSidecarPort  = 8080
+	defaultReadyTimeout = 120 * time.Second
+	defaultPollInterval = 250 * time.Millisecond
 	// shutdownGrace bounds the SIGTERM phase before the process group is
 	// SIGKILLed.
 	shutdownGrace = 3 * time.Second
@@ -58,7 +66,8 @@ type SidecarConfig struct {
 // SidecarConfigFromEnv reads the sidecar environment:
 //
 //	LEANKG_EMBED_SIDECAR_CMD       executable (default llama-server)
-//	LEANKG_EMBED_SIDECAR_ARGS      shell-quoted extra argv
+//	LEANKG_EMBED_SIDECAR_ARGS      shell-quoted extra argv (default: serve
+//	                               the pinned bge-small-en-v1.5 GGUF with --embeddings)
 //	LEANKG_EMBED_SIDECAR_PORT      port (default 8080)
 //	LEANKG_EMBED_SIDECAR_READY_SECS  startup health-poll bound (default 120)
 func SidecarConfigFromEnv() (SidecarConfig, error) {
@@ -68,11 +77,16 @@ func SidecarConfigFromEnv() (SidecarConfig, error) {
 		ReadyTimeout: defaultReadyTimeout,
 		PollInterval: defaultPollInterval,
 	}
-	args, err := splitArgs(os.Getenv("LEANKG_EMBED_SIDECAR_ARGS"))
-	if err != nil {
-		return cfg, fmt.Errorf("embed: invalid LEANKG_EMBED_SIDECAR_ARGS: %w", err)
+	raw := os.Getenv("LEANKG_EMBED_SIDECAR_ARGS")
+	if raw == "" {
+		cfg.Args = defaultSidecarArgs()
+	} else {
+		args, err := splitArgs(raw)
+		if err != nil {
+			return cfg, fmt.Errorf("embed: invalid LEANKG_EMBED_SIDECAR_ARGS: %w", err)
+		}
+		cfg.Args = args
 	}
-	cfg.Args = args
 	if v := os.Getenv("LEANKG_EMBED_SIDECAR_PORT"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 65535 {
@@ -88,6 +102,33 @@ func SidecarConfigFromEnv() (SidecarConfig, error) {
 		cfg.ReadyTimeout = time.Duration(n) * time.Second
 	}
 	return cfg, nil
+}
+
+// defaultSidecarArgs serves the pinned local GGUF with embedding support.
+// An explicit LEANKG_EMBED_SIDECAR_ARGS always wins; when the pinned file
+// already sits in ~/.leankg/models it is served directly, otherwise
+// llama-server fetches it from HuggingFace on first use (-hf) into the hub
+// cache (~/.cache/huggingface) — operator action is the binary only, never
+// a manual download (e2e-verified 2026-09-18: fresh HOME, 21 s incl. fetch).
+func defaultSidecarArgs() []string {
+	if home, err := os.UserHomeDir(); err == nil {
+		if p := filepath.Join(home, ".leankg", "models", DefaultLocalFile); fileExists(p) {
+			return []string{"-m", p, "--embeddings", "-c", "8192"}
+		}
+	}
+	return []string{"-hf", DefaultLocalRepo + ":f16", "--embeddings", "-c", "8192"}
+}
+
+// localModelHint is the one-liner the actionable errors below hand the
+// operator: install the binary, and the GGUF self-fetches on first use.
+func localModelHint() string {
+	return fmt.Sprintf("install llama-server (brew install llama.cpp); the pinned GGUF self-downloads "+
+		"on first use (-hf %s:f16, cached by llama-server)", DefaultLocalRepo)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // Sidecar is one running sidecar process. Shutdown is idempotent and
@@ -262,8 +303,8 @@ func sidecarStartError(command string, err error) error {
 	var execErr *exec.Error
 	if errors.As(err, &execErr) && errors.Is(execErr.Err, exec.ErrNotFound) {
 		return fmt.Errorf("embed: local provider requires the llama.cpp sidecar but %q was not found on PATH; "+
-			"install llama-server, set LEANKG_EMBED_SIDECAR_CMD, or attach to a running server via LEANKG_EMBED_BASE_URL",
-			command)
+			"%s, set LEANKG_EMBED_SIDECAR_CMD, or attach to a running server via LEANKG_EMBED_BASE_URL",
+			command, localModelHint())
 	}
 	return fmt.Errorf("embed: cannot start sidecar %q: %w", command, err)
 }
