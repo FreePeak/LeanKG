@@ -507,6 +507,12 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if _, err := e.rungFuzzy(req.Query, limit, resp, true); err == nil && len(hitsOf(resp)) > 0 {
 		return resp, nil
 	}
+	// Noul L3 gate: ontology confidence below MinConfidence
+	// (0.3) justifies no embedding call — degrade to L2.
+	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
+	if conf > 0 && conf < ontology.MinConfidence {
+		return e.rungFuzzy(req.Query, limit, resp, true)
+	}
 	return e.rungSemantic(ctx, req.Query, limit, resp, true)
 }
 
