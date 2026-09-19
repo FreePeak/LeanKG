@@ -406,9 +406,7 @@ func cmdServe(args []string) {
 			pSrv.SetProjectRouter(router)
 			return httpMux(pSrv.HTTPHandler())
 		})
-		if mux, ok := h.(*http.ServeMux); ok {
-			restauto.RegisterAutoConfig(mux, engine)
-		}
+		restauto.RegisterAutoConfig(h, engine)
 		go serveHTTP(ctx, h, addr)
 	}
 	if *restAddr != "" {
@@ -421,6 +419,7 @@ func cmdServe(args []string) {
 		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
+		restauto.RegisterAutoConfig(h, engine)
 		// /api/v1/auth/* is public by design: register/login/token are the
 		// bootstrap (the handlers enforce their own caller/account checks), and
 		// Rust registered them outside the auth middleware for the same reason.

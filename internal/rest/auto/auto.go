@@ -52,10 +52,13 @@ func writeAutoJSON(w http.ResponseWriter, code int, v any) {
 // RegisterAutoConfig mounts POST /api/v1/mcp/auto-config on the mux.
 // The endpoint triggers background auto-index and/or auto-embed for the
 // served project; both default to off and must be explicitly enabled.
-func RegisterAutoConfig(mux *http.ServeMux, engine *core.Engine) {
+func RegisterAutoConfig(h http.Handler, engine *core.Engine) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", h)
 	mux.HandleFunc("POST /api/v1/mcp/auto-config", func(w http.ResponseWriter, r *http.Request) {
 		handleAutoConfig(w, r, engine)
 	})
+	return mux
 }
 
 func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engine) {
