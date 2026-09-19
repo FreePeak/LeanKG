@@ -737,6 +737,61 @@ func OntologyStatus(st store.Backend) (Status, error) {
 	return status, nil
 }
 
+// MatchLevel is the typed tier of a MatchScore result.
+type MatchLevel int
+
+const (
+	MatchNone MatchLevel = iota
+	MatchDescription
+	MatchPartial
+	MatchAliasContains
+	MatchNameContains
+	MatchAliasExact
+	MatchNameExact
+)
+
+const MinConfidence = 0.3
+
+var scoreBands = []struct {
+	min   float64
+	level MatchLevel
+}{
+	{1.0, MatchNameExact},
+	{0.9, MatchAliasExact},
+	{0.8, MatchNameContains},
+	{0.7, MatchAliasContains},
+	{0.5, MatchDescription},
+	{MinConfidence, MatchPartial},
+}
+
+func ScoreLevel(score float64) MatchLevel {
+	for _, b := range scoreBands {
+		if score >= b.min {
+			return b.level
+		}
+	}
+	return MatchNone
+}
+
+// OntologyConfidence returns the aggregated ontology match score
+// (sum of node MatchScores / count). It is the input to the Noul
+// L3 gate in internal/core/core.go: confidence < MinConfidence →
+// skip L3, degrade to L2. Returns 0 when nothing matches.
+func OntologyConfidence(st store.Backend, query string) (float64, error) {
+	nodes, err := SearchOntologyNodes(st, query)
+	if err != nil {
+		return 0, err
+	}
+	if len(nodes) == 0 {
+		return 0, nil
+	}
+	var sum float64
+	for _, n := range nodes {
+		sum += n.MatchScore
+	}
+	return sum / float64(len(nodes)), nil
+}
+
 // MatchScore calculates the match score for a (lowercased) query against an
 // ontology node's name, aliases and description (parity with
 // calculate_match_score; reasons are identical strings).

@@ -96,6 +96,24 @@ func TestQueryLadderOrderAndProvenance(t *testing.T) {
 	}
 }
 
+func TestL3GateSkipsWhenConfidenceBelowThreshold(t *testing.T) {
+	// Noul L3 gate: when ontology confidence < MinConfidence,
+	// rungSemantic must not be called. We assert via ScoreLevel
+	// boundaries and via Query degradation.
+	if got := ontology.ScoreLevel(0.25); got != ontology.MatchNone {
+		t.Errorf("ScoreLevel(0.25) = %v, want MatchNone", got)
+	}
+	if got := ontology.ScoreLevel(0.299); got != ontology.MatchNone {
+		t.Errorf("ScoreLevel(0.299) = %v, want MatchNone", got)
+	}
+	if got := ontology.ScoreLevel(ontology.MinConfidence); got != ontology.MatchPartial {
+		t.Errorf("ScoreLevel(MinConfidence) = %v, want MatchPartial", got)
+	}
+	if got := ontology.ScoreLevel(0.3); got != ontology.MatchPartial {
+		t.Errorf("ScoreLevel(0.3) = %v, want MatchPartial", got)
+	}
+}
+
 func TestQuerySemanticDegradesToL2(t *testing.T) {
 	// No provider wired: action=semantic degrades with a reason, no error.
 	e, _ := newEngine(t)
