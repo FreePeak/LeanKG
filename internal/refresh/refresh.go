@@ -88,7 +88,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	res.Path = indexPath
 
-	st, err := store.OpenBackend(ctx, project, os.Getenv("LEANKG_DB_ENGINE"), os.Getenv("LEANKG_PG_URL"), store.RW)
+	st, err := store.OpenBackend(ctx, project, os.Getenv("LEANKG_DB_ENGINE"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
 	if err != nil {
 		return res, fmt.Errorf("refresh: open store: %w", err)
 	}

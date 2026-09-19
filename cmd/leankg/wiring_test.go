@@ -53,7 +53,7 @@ func TestStdioSpawnServesMCP(t *testing.T) {
 	bin := buildLeanKG(t)
 	proj := seedProject(t)
 
-	cmd := exec.Command(bin, stdioArgs("")...)
+	cmd := exec.Command(bin, stdioArgs("", "")...)
 	cmd.Dir = proj // projectless contract: the server resolves cwd
 	cmd.Stderr = nil
 	stdin, err := cmd.StdinPipe()

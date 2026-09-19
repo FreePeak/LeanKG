@@ -54,7 +54,7 @@ func cmdRegisterProject(args []string) {
 
 	var elements, files int
 	var indexedAt *time.Time
-	if st, err := store.OpenBackend(ctx, target, opts.Engine, opts.PGURL, store.RO); err == nil {
+	if st, err := store.OpenBackend(ctx, target, opts.Engine, opts.PGURL, "", store.RO); err == nil {
 		// A readable store means this project HAS been indexed: stamp it.
 		elements, _ = st.ElementCount()
 		files, _ = st.FileCount()

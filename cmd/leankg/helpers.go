@@ -64,7 +64,7 @@ func resolveProjectDir(flagValue string) string {
 // like the serving transports. The caller closes engine.Store().
 func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
 	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), projectcfg.PGURL(dir), mode)
+		envOr("LEANKG_DB_ENGINE", "sqlite"), projectcfg.PGURL(dir), "", mode)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func runIndex(project, target, source, refName, auth string) error {
 		projectcfg.EnsureIdentityFieldsForDB(filepath.Join(dir, ".leankg"), abs)
 	}
 	st, err := store.OpenBackend(context.Background(), dir,
-		os.Getenv("LEANKG_DB_ENGINE"), projectcfg.PGURL(dir), store.RW)
+		os.Getenv("LEANKG_DB_ENGINE"), projectcfg.PGURL(dir), "", store.RW)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

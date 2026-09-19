@@ -190,7 +190,7 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 // shared pool that checks out a connection and SETs search_path per child
 // inside a transaction — which needs every Backend reader to run in that tx.
 func (o Options) OpenChild(ctx context.Context, dir string) (store.Backend, error) {
-	return store.OpenBackend(ctx, dir, o.engine(), o.pgURL(dir), store.RO)
+	return store.OpenBackend(ctx, dir, o.engine(), o.pgURL(dir), "", store.RO)
 }
 
 // Canonical turns a project path into the registry key: absolute, with symlinks

@@ -160,7 +160,7 @@ func MineIntoProject(ctx context.Context, project, input string, format Format) 
 	if len(result.Items) == 0 {
 		return result, nil
 	}
-	st, err := store.OpenBackend(ctx, project, os.Getenv("LEANKG_DB_ENGINE"), os.Getenv("LEANKG_PG_URL"), store.RW)
+	st, err := store.OpenBackend(ctx, project, os.Getenv("LEANKG_DB_ENGINE"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
 	if err != nil {
 		return result, fmt.Errorf("open store: %w", err)
 	}

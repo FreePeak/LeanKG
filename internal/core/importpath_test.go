@@ -30,7 +30,7 @@ func writeProject(t *testing.T) string {
 
 func engineAt(t *testing.T, dir string) *Engine {
 	t.Helper()
-	st, err := store.OpenBackend(context.Background(), dir, "sqlite", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), dir, "sqlite", "", "", store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}

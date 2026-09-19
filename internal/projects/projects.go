@@ -248,7 +248,7 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	// Postgres schema key matches what the project declares. cfg.PGURL stays
 	// process-wide — Rust had a single db tier from db_config_from_cwd.
 	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
-	st, err := store.OpenBackend(ctx, filepath.Dir(dbDir), engineName, cfg.PGURL, cfg.Mode)
+	st, err := store.OpenBackend(ctx, filepath.Dir(dbDir), engineName, cfg.PGURL, "", cfg.Mode)
 	if err != nil {
 		return nil, fmt.Errorf("projects: open store for %s: %w", dir, err)
 	}

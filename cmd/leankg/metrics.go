@@ -31,7 +31,7 @@ func cmdMetrics(args []string) {
 
 	dir := resolveProjectDir(*project)
 	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), store.RW)
+		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
 	if err != nil {
 		fatalJSON(err)
 	}
@@ -69,7 +69,7 @@ func cmdDashboard(args []string) {
 
 	dir := resolveProjectDir(*project)
 	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), store.RW)
+		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
 	if err != nil {
 		fatalJSON(err)
 	}
