@@ -38,6 +38,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/projects"
 	"github.com/FreePeak/LeanKG/internal/rest"
+	restauto "github.com/FreePeak/LeanKG/internal/rest/auto"
 	"github.com/FreePeak/LeanKG/internal/rpc"
 	leankgv1connect "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1/leankgv1connect"
 	"github.com/FreePeak/LeanKG/internal/setupcfg"
@@ -405,7 +406,9 @@ func cmdServe(args []string) {
 			pSrv.SetProjectRouter(router)
 			return httpMux(pSrv.HTTPHandler())
 		})
-		log.Printf("leankg serve (MCP HTTP) on %s project=%s engine=%s", addr, dir, st.Engine())
+		if mux, ok := h.(*http.ServeMux); ok {
+			restauto.RegisterAutoConfig(mux, engine)
+		}
 		go serveHTTP(ctx, h, addr)
 	}
 	if *restAddr != "" {
