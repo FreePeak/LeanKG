@@ -15,7 +15,7 @@ import (
 func openStore(t *testing.T) store.Backend {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", store.RW)
+	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
 	if err != nil {
 		t.Fatalf("OpenBackend: %v", err)
 	}

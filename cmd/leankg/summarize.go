@@ -35,7 +35,7 @@ func cmdSummarize(args []string) {
 		dir = "."
 	}
 	ctx := context.Background()
-	st, err := store.OpenBackend(ctx, dir, os.Getenv("LEANKG_DB_ENGINE"), projectcfg.PGURL(dir), store.RW)
+	st, err := store.OpenBackend(ctx, dir, os.Getenv("LEANKG_DB_ENGINE"), projectcfg.PGURL(dir), "", store.RW)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "summarize: open store: %v\n", err)
 		os.Exit(1)

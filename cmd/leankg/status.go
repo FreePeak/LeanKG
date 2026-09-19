@@ -39,7 +39,7 @@ func cmdStatus(args []string) {
 	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
 	storeDir := filepath.Dir(dbDir)
 	st, err := store.OpenBackend(context.Background(), storeDir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), projectcfg.PGURL(storeDir), store.RO)
+		envOr("LEANKG_DB_ENGINE", "sqlite"), projectcfg.PGURL(storeDir), "", store.RO)
 	if err != nil {
 		// An uninitialized project is legitimately "cold" (exit 0); a store
 		// that EXISTS but cannot be opened is an operational failure and

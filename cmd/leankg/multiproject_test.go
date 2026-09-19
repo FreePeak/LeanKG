@@ -59,7 +59,7 @@ func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 // engineOver opens a serving-style engine over a seeded project dir.
 func engineOver(t *testing.T, dir string) *core.Engine {
 	t.Helper()
-	st, err := store.OpenBackend(context.Background(), dir, "sqlite", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), dir, "sqlite", "", "", store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}

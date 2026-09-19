@@ -91,7 +91,7 @@ func projectDir(project string) string {
 func openStore(project string) (store.Backend, error) {
 	dir := projectDir(project)
 	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), store.RW)
+		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
 	if err != nil {
 		return nil, err
 	}

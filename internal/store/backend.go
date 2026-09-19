@@ -235,9 +235,12 @@ func (s *Store) VectorCoverage(modelID string) (covered, orphans int, err error)
 // OpenBackend opens the engine's storage for a project directory.
 // engine is EngineSQLite (default) or EnginePostgres (dsn via env
 // LEANKG_PG_URL or the pgURL argument when non-empty).
-func OpenBackend(ctx context.Context, projectDir, engine, pgURL string, mode Mode) (Backend, error) {
+func OpenBackend(ctx context.Context, projectDir, engine, pgURL, dbPath string, mode Mode) (Backend, error) {
 	switch engine {
 	case "", EngineSQLite:
+		if dbPath != "" {
+			return Open(dbPath, mode)
+		}
 		return Open(projectDir+"/.leankg/leankg.db", mode)
 	case EnginePostgres:
 		if pgURL == "" {

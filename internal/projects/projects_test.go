@@ -111,7 +111,7 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	r := NewRouter(defaultDir, Config{ExtraDirs: []string{dirA}})
 	// Seed the default with an externally-opened engine: routing to it
 	// must hand back the SAME engine (one store handle per project).
-	st, err := store.OpenBackend(ctx, defaultDir, "sqlite", "", store.RW)
+	st, err := store.OpenBackend(ctx, defaultDir, "sqlite", "", "", store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}

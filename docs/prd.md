@@ -874,6 +874,7 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 | Variable | Default | Meaning |
 |---|---|---|
 | `LEANKG_DB_ENGINE` | `sqlite` | storage engine (`sqlite` \| `postgres`) |
+| `LEANKG_DB_PATH` | — | SQLite store file path (default `<project>/.leankg/leankg.db`); set to make the project directory optional (FR-P2) |
 | `LEANKG_PG_URL` | — | PostgreSQL DSN (libpq params incl. `sslmode`/`sslrootcert` ride the URL) |
 | `LEANKG_PROJECT_DIRS` | — | comma-separated project dirs to serve (multi-project routing) |
 | `LEANKG_PROJECT` | cwd | project dir for `query`/`impact` when `--project` is absent |
@@ -893,6 +894,18 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 | `GITHUB_TOKEN` | — | raises the `leankg update` API rate limit; absence only warns (anonymous calls work) |
 | `PATH` | — | ast-grep / LSP server / sidecar discovery |
 
+### FR-P2 — Project directory optional (DB from config/env)
+
+- The project directory is **no longer required** for the server to run. When configured, the server opens a standalone SQLite store whose path comes from configuration, not from `<cwd>/.leankg/leankg.db`.
+- **Precedence** (db path, high → low):
+  1. `LEANKG_DB_PATH` environment variable.
+  2. `db.standalone_db_path` key in `leankg.yaml` (see `DBConfig` in `internal/projectcfg`).
+  3. Default: `<project>/.leankg/leankg.db` (project-scoped mode, existing behavior).
+- **Serving**: `leankg serve --db <path>` (CLI flag, equivalent to env). When the flag/env is set, project-resolution sidecars (auto-index, setup pipeline, leankg.yaml anchor resolution) are skipped — the server has no checkout in this path (FR-P2-3).
+- **Importing**: users import data themselves via `leankg import ./` (indexes cwd with full absolute path as an indexable/embeddable target; embedding only fires if an embedding provider is configured — `LEANKG_EMBED_PROVIDER` / sidecar). The MCP `import` tool description guides agents to use `action=dir` with `path="."` to scope import to the current directory.
+
+---
+
 ## 7. Historical Record
 
 All superseded material is preserved and linked, not deleted:
@@ -907,4 +920,5 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
-*Last updated: 2026-09-19 (auto-config REST endpoint added: internal/rest/auto package + POST /api/v1/mcp/auto-config mounted on the served projects MCP mux; cmd/leankg/main.go and cmd/leankg/helpers.go updated; prior: 2026-09-18.) — `internal/embed/sidecar.go` defaults `LEANKG_EMBED_SIDECAR_ARGS` to `-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf --embeddings` when the file exists, else `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` which self-downloads on first use (e2e: fresh HOME, 21 s incl. fetch); the not-found error names the download step; README setup + PRD §5.1 runbook + tracker updated to the attach-vs-spawn distinction. Prior: v4.13.0-memory-service — FR-ZCP-14 `serve --hindsight-compat` became a real service surface, 46 packages ok, vet/gofmt clean.)
+- **FR-P2 (2026-09-19):** project directory optional — `LEANKG_DB_PATH` env, `--db` CLI flag, `db.standalone_db_path` config key, `OpenBackend(dbPath)`; `leankg import ./` cwd-scoped import; MCP import tool description updated.
+*Last updated: 2026-09-19 (FR-P2: project directory optional — `LEANKG_DB_PATH` env, `--db` CLI flag, `db.standalone_db_path` config key; `OpenBackend(dbPath)`; `leankg import ./` cwd-scoped import; MCP import tool description updated. Prior: 2026-09-18.) — `internal/embed/sidecar.go` defaults `LEANKG_EMBED_SIDECAR_ARGS` to `-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf --embeddings` when the file exists, else `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` which self-downloads on first use (e2e: fresh HOME, 21 s incl. fetch); the not-found error names the download step; README setup + PRD §5.1 runbook + tracker updated to the attach-vs-spawn distinction. Prior: v4.13.0-memory-service — FR-ZCP-14 `serve --hindsight-compat` became a real service surface, 46 packages ok, vet/gofmt clean.)

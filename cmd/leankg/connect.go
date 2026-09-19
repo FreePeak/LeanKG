@@ -130,7 +130,7 @@ func jsonEntry(client string, cfg Config) map[string]any {
 	if exe == "" {
 		exe = "leankg"
 	}
-	args := stdioArgs(cfg.Project)
+	args := stdioArgs(cfg.Project, "")
 	switch client {
 	case ClientOpencode:
 		return map[string]any{"type": "local", "command": append([]string{exe}, args...), "enabled": true}
@@ -143,12 +143,18 @@ func jsonEntry(client string, cfg Config) map[string]any {
 
 // stdioArgs returns the spawn args after the entry command: `serve --stdio`,
 // this binary's MCP-over-stdio mode. Relative project paths are made absolute
-// against the current directory (Rust parity).
-func stdioArgs(project string) []string {
-	if project == "" {
-		return []string{"serve", "--stdio"}
+// against the current directory (Rust parity). When dbPath is non-empty
+// (standalone-DB mode, no checkout required), the project directory is
+// not resolved — the user owns the DB path via LEANKG_DB_PATH/env.
+func stdioArgs(project, dbPath string) []string {
+	args := []string{"serve", "--stdio"}
+	if dbPath != "" {
+		args = append(args, "--db", dbPath)
 	}
-	return []string{"serve", "--stdio", "--project", absolutize(project)}
+	if project == "" {
+		return args
+	}
+	return append(args, "--project", absolutize(project))
 }
 
 // absolutize makes p absolute against the process working directory.
@@ -286,7 +292,7 @@ func codexSectionLines(cfg Config) []string {
 	if exe == "" {
 		exe = "leankg"
 	}
-	args := append([]string{exe}, stdioArgs(cfg.Project)...)
+	args := append([]string{exe}, stdioArgs(cfg.Project, "")...)
 	quoted := make([]string, len(args))
 	for i, a := range args {
 		quoted[i] = strconv.Quote(a)

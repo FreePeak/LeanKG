@@ -136,7 +136,8 @@ func (s *Server) registerTools() {
 		Description: "Import content into LeanKG: index a repository or directory " +
 			"of repositories (action=repo|dir, path), or curate agent memory " +
 			"(action=memory, command=create|str_replace|insert|delete|rename|add|replace|remove). " +
-			"Legacy tool name 'set' is superseded by this tool.",
+			"Legacy tool name 'set' is superseded by this tool. " +
+			"Use action=dir with path=\".\" to import the current directory as a scoped index target (FR-P2).",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

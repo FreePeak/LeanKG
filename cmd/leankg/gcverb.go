@@ -30,7 +30,7 @@ func cmdGC(args []string) {
 		eng = os.Getenv("LEANKG_DB_ENGINE")
 	}
 	st, err := store.OpenBackend(context.Background(), *project,
-		eng, projectcfg.PGURL(*project), store.RW)
+		eng, projectcfg.PGURL(*project), "", store.RW)
 	if err != nil {
 		fatalText(fmt.Errorf("gc: open store: %w", err))
 	}

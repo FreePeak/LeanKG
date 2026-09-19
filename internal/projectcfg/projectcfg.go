@@ -165,6 +165,9 @@ type DBConfig struct {
 	PoolSize *int `yaml:"pool_size,omitempty"`
 	// Lock false disables the index advisory lock (default true).
 	Lock *bool `yaml:"lock,omitempty"`
+	// StandaloneDBPath overrides the SQLite store location; set via
+	// leankg.yaml db.standalone_db_path or LEANKG_DB_PATH.
+	StandaloneDBPath string `yaml:"standalone_db_path,omitempty"`
 }
 
 // DefaultProjectConfig mirrors `impl Default for ProjectConfig`, literals and
@@ -393,6 +396,22 @@ func DBConfigFromDir(dir string) *DBConfig {
 		}
 		d = parent
 	}
+}
+
+// StandaloneDBPath is the standalone SQLite store path for one project
+// directory: the LEANKG_DB_PATH environment variable > the nearest
+// leankg.yaml `db.standalone_db_path` > "" (the store's default
+// <project>/.leankg/leankg.db). Empty means "use project-scoped store".
+func StandaloneDBPath(dir string) string {
+	if v := os.Getenv("LEANKG_DB_PATH"); v != "" {
+		return v
+	}
+	if db := DBConfigFromDir(dir); db != nil {
+		if db.StandaloneDBPath != "" {
+			return db.StandaloneDBPath
+		}
+	}
+	return ""
 }
 
 // PGURL is the Postgres DSN for one project directory: the LEANKG_PG_URL

@@ -248,6 +248,7 @@ requests select one with ?project= (dir path or name).
 func cmdServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
+	dbFlag := fs.String("db", "", "standalone SQLite store file path (default empty = <project>/.leankg/leankg.db); sets the project directory optional (FR-P2)")
 	stdio := fs.Bool("stdio", false, "serve MCP over stdio")
 	httpAddr := fs.String("http", "", "MCP streamable HTTP address (e.g. :9699)")
 	restAddr := fs.String("rest", "", "REST API address (e.g. :8080)")
@@ -273,18 +274,32 @@ func cmdServe(args []string) {
 			log.Fatalf("resolve cwd: %v", err)
 		}
 	}
-	// leankg.yaml project.project_path / project.root anchor, canonicalized
-	// before use: this process serves the anchored project's schema (Rust
-	// MCPServer::resolve_project_root, N3).
+	// Standalone mode: the DB is externally imported (FR-P2-3);
+	// the user owns the store — do not anchor to a .leankg dir
+	// that doesn't exist.
+	if dbPath := projectcfg.StandaloneDBPath(dir); dbPath != "" {
+		goto serveStart
+	}
+	// leankg.yaml project.project_path / project.root anchor,
+	// canonicalized before use (Rust MCPServer::resolve_project_root, N3).
 	if dbDir := filepath.Join(dir, ".leankg"); projectcfg.ResolveProjectDBDir(dbDir) != dbDir {
 		dir = filepath.Dir(projectcfg.ResolveProjectRoot(dbDir))
 	}
 
+serveStart:
+
+	// Standalone mode skips the project-gated sidecars (they expect
+	// a .leankg dir in dir — FR-P2-3).
+	if dbPath := projectcfg.StandaloneDBPath(dir); dbPath != "" {
+		goto afterSidecars
+	}
 	// FR-ZCP-13: the auto-index gates the mcp.auto_index_* keys configure, and
 	// the LEANKG_SETUP=1 post-bind setup trigger. Both run in the background so
 	// the listener binds immediately.
 	go maybeAutoIndexOnStart(ctx, dir, *readOnly)
 	go maybeRunServeSetup(ctx, dir)
+
+afterSidecars:
 
 	mode := store.RW
 	if *readOnly {
@@ -294,7 +309,11 @@ func cmdServe(args []string) {
 	if eng == "" {
 		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
 	}
-	st, err := store.OpenBackend(ctx, dir, eng, projectcfg.PGURL(dir), mode)
+	dbPath := *dbFlag
+	if dbPath == "" {
+		dbPath = projectcfg.StandaloneDBPath(dir)
+	}
+	st, err := store.OpenBackend(ctx, dir, eng, projectcfg.PGURL(dir), dbPath, mode)
 	if err != nil {
 		log.Fatalf("open store: %s", storeErrText(eng, err))
 	}
