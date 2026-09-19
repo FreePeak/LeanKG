@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>TypeSafe Noul A/B Report</title>
+<style>
+body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1200px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+h1 { border-bottom: 2px solid #555; padding-bottom: .4rem; }
+h2 { margin-top: 2rem; color: #333; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .9rem; }
+th, td { border: 1px solid #ccc; padding: .4rem .6rem; text-align: left; }
+th { background: #f0f0f0; }
+.pass { color: #1a7; } .fail { color: #c00; } .warn { color: #aa0; }
+.bar { background: #4a9; height: 14px; display: inline-block; vertical-align: middle; }
+.bar-rel { background: #16a; } .bar-unrel { background: #c44; }
+.query-block { background: #f8f8f8; border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+.summary { background: #eef; border: 1px solid #99c; border-radius: 6px; padding: 1.2rem; margin: 1rem 0; }
+.rank-table td { font-family: monospace; font-size: .85rem; }
+</style></head><body>
+<h1>&#x1F50E; TypeSafe Noul Re-rank — A/B Experiment Report</h1>
+<p><strong>Date:</strong> 2026-09-19 22:31:15 | <strong>Model:</strong> jev-1.13.0 | <strong>API:</strong> live api.typesafe.ai | <strong>API calls:</strong> 240</p>
+
+<div class="summary">
+<h2 style="margin-top:0;">Summary</h2>
+<table>
+<tr><td>Queries</td><td>8</td></tr>
+<tr><td>API calls</td><td>240</td></tr>
+<tr><td>Total wall time</td><td>186.1s</td></tr>
+<tr><td>Avg Noul/BM25 top-5 overlap</td><td>1.2/5</td></tr>
+<tr><td>Noul changes top-5 vs BM25</td><td class="pass">8/8</td></tr>
+<tr><td>Full related/unrelated separation</td><td class="pass">8/8</td></tr>
+<tr><td>Related noul range</td><td>0.110 – 0.220</td></tr>
+<tr><td>Unrelated noul range</td><td>0.010 – 0.040</td></tr>
+</table>
+</div>
+<div class="query-block">
+<h2>Query 0: "how does authentication work"</h2>
+<p><strong>Keywords:</strong> auth, session, jwt, login, token | <strong>Time:</strong> 24.5s |
+<strong>Separation:</strong> <span class="pass">PASS</span> |
+<strong>Top5 overlap:</strong> 2/5</p>
+
+<table class="rank-table">
+<tr><th>Rank (Noul)</th><th>Candidate</th><th>Noul</th><th>BM25 rank</th><th>Noul bar</th></tr>
+<tr><td>1</td><td>Document about login handling in how does authentication work</td><td>0.250</td>
+<td>3</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>2</td><td>Document about jwt handling in how does authentication work</td><td>0.250</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>3</td><td>Document about jwt handling in how does authentication work</td><td>0.240</td>
+<td>2</td><td><span class="bar bar-rel" style="width:192px"></span></td></tr>
+<tr><td>4</td><td>Document about login handling in how does authentication work</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:192px"></span></td></tr>
+<tr><td>5</td><td>Document about jwt handling in how does authentication work</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:192px"></span></td></tr>
+<tr><td>6</td><td>Document about login handling in how does authentication work</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:192px"></span></td></tr>
+<tr><td>7</td><td>Document about jwt handling in how does authentication work</td><td>0.230</td>
+<td>–</td><td><span class="bar bar-rel" style="width:184px"></span></td></tr>
+<tr><td>8</td><td>Document about login handling in how does authentication work</td><td>0.230</td>
+<td>–</td><td><span class="bar bar-rel" style="width:184px"></span></td></tr>
+<tr><td>9</td><td>Document about token handling in how does authentication work</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:160px"></span></td></tr>
+<tr><td>10</td><td>Document about token handling in how does authentication work</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:160px"></span></td></tr>
+<tr><td>11</td><td>Document about token handling in how does authentication work</td><td>0.190</td>
+<td>4</td><td><span class="bar bar-rel" style="width:152px"></span></td></tr>
+<tr><td>12</td><td>Document about auth handling in how does authentication work</td><td>0.180</td>
+<td>–</td><td><span class="bar bar-rel" style="width:144px"></span></td></tr>
+<tr><td>13</td><td>Document about session handling in how does authentication work</td><td>0.180</td>
+<td>5</td><td><span class="bar bar-rel" style="width:144px"></span></td></tr>
+<tr><td>14</td><td>Document about token handling in how does authentication work</td><td>0.180</td>
+<td>–</td><td><span class="bar bar-rel" style="width:144px"></span></td></tr>
+<tr><td>15</td><td>Document about session handling in how does authentication work</td><td>0.170</td>
+<td>1</td><td><span class="bar bar-rel" style="width:136px"></span></td></tr>
+<tr><td>16</td><td>Document about session handling in how does authentication work</td><td>0.170</td>
+<td>–</td><td><span class="bar bar-rel" style="width:136px"></span></td></tr>
+<tr><td>17</td><td>Document about session handling in how does authentication work</td><td>0.160</td>
+<td>–</td><td><span class="bar bar-rel" style="width:128px"></span></td></tr>
+<tr><td>18</td><td>Document about auth handling in how does authentication work</td><td>0.150</td>
+<td>–</td><td><span class="bar bar-rel" style="width:120px"></span></td></tr>
+<tr><td>19</td><td>Document about auth handling in how does authentication work</td><td>0.150</td>
+<td>–</td><td><span class="bar bar-rel" style="width:120px"></span></td></tr>
+<tr><td>20</td><td>Document about auth handling in how does authentication work</td><td>0.130</td>
+<td>–</td><td><span class="bar bar-rel" style="width:104px"></span></td></tr>
+<tr><td>21</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>22</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>23</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>24</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>25</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>26</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>27</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>28</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>29</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+<tr><td>30</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:8px"></span></td></tr>
+</table></div>
+<div class="query-block">
+<h2>Query 1: "database connection pooling"</h2>
+<p><strong>Keywords:</strong> pool, connection, db, store, open | <strong>Time:</strong> 22.4s |
+<strong>Separation:</strong> <span class="pass">PASS</span> |
+<strong>Top5 overlap:</strong> 0/5</p>
+
+<table class="rank-table">
+<tr><th>Rank (Noul)</th><th>Candidate</th><th>Noul</th><th>BM25 rank</th><th>Noul bar</th></tr>
+<tr><td>1</td><td>Document about connection handling in database connection pooling</td><td>0.630</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>2</td><td>Document about pool handling in database connection pooling</td><td>0.610</td>
+<td>–</td><td><span class="bar bar-rel" style="width:193px"></span></td></tr>
+<tr><td>3</td><td>Document about pool handling in database connection pooling</td><td>0.610</td>
+<td>–</td><td><span class="bar bar-rel" style="width:193px"></span></td></tr>
+<tr><td>4</td><td>Document about connection handling in database connection pooling</td><td>0.610</td>
+<td>–</td><td><span class="bar bar-rel" style="width:193px"></span></td></tr>
+<tr><td>5</td><td>Document about pool handling in database connection pooling</td><td>0.600</td>
+<td>–</td><td><span class="bar bar-rel" style="width:190px"></span></td></tr>
+<tr><td>6</td><td>Document about connection handling in database connection pooling</td><td>0.590</td>
+<td>–</td><td><span class="bar bar-rel" style="width:187px"></span></td></tr>
+<tr><td>7</td><td>Document about connection handling in database connection pooling</td><td>0.590</td>
+<td>–</td><td><span class="bar bar-rel" style="width:187px"></span></td></tr>
+<tr><td>8</td><td>Document about pool handling in database connection pooling</td><td>0.560</td>
+<td>–</td><td><span class="bar bar-rel" style="width:177px"></span></td></tr>
+<tr><td>9</td><td>Document about db handling in database connection pooling</td><td>0.480</td>
+<td>1</td><td><span class="bar bar-rel" style="width:152px"></span></td></tr>
+<tr><td>10</td><td>Document about db handling in database connection pooling</td><td>0.460</td>
+<td>–</td><td><span class="bar bar-rel" style="width:146px"></span></td></tr>
+<tr><td>11</td><td>Document about db handling in database connection pooling</td><td>0.460</td>
+<td>–</td><td><span class="bar bar-rel" style="width:146px"></span></td></tr>
+<tr><td>12</td><td>Document about db handling in database connection pooling</td><td>0.450</td>
+<td>4</td><td><span class="bar bar-rel" style="width:142px"></span></td></tr>
+<tr><td>13</td><td>Document about open handling in database connection pooling</td><td>0.280</td>
+<td>3</td><td><span class="bar bar-rel" style="width:88px"></span></td></tr>
+<tr><td>14</td><td>Document about open handling in database connection pooling</td><td>0.270</td>
+<td>–</td><td><span class="bar bar-rel" style="width:85px"></span></td></tr>
+<tr><td>15</td><td>Document about open handling in database connection pooling</td><td>0.260</td>
+<td>–</td><td><span class="bar bar-rel" style="width:82px"></span></td></tr>
+<tr><td>16</td><td>Document about open handling in database connection pooling</td><td>0.250</td>
+<td>–</td><td><span class="bar bar-rel" style="width:79px"></span></td></tr>
+<tr><td>17</td><td>Document about store handling in database connection pooling</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:76px"></span></td></tr>
+<tr><td>18</td><td>Document about store handling in database connection pooling</td><td>0.220</td>
+<td>5</td><td><span class="bar bar-rel" style="width:69px"></span></td></tr>
+<tr><td>19</td><td>Document about store handling in database connection pooling</td><td>0.220</td>
+<td>–</td><td><span class="bar bar-rel" style="width:69px"></span></td></tr>
+<tr><td>20</td><td>Document about store handling in database connection pooling</td><td>0.210</td>
+<td>2</td><td><span class="bar bar-rel" style="width:66px"></span></td></tr>
+<tr><td>21</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:6px"></span></td></tr>
+<tr><td>22</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:6px"></span></td></tr>
+<tr><td>23</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:6px"></span></td></tr>
+<tr><td>24</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:6px"></span></td></tr>
+<tr><td>25</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:6px"></span></td></tr>
+<tr><td>26</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>27</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>28</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>29</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>30</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+</table></div>
+<div class="query-block">
+<h2>Query 2: "error handling strategy"</h2>
+<p><strong>Keywords:</strong> error, fail, retry, fallback, degrade | <strong>Time:</strong> 22.2s |
+<strong>Separation:</strong> <span class="pass">PASS</span> |
+<strong>Top5 overlap:</strong> 2/5</p>
+
+<table class="rank-table">
+<tr><th>Rank (Noul)</th><th>Candidate</th><th>Noul</th><th>BM25 rank</th><th>Noul bar</th></tr>
+<tr><td>1</td><td>Document about retry handling in error handling strategy</td><td>0.380</td>
+<td>2</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>2</td><td>Document about retry handling in error handling strategy</td><td>0.380</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>3</td><td>Document about retry handling in error handling strategy</td><td>0.380</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>4</td><td>Document about fallback handling in error handling strategy</td><td>0.370</td>
+<td>3</td><td><span class="bar bar-rel" style="width:194px"></span></td></tr>
+<tr><td>5</td><td>Document about fallback handling in error handling strategy</td><td>0.370</td>
+<td>–</td><td><span class="bar bar-rel" style="width:194px"></span></td></tr>
+<tr><td>6</td><td>Document about retry handling in error handling strategy</td><td>0.360</td>
+<td>–</td><td><span class="bar bar-rel" style="width:189px"></span></td></tr>
+<tr><td>7</td><td>Document about fallback handling in error handling strategy</td><td>0.350</td>
+<td>–</td><td><span class="bar bar-rel" style="width:184px"></span></td></tr>
+<tr><td>8</td><td>Document about degrade handling in error handling strategy</td><td>0.340</td>
+<td>4</td><td><span class="bar bar-rel" style="width:178px"></span></td></tr>
+<tr><td>9</td><td>Document about fallback handling in error handling strategy</td><td>0.340</td>
+<td>–</td><td><span class="bar bar-rel" style="width:178px"></span></td></tr>
+<tr><td>10</td><td>Document about degrade handling in error handling strategy</td><td>0.330</td>
+<td>–</td><td><span class="bar bar-rel" style="width:173px"></span></td></tr>
+<tr><td>11</td><td>Document about degrade handling in error handling strategy</td><td>0.330</td>
+<td>–</td><td><span class="bar bar-rel" style="width:173px"></span></td></tr>
+<tr><td>12</td><td>Document about degrade handling in error handling strategy</td><td>0.320</td>
+<td>–</td><td><span class="bar bar-rel" style="width:168px"></span></td></tr>
+<tr><td>13</td><td>Document about fail handling in error handling strategy</td><td>0.250</td>
+<td>1</td><td><span class="bar bar-rel" style="width:131px"></span></td></tr>
+<tr><td>14</td><td>Document about fail handling in error handling strategy</td><td>0.250</td>
+<td>–</td><td><span class="bar bar-rel" style="width:131px"></span></td></tr>
+<tr><td>15</td><td>Document about fail handling in error handling strategy</td><td>0.230</td>
+<td>5</td><td><span class="bar bar-rel" style="width:121px"></span></td></tr>
+<tr><td>16</td><td>Document about fail handling in error handling strategy</td><td>0.230</td>
+<td>–</td><td><span class="bar bar-rel" style="width:121px"></span></td></tr>
+<tr><td>17</td><td>Document about error handling in error handling strategy</td><td>0.170</td>
+<td>–</td><td><span class="bar bar-rel" style="width:89px"></span></td></tr>
+<tr><td>18</td><td>Document about error handling in error handling strategy</td><td>0.160</td>
+<td>–</td><td><span class="bar bar-rel" style="width:84px"></span></td></tr>
+<tr><td>19</td><td>Document about error handling in error handling strategy</td><td>0.140</td>
+<td>–</td><td><span class="bar bar-rel" style="width:73px"></span></td></tr>
+<tr><td>20</td><td>Document about error handling in error handling strategy</td><td>0.140</td>
+<td>–</td><td><span class="bar bar-rel" style="width:73px"></span></td></tr>
+<tr><td>21</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.030</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:15px"></span></td></tr>
+<tr><td>22</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.030</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:15px"></span></td></tr>
+<tr><td>23</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.030</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:15px"></span></td></tr>
+<tr><td>24</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.030</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:15px"></span></td></tr>
+<tr><td>25</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.030</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:15px"></span></td></tr>
+<tr><td>26</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:10px"></span></td></tr>
+<tr><td>27</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:10px"></span></td></tr>
+<tr><td>28</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:10px"></span></td></tr>
+<tr><td>29</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:10px"></span></td></tr>
+<tr><td>30</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:10px"></span></td></tr>
+</table></div>
+<div class="query-block">
+<h2>Query 3: "embedding model configuration"</h2>
+<p><strong>Keywords:</strong> embed, model, bge, vector, stamp | <strong>Time:</strong> 22.1s |
+<strong>Separation:</strong> <span class="pass">PASS</span> |
+<strong>Top5 overlap:</strong> 2/5</p>
+
+<table class="rank-table">
+<tr><th>Rank (Noul)</th><th>Candidate</th><th>Noul</th><th>BM25 rank</th><th>Noul bar</th></tr>
+<tr><td>1</td><td>Document about bge handling in embedding model configuration</td><td>0.420</td>
+<td>4</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>2</td><td>Document about bge handling in embedding model configuration</td><td>0.400</td>
+<td>–</td><td><span class="bar bar-rel" style="width:190px"></span></td></tr>
+<tr><td>3</td><td>Document about bge handling in embedding model configuration</td><td>0.380</td>
+<td>1</td><td><span class="bar bar-rel" style="width:180px"></span></td></tr>
+<tr><td>4</td><td>Document about bge handling in embedding model configuration</td><td>0.370</td>
+<td>–</td><td><span class="bar bar-rel" style="width:176px"></span></td></tr>
+<tr><td>5</td><td>Document about embed handling in embedding model configuration</td><td>0.350</td>
+<td>–</td><td><span class="bar bar-rel" style="width:166px"></span></td></tr>
+<tr><td>6</td><td>Document about embed handling in embedding model configuration</td><td>0.350</td>
+<td>–</td><td><span class="bar bar-rel" style="width:166px"></span></td></tr>
+<tr><td>7</td><td>Document about vector handling in embedding model configuration</td><td>0.350</td>
+<td>–</td><td><span class="bar bar-rel" style="width:166px"></span></td></tr>
+<tr><td>8</td><td>Document about embed handling in embedding model configuration</td><td>0.340</td>
+<td>–</td><td><span class="bar bar-rel" style="width:161px"></span></td></tr>
+<tr><td>9</td><td>Document about vector handling in embedding model configuration</td><td>0.340</td>
+<td>2</td><td><span class="bar bar-rel" style="width:161px"></span></td></tr>
+<tr><td>10</td><td>Document about vector handling in embedding model configuration</td><td>0.340</td>
+<td>–</td><td><span class="bar bar-rel" style="width:161px"></span></td></tr>
+<tr><td>11</td><td>Document about embed handling in embedding model configuration</td><td>0.330</td>
+<td>–</td><td><span class="bar bar-rel" style="width:157px"></span></td></tr>
+<tr><td>12</td><td>Document about vector handling in embedding model configuration</td><td>0.320</td>
+<td>5</td><td><span class="bar bar-rel" style="width:152px"></span></td></tr>
+<tr><td>13</td><td>Document about model handling in embedding model configuration</td><td>0.300</td>
+<td>–</td><td><span class="bar bar-rel" style="width:142px"></span></td></tr>
+<tr><td>14</td><td>Document about model handling in embedding model configuration</td><td>0.290</td>
+<td>–</td><td><span class="bar bar-rel" style="width:138px"></span></td></tr>
+<tr><td>15</td><td>Document about model handling in embedding model configuration</td><td>0.290</td>
+<td>–</td><td><span class="bar bar-rel" style="width:138px"></span></td></tr>
+<tr><td>16</td><td>Document about model handling in embedding model configuration</td><td>0.280</td>
+<td>–</td><td><span class="bar bar-rel" style="width:133px"></span></td></tr>
+<tr><td>17</td><td>Document about stamp handling in embedding model configuration</td><td>0.130</td>
+<td>3</td><td><span class="bar bar-rel" style="width:61px"></span></td></tr>
+<tr><td>18</td><td>Document about stamp handling in embedding model configuration</td><td>0.130</td>
+<td>–</td><td><span class="bar bar-rel" style="width:61px"></span></td></tr>
+<tr><td>19</td><td>Document about stamp handling in embedding model configuration</td><td>0.120</td>
+<td>–</td><td><span class="bar bar-rel" style="width:57px"></span></td></tr>
+<tr><td>20</td><td>Document about stamp handling in embedding model configuration</td><td>0.110</td>
+<td>–</td><td><span class="bar bar-rel" style="width:52px"></span></td></tr>
+<tr><td>21</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>22</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>23</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>24</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>25</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>26</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>27</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>28</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>29</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>30</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+</table></div>
+<div class="query-block">
+<h2>Query 4: "graph traversal algorithm"</h2>
+<p><strong>Keywords:</strong> traverse, graph, edge, neighbor, bfs | <strong>Time:</strong> 25.6s |
+<strong>Separation:</strong> <span class="pass">PASS</span> |
+<strong>Top5 overlap:</strong> 1/5</p>
+
+<table class="rank-table">
+<tr><th>Rank (Noul)</th><th>Candidate</th><th>Noul</th><th>BM25 rank</th><th>Noul bar</th></tr>
+<tr><td>1</td><td>Document about bfs handling in graph traversal algorithm</td><td>0.640</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>2</td><td>Document about bfs handling in graph traversal algorithm</td><td>0.610</td>
+<td>–</td><td><span class="bar bar-rel" style="width:190px"></span></td></tr>
+<tr><td>3</td><td>Document about bfs handling in graph traversal algorithm</td><td>0.600</td>
+<td>4</td><td><span class="bar bar-rel" style="width:187px"></span></td></tr>
+<tr><td>4</td><td>Document about bfs handling in graph traversal algorithm</td><td>0.590</td>
+<td>–</td><td><span class="bar bar-rel" style="width:184px"></span></td></tr>
+<tr><td>5</td><td>Document about traverse handling in graph traversal algorithm</td><td>0.270</td>
+<td>–</td><td><span class="bar bar-rel" style="width:84px"></span></td></tr>
+<tr><td>6</td><td>Document about traverse handling in graph traversal algorithm</td><td>0.240</td>
+<td>1</td><td><span class="bar bar-rel" style="width:75px"></span></td></tr>
+<tr><td>7</td><td>Document about traverse handling in graph traversal algorithm</td><td>0.230</td>
+<td>–</td><td><span class="bar bar-rel" style="width:71px"></span></td></tr>
+<tr><td>8</td><td>Document about traverse handling in graph traversal algorithm</td><td>0.220</td>
+<td>5</td><td><span class="bar bar-rel" style="width:68px"></span></td></tr>
+<tr><td>9</td><td>Document about neighbor handling in graph traversal algorithm</td><td>0.210</td>
+<td>3</td><td><span class="bar bar-rel" style="width:65px"></span></td></tr>
+<tr><td>10</td><td>Document about neighbor handling in graph traversal algorithm</td><td>0.210</td>
+<td>–</td><td><span class="bar bar-rel" style="width:65px"></span></td></tr>
+<tr><td>11</td><td>Document about neighbor handling in graph traversal algorithm</td><td>0.210</td>
+<td>–</td><td><span class="bar bar-rel" style="width:65px"></span></td></tr>
+<tr><td>12</td><td>Document about edge handling in graph traversal algorithm</td><td>0.210</td>
+<td>–</td><td><span class="bar bar-rel" style="width:65px"></span></td></tr>
+<tr><td>13</td><td>Document about graph handling in graph traversal algorithm</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:62px"></span></td></tr>
+<tr><td>14</td><td>Document about edge handling in graph traversal algorithm</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:62px"></span></td></tr>
+<tr><td>15</td><td>Document about neighbor handling in graph traversal algorithm</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:62px"></span></td></tr>
+<tr><td>16</td><td>Document about edge handling in graph traversal algorithm</td><td>0.190</td>
+<td>2</td><td><span class="bar bar-rel" style="width:59px"></span></td></tr>
+<tr><td>17</td><td>Document about edge handling in graph traversal algorithm</td><td>0.190</td>
+<td>–</td><td><span class="bar bar-rel" style="width:59px"></span></td></tr>
+<tr><td>18</td><td>Document about graph handling in graph traversal algorithm</td><td>0.190</td>
+<td>–</td><td><span class="bar bar-rel" style="width:59px"></span></td></tr>
+<tr><td>19</td><td>Document about graph handling in graph traversal algorithm</td><td>0.180</td>
+<td>–</td><td><span class="bar bar-rel" style="width:56px"></span></td></tr>
+<tr><td>20</td><td>Document about graph handling in graph traversal algorithm</td><td>0.180</td>
+<td>–</td><td><span class="bar bar-rel" style="width:56px"></span></td></tr>
+<tr><td>21</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>22</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>23</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>24</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>25</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>26</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>27</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>28</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>29</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+<tr><td>30</td><td>Office supply inventory management system</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:3px"></span></td></tr>
+</table></div>
+<div class="query-block">
+<h2>Query 5: "how to index a repository"</h2>
+<p><strong>Keywords:</strong> index, scan, ingest, crawl, parse | <strong>Time:</strong> 22.4s |
+<strong>Separation:</strong> <span class="pass">PASS</span> |
+<strong>Top5 overlap:</strong> 0/5</p>
+
+<table class="rank-table">
+<tr><th>Rank (Noul)</th><th>Candidate</th><th>Noul</th><th>BM25 rank</th><th>Noul bar</th></tr>
+<tr><td>1</td><td>Document about index handling in how to index a repository</td><td>0.440</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>2</td><td>Document about index handling in how to index a repository</td><td>0.420</td>
+<td>–</td><td><span class="bar bar-rel" style="width:190px"></span></td></tr>
+<tr><td>3</td><td>Document about index handling in how to index a repository</td><td>0.400</td>
+<td>–</td><td><span class="bar bar-rel" style="width:181px"></span></td></tr>
+<tr><td>4</td><td>Document about index handling in how to index a repository</td><td>0.380</td>
+<td>–</td><td><span class="bar bar-rel" style="width:172px"></span></td></tr>
+<tr><td>5</td><td>Document about ingest handling in how to index a repository</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:109px"></span></td></tr>
+<tr><td>6</td><td>Document about ingest handling in how to index a repository</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:109px"></span></td></tr>
+<tr><td>7</td><td>Document about ingest handling in how to index a repository</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:109px"></span></td></tr>
+<tr><td>8</td><td>Document about ingest handling in how to index a repository</td><td>0.220</td>
+<td>2</td><td><span class="bar bar-rel" style="width:100px"></span></td></tr>
+<tr><td>9</td><td>Document about crawl handling in how to index a repository</td><td>0.210</td>
+<td>–</td><td><span class="bar bar-rel" style="width:95px"></span></td></tr>
+<tr><td>10</td><td>Document about crawl handling in how to index a repository</td><td>0.200</td>
+<td>3</td><td><span class="bar bar-rel" style="width:90px"></span></td></tr>
+<tr><td>11</td><td>Document about crawl handling in how to index a repository</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:90px"></span></td></tr>
+<tr><td>12</td><td>Document about crawl handling in how to index a repository</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:90px"></span></td></tr>
+<tr><td>13</td><td>Document about scan handling in how to index a repository</td><td>0.190</td>
+<td>–</td><td><span class="bar bar-rel" style="width:86px"></span></td></tr>
+<tr><td>14</td><td>Document about scan handling in how to index a repository</td><td>0.180</td>
+<td>1</td><td><span class="bar bar-rel" style="width:81px"></span></td></tr>
+<tr><td>15</td><td>Document about scan handling in how to index a repository</td><td>0.180</td>
+<td>5</td><td><span class="bar bar-rel" style="width:81px"></span></td></tr>
+<tr><td>16</td><td>Document about scan handling in how to index a repository</td><td>0.180</td>
+<td>–</td><td><span class="bar bar-rel" style="width:81px"></span></td></tr>
+<tr><td>17</td><td>Document about parse handling in how to index a repository</td><td>0.130</td>
+<td>4</td><td><span class="bar bar-rel" style="width:59px"></span></td></tr>
+<tr><td>18</td><td>Document about parse handling in how to index a repository</td><td>0.120</td>
+<td>–</td><td><span class="bar bar-rel" style="width:54px"></span></td></tr>
+<tr><td>19</td><td>Document about parse handling in how to index a repository</td><td>0.120</td>
+<td>–</td><td><span class="bar bar-rel" style="width:54px"></span></td></tr>
+<tr><td>20</td><td>Document about parse handling in how to index a repository</td><td>0.120</td>
+<td>–</td><td><span class="bar bar-rel" style="width:54px"></span></td></tr>
+<tr><td>21</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>22</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>23</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>24</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>25</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>26</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>27</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>28</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>29</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>30</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+</table></div>
+<div class="query-block">
+<h2>Query 6: "caching invalidation policy"</h2>
+<p><strong>Keywords:</strong> cache, stale, invalidate, refresh, watermark | <strong>Time:</strong> 22.9s |
+<strong>Separation:</strong> <span class="pass">PASS</span> |
+<strong>Top5 overlap:</strong> 1/5</p>
+
+<table class="rank-table">
+<tr><th>Rank (Noul)</th><th>Candidate</th><th>Noul</th><th>BM25 rank</th><th>Noul bar</th></tr>
+<tr><td>1</td><td>Document about stale handling in caching invalidation policy</td><td>0.410</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>2</td><td>Document about stale handling in caching invalidation policy</td><td>0.410</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>3</td><td>Document about stale handling in caching invalidation policy</td><td>0.400</td>
+<td>–</td><td><span class="bar bar-rel" style="width:195px"></span></td></tr>
+<tr><td>4</td><td>Document about stale handling in caching invalidation policy</td><td>0.380</td>
+<td>2</td><td><span class="bar bar-rel" style="width:185px"></span></td></tr>
+<tr><td>5</td><td>Document about invalidate handling in caching invalidation policy</td><td>0.360</td>
+<td>–</td><td><span class="bar bar-rel" style="width:175px"></span></td></tr>
+<tr><td>6</td><td>Document about refresh handling in caching invalidation policy</td><td>0.350</td>
+<td>4</td><td><span class="bar bar-rel" style="width:170px"></span></td></tr>
+<tr><td>7</td><td>Document about invalidate handling in caching invalidation policy</td><td>0.340</td>
+<td>3</td><td><span class="bar bar-rel" style="width:165px"></span></td></tr>
+<tr><td>8</td><td>Document about refresh handling in caching invalidation policy</td><td>0.330</td>
+<td>–</td><td><span class="bar bar-rel" style="width:160px"></span></td></tr>
+<tr><td>9</td><td>Document about invalidate handling in caching invalidation policy</td><td>0.330</td>
+<td>–</td><td><span class="bar bar-rel" style="width:160px"></span></td></tr>
+<tr><td>10</td><td>Document about invalidate handling in caching invalidation policy</td><td>0.330</td>
+<td>–</td><td><span class="bar bar-rel" style="width:160px"></span></td></tr>
+<tr><td>11</td><td>Document about refresh handling in caching invalidation policy</td><td>0.330</td>
+<td>–</td><td><span class="bar bar-rel" style="width:160px"></span></td></tr>
+<tr><td>12</td><td>Document about refresh handling in caching invalidation policy</td><td>0.310</td>
+<td>–</td><td><span class="bar bar-rel" style="width:151px"></span></td></tr>
+<tr><td>13</td><td>Document about cache handling in caching invalidation policy</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:117px"></span></td></tr>
+<tr><td>14</td><td>Document about watermark handling in caching invalidation policy</td><td>0.230</td>
+<td>5</td><td><span class="bar bar-rel" style="width:112px"></span></td></tr>
+<tr><td>15</td><td>Document about cache handling in caching invalidation policy</td><td>0.230</td>
+<td>–</td><td><span class="bar bar-rel" style="width:112px"></span></td></tr>
+<tr><td>16</td><td>Document about cache handling in caching invalidation policy</td><td>0.220</td>
+<td>1</td><td><span class="bar bar-rel" style="width:107px"></span></td></tr>
+<tr><td>17</td><td>Document about watermark handling in caching invalidation policy</td><td>0.220</td>
+<td>–</td><td><span class="bar bar-rel" style="width:107px"></span></td></tr>
+<tr><td>18</td><td>Document about watermark handling in caching invalidation policy</td><td>0.210</td>
+<td>–</td><td><span class="bar bar-rel" style="width:102px"></span></td></tr>
+<tr><td>19</td><td>Document about cache handling in caching invalidation policy</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:97px"></span></td></tr>
+<tr><td>20</td><td>Document about watermark handling in caching invalidation policy</td><td>0.200</td>
+<td>–</td><td><span class="bar bar-rel" style="width:97px"></span></td></tr>
+<tr><td>21</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>22</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>23</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>24</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>25</td><td>Office supply inventory management system</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:9px"></span></td></tr>
+<tr><td>26</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>27</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>28</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>29</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+<tr><td>30</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.010</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:4px"></span></td></tr>
+</table></div>
+<div class="query-block">
+<h2>Query 7: "multi-tenant isolation"</h2>
+<p><strong>Keywords:</strong> tenant, project, scope, isolate, namespace | <strong>Time:</strong> 24.1s |
+<strong>Separation:</strong> <span class="pass">PASS</span> |
+<strong>Top5 overlap:</strong> 2/5</p>
+
+<table class="rank-table">
+<tr><th>Rank (Noul)</th><th>Candidate</th><th>Noul</th><th>BM25 rank</th><th>Noul bar</th></tr>
+<tr><td>1</td><td>Document about namespace handling in multi-tenant isolation</td><td>0.530</td>
+<td>–</td><td><span class="bar bar-rel" style="width:200px"></span></td></tr>
+<tr><td>2</td><td>Document about namespace handling in multi-tenant isolation</td><td>0.510</td>
+<td>4</td><td><span class="bar bar-rel" style="width:192px"></span></td></tr>
+<tr><td>3</td><td>Document about namespace handling in multi-tenant isolation</td><td>0.500</td>
+<td>–</td><td><span class="bar bar-rel" style="width:188px"></span></td></tr>
+<tr><td>4</td><td>Document about isolate handling in multi-tenant isolation</td><td>0.490</td>
+<td>3</td><td><span class="bar bar-rel" style="width:184px"></span></td></tr>
+<tr><td>5</td><td>Document about namespace handling in multi-tenant isolation</td><td>0.490</td>
+<td>–</td><td><span class="bar bar-rel" style="width:184px"></span></td></tr>
+<tr><td>6</td><td>Document about tenant handling in multi-tenant isolation</td><td>0.480</td>
+<td>–</td><td><span class="bar bar-rel" style="width:181px"></span></td></tr>
+<tr><td>7</td><td>Document about isolate handling in multi-tenant isolation</td><td>0.470</td>
+<td>–</td><td><span class="bar bar-rel" style="width:177px"></span></td></tr>
+<tr><td>8</td><td>Document about scope handling in multi-tenant isolation</td><td>0.470</td>
+<td>–</td><td><span class="bar bar-rel" style="width:177px"></span></td></tr>
+<tr><td>9</td><td>Document about isolate handling in multi-tenant isolation</td><td>0.460</td>
+<td>–</td><td><span class="bar bar-rel" style="width:173px"></span></td></tr>
+<tr><td>10</td><td>Document about tenant handling in multi-tenant isolation</td><td>0.450</td>
+<td>–</td><td><span class="bar bar-rel" style="width:169px"></span></td></tr>
+<tr><td>11</td><td>Document about scope handling in multi-tenant isolation</td><td>0.450</td>
+<td>–</td><td><span class="bar bar-rel" style="width:169px"></span></td></tr>
+<tr><td>12</td><td>Document about scope handling in multi-tenant isolation</td><td>0.450</td>
+<td>–</td><td><span class="bar bar-rel" style="width:169px"></span></td></tr>
+<tr><td>13</td><td>Document about isolate handling in multi-tenant isolation</td><td>0.450</td>
+<td>–</td><td><span class="bar bar-rel" style="width:169px"></span></td></tr>
+<tr><td>14</td><td>Document about scope handling in multi-tenant isolation</td><td>0.440</td>
+<td>2</td><td><span class="bar bar-rel" style="width:166px"></span></td></tr>
+<tr><td>15</td><td>Document about tenant handling in multi-tenant isolation</td><td>0.430</td>
+<td>–</td><td><span class="bar bar-rel" style="width:162px"></span></td></tr>
+<tr><td>16</td><td>Document about tenant handling in multi-tenant isolation</td><td>0.420</td>
+<td>–</td><td><span class="bar bar-rel" style="width:158px"></span></td></tr>
+<tr><td>17</td><td>Document about project handling in multi-tenant isolation</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:90px"></span></td></tr>
+<tr><td>18</td><td>Document about project handling in multi-tenant isolation</td><td>0.240</td>
+<td>–</td><td><span class="bar bar-rel" style="width:90px"></span></td></tr>
+<tr><td>19</td><td>Document about project handling in multi-tenant isolation</td><td>0.230</td>
+<td>1</td><td><span class="bar bar-rel" style="width:86px"></span></td></tr>
+<tr><td>20</td><td>Document about project handling in multi-tenant isolation</td><td>0.220</td>
+<td>5</td><td><span class="bar bar-rel" style="width:83px"></span></td></tr>
+<tr><td>21</td><td>Office supply inventory management system</td><td>0.040</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:15px"></span></td></tr>
+<tr><td>22</td><td>Office supply inventory management system</td><td>0.040</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:15px"></span></td></tr>
+<tr><td>23</td><td>Office supply inventory management system</td><td>0.030</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:11px"></span></td></tr>
+<tr><td>24</td><td>Office supply inventory management system</td><td>0.030</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:11px"></span></td></tr>
+<tr><td>25</td><td>Office supply inventory management system</td><td>0.030</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:11px"></span></td></tr>
+<tr><td>26</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:7px"></span></td></tr>
+<tr><td>27</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:7px"></span></td></tr>
+<tr><td>28</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:7px"></span></td></tr>
+<tr><td>29</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:7px"></span></td></tr>
+<tr><td>30</td><td>Server rack cooling settings and HVAC monitoring</td><td>0.020</td>
+<td>–</td><td><span class="bar bar-unrel" style="width:7px"></span></td></tr>
+</table></div>
+</body></html>

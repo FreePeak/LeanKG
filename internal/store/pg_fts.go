@@ -89,6 +89,20 @@ func hybridWindow(limit int) int {
 // the fabricated 0.0 that normalization turns it into.
 const RRFK = 60
 
+// FuseRRFWeights is a future extension point — currently unused.
+// When introduced, it scales each arm's contribution inside
+// a weighted variant of FuseRRF so a learned reranker can adjust
+// arm weights instead of the fixed RRFK formula (see the
+// primitive map, "Add weight params to FuseRRF"). Zero fields
+// leave the arm at RRFK; the slice (not the struct) is how you
+// drop an arm entirely.
+type FuseRRFWeights struct {
+	Vector   float64
+	TSVector float64
+	Trigram  float64
+	ILIKE    float64
+}
+
 // RankList is one arm's ranked output feeding FuseRRF: document keys in
 // descending relevance (rank 1 first). Name labels the arm for provenance.
 type RankList struct {
@@ -129,6 +143,64 @@ func FuseRRF(lists []RankList) []FusedHit {
 			}
 			s.hit.Ranks[l.Name] = rank + 1
 			s.hit.Score += 1 / float64(RRFK+rank+1)
+		}
+	}
+	sort.SliceStable(slots, func(i, j int) bool { return slots[i].hit.Score > slots[j].hit.Score })
+	out := make([]FusedHit, len(slots))
+	for i, s := range slots {
+		out[i] = s.hit
+	}
+	return out
+}
+
+// armWeight maps an arm name to its weight for weighted fusion.
+func (w FuseRRFWeights) armWeight(name string) float64 {
+	switch name {
+	case ArmVector:
+		if w.Vector != 0 {
+			return w.Vector
+		}
+	case ArmTSVector:
+		if w.TSVector != 0 {
+			return w.TSVector
+		}
+	case ArmTrigram:
+		if w.Trigram != 0 {
+			return w.Trigram
+		}
+	case ArmILIKE:
+		if w.ILIKE != 0 {
+			return w.ILIKE
+		}
+	}
+	return 1.0
+}
+
+// FuseRRFWeighted is FuseRRF with per-arm score scaling: score +=
+// weight[arm] / (K + rank + 1). It keeps the same RRFK convention, tie
+// break and arm-order logic as FuseRRF, so a caller can upweight or
+// downweight a ranking arm (the primitive map's "learned reranker
+// replaces fixed RRFK") without perturbing how missing ranks are treated.
+func FuseRRFWeighted(lists []RankList, w FuseRRFWeights) []FusedHit {
+	type slot struct{ hit FusedHit }
+	var slots []*slot
+	byKey := map[string]*slot{}
+	for _, l := range lists {
+		weight := w.armWeight(l.Name)
+		seen := map[string]bool{}
+		for rank, key := range l.Keys {
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			s := byKey[key]
+			if s == nil {
+				s = &slot{hit: FusedHit{Key: key, Ranks: map[string]int{}}}
+				byKey[key] = s
+				slots = append(slots, s)
+			}
+			s.hit.Ranks[l.Name] = rank + 1
+			s.hit.Score += weight / float64(RRFK+rank+1)
 		}
 	}
 	sort.SliceStable(slots, func(i, j int) bool { return slots[i].hit.Score > slots[j].hit.Score })
