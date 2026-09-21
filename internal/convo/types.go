@@ -3,6 +3,7 @@
 package convo
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/FreePeak/LeanKG/internal/judge"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -70,7 +72,67 @@ var (
 // prefix label ("decision:", "preference:", ...) wins; otherwise problem
 // phrases are tried first (most specific), then decision / milestone /
 // preference keyword heuristics. Unmatched text falls back to KindGeneral.
+//
+// ClassifyWithJudge is the learned counterpart (internal/judge): same four
+// classes as one Choice question, gated on confidence — below the floor the
+// keyword verdict stands. Classify stays the default; the judge graduates
+// only with a measured gap (see docs/judge-use-cases.md UC-3).
 func Classify(text string) Kind {
+	return classifyKind(text)
+}
+
+// ClassifyWithJudge runs the keyword classifier first and consults the judge
+// only when it says KindGeneral — the "uncertain" branch where keywords have
+// no signal. A nil judge (the default: nothing configured) returns
+// (KindGeneral, false) without a call. Non-general keyword verdicts return
+// immediately: explicit labels and specific phrases outrank a model. The
+// judged label applies only at confidence >= floor; below it the text stays
+// unmined (false), never silently kept on a weak judgment.
+func ClassifyWithJudge(j judge.Judge, text string, floor float64) (Kind, bool) {
+	if k := classifyKind(text); k != KindGeneral {
+		return k, true
+	}
+	if j == nil {
+		return KindGeneral, false
+	}
+	lowered := strings.ToLower(strings.TrimSpace(text))
+	if lowered == "" {
+		return KindGeneral, false
+	}
+	answers, err := j.Ask(context.Background(), lowered, map[string]judge.Question{
+		"kind": {
+			Type:         judge.Choice,
+			Instructions: "What kind of team note is this message?",
+			Criteria: map[string]string{
+				"decision":   "the team chose an approach or will do something",
+				"preference": "someone likes or wants one option over another",
+				"milestone":  "a goal, deadline, or shipped marker",
+				"problem":    "something is broken, failing, or stuck",
+				"general":    "none of the above; ordinary chatter",
+			},
+		},
+	})
+	if err != nil || judge.Unavailable(answers) {
+		return KindGeneral, false
+	}
+	a, ok := answers["kind"]
+	if !ok || a.Confidence < floor {
+		return KindGeneral, false
+	}
+	switch a.Value {
+	case "decision":
+		return KindDecision, true
+	case "preference":
+		return KindPreference, true
+	case "milestone":
+		return KindMilestone, true
+	case "problem":
+		return KindProblem, true
+	}
+	return KindGeneral, false
+}
+
+func classifyKind(text string) Kind {
 	lowered := strings.ToLower(strings.TrimSpace(text))
 
 	for _, p := range labelPhrases {
