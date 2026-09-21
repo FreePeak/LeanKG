@@ -1,0 +1,333 @@
+{
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "LeanKG engine (Go module)",
+   "wraps": [
+    "miner",
+    "store",
+    "ladder",
+    "judge",
+    "summarize"
+   ]
+  }
+ ],
+ "cards": [
+  {
+   "dot": "emerald",
+   "items": [
+    "One Judge.Ask wire serves both backends; unconfigured = nil judge, zero calls",
+    "Unreachable or 500 answers (nil, nil): native rule stands, never fails the op"
+   ],
+   "title": "Abstraction"
+  },
+  {
+   "dot": "cyan",
+   "items": [
+    "Chat exports mined by MineDir; keywords decide, judge rescues only KindGeneral",
+    "Judged label applies at confidence >= floor, else the text stays unmined"
+   ],
+   "title": "LIVE path"
+  },
+  {
+   "dot": "rose",
+   "items": [
+    "Summarize writes the meaning tier at temperature 0; it never judges",
+    "Embedder supplies L3 vectors only; a decision model does not embed"
+   ],
+   "title": "Non-goals"
+  }
+ ],
+ "components": [
+  {
+   "id": "exports",
+   "label": "Chat exports",
+   "pos": [
+    40,
+    300
+   ],
+   "size": [
+    120,
+    60
+   ],
+   "sublabel": "Claude / Slack / ChatGPT",
+   "type": "external"
+  },
+  {
+   "id": "miner",
+   "label": "convo miner",
+   "pos": [
+    250,
+    300
+   ],
+   "size": [
+    130,
+    60
+   ],
+   "sublabel": "MineDir + Classify",
+   "type": "backend"
+  },
+  {
+   "id": "store",
+   "label": "graph + vectors",
+   "pos": [
+    460,
+    300
+   ],
+   "size": [
+    130,
+    60
+   ],
+   "sublabel": "SQLite WAL / pgvector",
+   "type": "database"
+  },
+  {
+   "id": "ladder",
+   "label": "L0-L3 ladder",
+   "pos": [
+    670,
+    300
+   ],
+   "size": [
+    130,
+    60
+   ],
+   "sublabel": "exact > fuzzy > semantic",
+   "type": "backend"
+  },
+  {
+   "id": "agent",
+   "label": "agent next turn",
+   "pos": [
+    880,
+    300
+   ],
+   "size": [
+    120,
+    60
+   ],
+   "sublabel": "hits + <memories>",
+   "type": "external"
+  },
+  {
+   "id": "judge",
+   "label": "internal/judge",
+   "pos": [
+    40,
+    110
+   ],
+   "size": [
+    130,
+    64
+   ],
+   "sublabel": "Ask(state, questions)",
+   "tag": "choice / score / noul",
+   "type": "backend"
+  },
+  {
+   "id": "laya",
+   "label": "Laya sidecar",
+   "pos": [
+    250,
+    110
+   ],
+   "size": [
+    130,
+    64
+   ],
+   "sublabel": "~33 ms, $0 self-hosted",
+   "tag": "LEANKG_JUDGE_SIDECAR_URL",
+   "type": "backend"
+  },
+  {
+   "id": "jev",
+   "label": "Jev provider API",
+   "pos": [
+    460,
+    110
+   ],
+   "size": [
+    130,
+    64
+   ],
+   "sublabel": "~250 ms p50, per-call",
+   "tag": "LEANKG_JUDGE_URL",
+   "type": "external"
+  },
+  {
+   "id": "summarize",
+   "label": "summarize LLM",
+   "pos": [
+    670,
+    110
+   ],
+   "size": [
+    130,
+    64
+   ],
+   "sublabel": "writes meaning tier",
+   "tag": "never judges",
+   "type": "backend"
+  },
+  {
+   "id": "embed",
+   "label": "bge-small embed",
+   "pos": [
+    880,
+    110
+   ],
+   "size": [
+    120,
+    64
+   ],
+   "sublabel": "L3 vectors only",
+   "type": "backend"
+  }
+ ],
+ "connections": [
+  {
+   "from": "exports",
+   "id": "exports-to-miner",
+   "label": "MineDir :110",
+   "to": "miner",
+   "labelDy": -24
+  },
+  {
+   "from": "miner",
+   "id": "miner-to-store",
+   "label": "elements + edges",
+   "to": "store",
+   "labelDy": -24
+  },
+  {
+   "from": "miner",
+   "fromSide": "top",
+   "id": "miner-to-judge",
+   "label": "KindGeneral only",
+   "to": "judge",
+   "toSide": "bottom",
+   "variant": "emphasis",
+   "labelDy": 10
+  },
+  {
+   "from": "judge",
+   "id": "judge-to-laya",
+   "label": "Ask, one call",
+   "to": "laya",
+   "labelDy": -23
+  },
+  {
+   "from": "judge",
+   "id": "judge-to-jev",
+   "label": "Ask, one call",
+   "to": "jev",
+   "variant": "dashed",
+   "labelDy": -14,
+   "fromSide": "top",
+   "toSide": "top",
+   "via": [
+    [
+     105,
+     60
+    ],
+    [
+     525,
+     60
+    ]
+   ]
+  },
+  {
+   "from": "laya",
+   "fromSide": "bottom",
+   "id": "laya-back",
+   "label": "choice + confidence",
+   "to": "miner",
+   "toSide": "top",
+   "via": [
+    [
+     315,
+     215
+    ],
+    [
+     315,
+     246
+    ]
+   ],
+   "labelDx": 12
+  },
+  {
+   "from": "store",
+   "id": "store-to-ladder",
+   "label": "L1 / L2 / L3",
+   "to": "ladder",
+   "labelDy": -24
+  },
+  {
+   "from": "ladder",
+   "id": "ladder-to-agent",
+   "label": "hits + inject",
+   "to": "agent",
+   "labelDy": -24
+  },
+  {
+   "from": "embed",
+   "fromSide": "bottom",
+   "id": "embed-to-ladder",
+   "label": "L3 vectors",
+   "to": "ladder",
+   "toSide": "top",
+   "labelDx": 8
+  },
+  {
+   "from": "summarize",
+   "fromSide": "left",
+   "id": "summarize-to-store",
+   "label": "meaning tier",
+   "to": "store",
+   "toSide": "top",
+   "variant": "dashed"
+  }
+ ],
+ "diagram_type": "architecture",
+ "meta": {
+  "quality_profile": "showcase",
+  "title": "Laya / Jev judgment inside LeanKG",
+  "views": [
+   {
+    "focus": [
+     "exports",
+     "miner",
+     "store",
+     "ladder",
+     "agent"
+    ],
+    "id": "main-path",
+    "label": "Mine, store, answer",
+    "note": "Deterministic backbone: exports become graph elements, the ladder answers queries."
+   },
+   {
+    "focus": [
+     "miner",
+     "judge",
+     "laya",
+     "jev"
+    ],
+    "id": "judge-branch",
+    "label": "Judge branch",
+    "note": "Keywords decide; only KindGeneral consults Laya local or Jev provider."
+   },
+   {
+    "focus": [
+     "summarize",
+     "embed",
+     "store",
+     "ladder"
+    ],
+    "id": "never-judges",
+    "label": "What never judges",
+    "note": "Summarize writes prose at temp 0; the embedder supplies L3 vectors."
+   }
+  ]
+ },
+ "schema_version": 1
+}
