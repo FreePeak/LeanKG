@@ -230,3 +230,11 @@ unreachable / unconfigured → nil+nil, bad questions → error, nil default).
 4. Cost noted: calls × p50 added to the path (query-path sites: Local or
    don't graduate).
 5. PRD + tracker updated (FR-TYPE row) in the same PR.
+
+## 6. Diagram
+
+`diagrams/laya-judge.html` — interactive architecture map of this document:
+the deterministic backbone (exports → miner → store → L0–L3 ladder → agent),
+the judge branch (miner → `internal/judge` → Laya sidecar or Jev provider),
+and the explicit non-goals (summarize LLM, bge-small embedder).
+Open it in a browser; three guided views isolate each story.
