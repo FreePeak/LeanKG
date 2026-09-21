@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/judge"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -579,5 +580,39 @@ func TestFixtureShapes(t *testing.T) {
 		if _, err := MineFile(fixture(t, tc.file), tc.format); err != nil {
 			t.Fatalf("%s must parse as %s: %v", tc.file, tc.format, err)
 		}
+	}
+}
+
+func TestClassifyWithJudge(t *testing.T) {
+	stub := judge.JudgeFunc(func(ctx context.Context, state string, qs map[string]judge.Question) (map[string]judge.Answer, error) {
+		if strings.Contains(state, "redis") {
+			return map[string]judge.Answer{"kind": {Value: "decision", Confidence: 0.9}}, nil
+		}
+		return map[string]judge.Answer{"kind": {Value: "general", Confidence: 0.9}}, nil
+	})
+	// Keyword verdicts never call the judge: label wins without a round trip.
+	called := false
+	spy := judge.JudgeFunc(func(ctx context.Context, state string, qs map[string]judge.Question) (map[string]judge.Answer, error) {
+		called = true
+		return stub.Ask(ctx, state, qs)
+	})
+	if k, ok := ClassifyWithJudge(spy, "Problem: disk full", 0.5); !ok || k != KindProblem || called {
+		t.Fatalf("keyword path = (%v, %v, called=%v), want (problem, true, false)", k, ok, called)
+	}
+	// Uncertain branch: judged label applies at/above the floor.
+	if k, ok := ClassifyWithJudge(stub, "maybe we try redis next quarter", 0.5); !ok || k != KindDecision {
+		t.Fatalf("judged = (%v, %v), want (decision, true)", k, ok)
+	}
+	// Below the floor the text stays unmined.
+	if _, ok := ClassifyWithJudge(stub, "maybe we try redis next quarter", 0.95); ok {
+		t.Fatal("below-floor judgment must not mine")
+	}
+	// Nil judge: no call, no mine.
+	if _, ok := ClassifyWithJudge(nil, "maybe we try redis next quarter", 0.5); ok {
+		t.Fatal("nil judge must not mine")
+	}
+	// Judge says general: stays unmined.
+	if _, ok := ClassifyWithJudge(stub, "what is for lunch", 0.5); ok {
+		t.Fatal("judged general must not mine")
 	}
 }
