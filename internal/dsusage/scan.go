@@ -251,10 +251,10 @@ func scanFile(path string) ([]Step, []SessionIssue, error) {
 		steps[i].TopSeverity = Top(steps[i].Issues)
 		out = append(out, steps[i])
 	}
-	return out, sessionIssues(sid, stats), nil
+	return out, sessionIssues(sid, ws, stats), nil
 }
 
-func sessionIssues(sid string, s sessionStats) []SessionIssue {
+func sessionIssues(sid, ws string, s sessionStats) []SessionIssue {
 	var out []SessionIssue
 	if s.totalTools > 0 && s.leankgCalls == 0 {
 		// Session used local tools (bash/grep/read/glob) but never called LeanKG.
@@ -273,8 +273,14 @@ func sessionIssues(sid string, s sessionStats) []SessionIssue {
 				Rule:     "semantic_never_served",
 				Severity: SevMedium,
 				Title:    "No query in this session reached semantic search",
-				Detail:   fmt.Sprintf("%s: rung mix L1 %d · L2 %d · L3 %d", sid, s.rungs["L1"], s.rungs["L2"], s.rungs["L3"]),
-				Fix:      "Build vectors for this project (leankg-embed run). The ladder stops at the first rung with hits, so a keyword hit hides that L3 is unavailable.",
+				Detail: fmt.Sprintf("%s [%s]: rung mix L1 %d · L2 %d · L3 %d",
+					sid, ws, s.rungs["L1"], s.rungs["L2"], s.rungs["L3"]),
+				Fix: "This project has no vectors, so L3 cannot answer and the ladder stops at the first " +
+					"rung with hits — a keyword hit hides it. Build them ONCE per project: " +
+					"scripts/embed-runtime.sh on && LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 " +
+					"leankg-embed run --project <ABSOLUTE-PATH-TO-PROJECT>. Always pass --project; " +
+					"without it leankg-embed embeds the cwd store instead. See by_rung on this dashboard " +
+					"for which projects still have no vectors.",
 			})
 		}
 	}

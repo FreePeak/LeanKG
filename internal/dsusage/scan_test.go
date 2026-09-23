@@ -229,3 +229,31 @@ func TestSessionIssueSemanticNeverServedSuppressedByL3(t *testing.T) {
 		}
 	}
 }
+
+// The fix text is the operator's/agent's only instruction for turning L3 on,
+// so it must stay runnable: an absolute --project (leankg-embed otherwise
+// embeds the cwd store, the #370 footgun) and LEANKG_EMBED_BASE_URL (FromEnv
+// for provider=local refuses to attach without it and L3 degrades to L2).
+func TestSemanticNeverServedFixIsActionable(t *testing.T) {
+	issues := sessionIssues("session-x", "--work-abc--", sessionStats{
+		leankgCalls: 2,
+		rungs:       map[string]int{"L2": 2},
+	})
+	if len(issues) != 1 || issues[0].Rule != "semantic_never_served" {
+		t.Fatalf("got %+v", issues)
+	}
+	fix := issues[0].Fix
+	for _, want := range []string{
+		"leankg-embed run",
+		"--project",
+		"ABSOLUTE-PATH-TO-PROJECT",
+		"LEANKG_EMBED_BASE_URL",
+	} {
+		if !strings.Contains(fix, want) {
+			t.Fatalf("fix text missing %q: %s", want, fix)
+		}
+	}
+	if !strings.Contains(issues[0].Detail, "--work-abc--") {
+		t.Fatalf("detail must name the workspace: %s", issues[0].Detail)
+	}
+}
