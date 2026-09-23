@@ -63,6 +63,12 @@ type sessionStats struct {
 	// rungs counts ladder rungs that actually answered (L1/L2/L3), so a
 	// session can report that its queries never reached semantic search.
 	rungs map[string]int
+	// degradedFromL3 counts answers whose reason says L3 WAS attempted and
+	// degraded (e.g. "no vector collection ... degraded from L3"). This is
+	// the one case that proves semantic was reachable-but-broken, as opposed
+	// to a keyword/exact hit that simply answered first or an agent that
+	// pinned action=exact/fuzzy and never consulted L3.
+	degradedFromL3 int
 }
 
 // parseRetrieval pulls retrieval.rung / retrieval.reason out of a LeanKG
@@ -238,6 +244,9 @@ func scanFile(path string) ([]Step, []SessionIssue, error) {
 				}
 				stats.rungs[r]++
 			}
+			if strings.Contains(strings.ToLower(steps[idx].RungReason), "degraded from l3") {
+				stats.degradedFromL3++
+			}
 			steps[idx].Output = clip(text, 2000)
 			steps[idx].IsError = isErr
 		}
@@ -269,19 +278,36 @@ func sessionIssues(sid, ws string, s sessionStats) []SessionIssue {
 	if s.rungs["L3"] == 0 {
 		answered := s.rungs["L1"] + s.rungs["L2"] + s.rungs["L3"]
 		if answered > 0 {
-			out = append(out, SessionIssue{
-				Rule:     "semantic_never_served",
-				Severity: SevMedium,
-				Title:    "No query in this session reached semantic search",
-				Detail: fmt.Sprintf("%s [%s]: rung mix L1 %d · L2 %d · L3 %d",
-					sid, ws, s.rungs["L1"], s.rungs["L2"], s.rungs["L3"]),
-				Fix: "This project has no vectors, so L3 cannot answer and the ladder stops at the first " +
-					"rung with hits — a keyword hit hides it. Build them ONCE per project: " +
-					"scripts/embed-runtime.sh on && LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 " +
-					"leankg-embed run --project <ABSOLUTE-PATH-TO-PROJECT>. Always pass --project; " +
-					"without it leankg-embed embeds the cwd store instead. See by_rung on this dashboard " +
-					"for which projects still have no vectors.",
-			})
+			mix := fmt.Sprintf("%s [%s]: rung mix L1 %d · L2 %d · L3 %d",
+				sid, ws, s.rungs["L1"], s.rungs["L2"], s.rungs["L3"])
+			if s.degradedFromL3 > 0 {
+				// Semantic WAS reached and degraded: the project has no
+				// vectors. This is the actionable infrastructure gap.
+				out = append(out, SessionIssue{
+					Rule:     "semantic_degraded_no_vectors",
+					Severity: SevMedium,
+					Title:    "Semantic search was reached but degraded (no vectors)",
+					Detail:   fmt.Sprintf("%s · %d answer(s) degraded from L3", mix, s.degradedFromL3),
+					Fix: "This project has no vectors, so L3 degrades to keyword. Build them ONCE per " +
+						"project: scripts/embed-runtime.sh on && " +
+						"LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 " +
+						"leankg-embed run --project <ABSOLUTE-PATH>. Always pass --project; without it " +
+						"leankg-embed embeds the cwd store instead.",
+				})
+			} else {
+				// No L3 attempt: either a keyword/exact hit answered first, or
+				// the agent pinned action=exact/fuzzy. Routing behaviour, not
+				// a missing collection — flag it differently.
+				out = append(out, SessionIssue{
+					Rule:     "semantic_never_consulted",
+					Severity: SevInfo,
+					Title:    "Semantic search was never consulted (no L3, but none degraded either)",
+					Detail:   mix,
+					Fix: "L1/L2 answered first (a keyword or exact hit short-circuits the ladder) or the " +
+						"call pinned action=exact/fuzzy, which bypasses L3. Not a missing-vector problem. " +
+						"Pass no action (or action=search) to let the ladder reach L3 on semantic questions.",
+				})
+			}
 		}
 	}
 	return out

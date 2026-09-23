@@ -184,9 +184,10 @@ func TestScanFileExtractsRetrievalRungBeyondClipBudget(t *testing.T) {
 	if steps[0].RungReason != "FTS5 keyword match" {
 		t.Fatalf("rung reason = %q", steps[0].RungReason)
 	}
-	// L2-only session must raise the semantic_never_served issue.
-	if len(si) != 1 || si[0].Rule != "semantic_never_served" || si[0].Severity != SevMedium {
-		t.Fatalf("expected semantic_never_served (medium), got %+v", si)
+	// L2-only with a plain keyword reason: L3 was never consulted (a keyword
+	// hit answered first), which is routing behaviour, not a missing vector.
+	if len(si) != 1 || si[0].Rule != "semantic_never_consulted" || si[0].Severity != SevInfo {
+		t.Fatalf("expected semantic_never_consulted (info), got %+v", si)
 	}
 }
 
@@ -224,29 +225,30 @@ func TestSessionIssueSemanticNeverServedSuppressedByL3(t *testing.T) {
 		t.Fatalf("rungs not parsed: %+v", steps)
 	}
 	for _, s := range si {
-		if s.Rule == "semantic_never_served" {
-			t.Fatalf("L3 was served; semantic_never_served must not fire: %+v", si)
+		if s.Rule == "semantic_never_consulted" || s.Rule == "semantic_degraded_no_vectors" {
+			t.Fatalf("L3 was served; no semantic-gap issue may fire: %+v", si)
 		}
 	}
 }
 
-// The fix text is the operator's/agent's only instruction for turning L3 on,
-// so it must stay runnable: an absolute --project (leankg-embed otherwise
-// embeds the cwd store, the #370 footgun) and LEANKG_EMBED_BASE_URL (FromEnv
-// for provider=local refuses to attach without it and L3 degrades to L2).
-func TestSemanticNeverServedFixIsActionable(t *testing.T) {
+// The degraded-from-L3 fix text is the operator's only instruction for
+// turning L3 on, so it must stay runnable: an absolute --project (leankg-embed
+// otherwise embeds the cwd store, the #370 footgun) and LEANKG_EMBED_BASE_URL
+// (FromEnv for provider=local refuses to attach without it and L3 degrades).
+func TestSemanticDegradedFixIsActionable(t *testing.T) {
 	issues := sessionIssues("session-x", "--work-abc--", sessionStats{
-		leankgCalls: 2,
-		rungs:       map[string]int{"L2": 2},
+		leankgCalls:    2,
+		rungs:          map[string]int{"L2": 2},
+		degradedFromL3: 2,
 	})
-	if len(issues) != 1 || issues[0].Rule != "semantic_never_served" {
+	if len(issues) != 1 || issues[0].Rule != "semantic_degraded_no_vectors" {
 		t.Fatalf("got %+v", issues)
 	}
 	fix := issues[0].Fix
 	for _, want := range []string{
 		"leankg-embed run",
 		"--project",
-		"ABSOLUTE-PATH-TO-PROJECT",
+		"ABSOLUTE-PATH",
 		"LEANKG_EMBED_BASE_URL",
 	} {
 		if !strings.Contains(fix, want) {
@@ -255,5 +257,37 @@ func TestSemanticNeverServedFixIsActionable(t *testing.T) {
 	}
 	if !strings.Contains(issues[0].Detail, "--work-abc--") {
 		t.Fatalf("detail must name the workspace: %s", issues[0].Detail)
+	}
+}
+
+// A degrade reason carrying "degraded from L3" is the only proof semantic was
+// attempted, so the scanner must key the actionable no-vectors issue off it.
+func TestDegradedFromL3ClassifiesAsMissingVectors(t *testing.T) {
+	dir := t.TempDir()
+	ws := filepath.Join(dir, "--work-abc--", "session-deg")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res := `{"freshness":"fresh","hits":[{"content":"a"}],"retrieval":{"reason":"no vector collection for model local; degraded from L3","rung":"L2"}}`
+	line, _ := json.Marshal(map[string]any{
+		"type": "tool/result", "time": 1003,
+		"data": map[string]any{"message": map[string]any{
+			"source": map[string]any{"kind": "tool", "callId": "c1"},
+			"content": []any{map[string]any{
+				"type":    "tool-result",
+				"content": []any{map[string]any{"type": "text", "text": res}},
+			}},
+		}},
+	})
+	body := `{"type":"tool/call","time":1002,"data":{"callId":"c1","name":"mcp__leankg__query","arguments":"{\"query\":\"x\"}"}}` + "\n" + string(line) + "\n"
+	if err := os.WriteFile(filepath.Join(ws, "session.v4.jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, si, err := scanFile(filepath.Join(ws, "session.v4.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(si) != 1 || si[0].Rule != "semantic_degraded_no_vectors" || si[0].Severity != SevMedium {
+		t.Fatalf("degrade must classify as semantic_degraded_no_vectors (medium), got %+v", si)
 	}
 }
