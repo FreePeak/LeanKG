@@ -39,7 +39,31 @@ DSH **does** call LeanKG. The April `posttooluse.log` is the wrong meter. Real u
 | 7 | **Cursor unwired to local LeanKG** | `~/.cursor/mcp.json` has remote BE KG, not `http://127.0.0.1:9699/mcp` | high | **Not solved** — user config change |
 | 8 | **Writer only watches LeanKG checkout** | Other repos go stale unless imported | medium | **Operational / product** — per-project writer or on-demand import |
 | 9 | **Laya is a classifier, not chat** | `:9101` is bge-small embeddings; Laya = ModernBERT System One | info | **Solved for scoring** — local sidecar `:8091` scores steps |
-| 10 | **Semantic (L3) search is effectively unused** | Live corpus 2026-09-23: `by_rung` = L0 8 · L1 6 · L2 53 · **L3 1** across 68 rung-tagged steps. Most stores hold 0 vectors, so the ladder returns at L1/L2 and never attempts L3; the ladder stops at the first rung with hits, so a keyword hit hides that L3 is unavailable. | medium | **Visible, not fixed** — `semantic_never_served` (medium) + `by_rung` on the dashboard now show it. Fix = build vectors per project (`leankg-embed run`) |
+| 10 | **Semantic (L3) search is effectively unused** | Root-caused below: the L3 read path is healthy, but per-project vectors were never built (index/import/writer never embed), and REST auto-embed was dead. | medium | **Root-caused + auto-embed fixed** (`064f095`); remaining fix is operational: `leankg-embed run` per project (verified: commitgen/onegw now serve L3) |
+
+## Root cause: why L3 semantic is unused (investigated 2026-09-23)
+
+`semantic_never_served` was investigated end to end (own probes + three subagent tracks) and the L3 machinery is **not broken**. L3 serves correctly the moment a project has vectors. Confirmed live on `:9699` for `leankg`: forced `action=semantic` and the ordinary ladder both return `{"rung":"L3","reason":"vector similarity (cosine)"}`. The stamp the live server selects (`local` / `local:local` / 384 / cosine / chunker 2 / no prefixes) matches the stored collection exactly — **no stamp mismatch**.
+
+The cause is **per-project vectors were never built**, and a broken auto-embed path that should have built them:
+
+| Layer | Finding | Status |
+|---|---|---|
+| Build trigger | `leankg index`, MCP `import`, and `leankg writer` only index — they never call the embed pipeline. A project can have elements and 0 vectors legitimately. | by design; fix is operational |
+| L3 read path | Healthy. Degrade reasons are explicit (`no vector collection for model local; degraded from L3`, `stamp mismatch …`, `embedding provider failed …`). | healthy |
+| Stamp identity | Freshly embedded project stamp == server's `local` stamp, so no drift. | verified |
+| **REST auto-embed** | `handleAutoConfig` passed `r.Context()` to a background goroutine and returned. net/http cancels the request context at return, so the 120s debounce never elapsed and auto-embed **silently did nothing** (200 OK). | **fixed** (`064f095`) — server-lifetime ctx threaded through; regression test drives a real server and fails on the old wiring |
+| `leankg index --auto` | Advertises "index (and later embed)" but discards the mode (`_ = mode`); it only indexes. | not wired (product decision) |
+
+**Verified fix (operational).** With the runtime up and one pinned identity, per project:
+
+```bash
+export LEANKG_EMBED_PROVIDER=local
+export LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1
+leankg-embed run --project /abs/path/to/project   # fresh: embeds all
+```
+
+Locally proven: `commitgen` 0 → 119 vectors and `onegw` 0 → 2977 vectors (2m5s), both then serving `L3 / cosine`. A project without vectors degrades with `no vector collection for model local; degraded from L3` — now visible per project via `by_rung` / `semantic_never_served`.
 
 ## The embedding runtime (memory)
 
