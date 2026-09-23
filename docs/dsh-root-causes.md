@@ -43,16 +43,27 @@ DSH **does** call LeanKG. The April `posttooluse.log` is the wrong meter. Real u
 
 ## Root cause: why L3 semantic is unused (investigated 2026-09-23)
 
-`semantic_never_served` was investigated end to end (own probes + three subagent tracks) and the L3 machinery is **not broken**. L3 serves correctly the moment a project has vectors. Confirmed live on `:9699` for `leankg`: forced `action=semantic` and the ordinary ladder both return `{"rung":"L3","reason":"vector similarity (cosine)"}`. The stamp the live server selects (`local` / `local:local` / 384 / cosine / chunker 2 / no prefixes) matches the stored collection exactly — **no stamp mismatch**.
+`semantic_never_consulted` was investigated end to end (own probes + three subagent tracks over the live corpus and the L3 code) and the L3 machinery is **not broken**. L3 serves correctly the moment a project has vectors. Confirmed live on `:9699` for `leankg`: forced `action=semantic` and the ordinary ladder both return `{"rung":"L3","reason":"vector similarity (cosine)"}`. The stamp the live server selects (`local` / `local:local` / 384 / cosine / chunker 2 / no prefixes) matches the stored collection exactly — **no stamp mismatch**.
 
-The cause is **per-project vectors were never built**, and a broken auto-embed path that should have built them:
+**A "no L3" rung mix is not proof L3 was unavailable.** Over the 116 query steps that carried a retrieval block, the causes are:
+
+| cause | n | share |
+|---|---:|---:|
+| Router answered at L1/L2 first (a keyword or exact hit short-circuits the ladder) | 55 | 47% |
+| Agent pinned a low rung (`action=exact`/`fuzzy`, which bypass L3) | 49 | 42% |
+| **Missing vectors** — L3 attempted and degraded (`no vector collection for model local; degraded from L3`) | 7 | 6% |
+| L3 actually served | 5 | 4% |
+
+So building vectors raises the ceiling for genuinely semantic questions, but on their own does **not** make L3 the common path — ~89% of no-L3 answers are the ladder doing its job or an agent pinning a rung. `action=search` is a router (same as empty); only `exact`/`element`, `fuzzy`, and `semantic` pin (`internal/core/core.go:466,485-488`).
+
+The dashboard now reports the distinction rather than one misleading bucket: `semantic_degraded_no_vectors` (medium — L3 attempted and broke, actionable) vs `semantic_never_consulted` (info — L1/L2 answered first or a low rung was pinned). On the live corpus that is 3 real no-vector projects vs 24 routing notes.
+
+The infrastructure layer found and fixed:
 
 | Layer | Finding | Status |
 |---|---|---|
-| Build trigger | `leankg index`, MCP `import`, and `leankg writer` only index — they never call the embed pipeline. A project can have elements and 0 vectors legitimately. | by design; fix is operational |
-| L3 read path | Healthy. Degrade reasons are explicit (`no vector collection for model local; degraded from L3`, `stamp mismatch …`, `embedding provider failed …`). | healthy |
-| Stamp identity | Freshly embedded project stamp == server's `local` stamp, so no drift. | verified |
-| **REST auto-embed** | `handleAutoConfig` passed `r.Context()` to a background goroutine and returned. net/http cancels the request context at return, so the 120s debounce never elapsed and auto-embed **silently did nothing** (200 OK). | **fixed** (`064f095`) — server-lifetime ctx threaded through; regression test drives a real server and fails on the old wiring |
+| **REST auto-embed** | `handleAutoConfig` passed `r.Context()` to a background goroutine and returned; net/http cancels the request context at return, so the 120s debounce never elapsed and auto-embed **silently did nothing** (200 OK). | **fixed** (`064f095`) — server-lifetime ctx threaded through; regression test drives a real server and fails on the old wiring |
+| Build trigger | `leankg index`, MCP `import`, and `leankg writer` only index; they never call the embed pipeline. A project can have elements and 0 vectors legitimately. | by design; fix is operational |
 | `leankg index --auto` | Advertises "index (and later embed)" but discards the mode (`_ = mode`); it only indexes. | not wired (product decision) |
 
 **Verified fix (operational).** With the runtime up and one pinned identity, per project:
@@ -63,7 +74,7 @@ export LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1
 leankg-embed run --project /abs/path/to/project   # fresh: embeds all
 ```
 
-Locally proven: `commitgen` 0 → 119 vectors and `onegw` 0 → 2977 vectors (2m5s), both then serving `L3 / cosine`. A project without vectors degrades with `no vector collection for model local; degraded from L3` — now visible per project via `by_rung` / `semantic_never_served`.
+Locally proven: `commitgen` 0 → 119 vectors and `onegw` 0 → 2977 vectors (2m5s), both then serving `L3 / cosine`. Without vectors a semantic query degrades with `no vector collection for model local; degraded from L3` — the exact signal the dashboard keys on.
 
 ## The embedding runtime (memory)
 
