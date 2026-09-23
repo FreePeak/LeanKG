@@ -25,10 +25,17 @@ func Handler(roots []string, laya LayaClient, watch *Watcher) http.Handler {
 		if r.URL.Query().Get("laya") == "1" {
 			ApplyLaya(steps, laya, 8)
 		}
+		summary := summarize(steps)
+		if l, ok := summary["laya"].(map[string]int); ok {
+			l["configured"] = 0
+			if laya.Backend != nil {
+				l["configured"] = 1
+			}
+		}
 		writeJSON(w, map[string]any{
 			"steps":          steps,
 			"session_issues": sessIssues,
-			"summary":        summarize(steps),
+			"summary":        summary,
 			"causes":         knownCauses(),
 		})
 	})
@@ -97,6 +104,7 @@ func summarize(steps []Step) map[string]any {
 	tools := map[string]int{}
 	rungs := map[string]int{}
 	sessions := map[string]int{}
+	scored, unavailable, skippedInfo := 0, 0, 0
 	for _, s := range steps {
 		sev[string(s.TopSeverity)]++
 		tools[s.Tool]++
@@ -104,10 +112,24 @@ func summarize(steps []Step) map[string]any {
 		if s.Rung != "" {
 			rungs[s.Rung]++
 		}
+		// Laya engagement is derived from the tags ApplyLaya already writes
+		// onto each step — no new counters, no new judge calls.
+		for _, is := range s.Issues {
+			switch is.Rule {
+			case "laya_score", "laya_critical":
+				scored++
+			case "laya_unavailable":
+				unavailable++
+			}
+		}
+		if Top(s.Issues) == SevInfo {
+			skippedInfo++
+		}
 	}
 	return map[string]any{
 		"steps": len(steps), "sessions": len(sessions),
 		"by_severity": sev, "by_tool": tools, "by_rung": rungs,
+		"laya": map[string]int{"scored": scored, "unavailable": unavailable, "skipped_info": skippedInfo},
 	}
 }
 

@@ -74,6 +74,7 @@
 
   <section class="card" id="panel-all" hidden>
     <h2>Steps <span class="meta" id="stepsmeta"></span></h2>
+    <div id="sessissues"></div>
     <div class="chips" style="margin-bottom:10px">
       <select id="filter" class="chip" aria-label="severity filter">
         <option value="critical-high">critical + high</option>
@@ -185,21 +186,34 @@ async function loadSteps(){
 
 function renderSteps(){
   const data = cache.steps; if (!data) return;
-  $("stepsmeta").textContent = `· ${(data.summary||{}).steps||0} steps · ${(data.summary||{}).sessions||0} sessions`;
+  const sum = data.summary || {};
+  const rungTxt = Object.entries(sum.by_rung||{}).map(([k,v]) => `${k} ${v}`).join(" · ");
+  const lay = sum.laya || {};
+  $("stepsmeta").textContent = `· ${sum.steps||0} steps · ${sum.sessions||0} sessions`
+    + (rungTxt ? ` · rungs ${rungTxt}` : " · rungs none")
+    + ` · laya ${lay.configured?"on":"off"} (scored ${lay.scored||0}, skipped-info ${lay.skipped_info||0})`;
+  renderSessionIssues(data.session_issues||[]);
   const want = $("filter").value;
   const match = (st) => want==="critical-high" ? (st.top_severity==="critical"||st.top_severity==="high") : (!want || st.top_severity===want);
   const steps = (data.steps||[]).filter(match).slice(0,60);
   $("steps").innerHTML = steps.map(st => {
     const when = st.time_ms ? new Date(st.time_ms).toISOString().replace("T"," ").slice(0,19) : "";
+    const rungTag = st.rung ? ` <span class="chip">rung ${esc(st.rung)}</span>` : "";
     const issues = (st.issues||[]).map(i => `<div style="margin-top:6px"><span class="sev ${i.severity}">${i.severity}</span> <b>${esc(i.title)}</b><div class="meta">${esc(i.detail)}</div><div class="fix">Fix: ${esc(i.fix)}</div></div>`).join("");
-    return `<details class="step" style="margin-bottom:8px"><summary><span class="sev ${st.top_severity}">${st.top_severity}</span><span><b>${esc(st.tool)}</b><div class="meta">${esc(st.workspace)} · ${esc(st.session_id)} · turn ${st.turn} step ${st.step}</div></span><span class="meta">${when}</span></summary>
+    return `<details class="step" style="margin-bottom:8px"><summary><span class="sev ${st.top_severity}">${st.top_severity}</span><span><b>${esc(st.tool)}</b>${rungTag}<div class="meta">${esc(st.workspace)} · ${esc(st.session_id)} · turn ${st.turn} step ${st.step}</div></span><span class="meta">${when}</span></summary>
       <div class="grid2">
         <div><h2 style="font-size:11px;color:var(--muted)">Input</h2><pre>${esc(st.input)}</pre><h2 style="font-size:11px;color:var(--muted)">Agent before</h2><pre>${esc(st.agent_before)}</pre><h2 style="font-size:11px;color:var(--muted)">User</h2><pre>${esc(st.user_prompt)}</pre></div>
-        <div><h2 style="font-size:11px;color:var(--muted)">Output${st.is_error?" · error":""}</h2><pre>${esc(st.output)}</pre><h2 style="font-size:11px;color:var(--muted)">Agent after</h2><pre>${esc(st.agent_after)}</pre></div>
+        <div><h2 style="font-size:11px;color:var(--muted)">Output${st.is_error?" · error":""}</h2><pre>${esc(st.output)}</pre>${st.rung_reason?`<h2 style="font-size:11px;color:var(--muted)">Retrieval reason</h2><pre>${esc(st.rung_reason)}</pre>`:""}<h2 style="font-size:11px;color:var(--muted)">Agent after</h2><pre>${esc(st.agent_after)}</pre></div>
       </div>
       <div style="padding:0 14px 14px">${issues}</div>
     </details>`;
   }).join("") || `<div class="meta">No steps at this severity.</div>`;
+}
+
+function renderSessionIssues(list){
+  if (!list.length) { $("sessissues").innerHTML = ""; return; }
+  const rows = list.slice(0,20).map(x => `<li class="ask"><div class="rowline"><span class="sev ${x.severity}">${x.severity}</span><span class="title">${esc(x.title)}</span></div><div class="meta">${esc(x.detail)}</div><div class="fix">Fix: ${esc(x.fix)}</div></li>`).join("");
+  $("sessissues").innerHTML = `<details class="causes" open><summary>Session-level issues (${list.length})</summary><ul class="clean">${rows}</ul></details>`;
 }
 
 async function loadCauses(){

@@ -42,6 +42,25 @@ func TestSummarizeCountsRungs(t *testing.T) {
 	}
 }
 
+func TestSummarizeReportsLayaEngagement(t *testing.T) {
+	steps := []Step{
+		{SessionID: "a", Tool: "mcp__leankg__query",
+			Issues: []Issue{{Rule: "project_not_passed", Severity: SevCritical}, {Rule: "laya_score", Severity: SevInfo}}},
+		{SessionID: "a", Tool: "mcp__leankg__query",
+			Issues: []Issue{{Rule: "mcp_session_lost", Severity: SevCritical}, {Rule: "laya_critical", Severity: SevCritical}}},
+		{SessionID: "b", Tool: "mcp__leankg__query",
+			Issues: []Issue{{Rule: "tool_error", Severity: SevHigh}, {Rule: "laya_unavailable", Severity: SevInfo}}},
+		{SessionID: "b", Tool: "mcp__leankg__status", Issues: []Issue{{Rule: "ok", Severity: SevInfo}}},
+	}
+	laya, ok := summarize(steps)["laya"].(map[string]int)
+	if !ok {
+		t.Fatalf("laya block missing")
+	}
+	if laya["scored"] != 2 || laya["unavailable"] != 1 || laya["skipped_info"] != 1 {
+		t.Fatalf("laya = %v, want scored=2 unavailable=1 skipped_info=1", laya)
+	}
+}
+
 func TestLayaUnavailableDoesNotClearRules(t *testing.T) {
 	steps := []Step{{
 		Tool: "mcp__leankg__status", IsError: true,
