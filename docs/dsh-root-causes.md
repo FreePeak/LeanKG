@@ -97,7 +97,7 @@ scripts/embed-runtime.sh on       # bootstrap + wait for /health
 1. **`leankg dsh-usage`** — dashboard at `http://127.0.0.1:9710`  
    - tool input / output / agent before+after / user prompt  
    - rule classifier (`mcp_session_lost`, `project_not_passed`, `cold_store`, …)
-   - session-level issues (`no_leankg_in_code_session`, `semantic_never_served`)
+   - session-level issues (`no_leankg_in_code_session`, `semantic_degraded_no_vectors`, `semantic_never_consulted`)
    - per-step ladder `rung` + `retrieval.reason`, `by_rung` summary, and a derived `laya {configured, scored, unavailable, skipped_info}` block
 2. **MCP streamable HTTP `Stateless: true`** in `internal/mcp/server.go` (needs serve restart)
 3. **Local Laya sidecar** (`POST http://127.0.0.1:8091/v1/systemone`) for step scoring
