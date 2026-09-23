@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/core"
-	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/refresh"
@@ -148,13 +147,10 @@ func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceS
 	case <-time.After(time.Duration(debounceSecs) * time.Second):
 	}
 
-	provider, release, err := embed.StartProvider(ctx)
-	if err != nil {
-		log.Printf("auto-config: embed skipped: %v", err)
-		return
-	}
-	defer release()
-	_ = provider
+	// refresh.Run owns the provider lifecycle: it calls embed.StartProvider
+	// itself (spawning the local sidecar on demand when LEANKG_EMBED_BASE_URL
+	// is unset) and releases it on return. Starting a second provider here
+	// only collided on the default sidecar port.
 
 	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir})
 	if err != nil {

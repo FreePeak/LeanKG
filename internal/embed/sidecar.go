@@ -111,12 +111,15 @@ func SidecarConfigFromEnv() (SidecarConfig, error) {
 // cache (~/.cache/huggingface) — operator action is the binary only, never
 // a manual download (e2e-verified 2026-09-18: fresh HOME, 21 s incl. fetch).
 func defaultSidecarArgs() []string {
+	// -c 512 is bge-small's training context. The old 8192 made llama-server
+	// log "slot context exceeds the training context of the model (512) -
+	// capping" on every start; the effective value was 512 either way.
 	if home, err := os.UserHomeDir(); err == nil {
 		if p := filepath.Join(home, ".leankg", "models", DefaultLocalFile); fileExists(p) {
-			return []string{"-m", p, "--embeddings", "-c", "8192"}
+			return []string{"-m", p, "--embeddings", "-c", "512"}
 		}
 	}
-	return []string{"-hf", DefaultLocalRepo + ":f16", "--embeddings", "-c", "8192"}
+	return []string{"-hf", DefaultLocalRepo + ":f16", "--embeddings", "-c", "512"}
 }
 
 // localModelHint is the one-liner the actionable errors below hand the
