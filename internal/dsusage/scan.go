@@ -5,6 +5,7 @@ package dsusage
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -15,53 +16,125 @@ import (
 
 // ScanRoots walks DSH session directories and returns LeanKG tool steps,
 // newest first. An empty roots list means ~/.dsh/sessions.
+// It covers session.v3.jsonl* and session.v4.jsonl*; when a session
+// has both formats only v4 is used so one call is not counted twice.
 //
 // ponytail: one zstd process per session file, no index. Fine for a few
 // hundred local sessions; append a JSONL from a hook if this is polled
 // harder than a dashboard refresh.
-func ScanRoots(roots []string) ([]Step, error) {
+func ScanRoots(roots []string) ([]Step, []SessionIssue, error) {
 	if len(roots) == 0 {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		roots = []string{filepath.Join(home, ".dsh", "sessions")}
 	}
 	var steps []Step
+	var allIssues []SessionIssue
 	for _, root := range roots {
-		found, err := scanRoot(root)
+		got, si, err := scanRoot(root)
 		if err != nil {
-			return steps, err
+			return steps, allIssues, err
 		}
-		steps = append(steps, found...)
+		steps = append(steps, got...)
+		allIssues = append(allIssues, si...)
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].TimeMS > steps[j].TimeMS })
-	return steps, nil
+	return steps, allIssues, nil
 }
 
-func scanRoot(root string) ([]Step, error) {
+// SessionIssue is a session-level finding computed from the tool mix,
+// not from a single LeanKG call. These feed the dashboard and the
+// enhancement backlog (e.g. "agent never called LeanKG this session").
+type SessionIssue struct {
+	Rule     string   `json:"rule"`
+	Severity Severity `json:"severity"`
+	Title    string   `json:"title"`
+	Detail   string   `json:"detail"`
+	Fix      string   `json:"fix"`
+}
+
+// sessionStats tracks per-session tool usage so ScanRoots can surface
+// sessions that never called LeanKG despite doing code search locally.
+type sessionStats struct {
+	leankgCalls int
+	totalTools  int
+	hasQuery    bool
+}
+
+func scanRoot(root string) ([]Step, []SessionIssue, error) {
 	var steps []Step
+	var sessIssues []SessionIssue
+	// sessionsWithV4: session dirs that already have a v4 log; skip v3
+	// for those so the same tool call is not counted twice.
+	sessionsWithV4 := map[string]struct{}{}
+
+	// First pass: record which session dirs have v4 logs.
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasPrefix(name, "session-") {
+			return nil
+		}
+		hasV4, _ := hasLogFile(path, "session.v4.jsonl")
+		if hasV4 {
+			sessionsWithV4[name] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Second pass: scan logs, preferring v4 over v3 per session.
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		if !strings.HasPrefix(d.Name(), "session.v3.jsonl") {
+		name := d.Name()
+		isV4 := strings.HasPrefix(name, "session.v4.jsonl")
+		isV3 := strings.HasPrefix(name, "session.v3.jsonl")
+		if !isV4 && !isV3 {
 			return nil
 		}
-		got, err := scanFile(path)
+		// Prefer v4: skip v3 when this session already has v4.
+		if isV3 {
+			_, sid := sessionIdentity(path)
+			if _, ok := sessionsWithV4[sid]; ok {
+				return nil
+			}
+		}
+		got, si, err := scanFile(path)
 		if err != nil {
 			return nil
 		}
 		steps = append(steps, got...)
+		sessIssues = append(sessIssues, si...)
 		return nil
 	})
-	return steps, err
+	return steps, sessIssues, err
 }
 
-func scanFile(path string) ([]Step, error) {
+func hasLogFile(sessionDir, prefix string) (bool, error) {
+	entries, err := os.ReadDir(sessionDir)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func scanFile(path string) ([]Step, []SessionIssue, error) {
 	rc, err := openLog(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rc.Close()
 	ws, sid := sessionIdentity(path)
@@ -70,6 +143,7 @@ func scanFile(path string) ([]Step, error) {
 		agentBefore string
 		steps       []Step
 		byCall      = map[string]int{}
+		stats       sessionStats
 	)
 	sc := bufio.NewScanner(rc)
 	sc.Buffer(make([]byte, 64*1024), 8*1024*1024)
@@ -96,7 +170,13 @@ func scanFile(path string) ([]Step, error) {
 		case "tool/call":
 			name, _ := ev.Data["name"].(string)
 			if !strings.Contains(name, "leankg") {
+				stats.totalTools++
 				continue
+			}
+			stats.leankgCalls++
+			args := strings.ToLower(stringify(ev.Data["arguments"]))
+			if strings.Contains(args, `"action":"query"`) || strings.Contains(args, `"action": "query"`) {
+				stats.hasQuery = true
 			}
 			callID, _ := ev.Data["callId"].(string)
 			st := Step{
@@ -130,7 +210,7 @@ func scanFile(path string) ([]Step, error) {
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := steps[:0]
 	for i := range steps {
@@ -138,7 +218,21 @@ func scanFile(path string) ([]Step, error) {
 		steps[i].TopSeverity = Top(steps[i].Issues)
 		out = append(out, steps[i])
 	}
-	return out, nil
+	return out, sessionIssues(sid, ws, stats), nil
+}
+
+func sessionIssues(sid, ws string, s sessionStats) []SessionIssue {
+	if s.totalTools == 0 || s.leankgCalls > 0 {
+		return nil
+	}
+	// Session used local tools (bash/grep/read/glob) but never called LeanKG.
+	return []SessionIssue{{
+		Rule:     "no_leankg_in_code_session",
+		Severity: SevHigh,
+		Title:    "Session searched code without LeanKG",
+		Detail:   sid + ": " + fmt.Sprintf("%d", s.totalTools) + " local tool calls, 0 LeanKG calls",
+		Fix:      "Query LeanKG first in DSH sessions: leankg query with project=<repo>.",
+	}}
 }
 
 type event struct {

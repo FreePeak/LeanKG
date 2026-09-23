@@ -13,7 +13,7 @@ import (
 func Handler(roots []string, laya LayaClient, watch *Watcher) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/steps", func(w http.ResponseWriter, r *http.Request) {
-		steps, err := ScanRoots(roots)
+		steps, sessIssues, err := ScanRoots(roots)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -26,9 +26,10 @@ func Handler(roots []string, laya LayaClient, watch *Watcher) http.Handler {
 			ApplyLaya(steps, laya, 8)
 		}
 		writeJSON(w, map[string]any{
-			"steps":   steps,
-			"summary": summarize(steps),
-			"causes":  knownCauses(),
+			"steps":          steps,
+			"session_issues": sessIssues,
+			"summary":        summarize(steps),
+			"causes":         knownCauses(),
 		})
 	})
 	mux.HandleFunc("GET /api/asks", func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +111,7 @@ func knownCauses() []Issue {
 	return []Issue{
 		{Rule: "meter_wrong", Severity: SevInfo, Title: "The April posttooluse.log is not a DSH meter",
 			Detail: "That file is written only by the Claude plugin hook, and only for Rust-era tool names. DSH never runs it, so a stale April mtime does not mean DSH is idle.",
-			Fix:    "Read ~/.dsh/sessions/*/session.v3.jsonl, or this dashboard."},
+			Fix:    "Read ~/.dsh/sessions/*/session.v4.jsonl(.zstd), or this dashboard."},
 		{Rule: "no_dsh_hook", Severity: SevHigh, Title: "DSH has no LeanKG nudge",
 			Detail: "Claude and Cursor inject a bootstrap hook. DSH only has a passive paragraph in ~/.dsh/AGENTS.md. Across 152 sessions, 8 called LeanKG (24 calls) while bash/read/grep ran thousands of times.",
 			Fix:    "Add a DSH session-start hook that says: query LeanKG before grep, and always pass project."},

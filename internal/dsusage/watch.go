@@ -52,6 +52,7 @@ type Watcher struct {
 	mu    sync.Mutex
 	seen  map[string]struct{}
 	asks  []Ask
+	sessionIssues []SessionIssue
 	stats struct {
 		Scans   int `json:"scans"`
 		New     int `json:"new_steps"`
@@ -119,10 +120,12 @@ func (w *Watcher) Snapshot() map[string]any {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	asks := append([]Ask(nil), w.asks...)
+	si := append([]SessionIssue(nil), w.sessionIssues...)
 	return map[string]any{
-		"asks":  asks,
-		"stats": w.stats,
-		"seen":  len(w.seen),
+		"asks":           asks,
+		"stats":          w.stats,
+		"seen":           len(w.seen),
+		"session_issues": si,
 	}
 }
 
@@ -217,11 +220,12 @@ Do this now:
 
 // RunOnce scans and processes new steps. Returns new alert count.
 func (w *Watcher) RunOnce() (int, error) {
-	steps, err := ScanRoots(w.cfg.Roots)
+	steps, si, err := ScanRoots(w.cfg.Roots)
 	if err != nil {
 		return 0, err
 	}
 	w.mu.Lock()
+	w.sessionIssues = si
 	w.stats.Scans++
 	w.mu.Unlock()
 
@@ -309,7 +313,10 @@ func askKey(a Ask) string {
 
 // Loop runs until ctx-less forever; caller cancels via process.
 func (w *Watcher) Loop(stop <-chan struct{}) {
-	steps, _ := ScanRoots(w.cfg.Roots)
+	steps, _, err := ScanRoots(w.cfg.Roots)
+	if err != nil {
+		return
+	}
 	w.mu.Lock()
 	backlog := 0
 	for _, s := range steps {
