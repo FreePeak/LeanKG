@@ -61,6 +61,35 @@ type sessionStats struct {
 	leankgCalls int
 	totalTools  int
 	hasQuery    bool
+	// rungs counts ladder rungs that actually answered (L1/L2/L3), so a
+	// session can report that its queries never reached semantic search.
+	rungs map[string]int
+}
+
+// parseRetrieval pulls retrieval.rung / retrieval.reason out of a LeanKG
+// tool result. The block is emitted last in the response body and real
+// answers run thousands of chars (hit contents), so the caller must pass
+// the UNCAPPED text — Step.Output is clipped to 2000 and would miss it.
+func parseRetrieval(text string) (rung, reason string) {
+	i := strings.LastIndex(text, `"retrieval"`)
+	if i < 0 {
+		return "", ""
+	}
+	j := strings.Index(text[i:], "{")
+	if j < 0 {
+		return "", ""
+	}
+	// The value object may be followed by sibling braces from the enclosing
+	// body; Decoder stops after the first complete JSON value, so trailing
+	// braces are ignored.
+	var env struct {
+		Rung   string `json:"rung"`
+		Reason string `json:"reason"`
+	}
+	if json.NewDecoder(strings.NewReader(text[i+j:])).Decode(&env) != nil {
+		return "", ""
+	}
+	return env.Rung, env.Reason
 }
 
 func scanRoot(root string) ([]Step, []SessionIssue, error) {
@@ -205,6 +234,15 @@ func scanFile(path string) ([]Step, []SessionIssue, error) {
 				continue
 			}
 			text, isErr := resultText(msg)
+			// Parse the rung from the UNCAPPED text: the retrieval block
+			// sits at the tail of a multi-KB body, past Output's 2000 clip.
+			steps[idx].Rung, steps[idx].RungReason = parseRetrieval(text)
+			if r := steps[idx].Rung; r != "" {
+				if stats.rungs == nil {
+					stats.rungs = map[string]int{}
+				}
+				stats.rungs[r]++
+			}
 			steps[idx].Output = clip(text, 2000)
 			steps[idx].IsError = isErr
 		}
@@ -222,17 +260,30 @@ func scanFile(path string) ([]Step, []SessionIssue, error) {
 }
 
 func sessionIssues(sid, ws string, s sessionStats) []SessionIssue {
-	if s.totalTools == 0 || s.leankgCalls > 0 {
-		return nil
+	var out []SessionIssue
+	if s.totalTools > 0 && s.leankgCalls == 0 {
+		// Session used local tools (bash/grep/read/glob) but never called LeanKG.
+		out = append(out, SessionIssue{
+			Rule:     "no_leankg_in_code_session",
+			Severity: SevHigh,
+			Title:    "Session searched code without LeanKG",
+			Detail:   sid + ": " + fmt.Sprintf("%d", s.totalTools) + " local tool calls, 0 LeanKG calls",
+			Fix:      "Query LeanKG first in DSH sessions: leankg query with project=<repo>.",
+		})
 	}
-	// Session used local tools (bash/grep/read/glob) but never called LeanKG.
-	return []SessionIssue{{
-		Rule:     "no_leankg_in_code_session",
-		Severity: SevHigh,
-		Title:    "Session searched code without LeanKG",
-		Detail:   sid + ": " + fmt.Sprintf("%d", s.totalTools) + " local tool calls, 0 LeanKG calls",
-		Fix:      "Query LeanKG first in DSH sessions: leankg query with project=<repo>.",
-	}}
+	if s.rungs["L3"] == 0 {
+		answered := s.rungs["L1"] + s.rungs["L2"] + s.rungs["L3"]
+		if answered > 0 {
+			out = append(out, SessionIssue{
+				Rule:     "semantic_never_served",
+				Severity: SevMedium,
+				Title:    "No query in this session reached semantic search",
+				Detail:   fmt.Sprintf("%s: rung mix L1 %d · L2 %d · L3 %d", sid, s.rungs["L1"], s.rungs["L2"], s.rungs["L3"]),
+				Fix:      "Build vectors for this project (leankg-embed run). The ladder stops at the first rung with hits, so a keyword hit hides that L3 is unavailable.",
+			})
+		}
+	}
+	return out
 }
 
 type event struct {

@@ -95,15 +95,19 @@ func writeJSON(w http.ResponseWriter, v any) {
 func summarize(steps []Step) map[string]any {
 	sev := map[string]int{}
 	tools := map[string]int{}
+	rungs := map[string]int{}
 	sessions := map[string]int{}
 	for _, s := range steps {
 		sev[string(s.TopSeverity)]++
 		tools[s.Tool]++
 		sessions[s.SessionID]++
+		if s.Rung != "" {
+			rungs[s.Rung]++
+		}
 	}
 	return map[string]any{
 		"steps": len(steps), "sessions": len(sessions),
-		"by_severity": sev, "by_tool": tools,
+		"by_severity": sev, "by_tool": tools, "by_rung": rungs,
 	}
 }
 

@@ -48,12 +48,12 @@ type WatchConfig struct {
 
 // Watcher polls session logs, classifies, scores, notifies, and queues asks.
 type Watcher struct {
-	cfg   WatchConfig
-	mu    sync.Mutex
-	seen  map[string]struct{}
-	asks  []Ask
+	cfg           WatchConfig
+	mu            sync.Mutex
+	seen          map[string]struct{}
+	asks          []Ask
 	sessionIssues []SessionIssue
-	stats struct {
+	stats         struct {
 		Scans   int `json:"scans"`
 		New     int `json:"new_steps"`
 		Alerts  int `json:"alerts"`

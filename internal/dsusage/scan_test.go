@@ -3,8 +3,10 @@
 package dsusage
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -138,5 +140,92 @@ func TestScanRootPrefersV4OverV3(t *testing.T) {
 	}
 	if steps[0].CallID != "v4only" {
 		t.Fatalf("expected v4 call, got %s", steps[0].CallID)
+	}
+}
+
+// The retrieval block is emitted at the TAIL of a real answer, well past
+// the 2000-char clip applied to Step.Output. This is the regression guard:
+// parsing off Output instead of the raw text makes the rung silently empty.
+func TestScanFileExtractsRetrievalRungBeyondClipBudget(t *testing.T) {
+	dir := t.TempDir()
+	ws := filepath.Join(dir, "--work-harness--", "session-rung")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// ~3000 chars of hit content, then the retrieval block at the very end.
+	filler := strings.Repeat("x", 3000)
+	result := `{"freshness":"fresh","hits":[{"content":"` + filler + `"}],"retrieval":{"reason":"FTS5 keyword match","rung":"L2"}}`
+	line, _ := json.Marshal(map[string]any{
+		"type": "tool/result", "time": 1003,
+		"data": map[string]any{"message": map[string]any{
+			"source": map[string]any{"kind": "tool", "callId": "c1"},
+			"content": []any{map[string]any{
+				"type":    "tool-result",
+				"content": []any{map[string]any{"type": "text", "text": result}},
+			}},
+		}},
+	})
+	body := `{"type":"tool/call","time":1002,"data":{"turn":1,"step":1,"callId":"c1","name":"mcp__leankg__query","arguments":"{\"query\":\"x\"}"}}
+` + string(line) + "\n"
+	path := filepath.Join(ws, "session.v4.jsonl")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	steps, si, err := scanFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("steps %d", len(steps))
+	}
+	if steps[0].Rung != "L2" {
+		t.Fatalf("rung = %q, want L2 (retrieval sits past the 2000-char clip)", steps[0].Rung)
+	}
+	if steps[0].RungReason != "FTS5 keyword match" {
+		t.Fatalf("rung reason = %q", steps[0].RungReason)
+	}
+	// L2-only session must raise the semantic_never_served issue.
+	if len(si) != 1 || si[0].Rule != "semantic_never_served" || si[0].Severity != SevMedium {
+		t.Fatalf("expected semantic_never_served (medium), got %+v", si)
+	}
+}
+
+func TestSessionIssueSemanticNeverServedSuppressedByL3(t *testing.T) {
+	dir := t.TempDir()
+	ws := filepath.Join(dir, "--work-harness--", "session-l3")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(id, rung string) string {
+		res := `{"freshness":"fresh","hits":[{"content":"a"}],"retrieval":{"reason":"r","rung":"` + rung + `"}}`
+		line, _ := json.Marshal(map[string]any{
+			"type": "tool/result", "time": 1003,
+			"data": map[string]any{"message": map[string]any{
+				"source": map[string]any{"kind": "tool", "callId": id},
+				"content": []any{map[string]any{
+					"type":    "tool-result",
+					"content": []any{map[string]any{"type": "text", "text": res}},
+				}},
+			}},
+		})
+		call := `{"type":"tool/call","time":1002,"data":{"callId":"` + id + `","name":"mcp__leankg__query","arguments":"{\"query\":\"x\"}"}}` + "\n"
+		return call + string(line) + "\n"
+	}
+	body := mk("c1", "L2") + mk("c2", "L3")
+	path := filepath.Join(ws, "session.v4.jsonl")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	steps, si, err := scanFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 || steps[0].Rung != "L2" || steps[1].Rung != "L3" {
+		t.Fatalf("rungs not parsed: %+v", steps)
+	}
+	for _, s := range si {
+		if s.Rule == "semantic_never_served" {
+			t.Fatalf("L3 was served; semantic_never_served must not fire: %+v", si)
+		}
 	}
 }

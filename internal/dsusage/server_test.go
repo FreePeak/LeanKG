@@ -24,6 +24,24 @@ func TestSummarizeCountsSessions(t *testing.T) {
 	}
 }
 
+func TestSummarizeCountsRungs(t *testing.T) {
+	sum := summarize([]Step{
+		{SessionID: "a", Tool: "mcp__leankg__query", Rung: "L2"},
+		{SessionID: "a", Tool: "mcp__leankg__query", Rung: "L3"},
+		{SessionID: "b", Tool: "mcp__leankg__status"}, // no retrieval block
+	})
+	rungs, ok := sum["by_rung"].(map[string]int)
+	if !ok {
+		t.Fatalf("by_rung missing: %v", sum)
+	}
+	if rungs["L2"] != 1 || rungs["L3"] != 1 {
+		t.Fatalf("by_rung = %v, want L2=1 L3=1", rungs)
+	}
+	if len(rungs) != 2 {
+		t.Fatalf("steps without a rung must not be counted: %v", rungs)
+	}
+}
+
 func TestLayaUnavailableDoesNotClearRules(t *testing.T) {
 	steps := []Step{{
 		Tool: "mcp__leankg__status", IsError: true,

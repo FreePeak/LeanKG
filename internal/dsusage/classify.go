@@ -43,6 +43,8 @@ type Step struct {
 	UserPrompt  string   `json:"user_prompt"`
 	Issues      []Issue  `json:"issues"`
 	TopSeverity Severity `json:"top_severity"`
+	Rung        string   `json:"rung"`        // ladder rung that answered: L1/L2/L3; empty when the call was not an index-backed answer
+	RungReason  string   `json:"rung_reason"` // retrieval.reason, e.g. "FTS5 keyword match" or a degrade note
 }
 
 // Classify applies the rules that the session scan already proved. A Laya
