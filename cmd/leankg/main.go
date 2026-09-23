@@ -97,6 +97,10 @@ func main() {
 		cmdMetrics(os.Args[2:])
 	case "dashboard":
 		cmdDashboard(os.Args[2:])
+	case "dsh-usage":
+		// Optional dogfood feature: default binary ships a stub that
+		// explains how to rebuild with -tags dshusage. See docs/dsh-root-causes.md.
+		cmdDSHUsage(os.Args[2:])
 	case "auth":
 		cmdAuth(os.Args[2:])
 	case "tunnels":
@@ -190,6 +194,8 @@ Usage:
   leankg metrics [--project DIR] [--since N|Nd] [--tool NAME] [--json|-j] [--session]
                  [--reset] [--cleanup] [--retention DAYS] [--seed]
   leankg dashboard [--project DIR] [--since 24h|7d|30d|2w] [--format text|json]
+  leankg dsh-usage [--addr 127.0.0.1:9710] [--sessions DIR[,DIR]] [--watch]
+                   # optional; rebuild with -tags dshusage (default off)
   leankg auth register     [--project DIR] --email EMAIL --password PW --name NAME
   leankg auth token create [--project DIR] --name NAME [--role admin|contributor|viewer]
                            [--account-id ID] [--org-id ID] [--scopes a,b] [--ttl 24h]

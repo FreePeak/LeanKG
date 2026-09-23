@@ -62,10 +62,39 @@ func NewServer(baseURL, apiKey, model string, timeout time.Duration) *Server {
 	return &Server{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, model: model, timeout: timeout, client: &http.Client{Timeout: timeout}}
 }
 
+// wireQuestion encodes one question for the systemone wire. Criteria is
+// `any` on purpose: a Choice sends its option map, a Score must send the
+// ordered ladder as a JSON ARRAY. Sending a map for a Score loses the
+// ordinal levels — Laya falls back to a bare "0","1","2","3" legend and
+// answers a different question.
 type wireQuestion struct {
-	Type         string            `json:"type"`
-	Instructions string            `json:"instructions"`
-	Criteria     map[string]string `json:"criteria,omitempty"`
+	Type         string `json:"type"`
+	Instructions string `json:"instructions"`
+	Criteria     any    `json:"criteria,omitempty"`
+}
+
+// encodeQuestions validates and encodes a batch, failing fast on a
+// malformed question (programmer error) rather than sending it.
+func encodeQuestions(questions map[string]Question) (map[string]wireQuestion, error) {
+	wq := make(map[string]wireQuestion, len(questions))
+	for id, q := range questions {
+		if err := q.Validate(); err != nil {
+			return nil, fmt.Errorf("judge: question %q: %w", id, err)
+		}
+		w := wireQuestion{Type: string(q.Type), Instructions: q.Instructions}
+		switch q.Type {
+		case Score:
+			w.Criteria = q.Ladder
+		case Choice:
+			w.Criteria = q.Criteria
+		case Noul:
+			if len(q.Criteria) > 0 {
+				w.Criteria = q.Criteria // optional pole descriptions
+			}
+		}
+		wq[id] = w
+	}
+	return wq, nil
 }
 
 type wireResponse struct {
@@ -87,18 +116,13 @@ func (s *Server) Ask(ctx context.Context, state string, questions map[string]Que
 		return nil, nil
 	}
 	for id, q := range questions {
-		switch q.Type {
-		case Choice, Score, Noul:
-		default:
-			return nil, fmt.Errorf("judge: question %q: unknown type %q", id, q.Type)
-		}
-		if strings.TrimSpace(q.Instructions) == "" {
-			return nil, fmt.Errorf("judge: question %q: empty instructions", id)
+		if err := q.Validate(); err != nil {
+			return nil, fmt.Errorf("judge: question %q: %w", id, err)
 		}
 	}
-	wq := make(map[string]wireQuestion, len(questions))
-	for id, q := range questions {
-		wq[id] = wireQuestion{Type: string(q.Type), Instructions: q.Instructions, Criteria: q.Criteria}
+	wq, err := encodeQuestions(questions)
+	if err != nil {
+		return nil, err
 	}
 	body, err := json.Marshal(map[string]any{"state": state, "model": s.model, "questions": wq})
 	if err != nil {

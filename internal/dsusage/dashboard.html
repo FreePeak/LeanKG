@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LeanKG · Needs attention</title>
+<style>
+  :root { color-scheme: dark; --bg:#0c0e12; --card:#141922; --card2:#10151d; --line:#242d3d; --text:#e8edf5; --muted:#98a3b6; --crit:#ff6161; --high:#f5a524; --med:#7eb6ff; --info:#8b95a7; --ok:#3ecf8e; --accent:#7c6cf5; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; background:radial-gradient(1200px 400px at 20% -80px, #1b2340 0%, transparent 60%), var(--bg); color:var(--text); }
+  header.sticky { position:sticky; top:0; z-index:5; backdrop-filter: blur(8px); background:rgba(12,14,18,.85); border-bottom:1px solid var(--line); padding:14px 24px; display:flex; gap:16px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+  h1 { font-size:17px; margin:0; font-weight:650; letter-spacing:-.01em; }
+  .sub { color:var(--muted); font-size:12px; margin-top:2px; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .chip { border:1px solid var(--line); border-radius:999px; padding:5px 12px; font-size:12px; background:#10141b; color:var(--text); }
+  .chip b { font-variant-numeric: tabular-nums; }
+  .chip.critical { border-color:#5c2222; background:#231313; color:#ffb4b4; }
+  .chip.high { border-color:#5c451a; background:#221a10; color:#ffd9a0; }
+  .chip.laya-ok { border-color:#1e4d38; background:#10221a; color:#9fe8c4; }
+  .chip.laya-down { border-color:var(--line); color:var(--muted); }
+  main { max-width:1180px; margin:0 auto; padding:20px 24px 60px; display:grid; gap:16px; }
+  .tabs { display:flex; gap:8px; }
+  .tabs button { background:transparent; border:1px solid var(--line); color:var(--muted); border-radius:10px; padding:8px 14px; cursor:pointer; }
+  .tabs button[aria-pressed="true"] { background:#1a2130; color:var(--text); border-color:#39435a; }
+  .card { background:linear-gradient(180deg, var(--card), var(--card2)); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  .card h2 { font-size:12px; margin:0 0 10px; color:var(--muted); font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+  ul.clean { list-style:none; margin:0; padding:0; }
+  li.ask { padding:14px 0; border-top:1px solid var(--line); }
+  li.ask:first-child { border-top:0; padding-top:2px; }
+  .rowline { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+  .sev { font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; padding:2px 8px; border-radius:999px; border:1px solid; }
+  .sev.critical { color:#ffb4b4; border-color:#5c2222; background:#231313; }
+  .sev.high { color:#ffd9a0; border-color:#5c451a; background:#221a10; }
+  .sev.medium { color:#bcd7ff; border-color:#2c4a72; background:#121c2b; }
+  .sev.info { color:var(--muted); border-color:var(--line); }
+  .ruletag { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:2px 8px; font-family:ui-monospace, monospace; }
+  .title { font-weight:650; }
+  .meta { color:var(--muted); font-size:12px; }
+  .fix { color:#c9f5da; font-size:12px; margin-top:4px; }
+  .actions { margin-top:10px; display:flex; gap:8px; }
+  button.act { background:#10141b; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:8px 14px; cursor:pointer; }
+  button.act.primary { background:var(--accent); border-color:transparent; }
+  button.act:disabled { opacity:.5; cursor:default; }
+  details.causes summary { cursor:pointer; color:var(--muted); }
+  details.causes > div { margin-top:10px; }
+  details.step { border:1px solid var(--line); border-radius:12px; background:var(--card); }
+  details.step summary { cursor:pointer; padding:12px 14px; display:grid; grid-template-columns: 96px 1fr auto; gap:10px; align-items:baseline; list-style:none; }
+  details.step summary::-webkit-details-marker { display:none; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:0 14px 14px; }
+  pre { white-space:pre-wrap; word-break:break-word; background:#0c1017; border:1px solid var(--line); border-radius:10px; padding:10px; margin:6px 0 12px; font:12px/1.45 ui-monospace, SFMono-Regular, monospace; max-height:320px; overflow:auto; }
+  .foot { text-align:center; color:var(--muted); font-size:12px; margin-top:8px; }
+  @media (max-width: 900px) { .grid2, details.step summary { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="sticky">
+  <div>
+    <h1>LeanKG · Needs attention</h1>
+    <div class="sub" id="watchline">watch off</div>
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+<main>
+  <div class="tabs" role="tablist">
+    <button id="tab-asks" type="button" aria-pressed="true">Needs attention</button>
+    <button id="tab-all" type="button" aria-pressed="false">All steps</button>
+    <button id="tab-causes" type="button" aria-pressed="false">Why it looks unused</button>
+  </div>
+
+  <section class="card" id="panel-asks">
+    <h2>Pending asks — help the agent?</h2>
+    <ul class="clean" id="asks"></ul>
+  </section>
+
+  <section class="card" id="panel-all" hidden>
+    <h2>Steps <span class="meta" id="stepsmeta"></span></h2>
+    <div class="chips" style="margin-bottom:10px">
+      <select id="filter" class="chip" aria-label="severity filter">
+        <option value="critical-high">critical + high</option>
+        <option value="">all severities</option>
+        <option value="critical">critical</option>
+        <option value="high">high</option>
+        <option value="medium">medium</option>
+        <option value="info">info</option>
+      </select>
+      <label class="meta"><input id="laya" type="checkbox" /> score with local Laya</label>
+      <button id="reload" class="chip" type="button">Refresh</button>
+    </div>
+    <div id="steps"></div>
+  </section>
+
+  <section class="card" id="panel-causes" hidden>
+    <h2>Why LeanKG looks unused</h2>
+    <ul class="clean" id="causes"></ul>
+    <details class="causes" style="margin-top:10px">
+      <summary>Session-start rule for agents (copy into session prompt)</summary>
+      <div><pre id="hooktext"></pre></div>
+    </details>
+  </section>
+
+  <div class="foot">Layout inspired by the OpenUI dark console (thesysdev/openui). This page is static triage HTML — not the OpenUI generative runtime.</div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+function esc(s){ return (s||"").replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+const HOOK = "Before bash/grep/rg for code search: call mcp__leankg__query (or status/import) first.\nAlways pass project=<repo basename> or an absolute path.\nIf the store is cold, import the repo once, then query.\nAn omitted project is not 'current directory' — it is rejected.";
+let cache = {asks:null, steps:null};
+
+function tab(name){
+  for (const t of ["asks","all","causes"]) {
+    $("tab-"+t).setAttribute("aria-pressed", t===name ? "true" : "false");
+    $("panel-"+t).hidden = t!==name;
+  }
+  if (name==="all" && !cache.steps) loadSteps();
+  if (name==="causes" && !$("causes").dataset.done) loadCauses();
+}
+$("tab-asks").onclick = () => tab("asks");
+$("tab-all").onclick = () => tab("all");
+$("tab-causes").onclick = () => tab("causes");
+
+async function answer(id, help){
+  await fetch("/api/asks/"+encodeURIComponent(id)+"?help="+(help?"1":"0"), {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({help})});
+  await loadAsks();
+}
+window.answer = answer;
+
+function askCard(a){
+  const rules = (a.rules||[]).map(r => `<span class="ruletag">${esc(r)}</span>`).join(" ");
+  const btns = a.status === "pending"
+    ? `<div class="actions">
+        <button class="act primary" type="button" onclick="answer('${esc(a.id)}', true)">Help agent</button>
+        <button class="act" type="button" onclick="answer('${esc(a.id)}', false)">Ignore</button>
+      </div>`
+    : `<div class="meta">status: ${esc(a.status)}${a.note? " · "+esc(a.note):""}</div>`;
+  return `<li class="ask"><div class="rowline"><span class="sev ${a.severity}">${esc(a.severity)}</span><span class="title">${esc(a.title)}</span></div>
+    <div class="meta">${esc(a.session_id)} · ${esc(a.tool)} · ${esc(a.created_at||"")}</div>
+    <div class="meta">${esc(a.detail)}</div>
+    <div class="fix">Fix: ${esc(a.fix)}</div>
+    <div class="rowline" style="margin-top:6px">${rules}</div>${btns}</li>`;
+}
+
+async function loadAsks(){
+  try {
+    const res = await fetch("/api/asks");
+    const data = await res.json();
+    cache.asks = data;
+    const st = data.stats || {};
+    const pending = (data.asks||[]).filter(a => a.status==="pending").length;
+    $("watchline").textContent = data.watch
+      ? `watch on · scans ${st.scans||0} · alerts ${st.alerts||0} · helped ${st.helped||0} · pending ${pending}`
+      : "watch off — start with leankg dsh-usage --watch";
+    $("chips").innerHTML = chips(st, pending);
+    const asks = (data.asks||[]);
+    $("asks").innerHTML = asks.filter(a => a.status==="pending").slice(0,12).map(askCard).join("")
+      + (asks.some(a => a.status!=="pending") ? `<li class="ask"><div class="meta">Recently answered: ${asks.filter(a=>a.status!=="pending").slice(0,3).map(a=>esc(a.status)).join(", ")}</div></li>` : "")
+      || `<li class="ask"><div class="meta">No pending asks. LeanKG steps are quiet — or watch is off.</div></li>`;
+  } catch (e) {
+    $("watchline").textContent = "asks unavailable";
+  }
+}
+
+function chips(st, pending){
+  const sev = (cache.sev||{});
+  const laya = cache.layaUp === true ? `<span class="chip laya-ok">laya ●</span>`
+    : cache.layaUp === false ? `<span class="chip laya-down">laya ○</span>` : ``;
+  return `<span class="chip">pending <b>${pending}</b></span>
+    <span class="chip critical">critical <b>${sev.critical||0}</b></span>
+    <span class="chip high">high <b>${sev.high||0}</b></span>
+    <span class="chip">steps <b>${cache.stepCount??"–"}</b></span>${laya}`;
+}
+
+async function loadSteps(){
+  const q = $("laya").checked ? "?laya=1" : "";
+  const res = await fetch("/api/steps"+q);
+  const data = await res.json();
+  cache.steps = data;
+  const s = data.summary || {};
+  cache.sev = s.by_severity || {};
+  cache.stepCount = s.steps;
+  cache.layaUp = (data.steps||[]).some(st => (st.issues||[]).some(i => i.rule==="laya_score" || i.rule==="laya_critical"))
+    ? true : (data.steps||[]).some(st => (st.issues||[]).some(i => i.rule==="laya_unavailable")) ? false : cache.layaUp;
+  renderSteps();
+  await loadAsks();
+}
+
+function renderSteps(){
+  const data = cache.steps; if (!data) return;
+  $("stepsmeta").textContent = `· ${(data.summary||{}).steps||0} steps · ${(data.summary||{}).sessions||0} sessions`;
+  const want = $("filter").value;
+  const match = (st) => want==="critical-high" ? (st.top_severity==="critical"||st.top_severity==="high") : (!want || st.top_severity===want);
+  const steps = (data.steps||[]).filter(match).slice(0,60);
+  $("steps").innerHTML = steps.map(st => {
+    const when = st.time_ms ? new Date(st.time_ms).toISOString().replace("T"," ").slice(0,19) : "";
+    const issues = (st.issues||[]).map(i => `<div style="margin-top:6px"><span class="sev ${i.severity}">${i.severity}</span> <b>${esc(i.title)}</b><div class="meta">${esc(i.detail)}</div><div class="fix">Fix: ${esc(i.fix)}</div></div>`).join("");
+    return `<details class="step" style="margin-bottom:8px"><summary><span class="sev ${st.top_severity}">${st.top_severity}</span><span><b>${esc(st.tool)}</b><div class="meta">${esc(st.workspace)} · ${esc(st.session_id)} · turn ${st.turn} step ${st.step}</div></span><span class="meta">${when}</span></summary>
+      <div class="grid2">
+        <div><h2 style="font-size:11px;color:var(--muted)">Input</h2><pre>${esc(st.input)}</pre><h2 style="font-size:11px;color:var(--muted)">Agent before</h2><pre>${esc(st.agent_before)}</pre><h2 style="font-size:11px;color:var(--muted)">User</h2><pre>${esc(st.user_prompt)}</pre></div>
+        <div><h2 style="font-size:11px;color:var(--muted)">Output${st.is_error?" · error":""}</h2><pre>${esc(st.output)}</pre><h2 style="font-size:11px;color:var(--muted)">Agent after</h2><pre>${esc(st.agent_after)}</pre></div>
+      </div>
+      <div style="padding:0 14px 14px">${issues}</div>
+    </details>`;
+  }).join("") || `<div class="meta">No steps at this severity.</div>`;
+}
+
+async function loadCauses(){
+  const res = await fetch("/api/causes");
+  const causes = await res.json();
+  $("causes").innerHTML = (causes||[]).map(c => `<li class="ask"><div class="rowline"><span class="sev ${c.severity}">${c.severity}</span><span class="title">${esc(c.title)}</span></div><div class="meta">${esc(c.detail)}</div><div class="fix">Fix: ${esc(c.fix)}</div></li>`).join("");
+  $("causes").dataset.done = "1";
+  $("hooktext").textContent = HOOK;
+}
+$("hooktext").textContent = HOOK;
+$("reload").onclick = loadSteps;
+$("filter").onchange = renderSteps;
+$("laya").onchange = loadSteps;
+loadAsks();
+setInterval(loadAsks, 5000);
+</script>
+</body>
+</html>

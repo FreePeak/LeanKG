@@ -1,13 +1,20 @@
 # Judge Use Cases — Laya / System One judgments in LeanKG
 
-**Status: abstraction LIVE, one call site LIVE, everything else CANDIDATE.**
-`internal/judge` (interface + server + local backends) is implemented and tested.
-Exactly one judgment call exists in the engine: conversation classification
-(`internal/convo/types.go:ClassifyWithJudge`), and it fires zero calls unless
-a judge is configured. Every other row below is a CANDIDATE: a concrete
-question shape, state, and floor, waiting on a recorded experiment that shows
-the native rule failing on real inputs before it graduates to a call.
-Native first, judged only where measured.
+**Status: abstraction LIVE, two call sites LIVE, everything else CANDIDATE.**
+`internal/judge` (interface + server + local backends + content-addressed
+`Cached`) is implemented and tested. Two judgments exist: conversation
+classification (`internal/convo/types.go:ClassifyWithJudge`) and DSH MCP-step
+corroboration (`internal/dsusage/laya.go`, UC-9). Every other row below is a
+CANDIDATE: a concrete question shape, state, and floor, waiting on a recorded
+experiment that shows the native rule failing on real inputs before it
+graduates to a call. Native first, judged only where measured.
+
+**Question encoding is part of the question (2026-09-23).** A `Score` must
+carry an ordered `Ladder []string`; sending criteria as a map silently
+re-labels the levels and answers a different question (measured: 0.1355 vs
+0.5377 on identical state). `Question.Validate` rejects the map form. A wide
+`choice` is penalized by Laya's entropy confidence — decompose into `Noul`s
+(measured: 0.474 wide vs 0.60–0.91 decomposed). See UC-9.
 
 ## 1. What Laya is (read from the source, 2026-09-21)
 
@@ -43,6 +50,14 @@ noul `{noul (= p[1] over [false, true]), confidence}`.
 Plus `act_probability` (act/escalate head) and per-(qtype, option-count)
 fitted temperatures. Every question in a call answers in **one** forward
 pass — batching is free, so independent questions always fan out together.
+**`criteria` is type-dependent:** `choice` takes an option **map**
+(key → meaning; the keys are the accepted values), `score` takes an ordered
+**array** (a map has no order, so the levels would be re-labelled `"0"…"n"`
+and the labels never reach the model). Measured cost of getting this wrong:
+identical state scored 0.1355 (map) vs 0.5377 (array). Budgets:
+`max_len` 512 shares options **and** state; `head_max_len` 192 splits across
+options with 48 tokens each — so ~4 options leave roughly 320 tokens (~1.2k
+chars) for the state, and option count is what makes confidence collapse.
 
 **Laya vs Jev, honestly** (their benchmark page; Jev figures third-party
 published, never measured there): typed-decisions 0.766 vs 0.727 (beats the
@@ -207,6 +222,49 @@ unreachable / unconfigured → nil+nil, bad questions → error, nil default).
 - **Question:** `Noul` softening refusal into graded advisory.
 - **Why likely never:** the boolean is a safety rail, not a ranking — coarse
   is correct here.
+
+### UC-9 — DSH MCP-step corroboration — ✅ LIVE (dsh-usage, rules own severity)
+
+- **Native today:** `internal/dsusage/classify.go` — rule classifier over DSH
+  session logs (`mcp_session_lost`, `project_not_passed`, `cold_store`, …).
+  Rules own severity; this judgment only corroborates.
+- **Questions (decomposed, measured 2026-09-23):** three `Noul`
+  (`is_defect`, `wrong_project`, `transport_dead`) plus one `Score` ladder
+  (`ignore → later → this week → blocking dogfood`), fanned out in **one** call.
+- **Measured, 12 real steps from `~/.dsh/sessions`:**
+
+  | | old battery (1 wide choice + map-score) | new battery (3 noul + ladder) |
+  |---|---|---|
+  | mean confidence | 0.054 | **0.604** |
+  | steps above the 0.6 floor | 0/12 | **6/12** |
+  | ladder `legend` correct | no (`"0"…"3"` labels) | **yes** |
+  | rule agreement | 5/12 | 5/12 |
+
+  Determinism: 5 identical calls on one state returned byte-identical answers,
+  so the variance above is signal, not noise — which is also what makes
+  `judge.Cached` sound.
+- **Two defects this fixed (both were silent):**
+  1. **A `Score` sent with a criteria map loses its ladder.** Laya re-labels
+     the levels `"0","1","2","3"` and answers a *different* question — the
+     same state scored 0.1355 with a map and 0.5377 with the ordered list.
+     `judge.Question` now carries `Ladder []string` for `Score`, `Validate`
+     rejects a `Score` carrying `Criteria`, and both transports encode the
+     ladder as a JSON array (`TestScoreLadderEncodesAsArray`).
+  2. **A wide `choice` cannot be gated.** The 5-way verdict answered with
+     confidence 0.474 while the same decision as binary questions answered
+     0.60–0.91; Laya's confidence is normalized entropy, so it is penalized by
+     option count. The battery is decomposed instead.
+- **Escalation rule:** a specific, corroborated failure (`transport_dead`
+  above floor) escalates on its own, because on a dead-session step that
+  question answered 0.644 while the general `is_defect` answered 0.452 —
+  requiring general agreement would suppress the one failure we can see.
+- **Cost:** ~0.4–0.6 s per step, cached by content hash (`judge.Cached`);
+  repeats are free. Live checks are env-gated
+  (`LEANKG_TEST_LAYA_URL=http://127.0.0.1:8091 go test ./internal/dsusage/ -run Live`).
+- **Known gap (measured, not fixed):** `GET /api/steps` spends ~10 s in
+  `ScanRoots` (100 MB / 156 zstd session files) against ~3–5 s of Laya — the
+  scan, not the model, is the dashboard's bottleneck. A scan cache or an
+  append-only index is the obvious next step.
 
 ### Explicit non-goals (do not graduate)
 

@@ -11,6 +11,8 @@ make go-vet              # go vet ./...
 make go-bench            # benchmark/ab suite
 make go-build-tstree     # build with the tree-sitter tier (-tags tstree, CGO)
 make go-test-tstree      # test that same tier
+make go-build-dshusage  # optional DSH usage dashboard (-tags dshusage, default off)
+make go-test-dshusage   # test with -tags dshusage
 make dual-engine         # sqlite + live-PostgreSQL acceptance gate (needs :5433 pgvector)
 make go-ui-assets        # build ui-v2 and sync dist/ into internal/web/embed
 ```
@@ -38,6 +40,7 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 |`leankg-embed export\|import`|NDJSON offsite flow (pairs with `scripts/embed_batch.py`)|
 |`leankg connect\|install --target claude\|cursor\|codex\|gemini\|opencode\|omp`|Client wiring (+ `--register-cwd` SessionStart hook)|
 |`leankg doctor --project <dir>`|Store diagnostics|
+|`leankg dsh-usage` (opt-in `-tags dshusage`)|DSH session LeanKG usage dashboard; Laya scoring default off|
 
 ## SoT pairing
 

@@ -10,12 +10,14 @@ help:
 	@echo "  go-vet          Vet the Go engine"
 	@echo "  go-build-tstree Build with the tree-sitter tier (CGO)"
 	@echo "  go-test-tstree  Test the tree-sitter tier"
+	@echo "  go-build-dshusage Build with optional DSH usage dashboard (-tags dshusage)"
+	@echo "  go-test-dshusage  Test the dshusage package (and default packages)"
 	@echo "  go-ui-assets    Sync the checked-in ui build into the Go embed dir"
 	@echo "  dual-engine     Run the dual-engine (sqlite + postgres) acceptance gate"
 	@echo "  clean           Remove Go build artifacts"
 	@echo "  install-go      Build-from-source installer (scripts/install-go.sh)"
 
-.PHONY: help go-build go-test go-bench go-vet go-ui-assets dual-engine clean install-go go-build-tstree go-test-tstree
+.PHONY: help go-build go-test go-bench go-vet go-ui-assets dual-engine clean install-go go-build-tstree go-test-tstree go-build-dshusage go-test-dshusage
 
 go-build:
 	CGO_ENABLED=0 go build -o bin/ ./cmd/leankg ./cmd/leankg-embed
@@ -36,6 +38,15 @@ go-build-tstree:
 
 go-test-tstree:
 	go test -tags tstree ./... -count=1
+
+# DSH usage dashboard is opt-in dogfood tooling. Default `go-build` ships a
+# stub that prints how to enable it; Laya scoring stays off unless LAYA_URL /
+# LEANKG_JUDGE_SIDECAR_URL (or --laya-url) is set.
+go-build-dshusage:
+	CGO_ENABLED=0 go build -tags dshusage -o bin/ ./cmd/leankg ./cmd/leankg-embed
+
+go-test-dshusage:
+	go test -tags dshusage ./... -count=1
 
 # Sync a fresh ui-v2 production build into the Go dashboard embed dir
 # (`internal/web/embed`, consumed by //go:embed all:embed in web.go). The

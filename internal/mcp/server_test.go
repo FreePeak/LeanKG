@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -127,8 +128,76 @@ func TestCallQueryRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLegacyToolNameRejected proves the envelope guard over the wire: a call
-// to a removed tool name is refused by the registry, not silently routed.
+// TestEngineForRequiresProjectUnderRouter proves the fail-closed multi-project
+// rule: with a router set, an omitted project is rejected instead of silently
+// answering from the default engine (the serve cwd). Without a router the
+// single-engine behavior is unchanged.
+func TestEngineForRequiresProjectUnderRouter(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := memory.Open(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := core.New(st, mem, nil)
+	def.SetProjectDir(dir)
+
+	routed := core.New(st, mem, nil)
+	routed.SetProjectDir(dir + "-routed")
+	router := &stubRouter{engines: map[string]*core.Engine{"api": routed}}
+
+	s := New(def)
+	// No router: default engine answers with no project.
+	if got, err := s.engineFor(context.Background(), nil); err != nil || got != def {
+		t.Fatalf("no router: got %v err %v, want default engine", got, err)
+	}
+
+	s.SetProjectRouter(router)
+	// Router set, no project: fail closed — for nil, empty-args, and
+	// blank-string requests alike.
+	for name, raw := range map[string][]byte{
+		"nil request":   nil,
+		"empty args":    []byte(`{}`),
+		"blank project": []byte(`{"project":"  "}`),
+	} {
+		req := (*mcp.CallToolRequest)(nil)
+		if raw != nil {
+			req = newRawCallRequest(raw)
+		}
+		if _, err := s.engineFor(context.Background(), req); err == nil || !strings.Contains(err.Error(), "omitted project") {
+			t.Fatalf("%s: want project-required error, got %v", name, err)
+		}
+	}
+	// Router set, known project: routes to the project's engine.
+	if got, err := s.engineFor(context.Background(), newRawCallRequest([]byte(`{"project":"api"}`))); err != nil || got != routed {
+		t.Fatalf("routed: got %v err %v, want routed engine", got, err)
+	}
+}
+
+type stubRouter struct {
+	engines map[string]*core.Engine
+}
+
+func (r *stubRouter) EngineFor(_ context.Context, project string) (*core.Engine, error) {
+	e, ok := r.engines[project]
+	if !ok {
+		return nil, fmt.Errorf("unknown project %q", project)
+	}
+	return e, nil
+}
+
+// newRawCallRequest builds the minimal CallToolRequest the SDK hands to
+// tool handlers: params.arguments as raw JSON.
+func newRawCallRequest(raw []byte) *mcp.CallToolRequest {
+	return &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: raw}}
+}
 func TestLegacyToolNameRejected(t *testing.T) {
 	session := newTestServer(t)
 	_, err := session.CallTool(context.Background(), &mcp.CallToolParams{

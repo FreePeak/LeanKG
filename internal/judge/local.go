@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -77,19 +76,9 @@ func (l *Local) Ask(ctx context.Context, state string, questions map[string]Ques
 	if l.baseURL == "" {
 		return nil, nil
 	}
-	for id, q := range questions {
-		switch q.Type {
-		case Choice, Score, Noul:
-		default:
-			return nil, fmt.Errorf("judge: question %q: unknown type %q", id, q.Type)
-		}
-		if strings.TrimSpace(q.Instructions) == "" {
-			return nil, fmt.Errorf("judge: question %q: empty instructions", id)
-		}
-	}
-	wq := make(map[string]wireQuestion, len(questions))
-	for id, q := range questions {
-		wq[id] = wireQuestion{Type: string(q.Type), Instructions: q.Instructions, Criteria: q.Criteria}
+	wq, err := encodeQuestions(questions)
+	if err != nil {
+		return nil, err
 	}
 	body, err := json.Marshal(map[string]any{"state": state, "model": l.model, "questions": wq})
 	if err != nil {

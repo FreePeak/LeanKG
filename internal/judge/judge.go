@@ -1,6 +1,10 @@
 package judge
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"strings"
+)
 
 // Judge is the one narrow seam every graduated Laya call crosses.
 //
@@ -63,10 +67,50 @@ const (
 // Question is one typed judgment. Instructions ask about the IDEA, not the
 // words ("is amd tracking nvidia" beats "which resolution"), because the
 // match is on meaning — the function-calling cookbook's central spec rule.
+//
+// Criteria and Ladder are not interchangeable, and picking the wrong one
+// silently changes the answer:
+//
+//	Choice → Criteria (map). The keys ARE the accepted values, so there is
+//	         no label→argument mapping step.
+//	Score  → Ladder (ordered slice). Laya's ordinal head reads positional
+//	         levels; a map loses the order and, because Go maps have no
+//	         order, would also make the prompt non-deterministic. A Score
+//	         with no Ladder is a programmer error (fail fast), and a Score
+//	         carrying Criteria is rejected rather than guessed at.
+//	Noul   → neither (the model answers P(yes) over an implicit
+//	         [false,true]); Criteria may optionally name the two poles.
 type Question struct {
 	Type         Kind              `json:"type"`
 	Instructions string            `json:"instructions"`
 	Criteria     map[string]string `json:"criteria,omitempty"`
+	Ladder       []string          `json:"ladder,omitempty"`
+}
+
+// Validate reports whether a question is well formed for its kind: the
+// cheapest place to catch a malformed judgment, before any wire call.
+func (q Question) Validate() error {
+	switch q.Type {
+	case Choice:
+		if len(q.Criteria) == 0 {
+			return fmt.Errorf("choice question needs a non-empty criteria map (option key → meaning)")
+		}
+	case Score:
+		if len(q.Criteria) > 0 {
+			return fmt.Errorf("score question must use the ordered ladder, not a criteria map (a map has no order and loses the ladder)")
+		}
+		if len(q.Ladder) < 2 {
+			return fmt.Errorf("score question needs an ordered ladder of at least 2 levels")
+		}
+	case Noul:
+		// Criteria optionally names the false/true poles; nothing required.
+	default:
+		return fmt.Errorf("unknown type %q", q.Type)
+	}
+	if strings.TrimSpace(q.Instructions) == "" {
+		return fmt.Errorf("empty instructions")
+	}
+	return nil
 }
 
 // Answer is one judged answer. Probability is the calibrated P for the

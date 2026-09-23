@@ -896,6 +896,10 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 | `GITHUB_TOKEN` | — | raises the `leankg update` API rate limit; absence only warns (anonymous calls work) |
 | `PATH` | — | ast-grep / LSP server / sidecar discovery |
 
+### FR-DSH-01 — Optional DSH usage dashboard (default off)
+
+Dogfood observability for whether coding sessions call LeanKG MCP correctly. Not part of the default binary: rebuild with `-tags dshusage` / `make go-build-dshusage`. Laya corroboration stays off unless `LAYA_URL` / `LEANKG_JUDGE_SIDECAR_URL` / `--laya-url` is set (same nil-judge pattern as FR-TYPE-02). Product-side fixes that always ship: multi-project MCP rejects omitted `project` (fail-closed) and streamable HTTP runs `Stateless: true` so sticky client session IDs survive process restart. See [`dsh-root-causes.md`](dsh-root-causes.md), [`laya-shared-service.md`](laya-shared-service.md), UC-9 in [`judge-use-cases.md`](judge-use-cases.md).
+
 ### FR-P2 — Project directory optional (DB from config/env)
 
 - The project directory is **no longer required** for the server to run. When configured, the server opens a standalone SQLite store whose path comes from configuration, not from `<cwd>/.leankg/leankg.db`.
@@ -923,4 +927,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-09-21 (FR-TYPE-02 DONE via #434 + #435: abstraction + convo path + use-case doc + interactive diagram; tracker row closed. Prior: 2026-09-19 FR-P2.)*
+*Last updated: 2026-09-23 (FR-DSH-01 optional dsh-usage. Prior: 2026-09-21 (FR-TYPE-02 DONE via #434 + #435: abstraction + convo path + use-case doc + interactive diagram; tracker row closed. Prior: 2026-09-19 FR-P2.)*
