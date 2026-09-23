@@ -30,7 +30,7 @@ DSH **does** call LeanKG. The April `posttooluse.log` is the wrong meter. Real u
 
 | # | Cause | Evidence | Severity | Solution status |
 |---|---|---|---|---|
-| 1 | **Wrong meter** | `~/.leankg/sessions/posttooluse.log` is Claude plugin only (Rust-era tool names). DSH never writes it. | info | **Solved** — read `~/.dsh/sessions/**/session.v3.jsonl[.zstd]` via `leankg dsh-usage` (opt-in `-tags dshusage`) |
+| 1 | **Wrong meter** | `~/.leankg/sessions/posttooluse.log` is Claude plugin only (Rust-era tool names). DSH never writes it. | info | **Solved** — read `~/.dsh/sessions/**/session.v{3,4}.jsonl[.zstd]` via `leankg dsh-usage` (opt-in `-tags dshusage`); v4 preferred per session |
 | 2 | **No DSH LeanKG nudge** | Claude/Cursor inject hooks; DSH only has passive `~/.dsh/AGENTS.md`. bash 7642 / read 2271 / grep 401 vs 28 LeanKG calls | high | **Partial** — `~/.dsh/AGENTS.md` now has a LeanKG-first hard rule + dashboard hook text; full DSH SessionStart plugin still out of scope (harness repo) |
 | 3 | **Omitted `project=` searched serve cwd** | Multi-project MCP defaulted to LeanKG process cwd. Menu/promo questions returned LeanKG source. 7/28 steps: `project_not_passed` | critical | **Fixed in branch + live** — `engineFor` fails closed (`LEANKG_ERROR_MISSING_PARAM`); verified against running serve. Old logs still classify as `project_not_passed`; new errors classify as `project_required` |
 | 4 | **Sticky MCP session dies on restart** | DSH keeps `Mcp-Session-Id`; launchd restart / per-project handler maps → `session not found` (7/28) | critical | **Fixed + live** — `Stateless: true` built into `~/.local/bin/leankg` (backup `~/.local/bin/leankg.bak-20260923`); `com.freepeak.leankg-serve` restarted 2026-09-23; `initialize` smoke OK |
@@ -39,12 +39,31 @@ DSH **does** call LeanKG. The April `posttooluse.log` is the wrong meter. Real u
 | 7 | **Cursor unwired to local LeanKG** | `~/.cursor/mcp.json` has remote BE KG, not `http://127.0.0.1:9699/mcp` | high | **Not solved** — user config change |
 | 8 | **Writer only watches LeanKG checkout** | Other repos go stale unless imported | medium | **Operational / product** — per-project writer or on-demand import |
 | 9 | **Laya is a classifier, not chat** | `:9101` is bge-small embeddings; Laya = ModernBERT System One | info | **Solved for scoring** — local sidecar `:8091` scores steps |
+| 10 | **Semantic (L3) search is effectively unused** | Live corpus 2026-09-23: `by_rung` = L0 8 · L1 6 · L2 53 · **L3 1** across 68 rung-tagged steps. Most stores hold 0 vectors, so the ladder returns at L1/L2 and never attempts L3; the ladder stops at the first rung with hits, so a keyword hit hides that L3 is unavailable. | medium | **Visible, not fixed** — `semantic_never_served` (medium) + `by_rung` on the dashboard now show it. Fix = build vectors per project (`leankg-embed run`) |
+
+## The embedding runtime (memory)
+
+The embeddings model is **not a container** — it is a host `llama-server` supervised by launchd (`com.freepeak.llama-embed`, `RunAtLoad`), serving bge-small-en-v1.5 on `:9101` at ~82 MB RSS.
+
+- `leankg serve` **attaches, never owns** it: the launchd wrapper exports `LEANKG_EMBED_BASE_URL`, so `embed.StartProvider` takes the attach branch and returns a no-op release. `serve` can neither start nor stop it.
+- `leankg-embed run` / `refresh.Run` **spawn on demand and tear down** only when `LEANKG_EMBED_BASE_URL` is unset: `StartSidecar` spawns and health-polls, and `Sidecar.Shutdown` kills the process group (SIGTERM → 3 s → SIGKILL). There is **no idle/TTL unload** — a spawned sidecar lives as long as its owning process.
+- With the runtime down, L3 degrades to L2 keyword (`retrieval.reason` = `embedding provider failed… degraded from L3`). That is by design, never a crash, and now visible in `by_rung`.
+
+Turn it on only when embedding, to keep it off your RAM the rest of the time:
+
+```bash
+scripts/embed-runtime.sh status   # exit 0 up · 1 down
+scripts/embed-runtime.sh off      # bootout — NOT SIGTERM; KeepAlive would race the exit
+scripts/embed-runtime.sh on       # bootstrap + wait for /health
+```
 
 ## What this branch already ships
 
 1. **`leankg dsh-usage`** — dashboard at `http://127.0.0.1:9710`  
    - tool input / output / agent before+after / user prompt  
    - rule classifier (`mcp_session_lost`, `project_not_passed`, `cold_store`, …)
+   - session-level issues (`no_leankg_in_code_session`, `semantic_never_served`)
+   - per-step ladder `rung` + `retrieval.reason`, `by_rung` summary, and a derived `laya {configured, scored, unavailable, skipped_info}` block
 2. **MCP streamable HTTP `Stateless: true`** in `internal/mcp/server.go` (needs serve restart)
 3. **Local Laya sidecar** (`POST http://127.0.0.1:8091/v1/systemone`) for step scoring
 4. **Continuous watch + notify** (see `leankg dsh-usage --watch`)  
@@ -63,6 +82,7 @@ DSH **does** call LeanKG. The April `posttooluse.log` is the wrong meter. Real u
 | Default or require `project` | LeanKG | reject omit when >1 project, or map from client roots |
 | Wire Cursor to local LeanKG | user | add MCP url `http://127.0.0.1:9699/mcp` |
 | DSH cookie for auto-steer | user | export cookie from the GUI so the watcher can queue a prompt in the live session |
+| Build vectors for the vector-less stores | ops | `scripts/embed-runtime.sh on`, then `leankg-embed run` per project — until then L3 never serves |
 
 ## How to run the loop
 
