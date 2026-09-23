@@ -60,7 +60,6 @@ type SessionIssue struct {
 type sessionStats struct {
 	leankgCalls int
 	totalTools  int
-	hasQuery    bool
 	// rungs counts ladder rungs that actually answered (L1/L2/L3), so a
 	// session can report that its queries never reached semantic search.
 	rungs map[string]int
@@ -203,10 +202,6 @@ func scanFile(path string) ([]Step, []SessionIssue, error) {
 				continue
 			}
 			stats.leankgCalls++
-			args := strings.ToLower(stringify(ev.Data["arguments"]))
-			if strings.Contains(args, `"action":"query"`) || strings.Contains(args, `"action": "query"`) {
-				stats.hasQuery = true
-			}
 			callID, _ := ev.Data["callId"].(string)
 			st := Step{
 				SessionID:   sid,
@@ -256,10 +251,10 @@ func scanFile(path string) ([]Step, []SessionIssue, error) {
 		steps[i].TopSeverity = Top(steps[i].Issues)
 		out = append(out, steps[i])
 	}
-	return out, sessionIssues(sid, ws, stats), nil
+	return out, sessionIssues(sid, stats), nil
 }
 
-func sessionIssues(sid, ws string, s sessionStats) []SessionIssue {
+func sessionIssues(sid string, s sessionStats) []SessionIssue {
 	var out []SessionIssue
 	if s.totalTools > 0 && s.leankgCalls == 0 {
 		// Session used local tools (bash/grep/read/glob) but never called LeanKG.
