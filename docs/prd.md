@@ -433,6 +433,10 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 | 3 | `FR-3T-03` | **P0** | Session default: SQLite engaged when `LEANKG_DB_ENGINE=sqlite` or `LEANKG_PG_URL` unset; `leankg migrate`/`index`/serve run on SQLite | **IN_PROGRESS** |
 | 4 | `FR-3T-04` | **P1** | Live validation: this repo indexed into SQLite, 3-tool smoke (search/status/router), persistence across restart | **NOT_DONE** |
 
+### Agent discoverability follow-up (2026-09-24)
+
+The three-tool registry now advertises an MCP `initialize.instructions` protocol and repeats its critical project/cold-store rules in each tool description. This keeps the LLM workflow available even when a client renders only `tools/list`; no fourth tool is introduced.
+
 ### v4.3.1-one-tool-envelope — Hard one-tool cutover (2026-09-05)
 
 > **Trigger:** user decision superseding the T3 budget path — hard-delete every registered tool except `leankg_context`; all capabilities ride it as verbs. Envelope = `{verb: "<capability>", ...args}`; omitting `verb` uses the natural-language router. The verb namespace IS the legacy tool namespace (all docs/hints naming a tool remain valid as verb references). Envelope resolution happens **before** read-only gate / write-lock serialization / audit recording, so verb-scoped security decisions cannot be bypassed by hiding a write verb inside a read-named envelope (audit records the effective capability).

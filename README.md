@@ -210,7 +210,7 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 
 ## MCP prefer-order
 
-Discover with `query` — it routes down the ladder by default (L1 exact → L2 fuzzy → L3 semantic), degrades instead of erroring, and every answer carries `retrieval{rung,reason}` + `freshness`.
+Discover with `query` — it routes down the ladder by default (L1 exact → L2 fuzzy → L3 semantic), degrades instead of erroring, and every answer carries `retrieval{rung,reason}` + `freshness`. MCP initialization also returns a short agent protocol, and each tool description repeats the critical project/cold-store rules for clients that ignore server-level instructions.
 
 | Question | How |
 | -------- | --- |

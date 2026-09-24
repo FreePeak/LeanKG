@@ -79,6 +79,29 @@ func TestRegistryIsExactlyThreeTools(t *testing.T) {
 	}
 }
 
+func TestServerAdvertisesAgentProtocol(t *testing.T) {
+	session := newTestServer(t)
+	initialize := session.InitializeResult()
+	if initialize == nil {
+		t.Fatal("client has no initialize result")
+	}
+	for _, want := range []string{"query before bash/grep", "always pass project", "does not create vectors"} {
+		if !strings.Contains(strings.ToLower(initialize.Instructions), want) {
+			t.Fatalf("initialize instructions missing %q: %s", want, initialize.Instructions)
+		}
+	}
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if !strings.Contains(tool.Description, toolGuidance) {
+			t.Fatalf("tool %q does not carry the fallback agent guidance", tool.Name)
+		}
+	}
+}
+
 // TestCallQueryRoundTrip drives tools/call end-to-end: L0 cold answer with
 // guidance on an empty store, then an L1 hit after seeding an element.
 func TestCallQueryRoundTrip(t *testing.T) {
