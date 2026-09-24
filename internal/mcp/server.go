@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
@@ -42,8 +43,9 @@ type Server struct {
 // silently falls back to the default project).
 func (s *Server) SetProjectRouter(r ProjectRouter) { s.router = r }
 
-// engineFor picks the engine for one call: args.project when a router is
-// configured, else the wrapped engine.
+// engineFor picks the engine for one call. When a router is configured the
+// project selector is REQUIRED: answering from the default engine would
+// silently serve another repository's data.
 func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core.Engine, error) {
 	if s.router == nil {
 		return s.engine, nil
@@ -55,8 +57,10 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 		}
 	}
 	p, _ := args["project"].(string)
-	if p == "" {
-		return s.engine, nil
+	if strings.TrimSpace(p) == "" {
+		return nil, errs.NewError(errs.MissingParam,
+			"this server hosts multiple projects and the call omitted project",
+			"pass project=<repo basename> or an absolute path (see tools/list)")
 	}
 	return s.router.EngineFor(ctx, p)
 }
@@ -84,7 +88,11 @@ func (s *Server) RunStdio(ctx context.Context) error {
 // enforced per tool call inside the handlers (MCP carries capability in the
 // JSON-RPC body, so path middleware cannot see it).
 func (s *Server) HTTPHandler() http.Handler {
-	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.srv }, nil)
+	// Stateless: DSH keeps Mcp-Session-Id across calls, and this process is
+	// launchd-restarted. A sticky session map answers "session not found"
+	// after restart or when routeByProject builds a second handler. Tool
+	// calls do not need a server-side session.
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.srv }, &mcp.StreamableHTTPOptions{Stateless: true})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, err := auth.RoleForRequest(r)
 		if err != nil {
@@ -156,7 +164,7 @@ func (s *Server) registerTools() {
 				"payload": {"type": "string", "description": "payload to offload (action=session)"},
 				"summary": {"type": "string", "description": "offload summary (action=session)"},
 				"args": {"type": "object", "description": "action params: turns[]/session_id/retained_through_user_turn/scope/cwd/bank (memory session_retain); content/old/new (memory curation); mode/lines/fresh (read)"},
-				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
+				"project": {"type": "string", "description": "target project (dir path or name); REQUIRED when the server serves multiple projects (LEANKG_PROJECT_DIRS) — calls without it are rejected instead of answering from the wrong repo"}
 			}
 		}`),
 	}, s.handleImport)
@@ -174,7 +182,7 @@ func (s *Server) registerTools() {
 				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "prd", "incidents", "env_conflicts", "service_context", "portfolio", "pattern", "languages", "lsp", "compress"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path); org reads take args.service/args.pattern/args.env; action=portfolio is the cross-project fleet read (args.cmd=summary selects the T0 manifest, args.action pins each child's action)"},
 				"limit": {"type": "integer", "description": "max hits (default 10; impact depth comes from args.depth)"},
 				"args": {"type": "object", "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), main (memory); command session_recall|memories + scope/cwd/bank (memory session reads); pattern/lang/limit (pattern), lang (lsp), mode/lines/fresh (read), cmd/tool/response (compress), cmd/action (portfolio)"},
-				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
+				"project": {"type": "string", "description": "target project (dir path or name); REQUIRED when the server serves multiple projects (LEANKG_PROJECT_DIRS) — calls without it are rejected instead of answering from the wrong repo"}
 			},
 			"required": []
 		}`),
