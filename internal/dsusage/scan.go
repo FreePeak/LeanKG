@@ -23,12 +23,9 @@ import (
 // hundred local sessions; append a JSONL from a hook if this is polled
 // harder than a dashboard refresh.
 func ScanRoots(roots []string) ([]Step, []SessionIssue, error) {
-	if len(roots) == 0 {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, nil, err
-		}
-		roots = []string{filepath.Join(home, ".dsh", "sessions")}
+	roots, err := defaultRoots(roots)
+	if err != nil {
+		return nil, nil, err
 	}
 	var steps []Step
 	var allIssues []SessionIssue
@@ -48,11 +45,13 @@ func ScanRoots(roots []string) ([]Step, []SessionIssue, error) {
 // not from a single LeanKG call. These feed the dashboard and the
 // enhancement backlog (e.g. "agent never called LeanKG this session").
 type SessionIssue struct {
-	Rule     string   `json:"rule"`
-	Severity Severity `json:"severity"`
-	Title    string   `json:"title"`
-	Detail   string   `json:"detail"`
-	Fix      string   `json:"fix"`
+	Rule      string   `json:"rule"`
+	Severity  Severity `json:"severity"`
+	Title     string   `json:"title"`
+	Detail    string   `json:"detail"`
+	Fix       string   `json:"fix"`
+	SessionID string   `json:"session_id,omitempty"`
+	Workspace string   `json:"workspace,omitempty"`
 }
 
 // sessionStats tracks per-session tool usage so ScanRoots can surface
@@ -268,11 +267,13 @@ func sessionIssues(sid, ws string, s sessionStats) []SessionIssue {
 	if s.totalTools > 0 && s.leankgCalls == 0 {
 		// Session used local tools (bash/grep/read/glob) but never called LeanKG.
 		out = append(out, SessionIssue{
-			Rule:     "no_leankg_in_code_session",
-			Severity: SevHigh,
-			Title:    "Session searched code without LeanKG",
-			Detail:   sid + ": " + fmt.Sprintf("%d", s.totalTools) + " local tool calls, 0 LeanKG calls",
-			Fix:      "Query LeanKG first in DSH sessions: leankg query with project=<repo>.",
+			Rule:      "no_leankg_in_code_session",
+			Severity:  SevHigh,
+			Title:     "Session searched code without LeanKG",
+			Detail:    sid + ": " + fmt.Sprintf("%d", s.totalTools) + " local tool calls, 0 LeanKG calls",
+			Fix:       "Query LeanKG first in DSH sessions: leankg query with project=<repo>.",
+			SessionID: sid,
+			Workspace: ws,
 		})
 	}
 	if s.rungs["L3"] == 0 {
@@ -293,6 +294,8 @@ func sessionIssues(sid, ws string, s sessionStats) []SessionIssue {
 						"LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 " +
 						"leankg-embed run --project <ABSOLUTE-PATH>. Always pass --project; without it " +
 						"leankg-embed embeds the cwd store instead.",
+					SessionID: sid,
+					Workspace: ws,
 				})
 			} else {
 				// No L3 attempt: either a keyword/exact hit answered first, or
@@ -306,6 +309,8 @@ func sessionIssues(sid, ws string, s sessionStats) []SessionIssue {
 					Fix: "L1/L2 answered first (a keyword or exact hit short-circuits the ladder) or the " +
 						"call pinned action=exact/fuzzy, which bypasses L3. Not a missing-vector problem. " +
 						"Pass no action (or action=search) to let the ladder reach L3 on semantic questions.",
+					SessionID: sid,
+					Workspace: ws,
 				})
 			}
 		}

@@ -104,7 +104,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 function esc(s){ return (s||"").replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-const HOOK = "Before bash/grep/rg for code search: call mcp__leankg__query (or status/import) first.\nAlways pass project=<repo basename> or an absolute path.\nIf the store is cold, import the repo once, then query.\nAn omitted project is not 'current directory' — it is rejected.";
+const HOOK = "At session start, fetch current DSH findings with: curl -fsS --max-time 2 http://127.0.0.1:9710/api/findings\nBefore bash/grep/rg for code search: call mcp__leankg__query (or status/import) first.\nAlways pass project=<repo basename> or an absolute path.\nIf the store is cold, import the repo once, then query.\nAn omitted project is not 'current directory' — it is rejected.";
 let cache = {asks:null, steps:null};
 
 function tab(name){
@@ -171,10 +171,14 @@ function chips(st, pending){
 }
 
 async function loadSteps(){
+  clearTimeout(loadSteps.retry);
   const q = $("laya").checked ? "?laya=1" : "";
   const res = await fetch("/api/steps"+q);
   const data = await res.json();
   cache.steps = data;
+  if (data.scan && data.scan.state !== "ready" && data.scan.state !== "error") {
+    loadSteps.retry = setTimeout(loadSteps, 2000);
+  }
   const s = data.summary || {};
   cache.sev = s.by_severity || {};
   cache.stepCount = s.steps;
@@ -189,9 +193,13 @@ function renderSteps(){
   const sum = data.summary || {};
   const rungTxt = Object.entries(sum.by_rung||{}).map(([k,v]) => `${k} ${v}`).join(" · ");
   const lay = sum.laya || {};
+  const scan = data.scan || {};
+  const scanTxt = scan.state === "scanning" ? " · scanning session logs…"
+    : scan.updated_at ? ` · cached ${scan.updated_at}` : "";
   $("stepsmeta").textContent = `· ${sum.steps||0} steps · ${sum.sessions||0} sessions`
     + (rungTxt ? ` · rungs ${rungTxt}` : " · rungs none")
-    + ` · laya ${lay.configured?"on":"off"} (scored ${lay.scored||0}, skipped-info ${lay.skipped_info||0})`;
+    + ` · laya ${lay.configured?"on":"off"} (scored ${lay.scored||0}, skipped-info ${lay.skipped_info||0})`
+    + scanTxt;
   renderSessionIssues(data.session_issues||[]);
   const want = $("filter").value;
   const match = (st) => want==="critical-high" ? (st.top_severity==="critical"||st.top_severity==="high") : (!want || st.top_severity===want);
@@ -207,7 +215,7 @@ function renderSteps(){
       </div>
       <div style="padding:0 14px 14px">${issues}</div>
     </details>`;
-  }).join("") || `<div class="meta">No steps at this severity.</div>`;
+  }).join("") || `<div class="meta">${(data.scan||{}).state === "scanning" ? "Scanning session logs… cached findings will appear here." : "No cached steps at this severity."}</div>`;
 }
 
 function renderSessionIssues(list){
@@ -228,6 +236,7 @@ $("reload").onclick = loadSteps;
 $("filter").onchange = renderSteps;
 $("laya").onchange = loadSteps;
 loadAsks();
+loadSteps();
 setInterval(loadAsks, 5000);
 </script>
 </body>

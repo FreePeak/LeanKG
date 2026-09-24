@@ -4,20 +4,45 @@ package dsusage
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
-// Handler serves the dashboard JSON + optional watch APIs.
-func Handler(roots []string, laya LayaClient, watch *Watcher) http.Handler {
+// Handler serves the dashboard JSON + optional watch APIs. When findings is
+// non-nil, API reads are cache-only; the watcher owns the background scan.
+// The optional store argument keeps the old three-argument call shape usable
+// for embedders that do not need persistence.
+func Handler(roots []string, laya LayaClient, watch *Watcher, stores ...*FindingsStore) http.Handler {
+	var findings *FindingsStore
+	if len(stores) > 0 {
+		findings = stores[0]
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/steps", func(w http.ResponseWriter, r *http.Request) {
-		steps, sessIssues, err := ScanRoots(roots)
+	readSnapshot := func() (Snapshot, error) {
+		if findings != nil {
+			return findings.Snapshot(), nil
+		}
+		steps, issues, err := ScanRoots(roots)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			return Snapshot{}, err
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		findings := buildFindings(steps, issues)
+		return Snapshot{
+			Steps: steps, SessionIssues: issues, Findings: findings,
+			Scan: ScanStatus{State: "ready", UpdatedAt: now, Steps: len(steps), SessionIssues: len(issues), Findings: len(findings)},
+		}, nil
+	}
+	mux.HandleFunc("GET /api/steps", func(w http.ResponseWriter, r *http.Request) {
+		snap, err := readSnapshot()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		steps := snap.Steps
 		for i := range steps {
 			steps[i].Issues = Classify(steps[i])
 			steps[i].TopSeverity = Top(steps[i].Issues)
@@ -34,29 +59,65 @@ func Handler(roots []string, laya LayaClient, watch *Watcher) http.Handler {
 		}
 		writeJSON(w, map[string]any{
 			"steps":          steps,
-			"session_issues": sessIssues,
+			"session_issues": snap.SessionIssues,
 			"summary":        summary,
 			"causes":         knownCauses(),
+			"scan":           snap.Scan,
+		})
+	})
+	mux.HandleFunc("GET /api/findings", func(w http.ResponseWriter, r *http.Request) {
+		minSeverity, err := parseMinSeverity(r.URL.Query().Get("min_severity"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		snap, err := readSnapshot()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		findingsOut := make([]Finding, 0)
+		for _, finding := range snap.Findings {
+			if finding.Status == "open" && severityAtLeast(finding.Severity, minSeverity) {
+				findingsOut = append(findingsOut, finding)
+			}
+		}
+		path := ""
+		if findings != nil {
+			path = findings.Path()
+		}
+		writeJSON(w, map[string]any{
+			"findings":      findingsOut,
+			"min_severity":  minSeverity,
+			"scan":          snap.Scan,
+			"findings_file": path,
 		})
 	})
 	mux.HandleFunc("GET /api/asks", func(w http.ResponseWriter, r *http.Request) {
 		if watch == nil {
-			writeJSON(w, map[string]any{"asks": []any{}, "stats": map[string]any{}, "watch": false})
+			out := map[string]any{"asks": []any{}, "stats": map[string]any{}, "watch": false}
+			if findings != nil {
+				out["scan"] = findings.Snapshot().Scan
+			}
+			writeJSON(w, out)
 			return
 		}
 		out := watch.Snapshot()
 		out["watch"] = true
+		if findings != nil {
+			out["scan"] = findings.Snapshot().Scan
+		}
 		writeJSON(w, out)
 	})
 	mux.HandleFunc("POST /api/asks/", func(w http.ResponseWriter, r *http.Request) {
 		if watch == nil {
-			http.Error(w, "watch not enabled", 400)
+			http.Error(w, "watch not enabled", http.StatusBadRequest)
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/asks/")
 		id = strings.Trim(id, "/")
 		if id == "" {
-			http.Error(w, "missing ask id", 400)
+			http.Error(w, "missing ask id", http.StatusBadRequest)
 			return
 		}
 		var body struct {
@@ -73,7 +134,7 @@ func Handler(roots []string, laya LayaClient, watch *Watcher) http.Handler {
 		}
 		a, err := watch.AnswerAsk(id, body.Help)
 		if err != nil {
-			http.Error(w, err.Error(), 404)
+			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
 		writeJSON(w, a)
@@ -90,6 +151,20 @@ func Handler(roots []string, laya LayaClient, watch *Watcher) http.Handler {
 		_, _ = w.Write(dashboardHTML)
 	})
 	return mux
+}
+
+func parseMinSeverity(value string) (Severity, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return SevMedium, nil
+	}
+	severity := Severity(value)
+	switch severity {
+	case SevCritical, SevHigh, SevMedium, SevInfo:
+		return severity, nil
+	default:
+		return "", fmt.Errorf("invalid min_severity %q (want critical, high, medium, or info)", value)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

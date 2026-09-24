@@ -196,6 +196,7 @@ Usage:
   leankg dashboard [--project DIR] [--since 24h|7d|30d|2w] [--format text|json]
   leankg dsh-usage [--addr 127.0.0.1:9710] [--sessions DIR[,DIR]] [--watch]
                    # optional; rebuild with -tags dshusage (default off)
+                   # watch persists ~/.leankg/dsh-usage-findings.json; GET /api/findings
   leankg auth register     [--project DIR] --email EMAIL --password PW --name NAME
   leankg auth token create [--project DIR] --name NAME [--role admin|contributor|viewer]
                            [--account-id ID] [--org-id ID] [--scopes a,b] [--ttl 24h]

@@ -42,6 +42,7 @@ func cmdDSHUsage(args []string) {
 		laya = dsusage.DefaultLaya() // still honors LAYA_URL / LEANKG_JUDGE_SIDECAR_URL
 	}
 	layaOn := laya.Backend != nil
+	findings := dsusage.NewFindingsStore("")
 
 	if *cookieFile == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -74,14 +75,23 @@ func cmdDSHUsage(args []string) {
 			Notify:      *notify,
 			DSHURL:      strings.TrimSpace(*dshURL),
 			DSHCookie:   cookie,
+			Findings:    findings,
 			MinSeverity: dsusage.Severity(*minSev),
 		})
 		stop := make(chan struct{})
 		go w.Loop(stop)
 	}
 
-	h := dsusage.Handler(list, laya, w)
-	log.Printf("leankg dsh-usage on http://%s (watch=%v laya=%v)", *addr, *watch, layaOn)
+	if !*watch {
+		go func() {
+			if _, err := findings.Scan(list); err != nil {
+				log.Printf("dsh-usage initial scan: %v", err)
+			}
+		}()
+	}
+
+	h := dsusage.Handler(list, laya, w, findings)
+	log.Printf("leankg dsh-usage on http://%s (watch=%v laya=%v findings=%s)", *addr, *watch, layaOn, findings.Path())
 	if err := http.ListenAndServe(*addr, h); err != nil {
 		log.Fatal(err)
 	}

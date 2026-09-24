@@ -1,6 +1,6 @@
 # DSH × LeanKG — root causes and solutions
 
-**Date:** 2026-09-22 (updated 2026-09-23)
+**Date:** 2026-09-22 (updated 2026-09-24)
 **Scope:** why DSH sessions look like they never use LeanKG, what is fixed in this branch, and what still needs a product/process change.
 
 ## Optional feature (default off)
@@ -99,6 +99,8 @@ scripts/embed-runtime.sh on       # bootstrap + wait for /health
    - rule classifier (`mcp_session_lost`, `project_not_passed`, `cold_store`, …)
    - session-level issues (`no_leankg_in_code_session`, `semantic_degraded_no_vectors`, `semantic_never_consulted`)
    - per-step ladder `rung` + `retrieval.reason`, `by_rung` summary, and a derived `laya {configured, scored, unavailable, skipped_info}` block
+   - after each watch scan, a fingerprinted cache at `~/.leankg/dsh-usage-findings.json`; unchanged logs are not reopened
+   - `GET /api/findings` returns the current critical/high/medium queue for an agent without adding a fourth MCP tool
 2. **MCP streamable HTTP `Stateless: true`** in `internal/mcp/server.go` (needs serve restart)
 3. **Local Laya sidecar** (`POST http://127.0.0.1:8091/v1/systemone`) for step scoring
 4. **Continuous watch + notify** (see `leankg dsh-usage --watch`)  
@@ -144,3 +146,27 @@ When a step is high/critical, the watcher:
 3. opens a pending ask: **Help the agent in this session?**  
 4. if you answer **yes** and a DSH cookie is available, queues a steer on that session explaining the defect and the fix  
 5. if no cookie, the ask stays on the dashboard for you to paste/act in DSH yourself
+
+## Copy-paste agent handoff
+
+The watcher writes the same cache used by the dashboard to
+`~/.leankg/dsh-usage-findings.json`. Add this block to `~/.dsh/AGENTS.md` so a
+future DSH session can act on the findings without re-walking session logs:
+
+````markdown
+## LeanKG DSH findings (session start)
+
+Fetch the current actionable findings (critical, high, and medium) before
+starting a code task:
+
+```bash
+curl -fsS --max-time 2 http://127.0.0.1:9710/api/findings
+```
+
+If the dashboard is temporarily down, read
+`~/.leankg/dsh-usage-findings.json` instead. For each open finding, verify
+its `detail`, `fix`, and `session_id` in the relevant worktree, make the
+smallest product fix, and run the relevant regression check. Report the
+finding rule, changed file, and check. Do not re-scan DSH logs from a new
+agent and do not add a fourth MCP tool for this workflow.
+````

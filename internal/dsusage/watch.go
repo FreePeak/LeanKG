@@ -42,6 +42,7 @@ type WatchConfig struct {
 	DSHURL      string // e.g. http://127.0.0.1:3081
 	DSHCookie   string // raw Cookie header value
 	StatePath   string // seen call ids
+	Findings    *FindingsStore
 	MinSeverity Severity
 	OnAsk       func(Ask)
 }
@@ -72,6 +73,9 @@ func NewWatcher(cfg WatchConfig) *Watcher {
 	if cfg.StatePath == "" {
 		home, _ := os.UserHomeDir()
 		cfg.StatePath = filepath.Join(home, ".leankg", "dsh-usage-seen.json")
+	}
+	if cfg.Findings == nil {
+		cfg.Findings = NewFindingsStore("")
 	}
 	w := &Watcher{cfg: cfg, seen: map[string]struct{}{}, asks: []Ask{}}
 	w.loadSeen()
@@ -220,10 +224,11 @@ Do this now:
 
 // RunOnce scans and processes new steps. Returns new alert count.
 func (w *Watcher) RunOnce() (int, error) {
-	steps, si, err := ScanRoots(w.cfg.Roots)
+	snap, err := w.cfg.Findings.Scan(w.cfg.Roots)
 	if err != nil {
 		return 0, err
 	}
+	steps, si := snap.Steps, snap.SessionIssues
 	w.mu.Lock()
 	w.sessionIssues = si
 	w.stats.Scans++
@@ -313,32 +318,38 @@ func askKey(a Ask) string {
 
 // Loop runs until ctx-less forever; caller cancels via process.
 func (w *Watcher) Loop(stop <-chan struct{}) {
-	steps, _, err := ScanRoots(w.cfg.Roots)
+	snap, err := w.cfg.Findings.Scan(w.cfg.Roots)
 	if err != nil {
-		return
-	}
-	w.mu.Lock()
-	backlog := 0
-	for _, s := range steps {
-		s.Issues = Classify(s)
-		s.TopSeverity = Top(s.Issues)
-		w.seen[stepKey(s)] = struct{}{}
-		// Surface existing high/critical once so the human can answer Help/Ignore.
-		if severityAtLeast(s.TopSeverity, w.cfg.MinSeverity) && backlog < 12 && !w.hasAskFor(stepKey(s)) {
-			a := askFromStep(s)
-			a.Note = "backlog from existing session logs"
-			w.asks = append(w.asks, a)
-			w.stats.Alerts++
-			backlog++
-			if w.cfg.Notify && backlog <= 3 {
-				go notifyMac(a)
+		// Keep polling: a session root can disappear during rotation or a
+		// sidecar can be temporarily unreadable. The cache preserves the last
+		// good evidence and the next tick can recover without a restart.
+		log.Printf("dsh-usage initial scan: %v", err)
+	} else {
+		steps, si := snap.Steps, snap.SessionIssues
+		w.mu.Lock()
+		w.sessionIssues = si
+		backlog := 0
+		for _, s := range steps {
+			s.Issues = Classify(s)
+			s.TopSeverity = Top(s.Issues)
+			w.seen[stepKey(s)] = struct{}{}
+			// Surface existing high/critical once so the human can answer Help/Ignore.
+			if severityAtLeast(s.TopSeverity, w.cfg.MinSeverity) && backlog < 12 && !w.hasAskFor(stepKey(s)) {
+				a := askFromStep(s)
+				a.Note = "backlog from existing session logs"
+				w.asks = append(w.asks, a)
+				w.stats.Alerts++
+				backlog++
+				if w.cfg.Notify && backlog <= 3 {
+					go notifyMac(a)
+				}
 			}
 		}
+		nSeen := len(w.seen)
+		w.mu.Unlock()
+		w.saveSeen()
+		log.Printf("dsh-usage watch: seeded %d steps, backlog asks=%d; interval=%s", nSeen, backlog, w.cfg.Interval)
 	}
-	nSeen := len(w.seen)
-	w.mu.Unlock()
-	w.saveSeen()
-	log.Printf("dsh-usage watch: seeded %d steps, backlog asks=%d; interval=%s", nSeen, backlog, w.cfg.Interval)
 
 	t := time.NewTicker(w.cfg.Interval)
 	defer t.Stop()
