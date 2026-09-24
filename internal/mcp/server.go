@@ -66,10 +66,25 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 // x-release-please-version markers; version_test.go fails on drift.
 const version = "0.34.0" // x-release-please-version
 
+// serverInstructions is returned during MCP initialization. MCP clients may
+// add this to the model's system prompt; the shorter toolGuidance below keeps
+// the same rules visible to clients that only render tools/list.
+const serverInstructions = `LeanKG is a code knowledge graph. Agent protocol:
+1. For code discovery, call query before bash/grep/read. Leave action empty (or use search) for the L1 exact -> L2 fuzzy -> L3 semantic ladder; pin exact/fuzzy/semantic only when that rung is intentional.
+2. Always pass project=<repo basename> or an absolute path. Multi-project serving rejects an omitted project; never assume the server's cwd is the caller's repo.
+3. Inspect retrieval{rung,reason} and freshness. If a store is cold, import it once with action=repo, path=<absolute repository path>, project=<repo basename>, then query; do not re-import on every turn.
+4. Importing indexes elements but does not create vectors. If L3 is required, run the embedding pipeline separately; a degraded L3 is not proof that the query ladder is broken.
+5. Use status for health, freshness, and embedding coverage, not as a substitute for query. Use impact/path/callers/callees/context/explain for relationships.`
+
+const toolGuidance = "Agent protocol: query before bash/grep for code discovery; always pass project; import once when cold; inspect retrieval/freshness; do not pin a rung unless intentional."
+
 // New builds the MCP server with the 3-tool registry.
 func New(engine *core.Engine) *Server {
 	s := &Server{engine: engine}
-	s.srv = mcp.NewServer(&mcp.Implementation{Name: "leankg", Version: version}, nil)
+	s.srv = mcp.NewServer(&mcp.Implementation{
+		Name: "leankg", Version: version,
+		Description: "LeanKG code knowledge graph: use query for code discovery and import for first-time indexing.",
+	}, &mcp.ServerOptions{Instructions: serverInstructions})
 	s.registerTools()
 	return s
 }
@@ -137,7 +152,8 @@ func (s *Server) registerTools() {
 			"of repositories (action=repo|dir, path), or curate agent memory " +
 			"(action=memory, command=create|str_replace|insert|delete|rename|add|replace|remove). " +
 			"Legacy tool name 'set' is superseded by this tool. " +
-			"Use action=dir with path=\".\" to import the current directory as a scoped index target (FR-P2).",
+			"Use action=dir with path=\".\" to import the current directory as a scoped index target (FR-P2). " +
+			"Import only for first-time indexing or deliberate updates; indexing does not create vectors. " + toolGuidance,
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -166,7 +182,8 @@ func (s *Server) registerTools() {
 		Description: "Query LeanKG. Empty action routes down the ladder: L1 exact " +
 			"identifier → L2 fuzzy keyword → L3 semantic (vectors). Every answer carries " +
 			"retrieval{rung,reason} + freshness. action=memory searches agent memory; " +
-			"action=exact|fuzzy|semantic pins a rung; graph verbs (impact/path/callers/callees/context/explain) and session/ontology reads are also available. Legacy tool name 'get' is superseded.",
+			"action=exact|fuzzy|semantic pins a rung; graph verbs (impact/path/callers/callees/context/explain) and session/ontology reads are also available. " +
+			"Leave action empty/search for semantic questions; legacy tool name 'get' is superseded. " + toolGuidance,
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -181,8 +198,9 @@ func (s *Server) registerTools() {
 	}, s.handleQuery)
 
 	s.srv.AddTool(&mcp.Tool{
-		Name:        core.ToolStatus,
-		Description: "LeanKG health: inventory, freshness (fresh|possibly_stale|cold), watermark, backend, embeddings state (stamped models, vectors), last embed run.",
+		Name: core.ToolStatus,
+		Description: "LeanKG health: inventory, freshness (fresh|possibly_stale|cold), watermark, backend, embeddings state (stamped models, vectors), last embed run. " +
+			"Use status for health and coverage, not as a substitute for query. " + toolGuidance,
 		InputSchema: json.RawMessage(`{"type": "object", "properties": {"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}}}`),
 	}, s.handleStatus)
 }
