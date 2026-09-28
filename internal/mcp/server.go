@@ -99,7 +99,16 @@ func (s *Server) RunStdio(ctx context.Context) error {
 // enforced per tool call inside the handlers (MCP carries capability in the
 // JSON-RPC body, so path middleware cannot see it).
 func (s *Server) HTTPHandler() http.Handler {
-	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.srv }, nil)
+	// Stateless: true is required, not an optimization. go-sdk refuses protocol
+	// >= 2026-07-28 on any stateful HTTP server, and that version arrives in the
+	// Mcp-Protocol-Version HEADER — so a compliant client (DSH) gets HTTP 400
+	// without this. It also drops per-session state, which suits a read-mostly
+	// query server holding no session-bound resources. Pinned by
+	// TestMCPNewProtocolVersionOverHTTP.
+	inner := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return s.srv },
+		&mcp.StreamableHTTPOptions{Stateless: true},
+	)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, err := auth.RoleForRequest(r)
 		if err != nil {
