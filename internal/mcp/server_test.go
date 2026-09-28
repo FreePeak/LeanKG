@@ -298,3 +298,73 @@ func TestNewActionsOverMCPWire(t *testing.T) {
 		t.Fatalf("lsp must reach the engine and refuse (schema rejection would differ): %v", err)
 	}
 }
+
+// TestMCPNewProtocolVersionOverHTTP pins the gate that let this regress twice:
+// go-sdk rejects protocol >= 2026-07-28 on any stateful HTTP server, and the
+// version is read from the Mcp-Protocol-Version HEADER — not the initialize
+// body. Every prior test omitted that header, so the server silently negotiated
+// 2025-03-26, the >= 20260728 branch never executed, and CI stayed green on a
+// server the real client (DSH) could not talk to.
+func TestMCPNewProtocolVersionOverHTTP(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	engine := core.New(st, nil, nil)
+	engine.SetProjectDir(dir)
+	h := New(engine).HTTPHandler()
+
+	// post sends one tools/list. SEP-2575 makes a compliant client state the
+	// method and version THREE ways — the Mcp-Protocol-Version header, the
+	// matching _meta."io.modelcontextprotocol/protocolVersion", and the
+	// Mcp-Method header — plus clientCapabilities in _meta, and the server
+	// refuses any mismatch. Modelling the compliant client is the point: a
+	// header-only request is refused for a different reason and would not have
+	// proven the transport gate opened.
+	post := func(compliant bool, metaVersion string) *httptest.ResponseRecorder {
+		t.Helper()
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+		if compliant {
+			body = `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{` +
+				`"io.modelcontextprotocol/protocolVersion":"` + metaVersion + `",` +
+				`"io.modelcontextprotocol/clientCapabilities":{"capabilities":{}}}}}`
+		}
+		req := httptest.NewRequest("POST", "/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		if compliant {
+			req.Header.Set("Mcp-Protocol-Version", "2026-07-28")
+			req.Header.Set("Mcp-Method", "tools/list")
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// The compliant 2026-07-28 client (DSH) must be served, not refused.
+	rec := post(true, "2026-07-28")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("compliant protocol 2026-07-28 over HTTP: %d, want 200 — body: %s",
+			rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"import"`) {
+		t.Fatalf("2026-07-28 tools/list must carry the registry: %s", rec.Body.String())
+	}
+
+	// A non-compliant 2026-07-28 request must be refused for the SEP-2575
+	// reason — but never with the stateful-transport error, which is the gate
+	// this fix opens. Guards the fix without asserting bad faith is served.
+	if rec := post(true, "2025-06-18"); rec.Code == http.StatusOK {
+		t.Fatalf("mismatched _meta must be rejected, got 200: %s", rec.Body.String())
+	}
+
+	// No regression for a legacy client that omits the new headers entirely.
+	if rec := post(false, ""); rec.Code != http.StatusOK {
+		t.Fatalf("legacy header-less tools/list: %d, want 200 — body: %s", rec.Code, rec.Body.String())
+	}
+}
