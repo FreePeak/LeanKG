@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.13.1-first-run
-**Date:** 2026-09-21
+**Version:** 4.13.2-memory-flat-args
+**Date:** 2026-09-29
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
@@ -9,6 +9,16 @@
 ---
 
 ## Changelog
+
+### v4.13.2-memory-flat-args — the advertised memory-write shape no longer loses content (2026-09-29)
+
+**Trigger:** validating the PR #442 result from an actual xdev session (the one consumer that writes agent memory through the live MCP tool) instead of a curl harness. `leankg_import action=memory command=create` returned `{"command":"create","ok":true}` and wrote a **0-byte file**.
+
+**Root cause:** the import tool's advertised input schema (`internal/mcp/server.go:173-180`) publishes the curation fields — `content`, `old`, `new`, `text`, `file`, `insert_line`, `payload`, `summary`, `session_id`, `node_id` — as **top-level** properties, but `core.ImportRequest` only carried `Action/Path/Command/Args` and `memoryWrite` read content exclusively from `req.Args`. An agent that followed the documented schema therefore got `ok:true` and an empty file: a silent memory loss. My earlier CLI-driven probes passed because they nested the fields under `args`, which is what hid it until a real session wrote memory.
+
+- **Fix:** `ImportRequest` gains the flat fields the schema advertises, and `withFlatArgs` folds them into `Args` at the top of `Import` so one lookup path serves both call shapes. Anything already nested under `args` wins, so the more explicit shape is never silently overridden.
+- **Tests:** `TestMemoryWriteFlatSchemaFieldsLandOnDisk` (create/add/str_replace flat, asserting the file content on disk) and `TestMemoryWriteArgsShapeStillWorksAndArgsWins`. The first was verified to fail on the pre-fix code with `file = "" , want "flat top-level content"`, and passes after.
+- **Verified end to end** on a real stdio server driven with exactly the advertised shape (`content` at the top level): 26-byte file, `top-level content survives` on disk. `go test ./... -count=1` green, `go vet` clean, `gofmt` clean.
 
 ### v4.13.1-first-run — the install path a new user actually walks (2026-09-21)
 

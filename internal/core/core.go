@@ -151,17 +151,66 @@ func (e *Engine) freshness(totalElements int) string {
 	return store.Freshness(e.st, totalElements)
 }
 
-// ImportRequest is the import tool payload.
+// ImportRequest is the import tool payload. The flat curation fields mirror
+// the advertised MCP input schema (content/old/new/text/file/payload/summary/
+// session_id/node_id/insert_line): an agent that follows the schema sends them
+// at the top level, while the same fields nested under args also work.
 type ImportRequest struct {
 	Action string `json:"action"`         // repo | dir | memory
 	Path   string `json:"path,omitempty"` // repo/dir target
 	// Memory write commands ride action="memory".
-	Command string         `json:"command,omitempty"`
-	Args    map[string]any `json:"args,omitempty"`
+	Command   string         `json:"command,omitempty"`
+	Args      map[string]any `json:"args,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	Old       string         `json:"old,omitempty"`
+	New       string         `json:"new,omitempty"`
+	Text      string         `json:"text,omitempty"`
+	File      string         `json:"file,omitempty"`
+	Payload   string         `json:"payload,omitempty"`
+	Summary   string         `json:"summary,omitempty"`
+	SessionID string         `json:"session_id,omitempty"`
+	NodeID    string         `json:"node_id,omitempty"`
+	InsertAt  *int           `json:"insert_line,omitempty"`
+}
+
+// withFlatArgs folds the top-level curation fields into Args so one lookup
+// path serves both call shapes. Anything already nested under args wins, so an
+// explicit args key is never overridden by the flat one. Before this, a
+// schema-shaped call (content at the top level) reported ok:true and wrote an
+// EMPTY file — the agent's memory silently lost the write.
+func (r ImportRequest) withFlatArgs() ImportRequest {
+	flat := map[string]any{}
+	for k, v := range map[string]string{
+		"content": r.Content, "old": r.Old, "new": r.New, "text": r.Text,
+		"file": r.File, "payload": r.Payload, "summary": r.Summary,
+		"session_id": r.SessionID, "node_id": r.NodeID,
+	} {
+		if v != "" {
+			flat[k] = v
+		}
+	}
+	if r.InsertAt != nil {
+		flat["insert_line"] = *r.InsertAt
+	}
+	if len(flat) == 0 {
+		return r
+	}
+	merged := make(map[string]any, len(r.Args)+len(flat))
+	for k, v := range flat {
+		merged[k] = v
+	}
+	for k, v := range r.Args {
+		merged[k] = v
+	}
+	r.Args = merged
+	return r
 }
 
 // Import handles the import tool: repo/dir indexing or memory curation writes.
+// The flat curation fields are folded into Args first, so a schema-shaped call
+// (content at the top level) and an args-shaped call behave identically.
 func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any, error) {
+	req = req.withFlatArgs()
 	switch req.Action {
 	case "docs":
 		if req.Path == "" {
