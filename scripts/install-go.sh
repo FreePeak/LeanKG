@@ -18,30 +18,45 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# The clone lives under $WORK/src, not $WORK/leankg: `go build -o $WORK`
+# cannot write a binary named after an existing directory.
 echo "==> cloning $REPO_URL"
-git clone --depth 1 "$REPO_URL" "$WORK/leankg"
-cd "$WORK/leankg/go"
+git clone --depth 1 "$REPO_URL" "$WORK/src"
+cd "$WORK/src"
 
 echo "==> building leankg + leankg-embed (CGO_ENABLED=0)"
-CGO_ENABLED=0 go build -o "$WORK" ./cmd/leankg ./cmd/leankg-embed
+mkdir -p "$WORK/bin"
+CGO_ENABLED=0 go build -o "$WORK/bin" ./cmd/leankg ./cmd/leankg-embed
 
 echo "==> installing to $PREFIX"
 mkdir -p "$PREFIX"
-install -m 0755 "$WORK/leankg" "$PREFIX/leankg"
-install -m 0755 "$WORK/leankg-embed" "$PREFIX/leankg-embed"
+install -m 0755 "$WORK/bin/leankg" "$PREFIX/leankg"
+install -m 0755 "$WORK/bin/leankg-embed" "$PREFIX/leankg-embed"
 
 echo "==> verifying"
-"$PREFIX/leankg" doctor --project "$(mktemp -d)" || true
+"$PREFIX/leankg" version
 
-cat <<MSG
+echo "Installed: $PREFIX/leankg, $PREFIX/leankg-embed"
 
-Installed:
-  $PREFIX/leankg        server (serve/index/writer/doctor/connect/install)
-  $PREFIX/leankg-embed  embedding pipeline (run/full/export/import/status)
+# Quoted heredoc: the body is literal text, so the backticks around the argv
+# below stay readable instead of being run as command substitution.
+cat <<'MSG'
 
-Next steps:
-  leankg install --target claude-code   # wire your coding tool (claude-code | cursor | codex | gemini | opencode | omp)
-  leankg index .                        # build the knowledge index for this repo
-  leankg serve -http 127.0.0.1:9699 -rest 127.0.0.1:8080 -memory
+Make sure that directory is on your PATH, then from inside a repo:
+
+  leankg index .                        # build the knowledge index (one-time)
+  leankg install --target claude-code   # wire your agent (claude-code | cursor | codex | gemini | opencode | omp)
+
+The second command wires `serve --stdio --memory`, so the agent gets both the
+code graph and the markdown memory layer. Restart the agent afterwards to pick
+the entry up.
+
+Shared server instead of one spawn per client (optional; adds REST + UI ports):
+  leankg serve --http :9699 --rest :8080 --ui :8081 --memory
+  leankg install --target claude-code --http --url http://127.0.0.1:9699/mcp
+
+Semantic (L3) search needs embeddings: set LEANKG_EMBED_PROVIDER (see the
+leankg-embed usage), then run `leankg-embed run`. Without it, queries still
+answer from exact + fuzzy matches.
 
 MSG

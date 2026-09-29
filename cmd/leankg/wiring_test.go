@@ -85,6 +85,10 @@ func TestStdioSpawnServesMCP(t *testing.T) {
 	write(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"wiring-test","version":"0"}}}`)
 	write(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	write(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	// A memory write over the exact argv install/connect write into client
+	// configs. Without --memory on that argv the layer is nil and the write
+	// fails with "memory not initialized".
+	write(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"import","arguments":{"action":"memory","command":"create","args":{"path":"topics/wiring.md","content":"Alpha calls Beta"}}}}`)
 
 	lines := make(chan string, 16)
 	go func() {
@@ -96,9 +100,10 @@ func TestStdioSpawnServesMCP(t *testing.T) {
 		}
 	}()
 
-	sawServerInfo, sawTools := false, false
-	timeout := time.After(60 * time.Second) // generous: covers a cold `go build`
-	for !sawServerInfo || !sawTools {
+	sawServerInfo, sawTools, sawMemory := false, false, false
+	// Generous: covers a cold `go build` plus the first memory write.
+	timeout := time.After(60 * time.Second)
+	for !sawServerInfo || !sawTools || !sawMemory {
 		select {
 		case <-timeout:
 			t.Fatalf("spawn never completed the MCP handshake (serverInfo=%v tools=%v)", sawServerInfo, sawTools)
@@ -137,6 +142,18 @@ func TestStdioSpawnServesMCP(t *testing.T) {
 					}
 				}
 				sawTools = true
+			case 3:
+				// The memory layer is reachable only when the spawn argv
+				// carries --memory; without it every memory write fails with
+				// "memory not initialized". Assert the write succeeds over the
+				// exact argv install/connect write into client configs.
+				if strings.Contains(line, "memory not initialized") {
+					t.Fatalf("memory write over the wired argv failed: %s", line)
+				}
+				if !strings.Contains(line, `\"ok\":true`) {
+					t.Fatalf("memory write over the wired argv did not succeed: %s", line)
+				}
+				sawMemory = true
 			}
 		}
 	}

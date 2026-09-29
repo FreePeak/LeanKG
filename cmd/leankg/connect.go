@@ -141,13 +141,16 @@ func jsonEntry(client string, cfg Config) map[string]any {
 	}
 }
 
-// stdioArgs returns the spawn args after the entry command: `serve --stdio`,
-// this binary's MCP-over-stdio mode. Relative project paths are made absolute
-// against the current directory (Rust parity). When dbPath is non-empty
-// (standalone-DB mode, no checkout required), the project directory is
-// not resolved — the user owns the DB path via LEANKG_DB_PATH/env.
+// stdioArgs returns the spawn args after the entry command: `serve --stdio
+// --memory`, this binary's MCP-over-stdio mode. --memory is unconditional: the
+// markdown memory layer is part of the product, and leaving it off made every
+// agent's memory write fail with "memory not initialized" (internal/core).
+// Relative project paths are made absolute against the current directory
+// (Rust parity). When dbPath is non-empty (standalone-DB mode, no checkout
+// required), the project directory is not resolved — the user owns the DB path
+// via LEANKG_DB_PATH/env.
 func stdioArgs(project, dbPath string) []string {
-	args := []string{"serve", "--stdio"}
+	args := []string{"serve", "--stdio", "--memory"}
 	if dbPath != "" {
 		args = append(args, "--db", dbPath)
 	}
