@@ -115,12 +115,20 @@ container, one port, `leankg serve --read-only --ui :$PORT`.
 cd your-project
 leankg index .
 
-# 2. Wire up an AI client — one command (claude-code | cursor | codex | gemini | opencode | omp)
-leankg connect claude-code           # stdio entry; --http --url http://host:9699/mcp to reuse a shared server
+# 2. Wire up an AI client — one command (claude-code | cursor | codex | gemini | opencode | omp).
+#    The stdio entry is `serve --stdio --memory`: the agent gets the code graph AND the
+#    markdown memory layer (per-project at <project>/.leankg/memory), no second server.
+leankg install --target claude-code  # `connect claude-code` is the same writer
+#    Restart the client afterwards so it picks the entry up.
 
 # 3. ...or serve MCP over HTTP yourself (endpoint /mcp; GET /health returns 200 when ready)
-leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080
+leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --memory
+leankg install --target claude-code --http --url http://127.0.0.1:9699/mcp
 ```
+
+Semantic (L3) search is the one optional layer: it needs embeddings. Set
+`LEANKG_EMBED_PROVIDER` (see `leankg-embed` usage) and run `leankg-embed run`;
+until then queries answer from exact + fuzzy matches.
 
 Self-check any deployment: `leankg doctor` — prints the store path, element and
 file counts and the write watermark (exit 0 pass / 2 fail).

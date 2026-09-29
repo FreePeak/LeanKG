@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.13.0-memory-service
-**Date:** 2026-09-17
+**Version:** 4.13.1-first-run
+**Date:** 2026-09-21
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
@@ -9,6 +9,19 @@
 ---
 
 ## Changelog
+
+### v4.13.1-first-run — the install path a new user actually walks (2026-09-21)
+
+**Trigger:** a first-run audit of the install + first-value path for a user who has neither a LeanKG checkout nor a configured agent. Three defects made that path fail outright or deliver half the product; a fourth left the memory layer structurally unreachable for every user who followed the documented commands.
+
+- **The source installer was dead.** `scripts/install-go.sh` (the `make install-go` and `curl … | bash` path, README §Installation) still did `cd "$WORK/leankg/go"` — a directory the #403 module-root move deleted — so under `set -e` it aborted at the first build step, every time. It also wrote the build output to `$WORK`, the same path the clone occupied, which `go build` refuses once the clone is a directory. Both fixed (clone into `$WORK/src`, output into `$WORK/bin`), and its self-verification now runs `leankg version` instead of `doctor --project $(mktemp -d)`, which always printed `FAIL store: read-only open of missing store …` and was swallowed by `|| true` — a broken install looked like a clean one. No CI step covered the installer, which is how the stale `cd` survived the cutover.
+- **The installer printed wrong next steps** (`leankg serve -http 127.0.0.1:9699 -rest … -memory`; the flags are `--http :9699 --rest :8080`) and omitted the client-wiring step entirely. The message is now the two-command path, in order, with the optional shared-server and embeddings notes marked optional.
+- **Memory was unreachable through the documented install.** `install`/`connect` wrote the stdio argv `serve --stdio`, and `--memory` is the only switch that opens the memory layer (`cmd/leankg` builds `core.New` with a nil `*memory.Memory` otherwise), so every agent's first `import action=memory` returned the bare error `memory not initialized` and the README/PRD describe no way to fix it. The stdio argv is now `serve --stdio --memory`: one command wires the code graph AND the markdown memory layer (per-project `<project>/.leankg/memory`), which is what the product already claims to be. Guarded behaviorally by `TestStdioSpawnServesMCP`, which now drives a real memory write over the exact argv the client configs carry (it fails with `memory not initialized` if `--memory` is dropped again).
+- **`leankg index` ended with a dead end.** The command printed a count line and nothing else, so the second half of getting value (wiring an agent) was undiscoverable from the terminal. It now prints the one next command.
+
+**Verified:** `go test ./... -count=1` green (54 packages), `go vet ./...` clean, `gofmt` clean; installer executed end-to-end against a `file://` clone into a temp PREFIX and the resulting binary driven through `index` → `install --target claude-code` → JSON-RPC `initialize`/`tools/list`/`import action=memory` over stdio (memory write returns `{"command":"create","ok":true}`).
+
+**Not in this change (next candidates, same theme):** Windows is absent from the release matrix (`linux`/`darwin` × `amd64`/`arm64` only), there is no Homebrew tap / npm / pip distribution, `leankg` with no args prints ~80 verbs to stderr and exits 2, `leankg doctor` before a first index prints a raw store error instead of "run `leankg index .`", the FR-ZCP-13 first-run prompt is asked and then discarded (`_ = mode`), and there is still no backfill of an existing agent memory (Claude Code transcripts, AGENTS.md/CLAUDE.md) into the memory layer.
 
 
 ### v4.13.0-memory-service — LeanKG IS the memory backend service (FR-ZCP-14) (2026-09-17)
@@ -923,4 +936,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-09-21 (FR-TYPE-02 DONE via #434 + #435: abstraction + convo path + use-case doc + interactive diagram; tracker row closed. Prior: 2026-09-19 FR-P2.)*
+*Last updated: 2026-09-21 (v4.13.1-first-run: install-go.sh repaired + verified, stdio wiring now carries --memory so the documented install delivers the memory layer, `index` prints its next step; FR-TYPE-02 DONE via #434 + #435: abstraction + convo path + use-case doc + interactive diagram; tracker row closed. Prior: 2026-09-19 FR-P2.)*
