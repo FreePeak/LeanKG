@@ -328,12 +328,40 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
 	return scanFuzzyMatches(rows)
 }
 
+// nameTokenFreq is the rarity table the name arm gates on, on postgres. Same
+// query, same bound, same meaning as the sqlite one: a token must be rare among
+// symbol names to be worth a name search, and the bound is a fraction of the
+// ELEMENT count.
+func (s *PGStore) nameTokenFreq() (map[string]int, int, error) {
+	rows, err := s.pool.Query(pgCtx, `SELECT lower(name), COUNT(*) FROM code_elements GROUP BY lower(name)`)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	freq := map[string]int{}
+	elements := 0
+	for rows.Next() {
+		var name string
+		var n int
+		if err := rows.Scan(&name, &n); err != nil {
+			return nil, 0, err
+		}
+		freq[name] += n
+		elements += n
+	}
+	return freq, elements, rows.Err()
+}
+
 // FindByNameToken is the ArmName arm on postgres: the same identifier-shaped
 // tokens as the sqlite implementation (shared nameTokens, so both engines fire
 // the arm on exactly the same questions) with ILIKE instead of LIKE, because
 // Postgres' LIKE is case-sensitive.
 func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
-	toks := nameTokens(query)
+	freq, distinct, err := s.nameTokenFreq()
+	if err != nil {
+		return nil, err
+	}
+	toks := nameTokens(query, freq, distinct)
 	if len(toks) == 0 {
 		return nil, nil
 	}

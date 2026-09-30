@@ -2,47 +2,49 @@ package store
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// TestNameTokensAreIdentifierShaped pins the gate that keeps the name arm from
-// being a noise machine: a token must look like code, not English.
+// TestNameTokensAreRareInTheCorpus pins the gate that keeps the name arm from
+// being a noise machine. It is a RARITY test, not a shape test, and that
+// distinction is the whole finding: agents ask in PROSE ("take the single-flight
+// lock for embedding"), so the informative token is a lowercase English word
+// (`lock`, `stamp`, `runes`) that a capital/underscore shape test rejects — a
+// shape gate let the arm fire on 2 of the 30 labelled questions, a rarity gate
+// lets it fire on the ones that matter.
 //
-// The arm matches a query token inside a SYMBOL NAME, so a stop-list of common
-// words can never be complete — "lock", "stamp", "list" and "run" are all real
-// symbols in this repository's own code, and dropping them is exactly the
-// failure the arm exists to prevent. The shape test is the filter: a capital, an
-// underscore, a dot (Type.Method), a digit, or a later capital inside the token.
-// Prose is excluded by shape alone, and `how`/`the`/`where` are excluded by a
-// short stop set on top of it.
-func TestNameTokensAreIdentifierShaped(t *testing.T) {
+// The corollary is that a stop-list of English words can never be right: every
+// word it omits is a real symbol name somewhere. Rarity is measured from the
+// store, so it adapts to the project.
+func TestNameTokensAreRareInTheCorpus(t *testing.T) {
+	// A 40-element corpus: the bound is elements/500 with a floor of 2, so a
+	// token must sit on at most 2 of them to count. `lock` and `stamp` are
+	// unique; `read` and `text` are everywhere; the rest of the question's
+	// words are unseen, which counts as rare (that is how "runes" reaches an arm
+	// on a corpus that happens not to contain it) and is why the function-word
+	// stop list is applied FIRST.
+	freq := map[string]int{"lock": 1, "stamp": 1, "read": 12, "text": 9}
+	const elements = 40
 	cases := []struct {
 		query string
 		want  []string
 	}{
+		{"take the single-flight lock for embedding", []string{"take", "single", "flight", "lock", "embedding"}},
+		{"compose the model stamp for a provider", []string{"compose", "model", "stamp", "provider"}},
+		{"cut a string to n runes", []string{"cut", "string", "runes"}},
 		{"truncateRunes", []string{"truncateRunes"}},
-		{"where is truncateRunes used", []string{"truncateRunes"}},
 		{"Store.Space", []string{"Store.Space"}},
-		{"fts5 vs trigram", []string{"fts5"}},      // "trigram" is prose: shape rejects it
-		{"parseURL and run", []string{"parseURL"}}, // "run" is prose: shape rejects it
-		// A bare lowercase English word is rejected even when it IS a real
-		// symbol ("lock", "stamp"): firing on it would pull every element with
-		// that word in its name into every result, which is worse than missing
-		// one. Capitalised and compound forms are the ones that reach an arm.
-		{"lock", nil},
-		{"stamp", nil},
-		{"Stamp", []string{"Stamp"}}, // capitalised single word IS a symbol
-		{"RuneCountInString", []string{"RuneCountInString"}},
-		// Prose must produce nothing at all: an arm that fires here would put
-		// every element whose name contains a word of the sentence in the result.
-		{"how do i make the thing go faster please", nil},
-		{"where is the store opened for a project", nil},
-		{"list the files the indexer would take", nil},
+		// Common across the corpus: they discriminate nothing, and a wall of
+		// near-identical names is worse than a miss.
+		{"where is the text read", nil},
+		{"how do i read the text", nil},
+		// Too short to be a name, and function words are out before rarity is even
+		// consulted.
+		{"a b go", nil},
 		{"", nil},
 	}
 	for _, tc := range cases {
-		got := nameTokens(tc.query)
+		got := nameTokens(tc.query, freq, elements)
 		if len(got) != len(tc.want) {
 			t.Errorf("nameTokens(%q) = %v, want %v", tc.query, got, tc.want)
 			continue
@@ -131,12 +133,12 @@ func TestFindByNameTokenIsInjectionSafe(t *testing.T) {
 			}
 		}
 	}
-	// The LIKE metacharacters must be escaped, not treated as wildcards: a bare
-	// `%` token is not identifier-shaped, so it never even reaches the SQL.
-	if toks := nameTokens("%"); len(toks) != 0 {
+	// The LIKE metacharacters are data, not wildcards: the field splitter drops
+	// them, so neither reaches the SQL at all.
+	if toks := nameTokens("%", map[string]int{}, 10); len(toks) != 0 {
 		t.Errorf("a bare wildcard must not become a name token: %v", toks)
 	}
-	if toks := nameTokens("a%b"); len(toks) != 0 && strings.Contains(toks[0], "%") {
+	if toks := nameTokens("a%b", map[string]int{}, 10); len(toks) != 0 {
 		t.Errorf("a token carrying a LIKE wildcard must not reach the query: %v", toks)
 	}
 }

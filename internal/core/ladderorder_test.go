@@ -48,8 +48,13 @@ func TestLadderPrefersSemanticOverWeakKeyword(t *testing.T) {
 		FilePath: "store/rank.go", Language: "go",
 		Content: "rank fuses candidate lists into one ordered result",
 	}
+	// The decoy is keyword noise ONLY: its NAME deliberately shares nothing
+	// with the question, because a decoy named after the question's own word
+	// stops being a keyword-noise fixture and becomes a name-collision one —
+	// and the name arm (0.6 weight) would then win it, which says nothing about
+	// the L2→L3 route this test exists to pin.
 	noise := store.Element{
-		QualifiedName: "docs/report.md::Results", ElementType: "section", Name: "Results",
+		QualifiedName: "docs/report.md::Q3Numbers", ElementType: "section", Name: "Q3Numbers",
 		FilePath: "docs/report.md", Language: "md",
 		Content: "search results ranked and fused during the reporting run",
 	}
