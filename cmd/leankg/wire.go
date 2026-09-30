@@ -71,7 +71,7 @@ func cmdWriter(args []string) {
 	if interval > 0 {
 		log.Printf("writer: maintenance every %s (0 disables)", interval)
 	}
-	maintain.Run(ctx, st, nil, maintain.Options{Logf: log.Printf}, interval)
+	maintain.Run(ctx, st, nil, maintain.Options{Logf: log.Printf}, interval, maintain.FirstIdle)
 	log.Printf("writer: watching %s (Ctrl-C to stop)", dir)
 	<-ctx.Done()
 	w.Stop()

@@ -174,13 +174,14 @@ func CompactMemory(mem *memory.Memory, opts Options) {
 }
 
 // Run drives Pass (and CompactMemory, when mem is non-nil) on a ticker until
-// ctx is done, with one first pass after FirstIdle — a server that just started
-// is mid-write, and this is a maintenance task, not a startup cost.
+// ctx is done. firstIdle delays the FIRST pass — a server that just started is
+// mid-write, and this is a maintenance task, not a startup cost; pass 0 to run
+// it immediately.
 //
 // A non-positive interval disables the loop entirely, which is how
 // LEANKG_VACUUM_INTERVAL_HOURS=0 keeps the Rust engine's documented
 // "disabled" semantics.
-func Run(ctx context.Context, st store.Backend, mem *memory.Memory, opts Options, interval time.Duration) {
+func Run(ctx context.Context, st store.Backend, mem *memory.Memory, opts Options, interval, firstIdle time.Duration) {
 	if interval <= 0 {
 		return
 	}
@@ -191,10 +192,12 @@ func Run(ctx context.Context, st store.Backend, mem *memory.Memory, opts Options
 		CompactMemory(mem, opts)
 	}
 	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(FirstIdle):
+		if firstIdle > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(firstIdle):
+			}
 		}
 		pass()
 		ticker := time.NewTicker(interval)
