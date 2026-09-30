@@ -1,6 +1,6 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.13.2-memory-flat-args
+**Version:** 4.13.3-agent-ux-protocol
 **Date:** 2026-09-29
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
@@ -9,6 +9,17 @@
 ---
 
 ## Changelog
+
+### v4.13.3-agent-ux-protocol — agents can keep context and recover from empty hits (2026-09-30)
+
+**Trigger:** deep review of what stops agents from using LeanKG correctly for discovery + session memory. The engine ladder, freshness, and hindsight memory path already work; the binding gaps were protocol text, silent zero-hit answers, and project-resolution wording that trained stdio agents wrong.
+
+- **MCP protocol (serverInstructions + toolGuidance):** memory rules added (`session_recall` at start, `session_retain`/`lesson` at end); `project=` required only on multi-project HTTP; L3 names `leankg-embed run|full`; registry description states exactly 3 tools; zero-hit answers tell agents to follow `guidance` instead of falling back to bash.
+- **FR-HEA-02 slice:** `withEmptyHint` on pinned/final L1/L2/L3 answers and L3→L2 degrade; empty `callers`/`callees`/`path` carry a next-step `guidance` string (resolve QN, then retry).
+- **status.project_dir:** status echoes the resolved project directory so worktree/subdir sessions can see which tree the server answered.
+- **Error Fix strings:** ProjectNotInitialized / UnknownProject point at `status.project_dir`; UnknownTool names the 3-tool surface; NoVectors names `leankg-embed run|full`.
+
+**Verified:** `go test ./internal/core ./internal/mcp ./internal/errs -count=1` green (new `TestEmptyHitGuidance`, updated `TestServerAdvertisesAgentProtocol`, `TestStatusShape` asserts `project_dir`).
 
 ### v4.13.2-memory-flat-args — the advertised memory-write shape no longer loses content (2026-09-29)
 

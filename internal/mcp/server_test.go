@@ -84,10 +84,24 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 	if initialize == nil {
 		t.Fatal("client has no initialize result")
 	}
-	for _, want := range []string{"query before bash/grep", "always pass project", "does not create vectors"} {
-		if !strings.Contains(strings.ToLower(initialize.Instructions), want) {
+	lower := strings.ToLower(initialize.Instructions)
+	for _, want := range []string{
+		"query before bash/grep",
+		"project= is required only on multi-project",
+		"does not create vectors",
+		"session_recall",
+		"session_retain",
+		"exactly 3 tools",
+		"leankg-embed",
+		"per-project",
+	} {
+		if !strings.Contains(lower, strings.ToLower(want)) {
 			t.Fatalf("initialize instructions missing %q: %s", want, initialize.Instructions)
 		}
+	}
+	// The old "always pass project" wording trained agents wrong on stdio.
+	if strings.Contains(lower, "always pass project") {
+		t.Fatalf("instructions still force always-pass-project: %s", initialize.Instructions)
 	}
 
 	res, err := session.ListTools(context.Background(), nil)

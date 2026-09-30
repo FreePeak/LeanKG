@@ -101,7 +101,7 @@ var Unauthorized = ErrorCode{
 var UnknownTool = ErrorCode{
 	Code:      "LEANKG_ERROR_UNKNOWN_TOOL",
 	Cause:     "the requested tool name is not in this server's registry",
-	Fix:       "call the `query` tool (the default router that serves every intent) or re-read tools/list for the complete catalog and retry with the corrected name",
+	Fix:       "LeanKG exposes exactly 3 tools — import, query, status. Call query (the default ladder router) or re-read tools/list and retry with the corrected name",
 	DocAnchor: "docs/archive/mcp-tools.md",
 }
 
@@ -109,7 +109,7 @@ var UnknownTool = ErrorCode{
 var NoVectors = ErrorCode{
 	Code:      "LEANKG_ERROR_NO_VECTORS",
 	Cause:     "no embedding vectors exist for this project, so the semantic rung cannot match anything",
-	Fix:       "use a keyword rung (query action exact/fuzzy or search) instead, and run `leankg-embed` to build the vectors",
+	Fix:       "use a keyword rung (query action exact/fuzzy or search) instead, and run `leankg-embed run` (or `leankg-embed full` on stamp drift) to build the vectors",
 	DocAnchor: "src/embeddings/EMBEDDINGS.md",
 }
 

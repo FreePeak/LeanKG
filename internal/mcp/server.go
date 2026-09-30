@@ -69,21 +69,22 @@ const version = "0.34.0" // x-release-please-version
 // serverInstructions is returned during MCP initialization. MCP clients may
 // add this to the model's system prompt; the shorter toolGuidance below keeps
 // the same rules visible to clients that only render tools/list.
-const serverInstructions = `LeanKG is a code knowledge graph. Agent protocol:
-1. For code discovery, call query before bash/grep/read. Leave action empty (or use search) for the L1 exact -> L2 fuzzy -> L3 semantic ladder; pin exact/fuzzy/semantic only when that rung is intentional.
-2. Always pass project=<repo basename> or an absolute path. Multi-project serving rejects an omitted project; never assume the server's cwd is the caller's repo.
-3. Inspect retrieval{rung,reason} and freshness. If a store is cold, import it once with action=repo, path=<absolute repository path>, project=<repo basename>, then query; do not re-import on every turn.
-4. Importing indexes elements but does not create vectors. If L3 is required, run the embedding pipeline separately; a degraded L3 is not proof that the query ladder is broken.
-5. Use status for health, freshness, and embedding coverage, not as a substitute for query. Use impact/path/callers/callees/context/explain for relationships.`
+const serverInstructions = `LeanKG is a code knowledge graph (exactly 3 tools: import, query, status). Agent protocol:
+1. For code discovery, call query before bash/grep/read. Leave action empty (or use search) for the L1 exact -> L2 fuzzy -> L3 semantic ladder; pin exact/fuzzy/semantic only when that rung is intentional. Once you have a qualified name, prefer impact/path/callers/callees/context over re-grepping.
+2. project= is required only on multi-project HTTP servers (LEANKG_PROJECT_DIRS / ?project=). Stdio and single-project serve resolve from the server process cwd — omit project there. Pass project=<repo basename or absolute path> when the server hosts more than one repo; never assume another project's store.
+3. Inspect retrieval{rung,reason}, guidance (when present), and freshness. If a store is cold, import it once with action=repo, path=<absolute repository path>, then query; do not re-import on every turn. On zero hits, follow guidance instead of abandoning LeanKG for bash.
+4. Importing indexes elements but does not create vectors. If L3 is required, run ` + "`leankg-embed run`" + ` (or ` + "`leankg-embed full`" + ` on stamp drift); a degraded L3 is not proof that the query ladder is broken.
+5. Use status for health, freshness, resolved project_dir, and embedding coverage — not as a substitute for query.
+6. Keep context across sessions: at session start call query action=memory with args.command=session_recall (or memories). At session end call import action=memory command=session_retain with session_id + turns[] (args.scope=per-project|global|per-project-tagged, args.cwd optional); durable lessons use command=lesson.`
 
-const toolGuidance = "Agent protocol: query before bash/grep for code discovery; always pass project; import once when cold; inspect retrieval/freshness; do not pin a rung unless intentional."
+const toolGuidance = "Agent protocol: query before bash/grep; project= only on multi-project HTTP; import once when cold; inspect retrieval/freshness/guidance; session_recall at start and session_retain/lesson at end (memory scope=per-project|global|per-project-tagged); do not pin a rung unless intentional."
 
 // New builds the MCP server with the 3-tool registry.
 func New(engine *core.Engine) *Server {
 	s := &Server{engine: engine}
 	s.srv = mcp.NewServer(&mcp.Implementation{
 		Name: "leankg", Version: version,
-		Description: "LeanKG code knowledge graph: use query for code discovery and import for first-time indexing.",
+		Description: "LeanKG code knowledge graph (3 tools: import/query/status): query for code discovery and memory recall; import for indexing and session_retain.",
 	}, &mcp.ServerOptions{Instructions: serverInstructions})
 	s.registerTools()
 	return s

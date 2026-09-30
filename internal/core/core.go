@@ -349,6 +349,11 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 		"tools":            []string{ToolImport, ToolQuery, ToolStatus},
 		"embeddings":       e.embeddingsState(),
 	}
+	// Surface the resolved project so agents in a worktree/subdir can see
+	// which tree the server is actually answering for.
+	if e.projectDir != "" {
+		out["project_dir"] = e.projectDir
+	}
 	// FR-HEA-03: mega-graph full-scan advisory banner. Below the
 	// LEANKG_MAX_CACHE_ELEMENTS cap (default 50k) the map is empty, so normal
 	// graphs keep byte-identical status payloads.
@@ -560,14 +565,54 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	// (0.3) justifies no embedding call — degrade to L2.
 	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
 	if conf > 0 && conf < ontology.MinConfidence {
-		return e.rungFuzzy(req.Query, limit, resp, true)
+		return withEmptyHint(e.rungFuzzy(req.Query, limit, resp, true))
 	}
-	return e.rungSemantic(ctx, req.Query, limit, resp, true)
+	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true))
 }
 
 func hitsOf(resp map[string]any) []map[string]any {
 	h, _ := resp["hits"].([]map[string]any)
 	return h
+}
+
+// withEmptyHint attaches a next-step guidance string when a pinned or final
+// rung returned zero hits (FR-HEA-02). Existing guidance is left alone.
+func withEmptyHint(resp map[string]any, err error) (map[string]any, error) {
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	if _, ok := resp["guidance"]; ok {
+		return resp, nil
+	}
+	if len(hitsOf(resp)) > 0 {
+		return resp, nil
+	}
+	rung, reason := "", ""
+	if retr, ok := resp["retrieval"].(map[string]any); ok {
+		rung, _ = retr["rung"].(string)
+		reason, _ = retr["reason"].(string)
+	}
+	switch rung {
+	case "L1":
+		resp["guidance"] = "No exact identifier match. Retry with action empty (ladder) or action=fuzzy; prefer a short symbol name over a sentence."
+	case "L2":
+		if strings.Contains(reason, "degraded from L3") || strings.Contains(reason, "no embedding") || strings.Contains(reason, "no vector") || strings.Contains(reason, "stamp mismatch") {
+			resp["guidance"] = "Keyword rung empty after L3 degrade (" + reason + "). Run `leankg-embed run` (or `leankg-embed full` on stamp drift), then retry; or rephrase as a short identifier."
+		} else {
+			resp["guidance"] = "No keyword match. Rephrase as a short identifier, try action=semantic after `leankg-embed run`, or status to confirm the store is fresh and non-empty."
+		}
+	case "L3":
+		resp["guidance"] = "Semantic rung returned no hits. Try a shorter identifier (action empty or exact/fuzzy), or run `leankg-embed run` if embeddings are stale/missing (see status.embeddings)."
+	default:
+		resp["guidance"] = "No hits. Try a shorter identifier, leave action empty for the ladder, or call status to check freshness and embedding coverage."
+	}
+	return resp, nil
+}
+
+// graphEmptyGuidance steers agents when a graph verb returns an empty list —
+// usually an unresolved seed QN rather than a true leaf.
+func graphEmptyGuidance(verb, seed string) string {
+	return "No " + verb + " for " + seed + ". Resolve the seed with query (action empty) to a qualified_name, then retry " + verb + " with that exact QN."
 }
 
 // rungExact is L1: case-insensitive exact match on name / qualified name.
@@ -580,6 +625,9 @@ func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool) (
 		return nil, err
 	}
 	resp["hits"] = shapeElements(els, limit)
+	if pin {
+		return withEmptyHint(resp, nil)
+	}
 	return resp, nil
 }
 
@@ -619,6 +667,9 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (
 		hits = append(hits, h)
 	}
 	resp["hits"] = hits
+	if pin {
+		return withEmptyHint(resp, nil)
+	}
 	return resp, nil
 }
 
@@ -631,7 +682,9 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		if pin {
 			resp["retrieval"] = map[string]any{"rung": "L2", "reason": reason}
 		}
-		return e.rungFuzzy(q, limit, resp, false)
+		// pin=false so rungFuzzy does not overwrite the L3-degrade reason;
+		// withEmptyHint still attaches next-step guidance on a zero-hit result.
+		return withEmptyHint(e.rungFuzzy(q, limit, resp, false))
 	}
 	if e.embedder == nil {
 		return degrade("no embedding provider wired; degraded from L3")
@@ -676,7 +729,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 			}
 			resp["hits"] = out
 			resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
-			return resp, nil
+			return withEmptyHint(resp, nil)
 		}
 	}
 	hits, err := e.st.SearchVectors(modelID, qvec, limit)
@@ -691,7 +744,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	}
 	resp["hits"] = out
 	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)"}
-	return resp, nil
+	return withEmptyHint(resp, nil)
 }
 
 // --- memory actions (ride the 3-tool surface; #369) ---
@@ -891,6 +944,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		if path == nil {
 			resp["path"] = []string{}
 			resp["reachable"] = false
+			resp["guidance"] = "No path found. Confirm both ends with query (action empty) and retry path with exact qualified_names (args.to required)."
 		} else {
 			resp["path"] = path
 			resp["reachable"] = true
@@ -902,6 +956,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 			return nil, err
 		}
 		resp["callers"] = qns
+		if len(qns) == 0 {
+			resp["guidance"] = graphEmptyGuidance("callers", req.Query)
+		}
 		return g(), nil
 	case "callees":
 		qns, err := graph.Callees(e.st, req.Query)
@@ -909,6 +966,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 			return nil, err
 		}
 		resp["callees"] = qns
+		if len(qns) == 0 {
+			resp["guidance"] = graphEmptyGuidance("callees", req.Query)
+		}
 		return g(), nil
 	case "context":
 		out, err := graph.Context(e.st, req.Query, req.Limit)
