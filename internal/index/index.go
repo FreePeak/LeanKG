@@ -26,6 +26,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -111,7 +112,9 @@ func staticOwner(ext string) (string, bool) {
 
 // IndexDir walks dir, re-extracts changed/new files, drops deleted ones and
 // returns per-run counters. Files whose size+mtime match the stored record or
-// whose SHA-256 matches ContentHash are skipped without any writes.
+// whose SHA-256 matches ContentHash are skipped without any writes — UNLESS the
+// index was built by a different extractor (see IndexerVersion), in which case
+// the per-file signals are all true and all beside the point.
 func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error) {
 	return IndexDirWith(ctx, st, dir, nil)
 }
@@ -129,7 +132,18 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 			return string(l), ok
 		}
 	}
-	res, err := indexDir(ctx, st, dir, owner)
+	// The extractor identity gate, before the walk: a store whose recorded
+	// indexer differs from this build is stale in a way no per-file comparison
+	// can detect, because the files are unchanged and only the CODE THAT READS
+	// THEM changed. Measured (wave 10): adding the doc comment to an element's
+	// stored content left 842 of 857 files unvisited, `doctor --deep` passed
+	// index-freshness, and the retrieval bench moved 65/84 -> 64/84 over a
+	// quietly half-old corpus.
+	stale, err := indexerChanged(st)
+	if err != nil {
+		return Result{}, err
+	}
+	res, err := indexDir(ctx, st, dir, owner, stale)
 	if err != nil {
 		return res, err
 	}
@@ -156,7 +170,42 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 	return res, nil
 }
 
-func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (Result, error) {
+// indexerNamespace and indexerVersionKey are where the index records which
+// build of the extractor produced it.
+const (
+	indexerNamespace  = "indexer"
+	indexerVersionKey = "version"
+)
+
+// IndexerVersion is the identity of the extraction pipeline: bump it on ANY
+// change to what is EXTRACTED (which languages, which symbol kinds, how an
+// element's content/qualified_name/metadata is assembled). It is deliberately
+// separate from any "which files changed" logic, and it is the indexer's
+// counterpart to the embedding collection's ChunkerVersion stamp.
+//
+// ponytail: a hand-maintained integer, not a hash of the source tree. A hash
+// would be self-invalidating on any unrelated edit to the package, turning every
+// commit into a full reindex; the integer costs a bump per behavioural change,
+// which is the same discipline the embedding stamp already requires and the one
+// a reviewer can check in the diff.
+const IndexerVersion = 2
+
+// indexerChanged reports whether the store was built by a different extractor
+// (or by none — a store that never recorded one is assumed stale, so the first
+// run against a new build reindexes rather than trusting rows it cannot vouch
+// for).
+func indexerChanged(st store.Backend) (bool, error) {
+	got, ok, err := st.KVGet(indexerNamespace, indexerVersionKey)
+	if err != nil {
+		return false, err
+	}
+	return !ok || got != strconv.Itoa(IndexerVersion), nil
+}
+
+// force re-extracts every file even when size+mtime/SHA-256 match: the run that
+// sets it did so because the EXTRACTOR changed, and a per-file comparison of
+// unchanged sources can never see that.
+func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc, force bool) (Result, error) {
 	var res Result
 
 	prev, err := st.Files()
@@ -285,15 +334,17 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return res, err
 		}
 		rec, seen := prevByRel[c.rel]
-		if seen && rec.Size == c.size && rec.MtimeNS == c.mtimeNS {
-			res.Skipped++
-			continue
+		if !force {
+			if seen && rec.Size == c.size && rec.MtimeNS == c.mtimeNS {
+				res.Skipped++
+				continue
+			}
 		}
 		sum, err := fileSHA256(c.abs)
 		if err != nil {
 			return res, err
 		}
-		if seen && rec.ContentHash == sum {
+		if !force && seen && rec.ContentHash == sum {
 			// Content identical despite size/mtime signal mismatch: skip, no
 			// writes (the stored record stays as-is per contract, so the next
 			// run re-hashes this file — acceptable).
@@ -359,6 +410,11 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 				}
 			}
 		}
+	}
+	// Record the identity LAST, so a run that failed above never stamps a store
+	// with an extractor that did not finish writing it.
+	if err := st.KVSet(indexerNamespace, indexerVersionKey, strconv.Itoa(IndexerVersion)); err != nil {
+		return res, err
 	}
 	return res, nil
 }
