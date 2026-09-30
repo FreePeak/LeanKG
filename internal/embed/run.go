@@ -26,7 +26,13 @@ import (
 // (maxLocalTextChars) instead of the general cap — text a 512-token sidecar
 // can actually accept. Bumping the version rebuilds collections stamped v1,
 // where over-budget elements had no vectors at all (the run died on them).
-const ChunkerVersion = 2
+// v3: the embedded text carries the element's qualified name ahead of its body
+// (embedText). Measured on this repository's own collection: a vector built
+// from a body alone cannot tell `FuseRRF` from `FuseRRFWeighted` (0.618 cosine
+// against the intent question) while the qualified name lifts it to 0.696, and
+// 16 of 30 labelled retrieval questions had their answer in NEITHER arm's top
+// 30. A rebuild directive, not a silent re-cut of an existing collection.
+const ChunkerVersion = 3
 
 // batchSize is the number of texts sent to the provider per call.
 const batchSize = 32
@@ -186,7 +192,9 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 			rep.Skipped++
 			continue
 		}
-		text := e.Content
+		// The text a model embeds LEADS with the element's qualified name,
+		// then the body — see embedText for the measurement behind it.
+		text := embedText(e.QN, e.Content)
 		textCap := maxContentChars
 		if p.Provider() == "local" {
 			textCap = min(textCap, maxLocalTextChars)
@@ -354,6 +362,41 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 func truncateRunes(s string, n int) string {
 	r := []rune(s)
 	return string(r[:n])
+}
+
+// embedText is the text a model embeds for one code element: the qualified
+// name first, then the body.
+//
+// The name is not decoration. A 384-d bge-small-en-v1.5 embeds a Go function
+// body as a bag of the identifiers that happen to appear in it, so
+// `FuseRRF` and `FuseRRFWeighted` — one a prefix of the other, bodies differing
+// by a dozen words — land on top of each other. Measured on this repository's
+// own collection with the pinned sidecar, cosine between the question
+// "reciprocal rank fusion of ranked lists" and that element:
+//
+//	body only            0.618
+//	bare name + body     0.672
+//	qualified name+body  0.696
+//
+// and a full retrieval bench (docs/retrieval-label-set.md, 30 labelled
+// questions) put 16 of them in NEITHER arm's top 30 before this change. For a
+// question phrased in prose the name is the only bridge between the question
+// and the symbol, so it is the part that must not be lost.
+//
+// The name leads, and that is not cosmetic: the local sidecar caps text at
+// maxLocalTextChars, so a leading name survives every budget while a trailing
+// one would be the first thing cut. The qualified name (file::Type.Method)
+// rather than the bare name, because the file disambiguates the symbol from
+// prose that uses the same words, and because it is the identifier an agent
+// actually searches for.
+func embedText(qn, content string) string {
+	if qn == "" {
+		return content
+	}
+	if content == "" {
+		return qn
+	}
+	return qn + "\n" + content
 }
 
 // coverage is the fraction of live elements holding vectors; a store with
