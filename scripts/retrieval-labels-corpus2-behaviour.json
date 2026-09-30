@@ -1,0 +1,378 @@
+[
+ [
+  "cmd/qa-agent/baseline.go::pluralWord",
+  "where is the code that handles plural word"
+ ],
+ [
+  "cmd/qa-agent/clean.go::cleanConfigValue",
+  "where is the code that handles clean value"
+ ],
+ [
+  "cmd/qa-agent/doctor_targets.go::checkProfileTargets",
+  "where is the code that handles check targets"
+ ],
+ [
+  "cmd/qa-agent/echo_other.go::readLineNoEcho",
+  "where is the code that handles read echo"
+ ],
+ [
+  "cmd/qa-agent/eval.go::printEvalResult",
+  "where is the code that handles print eval result"
+ ],
+ [
+  "cmd/qa-agent/fetch.go::appendUnique",
+  "where is the code that handles append unique"
+ ],
+ [
+  "cmd/qa-agent/install.go::installDetail",
+  "where is the code that handles install detail"
+ ],
+ [
+  "cmd/qa-agent/main.go::defaultDBPath",
+  "where is the code that handles default dbpath"
+ ],
+ [
+  "cmd/qa-agent/plan.go::shortHash",
+  "where is the code that handles short hash"
+ ],
+ [
+  "cmd/qa-agent/plan_import.go::validateImportedPlan",
+  "where is the code that handles validate imported"
+ ],
+ [
+  "cmd/qa-agent/report.go::formatRunTime",
+  "where is the code that handles format time"
+ ],
+ [
+  "cmd/qa-agent/run.go::progressStore.AppendStepResult",
+  "where is the code that handles append step result"
+ ],
+ [
+  "cmd/qa-agent/serve.go::mcpServeCommandNote",
+  "where is the code that handles mcp serve command note"
+ ],
+ [
+  "cmd/qa-agent/setup.go::statusWord",
+  "where is the code that handles status word"
+ ],
+ [
+  "cmd/qa-agent/show.go::formatBody",
+  "where is the code that handles format body"
+ ],
+ [
+  "cmd/qa-agent/skill_sync.go::skillDocExcluded",
+  "where is the code that handles skill doc excluded"
+ ],
+ [
+  "internal/agents/agents.go::readJSONFile",
+  "where is the code that handles read jsonfile"
+ ],
+ [
+  "internal/eval/eval.go::harnessMissing",
+  "where is the code that handles harness missing"
+ ],
+ [
+  "internal/eval/records.go::sortedJudgeNames",
+  "where is the code that handles sorted judge"
+ ],
+ [
+  "internal/eval/trend.go::scoreText",
+  "where is the code that handles score text"
+ ],
+ [
+  "internal/exec/allure.go::allureText",
+  "where is the code that handles allure text"
+ ],
+ [
+  "internal/exec/baseline.go::shapedRow",
+  "where is the code that handles shaped row"
+ ],
+ [
+  "internal/exec/cadence.go::decodeOrRaw",
+  "where is the code that handles decode raw"
+ ],
+ [
+  "internal/exec/checks.go::sqlValue",
+  "where is the code that handles sql value"
+ ],
+ [
+  "internal/exec/contract.go::ReportMeta",
+  "where is the code that handles report meta"
+ ],
+ [
+  "internal/exec/datafactory.go::floatBounds",
+  "where is the code that handles float bounds"
+ ],
+ [
+  "internal/exec/executor.go::expectString",
+  "where is the code that handles expect string"
+ ],
+ [
+  "internal/exec/jsonpath.go::numericEqual",
+  "where is the code that handles numeric equal"
+ ],
+ [
+  "internal/exec/junit.go::junitTestcase",
+  "where is the code that handles junit testcase"
+ ],
+ [
+  "internal/exec/report.go::assertionView",
+  "where is the code that handles assertion view"
+ ],
+ [
+  "internal/exec/repro.go::reproPair",
+  "where is the code that handles repro pair"
+ ],
+ [
+  "internal/exec/verdict.go::verdictFacts.outcomeCount",
+  "where is the code that handles outcome count"
+ ],
+ [
+  "internal/ingest/adf.go::nodeFromMap",
+  "where is the code that handles node map"
+ ],
+ [
+  "internal/ingest/client.go::remoteIngestor.confluenceTool",
+  "where is the code that handles confluence tool"
+ ],
+ [
+  "internal/ingest/jsonrpc.go::toolContent",
+  "where is the code that handles tool content"
+ ],
+ [
+  "internal/ingest/normalize.go::containsToken",
+  "where is the code that handles contains token"
+ ],
+ [
+  "internal/llm/client.go::promptHash",
+  "where is the code that handles prompt hash"
+ ],
+ [
+  "internal/mcp/mcp.go::server.planTicket",
+  "where is the code that handles plan ticket"
+ ],
+ [
+  "internal/model/proves.go::isProvesTag",
+  "where is the code that handles proves tag"
+ ],
+ [
+  "internal/model/redact.go::RedactString",
+  "where is the code that handles redact string"
+ ],
+ [
+  "internal/model/types.go::ResolvedRequest",
+  "where is the code that handles resolved request"
+ ],
+ [
+  "internal/plan/builder.go::builder.loadTicket",
+  "where is the code that handles load ticket"
+ ],
+ [
+  "internal/plan/heal.go::provesLabel",
+  "where is the code that handles proves label"
+ ],
+ [
+  "internal/plan/matrix.go::sortACIDs",
+  "where is the code that handles sort acids"
+ ],
+ [
+  "internal/plan/ownership.go::sortedPropNames",
+  "where is the code that handles sorted prop"
+ ],
+ [
+  "internal/plan/repro.go::otherReproTag",
+  "where is the code that handles other repro tag"
+ ],
+ [
+  "internal/plan/validate.go::stepLabel",
+  "where is the code that handles step label"
+ ],
+ [
+  "internal/scan/gohelpers.go::buildStatusNames",
+  "where is the code that handles build status"
+ ],
+ [
+  "internal/scan/gorange.go::goScanner.applyHandlerFacts",
+  "where is the code that handles apply facts"
+ ],
+ [
+  "internal/scan/javarange.go::javaRoute",
+  "where is the code that handles java route"
+ ],
+ [
+  "internal/scan/openapi.go::sortEndpoints",
+  "where is the code that handles sort endpoints"
+ ],
+ [
+  "internal/scan/scope.go::scope.lookupVar",
+  "where is the code that handles lookup var"
+ ],
+ [
+  "internal/scan/testdata/goapp/chi_routes.go::createRefund",
+  "where is the code that handles create refund"
+ ],
+ [
+  "internal/scan/testdata/goapp/gin_routes.go::pingHandler",
+  "where is the code that handles ping handler"
+ ],
+ [
+  "internal/scan/testdata/goapp/http_routes.go::handleCreateUser",
+  "where is the code that handles handle create user"
+ ],
+ [
+  "internal/scan/tsrange.go::tsScan.classScope",
+  "where is the code that handles class scope"
+ ],
+ [
+  "internal/scan/walker.go::walker.statusLit",
+  "where is the code that handles status lit"
+ ],
+ [
+  "internal/setup/setup.go::masterKeyCheck",
+  "where is the code that handles master key check"
+ ],
+ [
+  "internal/stepmode/loop.go::renderStep",
+  "where is the code that handles render step"
+ ],
+ [
+  "internal/stepmode/tui.go::runDoneMsg",
+  "where is the code that handles done msg"
+ ],
+ [
+  "internal/store/baseline.go::BaselineRow",
+  "where is the code that handles baseline row"
+ ],
+ [
+  "internal/store/case_history.go::sqliteStore.CaseHistory",
+  "where is the code that handles case history"
+ ],
+ [
+  "internal/store/env_admin.go::sqliteStore.EnvDelete",
+  "where is the code that handles env delete"
+ ],
+ [
+  "internal/store/eval_audit.go::sqliteStore.ListEvalAudits",
+  "where is the code that handles eval audits"
+ ],
+ [
+  "internal/store/eval_audit_metric.go::sqliteStore.AppendEvalAuditMetrics",
+  "where is the code that handles append eval audit metrics"
+ ],
+ [
+  "internal/store/migrate.go::sqliteStore.applyMigration",
+  "where is the code that handles apply migration"
+ ],
+ [
+  "internal/store/people.go::sqliteStore.UpsertUser",
+  "where is the code that handles upsert user"
+ ],
+ [
+  "internal/store/run_verdict.go::sqliteStore.FinishRunVerdict",
+  "where is the code that handles finish verdict"
+ ],
+ [
+  "internal/store/scan_cache.go::sqliteStore.StoreScan",
+  "where is the code that handles store scan"
+ ],
+ [
+  "internal/store/sqlite.go::scanNoRows",
+  "where is the code that handles scan rows"
+ ],
+ [
+  "internal/store/store.go::CredEntry",
+  "where is the code that handles cred entry"
+ ],
+ [
+  "internal/tools/cdcmock/main.go::fieldVarint",
+  "where is the code that handles field varint"
+ ],
+ [
+  "internal/tools/mintstagepartner/main.go::jsonCodeField",
+  "where is the code that handles json field"
+ ],
+ [
+  "internal/tools/s7stage19352/main.go::nestedAccessToken",
+  "where is the code that handles nested access token"
+ ],
+ [
+  "internal/tools/seed19349/main.go::v1MenuForbidden",
+  "where is the code that handles menu forbidden"
+ ],
+ [
+  "internal/tools/seed19354/main.go::partnerAuth",
+  "where is the code that handles partner auth"
+ ],
+ [
+  "internal/tools/seed19447resync/main.go::ensureMGStage",
+  "where is the code that handles ensure mgstage"
+ ],
+ [
+  "internal/tools/seedadsflow/main.go::listingBody",
+  "where is the code that handles listing body"
+ ],
+ [
+  "internal/tools/seedcdcprobe/main.go::mysqlStep",
+  "where is the code that handles mysql step"
+ ],
+ [
+  "internal/tools/seedghostrepro/main.go::adminAuth",
+  "where is the code that handles admin auth"
+ ],
+ [
+  "internal/tools/seedmenuall/main.go::ensureStage",
+  "where is the code that handles ensure stage"
+ ],
+ [
+  "internal/tools/seedpartneraccessv2/main.go::partnerAuth",
+  "where is the code that handles partner auth"
+ ],
+ [
+  "internal/tools/seeds196smoke/main.go::adminAuth",
+  "where is the code that handles admin auth"
+ ],
+ [
+  "internal/ui/ui.go::Playwright.WaitForText",
+  "where is the code that handles wait text"
+ ],
+ [
+  "internal/webui/agents.go::Server.handleAgentsAction",
+  "where is the code that handles handle agents action"
+ ],
+ [
+  "internal/webui/apistatus.go::apiStatusView",
+  "where is the code that handles api status view"
+ ],
+ [
+  "internal/webui/dashboard.go::Server.handleDashboard",
+  "where is the code that handles handle dashboard"
+ ],
+ [
+  "internal/webui/envs.go::profileSaveRequest",
+  "where is the code that handles profile save request"
+ ],
+ [
+  "internal/webui/events.go::newEventHub",
+  "where is the code that handles event hub"
+ ],
+ [
+  "internal/webui/people.go::Server.handleUserProfile",
+  "where is the code that handles handle user"
+ ],
+ [
+  "internal/webui/planrun.go::planCreateRequest",
+  "where is the code that handles plan create request"
+ ],
+ [
+  "internal/webui/playground.go::Server.handlePlaygroundMySQL",
+  "where is the code that handles handle playground sql"
+ ],
+ [
+  "internal/webui/server.go::writeJSON",
+  "where is the code that handles write json"
+ ],
+ [
+  "internal/webui/tasks.go::parseGhIssues",
+  "where is the code that handles parse issues"
+ ]
+]
