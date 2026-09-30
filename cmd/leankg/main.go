@@ -33,6 +33,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/langs"
+	"github.com/FreePeak/LeanKG/internal/maintain"
 	leankgmcp "github.com/FreePeak/LeanKG/internal/mcp"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
@@ -109,6 +110,8 @@ func main() {
 		cmdRefresh(os.Args[2:])
 	case "gc":
 		cmdGC(os.Args[2:])
+	case "vacuum":
+		cmdVacuum(os.Args[2:])
 	case "register":
 		cmdRegister(os.Args[2:])
 	case "unregister":
@@ -183,6 +186,7 @@ Usage:
   leankg gods [--project DIR] [--limit N] [--exclude-hubs-percentile N]
   leankg ctags [--project DIR] [--out FILE] [--format ctags]
   leankg cost [--project DIR] [--format text|json]
+  leankg vacuum [DIR] [--project DIR] [--engine sqlite|postgres] [--full] [--max-pages N]
   leankg migrate [--project DIR] [--engine sqlite|postgres]
   leankg gc [DIR] [--project DIR] [--engine sqlite|postgres]
   leankg audit export [--project DIR] [--since T] [--until T] [--format jsonl] [--out FILE]
@@ -336,6 +340,21 @@ afterSidecars:
 			log.Fatalf("memory: %v", err)
 		}
 		log.Printf("leankg memory root %s", mem.Root())
+	}
+
+	// Storage maintenance: the Rust engine's hourly vacuum scheduler
+	// (FR-V2-08), restored in Go. gc and DeleteByFile return deleted rows to
+	// SQLite's freelist; this returns the freelist to the filesystem, plus a
+	// WAL truncate — and, when --memory is on, the same for the memory FTS
+	// index. Skipped under --read-only (a reader takes no lock it may need to
+	// rewrite) and disabled by LEANKG_VACUUM_INTERVAL_HOURS=0. Placed after
+	// memory.Open so the pass can compact the FTS index too.
+	if mode == store.RW {
+		interval := maintain.IntervalFromEnv(os.Getenv)
+		if interval > 0 {
+			log.Printf("maintenance: vacuum every %s (0 disables)", interval)
+		}
+		maintain.Run(ctx, st, mem, maintain.Options{Logf: log.Printf}, interval)
 	}
 
 	var embedder core.QueryEmbedder

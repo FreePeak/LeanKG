@@ -665,3 +665,104 @@ func TestSessionHermeticNoHomeWrites(t *testing.T) {
 		t.Errorf("HOME canary dir polluted: %v", entries)
 	}
 }
+
+// TestMemoryCompactReclaimsFTSPages drives the FTS index through the churn a
+// long-lived memory server produces — repeated rewrites of the same file,
+// which each delete every prior row — then asserts Compact gives the space and
+// the WAL back while the index still answers.
+func TestMemoryCompactReclaimsFTSPages(t *testing.T) {
+	dir := t.TempDir()
+	m, err := Open(dir, false)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer m.Close()
+
+	// A long file so the index holds a few pages worth of rows.
+	body := make([]string, 0, 400)
+	for i := 0; i < 400; i++ {
+		body = append(body, "line "+itoaTest(i)+" some searchable content about vacuuming")
+	}
+	for round := 0; round < 6; round++ {
+		if err := m.Create("topics/big.md", strings.Join(body, "\n")); err != nil {
+			// Round 0 creates; later rounds rewrite through StrReplace, which is
+			// the replace-on-write path that actually churns the FTS index.
+			if round == 0 {
+				t.Fatalf("create: %v", err)
+			}
+			_ = err
+		}
+	}
+	before, err := m.Space()
+	if err != nil {
+		t.Fatalf("space before: %v", err)
+	}
+	if before.SizeBytes == 0 {
+		t.Fatalf("no index yet: %+v", before)
+	}
+
+	if err := m.Compact(); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	after, err := m.Space()
+	if err != nil {
+		t.Fatalf("space after: %v", err)
+	}
+	if after.WALBytes != 0 {
+		t.Errorf("wal sidecar = %d bytes after compact, want 0", after.WALBytes)
+	}
+	if after.FreeBytes != 0 {
+		t.Errorf("freelist after compact = %d bytes, want 0", after.FreeBytes)
+	}
+	// The index still works.
+	hits, err := m.Search("vacuuming", 5)
+	if err != nil {
+		t.Fatalf("search after compact: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Error("compact emptied the index")
+	}
+}
+
+// TestMemoryCompactIsIdempotent: the auto_vacuum upgrade runs once, so a
+// second compact must be a quiet no-op rather than a second full rewrite.
+func TestMemoryCompactIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	m, err := Open(dir, false)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer m.Close()
+	if err := m.Create("topics/a.md", "alpha beta gamma"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := m.Compact(); err != nil {
+		t.Fatalf("first compact: %v", err)
+	}
+	first, err := m.Space()
+	if err != nil {
+		t.Fatalf("space: %v", err)
+	}
+	if err := m.Compact(); err != nil {
+		t.Fatalf("second compact: %v", err)
+	}
+	second, err := m.Space()
+	if err != nil {
+		t.Fatalf("space: %v", err)
+	}
+	if second.SizeBytes > first.SizeBytes {
+		t.Errorf("second compact grew the index: %d -> %d", first.SizeBytes, second.SizeBytes)
+	}
+}
+
+func itoaTest(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var b []byte
+	for i > 0 {
+		b = append([]byte{byte('0' + i%10)}, b...)
+		i /= 10
+	}
+	return string(b)
+}

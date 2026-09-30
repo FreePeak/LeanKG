@@ -349,6 +349,20 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 		"tools":            []string{ToolImport, ToolQuery, ToolStatus},
 		"embeddings":       e.embeddingsState(),
 	}
+	// Space is a no-write probe (PRAGMA page_count/freelist_count on SQLite,
+	// pg_database_size on Postgres), so it is safe on a read-only handle and
+	// costs three rows. Reporting it is what makes disk bloat visible to an
+	// agent: docs/mcp-tool-contract.md advertises "watch/vacuum status" on
+	// this tool, and without a payload field there is nothing to see.
+	if space, serr := e.st.Space(); serr == nil {
+		out["space"] = map[string]any{
+			"size_bytes":     space.SizeBytes,
+			"free_bytes":     space.FreeBytes,
+			"live_bytes":     space.LiveBytes,
+			"wal_bytes":      space.WALBytes,
+			"bloat_fraction": space.BloatFraction(),
+		}
+	}
 	// FR-HEA-03: mega-graph full-scan advisory banner. Below the
 	// LEANKG_MAX_CACHE_ELEMENTS cap (default 50k) the map is empty, so normal
 	// graphs keep byte-identical status payloads.

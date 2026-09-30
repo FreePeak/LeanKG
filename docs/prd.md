@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.13.2-memory-flat-args
-**Date:** 2026-09-29
+**Version:** 4.13.3-storage-maintenance
+**Date:** 2026-09-30
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
@@ -9,6 +9,29 @@
 ---
 
 ## Changelog
+
+### v4.13.3-storage-maintenance — the disk space the engine was silently keeping (2026-09-30)
+
+**Trigger:** an audit question — "does LeanKG reclaim the disk space its users spend on it, in both the MCP server and the agent memory?" The answer was *no, at either layer*, and it was not a small gap.
+
+**Measured on this repo's own store before the fix:** `.leankg/leankg.db` = 210.8 MB with `PRAGMA freelist_count` = 23,115 pages (**90.3 MB, 42.8% dead**) and `PRAGMA auto_vacuum` = **0 (NONE)**. `auto_vacuum=NONE` means SQLite reuses freed pages internally but never returns them to the filesystem, so the file's high-water mark is permanent without a manual `VACUUM`. Alongside it: `leankg.db-wal` 412 KB and `memory/index.db-wal` 3.1 MB, with no `wal_checkpoint` anywhere in the tree.
+
+**Why it was missing, and why the recorded reason was wrong.** `docs/prd.md` §"known gaps" claimed the Rust `gc.rs` vacuum scheduler was a "Go-native substitute, not a port" because "Go's runtime GC returns memory itself". That conflates **process RSS** with **store file size**: Go's GC returns the heap and has nothing to do with a 210 MB SQLite file. The scheduler (FR-V2-08, `LEANKG_VACUUM_INTERVAL_HOURS`, default 1h, `0` disables) was deleted with the Rust tree and never came back. `docs/mcp-tool-contract.md` meanwhile advertised "watch/vacuum status" on the `status` tool — a field the Go payload never had, so an agent could not even see the bloat.
+
+**What landed:**
+
+- **`internal/store/maintenance.go`** — `Space()` (a no-write `page_count`/`freelist_count` probe + `-wal` stat), `Checkpoint()` (`wal_checkpoint(TRUNCATE)`), `IncrementalVacuum(maxPages)` (bounded, so a live serving database caps how long the write lock is held), `Vacuum()` (whole-file), and `EnsureIncrementalVacuum()`. The last one is the load-bearing detail: SQLite adopts a new `auto_vacuum` mode only while a `VACUUM` rewrites the file, so the upgrade is `PRAGMA auto_vacuum=INCREMENTAL` **then** `VACUUM`, and the result is verified — either half alone is a silent no-op. It runs at most once per store, ever.
+- **`internal/store/maintenance_pg.go`** — the same five methods on `*PGStore` so the loop is engine-agnostic: `Space` is `pg_database_size`, `Vacuum` issues `ANALYZE` (not `VACUUM`, which would fight the server's own autovacuum for locks), the rest are documented no-ops because autovacuum owns dead-tuple reclamation.
+- **`internal/maintain`** — `Pass` (probe → header upgrade → bounded sweep → checkpoint), `Run` (ticker, first pass after 30 s so it never competes with startup writes), and `IntervalFromEnv` (`LEANKG_VACUUM_INTERVAL_HOURS`, default 1 h; `0`/`off`/`false` disables; an unparseable value falls back to the default so a typo cannot silently disable reclamation).
+- **Wired into both long-lived roles** — `leankg serve` (RW only, after `memory.Open` so the FTS index is included) and `leankg writer`, which is the process that actually produces the garbage.
+- **`internal/memory`** — `Compact()` and `Space()` for the FTS side index, same engine, same replace-on-write churn, previously never compacted.
+- **`leankg vacuum [DIR] [--full] [--max-pages N] [--quiet]`** — the one-shot form for a CLI invocation, a cron entry, or right after `leankg gc`. The default is the bounded incremental pass (safe against a live reader); `--full` is the whole-file rewrite.
+- **`status` reports a `space` block** (`size_bytes`, `free_bytes`, `live_bytes`, `wal_bytes`, `bloat_fraction`) — the field `docs/mcp-tool-contract.md` had been promising. The golden pins the keys; the byte counts are fixture-dependent and are redacted like the watermark.
+
+**Verified end to end**, not only in tests: a real store built by `leankg index` and then mass-deleted showed 36,864 free bytes at `auto_vacuum=0`; `leankg vacuum` printed `reclaimed 32768 bytes (368640 -> 335872)`, left `freelist_count=0`, flipped the header to `auto_vacuum=2`, and kept all rows (`elements: 1 files: 1 freshness: fresh`). A second `leankg vacuum` reclaimed 0 (the upgrade is one-shot). `--full` and `--quiet` were both exercised, the memory FTS index was churned 50 rewrites and compacted (1.5 MB WAL → 0), and `LEANKG_VACUUM_INTERVAL_HOURS=0` was confirmed to start no loop. `go test ./... -count=1` green, `go vet ./...` clean, `gofmt` clean.
+
+**Not in scope, and still true:** `internal/memory/banks.go` is append-only with no compaction (superseded JSONL entries accumulate indefinitely), and session offload (`internal/session`) has no retention. Those are logical-growth problems, not freelist problems — a vacuum cannot fix them, and pretending otherwise would be the same error as the note this section replaces.
+
 
 ### v4.13.2-memory-flat-args — the advertised memory-write shape no longer loses content (2026-09-29)
 
@@ -883,7 +906,7 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 |---|---|
 | PG migrations 008 (tokens), 009 (enterprise auth) | **Executed** on throwaway PostgreSQL clusters during the wave (their agents' reports). |
 | PG migrations 008–011 (tokens, enterprise auth, org knowledge, context metrics) | **Executed on PostgreSQL 18.6** (throwaway local cluster): all 17 gated PG tests green — round-trips for tokens (expiry/revocation/lifecycle), accounts/orgs/memberships/ownership, incidents/knowledge_entries/service_metadata/env_snapshots (arrays, nullable BIGINTs, jsonb metadata), metrics ledger, plus `Migrate` idempotency and schema isolation. Re-run anywhere with a PG server: `LEANKG_TEST_PG_URL=… go test ./internal/store/ ./internal/auth/ ./internal/orgknowledge/ ./internal/metrics/` |
-| `gc.rs` (Rust `MemoryGuard`) | **Go-native substitute, not a port**: Rust polled RSS and called `malloc_trim` per MCP request plus an idle-triggered vacuum scheduler; Go's runtime GC returns memory itself and the store has no vacuum step. The *idle-gated embedding* behaviour (`embeddings/control.rs`) has no Go counterpart — recorded as dropped, not forgotten. |
+| `gc.rs` (Rust `MemoryGuard`) | **Partly ported — and the original note was wrong about why.** Rust polled RSS and called `malloc_trim` per MCP request plus an idle-triggered vacuum scheduler. `malloc_trim` still has no Go analogue (Go's runtime GC returns the *heap*, a different thing entirely), but the vacuum scheduler is now `internal/maintain`: an hourly pass over `store.Backend` (`EnsureIncrementalVacuum` → bounded `IncrementalVacuum` → `Checkpoint`) started by `leankg serve` and `leankg writer`, with `LEANKG_VACUUM_INTERVAL_HOURS` (default 1, `0` disables) restored as the interval. The *idle-gated embedding* behaviour (`embeddings/control.rs`) still has no Go counterpart — recorded as dropped, not forgotten. |
 | doc→code join (`doc_indexer` references/`documented_by` edges, `paths.go`, dir elements, 512K cap) | **Unported**: `internal/docindex` covers the doc walk and sections only, so import-hygiene questions that relied on doc→code edges return empty. |
 | Error catalog wiring | 6 of 14 catalog entries are wired into call sites; the rest have no Go emission point yet (the drift-audit test logs the uncovered set rather than hiding it). |
 | `env_snapshots` | Go stand-in for Rust's env-scoped `code_elements` (Go elements are keyed on `qualified_name`, single-env). Consequence: `calls`/`called_by`/`schemas` cannot be env-filtered. |
@@ -946,4 +969,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-09-21 (v4.13.1-first-run: install-go.sh repaired + verified, stdio wiring now carries --memory so the documented install delivers the memory layer, `index` prints its next step; FR-TYPE-02 DONE via #434 + #435: abstraction + convo path + use-case doc + interactive diagram; tracker row closed. Prior: 2026-09-19 FR-P2.)*
+*Last updated: 2026-09-30 (storage maintenance restored: `internal/maintain` hourly vacuum pass over `store.Backend` + the memory FTS index, `LEANKG_VACUUM_INTERVAL_HOURS`, new `leankg vacuum` verb, `status` now reports a `space` block; the gc.rs row's "Go's runtime GC returns memory itself" rationale is corrected. Prior: 2026-09-21 v4.13.1.)*

@@ -186,6 +186,12 @@ var (
 	reWatermarkAt  = regexp.MustCompile(`"at":\s*-?\d+`)
 )
 
+// reSpaceBytes redacts the status tool's storage-space block: the byte counts
+// depend on the fixture's page layout and the WAL's write history, so the
+// golden pins the KEY, not the number. bloat_fraction is derived from the
+// same numbers and is redacted for the same reason.
+var reSpaceBytes = regexp.MustCompile(`"(size_bytes|free_bytes|live_bytes|wal_bytes|bloat_fraction)":\s*[0-9.e-]+`)
+
 // canon marshals v, redacts nondeterminism to fixed strings, and re-marshals
 // compact (sorted keys) as the comparison form.
 func canon(t *testing.T, v any, project string) []byte {
@@ -195,6 +201,7 @@ func canon(t *testing.T, v any, project string) []byte {
 		t.Fatal(err)
 	}
 	s := string(b)
+	s = reSpaceBytes.ReplaceAllString(s, `"$1":"<BYTES>"`)
 	s = strings.ReplaceAll(s, project, "<PROJECT>")
 	s = reWatermarkSeq.ReplaceAllLiteralString(s, `"seq":"<SEQ>"`)
 	s = reWatermarkAt.ReplaceAllLiteralString(s, `"at":"<AT>"`)
