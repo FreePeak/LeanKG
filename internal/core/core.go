@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -441,11 +442,20 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	switch req.Action {
 	case "memory":
 		switch cmd := argStr(req.Args, "command"); cmd {
+		case "":
+			// No command: the documented memory search over the
+			// full-markdown memory files (command=search is the same call).
+			return e.MemoryRead("search", "", req.Query, req.Limit)
 		case "session_recall", "memories":
 			return e.SessionMemoryRead(cmd, req.Query, req.Limit, req.Args)
-		default:
-			// Query-tool memory reads carry the command in Query.
+		case "search":
 			return e.MemoryRead("search", "", req.Query, req.Limit)
+		default:
+			// A command that does not exist must say so. Falling through to
+			// the search answered a typo ("recal") as a confident empty hit
+			// list, which reads to an agent as "the recall found nothing"
+			// rather than "that command is not a command".
+			return nil, fmt.Errorf("unknown memory command %q (valid: search, session_recall, memories)", cmd)
 		}
 	case "ontology":
 		cmd := argStr(req.Args, "cmd")
@@ -559,7 +569,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		return e.graphAction(ctx, req, resp)
 	}
 
-	// Ladder router: L0 cold → L1 exact → L2 fuzzy → L3 semantic.
+	// Ladder router: L0 cold → L1 exact → L3 semantic → L2 fuzzy.
 	if els == 0 {
 		resp["retrieval"] = map[string]any{"rung": "L0", "reason": "no elements indexed"}
 		resp["hits"] = []any{}
@@ -570,17 +580,24 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 		return resp, nil
 	}
-	// pin=true: the rung knows which keyword arm served the hits, so it owns
-	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
-	if _, err := e.rungFuzzy(req.Query, limit, resp, true); err == nil && len(hitsOf(resp)) > 0 {
-		return resp, nil
-	}
 	// Noul L3 gate: ontology confidence below MinConfidence
 	// (0.3) justifies no embedding call — degrade to L2.
 	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
 	if conf > 0 && conf < ontology.MinConfidence {
 		return withEmptyHint(e.rungFuzzy(req.Query, limit, resp, true))
 	}
+	// The vector rung is tried BEFORE the keyword rung, which is the order
+	// D-2026-09-04-4 states (L3 with vectors, L2 without): the whole point of
+	// the semantic tier is to outrank keyword noise, and returning as soon as
+	// L2 produced any hit made it unreachable — an intent question was answered
+	// with whichever elements happened to contain its words. Live on this repo
+	// before the fix: "how are search results ranked and fused" returned three
+	// archive-report headings; L3 on the same query ranked the function that
+	// implements the answer first.
+	//
+	// No capability probe is needed: rungSemantic degrades to L2 itself when
+	// the collection is absent, the stamp drifted, or the provider is
+	// unreachable, each with its own reason. pin=true so that reason survives.
 	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true))
 }
 
@@ -687,10 +704,23 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (
 	return resp, nil
 }
 
-// rungSemantic is L3: embed the query via the wired provider, cosine top-k
-// over the first stamped collection. Provider failure or absent wiring
-// DEGRADES to L2 — never a hard error (issue #368 AC: query-time provider
-// failure degrades the ladder with retrieval.reason).
+// rungSemantic is L3: embed the query via the wired provider and rank the
+// collection by FUSING the vector arm with the keyword arm (reciprocal rank
+// fusion, the same combination the PostgreSQL path already runs as
+// HybridSearch). Provider failure or absent wiring DEGRADES to L2 — never a
+// hard error (issue #368 AC: query-time provider failure degrades the ladder
+// with retrieval.reason).
+//
+// Fusing rather than picking one arm is the point. Live on this repository
+// before the fix, a question whose answer is CODE ("where is the single flight
+// lock taken") was answered by the vector arm with three archived run reports
+// and by the keyword arm with cmd/leankg-embed/main.go::lock — the element
+// that IS the answer. The two arms are strong on different corpora: vectors
+// carry phrasing similarity into prose, keywords carry the identifier out of
+// a code symbol. Neither ordering is right, and whichever rung won outright
+// lost half the corpus. RRF is scale-free, so both survive with their own
+// weights and the disagreement between them becomes visible in the per-arm
+// ranks each hit carries.
 func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool) (map[string]any, error) {
 	degrade := func(reason string) (map[string]any, error) {
 		if pin {
@@ -722,43 +752,91 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil {
 		return degrade(fmt.Sprintf("embedding provider failed (%v); degraded from L3", err))
 	}
-	// Issue #273: the PostgreSQL L3 rung fuses the cosine ranking with its
-	// tsvector and trigram rankings by reciprocal rank fusion, because the
-	// three scores live on unrelated scales (cosine, ts_rank, similarity) and
-	// only their ranks are comparable. sqlite keeps the plain cosine rung
-	// below; an empty fusion also falls through to it.
-	if fts, ok := e.st.(store.FTSBackend); ok {
-		fused, arms, ferr := fts.HybridSearch(modelID, q, qvec, limit)
-		if ferr != nil {
-			return degrade(fmt.Sprintf("hybrid fusion failed (%v); degraded from L3", ferr))
-		}
-		if len(fused) > 0 {
-			out := make([]map[string]any, 0, len(fused))
-			for _, h := range fused {
-				m := shapeElement(h.Element)
-				m["similarity"] = h.Similarity
-				m["score"] = h.Score // the fused RRF score, not a single-arm score
-				m["ranks"] = h.Ranks
-				out = append(out, m)
-			}
-			resp["hits"] = out
-			resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
-			return withEmptyHint(resp, nil)
-		}
+
+	// The keyword arm is FUSED, not consulted afterwards. It comes from
+	// FindFuzzy — the store's own L2 rung — rather than the FTSBackend's
+	// Postgres-only SearchElementsFTS, so the sqlite ladder fuses the same
+	// keyword ranking it serves on its own; a backend with no FTS index simply
+	// runs the vector arm alone.
+	kw, err := e.st.FindFuzzy(q, limit)
+	if err != nil {
+		return degrade(fmt.Sprintf("keyword arm failed (%v); degraded from L3", err))
 	}
-	hits, err := e.st.SearchVectors(modelID, qvec, limit)
+	vectors, err := e.st.SearchVectors(modelID, qvec, limit)
 	if err != nil {
 		return degrade(fmt.Sprintf("vector search failed (%v); degraded from L3", err))
 	}
-	out := make([]map[string]any, 0, len(hits))
-	for _, h := range hits {
-		m := shapeElement(h.Element)
-		m["similarity"] = h.Similarity
+	fused, elements, ranks, scores := fuseQueryRanks(vectors, kw, limit)
+	if len(fused) == 0 {
+		return withEmptyHint(e.rungFuzzy(q, limit, resp, true))
+	}
+	out := make([]map[string]any, 0, len(fused))
+	for _, qn := range fused {
+		m := shapeElement(elements[qn])
+		m["score"] = scores[qn]
+		if r, ok := ranks[qn]; ok {
+			m["ranks"] = r
+		}
+		if sim, ok := vectorSim(vectors, qn); ok {
+			m["similarity"] = sim
+		}
 		out = append(out, m)
 	}
 	resp["hits"] = out
-	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)"}
+	arms := "vector"
+	if len(kw) > 0 {
+		arms += "+keyword"
+	}
+	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
 	return withEmptyHint(resp, nil)
+}
+
+// vectorSim finds a vector arm's similarity for one qualified name.
+func vectorSim(vectors []store.VectorSearchHit, qn string) (float64, bool) {
+	for _, v := range vectors {
+		if v.Element.QualifiedName == qn {
+			return v.Similarity, true
+		}
+	}
+	return 0, false
+}
+
+// fuseQueryRanks reciprocal-rank fuses the two arms into one key order and
+// returns, per key, the element, the per-arm ranks and the fused score. The
+// element maps are keyed by qualified name so the caller never re-queries the
+// store; a key only one arm returned still appears, carrying that arm's rank.
+func fuseQueryRanks(vectors []store.VectorSearchHit, kw []store.FuzzyMatch, limit int) ([]string, map[string]store.Element, map[string]map[string]int, map[string]float64) {
+	lists := make([]store.RankList, 0, 2)
+	elements := map[string]store.Element{}
+	ranks := map[string]map[string]int{}
+	scores := map[string]float64{}
+	if len(vectors) > 0 {
+		keys := make([]string, 0, len(vectors))
+		for _, v := range vectors {
+			keys = append(keys, v.Element.QualifiedName)
+			elements[v.Element.QualifiedName] = v.Element
+		}
+		lists = append(lists, store.RankList{Name: store.ArmVector, Keys: keys})
+	}
+	if len(kw) > 0 {
+		keys := make([]string, 0, len(kw))
+		for _, m := range kw {
+			keys = append(keys, m.Element.QualifiedName)
+			elements[m.Element.QualifiedName] = m.Element
+		}
+		lists = append(lists, store.RankList{Name: store.ArmTSVector, Keys: keys})
+	}
+	fused := store.FuseRRF(lists)
+	out := make([]string, 0, len(fused))
+	for _, h := range fused {
+		out = append(out, h.Key)
+		if len(out) >= limit {
+			break
+		}
+		ranks[h.Key] = h.Ranks
+		scores[h.Key] = h.Score
+	}
+	return out, elements, ranks, scores
 }
 
 // --- memory actions (ride the 3-tool surface; #369) ---
@@ -950,10 +1028,27 @@ func (e *Engine) resolveGraphSeed(seed string) (string, error) {
 // graphAction routes the connection verbs (Rust graph/query.rs parity) to
 // internal/graph. The query string may be a bare name or a qualified name —
 // bare names are resolved via FindExact before traversal.
+//
+// A seed or target that no element resolves to is an ANSWER with recovery
+// guidance, never graph.ErrUnknownNode: that error reached the agent as a
+// failed tool call reading `graph: unknown node`, naming neither the verb nor
+// the seed nor a next step, and it made the same typo look like a broken verb.
 func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
 	g := func() map[string]any {
 		resp["action"] = req.Action
 		return resp
+	}
+	// One recovery sentence for an unresolvable end of the walk: name WHICH
+	// end was not found, quote it, and give the one step that fixes it. That
+	// is what lets an agent tell a typo from a verb that is misconfigured.
+	// The value is the string the lookup was given, not the verb.
+	unresolved := func(what, value string) (map[string]any, error) {
+		resp["hits"] = []any{}
+		resp["reachable"] = false
+		resp["guidance"] = fmt.Sprintf(
+			"No indexed element matches the %s %q; resolve it with query (action empty) to a qualified_name, then retry %s with that exact QN.",
+			what, value, req.Action)
+		return g(), nil
 	}
 	seed, err := e.resolveGraphSeed(req.Query)
 	if err != nil {
@@ -968,6 +1063,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// result-count concept, not a traversal depth.
 		depth := argInt(req.Args, "depth", 2)
 		hits, err := graph.Impact(e.st, seed, depth)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -989,6 +1087,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// count, not a traversal bound; paths are a single answer anyway.
 		maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
 		path, err := graph.ShortestPath(e.st, seed, to, maxDepth)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("target (args.to)", toRaw)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1003,6 +1104,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "callers":
 		qns, err := graph.Callers(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1013,6 +1117,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "callees":
 		qns, err := graph.Callees(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1023,6 +1130,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "context":
 		out, err := graph.Context(e.st, seed, req.Limit)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1032,6 +1142,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "explain":
 		out, err := graph.Explain(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
