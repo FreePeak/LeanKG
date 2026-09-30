@@ -132,3 +132,85 @@ func ftsQuery(query string) string {
 	}
 	return strings.Join(parts, " AND ")
 }
+
+// SpaceReport is the FTS side index's on-disk footprint: total bytes, the
+// freelist pages a delete left behind, and the -wal sidecar. It mirrors
+// store.SpaceReport so one caller can report both layers in one shape.
+type SpaceReport struct {
+	Path      string
+	SizeBytes int64
+	FreeBytes int64
+	LiveBytes int64
+	PageSize  int64
+	WALBytes  int64
+}
+
+// Compact reclaims the FTS index's free pages and truncates its WAL sidecar.
+//
+// Every memory write replaces a path's rows (deleteRows + reindex) — the same
+// freelist growth the graph store has, and unbounded here because nothing in
+// this package ever compacted. On a long-lived memory server that is a slow
+// leak in <root>/index.db and its -wal sidecar, which no amount of Markdown
+// editing gives back.
+//
+// The auto_vacuum upgrade is here for the same reason as in store: SQLite
+// adopts a new header mode only while a VACUUM rewrites the file, so the
+// request and the VACUUM are both required, and both run at most once, ever.
+//
+// Safe on a live memory: it takes this handle's own write connection (one per
+// Memory, MaxOpenConns(1)) and no other.
+func (m *Memory) Compact() error {
+	var mode int64
+	if err := m.fts.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		// An index too old to answer the pragma is not a reason to skip the
+		// reclaim; fall through to the vacuum.
+		mode = 0
+	}
+	if mode == 0 {
+		if _, err := m.fts.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+			return fmt.Errorf("memory: request incremental vacuum: %w", err)
+		}
+		if _, err := m.fts.Exec(`VACUUM`); err != nil {
+			return fmt.Errorf("memory: enable incremental vacuum: %w", err)
+		}
+	}
+	if _, err := m.fts.Exec(`PRAGMA incremental_vacuum`); err != nil {
+		return fmt.Errorf("memory: incremental vacuum: %w", err)
+	}
+	if _, err := m.fts.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return fmt.Errorf("memory: wal_checkpoint(TRUNCATE): %w", err)
+	}
+	return nil
+}
+
+// Space reports the FTS side index's footprint. Like store.Space it is a
+// no-write probe, and it reports page_count rather than the stat size: in WAL
+// mode a mass delete frees pages into the -wal sidecar, and the main file only
+// shrinks once that sidecar is checkpointed back — which is what Compact does.
+func (m *Memory) Space() (SpaceReport, error) {
+	rep := SpaceReport{Path: m.ftsPath}
+	if fi, err := os.Stat(m.ftsPath); err == nil {
+		rep.SizeBytes = fi.Size()
+	}
+	if fi, err := os.Stat(m.ftsPath + "-wal"); err == nil {
+		rep.WALBytes = fi.Size()
+	}
+	var pageSize, pageCount, freelist int64
+	if err := m.fts.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+		return rep, fmt.Errorf("memory: page_size: %w", err)
+	}
+	if err := m.fts.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+		return rep, fmt.Errorf("memory: page_count: %w", err)
+	}
+	if err := m.fts.QueryRow(`PRAGMA freelist_count`).Scan(&freelist); err != nil {
+		return rep, fmt.Errorf("memory: freelist_count: %w", err)
+	}
+	rep.PageSize = pageSize
+	rep.FreeBytes = freelist * pageSize
+	rep.SizeBytes = pageCount * pageSize
+	if rep.SizeBytes < rep.FreeBytes {
+		rep.SizeBytes = rep.FreeBytes
+	}
+	rep.LiveBytes = rep.SizeBytes - rep.FreeBytes
+	return rep, nil
+}

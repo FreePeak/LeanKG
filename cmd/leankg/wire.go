@@ -13,6 +13,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
+	"github.com/FreePeak/LeanKG/internal/maintain"
 	"github.com/FreePeak/LeanKG/internal/store"
 	"github.com/FreePeak/LeanKG/internal/watch"
 )
@@ -62,6 +63,15 @@ func cmdWriter(args []string) {
 	if err != nil {
 		log.Fatalf("watch: %v", err)
 	}
+
+	// Same maintenance pass `serve` runs, over the writer's own handle: the
+	// writer is the process that actually produces the garbage (DeleteByFile
+	// on every re-index), so it is the one that should hand the space back.
+	interval := maintain.IntervalFromEnv(os.Getenv)
+	if interval > 0 {
+		log.Printf("writer: maintenance every %s (0 disables)", interval)
+	}
+	maintain.Run(ctx, st, nil, maintain.Options{Logf: log.Printf}, interval)
 	log.Printf("writer: watching %s (Ctrl-C to stop)", dir)
 	<-ctx.Done()
 	w.Stop()

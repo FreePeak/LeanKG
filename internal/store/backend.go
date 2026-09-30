@@ -44,6 +44,18 @@ type Backend interface {
 	// file left its vectors behind forever. Returns the number of vector
 	// rows removed.
 	DeleteOrphanVectors() (int, error)
+
+	// space maintenance (the reclaim half of DeleteByFile/gc: those return
+	// rows to the freelist, these return the freelist to the filesystem).
+	// Space is a no-write probe, safe on a read-only handle; Checkpoint,
+	// IncrementalVacuum and Vacuum are writes and refuse a read-only store.
+	// Postgres implements Space with pg_database_size and the rest as
+	// autovacuum-driven no-ops — the maintenance loop is engine-agnostic.
+	Space() (SpaceReport, error)
+	Checkpoint() error
+	IncrementalVacuum(maxPages int) error
+	Vacuum() error
+	EnsureIncrementalVacuum() error
 	// relationship reads (graph traversal seeds; pure-Go BFS lives in internal/graph)
 	Outgoing(source string) ([]Relationship, error)
 	Incoming(target string) ([]Relationship, error)

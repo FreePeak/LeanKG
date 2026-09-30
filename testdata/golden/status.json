@@ -24,6 +24,13 @@
     "provider": "deterministic"
   },
   "relationships": 1,
+  "space": {
+    "bloat_fraction": "<BYTES>",
+    "free_bytes": "<BYTES>",
+    "live_bytes": "<BYTES>",
+    "size_bytes": "<BYTES>",
+    "wal_bytes": "<BYTES>"
+  },
   "store": "<PROJECT>/.leankg/leankg.db",
   "tools": [
     "import",
