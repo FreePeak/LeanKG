@@ -573,6 +573,14 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if req.Query == "" {
 		return nil, fmt.Errorf("query requires query text")
 	}
+	// Validate the fusion weight HERE, beside the rest of the argument
+	// contract, for two reasons the L3 path alone could not give: a typo must be
+	// an error even when the store has no vectors (L3 degrades to L2 without ever
+	// reading a weight, so validating inside rungSemantic would silently accept
+	// it), and an invalid weight must fail the same way an invalid scope does.
+	if _, err := parseFusionWeight(argStr(req.Args, "weight")); err != nil {
+		return nil, err
+	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10
@@ -588,7 +596,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "fuzzy":
 		return e.rungFuzzy(req.Query, limit, resp, true)
 	case "semantic":
-		return e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope"))
+		return e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope"), argStr(req.Args, "weight"))
 	case "impact", "path", "callers", "callees", "context", "explain":
 		return e.graphAction(ctx, req, resp)
 	}
@@ -622,7 +630,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	// No capability probe is needed: rungSemantic degrades to L2 itself when
 	// the collection is absent, the stamp drifted, or the provider is
 	// unreachable, each with its own reason. pin=true so that reason survives.
-	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope")))
+	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope"), argStr(req.Args, "weight")))
 }
 
 func hitsOf(resp map[string]any) []map[string]any {
@@ -745,7 +753,16 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (
 // lost half the corpus. RRF is scale-free, so both survive with their own
 // weights and the disagreement between them becomes visible in the per-arm
 // ranks each hit carries.
-func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, scope ...string) (map[string]any, error) {
+func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, argz ...string) (map[string]any, error) {
+	// argz carries the caller's optional query args (scope, weight); variadic so
+	// the pinned-rung and ladder call sites stay one call each.
+	scope, weight := "", ""
+	if len(argz) > 0 {
+		scope = argz[0]
+	}
+	if len(argz) > 1 {
+		weight = argz[1]
+	}
 	degrade := func(reason string) (map[string]any, error) {
 		if pin {
 			resp["retrieval"] = map[string]any{"rung": "L2", "reason": reason}
@@ -782,11 +799,11 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	// keyword arm free to reintroduce the test fixture the caller excluded,
 	// which is the answer they asked not to see. See scopeFilter for the
 	// measured motivation (rank 54 -> 7 on this repository's own store).
-	scopeArg := ""
-	if len(scope) > 0 {
-		scopeArg = scope[0]
+	keep, scopeName, err := scopeFilter(e.st, scope)
+	if err != nil {
+		return nil, err
 	}
-	keep, scopeName, err := scopeFilter(e.st, scopeArg)
+	fw, err := parseFusionWeight(weight)
 	if err != nil {
 		return nil, err
 	}
@@ -812,7 +829,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil {
 		return degrade(fmt.Sprintf("name arm failed (%v); degraded from L3", err))
 	}
-	fused, elements, ranks, scores := fuseQueryRanks(vectors, kw, names, limit)
+	fused, elements, ranks, scores := fuseQueryRanks(vectors, kw, names, fw, limit)
 	if len(fused) == 0 {
 		return withEmptyHint(e.rungFuzzy(q, limit, resp, true))
 	}
@@ -830,7 +847,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	}
 	resp["hits"] = out
 	arms := "vector"
-	if len(kw) > 0 {
+	if fw.keyword > 0 && len(kw) > 0 {
 		arms += "+keyword"
 	}
 	if len(names) > 0 {
@@ -842,6 +859,11 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		// production code and got a narrower corpus should be able to see that
 		// from the answer alone, not infer it.
 		retrieval["scope"] = scopeName
+	}
+	if fw.raw != "" {
+		// A weighted answer must say so, for the same reason scope does: an
+		// agent reading the ranking needs to know it was not the default.
+		retrieval["weight"] = fw.raw
 	}
 	resp["retrieval"] = retrieval
 	return withEmptyHint(resp, nil)
@@ -907,6 +929,68 @@ func isProductionCode(path string) bool {
 // `prod` excludes it because an archive describes a state the project left.
 func isCurrentDoc(path string) bool {
 	return strings.HasPrefix(path, "docs/") && !strings.HasPrefix(path, "docs/archive/")
+}
+
+// fusionWeight is the parsed form of `args.weight`: the two fusion weights the
+// caller asked for, plus the raw text so the answer can report it back.
+type fusionWeight struct {
+	vector, keyword float64
+	raw             string
+	ok              bool
+}
+
+// parseFusionWeight reads `"<vector>,<keyword>"` — the same convention
+// `scripts/retrieval-policy-sweep.py` prints, so a number measured offline can
+// be pasted in without translation. Unset is exactly today's behaviour, (1,1).
+//
+// Why an escape hatch and not a better default. Waves 12 and 13 measured the
+// trade over four cells (two corpora, two label protocols) and found no single
+// weighting that is right for all of them:
+//
+//	                        corpus1/behaviour  corpus1/doc  corpus2/behaviour  corpus2/doc
+//	(1,1) — the default                  16/137       49/84           13/94        92/102
+//	(3,1)                               30/137       48/84           21/94        88/102
+//	keyword arm dropped (1,0)           59/137       40/84           55/94        84/102
+//
+// A keyword arm that cannot corroborate contributes nothing measurable to the
+// fused order — wave 13's `agree_gate` was byte-identical to vector-only in
+// every cell — so on behaviour-shaped questions, which name a concept and
+// contain none of the document's words, dropping it is right; on keyword-shaped
+// questions it is the arm carrying the answer. Which population a deployment
+// serves is a product decision no query reveals, so the lever is the same shape
+// as `args.scope`: named, optional, reported back, inert when absent.
+//
+// Everything but a well-formed non-negative pair is an ERROR. A tuning knob
+// that silently falls back on a typo is the class of defect waves 1-11 of this
+// loop exist to remove — an agent would believe it asked for (3,1) and be
+// served (1,1) with no way to tell.
+//
+// ponytail: a two-number string, not a nested object. The whole surface is
+// "how much do you trust each arm", and a flat "<vector>,<keyword>" is
+// unambiguous, trivially reportable, and copy-pasteable out of the bench. It
+// grows into an object the day a third arm needs its own knob, which is the day
+// a caller has three different questions to ask.
+func parseFusionWeight(raw string) (fusionWeight, error) {
+	if strings.TrimSpace(raw) == "" {
+		// Unset is not an error and not an override: it is today's behaviour.
+		return fusionWeight{vector: 1, keyword: 1, ok: true}, nil
+	}
+	parts := strings.Split(strings.TrimSpace(raw), ",")
+	if len(parts) != 2 {
+		return fusionWeight{}, fmt.Errorf("query weight %q must be \"<vector>,<keyword>\" (e.g. \"3,1\" or \"1,0\" to drop the keyword arm)", raw)
+	}
+	nums := make([]float64, 2)
+	for i, p := range parts {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil || v < 0 {
+			return fusionWeight{}, fmt.Errorf("query weight %q: %q is not a non-negative number", raw, strings.TrimSpace(p))
+		}
+		nums[i] = v
+	}
+	if nums[0] == 0 && nums[1] == 0 {
+		return fusionWeight{}, fmt.Errorf("query weight %q cannot be \"0,0\": both arms off ranks nothing", raw)
+	}
+	return fusionWeight{vector: nums[0], keyword: nums[1], raw: strings.TrimSpace(raw), ok: true}, nil
 }
 
 // nameArmWeight is the name arm's scale in the L3 fusion.
@@ -975,12 +1059,12 @@ func vectorSim(vectors []store.VectorSearchHit, qn string) (float64, bool) {
 // appearing inside a symbol name is weaker evidence than a body that discusses
 // the question, and an unweighted arm would let "Fuse" drag in every symbol whose
 // name contains it.
-func fuseQueryRanks(vectors []store.VectorSearchHit, kw []store.FuzzyMatch, names []store.FuzzyMatch, limit int) ([]string, map[string]store.Element, map[string]map[string]int, map[string]float64) {
+func fuseQueryRanks(vectors []store.VectorSearchHit, kw, names []store.FuzzyMatch, fw fusionWeight, limit int) ([]string, map[string]store.Element, map[string]map[string]int, map[string]float64) {
 	lists := make([]store.RankList, 0, 3)
 	elements := map[string]store.Element{}
 	ranks := map[string]map[string]int{}
 	scores := map[string]float64{}
-	if len(vectors) > 0 {
+	if len(vectors) > 0 && fw.vector > 0 {
 		keys := make([]string, 0, len(vectors))
 		for _, v := range vectors {
 			keys = append(keys, v.Element.QualifiedName)
@@ -988,13 +1072,32 @@ func fuseQueryRanks(vectors []store.VectorSearchHit, kw []store.FuzzyMatch, name
 		}
 		lists = append(lists, store.RankList{Name: store.ArmVector, Keys: keys})
 	}
-	if len(kw) > 0 {
+	if fw.vector == 0 {
+		for _, v := range vectors {
+			elements[v.Element.QualifiedName] = v.Element
+		}
+	}
+	// A keyword weight of ZERO drops the arm. It cannot be expressed as a
+	// 0-valued weight: store's armWeight treats a 0 field as "unset" and
+	// substitutes 1.0, so "1,0" would silently become "1,1" — the exact
+	// silent fallback this hatch exists to prevent. Wave 13 measured that
+	// dropping the arm is the whole win (59/137 and 55/94 on behaviour labels),
+	// so the intent is honoured where it is known.
+	if len(kw) > 0 && fw.keyword > 0 {
 		keys := make([]string, 0, len(kw))
 		for _, m := range kw {
 			keys = append(keys, m.Element.QualifiedName)
 			elements[m.Element.QualifiedName] = m.Element
 		}
 		lists = append(lists, store.RankList{Name: store.ArmTSVector, Keys: keys})
+	}
+	if fw.keyword == 0 && len(kw) > 0 {
+		// A dropped arm's documents are still reportable (an agent asked to
+		// rank without the keyword arm may still want to see what it excluded),
+		// but they must not be fused or ranked.
+		for _, m := range kw {
+			elements[m.Element.QualifiedName] = m.Element
+		}
 	}
 	if len(names) > 0 {
 		keys := make([]string, 0, len(names))
@@ -1004,7 +1107,11 @@ func fuseQueryRanks(vectors []store.VectorSearchHit, kw []store.FuzzyMatch, name
 		}
 		lists = append(lists, store.RankList{Name: store.ArmName, Keys: keys})
 	}
-	fused := store.FuseRRFWeighted(lists, store.FuseRRFWeights{Name: nameArmWeight})
+	fused := store.FuseRRFWeighted(lists, store.FuseRRFWeights{
+		Vector:   fw.vector,
+		TSVector: fw.keyword,
+		Name:     nameArmWeight,
+	})
 	out := make([]string, 0, len(fused))
 	for _, h := range fused {
 		out = append(out, h.Key)
