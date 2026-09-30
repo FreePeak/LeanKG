@@ -1354,6 +1354,13 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		if err != nil {
 			return nil, err
 		}
+		// The result carries the VERB's name, like every other graph verb:
+		// impact under `hits` was the same key the search ladder uses, and
+		// these are different shapes (qualified_name + depth, not elements),
+		// so the plausible reading of a 21-entry `hits` was "21 elements
+		// matched a text query" when it meant "21 nodes depend on this". The
+		// alias stays so an agent that learned `hits` is not broken.
+		resp["impact"] = hits
 		resp["hits"] = hits
 		return g(), nil
 	case "path":
@@ -1530,6 +1537,14 @@ func (e *Engine) SessionRead(command, sessionID, nodeID string) (map[string]any,
 		// only the session id. The caller filters.
 		return map[string]any{"command": "lessons", "session_id": sessionID, "lessons": lessons}, nil
 	default:
+		if command == "" {
+			// No command is not a mistake here: a session read carries no
+			// query text, so the command IS the request, and the only way to
+			// discover what the verb supports is to call it. Answer with the
+			// valid set (the same posture action=memory now takes) rather than
+			// failing a tool call an agent cannot interpret.
+			return map[string]any{"commands": []string{"recall", "canvas", "lessons"}}, nil
+		}
 		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas, lessons)", command)
 	}
 }
