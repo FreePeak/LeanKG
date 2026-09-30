@@ -233,7 +233,13 @@ func openProbes(ctx context.Context, projectDir, engine, pgURL string) (Probes, 
 }
 
 func sqliteProbes(projectDir string) (*dbProbes, error) {
-	dbPath := filepath.Join(projectDir, ".leankg", "leankg.db")
+	// The configured store wins: standalone mode (FR-P2) has no
+	// <project>/.leankg at all, and the doctor's job is to report on the
+	// store the engine actually uses — not the one the default would build.
+	dbPath := store.StandaloneDBPath(projectDir)
+	if dbPath == "" {
+		dbPath = filepath.Join(projectDir, ".leankg", "leankg.db")
+	}
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil, fmt.Errorf("doctor: no store at %s (run `leankg index` first): %w", dbPath, err)
 	}

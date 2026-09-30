@@ -543,9 +543,15 @@ func cmdDoctor(args []string) int {
 	// find_project_root (nearest .leankg OR leankg.yaml), then the config's
 	// project_path anchor: doctor must inspect the store the server serves
 	// (Rust main.rs find_project_root + MCPServer::resolve_project_root).
-	dir = projectcfg.FindProjectRoot(dir)
-	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
-	st, err := store.Open(filepath.Join(dbDir, "leankg.db"), store.RO)
+	// A configured standalone store (FR-P2) has no .leankg to discover, so
+	// the project-root walk is skipped and the store comes from the config.
+	dbPath := projectcfg.StandaloneDBPath(dir)
+	if dbPath == "" {
+		dir = projectcfg.FindProjectRoot(dir)
+		dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
+		dbPath = filepath.Join(dbDir, "leankg.db")
+	}
+	st, err := store.Open(dbPath, store.RO)
 	if err != nil {
 		fmt.Printf("FAIL store: %v\n", err)
 		return 2

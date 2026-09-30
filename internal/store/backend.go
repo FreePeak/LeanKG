@@ -247,9 +247,18 @@ func (s *Store) VectorCoverage(modelID string) (covered, orphans int, err error)
 // OpenBackend opens the engine's storage for a project directory.
 // engine is EngineSQLite (default) or EnginePostgres (dsn via env
 // LEANKG_PG_URL or the pgURL argument when non-empty).
+//
+// dbPath is the caller's explicit SQLite store path (serve's --db flag). When
+// it is empty the LEANKG_DB_PATH / leankg.yaml db.standalone_db_path override
+// is resolved HERE, so the configured store is what every caller gets — a
+// verb passing "" no longer silently lands on <project>/.leankg/leankg.db
+// while `serve` reads the configured file.
 func OpenBackend(ctx context.Context, projectDir, engine, pgURL, dbPath string, mode Mode) (Backend, error) {
 	switch engine {
 	case "", EngineSQLite:
+		if dbPath == "" {
+			dbPath = StandaloneDBPath(projectDir)
+		}
 		if dbPath != "" {
 			return Open(dbPath, mode)
 		}
