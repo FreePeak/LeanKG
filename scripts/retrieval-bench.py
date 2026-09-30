@@ -24,12 +24,26 @@ import re
 import subprocess
 import sys
 
-LABELS_MD = os.path.join(os.path.dirname(__file__), "..", "docs", "retrieval-label-set.md")
+HERE = os.path.dirname(os.path.abspath(__file__))
+LABELS_MD = os.path.join(HERE, "..", "docs", "retrieval-label-set.md")
 RRFK = 60
 ROW = re.compile(r"^\| (\d+) \| (.+?) \| `([^`]+)` \| (.+?) \|$", re.M)
 
 
-def load_labels():
+def load_labels(path=None):
+    """Load the label set.
+
+    Default: the LeanKG markdown table (question | ground truth | file).
+    With --labels: a JSON file of [qualified_name, question] pairs — the form
+    corpus 2 uses, because a second corpus cannot live in this repo's docs.
+    """
+    if path:
+        import json
+        rows = json.load(open(path))
+        labels = [(i + 1, q.strip(), qn, qn.split("::")[0]) for i, (qn, q) in enumerate(rows)]
+        if not labels:
+            sys.exit("no labels in " + path)
+        return labels
     text = open(LABELS_MD).read()
     labels = [(int(n), q.strip(), qn.strip(), where.strip()) for n, q, qn, where in ROW.findall(text)]
     if not labels:
@@ -129,9 +143,10 @@ def main():
     ap.add_argument("--limit", type=int, default=30, help="per-arm depth fetched and scored")
     ap.add_argument("--sweep", action="store_true", help="score every (vector, keyword) weight pair")
     ap.add_argument("--scope", default="", help="args.scope passed to every query (code|prod|all)")
+    ap.add_argument("--labels", default="", help="JSON label file [[qualified_name, question], ...]; default is the LeanKG markdown table")
     args = ap.parse_args()
 
-    labels = load_labels()
+    labels = load_labels(args.labels or None)
     s = Session(args.binary, args.project)
     data = []
     for n, q, truth, where in labels:
@@ -141,7 +156,8 @@ def main():
     s.close()
 
     n = len(data)
-    print(f"{n} labels, per-arm depth {args.limit}, scope={args.scope or 'full corpus'}\n")
+    print(f"{n} labels from {args.labels or 'docs/retrieval-label-set.md'}, per-arm depth {args.limit}, "
+          f"scope={args.scope or 'full corpus'}\n")
 
     def tally(order_fn):
         out = {}
@@ -187,8 +203,8 @@ def main():
         print("-" * 46)
         for wv, kw in [(1, 1), (1, 2), (2, 1), (1, 3), (3, 1), (1.5, 1), (1, 1.5), (2, 2)]:
             t1 = t3 = t10 = 0
-            for _, _, truth, vec, kwv in data:
-                r = score(rrf(vec, kwv, wv, kw), truth)
+            for _, _, truth, vec, kwv, _served in data:
+                r = score(rrf(vec, kwv, wv, kw), truth) if vec else score(_served, truth)
                 if r is None:
                     continue
                 t1 += r == 1
