@@ -37,26 +37,68 @@ type NoteMetadata struct {
 	Updated          string   `json:"updated"`
 }
 
-// NotePath maps an element to its vault-relative note path (Rust
-// NoteGenerator::element_to_note_path): "::" becomes a directory separator,
-// the other unsafe characters become underscores, and folder elements get a
-// .folder suffix so a note file can never shadow a directory.
+// NotePath maps an element to its vault-relative note path.
+//
+// Layout (deliberately not a 1:1 of the source tree):
+//
+//   - Folder  → <qn>.folder.md
+//   - symbol  → <file>.elems/<symbol>.md   (QN "file::sym")
+//   - other   → <qn>.md                    (File elements, bare names)
+//
+// The ".elems" segment is the fix for #28: the Rust/Go port used to turn
+// "file.ts::Foo" into "file.ts/Foo.md", so MkdirAll("file.ts") failed with
+// EEXIST whenever that path was already a real source file (custom --vault
+// pointing at the project, or a prior non-.md write). Folder notes already
+// used a suffix for the same reason; symbols get the same treatment.
+// Absolute qualified names are stripped to vault-relative form so a leading
+// "/" cannot escape Join(vault, …) on any platform.
 func NotePath(el store.Element) string {
-	safe := strings.NewReplacer("::", "/", ":", "_", " ", "_", "(", "_", ")", "_").
-		Replace(el.QualifiedName)
+	qn := stripAbsPrefix(el.QualifiedName)
 	if el.ElementType == "Folder" {
-		return safe + ".folder.md"
+		return sanitizeNoteSeg(qn) + ".folder.md"
 	}
-	return safe + ".md"
+	if file, sym, ok := strings.Cut(qn, "::"); ok {
+		return sanitizeNoteSeg(file) + ".elems/" + sanitizeNoteSeg(sym) + ".md"
+	}
+	return sanitizeNoteSeg(qn) + ".md"
+}
+
+// sanitizeNoteSeg replaces path-hostile characters inside one note-path
+// segment. "::" is handled by NotePath before this runs; bare ":" / spaces /
+// parens become underscores (Rust element_to_note_path parity).
+func sanitizeNoteSeg(s string) string {
+	return strings.NewReplacer(":", "_", " ", "_", "(", "_", ")", "_").Replace(s)
+}
+
+// stripAbsPrefix drops a leading filesystem root so NotePath stays vault-
+// relative. On Unix that is a leading "/"; on Windows a drive letter ("C:/")
+// or UNC prefix. Cleaned empty input becomes "_".
+func stripAbsPrefix(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.ReplaceAll(p, "\\", "/")
+	for strings.HasPrefix(p, "/") {
+		p = strings.TrimPrefix(p, "/")
+	}
+	// Windows drive: "C:/foo" or "C:foo"
+	if len(p) >= 2 && p[1] == ':' &&
+		((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) {
+		p = p[2:]
+		p = strings.TrimPrefix(p, "/")
+	}
+	if p == "" {
+		return "_"
+	}
+	return p
 }
 
 // skipExportPath ports the Rust push filter: build artifacts, vendored trees,
-// test files and generated files get no note.
+// test files and generated files get no note. /build/ covers Kotlin/Compose
+// resourceGenerator trees that flooded #28's failure log.
 func skipExportPath(p string) bool {
 	if strings.Contains(p, ".test.") || strings.HasSuffix(p, ".generated.rs") {
 		return true
 	}
-	for _, frag := range []string{"/target/", "/.next/", "/node_modules/", "/dist/"} {
+	for _, frag := range []string{"/target/", "/.next/", "/node_modules/", "/dist/", "/build/"} {
 		if strings.Contains(p, frag) {
 			return true
 		}
@@ -149,8 +191,8 @@ func wikiLink(r store.Relationship) (string, bool) {
 		if !strings.Contains(stripDotSlash(parts[0]), "/") {
 			return "", false
 		}
-		// ./src/main.rs::main -> [[src/main.rs/main]]
-		return fmt.Sprintf("[[%s/%s]]", stripDotSlash(parts[0]), parts[1]), true
+		// ./src/main.rs::main -> [[src/main.rs.elems/main]] (matches NotePath)
+		return fmt.Sprintf("[[%s.elems/%s]]", stripDotSlash(parts[0]), parts[1]), true
 	}
 
 	if !strings.Contains(target, "/") {
