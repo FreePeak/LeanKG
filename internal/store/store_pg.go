@@ -746,11 +746,30 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 // ranked by cosine distance (HNSW index when present), hydrated against
 // code_elements. similarity = 1 - distance (the <=> operator's cosine distance).
 func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error) {
+	return s.SearchVectorsScoped(modelID, q, k, nil)
+}
+
+// SearchVectorsScoped is SearchVectors restricted to the elements keep accepts.
+// A nil keep is exactly SearchVectors.
+//
+// ponytail: keep is a Go predicate, so it cannot be pushed into the SQL the
+// HNSW index serves — the query over-fetches a bounded window and filters during
+// the scan, so a caller with an aggressive predicate can see FEWER than k hits
+// even when more matched. That is the ceiling; the upgrade path is a predicate
+// expressed as SQL (a path prefix, an element-type set) and pushed into the
+// WHERE clause, which is the only way to keep the index in the plan. The window
+// is 4x k with a floor, so the common case — a minority of rows filtered — is
+// unaffected.
+func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
 	if len(q) == 0 {
 		return nil, nil
 	}
 	if k < 0 {
 		k = 0
+	}
+	fetch := k
+	if keep != nil {
+		fetch = max(k*4, 64)
 	}
 	rows, err := s.pool.Query(pgCtx, `SELECT v.qualified_name,
 		COALESCE(ce.element_type,''), COALESCE(ce.name, v.qualified_name), COALESCE(ce.file_path,''),
@@ -760,7 +779,7 @@ func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSea
 		FROM `+s.vecTable(modelID)+` v
 		LEFT JOIN code_elements ce ON ce.qualified_name = v.qualified_name
 		ORDER BY v.vec <=> $1::vector
-		LIMIT $2`, pgvector.NewVector(q), k)
+		LIMIT $2`, pgvector.NewVector(q), fetch)
 	if err != nil {
 		return nil, err
 	}
@@ -777,7 +796,13 @@ func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSea
 		if meta != "" && meta != "{}" {
 			_ = json.Unmarshal([]byte(meta), &h.Element.Metadata)
 		}
+		if keep != nil && !keep(h.Element) {
+			continue
+		}
 		out = append(out, h)
+		if len(out) >= k {
+			break
+		}
 	}
 	return out, rows.Err()
 }

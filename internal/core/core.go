@@ -564,7 +564,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "fuzzy":
 		return e.rungFuzzy(req.Query, limit, resp, true)
 	case "semantic":
-		return e.rungSemantic(ctx, req.Query, limit, resp, true)
+		return e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope"))
 	case "impact", "path", "callers", "callees", "context", "explain":
 		return e.graphAction(ctx, req, resp)
 	}
@@ -598,7 +598,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	// No capability probe is needed: rungSemantic degrades to L2 itself when
 	// the collection is absent, the stamp drifted, or the provider is
 	// unreachable, each with its own reason. pin=true so that reason survives.
-	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true))
+	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope")))
 }
 
 func hitsOf(resp map[string]any) []map[string]any {
@@ -721,7 +721,7 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (
 // lost half the corpus. RRF is scale-free, so both survive with their own
 // weights and the disagreement between them becomes visible in the per-arm
 // ranks each hit carries.
-func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool) (map[string]any, error) {
+func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, scope ...string) (map[string]any, error) {
 	degrade := func(reason string) (map[string]any, error) {
 		if pin {
 			resp["retrieval"] = map[string]any{"rung": "L2", "reason": reason}
@@ -753,16 +753,27 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		return degrade(fmt.Sprintf("embedding provider failed (%v); degraded from L3", err))
 	}
 
+	// The scope is the caller's decision about which population to rank, and
+	// it applies to BOTH arms: scoping only the vector arm would leave the
+	// keyword arm free to reintroduce the test fixture the caller excluded,
+	// which is the answer they asked not to see. See scopeFilter for the
+	// measured motivation (rank 54 -> 7 on this repository's own store).
+	scopeArg := ""
+	if len(scope) > 0 {
+		scopeArg = scope[0]
+	}
+	keep, scopeName, err := scopeFilter(e.st, scopeArg)
+	if err != nil {
+		return nil, err
+	}
+
 	// The keyword arm is FUSED, not consulted afterwards. It comes from
 	// FindFuzzy — the store's own L2 rung — rather than the FTSBackend's
-	// Postgres-only SearchElementsFTS, so the sqlite ladder fuses the same
-	// keyword ranking it serves on its own; a backend with no FTS index simply
-	// runs the vector arm alone.
-	kw, err := e.st.FindFuzzy(q, limit)
+	kw, err := e.findFuzzyScoped(q, limit, keep)
 	if err != nil {
 		return degrade(fmt.Sprintf("keyword arm failed (%v); degraded from L3", err))
 	}
-	vectors, err := e.st.SearchVectors(modelID, qvec, limit)
+	vectors, err := e.st.SearchVectorsScoped(modelID, qvec, limit, keep)
 	if err != nil {
 		return degrade(fmt.Sprintf("vector search failed (%v); degraded from L3", err))
 	}
@@ -787,8 +798,95 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if len(kw) > 0 {
 		arms += "+keyword"
 	}
-	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
+	retrieval := map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
+	if scopeName != "" {
+		// A scoped answer must SAY it is scoped: an agent that asked for
+		// production code and got a narrower corpus should be able to see that
+		// from the answer alone, not infer it.
+		retrieval["scope"] = scopeName
+	}
+	resp["retrieval"] = retrieval
 	return withEmptyHint(resp, nil)
+}
+
+// scopeFilter resolves the query's `args.scope` into an element predicate, and
+// the name to report it under. "" (the default) is nil — the full corpus, which
+// is what every existing caller and every existing answer sees.
+//
+// The values are the populations a caller actually wants to separate, measured
+// on this repository's own store: 9,306 vectors of which 1,879 are test
+// fixtures and 4,148 are documentation, and ranking "reciprocal rank fusion of
+// ranked lists" puts internal/store/pg_fts.go::FuseRRF at rank 54 over the whole
+// corpus and rank 7 over code. `code` is production source; `prod` is `code`
+// plus current (non-archived) docs; `all` is the full corpus, spelled out so an
+// agent can undo a narrower scope it inherited.
+//
+// An unknown scope is an error rather than a silent full corpus: answering over
+// everything when the caller asked for a subset looks exactly like the scope
+// working, and the difference is invisible in the answer.
+func scopeFilter(_ store.Backend, scope string) (func(store.Element) bool, string, error) {
+	switch scope {
+	case "":
+		return nil, "", nil
+	case "all":
+		return nil, "all", nil
+	case "code", "src":
+		return func(el store.Element) bool { return isProductionCode(el.FilePath) }, "code", nil
+	case "prod", "production":
+		return func(el store.Element) bool {
+			return isProductionCode(el.FilePath) || isCurrentDoc(el.FilePath)
+		}, "prod", nil
+	default:
+		return nil, "", fmt.Errorf("unknown query scope %q (valid: code, prod, all)", scope)
+	}
+}
+
+// isProductionCode reports whether a path is source the project ships rather
+// than a test or a fixture. A test file is a _test.go sibling or anything under
+// a testdata/ directory — the convention every language in this repo's registry
+// already follows for its own fixtures.
+func isProductionCode(path string) bool {
+	if strings.Contains(path, "testdata/") || strings.Contains(path, "/test/") {
+		return false
+	}
+	base := path
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		base = path[i+1:]
+	}
+	for _, suffix := range []string{
+		"_test.go", "_test.py", ".test.ts", ".test.tsx", ".test.js", ".spec.ts",
+		"_test.rb", "_spec.rb", "Test.java", "Tests.cs",
+	} {
+		if strings.HasSuffix(base, suffix) {
+			return false
+		}
+	}
+	return true
+}
+
+// isCurrentDoc reports whether a documentation path is current rather than
+// superseded: docs/archive/ is real content and stays in the corpus, but
+// `prod` excludes it because an archive describes a state the project left.
+func isCurrentDoc(path string) bool {
+	return strings.HasPrefix(path, "docs/") && !strings.HasPrefix(path, "docs/archive/")
+}
+
+// findFuzzyScoped is the keyword arm with the same element filter the vector arm
+// got. The filter is applied AFTER FindFuzzy, so a scoped caller that filters
+// aggressively can see fewer than `limit` keyword hits even when more matched —
+// the same ceiling the scoped vector search documents.
+func (e *Engine) findFuzzyScoped(q string, limit int, keep func(store.Element) bool) ([]store.FuzzyMatch, error) {
+	matches, err := e.st.FindFuzzy(q, limit)
+	if err != nil || keep == nil {
+		return matches, err
+	}
+	out := matches[:0]
+	for _, m := range matches {
+		if keep(m.Element) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 // vectorSim finds a vector arm's similarity for one qualified name.

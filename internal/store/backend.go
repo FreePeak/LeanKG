@@ -92,6 +92,12 @@ type Backend interface {
 	// has a live element vs. rows whose QN disappeared.
 	VectorCoverage(modelID string) (covered, orphans int, err error)
 	SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error)
+	// SearchVectorsScoped is SearchVectors restricted to the elements keep
+	// accepts; a nil keep is exactly SearchVectors. A caller that wants to rank
+	// production code without test fixtures and archived prose otherwise ranks
+	// over the same collection, and the filter costs one predicate per row on a
+	// scan both backends already do.
+	SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error)
 
 	// freshness watermark (DB-resident; readers never bump)
 	Watermark() (seq, at int64, err error)

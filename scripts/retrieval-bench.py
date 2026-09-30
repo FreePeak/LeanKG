@@ -65,8 +65,11 @@ class Session:
             if msg.get("id") == self._id:
                 return msg
 
-    def query(self, q, limit):
-        r = self.call("tools/call", {"name": "query", "arguments": {"query": q, "limit": limit}})
+    def query(self, q, limit, scope=""):
+        args = {"query": q, "limit": limit}
+        if scope:
+            args["args"] = {"scope": scope}
+        r = self.call("tools/call", {"name": "query", "arguments": args})
         return json.loads(r["result"]["content"][0]["text"])
 
     def close(self):
@@ -109,19 +112,20 @@ def main():
     ap.add_argument("--project", default=".")
     ap.add_argument("--limit", type=int, default=30, help="per-arm depth fetched and scored")
     ap.add_argument("--sweep", action="store_true", help="score every (vector, keyword) weight pair")
+    ap.add_argument("--scope", default="", help="args.scope passed to every query (code|prod|all)")
     args = ap.parse_args()
 
     labels = load_labels()
     s = Session(args.binary, args.project)
     data = []
     for n, q, truth, where in labels:
-        a = s.query(q, args.limit)
+        a = s.query(q, args.limit, args.scope)
         vec, kw = arms_of(a, args.limit)
         data.append((n, q, truth, vec, kw))
     s.close()
 
     n = len(data)
-    print(f"{n} labels, per-arm depth {args.limit}\n")
+    print(f"{n} labels, per-arm depth {args.limit}, scope={args.scope or 'full corpus'}\n")
 
     def tally(order_fn):
         out = {}
