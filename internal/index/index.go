@@ -48,7 +48,8 @@ type Result struct {
 }
 
 // skipDirs are skipped path components during the walk; any dot-prefixed
-// directory is skipped as well.
+// directory is skipped as well, and so is any dot-prefixed FILE (see the
+// walk's name gate) — one rule for both, so the walk and indexDir cannot drift.
 var skipDirs = map[string]bool{
 	".git": true, "target": true, "node_modules": true, "vendor": true,
 	".leankg": true, "dist": true, "build": true, ".worktrees": true,
@@ -193,6 +194,23 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return nil
 		}
 		if !d.Type().IsRegular() {
+			return nil
+		}
+		// A dot-prefixed FILE is out, same as a dot-prefixed directory (the
+		// skipDirs branch above): the extension gate below cannot tell a
+		// tracked `.env.example` from a live `.env`, so without this every
+		// dotfile with a language extension entered the store — agent scratch
+		// files (`.*.md`), harness configs, and secret-shaped files that then
+		// get embedded, exported and pushed. Found live on this repository: a
+		// dot-prefixed PR scratch note answered the query "where is the single
+		// flight lock taken" at rank 1 on both arms, outranking the source
+		// documenting it.
+		//
+		// ponytail: name-based, not a denylist of secret filenames — one rule,
+		// and a denylist is always incomplete. The cost is that a deliberately
+		// dot-prefixed source file is not indexed; nothing in this repo tracks
+		// one, and `git ls-files` is the authority if that ever changes.
+		if strings.HasPrefix(name, ".") {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
