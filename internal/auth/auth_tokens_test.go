@@ -298,3 +298,34 @@ func TestVerifyStampsLastUsed(t *testing.T) {
 		t.Fatalf("stamped the wrong token: %s", list[0].ID)
 	}
 }
+
+// TestDeadDBTokensDoNotEnableGate pins the unlock: a store that holds only
+// revoked/expired rows must behave like an empty store (local default Admin),
+// otherwise leftover smoke-test tokens lock REST behind 401 forever.
+func TestDeadDBTokensDoNotEnableGate(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+
+	_, revokedTok, err := Mint(st, MintRequest{Name: "revoked-smoke", Role: "viewer"})
+	if err != nil {
+		t.Fatalf("mint revoked: %v", err)
+	}
+	if err := st.TokenRevoke(revokedTok.ID, time.Now().Unix()); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	_, expTok, err := Mint(st, MintRequest{Name: "expired-smoke", Role: "viewer", TTL: -time.Second})
+	if err != nil {
+		t.Fatalf("mint expired: %v", err)
+	}
+	_ = expTok
+
+	role, err := RoleForRequestWithStore(st, reqWith(""))
+	if err != nil || role != Admin {
+		t.Fatalf("dead tokens only: role=%v err=%v, want Admin", role, err)
+	}
+	// A random bearer is also Admin (gate off), not 401.
+	role, err = RoleForRequestWithStore(st, reqWith("nope"))
+	if err != nil || role != Admin {
+		t.Fatalf("dead tokens + unknown bearer: role=%v err=%v, want Admin", role, err)
+	}
+}

@@ -926,32 +926,69 @@ func looksLikeIdentifier(s string) bool {
 	return true
 }
 
+// resolveGraphSeed turns a short name or bare identifier into the qualified
+// name graph verbs need. Relationships are keyed by qualified_name only, so a
+// bare "ServeProjectDirs" used to look like a leaf (empty callers/callees) even
+// when the element and its edges were indexed. FindExact already ranks by
+// shortest qualified_name, matching L1. Unknown seeds pass through unchanged so
+// graph.ErrUnknownNode still fires for true misses.
+func (e *Engine) resolveGraphSeed(seed string) (string, error) {
+	seed = strings.TrimSpace(seed)
+	if seed == "" {
+		return seed, nil
+	}
+	els, err := e.st.FindExact(seed)
+	if err != nil {
+		return "", err
+	}
+	if len(els) == 0 {
+		return seed, nil
+	}
+	return els[0].QualifiedName, nil
+}
+
 // graphAction routes the connection verbs (Rust graph/query.rs parity) to
-// internal/graph; the query string is the seed qualified name.
+// internal/graph. The query string may be a bare name or a qualified name —
+// bare names are resolved via FindExact before traversal.
 func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
 	g := func() map[string]any {
 		resp["action"] = req.Action
 		return resp
+	}
+	seed, err := e.resolveGraphSeed(req.Query)
+	if err != nil {
+		return nil, err
+	}
+	if seed != req.Query {
+		resp["resolved_query"] = seed
 	}
 	switch req.Action {
 	case "impact":
 		// depth comes from args.depth (Rust --depth parity); limit is a
 		// result-count concept, not a traversal depth.
 		depth := argInt(req.Args, "depth", 2)
-		hits, err := graph.Impact(e.st, req.Query, depth)
+		hits, err := graph.Impact(e.st, seed, depth)
 		if err != nil {
 			return nil, err
 		}
 		resp["hits"] = hits
 		return g(), nil
 	case "path":
-		if argStr(req.Args, "to") == "" {
+		toRaw := argStr(req.Args, "to")
+		if toRaw == "" {
 			return nil, fmt.Errorf("query path requires args.to (target qualified name)")
+		}
+		to, err := e.resolveGraphSeed(toRaw)
+		if err != nil {
+			return nil, err
+		}
+		if to != toRaw {
+			resp["resolved_to"] = to
 		}
 		// maxDepth comes from args.depth (default 2) — Limit is a result
 		// count, not a traversal bound; paths are a single answer anyway.
 		maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
-		path, err := graph.ShortestPath(e.st, req.Query, argStr(req.Args, "to"), maxDepth)
+		path, err := graph.ShortestPath(e.st, seed, to, maxDepth)
 		if err != nil {
 			return nil, err
 		}
@@ -965,27 +1002,27 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		}
 		return g(), nil
 	case "callers":
-		qns, err := graph.Callers(e.st, req.Query)
+		qns, err := graph.Callers(e.st, seed)
 		if err != nil {
 			return nil, err
 		}
 		resp["callers"] = qns
 		if len(qns) == 0 {
-			resp["guidance"] = graphEmptyGuidance("callers", req.Query)
+			resp["guidance"] = graphEmptyGuidance("callers", seed)
 		}
 		return g(), nil
 	case "callees":
-		qns, err := graph.Callees(e.st, req.Query)
+		qns, err := graph.Callees(e.st, seed)
 		if err != nil {
 			return nil, err
 		}
 		resp["callees"] = qns
 		if len(qns) == 0 {
-			resp["guidance"] = graphEmptyGuidance("callees", req.Query)
+			resp["guidance"] = graphEmptyGuidance("callees", seed)
 		}
 		return g(), nil
 	case "context":
-		out, err := graph.Context(e.st, req.Query, req.Limit)
+		out, err := graph.Context(e.st, seed, req.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -994,7 +1031,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		}
 		return g(), nil
 	case "explain":
-		out, err := graph.Explain(e.st, req.Query)
+		out, err := graph.Explain(e.st, seed)
 		if err != nil {
 			return nil, err
 		}
@@ -1270,13 +1307,20 @@ func (e *Engine) compressRead(req ImportRequest) (map[string]any, error) {
 	if req.Path == "" {
 		return nil, fmt.Errorf("import read requires path")
 	}
+	// Relative paths mean "in this project" — same contract as import repo/dir.
+	// Without the anchor, MCP clients sending internal/foo.go open against the
+	// server process cwd (often a different repo) and fail with ENOENT.
+	path := req.Path
+	if !filepath.IsAbs(path) && e.projectDir != "" {
+		path = filepath.Join(e.projectDir, path)
+	}
 	modeName := argStr(req.Args, "mode")
 	mode, ok := compress.ParseMode(modeName)
 	if modeName != "" && !ok {
 		return nil, fmt.Errorf("invalid mode %q (valid: adaptive, full, map, signatures, diff, aggressive, entropy, lines)", modeName)
 	}
 	res, err := e.compressor.Reduce(compress.Request{
-		Path:      req.Path,
+		Path:      path,
 		Mode:      mode,
 		LinesSpec: argStr(req.Args, "lines"),
 		Fresh:     argStr(req.Args, "fresh") == "true",
@@ -1285,7 +1329,7 @@ func (e *Engine) compressRead(req ImportRequest) (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"path":            req.Path,
+		"path":            path,
 		"mode":            res.Mode.String(),
 		"content":         res.Content,
 		"tokens":          res.Tokens,
