@@ -17,10 +17,12 @@ func TestNotePath(t *testing.T) {
 		el   store.Element
 		want string
 	}{
-		{"qualified name splits on ::", store.Element{QualifiedName: "./src/main.rs::main", ElementType: "function"}, "./src/main.rs/main.md"},
+		{"qualified name splits on :: into .elems", store.Element{QualifiedName: "./src/main.rs::main", ElementType: "function"}, "./src/main.rs.elems/main.md"},
 		{"bare colon becomes underscore", store.Element{QualifiedName: "Cargo.toml:dep", ElementType: "dependency"}, "Cargo.toml_dep.md"},
 		{"spaces and parens become underscores", store.Element{QualifiedName: "impl Display for Foo (x)", ElementType: "impl"}, "impl_Display_for_Foo__x_.md"},
 		{"folder notes get the folder suffix", store.Element{QualifiedName: "./src/api", ElementType: "Folder"}, "./src/api.folder.md"},
+		{"absolute QN is stripped to vault-relative", store.Element{QualifiedName: "/Volumes/X/app/src/f.ts::Foo", ElementType: "class"}, "Volumes/X/app/src/f.ts.elems/Foo.md"},
+		{"file element keeps .md beside the source name", store.Element{QualifiedName: "src/f.ts", ElementType: "File"}, "src/f.ts.md"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -28,6 +30,58 @@ func TestNotePath(t *testing.T) {
 				t.Fatalf("NotePath(%q) = %q, want %q", tc.el.QualifiedName, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestPushSurvivesSourceTreeAsVault is the #28 regression: when the vault is
+// the project root (or any tree that already holds the source files named in
+// the qualified names), the old "file.ts/Foo.md" layout called
+// MkdirAll("file.ts") against a real file and failed with EEXIST. Symbols now
+// land under "<file>.elems/", so the source file and its notes coexist.
+func TestPushSurvivesSourceTreeAsVault(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "apps", "backend", "src", "auctions", "services")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	srcFile := filepath.Join(src, "bidding.service.ts")
+	if err := os.WriteFile(srcFile, []byte("export class BiddingService {}"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	st := openStore(t)
+	qnFile := "apps/backend/src/auctions/services/bidding.service.ts"
+	if err := st.UpsertElements([]store.Element{
+		{QualifiedName: qnFile, ElementType: "File", Name: "bidding.service.ts", FilePath: qnFile, Language: "ts"},
+		{QualifiedName: qnFile + "::BiddingService", ElementType: "class", Name: "BiddingService", FilePath: qnFile, Language: "ts"},
+		{QualifiedName: qnFile + "::placeBid", ElementType: "function", Name: "placeBid", FilePath: qnFile, Language: "ts"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Vault == project root: the source file is already on disk at the path
+	// the old layout would have tried to mkdir.
+	e := New(root, st)
+	res, err := e.Push()
+	if err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if res.Failed != 0 || res.Notes != 3 {
+		t.Fatalf("Push = %+v, want 3 notes and 0 failures", res)
+	}
+
+	// Source file untouched; notes sit beside it under .elems/.
+	if _, err := os.Stat(srcFile); err != nil {
+		t.Fatalf("source file must survive push: %v", err)
+	}
+	for _, rel := range []string{
+		"apps/backend/src/auctions/services/bidding.service.ts.md",
+		"apps/backend/src/auctions/services/bidding.service.ts.elems/BiddingService.md",
+		"apps/backend/src/auctions/services/bidding.service.ts.elems/placeBid.md",
+	} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("missing note %s: %v", rel, err)
+		}
 	}
 }
 
@@ -94,7 +148,7 @@ updated: 2026-09-12T10:00:00Z
 **Relationships**:
   - ./src/main.rs::main (calls)
 
-- [[src/main.rs/main]] (calls)
+- [[src/main.rs.elems/main]] (calls)
 `
 	if got := RenderNote(el, meta); got != want {
 		t.Fatalf("note content mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)
@@ -143,7 +197,7 @@ func TestBuildMetadataFiltersWikiLinks(t *testing.T) {
 
 	wantLinks := []string{
 		"- [[pkg.folder]] (imports)",
-		"- [[pkg/other.go/Other]] (calls)",
+		"- [[pkg/other.go.elems/Other]] (calls)",
 	}
 	if len(meta.WikiLinks) != len(wantLinks) {
 		t.Fatalf("WikiLinks = %v, want %v", meta.WikiLinks, wantLinks)
@@ -190,13 +244,13 @@ func TestPushWritesNotesForStoreElements(t *testing.T) {
 	}
 	got := vaultFiles(t, vault)
 	sort.Strings(got)
-	want := []string{"pkg/thing.go/Thing.md", "src/api.rs/Handler.md", "src/util.rs.md"}
+	want := []string{"pkg/thing.go.elems/Thing.md", "src/api.rs.elems/Handler.md", "src/util.rs.md"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("vault files = %v, want %v", got, want)
 	}
 
 	// The pushed note carries the store's annotation and its own stamps.
-	content, err := os.ReadFile(filepath.Join(vault, "src", "api.rs", "Handler.md"))
+	content, err := os.ReadFile(filepath.Join(vault, "src", "api.rs.elems", "Handler.md"))
 	if err != nil {
 		t.Fatalf("read note: %v", err)
 	}
@@ -225,7 +279,7 @@ func TestPushWritesNotesForStoreElements(t *testing.T) {
 	}
 
 	// Thing links only the vault-shaped targets.
-	thing, err := os.ReadFile(filepath.Join(vault, "pkg", "thing.go", "Thing.md"))
+	thing, err := os.ReadFile(filepath.Join(vault, "pkg", "thing.go.elems", "Thing.md"))
 	if err != nil {
 		t.Fatalf("read Thing note: %v", err)
 	}
@@ -240,7 +294,7 @@ func TestPushWritesNotesForStoreElements(t *testing.T) {
 	if !ok {
 		t.Fatalf("Thing note has no wiki-link section:\n%s", rest)
 	}
-	for _, wantLink := range []string{"[[pkg.folder]] (imports)", "[[pkg/other.go/Other]] (calls)"} {
+	for _, wantLink := range []string{"[[pkg.folder]] (imports)", "[[pkg/other.go.elems/Other]] (calls)"} {
 		if !strings.Contains(wiki, wantLink) {
 			t.Fatalf("Thing wiki-links missing %q:\n%s", wantLink, wiki)
 		}
