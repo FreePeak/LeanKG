@@ -67,6 +67,12 @@ type Backend interface {
 
 	FindExact(name string) ([]Element, error)
 	FindFuzzy(query string, limit int) ([]FuzzyMatch, error)
+	// FindByNameToken ranks elements whose SYMBOL NAME contains an
+	// identifier-shaped token of the query, ignoring the body entirely. It is
+	// the ArmName ranking arm: empty for a prose query, because the tokens must
+	// look like identifiers. Both backends implement it (LIKE / ILIKE), so the
+	// arm is engine-agnostic like every other rung.
+	FindByNameToken(query string, limit int) ([]FuzzyMatch, error)
 	ElementCount() (int, error)
 	RelationshipCount() (int, error)
 	ElementsByType() (map[string]int, error)

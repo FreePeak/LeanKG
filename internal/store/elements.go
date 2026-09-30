@@ -262,6 +262,126 @@ type FuzzyMatch struct {
 	Score   float64
 }
 
+// FindByNameToken ranks elements whose SYMBOL NAME contains an identifier-shaped
+// token of the query, shortest (most specific) name first. It is the ArmName
+// ranking arm, and it reads the name alone: the FTS arm reads
+// name + qualified_name + content but only for words that MATCH, and a vector
+// embedding reads the body — so a question that paraphrases ("cut a string to
+// n runes") or names a two-line helper whose body says nothing useful
+// (`coverage`) reaches neither.
+//
+// The tokens become quoted LIKE patterns, so user input can never inject SQL,
+// and a token must be identifier-shaped (see nameTokens) so ordinary prose never
+// summons this arm and fills the result with every element that has a common
+// word in its name. Matching is case-insensitive on both sides because Go symbol
+// names and an agent's question do not agree about case.
+//
+// The score is 0 for every hit: this arm does not rank by RELEVANCE, it ranks by
+// specificity (shortest name first), and the fusion only needs the order.
+func (s *Store) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
+	toks := nameTokens(query)
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var where []string
+	var args []any
+	for _, t := range toks {
+		pat := "%" + t + "%"
+		where = append(where, "(ce.name LIKE ? COLLATE NOCASE OR ce.qualified_name LIKE ? COLLATE NOCASE)")
+		args = append(args, pat, pat)
+	}
+	args = append(args, limit)
+	rows, err := s.db.Query(`SELECT `+elementCols+`, 0.0 AS score
+		FROM code_elements ce
+		WHERE `+strings.Join(where, " OR ")+`
+		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FuzzyMatch
+	for rows.Next() {
+		var m FuzzyMatch
+		var meta string
+		if err := rows.Scan(&m.Element.QualifiedName, &m.Element.ElementType, &m.Element.Name, &m.Element.FilePath,
+			&m.Element.LineStart, &m.Element.LineEnd, &m.Element.Language, &m.Element.ParentQualified,
+			&m.Element.Content, &meta, &m.Score); err != nil {
+			return nil, err
+		}
+		if meta != "" && meta != "{}" {
+			_ = json.Unmarshal([]byte(meta), &m.Element.Metadata)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// nameTokens extracts the identifier-shaped tokens of a query: runs containing
+// a capital letter, an underscore or a dot, which is what separates
+// "truncateRunes" / "Store_Space" from the words of an English sentence. A stop
+// set keeps the lowercase English words that legitimately look like symbols
+// ("get", "run", "list") out of the arm.
+func nameTokens(query string) []string {
+	fields := strings.FieldsFunc(query, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' && r != '.'
+	})
+	// The stop set is the SMALLEST set of words that are simultaneously common
+	// English and plausible symbol names: firing the name arm on "how", "the"
+	// or "one" would put every element with that substring in its name into
+	// every result, which is worse than not having the arm. Words that ARE real
+	// symbol names in most codebases ("lock", "stamp", "run", "list") are
+	// deliberately NOT here — missing those is the failure the arm exists to
+	// prevent, and the arm's 0.6 weight plus the fusion is what keeps them from
+	// dominating.
+	stop := map[string]bool{
+		"how": true, "what": true, "where": true, "which": true, "the": true,
+		"and": true, "for": true, "not": true, "use": true, "one": true, "two": true,
+		"all": true, "any": true, "with": true, "from": true, "into": true, "that": true,
+		"this": true, "then": true, "than": true, "when": true, "why": true, "who": true,
+		"you": true, "your": true, "its": true, "are": true, "was": true, "were": true,
+		"can": true, "does": true, "did": true, "has": true, "had": true, "but": true,
+		"out": true, "own": true, "same": true, "too": true, "very": true, "just": true,
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fields {
+		if len(f) < 3 || seen[f] {
+			continue
+		}
+		// Identifier-shaped: a capital, an underscore, or a dot (Type.Method).
+		// A single capital is enough for "Runes" but not for "stamp" — which is
+		// a real symbol name AND an ordinary English word. The length floor
+		// below is what separates them: a short word that is also a symbol
+		// (stamp, lock, list) still has to be CAUGHT, so the shape test is the
+		// only filter, and the stop set handles the handful that would
+		// otherwise summon the arm on prose.
+		shaped := strings.ContainsAny(f, "_.") ||
+			(f[0] >= 'A' && f[0] <= 'Z') ||
+			// A lowercase token counts when it is a compound (has a digit or a
+			// second capital later), which is where names like `fts5` and
+			// `parseURL` live.
+			strings.ContainsAny(f[1:], "0123456789") ||
+			func() bool {
+				for i := 1; i < len(f); i++ {
+					if f[i] >= 'A' && f[i] <= 'Z' {
+						return true
+					}
+				}
+				return false
+			}()
+		if !shaped || stop[strings.ToLower(f)] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
 // FindFuzzy implements the L2 rung over FTS5. The query is tokenized into
 // quoted OR terms so user input can never inject FTS syntax.
 func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {

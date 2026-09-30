@@ -777,7 +777,18 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil {
 		return degrade(fmt.Sprintf("vector search failed (%v); degraded from L3", err))
 	}
-	fused, elements, ranks, scores := fuseQueryRanks(vectors, kw, limit)
+	// The NAME arm, third and weakest: it reads symbol names only, so it reaches
+	// a helper whose body says nothing useful for the question — which is where
+	// the other two arms are weakest (measured on this repository's own store:
+	// `truncateRunes` ranks 755 and `coverage` 1776 over production code alone,
+	// while 18 of the 30 labelled questions contain a token of the answer's own
+	// symbol name). Empty for a prose question by construction, so a normal
+	// question is unaffected.
+	names, err := e.findNameScoped(q, limit, keep)
+	if err != nil {
+		return degrade(fmt.Sprintf("name arm failed (%v); degraded from L3", err))
+	}
+	fused, elements, ranks, scores := fuseQueryRanks(vectors, kw, names, limit)
 	if len(fused) == 0 {
 		return withEmptyHint(e.rungFuzzy(q, limit, resp, true))
 	}
@@ -797,6 +808,9 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	arms := "vector"
 	if len(kw) > 0 {
 		arms += "+keyword"
+	}
+	if len(names) > 0 {
+		arms += "+name"
 	}
 	retrieval := map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
 	if scopeName != "" {
@@ -871,6 +885,35 @@ func isCurrentDoc(path string) bool {
 	return strings.HasPrefix(path, "docs/") && !strings.HasPrefix(path, "docs/archive/")
 }
 
+// nameArmWeight is the name arm's scale in the L3 fusion.
+//
+// ponytail: 0.6, chosen because the arm fires on a SUBSTRING of a symbol name,
+// which is a much weaker signal than a body that discusses the question or a
+// keyword that matches it — and because the failure it must not cause is
+// visible: a question mentioning "Fuse" would otherwise pull every
+// FuseRRFWeighted / FuseRRFWeights / fuseQueryRanks element to the same rank-1
+// score and lose the fusion's ability to break that tie on evidence. One
+// number, one place; the sweep in scripts/retrieval-bench.py --sweep is the
+// gate if it ever needs revisiting.
+const nameArmWeight = 0.6
+
+// findNameScoped is the name arm with the same element filter the other two arms
+// got — scoping only the vector arm would let the other arms reintroduce exactly
+// the fixture the caller excluded.
+func (e *Engine) findNameScoped(q string, limit int, keep func(store.Element) bool) ([]store.FuzzyMatch, error) {
+	matches, err := e.st.FindByNameToken(q, limit)
+	if err != nil || keep == nil {
+		return matches, err
+	}
+	out := matches[:0]
+	for _, m := range matches {
+		if keep(m.Element) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
 // findFuzzyScoped is the keyword arm with the same element filter the vector arm
 // got. The filter is applied AFTER FindFuzzy, so a scoped caller that filters
 // aggressively can see fewer than `limit` keyword hits even when more matched —
@@ -899,12 +942,17 @@ func vectorSim(vectors []store.VectorSearchHit, qn string) (float64, bool) {
 	return 0, false
 }
 
-// fuseQueryRanks reciprocal-rank fuses the two arms into one key order and
-// returns, per key, the element, the per-arm ranks and the fused score. The
-// element maps are keyed by qualified name so the caller never re-queries the
-// store; a key only one arm returned still appears, carrying that arm's rank.
-func fuseQueryRanks(vectors []store.VectorSearchHit, kw []store.FuzzyMatch, limit int) ([]string, map[string]store.Element, map[string]map[string]int, map[string]float64) {
-	lists := make([]store.RankList, 0, 2)
+// fuseQueryRanks reciprocal-rank fuses the arms into one key order and returns,
+// per key, the element, the per-arm ranks and the fused score. The element maps
+// are keyed by qualified name so the caller never re-queries the store; a key
+// only one arm returned still appears, carrying that arm's rank.
+//
+// The name arm is weighted BELOW the other two (nameArmWeight): a query token
+// appearing inside a symbol name is weaker evidence than a body that discusses
+// the question, and an unweighted arm would let "Fuse" drag in every symbol whose
+// name contains it.
+func fuseQueryRanks(vectors []store.VectorSearchHit, kw []store.FuzzyMatch, names []store.FuzzyMatch, limit int) ([]string, map[string]store.Element, map[string]map[string]int, map[string]float64) {
+	lists := make([]store.RankList, 0, 3)
 	elements := map[string]store.Element{}
 	ranks := map[string]map[string]int{}
 	scores := map[string]float64{}
@@ -924,7 +972,15 @@ func fuseQueryRanks(vectors []store.VectorSearchHit, kw []store.FuzzyMatch, limi
 		}
 		lists = append(lists, store.RankList{Name: store.ArmTSVector, Keys: keys})
 	}
-	fused := store.FuseRRF(lists)
+	if len(names) > 0 {
+		keys := make([]string, 0, len(names))
+		for _, m := range names {
+			keys = append(keys, m.Element.QualifiedName)
+			elements[m.Element.QualifiedName] = m.Element
+		}
+		lists = append(lists, store.RankList{Name: store.ArmName, Keys: keys})
+	}
+	fused := store.FuseRRFWeighted(lists, store.FuseRRFWeights{Name: nameArmWeight})
 	out := make([]string, 0, len(fused))
 	for _, h := range fused {
 		out = append(out, h.Key)

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -321,6 +322,37 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
 		FROM code_elements ce
 		WHERE ce.name ILIKE $1 ESCAPE '\' OR ce.qualified_name ILIKE $1 ESCAPE '\'
 		ORDER BY length(ce.qualified_name) LIMIT $2`, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanFuzzyMatches(rows)
+}
+
+// FindByNameToken is the ArmName arm on postgres: the same identifier-shaped
+// tokens as the sqlite implementation (shared nameTokens, so both engines fire
+// the arm on exactly the same questions) with ILIKE instead of LIKE, because
+// Postgres' LIKE is case-sensitive.
+func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
+	toks := nameTokens(query)
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var where []string
+	var args []any
+	for i, t := range toks {
+		n := i + 1
+		where = append(where, fmt.Sprintf("(ce.name ILIKE $%d ESCAPE '\\' OR ce.qualified_name ILIKE $%d ESCAPE '\\')", n, n))
+		args = append(args, "%"+escapeLike(t)+"%")
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+`, 0.0 AS score
+		FROM code_elements ce
+		WHERE `+strings.Join(where, " OR ")+`
+		ORDER BY length(ce.name), length(ce.qualified_name) LIMIT $`+strconv.Itoa(len(toks)+1),
+		args...)
 	if err != nil {
 		return nil, err
 	}
