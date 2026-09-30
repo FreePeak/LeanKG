@@ -163,6 +163,10 @@ func (s *Server) registerTools() {
 			"(action=memory, command=create|str_replace|insert|delete|rename|add|replace|remove). " +
 			"Legacy tool name 'set' is superseded by this tool. " +
 			"Use action=dir with path=\".\" to import the current directory as a scoped index target (FR-P2). " +
+			"The store is <project>/.leankg/leankg.db unless LEANKG_DB_PATH or leankg.yaml db.standalone_db_path " +
+			"names another file — in that case EVERY verb (import, query, status, doctor, leankg-embed) reads THAT " +
+			"store and no store appears under the project, so the path you import does not decide where the data lives; " +
+			"status reports it in the store field. " +
 			"Import only for first-time indexing or deliberate updates; indexing does not create vectors. " + toolGuidance,
 		InputSchema: json.RawMessage(`{
 			"type": "object",

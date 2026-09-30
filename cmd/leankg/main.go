@@ -553,6 +553,17 @@ func cmdDoctor(args []string) int {
 	}
 	st, err := store.Open(dbPath, store.RO)
 	if err != nil {
+		// A store that does not exist yet is a FIRST-RUN state, not a broken
+		// one: `status` already reports it as cold and exits 0, and
+		// `doctor --deep` already names the command. The raw open error
+		// ("read-only open of missing store …: no such file or directory")
+		// leaked the storage layer into a user-facing diagnosis and buried
+		// the only thing an agent can act on. Keep the path (so the operator
+		// sees WHERE the engine looked) and name the fix.
+		if _, statErr := os.Lstat(dbPath); os.IsNotExist(statErr) {
+			fmt.Printf("FAIL store: no store at %s — this project is not indexed yet; run `leankg index .` (then `leankg-embed run` for semantic search)\n", dbPath)
+			return 2
+		}
 		fmt.Printf("FAIL store: %v\n", err)
 		return 2
 	}
