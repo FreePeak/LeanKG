@@ -213,12 +213,20 @@ func cmdPack(args []string) {
 		*output, m.Elements, m.Relationships, scope, hash)
 }
 
-// cmdGenerate ports `leankg generate`: render AGENTS.md from the graph and
-// write it to docs/AGENTS.md (the Rust destination).
+// cmdGenerate ports `leankg generate`: render AGENTS.md from the graph.
+//
+// It PRINTS by default and writes only when the caller names a destination
+// with --out. It used to write `docs/AGENTS.md` in the current directory with
+// no flag and no announcement — a verb whose documented output is stdout had an
+// unannounced side effect on the user's tree, and in a repository whose `docs/`
+// is tracked, the next `git status` showed a file the operator never asked for
+// and never knew to review. Nothing is lost by printing: the body is still on
+// stdout, and a caller who wants the file names where it goes.
 func cmdGenerate(args []string) {
 	fs := flag.NewFlagSet("generate", flag.ExitOnError)
 	template := fs.String("template", "", "template name (accepted for CLI parity; the Rust generator never read it)")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
+	out := fs.String("out", "", "write the body to this path instead of only printing it")
 	parseInterspersed("generate", fs, args, 0)
 	_ = template
 
@@ -232,16 +240,25 @@ func cmdGenerate(args []string) {
 	if err != nil {
 		verbFatal(err)
 	}
-	fmt.Printf("Generated documentation:\n%s", body)
-	path, err := docgen.WriteFile("docs", body)
+	if *out == "" {
+		fmt.Printf("%s", body)
+		fmt.Println("\n(not written to disk — pass --out PATH to save it)")
+		return
+	}
+	path, err := docgen.WriteFileTo(*out, body)
 	if err != nil {
 		verbFatal(err)
 	}
+	fmt.Printf("%s", body)
 	fmt.Printf("\nSaved to %s\n", path)
 }
 
-// requireIndexedElement refuses a qualified_name the index does not contain,
-// before any write. `annotate` and `link` are the only ways an agent records
+// requireIndexedElement refuses a qualified_name the index does not contain AND
+// a description with nothing in it, before any write. Both halves are the same
+// rule — a write must report itself empty AND unanchored — and the empty half
+// was found in the same wave as the anchored one: `annotate --description "   "`
+// wrote a whitespace annotation and answered "Created annotation", which is a
+// successful write of nothing in the same shape as wave 15's lesson field. `annotate` and `link` are the only ways an agent records
 // business knowledge against a specific element — the prose a code reader
 // cannot get from the source — and both used to accept anything:
 //
@@ -259,9 +276,12 @@ func cmdGenerate(args []string) {
 // next steps (re-ask with the right name vs `leankg index`). It does not
 // suggest a near-match: an annotation is cheap to redo and expensive to discover
 // later, so the cheap side is to refuse.
-func requireIndexedElement(st store.Backend, element string) error {
+func requireIndexedElement(st store.Backend, element, description string) error {
 	if strings.TrimSpace(element) == "" {
 		return fmt.Errorf("element is required: pass the qualified_name an element has in the index, e.g. `leankg query <name>` to find it")
+	}
+	if strings.TrimSpace(description) == "" {
+		return fmt.Errorf("description is required: an annotation with no text is not a note about anything — say what the element does")
 	}
 	els, err := st.FindExact(element)
 	if err != nil {
@@ -294,7 +314,7 @@ func cmdAnnotate(args []string) {
 	}
 	defer st.Close()
 
-	if err := requireIndexedElement(st, element); err != nil {
+	if err := requireIndexedElement(st, element, *description); err != nil {
 		verbFatal(err)
 	}
 
@@ -334,7 +354,7 @@ func cmdLink(args []string) {
 	}
 	defer st.Close()
 
-	if err := requireIndexedElement(st, element); err != nil {
+	if err := requireIndexedElement(st, element, "link"); err != nil {
 		verbFatal(err)
 	}
 
