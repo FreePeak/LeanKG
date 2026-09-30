@@ -626,7 +626,6 @@ func TestLanguagesStatusAction(t *testing.T) {
 	}
 }
 
-
 // TestGraphActionResolvesShortName pins the seed fix: relationships are keyed
 // by qualified_name, so callers/callees/impact with a bare function name must
 // resolve via FindExact before traversal (otherwise every short-name graph
@@ -685,7 +684,6 @@ func TestGraphActionResolvesShortName(t *testing.T) {
 		t.Fatalf("path=%v, want 3 hops", path)
 	}
 }
-
 
 // TestCompressReadAnchorsRelativePath pins import{action:read} / query compress
 // resolving relative paths against the project dir (not the server cwd).

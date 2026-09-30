@@ -299,7 +299,6 @@ func TestVerifyStampsLastUsed(t *testing.T) {
 	}
 }
 
-
 // TestDeadDBTokensDoNotEnableGate pins the unlock: a store that holds only
 // revoked/expired rows must behave like an empty store (local default Admin),
 // otherwise leftover smoke-test tokens lock REST behind 401 forever.
