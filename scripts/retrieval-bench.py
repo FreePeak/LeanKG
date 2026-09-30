@@ -77,15 +77,31 @@ class Session:
 
 
 def arms_of(answer, limit):
-    """(vector keys, keyword keys) in each arm's own rank order."""
+    """(vector keys, keyword keys) in each arm's own rank order.
+
+    A binary that predates the fused `ranks` field (origin/main, before wave 1)
+    serves the keyword rung alone, so its hits carry no per-arm provenance. That
+    is not a zero: score the single list as the keyword arm and leave the vector
+    arm empty, which is what that binary actually answers with. Without the
+    fallback a before/after A/B against the pre-wave-1 engine reads 0/84 on both
+    columns and the regression looks catastrophic when nothing changed.
+    """
     vec, kw = [], []
-    for h in answer.get("hits", [])[:limit]:
+    hits = answer.get("hits", [])[:limit]
+    for h in hits:
         rk = h.get("ranks") or {}
         if rk.get("vector"):
             vec.append((rk["vector"], h["qualified_name"]))
         if rk.get("tsvector"):
             kw.append((rk["tsvector"], h["qualified_name"]))
+    if not vec and not kw and hits:
+        kw = [(i + 1, h["qualified_name"]) for i, h in enumerate(hits)]
     return [k for _, k in sorted(vec)], [k for _, k in sorted(kw)]
+
+
+def served_order(answer, limit):
+    """The order the server actually answered with, whatever arms it has."""
+    return [h["qualified_name"] for h in answer.get("hits", [])[:limit]]
 
 
 def score(order, truth):
@@ -121,7 +137,7 @@ def main():
     for n, q, truth, where in labels:
         a = s.query(q, args.limit, args.scope)
         vec, kw = arms_of(a, args.limit)
-        data.append((n, q, truth, vec, kw))
+        data.append((n, q, truth, vec, kw, served_order(a, args.limit)))
     s.close()
 
     n = len(data)
@@ -131,8 +147,16 @@ def main():
         out = {}
         for tag in ("vector", "keyword", "fused"):
             inpool = t1 = t3 = t10 = 0
-            for _, _, truth, vec, kw in data:
-                order = order_fn(tag, vec, kw)
+            for _, _, truth, vec, kw, served in data:
+                if tag == "fused" and not vec:
+                    # A pre-wave-1 engine serves one arm; its answer IS that
+                    # arm's ranking, and fusing it with itself would invent
+                    # agreement the server never expressed.
+                    order = served
+                elif tag == "fused":
+                    order = order_fn(tag, vec, kw)
+                else:
+                    order = order_fn(tag, vec, kw)
                 r = score(order, truth)
                 if r is None:
                     continue
@@ -144,6 +168,8 @@ def main():
         return out
 
     res = tally(lambda tag, v, k: v if tag == "vector" else k if tag == "keyword" else rrf(v, k))
+    # When only one arm exists (a pre-wave-1 engine), the fused order IS that
+    # arm's order — fusing a list with itself would invent agreement.
     print(f"{'arm':<10} {'in-pool':>8} {'top-1':>8} {'top-3':>8} {'top-10':>8}")
     print("-" * 48)
     for tag in ("vector", "keyword", "fused"):
@@ -151,9 +177,9 @@ def main():
         print(f"{tag:<10} {p:>4}/{n:<3} {a:>4}/{n:<3} {b:>4}/{n:<3} {c:>4}/{n:<3}")
 
     print(f"\n{'#':<3} {'in vec':>7} {'in kw':>6} {'fused rank':>12}  question")
-    for num, q, truth, vec, kw in data:
+    for num, q, truth, vec, kw, served in data:
         inv, ink = score(vec, truth), score(kw, truth)
-        r = score(rrf(vec, kw), truth)
+        r = score(rrf(vec, kw) if vec else served, truth)
         print(f"{num:<3} {str(inv or '-'):>7} {str(ink or '-'):>6} {str(r or '-'):>12}  {q[:46]}")
 
     if args.sweep:
@@ -170,7 +196,7 @@ def main():
                 t10 += r <= 10
             print(f"{f'{wv},{kw}':<18} {t1:>4}/{n:<3} {t3:>4}/{n:<3} {t10:>4}/{n:<3}")
 
-    missing = [(num, q, truth) for num, q, truth, vec, kw in data
+    missing = [(num, q, truth) for num, q, truth, vec, kw, served in data
                if score(vec, truth) is None and score(kw, truth) is None]
     if missing:
         print(f"\n{len(missing)} label(s) in NEITHER arm — these measure the indexer or the embedded text, not the fusion:")
