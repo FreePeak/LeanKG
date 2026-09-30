@@ -11,6 +11,16 @@
       "qn": "src/alpha.go::Alpha"
     }
   ],
+  "impact": [
+    {
+      "depth": 0,
+      "qn": "src/beta.go::Beta"
+    },
+    {
+      "depth": 1,
+      "qn": "src/alpha.go::Alpha"
+    }
+  ],
   "limit": 10,
   "query": "src/beta.go::Beta"
 }
