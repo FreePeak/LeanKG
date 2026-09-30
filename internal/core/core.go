@@ -179,6 +179,15 @@ type ImportRequest struct {
 // explicit args key is never overridden by the flat one. Before this, a
 // schema-shaped call (content at the top level) reported ok:true and wrote an
 // EMPTY file — the agent's memory silently lost the write.
+//
+// The TARGET file is folded under BOTH names, and that is not a convenience.
+// The import schema advertises the target twice — `path` for
+// create/str_replace/insert/delete/rename, `file` for add/replace/remove — and
+// the two command families read opposite fields. So an agent that used the
+// other one got `memory: invalid memory path: empty path` for a file it had
+// named, which reads like an engine bug rather than a field-name mismatch. One
+// lookup, either name: the schema can name the target either way and the engine
+// finds it.
 func (r ImportRequest) withFlatArgs() ImportRequest {
 	flat := map[string]any{}
 	for k, v := range map[string]string{
@@ -188,6 +197,21 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 	} {
 		if v != "" {
 			flat[k] = v
+		}
+	}
+	// Path fills whichever name the command family reads, without overwriting a
+	// field the caller actually set: `file` is the schema's name for the
+	// add/replace/remove target, `path` for the create/str_replace family.
+	// Filling both when only one was sent is what makes either spelling work.
+	if r.Path != "" {
+		if _, ok := flat["file"]; !ok {
+			flat["file"] = r.Path
+		}
+		flat["path"] = r.Path
+	}
+	if r.File != "" {
+		if _, ok := flat["path"]; !ok {
+			flat["path"] = r.File
 		}
 	}
 	if r.InsertAt != nil {
