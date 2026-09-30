@@ -260,6 +260,8 @@ func TestMemoryWriteAndReadRouting(t *testing.T) {
 
 func TestStatusShape(t *testing.T) {
 	e, _ := newEngine(t)
+	dir := t.TempDir()
+	e.SetProjectDir(dir)
 	out, err := e.Status(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -273,6 +275,74 @@ func TestStatusShape(t *testing.T) {
 	}
 	if out["backend"] != "sqlite" {
 		t.Fatalf("backend: %v", out["backend"])
+	}
+	if out["project_dir"] != dir {
+		t.Fatalf("project_dir = %v, want %s", out["project_dir"], dir)
+	}
+}
+
+// TestEmptyHitGuidance pins FR-HEA-02: zero-hit pinned/final rungs and empty
+// graph verbs carry a next-step guidance string instead of a bare dead end.
+func TestEmptyHitGuidance(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	if err := e.st.UpsertElements([]store.Element{
+		{QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha", FilePath: "a.go", Language: "go", Content: "alpha helper"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.refreshInventory(); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := e.Query(ctx, QueryRequest{Query: "DefinitelyMissingSymbolXYZ", Action: "exact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hitsOf(out)) != 0 {
+		t.Fatalf("exact miss should be empty: %+v", out)
+	}
+	g, _ := out["guidance"].(string)
+	if !strings.Contains(g, "exact identifier") {
+		t.Fatalf("exact miss guidance: %q", g)
+	}
+
+	out, err = e.Query(ctx, QueryRequest{Query: "DefinitelyMissingSymbolXYZ", Action: "fuzzy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hitsOf(out)) != 0 {
+		t.Fatalf("fuzzy miss should be empty: %+v", out)
+	}
+	g, _ = out["guidance"].(string)
+	if !strings.Contains(g, "keyword") {
+		t.Fatalf("fuzzy miss guidance: %q", g)
+	}
+
+	// Ladder with no embedder degrades L3→L2 and must still guide on a total miss.
+	out, err = e.Query(ctx, QueryRequest{Query: "DefinitelyMissingSymbolXYZ"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hitsOf(out)) != 0 {
+		t.Fatalf("ladder miss should be empty: %+v", out)
+	}
+	g, _ = out["guidance"].(string)
+	if g == "" {
+		t.Fatalf("ladder miss missing guidance: %+v", out)
+	}
+
+	out, err = e.Query(ctx, QueryRequest{Query: "pkg.Alpha", Action: "callers"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callers, _ := out["callers"].([]string)
+	if len(callers) != 0 {
+		t.Fatalf("callers should be empty without edges: %+v", out)
+	}
+	g, _ = out["guidance"].(string)
+	if !strings.Contains(g, "callers") || !strings.Contains(g, "qualified_name") {
+		t.Fatalf("callers empty guidance: %q", g)
 	}
 }
 

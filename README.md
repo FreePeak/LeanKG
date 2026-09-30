@@ -223,6 +223,8 @@ Discover with `query` — it routes down the ladder by default (L1 exact → L2 
 | Question | How |
 | -------- | --- |
 | Any identifier (default) | `query "Alpha"` (exact, then fuzzy fallback) |
+| Session start memory | `query` action=memory args.command=session_recall |
+| Session end retain | `import` action=memory command=session_retain |
 | Blast radius | `leankg impact <file>` or `query --action impact --to <qn>` |
 | Who calls X? | `query --action callers --to <qn>` |
 | How A↔B? | `query --action path --to <qn>` |
