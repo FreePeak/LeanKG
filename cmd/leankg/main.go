@@ -354,7 +354,7 @@ afterSidecars:
 		if interval > 0 {
 			log.Printf("maintenance: vacuum every %s (0 disables)", interval)
 		}
-		maintain.Run(ctx, st, mem, maintain.Options{Logf: log.Printf}, interval)
+		maintain.Run(ctx, st, mem, maintain.Options{Logf: log.Printf}, interval, maintain.FirstIdle)
 	}
 
 	var embedder core.QueryEmbedder

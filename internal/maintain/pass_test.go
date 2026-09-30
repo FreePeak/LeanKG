@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -166,7 +167,7 @@ func TestRunIsDisabledByNonPositiveInterval(t *testing.T) {
 	defer cancel()
 	// A non-positive interval must start nothing: LEANKG_VACUUM_INTERVAL_HOURS=0
 	// promises the loop is disabled.
-	Run(ctx, st, nil, Options{}, 0)
+	Run(ctx, st, nil, Options{}, 0, 0)
 	// Give a wrongly-started goroutine far more than enough time to fire.
 	time.Sleep(100 * time.Millisecond)
 	rep, err := st.Space()
@@ -176,6 +177,57 @@ func TestRunIsDisabledByNonPositiveInterval(t *testing.T) {
 	if rep.FreeBytes == 0 {
 		t.Fatal("a disabled loop still compacted the store")
 	}
+}
+
+// TestRunFiresOnTicker covers the positive branch: the loop is the mechanism
+// this whole change exists for (nothing reclaimed space between manual
+// invocations before it), so "the disabled path returns early" is not
+// sufficient evidence that the enabled path compacts. Waiting on the
+// observable effect rather than sleeping a fixed duration keeps it fast and
+// non-flaky.
+func TestRunFiresOnTicker(t *testing.T) {
+	st := bloatFixture(t)
+	// Prime the header so the ticker's own bounded sweep has to do the
+	// reclaim, rather than the one-shot header-upgrade VACUUM.
+	if _, err := Pass(st, Options{MinFreeBytes: 1}); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+	for i := 350; i < 400; i++ {
+		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
+		if err := st.DeleteByFile(p); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Logf fires only on a RECLAIMING pass (a pass that finds no space to
+	// give back logs nothing), so drop the floor: with the 1 MB default this
+	// tiny fixture's freelist would never reach it and the test would wait
+	// forever for a line that is correctly never printed.
+	done := make(chan struct{})
+	var once sync.Once
+	Run(ctx, st, nil, Options{
+		MinFreeBytes: 1,
+		Logf:         func(string, ...any) { once.Do(func() { close(done) }) },
+	}, 10*time.Millisecond, 0)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the maintenance ticker never ran")
+	}
+	rep, err := st.Space()
+	if err != nil {
+		t.Fatalf("space: %v", err)
+	}
+	if rep.FreeBytes != 0 {
+		t.Fatalf("ticker ran but left %d free bytes", rep.FreeBytes)
+	}
+
+	// Cancelling must stop it, so a later tick cannot fire.
+	cancel()
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestCompactMemoryNilIsNoOp(t *testing.T) {
