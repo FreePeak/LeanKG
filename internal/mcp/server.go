@@ -75,16 +75,16 @@ const serverInstructions = `LeanKG is a code knowledge graph (exactly 3 tools: i
 3. Inspect retrieval{rung,reason}, guidance (when present), and freshness. If a store is cold, import it once with action=repo, path=<absolute repository path>, then query; do not re-import on every turn. On zero hits, follow guidance instead of abandoning LeanKG for bash.
 4. Importing indexes elements but does not create vectors. If L3 is required, run ` + "`leankg-embed run`" + ` (or ` + "`leankg-embed full`" + ` on stamp drift); a degraded L3 is not proof that the query ladder is broken.
 5. Use status for health, freshness, resolved project_dir, and embedding coverage — not as a substitute for query.
-6. Keep context across sessions: at session start call query action=memory with args.command=session_recall (or memories). At session end call import action=memory command=session_retain with session_id + turns[]; durable lessons use command=lesson.`
+6. Keep context across sessions: at session start call query action=memory with args.command=session_recall (or memories). At session end call import action=memory command=session_retain with session_id + turns[] (args.scope=per-project|global|per-project-tagged, args.cwd optional); durable lessons use command=lesson.`
 
-const toolGuidance = "Agent protocol: query before bash/grep; project= only on multi-project HTTP; import once when cold; inspect retrieval/freshness/guidance; session_recall at start and session_retain/lesson at end; do not pin a rung unless intentional."
+const toolGuidance = "Agent protocol: query before bash/grep; project= only on multi-project HTTP; import once when cold; inspect retrieval/freshness/guidance; session_recall at start and session_retain/lesson at end (memory scope=per-project|global|per-project-tagged); do not pin a rung unless intentional."
 
 // New builds the MCP server with the 3-tool registry.
 func New(engine *core.Engine) *Server {
 	s := &Server{engine: engine}
 	s.srv = mcp.NewServer(&mcp.Implementation{
 		Name: "leankg", Version: version,
-		Description: "LeanKG code knowledge graph: use query for code discovery and import for first-time indexing.",
+		Description: "LeanKG code knowledge graph (3 tools: import/query/status): query for code discovery and memory recall; import for indexing and session_retain.",
 	}, &mcp.ServerOptions{Instructions: serverInstructions})
 	s.registerTools()
 	return s
