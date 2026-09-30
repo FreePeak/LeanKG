@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -136,8 +137,15 @@ func EffectiveRole(st store.Backend, r *http.Request) (Role, error) {
 	return ctx.Role, nil
 }
 
-// tokensConfigured reports whether any token source is configured at all (env
-// or the DB store). No configured source means the gate is disabled.
+// tokensConfigured reports whether any LIVE token source is configured (env
+// or the DB store). Soft-revoked and expired DB rows do not count: they can
+// never authenticate, and treating them as "configured" locked local REST
+// behind 401 forever after a smoke test left a revoked row behind. No live
+// source means the gate is disabled (local default = Admin).
+//
+// Ceiling: a soft-revoked row no longer keeps the gate on. Operators who must
+// never run open should keep at least one env token set (LEANKG_TOKEN_*), which
+// still enables the gate regardless of DB state.
 func (reg *registry) tokensConfigured(st store.Backend) (bool, error) {
 	if reg.enabled() {
 		return true, nil
@@ -149,7 +157,17 @@ func (reg *registry) tokensConfigured(st store.Backend) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("auth: token store: %w", err)
 	}
-	return len(toks) > 0, nil
+	now := time.Now().Unix()
+	for _, t := range toks {
+		if t.RevokedAt != 0 {
+			continue
+		}
+		if t.ExpiresAt != 0 && t.ExpiresAt <= now {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // resolveGrant applies the owner > org role > token role ladder to a verified

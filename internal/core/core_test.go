@@ -625,3 +625,96 @@ func TestLanguagesStatusAction(t *testing.T) {
 		t.Fatalf("go not in languages: %+v", langsOut)
 	}
 }
+
+
+// TestGraphActionResolvesShortName pins the seed fix: relationships are keyed
+// by qualified_name, so callers/callees/impact with a bare function name must
+// resolve via FindExact before traversal (otherwise every short-name graph
+// verb looks like a leaf).
+func TestGraphActionResolvesShortName(t *testing.T) {
+	e, _ := newEngine(t)
+	if err := e.st.UpsertElements([]store.Element{
+		{QualifiedName: "pkg/a.go::Helper", ElementType: "function", Name: "Helper", FilePath: "pkg/a.go", Language: "go"},
+		{QualifiedName: "pkg/b.go::Caller", ElementType: "function", Name: "Caller", FilePath: "pkg/b.go", Language: "go"},
+		{QualifiedName: "pkg/a.go::Leaf", ElementType: "function", Name: "Leaf", FilePath: "pkg/a.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpsertRelationships([]store.Relationship{
+		{Source: "pkg/b.go::Caller", Target: "pkg/a.go::Helper", RelType: "calls", Confidence: 1},
+		{Source: "pkg/a.go::Helper", Target: "pkg/a.go::Leaf", RelType: "calls", Confidence: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	out, err := e.Query(ctx, QueryRequest{Action: "callers", Query: "Helper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["resolved_query"] != "pkg/a.go::Helper" {
+		t.Fatalf("resolved_query=%v, want pkg/a.go::Helper", out["resolved_query"])
+	}
+	callers, _ := out["callers"].([]string)
+	if len(callers) != 1 || callers[0] != "pkg/b.go::Caller" {
+		t.Fatalf("callers=%v, want [pkg/b.go::Caller]", callers)
+	}
+
+	out, err = e.Query(ctx, QueryRequest{Action: "callees", Query: "Helper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callees, _ := out["callees"].([]string)
+	if len(callees) != 1 || callees[0] != "pkg/a.go::Leaf" {
+		t.Fatalf("callees=%v, want [pkg/a.go::Leaf]", callees)
+	}
+
+	out, err = e.Query(ctx, QueryRequest{
+		Action: "path",
+		Query:  "Caller",
+		Args:   map[string]any{"to": "Leaf", "depth": 5},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["reachable"] != true {
+		t.Fatalf("path not reachable: %+v", out)
+	}
+	path, _ := out["path"].([]string)
+	if len(path) != 3 {
+		t.Fatalf("path=%v, want 3 hops", path)
+	}
+}
+
+
+// TestCompressReadAnchorsRelativePath pins import{action:read} / query compress
+// resolving relative paths against the project dir (not the server cwd).
+func TestCompressReadAnchorsRelativePath(t *testing.T) {
+	e, _ := newEngine(t)
+	dir := t.TempDir()
+	e.SetProjectDir(dir)
+	sub := filepath.Join(dir, "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "package pkg\n\nfunc Hello() {}\n"
+	if err := os.WriteFile(filepath.Join(sub, "hello.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.Import(context.Background(), ImportRequest{
+		Action: "read",
+		Path:   "pkg/hello.go",
+		Args:   map[string]any{"mode": "full"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, _ := out["content"].(string)
+	if !strings.Contains(content, "func Hello") {
+		t.Fatalf("content=%q, want Hello body", content)
+	}
+	gotPath, _ := out["path"].(string)
+	if gotPath != filepath.Join(dir, "pkg/hello.go") {
+		t.Fatalf("path=%q, want project-anchored", gotPath)
+	}
+}

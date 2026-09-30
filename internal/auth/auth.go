@@ -166,11 +166,9 @@ func AllowedTool(role Role, tool string) bool {
 // LEANKG_TOKEN_{ADMIN,CONTRIBUTOR,VIEWER} are the fallback. With no token
 // configured in either source the gate is disabled (local default = Admin).
 //
-// Ceiling: gate enablement is presence-based — it counts token ROWS, so a
-// soft-revoked token (TokenRevoke) keeps the gate on while refusing every
-// request, and only deleting the last row (TokenDelete) re-disables it and
-// returns the process to the local default (Admin). Operators who must never
-// run open should keep at least one env token set.
+// Ceiling: gate enablement counts LIVE tokens only — soft-revoked and expired
+// DB rows do not keep the gate on (they can never authenticate). Operators who
+// must never run open should keep at least one env token set.
 //
 // NOTE: this cannot gate MCP — its capability lives in the JSON-RPC body.
 // MCP servers must call RoleForRequest/AllowedTool inside the tool handler

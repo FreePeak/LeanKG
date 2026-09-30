@@ -1,5 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
+**Version:** 4.13.5-graph-seed-resolve
+**Date:** 2026-09-30
 **Version:** 4.13.4-storage-maintenance
 **Date:** 2026-09-30
 **Version:** 4.13.3-agent-ux-protocol
@@ -11,6 +13,18 @@
 ---
 
 ## Changelog
+
+### v4.13.5-graph-seed-resolve — short-name graph verbs + dead-token REST unlock (2026-09-30)
+
+**Trigger:** live MCP matrix against the dogfood server. `query action=callers|callees|impact|path` with a bare function name (`ServeProjectDirs`) returned empty/`reachable:false` even though the element and its `calls` edges were indexed; REST `:9701` answered every route with 401 after leftover smoke-test tokens; `import action=read` / `query action=compress` with a project-relative path opened against the server cwd and ENOENT'd.
+
+**What landed:**
+
+- **`resolveGraphSeed`** in `internal/core` — graph verbs run `FindExact` first and traverse on the shortest qualified_name (same ranking L1 already uses). Bare names and full QNs both work; `resolved_query` / `resolved_to` echo the canonical form. Unknown seeds still surface `graph.ErrUnknownNode`.
+- **Auth gate enablement** — `tokensConfigured` counts LIVE DB tokens only. Soft-revoked and expired rows no longer keep REST locked at 401; the documented ceiling shifts to "keep an env token if you must never run open".
+- **`compressRead` path anchor** — relative paths join `projectDir` before open, matching the import repo/dir contract.
+
+**Verified:** `go test ./internal/core ./internal/auth ./internal/graph -count=1` green (`TestGraphActionResolvesShortName`, `TestDeadDBTokensDoNotEnableGate`, `TestCompressReadAnchorsRelativePath`). Live MCP matrix after install+restart: callers=2, callees=5, impact hits=4, path reachable, LSP symbols via gopls, REST `/health` + `/api/v1/status` 200 without a bearer.
 
 ### v4.13.4-storage-maintenance — the disk space the engine was silently keeping (2026-09-30)
 
@@ -981,4 +995,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-09-30 (storage maintenance restored: `internal/maintain` hourly vacuum pass over `store.Backend` + the memory FTS index, `LEANKG_VACUUM_INTERVAL_HOURS`, new `leankg vacuum` verb, `status` now reports a `space` block; the gc.rs row's "Go's runtime GC returns memory itself" rationale is corrected. Prior: 2026-09-21 v4.13.1.)*
+*Last updated: 2026-09-30 (graph verbs resolve bare names via FindExact; REST unlocks when only dead DB tokens remain; compress/read anchors relative paths at projectDir. Prior storage maintenance restored: `internal/maintain` hourly vacuum pass over `store.Backend` + the memory FTS index, `LEANKG_VACUUM_INTERVAL_HOURS`, new `leankg vacuum` verb, `status` now reports a `space` block; the gc.rs row's "Go's runtime GC returns memory itself" rationale is corrected. Prior: 2026-09-21 v4.13.1.)*
