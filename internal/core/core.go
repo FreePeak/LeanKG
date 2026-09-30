@@ -1469,7 +1469,21 @@ func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
 		}
 		return map[string]any{"offloaded": ref}, nil
 	case "lesson":
-		deduped, err := s.AddLesson(get("session_id"), get("text"))
+		// The schema names `summary` as the lesson's content field, and only
+		// `text` was read, so a schema-shaped call wrote an EMPTY lesson and
+		// answered {"deduped":false} — a successful write of nothing, which
+		// is the class waves 6, 7 and 11 exist to remove. `text` still works.
+		text := get("text")
+		if strings.TrimSpace(text) == "" {
+			text = get("summary")
+		}
+		// And an empty lesson is REFUSED rather than stored: a write that
+		// cannot report itself empty is a write that cannot be wrong loudly,
+		// which is how the field mismatch above hid for this long.
+		if strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("session lesson requires text (or summary) — an empty lesson is unrecallable")
+		}
+		deduped, err := s.AddLesson(get("session_id"), text)
 		if err != nil {
 			return nil, err
 		}
