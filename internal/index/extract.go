@@ -526,6 +526,20 @@ func qualify(fe fileElements) {
 }
 
 // boundContent fills Content from the source lines, bounded 8000 chars.
+//
+// Content LEADS with the element's own doc comment. `start` is the `func`/
+// `type` line, so the `//` block an author wrote ABOVE it was never in the
+// store — and that block is the prose a question is a paraphrase of. Measured
+// on this repository (wave 9 of the dogfood loop): 2,596 of 4,175 Go elements
+// (62%) have a doc comment the engine could not see, and of the 17 labelled
+// questions no arm could reach, nine were the doc comment verbatim minus the
+// symbol name. Adding it moved the pure-vector top-10 from 36/84 to 71/84 with
+// zero regressions (numbers and rationale in internal/index/doccapture_test.go;
+// the comment leads rather than trails because the local sidecar truncates to a
+// 1000-rune budget and a leading explanation survives it).
+//
+// The slice GROWS (lines[docStart-1:e]), so a body is never shortened to make
+// room, and an element with no comment is byte-identical to what it was.
 func boundContent(els []indexedElem, lines []string) {
 	const maxContent = 8000
 	for i := range els {
@@ -536,9 +550,64 @@ func boundContent(els []indexedElem, lines []string) {
 		if e > len(lines) {
 			e = len(lines)
 		}
+		if doc := docCommentStart(lines, s); doc < s {
+			s = doc
+		}
 		els[i].content = strings.Join(lines[s-1:e], "\n")
 		els[i].content = store.ClipUTF8(els[i].content, maxContent)
 	}
+}
+
+// docCommentStart walks back from line `start` over a CONTIGUOUS comment block
+// directly above it and returns that block's first line (start itself when there
+// is none). Contiguity is the rule: a blank line or a second declaration ends
+// the block, so a comment belonging to the PREVIOUS element is never stolen.
+//
+// Recognised forms are the ones the indexed languages use: `//`, `///`, `//!`,
+// `#`, and a `/* … */` block. Anything else stops the walk.
+func docCommentStart(lines []string, start int) int {
+	if start < 2 || start > len(lines) {
+		return start
+	}
+	// `start` is 1-based, so the line above it is index start-2 in the 0-based
+	// slice below.
+	i := start - 2
+	// A /* … */ block that ends on the line above. Having SEEN the terminator we
+	// know a block is open, and everything up to its `/*` is that block's body —
+	// a block comment cannot contain code, so no per-line filtering is needed or
+	// correct here (interior lines are conventionally " * …" but may be
+	// anything, and a stricter walk strands the block). A `//` run sitting
+	// directly on top of the block belongs to the same documentation unit, and
+	// this loop walks up through it naturally.
+	if strings.HasSuffix(strings.TrimSpace(lines[i]), "*/") {
+		for k := i; k >= 0; k-- {
+			if strings.Contains(lines[k], "/*") {
+				return k + 1
+			}
+		}
+		// Malformed — no opening delimiter above. Take nothing rather than
+		// guess and swallow unrelated lines.
+		return start
+	}
+	// Otherwise a run of single-line comment lines.
+	j := i
+	for j >= 0 && isDocCommentLine(lines[j]) {
+		j--
+	}
+	return j + 2
+}
+
+// isDocCommentLine reports whether one source line is a single-line doc comment
+// in a language the registry indexes.
+func isDocCommentLine(line string) bool {
+	t := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(t, "//"), strings.HasPrefix(t, "#"):
+		return true
+	case strings.HasPrefix(t, "*") && strings.HasSuffix(t, "*/"):
+		return true
+	}
+	return false
 }
 
 func extOf(rel string) string {

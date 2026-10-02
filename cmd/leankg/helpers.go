@@ -109,6 +109,20 @@ func runIndex(project, target, source, refName, auth string) error {
 		}
 		indexTarget = synced
 	}
+	// The walk root must EXIST. WalkDir treats a missing root as an empty tree,
+	// so `leankg index ./nope` printed the ordinary success line and exited 0 —
+	// after creating a store at the missing path, which every later signal
+	// (status cold, doctor empty) then reported as a healthy project that
+	// indexed nothing. A typo is the most common mistake this verb gets, and an
+	// empty-but-real directory stays valid.
+	if info, serr := os.Stat(indexTarget); serr != nil {
+		if os.IsNotExist(serr) {
+			return fmt.Errorf("refusing to index %s: no such file or directory (an empty existing directory indexes fine — this is a path that does not exist)", indexTarget)
+		}
+		return fmt.Errorf("refusing to index %s: %w", indexTarget, serr)
+	} else if !info.IsDir() {
+		return fmt.Errorf("refusing to index %s: not a directory", indexTarget)
+	}
 	// The store reconciles its file set against the walk: paths are relative to
 	// the walk root, so walking anything other than the project root reads every
 	// file outside it as deleted and sweeps it. `index . --source <path>` did

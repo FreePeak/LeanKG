@@ -262,6 +262,171 @@ type FuzzyMatch struct {
 	Score   float64
 }
 
+// FindByNameToken ranks elements whose SYMBOL NAME contains an identifier-shaped
+// token of the query, shortest (most specific) name first. It is the ArmName
+// ranking arm, and it reads the name alone: the FTS arm reads
+// name + qualified_name + content but only for words that MATCH, and a vector
+// embedding reads the body — so a question that paraphrases ("cut a string to
+// n runes") or names a two-line helper whose body says nothing useful
+// (`coverage`) reaches neither.
+//
+// The tokens become quoted LIKE patterns, so user input can never inject SQL,
+// and a token must be identifier-shaped (see nameTokens) so ordinary prose never
+// summons this arm and fills the result with every element that has a common
+// word in its name. Matching is case-insensitive on both sides because Go symbol
+// names and an agent's question do not agree about case.
+//
+// The score is 0 for every hit: this arm does not rank by RELEVANCE, it ranks by
+// specificity (shortest name first), and the fusion only needs the order.
+func (s *Store) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
+	freq, distinct, err := s.nameTokenFreq()
+	if err != nil {
+		return nil, err
+	}
+	toks := nameTokens(query, freq, distinct)
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var where []string
+	var args []any
+	for _, t := range toks {
+		pat := "%" + t + "%"
+		where = append(where, "(ce.name LIKE ? COLLATE NOCASE OR ce.qualified_name LIKE ? COLLATE NOCASE)")
+		args = append(args, pat, pat)
+	}
+	args = append(args, limit)
+	rows, err := s.db.Query(`SELECT `+elementCols+`, 0.0 AS score
+		FROM code_elements ce
+		WHERE `+strings.Join(where, " OR ")+`
+		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FuzzyMatch
+	for rows.Next() {
+		var m FuzzyMatch
+		var meta string
+		if err := rows.Scan(&m.Element.QualifiedName, &m.Element.ElementType, &m.Element.Name, &m.Element.FilePath,
+			&m.Element.LineStart, &m.Element.LineEnd, &m.Element.Language, &m.Element.ParentQualified,
+			&m.Element.Content, &meta, &m.Score); err != nil {
+			return nil, err
+		}
+		if meta != "" && meta != "{}" {
+			_ = json.Unmarshal([]byte(meta), &m.Element.Metadata)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// nameTokens extracts the tokens of a query that are worth searching for in a
+// SYMBOL NAME. It is the gate that keeps the name arm from being a noise
+// machine, and it had to get much more permissive than a shape test: measured
+// against the 30 labelled questions in docs/retrieval-label-set.md, a
+// capital/underscore/digit shape test let the arm fire on 2 of 30 — because
+// agents ask in PROSE ("take the single-flight lock for embedding") and the
+// informative token is lowercase (`lock`, `stamp`, `runes`).
+//
+// Two filters, in order:
+//
+//  1. length and duplicates — a token must be at least 3 characters, so "go"
+//     and "a" never become name searches;
+//  2. RARITY IN THIS CORPUS. A token that appears inside a large number of
+//     symbol names ("read" in 142 of them, "text" in 210) discriminates nothing,
+//     and searching on it would return a wall of near-identical names. A token
+//     that is rare is the one an agent typed because it is the answer's name.
+//
+// The rarity bound is what replaced the stop-list, and it is strictly better:
+// a stop-list of English words can never be complete, and every word it omits is
+// a real symbol name somewhere (`lock`, `stamp`, `list`, `run`). Rarity is
+// measured from the store itself, so it adapts to the project rather than to
+// the author's guesses about English.
+// total is the ELEMENT count (not the distinct-name count): see the bound below.
+func nameTokens(query string, freq map[string]int, total int) []string {
+	stop := stopWords
+	fields := strings.FieldsFunc(query, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' && r != '.'
+	})
+	// A token must be rare among symbol names to count. The bound is a
+	// fraction of the ELEMENTS, not of the distinct names: a fixture corpus of
+	// three elements would otherwise make every English word "rare" and the
+	// arm would fire on prose, which is exactly the noise it must not produce.
+	// total is the element count, so the bound is scale-free.
+	bound := total / 500
+	if bound < 2 {
+		bound = 2
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fields {
+		low := strings.ToLower(f)
+		if len(f) < 3 || seen[low] {
+			continue
+		}
+		seen[low] = true
+		if stop[low] {
+			continue
+		}
+		// Rare in this corpus. An UNSEEN token counts as rare (it is how "runes"
+		// reaches an arm on a corpus that happens not to have it), which is why
+		// the stop list above is not optional: rarity alone would let "the"
+		// through on any project.
+		if freq[low] > bound {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// stopWords is the SMALL set of function words that must never reach a name
+// search. It is deliberately tiny and deliberately not "English": every word
+// here is one a name arm must reject regardless of how rare it is in the
+// corpus, and every word NOT here gets the rarity test instead. A larger list
+// would re-introduce the failure this design exists to avoid — dropping a real
+// symbol name because the author guessed it was an English word.
+var stopWords = map[string]bool{
+	"the": true, "and": true, "for": true, "not": true, "but": true,
+	"you": true, "your": true, "its": true, "are": true, "was": true, "were": true,
+	"can": true, "did": true, "has": true, "had": true, "out": true,
+	"own": true, "same": true, "too": true, "very": true, "just": true, "into": true,
+	"that": true, "this": true, "then": true, "than": true, "when": true,
+	"how": true, "what": true, "where": true, "which": true, "who": true, "why": true,
+	"with": true, "from": true, "use": true, "used": true, "using": true,
+	"one": true, "two": true, "all": true, "any": true, "some": true, "each": true,
+	"does": true, "get": true, "via": true, "per": true, "upon": true, "there": true, "here": true,
+}
+
+// nameTokenFreq returns how many elements carry each distinct symbol name, and
+// the total ELEMENT count (the rarity bound's denominator). It is the table
+// nameTokens consults, and it is one GROUP BY over the names it needs — cheap
+// enough to run per scoped arm, and never on a miss (an arm with no tokens does
+// no work at all).
+func (s *Store) nameTokenFreq() (map[string]int, int, error) {
+	rows, err := s.db.Query(`SELECT name, COUNT(*) FROM code_elements GROUP BY name`)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	freq := map[string]int{}
+	elements := 0
+	for rows.Next() {
+		var name string
+		var n int
+		if err := rows.Scan(&name, &n); err != nil {
+			return nil, 0, err
+		}
+		freq[strings.ToLower(name)] += n
+		elements += n
+	}
+	return freq, elements, rows.Err()
+}
+
 // FindFuzzy implements the L2 rung over FTS5. The query is tokenized into
 // quoted OR terms so user input can never inject FTS syntax.
 func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {

@@ -40,6 +40,13 @@ func SupportedFiles(dir string, reg *langs.Registry) ([]string, error) {
 		if !d.Type().IsRegular() {
 			return nil
 		}
+		// Dot-prefixed FILES are skipped here for the same reason the indexer
+		// skips them (index.go's name gate): the two walks must agree or doctor
+		// --deep's freshness comparison reports drift on files the indexer
+		// would never have taken.
+		if strings.HasPrefix(name, ".") {
+			return nil
+		}
 		rel, rerr := filepath.Rel(dir, path)
 		if rerr != nil {
 			return rerr

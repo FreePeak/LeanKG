@@ -152,14 +152,31 @@ func Write(st store.Backend, docsDir string) (string, error) {
 }
 
 // WriteFile writes an already-rendered body to <docsDir>/AGENTS.md, creating
-// docsDir; it returns the written path. It exists so a caller that prints the
-// document (the `generate` verb prints it before saving) does not have to read
-// the graph twice.
+// docsDir; it returns the written path. It exists so a caller that renders the
+// document itself does not have to read the graph twice.
+//
+// ponytail: the destination is a DIRECTORY and the file name is fixed. The
+// `generate` verb does not use it — it writes to the path the CALLER names with
+// --out, via WriteFileTo — because a verb that invents its own destination
+// writes into the user's tree without being asked. This stays for the
+// programmatic callers that pass their own docsDir.
 func WriteFile(docsDir, body string) (string, error) {
 	if err := os.MkdirAll(docsDir, 0o755); err != nil {
 		return "", fmt.Errorf("docgen: create docs dir: %w", err)
 	}
 	path := filepath.Join(docsDir, "AGENTS.md")
+	return WriteFileTo(path, body)
+}
+
+// WriteFileTo writes an already-rendered body to the EXACT path given,
+// creating the parent directory. The caller chose this path, so there is
+// nothing to invent and nothing to announce beyond returning it.
+func WriteFileTo(path, body string) (string, error) {
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", fmt.Errorf("docgen: create %s: %w", dir, err)
+		}
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return "", fmt.Errorf("docgen: write %s: %w", path, err)
 	}

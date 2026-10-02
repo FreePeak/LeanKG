@@ -128,7 +128,9 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"incidents": incidents})
+		writeJSON(w, http.StatusOK, emptyList(core.AnySlice(incidents), map[string]any{"incidents": core.AnySlice(incidents)},
+			"no incidents recorded for this filter; an empty list means either no incident store is "+
+				"configured (`leankg incident import` to add one) or nothing matched the filter"))
 	})
 	mux.HandleFunc("GET /api/v2/env/diff", func(w http.ResponseWriter, r *http.Request) {
 		conflicts, err := org.FindEnvConflicts(r.URL.Query().Get("service"))
@@ -162,16 +164,31 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			// (NOT "text" — pinned here and in tests so harness authors
 			// don't hit the same mismatch twice).
 			var body struct {
-				Entries         []memory.Entry `json:"entries"`
-				ThroughUserTurn int            `json:"through_user_turn"`
+				Entries         *[]memory.Entry `json:"entries"`
+				ThroughUserTurn int             `json:"through_user_turn"`
 			}
 			if !decode(w, r, &body) {
 				return
 			}
-			// Trust boundary: an empty-content entry is permanently
+			// Trust boundary, first of two: the entries array must be PRESENT.
+			// A pointer is the whole point — with a plain slice, `{}`,
+			// `{"items":[...]}` (the name the hindsight-compat mount on this
+			// same listener uses) and an empty body all decoded to a nil slice
+			// and answered `200 {"ok":true,"retained":0}`: a client whose field
+			// name did not match got a successful retain of nothing, with no way
+			// to tell. Absent is not zero; only an EXPLICIT `"entries": []` is a
+			// legitimate no-op.
+			if body.Entries == nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "entries is required (an explicit \"entries\": [] is a valid no-op; " +
+						"this route reads `entries`, not the hindsight-compat mount's `items`)",
+				})
+				return
+			}
+			// Trust boundary, second: an empty-content entry is permanently
 			// unrecallable (zero-match filtering) — reject rather than
 			// silently swallow it.
-			for i, e := range body.Entries {
+			for i, e := range *body.Entries {
 				if strings.TrimSpace(e.Content) == "" {
 					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"error": fmt.Sprintf("entries[%d].content is empty — empty entries would be unrecallable", i),
@@ -179,11 +196,34 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 					return
 				}
 			}
-			if err := mem.Retain(bank, body.Entries, body.ThroughUserTurn); err != nil {
+			// Retain is cursor-gated by contract (resume-safety: a batch at or
+			// below the bank's stored cursor is SKIPPED, see memory.Retain), so
+			// the count SENT is not the count WRITTEN. Reporting `retained: N`
+			// for a skipped re-send is a lie an agent cannot detect — it is the
+			// same class as the missing-entries field above, one layer up.
+			cursor := mem.BankCursor(bank)
+			skipped := 0
+			if body.ThroughUserTurn <= cursor {
+				skipped = len(*body.Entries)
+			}
+			if err := mem.Retain(bank, *body.Entries, body.ThroughUserTurn); err != nil {
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "retained": len(body.Entries)})
+			// `retained` is the count WRITTEN, so the two numbers never
+			// contradict each other: a fully-skipped re-send is retained 0,
+			// skipped N. Reporting both as N would be the lie in a different
+			// field.
+			out := map[string]any{
+				"ok":       true,
+				"retained": len(*body.Entries) - skipped,
+				"skipped":  skipped,
+			}
+			if skipped > 0 {
+				out["through_user_turn"] = body.ThroughUserTurn
+				out["bank_cursor"] = cursor
+			}
+			writeJSON(w, http.StatusOK, out)
 		})
 		mux.HandleFunc("POST /api/v1/memory/banks/{bank}/recall", func(w http.ResponseWriter, r *http.Request) {
 			bank := r.PathValue("bank")
@@ -199,7 +239,9 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+			writeJSON(w, http.StatusOK, emptyList(core.AnySlice(entries), map[string]any{"entries": core.AnySlice(entries)},
+				"bank "+bank+" holds nothing matching this query; recall matches on query tokens, "+
+					"and an empty query matches nothing"))
 		})
 		// FR-ZCP-07 session surface (hindsight-shaped): retain with a
 		// session-keyed cursor, recall merged across the scope's banks, and the
@@ -293,6 +335,31 @@ func writeErr(w http.ResponseWriter, err error) {
 		body["code"] = coded.Code()
 	}
 	writeJSON(w, http.StatusBadRequest, body)
+}
+
+// emptyList normalises a list answer that has nothing in it, and explains what
+// an empty one means HERE.
+//
+// Go marshals a nil slice as `null`, which on the wire is indistinguishable from
+// "this field was never populated". For these routes that matters: `matches:
+// null` reads as "no concept appears in this corpus" when it usually means "no
+// catalog was ever imported", and the two call for opposite next steps. Every
+// other list this product returns (`hits`, `conflicts`, `refs`) is already an
+// empty ARRAY when it has nothing, so this is consistency rather than a new
+// idea — the few sites below are the outliers.
+//
+// ponytail: `[]` plus one sentence, not an error and not a status field. The
+// answer is not wrong without it; it is uninformative, and 200 keeps ONE response
+// shape for both cases. The sentence names the causes an EMPTY list can have at
+// this route and does not pretend to pick between them — a note that claimed a
+// distinction the engine cannot make would be the same defect one level down.
+func emptyList(list []any, out map[string]any, emptyNote string) map[string]any {
+	if list == nil {
+		list = []any{}
+	}
+	out["items"] = list
+	out["note"] = emptyNote
+	return out
 }
 
 func decode[T any](w http.ResponseWriter, r *http.Request, into *T) bool {

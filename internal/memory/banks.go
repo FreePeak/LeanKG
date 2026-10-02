@@ -394,6 +394,13 @@ func (m *Memory) appendBank(bank string, entries []Entry) error {
 	return nil
 }
 
+// BankCursor is bankCursor for a caller outside this package that must REPORT
+// the gate rather than only obey it: the REST retain route answers
+// `skipped` / `bank_cursor` so a cursor-gated re-send is visible to the client
+// instead of looking like a successful write. Reading is a public promise about
+// the store; writing is not — Retain stays the only writer.
+func (m *Memory) BankCursor(bank string) int { return m.bankCursor(bank) }
+
 // bankCursor reads the highest retained_through_user_turn stored in the
 // bank's JSONL (0 for a missing/empty bank).
 func (m *Memory) bankCursor(bank string) int {

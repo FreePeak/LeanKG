@@ -186,21 +186,29 @@ func TestGraphActionOverMCPWire(t *testing.T) {
 
 	// Seed a call chain through the import tool is not available for elements,
 	// so use the store directly via a query round-trip on an empty store first.
-	// The engine's legitimate ErrUnknownNode proves the call REACHED core —
-	// a schema rejection would read "invalid arguments"/"unexpected additional
-	// properties" instead. Assert on the distinction, not on absence of error.
-	_, err := session.CallTool(ctx, &mcp.CallToolParams{
+	// An unresolvable seed is an ANSWER carrying guidance (internal/core's
+	// graph-seed contract), so the proof that the call REACHED core is that
+	// answer — a schema rejection would read "invalid arguments"/"unexpected
+	// additional properties" as a tool error instead.
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "query",
 		Arguments: map[string]any{
 			"action": "impact", "query": "does.not.exist",
 			"args": map[string]any{"depth": "2"},
 		},
 	})
-	if err == nil {
-		t.Fatal("impact on unknown node should surface ErrUnknownNode")
-	}
-	if !strings.Contains(err.Error(), "unknown node") {
+	if err != nil {
 		t.Fatalf("impact must reach the engine (got %v) — a schema rejection means the enum/args are incomplete", err)
+	}
+	var payload struct {
+		Guidance string `json:"guidance"`
+		Action   string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(res.Content[0].(*mcp.TextContent).Text), &payload); err != nil {
+		t.Fatalf("decode impact answer: %v", err)
+	}
+	if payload.Action != "impact" || payload.Guidance == "" {
+		t.Fatalf("impact on an unknown seed must answer with guidance, got %+v", payload)
 	}
 
 	// session action must also be accepted by the schema.

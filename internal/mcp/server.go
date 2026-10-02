@@ -163,6 +163,10 @@ func (s *Server) registerTools() {
 			"(action=memory, command=create|str_replace|insert|delete|rename|add|replace|remove). " +
 			"Legacy tool name 'set' is superseded by this tool. " +
 			"Use action=dir with path=\".\" to import the current directory as a scoped index target (FR-P2). " +
+			"The store is <project>/.leankg/leankg.db unless LEANKG_DB_PATH or leankg.yaml db.standalone_db_path " +
+			"names another file — in that case EVERY verb (import, query, status, doctor, leankg-embed) reads THAT " +
+			"store and no store appears under the project, so the path you import does not decide where the data lives; " +
+			"status reports it in the store field. " +
 			"Import only for first-time indexing or deliberate updates; indexing does not create vectors. " + toolGuidance,
 		InputSchema: json.RawMessage(`{
 			"type": "object",
@@ -198,9 +202,9 @@ func (s *Server) registerTools() {
 			"type": "object",
 			"properties": {
 				"query": {"type": "string", "description": "search text, identifier, or memory search text"},
-				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "prd", "incidents", "env_conflicts", "service_context", "portfolio", "pattern", "languages", "lsp", "compress"], "description": "empty = ladder router (L0-L3); graph verbs need args.depth (impact) or args.to (path); org reads take args.service/args.pattern/args.env; action=portfolio is the cross-project fleet read (args.cmd=summary selects the T0 manifest, args.action pins each child's action)"},
-				"limit": {"type": "integer", "description": "max hits (default 10; impact depth comes from args.depth)"},
-				"args": {"type": "object", "description": "action params: depth (impact/path), to (path target QN), command/node_id (session), main (memory); command session_recall|memories + scope/cwd/bank (memory session reads); pattern/lang/limit (pattern), lang (lsp), mode/lines/fresh (read), cmd/tool/response (compress), cmd/action (portfolio)"},
+				"action": {"type": "string", "enum": ["search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain", "memory", "session", "ontology", "prd", "incidents", "env_conflicts", "service_context", "portfolio", "pattern", "languages", "lsp", "compress"], "description": "empty = ladder router (L0-L3). Actions that NEED another argument (they error without it): path → args.to (target qualified name); pattern → args.pattern (AST pattern, e.g. \"func $F\"); lsp → args.lang (server language); service_context and env_conflicts → args.service; portfolio → args.cmd=summary for the T0 manifest, args.action pins each child's action. impact reads its traversal DEPTH from args.depth. ontology reads args.cmd (matches|trace|status|concept_search|feature_flow|traceability); org reads take args.pattern/args.env for filtering."},
+				"limit": {"type": "integer", "description": "max hits for search and the graph verbs (default 10; impact DEPTH comes from args.depth). This is the field those actions read; args.limit applies only to the full-scan tools pattern/lsp, and when both are sent this one wins."},
+				"args": {"type": "object", "description": "action params. scope: search — code|prod|all, the corpus to rank (default is everything, including test fixtures and archived docs; retrieval.scope reports it). weight: search — \"<vector>,<keyword>\" fusion weights, e.g. \"3,1\" trusts the vector arm more, \"1,0\" drops the keyword arm; unset is 1,1 and retrieval.weight reports it. cmd: ontology — one of matches|trace|status|concept_search|feature_flow|traceability. command: session — recall|canvas (node_id for recall). command: memory — session_recall|memories (plus scope/cwd/bank). main: memory — the query to search. depth: impact (traversal depth), path (max hops). to: path (target qualified name). pattern: pattern (AST pattern, e.g. \"func $F\"). lang: lsp (server language). mode/lines/fresh: read. cmd: portfolio (summary selects the T0 manifest); action: portfolio (pins each child's action); tool/response: compress. limit: pattern/lsp — these full-scan tools read args.limit, while search and the graph verbs read the TOP-LEVEL limit; sending both gives the top-level one precedence."},
 				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
 			},
 			"required": []

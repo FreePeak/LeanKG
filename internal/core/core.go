@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -178,6 +179,15 @@ type ImportRequest struct {
 // explicit args key is never overridden by the flat one. Before this, a
 // schema-shaped call (content at the top level) reported ok:true and wrote an
 // EMPTY file — the agent's memory silently lost the write.
+//
+// The TARGET file is folded under BOTH names, and that is not a convenience.
+// The import schema advertises the target twice — `path` for
+// create/str_replace/insert/delete/rename, `file` for add/replace/remove — and
+// the two command families read opposite fields. So an agent that used the
+// other one got `memory: invalid memory path: empty path` for a file it had
+// named, which reads like an engine bug rather than a field-name mismatch. One
+// lookup, either name: the schema can name the target either way and the engine
+// finds it.
 func (r ImportRequest) withFlatArgs() ImportRequest {
 	flat := map[string]any{}
 	for k, v := range map[string]string{
@@ -187,6 +197,21 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 	} {
 		if v != "" {
 			flat[k] = v
+		}
+	}
+	// Path fills whichever name the command family reads, without overwriting a
+	// field the caller actually set: `file` is the schema's name for the
+	// add/replace/remove target, `path` for the create/str_replace family.
+	// Filling both when only one was sent is what makes either spelling work.
+	if r.Path != "" {
+		if _, ok := flat["file"]; !ok {
+			flat["file"] = r.Path
+		}
+		flat["path"] = r.Path
+	}
+	if r.File != "" {
+		if _, ok := flat["path"]; !ok {
+			flat["path"] = r.File
 		}
 	}
 	if r.InsertAt != nil {
@@ -441,11 +466,20 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	switch req.Action {
 	case "memory":
 		switch cmd := argStr(req.Args, "command"); cmd {
+		case "":
+			// No command: the documented memory search over the
+			// full-markdown memory files (command=search is the same call).
+			return e.MemoryRead("search", "", req.Query, req.Limit)
 		case "session_recall", "memories":
 			return e.SessionMemoryRead(cmd, req.Query, req.Limit, req.Args)
-		default:
-			// Query-tool memory reads carry the command in Query.
+		case "search":
 			return e.MemoryRead("search", "", req.Query, req.Limit)
+		default:
+			// A command that does not exist must say so. Falling through to
+			// the search answered a typo ("recal") as a confident empty hit
+			// list, which reads to an agent as "the recall found nothing"
+			// rather than "that command is not a command".
+			return nil, fmt.Errorf("unknown memory command %q (valid: search, session_recall, memories)", cmd)
 		}
 	case "ontology":
 		cmd := argStr(req.Args, "cmd")
@@ -539,6 +573,14 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if req.Query == "" {
 		return nil, fmt.Errorf("query requires query text")
 	}
+	// Validate the fusion weight HERE, beside the rest of the argument
+	// contract, for two reasons the L3 path alone could not give: a typo must be
+	// an error even when the store has no vectors (L3 degrades to L2 without ever
+	// reading a weight, so validating inside rungSemantic would silently accept
+	// it), and an invalid weight must fail the same way an invalid scope does.
+	if _, err := parseFusionWeight(argStr(req.Args, "weight")); err != nil {
+		return nil, err
+	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10
@@ -554,12 +596,12 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "fuzzy":
 		return e.rungFuzzy(req.Query, limit, resp, true)
 	case "semantic":
-		return e.rungSemantic(ctx, req.Query, limit, resp, true)
+		return e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope"), argStr(req.Args, "weight"))
 	case "impact", "path", "callers", "callees", "context", "explain":
 		return e.graphAction(ctx, req, resp)
 	}
 
-	// Ladder router: L0 cold → L1 exact → L2 fuzzy → L3 semantic.
+	// Ladder router: L0 cold → L1 exact → L3 semantic → L2 fuzzy.
 	if els == 0 {
 		resp["retrieval"] = map[string]any{"rung": "L0", "reason": "no elements indexed"}
 		resp["hits"] = []any{}
@@ -570,18 +612,25 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 		return resp, nil
 	}
-	// pin=true: the rung knows which keyword arm served the hits, so it owns
-	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
-	if _, err := e.rungFuzzy(req.Query, limit, resp, true); err == nil && len(hitsOf(resp)) > 0 {
-		return resp, nil
-	}
 	// Noul L3 gate: ontology confidence below MinConfidence
 	// (0.3) justifies no embedding call — degrade to L2.
 	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
 	if conf > 0 && conf < ontology.MinConfidence {
 		return withEmptyHint(e.rungFuzzy(req.Query, limit, resp, true))
 	}
-	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true))
+	// The vector rung is tried BEFORE the keyword rung, which is the order
+	// D-2026-09-04-4 states (L3 with vectors, L2 without): the whole point of
+	// the semantic tier is to outrank keyword noise, and returning as soon as
+	// L2 produced any hit made it unreachable — an intent question was answered
+	// with whichever elements happened to contain its words. Live on this repo
+	// before the fix: "how are search results ranked and fused" returned three
+	// archive-report headings; L3 on the same query ranked the function that
+	// implements the answer first.
+	//
+	// No capability probe is needed: rungSemantic degrades to L2 itself when
+	// the collection is absent, the stamp drifted, or the provider is
+	// unreachable, each with its own reason. pin=true so that reason survives.
+	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope"), argStr(req.Args, "weight")))
 }
 
 func hitsOf(resp map[string]any) []map[string]any {
@@ -687,11 +736,33 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (
 	return resp, nil
 }
 
-// rungSemantic is L3: embed the query via the wired provider, cosine top-k
-// over the first stamped collection. Provider failure or absent wiring
-// DEGRADES to L2 — never a hard error (issue #368 AC: query-time provider
-// failure degrades the ladder with retrieval.reason).
-func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool) (map[string]any, error) {
+// rungSemantic is L3: embed the query via the wired provider and rank the
+// collection by FUSING the vector arm with the keyword arm (reciprocal rank
+// fusion, the same combination the PostgreSQL path already runs as
+// HybridSearch). Provider failure or absent wiring DEGRADES to L2 — never a
+// hard error (issue #368 AC: query-time provider failure degrades the ladder
+// with retrieval.reason).
+//
+// Fusing rather than picking one arm is the point. Live on this repository
+// before the fix, a question whose answer is CODE ("where is the single flight
+// lock taken") was answered by the vector arm with three archived run reports
+// and by the keyword arm with cmd/leankg-embed/main.go::lock — the element
+// that IS the answer. The two arms are strong on different corpora: vectors
+// carry phrasing similarity into prose, keywords carry the identifier out of
+// a code symbol. Neither ordering is right, and whichever rung won outright
+// lost half the corpus. RRF is scale-free, so both survive with their own
+// weights and the disagreement between them becomes visible in the per-arm
+// ranks each hit carries.
+func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, argz ...string) (map[string]any, error) {
+	// argz carries the caller's optional query args (scope, weight); variadic so
+	// the pinned-rung and ladder call sites stay one call each.
+	scope, weight := "", ""
+	if len(argz) > 0 {
+		scope = argz[0]
+	}
+	if len(argz) > 1 {
+		weight = argz[1]
+	}
 	degrade := func(reason string) (map[string]any, error) {
 		if pin {
 			resp["retrieval"] = map[string]any{"rung": "L2", "reason": reason}
@@ -722,43 +793,335 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil {
 		return degrade(fmt.Sprintf("embedding provider failed (%v); degraded from L3", err))
 	}
-	// Issue #273: the PostgreSQL L3 rung fuses the cosine ranking with its
-	// tsvector and trigram rankings by reciprocal rank fusion, because the
-	// three scores live on unrelated scales (cosine, ts_rank, similarity) and
-	// only their ranks are comparable. sqlite keeps the plain cosine rung
-	// below; an empty fusion also falls through to it.
-	if fts, ok := e.st.(store.FTSBackend); ok {
-		fused, arms, ferr := fts.HybridSearch(modelID, q, qvec, limit)
-		if ferr != nil {
-			return degrade(fmt.Sprintf("hybrid fusion failed (%v); degraded from L3", ferr))
-		}
-		if len(fused) > 0 {
-			out := make([]map[string]any, 0, len(fused))
-			for _, h := range fused {
-				m := shapeElement(h.Element)
-				m["similarity"] = h.Similarity
-				m["score"] = h.Score // the fused RRF score, not a single-arm score
-				m["ranks"] = h.Ranks
-				out = append(out, m)
-			}
-			resp["hits"] = out
-			resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
-			return withEmptyHint(resp, nil)
-		}
+
+	// The scope is the caller's decision about which population to rank, and
+	// it applies to BOTH arms: scoping only the vector arm would leave the
+	// keyword arm free to reintroduce the test fixture the caller excluded,
+	// which is the answer they asked not to see. See scopeFilter for the
+	// measured motivation (rank 54 -> 7 on this repository's own store).
+	keep, scopeName, err := scopeFilter(e.st, scope)
+	if err != nil {
+		return nil, err
 	}
-	hits, err := e.st.SearchVectors(modelID, qvec, limit)
+	fw, err := parseFusionWeight(weight)
+	if err != nil {
+		return nil, err
+	}
+
+	// The keyword arm is FUSED, not consulted afterwards. It comes from
+	// FindFuzzy — the store's own L2 rung — rather than the FTSBackend's
+	kw, err := e.findFuzzyScoped(q, limit, keep)
+	if err != nil {
+		return degrade(fmt.Sprintf("keyword arm failed (%v); degraded from L3", err))
+	}
+	vectors, err := e.st.SearchVectorsScoped(modelID, qvec, limit, keep)
 	if err != nil {
 		return degrade(fmt.Sprintf("vector search failed (%v); degraded from L3", err))
 	}
-	out := make([]map[string]any, 0, len(hits))
-	for _, h := range hits {
-		m := shapeElement(h.Element)
-		m["similarity"] = h.Similarity
+	// The NAME arm, third and weakest: it reads symbol names only, so it reaches
+	// a helper whose body says nothing useful for the question — which is where
+	// the other two arms are weakest (measured on this repository's own store:
+	// `truncateRunes` ranks 755 and `coverage` 1776 over production code alone,
+	// while 18 of the 30 labelled questions contain a token of the answer's own
+	// symbol name). Empty for a prose question by construction, so a normal
+	// question is unaffected.
+	names, err := e.findNameScoped(q, limit, keep)
+	if err != nil {
+		return degrade(fmt.Sprintf("name arm failed (%v); degraded from L3", err))
+	}
+	fused, elements, ranks, scores := fuseQueryRanks(vectors, kw, names, fw, limit)
+	if len(fused) == 0 {
+		return withEmptyHint(e.rungFuzzy(q, limit, resp, true))
+	}
+	out := make([]map[string]any, 0, len(fused))
+	for _, qn := range fused {
+		m := shapeElement(elements[qn])
+		m["score"] = scores[qn]
+		if r, ok := ranks[qn]; ok {
+			m["ranks"] = r
+		}
+		if sim, ok := vectorSim(vectors, qn); ok {
+			m["similarity"] = sim
+		}
 		out = append(out, m)
 	}
 	resp["hits"] = out
-	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)"}
+	arms := "vector"
+	if fw.keyword > 0 && len(kw) > 0 {
+		arms += "+keyword"
+	}
+	if len(names) > 0 {
+		arms += "+name"
+	}
+	retrieval := map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
+	if scopeName != "" {
+		// A scoped answer must SAY it is scoped: an agent that asked for
+		// production code and got a narrower corpus should be able to see that
+		// from the answer alone, not infer it.
+		retrieval["scope"] = scopeName
+	}
+	if fw.raw != "" {
+		// A weighted answer must say so, for the same reason scope does: an
+		// agent reading the ranking needs to know it was not the default.
+		retrieval["weight"] = fw.raw
+	}
+	resp["retrieval"] = retrieval
 	return withEmptyHint(resp, nil)
+}
+
+// scopeFilter resolves the query's `args.scope` into an element predicate, and
+// the name to report it under. "" (the default) is nil — the full corpus, which
+// is what every existing caller and every existing answer sees.
+//
+// The values are the populations a caller actually wants to separate, measured
+// on this repository's own store: 9,306 vectors of which 1,879 are test
+// fixtures and 4,148 are documentation, and ranking "reciprocal rank fusion of
+// ranked lists" puts internal/store/pg_fts.go::FuseRRF at rank 54 over the whole
+// corpus and rank 7 over code. `code` is production source; `prod` is `code`
+// plus current (non-archived) docs; `all` is the full corpus, spelled out so an
+// agent can undo a narrower scope it inherited.
+//
+// An unknown scope is an error rather than a silent full corpus: answering over
+// everything when the caller asked for a subset looks exactly like the scope
+// working, and the difference is invisible in the answer.
+func scopeFilter(_ store.Backend, scope string) (func(store.Element) bool, string, error) {
+	switch scope {
+	case "":
+		return nil, "", nil
+	case "all":
+		return nil, "all", nil
+	case "code", "src":
+		return func(el store.Element) bool { return isProductionCode(el.FilePath) }, "code", nil
+	case "prod", "production":
+		return func(el store.Element) bool {
+			return isProductionCode(el.FilePath) || isCurrentDoc(el.FilePath)
+		}, "prod", nil
+	default:
+		return nil, "", fmt.Errorf("unknown query scope %q (valid: code, prod, all)", scope)
+	}
+}
+
+// isProductionCode reports whether a path is source the project ships rather
+// than a test or a fixture. A test file is a _test.go sibling or anything under
+// a testdata/ directory — the convention every language in this repo's registry
+// already follows for its own fixtures.
+func isProductionCode(path string) bool {
+	if strings.Contains(path, "testdata/") || strings.Contains(path, "/test/") {
+		return false
+	}
+	base := path
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		base = path[i+1:]
+	}
+	for _, suffix := range []string{
+		"_test.go", "_test.py", ".test.ts", ".test.tsx", ".test.js", ".spec.ts",
+		"_test.rb", "_spec.rb", "Test.java", "Tests.cs",
+	} {
+		if strings.HasSuffix(base, suffix) {
+			return false
+		}
+	}
+	return true
+}
+
+// isCurrentDoc reports whether a documentation path is current rather than
+// superseded: docs/archive/ is real content and stays in the corpus, but
+// `prod` excludes it because an archive describes a state the project left.
+func isCurrentDoc(path string) bool {
+	return strings.HasPrefix(path, "docs/") && !strings.HasPrefix(path, "docs/archive/")
+}
+
+// fusionWeight is the parsed form of `args.weight`: the two fusion weights the
+// caller asked for, plus the raw text so the answer can report it back.
+type fusionWeight struct {
+	vector, keyword float64
+	raw             string
+	ok              bool
+}
+
+// parseFusionWeight reads `"<vector>,<keyword>"` — the same convention
+// `scripts/retrieval-policy-sweep.py` prints, so a number measured offline can
+// be pasted in without translation. Unset is exactly today's behaviour, (1,1).
+//
+// Why an escape hatch and not a better default. Waves 12 and 13 measured the
+// trade over four cells (two corpora, two label protocols) and found no single
+// weighting that is right for all of them:
+//
+//	                        corpus1/behaviour  corpus1/doc  corpus2/behaviour  corpus2/doc
+//	(1,1) — the default                  16/137       49/84           13/94        92/102
+//	(3,1)                               30/137       48/84           21/94        88/102
+//	keyword arm dropped (1,0)           59/137       40/84           55/94        84/102
+//
+// A keyword arm that cannot corroborate contributes nothing measurable to the
+// fused order — wave 13's `agree_gate` was byte-identical to vector-only in
+// every cell — so on behaviour-shaped questions, which name a concept and
+// contain none of the document's words, dropping it is right; on keyword-shaped
+// questions it is the arm carrying the answer. Which population a deployment
+// serves is a product decision no query reveals, so the lever is the same shape
+// as `args.scope`: named, optional, reported back, inert when absent.
+//
+// Everything but a well-formed non-negative pair is an ERROR. A tuning knob
+// that silently falls back on a typo is the class of defect waves 1-11 of this
+// loop exist to remove — an agent would believe it asked for (3,1) and be
+// served (1,1) with no way to tell.
+//
+// ponytail: a two-number string, not a nested object. The whole surface is
+// "how much do you trust each arm", and a flat "<vector>,<keyword>" is
+// unambiguous, trivially reportable, and copy-pasteable out of the bench. It
+// grows into an object the day a third arm needs its own knob, which is the day
+// a caller has three different questions to ask.
+func parseFusionWeight(raw string) (fusionWeight, error) {
+	if strings.TrimSpace(raw) == "" {
+		// Unset is not an error and not an override: it is today's behaviour.
+		return fusionWeight{vector: 1, keyword: 1, ok: true}, nil
+	}
+	parts := strings.Split(strings.TrimSpace(raw), ",")
+	if len(parts) != 2 {
+		return fusionWeight{}, fmt.Errorf("query weight %q must be \"<vector>,<keyword>\" (e.g. \"3,1\" or \"1,0\" to drop the keyword arm)", raw)
+	}
+	nums := make([]float64, 2)
+	for i, p := range parts {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil || v < 0 {
+			return fusionWeight{}, fmt.Errorf("query weight %q: %q is not a non-negative number", raw, strings.TrimSpace(p))
+		}
+		nums[i] = v
+	}
+	if nums[0] == 0 && nums[1] == 0 {
+		return fusionWeight{}, fmt.Errorf("query weight %q cannot be \"0,0\": both arms off ranks nothing", raw)
+	}
+	return fusionWeight{vector: nums[0], keyword: nums[1], raw: strings.TrimSpace(raw), ok: true}, nil
+}
+
+// nameArmWeight is the name arm's scale in the L3 fusion.
+//
+// ponytail: 0.6, chosen because the arm fires on a SUBSTRING of a symbol name,
+// which is a much weaker signal than a body that discusses the question or a
+// keyword that matches it — and because the failure it must not cause is
+// visible: a question mentioning "Fuse" would otherwise pull every
+// FuseRRFWeighted / FuseRRFWeights / fuseQueryRanks element to the same rank-1
+// score and lose the fusion's ability to break that tie on evidence. One
+// number, one place; the sweep in scripts/retrieval-bench.py --sweep is the
+// gate if it ever needs revisiting.
+const nameArmWeight = 0.6
+
+// findNameScoped is the name arm with the same element filter the other two arms
+// got — scoping only the vector arm would let the other arms reintroduce exactly
+// the fixture the caller excluded.
+func (e *Engine) findNameScoped(q string, limit int, keep func(store.Element) bool) ([]store.FuzzyMatch, error) {
+	matches, err := e.st.FindByNameToken(q, limit)
+	if err != nil || keep == nil {
+		return matches, err
+	}
+	out := matches[:0]
+	for _, m := range matches {
+		if keep(m.Element) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+// findFuzzyScoped is the keyword arm with the same element filter the vector arm
+// got. The filter is applied AFTER FindFuzzy, so a scoped caller that filters
+// aggressively can see fewer than `limit` keyword hits even when more matched —
+// the same ceiling the scoped vector search documents.
+func (e *Engine) findFuzzyScoped(q string, limit int, keep func(store.Element) bool) ([]store.FuzzyMatch, error) {
+	matches, err := e.st.FindFuzzy(q, limit)
+	if err != nil || keep == nil {
+		return matches, err
+	}
+	out := matches[:0]
+	for _, m := range matches {
+		if keep(m.Element) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+// vectorSim finds a vector arm's similarity for one qualified name.
+func vectorSim(vectors []store.VectorSearchHit, qn string) (float64, bool) {
+	for _, v := range vectors {
+		if v.Element.QualifiedName == qn {
+			return v.Similarity, true
+		}
+	}
+	return 0, false
+}
+
+// fuseQueryRanks reciprocal-rank fuses the arms into one key order and returns,
+// per key, the element, the per-arm ranks and the fused score. The element maps
+// are keyed by qualified name so the caller never re-queries the store; a key
+// only one arm returned still appears, carrying that arm's rank.
+//
+// The name arm is weighted BELOW the other two (nameArmWeight): a query token
+// appearing inside a symbol name is weaker evidence than a body that discusses
+// the question, and an unweighted arm would let "Fuse" drag in every symbol whose
+// name contains it.
+func fuseQueryRanks(vectors []store.VectorSearchHit, kw, names []store.FuzzyMatch, fw fusionWeight, limit int) ([]string, map[string]store.Element, map[string]map[string]int, map[string]float64) {
+	lists := make([]store.RankList, 0, 3)
+	elements := map[string]store.Element{}
+	ranks := map[string]map[string]int{}
+	scores := map[string]float64{}
+	if len(vectors) > 0 && fw.vector > 0 {
+		keys := make([]string, 0, len(vectors))
+		for _, v := range vectors {
+			keys = append(keys, v.Element.QualifiedName)
+			elements[v.Element.QualifiedName] = v.Element
+		}
+		lists = append(lists, store.RankList{Name: store.ArmVector, Keys: keys})
+	}
+	if fw.vector == 0 {
+		for _, v := range vectors {
+			elements[v.Element.QualifiedName] = v.Element
+		}
+	}
+	// A keyword weight of ZERO drops the arm. It cannot be expressed as a
+	// 0-valued weight: store's armWeight treats a 0 field as "unset" and
+	// substitutes 1.0, so "1,0" would silently become "1,1" — the exact
+	// silent fallback this hatch exists to prevent. Wave 13 measured that
+	// dropping the arm is the whole win (59/137 and 55/94 on behaviour labels),
+	// so the intent is honoured where it is known.
+	if len(kw) > 0 && fw.keyword > 0 {
+		keys := make([]string, 0, len(kw))
+		for _, m := range kw {
+			keys = append(keys, m.Element.QualifiedName)
+			elements[m.Element.QualifiedName] = m.Element
+		}
+		lists = append(lists, store.RankList{Name: store.ArmTSVector, Keys: keys})
+	}
+	if fw.keyword == 0 && len(kw) > 0 {
+		// A dropped arm's documents are still reportable (an agent asked to
+		// rank without the keyword arm may still want to see what it excluded),
+		// but they must not be fused or ranked.
+		for _, m := range kw {
+			elements[m.Element.QualifiedName] = m.Element
+		}
+	}
+	if len(names) > 0 {
+		keys := make([]string, 0, len(names))
+		for _, m := range names {
+			keys = append(keys, m.Element.QualifiedName)
+			elements[m.Element.QualifiedName] = m.Element
+		}
+		lists = append(lists, store.RankList{Name: store.ArmName, Keys: keys})
+	}
+	fused := store.FuseRRFWeighted(lists, store.FuseRRFWeights{
+		Vector:   fw.vector,
+		TSVector: fw.keyword,
+		Name:     nameArmWeight,
+	})
+	out := make([]string, 0, len(fused))
+	for _, h := range fused {
+		out = append(out, h.Key)
+		if len(out) >= limit {
+			break
+		}
+		ranks[h.Key] = h.Ranks
+		scores[h.Key] = h.Score
+	}
+	return out, elements, ranks, scores
 }
 
 // --- memory actions (ride the 3-tool surface; #369) ---
@@ -950,10 +1313,27 @@ func (e *Engine) resolveGraphSeed(seed string) (string, error) {
 // graphAction routes the connection verbs (Rust graph/query.rs parity) to
 // internal/graph. The query string may be a bare name or a qualified name —
 // bare names are resolved via FindExact before traversal.
+//
+// A seed or target that no element resolves to is an ANSWER with recovery
+// guidance, never graph.ErrUnknownNode: that error reached the agent as a
+// failed tool call reading `graph: unknown node`, naming neither the verb nor
+// the seed nor a next step, and it made the same typo look like a broken verb.
 func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
 	g := func() map[string]any {
 		resp["action"] = req.Action
 		return resp
+	}
+	// One recovery sentence for an unresolvable end of the walk: name WHICH
+	// end was not found, quote it, and give the one step that fixes it. That
+	// is what lets an agent tell a typo from a verb that is misconfigured.
+	// The value is the string the lookup was given, not the verb.
+	unresolved := func(what, value string) (map[string]any, error) {
+		resp["hits"] = []any{}
+		resp["reachable"] = false
+		resp["guidance"] = fmt.Sprintf(
+			"No indexed element matches the %s %q; resolve it with query (action empty) to a qualified_name, then retry %s with that exact QN.",
+			what, value, req.Action)
+		return g(), nil
 	}
 	seed, err := e.resolveGraphSeed(req.Query)
 	if err != nil {
@@ -968,9 +1348,19 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// result-count concept, not a traversal depth.
 		depth := argInt(req.Args, "depth", 2)
 		hits, err := graph.Impact(e.st, seed, depth)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
+		// The result carries the VERB's name, like every other graph verb:
+		// impact under `hits` was the same key the search ladder uses, and
+		// these are different shapes (qualified_name + depth, not elements),
+		// so the plausible reading of a 21-entry `hits` was "21 elements
+		// matched a text query" when it meant "21 nodes depend on this". The
+		// alias stays so an agent that learned `hits` is not broken.
+		resp["impact"] = hits
 		resp["hits"] = hits
 		return g(), nil
 	case "path":
@@ -989,6 +1379,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// count, not a traversal bound; paths are a single answer anyway.
 		maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
 		path, err := graph.ShortestPath(e.st, seed, to, maxDepth)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("target (args.to)", toRaw)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1003,6 +1396,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "callers":
 		qns, err := graph.Callers(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1013,6 +1409,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "callees":
 		qns, err := graph.Callees(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1023,6 +1422,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "context":
 		out, err := graph.Context(e.st, seed, req.Limit)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1032,6 +1434,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "explain":
 		out, err := graph.Explain(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1064,7 +1469,21 @@ func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
 		}
 		return map[string]any{"offloaded": ref}, nil
 	case "lesson":
-		deduped, err := s.AddLesson(get("session_id"), get("text"))
+		// The schema names `summary` as the lesson's content field, and only
+		// `text` was read, so a schema-shaped call wrote an EMPTY lesson and
+		// answered {"deduped":false} — a successful write of nothing, which
+		// is the class waves 6, 7 and 11 exist to remove. `text` still works.
+		text := get("text")
+		if strings.TrimSpace(text) == "" {
+			text = get("summary")
+		}
+		// And an empty lesson is REFUSED rather than stored: a write that
+		// cannot report itself empty is a write that cannot be wrong loudly,
+		// which is how the field mismatch above hid for this long.
+		if strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("session lesson requires text (or summary) — an empty lesson is unrecallable")
+		}
+		deduped, err := s.AddLesson(get("session_id"), text)
 		if err != nil {
 			return nil, err
 		}
@@ -1094,6 +1513,14 @@ func (e *Engine) SessionRead(command, sessionID, nodeID string) (map[string]any,
 		}
 		return map[string]any{"command": "canvas", "session_id": sessionID, "refs": refs}, nil
 	default:
+		if command == "" {
+			// No command is not a mistake here: a session read carries no
+			// query text, so the command IS the request, and the only way to
+			// discover what the verb supports is to call it. Answer with the
+			// valid set (the same posture action=memory now takes) rather than
+			// failing a tool call an agent cannot interpret.
+			return map[string]any{"commands": []string{"recall", "canvas"}}, nil
+		}
 		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas)", command)
 	}
 }
@@ -1115,13 +1542,49 @@ func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
 	return map[string]any{"concepts": len(cat.Concepts), "matches": matches}, nil
 }
 
+// anySlice renders any slice as []any, turning a NIL slice into an EMPTY one.
+// Go marshals nil as `null` and empty as `[]`, and for a list answer the second
+// is the honest "nothing to report": `null` reads as "this field was never
+// populated", which for a corpus-derived answer is a claim about configuration
+// wearing the clothes of a result.
+//
+// It lives here (not only in internal/rest) because the same answer reaches MCP
+// and REST from one engine method, and the wire shape must not depend on which
+// transport asked.
+// AnySlice is exported so internal/rest shares ONE definition of the empty-vs-null
+// wire shape rather than re-deriving it per transport.
+func AnySlice[T any](in []T) []any {
+	out := make([]any, 0, len(in))
+	for _, v := range in {
+		out = append(out, v)
+	}
+	return out
+}
+
 // OntologyMatches returns the last persisted match set.
 func (e *Engine) OntologyMatches() (map[string]any, error) {
 	matches, err := ontology.LoadMatches(e.st)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"matches": matches}, nil
+	// A nil match set means no catalog was ever imported (LoadMatches returns
+	// nil when the kv row is absent) — a configuration fact, not a result.
+	// Without the note it reaches the wire as `{"matches": null}`, which reads
+	// as "no concept appears in this corpus" and sends the reader to look
+	// harder instead of importing a catalog.
+	// LoadMatches returns a nil slice when no catalog was ever imported (the kv
+	// row is absent), and Go marshals nil as `null` — which reads as "no concept
+	// appears in this corpus" rather than "no catalog exists", and sends the
+	// reader to look harder instead of importing one. Normalise to an empty
+	// array and say what an empty one means here. `matches` is []ontology.Match,
+	// so it goes through the same anySlice shape the REST sites use.
+	out := map[string]any{"matches": AnySlice(matches)}
+	if len(matches) == 0 {
+		out["note"] = "no concept catalog is imported for this project; import one with " +
+			"`leankg import` (or the import tool, action=ontology). A NON-empty list means a " +
+			"catalog is imported and its concepts matched these elements."
+	}
+	return out, nil
 }
 
 // LanguagesStatus reports the lazy activation state: which languages are

@@ -321,14 +321,24 @@ func TestRunLocalProviderTextBudget(t *testing.T) {
 			len(p.texts), got, maxLocalTextChars)
 	}
 
+	// The openai arm is not under a model-context budget, so its text keeps
+	// the name AND the whole body (v3's embedText, see elementtext_test.go).
 	st2 := testStore(t)
 	seed(t, st2, el("a::big", strings.Repeat("x", 4000)))
 	p2 := &recordProvider{inner: Deterministic(8), provider: "openai"}
 	rep2 := mustRun(t, st2, p2, "full")
-	if rep2.Truncations != 0 || len(p2.texts) != 1 || utf8.RuneCountInString(p2.texts[0]) != 4000 {
-		t.Fatalf("openai run: got truncations=%d texts=%+v, want 0 and the full 4000-rune text",
-			rep2.Truncations, p2.texts)
+	wantText := embedText("a::big", strings.Repeat("x", 4000))
+	if rep2.Truncations != 0 || len(p2.texts) != 1 || p2.texts[0] != wantText {
+		t.Fatalf("openai run: got truncations=%d text rune len %d, want 0 and %d runes (name + full body)",
+			rep2.Truncations, runeLen(p2.texts), utf8.RuneCountInString(wantText))
 	}
+}
+
+func runeLen(texts []string) int {
+	if len(texts) == 0 {
+		return -1
+	}
+	return utf8.RuneCountInString(texts[0])
 }
 
 // longTextProvider fails any call containing a text over maxRunes, mimicking

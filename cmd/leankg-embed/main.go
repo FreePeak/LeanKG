@@ -135,8 +135,20 @@ func bindPositional(verb string, args []string, project *string) {
 // lock takes the single-flight flock for the PROJECT dir (not the process
 // cwd): concurrent invocations against one project serialize; abandoned
 // locks release with the process.
+//
+// The lock is keyed on the STORE, not on <project>/.leankg: a standalone store
+// (FR-P2) has no .leankg dir, and the lock must not create one — that is what
+// made `leankg-embed run` fail with "open .../.leankg/embed.lock: no such
+// file or directory" the moment the store moved out of the project.
 func lock(dir string) (func(), error) {
-	lockPath := filepath.Join(dir, ".leankg", "embed.lock")
+	lockDir := filepath.Dir(store.StandaloneDBPath(dir))
+	if lockDir == "" || lockDir == "." {
+		lockDir = filepath.Join(dir, ".leankg")
+	}
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		return nil, err
+	}
+	lockPath := filepath.Join(lockDir, "embed.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err

@@ -107,11 +107,17 @@ func cmdObsidian(args []string) {
 			log.Fatalf("migrate: %v", err)
 		}
 		e := obsidian.New(vault, st)
-		if s, err := e.Status(); err != nil {
+		s, err := e.Status()
+		if err != nil {
 			log.Fatal(err)
-		} else if !s.Initialized {
-			fmt.Fprintln(os.Stderr, "Vault not initialized. Run 'leankg obsidian init' first.")
-			return
+		}
+		if !s.Initialized {
+			// Exit NONZERO: the verb did nothing, and a caller driving it by
+			// exit code must not read this as a completed sync. The old
+			// `return` printed the same words and exited 0, so a script
+			// believed a push had happened against no vault at all.
+			fmt.Fprintln(os.Stderr, "leankg obsidian: vault not initialized — run 'leankg obsidian init' first")
+			os.Exit(2)
 		}
 
 		switch verb {

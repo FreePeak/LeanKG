@@ -10,13 +10,14 @@
       "line_start": 1,
       "name": "Alpha",
       "qualified_name": "src/alpha.go::Alpha",
+      "score": 0,
       "similarity": -0.3505250911615613
     }
   ],
   "limit": 1,
   "query": "compute the answer",
   "retrieval": {
-    "reason": "vector similarity (cosine)",
+    "reason": "reciprocal-rank fusion vector",
     "rung": "L3"
   }
 }

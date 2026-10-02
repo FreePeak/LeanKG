@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -321,6 +322,65 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
 		FROM code_elements ce
 		WHERE ce.name ILIKE $1 ESCAPE '\' OR ce.qualified_name ILIKE $1 ESCAPE '\'
 		ORDER BY length(ce.qualified_name) LIMIT $2`, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanFuzzyMatches(rows)
+}
+
+// nameTokenFreq is the rarity table the name arm gates on, on postgres. Same
+// query, same bound, same meaning as the sqlite one: a token must be rare among
+// symbol names to be worth a name search, and the bound is a fraction of the
+// ELEMENT count.
+func (s *PGStore) nameTokenFreq() (map[string]int, int, error) {
+	rows, err := s.pool.Query(pgCtx, `SELECT lower(name), COUNT(*) FROM code_elements GROUP BY lower(name)`)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	freq := map[string]int{}
+	elements := 0
+	for rows.Next() {
+		var name string
+		var n int
+		if err := rows.Scan(&name, &n); err != nil {
+			return nil, 0, err
+		}
+		freq[name] += n
+		elements += n
+	}
+	return freq, elements, rows.Err()
+}
+
+// FindByNameToken is the ArmName arm on postgres: the same identifier-shaped
+// tokens as the sqlite implementation (shared nameTokens, so both engines fire
+// the arm on exactly the same questions) with ILIKE instead of LIKE, because
+// Postgres' LIKE is case-sensitive.
+func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
+	freq, distinct, err := s.nameTokenFreq()
+	if err != nil {
+		return nil, err
+	}
+	toks := nameTokens(query, freq, distinct)
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var where []string
+	var args []any
+	for i, t := range toks {
+		n := i + 1
+		where = append(where, fmt.Sprintf("(ce.name ILIKE $%d ESCAPE '\\' OR ce.qualified_name ILIKE $%d ESCAPE '\\')", n, n))
+		args = append(args, "%"+escapeLike(t)+"%")
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+`, 0.0 AS score
+		FROM code_elements ce
+		WHERE `+strings.Join(where, " OR ")+`
+		ORDER BY length(ce.name), length(ce.qualified_name) LIMIT $`+strconv.Itoa(len(toks)+1),
+		args...)
 	if err != nil {
 		return nil, err
 	}
@@ -746,11 +806,30 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 // ranked by cosine distance (HNSW index when present), hydrated against
 // code_elements. similarity = 1 - distance (the <=> operator's cosine distance).
 func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error) {
+	return s.SearchVectorsScoped(modelID, q, k, nil)
+}
+
+// SearchVectorsScoped is SearchVectors restricted to the elements keep accepts.
+// A nil keep is exactly SearchVectors.
+//
+// ponytail: keep is a Go predicate, so it cannot be pushed into the SQL the
+// HNSW index serves — the query over-fetches a bounded window and filters during
+// the scan, so a caller with an aggressive predicate can see FEWER than k hits
+// even when more matched. That is the ceiling; the upgrade path is a predicate
+// expressed as SQL (a path prefix, an element-type set) and pushed into the
+// WHERE clause, which is the only way to keep the index in the plan. The window
+// is 4x k with a floor, so the common case — a minority of rows filtered — is
+// unaffected.
+func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
 	if len(q) == 0 {
 		return nil, nil
 	}
 	if k < 0 {
 		k = 0
+	}
+	fetch := k
+	if keep != nil {
+		fetch = max(k*4, 64)
 	}
 	rows, err := s.pool.Query(pgCtx, `SELECT v.qualified_name,
 		COALESCE(ce.element_type,''), COALESCE(ce.name, v.qualified_name), COALESCE(ce.file_path,''),
@@ -760,7 +839,7 @@ func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSea
 		FROM `+s.vecTable(modelID)+` v
 		LEFT JOIN code_elements ce ON ce.qualified_name = v.qualified_name
 		ORDER BY v.vec <=> $1::vector
-		LIMIT $2`, pgvector.NewVector(q), k)
+		LIMIT $2`, pgvector.NewVector(q), fetch)
 	if err != nil {
 		return nil, err
 	}
@@ -777,7 +856,13 @@ func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSea
 		if meta != "" && meta != "{}" {
 			_ = json.Unmarshal([]byte(meta), &h.Element.Metadata)
 		}
+		if keep != nil && !keep(h.Element) {
+			continue
+		}
 		out = append(out, h)
+		if len(out) >= k {
+			break
+		}
 	}
 	return out, rows.Err()
 }

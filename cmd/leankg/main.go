@@ -472,7 +472,11 @@ afterSidecars:
 		svc := rpc.NewLeanKGService(engine)
 		path, handler := leankgv1connect.NewLeanKGHandler(svc)
 		mux := http.NewServeMux()
-		mux.Handle(path, handler)
+		// argsRefusalRecovery rewrites the codec's "invalid value for string
+		// field value: 2" — which names a descriptor field the caller never
+		// sent — into a refusal that names their argument and the wire's
+		// limitation (internal/rpc).
+		mux.Handle(path, rpc.ArgsRefusalRecovery(handler))
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
 		go serveHTTP(ctx, auth.MiddlewareWithStore(st, mux), *rpcAddr)
 	}
@@ -543,10 +547,27 @@ func cmdDoctor(args []string) int {
 	// find_project_root (nearest .leankg OR leankg.yaml), then the config's
 	// project_path anchor: doctor must inspect the store the server serves
 	// (Rust main.rs find_project_root + MCPServer::resolve_project_root).
-	dir = projectcfg.FindProjectRoot(dir)
-	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
-	st, err := store.Open(filepath.Join(dbDir, "leankg.db"), store.RO)
+	// A configured standalone store (FR-P2) has no .leankg to discover, so
+	// the project-root walk is skipped and the store comes from the config.
+	dbPath := projectcfg.StandaloneDBPath(dir)
+	if dbPath == "" {
+		dir = projectcfg.FindProjectRoot(dir)
+		dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
+		dbPath = filepath.Join(dbDir, "leankg.db")
+	}
+	st, err := store.Open(dbPath, store.RO)
 	if err != nil {
+		// A store that does not exist yet is a FIRST-RUN state, not a broken
+		// one: `status` already reports it as cold and exits 0, and
+		// `doctor --deep` already names the command. The raw open error
+		// ("read-only open of missing store …: no such file or directory")
+		// leaked the storage layer into a user-facing diagnosis and buried
+		// the only thing an agent can act on. Keep the path (so the operator
+		// sees WHERE the engine looked) and name the fix.
+		if _, statErr := os.Lstat(dbPath); os.IsNotExist(statErr) {
+			fmt.Printf("FAIL store: no store at %s — this project is not indexed yet; run `leankg index .` (then `leankg-embed run` for semantic search)\n", dbPath)
+			return 2
+		}
 		fmt.Printf("FAIL store: %v\n", err)
 		return 2
 	}

@@ -34,6 +34,17 @@ const (
 	ArmTSVector = "tsvector"
 	ArmTrigram  = "trigram"
 	ArmILIKE    = "ilike"
+	// ArmName ranks elements whose SYMBOL NAME contains an identifier-shaped
+	// token of the query, independently of anything the element's body says.
+	// It exists because the other two arms both read the body: FTS searches
+	// name + qualified_name + content but only for words that MATCH, and a
+	// 384-d embedding ranks a two-line helper far below a long file that
+	// happens to use the same words (measured: `truncateRunes` at 755 and
+	// `coverage` at 1776 over production code alone on a 3,279-vector corpus).
+	// It is the weakest arm by design — a query token inside a name is a weak
+	// signal — and only fires for identifier-shaped tokens, so prose never
+	// summons it.
+	ArmName = "name"
 )
 
 // maxTsqueryWords bounds how much text is handed to websearch_to_tsquery. That
@@ -100,6 +111,9 @@ type FuseRRFWeights struct {
 	TSVector float64
 	Trigram  float64
 	ILIKE    float64
+	// Name scales the symbol-name arm (FindByNameToken). Zero keeps the
+	// default weight 1.0, as every other field does.
+	Name float64
 }
 
 const RRFK = 60
@@ -172,6 +186,10 @@ func (w FuseRRFWeights) armWeight(name string) float64 {
 	case ArmILIKE:
 		if w.ILIKE != 0 {
 			return w.ILIKE
+		}
+	case ArmName:
+		if w.Name != 0 {
+			return w.Name
 		}
 	}
 	return 1.0

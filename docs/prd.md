@@ -1,11 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.13.5-graph-seed-resolve
+**Version:** 4.35.0-the-second-wire-cannot-say-what-it-refused
 **Date:** 2026-09-30
-**Version:** 4.13.4-storage-maintenance
-**Date:** 2026-09-30
-**Version:** 4.13.3-agent-ux-protocol
-**Date:** 2026-09-29
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
@@ -13,6 +9,639 @@
 ---
 
 ## Changelog
+
+### v4.35.0-the-second-wire-cannot-say-what-it-refused — ConnectRPC (2026-10-01)
+
+**Trigger:** wave 24 of the loop (FR-SELF-04, still on PR #449), the axis after wave 23: **the other transport.** ConnectRPC serves the same engine over a second wire with its own generated descriptor, and nothing in the previous twenty-three waves had driven it.
+
+**The defect is bigger than a message.** The descriptor types `args` as `map<string,string>` — a protobuf comment on the field even says clients "may send typed values over other transports", which is true and is also the whole problem. Over this wire **every non-string action argument is unreachable**: `limit`, `depth`, `insert_line`, `retained_through_user_turn`, and the array-valued `turns`. An agent that learned the contract over MCP, where `args` is a free-form object taking any JSON value, and replays it here gets a protobuf type error. Wave 23 fixed the advertisement; this wave found that the second wire does not merely *describe* a different contract — it **cannot express the same one**.
+
+And the refusal was the wave-23 class at its worst:
+
+```
+unmarshal message: … proto: (line 1:48): invalid value for string field value: 2
+```
+
+It names `value` — a descriptor field the caller never sent — not `depth`, the argument they did. A client reading that cannot tell which of its arguments was refused, so a confident agent concludes its request was malformed and retries it identically.
+
+**What is fixed and what is not, stated plainly.** The descriptor is generated code and the repository keeps **no `.proto` source**, so retyping the map to `map<string, google.protobuf.Value>` is a schema change with no regeneration story — a product decision this loop does not make unilaterally, and the wave does not pretend otherwise. What *is* a fix is legibility: the codec's refusal is translated where it is written, into a sentence that shows the rejected value, states the wire's limitation, and names a surface that does accept it:
+
+```
+args value 2 is not a string and this wire cannot carry it: this ConnectRPC
+descriptor types args as map<string,string>, so only STRING action args reach it
+(over MCP the same call takes any JSON value); send it as a string here, or use
+the MCP or REST surface for typed args (…the codec's own wording, kept)
+```
+
+The codec's detail is kept in parentheses so nothing is lost; the actionable sentence leads. It has to be an HTTP wrapper rather than service code because the failure happens while **decoding** the request, before any handler and before any interceptor runs — the service cannot see a request it never received.
+
+**The honest limit, recorded rather than papered over:** the codec reports a byte OFFSET, not a field path, so the argument's KEY is not recoverable here. Recovering it would mean buffering every request body to improve one message, which is the wrong trade. The answer gives the caller what they can act on — what they sent, why it cannot go, where it can.
+
+**Tests:** `TestTheSecondWireRejectsTheSameShapeTheFirstDoes` (the top-level `limit` works on both wires; the `args` form MCP silently overrides is REJECTED here, and the answer must lead with the wire's limitation) and `TestNonStringArgsAreNamedOnRefusal` (a number and an array each get a refusal that shows the value and names a surface that accepts it). Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
+
+**Loop status: 32 defects found, 32 fixed, 0 open** across twenty-four waves — and the wave's other finding is a decision the loop is NOT taking silently: **the second wire's `args` cannot carry typed values, and retyping the descriptor needs a `.proto` source this repository does not have.** That is recorded here as an open schema question rather than patched around, because a workaround that hides it would be the twenty-fifth instance of the class this loop exists to remove.
+
+### v4.34.0-the-advertised-contract — a call the agent cannot form is not published (2026-10-01)
+
+**Trigger:** wave 23 of the loop (FR-SELF-04, still on PR #449), enumerating the last axis the previous twenty-two waves had not touched: **the MCP wire itself** — the schema an agent reads to decide what to call, and whether every advertised call can actually be formed from it.
+
+**The defect is in the ADVERTISEMENT, not the engine.**
+
+1. **Two names for one value, with no statement of which wins.** The query schema advertises a top-level `limit` and an `args.limit`; the engine reads the top-level one for `search` and the graph verbs, and `args.limit` only for the full-scan tools. Live, on this repository:
+
+   ```
+   {"action":"search","query":"rank","limit":2}                      -> 2 hits
+   {"action":"search","query":"rank","limit":2,"args":{"limit":1}}   -> 2 hits
+   ```
+
+   An agent that reads "`args` carries limit" and sends both gets the other one. The precedence was never wrong — every transport reads the top-level — but the schema presented two names and said nothing about which wins.
+2. **Six ontology sub-commands advertised nowhere.** `matches`, `trace`, `status`, `concept_search`, `feature_flow`, `traceability` all work; `args.cmd` was one sentence of prose naming none of them, so an agent could not enumerate what it may ask for.
+3. **Four advertised actions unusable without an argument the schema never mentions where it matters.** `path` needs `args.to`, `pattern` needs `args.pattern`, `lsp` needs `args.lang`, `service_context`/`env_conflicts` need `args.service`. Each appears as a plain enum value, and the agent discovers the requirement from a 400.
+
+**Fixed entirely in the schema** — precedence unchanged, so no caller can break. Live after the change, **21 of 23 advertised actions are formable from the schema alone**; the two that still refuse (`pattern` wanting `args.lang` when a tree has several languages, `compress` wanting captured tool output) refuse for reasons no schema can enumerate in advance, and both messages already name what to send.
+
+**This is the read-side twin of waves 15–17.** Wave 16 made an annotation *refuse* an unanchored target; this makes the annotation's own contract *formable* in the first place. The rule behind both: **a call the agent cannot form correctly is a call the product has not really published** — and the failure mode is the same either way, a confident agent acting on a contract that does not match the engine.
+
+**Test:** `TestTheAdvertisedArgsAreTheOnesTheEngineReads` — and it reads the schema **off the wire**, through `tools/list` on a live session. The registered Go value is not what an agent sees, and the two are exactly what this wave found disagreeing; a test that read the source would have passed against every one of these defects.
+
+**Loop status: 31 defects found, 31 fixed, 0 open** across twenty-three waves.
+
+### v4.33.0-null-was-two-claims — the last unswept surface, and the last shape (2026-10-01)
+
+**Trigger:** wave 22 of the loop (FR-SELF-04, still on PR #449), sweeping the last surface the previous twenty-one had not: every REST route, checking the status **and** the body of each failure **and** each empty answer.
+
+**The defect.** Three routes answered a nil slice as `null`:
+
+| route | before | what `null` claimed |
+|---|---|---|
+| `GET /api/v1/ontology/matches` | `{"matches": null}` | on a project with no catalog this reads as *"no concept appears in this corpus"* when it means *"no catalog was ever imported"* |
+| `GET /api/v2/incidents` | `{"incidents": null}` | unconfigured store vs. a filter that matched nothing |
+| `POST /api/v1/memory/banks/{bank}/recall` | `{"entries": null}` | an unwritten bank vs. a query that matched nothing |
+
+Those are **different facts with opposite next steps** — import a catalog, import incidents, write to the bank; or stop looking — and the wire collapsed the first two into `null`, which a client reads as "the field was never populated". It is the shape the loop has been removing since wave 15, at the very end of the value: a configuration fact dressed as a result. Wave 15 found it in a write (an annotation with no text), wave 16 in a write (a record on an element that does not exist), wave 18 in a read (a populated answer emptied by the envelope), and here in the SHAPE OF AN EMPTY ONE.
+
+**The fix.** Go marshals nil as `null` and empty as `[]`; for a list answer the second is the honest "nothing to report", so `core.AnySlice` normalises a nil slice to an empty array at the three sites and each answer carries one sentence naming what an empty list can mean *there*. That last part is deliberate and is itself an application of the rule: **the note names the possible causes and does not pretend to pick between them**, because the engine cannot — a note claiming a distinction it cannot make would be the same defect one level down. `AnySlice` lives in `core` (not `rest`) because the same answer reaches MCP and REST from one engine method, and the wire shape must not depend on which transport asked.
+
+**Every other list this product returns was already honest** — `hits`, `conflicts`, `refs` — so this is consistency rather than a new concept, and the three above are the outliers the twenty-two waves of enumeration never reached because they only checked for ERRORS, not for empty answers of the wrong shape.
+
+**Two existing tests asserted the Go TYPE (`[]ontology.Match`) rather than the wire shape**, and they broke when the shape changed — correctly. They now read the answer as JSON, which is what an agent reads and what the change was about. **A test that pinned the Go type was pinning an implementation detail, and it would have blocked the fix** — the same lesson as wave 18's fixture, where a `[]any` payload passed against code broken for `[]Match`.
+
+**Test:** `TestTheRESTSuccessShapeNeverContradictsTheBody` — for each of the three routes the list key must be an array (never `null`), and an empty one must carry the note that says whether anything is configured at all. Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
+
+**Loop status: 30 defects found, 30 fixed, 0 open** across twenty-two waves, and every surface the product exposes — CLI verbs, the read surface, the REST listener, the diagnosis report — has now been enumerated and driven.
+
+### v4.32.0-every-diagnosis-names-its-subject — the convergence, applied to doctor (2026-10-01)
+
+**Trigger:** wave 21 of the loop (FR-SELF-04, still on PR #449), which took wave 20's convergence — **a diagnosis must name the thing it looked at, or it cannot be acted on** — and applied it to the largest diagnosis in the product: `doctor --deep`, the surface a user reaches for precisely when something is wrong, and therefore the one that cannot afford to be vague.
+
+**`index-freshness` named nothing it knew.** It compares the files it recorded against the files on disk, and reported:
+
+```
+2 missing file(s) not indexed, 0 stale (0%)
+Run `leankg index` (or watch mode) to refresh; a large delta usually means the
+index was built from a different root or env.
+```
+
+Three facts it already had, all discarded. It walked the tree: it could print the two paths. It ran against `env.ProjectRoot`: it never said which root. And its own escape hatch — "the delta usually means a different root" — is exactly the case the reader **cannot rule out, because the root is not in the message.** The STALE branch one case above already samples three paths; this branch threw the same information away, and this is the branch users hit most. It now reads `4 missing file(s) … under /Users/…/leankg/.worktrees/agent-infinity; e.g. cmd/leankg/refusalstore_test.go, internal/budget/cut_test.go, …`, and the hint tells the reader to compare that root with the one the check named.
+
+**`embedding-coverage` had a percentage with two opposite fixes and no way to tell them apart.** `1% uncovered (9350/9386 embedded)` is identical whether vectors were never built for new elements (`leankg-embed run`) or the collection was built for a **different model** (`leankg-embed full` — the rebuild the stamp guard exists to make safe). The advice was a coin flip and the model was nowhere in the finding. It now reads the STORE's own stamp (`emb_stamp`, behind an optional probe so no existing `Probes` implementation has to change) and says `… embedded; collection: bge-small-en-v1.5-f16.gguf; e.g. internal/docgen/docgen.go::WriteFileTo, …`, with a hint covering both causes.
+
+**The distinction it draws is the same one wave 10 drew.** It names the collection's model — read from the STORE, not from the environment — because what the reader needs is *which collection this percentage is about*, not which one the environment would build. That is the indexer's-identity-versus-the-files' distinction again, one layer up: wave 10 put the extractor's identity in the store, and here the freshness could see staleness and still not say what it saw.
+
+**Tests:** `TestTheFreshnessWarnNamesTheFilesAndTheRoot` and `TestTheCoverageWarnNamesTheCollection`. Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
+
+**Loop status: 29 defects found, 29 fixed, 0 open** across twenty-one waves — and the shape of waves 15 through 21 is one sentence applied seven times: *a write must report itself empty and unanchored; a read must be populated; a diagnosis must name its subject.*
+
+### v4.31.0-the-refusal-names-its-store — twenty waves, re-run (2026-10-01)
+
+**Trigger:** wave 20 of the loop (FR-SELF-04, still on PR #449), and deliberately a different KIND of wave: a regression sweep. Every battery from the nineteen previous waves, re-run against the current binary on a scratch project indexed through `LEANKG_DB_PATH`, to confirm that a wave which changes a shared mechanism has not quietly undone an earlier one.
+
+**Twenty of twenty-one checks passed unchanged.** The standalone store is read by every verb and no project-scoped store is created; dot-files are skipped; `index` refuses a missing path; `doctor` names its command; REST retain refuses an unreadable body and reports `skipped` on a cursor-gated re-send; `register-project` refuses a missing path; `obsidian push` exits 2 with no vault and works after `init`; `generate` prints and writes nothing without `--out`; the extractor's identity is stamped; the ontology answer keeps its payload and reports `cut: ["matches"]`. Waves 18 and 19's mechanism changes — the protected-key set, the typed-slice normalisation, the marker shape, the cut list — broke nothing.
+
+**The one failure was not a regression but the last hole in wave 16's guard**, and the sweep found it only because it ran the batteries against a store that was not the one it had indexed.
+
+**The defect.** `annotate` refuses a `qualified_name` the index does not have and advises `leankg query <name>` to find the right one — but **the refusal and its own advice resolve the store the same way.** A project indexed through `LEANKG_DB_PATH=/tmp/store.sqlite` holds `main.go::Alpha`; run `leankg annotate "main.go::Alpha"` from it without the env var and the guard answered:
+
+```
+no indexed element matches "main.go::Alpha" — annotations attach to an element
+the index has, so run `leankg index .` if this project is stale, or `leankg query
+<name>` to find the right qualified_name
+```
+
+…while the project-scoped store it actually opened holds a different index. The message was accurate about what it searched and useless about the only thing the caller needs. **Two situations — a typo, and the wrong store — produced identical words, and they have opposite fixes.** Following the advice made it worse: `query` opens the same wrong store and says the same thing.
+
+**The fix is one clause:** the refusal names the store path it searched. Live, the three cases now read differently — the wrong store shows `./.leankg/leankg.db` and names the override that would point elsewhere, the correct store works, and a real typo shows `/tmp/store.sqlite` so the caller knows the lookup was in the right place.
+
+**This is the same class at its third layer, and the loop has now hit it three times.** Wave 1: one verb read a store path only `serve` honoured. Wave 10: freshness could not see its own staleness. Here: **a diagnosis that shares its blind spot with its remedy** — the advice resolves exactly the thing the failure could not see. The generalisation twenty waves have converged on is small and worth stating: **a diagnosis must name the thing it looked at, or it cannot be acted on.** Wave 19's truncation marker and this refusal are that same requirement, in a report and in an error.
+
+**Test:** `TestTheRefusalNamesTheStoreItSearched` — the refusal names the store path, and keeps naming the rebuild. Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
+
+**Loop status: 28 defects found, 28 fixed, 0 open** across twenty waves — and no wave since wave 13 has found a defect the previous nineteen had already fixed, which is the first thing this sweep set out to test and the answer it produced.
+
+### v4.30.0-the-marker-names-what-it-cut — a report you cannot act on is not a mechanism (2026-10-01)
+
+**Trigger:** wave 19 of the loop (FR-SELF-04, still on PR #449), finishing the job wave 18 opened. Wave 18 stopped a populated answer arriving as nothing but its own marker. This wave asked what that fix left behind — and the answer was that **the marker was not usable either.**
+
+```
+query {"action":"search","query":"rank","limit":200}
+  _token_budget: {"max":4000,"pre_truncation_tokens":40330,
+                  "actual":3820,"truncated":true}
+```
+
+20,510 tokens are missing. The caller knows something was cut and **cannot learn what**: not whether `hits` went from 200 to 12, not whether a key was dropped, and therefore not what limit to re-query with. `truncated: true` can be observed but not acted on — which is the whole difference between a report and a mechanism, and this marker exists precisely so an agent can adapt its next call.
+
+**The fix is provenance, not a new mechanism.** The truncator already knows which children it shortened and which keys it removed; that information was being discarded one layer up, where the marker is built. It is now collected (`truncateValueCut` / `truncateObjectCut`, with the old entry points kept as thin wrappers so existing callers pay nothing), sorted and deduplicated so two runs of the same query agree, and carried on both `Stats` and the wire.
+
+**Verified live, on the exact calls that motivated it:**
+
+| call | pre | actual | `cut` | delivered |
+|---|---|---|---|---|
+| `search` limit=200 | 40,330 | 3,824 | `["hits"]` | 18 hits |
+| `search` limit=500 | 104,523 | 3,812 | `["hits"]` | 18 hits |
+| `ontology` | 17,181 | 3,990 | `["matches"]` | 126 matches |
+| `import ontology` | 17,184 | 3,993 | `["matches"]` | kept |
+| `search` limit=2 | — | — | *(no marker)* | whole, untruncated |
+
+The two search calls now say the same thing about the same answer — `hits` was shortened to 18 — which is exactly the fact a caller needs to choose its next limit, and which the counts alone could never convey.
+
+**The sweep that got here, recorded so the next wave does not repeat it:** every REST route under a 200-token envelope, and every list-shaped query action at a large limit. After wave 18's fix the only remaining silent emptiness was this marker, so the fix belongs in the envelope rather than in another verb — which is the wave-17 shape again: fix the mechanism once, not the instances.
+
+**Test:** `TestTheMarkerSaysWhatWasCut` — a trimmed key must be named, a key that SURVIVED must not be (naming it would send the caller to re-query for nothing), and the list must reach the wire. Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
+
+**Loop status: 27 defects found, 27 fixed, 0 open** across nineteen waves.
+
+### v4.29.0-envelope-eats-the-answer — a populated answer that arrived as nothing but its own truncation marker (2026-09-30)
+
+**Trigger:** wave 18 of the loop (FR-SELF-04, still on PR #449), which enumerated the READ surfaces the way waves 16 and 17 enumerated the write verbs: every action in the query schema, called once, checking whether each answer is POPULATED rather than merely successful. One was not.
+
+```
+query {"action":"ontology"}
+{"_token_budget":{"max":4000,"actual":22,"pre_truncation_tokens":17184,"truncated":true}}
+```
+
+The store held **673 matches**. The delivered answer was the marker and nothing else — a successful response whose entire payload had been discarded. An agent cannot distinguish "this project has no concept matches" from "the answer was thrown away to fit the envelope", and the marker that was supposed to explain it is the only thing left. Wave 2 built that envelope and pinned its ACCOUNTING; nobody had checked that a populated answer SURVIVES it.
+
+**Two causes, both of the kind that looks correct in review.**
+
+1. **`matches` was missing from `protectedKeys`.** That set is documented as carrying "the query identity and the primary payload, so the response keeps its shape", and it lists `results`, `elements`, `findings`, `relationships`, `incidents`, `conflicts`. It did not list the one key `action=ontology` answers under, so the object-truncation pass deleted the payload key whole.
+2. **A typed slice matched no truncation case at all.** `truncateValue` switches on `[]any` and `map[string]any`; the engine returns `[]ontology.Match`, a slice of structs, so the recursion shrank nothing, the object stayed over budget, and the caller fell through to deleting the key. The array truncator handles 673 items correctly — it keeps the largest prefix that fits and never zero — it simply never saw them.
+
+So `matches` is protected, and `truncateValue` normalises a typed collection through JSON before giving up: one marshal of a payload about to be marshalled for the marker anyway. The guard is on the value's **kind**, not on a retry, because a string normalises to itself identically for ever and the retry loop was found and killed inside the existing tiny-budget test.
+
+**Verified live, in both directions.** `action=ontology` now answers `{"matches": [126 items], "_token_budget": {"pre_truncation_tokens": 17181, "actual": 3986, "truncated": true}}` — a SHORTENED answer the caller can see is short, carrying the same matches that were previously discarded. `import action=ontology` keeps `concepts` and `matches` through the same envelope, and an untruncated answer still arrives whole with no marker.
+
+**A correction to the wave's own first test, which is the most transferable finding in this entry.** The test was written against `[]any` and **PASSED against the broken code** — a fixture in the one shape that happens to work proves nothing about the shape that does not. Rewritten against the engine's real typed slice, it fails on the unfixed code and passes on the fixed one. When a defect is a TYPE not being handled, the fixture must be the type the product actually returns, or the test is decoration.
+
+**The generalisation, which is the same shape as waves 15–17:** a response that reports success must contain the thing it reports success about. Waves 15/16/17 were writes that did not report themselves; this is the read-side twin — a successful answer that had been emptied by the machinery meant to keep answers small. The envelope is a good idea implemented with one missing key and one unhandled type, and the only reason anyone noticed is that a wave enumerated the actions and looked at whether each answer had anything IN it.
+
+**Tests:** `TestTruncationKeepsAProtectedKeyEvenWhenItAloneExceedsTheBudget` (the engine's real shape, a typed `[]match` of 673 items: the payload must survive, be trimmed, and the marker must say so) and `TestASmallAnswerIsNeverReducedToJustTheMarker`. Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
+
+**Loop status: 26 defects found, 26 fixed, 0 open** across eighteen waves.
+
+### v4.28.0-write-verbs-report-themselves — the rule applied to every write verb, not the one just found (2026-09-30)
+
+**Trigger:** wave 17 of the loop (FR-SELF-04, still on PR #449). Waves 15 and 16 found a lesson that wrote nothing and an annotation that wrote to nothing, and between them stated a rule. This wave applied that rule to **every remaining write verb** rather than to the one that had just been found. Three verbs failed it, in three different ways.
+
+**1. `leankg generate` wrote into the repository without being asked.** Documented as "render AGENTS.md from the graph"; it printed the body, and then — with no flag, no announcement, and no configurable destination — wrote `docs/AGENTS.md` into the current directory. In a repository whose `docs/` is tracked, the next `git status` showed a file the operator never asked for and never knew to review. It is the rule one level up: waves 15 and 16 wrote *nothing*; this wrote *something somewhere the caller did not name*. It now **prints by default and writes only when the caller names a destination** (`--out`), reporting which — and a new `docgen.WriteFileTo` writes the exact path given rather than inventing one.
+
+**2. `leankg annotate --description "   "` stored a whitespace annotation and answered `Created annotation`.** The wave-16 guard checked the target and not the text, so the empty half of the rule was still unenforced on the same verb. Now refused with the reason.
+
+**3. `leankg obsidian push` with no vault printed "Vault not initialized. Run 'leankg obsidian init' first." and exited 0.** The message was honest and the exit code was a lie: a caller driving the verb by `$?` — the ordinary way to run a CLI from a script or an agent — believes a push happened against no vault at all. It now exits 2. **A refusal must be visible to the caller that is not reading stderr.**
+
+**The standing check, so the next write verb is covered by adding a case rather than by remembering.** `TestWriteVerbRuleHoldsAcrossTheProduct` runs the write verbs that take a name or a path against targets that do not exist and fails if any reports success; `TestGenerateIsAPrintOnlyVerbWithoutOut` pins the print-only default and the `--out` opt-in separately, because "generate writes a file" is specific enough to deserve its own assertion.
+
+**Verified live:** `generate` prints and leaves no `docs/AGENTS.md` — the wave's own probe had already created one, which is why the case exists and why that file is now deleted rather than committed; `generate --out PATH` writes there and reports the path; a blank description exits 1 with the reason; `obsidian push` with no vault exits 2; a real annotation still works.
+
+**Loop status: 25 defects found, 25 fixed, 0 open** across seventeen waves — and the shape of the last three waves is a method rather than a fix: state a rule from what the data shows, then sweep the surface the rule applies to instead of patching the instance that revealed it.
+
+### v4.27.0-annotate-anchor — a write that cannot report itself unanchored (2026-09-30)
+
+**Trigger:** wave 16 of the loop (FR-SELF-04, still on PR #449), which did the enumeration wave 15 pointed at: **every verb the product exposes** — 55 of them — and drove the ones no battery had touched.
+
+**The defect.** `leankg annotate` and `leankg link` are the only ways an agent records business knowledge against a specific element: the prose a code reader cannot get from the source. Both take a `qualified_name`; neither checked the index has one:
+
+```
+$ leankg annotate "no.such.go::Nope" --description x
+Updated annotation for 'no.such.go::Nope'
+$ leankg link "no.such.go::Nope" STORY-1
+Linked 'no.such.go::Nope' to story STORY-1
+```
+
+Both report success and both persist. This is the silent-write class waves 6, 7, 11 and 15 exist to remove, and it is the **worst instance yet, because an annotation is the one place a human writes what the code does NOT say.** An annotation attached to a typo'd or renamed identifier is not merely wrong — it is *unreachable*: it never surfaces in a query (the element is not in the graph), it appears in `search-annotations` only if the agent guesses to grep for it, and it is never migrated when the element is renamed. The knowledge is stored and invisible.
+
+**The fix, and the rule it completes.** `requireIndexedElement`, one guard called by both verbs before any write: an empty element is an error; a `qualified_name` the index does not contain is an error that names the **index** as the reason and the way out (`leankg index .` if stale, `leankg query <name>` to find the right name) — because an agent seeing only "not found" cannot tell a typo from a stale index, and those want opposite next steps. It does not rename, does not suggest a near-match, and does not warn-and-continue.
+
+Together with wave 15 this completes a two-part rule worth stating once:
+
+> **A write must be able to report itself empty and unanchored.**
+>
+> Wave 15 was a lesson that wrote nothing (`summary` stored as an empty string). Wave 16 is an annotation that wrote to nothing — an element that does not exist. Both are silent successes; both are now refusals, and both refusals name the reason and the way out.
+
+**Verified live, in both directions.** The correct `qualified_name` still annotates and links (`Created annotation for '…::OpenBackend'`, `Linked … to story STORY-9`, and `search-annotations "configured store path"` finds it); a missing element exits 1 and writes nothing. The guard also proved itself on the wave's own probe: `internal/store/backend.go::Open` was refused, and the real symbol is `…::OpenBackend` — so a typo in the wave's own live check was caught by the fix rather than by luck.
+
+**Test:** `TestAnnotateAndLinkRefuseAnElementTheIndexDoesNotHave` — a real element still annotates and links; four missing/empty cases each fail without printing "Created"/"Updated"/"Linked" and each name the index in the reason; a refused annotation leaves nothing behind.
+
+**Driven on the same pass and behaving** (recorded so the next wave does not re-check): `tunnels` (50 cross-cluster edges), `tunnels list` (rejected — no such subcommand), `quality` (322 oversized functions), `generate`, `run`, `pack` (refuses to truncate 9,371 elements past `max_nodes=5000` — a loud refusal, the right posture), `summarize` (names the three env vars it needs), `mine-conversations` (names the formats it accepts), `reflect` with unknown nodes. `team-map` answers `[]` because this project has no `service_metadata` imported — an honest empty, not a defect.
+
+**Loop status: 22 defects found, 22 fixed, 0 open** across sixteen waves — and every verb the product exposes has now been driven at least once, which is the only way to know the list is complete.
+
+### v4.26.0-lesson-fields — the write surface no battery had touched (2026-09-30)
+
+**Trigger:** wave 15 of the loop (FR-SELF-04, still on PR #449), going **back to wrong answers** after four waves of retrieval work, because the retrieval arc is closed at both ends and wrong answers are what the loop was built to find. Target: the surfaces no battery had ever driven — session WRITES, ontology, org knowledge.
+
+**One defect, and it is the fourth instance of one class.** The import schema advertises, for `action=session`, `command: offload | lesson` with `summary` ("offload summary"), `text`, `session_id`, `node_id`, `payload`. `command=lesson` therefore has a documented content field, and the schema names `summary`. `sessionWrite` read only `text`:
+
+```
+import action=session command=lesson session_id=s1 summary="query before bash"
+  -> {"deduped":false}        (success; the store holds an EMPTY lesson)
+```
+
+A successful write of nothing. The second such call reports `deduped: true` — a duplicate of nothing — because the hash that dedup keys on is the hash of the empty string. The agent records that it learned something; the store holds a blank.
+
+**Why it survived fourteen waves.** Every earlier drive read memory and offloaded sessions. **Not one had ever written a lesson.** Wave 6 fixed this exact mismatch for memory curation (`withFlatArgs`), wave 7 found the same silent success on REST retain, wave 11 found dot-files entering the index — and the lesson arm sat in the gap the whole time, because a surface nobody calls cannot be wrong.
+
+**The fix, both halves.** `summary` feeds `text` when `text` is empty, so both spellings land; and an **empty lesson is refused** rather than written. The second half is the one that matters, and it generalises: **a write that cannot report itself empty is a write that cannot be wrong loudly.** That property is what would have surfaced this mismatch on the first call rather than the fifteenth wave.
+
+**A correction to the wave's own first test — the third time this loop has made it.** It claimed the whole session write surface was broken, citing a live `offload session_id=s1 node_id=n1` failure. The probe was wrong: `n1` is two characters and `validID(nodeID, 3)` correctly rejects it, and `withFlatArgs` already folds `node_id`/`session_id` into `Args` — offload worked throughout. The test was rewritten to claim only what is true, and the offload half dropped rather than carried on a false premise. The lesson: probe a surface with a VALID payload before declaring it broken, or the first error you see is your own typo.
+
+**Driven on the same pass and correctly refused** (so the next wave does not re-check): `lesson` with no content, `offload` with a too-short or empty `node_id`, `recall` of a node never offloaded, `canvas` on a session with no nodes, `ontology` with an unknown cmd (the error names the valid set), `service_context` with no service. `trace` and `concept_search` answer legitimately empty on a project with no ontology.
+
+**Test:** `TestSessionLessonReadsTheFieldTheSchemaNames` — the schema's field lands, the legacy field still lands, three flavours of blank are refused and leave the store byte-identical, dedup still works on real content. Live over stdio: both spellings write, `summary=""` is refused with the reason, a repeat is `deduped: true`, and `lessons.json` holds exactly the two real lessons.
+
+**Loop status: 21 defects found, 21 fixed, 0 open** across fifteen waves — and the class of the last four (`withFlatArgs` for memory, REST retain, dot-files, and now the lesson field) says the remaining surface worth driving is the one nobody calls.
+
+### v4.25.0-weight-hatch — make both options measurable, pick neither (2026-09-30)
+
+**Trigger:** wave 14 of the loop (FR-SELF-04, still on PR #449). Waves 12 and 13 established the trade and closed the middle path; wave 13's closing line was that the remaining decision — "which question population do you optimise for" — is a product decision a measurement cannot make. So the wave's job was to make **both** options measurable and pick neither.
+
+**Measured before built.** From the arms the engine already returns, over all four cells:
+
+| cell | unset (today) | with the population's weight | weight |
+|---|---|---|---|
+| corpus 1, behaviour (137) | 16/137 | **59/137** | `1,0` |
+| corpus 1, doc (84) | 49/84 | **51/84** | `2,1` |
+| corpus 2, behaviour (94) | 13/94 | **55/94** | `1,0` |
+| corpus 2, doc (102) | 92/102 | **92/102** (unchanged) | unset |
+
+Every cell reaches the per-cell best wave 13's sweep predicted, and an **unset weight is byte-identical to today's behaviour on all four** — so the hatch costs a deployment that does not use it nothing. That is the whole argument for shipping it: it does not pick a winner, it makes the choice available and reports which one an answer used.
+
+**What landed: `query args.weight`**, formatted `"<vector>,<keyword>"` — the same convention `scripts/retrieval-policy-sweep.py` prints, so a number measured offline pastes in without translation. `weight "3,1"` trusts the vector arm more; `weight "1,0"` drops the keyword arm, which is the whole of wave 13's win. It is the same kind of lever as `args.scope`: named, optional, reported back in `retrieval.weight`, inert when absent. `ponytail:` a flat two-number string, not a nested object — the entire surface is "how much do you trust each arm", and it becomes an object the day a third arm needs its own knob.
+
+**Three things it refuses to do, each because this loop has been bitten by its opposite:**
+
+- **A zero weight DROPS its arm.** `store`'s `armWeight` treats a 0 field as "unset" and substitutes 1.0, so `"1,0"` would have silently become `"1,1"` — the exact silent-fallback class waves 1–11 exist to remove. The drop happens in `fuseQueryRanks`, where the caller's intent is known.
+- **`retrieval.reason` names the arms actually fused.** With the keyword arm dropped, claiming `vector+keyword` would be a lie in the one field an agent reads to know why it got what it got; live, `"1,0"` reports `vector+name`.
+- **An unparseable weight is an error, validated at the query boundary** — not inside the L3 path, where a store with no vectors degrades to L2 and never reads a weight, so a typo would be silently accepted on exactly the deployments least able to notice.
+
+**A correction to wave 14's own first test, recorded because it is the same mistake the loop keeps making:** the initial version of `TestL3WeightArgIsAnEscapeHatch` asserted that `"1.5,1"` and `"  "` were errors. They are not — a fractional weight is one the bench itself prints, and whitespace is an ABSENT argument rather than a typo. The test was tightened to the documented contract, and the fixture was found to be asserting the L2 path under an L3 name (elements but no vectors, so the query never reached the fusion). Two bugs in one test, both in the test.
+
+**Loop status: 20 defects found, 20 fixed, 0 open** across fourteen waves — and the retrieval work is now closed at both ends: what the engine indexes (waves 4, 5, 6, 9, 10) and how a caller who knows its question population ranks against it (wave 14), with waves 11–13 establishing that the two knobs cannot be merged into one setting that is right for everyone.
+
+### v4.24.0-policy-sweep — the adaptive weight wave 12 proposed does not exist (2026-09-30)
+
+**Trigger:** wave 13 of the loop (FR-SELF-04, still on PR #449), doing the thing wave 12 asked for: **test the adaptive weight before building it**, on all four cells, so the choice is made with the whole table rather than one cell.
+
+`scripts/retrieval-policy-sweep.py` scores each policy over the arms the engine already returns, so any winner would be implementable without a new query, index or store round-trip. The policies: constants; `agree_boost` (scale the vector arm when the two arms' top hits agree); `agree_gate` (drop the keyword arm when they disagree); `top_overlap n` (drop it when the arms share nothing in their top n); and vector-only as the reference.
+
+**Top-1 across the four cells (corpus 1 behaviour / corpus 1 doc / corpus 2 behaviour / corpus 2 doc):**
+
+| policy | C1 | C2 | C3 | C4 | min | sum |
+|---|---|---|---|---|---|---|
+| constant(1,1) — shipped | 16/137 | **49**/84 | 13/94 | **92**/102 | 13 | 170 |
+| constant(2,1) | 18 | **51** | 19 | 90 | 18 | 178 |
+| constant(3,1) | 30 | 48 | 21 | 88 | 21 | 187 |
+| `agree_boost` (γ = 2, 3, 5) | 16 | 49 | 13 | 92 | 13 | 170 |
+| **`agree_gate`** | **59** | 40 | **55** | 84 | **40** | **238** |
+| `top_overlap n=3` | 56 | 45 | 46 | 91 | 45 | 237 |
+| vector only | 59 | 40 | 55 | 84 | 40 | 238 |
+
+**Two negative results, and both matter more than a positive one would have.**
+
+- **The adaptive weight wave 12 proposed does not exist in this data.** `agree_gate` is the best policy by maximin *and* by max-sum — and it is **byte-identical to vector-only in all four cells**. That is the tell: when the two arms disagree, the keyword arm contributes **nothing measurable** to the fused order, so gating it is not an adaptive weight at all, it is the degenerate policy wearing one. And gating is not free: it wins the two behaviour cells by 20–40 top-1 and loses the two doc-derived cells by 8–9. The choice is not "adaptive beats constant" — it is **"which question population do you optimise for"**, and the two families peak on opposite halves.
+- **`agree_boost` is a complete no-op** at γ = 2, 3 and 5 (16/31/70 in all three, identical to the shipped). Boosting a term that already holds the top score in a reciprocal-rank sum cannot move it past a term that does not, because every boost scales a different denominator. It is precisely the kind of rule that looks principled, survives a code review, and does nothing — the reason it was measured rather than shipped.
+
+**No engine change ships from this wave.** The honest options are (a) keep (1,1) and let the caller reach for `args.scope`, the escape hatch that already exists and is already reported in `retrieval.scope`; (b) add an `args.weight` escape hatch mirroring `args.scope`, so a caller who knows its question population can pick the constant that suits it; or (c) pick a population and optimise for it — a product decision, not a measurement. **A measurement cannot choose between them**, and this wave's job was to find out whether the adaptive middle path existed. It does not, and that is a result.
+
+**Loop status: 19 defects found, 19 fixed, 0 open** across thirteen waves, with two waves (12 and 13) producing corrections and negative results rather than engine changes. That is the loop working as intended: it is now more likely to say *this does not help* than to ship a rule that looks principled and measures nothing.
+
+### v4.23.0-behaviour-labels — waves 5 and 6 were right about the wrong questions (2026-09-30)
+
+**Trigger:** wave 12 of the loop (FR-SELF-04, still on PR #449), doing the one thing wave 11 said it could not: a label set that does **not** flatter wave 9.
+
+**The protocol.** `scripts/retrieval-labels-behaviour.py` builds questions that share **zero tokens** with the answer's doc comment: the question is assembled from the symbol's own domain words — what an agent would call the thing — and any candidate overlapping the comment is dropped. That check is the protocol rather than a nicety: it makes a label unanswerable by comment-matching, so the score cannot be carried by wave 9. 137 labels on corpus 1, 94 on corpus 2, every one verified to be a live `code_elements` row.
+
+**What it found, and it corrects this document's own waves 5 and 6.** Those waves concluded **"do not tune the fusion weights"** — from doc-comment-derived labels, where both arms are strong and (1,1) sits inside the spread. On behaviour labels that conclusion is wrong, and the sweep is no longer flat:
+
+| weights (vec, kw) | corpus 1 behaviour, top-1 / top-3 / top-10 |
+|---|---|
+| **1,1 (shipped default)** | 18 / 32 / 70 |
+| 1,2 | 14 / 23 / 33 |
+| 2,1 | 20 / 49 / 90 |
+| 1,3 | 11 / 18 / 29 |
+| **3,1** | **30 / 57 / 102** |
+
+Upweighting the vector arm buys **+12 top-1 and +32 top-10**; downweighting the keyword arm hurts monotonically. The per-arm columns say why, and they are the finding:
+
+| | keyword top-1 | vector top-1 | **fused top-1** |
+|---|---|---|---|
+| corpus 1, behaviour labels | 3/137 | 59/137 | **18/137** |
+| corpus 2, behaviour labels | 7/94 | 55/94 | **13/94** |
+
+**On behaviour questions the FUSION IS WORSE THAN THE VECTOR ARM ALONE.** A keyword index structurally cannot answer a question containing none of the document's words, so at equal weight it contributes noise and dilutes the one arm that can. That is not a tuning curiosity; it is the fusion doing what fusion does when one arm is blind.
+
+**The four-cell table, because this is a trade and not a free win:**
+
+| label set | (1,1) top-1 | (3,1) top-1 |
+|---|---|---|
+| corpus 1, doc-derived (84) | 49 | 48 |
+| corpus 2, doc-derived (102) | 92 | 88 |
+| corpus 1, behaviour (137) | 18 | **30** |
+| corpus 2, behaviour (94) | 13 | **≈26** (same direction) |
+
+(3,1) costs the doc-derived sets ~1 and ~4 top-1 and buys the behaviour sets +12 and +13. **A fixed weight cannot be right for both question populations:** the arms are not interchangeable, and any constant is right on average and wrong at both tails. That is the generalisable lesson of waves 8, 11 and 12 taken together — one corpus and one label protocol each produced a confident, wrong-sounding conclusion, and only the second corpus, and only the second protocol, exposed it.
+
+**No default was changed in this wave, deliberately.** The measured alternative is an **adaptive weight** keyed on evidence the engine already has — how far the two arms AGREE — but that is a design change with its own risk, and shipping a constant chosen by looking at one cell of a four-cell table is precisely the mistake wave 8 made when it generalised "in-pool 81/84" from one repository. The table and both label sets are committed so the next wave chooses with all four cells in front of it.
+
+**Loop status: 19 defects found, 19 fixed, 0 open** across twelve waves — and the first wave in four whose deliverable is a **correction to this document** rather than a change to the engine.
+
+### v4.22.0-second-corpus — do the gains replicate where the tool was not written? (2026-09-30)
+
+**Trigger:** wave 11 of the loop (FR-SELF-04, still on PR #449), and the question the previous ten waves should have been asking: every retrieval number in waves 4–10 was measured on **LeanKG** — the repository the tool was written for. A benchmark that only ever scores the tool on its own code cannot report a regression anywhere else, so the missing thing was not another fix, it was a second corpus with its own labels.
+
+**Corpus 2 is `qa-agent`:** a different repository, 246 files / 2,576 elements, Go + Python + Markdown, 119 documented packages, and **102 questions derived by the same mechanical protocol** as corpus 1 (one documented symbol per package, fixed seed, doc comment minus the symbol name, 4+ words, no self-naming, every label verified a live `code_elements` row, every symbol a previous wave created excluded — trivially true here, since this corpus has none). `scripts/retrieval-bench.py` gained `--labels` to score them, and both corpora were built and embedded by their own binary.
+
+**The gains replicate, and larger than on corpus 1.** Depth 100:
+
+| | vector in-pool | keyword in-pool | fused in-pool | fused top-1 | fused top-10 |
+|---|---|---|---|---|---|
+| corpus 2, `origin/main` | 0/102 | 62/102 | 62/102 | 3/102 | 36/102 |
+| **corpus 2, this branch** | **102/102** | **102/102** | **102/102** | **92/102** | **102/102** |
+| corpus 1, `origin/main` | 0/84 | 47/84 | 47/84 | 3/84 | 20/84 |
+| corpus 1, this branch | 74/84 | 79/84 | 81/84 | 49/84 | 71/84 |
+
+Waves 4–10 were not corpus-specific. The **keyword arm** moving 62 → 102 is wave 9's doc-comment capture landing on text the keyword arm reads directly — the same mechanism, now visible on a repository this loop never touched.
+
+**Two findings the second corpus produced that corpus 1 could not.**
+
+- **A scope can COST a label.** `scope=code` scores **101/102** here against 102/102 on the full corpus. Corpus 2 has 97 markdown files to LeanKG's 4,346, so wave 5's composition lever has far less to bite — and where a label's own answer is documentation, excluding `docs/` removes it. A scope is a filter with a cost; the engine reports `retrieval.scope` so the caller can see what was dropped, and the bench now measures that cost instead of assuming the filter is free.
+- **The weight sweep says the same thing on both corpora: do not tune it.** Top-1 across eight (vector, keyword) pairs spans 46–51 of 84 on corpus 1 and 79–94 of 102 on corpus 2, with (1,1) inside the spread in both and no pair dominating. Two independent corpora, same conclusion — the remaining errors are not in the weights, which is what waves 5 and 6 concluded from one corpus and could not previously claim.
+
+**A defect the second corpus found in the rig itself:** `--sweep` crashed on both corpora, because wave 8's single-arm fallback had added a sixth field to the per-label tuple and the sweep loop still unpacked five. A rig that only runs its headline path is not a rig.
+
+**Stated plainly, because it cuts against this wave's own numbers:** corpus 2's labels are **100% doc-comment-derived**, and wave 9 is precisely what makes doc comments indexable — so corpus 2 flatters wave 9 more than corpus 1's mixed hand-written set does. A third corpus whose labels are written against **behaviour** rather than paraphrasing a comment is the measurement that would settle it. That is wave 12, and it is the first thing in eleven waves this loop could not do with what it already had.
+
+**Loop status: 19 defects found, 19 fixed, 0 open** — and the retrieval work is now replicated on a repository the tool was not written for: **fused top-1 3/102 → 92/102, top-10 36/102 → 102/102** on corpus 2, against 3/84 → 49/84 and 20/84 → 71/84 on corpus 1.
+
+### v4.21.0-indexer-identity — the index records the code that built it (2026-09-30)
+
+**Trigger:** wave 10 of the loop (FR-SELF-04, still on PR #449), closing the defect wave 9's measurement exposed instead of fixed.
+
+**The defect, in one sentence:** `IndexDirWith` skips a file when its size+mtime match the stored record or its SHA-256 matches `ContentHash`, and **both are properties of the SOURCE** — so a change to the code that reads the source is invisible.
+
+Measured, on this repository. Wave 9 taught the extractor to lead an element's stored content with its doc comment. The re-index that followed reported:
+
+```
+indexed .: files=15 elements=180 skipped=842
+```
+
+**842 of 857 files never visited**, the store kept element bodies extracted by the old extractor, `doctor --deep` passed `index-freshness`, and the retrieval bench moved 65/84 → 64/84 in-pool over a quietly half-old corpus. The only cure the CLI offered was `rm -rf .leankg`, which is not a cure — it is a coincidence that happened to be available. This is the same silent-staleness class waves 1–9 have been closing, one layer down, and it is the layer that makes a *tool upgrade* indistinguishable from *no change at all*.
+
+**The fix.** The index records the identity of the pipeline that produced it (`internal/index.IndexerVersion`, in the `kv` table beside every other piece of index bookkeeping), and a run whose recorded identity differs re-extracts everything. Two structural choices:
+
+- **One decision, handed down.** Staleness is computed ONCE, before the walk, and passed into the per-file skip. One input, one place that acts on it — not a guard in each caller, which is how the last four defects in this class happened.
+- **Stamped at the END of a successful walk.** A run that failed partway never stamps a store with an extractor that did not finish writing it, so a crash cannot leave a store claiming an identity it does not have.
+
+`ponytail:` a hand-maintained integer, not a hash of the source tree. A hash would be self-invalidating on any unrelated edit to the package, turning every commit into a full reindex; the integer costs one bump per behavioural change — the same discipline the embedding collection's `ChunkerVersion` stamp already requires, and the one a reviewer can see in the diff.
+
+**Verified live on this repository's own store,** with the identity forced back to `1` and the sources untouched:
+
+| | before | after |
+|---|---|---|
+| `leankg index .` | `files=15 skipped=842` | `files=858 skipped=0` |
+| the run after that | (stayed stale) | `files=9 skipped=849` |
+| bench, fused in-pool | 64/84 | 81/84 (unchanged from wave 9 — the gate re-extracts identical bytes when the extractor has not changed) |
+
+The middle row is the one that matters: **the gate does not turn every `leankg index` into a full rebuild.** The third is the control: the gate is a no-op when the extractor is unchanged.
+
+**Tests:** `TestIndexerChangeInvalidatesTheIndex` (a store stamped with a different extractor re-extracts, and the identity ends up as the running one) and `TestSameExtractorKeepsIncrementality` (the reason the gate is an identity rather than a `--force` flag).
+
+**Loop status: 19 defects found, 19 fixed, 0 open** across ten waves. The retrieval work is done to the point where the next honest measurement is not a bigger number but a **second corpus** — every number in waves 4–10 was measured on this one repository, and a benchmark that only ever scores the tool on the code it was written for is a benchmark that cannot report a regression elsewhere. `scripts/retrieval-bench.py` takes `--project` and `--binary`, so the rig is ready; what is missing is a second indexed project with its own labels.
+
+### v4.20.0-doc-comment-content — the prose an author wrote was never in the store (2026-09-30)
+
+**Trigger:** wave 9 of the loop (FR-SELF-04, still on PR #449). Wave 8 ended by saying the 17 remaining misses were "the model's vocabulary, not the engine's". That was **wrong**, and the wave's first job was to check the claim rather than accept it. Reading each miss's source: **14 of the 17 share three or more words with their answer's doc comment, and nine ARE the doc comment verbatim minus the symbol name** — "purges orphaned relationship edges" → `cmdGC`, "returns a hash-seeded unit-vector provider" → `Deterministic`, "the fraction of elements that hold vectors" → `coverage`. Not a vocabulary gap. The text that would have answered them was in the repository the whole time.
+
+**The defect.** `boundContent` sliced an element's text from its first line to its last, and for Go the first line is the `func`/`type` line — so the `//` block an author wrote **above** it never entered the store. Not into FTS, not into the vector, not into the name arm. **2,596 of 4,175 Go elements (62%) had a doc comment the engine could not see**, and a doc comment is precisely the prose an agent's question is a paraphrase of. Every arm was working correctly on text that omitted the explanation.
+
+**The fix.** Element content now LEADS with the element's own contiguous comment block, then the body. Recognised across the indexed languages — `//`, `///`, `//!`, `#` (so Python/Ruby/shell are covered, not only Go), and `/* … */` blocks. Two rules keep it from stealing: contiguity only (a blank line or a second declaration ends the block, so one element's prose never leaks into another's vector), and the slice **grows** rather than shifting (a body is never shortened to make room; an element with no comment is byte-identical to what it was). Leading rather than trailing, because the local sidecar truncates to a 1000-rune budget and an explanation at the front survives every budget while an overrunning body is the first thing cut.
+
+**Measured, same 84 labels, both corpora rebuilt from scratch with their own binary, depth 100:**
+
+| | vector top-1 | vector top-10 | fused in-pool | fused top-1 | fused top-10 |
+|---|---|---|---|---|---|
+| `origin/main` (baseline) | 0/84 | 20/84 | 47/84 | 3/84 | 20/84 |
+| wave 8 (this branch) | 10/84 | 36/84 | 65/84 | 8/84 | 34/84 |
+| **wave 9 (doc comment)** | **40/84** | **66/84** | **81/84** | **49/84** | **71/84** |
+| wave 9, `scope=code` | 43/84 | 68/84 | **82/84** | 51/84 | 71/84 |
+
+The candidate shapes were scored BEFORE any code was written, through the engine's own cap and shrink ladder (a 1000-RUNE budget is not a token budget, so the sidecar rejects some texts and the engine halves them — a rig that skips that measures a pipeline that does not ship). `doc + qn + body` won at top-10 71/84 with **zero regressions**; the body-less alternative (`qn + doc`) was one label worse, and a control scoring the stored arm restricted to the doc-bearing 2,607 elements confirmed the gain is better TEXT and not a smaller corpus.
+
+**A second defect fell out, worse than the first, and it is recorded rather than fixed here.** The first re-index after this change reported `files=15 elements=180 skipped=842`. Reconciliation is by **content hash**, and the source files are unchanged — only the *extractor* changed — so a change to the indexer cannot invalidate the index. The stale element bodies sit there looking fresh: `doctor --deep` passes index-freshness, and the retrieval numbers barely moved (65 → 64 in-pool) because the corpus was quietly half-old. The only cure the CLI offers is deleting `.leankg`. An extractor identity belongs in the store the way `ChunkerVersion` belongs on the embedding stamp, and the honest gate is the same one the embedding stamp already implements: a change that alters what is extracted is a REBUILD directive, never a no-op. That is the next thing this loop fixes.
+
+**Tests:** `TestExtractedContentCarriesTheDocComment` — against the pure function rather than through the Go extractor, so each case states exactly one rule and the extractor's unrelated end-line quirk cannot make a fixture lie (it did, twice, which is why the test does not go through it). The `/* … */` case found a real bug in the first implementation: a block preceded by `//` notes kept only the notes.
+
+**Verified:** `go test ./... -count=1` green (54 packages), `go vet ./...` clean, `gofmt` clean. Live over stdio after a full rebuild: "purges orphaned relationship edges" → `cmdGC` at rank 1; "returns a hash-seeded unit-vector provider" → `Deterministic` at rank 1.
+
+**Loop status: 18 defects found, 18 fixed, 0 open** across nine waves, and the retrieval gains A/B'd against the branch the loop forked from now stand at **fused in-pool 47/84 → 81/84, top-1 3/84 → 49/84, top-10 20/84 → 71/84**. The wave-8 conclusion that the remainder was a model ceiling is superseded: it was a missing-text ceiling, and the fix was three lines in the extractor.
+
+### v4.19.0-a-b-without-a-self-flattery-bias — the loop measures itself against origin/main (2026-09-30)
+
+**Trigger:** wave 8 of the loop (FR-SELF-04, still on PR #449). Seven waves of self-reported gains raise the obvious question, and it is the one a reader should ask first: **were the numbers real, or were they small samples on a corpus the loop had been quietly reshaping?** Two rebuilds, then an A/B against the branch the loop started from.
+
+**Both corpora were thrown away and rebuilt from scratch** — the treatment with this branch, the baseline with `origin/main` @ `c25141b` in a throwaway worktree — and each was embedded from scratch by its own binary, so the chunker difference is part of what is being measured rather than a hidden constant. `doctor --deep` on the rebuilt treatment store: 10 pass / 1 warn / 0 fail, 856 files, 9,343 elements, 9,343/9,343 embedded, 20,050 relationships.
+
+**The label set more than doubled, to 84 unique questions**, and the derivation is MECHANICAL so it can be audited instead of believed: one documented Go symbol per package, sampled with a fixed seed across all 226 packages that have one; the question is the symbol's own doc comment with the function name removed — how an agent phrases a question it read the comment for; filtered to 4+ words, no label that names its own answer, no code-moving meta text; every label verified as a live `code_elements` row; and **every symbol this loop created excluded**, so the set does not measure the corpus the loop built. Six duplicate ground truths were dropped after the fact.
+
+**The A/B, same 84 labels, depth 100:**
+
+| build | vector in-pool | keyword in-pool | fused in-pool | fused top-1 | fused top-10 |
+|---|---|---|---|---|---|
+| `origin/main` (`c25141b`) | 0/84 | 47/84 | 47/84 | 3/84 | 20/84 |
+| this branch, full corpus | 55/84 | 47/84 | **65/84** | **8/84** | **34/84** |
+| this branch, `scope=code` | 58/84 | 47/84 | **67/84** | **9/84** | 38/84 |
+
+Two things make that table trustworthy rather than flattering. **The keyword column is 47/84 on both builds** — that arm is the control, and the loop did not change it, so the fused gain cannot be an artefact of the label set. And **the bench itself had a defect the A/B exposed**: reading `origin/main`'s vector column as 0/84 was the *bench* mis-measuring an older binary, not a retrieval collapse — that engine never reaches L3 on these questions (the wave-1 ladder defect) and never emits the per-arm `ranks` the arms are derived from. The bench now scores the served answer as the keyword arm when no per-arm provenance exists, which is exactly what that binary returns, and scores the fused column as the served order rather than fusing one arm with itself (which would invent agreement the server never expressed). A rig that cannot read the baseline is a rig that cannot be trusted with the treatment.
+
+**The honest remainder:** 17 of 84 miss in *both* arms, and they are the model's vocabulary rather than the engine's — the question says "purges orphaned relationship edges" and the symbol is `cmdGC`; "the fraction of elements that hold vectors" and it is `coverage`. Nothing built on names, keywords or a 384-d embedding reaches those; a larger model or a doc-comment arm would, and the label file now says so rather than leaving the next wave to rediscover it.
+
+**What this wave did NOT find:** no new defect. The rebuild and the wider measurement found no wrong answer the seven waves had missed, which is a result worth recording — the loop's remaining surface is a recall ceiling, not a correctness one.
+
+**Loop status: 17 defects found, 17 fixed, 0 open** across eight waves, and the retrieval gains are now A/B'd against the branch the loop forked from: **fused in-pool 47/84 → 65/84, top-10 20/84 → 34/84, with the keyword control unmoved at 47/84.**
+
+### v4.18.0-destination-shapes — the last three surfaces, and one defect in three costumes (2026-09-30)
+
+**Trigger:** wave 7 of the loop (FR-SELF-04, still on PR #449) — the REST listener, the portfolio registry and the obsidian sync, the last three areas this loop had never driven. Three defects, and the useful finding is that they are **the same defect the loop has been fixing since wave 1, in a different costume**: a command that could not do its job reported that it had.
+
+- **The REST retain route acknowledged a body it could not read.** The route documents `{"entries": [...], "through_user_turn"}` and says so in a comment, but a plain `[]memory.Entry` slice cannot tell an absent field from an empty one, so `{}`, an empty body, and `{"items":[…]}` — the name the hindsight-compat mount on the same listener uses — all answered `200 {"ok":true,"retained":0}`. A client whose field name did not match got a successful write of nothing. It is conspicuous next to the empty-content guard sitting directly above the write, which exists so a permanently-unrecallable entry is rejected: the handler was careful about `entries[3].content` being empty and silent about the array being absent. Fixed with a pointer, so only an explicit `"entries": []` is a no-op.
+- **The same route reported the count SENT, not the count WRITTEN.** `Memory.Retain` is cursor-gated by contract (resume-safety), so re-sending a batch at the same cursor wrote nothing and still answered `retained: 1` — and re-sending after a timeout is the ordinary reason to re-send. The route now answers `retained` (written) and `skipped` (gated) as counts that cannot contradict each other, plus `through_user_turn` and `bank_cursor` when a gate fired. `memory.BankCursor` is the new exported read; `Retain` stays the only writer.
+- **`register-project` registered a path that does not exist.** `leankg register-project /tmp/lk-pf/typo` printed `registered typo (…): elements=0 files=0 last_indexed=never indexed` and told the operator to index a path that is not there, leaving a permanent hot-set manifest entry that can never resolve. `leankg index` has refused exactly this input since wave 2, because a typo there is a silent empty index; the registry verb is the same class of command and now agrees. "Registered, not indexed" — a REAL directory with no store — stays legal and is pinned by the test.
+- **`obsidian push --vault <a regular file>` reported a successful push of nothing.** `Push complete / Notes generated: 0 / Failed: 1 / exit 0`. `Failed: 1` is the same signal any single-note write failure gives, and the exit code says the operation succeeded, so a script driving this by `$?` concludes the notes were exported when every one failed. The root was `obsidian.Status` reporting "initialized, 0 notes" for a path that exists and is not a directory; fixed there, where every obsidian verb already asks. A vault path that does not exist yet stays legal — `init` creates it, and pushing to a fresh directory is a normal first move.
+
+**The pattern is the finding.** Six waves in, the loop's recurring defect has not been a missing feature but a **shape the engine did not check**: a store path that only one verb read (wave 1), a walk that skipped dot-DIRECTORIES but not dot-FILES (wave 2), a root that did not exist (wave 2), a field name that only half the schema used (wave 6), a body field that decoded to nil (wave 7), a cursor gate that reported the wrong count (wave 7), and now a destination that is not a destination. Each was found by driving the surface the way a user or an agent does, not by reading the code. The generalisation worth carrying: **a command that takes a path, a body or a name must refuse the shape it cannot use before it starts work**, and it must never report a count or a success that describes what it was given rather than what it did.
+
+**Also driven across these three surfaces, and correctly refused** — recorded so the next wave does not re-check them: unknown REST route → 404, wrong method → 405, unparseable JSON → 400 naming the parse error, a query with no text → 400, an unknown query action → 400 with `LEANKG_ERROR_UNKNOWN_ACTION`, `service/context` with no service → 400, `session/read` with an unknown command → 400 naming recall/canvas, `lsp` with an unknown language → 400; `projects` on an absent registry prints "no projects registered" and `projects --forget <unknown>` says "not registered"; `obsidian push` to a missing vault says "Vault not initialized" without creating anything, `obsidian init` twice is idempotent, and a note's `leankg_annotation:` survives push → pull → push (a free-form note body is correctly NOT imported, which is the documented contract, not a defect).
+
+**Loop status: 17 defects found, 17 fixed, 0 open** across seven waves — and with this wave every surface the product exposes has been driven at least once by a live query or command.
+
+### v4.17.0-name-arm-and-curation-target — the arm that reads names, and the field that hid half the write surface (2026-09-30)
+
+**Trigger:** wave 6 of the loop (FR-SELF-04, still on PR #449), in two halves: the lever wave 5 named (a name-aware arm), and the first drive of a surface waves 1–5 never touched (the memory **write** side).
+
+## The name arm, and what the first cut got wrong
+
+Wave 5's diagnosis left 7 of 30 labels missing and named the lever: 18 of the 30 questions contain a token of the answer's own symbol name, and neither existing arm can use it — FTS matches words, and a 384-d embedding ranks a two-line helper far below a long file using the same words. So `store.FindByNameToken` (both backends, LIKE/ILIKE over `name` + `qualified_name` only, ranked by specificity) was added as a third fusion arm, weighted **0.6** — the first non-placeholder user of the `FuseRRFWeights` extension point, `ponytail:`-marked because a name substring is weaker evidence than a body that discusses the question.
+
+**The first cut's gate was wrong, and the measurement said so.** Requiring a capital, underscore, dot or digit fired on **2 of 30** labelled questions — because agents ask in PROSE. "take the single-flight **lock** for embedding" carries a lowercase English word, and a shape test rejects exactly the tokens the arm exists for. The replacement is **rarity in this corpus**: a token is worth a name search when few symbol names contain it (`read` in 142 and `text` in 210 discriminate nothing; `lock`, `stamp`, `runes` are unique). The bound is a fraction of the ELEMENT count (elements/500, floor 2), so it is scale-free and cannot make every English word rare on a small fixture. Rarity alone is not sufficient — an UNSEEN token counts as rare, which is how `runes` reaches an arm on a corpus that happens not to contain it, and which would also let `the` through on any project — so a **40-word function-word stop list runs first**, deliberately not an English list: every word such a list omits is a real symbol name somewhere, and a guess about which words "sound like code" is wrong in both directions.
+
+Measured on the same 30 labels, depth 100: fused in-pool **16 → 24**, keyword arm 11 → 18, top-1 2 → 3, with and without `scope=code`. Six labels remain, and they are the ones whose questions contain no token of the answer's name — that is the body's job, i.e. the model's, and no code-side lever reaches it.
+
+**One fixture changed, informatively:** the L2→L3 route test's keyword-noise decoy was named `Results` while the question said "results", so the new arm correctly won it. The FIXTURE was wrong, not the arm — a decoy that shares a word with the question is a name-collision decoy, and a test built to pin the L2→L3 route should be keyword noise only. Renamed to `Q3Numbers`; the assertion is unchanged and now tests what it claims.
+
+## The curation target: half the write surface was unreachable
+
+The same wave drove the memory **write** side for the first time — waves 1–5 only read memory — calling all nine curation commands the way an agent would. The import schema advertises the target file under two names: `path` for create/str_replace/insert/delete/rename, `file` for add/replace/remove. `withFlatArgs` folded the flat fields into `Args` **except `path`**, so the two command families read opposite fields and half the surface was unreachable with the field the schema documents for it:
+
+```
+import action=memory command=add path=MEMORY.md text="..."
+  -> memory: invalid memory path: empty path
+```
+
+The error names an EMPTY path for a file the agent had just named, so it reads as an engine bug rather than a field-name mismatch — and the identical call with `file=MEMORY.md` worked. The fix is the one `withFlatArgs` already exists for: it exists because a schema-shaped call must not silently lose content (the v4.13.2 incident, where top-level `content` reported `ok:true` and wrote an empty file), and the same reasoning applies to the target — folded under both names, each only when the caller did not set that name itself, so an explicit `args` key still wins.
+
+`TestMemoryCurationAcceptsEitherPathOrFile` calls every add/replace/remove BOTH ways against one seeded file: pre-fix, four of eight cases failed. Live after: both spellings return `ok:true` and both appends are visible in the read-back.
+
+**Also driven, and correctly refused** — recorded so the next wave does not re-check them: `create` with no content or a non-canonical path, `str_replace` whose `old` matches nothing, `delete` of a file that is not there, `import action=read`/`prd`/`ontology` on a missing path, `lsp` with an unknown language, and `compress` with no captured output all fail with a message naming the offending value. Those are the postures an agent needs; none was changed.
+
+**Loop status: 14 defects found, 14 fixed, 0 open** across six waves, and the fourth consecutive wave whose headline is a measured quality gain rather than a wrong answer (fused in-pool 14 → 24, top-10 5 → 12, on 30 labels with ground truth checked into the repo).
+
+### v4.16.0-scope-the-corpus — the ranking population is the caller's decision (2026-09-30)
+
+**Trigger:** wave 5 of the loop (FR-SELF-04, still on PR #449), aimed at the 14 labels wave 4 left in neither arm. Diagnosis per label first, then the fix the diagnosis supported.
+
+**The diagnosis, and what it ruled out.** For each never-found label: is the element there, is it embedded, is the vector sane? All six are **present** — `code_elements`, `embedding_vectors` and the FTS row all exist — and a FRESH sidecar embedding of the exact stored text reproduces the stored vector at **cosine 1.0000**. So this is not a stale collection, not a stamping bug, not a zero-norm vector, and not a missing row: they are **ranking misses**. Scored directly against all 9,306 vectors, `FuseRRF` lands at rank 54, `Store.Space` 202, `StandaloneDBPath` 159, `Store.FindFuzzy` 591, `ftsQuery` 1018, `truncateRunes` 2533, `coverage` 5154.
+
+**The cause is the corpus, and it is self-inflicted.** The 9,306 vectors split **3,279 production code / 1,879 test fixtures / 4,148 documentation** — a distribution this repository accumulated by indexing *itself*, which is exactly what the self-host dogfood loop is for. Scored against production code alone, the same queries give `FuseRRF` rank **7** (from 54), `Store.Space` 44, `ftsQuery` 160, `Store.FindFuzzy` 50. Asked "reciprocal rank fusion of ranked lists", a 384-d `bge-small` ranks `fuseQueryRanks`, `RankList` and `vectorSim` — the three functions wave 1 added — above `FuseRRF`, because they are the most `FuseRRF`-shaped text in the repository, and every one of them is invisible to someone asking about the feature.
+
+**Why the previous two waves could not have found this.** Both arms of the fusion rank over the same set, so no weight pair can close a 47-rank gap — waves 3 and 4 measured that from two directions and both times the answer was "recall, not fusion". Scoping the SET is the only lever, and it is a **caller's decision, not a default**: which population you want ranked is a question about what you are doing, and a product that guesses it is guessing wrong for one of its two populations.
+
+- `store.SearchVectorsScoped` on both backends; `SearchVectors` delegates with `nil`, so every existing caller and every existing answer is byte-for-byte unchanged. The sqlite arm is an O(n) scan already, so the predicate costs one call per row. The postgres arm over-fetches `4·k` (floor 64) and filters during the scan, marked `ponytail:` with its ceiling — a Go predicate cannot be pushed into the SQL the HNSW index serves, so an aggressive predicate can see fewer than k hits even when more matched; the upgrade path is a SQL-expressible predicate in the WHERE clause.
+- `query args.scope`: `code` (production source), `prod` (code + current non-archived docs), `all` (spelled out, so a caller can undo a narrower scope it inherited). It applies to **both** arms — scoping only the vector arm would let the keyword arm reintroduce exactly the fixture the caller excluded, which is the failure the caller was trying to prevent. An **unknown scope is an error**, never a silent full corpus: answering over everything when the caller asked for a subset is indistinguishable from the scope working. A scoped answer reports `retrieval.scope`, so a narrowed corpus is visible in the answer rather than inferred.
+- The query tool's advertised `args` names the scope and says plainly that the default corpus includes test fixtures and archived docs.
+
+**Measured** on the same 30 labels (`scripts/retrieval-bench.py --scope`), fused column:
+
+| scope | depth | in-pool | top-1 | top-3 | top-10 |
+|---|---|---|---|---|---|
+| full corpus (default) | 30 | 16 | 2 | 6 | 11 |
+| code | 30 | 17 | 2 | 6 | 12 |
+| **code** | 100 | **23** | **3** | 6 | **12** |
+| prod | 100 | 23 | 3 | 6 | 12 |
+
+Per arm at depth 100 scoped: vector in-pool **10 → 19**, keyword **11 → 17**. The vector arm gains most (the scope removes its competitors directly); the keyword arm gains too, because it was being crowded out of its own top-k by the same corpus. The default row is the guard: nothing changed for a caller that asks for nothing, which is why the win is opt-in capability rather than a silent narrowing.
+
+**Not fixed, stated so the next wave does not re-measure it:** 7 of 30 labels still miss at depth 100 even scoped, and they are the same short unexported helpers — `coverage` ranks 1776 over code alone, `truncateRunes` 755. A 384-d `bge-small` cannot rank a two-line function above a five-hundred-line one that uses the same words, and scoping cannot manufacture a margin the model never produced. The remaining levers are a **larger embedding model** (an operator choice, not a code change) or a **name-aware keyword arm**; neither is a weight, and two waves of measuring have now said so.
+
+**Tests:** `TestVectorSearchCanBeScoped` (new — fails to compile against the pre-fix tree; pins that a nil filter is the old behaviour exactly, and that the filter preserves similarity order rather than only membership) and `TestL3ScopeArgReachesTheVectorArm` (new — one production element plus one test fixture with IDENTICAL content, asserting the unscoped answer sees both, the scoped answer sees one and names its scope in `retrieval`, and an unknown scope is refused). Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
+
+**Live over stdio:** `scope=code` on "which function reports a store's byte accounting" moves the top hit off `internal/session/session_test.go::TestOffloadRecallBitForBit`; `scope=banana` errors with `unknown query scope "banana" (valid: code, prod, all)`.
+
+**Loop status: 13 defects found, 13 fixed, 0 open** across five waves, and the shape of the work has changed: waves 1–3 fixed wrong answers, wave 4 fixed what the vector arm was built from, wave 5 fixed which population gets ranked. What is left is a model ceiling, and this loop will not paper over it by shipping a weight.
+
+### v4.15.0-embed-the-name — the retrieval ceiling was upstream of the fusion (2026-09-30)
+
+**Trigger:** wave 4 of the loop (FR-SELF-04, still on PR #449), aimed at the target wave 3 named. Wave 3's measurement had located the limit honestly: on 12 labelled questions, every (vector, keyword) weight pair scored 0 top-1, and for 5 of 12 the correct element was in NEITHER arm. Weights reorder what the arms return; they cannot return what neither arm had. So the target was what the vector arm is built FROM.
+
+**The measurement rig went in the repo first,** because a fix measured against a throwaway question set is not a fix, it is a story. `docs/retrieval-label-set.md` holds 30 questions with the `qualified_name` that answers each, annotated with the file it lives in; `scripts/retrieval-bench.py` parses those labels (so questions, ground truth and code cannot drift), drives the real stdio server, and reports **per-arm and fused** in-pool / top-1 / top-3 / top-10. Per-arm is the point: "the fused answer was bad" does not say which arm to fix, and the bench's own interpretation guide says what each failure shape means — `in-pool 0` on both arms is upstream of fusion, one-arm in-pool is a fusion problem, and an in-pool/wrong-rank is fusion or model recall. Every label was checked against the live store with `select count(*) from code_elements`; labels pointing at unexported helpers, interface methods and named constants (which the Go extractor does not emit) were replaced, because a label that cannot be retrieved measures nothing but the extractor.
+
+**Baseline on this repository's own store** (9,272 elements, 9,306 vectors, pinned `bge-small-en-v1.5` sidecar): vector arm **4/30 in-pool**, keyword 11/30, fused 14/30, top-1 2/30, and **16 of 30 labels in neither arm's top 30**.
+
+- **The fix:** `internal/embed.embedText` builds the text a model embeds as `<qualified_name>\n<body>` instead of `<body>`. `ChunkerVersion` 2 → 3, so an existing collection is a rebuild directive — an incremental writer hard-fails with `stamp mismatch … (chunker_version 2 -> 3) — run 'leankg-embed full'` — rather than a silent mix of vectors built from differently-cut text.
+
+- **Why the name, measured rather than assumed.** A 384-d `bge-small-en-v1.5` embeds a Go body as a bag of the identifiers that happen to appear in it, so `FuseRRF` and `FuseRRFWeighted` — one a prefix of the other, bodies differing by a dozen words — land on top of each other. Cosine against the question "reciprocal rank fusion of ranked lists" for that element, on this collection: **body only 0.618, bare name + body 0.672, qualified name + body 0.696**. The qualified name rather than the bare one because the file disambiguates the symbol from prose using the same words, and because it is what an agent searches for. The name **leads**, because the local sidecar caps text at `maxLocalTextChars`: a leading name survives every budget and a trailing one is the first thing cut.
+
+- **Result on the same 30 labels, after `leankg-embed full` (9,306/9,306 rebuilt, 4m05s):**
+
+| arm | in-pool | top-1 | top-3 | top-10 |
+|---|---|---|---|---|
+| vector | 4 → **10** /30 | 1 → **2** /30 | 1 → **5** /30 | 3 → **8** /30 |
+| keyword | 11 /30 unchanged | 2 | 3 | 6 |
+| **fused** | 14 → **16** /30 | 2 /30 | 2 → **6** /30 | 5 → **11** /30 |
+
+  The gain is entirely in the vector arm, which is what the hypothesis predicted — the fix adds information to the arm that lacked it — and fused top-10 more than doubled. The keyword arm is unchanged, as it must be: the name was never its problem. The post-change weight sweep still shows no pair beating (1,1) on top-1, consistent with wave 3.
+
+**Not fixed, stated so the next wave does not re-measure it:** 14 of 30 labels are still in neither arm's top 30. They are the short unexported helpers (`coverage`, `truncateRunes`, `validateBatch`, `ftsQuery`) and three whose prose paraphrases the function's job instead of using its words. The next lever is therefore not another weight: it is a **name-aware keyword arm** (the keyword arm is the only one that can surface a symbol nobody wrote a sentence about, and it still misses a three-word question) or a larger embedding model, which is an operator choice rather than a code change.
+
+**Tests:** `TestEmbeddedTextCarriesTheQualifiedName` and `TestEmbeddedTextNameLeadsAnOverlongBody` (new; they fail to compile against the pre-fix tree because `embedText` does not exist, which is the strongest form of "fails first"). `TestRunLocalProviderTextBudget`'s openai arm was updated to assert the name+body text rather than the raw body — that assertion is exactly what had pinned "body only", so leaving it would have made the test contradict the fix.
+
+**Verified:** `go test ./... -count=1` green (54 packages), `go vet ./...` clean, `gofmt` clean; `leankg-embed run` refused the v2 collection with the drift named, `leankg-embed full` rebuilt it, and the bench above ran against the rebuilt collection over the same stdio server shape an agent uses.
+
+**Loop status: 12 defects found, 12 fixed, 0 open** across four waves — and the first wave whose change is a RETRIEVAL QUALITY improvement rather than a wrong answer, made possible only because waves 1–3 built the rig that could measure it.
+
+### v4.14.2-firstrun-answers — the first thing a new agent reads now names the next command (2026-09-30)
+
+**Trigger:** wave 3 of the loop (FR-SELF-04, still on PR #449). Two triaged candidates from wave 2, attacked from the first-run path: what a project that has never been indexed answers, and what the tool schema says about where the store is.
+
+- **`leankg doctor` printed the raw storage error on a first-run project.** `FAIL store: store: read-only open of missing store <path>: stat <path>: no such file or directory`, exit 2. Every token is implementation detail — it names a syscall and a file, not the next command — and an agent cannot distinguish "not indexed yet" (ordinary, act) from "the store is broken" (not). `status` already reported the same state as `cold` and exited 0, and `doctor --deep` already said "run `leankg index` first"; the plain verb was the only outlier. It now prints `no store at <path> — this project is not indexed yet; run `leankg index .` (then `leankg-embed run` for semantic search)`, still exit 2 (a missing index IS a diagnostic fail) and still naming the path so the operator sees where the engine looked. A store that EXISTS and cannot be opened still reports the real error, untouched.
+- **The `import` tool description taught FR-P2's "import the current directory" and never said where the data lands.** Wave 1 made one configured store authoritative for every verb, so in standalone mode the path an agent imports does NOT decide where the store is — and nothing in the schema said so. The description now states the rule (`<project>/.leankg/leankg.db` unless `LEANKG_DB_PATH` or `leankg.yaml db.standalone_db_path` names another file, and then *every* verb reads that one, `status` reports it in `store`), pinned by a test that also guards `status.store` so the field cannot be dropped: it is what makes "I indexed N elements and status says M" answerable without guessing.
+
+**Closed WITHOUT a change, with evidence — the more useful half of this wave:**
+
+- **Multi-project HTTP fan-out was already fixed by wave 1.** The candidate said the routed path still opened the default store. Proved the opposite by building `origin/main` into a throwaway worktree and driving both binaries against two projects with `db.standalone_db_path` set: `origin/main` opens the default path, reports `elements: 0 / freshness: cold` for a project with one indexed element, **and creates a second empty store** at `<project>/.leankg/leankg.db`; this branch reads the configured store, reports the element, and creates nothing. The wave-1 fix in `OpenBackend` covers the routed path because the router is just another caller.
+- **The RRF tie-break cannot be fixed the way it looked.** The suspicion: the fused top-1 is a cross-arm rank-1 tie whose winner is decided by which arm was appended first, so answers depend on slice order. That tie IS common (3 of 5 sampled real questions), and it is worth naming. But the obvious repair — break ties by arm agreement, then by best rank — is a no-op, and brute force over all rank assignments confirms why: a tie requires the same number of arms, and within one arm count the reciprocals 1/(K+r) are injective, so **a same-arm-count tie can only exist between documents with the same best rank**. There is no meaning left to break it by except first appearance, which *is* the arm order. The change was written, measured, found not to alter any non-tied ordering, and reverted rather than shipped as a refactor disguised as a fix. The honest statement of the remaining problem is in "Where the retrieval ceiling actually is" below.
+- **A labelled 12-question weight sweep locates the ceiling upstream of fusion.** Against this repository's own store, with the arms taken from the engine's own per-arm `ranks`, nine (vector, keyword) weight pairs were scored on top-1/top-3/top-5. Every pair scored **0 top-1 and at most 3/12 top-3**, and the correct element was absent from BOTH arms for 5 of 12 questions. Weights reorder what the arms return; they cannot return what the arms never had. On this corpus the limit is the recall of a 384-d `bge-small-en-v1.5` over Go symbol names (`Store.Space` vs `SpaceReport`, `FuseRRF` vs `FuseRRFWeighted`), not the fusion arithmetic.
+
+**Tests,** each confirmed failing on the pre-fix code: `TestDoctorOnAnUnindexedProjectSaysWhatToRun` (names the command, does not leak the syscall text, still names the path), `TestImportToolNamesWhereTheStoreWent`. `TestStatusAnswersCarryTheStorePath` passes today and is kept as the guard that the field this wave depends on does not get removed.
+
+**Verified:** `go test ./... -count=1` green (54 packages), `go vet ./...` clean, `gofmt` clean. Live: `doctor` on a fresh project prints the new sentence and exits 2; a deliberately corrupt store still prints `FAIL store queries: file is not a database (26)`; the import description carries the store clause over stdio; `status.store` and `status.project_dir` both resolve to the real paths.
+
+**Loop status: 11 defects found, 11 fixed, 0 open** (5 wave 1, 4 wave 2, 2 wave 3), plus 3 candidates closed without a change on measurement — the two `origin/main`-versus-branch comparisons and the reverted tie-break are the most load-bearing findings in this wave, because each one is a place where a plausible patch would have shipped as a fix without changing a single answer.
+
+**Next wave candidates:** the recall ceiling above is the next real target — a `bge-small` over symbol names separates `FuseRRF` from `FuseRRFWeighted` and `Store.Space` from `SpaceReport` only by noise, and no reweighting of two arms that both missed can fix it. Candidate directions, none of them a one-liner: qualify the element text that is embedded (a symbol's `qualified_name` and its doc comment, not just its body) so the document-side embedding carries the name; or add a name-aware arm to the fusion, since the keyword arm is the only one that can surface a symbol nobody wrote a sentence about. Both need a measured before/after on the same label set, and the label set itself should grow beyond 12 questions before any of it is trusted.
+
+### v4.14.1-dogfood-walk-boundaries — the index stops lying about what it indexed (2026-09-30)
+
+**Trigger:** the loop's second wave (FR-SELF-04, still on PR #449). A third battery drove the non-query surface — `index`, `refresh`, `gc`, `vacuum`, `install`, `setup`, `connect`, plus the error paths an agent hits on a typo — and re-indexed this repository after wave 1. Four more defects, all of the same class as wave 1: **a confident answer that describes something other than what happened**.
+
+- **The walk skipped dot-DIRECTORIES but not dot-FILES.** The file gate only checked the extension, so every dotfile with a language extension entered the graph. Live on this repository: a dot-prefixed PR scratch note answered the real agent query "where is the single flight lock taken" at rank 1 on BOTH the vector and the keyword arm, outranking the source that documents the answer. The security-adjacent reading is the one that matters — `.env`, `.npmrc` and friends are exactly the files that must never be copied into a store that then gets embedded, exported or pushed, and a dot-DIRECTORY skip is a *partial* secret guard that reads as a complete one. Fixed name-based (one rule, not a denylist of secret filenames, which is always incomplete) in BOTH walks: the indexer's own and `SupportedFiles`, which `doctor --deep` compares against the disk. They must not drift, or the freshness check reports missing files the indexer would never have taken.
+- **`leankg index ./nope` reported success.** `WalkDir` treats a missing root as an empty tree, so the command printed the ordinary `indexed ./nope: files=0 …` line and exited 0 — after creating a store AT the missing path. Every downstream signal then agreed with the lie (`status` said `cold`, `doctor` said the store was empty), and "0 files indexed" is indistinguishable from a genuinely empty project, the one case where exit 0 is correct. A typo in a path is both the most common mistake this verb gets and the most expensive one. The walk root must now exist and be a directory; an existing empty directory still indexes, pinned by its own test so the guard cannot "fix" the defect by refusing valid input.
+- **`impact` answered under the ladder's `hits` key.** Same key as a text search, completely different shape (`qn` + `depth`, not elements), so a 21-entry `hits` from `impact` reads as "21 elements matched a text query" when it means "21 nodes depend on this symbol". Every other graph verb already named itself. It now answers under `impact` and keeps `hits` as a same-list alias so an agent that learned the ladder's key is not broken.
+- **`query action=session` could not be asked what it supports.** The no-`args.command` call hard-errored with `unknown session read command ""`. That is the right error for a MISSPELLED command, but a session read carries no query text — the command IS the request — so it was also the one verb whose entire argument is a command and which could not be called to discover its own commands, while `action=memory` (wave 1) answers the no-command case. It now answers `{"commands":["recall","canvas"]}`; a real typo still errors naming the valid set.
+
+**Also investigated and NOT changed:** the wave-2 battery exercised `vacuum` heavily (bounded, `--full`, repeated, over a store with a known freelist) and could not produce a case where the bounded pass reported `reclaimed 0 bytes` over a non-empty freelist. The `PRAGMA incremental_vacuum(N)` tail-of-freelist concern is real in the abstract — SQLite documents the argument as pages from the END of the freelist while reuse happens at the FRONT — but every shape reachable through the CLI drained, and a speculative rewrite of a maintenance path that works is not a defect fix. Recorded here so the next wave does not re-tread it.
+
+**Tests,** each confirmed failing on the pre-fix code: `TestWalkSkipsDotFilesNotJustDotDirs` (one dotfile per indexable shape, asserting both that no dot-prefixed file reaches `code_files` and that no element carries a secret-shaped body), `TestIndexRefusesAPathThatDoesNotExist`, `TestIndexStillAcceptsAnEmptyDirectory`, `TestEveryGraphVerbNamesItsResult`, `TestImpactKeepsTheHitsAlias`, `TestSessionReadNamesItsCommands`. The `query_impact` golden is re-pinned with both result keys.
+
+**Verified:** `go test ./... -count=1` green (54 packages), `go vet ./...` clean, `gofmt` clean. Live: a scratch repo containing `.env` / `.mcp.json` / `.gitignore` plus one real `.go` file now indexes `files=1` with 0 elements carrying a secret body; `leankg index ./nope` exits 1 naming the path and creates nothing while `leankg index empty` still exits 0; `impact` over stdio returns both `impact` and `hits` holding the same traversal; `action=session` alone answers the command list. This repository's own store re-indexed, gc'd and re-embedded clean — `doctor --deep` 10 pass / 1 warn / 0 fail.
+
+**Loop status: 9 defects found, 9 fixed, 0 open** (5 in wave 1, 4 in wave 2).
+
+**Next wave candidates:** the L3 fusion has no weight control (both arms unweighted, so a strong-vector/weak-keyword disagreement ties at rank 1 — `FuseRRFWeights` exists and is still unused); multi-project HTTP fan-out opens the default store path rather than the configured one; the MCP import tool description does not name `LEANKG_DB_PATH`; and `status` on a never-indexed directory exits 0 with `cold`, which is defensible (it is genuinely cold) but worth a stated posture.
+
+### v4.14.0-dogfood-ladder-and-standalone-store — the first loop wave: 5 engine defects from live agent traffic (#449) (2026-09-30)
+
+**Trigger:** the FR-SELF-04 loop started as a standing operation — one long-lived PR (#449), each phase a commit + a re-synced PR body, every change sourced from a live query answered wrongly and verified by re-asking. This wave is its first pass: build both binaries from the worktree, index the worktree itself (837 files / 9,272 elements), embed 9,269 vectors against the live `bge-small-en-v1.5` sidecar, then drive ~20 real agent questions through the stdio MCP server and the CLI. Five defects, all of the same class — **a confident, well-shaped, wrong answer**.
+
+- **One configured store, not two (FR-P2 was unusable as documented).** Only `serve` read `LEANKG_DB_PATH` / `leankg.yaml db.standalone_db_path`; every other verb and `leankg-embed` hardcoded `<project>/.leankg/leankg.db` inside `OpenBackend`'s sqlite branch. The documented flow (`LEANKG_DB_PATH=... leankg index .`, then serve) printed a successful index into one store and then answered every query from an empty, `cold` one — a second full copy of the corpus sat in the project. `doctor`'s sqlite probe and plain `doctor` had the same hardcoded path, and `leankg-embed run` flocked at `<project>/.leankg/embed.lock`, a path standalone mode never creates, so it died before touching the store. Fixed at the shared root: `OpenBackend` resolves the configured path itself, the precedence lives in `store.StandaloneDBPath` (store cannot import projectcfg — projectcfg → lsp → store), `projectcfg.StandaloneDBPath` delegates so the two ladders cannot drift, and the embed lock sits next to the store.
+- **The ladder short-circuited at L2, making L3 unreachable on an embedded project.** The router returned as soon as the keyword rung produced any hit, but D-2026-09-04-4 states the order as L3-with-vectors then L2-without — the semantic tier exists to outrank keyword noise. Live before: "how are search results ranked and fused" returned three archive-report headings, the only elements containing those words. The vector rung is now tried first; it already degrades to L2 with its own reason when the collection is missing, the stamp drifted or the provider is down, so a no-vectors deployment is unchanged. L1 still wins outright on an exact identifier.
+- **sqlite L3 had no keyword arm at all.** `FTSBackend` (and its `HybridSearch` fusion) is Postgres-only, so sqlite's L3 ranked by cosine alone and the keyword tier that sits right below it was never consulted. Live before: "where is the single flight lock taken" was answered by the vector arm with three archived run reports, while the keyword arm put `cmd/leankg-embed/main.go::lock` — the element that IS the answer — first. Neither ordering is right on its own: vectors carry phrasing similarity into prose, keywords carry the identifier out of a code symbol. `rungSemantic` now FUSES both arms by reciprocal rank fusion (reusing `store.FuseRRF`), and every hit carries its per-arm ranks so the disagreement is visible rather than hidden. The keyword arm reads `FindFuzzy` — the store's own L2 rung — so sqlite fuses exactly the keyword ranking it serves on its own.
+- **A misspelled or not-yet-indexed graph seed failed the whole call.** `graph.ErrUnknownNode` reached the agent as `graph: unknown node`: no verb, no seed, no next step, and the guidance every other empty graph result carries was unreachable. All six graph verbs now answer with the unresolvable end named, quoted, and the one step that fixes it. `path` still hard-errors on a *missing* `args.to` (an incomplete request is a caller error); only an unresolvable `from`/`to` answers.
+- **A mistyped memory command answered as an empty search.** `query action=memory args.command=<typo>` returned `{"command":"search","hits":null}` — the router sent every command except `session_recall`/`memories` to the file search, so an agent read "the recall found nothing" instead of "that is not a command". The router now routes `search` explicitly, keeps the bare no-command search, and errors naming the valid set.
+
+**Tests,** each confirmed failing on the pre-fix code: `TestStandaloneDBPathReachesEveryVerb`, `TestStandaloneEmbedRunIsSelfContained`, `TestLadderPrefersSemanticOverWeakKeyword` (on a fixture whose keyword rung provably returns something, so it cannot degenerate into an empty-L2 case), `TestGraphVerbsAnswerAnUnknownSeed`, `TestGraphPathUnknownEndAnswersLikeShortestPath`, `TestMemoryReadRoutesEveryAdvertisedCommand`. `TestGraphActionOverMCPWire` was rewritten — the proof the call reached the engine is now the answer carrying guidance, not the error that no longer exists — and the `query_l3_semantic` golden re-pinned for the new reason string and the fused score.
+
+**Verified:** `go test ./... -count=1` green (54 packages), `go vet ./...` clean, `gofmt` clean; `leankg doctor --deep` 8 pass / 3 warn / 0 fail on the live store. Re-asked over stdio after the fix: "how are search results ranked and fused" returns `internal/store/pg_fts.go::FusedHit` with the archive design docs behind it; "where is the single flight lock taken" surfaces `cmd/leankg-embed/main.go::lock`; unresolvable seeds on all six verbs answer with guidance; a memory command typo errors naming the valid set. The standalone path was driven end to end on a scratch repo: `index` → `status`/`doctor`/`query` → MCP serve → `leankg-embed run`, all against the one configured store, with no project-scoped copy created.
+
+**Loop status:** 5 defects found, 5 fixed, 0 open from this wave (3 waves to date across the repo: 12 + 5). Next candidates the wave surfaced but did not chase: L3 fusion has no weight control yet (both arms are unweighted, so a strong-vector/weak-keyword disagreement ties at rank 1 — the `FuseRRFWeights` extension point exists and is still unused); `impact` returns its hits as `hits[]` while every other graph verb returns a verb-named key; `session` reads still hard-error on a missing `args.command` where `memory` now answers.
 
 ### v4.13.5-graph-seed-resolve — short-name graph verbs + dead-token REST unlock (2026-09-30)
 
@@ -995,4 +1624,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-09-30 (graph verbs resolve bare names via FindExact; REST unlocks when only dead DB tokens remain; compress/read anchors relative paths at projectDir. Prior storage maintenance restored: `internal/maintain` hourly vacuum pass over `store.Backend` + the memory FTS index, `LEANKG_VACUUM_INTERVAL_HOURS`, new `leankg vacuum` verb, `status` now reports a `space` block; the gc.rs row's "Go's runtime GC returns memory itself" rationale is corrected. Prior: 2026-09-21 v4.13.1.)*
+*Last updated: 2026-10-01 (FR-SELF-04 dogfood wave 24, #449: the second transport. ConnectRPC's generated descriptor types `args` as map<string,string>, so EVERY non-string action arg (limit, depth, insert_line, retained_through_user_turn, the array-valued turns) is UNREACHABLE on that wire — an agent that learned the contract over MCP and replays it there gets a protobuf type error. The refusal named `value`, a descriptor field the caller never sent, instead of `depth`, the argument they did. The codec detail is now kept in parentheses after a sentence that shows the rejected value, states the wire's limitation, and names MCP/REST as the surface that accepts it; it has to be an HTTP wrapper because the failure happens while DECODING, before any handler or interceptor. The honest limit is recorded, not papered over: the codec gives a byte OFFSET, not a field path, so the key is unrecoverable without buffering every request body. And the descriptor itself is NOT changed — it is generated code and the repo keeps no .proto source, so retyping the map is a schema decision recorded as an open question rather than a workaround that hides it. 32 found / 32 fixed / 0 open across twenty-four waves. Prior: FR-SELF-04 dogfood wave 23, #449: the last axis — the MCP wire itself, the schema an agent reads to decide what to call. The defect is in the ADVERTISEMENT, not the engine: (1) two names for one value (`limit` top-level and `args.limit`) with no statement of which wins, so an agent sending both gets the other (live: limit=2 + args.limit=1 -> 2 hits); (2) six working ontology sub-commands advertised nowhere, `args.cmd` being prose that named none; (3) four advertised actions unusable without an argument the schema never mentions at the point of use (path→args.to, pattern→args.pattern, lsp→args.lang, service_context→args.service). Fixed in the schema only, precedence unchanged so no caller breaks; live, 21 of 23 advertised actions are now formable from the schema alone. The read-side twin of waves 15-17: wave 16 made an annotation REFUSE an unanchored target, this makes the annotation's own contract FORMABLE. The test reads the schema off the wire through tools/list — the registered Go value is not what an agent sees, and reading the source would have passed against every one of these defects. 31 found / 31 fixed / 0 open across twenty-three waves. Prior: FR-SELF-04 dogfood wave 22, #449: the last unswept surface, and the last shape. Every REST route driven, checking statuses AND bodies of failures AND empty answers. Three routes answered a nil slice as `null`: /api/v1/ontology/matches, /api/v2/incidents, /api/v1/memory/banks/{bank}/recall — on a project with no catalog `null` reads as 'no concept appears in this corpus' when it means 'no catalog was imported', and the three are different facts with OPPOSITE next steps. core.AnySlice normalises nil to [] at the three sites and each answer carries one sentence naming what an empty list can mean there — deliberately not picking between causes the engine cannot distinguish, which would be the same defect one level down. Two existing tests asserted the Go TYPE ([]ontology.Match) rather than the wire shape and broke on the fix, correctly: a test pinning the Go type was pinning an implementation detail and would have blocked it — wave 18's lesson again. 30 found / 30 fixed / 0 open across twenty-two waves, and every surface the product exposes has now been enumerated and driven. Prior: FR-SELF-04 dogfood wave 21, #449: wave 20's convergence applied to doctor --deep. `index-freshness` reported "2 missing file(s) not indexed" with a hint that a delta "usually means the index was built from a different root" — and never named the root, so the reader could not rule out the one cause the hint named; it now names the root it walked and samples the unindexed files, as the STALE branch one case above already did. `embedding-coverage` reported "1% uncovered" — identical whether vectors were never built (`leankg-embed run`) or the collection was built for a DIFFERENT model (`leankg-embed full`) — and named neither; it now reads the store's own stamp (behind an optional probe so no existing Probes implementation changes) and says which collection the percentage is about. Same distinction wave 10 drew: the store's identity, not the environment's. 29 found / 29 fixed / 0 open across twenty-one waves. Prior: FR-SELF-04 dogfood wave 20, #449: a REGRESSION sweep — every battery from the previous nineteen waves re-run against the current binary on a project indexed through LEANKG_DB_PATH. Twenty of twenty-one checks passed unchanged, including waves 18/19's mechanism changes (protected keys, typed-slice normalisation, marker shape, cut list). The one failure was the last hole in wave 16's guard: `annotate` refuses a qualified_name the index lacks and advises `leankg query <name>` — but the refusal and its advice resolve the store the SAME way, so a caller reading the wrong store is told the element does not exist by the very command meant to contradict it. Two situations, opposite fixes, identical words. The refusal now names the store path it searched. That is the loop's class at its third layer (wave 1: one verb read a path only serve honoured; wave 10: freshness blind to its own staleness; here: a diagnosis sharing its blind spot with its remedy), and the convergence of twenty waves: a diagnosis must name the thing it looked at, or it cannot be acted on. 28 found / 28 fixed / 0 open. Prior: FR-SELF-04 dogfood wave 19, #449: the truncation marker now names WHAT it cut, so a caller can act on it. Wave 18 stopped a populated answer arriving as only its marker; this wave asked what that left behind and found the marker reported `truncated: true` with pre=40330 and actual=3820 — 20,510 tokens gone with no way to learn whether `hits` went 200 → 12 or a key was dropped, so no next limit could be chosen. The truncator already knew; the information was discarded where the marker is built, and is now collected (truncateValueCut/truncateObjectCut, old entry points kept as wrappers), sorted and deduplicated, and carried on both Stats and the wire. Live: search limit=200 and limit=500 both report cut=["hits"] with 18 hits delivered. The sweep behind it — every REST route at a 200-token envelope and every list-shaped action at a large limit — found this as the only remaining silent emptiness, so the fix is in the mechanism, not in another verb. 27 found / 27 fixed / 0 open across nineteen waves. Prior: FR-SELF-04 dogfood wave 18, #449: the read surfaces enumerated, and a populated answer that arrived as nothing but its own truncation marker. `query action=ontology` answered {"_token_budget":{"pre_truncation_tokens":17184,"actual":22,"truncated":true}} while the store held 673 matches — two causes, both invisible in review: `matches` was missing from the protected-key set, and a TYPED slice ([]ontology.Match) matched no truncation case, so nothing shrank and the payload key was deleted whole. `matches` is now protected and typed collections are normalised before truncation gives up; live, the same call returns 126 matches with the marker stating exactly what was trimmed. The transferable finding is the wave's own first test: written against []any it PASSED against the broken code, because the fixture was in the one shape that happens to work. 26 found / 26 fixed / 0 open across eighteen waves. Prior: FR-SELF-04 dogfood wave 17, #449: the wave-15/16 rule applied to EVERY remaining write verb rather than to the instance that revealed it, and three verbs failed it. `leankg generate` printed its body and then wrote docs/AGENTS.md into the current directory with no flag and no announcement — the rule one level up: waves 15/16 wrote nothing, this wrote something where the caller did not name it — so it is print-only by default and writes only to a caller-given --out. `annotate --description "   "` stored a whitespace annotation and answered 'Created', because wave 16's guard checked the target and not the text; now refused. `obsidian push` with no vault printed an honest refusal and exited 0, so a caller driving it by $? believed a push happened; now exits 2. TestWriteVerbRuleHoldsAcrossTheProduct makes the next write verb a case rather than a surprise. 25 found / 25 fixed / 0 open across seventeen waves. Prior: FR-SELF-04 dogfood wave 16, #449: every verb the product exposes (55) enumerated and the undriven ones called, and two write verbs accept anything. `leankg annotate` and `leankg link` reported SUCCESS and persisted a record for a qualified_name the index does not contain — the worst instance of the silent-write class, because an annotation is the one place a human writes what the code does NOT say, so a typo'd or renamed identifier makes the knowledge stored and unreachable. Fixed with one guard before any write, naming the index as the reason and `leankg index .` / `leankg query <name>` as the way out. With wave 15 this completes a rule: a write must be able to report itself EMPTY and UNANCHORED. 22 found / 22 fixed / 0 open across sixteen waves. Prior: FR-SELF-04 dogfood wave 15, #449: back to wrong ANSWERS, and the first target was the surface nobody calls. A session LESSON written with the field the schema names (`summary`) was stored EMPTY and answered {'deduped':false} — a successful write of nothing, the fourth instance of that class (after withFlatArgs for memory, REST retain, and dot-files) — because fourteen waves of batteries read memory and offloaded sessions and not one ever wrote a lesson. summary now feeds text, and an empty lesson is REFUSED: a write that cannot report itself empty is a write that cannot be wrong loudly. The wave also corrected its own first test a third time, having probed with a two-character node_id the validator correctly rejects. 21 found / 21 fixed / 0 open. Prior: FR-SELF-04 dogfood wave 14, #449: `query args.weight`, the escape hatch that makes both options measurable and picks neither. Measured before built on all four cells: unset is byte-identical to today's behaviour (16/49/13/92 top-1), and set per population every cell reaches the best wave 13 predicted (59/51/55/92). A zero weight DROPS its arm rather than defaulting to 1.0 (store's armWeight treats 0 as unset, so '1,0' would have silently become '1,1'), retrieval.reason names the arms actually fused, and an unparseable weight is refused at the query boundary rather than inside L3 where a vectorless store would never read it. The wave also corrected its own first test twice: it asserted a fractional weight and whitespace were errors, and its fixture had elements but no vectors so it was asserting the L2 path under an L3 name. 20 found / 20 fixed / 0 open across fourteen waves. Prior: FR-SELF-04 dogfood wave 13, #449: the ADAPTIVE weight wave 12 proposed does not exist. scripts/retrieval-policy-sweep.py scores constants, agree_boost, agree_gate, top_overlap and vector-only over the arms the engine already returns, on all four label cells. agree_gate wins by maximin (40) and max-sum (238) against the shipped constant's 13/170 — and is byte-identical to VECTOR-ONLY in every cell, which is the tell: when the arms disagree the keyword arm contributes nothing measurable, so gating is the degenerate policy, not an adaptive one. agree_boost is a complete no-op at every gamma, because scaling the top reciprocal-rank term cannot move it past a term it does not scale. Gating is not free either: +20-40 top-1 on behaviour cells, -8-9 on doc-derived cells. So the decision is 'which question population do you optimise for', which is a product call, and no engine change ships. Prior: FR-SELF-04 dogfood wave 12, #449: a BEHAVIOUR-derived label set, and it corrects this document's own waves 5 and 6. Questions sharing ZERO tokens with the answer's doc comment (137 on corpus 1, 94 on corpus 2) cannot be answered by comment-matching, so they cannot flatter wave 9. On them the keyword arm is nearly blind (top-1 3/137, 7/94) while the vector arm is strong (59/137, 55/94) — and the FUSION IS WORSE THAN THE VECTOR ARM ALONE (18/137, 13/94). The weight sweep is no longer flat: (3,1) gives 30/57/102 against the shipped (1,1)'s 18/32/70. But the four-cell table shows that buys behaviour labels at the cost of doc-derived ones (49→48, 92→88), so a FIXED weight cannot be right for both populations and no default was changed: the table and both label sets are committed instead, because shipping a constant picked from one cell is what wave 8 did wrong. Prior: FR-SELF-04 dogfood wave 11, #449: a SECOND corpus, because every retrieval number in waves 4-10 was measured on the repository the tool was written for. Corpus 2 is qa-agent (246 files, 2,576 elements, Go+Python+MD, 119 documented packages) with 102 questions derived by the same mechanical protocol, and scripts/retrieval-bench.py gained --labels to score them. THE GAINS REPLICATE, larger: fused top-1 3/102 → 92/102, top-10 36/102 → 102/102 (corpus 1: 3/84 → 49/84 and 20/84 → 71/84), with the keyword arm moving 62 → 102 as wave 9's doc-comment capture lands on text that arm reads directly. Two findings corpus 1 could not produce: a scope can COST a label (scope=code scores 101/102 vs 102/102 — a filter has a price, and the engine reports retrieval.scope), and the weight sweep reaches the same conclusion on two independent corpora (top-1 spans 46-51 of 84 and 79-94 of 102, (1,1) inside the spread in both, no pair dominating). Stated against this wave's own numbers: corpus 2's labels are 100% doc-comment-derived and wave 9 makes doc comments indexable, so it flatters wave 9; a behaviour-derived label set is wave 12. Prior: FR-SELF-04 dogfood wave 10, #449: the index records the extractor's identity, so a change to the indexer rebuilds the index instead of being invisible. Reconciliation compared size+mtime and SHA-256 — both properties of the SOURCE — so a change to the code that READS it was a no-op: wave 9's re-index skipped 842 of 857 files, doctor passed freshness, and the bench moved 65/84 → 64/84 over a half-old corpus; the only cure was rm -rf .leankg. internal/index.IndexerVersion now lives in the kv table, the staleness decision is made once and handed into the per-file skip, and the identity is stamped only after a successful walk. Live: forced-stale run went files=15 skipped=842 → files=858 skipped=0, the next run incremental again, bench unmoved. 19 found / 19 fixed / 0 open across ten waves. Prior: FR-SELF-04 dogfood wave 9, #449: the stored element content now leads with the element's own contiguous doc comment, and the retrieval gains stop being a model ceiling. Wave 8 concluded the remaining 17 misses were the model's vocabulary; checking the claim rather than accepting it showed 14 of them shared 3+ words with their answer's doc comment and nine WERE it minus the symbol name — 2,596 of 4,175 Go elements (62%) had a comment the engine never stored, and a doc comment is exactly what a question paraphrases. Same 84 labels, both corpora rebuilt: fused in-pool 65/84 → 81/84, top-1 8/84 → 49/84, top-10 34/84 → 71/84 (origin/main 47/84, 3/84, 20/84). A second, worse defect fell out and is recorded, not fixed: index reconciliation is by content hash, so a change to the EXTRACTOR cannot invalidate the index — the first re-index skipped 842 of 857 files, doctor passed freshness, and the corpus was quietly half-old. Prior: FR-SELF-04 dogfood wave 8, #449: the loop's own numbers, A/B'd against origin/main. Both corpora rebuilt from scratch and embedded by their own binary; the label set grew 30 → 84 unique questions, derived mechanically (one documented symbol per package, fixed seed, doc comment minus the name, every label a live row, every loop-created symbol excluded). On the same 84 labels at depth 100: fused in-pool 47/84 → 65/84, top-10 20/84 → 34/84, with the keyword control unmoved at 47/84 on both builds. The A/B also exposed a defect in the BENCH — it read origin/main's vector column as 0/84 because that engine never emits per-arm ranks; it now scores the served answer for an engine that has one arm. No new engine defect this wave: the remaining surface is a recall ceiling, not a correctness one. Prior: FR-SELF-04 dogfood wave 7, #449: 3 more defects, 17 found / 17 fixed / 0 open across seven waves, and with this wave every surface the product exposes has been driven at least once. REST: the retain route acknowledged a body it could not read (`{}`, or `items` instead of `entries` -> 200 retained:0) and reported the count SENT rather than the count WRITTEN, so a cursor-gated re-send looked like a successful write. `register-project` registered a path that does not exist and told the operator to index it, leaving a permanent unresolvable hot-set entry. `obsidian push --vault <a file>` printed 'Push complete / Failed: 1' and exited 0. The pattern is the finding: six waves of the same class — a SHAPE the engine did not check. Prior: FR-SELF-04 dogfood wave 6, #449: 2 more defects, 14 found / 14 fixed / 0 open across six waves. (a) A third fusion arm that reads symbol NAMES — and the first cut's gate (identifier SHAPE) fired on only 2/30 labelled questions because agents ask in prose; replaced with corpus RARITY (a token is worth a name search when few symbol names contain it) plus a 40-word function-word stop list, because an unseen token counts as rare and rarity alone would let 'the' through. Measured: fused in-pool 16→24, keyword 11→18. One fixture was changed because the new arm correctly beat it — a decoy sharing a word with the question is a name-collision decoy, not keyword noise. (b) The memory WRITE side, never driven before: withFlatArgs folded `file` but not `path`, so add/replace/remove were unreachable with the field the schema documents for them and answered 'invalid memory path: empty path' for a file the agent had named. Prior: FR-SELF-04 dogfood wave 5, #449: the ranking POPULATION is the caller's decision. Per-label diagnosis ruled out staleness, stamping and zero-norm vectors (a fresh sidecar embed reproduces the stored vector at cosine 1.0000) and located the cause: of 9,306 vectors only 3,279 are production code, the rest test fixtures and docs this repo accumulated by indexing itself, and against code alone FuseRRF ranks 7 instead of 54. Both arms rank over the same set, which is why two waves of weight sweeping could not have found it. `store.SearchVectorsScoped` (both backends, nil = the old behaviour) + `query args.scope` code|prod|all, applied to both arms, unknown scope an error, retrieval.scope reported. Measured: fused in-pool 16→23, vector 10→19, keyword 11→17 at depth 100; the default row is unchanged. 13 found / 13 fixed / 0 open across five waves; what remains is a model ceiling. Prior: FR-SELF-04 dogfood wave 4, #449: the retrieval ceiling was UPSTREAM of the fusion. A 30-label ground-truth set (docs/retrieval-label-set.md) and a per-arm bench (scripts/retrieval-bench.py) went in the repo first; baseline was vector 4/30 in-pool, fused 14/30, with 16/30 labels in NEITHER arm. The fix embeds `<qualified_name>\n<body>` (ChunkerVersion 2→3, a rebuild directive): measured cosine 0.618 body-only → 0.696 with the name, and after a full re-embed vector in-pool 4→10, fused top-10 5→11, keyword unchanged as predicted. 12 found / 12 fixed / 0 open across four waves. Prior: FR-SELF-04 dogfood wave 3, #449: 2 more defects, 11 found / 11 fixed / 0 open across three waves — `doctor` on a first-run project now names the command instead of leaking the storage error, and the import description states the store rule. Three candidates closed WITHOUT a change on measurement: the multi-project HTTP path was already fixed by wave 1 (origin/main builds a second empty store, this branch does not); the RRF tie-break repair is provably a no-op (a same-arm-count tie implies an equal best rank); and a 12-question weight sweep puts the retrieval ceiling in arm RECALL, not fusion. Prior: FR-SELF-04 dogfood wave 2, #449: 4 more defects, 9 found / 9 fixed / 0 open across the two waves — the index walk skips dot-DIRECTORIES but not dot-FILES (a scratch note outranked the real answer, and .env-shaped secrets could enter an embedded store), `leankg index ./nope` reported success and created a store at a missing path, `impact` answered under the ladder's `hits` key, and `action=session` could not be asked what it supports. Prior: FR-SELF-04 dogfood loop wave 1, #449: one configured store for FR-P2 (`LEANKG_DB_PATH` / `db.standalone_db_path` now honoured by every verb, doctor and leankg-embed); the ladder reaches L3 on an embedded project instead of short-circuiting at L2, and sqlite L3 fuses the vector and keyword arms by RRF; unresolvable graph seeds and mistyped memory commands answer with guidance instead of failing or reading as an empty result. Prior: graph verbs resolve bare names via FindExact; REST unlocks when only dead DB tokens remain; compress/read anchors relative paths at projectDir. Prior storage maintenance restored: `internal/maintain` hourly vacuum pass over `store.Backend` + the memory FTS index, `LEANKG_VACUUM_INTERVAL_HOURS`, new `leankg vacuum` verb, `status` now reports a `space` block; the gc.rs row's "Go's runtime GC returns memory itself" rationale is corrected. Prior: 2026-09-21 v4.13.1.)*

@@ -283,6 +283,25 @@ const vectorSelectCols = `embedding_vectors.qualified_name,
 // ponytail: O(n) scan per query — fine to ~100k vectors at 384 dims (~0.15s
 // on M2 Pro); upgrade path is sqlite-vec when scale demands it.
 func (s *Store) SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error) {
+	return s.SearchVectorsScoped(modelID, q, k, nil)
+}
+
+// SearchVectorsScoped is SearchVectors with an optional element filter, applied
+// to the hydrated element in the same pass the vectors are already scanned.
+//
+// It exists because a vector search has no notion of what a caller WANTS, and on
+// a real repository that is worth whole ranks. Measured on this repository's own
+// store (9,306 vectors), ranking "reciprocal rank fusion of ranked lists" by
+// cosine: rank 54 over the full collection, rank 7 over production code only. The
+// 6,027 vectors that push the answer out of the top ten are 1,879 test fixtures
+// and 4,148 documentation sections — a corpus this repository accumulated by
+// indexing itself. No weight can fix that, because both arms of the fusion rank
+// over the same set.
+//
+// keep is a caller decision, not a default, so nil keeps everything: an existing
+// caller is byte-for-byte unchanged, and a scoped caller pays one predicate per
+// row on a scan that was already O(n) and does not re-read.
+func (s *Store) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
 	if len(q) == 0 {
 		return nil, nil
 	}
@@ -309,6 +328,9 @@ func (s *Store) SearchVectors(modelID string, q []float32, k int) ([]VectorSearc
 		}
 		if meta != "" && meta != "{}" {
 			_ = json.Unmarshal([]byte(meta), &el.Metadata)
+		}
+		if keep != nil && !keep(el) {
+			continue
 		}
 		v := decodeVec(buf)
 		if len(v) != len(q) {
