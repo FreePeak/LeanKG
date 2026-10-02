@@ -1542,13 +1542,49 @@ func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
 	return map[string]any{"concepts": len(cat.Concepts), "matches": matches}, nil
 }
 
+// anySlice renders any slice as []any, turning a NIL slice into an EMPTY one.
+// Go marshals nil as `null` and empty as `[]`, and for a list answer the second
+// is the honest "nothing to report": `null` reads as "this field was never
+// populated", which for a corpus-derived answer is a claim about configuration
+// wearing the clothes of a result.
+//
+// It lives here (not only in internal/rest) because the same answer reaches MCP
+// and REST from one engine method, and the wire shape must not depend on which
+// transport asked.
+// AnySlice is exported so internal/rest shares ONE definition of the empty-vs-null
+// wire shape rather than re-deriving it per transport.
+func AnySlice[T any](in []T) []any {
+	out := make([]any, 0, len(in))
+	for _, v := range in {
+		out = append(out, v)
+	}
+	return out
+}
+
 // OntologyMatches returns the last persisted match set.
 func (e *Engine) OntologyMatches() (map[string]any, error) {
 	matches, err := ontology.LoadMatches(e.st)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"matches": matches}, nil
+	// A nil match set means no catalog was ever imported (LoadMatches returns
+	// nil when the kv row is absent) — a configuration fact, not a result.
+	// Without the note it reaches the wire as `{"matches": null}`, which reads
+	// as "no concept appears in this corpus" and sends the reader to look
+	// harder instead of importing a catalog.
+	// LoadMatches returns a nil slice when no catalog was ever imported (the kv
+	// row is absent), and Go marshals nil as `null` — which reads as "no concept
+	// appears in this corpus" rather than "no catalog exists", and sends the
+	// reader to look harder instead of importing one. Normalise to an empty
+	// array and say what an empty one means here. `matches` is []ontology.Match,
+	// so it goes through the same anySlice shape the REST sites use.
+	out := map[string]any{"matches": AnySlice(matches)}
+	if len(matches) == 0 {
+		out["note"] = "no concept catalog is imported for this project; import one with " +
+			"`leankg import` (or the import tool, action=ontology). A NON-empty list means a " +
+			"catalog is imported and its concepts matched these elements."
+	}
+	return out, nil
 }
 
 // LanguagesStatus reports the lazy activation state: which languages are

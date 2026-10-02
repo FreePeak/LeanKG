@@ -128,7 +128,9 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"incidents": incidents})
+		writeJSON(w, http.StatusOK, emptyList(core.AnySlice(incidents), map[string]any{"incidents": core.AnySlice(incidents)},
+			"no incidents recorded for this filter; an empty list means either no incident store is "+
+				"configured (`leankg incident import` to add one) or nothing matched the filter"))
 	})
 	mux.HandleFunc("GET /api/v2/env/diff", func(w http.ResponseWriter, r *http.Request) {
 		conflicts, err := org.FindEnvConflicts(r.URL.Query().Get("service"))
@@ -237,7 +239,9 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+			writeJSON(w, http.StatusOK, emptyList(core.AnySlice(entries), map[string]any{"entries": core.AnySlice(entries)},
+				"bank "+bank+" holds nothing matching this query; recall matches on query tokens, "+
+					"and an empty query matches nothing"))
 		})
 		// FR-ZCP-07 session surface (hindsight-shaped): retain with a
 		// session-keyed cursor, recall merged across the scope's banks, and the
@@ -331,6 +335,31 @@ func writeErr(w http.ResponseWriter, err error) {
 		body["code"] = coded.Code()
 	}
 	writeJSON(w, http.StatusBadRequest, body)
+}
+
+// emptyList normalises a list answer that has nothing in it, and explains what
+// an empty one means HERE.
+//
+// Go marshals a nil slice as `null`, which on the wire is indistinguishable from
+// "this field was never populated". For these routes that matters: `matches:
+// null` reads as "no concept appears in this corpus" when it usually means "no
+// catalog was ever imported", and the two call for opposite next steps. Every
+// other list this product returns (`hits`, `conflicts`, `refs`) is already an
+// empty ARRAY when it has nothing, so this is consistency rather than a new
+// idea — the few sites below are the outliers.
+//
+// ponytail: `[]` plus one sentence, not an error and not a status field. The
+// answer is not wrong without it; it is uninformative, and 200 keeps ONE response
+// shape for both cases. The sentence names the causes an EMPTY list can have at
+// this route and does not pretend to pick between them — a note that claimed a
+// distinction the engine cannot make would be the same defect one level down.
+func emptyList(list []any, out map[string]any, emptyNote string) map[string]any {
+	if list == nil {
+		list = []any{}
+	}
+	out["items"] = list
+	out["note"] = emptyNote
+	return out
 }
 
 func decode[T any](w http.ResponseWriter, r *http.Request, into *T) bool {

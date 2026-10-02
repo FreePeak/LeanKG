@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/ontology"
 	"github.com/FreePeak/LeanKG/internal/session"
@@ -474,7 +475,10 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if matches, ok := again["matches"].([]ontology.Match); !ok || len(matches) != 1 {
+	// The answer is read the way an agent reads it — off the wire — because that
+	// shape is the contract, and wave 22 changed it on purpose (a nil slice
+	// marshalled as `null` read as "no catalog" rather than "no matches").
+	if n := wireLen(t, again["matches"]); n != 1 {
 		t.Fatalf("persisted matches: %+v", again)
 	}
 }
@@ -501,7 +505,7 @@ func TestOntologyImportAndQueryActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query ontology: %v", err)
 	}
-	if matches, ok := out["matches"].([]ontology.Match); !ok || len(matches) != 1 {
+	if n := wireLen(t, out["matches"]); n != 1 {
 		t.Fatalf("query ontology matches: %+v", out)
 	}
 	// importing without a catalog path must error clearly, not silently pass.
@@ -715,4 +719,22 @@ func TestCompressReadAnchorsRelativePath(t *testing.T) {
 	if gotPath != filepath.Join(dir, "pkg/hello.go") {
 		t.Fatalf("path=%q, want project-anchored", gotPath)
 	}
+}
+
+// wireLen is the length of an answer's list as it appears ON THE WIRE, so a
+// test pins the shape a client sees rather than the Go type that produced it.
+func wireLen(t *testing.T, v any) int {
+	t.Helper()
+	if v == nil {
+		return -1
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(b, &arr); err != nil {
+		t.Fatalf("answer is not a JSON array: %s", b)
+	}
+	return len(arr)
 }
