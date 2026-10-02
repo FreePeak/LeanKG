@@ -113,12 +113,24 @@ type TokenReport struct {
 	Actual             int  `json:"actual"`
 	PreTruncationToken int  `json:"pre_truncation_tokens"`
 	Truncated          bool `json:"truncated"`
+	// Cut names the keys the truncator shortened or removed, at any depth, so a
+	// caller can act instead of only observe. Measured on this repository
+	// (wave 19): `query {"action":"search","limit":200}` reported
+	// pre_truncation_tokens 40330 and actual 3820 — 20,510 tokens gone, with
+	// nothing saying whether `hits` went from 200 to 12 or a key was dropped, so
+	// the caller could not re-query with a limit that would fit. The marker
+	// exists to be acted on; `truncated: true` alone cannot be.
+	//
+	// Sorted and deduplicated, so two runs of the same query agree.
+	Cut []string `json:"cut,omitempty"`
 }
 
 // Stats is the savings accounting for one Apply call: how many tokens the
 // response carried before enforcement, how many it carries after, and whether
 // the payload was structurally trimmed to get there.
 type Stats struct {
+	// Cut names the keys the payload lost, at any depth (see TokenReport.Cut).
+	Cut                []string
 	Tool               string
 	Max                int
 	PreTruncationToken int
@@ -170,8 +182,10 @@ func (TokenBudget) Apply(v any, tool string) (any, Stats) {
 			budget -= reserve
 		}
 	}
-	truncated := truncateValue(&v, budget)
+	var cut []string
+	truncated := truncateValueCut(&v, budget, "", &cut)
 	stats.Truncated = truncated
+	stats.Cut = sortedKeys(cut)
 
 	obj, isObject := v.(map[string]any)
 	if !isObject {
@@ -187,6 +201,7 @@ func (TokenBudget) Apply(v any, tool string) (any, Stats) {
 			Actual:             stats.Actual,
 			PreTruncationToken: stats.PreTruncationToken,
 			Truncated:          truncated,
+			Cut:                stats.Cut,
 		}
 		if counted := countTokens(obj); counted != stats.Actual {
 			stats.Actual = counted
@@ -218,6 +233,14 @@ func countTokens(v any) int {
 // truncateValue returns true when anything inside v was dropped, writing the
 // trimmed value back through the pointer.
 func truncateValue(v *any, maxTokens int) bool {
+	return truncateValueCut(v, maxTokens, "", nil)
+}
+
+// truncateValueCut is truncateValue plus provenance: `key` is the object key
+// this value sits under ("" at the top), and `cut` collects the keys it
+// shortened or removed. The caller owns `cut`; a nil one is ignored, so the
+// existing call sites pay nothing.
+func truncateValueCut(v *any, maxTokens int, key string, cut *[]string) bool {
 	if countTokens(*v) <= maxTokens {
 		return false
 	}
@@ -225,9 +248,12 @@ func truncateValue(v *any, maxTokens int) bool {
 	case []any:
 		kept, dropped := truncateArray(typed, maxTokens)
 		*v = kept
+		if dropped && cut != nil && key != "" {
+			*cut = append(*cut, key)
+		}
 		return dropped
 	case map[string]any:
-		return truncateObject(typed, maxTokens)
+		return truncateObjectCut(typed, maxTokens, cut)
 	}
 	// A TYPED slice or struct — `[]ontology.Match`, which is what the engine
 	// actually returns — matches neither case above, so nothing shrinks, the
@@ -241,13 +267,30 @@ func truncateValue(v *any, maxTokens int) bool {
 	// for ever).
 	if isCollection(*v) {
 		if norm, err := normalize(*v); err == nil {
-			if truncateValue(&norm, maxTokens) {
+			if truncateValueCut(&norm, maxTokens, key, cut) {
 				*v = norm
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// sortedKeys dedupes and sorts a cut list so two runs of the same query agree.
+func sortedKeys(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(keys))
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // isCollection reports whether v is a typed slice (or a typed map) that
@@ -367,13 +410,20 @@ var protectedKeys = map[string]bool{
 // running total. Real payloads carry ~a dozen removable keys; if a mega-object
 // ever shows up, carry a running byte total like the Rust original.
 func truncateObject(obj map[string]any, maxTokens int) bool {
+	return truncateObjectCut(obj, maxTokens, nil)
+}
+
+// truncateObjectCut is truncateObject plus the cut list: a key whose value was
+// shortened, and a key that was REMOVED, are both recorded, because from the
+// caller's side a removed key is the more surprising of the two.
+func truncateObjectCut(obj map[string]any, maxTokens int, cut *[]string) bool {
 	truncated := false
 	for _, key := range slices.Sorted(maps.Keys(obj)) {
 		child := obj[key]
 		if child == nil {
 			continue
 		}
-		if truncateValue(&child, maxTokens) {
+		if truncateValueCut(&child, maxTokens, key, cut) {
 			obj[key] = child // write the trimmed child back; a range copy would drop it
 			truncated = true
 		}
@@ -393,6 +443,9 @@ func truncateObject(obj map[string]any, maxTokens int) bool {
 			break
 		}
 		delete(obj, key)
+		if cut != nil {
+			*cut = append(*cut, key)
+		}
 		truncated = true
 	}
 	return truncated
