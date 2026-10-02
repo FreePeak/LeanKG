@@ -3,6 +3,7 @@ package budget
 import (
 	"encoding/json"
 	"maps"
+	"reflect"
 	"slices"
 )
 
@@ -227,9 +228,56 @@ func truncateValue(v *any, maxTokens int) bool {
 		return dropped
 	case map[string]any:
 		return truncateObject(typed, maxTokens)
+	}
+	// A TYPED slice or struct — `[]ontology.Match`, which is what the engine
+	// actually returns — matches neither case above, so nothing shrinks, the
+	// object stays over budget, and the caller deletes the payload key whole.
+	// That is how `action=ontology` answered with nothing but the marker.
+	//
+	// Normalising through JSON turns every typed slice into []any, which the
+	// branch above already handles. It is attempted only when the value is
+	// actually a collection: a scalar cannot be truncated, so re-normalising
+	// one would spin forever (a string normalises to itself, identically,
+	// for ever).
+	if isCollection(*v) {
+		if norm, err := normalize(*v); err == nil {
+			if truncateValue(&norm, maxTokens) {
+				*v = norm
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isCollection reports whether v is a typed slice (or a typed map) that
+// normalize can turn into the []any / map[string]any forms above. A value that
+// is ALREADY one of those is handled by the type switch in truncateValue and
+// never reaches here.
+func isCollection(v any) bool {
+	rt := reflect.TypeOf(v)
+	if rt == nil {
+		return false
+	}
+	switch rt.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct:
+		return true
 	default:
 		return false
 	}
+}
+
+// normalize round-trips v through JSON into map/slice form.
+func normalize(v any) (any, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // itemBytes is the exact compact serialized size of one value.
@@ -302,6 +350,12 @@ var protectedKeys = map[string]bool{
 	// Primary payload keys of full-scan tools must survive so the response
 	// keeps its shape after truncation:
 	"findings": true, "relationships": true, "elements": true,
+	// `query action=ontology` answers {"matches": [...]}; it is that action's
+	// only payload and it was the one key this set forgot. Measured on this
+	// repository: 673 matches, 17,181 tokens against a 4,000 envelope, and the
+	// delivered answer was `{"_token_budget": …}` alone — a successful response
+	// with the result thrown away (wave 18).
+	"matches": true,
 }
 
 // truncateObject recursively trims children, then removes non-protected keys
