@@ -472,7 +472,11 @@ afterSidecars:
 		svc := rpc.NewLeanKGService(engine)
 		path, handler := leankgv1connect.NewLeanKGHandler(svc)
 		mux := http.NewServeMux()
-		mux.Handle(path, handler)
+		// argsRefusalRecovery rewrites the codec's "invalid value for string
+		// field value: 2" — which names a descriptor field the caller never
+		// sent — into a refusal that names their argument and the wire's
+		// limitation (internal/rpc).
+		mux.Handle(path, rpc.ArgsRefusalRecovery(handler))
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
 		go serveHTTP(ctx, auth.MiddlewareWithStore(st, mux), *rpcAddr)
 	}
