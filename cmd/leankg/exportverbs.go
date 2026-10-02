@@ -288,7 +288,17 @@ func requireIndexedElement(st store.Backend, element, description string) error 
 		return err
 	}
 	if len(els) == 0 {
-		return fmt.Errorf("no indexed element matches %q — annotations attach to an element the index has, so run `leankg index .` if this project is stale, or `leankg query <name>` to find the right qualified_name", element)
+		// Name the store searched. Wave 20's regression sweep hit the hole this
+		// closes: a project indexed through LEANKG_DB_PATH, annotated WITHOUT
+		// it, produced exactly these words — and the advice (`leankg query
+		// <name>`) resolves the store the same way, so the caller was told the
+		// element does not exist by the very command meant to contradict it.
+		// Two situations, opposite fixes, one message; the store path is what
+		// tells them which. Same class as wave 1 (one verb reading a path only
+		// `serve` honoured) and wave 10 (freshness that could not see its own
+		// staleness): a diagnosis must not share its blind spot with its remedy.
+		return fmt.Errorf("no indexed element matches %q in %s — annotations attach to an element that store has; if the element is right, you are reading a different store than the one you indexed (LEANKG_DB_PATH / leankg.yaml db.standalone_db_path), otherwise run `leankg index .`",
+			element, st.Path())
 	}
 	return nil
 }
