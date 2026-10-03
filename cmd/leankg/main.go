@@ -364,12 +364,25 @@ afterSidecars:
 		}
 	}
 	if os.Getenv("LEANKG_EMBED_PROVIDER") != "" {
+		// A query-time embedder is an OPTION on the serve path, not a
+		// precondition: the engine serves exact (L1), fuzzy (L2), graph,
+		// memory, REST and UI without it, and the L3 rung already degrades
+		// with a reason when no embedder is wired (core.rungSemantic). So a
+		// provider that will not start — no llama.cpp installed, a port held
+		// by something else, a model that will not load — costs L3 and
+		// nothing else. It used to be log.Fatalf, which meant one failed
+		// sidecar took the whole MCP server down with it: an operator's
+		// server answered no health probe at all, and the client reported
+		// "unreachable" with no clue why (found 2026-10-03 driving
+		// xdev's autostart, where LEANKG_EMBED_SIDECAR_PORT pointed at a
+		// port a previous sidecar still held).
 		p, release, perr := embed.StartProvider(ctx)
 		if perr != nil {
-			log.Fatalf("embed provider: %v", perr)
+			log.Printf("embed provider unavailable — serving without L3 semantic: %v", perr)
+		} else {
+			defer release()
+			embedder = core.QueryEmbedderFromProvider(p)
 		}
-		defer release()
-		embedder = core.QueryEmbedderFromProvider(p)
 	}
 	engine := core.New(st, mem, embedder)
 	engine.SetProjectDir(dir) // enables the session actions

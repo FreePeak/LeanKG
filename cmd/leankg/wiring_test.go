@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -247,5 +248,89 @@ func TestDashboardListenerServesHealthAndShell(t *testing.T) {
 	}
 	if code, ctype, _ := get("/favicon.svg"); code != 200 || !strings.Contains(ctype, "image/svg+xml") {
 		t.Fatalf("GET /favicon.svg: %d %s", code, ctype)
+	}
+}
+
+// TestServeSurvivesUnusableEmbedProvider is the guard for the defect that made
+// an MCP client report the server "unreachable": `serve --embed-provider
+// local` used to log.Fatal when the provider would not start, and a busy
+// sidecar port — a previous run's llama-server, a dev tunnel — is the common
+// way to get there. The server then died before binding, so the client's
+// health probe found nothing and the only trace was a llama-server stderr
+// tail in a log nobody reads. A query-time embedder is optional (L3 degrades
+// with a reason, see core.rungSemantic), so serve must bind and serve
+// anyway. Two cases: the sidecar port held by a stranger, and a sidecar
+// command that does not exist.
+func TestServeSurvivesUnusableEmbedProvider(t *testing.T) {
+	bin := buildLeanKG(t)
+	proj := seedProject(t)
+	if out, err := exec.Command(bin, "index", proj, "--auto").CombinedOutput(); err != nil {
+		t.Fatalf("index: %v\n%s", err, out)
+	}
+
+	// A port held by a process that is not an embedding endpoint.
+	hog, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hog.Close()
+	go func() {
+		for {
+			c, cerr := hog.Accept()
+			if cerr != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
+	for name, env := range map[string][]string{
+		"port held": {
+			"LEANKG_EMBED_SIDECAR_PORT=" + strconv.Itoa(hog.Addr().(*net.TCPAddr).Port),
+			"LEANKG_EMBED_SIDECAR_ARGS=-m unused.gguf --embeddings",
+		},
+		"no sidecar binary": {
+			"LEANKG_EMBED_SIDECAR_CMD=leankg-no-such-sidecar-binary",
+			"LEANKG_EMBED_SIDECAR_ARGS=-m unused.gguf --embeddings",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := l.Addr().String()
+			_ = l.Close()
+			cmd := exec.Command(bin, "serve", "--http", addr, "--project", proj, "--embed-provider", "local")
+			cmd.Env = append(os.Environ(), env...)
+			var logs strings.Builder
+			cmd.Stdout, cmd.Stderr = &logs, &logs
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("serve: %v", err)
+			}
+			defer func() {
+				_ = cmd.Process.Kill()
+				_, _ = cmd.Process.Wait()
+			}()
+			code := 0
+			deadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(deadline) && code != 200 {
+				resp, gerr := http.Get("http://" + addr + "/health")
+				if gerr == nil {
+					_ = resp.Body.Close()
+					code = resp.StatusCode
+				}
+				if code != 200 {
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+			if code != 200 {
+				t.Fatalf("GET /health = %d after 30s; the server must bind without a query embedder.\noutput:\n%s", code, logs.String())
+			}
+			// The degradation is reported, not swallowed.
+			if !strings.Contains(logs.String(), "embed provider unavailable") {
+				t.Fatalf("missing the degrade notice; output:\n%s", logs.String())
+			}
+		})
 	}
 }
