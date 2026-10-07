@@ -374,9 +374,92 @@ func applyEntryDefaults(entries []Entry) {
 	}
 }
 
+// RetainReplacing is RetainRaw with Hindsight document upsert semantics:
+// every existing row whose metadata document_id is in replaceDocs is dropped
+// before entries are appended, under one lock so a concurrent retain never
+// lands between the drop and the append. An empty replaceDocs is RetainRaw.
+func (m *Memory) RetainReplacing(bank string, entries []Entry, replaceDocs []string) error {
+	applyEntryDefaults(entries)
+	m.bankMu.Lock()
+	defer m.bankMu.Unlock()
+	if len(replaceDocs) > 0 {
+		drop := make(map[string]bool, len(replaceDocs))
+		for _, d := range replaceDocs {
+			drop[d] = true
+		}
+		if _, err := m.rewriteBankLocked(bank, func(e Entry) bool { return drop[entryDocumentID(e)] }); err != nil {
+			return err
+		}
+	}
+	return m.appendBankLocked(bank, entries)
+}
+
+// DeleteDocument removes every row of one document from a bank and reports
+// how many rows went. A missing bank or unknown document deletes nothing.
+func (m *Memory) DeleteDocument(bank, documentID string) (int, error) {
+	if strings.TrimSpace(documentID) == "" {
+		return 0, nil
+	}
+	m.bankMu.Lock()
+	defer m.bankMu.Unlock()
+	return m.rewriteBankLocked(bank, func(e Entry) bool { return entryDocumentID(e) == documentID })
+}
+
+// entryDocumentID reads the client document id RetainRaw stored in metadata.
+func entryDocumentID(e Entry) string {
+	doc, _ := e.Metadata["document_id"].(string)
+	return doc
+}
+
+// rewriteBankLocked drops the rows drop selects and atomically replaces the
+// bank file (temp file + rename, so a crash leaves the old bank intact).
+// Lines that fail to parse are kept verbatim: a rewrite must never be the
+// thing that loses data. Callers hold bankMu.
+func (m *Memory) rewriteBankLocked(bank string, drop func(Entry) bool) (int, error) {
+	path := m.bankPath(bank)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("memory: read bank %s: %w", bank, err)
+	}
+	var kept strings.Builder
+	removed := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		var e Entry
+		if json.Unmarshal([]byte(line), &e) == nil && drop(e) {
+			removed++
+			continue
+		}
+		kept.WriteString(line)
+		kept.WriteByte('\n')
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(kept.String()), 0o644); err != nil {
+		return 0, fmt.Errorf("memory: rewrite bank %s: %w", bank, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return 0, fmt.Errorf("memory: rewrite bank %s: %w", bank, err)
+	}
+	return removed, nil
+}
+
 // appendBank writes rows to the bank's JSONL, creating the banks dir on
 // first use. Raw append, no cursor logic — callers own idempotency.
 func (m *Memory) appendBank(bank string, entries []Entry) error {
+	m.bankMu.Lock()
+	defer m.bankMu.Unlock()
+	return m.appendBankLocked(bank, entries)
+}
+
+func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 	if err := os.MkdirAll(filepath.Join(m.root, "banks"), 0o755); err != nil {
 		return fmt.Errorf("memory: create banks dir: %w", err)
 	}
@@ -430,6 +513,13 @@ func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
 // set is ranked score-descending (stable — bank order breaks ties, matching
 // the reference's append-then-sort). Missing banks read as empty.
 func (m *Memory) RecallBanks(banks []string, query string, limit int) ([]Entry, error) {
+	return m.RecallFiltered(banks, query, limit, nil)
+}
+
+// RecallFiltered is RecallBanks with an eligibility filter applied BEFORE
+// ranking and the limit, so a scope filter (hindsight tags) narrows the
+// candidate set instead of an already-truncated page. A nil keep admits all.
+func (m *Memory) RecallFiltered(banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 8
 	}
@@ -471,6 +561,9 @@ func (m *Memory) RecallBanks(banks []string, query string, limit int) ([]Entry, 
 				continue
 			}
 			seenIDs[e.ID] = true
+			if keep != nil && !keep(e) {
+				continue
+			}
 			seen := map[string]bool{}
 			for _, t := range tokenize(e.Content) {
 				seen[t] = true

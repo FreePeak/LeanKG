@@ -111,14 +111,16 @@ var memoryWritePrefixes = []string{
 
 // isWritePath reports whether a request mutates state. Path alone is not
 // enough: memory retain and memory list share one path, so the method decides
-// (GET /…/memories lists, POST /…/memories retains).
+// (GET /…/memories lists, POST /…/memories retains). Every DELETE under a
+// memory mount (document delete) is a write.
 func isWritePath(path, method string) bool {
 	for _, p := range writePrefixes {
 		if strings.HasPrefix(path, p) {
 			return true
 		}
 	}
-	if method != http.MethodPost || !strings.HasSuffix(path, "/memories") {
+	retain := method == http.MethodPost && strings.HasSuffix(path, "/memories")
+	if !retain && method != http.MethodDelete {
 		return false
 	}
 	for _, p := range memoryWritePrefixes {

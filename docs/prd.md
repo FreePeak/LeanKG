@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.13.6-sidecar-adopt
-**Date:** 2026-10-03
+**Version:** 4.13.7-hindsight-semantics
+**Date:** 2026-10-07
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
@@ -9,6 +9,19 @@
 ---
 
 ## Changelog
+
+### v4.13.7-hindsight-semantics — the compat mount answers the way Hindsight does (FR-ZCP-14 K8) (2026-10-07)
+
+**Trigger:** wiring Claude Code as a third client of the shared `omp` bank (beside omp and xdev) surfaced three places where `--hindsight-compat` diverged from the wire it claims to speak. On the live bank, 169 of 192 rows were untagged (xdev `global`-scoped retains) and a `tags:["project:leankg"], tags_match:"any"` recall returned **0** rows although a matching tagged row existed.
+
+- **Untagged rows are global (Hindsight `engine/search/tags.py`).** `any` (the default) and `all` admit untagged rows beside the matching tagged ones; `any_strict`/`all_strict` exclude them; `exact` is tag-set equality, and an empty `exact` scope selects only untagged rows. The mount previously excluded untagged rows in every mode, so every `global`-scoped memory was invisible to a `per-project-tagged` client.
+- **Filter before limit.** Recall ranked the top 64 rows and only then applied the tag filter, so a tagged row ranked below 64 untagged ones never surfaced. `memory.RecallFiltered` applies the eligibility filter before ranking and the page limit (Hindsight filters at the database level). Pinned by `TestHindsightCompatTagFilterBeforeLimit` (1 tagged row behind 80 higher-scoring rows).
+- **K8 — document upsert + delete.** A retain item with a `document_id` now replaces that document's earlier rows (`update_mode:"replace"`, the Hindsight default); `"append"` keeps them. `DELETE /v1/default/banks/{bank}/documents/{document_id}` drops a document and answers `{success, document_id, memory_units_deleted}`; the auth gate treats every DELETE under a memory mount as a write. Rows carry `document_id` on list/recall/by-id so a client can reconcile. The JSONL rewrite is temp-file + rename under a per-process bank mutex, and unparseable lines are kept verbatim. Effect on omp: its full-session retains (`document_id = session id`) stop accumulating one copy of the transcript per retain.
+- **Protocol text:** rule 6 named `command=lesson` under `action=memory`, where it errors; it now reads `import action=session command=lesson`.
+
+**Verified:** `go test ./...`, `go vet`, `gofmt` clean; new/changed tests `TestHindsightCompatWire` (mode matrix), `TestHindsightCompatTagFilterBeforeLimit`, `TestHindsightCompatDocumentUpsertAndDelete`, `TestCompatMountWriteRoutesGated` (Viewer 403 on document delete).
+
+**Remaining (FR-ZCP-14):** K2 first-class tags, K5 honest reflect, K7 recall ranking (token overlap, no index/decay/embeddings), K9 `connect --target xdev`.
 
 ### v4.13.6-sidecar-adopt — one failed embedder no longer takes the server down (2026-10-03)
 
@@ -117,7 +130,7 @@
 - **What landed:** `leankg serve --hindsight-compat` (REST listener, requires `--memory`) mounts the exact wire omp's `memory.backend:"hindsight"` client speaks — `PUT /v1/default/banks/{bank}` (ensure, always 200), `POST .../memories` (`items[]` with `content/timestamp/context/metadata/document_id/tags`), `POST .../memories/recall` → `{results:[{text,…}]}`, `POST .../reflect` → `{text}` digest. One file (`internal/rest/hindsight.go`) as an **additive alias** — the native `/api/v1/memory/*` surface is unchanged, and without the flag the compat routes 404 (pinned by test).
 - **Why no upstream PR was needed:** `memory.backend` is a closed enum, but the `hindsight` arm takes `hindsight.apiUrl` — speaking the server side of that wire lights up auto-retain, `<memories>` injection and the memory tools with zero omp changes. The earlier "upstream `memory.backend:\"mcp\"` PR" path stays available but is no longer the only door.
 - **Cursor trap (the #406 class, memory side):** the hindsight retain wire has no `retained_through_user_turn`, and `Memory.Retain` gates on `throughUserTurn <= bankCursor` — a cursorless 0 write would have been **silently dropped after the first batch**. New `memory.RetainRaw` shares Retain's id/source/timestamp/importance defaults but appends unconditionally; pinned by `TestRetainRawNoCursor`.
-- **Mapping policy:** client tags ride in entry metadata and filter recall (`all`/`all_strict` require every tag, else intersection; page = 8, the OMP recall limit); `update_mode:"replace"` is treated as append (JSONL has no per-document revision); documents/mental-models endpoints are deliberately not mounted — the wiring disables mental models client-side.
+- **Mapping policy:** client tags ride in entry metadata and filter recall (`all`/`all_strict` require every tag, else intersection; page = 8, the OMP recall limit); `update_mode:"replace"` is treated as append (JSONL has no per-document revision — superseded by v4.13.7: replace upserts, documents DELETE is mounted); mental-models endpoints are deliberately not mounted — the wiring disables mental models client-side.
 - **Verified:** in-process httptest suite (wire walk + 404-without-flag) and a LIVE probe replaying `hindsight/client.ts` call shapes byte-for-byte against a scratch `serve --hindsight-compat` — bank ensure, 2-item retain + second-batch retain, ranked tag-scoped recall, disjoint-tag exclusion, reflect digest: all PASS. Harness wiring: `memory.backend="hindsight"`, `hindsight.apiUrl=<rest>`, `hindsight.mentalModelsEnabled=false`.
 - **Shipped as v0.34.0** (release PR #422, run `34871489633`): 4 platform tarballs, `latest` pointer correct, proxy origin resolves the tag, `go install github.com/FreePeak/LeanKG/cmd/leankg@v0.34.0` → `leankg 0.34.0`, zero `go/v0.34*` mirror tags (job retired in #415).
 

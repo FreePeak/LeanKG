@@ -9,20 +9,26 @@
 //	POST /v1/default/banks/{bank}/memories/recall recall  {query, tags?, tags_match?, budget?, max_tokens?}
 //	POST /v1/default/banks/{bank}/reflect         digest of top recall rows {text}
 //	GET  /v1/default/banks/{bank}/stats           store report (K4)
+//	DELETE /v1/default/banks/{bank}/documents/{document_id}  drop a document's rows
 //
 // Wire deltas this bridge absorbs (vs the native FR-ZCP-07 surface):
 // path prefix `/v1/default/banks` (not `/api/v1/memory/banks`), recall at
 // `.../memories/recall` (not `.../recall`), retain body `items[]` with
 // snake_case fields (not top-level `entries[]`), and the recall response
 // `results[].text` (not `memories[].content`). Client tags ride in entry
-// metadata and filter recall (`all`/`all_strict` require every requested
-// tag, anything else requires at least one). `update_mode:"replace"` is
-// treated as append (the JSONL store has no per-document revision), and the
-// wiring disables mental models client-side.
+// metadata and filter recall with Hindsight's tags_match semantics: `any`
+// (default) and `all` also admit untagged (global) rows, the `_strict`
+// variants exclude them, and `exact` demands set equality (an empty `exact`
+// scope selects only untagged rows). The filter runs before ranking and the
+// page limit, as Hindsight's database-level filter does. A retain item with
+// a document_id upserts that document (`update_mode` "replace", the default,
+// drops the document's earlier rows; "append" keeps them), and the wiring
+// disables mental models client-side.
 package rest
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -42,10 +48,6 @@ type handlerConfig struct {
 func WithHindsightCompat() HandlerOption {
 	return func(c *handlerConfig) { c.hindsightCompat = true }
 }
-
-// hindsightRecallPool bounds how many ranked rows recall pulls before the
-// tag filter narrows to the client's page (8, the OMP recall default).
-const hindsightRecallPool = 64
 
 type hindsightItem struct {
 	Content    string            `json:"content"`
@@ -73,6 +75,7 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 			return
 		}
 		entries := make([]memory.Entry, 0, len(body.Items))
+		var replaceDocs []string
 		for _, it := range body.Items {
 			if strings.TrimSpace(it.Content) == "" {
 				continue
@@ -98,8 +101,11 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 				e.Metadata = meta
 			}
 			entries = append(entries, e)
+			if it.DocumentID != "" && it.UpdateMode != "append" {
+				replaceDocs = append(replaceDocs, it.DocumentID)
+			}
 		}
-		if err := mem.RetainRaw(r.PathValue("bank"), entries); err != nil {
+		if err := mem.RetainReplacing(r.PathValue("bank"), entries, replaceDocs); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -117,22 +123,13 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		if !decode(w, r, &body) {
 			return
 		}
-		entries, err := mem.Recall(r.PathValue("bank"), body.Query, hindsightRecallPool)
+		entries, err := mem.RecallFiltered([]string{r.PathValue("bank")}, body.Query, defaultRecallLimit,
+			func(e memory.Entry) bool { return entryHasTags(e, body.Tags, body.TagsMatch) })
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		results := make([]map[string]any, 0, len(entries))
-		for _, e := range entries {
-			if !entryHasTags(e, body.Tags, body.TagsMatch) {
-				continue
-			}
-			results = append(results, hindsightRows([]memory.Entry{e})[0])
-			if len(results) == defaultRecallLimit {
-				break
-			}
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"results": results})
+		writeJSON(w, http.StatusOK, map[string]any{"results": hindsightRows(entries)})
 	})
 
 	mux.HandleFunc("POST /v1/default/banks/{bank}/reflect", func(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +163,17 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 			return
 		}
 		writeJSON(w, http.StatusOK, stats)
+	})
+
+	mux.HandleFunc("DELETE /v1/default/banks/{bank}/documents/{document_id}", func(w http.ResponseWriter, r *http.Request) {
+		n, err := mem.DeleteDocument(r.PathValue("bank"), r.PathValue("document_id"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true, "document_id": r.PathValue("document_id"), "memory_units_deleted": n,
+		})
 	})
 
 	// K3: read parity with the native mount's row access — by-id for the
@@ -215,6 +223,9 @@ func hindsightRows(entries []memory.Entry) []map[string]any {
 		if tags := entryTags(e); len(tags) > 0 {
 			row["tags"] = tags
 		}
+		if doc, _ := e.Metadata["document_id"].(string); doc != "" {
+			row["document_id"] = doc
+		}
 		rows = append(rows, row)
 	}
 	return rows
@@ -240,29 +251,43 @@ func entryTags(e memory.Entry) []string {
 	return nil
 }
 
-// entryHasTags applies the hindsight tag filter: no requested tags admits
-// everything; "all"/"all_strict" demand every requested tag, any other mode
-// ("any", "any_strict", unset) admits an intersection.
+// entryHasTags applies Hindsight's tags_match filter (engine/search/tags.py
+// filter_results_by_tags). Untagged rows are global: "any" (and unset) and
+// "all" admit them, "any_strict"/"all_strict"/"exact" do not. "all*" demand
+// every requested tag, "any*" at least one, "exact" the same tag set. No
+// requested tags means no filter, except "exact", where it selects exactly
+// the untagged rows.
 func entryHasTags(e memory.Entry, want []string, mode string) bool {
+	have := entryTags(e)
+	if mode == "exact" {
+		if len(have) != len(want) {
+			return false
+		}
+		return containsAll(have, want)
+	}
 	if len(want) == 0 {
 		return true
 	}
-	have := entryTags(e)
-	all := strings.HasPrefix(mode, "all")
+	if len(have) == 0 {
+		return mode != "any_strict" && mode != "all_strict"
+	}
+	if strings.HasPrefix(mode, "all") {
+		return containsAll(have, want)
+	}
 	for _, w := range want {
-		found := false
-		for _, h := range have {
-			if h == w {
-				found = true
-				break
-			}
-		}
-		if all && !found {
-			return false
-		}
-		if !all && found {
+		if slices.Contains(have, w) {
 			return true
 		}
 	}
-	return all
+	return false
+}
+
+// containsAll reports whether every tag in want appears in have.
+func containsAll(have, want []string) bool {
+	for _, w := range want {
+		if !slices.Contains(have, w) {
+			return false
+		}
+	}
+	return true
 }

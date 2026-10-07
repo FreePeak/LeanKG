@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // CoreFileBytes is the Hermes bound for MEMORY.md and USER.md. Writes that
@@ -59,6 +60,11 @@ type Memory struct {
 	real    string // symlink-resolved root
 	fts     *sql.DB
 	ftsPath string
+
+	// bankMu serializes bank JSONL writes inside this process: appends and
+	// the read-filter-rename rewrites document replace/delete perform must
+	// not interleave, or a rewrite drops a row appended mid-scan.
+	bankMu sync.Mutex
 }
 
 // Open opens (creating if needed) the memory tree for projectDir, or the

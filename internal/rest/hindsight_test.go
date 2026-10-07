@@ -99,21 +99,38 @@ func TestHindsightCompatWire(t *testing.T) {
 	}
 
 	// Tag scoping round-trips: same tag admits, disjoint tags exclude.
-	tagged := recall(map[string]any{"query": "preflight", "tags": []string{"proj-a"}, "tags_match": "all"})
+	tagged := recall(map[string]any{"query": "preflight", "tags": []string{"proj-a"}, "tags_match": "all_strict"})
 	if len(tagged.Results) != 1 || tagged.Results[0].Text != "preflight runs go run, not docker" {
 		t.Fatalf("tagged recall = %+v", tagged.Results)
 	}
 	if len(tagged.Results[0].Tags) != 1 || tagged.Results[0].Tags[0] != "proj-a" {
 		t.Fatalf("tags did not round-trip: %+v", tagged.Results[0].Tags)
 	}
-	disjoint := recall(map[string]any{"query": "preflight", "tags": []string{"proj-z"}, "tags_match": "all"})
+	disjoint := recall(map[string]any{"query": "preflight", "tags": []string{"proj-z"}, "tags_match": "all_strict"})
 	if len(disjoint.Results) != 0 {
 		t.Fatalf("disjoint tags leaked results: %+v", disjoint.Results)
 	}
-	// "any" with one overlapping tag admits the row, disjoint ones exclude it.
+	// Hindsight semantics: untagged rows are global. "all"/"any" admit them
+	// next to the matching tagged rows; the _strict variants drop them.
+	allLoose := recall(map[string]any{"query": "preflight", "tags": []string{"proj-a"}, "tags_match": "all"})
+	if len(allLoose.Results) != 2 {
+		t.Fatalf(`"all" must admit proj-a plus the untagged row: %+v`, allLoose.Results)
+	}
 	anyHit := recall(map[string]any{"query": "preflight", "tags": []string{"proj-a", "proj-z"}, "tags_match": "any"})
-	if len(anyHit.Results) != 1 {
-		t.Fatalf("any-match recall = %+v", anyHit.Results)
+	if len(anyHit.Results) != 2 {
+		t.Fatalf(`"any" must admit proj-a plus the untagged row: %+v`, anyHit.Results)
+	}
+	anyDefault := recall(map[string]any{"query": "preflight", "tags": []string{"proj-b"}})
+	if len(anyDefault.Results) != 2 {
+		t.Fatalf("unset tags_match is \"any\": %+v", anyDefault.Results)
+	}
+	anyStrict := recall(map[string]any{"query": "preflight", "tags": []string{"proj-a", "proj-z"}, "tags_match": "any_strict"})
+	if len(anyStrict.Results) != 1 || anyStrict.Results[0].Text != "preflight runs go run, not docker" {
+		t.Fatalf(`"any_strict" must drop untagged rows: %+v`, anyStrict.Results)
+	}
+	global := recall(map[string]any{"query": "preflight", "tags": []string{}, "tags_match": "exact"})
+	if len(global.Results) != 1 || global.Results[0].Text != "preflight also needs make available" {
+		t.Fatalf(`empty "exact" scope selects only untagged rows: %+v`, global.Results)
 	}
 
 	// Reflect answers the client's required shape: {text}.
@@ -257,5 +274,115 @@ func TestHindsightCompatReadSurface(t *testing.T) {
 	}
 	if code := getJSON(t, base+"/memories/no-such-id", nil); code != http.StatusNotFound {
 		t.Fatalf("unknown id status = %d, want 404", code)
+	}
+}
+
+// TestHindsightCompatTagFilterBeforeLimit pins that the tag filter narrows the
+// candidates before the page limit: a tagged row that outranks nothing must
+// still surface when untagged rows fill every higher-ranked slot.
+func TestHindsightCompatTagFilterBeforeLimit(t *testing.T) {
+	e, mem := newEngine(t)
+	srv := httptest.NewServer(Handler(e, mem, WithHindsightCompat()))
+	defer srv.Close()
+	base := srv.URL + "/v1/default/banks/demo"
+
+	items := []map[string]any{}
+	for i := 0; i < 80; i++ {
+		items = append(items, map[string]any{"content": "deploy runbook deploy notes deploy", "tags": []string{"project:other"}})
+	}
+	items = append(items, map[string]any{"content": "deploy uses the blue cluster", "tags": []string{"project:mine"}})
+	if code := postJSON(t, base+"/memories", map[string]any{"items": items}, nil); code != http.StatusOK {
+		t.Fatalf("retain status = %d", code)
+	}
+	var out struct {
+		Results []struct {
+			Text string `json:"text"`
+		} `json:"results"`
+	}
+	postJSON(t, base+"/memories/recall", map[string]any{
+		"query": "deploy runbook notes", "tags": []string{"project:mine"}, "tags_match": "any_strict",
+	}, &out)
+	if len(out.Results) != 1 || out.Results[0].Text != "deploy uses the blue cluster" {
+		t.Fatalf("tagged row lost behind 80 higher-ranked rows: %+v", out.Results)
+	}
+}
+
+// TestHindsightCompatDocumentUpsertAndDelete pins Hindsight's document
+// semantics: re-retaining a document_id replaces its rows (the default
+// update_mode), "append" keeps them, and DELETE .../documents/{id} drops them.
+func TestHindsightCompatDocumentUpsertAndDelete(t *testing.T) {
+	e, mem := newEngine(t)
+	srv := httptest.NewServer(Handler(e, mem, WithHindsightCompat()))
+	defer srv.Close()
+	base := srv.URL + "/v1/default/banks/demo"
+
+	retain := func(items ...map[string]any) {
+		t.Helper()
+		if code := postJSON(t, base+"/memories", map[string]any{"items": items}, nil); code != http.StatusOK {
+			t.Fatalf("retain status = %d", code)
+		}
+	}
+	type listOut struct {
+		Total   int `json:"total"`
+		Results []struct {
+			Text       string `json:"text"`
+			DocumentID string `json:"document_id"`
+		} `json:"results"`
+	}
+	list := func() listOut {
+		t.Helper()
+		resp, err := http.Get(base + "/memories")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out listOut
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	retain(map[string]any{"content": "deadline is March 31", "document_id": "plan"},
+		map[string]any{"content": "unrelated note"})
+	retain(map[string]any{"content": "deadline is April 15", "document_id": "plan"})
+	got := list()
+	if got.Total != 2 {
+		t.Fatalf("replace left %d rows, want 2: %+v", got.Total, got.Results)
+	}
+	for _, r := range got.Results {
+		if r.Text == "deadline is March 31" {
+			t.Fatalf("replace kept the superseded row: %+v", got.Results)
+		}
+		if r.Text == "deadline is April 15" && r.DocumentID != "plan" {
+			t.Fatalf("document_id not returned on the row: %+v", r)
+		}
+	}
+
+	retain(map[string]any{"content": "deadline moved again", "document_id": "plan", "update_mode": "append"})
+	if got := list(); got.Total != 3 {
+		t.Fatalf("append mode replaced rows: total=%d", got.Total)
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, base+"/documents/plan", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var del struct {
+		Deleted int `json:"memory_units_deleted"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&del); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || del.Deleted != 2 {
+		t.Fatalf("delete: status=%d deleted=%d, want 200/2", resp.StatusCode, del.Deleted)
+	}
+	if got := list(); got.Total != 1 || got.Results[0].Text != "unrelated note" {
+		t.Fatalf("delete left %+v", got.Results)
 	}
 }
