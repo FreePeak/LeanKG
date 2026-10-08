@@ -82,12 +82,30 @@ func relativeTo(p, root, realRoot string) (string, bool) {
 	}
 	clean := filepath.Clean(p)
 	for _, base := range []string{root, realRoot} {
-		if rel, err := filepath.Rel(base, clean); err == nil &&
-			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if rel, ok := relUnder(base, clean); ok {
 			return rel, true
 		}
 	}
+	// The client may spell the root through a symlink alias (macOS /tmp ->
+	// /private/tmp). Resolve the path, or its parent when the file does not
+	// exist yet, and compare against the real root; os.Root still confirms
+	// containment of the final component.
+	if r, err := filepath.EvalSymlinks(clean); err == nil {
+		return relUnder(realRoot, r)
+	}
+	if d, err := filepath.EvalSymlinks(filepath.Dir(clean)); err == nil {
+		return relUnder(realRoot, filepath.Join(d, filepath.Base(clean)))
+	}
 	return "", false
+}
+
+// relUnder returns p relative to base when p lies inside it.
+func relUnder(base, p string) (string, bool) {
+	if !within(p, base) {
+		return "", false
+	}
+	rel, err := filepath.Rel(base, p)
+	return rel, err == nil
 }
 
 func outside(p string) error {

@@ -236,3 +236,28 @@ func TestPathNamesTheUnknownEndpoint(t *testing.T) {
 		t.Fatalf("err = %v, want the unknown 'to' endpoint named", err)
 	}
 }
+
+// TestRelativeProjectDirAcceptsAbsolutePaths pins the CLI default: the one-shot
+// verbs and `serve --project .` hand the engine a relative project dir. An
+// absolute path naming the project root (import) or a file inside it (read)
+// must be accepted exactly as its relative spelling is.
+func TestRelativeProjectDirAcceptsAbsolutePaths(t *testing.T) {
+	dir := writeProject(t)
+	e := engineAt(t, dir)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(wd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	e.SetProjectDir(".")
+	ctx := context.Background()
+	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: dir}); err != nil {
+		t.Fatalf("import repo <abs project root> with project dir \".\": %v", err)
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "read", Path: filepath.Join(dir, "root.go")}); err != nil {
+		t.Fatalf("import read <abs file in project> with project dir \".\": %v", err)
+	}
+}

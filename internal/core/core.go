@@ -88,8 +88,17 @@ type Engine struct {
 func (e *Engine) SetLangsRegistry(reg *langs.Registry) { e.langsReg = reg }
 
 // SetProjectDir records the project directory (enable
-// import{action:"session"} for offloading bulky tool payloads).
-func (e *Engine) SetProjectDir(dir string) { e.projectDir = dir }
+// import{action:"session"} for offloading bulky tool payloads). A relative
+// dir is made absolute against the cwd now, so absolute client paths compare
+// against a real root (the CLI default is ".").
+func (e *Engine) SetProjectDir(dir string) {
+	if dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+	}
+	e.projectDir = dir
+}
 
 // SetEmbedder wires the query-time embedder after construction. The CLI's
 // one-shot verbs build an engine before they know whether a provider endpoint

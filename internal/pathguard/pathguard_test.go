@@ -69,3 +69,31 @@ func TestResolve(t *testing.T) {
 		t.Error("empty path accepted")
 	}
 }
+
+// TestResolveAliasedRoot pins the macOS /tmp -> /private/tmp split: a server
+// rooted at the real path must accept a client path spelled through a symlink
+// alias of the root, and still refuse an alias that leaves it.
+func TestResolveAliasedRoot(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "a.go"), []byte("package a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, rel, err := Resolve(root, filepath.Join(alias, "a.go")); err != nil || rel != "a.go" {
+		t.Fatalf("Resolve(<alias>/a.go) = (%q, %v), want a.go", rel, err)
+	}
+	if _, _, err := Resolve(filepath.Join(root, "missing-subdir"), filepath.Join(alias, "a.go")); err == nil {
+		t.Fatal("alias resolving outside a narrower root was accepted")
+	}
+}

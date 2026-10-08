@@ -28,7 +28,15 @@ func TestDemoteTestHits(t *testing.T) {
 			t.Fatalf("order = %v, want %v", got, want)
 		}
 	}
-	if !mentionsTests("which tests cover the parser") || mentionsTests("where is the parser implemented") {
-		t.Fatal("mentionsTests misclassified")
+	for q, want := range map[string]bool{
+		"which tests cover the parser":    true,
+		"where is TestParse defined":      true,
+		"where is the parser implemented": false,
+		"make the parser testable":        false,
+		"the testament of the lexer":      false,
+	} {
+		if got := mentionsTests(q); got != want {
+			t.Errorf("mentionsTests(%q) = %v, want %v", q, got, want)
+		}
 	}
 }

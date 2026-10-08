@@ -35,9 +35,6 @@ func mentionsTests(q string) bool {
 		case "test", "tests", "testing", "tested", "spec", "specs", "fixture", "fixtures", "assert", "assertion":
 			return true
 		}
-		if strings.HasPrefix(w, "test") && len(w) > 4 && strings.ToUpper(w[:1]) == "T" {
-			return true
-		}
 	}
 	return strings.Contains(q, "Test")
 }
