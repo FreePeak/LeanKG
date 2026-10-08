@@ -298,6 +298,14 @@ func (h *apiH) query(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
+		if k == "limit" {
+			// RS-24: limit is the request's result count, not an action arg —
+			// it used to land in Args, where nothing read it.
+			if n, ok := v.(float64); ok {
+				qr.Limit = int(n)
+			}
+			continue
+		}
 		if qr.Args == nil {
 			qr.Args = map[string]any{}
 		}

@@ -25,6 +25,7 @@ type indexedElem struct {
 	start   int // 1-based
 	end     int
 	content string
+	docLen  int // bytes of content that are the prepended leading doc block (RS-10)
 	parent  int // index into the same slice, -1 = none
 	qn      string
 	recv    string   // Go method receiver type
@@ -537,6 +538,12 @@ func boundContent(els []indexedElem, lines []string) {
 			e = len(lines)
 		}
 		els[i].content = strings.Join(lines[s-1:e], "\n")
+		if els[i].etype != "doc" {
+			if doc := leadingDoc(lines, s, els[i].lang); doc != "" {
+				els[i].content = doc + "\n" + els[i].content
+				els[i].docLen = len(doc) + 1
+			}
+		}
 		els[i].content = store.ClipUTF8(els[i].content, maxContent)
 	}
 }

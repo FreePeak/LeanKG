@@ -225,7 +225,7 @@ Usage:
   leankg team-map [--env production] [--project DIR]
   leankg serve  [--project DIR] [--stdio] [--http ADDR] [--rest ADDR] [--read-only] [--memory] [--embed-provider P]
   leankg setup [--reset] [--clone] [--index] [--embed] [--status]
-  leankg index <dir> [--source URI] [--ref-name REF] [--auth TOKEN]
+  leankg index <dir> [--source URI] [--ref-name REF] [--auth TOKEN] [--rebase-root]
   leankg prd [--source docs/prd.md] [--environment local] [--project DIR]
   leankg prd-trace [FEATURE_ID] [--project DIR]
   leankg push --remote URL --token TOKEN [--env local] [--project DIR]
@@ -242,7 +242,7 @@ service_context|portfolio (portfolio = #376 fleet read via the registry;
 queried through the same core wiring the MCP transports use).
 Time filters (audit --since/--until): RFC3339 | epoch seconds | 90s|30m|24h|7d.
 
-Defaults: --http :9699 (MCP streamable HTTP) and --rest :8080 (REST) when
+Defaults: --http 127.0.0.1:9699 (MCP streamable HTTP, loopback) and --rest :8080 (REST) when
 neither --stdio nor addresses are given; --project defaults to cwd.
 LEANKG_PROJECT_DIRS (comma-separated) registers extra projects; REST/MCP
 requests select one with ?project= (dir path or name).
@@ -446,15 +446,21 @@ afterSidecars:
 
 	addr := *httpAddr
 	if addr == "" && *restAddr == "" {
-		addr = ":9699"
+		// Loopback by default (RS-03): the MCP surface reads project files and
+		// indexes, and with no token configured every caller is Admin. Pass
+		// --http :9699 explicitly to listen on every interface.
+		addr = defaultHTTPAddr
 	}
 	if addr != "" {
+		warnIfExposed("MCP", addr, st)
 		mcpSrv := leankgmcp.New(engine)
 		mcpSrv.SetProjectRouter(router)
+		mcpSrv.SetAuthStore(st)
 		h := httpMux(mcpSrv.HTTPHandler())
 		h = routeByProject(ctx, router, h, func(p *projects.Project) http.Handler {
 			pSrv := leankgmcp.New(p.Engine)
 			pSrv.SetProjectRouter(router)
+			pSrv.SetAuthStore(st)
 			return httpMux(pSrv.HTTPHandler())
 		})
 		restauto.RegisterAutoConfig(h, engine)
@@ -475,6 +481,7 @@ afterSidecars:
 		// bootstrap (the handlers enforce their own caller/account checks), and
 		// Rust registered them outside the auth middleware for the same reason.
 		// Everything else sits behind the bearer gate.
+		warnIfExposed("REST", *restAddr, st)
 		root := http.NewServeMux()
 		root.Handle("/api/v1/auth/", auth.Routes(st))
 		root.Handle("/", auth.MiddlewareWithStore(st, h))
@@ -536,6 +543,40 @@ afterSidecars:
 		go serveHTTP(ctx, uiMux, *uiAddr)
 	}
 	<-ctx.Done()
+}
+
+// defaultHTTPAddr is the MCP listener when serve is given no address.
+const defaultHTTPAddr = "127.0.0.1:9699"
+
+// exposedWithoutAuth reports whether addr listens beyond loopback while no
+// token gates its callers.
+func exposedWithoutAuth(addr string, gateOn bool) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return false
+	}
+	return !gateOn
+}
+
+// warnIfExposed logs the RS-03 warning: an MCP or REST listener on a
+// non-loopback address with no token configured serves every caller as
+// Admin (file reads inside the project, indexing, memory writes).
+func warnIfExposed(kind, addr string, st store.Backend) {
+	gateOn, err := auth.GateEnabled(st)
+	if err != nil {
+		log.Printf("warning: %s auth gate state unknown: %v", kind, err)
+		return
+	}
+	if exposedWithoutAuth(addr, gateOn) {
+		log.Printf("warning: %s listens on %s (beyond loopback) with no auth token configured — every caller is Admin. "+
+			"Bind 127.0.0.1, or set LEANKG_TOKEN_ADMIN / run `leankg auth token create`", kind, addr)
+	}
 }
 
 func cmdDoctor(args []string) int {
@@ -620,6 +661,7 @@ func cmdIndex(args []string) {
 	authFlag := fs.String("auth", "", "credential for --source (git token or GCS access token)")
 	auto := fs.Bool("auto", false, "first-run setup mode: index (and later embed) without asking again")
 	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
+	rebase := fs.Bool("rebase-root", false, "adopt this directory as the store's index root (after moving a checkout); without it a store built from another root refuses the walk")
 	positional := parseInterspersed("index", fs, args, 1)
 	if *auto && *manual {
 		log.Fatal("index: --auto and --manual are mutually exclusive")
@@ -666,7 +708,7 @@ func cmdIndex(args []string) {
 	// command the user typed.
 	_ = mode
 
-	if err := runIndex(*project, target, *source, *refName, sourceAuth(*authFlag)); err != nil {
+	if err := runIndex(*project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
 		log.Fatalf("index: %v", err)
 	}
 }

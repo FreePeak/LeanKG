@@ -270,8 +270,11 @@ type VectorSearchHit struct {
 	Similarity float64
 }
 
-// vectorSelectCols hydrates L3 hits: vector QN always present; element fields
-// fall back to the QN when no code element matches (docs, memory blobs).
+// vectorSelectCols hydrates L3 hits. The join is INNER (RS-05): a vector
+// whose element is gone is an orphan by the store's own definition
+// (DeleteOrphanVectors) — nothing writes vectors for non-elements and the
+// NDJSON import skips dead QNs — so a LEFT JOIN served only ghosts of deleted
+// code, ranked first for their own queries, until `leankg gc`.
 const vectorSelectCols = `embedding_vectors.qualified_name,
 	COALESCE(ce.element_type,''), COALESCE(ce.name, embedding_vectors.qualified_name),
 	COALESCE(ce.file_path,''), COALESCE(ce.line_start,0), COALESCE(ce.line_end,0),
@@ -287,7 +290,7 @@ func (s *Store) SearchVectors(modelID string, q []float32, k int) ([]VectorSearc
 		return nil, nil
 	}
 	rows, err := s.db.Query(`SELECT `+vectorSelectCols+`, embedding_vectors.vec
-		FROM embedding_vectors LEFT JOIN code_elements ce ON ce.qualified_name = embedding_vectors.qualified_name
+		FROM embedding_vectors JOIN code_elements ce ON ce.qualified_name = embedding_vectors.qualified_name
 		WHERE embedding_vectors.model_id = ?`, modelID)
 	if err != nil {
 		return nil, err

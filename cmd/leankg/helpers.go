@@ -91,7 +91,7 @@ func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
 // runIndex performs a one-shot index run into the project store. A non-empty
 // source is a --source URI whose tree is synced into <project>/.leankg/sources
 // and indexed instead of target (Rust main.rs index path resolution).
-func runIndex(project, target, source, refName, auth string) error {
+func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool) error {
 	dir := project
 	if dir == "" {
 		dir = target
@@ -139,6 +139,12 @@ func runIndex(project, target, source, refName, auth string) error {
 	reg := langs.DefaultRegistry()
 	if _, aerr := reg.Activate(indexTarget); aerr != nil {
 		return fmt.Errorf("language detection: %w", aerr)
+	}
+	if len(rebaseRoot) > 0 && rebaseRoot[0] {
+		// The checkout moved: adopt the new root deliberately (RS-02 tripwire).
+		if err := index.RebaseRoot(st, indexTarget); err != nil {
+			return fmt.Errorf("rebase root: %w", err)
+		}
 	}
 	res, err := index.IndexDirWith(context.Background(), st, indexTarget, reg)
 	if err != nil {

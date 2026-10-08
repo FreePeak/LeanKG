@@ -32,10 +32,17 @@ type ProjectRouter interface {
 // each tool call may name a project (args.project) and is served by that
 // project's engine; otherwise the wrapped engine answers.
 type Server struct {
-	engine *core.Engine
-	router ProjectRouter
-	srv    *mcp.Server
+	engine    *core.Engine
+	router    ProjectRouter
+	srv       *mcp.Server
+	authStore store.Backend // token store for HTTP callers; nil = env tokens only
 }
+
+// SetAuthStore makes the HTTP handler honor DB-minted tokens (`leankg auth
+// token create`) as well as LEANKG_TOKEN_* env tokens. Without it a token
+// minted in the store gated REST and ConnectRPC but left MCP open as Admin
+// (RS-03). serve passes the default project's store, the one REST uses.
+func (s *Server) SetAuthStore(st store.Backend) { s.authStore = st }
 
 // SetProjectRouter enables per-call project routing. The router resolves a
 // directory path or project name and errors on unknown selectors (never
@@ -87,7 +94,26 @@ func New(engine *core.Engine) *Server {
 		Description: "LeanKG code knowledge graph (3 tools: import/query/status): query for code discovery and memory recall; import for indexing and session_retain.",
 	}, &mcp.ServerOptions{Instructions: serverInstructions})
 	s.registerTools()
+	s.srv.AddReceivingMiddleware(resolveToolNames)
 	return s
+}
+
+// resolveToolNames routes every tools/call through core.ResolveEnvelope
+// (RS-22): the legacy names `get`/`set` reach query/import, and an unknown
+// name answers the catalog error that lists the valid tools instead of the
+// SDK's bare "unknown tool". The alias map was declared but no call site
+// read it, so the aliasing its comment promised never existed.
+func resolveToolNames(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if call, ok := req.(*mcp.CallToolRequest); ok && call.Params != nil {
+			canonical, err := core.ResolveEnvelope(call.Params.Name)
+			if err != nil {
+				return nil, err
+			}
+			call.Params.Name = canonical
+		}
+		return next(ctx, method, req)
+	}
 }
 
 // RunStdio serves MCP over stdin/stdout (blocks until the client disconnects).
@@ -108,10 +134,14 @@ func (s *Server) HTTPHandler() http.Handler {
 	// TestMCPNewProtocolVersionOverHTTP.
 	inner := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return s.srv },
-		&mcp.StreamableHTTPOptions{Stateless: true},
+		// PropagateRequestCancellation (RS-02): a client that gives up on a
+		// long import cancels the handler instead of leaving the walk running
+		// (go-sdk applies it to the >= 2026-07-28 protocol only; older
+		// clients rely on the index-root guard to bound an import).
+		&mcp.StreamableHTTPOptions{Stateless: true, PropagateRequestCancellation: true},
 	)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role, err := auth.RoleForRequest(r)
+		role, err := auth.RoleForRequestWithStore(s.authStore, r)
 		if err != nil {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
@@ -160,7 +190,7 @@ func (s *Server) registerTools() {
 		Name: core.ToolImport,
 		Description: "Import content into LeanKG: index a repository or directory " +
 			"of repositories (action=repo|dir, path), or curate agent memory " +
-			"(action=memory, command=create|str_replace|insert|delete|rename|add|replace|remove). " +
+			"(action=memory, command=create|str_replace|insert|delete|rename|add|replace|remove; create overwrites an existing file). " +
 			"Legacy tool name 'set' is superseded by this tool. " +
 			"Use action=dir with path=\".\" to import the current directory as a scoped index target (FR-P2). " +
 			"Import only for first-time indexing or deliberate updates; indexing does not create vectors. " + toolGuidance,
@@ -191,7 +221,7 @@ func (s *Server) registerTools() {
 		Name: core.ToolQuery,
 		Description: "Query LeanKG. Empty action routes down the ladder: L1 exact " +
 			"identifier → L2 fuzzy keyword → L3 semantic (vectors). Every answer carries " +
-			"retrieval{rung,reason} + freshness. action=memory searches agent memory; " +
+			"retrieval{rung,reason} + freshness. action=memory searches agent memory (args.command=view with args.path reads one file, =snapshot the MEMORY.md/USER.md core); " +
 			"action=exact|fuzzy|semantic pins a rung; graph verbs (impact/path/callers/callees/context/explain) and session/ontology reads are also available. " +
 			"Leave action empty/search for semantic questions; legacy tool name 'get' is superseded. " + toolGuidance,
 		InputSchema: json.RawMessage(`{
@@ -297,7 +327,10 @@ func metricQueryArgs(raw json.RawMessage) (pattern, file string, depth int64) {
 func enforceBudget(v any, action string) any {
 	key := action
 	if key == "" {
-		key = "query"
+		// The ladder router answers search hits (L1/L2/L3), so it carries the
+		// search cap; the uncapped `query` envelope row let a ladder answer
+		// grow without bound while the same hits pinned to semantic were cut.
+		key = "search"
 	}
 	res := any(v)
 	if m, ok := v.(map[string]any); ok {

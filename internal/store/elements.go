@@ -92,12 +92,52 @@ func ftsSync(tx *sql.Tx, e Element) error {
 	return nil
 }
 
+// SplitIdentifier spells a code identifier as words — camelCase, PascalCase
+// (acronyms kept together), snake_case and kebab-case — lowercased; "" when
+// the name has nothing to split. FTS5's unicode61 tokenizer keeps
+// RotateStagingCredentials as one token, so "rotate staging credentials" never
+// matched it on the keyword rung (RS-13).
+func SplitIdentifier(name string) string {
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	rs := []rune(name)
+	for i, r := range rs {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ' ':
+			flush()
+			continue
+		case unicode.IsUpper(r) && len(cur) > 0:
+			prevLower := unicode.IsLower(rs[i-1]) || unicode.IsDigit(rs[i-1])
+			nextLower := i+1 < len(rs) && unicode.IsLower(rs[i+1])
+			if prevLower || (unicode.IsUpper(rs[i-1]) && nextLower) {
+				flush()
+			}
+		}
+		cur = append(cur, r)
+	}
+	flush()
+	if len(words) < 2 {
+		return ""
+	}
+	return strings.Join(words, " ")
+}
+
 func ftsContent(e Element) string {
 	// Bound the indexed text: content is the source snippet already; cap it so
 	// the FTS index does not balloon on generated files.
 	const maxContent = 8000
 	c := ClipUTF8(e.Content, maxContent)
-	return e.Name + " " + e.QualifiedName + " " + c
+	head := e.Name
+	if terms := SplitIdentifier(e.Name); terms != "" {
+		head += " " + terms
+	}
+	return head + " " + e.QualifiedName + " " + c
 }
 
 // UpsertRelationships writes a batch of relationships in one transaction.

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -380,5 +381,61 @@ func TestMCPNewProtocolVersionOverHTTP(t *testing.T) {
 	// No regression for a legacy client that omits the new headers entirely.
 	if rec := post(false, ""); rec.Code != http.StatusOK {
 		t.Fatalf("legacy header-less tools/list: %d, want 200 — body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMCPHonorsDBMintedTokens pins RS-03: a token minted into the store (the
+// `leankg auth token create` path) must gate MCP HTTP exactly as it gates
+// REST. Before, MCP consulted env tokens only and stayed open as Admin.
+func TestMCPHonorsDBMintedTokens(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_VIEWER", "")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
+	dir := t.TempDir()
+	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := auth.Mint(st, auth.MintRequest{Name: "ci", Role: "viewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := core.New(st, nil, nil)
+	engine.SetProjectDir(dir)
+	srv := New(engine)
+	srv.SetAuthStore(st)
+	h := srv.HTTPHandler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/mcp", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no token with a DB token minted: %d, want 401", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+plain)
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatal("the DB-minted token was rejected")
+	}
+}
+
+// TestLegacyToolNamesResolve pins RS-22: legacy names are refused with their
+// replacement named, and an unknown tool gets the catalog error listing the
+// valid surface (not the SDK's bare "unknown tool").
+func TestLegacyToolNamesResolve(t *testing.T) {
+	session := newTestServer(t)
+	ctx := context.Background()
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get", Arguments: map[string]any{"action": "languages", "query": "x"}}); err == nil ||
+		!strings.Contains(err.Error(), `superseded by "query"`) {
+		t.Fatalf("legacy get must be refused naming its replacement: %v", err)
+	}
+	_, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "delete_everything", Arguments: map[string]any{}})
+	if err == nil || !strings.Contains(err.Error(), "valid tools: import, query, status") {
+		t.Fatalf("unknown tool error = %v, want the catalog error", err)
 	}
 }

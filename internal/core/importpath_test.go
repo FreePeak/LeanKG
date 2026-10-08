@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -105,5 +107,132 @@ func TestImportSubtreeRefused(t *testing.T) {
 	}
 	if count(t, e) != before {
 		t.Fatalf("the refused import still mutated the store: %d -> %d", before, count(t, e))
+	}
+}
+
+// TestImportForeignRootRefused pins RS-02: any walk root other than the
+// project root — sibling, ancestor, unrelated, relative climb — is refused
+// with LEANKG_ERROR_INDEX_ROOT_MISMATCH and leaves the store untouched.
+func TestImportForeignRootRefused(t *testing.T) {
+	dir := writeProject(t)
+	e := engineAt(t, dir)
+	ctx := context.Background()
+	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
+		t.Fatal(err)
+	}
+	before := count(t, e)
+	sibling := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sibling, "x.go"), []byte("package x\n\nfunc X() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{sibling, filepath.Dir(dir), "..", "../..", filepath.Join(dir, "sub")} {
+		for _, action := range []string{"repo", "dir"} {
+			_, err := e.Import(ctx, ImportRequest{Action: action, Path: p})
+			if err == nil || !strings.Contains(err.Error(), "LEANKG_ERROR_INDEX_ROOT_MISMATCH") {
+				t.Fatalf("import %s %q: err=%v, want INDEX_ROOT_MISMATCH", action, p, err)
+			}
+			if got := count(t, e); got != before {
+				t.Fatalf("refused import %s %q mutated the store: %d -> %d", action, p, before, got)
+			}
+		}
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "dir", Path: dir}); err != nil {
+		t.Fatalf("project root refused: %v", err)
+	}
+}
+
+// TestDeletedCodeIsNeverASemanticHit pins RS-05: after a file is deleted and
+// the project re-indexed, its symbols' vectors are gone and L3 never returns
+// them. The validation run got the deleted symbol back as the rank-1 hit,
+// with empty type/file/content, until `leankg gc`.
+func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
+	dir := writeProject(t)
+	ghost := filepath.Join(dir, "ghost.go")
+	if err := os.WriteFile(ghost, []byte("package p\n\nfunc RotateStagingCredentials() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := engineAt(t, dir)
+	p := embed.Deterministic(64)
+	e.SetEmbedder(QueryEmbedderFromProvider(p))
+	ctx := context.Background()
+	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := embed.Run(ctx, e.st, p, "full"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(ghost); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
+		t.Fatal(err)
+	}
+	vecs, _ := e.st.VectorCount(p.ModelID())
+	if els := count(t, e); vecs != els {
+		t.Fatalf("after re-index: %d vectors for %d elements (orphans left behind)", vecs, els)
+	}
+	out, err := e.Query(ctx, QueryRequest{Action: "semantic", Query: "RotateStagingCredentials", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range hitsOf(out) {
+		if strings.Contains(h["qualified_name"].(string), "ghost.go") {
+			t.Fatalf("deleted symbol served as a semantic hit: %v", h)
+		}
+	}
+}
+
+// TestImportDocsRelativeAnchorsAtProject pins RS-08: `import docs path=docs`
+// resolves against the project (it used to resolve against the server cwd
+// and fail with ENOENT), keys files project-relative, and leaves .md records
+// outside the walked directory alone.
+func TestImportDocsRelativeAnchorsAtProject(t *testing.T) {
+	dir := writeProject(t)
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docs", "guide.md"), []byte("# Guide\n\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Readme\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := engineAt(t, dir)
+	ctx := context.Background()
+	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(dir) })
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "docs", Path: "docs"}); err != nil {
+		t.Fatalf("import docs relative: %v", err)
+	}
+	files, _ := e.st.Files()
+	got := map[string]bool{}
+	for _, f := range files {
+		got[f.Path] = true
+	}
+	if !got["docs/guide.md"] || !got["README.md"] || got["guide.md"] {
+		t.Fatalf("file records after import docs = %v", got)
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "docs", Path: "/etc"}); err == nil {
+		t.Fatal("docs outside the project accepted")
+	}
+}
+
+// TestPathNamesTheUnknownEndpoint: an unknown path endpoint is named, not
+// reported as a bare "graph: unknown node".
+func TestPathNamesTheUnknownEndpoint(t *testing.T) {
+	dir := writeProject(t)
+	e := engineAt(t, dir)
+	ctx := context.Background()
+	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.Query(ctx, QueryRequest{Action: "path", Query: "RootOne", Args: map[string]any{"to": "NoSuchThing"}})
+	if err == nil || !strings.Contains(err.Error(), `to (args.to) endpoint "NoSuchThing"`) {
+		t.Fatalf("err = %v, want the unknown 'to' endpoint named", err)
 	}
 }

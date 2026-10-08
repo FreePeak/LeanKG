@@ -152,10 +152,12 @@ func TestRelationshipsPerFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	rels := goRels(fe)
-	wantCalls := [][2]string{
-		{"sample.go::greet", "sample.go::Widget"},
-		{"sample.go::Widget.Shout", "sample.go::greet"},
-		{"sample.go::Widget.Shout", "sample.go::Widget"},
+	// Signature-only names (a parameter type, a receiver) are references;
+	// a name used in the body is a call.
+	wantCalls := [][3]string{
+		{"sample.go::greet", "sample.go::Widget", "references"},
+		{"sample.go::Widget.Shout", "sample.go::greet", "calls"},
+		{"sample.go::Widget.Shout", "sample.go::Widget", "references"},
 	}
 	if len(rels) != len(wantCalls) {
 		t.Fatalf("go edges = %d (%v), want %d (dedupe/self-drop broken)", len(rels), rels, len(wantCalls))
@@ -164,8 +166,8 @@ func TestRelationshipsPerFile(t *testing.T) {
 		found := false
 		for _, r := range rels {
 			if r.Source == pair[0] && r.Target == pair[1] {
-				if r.RelType != "calls" || r.Confidence != 0.5 {
-					t.Errorf("edge %v: got %s/%v, want calls/0.5", pair, r.RelType, r.Confidence)
+				if r.RelType != pair[2] || r.Confidence != 0.5 {
+					t.Errorf("edge %v: got %s/%v, want %s/0.5", pair, r.RelType, r.Confidence, pair[2])
 				}
 				found = true
 			}
@@ -352,5 +354,81 @@ func TestQualifiedNameFormat(t *testing.T) {
 		if !got[want] {
 			t.Errorf("missing qualified name %q in %v", want, got)
 		}
+	}
+}
+
+// TestIndexRootTripwire pins RS-02 at the store level: a store built from one
+// root refuses a walk of another (before deleting anything), and RebaseRoot
+// is the deliberate escape.
+func TestIndexRootTripwire(t *testing.T) {
+	a := t.TempDir()
+	b := t.TempDir()
+	if err := os.WriteFile(filepath.Join(a, "a.go"), []byte("package a\n\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "b.go"), []byte("package b\n\nfunc B() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := IndexDir(ctx, st, a); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := st.ElementCount()
+	if _, err := IndexDir(ctx, st, b); err == nil || !strings.Contains(err.Error(), "INDEX_ROOT_MISMATCH") {
+		t.Fatalf("foreign root walk: err=%v, want INDEX_ROOT_MISMATCH", err)
+	}
+	if after, _ := st.ElementCount(); after != before {
+		t.Fatalf("refused walk mutated the store: %d -> %d", before, after)
+	}
+	if _, err := IndexDir(ctx, st, a); err != nil {
+		t.Fatalf("re-index of the recorded root: %v", err)
+	}
+	if err := RebaseRoot(st, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IndexDir(ctx, st, b); err != nil {
+		t.Fatalf("walk after RebaseRoot: %v", err)
+	}
+}
+
+// TestExtractorVersionReextractsOnce: a store indexed by an older extractor
+// re-extracts every file once (unchanged files included), then goes back to
+// skipping them.
+func TestExtractorVersionReextractsOnce(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\n// A does a thing.\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := IndexDir(ctx, st, dir); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := IndexDir(ctx, st, dir); res.Files != 0 {
+		t.Fatalf("unchanged tree re-extracted %d files", res.Files)
+	}
+	if err := st.KVSet(rootKVNamespace, extractorKVKey, "1"); err != nil { // simulate an older store
+		t.Fatal(err)
+	}
+	if res, _ := IndexDir(ctx, st, dir); res.Files != 1 {
+		t.Fatalf("older extractor version: re-extracted %d files, want 1", res.Files)
+	}
+	if res, _ := IndexDir(ctx, st, dir); res.Files != 0 {
+		t.Fatalf("after upgrade: re-extracted %d files, want 0", res.Files)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/session"
 )
 
 // The import tool's advertised MCP input schema publishes the curation fields
@@ -115,5 +117,77 @@ func TestMemoryWriteArgsShapeStillWorksAndArgsWins(t *testing.T) {
 	}
 	if string(got) != "args wins" {
 		t.Fatalf("precedence = %q, want %q (args must win over flat)", got, "args wins")
+	}
+}
+
+// TestMemoryRenameTopLevelNewPath pins RS-06: the advertised schema puts
+// new_path at the top level; it used to be dropped ("empty path").
+func TestMemoryRenameTopLevelNewPath(t *testing.T) {
+	e, _ := newEngine(t)
+	if _, err := e.Import(context.Background(), ImportRequest{Action: "memory", Command: "create", Path: "topics/a.md", Content: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Import(context.Background(), ImportRequest{Action: "memory", Command: "rename", Path: "topics/a.md", NewPath: "topics/b.md"}); err != nil {
+		t.Fatalf("rename with top-level new_path: %v", err)
+	}
+}
+
+// TestMemoryViewAndSnapshotOverQuery pins RS-21: an MCP agent can read a
+// memory file and the core snapshot through the query tool.
+func TestMemoryViewAndSnapshotOverQuery(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	if _, err := e.Import(ctx, ImportRequest{Action: "memory", Command: "create", Path: "topics/n.md", Content: "note body"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.Query(ctx, QueryRequest{Action: "memory", Args: map[string]any{"command": "view", "path": "topics/n.md"}})
+	if err != nil || out["content"] != "note body" {
+		t.Fatalf("view: %v %v", out, err)
+	}
+	out, err = e.Query(ctx, QueryRequest{Action: "memory", Args: map[string]any{"command": "snapshot"}})
+	if err != nil || out["command"] != "snapshot" {
+		t.Fatalf("snapshot: %v %v", out, err)
+	}
+	if _, err := e.Query(ctx, QueryRequest{Action: "memory", Args: map[string]any{"command": "view", "path": "../../etc/hosts"}}); err == nil {
+		t.Fatal("view escaped the memory root")
+	}
+}
+
+// TestErrorsAndRefsAreProjectRelative pins RS-23: no client-facing error or
+// session ref carries the server's absolute project path.
+func TestErrorsAndRefsAreProjectRelative(t *testing.T) {
+	e, _ := newEngine(t)
+	proj := t.TempDir()
+	e.SetProjectDir(proj)
+	ctx := context.Background()
+	_, err := e.Import(ctx, ImportRequest{Action: "memory", Command: "delete", Path: "topics/missing.md"})
+	if err == nil {
+		t.Fatal("deleting a missing memory file succeeded")
+	}
+	if root := e.projectRoot(); strings.Contains(err.Error(), root) || strings.Contains(err.Error(), proj) {
+		t.Fatalf("error leaks the project path: %v", err)
+	}
+	out, err := e.Import(ctx, ImportRequest{Action: "session", Command: "offload",
+		Args: map[string]any{"session_id": "s1", "node_id": "node-1", "payload": "p", "summary": "s"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := out["offloaded"].(session.Ref).Path; filepath.IsAbs(p) {
+		t.Fatalf("offload ref path is absolute: %s", p)
+	}
+}
+
+// TestMemoryCreateReportsOverwrite: create still overwrites (memory-tool
+// contract) but says so.
+func TestMemoryCreateReportsOverwrite(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	out, err := e.Import(ctx, ImportRequest{Action: "memory", Command: "create", Path: "topics/o.md", Content: "one"})
+	if err != nil || out["overwrote"] != false {
+		t.Fatalf("first create: %v %v", out, err)
+	}
+	out, err = e.Import(ctx, ImportRequest{Action: "memory", Command: "create", Path: "topics/o.md", Content: "two"})
+	if err != nil || out["overwrote"] != true {
+		t.Fatalf("second create must report overwrote=true: %v %v", out, err)
 	}
 }

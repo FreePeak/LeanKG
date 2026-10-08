@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,7 +27,28 @@ func openFTS(path string) (*sql.DB, error) {
 	// modernc.org/sqlite builds FTS5 in; these statements fail as one
 	// ErrNoRows-shaped nothing if not, which the round-trip test catches.
 	for _, stmt := range []string{
-		`CREATE VIRTUAL TABLE IF NOT EXISTS memory_index USING fts5(path, body, tokenize='unicode61')`,
+		// RS-18: one ranked index over memory files (one row per line) and
+		// bank rows (one row per entry, the entry JSON carried in `doc` so
+		// recall never re-reads the JSONL). porter stems (embedding ~
+		// embeddings), remove_diacritics 2 folds accents (tim kiem ~ tìm
+		// kiếm), bm25 weighs rare terms over common ones. The JSONL banks and
+		// Markdown files stay the source of truth; this file is derived and
+		// rebuilt from them when indexVersion changes.
+		`DROP TABLE IF EXISTS memory_index`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+			kind UNINDEXED, path UNINDEXED, bank UNINDEXED, entry_id UNINDEXED, doc UNINDEXED, body,
+			tokenize='porter unicode61 remove_diacritics 2')`,
+		`CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		// RS-20: retain cursors, maintained on append, so a retain no longer
+		// re-reads every bank file to find them.
+		// RS-19: dense recall vectors, keyed by vector space (model) so a
+		// model change re-embeds instead of mixing spaces. Derived like the
+		// rest of this file: losing it only costs re-embedding.
+		`CREATE TABLE IF NOT EXISTS memory_vectors (
+			model TEXT NOT NULL, bank TEXT NOT NULL, entry_id TEXT NOT NULL, vec BLOB NOT NULL,
+			PRIMARY KEY (model, bank, entry_id))`,
+		`CREATE TABLE IF NOT EXISTS memory_cursors (
+			kind TEXT NOT NULL, key TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (kind, key))`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			db.Close()
@@ -53,7 +75,15 @@ func (m *Memory) reindex(key string) error {
 	if err != nil {
 		return err
 	}
-	for i, line := range strings.Split(string(data), "\n") {
+	if err := insertFileRows(tx, key, string(data)); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func insertFileRows(tx *sql.Tx, key, data string) error {
+	for i, line := range strings.Split(data, "\n") {
 		if i > 10000 {
 			break // index the head; whole-file BLOBs are a W2 upgrade
 		}
@@ -61,17 +91,16 @@ func (m *Memory) reindex(key string) error {
 		if line == "" {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO memory_index(path, body) VALUES (?, ?)`, key, line); err != nil {
-			tx.Rollback()
+		if _, err := tx.Exec(`INSERT INTO memory_fts(kind, path, bank, entry_id, doc, body) VALUES ('file', ?, '', '', '', ?)`, key, line); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // deleteRows removes all index rows for one path.
 func (m *Memory) deleteRows(key string) error {
-	if _, err := m.fts.Exec(`DELETE FROM memory_index WHERE path = ?`, key); err != nil {
+	if _, err := m.fts.Exec(`DELETE FROM memory_fts WHERE kind = 'file' AND path = ?`, key); err != nil {
 		return err
 	}
 	return nil
@@ -85,25 +114,29 @@ type Hit struct {
 }
 
 // Search queries across all memory files and returns up to limit hits
-// ordered by relevance. limit <= 0 means 10.
+// ordered by bm25 relevance. limit <= 0 means 10. Terms are ORed (a hit
+// needs one of them, ranking rewards more and rarer ones) after dropping
+// stopwords; the old per-line AND missed any fact whose words spanned two
+// lines.
 func (m *Memory) Search(query string, limit int) ([]Hit, error) {
-	if strings.TrimSpace(query) == "" {
-		return nil, nil
+	match := matchQuery(query)
+	if match == "" {
+		return []Hit{}, nil
 	}
 	if limit <= 0 {
 		limit = 10
 	}
 	rows, err := m.fts.Query(`
-		SELECT path, body, bm25(memory_index) AS score
-		FROM memory_index
-		WHERE memory_index MATCH ?
+		SELECT path, body, bm25(memory_fts) AS score
+		FROM memory_fts
+		WHERE memory_fts MATCH ? AND kind = 'file'
 		ORDER BY score
-		LIMIT ?`, ftsQuery(query), limit)
+		LIMIT ?`, match, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var hits []Hit
+	hits := []Hit{}
 	for rows.Next() {
 		var h Hit
 		if err := rows.Scan(&h.Path, &h.Snippet, &h.Score); err != nil {
@@ -115,22 +148,37 @@ func (m *Memory) Search(query string, limit int) ([]Hit, error) {
 	return hits, rows.Err()
 }
 
-// ftsQuery converts a plain string into a benign FTS5 MATCH expression:
-// quoted phrases for each token, ANDed. Bare user input would let syntax
-// errors (e.g. "a(") abort the query.
-func ftsQuery(query string) string {
-	toks := strings.Fields(query)
-	if len(toks) == 0 {
-		return `""`
+// stopwords are dropped from memory queries: under raw token overlap a row of
+// nothing but "the the the and of" outranked real content for "what is the
+// plan". A query made only of stopwords keeps them (searching for "it" is
+// still a search).
+var stopwords = map[string]bool{}
+
+func init() {
+	for _, w := range strings.Fields(`a an and are as at be but by can could did do does for from had has have
+		how i if in into is it its me my no not of on or our so than that the their them then there these
+		they this to was we were what when where which who why will with would you your`) {
+		stopwords[w] = true
 	}
-	parts := make([]string, 0, len(toks))
-	for _, t := range toks {
-		t = strings.ReplaceAll(t, `"`, "") // raw quotes would break the FTS5 string literal
-		if t != "" {
-			parts = append(parts, `"`+t+`"`)
+}
+
+// matchQuery turns free text into a safe FTS5 OR expression of quoted terms,
+// stopwords removed. "" when nothing searchable remains.
+func matchQuery(query string) string {
+	words := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	var kept, all []string
+	for _, w := range words {
+		all = append(all, `"`+w+`"`)
+		if !stopwords[w] {
+			kept = append(kept, `"`+w+`"`)
 		}
 	}
-	return strings.Join(parts, " AND ")
+	if len(kept) == 0 {
+		kept = all
+	}
+	return strings.Join(kept, " OR ")
 }
 
 // SpaceReport is the FTS side index's on-disk footprint: total bytes, the

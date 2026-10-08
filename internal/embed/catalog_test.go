@@ -307,7 +307,7 @@ func TestExportAppliesDocumentPrefix(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &line); err != nil {
 		t.Fatalf("decode export line: %v", err)
 	}
-	if line.Text != model.DocumentPrefix+"func f1() {}" {
+	if line.Text != model.DocumentPrefix+"function a::f1 — src/f.go\nfunc f1() {}" {
 		t.Fatalf("export text = %q, want document prefix applied", line.Text)
 	}
 	if line.ContentHash != contentHashHex("func f1() {}") {

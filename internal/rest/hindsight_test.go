@@ -386,3 +386,15 @@ func TestHindsightCompatDocumentUpsertAndDelete(t *testing.T) {
 		t.Fatalf("delete left %+v", got.Results)
 	}
 }
+
+// TestHindsightCompatRejectsUnknownTagsMatch: an unknown tags_match is a 400,
+// not a silent "any" that widens the filter.
+func TestHindsightCompatRejectsUnknownTagsMatch(t *testing.T) {
+	e, mem := newEngine(t)
+	srv := httptest.NewServer(Handler(e, mem, WithHindsightCompat()))
+	defer srv.Close()
+	res, err := httpPost(srv.URL+"/v1/default/banks/b/memories/recall", map[string]any{"query": "x", "tags": []string{"t"}, "tags_match": "bogus"})
+	if err != nil || res.status != http.StatusBadRequest {
+		t.Fatalf("unknown tags_match: %d %v %s", res.status, err, res.body)
+	}
+}

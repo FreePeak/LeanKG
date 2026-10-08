@@ -299,13 +299,13 @@ func TestBankNameDeterministic(t *testing.T) {
 func TestRetainCursorResume(t *testing.T) {
 	m := openTest(t)
 	es := []Entry{{Content: "deploy kubernetes cluster"}}
-	if err := m.Retain("sess1", es, 4); err != nil {
+	if _, err := m.Retain("sess1", es, 4); err != nil {
 		t.Fatalf("Retain: %v", err)
 	}
 	before, _ := os.ReadFile(m.bankPath("sess1"))
 	// Same or lower cursor: skipped entirely.
 	for _, cur := range []int{4, 3} {
-		if err := m.Retain("sess1", es, cur); err != nil {
+		if _, err := m.Retain("sess1", es, cur); err != nil {
 			t.Fatalf("Retain(%d): %v", cur, err)
 		}
 	}
@@ -314,7 +314,7 @@ func TestRetainCursorResume(t *testing.T) {
 		t.Error("re-retain at/below cursor must not append rows")
 	}
 	// Higher cursor: appended, and the cursor lands in metadata.
-	if err := m.Retain("sess1", []Entry{{Content: "second batch", Metadata: map[string]any{"session_id": "s"}}, {Content: "third"}}, 7); err != nil {
+	if _, err := m.Retain("sess1", []Entry{{Content: "second batch", Metadata: map[string]any{"session_id": "s"}}, {Content: "third"}}, 7); err != nil {
 		t.Fatalf("Retain(7): %v", err)
 	}
 	got, err := m.Recall("sess1", "second batch", 0)
@@ -325,7 +325,7 @@ func TestRetainCursorResume(t *testing.T) {
 		t.Errorf("Recall cursor = %+v", got)
 	}
 	// New bank starts at cursor 0: nothing skipped.
-	if err := m.Retain("sess2", es, 1); err != nil {
+	if _, err := m.Retain("sess2", es, 1); err != nil {
 		t.Fatalf("Retain new bank: %v", err)
 	}
 }
@@ -338,7 +338,7 @@ func TestRetainRawNoCursor(t *testing.T) {
 	// Contrast with the cursor-gated path: with no cursor (0) a plain Retain
 	// is a silent no-op — the hindsight wire has no cursor concept, so every
 	// compat retain must land.
-	if err := m.Retain("hb", []Entry{{Content: "dropped"}}, 0); err != nil {
+	if _, err := m.Retain("hb", []Entry{{Content: "dropped"}}, 0); err != nil {
 		t.Fatalf("Retain: %v", err)
 	}
 	if err := m.RetainRaw("hb", []Entry{{Content: "second heartbeat row"}}); err != nil {
@@ -360,7 +360,7 @@ func TestRecallZeroMatchFiltered(t *testing.T) {
 		{Content: "pasta recipe with garlic"},
 		{Content: "pasta shapes list"},
 	}
-	if err := m.Retain("cook", es, 2); err != nil {
+	if _, err := m.Retain("cook", es, 2); err != nil {
 		t.Fatalf("Retain: %v", err)
 	}
 	got, err := m.Recall("cook", "pasta", 0)

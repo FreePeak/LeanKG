@@ -48,7 +48,7 @@ func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Wr
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		text := e.Content
+		text := documentText(e)
 		if documentPrefix != "" {
 			text = documentPrefix + text
 		}
