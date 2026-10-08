@@ -123,6 +123,14 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		if !decode(w, r, &body) {
 			return
 		}
+		if !validTagsMatch[body.TagsMatch] {
+			// tags_match is a closed vocabulary; a typo used to read as "any"
+			// and silently widened the filter to untagged (global) rows.
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "tags_match must be one of any, all, any_strict, all_strict, exact (got " + strconv.Quote(body.TagsMatch) + ")",
+			})
+			return
+		}
 		entries, err := mem.RecallFiltered([]string{r.PathValue("bank")}, body.Query, defaultRecallLimit,
 			func(e memory.Entry) bool { return entryHasTags(e, body.Tags, body.TagsMatch) })
 		if err != nil {
@@ -232,6 +240,9 @@ func hindsightRows(entries []memory.Entry) []map[string]any {
 }
 
 const defaultRecallLimit = 8
+
+// validTagsMatch is Hindsight's tags_match vocabulary ("" = the default, any).
+var validTagsMatch = map[string]bool{"": true, "any": true, "all": true, "any_strict": true, "all_strict": true, "exact": true}
 
 // entryTags reads the client tags stored in entry metadata (JSONL decodes
 // string slices as []any, so both forms are accepted).

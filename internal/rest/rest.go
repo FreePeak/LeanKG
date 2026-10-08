@@ -162,8 +162,12 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			// (NOT "text" — pinned here and in tests so harness authors
 			// don't hit the same mismatch twice).
 			var body struct {
-				Entries         []memory.Entry `json:"entries"`
-				ThroughUserTurn int            `json:"through_user_turn"`
+				Entries []memory.Entry `json:"entries"`
+				// Pointer: an ABSENT cursor means "no gate" (append, like the
+				// hindsight mount). Decoded as int it read as 0, which the
+				// cursor gate treats as already retained — every cursor-less
+				// retain was dropped while answering ok (RS-07).
+				ThroughUserTurn *int `json:"through_user_turn"`
 			}
 			if !decode(w, r, &body) {
 				return
@@ -179,11 +183,24 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 					return
 				}
 			}
-			if err := mem.Retain(bank, body.Entries, body.ThroughUserTurn); err != nil {
-				writeErr(w, err)
-				return
+			var res memory.RetainResult
+			if body.ThroughUserTurn == nil {
+				if err := mem.RetainRaw(bank, body.Entries); err != nil {
+					writeErr(w, err)
+					return
+				}
+				res = memory.RetainResult{Bank: bank, Written: len(body.Entries)}
+			} else {
+				var err error
+				if res, err = mem.Retain(bank, body.Entries, *body.ThroughUserTurn); err != nil {
+					writeErr(w, err)
+					return
+				}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "retained": len(body.Entries)})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": true, "retained": res.Written, "skipped": res.Skipped,
+				"retained_through_user_turn": res.RetainedThroughUserTurn,
+			})
 		})
 		mux.HandleFunc("POST /api/v1/memory/banks/{bank}/recall", func(w http.ResponseWriter, r *http.Request) {
 			bank := r.PathValue("bank")

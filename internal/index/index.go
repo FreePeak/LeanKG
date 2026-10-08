@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/lsp"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -155,6 +157,66 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 	return res, nil
 }
 
+// Index-root tripwire (RS-02). Stored file paths are relative to the walk
+// root and the reconcile below deletes every stored path the walk does not
+// see, so walking a DIFFERENT root against an existing store reads the whole
+// project as deleted — `import repo <sibling>` replaced a 48-file index with
+// one file. The store records the root it was built from and refuses any
+// other; RebaseRoot is the deliberate escape for a moved checkout.
+const (
+	rootKVNamespace = "index"
+	rootKVKey       = "root"
+)
+
+// CanonicalRoot is the form a walk root is recorded and compared in:
+// absolute and symlink-resolved, so /tmp and /private/tmp agree.
+func CanonicalRoot(dir string) string {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	return filepath.Clean(dir)
+}
+
+// RebaseRoot records dir as the store's index root, replacing any previous
+// one (`leankg index --rebase-root` after moving a checkout).
+func RebaseRoot(st store.Backend, dir string) error {
+	return st.KVSet(rootKVNamespace, rootKVKey, CanonicalRoot(dir))
+}
+
+// checkRoot enforces the tripwire: a store with no recorded root (built
+// before RS-02, or empty) adopts dir; a store with files and a different
+// recorded root refuses the walk before anything is deleted.
+func checkRoot(st store.Backend, dir string, hasFiles bool) error {
+	want := CanonicalRoot(dir)
+	got, ok, err := st.KVGet(rootKVNamespace, rootKVKey)
+	if err != nil {
+		return err
+	}
+	if ok && got != "" && got != want && hasFiles {
+		return errs.NewError(errs.IndexRootMismatch,
+			fmt.Sprintf("this store was indexed from %q; walking %q would delete every element outside it", got, want),
+			"index the recorded root, open the other directory as its own project, or run `leankg index --rebase-root <dir>` if the checkout moved")
+	}
+	if !ok || got != want {
+		return st.KVSet(rootKVNamespace, rootKVKey, want)
+	}
+	return nil
+}
+
+// extractorVersion versions what the extractors put into an element
+// (content, boundaries, edge rules). Unchanged files are skipped by the
+// size+mtime / content-hash signals, so an extractor change would otherwise
+// reach a store only as its files happen to change: v2 (RS-10, leading doc
+// comments in content; signature-only names as references) never reached
+// an existing store at all. A store recorded under another version
+// re-extracts every file once.
+const extractorVersion = "2"
+
+const extractorKVKey = "extractor_version"
+
 func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (Result, error) {
 	var res Result
 
@@ -166,6 +228,14 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	for _, f := range prev {
 		prevByRel[f.Path] = f
 	}
+	if err := checkRoot(st, dir, len(prev) > 0); err != nil {
+		return res, err
+	}
+	ver, _, err := st.KVGet(rootKVNamespace, extractorKVKey)
+	if err != nil {
+		return res, err
+	}
+	reextract := len(prev) > 0 && ver != extractorVersion
 
 	type candidate struct {
 		rel, abs, lang string
@@ -267,7 +337,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return res, err
 		}
 		rec, seen := prevByRel[c.rel]
-		if seen && rec.Size == c.size && rec.MtimeNS == c.mtimeNS {
+		if seen && !reextract && rec.Size == c.size && rec.MtimeNS == c.mtimeNS {
 			res.Skipped++
 			continue
 		}
@@ -275,7 +345,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		if err != nil {
 			return res, err
 		}
-		if seen && rec.ContentHash == sum {
+		if seen && !reextract && rec.ContentHash == sum {
 			// Content identical despite size/mtime signal mismatch: skip, no
 			// writes (the stored record stays as-is per contract, so the next
 			// run re-hashes this file — acceptable).
@@ -340,6 +410,21 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 					return res, err
 				}
 			}
+		}
+	}
+	// Vectors are keyed by qualified name and DeleteByFile does not own them,
+	// so every deleted file or removed symbol left a vector behind (RS-05).
+	// Sweep once per run that changed anything, instead of cascading inside
+	// DeleteByFile, which would also discard the vectors of a changed file's
+	// UNCHANGED symbols and force them to re-embed.
+	if res.DeletedFiles > 0 || res.Files > 0 {
+		if _, err := st.DeleteOrphanVectors(); err != nil {
+			return res, fmt.Errorf("index: reclaim orphan vectors: %w", err)
+		}
+	}
+	if ver != extractorVersion {
+		if err := st.KVSet(rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
+			return res, err
 		}
 	}
 	return res, nil

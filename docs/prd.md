@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.13.7-hindsight-semantics
-**Date:** 2026-10-07
+**Version:** 4.14.0-retrieval-safety
+**Date:** 2026-10-08
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
@@ -9,6 +9,21 @@
 ---
 
 ## Changelog
+
+### v4.14.0-retrieval-safety — the validation wave: safety, correctness, semantic quality, memory recall (RS-01..RS-26) (2026-10-08)
+
+**Trigger:** an isolated end-to-end validation of v0.34.0 (241 scripted checks over MCP HTTP + stdio, REST, ConnectRPC, dashboard and a read-only reader, plus fault injection): 210 passed, 12 failed, 19 notes. Root causes, designs and per-item outcomes: [`plan-v4.14-retrieval-safety.md`](plan-v4.14-retrieval-safety.md) §7.
+
+- **Safety.** File arguments are confined to the project through `os.Root` (`LEANKG_ERROR_PATH_OUTSIDE_PROJECT`; `/etc/hosts` was readable through `import read`, `query compress` and `query lsp`). `import repo|dir` accepts only the project root, and the store refuses a reconcile against any root other than the one it was built from (`LEANKG_ERROR_INDEX_ROOT_MISMATCH`, `leankg index --rebase-root`): a sibling import had wiped a 48-file index. `serve` defaults to `127.0.0.1:9699`, warns when MCP/REST leave loopback with no token, and MCP now honors DB-minted tokens.
+- **Budget.** The MCP token budget shrinks answers (item text, then tail items) and never drops the primary list or the envelope; it used to delete `hits` from semantic answers and `content` from full reads, because its protected keys were the Rust engine's.
+- **Correctness.** No ghost vectors (INNER JOIN + orphan sweep after index and embed); `memory rename` honors the advertised `new_path` (schema↔struct parity test); REST retain reports what it wrote; `import docs` and `leankg refresh` key docs project-relative instead of re-keying and deleting them; empty lists are `[]`.
+- **Semantic quality.** Doc comments are part of element content; the embedded text is a `"<type> <name> — <file>"` document (`ChunkerVersion` 3 — run `leankg-embed full` once); SQLite L3 fuses vector and FTS5 ranks by RRF and prose questions reach it directly; camelCase names are searchable by their words; the local sidecar's model is fingerprinted from `/props`. On the same corpus and model: pinned semantic MRR 0.188 → 0.679; function/method share of semantic hits 1% → 72%; prose questions answered by L3 0/16 → all.
+- **Memory.** One BM25 index (porter stemming, accent folding, query stopwords) over memory files and bank rows; retain cursors kept in the index; `query action=memory` can `view`/`snapshot`. With a query embedder, recall also fuses a dense arm (paraphrase recall top-3 2/8 → 7/8), admitting meaning-only matches above the calibrated noise floor.
+- **"No answer" signal.** Each embed run calibrates the collection's noise floor from off-topic probes; L3 answers that do not beat it are marked `retrieval.confidence: "low"` (unrelated questions 14/15 flagged, on-topic 0/28).
+
+**Verified:** `go test ./...` (default and `-tags tstree`), `go vet`, `make dual-engine` on pgvector 17; the validation harness against the new build: 244/244 pass. On the whole repository with independent query sets (40 random doc-comment paraphrases, 29 commit subjects): exact-element hit@10 8/40 → 37/40 (MRR 0.096 → 0.752); confirmed on two more repositories (xdev, onegw; 120 commit subjects each), where a test-file demotion keeps the ladder ahead of the old build on both implementation-only and all-files scoring. Upgrade rehearsed on a copy of the live self-host store (an `extractor_version` marker now re-extracts old stores once); the operator runbook is in the plan §7.
+
+**Rejected (measured):** BGE query prefix (no gain on the fused rung); long-element chunking (three variants, each costing 0.07–0.13 code-question MRR for modest doc-tail gains the keyword arm already covers).
 
 ### v4.13.7-hindsight-semantics — the compat mount answers the way Hindsight does (FR-ZCP-14 K8) (2026-10-07)
 

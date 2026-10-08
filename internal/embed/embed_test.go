@@ -295,7 +295,9 @@ func (r *recordProvider) Distance() string { return r.inner.Distance() }
 func (r *recordProvider) Provider() string { return r.provider }
 
 func (r *recordProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
-	r.texts = append(r.texts, texts...)
+	if kind == Document { // query-kind calls are the calibration probes
+		r.texts = append(r.texts, texts...)
+	}
 	return r.inner.Embed(ctx, kind, texts)
 }
 
@@ -325,9 +327,10 @@ func TestRunLocalProviderTextBudget(t *testing.T) {
 	seed(t, st2, el("a::big", strings.Repeat("x", 4000)))
 	p2 := &recordProvider{inner: Deterministic(8), provider: "openai"}
 	rep2 := mustRun(t, st2, p2, "full")
-	if rep2.Truncations != 0 || len(p2.texts) != 1 || utf8.RuneCountInString(p2.texts[0]) != 4000 {
-		t.Fatalf("openai run: got truncations=%d texts=%+v, want 0 and the full 4000-rune text",
-			rep2.Truncations, p2.texts)
+	// The document is the header line plus the full content (RS-11).
+	if rep2.Truncations != 0 || len(p2.texts) != 1 || !strings.HasSuffix(p2.texts[0], "\n"+strings.Repeat("x", 4000)) {
+		t.Fatalf("openai run: got truncations=%d, %d texts, want 0 and the full 4000-rune content",
+			rep2.Truncations, len(p2.texts))
 	}
 }
 
@@ -581,7 +584,12 @@ func TestFromEnv(t *testing.T) {
 		if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "sidecar") {
 			t.Fatalf("want actionable sidecar error, got %v", err)
 		}
-		t.Setenv("LEANKG_EMBED_BASE_URL", "http://127.0.0.1:9101/v1")
+		// Hermetic: a sidecar with no /props (another OpenAI-compatible
+		// server) keeps the legacy identity. Never a fixed port — a real
+		// sidecar on this host would answer and fingerprint the test.
+		bare := httptest.NewServer(http.NotFoundHandler())
+		defer bare.Close()
+		t.Setenv("LEANKG_EMBED_BASE_URL", bare.URL+"/v1")
 		p, err := FromEnv()
 		if err != nil {
 			t.Fatal(err)
@@ -593,11 +601,44 @@ func TestFromEnv(t *testing.T) {
 		if !ok {
 			t.Fatalf("want *localProvider, got %T", p)
 		}
-		if o.baseURL != "http://127.0.0.1:9101/v1" {
+		if o.baseURL != bare.URL+"/v1" {
 			t.Fatalf("base URL: got %q", o.baseURL)
 		}
 		if o.ModelID() != "local" || o.Revision() != "local:local" {
 			t.Fatalf("stamp defaults: got %s/%s", o.ModelID(), o.Revision())
+		}
+	})
+
+	t.Run("local fingerprints the served model (RS-14)", func(t *testing.T) {
+		t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+		t.Setenv("LEANKG_EMBED_REVISION", "")
+		t.Setenv("LEANKG_EMBED_MODEL", "")
+		model := "/cache/hub/models--x--bge-gguf/snapshots/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-f16.gguf"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/props" {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write([]byte(`{"model_path":"` + model + `","default_generation_settings":{"n_ctx":512}}`))
+		}))
+		defer srv.Close()
+		t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL+"/v1")
+		p, err := FromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "local:bge-small-en-v1.5-f16.gguf@d32f8c040ea3b516330eeb75b72bcc2d3a780ab7"
+		if got := p.Revision(); got != want {
+			t.Fatalf("revision = %q, want %q", got, want)
+		}
+		if tb := p.(*localProvider).TextBudget(); tb != 960 {
+			t.Fatalf("text budget from n_ctx 512 = %d, want 960", tb)
+		}
+		// An explicit operator pin still wins.
+		t.Setenv("LEANKG_EMBED_REVISION", "my-pin")
+		p2, _ := FromEnv()
+		if p2.Revision() != "my-pin" {
+			t.Fatalf("explicit pin overridden: %q", p2.Revision())
 		}
 	})
 
@@ -632,7 +673,7 @@ func TestNDJSONRoundTrip(t *testing.T) {
 	}
 	// readElements orders by qualified_name: a::f1 < a::f2 < b::g.
 	sum := sha256.Sum256([]byte("func f1() {}"))
-	if line.Text != "func f1() {}" || line.ContentHash != hex.EncodeToString(sum[:]) || line.QualifiedName != "a::f1" {
+	if line.Text != "function a::f1 — src/f.go\nfunc f1() {}" || line.ContentHash != hex.EncodeToString(sum[:]) || line.QualifiedName != "a::f1" {
 		t.Fatalf("export line: got %+v", line)
 	}
 	// Simulate the offsite workflow: export → embed elsewhere → import.
@@ -760,5 +801,23 @@ func TestRunIncrementalMismatchHardFails(t *testing.T) {
 	}
 	if got := vectorCount(t, st, p1.ModelID()); got != before {
 		t.Fatalf("failed incremental run must not touch vectors: had %d, now %d", before, got)
+	}
+}
+
+// TestRunCalibratesNoiseFloor: every run that embeds records the collection's
+// noise floor for its exact identity; another identity reads nothing.
+func TestRunCalibratesNoiseFloor(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+	p := Deterministic(8)
+	rep := mustRun(t, st, p, "full")
+	floor, ok := ReadCalibration(st, StampOf(p))
+	if !ok || rep.NoiseFloor != floor {
+		t.Fatalf("calibration: ok=%v floor=%v report=%v", ok, floor, rep.NoiseFloor)
+	}
+	other := StampOf(p)
+	other.ChunkerVersion++
+	if _, ok := ReadCalibration(st, other); ok {
+		t.Fatal("calibration leaked to another collection identity")
 	}
 }

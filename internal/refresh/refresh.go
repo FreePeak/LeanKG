@@ -116,7 +116,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 	}
 	if docsDir != "" {
-		res.DocsResult, err = docindex.IndexDocs(ctx, st, docsDir)
+		res.DocsResult, err = docindex.IndexDocsUnder(ctx, st, project, docsDir)
 		if err != nil {
 			return res, fmt.Errorf("refresh: index docs %s: %w", docsDir, err)
 		}

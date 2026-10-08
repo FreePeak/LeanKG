@@ -65,6 +65,10 @@ type Memory struct {
 	// the read-filter-rename rewrites document replace/delete perform must
 	// not interleave, or a rewrite drops a row appended mid-scan.
 	bankMu sync.Mutex
+
+	// vec is the optional dense recall arm (dense.go); vecMu guards it.
+	vecMu sync.Mutex
+	vec   Vectorizer
 }
 
 // Open opens (creating if needed) the memory tree for projectDir, or the
@@ -101,6 +105,10 @@ func Open(projectDir string, global bool) (*Memory, error) {
 	}
 	m := &Memory{root: root, real: real, ftsPath: filepath.Join(root, "index.db")}
 	if m.fts, err = openFTS(m.ftsPath); err != nil {
+		return nil, err
+	}
+	if err := m.ensureIndex(); err != nil {
+		m.fts.Close()
 		return nil, err
 	}
 	return m, nil
@@ -219,6 +227,17 @@ func (m *Memory) View(path string, offsetLine int) (string, error) {
 }
 
 // Create writes path with content, replacing any existing file.
+// Exists reports whether path names an existing memory file (false for an
+// invalid or escaping path).
+func (m *Memory) Exists(path string) bool {
+	full, _, err := m.resolve(path)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(full)
+	return err == nil
+}
+
 func (m *Memory) Create(path, content string) error {
 	full, key, err := m.resolve(path)
 	if err != nil {

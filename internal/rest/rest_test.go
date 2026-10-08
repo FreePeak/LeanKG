@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -283,13 +284,22 @@ func TestSessionAndOntologyEndpoints(t *testing.T) {
 	_ = e.Store().UpsertElements([]store.Element{
 		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
 	})
-	catPath := filepath.Join(t.TempDir(), "c.json")
+	catPath := filepath.Join(dir, "c.json")
 	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Auth","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, err = httpPost(srv.URL+"/api/v1/ontology/match", map[string]any{"catalog": catPath})
+	res, err = httpPost(srv.URL+"/api/v1/ontology/match", map[string]any{"catalog": "c.json"})
 	if err != nil || res.status != 200 {
 		t.Fatalf("ontology match: %d %v %s", res.status, err, res.body)
+	}
+	// A catalog outside the project is refused, never read (RS-01).
+	outside := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(outside, []byte(`{"concepts":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ = httpPost(srv.URL+"/api/v1/ontology/match", map[string]any{"catalog": outside}); res.status != 400 ||
+		!strings.Contains(string(res.body), "LEANKG_ERROR_PATH_OUTSIDE_PROJECT") {
+		t.Fatalf("outside catalog: %d %s", res.status, res.body)
 	}
 	res, err = httpGet(srv.URL + "/api/v1/ontology/matches")
 	if err != nil || res.status != 200 {
@@ -316,4 +326,47 @@ func getJSON(t *testing.T, url string, out any) int {
 		}
 	}
 	return resp.StatusCode
+}
+
+// TestNativeRetainAcknowledgesWhatItWrote pins RS-07: a retain without a
+// cursor lands (it used to read as cursor 0 and be dropped), and a batch the
+// cursor gate skips is reported as skipped — never as `retained: N`.
+func TestNativeRetainAcknowledgesWhatItWrote(t *testing.T) {
+	e, mem := newEngine(t)
+	srv := httptest.NewServer(Handler(e, mem))
+	defer srv.Close()
+	post := func(body map[string]any) map[string]any {
+		t.Helper()
+		res, err := httpPost(srv.URL+"/api/v1/memory/banks/b1/memories", body)
+		if err != nil || res.status != 200 {
+			t.Fatalf("retain: %d %v %s", res.status, err, res.body)
+		}
+		var out map[string]any
+		_ = json.Unmarshal(res.body, &out)
+		return out
+	}
+	recall := func(q string) int {
+		res, _ := httpPost(srv.URL+"/api/v1/memory/banks/b1/recall", map[string]any{"query": q})
+		var out struct {
+			Entries []any `json:"entries"`
+		}
+		_ = json.Unmarshal(res.body, &out)
+		return len(out.Entries)
+	}
+	if out := post(map[string]any{"entries": []any{map[string]any{"content": "zebras without a cursor"}}}); out["retained"] != float64(1) {
+		t.Fatalf("no-cursor retain: %v", out)
+	}
+	if recall("zebras") != 1 {
+		t.Fatal("no-cursor retain was not written")
+	}
+	if out := post(map[string]any{"entries": []any{map[string]any{"content": "giraffes at turn one"}}, "through_user_turn": 1}); out["retained"] != float64(1) {
+		t.Fatalf("cursor 1: %v", out)
+	}
+	out := post(map[string]any{"entries": []any{map[string]any{"content": "lions again at one"}}, "through_user_turn": 1})
+	if out["retained"] != float64(0) || out["skipped"] != float64(1) {
+		t.Fatalf("repeated cursor must report skipped, got %v", out)
+	}
+	if recall("lions") != 0 {
+		t.Fatal("skipped batch was written")
+	}
 }

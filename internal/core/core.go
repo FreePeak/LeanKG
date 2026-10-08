@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/FreePeak/LeanKG/internal/astgrep"
 	"github.com/FreePeak/LeanKG/internal/compress"
@@ -27,6 +29,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/ontology"
 	"github.com/FreePeak/LeanKG/internal/orgknowledge"
+	"github.com/FreePeak/LeanKG/internal/pathguard"
 	"github.com/FreePeak/LeanKG/internal/prdindex"
 	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -41,9 +44,11 @@ const (
 	ToolStatus = "status"
 )
 
-// ToolAliases maps legacy tool names (v4.4 surface) to their Go-engine
-// equivalents; one minor release of aliasing per the deprecation policy.
-var ToolAliases = map[string]string{
+// supersededTools names the removed v4.4 tool names and their replacement.
+// They are REJECTED (the aliasing window has closed and the wire test pins
+// the refusal); the error says which tool to call instead (RS-22: a declared
+// alias map that no call site read promised routing that never existed).
+var supersededTools = map[string]string{
 	"set": ToolImport,
 	"get": ToolQuery,
 }
@@ -74,6 +79,7 @@ type Engine struct {
 	langsReg   *langs.Registry            // lazy language activation for the opened codebase
 	lspManager *lsp.Manager               // lazy per-(lang,dir) LSP server pool (query time only)
 	embedder   QueryEmbedder              // optional; nil ⇒ L3 degrades with reason
+	embedProbe embedHealth                // cached reachability of the embedder (status)
 	compressor *compress.LeanKGCompressor // context compression (reader/cmd/response paths, Rust parity)
 }
 
@@ -82,13 +88,65 @@ type Engine struct {
 func (e *Engine) SetLangsRegistry(reg *langs.Registry) { e.langsReg = reg }
 
 // SetProjectDir records the project directory (enable
-// import{action:"session"} for offloading bulky tool payloads).
-func (e *Engine) SetProjectDir(dir string) { e.projectDir = dir }
+// import{action:"session"} for offloading bulky tool payloads). A relative
+// dir is made absolute against the cwd now, so absolute client paths compare
+// against a real root (the CLI default is ".").
+func (e *Engine) SetProjectDir(dir string) {
+	if dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+	}
+	e.projectDir = dir
+}
 
 // SetEmbedder wires the query-time embedder after construction. The CLI's
 // one-shot verbs build an engine before they know whether a provider endpoint
 // is configured; serve passes it to New directly.
-func (e *Engine) SetEmbedder(em QueryEmbedder) { e.embedder = em }
+func (e *Engine) SetEmbedder(em QueryEmbedder) {
+	e.embedder = em
+	e.wireMemoryVectors()
+}
+
+// wireMemoryVectors gives the memory layer the dense recall arm (RS-19)
+// when a query embedder that can embed documents is wired.
+func (e *Engine) wireMemoryVectors() {
+	if e.mem == nil {
+		return
+	}
+	if _, ok := e.embedder.(documentEmbedder); ok && e.embedder != nil {
+		e.mem.SetVectorizer(memVectorizer{e: e})
+		return
+	}
+	e.mem.SetVectorizer(nil)
+}
+
+// documentEmbedder is the optional half of a query embedder that embeds
+// stored text (memory rows) rather than questions.
+type documentEmbedder interface {
+	EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+// memVectorizer adapts the engine's embedder and calibrated noise floor to
+// memory.Vectorizer.
+type memVectorizer struct{ e *Engine }
+
+func (v memVectorizer) Key() string {
+	s := v.e.embedder.Stamp()
+	return fmt.Sprintf("%s|%s|%s|%d|%d|%s|%s", s.ModelID, s.Revision, s.Provider, s.Dimensions, s.ChunkerVersion, s.QueryPrefix, s.DocumentPrefix)
+}
+
+func (v memVectorizer) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	return v.e.embedder.EmbedQuery(ctx, text)
+}
+
+func (v memVectorizer) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
+	return v.e.embedder.(documentEmbedder).EmbedDocuments(ctx, texts)
+}
+
+func (v memVectorizer) Floor() (float64, bool) {
+	return embed.ReadCalibration(v.e.st, v.e.embedder.Stamp())
+}
 
 // ProjectDir reports the project directory the engine is bound to (the metric
 // ledger records it as each row's project_path).
@@ -96,7 +154,11 @@ func (e *Engine) ProjectDir() string { return e.projectDir }
 
 // New builds an Engine. mem may be nil (memory actions then error).
 func New(st store.Backend, mem *memory.Memory, embedder QueryEmbedder) *Engine {
-	return &Engine{st: st, mem: mem, embedder: embedder, compressor: compress.New()}
+	e := &Engine{st: st, mem: mem, embedder: embedder, compressor: compress.New()}
+	if embedder != nil {
+		e.wireMemoryVectors()
+	}
+	return e
 }
 
 // Store exposes the underlying backend (transports needing raw reads).
@@ -112,6 +174,9 @@ func QueryEmbedderFromProvider(p embed.Provider) QueryEmbedder {
 type providerEmbedder struct{ p embed.Provider }
 
 func (a providerEmbedder) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	// A query longer than the model window used to fail at the sidecar (HTTP
+	// 500) and degrade L3 to keywords; embed its head instead (RS-15).
+	text = embed.TruncateText(text, embed.TextCap(a.p))
 	vecs, err := a.p.Embed(ctx, embed.Query, []string{text})
 	if err != nil {
 		return nil, err
@@ -120,6 +185,16 @@ func (a providerEmbedder) EmbedQuery(ctx context.Context, text string) ([]float3
 		return nil, fmt.Errorf("embed: query returned %d vectors, want 1", len(vecs))
 	}
 	return vecs[0], nil
+}
+
+// EmbedDocuments embeds stored text (memory rows) under the provider's
+// document kind, each cut to the provider's text budget.
+func (a providerEmbedder) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
+	cut := make([]string, len(texts))
+	for i, t := range texts {
+		cut[i] = embed.TruncateText(t, embed.TextCap(a.p))
+	}
+	return a.p.Embed(ctx, embed.Document, cut)
 }
 
 // Stamp exposes the provider's full collection identity (issue #279).
@@ -131,18 +206,19 @@ func (a providerEmbedder) Describe() (string, string) {
 
 func (a providerEmbedder) Revision() string { return a.p.Revision() }
 
-// ResolveEnvelope maps a requested tool name to the canonical tool, applying
-// aliases. Unknown names hard-fail naming the valid surface (error-catalog
-// posture carried over from FR-ZCP-12).
+// ResolveEnvelope validates a requested tool name against the three-tool
+// registry. Unknown names hard-fail naming the valid surface (error-catalog
+// posture carried over from FR-ZCP-12); a superseded legacy name also names
+// its replacement.
 func ResolveEnvelope(tool string) (string, error) {
 	if tool == ToolImport || tool == ToolQuery || tool == ToolStatus {
 		return tool, nil
 	}
-	if canonical, ok := ToolAliases[tool]; ok {
-		return canonical, nil
+	cause := fmt.Sprintf("tool %q is not in this server's registry — valid tools: import, query, status", tool)
+	if repl, ok := supersededTools[tool]; ok {
+		cause += fmt.Sprintf(" (%q was superseded by %q)", tool, repl)
 	}
-	return "", errs.NewError(errs.UnknownTool,
-		fmt.Sprintf("tool %q is not in this server's registry — valid tools: import, query, status (legacy aliases: set, get)", tool), "")
+	return "", errs.NewError(errs.UnknownTool, cause, "")
 }
 
 // freshness derives the status/query freshness label; the derivation itself is
@@ -170,6 +246,7 @@ type ImportRequest struct {
 	Summary   string         `json:"summary,omitempty"`
 	SessionID string         `json:"session_id,omitempty"`
 	NodeID    string         `json:"node_id,omitempty"`
+	NewPath   string         `json:"new_path,omitempty"`
 	InsertAt  *int           `json:"insert_line,omitempty"`
 }
 
@@ -183,7 +260,7 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 	for k, v := range map[string]string{
 		"content": r.Content, "old": r.Old, "new": r.New, "text": r.Text,
 		"file": r.File, "payload": r.Payload, "summary": r.Summary,
-		"session_id": r.SessionID, "node_id": r.NodeID,
+		"session_id": r.SessionID, "node_id": r.NodeID, "new_path": r.NewPath,
 	} {
 		if v != "" {
 			flat[k] = v
@@ -210,13 +287,22 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 // The flat curation fields are folded into Args first, so a schema-shaped call
 // (content at the top level) and an args-shaped call behave identically.
 func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any, error) {
+	out, err := e.importAction(ctx, req)
+	return out, e.scrubPaths(err)
+}
+
+func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[string]any, error) {
 	req = req.withFlatArgs()
 	switch req.Action {
 	case "docs":
 		if req.Path == "" {
 			return nil, fmt.Errorf("import docs requires path")
 		}
-		res, err := docindex.IndexDocs(ctx, e.st, req.Path)
+		dir, _, err := e.projectPath(req.Path)
+		if err != nil {
+			return nil, err
+		}
+		res, err := docindex.IndexDocsUnder(ctx, e.st, e.projectRoot(), dir)
 		if err != nil {
 			return nil, fmt.Errorf("docindex %s: %w", req.Path, err)
 		}
@@ -234,7 +320,11 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		if env == "" {
 			env = "local"
 		}
-		res, err := prdindex.IndexDocument(ctx, e.st, e.projectDir, req.Path, env)
+		_, relDoc, err := e.projectPath(req.Path)
+		if err != nil {
+			return nil, err
+		}
+		res, err := prdindex.IndexDocument(ctx, e.st, e.projectRoot(), relDoc, env)
 		if err != nil {
 			return nil, err
 		}
@@ -287,14 +377,18 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		if req.Path == "" {
 			return nil, fmt.Errorf("import ontology requires path (ontology dir or concept catalog JSON)")
 		}
-		if info, err := os.Stat(req.Path); err == nil && info.IsDir() {
-			stats, err := ontology.LoadWorkflows(e.st, req.Path)
+		opath, _, err := e.projectPath(req.Path)
+		if err != nil {
+			return nil, err
+		}
+		if info, err := os.Stat(opath); err == nil && info.IsDir() {
+			stats, err := ontology.LoadWorkflows(e.st, opath)
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{"ontology": "synced", "stats": stats}, nil
 		}
-		return e.OntologyMatch(req.Path)
+		return e.OntologyMatch(opath)
 	case "":
 		return nil, fmt.Errorf("import requires action (repo, dir, docs, prd, memory, session, ontology, read)")
 	default:
@@ -376,7 +470,15 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 	}
 	if e.embedder != nil {
 		modelID, provider := e.embedder.Describe()
-		out["query_embedder"] = map[string]any{"model_id": modelID, "provider": provider}
+		reachable, perr := e.embedProbe.check(e.embedder)
+		qe := map[string]any{"model_id": modelID, "provider": provider,
+			"revision": e.embedder.Revision(), "reachable": reachable}
+		if perr != "" {
+			// status used to report healthy with the provider down while every
+			// L3 query degraded (RS-15); say so where the agent looks.
+			qe["error"] = perr
+		}
+		out["query_embedder"] = qe
 	}
 	if e.langsReg != nil {
 		tiers := e.langsReg.Tiers()
@@ -409,9 +511,17 @@ func (e *Engine) embeddingsState() []map[string]any {
 		return []map[string]any{}
 	}
 	states := make([]map[string]any, 0, len(stamps))
+	els, _ := e.st.ElementCount()
 	for _, st := range stamps {
 		vecs, _ := e.st.VectorCount(st.ModelID)
+		// RS-25: freshness tracks the index only, so a store with un-embedded
+		// elements still read "fresh"; coverage says how much L3 can see.
+		coverage := 0.0
+		if els > 0 {
+			coverage = float64(min(vecs, els)) / float64(els)
+		}
 		states = append(states, map[string]any{
+			"coverage":   coverage,
 			"model_id":   st.ModelID,
 			"revision":   st.Revision,
 			"dimensions": st.Dimensions,
@@ -438,11 +548,77 @@ type QueryRequest struct {
 // with their own payload shape (command/banks/count) and do not.
 // "memory" additionally dispatches on args.command (session_recall, memories).
 func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, error) {
+	demote := demotesTests(req.Action) && !mentionsTests(req.Query)
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if demote {
+		req.Limit = limit * 2 // a wider window so implementations below the cut can move up
+	}
+	out, err := e.query(ctx, req)
+	if demote && out != nil {
+		if hits := hitsOf(out); len(hits) > 0 {
+			out["hits"] = demoteTestHits(hits, limit)
+		}
+		out["limit"] = limit
+	}
+	if out != nil {
+		out, _ = emptyLists(out).(map[string]any)
+	}
+	return out, e.scrubPaths(err)
+}
+
+// scrubPaths rewrites the project's absolute path out of a client-facing
+// error (RS-23): an OS error such as `remove /Users/…/topics/x.md: no such
+// file` told any caller where the server's checkout lives. Catalog errors
+// keep their type and code; only the cause text changes.
+func (e *Engine) scrubPaths(err error) error {
+	if err == nil || e.projectDir == "" {
+		return err
+	}
+	scrub := func(msg string) string {
+		for _, root := range []string{e.projectRoot(), filepath.Clean(e.projectDir)} {
+			msg = strings.ReplaceAll(msg, root+string(filepath.Separator), "")
+			msg = strings.ReplaceAll(msg, root, ".")
+		}
+		return msg
+	}
+	var ce *errs.Error
+	if errors.As(err, &ce) {
+		cp := *ce
+		cp.Cause = scrub(cp.Cause)
+		return &cp
+	}
+	if msg := scrub(err.Error()); msg != err.Error() {
+		return errors.New(msg)
+	}
+	return err
+}
+
+// relRef reports a session ref with a project-relative path (RS-23).
+func (e *Engine) relRef(r session.Ref) session.Ref {
+	if rel, err := filepath.Rel(e.projectDir, r.Path); err == nil && !strings.HasPrefix(rel, "..") {
+		r.Path = filepath.ToSlash(rel)
+	}
+	return r
+}
+
+func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, error) {
 	switch req.Action {
 	case "memory":
 		switch cmd := argStr(req.Args, "command"); cmd {
 		case "session_recall", "memories":
 			return e.SessionMemoryRead(cmd, req.Query, req.Limit, req.Args)
+		case "view":
+			// RS-21: read one memory file by path (was ConnectRPC-only).
+			path := argStr(req.Args, "path")
+			if path == "" {
+				path = req.Query
+			}
+			return e.MemoryRead("view", path, "", 0)
+		case "snapshot":
+			return e.MemoryRead("snapshot", "", "", 0)
 		default:
 			// Query-tool memory reads carry the command in Query.
 			return e.MemoryRead("search", "", req.Query, req.Limit)
@@ -570,6 +746,18 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 		return resp, nil
 	}
+	// RS-12: a prose question goes to the hybrid L3 rung (keyword + vector
+	// fused) whenever a query embedder is wired. The keyword rung ORs every
+	// term, so it is never empty for prose and the ladder used to stop there:
+	// 16 of 16 natural-language questions were answered by keyword alone.
+	// Identifier-shaped queries keep L1 → L2 → L3. The Noul confidence gate
+	// still holds L3 back for queries the ontology rates as noise.
+	if e.embedder != nil && isProse(req.Query) {
+		if conf, _ := ontology.OntologyConfidence(e.st, req.Query); conf == 0 || conf >= ontology.MinConfidence {
+			delete(resp, "guidance")
+			return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true))
+		}
+	}
 	// pin=true: the rung knows which keyword arm served the hits, so it owns
 	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
 	if _, err := e.rungFuzzy(req.Query, limit, resp, true); err == nil && len(hitsOf(resp)) > 0 {
@@ -581,6 +769,9 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if conf > 0 && conf < ontology.MinConfidence {
 		return withEmptyHint(e.rungFuzzy(req.Query, limit, resp, true))
 	}
+	// The empty L2 pass above left "No keyword match…" guidance; L3 sets its
+	// own (an outage reads as an outage, not as a phrasing problem — RS-15).
+	delete(resp, "guidance")
 	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true))
 }
 
@@ -722,13 +913,13 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil {
 		return degrade(fmt.Sprintf("embedding provider failed (%v); degraded from L3", err))
 	}
-	// Issue #273: the PostgreSQL L3 rung fuses the cosine ranking with its
-	// tsvector and trigram rankings by reciprocal rank fusion, because the
-	// three scores live on unrelated scales (cosine, ts_rank, similarity) and
-	// only their ranks are comparable. sqlite keeps the plain cosine rung
-	// below; an empty fusion also falls through to it.
-	if fts, ok := e.st.(store.FTSBackend); ok {
-		fused, arms, ferr := fts.HybridSearch(modelID, q, qvec, limit)
+	// Issue #273 / RS-12: L3 fuses the cosine ranking with the keyword
+	// rankings by reciprocal rank fusion, because the scores live on unrelated
+	// scales (cosine, bm25/ts_rank, trigram similarity) and only their ranks
+	// are comparable — PostgreSQL over tsvector+trigram, SQLite over FTS5. An
+	// empty fusion falls through to the plain cosine rung below.
+	if hs, ok := e.st.(store.HybridSearcher); ok {
+		fused, arms, ferr := hs.HybridSearch(modelID, q, qvec, limit)
 		if ferr != nil {
 			return degrade(fmt.Sprintf("hybrid fusion failed (%v); degraded from L3", ferr))
 		}
@@ -743,6 +934,13 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 			}
 			resp["hits"] = out
 			resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
+			best, seen := 0.0, false
+			for _, h := range fused {
+				if _, ok := h.Ranks[store.ArmVector]; ok && (!seen || h.Similarity > best) {
+					best, seen = h.Similarity, true
+				}
+			}
+			e.annotateConfidence(resp, *stamp, best, seen)
 			return withEmptyHint(resp, nil)
 		}
 	}
@@ -758,7 +956,33 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	}
 	resp["hits"] = out
 	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)"}
+	if len(hits) > 0 {
+		e.annotateConfidence(resp, *stamp, hits[0].Similarity, true)
+	}
 	return withEmptyHint(resp, nil)
+}
+
+// annotateConfidence marks an L3 answer whose best vector hit does not beat
+// the collection's calibrated noise floor (embed.Calibrate): the question is
+// probably not about this codebase, so the hits are the nearest unrelated
+// text. The hits stay — the flag and guidance tell the agent not to trust
+// them. Collections never calibrated (an embed run before this change) get
+// no flag at all rather than a guessed one.
+func (e *Engine) annotateConfidence(resp map[string]any, stamp store.ModelStamp, best float64, seen bool) {
+	floor, ok := embed.ReadCalibration(e.st, stamp)
+	if !ok {
+		return
+	}
+	r, _ := resp["retrieval"].(map[string]any)
+	if r == nil {
+		return
+	}
+	if !seen || best <= floor {
+		r["confidence"] = "low"
+		resp["guidance"] = fmt.Sprintf("No strong semantic match: the best hit (similarity %.3f) scores no higher than text unrelated to this codebase (noise floor %.3f). The question may be outside this project; rephrase with its terms, or try a keyword/identifier query.", best, floor)
+		return
+	}
+	r["confidence"] = "normal"
 }
 
 // --- memory actions (ride the 3-tool surface; #369) ---
@@ -798,7 +1022,13 @@ func (e *Engine) memoryWrite(req ImportRequest) (map[string]any, error) {
 		}
 		return map[string]any{"ok": true, "command": "session_retain", "bank": res.Bank, "written": res.Written, "skipped": res.Skipped, "retained_through_user_turn": res.RetainedThroughUserTurn}, nil
 	case "create":
-		err = e.mem.Create(get("path"), get("content"))
+		// create keeps the memory-tool contract (create or overwrite), but an
+		// overwrite is reported, never silent.
+		existed := e.mem.Exists(get("path"))
+		if err = e.mem.Create(get("path"), get("content")); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "command": req.Command, "overwrote": existed}, nil
 	case "str_replace":
 		err = e.mem.StrReplace(get("path"), get("old"), get("new"))
 	case "insert":
@@ -906,6 +1136,38 @@ func NLRoute(q string) string {
 	return q
 }
 
+// isProse reports whether q reads as a natural-language question rather than
+// a symbol lookup: at least two words, none of them code-shaped (camelCase,
+// snake_case, dotted/qualified paths, call syntax).
+func isProse(q string) bool {
+	fields := strings.Fields(q)
+	if len(fields) < 2 {
+		return false
+	}
+	for _, f := range fields {
+		if codeShaped(strings.Trim(f, ".,;:?!\"'`")) {
+			return false
+		}
+	}
+	return true
+}
+
+func codeShaped(w string) bool {
+	if strings.ContainsAny(w, "_.:/()[]{}<>=") {
+		return true
+	}
+	// camelCase / PascalCase: an interior capital in a word that also has
+	// lowercase letters. All-caps words are acronyms (JSON, RPC, XML), not
+	// code — they used to keep prose questions off the L3 rung.
+	hasLower := strings.IndexFunc(w, unicode.IsLower) >= 0
+	for i, r := range w {
+		if i > 0 && unicode.IsUpper(r) && hasLower {
+			return true
+		}
+	}
+	return false
+}
+
 func looksLikeIdentifier(s string) bool {
 	if s == "" {
 		return false
@@ -989,6 +1251,15 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// count, not a traversal bound; paths are a single answer anyway.
 		maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
 		path, err := graph.ShortestPath(e.st, seed, to, maxDepth)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			// Name the end that is unknown: "graph: unknown node" left the
+			// caller guessing which of from/to to fix.
+			for _, end := range []struct{ label, qn string }{{"from (query)", seed}, {"to (args.to)", to}} {
+				if els, ferr := e.st.FindExact(end.qn); ferr == nil && len(els) == 0 {
+					return nil, fmt.Errorf("%w: %s endpoint %q is not an indexed element; resolve it with query (action empty) and retry with its qualified_name", err, end.label, end.qn)
+				}
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1062,7 +1333,7 @@ func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"offloaded": ref}, nil
+		return map[string]any{"offloaded": e.relRef(ref)}, nil
 	case "lesson":
 		deduped, err := s.AddLesson(get("session_id"), get("text"))
 		if err != nil {
@@ -1092,6 +1363,9 @@ func (e *Engine) SessionRead(command, sessionID, nodeID string) (map[string]any,
 		if err != nil {
 			return nil, err
 		}
+		for i := range refs {
+			refs[i] = e.relRef(refs[i])
+		}
 		return map[string]any{"command": "canvas", "session_id": sessionID, "refs": refs}, nil
 	default:
 		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas)", command)
@@ -1101,6 +1375,12 @@ func (e *Engine) SessionRead(command, sessionID, nodeID string) (map[string]any,
 // OntologyMatch loads a concept catalog and matches it against indexed
 // elements (internal/ontology); matches are persisted in kv for later reads.
 func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
+	// The catalog is a project file like any other import input (RS-01): the
+	// REST /api/v1/ontology/match route reaches this method directly.
+	catalogPath, _, err := e.projectPath(catalogPath)
+	if err != nil {
+		return nil, err
+	}
 	cat, err := ontology.LoadCatalog(catalogPath)
 	if err != nil {
 		return nil, err
@@ -1230,9 +1510,12 @@ func (e *Engine) lspQuery(ctx context.Context, req QueryRequest, resp map[string
 	}
 	switch command {
 	case "document":
-		path := argStr(req.Args, "path")
-		if path == "" {
+		if argStr(req.Args, "path") == "" {
 			return nil, fmt.Errorf("lsp document requires args.path (file to inspect)")
+		}
+		path, _, err := e.projectPath(argStr(req.Args, "path"))
+		if err != nil {
+			return nil, err
 		}
 		syms, err := client.DocumentSymbols(ctx, path)
 		if err != nil {
@@ -1307,12 +1590,12 @@ func (e *Engine) compressRead(req ImportRequest) (map[string]any, error) {
 	if req.Path == "" {
 		return nil, fmt.Errorf("import read requires path")
 	}
-	// Relative paths mean "in this project" — same contract as import repo/dir.
-	// Without the anchor, MCP clients sending internal/foo.go open against the
-	// server process cwd (often a different repo) and fail with ENOENT.
-	path := req.Path
-	if !filepath.IsAbs(path) && e.projectDir != "" {
-		path = filepath.Join(e.projectDir, path)
+	// Relative paths mean "in this project" — same contract as import repo/dir
+	// — and every path must STAY in the project (RS-01): an absolute path, a
+	// `..` climb or an escaping symlink is refused, never read.
+	path, rel, err := e.projectPath(req.Path)
+	if err != nil {
+		return nil, err
 	}
 	modeName := argStr(req.Args, "mode")
 	mode, ok := compress.ParseMode(modeName)
@@ -1329,7 +1612,7 @@ func (e *Engine) compressRead(req ImportRequest) (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"path":            path,
+		"path":            rel,
 		"mode":            res.Mode.String(),
 		"content":         res.Content,
 		"tokens":          res.Tokens,
@@ -1482,6 +1765,28 @@ func stampDriftForLog(stored, want store.ModelStamp) string {
 	return strings.Join(diffs, ", ")
 }
 
+// projectPath confines a client-supplied file argument to the project root
+// (RS-01). Relative paths are taken from the root; absolute paths, `..`
+// climbs and symlinks leaving the root are refused with
+// LEANKG_ERROR_PATH_OUTSIDE_PROJECT. rel is root-relative, for responses
+// that must not leak the server's filesystem layout.
+func (e *Engine) projectPath(p string) (abs, rel string, err error) {
+	return pathguard.Resolve(e.projectDir, p)
+}
+
+// projectRoot is the symlink-resolved project directory (cwd when the engine
+// has none), the base every stored file path is relative to.
+func (e *Engine) projectRoot() string {
+	root := e.projectDir
+	if root == "" {
+		root, _ = os.Getwd()
+	}
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		return r
+	}
+	return root
+}
+
 // resolveIndexTarget turns an import path into the directory to index.
 //
 // Two hazards, both from the #332 class the doctor tripwire guards:
@@ -1512,9 +1817,20 @@ func (e *Engine) resolveIndexTarget(path string) (string, error) {
 		if r, err := filepath.EvalSymlinks(root); err == nil {
 			root = r
 		}
-		if abs != root && strings.HasPrefix(abs, root+string(filepath.Separator)) {
-			return "", fmt.Errorf("import %s: %q is a subdirectory of the project %q; indexing a subtree would delete every element outside it (the store reconciles against the walk root) — run `leankg index %s` as its own project, or index the project root",
-				"repo|dir", path, root, abs)
+		// RS-02: the walk root must BE the project root. A subtree reads every
+		// file outside it as deleted; a sibling, ancestor or unrelated root
+		// reads the whole project as deleted (validation: `import repo
+		// <sibling>` reported deleted_files 48 and left one element; `import
+		// repo /private/tmp` grew the store to 2.2 GB). Only "." / the root
+		// itself is an index target for this engine's store.
+		if abs != root {
+			kind := "is not the project root"
+			if strings.HasPrefix(abs, root+string(filepath.Separator)) {
+				kind = "is a subdirectory of the project"
+			}
+			return "", errs.NewError(errs.IndexRootMismatch,
+				fmt.Sprintf("import repo|dir: %q %s; indexing it into this project's store would delete every element outside it (the store reconciles against the walk root)", path, kind),
+				`index the project root (path "."), run `+"`leankg index <dir>`"+` to make the other directory its own project, or select it with project= on a multi-project server`)
 		}
 	}
 	return abs, nil

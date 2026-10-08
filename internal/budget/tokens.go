@@ -41,7 +41,10 @@ var ToolBudgets = []ToolBudget{
 	{MaxTokens: 2000, Actions: []string{"query_incidents"}},
 	{MaxTokens: 2000, Actions: []string{"find_env_conflicts"}},
 	{MaxTokens: 2000, Actions: []string{"trace_call_chain"}},
-	{MaxTokens: 2000, Actions: []string{"semantic_search", "semantic"}},
+	{MaxTokens: 2000, Actions: []string{"semantic_search"}},
+	// The Go semantic rung answers the same hit shape as search/fuzzy, so it
+	// shares their cap (RS-04: at 2000 a ten-hit answer lost every hit).
+	{MaxTokens: 4000, Actions: []string{"semantic"}},
 	{MaxTokens: 4000, Actions: []string{"kg_context", "context"}},
 	{MaxTokens: 4000, Actions: []string{"kg_trace_workflow"}},
 	{MaxTokens: 4000, Actions: []string{"kg_ontology_status", "ontology"}},
@@ -61,6 +64,10 @@ var ToolBudgets = []ToolBudget{
 	{MaxTokens: 2000, Actions: []string{"languages"}},
 	{MaxTokens: 4000, Actions: []string{"explain"}},
 	{MaxTokens: 4000, Actions: []string{"lsp"}},
+	// Reader-mode compression: the caller chose the mode (full, map,
+	// signatures…), so the answer IS the file text; under the 1000-token
+	// default a full read of any file over ~4 KB lost its content.
+	{MaxTokens: 8000, Actions: []string{"read", "compress"}},
 	// A portfolio answer is the union of up to MaxRepos children's own results
 	// (issue #376), so its natural size is N times a single-project response.
 	// Under the 1000-token default a two-project fan-out was truncated to its
@@ -108,10 +115,20 @@ const BudgetMarkerKey = "_token_budget"
 
 // TokenReport is the value stored under BudgetMarkerKey.
 type TokenReport struct {
-	Max                int  `json:"max"`
-	Actual             int  `json:"actual"`
-	PreTruncationToken int  `json:"pre_truncation_tokens"`
-	Truncated          bool `json:"truncated"`
+	Max                int                 `json:"max"`
+	Actual             int                 `json:"actual"`
+	PreTruncationToken int                 `json:"pre_truncation_tokens"`
+	Truncated          bool                `json:"truncated"`
+	Trimmed            map[string]TrimInfo `json:"trimmed,omitempty"`
+	Dropped            []string            `json:"dropped,omitempty"`
+	Hint               string              `json:"hint,omitempty"`
+}
+
+// TrimInfo reports one list cut by the budget: how many items the caller
+// received out of how many the engine produced.
+type TrimInfo struct {
+	Returned  int `json:"returned"`
+	Available int `json:"available"`
 }
 
 // Stats is the savings accounting for one Apply call: how many tokens the
@@ -145,13 +162,19 @@ func (s Stats) SavedPercent() float64 {
 
 // Apply enforces the tool's token cap on a JSON response.
 //
-// Under budget the value is returned untouched (no marker). Over budget the
-// payload is structurally trimmed (arrays keep their longest fitting prefix,
-// objects shed non-payload keys), the post-truncation size is recorded as
-// `actual` (issue #300: never the pre-truncation count) and the report is
-// attached as a `_token_budget` object. A non-object response is trimmed
-// recursively but cannot carry the marker. Tools mapped to 0 are uncapped and
-// pass through untouched.
+// Under budget the value is returned untouched (no marker). Over budget it is
+// SHRUNK, never emptied (RS-04): string fields inside list items are capped
+// progressively, then lists lose tail items (never below one), then long
+// strings are cut, and only as a last resort are non-envelope scalar/object
+// keys removed. Envelope keys (envelopeKeys) and lists are never removed. The
+// post-shrink size is recorded as `actual` (issue #300: never the
+// pre-truncation count) and the report — including which lists were trimmed
+// from how many items — is attached as `_token_budget`.
+//
+// The previous shape protected keys by name, a list ported from the Rust
+// engine (`results`); the Go engine answers with `hits`, `result`,
+// `memories`, …, so an over-budget semantic answer lost `hits` altogether and
+// a full `import read` lost `content`.
 func (TokenBudget) Apply(v any, tool string) (any, Stats) {
 	maxTokens := TokenBudget{}.MaxTokensForTool(tool)
 	stats := Stats{Tool: tool, Max: maxTokens}
@@ -161,6 +184,10 @@ func (TokenBudget) Apply(v any, tool string) (any, Stats) {
 		return v, stats
 	}
 
+	// Engine answers carry typed values ([]map[string]any, structs); shrink
+	// reasons over generic JSON shapes, so normalize first. A typed hit slice
+	// was not recognized as a list and was dropped whole (RS-04 golden).
+	v = normalize(v)
 	budget := maxTokens
 	if _, isObject := v.(map[string]any); isObject {
 		// Reserve room for the report itself so the delivered payload honors
@@ -169,8 +196,9 @@ func (TokenBudget) Apply(v any, tool string) (any, Stats) {
 			budget -= reserve
 		}
 	}
-	truncated := truncateValue(&v, budget)
-	stats.Truncated = truncated
+	rep := &shrinkReport{}
+	v = shrink(v, budget*TokenCharsPerToken, rep, "")
+	stats.Truncated = true
 
 	obj, isObject := v.(map[string]any)
 	if !isObject {
@@ -185,7 +213,10 @@ func (TokenBudget) Apply(v any, tool string) (any, Stats) {
 			Max:                maxTokens,
 			Actual:             stats.Actual,
 			PreTruncationToken: stats.PreTruncationToken,
-			Truncated:          truncated,
+			Truncated:          true,
+			Trimmed:            rep.trimmed,
+			Dropped:            rep.dropped,
+			Hint:               budgetHint,
 		}
 		if counted := countTokens(obj); counted != stats.Actual {
 			stats.Actual = counted
@@ -196,11 +227,34 @@ func (TokenBudget) Apply(v any, tool string) (any, Stats) {
 	return obj, stats
 }
 
+// normalize round-trips v through JSON into generic maps, slices and
+// scalars. On failure v is returned as is.
+func normalize(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return v
+	}
+	return out
+}
+
+// budgetHint tells an agent how to get the rest of a trimmed answer.
+const budgetHint = "response shrunk to fit the token budget; lower limit or narrow the query to see whole items"
+
 // markerReserveTokens is the space held back for the largest possible
 // `_token_budget` report (widest counts plus key overhead).
 func markerReserveTokens() int {
 	probe := map[string]any{BudgetMarkerKey: TokenReport{
 		Max: 99999999, Actual: 99999999, PreTruncationToken: 99999999, Truncated: true,
+		Trimmed: map[string]TrimInfo{
+			"requirements": {Returned: 99999, Available: 99999},
+			"memories":     {Returned: 99999, Available: 99999},
+		},
+		Dropped: []string{"elements_by_type", "last_embed_run"},
+		Hint:    budgetHint,
 	}}
 	return countTokens(probe) + 1
 }
@@ -212,24 +266,6 @@ func countTokens(v any) int {
 		return 0
 	}
 	return len(b) / TokenCharsPerToken
-}
-
-// truncateValue returns true when anything inside v was dropped, writing the
-// trimmed value back through the pointer.
-func truncateValue(v *any, maxTokens int) bool {
-	if countTokens(*v) <= maxTokens {
-		return false
-	}
-	switch typed := (*v).(type) {
-	case []any:
-		kept, dropped := truncateArray(typed, maxTokens)
-		*v = kept
-		return dropped
-	case map[string]any:
-		return truncateObject(typed, maxTokens)
-	default:
-		return false
-	}
 }
 
 // itemBytes is the exact compact serialized size of one value.
@@ -263,83 +299,197 @@ func objectBytes(obj map[string]any) int {
 	return 2 + entries - 1 // drop the last comma slot
 }
 
-// truncateArray keeps the longest leading prefix of arr that fits the byte
-// budget and reports whether items were dropped. When the whole array fits on
-// its own, the over-budget part is the parent object and nothing is dropped
-// here.
-//
-// One pass, O(n): per-item sizes are summed once and the prefix is scanned
-// (Rust R2b perf fix — the old shape re-serialized the array once per dropped
-// item and wedged the server on 24k-finding responses).
-func truncateArray(arr []any, maxTokens int) ([]any, bool) {
-	budget := maxTokens * TokenCharsPerToken
-	cum := make([]int, 0, len(arr))
-	acc := 2 // "["
+// envelopeKeys carry an answer's identity and provenance; shrinking may
+// shorten them but never removes them.
+var envelopeKeys = map[string]bool{
+	"query": true, "retrieval": true, "freshness": true, "guidance": true,
+	"action": true, "resolved_query": true, "resolved_to": true, "reachable": true,
+	"command": true, "path": true, "mode": true, "limit": true, "count": true,
+	"tool": true, "cmd": true, "service": true, "env": true, "id": true,
+	"session_id": true, "node_id": true, "bank": true, "banks": true,
+}
+
+// itemStringCaps are the successive rune caps applied to string fields of
+// list items before any item is dropped: a shorter snippet per hit beats
+// fewer hits.
+var itemStringCaps = []int{400, 200, 120, 60}
+
+// minChildBytes is the smallest budget worth shrinking a child into; below
+// it the sibling keys alone exceed the budget and deletion is the only lever.
+const minChildBytes = 32
+
+// shrinkReport records what Apply removed.
+type shrinkReport struct {
+	trimmed map[string]TrimInfo
+	dropped []string
+}
+
+// shrink returns v reduced to at most budget serialized bytes where possible.
+// key names v inside its parent (for the trim report).
+func shrink(v any, budget int, rep *shrinkReport, key string) any {
+	if itemBytes(v) <= budget {
+		return v
+	}
+	switch t := v.(type) {
+	case string:
+		return cutString(t, budget)
+	case []any:
+		return shrinkArray(t, budget, rep, key)
+	case map[string]any:
+		return shrinkObject(t, budget, rep)
+	default:
+		return v
+	}
+}
+
+func shrinkArray(arr []any, budget int, rep *shrinkReport, key string) []any {
+	avail := len(arr)
+	for _, cap := range itemStringCaps {
+		if itemBytes(arr) <= budget {
+			return arr
+		}
+		arr = capItemStrings(arr, cap)
+	}
+	if itemBytes(arr) <= budget {
+		return arr
+	}
+	acc := 2 // "[" + "]"
+	keep := 0
 	for _, item := range arr {
 		acc += itemBytes(item) + 1
-		cum = append(cum, acc)
-	}
-	keep := 0
-	for keep < len(cum) && cum[keep] <= budget {
-		keep++
-	}
-	if keep == len(arr) {
-		return arr, false
-	}
-	if keep < 1 {
-		keep = 1 // never hand back a silently emptied payload
-	}
-	return arr[:keep:keep], true
-}
-
-// protectedKeys are never dropped during object truncation: they carry the
-// query identity and the primary payload, so the response keeps its shape.
-var protectedKeys = map[string]bool{
-	"service": true, "env": true, "query": true, "file": true,
-	"function": true, "element": true, "id": true, "results": true,
-	"incidents": true, "conflicts": true, "calls": true, "called_by": true,
-	"open_incidents": true, "recent_incidents": true, "count": true,
-	// Primary payload keys of full-scan tools must survive so the response
-	// keeps its shape after truncation:
-	"findings": true, "relationships": true, "elements": true,
-}
-
-// truncateObject recursively trims children, then removes non-protected keys
-// (sorted, so behavior is deterministic — Go map order is randomized) until the
-// object fits.
-//
-// ponytail: objectBytes is recomputed after each removal, so a pathological
-// object with thousands of removable keys is O(k*n) instead of the Rust O(n)
-// running total. Real payloads carry ~a dozen removable keys; if a mega-object
-// ever shows up, carry a running byte total like the Rust original.
-func truncateObject(obj map[string]any, maxTokens int) bool {
-	truncated := false
-	for _, key := range slices.Sorted(maps.Keys(obj)) {
-		child := obj[key]
-		if child == nil {
-			continue
-		}
-		if truncateValue(&child, maxTokens) {
-			obj[key] = child // write the trimmed child back; a range copy would drop it
-			truncated = true
-		}
-	}
-
-	removable := make([]string, 0, len(obj))
-	for k := range obj {
-		if !protectedKeys[k] && k != BudgetMarkerKey {
-			removable = append(removable, k)
-		}
-	}
-	slices.Sort(removable)
-
-	budget := maxTokens * TokenCharsPerToken
-	for _, key := range removable {
-		if objectBytes(obj) <= budget {
+		if acc > budget {
 			break
 		}
-		delete(obj, key)
-		truncated = true
+		keep++
 	}
-	return truncated
+	if keep < 1 {
+		// One item cannot fit any budget: keep it (never a silently emptied
+		// payload) and shrink the item itself.
+		keep = 1
+		arr = []any{shrink(arr[0], budget-2, rep, key)}
+	}
+	if keep < avail {
+		if rep.trimmed == nil {
+			rep.trimmed = map[string]TrimInfo{}
+		}
+		name := key
+		if name == "" {
+			name = "(root)"
+		}
+		rep.trimmed[name] = TrimInfo{Returned: keep, Available: avail}
+	}
+	return arr[:keep:keep]
+}
+
+// capItemStrings returns a copy of arr whose string items, and string fields
+// of object items, are cut to at most n runes.
+func capItemStrings(arr []any, n int) []any {
+	out := make([]any, len(arr))
+	for i, item := range arr {
+		switch t := item.(type) {
+		case string:
+			out[i] = cutRunes(t, n)
+		case map[string]any:
+			m := make(map[string]any, len(t))
+			for k, fv := range t {
+				if fs, ok := fv.(string); ok && !envelopeKeys[k] {
+					m[k] = cutRunes(fs, n)
+				} else {
+					m[k] = fv
+				}
+			}
+			out[i] = m
+		default:
+			out[i] = item
+		}
+	}
+	return out
+}
+
+func shrinkObject(obj map[string]any, budget int, rep *shrinkReport) map[string]any {
+	out := make(map[string]any, len(obj))
+	for k, v := range obj {
+		out[k] = v
+	}
+	isList := func(v any) bool { _, ok := v.([]any); return ok }
+	// Lists are the payload (hits, memories, requirements…). Spend the cut on
+	// everything else first: non-envelope scalars and objects (objects are
+	// shrunk recursively, so a nested result keeps its own lists), then the
+	// lists, then — only if nothing else is left — envelope strings.
+	phases := []func(string, any) bool{
+		func(k string, v any) bool { return !envelopeKeys[k] && !isList(v) && k != BudgetMarkerKey },
+		func(k string, v any) bool { return isList(v) },
+		func(k string, v any) bool { return k != BudgetMarkerKey },
+	}
+	for _, eligible := range phases {
+		for range 64 {
+			size := objectBytes(out)
+			if size <= budget {
+				return out
+			}
+			k := largestKey(out, eligible)
+			if k == "" || itemBytes(out[k]) <= minChildBytes {
+				break
+			}
+			childSize := itemBytes(out[k])
+			room := budget - (size - childSize)
+			if room >= minChildBytes {
+				if shrunk := shrink(out[k], room, rep, k); itemBytes(shrunk) < childSize {
+					out[k] = shrunk
+					continue
+				}
+			}
+			if !envelopeKeys[k] && !isList(out[k]) {
+				// No room left for it at all: drop the non-payload key.
+				delete(out, k)
+				rep.dropped = append(rep.dropped, k)
+				continue
+			}
+			// A list or envelope key never goes; squeeze it to its minimum.
+			out[k] = shrink(out[k], minChildBytes, rep, k)
+			break
+		}
+	}
+	return out
+}
+
+// largestKey returns the key with the largest serialized value among those
+// accepted by ok (ties broken by name, so the result is deterministic).
+func largestKey(obj map[string]any, ok func(string, any) bool) string {
+	best, bestSize := "", -1
+	for _, k := range slices.Sorted(maps.Keys(obj)) {
+		if !ok(k, obj[k]) {
+			continue
+		}
+		if sz := itemBytes(obj[k]); sz > bestSize {
+			best, bestSize = k, sz
+		}
+	}
+	return best
+}
+
+// truncMark ends every string the budget cut.
+const truncMark = "…"
+
+func cutRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + truncMark
+}
+
+// cutString cuts s so its JSON encoding fits budget bytes (escapes counted).
+func cutString(s string, budget int) string {
+	r := []rune(s)
+	lo, hi := 0, len(r)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if itemBytes(string(r[:mid])+truncMark) <= budget {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return string(r[:lo]) + truncMark
 }

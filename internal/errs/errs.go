@@ -161,6 +161,23 @@ var PermissionDenied = ErrorCode{
 	DocAnchor: "docs/archive/mcp-tools.md",
 }
 
+// PathOutsideProject: a file argument resolves outside the project roots.
+var PathOutsideProject = ErrorCode{
+	Code:      "LEANKG_ERROR_PATH_OUTSIDE_PROJECT",
+	Cause:     "the path resolves outside the project directory (absolute path, `..` climb, or a symlink that leaves the root)",
+	Fix:       "pass a path inside the project, relative to its root; to read another repository, select it with `project=` on a multi-project server",
+	DocAnchor: "docs/mcp-tool-contract.md",
+}
+
+// IndexRootMismatch: an import/index walk targets a directory other than the
+// root this store was built from; reconciling would delete the project's index.
+var IndexRootMismatch = ErrorCode{
+	Code:      "LEANKG_ERROR_INDEX_ROOT_MISMATCH",
+	Cause:     "the directory to index is not this project's root, and reconciling the store against it would delete every element outside it",
+	Fix:       "index the project root (path \".\"), index the other directory as its own project (`leankg index <dir>`), or select it with `project=` on a multi-project server",
+	DocAnchor: "docs/mcp-tool-contract.md",
+}
+
 // Catalog is the registry, in presentation order (not significance).
 var Catalog = []ErrorCode{
 	PGUnreachable,
@@ -177,6 +194,8 @@ var Catalog = []ErrorCode{
 	UnknownAction,
 	MissingParam,
 	PermissionDenied,
+	PathOutsideProject,
+	IndexRootMismatch,
 }
 
 // All returns every registered error code, in presentation order.

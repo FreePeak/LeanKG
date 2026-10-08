@@ -26,7 +26,10 @@ import (
 // (maxLocalTextChars) instead of the general cap — text a 512-token sidecar
 // can actually accept. Bumping the version rebuilds collections stamped v1,
 // where over-budget elements had no vectors at all (the run died on them).
-const ChunkerVersion = 2
+//
+// v3 (RS-11): the embedded text is documentText — a "<type> <name> — <file>"
+// header plus content (content now carries the leading doc comment, RS-10).
+const ChunkerVersion = 3
 
 // batchSize is the number of texts sent to the provider per call.
 const batchSize = 32
@@ -41,6 +44,7 @@ type Report struct {
 	Failed      int
 	Truncations int
 	Orphans     int
+	NoiseFloor  float64 `json:"NoiseFloor,omitempty"` // measured off-topic similarity ceiling (calibrate.go)
 	Coverage    float64
 	Duration    time.Duration
 }
@@ -49,6 +53,31 @@ type Report struct {
 // atomic write unit), its qualified name, the (possibly truncated) text to
 // send, and the full-content hash to record.
 type dirtyItem struct{ file, qn, text, hash string }
+
+// TextCap is the rune budget for one text sent to p: the general cap, or for
+// the local sidecar family the served model's real window when the sidecar
+// reports it (RS-14), else the conservative 512-token default. Documents and
+// queries use the same cap, so a long query is truncated instead of failing
+// at the provider and degrading L3 (RS-15).
+func TextCap(p Provider) int {
+	textCap := maxContentChars
+	if p.Provider() == "local" {
+		budget := maxLocalTextChars
+		if tb, ok := p.(interface{ TextBudget() int }); ok && tb.TextBudget() > 0 {
+			budget = tb.TextBudget()
+		}
+		textCap = min(textCap, budget)
+	}
+	return textCap
+}
+
+// TruncateText cuts s to at most n runes.
+func TruncateText(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return truncateRunes(s, n)
+}
 
 // StampOf composes the collection identity provider p writes with: p's five
 // identity fields plus the two pipeline components a provider does not carry
@@ -186,11 +215,8 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 			rep.Skipped++
 			continue
 		}
-		text := e.Content
-		textCap := maxContentChars
-		if p.Provider() == "local" {
-			textCap = min(textCap, maxLocalTextChars)
-		}
+		text := documentText(e)
+		textCap := TextCap(p)
 		if utf8.RuneCountInString(text) > textCap {
 			rep.Truncations++
 			text = truncateRunes(text, textCap)
@@ -211,6 +237,14 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 		return rep, err
 	}
 
+	// Reclaim vectors whose element is gone before measuring coverage: the
+	// run used to report `Orphans: N` and leave them to `leankg gc` while L3
+	// served them as hits (RS-05).
+	if _, err := st.DeleteOrphanVectors(); err != nil {
+		rep.Duration = time.Since(start)
+		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		return rep, fmt.Errorf("embed: reclaim orphan vectors: %w", err)
+	}
 	covered, orphans, err := readVectorCounts(st, modelID)
 	if err != nil {
 		rep.Duration = time.Since(start)
@@ -221,6 +255,16 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	rep.Coverage = coverage(covered, len(elems))
 	if rep.Failed > 0 {
 		status = "partial"
+	}
+	// Re-measure the noise floor whenever the collection changed (or was
+	// never measured for this identity). A calibration failure costs only the
+	// low-confidence flag and dense memory recall, never the run.
+	if _, ok := ReadCalibration(st, StampOf(p)); rep.Embedded > 0 || !ok {
+		if floor, ok, err := Calibrate(ctx, st, p); err == nil && ok {
+			rep.NoiseFloor = floor
+		}
+	} else if floor, ok := ReadCalibration(st, StampOf(p)); ok {
+		rep.NoiseFloor = floor
 	}
 	rep.Duration = time.Since(start)
 	if err := st.FinishEmbedRun(runID, status, rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {

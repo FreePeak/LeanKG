@@ -4,7 +4,9 @@
 # container. Exit nonzero on any engine failure, printing the captured output
 # on every assertion (a bare `grep -q` under pipefail fails silently).
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)/go"
+# The Go module is the repository root since #403 (the old `go/` subdirectory
+# is gone, which left this gate unrunnable).
+cd "$(git rev-parse --show-toplevel)"
 
 PG_URL="${LEANKG_TEST_PG_URL:-postgres://postgres:postgres@localhost:5433/leankg?sslmode=disable}"
 
@@ -25,7 +27,10 @@ go build ./...
 go vet ./...
 
 echo "== unit suite (sqlite) =="
-go test ./... -count=1 -timeout 300s
+# sqlite only: with LEANKG_TEST_PG_URL exported, every package's PG tests
+# would run here in parallel against one database, and on a fresh database the
+# vector extension lands in whichever project schema migrates first.
+env -u LEANKG_TEST_PG_URL go test ./... -count=1 -timeout 300s
 
 # Fast-fail if the PG endpoint is unreachable (a wedged Docker daemon would
 # otherwise hang every probe for 120s+ and the gate would report a nameless FAIL).

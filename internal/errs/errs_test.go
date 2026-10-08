@@ -82,6 +82,7 @@ func TestCatalogTableMatchesAccessors(t *testing.T) {
 		PGUnreachable, PGURLMalformed, ProjectNotInitialized, UnknownProject,
 		AutoAttachFailed, Unauthorized, UnknownTool, NoVectors, TrgmUnavailable,
 		MethodNotFound, ReadOnly, UnknownAction, MissingParam, PermissionDenied,
+		PathOutsideProject, IndexRootMismatch,
 	}
 	if len(consts) != len(Catalog) {
 		t.Fatalf("const count %d != catalog size %d", len(consts), len(Catalog))

@@ -758,7 +758,7 @@ func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSea
 		COALESCE(ce.parent_qualified,''), COALESCE(ce.content,''), COALESCE(ce.metadata::text,'{}'),
 		1 - (v.vec <=> $1::vector) AS similarity
 		FROM `+s.vecTable(modelID)+` v
-		LEFT JOIN code_elements ce ON ce.qualified_name = v.qualified_name
+		JOIN code_elements ce ON ce.qualified_name = v.qualified_name -- INNER: orphans are never hits (RS-05)
 		ORDER BY v.vec <=> $1::vector
 		LIMIT $2`, pgvector.NewVector(q), k)
 	if err != nil {

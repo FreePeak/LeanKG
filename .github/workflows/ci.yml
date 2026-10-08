@@ -13,16 +13,38 @@ on:
   pull_request:
     branches: [main]
 
+# Jobs run on the owner's self-hosted macOS runner (labels below). Pull
+# requests from forks default to a GitHub-hosted runner, but a fork controls
+# this file in its own PR and can name the runner's labels, so this expression
+# is not the protection: the repository requires maintainer approval for every
+# outside contributor's workflow run (Settings > Actions > Fork pull request
+# workflows). Read a fork PR's workflow diff before approving it. The
+# portfolio registry is pointed
+# at the job's temp dir: `leankg index` (TTFV gate) otherwise registers a
+# project in the runner account's real ~/.leankg/portfolio.db on every run.
+env:
+  LEANKG_PORTFOLIO_DB: ${{ github.workspace }}/../ci-portfolio.db
+
 jobs:
   go-engine:
     name: Go Engine (build + vet + test)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
     steps:
       - uses: actions/checkout@v4
+      # GOCACHE is pinned into the job's temp dir, so setup-go's cache key
+      # covers THIS repo's build cache (~20 MB) instead of the runner
+      # account's whole ~/Library/Caches/go-build — which on the self-hosted
+      # Mac is the entire machine's, measured 8.5 GB. A cache of that size
+      # costs more to download (~7.5 GB at 11.6 MB/s = 11 min) than the
+      # cold-cache build it replaces (measured 1m01s for the full suite), so
+      # every job on this runner timed out in `setup-go` before reaching a
+      # step of its own.
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
           cache-dependency-path: go.sum
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
       - name: Build (tstree tag — exercises the CGO tier first)
         run: go build -tags tstree ./...
       - name: Test (tstree tag)
@@ -66,14 +88,20 @@ jobs:
   # 17.8s total, 16.1s of it the build).
   ttfv:
     name: Cold TTFV Gate (Go, < 300s)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
+      # GOCACHE pinned for the same reason as the go-engine job above (and
+      # this job is where the 8.5 GB cache was first written): the TTFV gate
+      # measures a COLD happy path, so a cache it does not need is pure
+      # download time against a 12m job cap.
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
           cache-dependency-path: go.sum
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
       - name: Timed cold happy path
         run: bash scripts/ttfv_smoke.sh --json ttfv.json
         timeout-minutes: 10

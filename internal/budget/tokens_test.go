@@ -15,7 +15,8 @@ func TestMaxTokensForToolTable(t *testing.T) {
 		"get_impact_radius":   6000,
 		"unknown_tool":        DefaultMaxTokens,
 		// Go query actions routed through the 3-tool registry.
-		"semantic": 2000,
+		"semantic": 4000,
+		"read":     8000,
 		"impact":   6000,
 		"search":   4000,
 		"context":  4000,
@@ -118,7 +119,9 @@ func TestApplyUncappedToolPassesThrough(t *testing.T) {
 }
 
 func TestApplyTruncatesArrayAndKeepsPrefix(t *testing.T) {
-	items := make([]any, 20)
+	// 400 items cannot fit even at the smallest per-item snippet, so the list
+	// must be cut to a leading prefix and the cut reported.
+	items := make([]any, 400)
 	for i := range items {
 		items[i] = map[string]any{"id": "1", "data": strings.Repeat("x", 500)}
 	}
@@ -151,6 +154,9 @@ func TestApplyTruncatesArrayAndKeepsPrefix(t *testing.T) {
 	if marker.Max != 2000 {
 		t.Fatalf("marker max = %d, want 2000", marker.Max)
 	}
+	if tr := marker.Trimmed["results"]; tr.Returned != len(results) || tr.Available != len(items) {
+		t.Fatalf("trim report = %+v, want returned %d of %d", tr, len(results), len(items))
+	}
 	// Regression #300: actual is the POST-truncation size and must fit the cap.
 	if marker.Actual > marker.Max {
 		t.Fatalf("actual (%d) must be <= max (%d) when truncated", marker.Actual, marker.Max)
@@ -160,6 +166,25 @@ func TestApplyTruncatesArrayAndKeepsPrefix(t *testing.T) {
 	}
 	if !stats.Truncated || stats.SavedTokens() <= 0 || stats.SavedPercent() <= 0 {
 		t.Fatalf("savings accounting empty: %+v", stats)
+	}
+}
+
+// TestApplyShortensItemsBeforeDroppingThem pins the RS-04 order: a list that
+// fits once each item's text is shortened keeps every item.
+func TestApplyShortensItemsBeforeDroppingThem(t *testing.T) {
+	items := make([]any, 40) // ~21 KB: over the 4000-token (16 KB) semantic cap
+	for i := range items {
+		items[i] = map[string]any{"qualified_name": "pkg.F", "content": strings.Repeat("x", 500)}
+	}
+	out, _ := (TokenBudget{}).Apply(map[string]any{"hits": items, "query": "q"}, "semantic")
+	obj := out.(map[string]any)
+	hits, _ := obj["hits"].([]any)
+	if len(hits) != len(items) {
+		t.Fatalf("kept %d of %d hits; shortening content should have been enough", len(hits), len(items))
+	}
+	c, _ := hits[0].(map[string]any)["content"].(string)
+	if len([]rune(c)) >= 500 || !strings.HasSuffix(c, "…") {
+		t.Fatalf("content not shortened with a mark: %d runes", len([]rune(c)))
 	}
 }
 
@@ -181,8 +206,11 @@ func TestApplyPreservesPrimaryPayloadKeys(t *testing.T) {
 	if _, ok := obj["results"]; !ok {
 		t.Fatal("protected key 'results' was dropped")
 	}
-	if _, ok := obj["debug"]; ok {
-		t.Fatal("non-protected 'debug' should have been dropped to make room")
+	if d, ok := obj["debug"].(string); ok && len(d) >= 5000 {
+		t.Fatal("non-envelope 'debug' should have been cut or dropped to make room")
+	}
+	if marker := obj[BudgetMarkerKey].(TokenReport); marker.Actual > marker.Max {
+		t.Fatalf("actual %d over cap %d", marker.Actual, marker.Max)
 	}
 }
 
@@ -220,10 +248,11 @@ func TestApplyMarkerOnTinyBudget(t *testing.T) {
 }
 func TestApplyNonObjectResponseTruncatesWithoutMarker(t *testing.T) {
 	// No marker is ever attached, so the payload must be trimmed against the
-	// FULL cap (the reserve only exists to make room for the report).
-	arr := make([]any, 50)
+	// FULL cap (the reserve only exists to make room for the report). 500
+	// strings do not fit even at the smallest snippet, so items are cut too.
+	arr := make([]any, 500)
 	for i := range arr {
-		arr[i] = strings.Repeat("x", 400) // ~10k serialized bytes => ~5000 tokens > 4000
+		arr[i] = strings.Repeat("x", 400)
 	}
 	out, stats := (TokenBudget{}).Apply(arr, "search_code")
 	kept, ok := out.([]any)

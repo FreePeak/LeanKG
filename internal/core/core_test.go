@@ -34,17 +34,17 @@ func newEngine(t *testing.T) (*Engine, *memory.Memory) {
 }
 
 func TestResolveEnvelope(t *testing.T) {
-	for tool, want := range map[string]string{
-		"import": "import", "query": "query", "status": "status",
-		"set": "import", "get": "query",
-	} {
-		got, err := ResolveEnvelope(tool)
-		if err != nil || got != want {
-			t.Fatalf("envelope %q: got %q err %v, want %q", tool, got, err, want)
+	for _, tool := range []string{"import", "query", "status"} {
+		if got, err := ResolveEnvelope(tool); err != nil || got != tool {
+			t.Fatalf("envelope %q: got %q err %v", tool, got, err)
 		}
 	}
+	// Superseded legacy names are refused, naming their replacement.
+	if _, err := ResolveEnvelope("get"); err == nil || !strings.Contains(err.Error(), `superseded by "query"`) {
+		t.Fatalf("legacy get: %v", err)
+	}
 	if _, err := ResolveEnvelope("delete_everything"); err == nil || !strings.Contains(err.Error(), "valid tools") {
-		t.Fatalf("unknown envelope must error naming the surface: %v", err)
+		t.Fatalf("unknown tool: %v", err)
 	}
 }
 
@@ -459,7 +459,9 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	catPath := filepath.Join(t.TempDir(), "concepts.json")
+	proj := t.TempDir()
+	e.SetProjectDir(proj)
+	catPath := filepath.Join(proj, "concepts.json")
 	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -490,12 +492,20 @@ func TestOntologyImportAndQueryActions(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	catPath := filepath.Join(t.TempDir(), "concepts.json")
-	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
+	proj := t.TempDir()
+	e.SetProjectDir(proj)
+	if err := os.WriteFile(filepath.Join(proj, "concepts.json"), []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.Import(ctx, ImportRequest{Action: "ontology", Path: catPath}); err != nil {
+	if _, err := e.Import(ctx, ImportRequest{Action: "ontology", Path: "concepts.json"}); err != nil {
 		t.Fatalf("import ontology: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "concepts.json")
+	if err := os.WriteFile(outside, []byte(`{"concepts":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "ontology", Path: outside}); err == nil {
+		t.Fatal("ontology catalog outside the project was read (RS-01)")
 	}
 	out, err := e.Query(ctx, QueryRequest{Action: "ontology"})
 	if err != nil {
@@ -712,7 +722,39 @@ func TestCompressReadAnchorsRelativePath(t *testing.T) {
 		t.Fatalf("content=%q, want Hello body", content)
 	}
 	gotPath, _ := out["path"].(string)
-	if gotPath != filepath.Join(dir, "pkg/hello.go") {
-		t.Fatalf("path=%q, want project-anchored", gotPath)
+	// Project-relative: responses must not leak the server's layout (RS-23).
+	if gotPath != "pkg/hello.go" {
+		t.Fatalf("path=%q, want project-relative pkg/hello.go", gotPath)
+	}
+}
+
+// TestFileArgsConfinedToProject pins RS-01: every file-reading action refuses
+// paths outside the project — the validation read /etc/hosts through three of
+// them.
+func TestFileArgsConfinedToProject(t *testing.T) {
+	e, _ := newEngine(t)
+	proj := t.TempDir()
+	e.SetProjectDir(proj)
+	if err := os.WriteFile(filepath.Join(proj, "in.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("top secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(proj, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, p := range []string{outside, "../../../../../../" + outside, "link.txt"} {
+		if _, err := e.Import(ctx, ImportRequest{Action: "read", Path: p}); err == nil || !strings.Contains(err.Error(), "PATH_OUTSIDE_PROJECT") {
+			t.Errorf("import read %q: err=%v, want PATH_OUTSIDE_PROJECT", p, err)
+		}
+		if _, err := e.Query(ctx, QueryRequest{Action: "compress", Query: p}); err == nil || !strings.Contains(err.Error(), "PATH_OUTSIDE_PROJECT") {
+			t.Errorf("query compress %q: err=%v, want PATH_OUTSIDE_PROJECT", p, err)
+		}
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "read", Path: "in.go"}); err != nil {
+		t.Fatalf("in-project read refused: %v", err)
 	}
 }

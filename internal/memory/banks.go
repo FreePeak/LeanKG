@@ -287,36 +287,7 @@ func (m *Memory) scopeCwd(cwd string) string {
 // — session-keyed, so concurrent sessions sharing one bank never suppress
 // each other's batches; the REST Retain contract stays per-bank by design).
 func (m *Memory) sessionCursor(sessionID string) (int, bool) {
-	files, err := os.ReadDir(filepath.Join(m.root, "banks"))
-	if err != nil {
-		return 0, false
-	}
-	best, found := 0, false
-	for _, f := range files {
-		if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(m.root, "banks", f.Name()))
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			if line == "" {
-				continue
-			}
-			var e Entry
-			if json.Unmarshal([]byte(line), &e) != nil {
-				continue
-			}
-			if e.Metadata["session_id"] != sessionID {
-				continue
-			}
-			if n, ok := e.Metadata["retained_through_user_turn"].(float64); ok && (!found || int(n) > best) {
-				best, found = int(n), true
-			}
-		}
-	}
-	return best, found
+	return m.cursor("session", sessionID)
 }
 
 // Retain appends a transcript batch to a bank as JSONL, tagging every row's
@@ -325,9 +296,13 @@ func (m *Memory) sessionCursor(sessionID string) (int, bool) {
 // skipped entirely (resume-safety; the REST/mnemopi contract keys it per
 // bank — SessionRetain below keys the same check per session, matching the
 // reference handler).
-func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error {
-	if throughUserTurn <= m.bankCursor(bank) {
-		return nil
+//
+// The result says what happened: a skipped batch reports Skipped and the
+// stored cursor, never a write (RS-07: the REST handler answered
+// `retained: N` for batches this gate had dropped).
+func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) (RetainResult, error) {
+	if cur := m.bankCursor(bank); throughUserTurn <= cur {
+		return RetainResult{Bank: bank, Skipped: len(entries), RetainedThroughUserTurn: cur}, nil
 	}
 	for i := range entries {
 		if entries[i].Metadata == nil {
@@ -336,7 +311,10 @@ func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error
 		entries[i].Metadata["retained_through_user_turn"] = throughUserTurn
 	}
 	applyEntryDefaults(entries)
-	return m.appendBank(bank, entries)
+	if err := m.appendBank(bank, entries); err != nil {
+		return RetainResult{}, err
+	}
+	return RetainResult{Bank: bank, Written: len(entries), RetainedThroughUserTurn: throughUserTurn}, nil
 }
 
 // RetainRaw appends entries WITHOUT the user-turn cursor gate: same
@@ -448,6 +426,9 @@ func (m *Memory) rewriteBankLocked(bank string, drop func(Entry) bool) (int, err
 	if err := os.Rename(tmp, path); err != nil {
 		return 0, fmt.Errorf("memory: rewrite bank %s: %w", bank, err)
 	}
+	if err := m.reindexBankLocked(bank); err != nil {
+		return removed, err
+	}
 	return removed, nil
 }
 
@@ -474,30 +455,15 @@ func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 			return fmt.Errorf("memory: encode entry: %w", err)
 		}
 	}
-	return nil
+	return m.indexAppendLocked(bank, entries)
 }
 
-// bankCursor reads the highest retained_through_user_turn stored in the
-// bank's JSONL (0 for a missing/empty bank).
+// bankCursor is the highest retained_through_user_turn stored in the bank
+// (0 for a missing/empty bank), kept in the index on every append (RS-20; it
+// used to re-read the bank JSONL on every retain).
 func (m *Memory) bankCursor(bank string) int {
-	data, err := os.ReadFile(m.bankPath(bank))
-	if err != nil {
-		return 0
-	}
-	max := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
-			continue
-		}
-		var e Entry
-		if json.Unmarshal([]byte(line), &e) != nil {
-			continue
-		}
-		if n, ok := e.Metadata["retained_through_user_turn"].(float64); ok && int(n) > max {
-			max = int(n)
-		}
-	}
-	return max
+	v, _ := m.cursor("bank", sanitizeBank(bank))
+	return v
 }
 
 // Recall returns up to limit entries scored by query-token overlap from one
@@ -523,75 +489,10 @@ func (m *Memory) RecallFiltered(banks []string, query string, limit int, keep fu
 	if limit <= 0 {
 		limit = 8
 	}
-	// unique query tokens, lowercased
-	qSeen := map[string]bool{}
-	var qTokens []string
-	for _, t := range tokenize(query) {
-		if !qSeen[t] {
-			qSeen[t] = true
-			qTokens = append(qTokens, t)
-		}
-	}
-	if len(qTokens) == 0 {
-		return nil, nil
-	}
-	type scored struct {
-		e     Entry
-		score int
-	}
-	var matched []scored
-	seenIDs := map[string]bool{}
-	for _, bank := range banks {
-		data, err := os.ReadFile(m.bankPath(bank))
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			if line == "" {
-				continue
-			}
-			var e Entry
-			if json.Unmarshal([]byte(line), &e) != nil {
-				continue
-			}
-			if seenIDs[e.ID] {
-				continue
-			}
-			seenIDs[e.ID] = true
-			if keep != nil && !keep(e) {
-				continue
-			}
-			seen := map[string]bool{}
-			for _, t := range tokenize(e.Content) {
-				seen[t] = true
-			}
-			score := 0
-			for _, t := range qTokens {
-				if seen[t] {
-					score++
-				}
-			}
-			if score == 0 {
-				continue // zero-match entries never surface
-			}
-			matched = append(matched, scored{e, score})
-		}
-	}
-	if len(matched) == 0 {
-		return nil, nil
-	}
-	sort.SliceStable(matched, func(i, j int) bool { return matched[i].score > matched[j].score })
-	entries := make([]Entry, 0, min(limit, len(matched)))
-	for _, s := range matched {
-		if len(entries) == limit {
-			break
-		}
-		entries = append(entries, s.e)
-	}
-	return entries, nil
+	// RS-18: bm25 over the index (porter stemming, accent folding, stopwords
+	// dropped from the query) instead of raw unique-token overlap over a full
+	// JSONL scan, where a row of stopwords outranked real content.
+	return m.recallIndexed(banks, query, limit, keep)
 }
 
 // recentBanks returns the newest limit rows across the given banks — the

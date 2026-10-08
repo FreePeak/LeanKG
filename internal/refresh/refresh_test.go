@@ -62,8 +62,11 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	if !res.DocsIndexed || res.DocsDir != filepath.Join(dir, "docs") {
 		t.Fatalf("docs stage = indexed:%v dir:%q", res.DocsIndexed, res.DocsDir)
 	}
-	if res.DocsResult.Files == 0 || res.DocsResult.Elements == 0 {
-		t.Fatalf("docs stage counters = %+v", res.DocsResult)
+	// The code stage already indexes docs/guide.md under its project-relative
+	// key; the docs stage must see the same key (skip), not re-key it as
+	// guide.md and index a duplicate (RS-02/RS-08).
+	if res.DocsResult.Files+res.DocsResult.Skipped == 0 {
+		t.Fatalf("docs stage processed nothing: %+v", res.DocsResult)
 	}
 	if res.Embed.Mode != "incremental" {
 		t.Fatalf("embed mode = %q, want incremental", res.Embed.Mode)
@@ -94,6 +97,9 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	}
 	found := map[string]bool{}
 	for _, e := range els {
+		if e.ElementType == "doc" && !strings.HasPrefix(e.FilePath, "docs/") {
+			t.Fatalf("doc element keyed outside docs/: %q (%s)", e.QualifiedName, e.FilePath)
+		}
 		if e.ElementType == "function" {
 			found[e.Name] = true
 		}

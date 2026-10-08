@@ -150,6 +150,13 @@ func RoleForRequestWithStore(st store.Backend, r *http.Request) (Role, error) {
 	return fromEnv().classify(st, r)
 }
 
+// GateEnabled reports whether any live token (env or DB-backed) is
+// configured, i.e. whether HTTP callers must authenticate. serve uses it to
+// warn when a listener leaves the loopback interface with the gate open.
+func GateEnabled(st store.Backend) (bool, error) {
+	return fromEnv().tokensConfigured(st)
+}
+
 // AllowedTool reports whether role may invoke the MCP tool named tool.
 // Reads (query/status) are open to any valid role; writes need Contributor+.
 func AllowedTool(role Role, tool string) bool {
