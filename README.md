@@ -218,7 +218,7 @@ Agents normally rebuild structure with grep → open files → huge context. Lea
 
 ## MCP prefer-order
 
-Discover with `query` — it routes down the ladder by default (L1 exact → L2 fuzzy → L3 semantic), degrades instead of erroring, and every answer carries `retrieval{rung,reason}` + `freshness`.
+Discover with `query` — it routes down the ladder by default (L1 exact → L2 keyword → L3 semantic; a natural-language question goes straight from an L1 miss to L3, which fuses keyword and vector ranks), degrades instead of erroring, and every answer carries `retrieval{rung,reason}` + `freshness`.
 
 | Question | How |
 | -------- | --- |
@@ -274,7 +274,7 @@ the server + CLI straight from source.
 
 | | |
 |---|---|
-| **Surface** | exactly 3 MCP tools — `import` / `query` / `status` (pinned by `internal/mcp/server_test.go`). `query` routes the ladder (L1 exact → L2 keyword/FTS → L3 semantic) and **degrades instead of erroring**, so every answer carries `retrieval{rung,reason}` + `freshness` |
+| **Surface** | exactly 3 MCP tools — `import` / `query` / `status` (pinned by `internal/mcp/server_test.go`). `query` routes the ladder (L1 exact → L2 keyword/FTS → L3 hybrid: vector + keyword ranks fused by RRF, which prose questions reach directly) and **degrades instead of erroring**, so every answer carries `retrieval{rung,reason}` + `freshness` |
 | **Storage** | SQLite (WAL, FTS5, float32-BLOB vectors, DB-resident watermark) by default; PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project and per-model HNSW — both behind `store.Backend` |
 | **Transports** | MCP stdio · MCP streamable HTTP (`--http`, `/mcp` + `/health`) · REST (`--rest`, `/health` + `/api/v1/*`) · ConnectRPC (`--rpc`) · embedded dashboard (`--ui`) |
 | **Indexing** | 40 language profiles (`internal/langs.Default`), AST tiers regex → ast-grep → tree-sitter (behind the `tstree` tag), 3-signal change detection, `writer` role with fsnotify reconcile |

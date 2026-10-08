@@ -1,6 +1,6 @@
 # LeanKG Task Tracker
 
-**Last synced:** 2026-10-07 — v4.13.7-hindsight-semantics: the compat mount now follows Hindsight's `tags_match` (untagged rows are global; filter before the page limit) and document upsert/delete (FR-ZCP-14 K8). Prior: 2026-10-03 — v4.13.6-sidecar-adopt: the MCP server is no longer reachable because of a query embedder — `StartSidecar` adopts a sidecar already serving its port (never duplicates one into a busy port, never kills one it did not start) and `serve` logs the degrade and binds instead of `log.Fatal`. Found by reproducing the xdev autostart command by hand; verified against the live store (L3 answers through the adopted sidecar). Prior: 2026-09-30 — #28 obsidian push path collision fixed (`.elems` layout).
+**Last synced:** 2026-10-08 — v4.14.0-retrieval-safety: 24 of 26 `RS-*` items DONE on `fix/v4.14-retrieval-safety` (RS-16 and RS-17 rejected on measurements) plus a calibrated low-confidence signal for L3; outcomes in [`plan-v4.14-retrieval-safety.md`](plan-v4.14-retrieval-safety.md) §7. Prior: 2026-10-07 — v4.13.7-hindsight-semantics: the compat mount now follows Hindsight's `tags_match` (untagged rows are global; filter before the page limit) and document upsert/delete (FR-ZCP-14 K8). Prior: 2026-10-03 — v4.13.6-sidecar-adopt: the MCP server is no longer reachable because of a query embedder — `StartSidecar` adopts a sidecar already serving its port (never duplicates one into a busy port, never kills one it did not start) and `serve` logs the degrade and binds instead of `log.Fatal`. Found by reproducing the xdev autostart command by hand; verified against the live store (L3 answers through the adopted sidecar). Prior: 2026-09-30 — #28 obsidian push path collision fixed (`.elems` layout).
 **Previous syncs:** v4.11.4 vector-reclaim (#411 `gc` orphan-vector reclaim); v4.11.3 doctor-truth (#409, closes #406 — index-freshness bookkeeping source, T0 MANIFEST/not_indexed on fleet + fan-out, inventory refresh on gc + writer); v4.11.2 waves one+two (S1 five gates green; 6 defects); v4.11.1 ship-surface; v4.11.0 loop anchored.
 **SoT pairing:** narrative + ACs live in [`docs/prd.md`](prd.md); statuses live here.
 **Status legend:** `IN_PROGRESS` (being worked now) · `TODO` (backlog, ordered) · `DONE` (implemented + verified) · `BLOCKED` (needs external input) · `WONT_DO` (explicitly cancelled).
@@ -56,6 +56,39 @@
 | FR-TYPE-02 | Judge abstraction (`internal/judge`: Server + Local backends, `FromEnv`, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`, keyword-first, confidence-gated) + `docs/judge-use-cases.md` (Laya deep-dive, cookbook patterns, 8 use cases) + interactive diagram `docs/diagrams/laya-judge.html` | 2026-09-21 | **DONE** — #434 (abstraction + convo path + use-case doc) + #435 (showcase-validated archify diagram, 9/9 checks, three guided views); tests `judge_test.go` + `TestClassifyWithJudge` green; UC-1/2/4/6/7 stay CANDIDATE pending measured gaps |
 | FR-GO-MEM | #369: full-markdown memory — MEMORY.md/USER.md bounded 2200B error-not-truncate, topics/, Claude-Code file commands + traversal rejection, Hermes substring sugar, FTS5 reindex-on-write, mnemopi banks adapter (wyhash64 port) | 2026-09-10 | **DONE** on feat/go-rewrite — 11 tests incl. exact snapshot-header pin, symlink escape, overflow, ambiguous match, cursor resume, zero-match filter; hindsight HTTP endpoints landed in internal/rest |
 
+
+## v4.14 — retrieval + safety fix wave (2026-10-08, branch `fix/v4.14-retrieval-safety`)
+
+Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](plan-v4.14-retrieval-safety.md). P0 ships first and independently; RS-10/11/14 ship together (one `leankg-embed full`).
+
+| ID | Phase | Title | Status |
+|----|-------|-------|--------|
+| RS-01 | P0 | Confine every path-taking argument (`import read`, `query compress`, `query lsp`, `import docs/prd/ontology`, dashboard) via `os.Root` | DONE |
+| RS-02 | P0 | Refuse non-project index roots; persist `index_root` tripwire; propagate request cancellation | DONE |
+| RS-03 | P0 | Loopback default for `--http`; warn on non-loopback + ungated MCP/REST | DONE |
+| RS-04 | P0 | Shape-aware token budget — never drop the primary payload or envelope keys; one cap per shape | DONE |
+| RS-05 | P1 | No ghost vectors: INNER JOIN on both backends + orphan sweep after index/embed runs | DONE |
+| RS-06 | P1 | `memory rename` honors top-level `new_path`; schema↔struct parity test | DONE |
+| RS-07 | P1 | Native REST retain reports written/skipped; absent cursor = no gate | DONE |
+| RS-08 | P1 | `import docs` anchors relative paths to the project | DONE |
+| RS-09 | P1 | Empty lists are `[]`, never `null` (shape test) | DONE |
+| RS-10 | P2 | Leading doc comments become part of element content | DONE |
+| RS-11 | P2 | Embedding document = kind + name + path + content; one builder for run/full/NDJSON; `ChunkerVersion` 3 | DONE |
+| RS-12 | P2 | SQLite hybrid L3 via `FuseRRF`; prose queries route to hybrid | DONE |
+| RS-13 | P2 | Identifier-split `terms` column in both FTS backends | DONE |
+| RS-14 | P2 | Fingerprint the served local model from llama-server `/props`; budget from `n_ctx` | DONE |
+| RS-15 | P2 | Query truncation; `query_embedder.reachable` in status; correct degrade guidance | DONE |
+| RS-16 | P2 | BGE query instruction prefix (eval-gated) | REJECTED — no gain on the fused rung (MRR 0.722 → 0.711) |
+| RS-17 | P2 | Long-element chunking (deferred, eval-gated) | REJECTED — three chunking variants each cut code-question MRR 0.07–0.13 |
+| RS-18 | P3 | One BM25 memory index (files + bank rows, `porter unicode61 remove_diacritics 2`) | DONE |
+| RS-19 | P3 | Dense memory recall fused by RRF (deferred) | DONE — dense arm fused by RRF above the calibrated noise floor; paraphrase recall 2/8 → 7/8 |
+| RS-20 | P3 | Retain cursors stored in the memory index (no full JSONL scans) | DONE |
+| RS-21 | P3 | MCP `query action=memory` view/snapshot | DONE |
+| RS-22 | P4 | Delete dead `ToolAliases` / `ResolveEnvelope` | DONE — aliases stay retired; refusal names the replacement |
+| RS-23 | P4 | Project-relative paths in errors and payloads | DONE |
+| RS-24 | P4 | Dashboard `/api/query` honors `params.limit` | DONE |
+| RS-25 | P4 | `status.embedding_coverage` | DONE |
+| RS-26 | P4 | Document that `memory create` overwrites | DONE |
 
 ## M10 — self-host dogfood loop (v4.11.0, the operating plan)
 
