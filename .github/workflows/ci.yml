@@ -13,10 +13,18 @@ on:
   pull_request:
     branches: [main]
 
+# Jobs run on the owner's self-hosted macOS runner (labels below). A public
+# repository must never run fork code on that machine, so pull requests from
+# forks fall back to a GitHub-hosted runner. The portfolio registry is pointed
+# at the job's temp dir: `leankg index` (TTFV gate) otherwise registers a
+# project in the runner account's real ~/.leankg/portfolio.db on every run.
+env:
+  LEANKG_PORTFOLIO_DB: ${{ github.workspace }}/../ci-portfolio.db
+
 jobs:
   go-engine:
     name: Go Engine (build + vet + test)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -66,7 +74,7 @@ jobs:
   # 17.8s total, 16.1s of it the build).
   ttfv:
     name: Cold TTFV Gate (Go, < 300s)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
