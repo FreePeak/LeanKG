@@ -13,9 +13,13 @@ on:
   pull_request:
     branches: [main]
 
-# Jobs run on the owner's self-hosted macOS runner (labels below). A public
-# repository must never run fork code on that machine, so pull requests from
-# forks fall back to a GitHub-hosted runner. The portfolio registry is pointed
+# Jobs run on the owner's self-hosted macOS runner (labels below). Pull
+# requests from forks default to a GitHub-hosted runner, but a fork controls
+# this file in its own PR and can name the runner's labels, so this expression
+# is not the protection: the repository requires maintainer approval for every
+# outside contributor's workflow run (Settings > Actions > Fork pull request
+# workflows). Read a fork PR's workflow diff before approving it. The
+# portfolio registry is pointed
 # at the job's temp dir: `leankg index` (TTFV gate) otherwise registers a
 # project in the runner account's real ~/.leankg/portfolio.db on every run.
 env:
