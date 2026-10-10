@@ -41,9 +41,10 @@ import (
 	"github.com/FreePeak/LeanKG/internal/rest"
 	restauto "github.com/FreePeak/LeanKG/internal/rest/auto"
 	"github.com/FreePeak/LeanKG/internal/rpc"
-	leankgv1connect "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1/leankgv1connect"
+	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/setupcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 	"github.com/FreePeak/LeanKG/internal/web"
 )
 
@@ -98,6 +99,8 @@ func main() {
 		cmdMetrics(os.Args[2:])
 	case "dashboard":
 		cmdDashboard(os.Args[2:])
+	case "telemetry":
+		cmdTelemetry(os.Args[2:])
 	case "auth":
 		cmdAuth(os.Args[2:])
 	case "tunnels":
@@ -191,9 +194,12 @@ Usage:
   leankg gc [DIR] [--project DIR] [--engine sqlite|postgres]
   leankg audit export [--project DIR] [--since T] [--until T] [--format jsonl] [--out FILE]
   leankg audit verify [--project DIR] [--since T] [--until T]
-  leankg metrics [--project DIR] [--since N|Nd] [--tool NAME] [--json|-j] [--session]
+  leankg metrics [--project DIR] [--since N|Nd] [--tool NAME] [--json|-j] [--session] [--session-id ID]
                  [--reset] [--cleanup] [--retention DAYS] [--seed]
-  leankg dashboard [--project DIR] [--since 24h|7d|30d|2w] [--format text|json]
+  leankg dashboard [--addr 127.0.0.1:9701] [--no-open] [--project DIR] [--since 24h|7d|30d|2w]
+                   [--allow-remote --token T] [--format text|json]
+  leankg telemetry status [--json] | enable [--bodies] [--sessions LIST|all] [--yes] | disable
+                   | purge (--before 30d | --all) | link [--older-than 2m] | import-ab DIR
   leankg auth register     [--project DIR] --email EMAIL --password PW --name NAME
   leankg auth token create [--project DIR] --name NAME [--role admin|contributor|viewer]
                            [--account-id ID] [--org-id ID] [--scopes a,b] [--ttl 24h]
@@ -328,6 +334,14 @@ afterSidecars:
 		}
 	}
 
+	// Process-wide capture sink (plan v4.15): a no-op unless the user granted
+	// consent in telemetry.yaml. Memory and lesson events and the REST and
+	// ConnectRPC call rows all go to it.
+	rec := telemetryRecorder()
+	defer closeTelemetry()
+	memory.SetRecorder(rec)
+	session.SetRecorder(rec)
+
 	var mem *memory.Memory
 	if *withMemory {
 		// K1: --memory-global moves the bank root out of every indexed
@@ -437,6 +451,7 @@ afterSidecars:
 		// router hook.
 		srv := leankgmcp.New(engine)
 		srv.SetProjectRouter(router)
+		srv.SetRecorder(rec) // plan v4.15 DS-04: capture tools/call and identity
 		log.Printf("leankg serve (stdio) project=%s engine=%s", dir, st.Engine())
 		if err := srv.RunStdio(ctx); err != nil {
 			log.Fatalf("stdio: %v", err)
@@ -456,11 +471,13 @@ afterSidecars:
 		mcpSrv := leankgmcp.New(engine)
 		mcpSrv.SetProjectRouter(router)
 		mcpSrv.SetAuthStore(st)
+		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
 		h := httpMux(mcpSrv.HTTPHandler())
 		h = routeByProject(ctx, router, h, func(p *projects.Project) http.Handler {
 			pSrv := leankgmcp.New(p.Engine)
 			pSrv.SetProjectRouter(router)
 			pSrv.SetAuthStore(st)
+			pSrv.SetRecorder(rec)
 			return httpMux(pSrv.HTTPHandler())
 		})
 		restauto.RegisterAutoConfig(h, engine)
@@ -477,6 +494,7 @@ afterSidecars:
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
 		restauto.RegisterAutoConfig(h, engine)
+		h = rest.Capture(h, rec, telemetry.TransportREST)
 		// /api/v1/auth/* is public by design: register/login/token are the
 		// bootstrap (the handlers enforce their own caller/account checks), and
 		// Rust registered them outside the auth middleware for the same reason.
@@ -489,8 +507,7 @@ afterSidecars:
 		go serveHTTP(ctx, root, *restAddr)
 	}
 	if *rpcAddr != "" {
-		svc := rpc.NewLeanKGService(engine)
-		path, handler := leankgv1connect.NewLeanKGHandler(svc)
+		path, handler := rpc.Handler(engine, rec)
 		mux := http.NewServeMux()
 		mux.Handle(path, handler)
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)

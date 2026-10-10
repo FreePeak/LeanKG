@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/bits"
@@ -26,6 +27,13 @@ type Entry struct {
 	Importance float64        `json:"importance"`
 	Cwd        string         `json:"cwd"`
 	Metadata   map[string]any `json:"metadata"`
+
+	// Score is the relative relevance of this row in the recall that
+	// returned it (higher is better). Recall sets it on the rows it returns:
+	// -bm25 for a lexical-only ranking, the reciprocal-rank-fusion sum when
+	// the dense arm contributed. Values compare only within one response.
+	// It is never persisted.
+	Score float64 `json:"-"`
 }
 
 // bankPath sanitizes the bank name and appends .jsonl, matching the Rust
@@ -200,6 +208,13 @@ type RetainResult struct {
 // (store.rs:92-108): a retained_through_user_turn at or below the session's
 // stored cursor skips the whole batch.
 func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int) (RetainResult, error) {
+	return m.SessionRetainCtx(context.Background(), scope, cwd, bank, sessionID, turns, throughUserTurn)
+}
+
+// SessionRetainCtx is SessionRetain with the caller's context, so the retain
+// event joins the transport call that made it (telemetry.WithIdentity).
+func (m *Memory) SessionRetainCtx(ctx context.Context, scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int) (RetainResult, error) {
+	start := time.Now()
 	if sessionID == "" {
 		return RetainResult{}, fmt.Errorf("memory: session_retain requires session_id")
 	}
@@ -214,6 +229,7 @@ func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns [
 		target = scope.WriteBank(BankName(m.scopeCwd(cwd)))
 	}
 	if seen, ok := m.sessionCursor(sessionID); ok && throughUserTurn <= seen {
+		recordRetain(ctx, target, 0, len(turns), 0, start)
 		return RetainResult{Bank: target, Skipped: len(turns), RetainedThroughUserTurn: seen}, nil
 	}
 	ms := time.Now().UnixMilli()
@@ -245,6 +261,7 @@ func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns [
 	if err := m.appendBank(target, entries); err != nil {
 		return RetainResult{}, err
 	}
+	recordRetain(ctx, target, len(entries), 0, 0, start)
 	return RetainResult{Bank: target, Written: len(entries), RetainedThroughUserTurn: throughUserTurn}, nil
 }
 
@@ -256,8 +273,14 @@ func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns [
 // in tagged mode; bank.rs:88-95). Returns the consulted banks plus the
 // ranked rows; limit <= 0 means 8 (the OMP recallLimit).
 func (m *Memory) SessionRecall(scope Scope, cwd, bank, query string, limit int) (banks []string, entries []Entry, err error) {
+	return m.SessionRecallCtx(context.Background(), scope, cwd, bank, query, limit)
+}
+
+// SessionRecallCtx is SessionRecall with the caller's context (see
+// SessionRetainCtx).
+func (m *Memory) SessionRecallCtx(ctx context.Context, scope Scope, cwd, bank, query string, limit int) (banks []string, entries []Entry, err error) {
 	banks = m.sessionReadBanks(scope, cwd, bank)
-	entries, err = m.RecallBanks(banks, query, limit)
+	entries, err = m.RecallBanksCtx(ctx, banks, query, limit)
 	return banks, entries, err
 }
 
@@ -301,7 +324,14 @@ func (m *Memory) sessionCursor(sessionID string) (int, bool) {
 // stored cursor, never a write (RS-07: the REST handler answered
 // `retained: N` for batches this gate had dropped).
 func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) (RetainResult, error) {
+	return m.RetainCtx(context.Background(), bank, entries, throughUserTurn)
+}
+
+// RetainCtx is Retain with the caller's context (see SessionRetainCtx).
+func (m *Memory) RetainCtx(ctx context.Context, bank string, entries []Entry, throughUserTurn int) (RetainResult, error) {
+	start := time.Now()
 	if cur := m.bankCursor(bank); throughUserTurn <= cur {
+		recordRetain(ctx, bank, 0, len(entries), 0, start)
 		return RetainResult{Bank: bank, Skipped: len(entries), RetainedThroughUserTurn: cur}, nil
 	}
 	for i := range entries {
@@ -314,6 +344,7 @@ func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) (Reta
 	if err := m.appendBank(bank, entries); err != nil {
 		return RetainResult{}, err
 	}
+	recordRetain(ctx, bank, len(entries), 0, 0, start)
 	return RetainResult{Bank: bank, Written: len(entries), RetainedThroughUserTurn: throughUserTurn}, nil
 }
 
@@ -324,8 +355,18 @@ func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) (Reta
 // cursor would silently drop every write after the first (a missing cursor
 // is 0, and 0 <= 0 short-circuits).
 func (m *Memory) RetainRaw(bank string, entries []Entry) error {
+	return m.RetainRawCtx(context.Background(), bank, entries)
+}
+
+// RetainRawCtx is RetainRaw with the caller's context (see SessionRetainCtx).
+func (m *Memory) RetainRawCtx(ctx context.Context, bank string, entries []Entry) error {
+	start := time.Now()
 	applyEntryDefaults(entries)
-	return m.appendBank(bank, entries)
+	if err := m.appendBank(bank, entries); err != nil {
+		return err
+	}
+	recordRetain(ctx, bank, len(entries), 0, 0, start)
+	return nil
 }
 
 // applyEntryDefaults fills ID/Source/Timestamp/Importance exactly as the
@@ -357,30 +398,58 @@ func applyEntryDefaults(entries []Entry) {
 // before entries are appended, under one lock so a concurrent retain never
 // lands between the drop and the append. An empty replaceDocs is RetainRaw.
 func (m *Memory) RetainReplacing(bank string, entries []Entry, replaceDocs []string) error {
+	_, err := m.RetainReplacingCtx(context.Background(), bank, entries, replaceDocs)
+	return err
+}
+
+// RetainReplacingCtx is RetainReplacing that also reports how many existing
+// rows the document upsert dropped (the replaced count). The count goes to
+// telemetry; the Hindsight retain response does not carry it.
+func (m *Memory) RetainReplacingCtx(ctx context.Context, bank string, entries []Entry, replaceDocs []string) (int, error) {
+	start := time.Now()
 	applyEntryDefaults(entries)
 	m.bankMu.Lock()
 	defer m.bankMu.Unlock()
+	replaced := 0
 	if len(replaceDocs) > 0 {
 		drop := make(map[string]bool, len(replaceDocs))
 		for _, d := range replaceDocs {
 			drop[d] = true
 		}
-		if _, err := m.rewriteBankLocked(bank, func(e Entry) bool { return drop[entryDocumentID(e)] }); err != nil {
-			return err
+		n, err := m.rewriteBankLocked(bank, func(e Entry) bool { return drop[entryDocumentID(e)] })
+		if err != nil {
+			return 0, err
 		}
+		replaced = n
 	}
-	return m.appendBankLocked(bank, entries)
+	if err := m.appendBankLocked(bank, entries); err != nil {
+		return replaced, err
+	}
+	recordRetain(ctx, bank, len(entries), 0, replaced, start)
+	return replaced, nil
 }
 
 // DeleteDocument removes every row of one document from a bank and reports
 // how many rows went. A missing bank or unknown document deletes nothing.
 func (m *Memory) DeleteDocument(bank, documentID string) (int, error) {
+	return m.DeleteDocumentCtx(context.Background(), bank, documentID)
+}
+
+// DeleteDocumentCtx is DeleteDocument with the caller's context (see
+// SessionRetainCtx).
+func (m *Memory) DeleteDocumentCtx(ctx context.Context, bank, documentID string) (int, error) {
 	if strings.TrimSpace(documentID) == "" {
 		return 0, nil
 	}
+	start := time.Now()
 	m.bankMu.Lock()
 	defer m.bankMu.Unlock()
-	return m.rewriteBankLocked(bank, func(e Entry) bool { return entryDocumentID(e) == documentID })
+	n, err := m.rewriteBankLocked(bank, func(e Entry) bool { return entryDocumentID(e) == documentID })
+	if err != nil {
+		return 0, err
+	}
+	recordDelete(ctx, bank, n, start)
+	return n, nil
 }
 
 // entryDocumentID reads the client document id RetainRaw stored in metadata.
@@ -470,7 +539,12 @@ func (m *Memory) bankCursor(bank string) int {
 // bank. Zero-match entries never surface. limit <= 0 means 8 (OMP recall
 // limit).
 func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
-	return m.RecallBanks([]string{bank}, query, limit)
+	return m.RecallBanksCtx(context.Background(), []string{bank}, query, limit)
+}
+
+// RecallCtx is Recall with the caller's context (see SessionRetainCtx).
+func (m *Memory) RecallCtx(ctx context.Context, bank, query string, limit int) ([]Entry, error) {
+	return m.RecallBanksCtx(ctx, []string{bank}, query, limit)
 }
 
 // RecallBanks merges ranked recall across banks in order (Rust
@@ -479,20 +553,38 @@ func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
 // set is ranked score-descending (stable — bank order breaks ties, matching
 // the reference's append-then-sort). Missing banks read as empty.
 func (m *Memory) RecallBanks(banks []string, query string, limit int) ([]Entry, error) {
-	return m.RecallFiltered(banks, query, limit, nil)
+	return m.RecallBanksCtx(context.Background(), banks, query, limit)
+}
+
+// RecallBanksCtx is RecallBanks with the caller's context (see
+// SessionRetainCtx).
+func (m *Memory) RecallBanksCtx(ctx context.Context, banks []string, query string, limit int) ([]Entry, error) {
+	return m.RecallFilteredCtx(ctx, banks, query, limit, nil)
 }
 
 // RecallFiltered is RecallBanks with an eligibility filter applied BEFORE
 // ranking and the limit, so a scope filter (hindsight tags) narrows the
 // candidate set instead of an already-truncated page. A nil keep admits all.
 func (m *Memory) RecallFiltered(banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
+	return m.RecallFilteredCtx(context.Background(), banks, query, limit, keep)
+}
+
+// RecallFilteredCtx is RecallFiltered with the caller's context: every recall
+// ends here, so this is the one place a recall event is recorded.
+func (m *Memory) RecallFilteredCtx(ctx context.Context, banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 8
 	}
+	start := time.Now()
 	// RS-18: bm25 over the index (porter stemming, accent folding, stopwords
 	// dropped from the query) instead of raw unique-token overlap over a full
 	// JSONL scan, where a row of stopwords outranked real content.
-	return m.recallIndexed(banks, query, limit, keep)
+	rows, denseIDs, err := m.recallIndexed(banks, query, limit, keep)
+	if err != nil {
+		return nil, err
+	}
+	recordRecall(ctx, banks, query, limit, rows, denseIDs, start)
+	return rows, nil
 }
 
 // recentBanks returns the newest limit rows across the given banks — the
@@ -541,6 +633,13 @@ func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
 // (never a truncated half-memory). An empty result returns "" so callers
 // skip the block entirely.
 func InjectBlock(entries []Entry, limit, tokenBudget int) string {
+	text, _ := injectRows(entries, limit, tokenBudget)
+	return text
+}
+
+// injectRows is InjectBlock that also reports how many leading entries the
+// block carries (the rows telemetry counts as injected).
+func injectRows(entries []Entry, limit, tokenBudget int) (string, int) {
 	if limit <= 0 {
 		limit = 8 // OMP recallLimit
 	}
@@ -566,16 +665,17 @@ func InjectBlock(entries []Entry, limit, tokenBudget int) string {
 		n++
 	}
 	if n == 0 {
-		return ""
+		return "", 0
 	}
 	b.WriteString("</memories>")
-	return b.String()
+	return b.String(), n
 }
 
 // RankedMemory is one row of the OMP recall/injection contract
 // {id, content, source, timestamp, score} (Rust handler.rs:3031-3041).
-// Score is the reference's constant 0.0 — the rank is carried by the list
-// order and OMP does not consume the value.
+// Score is the row's relative relevance in its recall (see Entry.Score):
+// non-increasing down the list, meaningful only within one response. The
+// list order is the authoritative rank; OMP does not consume the value.
 type RankedMemory struct {
 	ID        string  `json:"id"`
 	Content   string  `json:"content"`
@@ -588,7 +688,7 @@ type RankedMemory struct {
 func RankEntries(entries []Entry) []RankedMemory {
 	out := make([]RankedMemory, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, RankedMemory{ID: e.ID, Content: e.Content, Source: e.Source, Timestamp: e.Timestamp})
+		out = append(out, RankedMemory{ID: e.ID, Content: e.Content, Source: e.Source, Timestamp: e.Timestamp, Score: e.Score})
 	}
 	return out
 }

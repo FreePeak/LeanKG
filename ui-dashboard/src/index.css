@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * Tokens. Light values are the default; dark values apply under the
+ * prefers-color-scheme media query only (the dashboard has no toggle).
+ * Categorical series slots come from the validated reference palette
+ * (ui-dashboard/docs palette = skill references/palette.md): --viz-1..8.
+ * Status colors are fixed and never reused as series colors.
+ */
+:root {
+  color-scheme: light;
+  --background: #fafaf9;
+  --surface: #ffffff;
+  --surface-muted: #f3f2ef;
+  --foreground: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #75736d;
+  --border: #e4e3df;
+  --ring: #2a78d6;
+  --accent: #2a78d6;
+  --accent-foreground: #ffffff;
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-7: #6250d6;
+  --viz-8: #e34948;
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --destructive: #d03b3b;
+  --destructive-foreground: #ffffff;
+  --radius: 0.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --background: #141413;
+    --surface: #1a1a19;
+    --surface-muted: #222220;
+    --foreground: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #9b9a92;
+    --border: #33332f;
+    --ring: #3987e5;
+    --accent: #3987e5;
+    --accent-foreground: #0b0b0b;
+    --viz-1: #3987e5;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
+    --viz-4: #c98500;
+    --viz-5: #d55181;
+    --viz-6: #008300;
+    --viz-7: #9085e9;
+    --viz-8: #e66767;
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-serious: #ec835a;
+    --status-critical: #d03b3b;
+    --destructive: #e66767;
+    --destructive-foreground: #0b0b0b;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-foreground: var(--foreground);
+  --color-secondary-foreground: var(--text-secondary);
+  --color-muted-foreground: var(--text-muted);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-viz-1: var(--viz-1);
+  --color-viz-2: var(--viz-2);
+  --color-viz-3: var(--viz-3);
+  --color-viz-4: var(--viz-4);
+  --color-viz-5: var(--viz-5);
+  --color-viz-6: var(--viz-6);
+  --color-viz-7: var(--viz-7);
+  --color-viz-8: var(--viz-8);
+  --color-status-good: var(--status-good);
+  --color-status-warning: var(--status-warning);
+  --color-status-serious: var(--status-serious);
+  --color-status-critical: var(--status-critical);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    margin: 0;
+    min-height: 100vh;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}

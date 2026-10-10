@@ -368,9 +368,9 @@ func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[strin
 		}
 		return map[string]any{"indexed": indexed, "status": status}, nil
 	case "memory":
-		return e.memoryWrite(req)
+		return e.memoryWrite(ctx, req)
 	case "session":
-		return e.sessionWrite(req)
+		return e.sessionWrite(ctx, req)
 	case "read":
 		return e.compressRead(req)
 	case "ontology":
@@ -609,7 +609,7 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "memory":
 		switch cmd := argStr(req.Args, "command"); cmd {
 		case "session_recall", "memories":
-			return e.SessionMemoryRead(cmd, req.Query, req.Limit, req.Args)
+			return e.SessionMemoryReadCtx(ctx, cmd, req.Query, req.Limit, req.Args)
 		case "view":
 			// RS-21: read one memory file by path (was ConnectRPC-only).
 			path := argStr(req.Args, "path")
@@ -987,7 +987,9 @@ func (e *Engine) annotateConfidence(resp map[string]any, stamp store.ModelStamp,
 
 // --- memory actions (ride the 3-tool surface; #369) ---
 
-func (e *Engine) memoryWrite(req ImportRequest) (map[string]any, error) {
+// ctx carries the caller identity (telemetry.WithIdentity) into memory
+// events (DS-09).
+func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest) (map[string]any, error) {
 	if e.mem == nil {
 		return nil, fmt.Errorf("memory not initialized")
 	}
@@ -1016,7 +1018,7 @@ func (e *Engine) memoryWrite(req ImportRequest) (map[string]any, error) {
 		if cwd == "" {
 			cwd = e.projectDir
 		}
-		res, serr := e.mem.SessionRetain(scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"))
+		res, serr := e.mem.SessionRetainCtx(ctx, scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"))
 		if serr != nil {
 			return nil, serr
 		}
@@ -1317,7 +1319,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 // sessionWrite/read wire internal/session into the 3-tool surface: bulky tool
 // payloads are offloaded to .leankg/sessions/<id>/refs/<node>.md and restored
 // bit-for-bit by session_recall (Rust session/mod.rs parity).
-func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
+func (e *Engine) sessionWrite(ctx context.Context, req ImportRequest) (map[string]any, error) {
 	if e.projectDir == "" {
 		return nil, fmt.Errorf("session offload requires a project directory")
 	}
@@ -1335,7 +1337,7 @@ func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
 		}
 		return map[string]any{"offloaded": e.relRef(ref)}, nil
 	case "lesson":
-		deduped, err := s.AddLesson(get("session_id"), get("text"))
+		deduped, err := s.AddLessonCtx(ctx, get("session_id"), get("text"))
 		if err != nil {
 			return nil, err
 		}
@@ -1685,6 +1687,12 @@ func (e *Engine) compressRun(req QueryRequest) (map[string]any, error) {
 // memories (the <memories> first-turn injection text). args: scope, cwd
 // (default the project dir), bank (bank-name mode override).
 func (e *Engine) SessionMemoryRead(command, query string, limit int, args map[string]any) (map[string]any, error) {
+	return e.SessionMemoryReadCtx(context.Background(), command, query, limit, args)
+}
+
+// SessionMemoryReadCtx is SessionMemoryRead with the caller ctx, so recall
+// events carry the caller identity (DS-09).
+func (e *Engine) SessionMemoryReadCtx(ctx context.Context, command, query string, limit int, args map[string]any) (map[string]any, error) {
 	if e.mem == nil {
 		return nil, fmt.Errorf("memory not initialized")
 	}
@@ -1698,13 +1706,13 @@ func (e *Engine) SessionMemoryRead(command, query string, limit int, args map[st
 	}
 	switch command {
 	case "session_recall":
-		banks, entries, err := e.mem.SessionRecall(scope, cwd, argStr(args, "bank"), query, limit)
+		banks, entries, err := e.mem.SessionRecallCtx(ctx, scope, cwd, argStr(args, "bank"), query, limit)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"command": "session_recall", "banks": banks, "count": len(entries), "memories": memory.RankEntries(entries)}, nil
 	case "memories":
-		text, entries, err := e.mem.FirstTurnMemories(scope, cwd, argStr(args, "bank"), query)
+		text, entries, err := e.mem.FirstTurnMemoriesCtx(ctx, scope, cwd, argStr(args, "bank"), query)
 		if err != nil {
 			return nil, err
 		}

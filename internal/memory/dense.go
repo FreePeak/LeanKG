@@ -162,6 +162,7 @@ func (m *Memory) denseCandidates(v Vectorizer, banks []string, query string) []E
 	entries := make([]Entry, len(out))
 	for i, s := range out {
 		entries[i] = s.e
+		entries[i].Score = s.sim // cosine; fuseRRF replaces it with the fused score
 	}
 	return entries
 }
@@ -185,6 +186,7 @@ func fuseRRF(lists ...[]Entry) []Entry {
 	out := make([]Entry, len(order))
 	for i, id := range order {
 		out[i] = first[id]
+		out[i].Score = score[id]
 	}
 	return out
 }

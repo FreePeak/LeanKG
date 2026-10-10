@@ -1,6 +1,10 @@
 package memory
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"time"
+)
 
 // Scoping matrix ported from the Rust src/memory/bank.rs:60-96
 // (computeMnemopiBankScope): which bank a write targets and which banks a
@@ -89,6 +93,13 @@ const (
 // tokens (bytes/4, the package-wide estimator). Empty recall renders ""
 // (callers skip an empty block, as mnemopi does).
 func (m *Memory) FirstTurnMemories(scope Scope, cwd, bank, query string) (string, []Entry, error) {
+	return m.FirstTurnMemoriesCtx(context.Background(), scope, cwd, bank, query)
+}
+
+// FirstTurnMemoriesCtx is FirstTurnMemories with the caller's context. It
+// records an inject event for the rows the block carries (see recordInject).
+func (m *Memory) FirstTurnMemoriesCtx(ctx context.Context, scope Scope, cwd, bank, query string) (string, []Entry, error) {
+	start := time.Now()
 	var banks []string
 	var entries []Entry
 	var err error
@@ -96,10 +107,12 @@ func (m *Memory) FirstTurnMemories(scope Scope, cwd, bank, query string) (string
 		banks = m.sessionReadBanks(scope, cwd, bank)
 		entries, err = m.recentBanks(banks, RecallLimit)
 	} else {
-		banks, entries, err = m.SessionRecall(scope, cwd, bank, query, RecallLimit)
+		banks, entries, err = m.SessionRecallCtx(ctx, scope, cwd, bank, query, RecallLimit)
 	}
 	if err != nil {
 		return "", nil, err
 	}
-	return InjectBlock(entries, RecallLimit, InjectionTokenLimit), entries, nil
+	text, n := injectRows(entries, RecallLimit, InjectionTokenLimit)
+	recordInject(ctx, banks, entries[:n], text, start)
+	return text, entries, nil
 }

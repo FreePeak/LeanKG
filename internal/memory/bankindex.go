@@ -200,11 +200,13 @@ func (m *Memory) cursor(kind, key string) (int, bool) {
 // recallIndexed ranks bank rows by bm25 over the requested banks. Rows are
 // deduped by id in score order (a tie keeps bank order), filtered by keep
 // BEFORE the limit (the hindsight tag filter contract), and only rows that
-// match at least one query term surface.
-func (m *Memory) recallIndexed(banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
+// match at least one query term surface. Each returned row carries its
+// relative Score (Entry.Score). denseIDs names the rows the dense arm ranked
+// (nil when it did not contribute).
+func (m *Memory) recallIndexed(banks []string, query string, limit int, keep func(Entry) bool) (out []Entry, denseIDs map[string]bool, err error) {
 	match := matchQuery(query)
 	if match == "" || len(banks) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	order := make(map[string]int, len(banks))
 	args := []any{match}
@@ -220,7 +222,7 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 	rows, err := m.fts.Query(`SELECT bank, entry_id, doc, bm25(memory_fts) FROM memory_fts
 		WHERE memory_fts MATCH ? AND kind = 'bank' AND bank IN (`+strings.Join(marks, ",")+`)`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("memory: recall: %w", err)
+		return nil, nil, fmt.Errorf("memory: recall: %w", err)
 	}
 	defer rows.Close()
 	type hit struct {
@@ -233,7 +235,7 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 		var bank, id, doc string
 		var score float64
 		if err := rows.Scan(&bank, &id, &doc, &score); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var e Entry
 		if json.Unmarshal([]byte(doc), &e) != nil {
@@ -242,7 +244,7 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 		hits = append(hits, hit{e: e, score: score, bank: order[bank]})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].score != hits[j].score {
@@ -257,15 +259,20 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 			continue
 		}
 		seen[h.e.ID] = true
-		lexical = append(lexical, h.e)
+		e := h.e
+		e.Score = -h.score // bm25 is more negative for better matches
+		lexical = append(lexical, e)
 	}
 	ranked := lexical
 	if v := m.vectorizer(); v != nil {
 		if dense := m.denseCandidates(v, banks, query); len(dense) > 0 {
+			denseIDs = make(map[string]bool, len(dense))
+			for _, d := range dense {
+				denseIDs[d.ID] = true
+			}
 			ranked = fuseRRF(lexical, dense)
 		}
 	}
-	var out []Entry
 	for _, e := range ranked {
 		if keep != nil && !keep(e) {
 			continue
@@ -275,5 +282,5 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 			break
 		}
 	}
-	return out, nil
+	return out, denseIDs, nil
 }

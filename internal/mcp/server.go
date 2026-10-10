@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
@@ -18,6 +20,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/store"
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -36,6 +39,13 @@ type Server struct {
 	router    ProjectRouter
 	srv       *mcp.Server
 	authStore store.Backend // token store for HTTP callers; nil = env tokens only
+
+	// Capture (plan v4.15 DS-04/DS-05). rec defaults to telemetry.Nop; stdio
+	// is the identity of the one stdio session, guarded by stdioMu.
+	rec             telemetry.Recorder
+	stdioMu         sync.Mutex
+	stdio           telemetry.Identity
+	sessionByClient map[string]string
 }
 
 // SetAuthStore makes the HTTP handler honor DB-minted tokens (`leankg auth
@@ -88,13 +98,15 @@ const toolGuidance = "Agent protocol: query before bash/grep; project= only on m
 
 // New builds the MCP server with the 3-tool registry.
 func New(engine *core.Engine) *Server {
-	s := &Server{engine: engine}
+	s := &Server{engine: engine, rec: telemetry.Nop{}}
+	s.initStdioIdentity(os.Getenv)
 	s.srv = mcp.NewServer(&mcp.Implementation{
 		Name: "leankg", Version: version,
 		Description: "LeanKG code knowledge graph (3 tools: import/query/status): query for code discovery and memory recall; import for indexing and session_retain.",
 	}, &mcp.ServerOptions{Instructions: serverInstructions})
 	s.registerTools()
-	s.srv.AddReceivingMiddleware(resolveToolNames)
+	// capture stays outermost: it sees name-resolution failures (DS-04).
+	s.srv.AddReceivingMiddleware(s.capture, resolveToolNames)
 	return s
 }
 
@@ -146,7 +158,11 @@ func (s *Server) HTTPHandler() http.Handler {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		inner.ServeHTTP(w, r.WithContext(withRole(r.Context(), role)))
+		ctx := withRole(r.Context(), role)
+		if s.recorder().Level() != telemetry.Off {
+			ctx = telemetry.WithIdentity(ctx, identityFromHeaders(r), telemetry.TransportHTTP)
+		}
+		inner.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -245,11 +261,18 @@ func (s *Server) registerTools() {
 	}, s.handleStatus)
 }
 
+// metricEval is the per-call token accounting finishCall derives once and
+// shares with the context_metrics row and the capture scratch.
+type metricEval struct {
+	baseline, saved, postTokens int64
+}
+
 // recordMetric persists one context_metrics row per served tool call (Rust
 // mcp/handler.rs records the same fields at the end of its tool dispatch).
-// Best-effort by contract: a ledger write failure must never fail the call
-// (Rust logged and returned the tool result anyway).
-func (s *Server) recordMetric(eng *core.Engine, req *mcp.CallToolRequest, started time.Time, out any, err error) {
+// post is the delivered (post-budget) output, so OutputTokens and the
+// elements count match what the client received (plan DS-07). Best-effort by
+// contract: a ledger write failure must never fail the call.
+func (s *Server) recordMetric(eng *core.Engine, req *mcp.CallToolRequest, started time.Time, post any, err error, ev metricEval) {
 	if eng == nil || req == nil {
 		return
 	}
@@ -261,12 +284,15 @@ func (s *Server) recordMetric(eng *core.Engine, req *mcp.CallToolRequest, starte
 		InputTokens:     int64(len(args) / 4),
 		ExecutionTimeMs: time.Since(started).Milliseconds(),
 		Success:         err == nil,
+		BaselineTokens:  ev.baseline,
+		TokensSaved:     ev.saved,
+	}
+	if ev.baseline > 0 {
+		m.SavingsPercent = float64(ev.saved) * 100 / float64(ev.baseline)
 	}
 	if err == nil {
-		if raw, merr := json.Marshal(out); merr == nil {
-			m.OutputTokens = int64(len(raw) / 4)
-		}
-		m.OutputElements = int64(countResponseElements(out))
+		m.OutputTokens = ev.postTokens
+		m.OutputElements = int64(countResponseElements(post))
 	}
 	m.QueryPattern, m.QueryFile, m.QueryDepth = metricQueryArgs(args)
 	if rerr := eng.Store().RecordMetric(m); rerr != nil {
@@ -325,6 +351,13 @@ func metricQueryArgs(raw json.RawMessage) (pattern, file string, depth int64) {
 // budget.Apply attaches the `_token_budget` marker to map[string]any payloads;
 // typed engine payloads are round-tripped through JSON to keep the marker.
 func enforceBudget(v any, action string) any {
+	res, _ := enforceBudgetStats(v, action)
+	return res
+}
+
+// enforceBudgetStats is enforceBudget that also returns the trim statistics
+// (pre-truncation size, delivered size) the capture layer records (DS-07).
+func enforceBudgetStats(v any, action string) (any, budget.Stats) {
 	key := action
 	if key == "" {
 		// The ladder router answers search hits (L1/L2/L3), so it carries the
@@ -332,20 +365,16 @@ func enforceBudget(v any, action string) any {
 		// grow without bound while the same hits pinned to semantic were cut.
 		key = "search"
 	}
-	res := any(v)
 	if m, ok := v.(map[string]any); ok {
-		res, _ = budget.TokenBudget{}.Apply(m, key)
-		return res
+		return budget.TokenBudget{}.Apply(m, key)
 	}
 	if raw, err := json.Marshal(v); err == nil {
 		var round map[string]any
 		if json.Unmarshal(raw, &round) == nil {
-			res, _ = budget.TokenBudget{}.Apply(round, key)
-			return res
+			return budget.TokenBudget{}.Apply(round, key)
 		}
 	}
-	res, _ = budget.TokenBudget{}.Apply(v, key)
-	return res
+	return budget.TokenBudget{}.Apply(v, key)
 }
 
 func (s *Server) handleImport(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -362,11 +391,12 @@ func (s *Server) handleImport(ctx context.Context, req *mcp.CallToolRequest) (*m
 		return nil, err
 	}
 	out, err := eng.Import(ctx, in)
-	s.recordMetric(eng, req, started, out, err)
 	if err != nil {
+		s.finishCall(ctx, eng, req, started, in.Action, out, nil, budget.Stats{}, err)
 		return nil, err
 	}
-	res := enforceBudget(out, in.Action)
+	res, st := enforceBudgetStats(out, in.Action)
+	s.finishCall(ctx, eng, req, started, in.Action, out, res, st, nil)
 	return textResult(res)
 }
 
@@ -381,11 +411,12 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 		return nil, err
 	}
 	out, err := eng.Query(ctx, in)
-	s.recordMetric(eng, req, started, out, err)
 	if err != nil {
+		s.finishCall(ctx, eng, req, started, in.Action, out, nil, budget.Stats{}, err)
 		return nil, err
 	}
-	res := enforceBudget(out, in.Action)
+	res, st := enforceBudgetStats(out, in.Action)
+	s.finishCall(ctx, eng, req, started, in.Action, out, res, st, nil)
 	return textResult(res)
 }
 
@@ -396,10 +427,11 @@ func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest) (*m
 		return nil, err
 	}
 	out, err := eng.Status(ctx)
-	s.recordMetric(eng, req, started, out, err)
 	if err != nil {
+		s.finishCall(ctx, eng, req, started, "", out, nil, budget.Stats{}, err)
 		return nil, err
 	}
+	s.finishCall(ctx, eng, req, started, "", out, out, budget.Stats{}, nil)
 	return textResult(out)
 }
 
