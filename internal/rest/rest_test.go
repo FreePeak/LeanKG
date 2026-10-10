@@ -2,7 +2,9 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -368,5 +370,43 @@ func TestNativeRetainAcknowledgesWhatItWrote(t *testing.T) {
 	}
 	if recall("lions") != 0 {
 		t.Fatal("skipped batch was written")
+	}
+}
+
+// TestInjectWithoutBankUsesTheServerDefault is the route the reference hook
+// (examples/hooks/leankg-memory) depends on. The bank name embeds a hash of
+// the cwd, so an external caller cannot know it; guessing one reads the wrong
+// bank silently, which is why the hook used to return nothing at all.
+func TestInjectWithoutBankUsesTheServerDefault(t *testing.T) {
+	e, mem := newEngine(t)
+	srv := httptest.NewServer(Handler(e, mem))
+	defer srv.Close()
+
+	// A row in the bank the scope selects by default.
+	if _, err := mem.SessionRetainCtx(context.Background(), memory.ScopePerProject, "", "",
+		"hook-1", []string{"a row an external hook must see"}, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/api/v1/memory/inject", "/api/v1/memory/inject?query=hook"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, resp.StatusCode, body)
+		}
+		var out struct {
+			Count int    `json:"count"`
+			Text  string `json:"text"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		if out.Count == 0 || !strings.Contains(out.Text, "an external hook must see") {
+			t.Fatalf("GET %s: count=%d text=%q — the bank-less route must read the default bank", path, out.Count, out.Text)
+		}
 	}
 }

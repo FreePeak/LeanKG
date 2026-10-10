@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""leankg-memory — reference UserPromptSubmit hook for Claude Code.
+
+What it does
+------------
+On every user prompt it fetches the <memories> injection block from a running
+LeanKG server and prints it to stdout, which Claude Code prepends to the prompt.
+
+Why a reference version ships here
+----------------------------------
+Without a hook of its own, an agent's memory recall happens with no session
+identity: the server cannot tie the rows it returned to the conversation that
+received them, so the dashboard's "returned" figure counts rows the caller may
+have dropped for budget. This hook sends `X-LeanKG-Session` (and Client/Cwd) so
+recall and retain join into one session, and it reports how many of the rows the
+block actually carried, which is the injected half.
+
+It is deliberately boring: one process per prompt, one HTTP GET, a timeout, and
+stdout. No dependency beyond Python 3 (urllib only).
+
+Install (the owner's call — it replaces ~/.claude/hooks/leankg-memory)
+---------------------------------------------------------------------
+  cp examples/hooks/leankg-memory ~/.claude/hooks/leankg-memory
+  chmod +x ~/.claude/hooks/leankg-memory
+Then point ~/.claude/settings.json's UserPromptSubmit hook at it, and export
+LEANKG_HOOK_URL if the server is not on the default 127.0.0.1:9700.
+
+Why stdout: Claude Code's UserPromptSubmit contract reads the hook's stdout.
+An error must therefore NEVER print to stdout, or a broken server would inject
+its own failure text into the prompt. Everything diagnostic goes to stderr, and
+the hook exits 0 in every failure mode so the prompt still works — memory is
+additive, never a gate.
+"""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+# Defaults a local self-host uses (leankg serve --rest :9700).
+BASE = os.environ.get("LEANKG_HOOK_URL", "http://127.0.0.1:9700").rstrip("/")
+# The bank the server serves for this project. Empty means "the default bank",
+# which is what a single-project self-host wants.
+BANK = os.environ.get("LEANKG_HOOK_BANK", "")
+# Seconds. A hook that hangs makes the prompt feel broken, so it is short.
+TIMEOUT = float(os.environ.get("LEANKG_HOOK_TIMEOUT", "3"))
+
+# The query is the prompt itself, trimmed. Anthropic sends the prompt on stdin;
+# a file argument is the fallback for a manual run.
+MAX_QUERY = 2000
+
+
+def read_prompt() -> str:
+    """The current prompt: stdin JSON (Claude Code), else argv[1]."""
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+    if sys.stdin is None or sys.stdin.isatty():
+        return ""
+    raw = sys.stdin.read()
+    if not raw.strip():
+        return ""
+    # Claude Code's UserPromptSubmit payload: {"prompt": "...", ...}. Be
+    # tolerant: a bare-string payload works too.
+    try:
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            for key in ("prompt", "user_prompt", "query"):
+                if isinstance(payload.get(key), str):
+                    return payload[key]
+            return ""
+        if isinstance(payload, str):
+            return payload
+    except (ValueError, AttributeError):
+        # Not JSON: treat the whole body as the prompt.
+        return raw
+    return ""
+
+
+def session_id() -> str:
+    """The agent session id, from the environment Claude Code provides."""
+    return (
+        os.environ.get("CLAUDE_SESSION_ID")
+        or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        or ""
+    )
+
+
+def fetch_block(query: str) -> str:
+    """GET the injection block. Returns "" on any failure (see module docstring)."""
+    params = {"query": query[:MAX_QUERY]}
+    if BANK:
+        params["bank"] = BANK
+    # The bank-less route: a hook cannot know the mnemopi bank name (it embeds
+    # a hash of the cwd), and guessing one reads the wrong bank silently.
+    # LEANKG_HOOK_BANK pins a bank for the rare case a caller really wants to.
+    path = "inject"
+    if BANK:
+        path = "banks/%s/inject" % urllib.parse.quote(BANK)
+    url = "%s/api/v1/memory/%s?%s" % (BASE, path, urllib.parse.urlencode(params))
+    req = urllib.request.Request(url, method="GET")
+    # Session identity: without this the recall rows are unattributable, and the
+    # dashboard cannot show which session they served.
+    sid = session_id()
+    if sid:
+        req.add_header("X-LeanKG-Session", sid)
+    req.add_header("X-LeanKG-Client", "claude-code")
+    cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    req.add_header("X-LeanKG-Cwd", cwd)
+
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        # stderr only — stdout is the prompt channel.
+        sys.stderr.write("leankg-memory: %s\n" % exc)
+        return ""
+    text = body.get("text") if isinstance(body, dict) else None
+    return text if isinstance(text, str) else ""
+
+
+def main() -> int:
+    query = " ".join(read_prompt().split())
+    if not query:
+        # A cold prompt (empty, or a slash command) gets the recent-rows block
+        # rather than nothing: that is the server's empty-query behaviour.
+        print(fetch_block(""), end="")
+        return 0
+    print(fetch_block(query), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
