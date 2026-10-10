@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -239,5 +240,68 @@ func TestMemorySearchTakesTheTermFromQueryOrArgs(t *testing.T) {
 		if hits, _ := out["hits"].([]memory.Hit); len(hits) == 0 {
 			t.Fatalf("%s: no hits for a term that exists", name)
 		}
+	}
+}
+
+// TestSessionRetainTagsThroughTheTool pins K2 at the tool boundary: the tag an
+// agent sends on session_retain must reach the row. The tool used to accept
+// tags nowhere in its schema and drop any tag a caller found anyway, so a
+// tag-scoped recall could never match conversation-retained memory.
+func TestSessionRetainTagsThroughTheTool(t *testing.T) {
+	e, mem := newEngine(t)
+	out, err := e.Import(context.Background(), ImportRequest{
+		Action:  "memory",
+		Command: "session_retain",
+		Args: map[string]any{
+			"session_id": "k2",
+			"turns":      []any{"a tagged turn"},
+			"tags":       []any{"project:leankg"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("session_retain: %v", err)
+	}
+	if ok, _ := out["ok"].(bool); !ok {
+		t.Fatalf("not ok: %#v", out)
+	}
+	var row memory.Entry
+	data, err := os.ReadFile(filepath.Join(mem.Root(), "banks", out["bank"].(string)+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)[0]), &row); err != nil {
+		t.Fatal(err)
+	}
+	if tags, _ := row.Metadata["tags"].([]any); len(tags) != 1 || tags[0] != "project:leankg" {
+		t.Fatalf("tags = %#v, want [project:leankg] on the row", row.Metadata["tags"])
+	}
+}
+
+// TestSessionRetainTagsAsCommaString accepts the other shape an agent sends:
+// one comma-separated field instead of a list.
+func TestSessionRetainTagsAsCommaString(t *testing.T) {
+	e, mem := newEngine(t)
+	out, err := e.Import(context.Background(), ImportRequest{
+		Action:  "memory",
+		Command: "session_retain",
+		Args: map[string]any{
+			"session_id": "k2b",
+			"turns":      []any{"a tagged turn"},
+			"tags":       "project:leankg, scope:local",
+		},
+	})
+	if err != nil {
+		t.Fatalf("session_retain: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(mem.Root(), "banks", out["bank"].(string)+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row memory.Entry
+	if err := json.Unmarshal([]byte(strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)[0]), &row); err != nil {
+		t.Fatal(err)
+	}
+	if tags, _ := row.Metadata["tags"].([]any); len(tags) != 2 || tags[0] != "project:leankg" || tags[1] != "scope:local" {
+		t.Fatalf("tags = %#v, want both tags split out of the string", row.Metadata["tags"])
 	}
 }

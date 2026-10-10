@@ -248,6 +248,47 @@ type ImportRequest struct {
 	NodeID    string         `json:"node_id,omitempty"`
 	NewPath   string         `json:"new_path,omitempty"`
 	InsertAt  *int           `json:"insert_line,omitempty"`
+	// Tags is the first-class tag list for action=memory command=session_retain
+	// (K2). normalizeTags folds it into args.tags, so one lookup path serves
+	// both call shapes.
+	Tags []string `json:"tags,omitempty"`
+}
+
+// splitCommaList turns "a, b" into ["a","b"]; an empty or blank string
+// yields nothing, so an absent tag list stays absent rather than becoming an
+// empty slice the tag filters would read as a (wrong) request.
+func splitCommaList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// normalizeTags is the one place the tag input is canonicalised (K2): the
+// advertised list field, a list already under args, and the comma-separated
+// string an agent sends against a single advertised field all become one
+// []string under args.tags, so the retain path reads a single representation.
+// An absent tag list stays absent — an empty slice would read as an explicit
+// (and wrong) tag request to the filters.
+func (r ImportRequest) normalizeTags() ImportRequest {
+	switch v := r.Args["tags"].(type) {
+	case string:
+		if split := splitCommaList(v); len(split) > 0 {
+			r.Args["tags"] = split
+		} else {
+			delete(r.Args, "tags")
+		}
+	case []string:
+		r.Args["tags"] = append([]string(nil), v...)
+	case nil:
+		if len(r.Tags) > 0 {
+			r.Args["tags"] = append([]string(nil), r.Tags...)
+		}
+	}
+	return r
 }
 
 // withFlatArgs folds the top-level curation fields into Args so one lookup
@@ -270,7 +311,7 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 		flat["insert_line"] = *r.InsertAt
 	}
 	if len(flat) == 0 {
-		return r
+		return r.normalizeTags()
 	}
 	merged := make(map[string]any, len(r.Args)+len(flat))
 	for k, v := range flat {
@@ -280,7 +321,7 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 		merged[k] = v
 	}
 	r.Args = merged
-	return r
+	return r.normalizeTags()
 }
 
 // Import handles the import tool: repo/dir indexing or memory curation writes.
@@ -1028,7 +1069,12 @@ func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest) (map[string
 		if cwd == "" {
 			cwd = e.projectDir
 		}
-		res, serr := e.mem.SessionRetainCtx(ctx, scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"))
+		// K2: tags are first-class on the retain path, so a tag-scoped recall
+		// can match what a conversation wrote. argStrs also accepts a
+		// comma-separated string ("a,b"), which is the shape an agent most
+		// often sends when the schema names one field.
+		tags := argStrs(req.Args, "tags")
+		res, serr := e.mem.SessionRetainCtx(ctx, scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"), tags)
 		if serr != nil {
 			return nil, serr
 		}
@@ -1738,14 +1784,23 @@ func argStrs(m map[string]any, key string) []string {
 	if m == nil {
 		return nil
 	}
-	list, _ := m[key].([]any)
-	out := make([]string, 0, len(list))
-	for _, v := range list {
-		if sv, ok := v.(string); ok {
-			out = append(out, sv)
+	// []string first: the flat-curation fold normalises lists to that type, and
+	// a []any miss would silently drop a caller's tags.
+	switch v := m[key].(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if sv, ok := item.(string); ok {
+				out = append(out, sv)
+			}
 		}
+		return out
+	case string:
+		return splitCommaList(v)
 	}
-	return out
+	return nil
 }
 
 // stampDriftForLog names the differing stamp components (revision plus any

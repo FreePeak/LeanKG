@@ -231,6 +231,9 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				Scope                   string   `json:"scope"`
 				CWD                     string   `json:"cwd"`
 				Bank                    string   `json:"bank"`
+				// K2: first-class tags on the retain path, so a later tag-scoped
+				// recall can match what this session wrote.
+				Tags []string `json:"tags"`
 			}
 			if !decode(w, r, &body) {
 				return
@@ -240,7 +243,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				writeErr(w, err)
 				return
 			}
-			res, err := mem.SessionRetainCtx(r.Context(), scope, body.CWD, body.Bank, body.SessionID, body.Turns, body.RetainedThroughUserTurn)
+			res, err := mem.SessionRetainCtx(r.Context(), scope, body.CWD, body.Bank, body.SessionID, body.Turns, body.RetainedThroughUserTurn, body.Tags)
 			if err != nil {
 				writeErr(w, err)
 				return
