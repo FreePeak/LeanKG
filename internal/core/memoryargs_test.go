@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/session"
 )
 
@@ -189,5 +190,54 @@ func TestMemoryCreateReportsOverwrite(t *testing.T) {
 	out, err = e.Import(ctx, ImportRequest{Action: "memory", Command: "create", Path: "topics/o.md", Content: "two"})
 	if err != nil || out["overwrote"] != true {
 		t.Fatalf("second create must report overwrote=true: %v %v", out, err)
+	}
+}
+
+// TestMemorySearchRefusesUnknownCommand pins the shape of the memory read
+// surface: only the documented commands are accepted. Before this, the
+// `default` arm of the query-tool switch treated ANY unknown command as
+// `search`, so `command: "serch"` (a typo) returned an empty hit list instead
+// of the mistake. Found while diagnosing a "search returns nothing" report
+// that turned out to be a caller putting the term in args instead of `query`.
+func TestMemorySearchRefusesUnknownCommand(t *testing.T) {
+	e, _ := newEngine(t)
+	out, err := e.Query(context.Background(), QueryRequest{
+		Action: "memory",
+		Query:  "anything",
+		Args:   map[string]any{"command": "serch"},
+	})
+	if err == nil {
+		t.Fatalf("unknown memory read command was accepted: %#v", out)
+	}
+	if !strings.Contains(err.Error(), "unknown memory read command") {
+		t.Fatalf("err = %v, want it to name the read commands", err)
+	}
+	for _, want := range []string{"session_recall", "view", "snapshot", "search"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err %q does not list %q", err, want)
+		}
+	}
+}
+
+// TestMemorySearchTakesTheTermFromQueryOrArgs pins the read path that made a
+// live server look broken: the term rides the top-level `query`, matching the
+// tool's own schema and the session_recall path, but an agent that nests it
+// under args should still get results rather than a silent empty list.
+func TestMemorySearchTakesTheTermFromQueryOrArgs(t *testing.T) {
+	e, mem := newEngine(t)
+	if err := mem.Create("topics/probe.md", "zebra-unique-token lives here"); err != nil {
+		t.Fatal(err)
+	}
+	for name, req := range map[string]QueryRequest{
+		"top-level query": {Action: "memory", Query: "zebra-unique-token", Args: map[string]any{"command": "search"}},
+		"args query":      {Action: "memory", Args: map[string]any{"command": "search", "query": "zebra-unique-token"}},
+	} {
+		out, err := e.Query(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if hits, _ := out["hits"].([]memory.Hit); len(hits) == 0 {
+			t.Fatalf("%s: no hits for a term that exists", name)
+		}
 	}
 }

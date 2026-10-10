@@ -619,9 +619,19 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 			return e.MemoryRead("view", path, "", 0)
 		case "snapshot":
 			return e.MemoryRead("snapshot", "", "", 0)
+		case "search":
+			// The search term rides the top-level `query`, not args.query: the
+			// tool's own schema advertises `query` as the search text, and
+			// session_recall takes it from the same place. A command nobody
+			// spelled correctly used to fall through to here and search, which
+			// reported an empty result instead of the typo.
+			term := req.Query
+			if term == "" {
+				term = argStr(req.Args, "query")
+			}
+			return e.MemoryRead("search", "", term, req.Limit)
 		default:
-			// Query-tool memory reads carry the command in Query.
-			return e.MemoryRead("search", "", req.Query, req.Limit)
+			return nil, fmt.Errorf("unknown memory read command %q (valid: session_recall, memories, view, snapshot, search)", cmd)
 		}
 	case "ontology":
 		cmd := argStr(req.Args, "cmd")
