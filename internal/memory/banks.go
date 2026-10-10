@@ -207,13 +207,13 @@ type RetainResult struct {
 // back to this store's own project dir. The batch is idempotent per session
 // (store.rs:92-108): a retained_through_user_turn at or below the session's
 // stored cursor skips the whole batch.
-func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int) (RetainResult, error) {
-	return m.SessionRetainCtx(context.Background(), scope, cwd, bank, sessionID, turns, throughUserTurn)
+func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int, tags []string) (RetainResult, error) {
+	return m.SessionRetainCtx(context.Background(), scope, cwd, bank, sessionID, turns, throughUserTurn, tags)
 }
 
 // SessionRetainCtx is SessionRetain with the caller's context, so the retain
 // event joins the transport call that made it (telemetry.WithIdentity).
-func (m *Memory) SessionRetainCtx(ctx context.Context, scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int) (RetainResult, error) {
+func (m *Memory) SessionRetainCtx(ctx context.Context, scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int, tags []string) (RetainResult, error) {
 	start := time.Now()
 	if sessionID == "" {
 		return RetainResult{}, fmt.Errorf("memory: session_retain requires session_id")
@@ -249,13 +249,7 @@ func (m *Memory) SessionRetainCtx(ctx context.Context, scope Scope, cwd, bank, s
 			Timestamp:  ms / 1000,
 			Importance: TranscriptImportance,
 			Cwd:        cwd,
-			Metadata: map[string]any{
-				"session_id":                 sessionID,
-				"source_id":                  sourceID,
-				"message_count":              len(turns),
-				"retained_through_user_turn": throughUserTurn,
-				"cwd":                        cwd,
-			},
+			Metadata:   entryMetadata(sessionID, sourceID, len(turns), throughUserTurn, cwd, tags),
 		})
 	}
 	if err := m.appendBank(target, entries); err != nil {
@@ -698,4 +692,24 @@ func tokenize(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
+}
+
+// entryMetadata builds a session_retain row's metadata. Tags are first-class
+// (K2): a caller passes them explicitly and they are persisted under the same
+// "tags" key the REST retain path and the Hindsight tag filters read, so a
+// tagged row is recallable by tag no matter which surface wrote it. An empty
+// tag list leaves the key absent rather than writing an empty array, which the
+// filters read as "untagged" (and "exact" then selects these rows).
+func entryMetadata(sessionID, sourceID string, messageCount, throughUserTurn int, cwd string, tags []string) map[string]any {
+	meta := map[string]any{
+		"session_id":                 sessionID,
+		"source_id":                  sourceID,
+		"message_count":              messageCount,
+		"retained_through_user_turn": throughUserTurn,
+		"cwd":                        cwd,
+	}
+	if len(tags) > 0 {
+		meta["tags"] = append([]string(nil), tags...)
+	}
+	return meta
 }
