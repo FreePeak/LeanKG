@@ -35,11 +35,12 @@ const (
 	ClientGemini     = "gemini"
 	ClientOpencode   = "opencode"
 	ClientOmp        = "omp"
+	ClientXdev       = "xdev"
 )
 
 // Clients returns the supported client names.
 func Clients() []string {
-	return []string{ClientClaudeCode, ClientCursor, ClientCodex, ClientGemini, ClientOpencode, ClientOmp}
+	return []string{ClientClaudeCode, ClientCursor, ClientCodex, ClientGemini, ClientOpencode, ClientOmp, ClientXdev}
 }
 
 // Config describes the leankg entry written into a client config.
@@ -79,6 +80,10 @@ func clientConfigPath(homeDir, client string) (string, error) {
 		return filepath.Join(homeDir, ".config", "opencode", "opencode.json"), nil
 	case ClientOmp:
 		return filepath.Join(homeDir, ".omp", "agent", "mcp.json"), nil
+	case ClientXdev:
+		// xdev reads one MCP config, a YAML file, and has no `xdev mcp`
+		// subcommand of its own (docs/decisions/leankg-memory-backend K9).
+		return filepath.Join(homeDir, ".xdev", "agent", "mcp.yml"), nil
 	default:
 		return "", fmt.Errorf("unknown client %q (valid: %s)", client, strings.Join(Clients(), ", "))
 	}
@@ -105,8 +110,11 @@ func WriteClient(homeDir, client string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if client == ClientCodex {
+	switch client {
+	case ClientCodex:
 		return writeCodexTOML(path, cfg)
+	case ClientXdev:
+		return writeXdevYAML(path, cfg)
 	}
 	return writeJSONEntry(path, jsonContainer(client), jsonEntry(client, cfg))
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -53,6 +54,110 @@ func writeSeedJSON(t *testing.T, path string, root map[string]any) {
 // of a fresh stdio config for every JSON client. The claude-code and
 // cursor/gemini entries carry NO "type" key — enforced by the full-map
 // comparison.
+// TestWriteClientXdevYAML pins the xdev target (FR-ZCP-14 K9): xdev reads a
+// YAML mcp.yml, not JSON, so the writer must produce the shape its loader
+// parses and must preserve every sibling server. Unknown targets must list
+// xdev, so an operator who types the wrong one is told about it.
+func TestWriteClientXdevYAML(t *testing.T) {
+	home := t.TempDir()
+	seed := strings.Join([]string{
+		"# MCP servers for xdev",
+		"servers:",
+		"    atlassian:",
+		"        url: http://127.0.0.1:8081/mcp",
+		"        autoStart:",
+		"            command: /usr/local/bin/mcp-atlassian",
+		"",
+	}, "\n")
+	path := filepath.Join(home, ".xdev", "agent", "mcp.yml")
+	writeSeed(t, path, seed)
+
+	if err := WriteClient(home, ClientXdev, Config{Mode: "stdio", Exe: testExe}); err != nil {
+		t.Fatalf("WriteClient xdev: %v", err)
+	}
+	var root struct {
+		Servers map[string]map[string]any `yaml:"servers"`
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("written mcp.yml is not valid YAML: %v\n%s", err, data)
+	}
+	if _, ok := root.Servers["atlassian"]; !ok {
+		t.Fatal("sibling server atlassian was dropped")
+	}
+	entry, ok := root.Servers["leankg"]
+	if !ok {
+		t.Fatalf("leankg entry missing; servers = %v", root.Servers)
+	}
+	if entry["type"] != "stdio" || entry["command"] != testExe {
+		t.Fatalf("stdio entry = %v, want type=stdio command=%s", entry, testExe)
+	}
+	args, _ := entry["args"].([]any)
+	if len(args) < 3 || args[0] != "serve" || args[1] != "--stdio" || args[2] != "--memory" {
+		t.Fatalf("args = %v, want serve --stdio --memory", args)
+	}
+}
+
+// TestWriteClientXdevHTTPShape: the HTTP entry carries xdev's url key and no
+// command, so the streamable HTTP client is wired.
+func TestWriteClientXdevHTTPShape(t *testing.T) {
+	home := t.TempDir()
+	if err := WriteClient(home, ClientXdev, Config{Mode: "http", URL: testURL}); err != nil {
+		t.Fatalf("WriteClient xdev http: %v", err)
+	}
+	var root struct {
+		Servers map[string]map[string]any `yaml:"servers"`
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".xdev", "agent", "mcp.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("not valid YAML: %v", err)
+	}
+	entry := root.Servers["leankg"]
+	if entry == nil || entry["url"] != testURL {
+		t.Fatalf("http entry = %v, want url=%s", entry, testURL)
+	}
+	if _, ok := entry["command"]; ok {
+		t.Fatal("http entry must not carry a stdio command")
+	}
+}
+
+// TestWriteClientXdevAutoStartsLeankg: xdev's autoStart block is what makes a
+// missing server self-heal, so the written stdio entry must carry one with the
+// health probe and the sidecar port that keeps startup alive.
+func TestWriteClientXdevAutoStart(t *testing.T) {
+	home := t.TempDir()
+	if err := WriteClient(home, ClientXdev, Config{Mode: "http", URL: testURL, Project: home}); err != nil {
+		t.Fatalf("WriteClient xdev: %v", err)
+	}
+	var root struct {
+		Servers map[string]struct {
+			AutoStart map[string]any `yaml:"autoStart"`
+		} `yaml:"servers"`
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".xdev", "agent", "mcp.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("not valid YAML: %v", err)
+	}
+	auto := root.Servers["leankg"].AutoStart
+	if auto == nil {
+		t.Fatal("http entry has no autoStart block; a stopped server would not self-heal")
+	}
+	for _, k := range []string{"command", "healthUrl", "healthTimeoutSec"} {
+		if _, ok := auto[k]; !ok {
+			t.Fatalf("autoStart is missing %q: %v", k, auto)
+		}
+	}
+}
+
 func TestWriteClientStdioShapes(t *testing.T) {
 	stdio := map[string]any{"command": testExe, "args": []any{"serve", "--stdio", "--memory"}}
 	cases := []struct {
@@ -416,7 +521,7 @@ func TestRegisterCWDUnsupportedClient(t *testing.T) {
 
 // TestClients pins the supported set and order.
 func TestClients(t *testing.T) {
-	want := []string{"claude-code", "cursor", "codex", "gemini", "opencode", "omp"}
+	want := []string{"claude-code", "cursor", "codex", "gemini", "opencode", "omp", "xdev"}
 	if got := Clients(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Clients() = %v, want %v", got, want)
 	}

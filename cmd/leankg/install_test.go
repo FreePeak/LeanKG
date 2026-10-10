@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,8 +15,11 @@ import (
 // NO --project flag) for every JSON client.
 func TestInstallStdioAllClients(t *testing.T) {
 	for _, client := range Clients() {
-		if client == ClientCodex { // covered by TOML-specific tests below
-			continue
+		switch client {
+		case ClientCodex:
+			continue // covered by TOML-specific tests below
+		case ClientXdev:
+			continue // YAML config; covered by TestInstallXdevAllModes
 		}
 		t.Run(client, func(t *testing.T) {
 			home := t.TempDir()
@@ -222,4 +226,51 @@ func TestInstallPreservesExistingConfig(t *testing.T) {
 func quoteTOML(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// TestInstallXdevAllModes covers the YAML target across `leankg install` itself:
+// both modes must land a parseable mcp.yml that preserves a pre-existing
+// sibling server, and the stdio argv must carry --memory like every client.
+func TestInstallXdevAllModes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts InstallOptions
+		url  bool
+	}{
+		{"stdio", InstallOptions{}, false},
+		{"http", InstallOptions{HTTP: true, URL: "http://127.0.0.1:9699"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeSeed(t, filepath.Join(home, ".xdev", "agent", "mcp.yml"),
+				"servers:\n    keeper:\n        url: http://127.0.0.1:9999/mcp\n")
+			if err := Install(home, ClientXdev, tc.opts); err != nil {
+				t.Fatal(err)
+			}
+			var root struct {
+				Servers map[string]map[string]any `yaml:"servers"`
+			}
+			data, err := os.ReadFile(filepath.Join(home, ".xdev", "agent", "mcp.yml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := yaml.Unmarshal(data, &root); err != nil {
+				t.Fatalf("not valid YAML: %v\n%s", err, data)
+			}
+			if _, ok := root.Servers["keeper"]; !ok {
+				t.Fatal("pre-existing sibling server was dropped")
+			}
+			entry := root.Servers["leankg"]
+			if entry == nil {
+				t.Fatal("no leankg entry written")
+			}
+			if tc.url {
+				if entry["url"] != tc.opts.URL {
+					t.Fatalf("url = %v, want %v", entry["url"], tc.opts.URL)
+				}
+			} else if args, _ := entry["args"].([]any); len(args) < 3 || args[2] != "--memory" {
+				t.Fatalf("args = %v, want serve --stdio --memory", args)
+			}
+		})
+	}
 }
