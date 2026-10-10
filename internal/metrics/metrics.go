@@ -37,14 +37,17 @@ const seedProjectPath = "/test"
 // `--retention 0` (purge everything) is therefore not expressible from the CLI,
 // which is the one flag value the port cannot carry; Rust's own default was 30.
 type Options struct {
-	Since     string // window, "<n>d" or a bare "<n>" days
-	Tool      string // tool filter ("" = all)
-	JSON      bool
-	Session   bool
-	Reset     bool
-	Retention int // days; 0 = unset
-	Cleanup   bool
-	Seed      bool
+	Since   string // window, "<n>d" or a bare "<n>" days
+	Tool    string // tool filter ("" = all)
+	JSON    bool
+	Session bool
+	// SessionText is the rendered telemetry session summary the CLI passes
+	// with --session (DS-16); empty means no session was recorded.
+	SessionText string
+	Reset       bool
+	Retention   int // days; 0 = unset
+	Cleanup     bool
+	Seed        bool
 }
 
 // Show renders the `leankg metrics` output (Rust show_metrics): reset, cleanup,
@@ -122,9 +125,13 @@ func Show(b store.Backend, opts Options) (string, error) {
 		}
 	}
 	if opts.Session {
-		// Ported verbatim: Rust's --session branch printed this placeholder,
-		// and the Go engine has no session-scoped ledger read to substitute.
-		out.WriteString("\nSession: Showing current session metrics not yet implemented\n")
+		// DS-16: the session comes from the telemetry ledger, not this
+		// per-project one, so the caller renders it (Rust printed a placeholder).
+		if opts.SessionText == "" {
+			out.WriteString("\nSession: no telemetry session recorded (enable capture with `leankg telemetry enable`)\n")
+		} else {
+			out.WriteString("\nSession:\n" + opts.SessionText)
+		}
 	}
 	return out.String(), nil
 }

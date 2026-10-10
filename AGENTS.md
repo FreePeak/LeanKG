@@ -38,6 +38,9 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 |`leankg-embed export\|import`|NDJSON offsite flow (pairs with `scripts/embed_batch.py`)|
 |`leankg connect\|install --target claude\|cursor\|codex\|gemini\|opencode\|omp`|Client wiring (+ `--register-cwd` SessionStart hook)|
 |`leankg doctor --project <dir>`|Store diagnostics|
+|`leankg dashboard [--addr 127.0.0.1:9701] [--no-open]`|Web dashboard (embedded `ui-dashboard`): per-session efficiency metrics, failures, memory, replay; `--format text\|json` keeps the usage tables|
+|`leankg telemetry status\|enable\|disable\|purge\|link\|import-ab`|Consent-gated capture (off by default) and transcript linking; see `docs/telemetry.md`|
+|`leankg metrics --session [--session-id ID]`|Latest (or named) agent session from the telemetry ledger|
 
 ## SoT pairing
 
@@ -98,6 +101,9 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 |`internal/embed/`|Provider port, ModelStamp guards, pipeline|
 |`internal/graph/`|impact/path/callers/callees/context/explain|
 |`internal/mcp/`, `rest/`, `rpc/`, `web/`|transports + UI|
+|`internal/telemetry/`|per-user capture ledger (`$LEANKG_HOME/telemetry.db`), consent config, redaction, classifier; `metrics/` builds the dashboard reports, `report/` is the API contract|
+|`internal/sessionlink/`|read-only, consent-gated linking of calls to agent transcripts (one adapter per client)|
+|`internal/dashboard/`, `ui-dashboard/`|`leankg dashboard` server + SPA (`make go-ui-dashboard` builds and embeds it)|
 |`internal/tstree/`|vendored generated grammars (objc/dart/perl) — build-tag gated|
 
 ## Multi-project setup

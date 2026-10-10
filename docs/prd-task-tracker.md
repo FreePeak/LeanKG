@@ -57,6 +57,41 @@
 | FR-GO-MEM | #369: full-markdown memory — MEMORY.md/USER.md bounded 2200B error-not-truncate, topics/, Claude-Code file commands + traversal rejection, Hermes substring sugar, FTS5 reindex-on-write, mnemopi banks adapter (wyhash64 port) | 2026-09-10 | **DONE** on feat/go-rewrite — 11 tests incl. exact snapshot-header pin, symlink escape, overflow, ambiguous match, cursor resume, zero-match filter; hindsight HTTP endpoints landed in internal/rest |
 
 
+## v4.15 — session telemetry, efficiency metrics and the web dashboard (2026-10-10, branch `feat/v4.15-dashboard`)
+
+Design, decisions and gates: [`plan-dashboard.md`](plan-dashboard.md). Capture and transcript reading are off until the owner consents.
+
+| ID | Phase | Title | Status |
+|----|-------|-------|--------|
+| DS-00 | P0 | Live client probe: clientInfo names + session-id env per agent | TODO — needs one live call per agent on the owner machine |
+| DS-01 | P0 | Telemetry config + consent (off by default, per-client transcript grant, `leankg telemetry`) | DONE |
+| DS-02 | P0 | Redaction, caps, retention, purge | DONE |
+| DS-03 | P1 | Per-user telemetry.db + async batched writer (never blocks a call) | DONE |
+| DS-04 | P1 | MCP capture middleware (every method, both transports) | DONE |
+| DS-05 | P1 | Client + session identity (stdio env, HTTP headers) | DONE |
+| DS-06 | P1 | Outcome classifier (ok / low-conf / degraded / zero-hit / cold / stale / error / refused / timeout) | DONE |
+| DS-07 | P1 | Honest tokens: pre/post budget, file-read baseline, tokens saved | DONE |
+| DS-08 | P1 | REST, Hindsight and ConnectRPC capture | DONE |
+| DS-09 | P1 | Memory events + real recall scores + replaced count | DONE |
+| DS-10 | P2 | sessionlink framework: read-only, consent-gated, lazy linking | DONE |
+| DS-11 | P2 | Claude Code transcript adapter | DONE |
+| DS-12 | P2 | pi-family adapter (pi, omp, xdev) | DONE |
+| DS-13 | P2 | opencode adapter (SQLite, read-only) | DONE |
+| DS-14 | P2 | Grok CLI adapter (experimental until probed) | DONE (experimental) |
+| DS-15 | P2 | Codex + Gemini CLI adapters (experimental) | DONE (experimental) |
+| DS-16 | P2 | Session outcome metrics | DONE |
+| DS-17 | P2 | Context-use signals (used hits, fallback, re-query) | DONE |
+| DS-18 | P2 | Turns/time saved: observational panel + controlled A/B import | DONE |
+| DS-19 | P2 | Memory effectiveness metrics | DONE |
+| DS-20 | P3 | `leankg dashboard` web mode (loopback, opens browser; `--format` keeps text) | DONE |
+| DS-21 | P3 | `/api/dashboard/v1` read API + consent | DONE |
+| DS-22 | P3 | `ui-dashboard/` SPA (React 19, Vite, Tailwind 4, shadcn, assistant-ui) | DONE |
+| DS-23 | P3 | Session replay on assistant-ui (read-only external store) | DONE |
+| DS-24 | P3 | Consent UX (first-run screen + Settings) | DONE |
+| DS-25 | P3 | Build + embed (`make go-ui-dashboard`) | DONE |
+| DS-26 | P4 | Ask-about-my-metrics chat | DEFERRED — needs an LLM provider decision |
+| DS-27 | P4 | PostgreSQL telemetry store | DEFERRED |
+
 ## v4.14 — retrieval + safety fix wave (2026-10-08, branch `fix/v4.14-retrieval-safety`)
 
 Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](plan-v4.14-retrieval-safety.md). P0 ships first and independently; RS-10/11/14 ship together (one `leankg-embed full`).

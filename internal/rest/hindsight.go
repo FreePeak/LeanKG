@@ -105,7 +105,7 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 				replaceDocs = append(replaceDocs, it.DocumentID)
 			}
 		}
-		if err := mem.RetainReplacing(r.PathValue("bank"), entries, replaceDocs); err != nil {
+		if _, err := mem.RetainReplacingCtx(r.Context(), r.PathValue("bank"), entries, replaceDocs); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -131,7 +131,7 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 			})
 			return
 		}
-		entries, err := mem.RecallFiltered([]string{r.PathValue("bank")}, body.Query, defaultRecallLimit,
+		entries, err := mem.RecallFilteredCtx(r.Context(), []string{r.PathValue("bank")}, body.Query, defaultRecallLimit,
 			func(e memory.Entry) bool { return entryHasTags(e, body.Tags, body.TagsMatch) })
 		if err != nil {
 			writeErr(w, err)
@@ -147,7 +147,7 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		if !decode(w, r, &body) {
 			return
 		}
-		entries, err := mem.Recall(r.PathValue("bank"), body.Query, 5)
+		entries, err := mem.RecallCtx(r.Context(), r.PathValue("bank"), body.Query, 5)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -174,7 +174,7 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 	})
 
 	mux.HandleFunc("DELETE /v1/default/banks/{bank}/documents/{document_id}", func(w http.ResponseWriter, r *http.Request) {
-		n, err := mem.DeleteDocument(r.PathValue("bank"), r.PathValue("document_id"))
+		n, err := mem.DeleteDocumentCtx(r.Context(), r.PathValue("bank"), r.PathValue("document_id"))
 		if err != nil {
 			writeErr(w, err)
 			return

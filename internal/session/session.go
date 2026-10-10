@@ -12,6 +12,7 @@
 package session
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -188,6 +189,21 @@ func (s *Store) Canvas(sessionID string) ([]Ref, error) {
 // AddLesson records a lesson for the session, dedup'd by SHA-256 of the
 // text. deduped is true when the text was already present (nothing written).
 func (s *Store) AddLesson(sessionID, text string) (deduped bool, err error) {
+	return s.AddLessonCtx(context.Background(), sessionID, text)
+}
+
+// AddLessonCtx is AddLesson with the caller's context, so the lesson event
+// joins the transport call that recorded it (telemetry.WithIdentity).
+func (s *Store) AddLessonCtx(ctx context.Context, sessionID, text string) (deduped bool, err error) {
+	start := time.Now()
+	deduped, err = s.addLesson(sessionID, text)
+	if err == nil {
+		recordLesson(ctx, deduped, start)
+	}
+	return deduped, err
+}
+
+func (s *Store) addLesson(sessionID, text string) (deduped bool, err error) {
 	dir, err := s.sessionDir(sessionID)
 	if err != nil {
 		return false, err

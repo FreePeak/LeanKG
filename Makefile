@@ -15,7 +15,7 @@ help:
 	@echo "  clean           Remove Go build artifacts"
 	@echo "  install-go      Build-from-source installer (scripts/install-go.sh)"
 
-.PHONY: help go-build go-test go-bench go-vet go-ui-assets dual-engine clean install-go go-build-tstree go-test-tstree
+.PHONY: help go-build go-test go-bench go-vet go-ui-assets go-ui-dashboard go-ui-dashboard-check dual-engine clean install-go go-build-tstree go-test-tstree
 
 go-build:
 	CGO_ENABLED=0 go build -o bin/ ./cmd/leankg ./cmd/leankg-embed
@@ -47,6 +47,27 @@ go-ui-assets:
 	@test -f ui-v2/dist/index.html || { echo "go-ui-assets: ui-v2 build produced no dist/"; exit 1; }
 	find internal/web/embed -mindepth 1 ! -name ui-build.json -delete
 	cp -R ui-v2/dist/. internal/web/embed/
+
+# Build the ui-dashboard SPA (DS-22/DS-25) and sync it into the dashboard
+# embed dir (`internal/dashboard/embed`). ui-build.json records a content
+# hash of the ui-dashboard sources (not a commit id, so uncommitted edits count
+# and source + embed can land in one commit); go-ui-dashboard-check fails when
+# the stamp no longer matches the sources (CI gate).
+UI_DASHBOARD_HASH = find ui-dashboard -type f -not -path '*/node_modules/*' -not -path '*/dist/*' -not -name '.DS_Store' -not -name '*.tsbuildinfo' | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1
+
+go-ui-dashboard:
+	npm --prefix ui-dashboard ci
+	npm --prefix ui-dashboard run build
+	@test -f ui-dashboard/dist/index.html || { echo "go-ui-dashboard: ui-dashboard build produced no dist/"; exit 1; }
+	find internal/dashboard/embed -mindepth 1 ! -name ui-build.json -delete
+	cp -R ui-dashboard/dist/. internal/dashboard/embed/
+	@printf '{"source_sha256":"%s"}\n' "$$($(UI_DASHBOARD_HASH))" > internal/dashboard/embed/ui-build.json
+
+go-ui-dashboard-check:
+	@cur=$$($(UI_DASHBOARD_HASH)); \
+	got=$$(sed -n 's/.*"source_sha256":"\([^"]*\)".*/\1/p' internal/dashboard/embed/ui-build.json); \
+	test -n "$$got" && test "$$cur" = "$$got" || { echo "go-ui-dashboard-check: internal/dashboard/embed is stale (embed=$$got, sources=$$cur); run make go-ui-dashboard"; exit 1; }
+	@echo "go-ui-dashboard-check: embed matches ui-dashboard sources"
 
 dual-engine:
 	bash scripts/test-dual-engine.sh
