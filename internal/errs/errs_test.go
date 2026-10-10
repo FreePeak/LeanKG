@@ -130,27 +130,24 @@ func TestNewErrorRendersAndMatchesByCode(t *testing.T) {
 	}
 }
 
-// goFilesOutsidePackage walks the Go module and returns every .go file outside
-// this package.
-func goFilesOutsidePackage(t *testing.T) []string {
+// goFilesUnder walks root and returns every .go file, skipping the directories
+// that are not part of this tree's module. `.worktrees/` is the important one:
+// it holds OTHER checkouts of this repository, each with its own copy of every
+// source file, and a worktree's own test fixtures (which deliberately plant
+// codes like LEANKG_ERROR_TOTALLY_NEW) used to fail the main checkout's gate.
+func goFilesUnder(t *testing.T, root, skipDir string) []string {
 	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Clean(filepath.Join(wd, "..", ".."))
-
 	var files []string
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == "testdata" || name == "node_modules" || name == "vendor" {
+			if name == ".git" || name == ".worktrees" || name == "testdata" || name == "node_modules" || name == "vendor" {
 				return fs.SkipDir
 			}
-			if filepath.Join(path) == filepath.Join(wd) { // this package
+			if skipDir != "" && path == skipDir {
 				return fs.SkipDir
 			}
 			return nil
@@ -166,6 +163,49 @@ func goFilesOutsidePackage(t *testing.T) []string {
 	return files
 }
 
+// goFilesOutsidePackage walks the Go module and returns every .go file outside
+// this package.
+func goFilesOutsidePackage(t *testing.T) []string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return goFilesUnder(t, filepath.Clean(filepath.Join(wd, "..", "..")), wd)
+}
+
+// TestWalkerSkipsWorktrees pins the walk that both audits share: a sibling
+// checkout under .worktrees/ is not part of this module, so its .go files must
+// not be visited. Found live: the main checkout's audit failed on
+// LEANKG_ERROR_TOO... codes that exist only in a worktree's test fixtures.
+func TestWalkerSkipsWorktrees(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("internal/errs/errs.go")                 // this package, skipped by the caller
+	mk("internal/other/other.go")               // must be found
+	mk("internal/other/testdata/fixture.go")    // skipped
+	mk(".worktrees/feat/internal/errs/errs.go") // another checkout, skipped
+
+	files := goFilesUnder(t, root, filepath.Join(root, "internal", "errs"))
+	if len(files) != 1 {
+		t.Fatalf("walk returned %d files (%v), want exactly internal/other/other.go", len(files), files)
+	}
+	if !strings.HasSuffix(files[0], "internal/other/other.go") {
+		t.Fatalf("walk returned %s, want the non-testdata, non-worktree file", files[0])
+	}
+}
+
+// scanErrorCodes extracts every `LEANKG_ERROR_<NAME>` token from text.
+// Port of the Rust scanner: the name is the trailing run of [A-Z0-9_], with a
+// dangling underscore trimmed so prose like `LEANKG_ERROR_*` is ignored.
 // scanErrorCodes extracts every `LEANKG_ERROR_<NAME>` token from text.
 // Port of the Rust scanner: the name is the trailing run of [A-Z0-9_], with a
 // dangling underscore trimmed so prose like `LEANKG_ERROR_*` is ignored.
