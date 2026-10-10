@@ -127,6 +127,45 @@ func TestWriteClientXdevHTTPShape(t *testing.T) {
 	}
 }
 
+// TestXdevAutoStartSchema pins the autoStart block to xdev's AutoStartConfig
+// field set. #467 shipped five knobs xdev does not define (startupWaitSecs,
+// logFile, restartOnExit, restartBackoffSec, maxRestarts) and no pidFile: the
+// loader ignores unknown keys, so the file read as configured while the
+// restart supervision it promised did not exist. The set below is checked
+// against the consumer's struct tags.
+func TestXdevAutoStartSchema(t *testing.T) {
+	want := map[string]bool{
+		"command": true, "args": true, "cwd": true, "env": true,
+		"healthUrl": true, "healthTimeoutSec": true, "pidFile": true,
+	}
+	got := map[string]bool{}
+	for _, cfg := range []Config{
+		{Mode: "stdio", Exe: testExe},
+		{Mode: "http", URL: testURL},
+	} {
+		entry, _ := xdevEntry(cfg)["autoStart"].(map[string]any)
+		if entry == nil {
+			t.Fatalf("%s entry has no autoStart", cfg.Mode)
+		}
+		if len(entry) != len(want) {
+			t.Fatalf("%s autoStart has %d keys %v, want exactly %d: %v", cfg.Mode, len(entry), entry, len(want), want)
+		}
+		for k := range entry {
+			got[k] = true
+		}
+	}
+	for k := range want {
+		if !got[k] {
+			t.Fatalf("autoStart is missing %q", k)
+		}
+	}
+	for k := range got {
+		if !want[k] {
+			t.Fatalf("autoStart carries %q, which xdev's AutoStartConfig does not define", k)
+		}
+	}
+}
+
 // TestWriteClientXdevAutoStartsLeankg: xdev's autoStart block is what makes a
 // missing server self-heal, so the written stdio entry must carry one with the
 // health probe and the sidecar port that keeps startup alive.

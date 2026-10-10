@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -78,74 +79,76 @@ func writeYAMLFile(path string, root map[string]any) error {
 	return atomicWrite(path, buf.Bytes())
 }
 
-// xdevEntry builds xdev's server value. Both modes carry autoStart so a
-// stopped server is restarted by the health probe; stdio mode points it at the
-// same argv `leankg install --target` would spawn.
+// xdevEntry builds xdev's server value. Both modes carry an autoStart block:
+// a stdio entry is spawned directly by xdev, but the same entry is what a
+// remote (HTTP) session points at when it finds the server down, so the block
+// is what turns "leankg is not running" into a self-healing session.
 func xdevEntry(cfg Config) map[string]any {
-	if cfg.Mode == "http" {
-		entry := map[string]any{
-			"type":    "remote",
-			"url":     cfg.URL,
-			"enabled": true,
-			"autoStart": map[string]any{
-				"command":           currentCommandForAutoStart(cfg),
-				"args":              httpAutoStartArgs(cfg),
-				"cwd":               autoStartCWD(cfg),
-				"healthUrl":         healthURLFor(cfg.URL),
-				"healthTimeoutSec":  30,
-				"env":               sidecarPortEnv(),
-				"startupWaitSecs":   30,
-				"logFile":           "xdev-leankg.log",
-				"restartOnExit":     true,
-				"restartBackoffSec": 5,
-				"maxRestarts":       10,
-			},
-		}
-		return entry
-	}
 	exe := cfg.Exe
 	if exe == "" {
 		exe = "leankg"
 	}
-	args := stdioArgs(cfg.Project, "")
+	if cfg.Mode != "http" {
+		args := stdioArgs(cfg.Project, "")
+		return map[string]any{
+			"type":      "stdio",
+			"command":   exe,
+			"args":      args,
+			"enabled":   true,
+			"autoStart": xdevAutoStart(exe, args, cfg, healthURLForStdio(cfg)),
+		}
+	}
+	// A remote entry never spawns a stdio command: the URL is the server. The
+	// autoStart block is the local fallback for when that server is down, so it
+	// carries the full serve argv instead.
 	return map[string]any{
-		"type":    "stdio",
-		"command": exe,
-		"args":    args,
+		"type":    "remote",
+		"url":     cfg.URL,
 		"enabled": true,
-		"autoStart": map[string]any{
-			"command":           exe,
-			"args":              args,
-			"cwd":               autoStartCWD(cfg),
-			"healthUrl":         healthURLForStdio(cfg),
-			"healthTimeoutSec":  30,
-			"env":               sidecarPortEnv(),
-			"startupWaitSecs":   30,
-			"logFile":           "xdev-leankg.log",
-			"restartOnExit":     true,
-			"restartBackoffSec": 5,
-			"maxRestarts":       10,
-		},
+		"autoStart": xdevAutoStart(
+			currentCommandForAutoStart(cfg), []string{"serve", "--http", ":9699", "--rest", ":9700", "--memory"},
+			cfg, healthURLFor(cfg.URL),
+		),
 	}
 }
 
-// -------- autoStart helpers --------
-
-// currentCommandForAutoStart resolves the binary an autoStart block should
-// respawn: the same resolution `leankg` itself uses (this binary's path).
-func currentCommandForAutoStart(cfg Config) string {
-	if cfg.Exe != "" {
-		return cfg.Exe
+// xdevAutoStart builds the autoStart block. Its field set is xdev's
+// AutoStartConfig exactly — command, args, cwd, env, healthUrl,
+// healthTimeoutSec, pidFile (verified against the consumer: xdev's
+// internal/mcpclient/mcp.go AutoStartConfig, and the shipped binary's own
+// `yaml:"...` struct tags).
+//
+// Writing a key xdev does not define is worse than omitting one: yaml.Unmarshal
+// drops it silently, so the file reads as configured while the loader never
+// sees it. #467 shipped five such knobs (startupWaitSecs, logFile,
+// restartOnExit, restartBackoffSec, maxRestarts) and no pidFile — dead config
+// that promised restart supervision xdev does not have. TestXdevAutoStartSchema
+// pins this key set so drift fails a test instead of a session.
+func xdevAutoStart(command string, args []string, cfg Config, healthURL string) map[string]any {
+	return map[string]any{
+		"command":          command,
+		"args":             args,
+		"cwd":              autoStartCWD(cfg),
+		"healthUrl":        healthURL,
+		"healthTimeoutSec": 30,
+		"pidFile":          pidFilePath(cfg),
+		"env":              sidecarPortEnv(),
 	}
-	return CurrentCommand()
 }
 
-// httpAutoStartArgs is the argv the autoStart block runs for an HTTP entry:
-// the same serve the URL was pointed at, minus the address that is bound by
-// the entry itself.
-func httpAutoStartArgs(cfg Config) []string {
-	args := []string{"serve", "--http", ":9699", "--rest", ":9700", "--memory"}
-	return args
+// pidFilePath is where xdev records the detached daemon so a second xdev run
+// waits for the existing one instead of starting a duplicate.
+func pidFilePath(cfg Config) string {
+	project := cfg.Project
+	if project == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			project = cwd
+		}
+	}
+	if project == "" {
+		return ""
+	}
+	return filepath.Join(project, ".leankg", "leankg.pid")
 }
 
 // autoStartCWD is the directory the respawned server runs in: the configured
@@ -160,8 +163,9 @@ func autoStartCWD(cfg Config) string {
 	return ""
 }
 
-// healthURLFor derives the health probe from a remote URL. xdev's own config
-// documents this shape (healthUrl beside the url it guards).
+// healthURLFor derives the health probe from a remote URL. xdev derives
+// <scheme://host/health> itself, so this is belt-and-braces: it keeps the
+// answer identical when the URL carries a sub-path (a reverse proxy prefix).
 func healthURLFor(url string) string {
 	url = strings.TrimSuffix(url, "/")
 	url = strings.TrimSuffix(url, "/mcp")
@@ -182,4 +186,13 @@ func healthURLForStdio(cfg Config) string {
 // and the live self-host use (9101).
 func sidecarPortEnv() map[string]any {
 	return map[string]any{"LEANKG_EMBED_SIDECAR_PORT": "9101"}
+}
+
+// currentCommandForAutoStart resolves the binary an autoStart block should
+// respawn: the same resolution `leankg` itself uses (this binary's path).
+func currentCommandForAutoStart(cfg Config) string {
+	if cfg.Exe != "" {
+		return cfg.Exe
+	}
+	return CurrentCommand()
 }
