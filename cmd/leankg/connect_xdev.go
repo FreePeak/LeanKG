@@ -116,14 +116,22 @@ func xdevEntry(cfg Config) map[string]any {
 // AutoStartConfig exactly — command, args, cwd, env, healthUrl,
 // healthTimeoutSec, pidFile (verified against the consumer: xdev's
 // internal/mcpclient/mcp.go AutoStartConfig, and the shipped binary's own
-// `yaml:"...` struct tags).
+// `yaml:"..."` struct tags).
 //
 // Writing a key xdev does not define is worse than omitting one: yaml.Unmarshal
 // drops it silently, so the file reads as configured while the loader never
 // sees it. #467 shipped five such knobs (startupWaitSecs, logFile,
-// restartOnExit, restartBackoffSec, maxRestarts) and no pidFile — dead config
-// that promised restart supervision xdev does not have. TestXdevAutoStartSchema
-// pins this key set so drift fails a test instead of a session.
+// restartOnExit, restartBackoffSec, maxRestarts) — dead config that promised
+// restart supervision xdev does not have. TestXdevAutoStartSchema pins this key
+// set so drift fails a test instead of a session.
+//
+// What each field actually does, measured against the shipped xdev binary
+// instead of assumed: StartAuto is reachable (all four of its error strings
+// are present) and reads command, args, cwd, env, healthUrl and
+// healthTimeoutSec. pidFile is declared and NOT yet read — no runtime
+// reference exists in the binary. It is written so the config is ready for the
+// day xdev acts on it, and it is labelled as such rather than counted as a
+// fix.
 func xdevAutoStart(command string, args []string, cfg Config, healthURL string) map[string]any {
 	return map[string]any{
 		"command":          command,
@@ -136,8 +144,11 @@ func xdevAutoStart(command string, args []string, cfg Config, healthURL string) 
 	}
 }
 
-// pidFilePath is where xdev records the detached daemon so a second xdev run
-// waits for the existing one instead of starting a duplicate.
+// pidFilePath is where xdev's AutoStartConfig.PidFile points: the path xdev
+// would record the detached daemon at so a second xdev run waits for the
+// existing one instead of starting a duplicate. xdev declares the field but
+// does not read it yet, and leankg does not write the file either, so this is
+// a ready path — not a live behaviour, and not something to claim as fixed.
 func pidFilePath(cfg Config) string {
 	project := cfg.Project
 	if project == "" {

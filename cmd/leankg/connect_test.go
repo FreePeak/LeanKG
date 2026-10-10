@@ -129,10 +129,12 @@ func TestWriteClientXdevHTTPShape(t *testing.T) {
 
 // TestXdevAutoStartSchema pins the autoStart block to xdev's AutoStartConfig
 // field set. #467 shipped five knobs xdev does not define (startupWaitSecs,
-// logFile, restartOnExit, restartBackoffSec, maxRestarts) and no pidFile: the
-// loader ignores unknown keys, so the file read as configured while the
-// restart supervision it promised did not exist. The set below is checked
-// against the consumer's struct tags.
+// logFile, restartOnExit, restartBackoffSec, maxRestarts): the loader ignores
+// unknown keys, so the file read as configured while the restart supervision
+// it promised did not exist. The set below is checked against the consumer's
+// struct tags. pidFile is in the set because xdev declares it; note that xdev
+// does not read it yet, so a file with or without it behaves identically today
+// — this guard is about not inventing keys, not about a live behaviour.
 func TestXdevAutoStartSchema(t *testing.T) {
 	want := map[string]bool{
 		"command": true, "args": true, "cwd": true, "env": true,
