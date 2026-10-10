@@ -1,3 +1,4 @@
+<!-- HISTORICAL: the Rust-era contract, retained as the record of the 76-tool surface the Go rewrite replaced. The live contract is docs/mcp-tool-contract.md (3 tools, generated from the Go registry). -->
 <!-- GENERATED-BY: scripts/gen_tool_contract.sh --><!-- DO NOT EDIT BY HAND -->
 
 # MCP Tool Contract
