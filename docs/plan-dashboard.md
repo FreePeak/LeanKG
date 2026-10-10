@@ -486,6 +486,6 @@ DS-01..DS-25 as specified. The work was split into eight parallel agents with di
 
 ### Reported, not changed (outside scope)
 - `internal/errs` audit walks `.worktrees/`, so it fails in the main checkout whenever a worktree carries new `LEANKG_ERROR_` literals.
-- `main.go` discards the return of `restauto.RegisterAutoConfig`, so `/api/v1/mcp/auto-config` is never mounted.
+- ~~`main.go` discards the return of `restauto.RegisterAutoConfig`, so `/api/v1/mcp/auto-config` is never mounted.~~ **FIXED in #463** — the returned mux is now assigned on both call sites.
 - `ui-dashboard` dev dependency `vitest` 3.x carries an advisory via `tinypool` (same range as `ui-v2`); the fix is a major upgrade.
 - Changes needed in other repos (owner rule 10): xdev should export `XDEV_SESSION_ID` to MCP children and send `X-LeanKG-Session`; the Claude Code memory hook should send `X-LeanKG-Session`.
