@@ -480,7 +480,10 @@ afterSidecars:
 			pSrv.SetRecorder(rec)
 			return httpMux(pSrv.HTTPHandler())
 		})
-		restauto.RegisterAutoConfig(h, engine)
+		// RegisterAutoConfig RETURNS the wrapped mux; the endpoint lives in
+		// that returned handler, so serving the original one served everything
+		// except /api/v1/mcp/auto-config.
+		h = restauto.RegisterAutoConfig(h, engine)
 		go serveHTTP(ctx, h, addr)
 	}
 	if *restAddr != "" {
@@ -493,7 +496,7 @@ afterSidecars:
 		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
-		restauto.RegisterAutoConfig(h, engine)
+		h = restauto.RegisterAutoConfig(h, engine)
 		h = rest.Capture(h, rec, telemetry.TransportREST)
 		// /api/v1/auth/* is public by design: register/login/token are the
 		// bootstrap (the handlers enforce their own caller/account checks), and
@@ -509,6 +512,15 @@ afterSidecars:
 	if *rpcAddr != "" {
 		path, handler := rpc.Handler(engine, rec)
 		mux := http.NewServeMux()
+		// Liveness for the same reason the MCP, REST and UI mounts carry one:
+		// FR-SELF-01 asks for /health on every listener, and a ConnectRPC
+		// mux answers 404 for everything but the service route, so an
+		// orchestrator probe against this address saw a dead server that was
+		// in fact serving. Same envelope as the other listeners.
+		mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		})
 		mux.Handle(path, handler)
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
 		go serveHTTP(ctx, auth.MiddlewareWithStore(st, mux), *rpcAddr)
