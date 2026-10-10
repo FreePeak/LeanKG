@@ -33,19 +33,54 @@ const captureBodyCap = 1 << 20
 // Capture wraps next. transport is the default transport for the row; paths
 // under /v1/default/banks/ are always recorded as telemetry.TransportHS.
 func Capture(next http.Handler, rec telemetry.Recorder, transport string) http.Handler {
-	if rec == nil {
-		rec = telemetry.Nop{}
-	}
-	return &captureHandler{next: next, rec: rec, transport: transport}
+	return &CaptureHandler{next: next, rec: &RecorderHolder{rec: rec}, transport: transport}
 }
 
-type captureHandler struct {
+// NewCaptureHandler builds the REST capture handler with no next yet; Wrap
+// attaches the wrapped handler. The explicit form exists so a consent reload
+// can re-point the sink after startup — the wrapper returns http.Handler,
+// which carries no SetRecorder.
+func NewCaptureHandler(rec telemetry.Recorder, transport string) *CaptureHandler {
+	return &CaptureHandler{rec: &RecorderHolder{rec: rec}, transport: transport}
+}
+
+// Wrap attaches next and returns the handler.
+func (c *CaptureHandler) Wrap(next http.Handler) http.Handler {
+	c.next = next
+	return c
+}
+
+// SetRecorder re-points this handler's sink.
+func (c *CaptureHandler) SetRecorder(rec telemetry.Recorder) { c.rec.SetRecorder(rec) }
+
+// CaptureHandler is the REST capture middleware: a handler whose sink a
+// consent reload can swap (see NewCaptureHandler).
+type CaptureHandler struct {
 	next      http.Handler
-	rec       telemetry.Recorder
+	rec       *RecorderHolder
 	transport string
 }
 
-func (c *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// RecorderHolder is the swappable sink a capture handler reads per request.
+// A consent reload (cmd/leankg ReloadTelemetry) can re-point it at a recorder
+// built after startup without rebuilding the handler chain; a level raise that
+// reached nobody was the bug this holder exists to prevent.
+type RecorderHolder struct {
+	rec telemetry.Recorder
+}
+
+// SetRecorder hands the holder a new recorder; nil means Nop. Safe to call
+// while requests are in flight — a handler reads the field per request.
+func (h *RecorderHolder) SetRecorder(rec telemetry.Recorder) {
+	if rec == nil {
+		rec = telemetry.Nop{}
+	}
+	h.rec = rec
+}
+
+func (h *RecorderHolder) Level() telemetry.Level { return h.rec.Level() }
+
+func (c *CaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if c.rec.Level() == telemetry.Off {
 		c.next.ServeHTTP(w, r)
 		return
@@ -97,7 +132,7 @@ func (c *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ev.Freshness = cls.Freshness
 	ev.Hits = cls.Hits
 	ev.HitFiles = strings.Join(cls.HitFiles, "\n")
-	if c.rec.Level() == telemetry.Bodies {
+	if c.rec.rec.Level() == telemetry.Bodies {
 		if raw != nil {
 			ev.ArgsRedacted = telemetry.Cap(telemetry.Redact(string(raw)), telemetry.DefaultMaxBodyBytes)
 		}
@@ -105,7 +140,7 @@ func (c *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ev.BodyRedacted = telemetry.Cap(telemetry.Redact(string(cw.body)), telemetry.DefaultMaxBodyBytes)
 		}
 	}
-	c.rec.RecordCall(ev)
+	c.rec.rec.RecordCall(ev)
 }
 
 // captureBody is the subset of a request body the row records.

@@ -477,7 +477,7 @@ DS-01..DS-25 as specified. The work was split into eight parallel agents with di
 ### Deviations
 - **DS-00 (live client probe)** not run. Adapters rely on the binary/source survey; Grok, Codex and Gemini ship marked experimental.
 - **Version** not bumped: release-please owns `cmd/leankg/VERSION` (the v4.14 feature PR did not bump it either).
-- **SIGHUP config reload** not implemented: servers read consent at start; the dashboard re-reads it per request.
+- ~~**SIGHUP config reload** not implemented: servers read consent at start~~. **IMPLEMENTED in #475**: `SIGHUP` re-reads telemetry.yaml and applies the level to the live recorder, building it on demand when capture was off at startup (a first grant after startup used to capture nothing). The dashboard's consent screen writes the same file, so it takes effect on the next SIGHUP — the one thing that still needs a restart is nothing.
 - **SLOC baseline fallback** not wired: `Baseline` sees file names only, so an unreadable hit file counts as `none` rather than a guess.
 - ~~**Reference memory hook** (`examples/hooks/leankg-memory`, DS-19) not shipped.~~ **SHIPPED in #474** along with the bank-less `GET /api/v1/memory/inject` route it needs (the bank name embeds a hash of the cwd, so an external caller cannot know it and a wrong guess reads the wrong bank silently). The hook sends `X-LeanKG-Session`, and "returned vs injected" now distinguishes the rows the server returned from the rows the block carried.
 - **`leankg metrics --session`** keeps `--session` as a boolean (latest session) and adds `--session-id ID`, rather than changing the flag type.

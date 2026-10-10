@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,7 +41,13 @@ type recorder struct {
 	closed bool
 
 	closeOnce sync.Once
-	closeErr  error
+	// writerOnce guards close(done): the Off construction path closes it with
+	// no writer, a running writer closes it on exit, and SetLevel re-arms it
+	// when it revives a recorder built Off. Without it, a revived recorder's
+	// writer would no-op on a once already spent, and Close would block on
+	// <-r.done forever.
+	writerOnce sync.Once
+	closeErr   error
 }
 
 // NewRecorder returns a Recorder that writes to st at level. Off returns a
@@ -52,8 +59,12 @@ func NewRecorder(st Store, level Level, maxBodyBytes int) Recorder {
 	}
 	r := &recorder{st: st, level: level, maxBody: maxBodyBytes, done: make(chan struct{})}
 	if level == Off {
-		r.closed = true
-		close(r.done)
+		// No writer and no queue. `closed` stays false because it marks
+		// "Close was called", not "not capturing": the level alone is Off, so
+		// SetLevel can revive this recorder (the consent reload) while Close
+		// semantics stay correct. `done` is closed because no writer will ever
+		// close it, which is what makes Close on an Off recorder cheap.
+		r.writerOnce.Do(func() { close(r.done) })
 		return r
 	}
 	r.ch = make(chan queued, queueSize)
@@ -62,7 +73,45 @@ func NewRecorder(st Store, level Level, maxBodyBytes int) Recorder {
 }
 
 // Level reports the level this recorder captures at.
-func (r *recorder) Level() Level { return r.level }
+func (r *recorder) Level() Level {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.level
+}
+
+// SetLevel applies a live level change — the SIGHUP / consent-screen path, so
+// an operator who grants or withdraws consent mid-session does not have to
+// restart the server. Two directions:
+//
+//   - rising from Off: the recorder was built with no writer and no queue, so
+//     this re-arms writerOnce and starts the writer. Without that, events
+//     would be accepted into a queue nobody drains.
+//   - falling to Off: capture stops immediately (enqueue checks the level
+//     under the same lock). The writer keeps running so a later raise is free.
+func (r *recorder) SetLevel(level Level) error {
+	if level != Metadata && level != Bodies {
+		level = Off
+	}
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return errors.New("telemetry: recorder is closed")
+	}
+	risingFromOff := r.level == Off && level != Off
+	r.level = level
+	needWriter := risingFromOff && r.ch == nil
+	if needWriter {
+		// Re-arm for the writer about to start: the Off construction path
+		// already spent this once to close `done`.
+		r.writerOnce = sync.Once{}
+		r.ch = make(chan queued, queueSize)
+	}
+	r.mu.Unlock()
+	if needWriter {
+		go r.run()
+	}
+	return nil
+}
 
 // RecordCall enqueues a call without blocking. It never panics into the caller.
 func (r *recorder) RecordCall(ev CallEvent) {
@@ -79,7 +128,7 @@ func (r *recorder) RecordMemory(ev MemoryEvent) {
 func (r *recorder) enqueue(q queued) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if r.closed {
+	if r.closed || r.level == Off {
 		return
 	}
 	select {
@@ -110,7 +159,10 @@ func (r *recorder) Close() error {
 // run is the single writer. It batches by count and by time, and reports
 // drops with AddDropped on every flush.
 func (r *recorder) run() {
-	defer close(r.done)
+	// `done` is closed by whoever stops this writer — here, or the Off
+	// construction path that never started one. The once keeps a revived
+	// recorder (SetLevel re-armed it) from double-closing.
+	defer r.writerOnce.Do(func() { close(r.done) })
 	defer func() { _ = recover() }() // a store panic must not reach the server
 
 	var calls []CallEvent
@@ -171,7 +223,7 @@ func (r *recorder) prepareCall(c CallEvent) CallEvent {
 	if c.TS.IsZero() {
 		c.TS = time.Now()
 	}
-	if r.level == Bodies {
+	if r.Level() == Bodies {
 		c.ArgsRedacted = Cap(Redact(c.ArgsRedacted), r.maxBody)
 		c.BodyRedacted = Cap(Redact(c.BodyRedacted), r.maxBody)
 	} else {

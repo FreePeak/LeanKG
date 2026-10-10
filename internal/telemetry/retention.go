@@ -20,6 +20,17 @@ func retentionSweepAt(ctx context.Context, st Store, days int, now time.Time) (i
 
 // startRetention sweeps once now and then daily until the returned stop
 // function is called. Errors are dropped: retention must never affect a call.
+// StartRetention is the exported form of startRetention: a caller that builds
+// a recorder lazily (cmd/leankg's consent reload, when capture was off at
+// startup) needs the same retention sweep the normal open path installs, or a
+// first-after-reload ledger would never be swept.
+func StartRetention(st Store, days int) (func(), error) {
+	if st == nil {
+		return func() {}, nil
+	}
+	return startRetention(st, days), nil
+}
+
 func startRetention(st Store, days int) (stop func()) {
 	done := make(chan struct{})
 	finished := make(chan struct{})

@@ -8,11 +8,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/sessionlink/all"
@@ -413,8 +416,17 @@ func fileExists(p string) bool {
 // telemetryOnce and telemetryStop make the process Recorder a singleton.
 var (
 	telemetryOnce sync.Once
-	telemetryRec  telemetry.Recorder = telemetry.Nop{}
-	telemetryStop sync.Once
+	// telemetryBuildOnce guards the lazy build (ReloadTelemetry). It is
+	// separate from telemetryOnce because serve consumes that one at startup
+	// with a Nop when capture is off — reusing it would make the reload a
+	// silent no-op, which is exactly the "first grant after startup does
+	// nothing" bug this reload exists to prevent.
+	telemetryBuildOnce sync.Once
+	telemetryRec       telemetry.Recorder = telemetry.Nop{}
+	// telemetryStop holds the retention sweep's cancel for a lazily built
+	// recorder (ReloadTelemetry), so a close stops the sweep before the store.
+	telemetryStop   func()
+	telemetryStopMu sync.Mutex
 )
 
 // telemetryRecorder returns the process-wide capture Recorder: telemetry.Nop
@@ -431,9 +443,133 @@ func telemetryRecorder() telemetry.Recorder {
 	return telemetryRec
 }
 
-// closeTelemetry flushes the process Recorder once; serve verbs defer it.
+// closeTelemetry stops the retention sweep then flushes the process Recorder.
 func closeTelemetry() {
-	telemetryStop.Do(func() {
-		_ = telemetryRec.Close()
+	telemetryStopMu.Lock()
+	stop := telemetryStop
+	telemetryStop = nil
+	telemetryStopMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	_ = telemetryRec.Close()
+}
+
+// ReloadTelemetry re-reads the consent file and applies the level to the live
+// recorder, so granting or withdrawing consent mid-session takes effect without
+// a server restart (the plan-dashboard §8 deviation this closes).
+//
+// The subtle half: a server that started with capture Off has NO recorder at
+// all — telemetry.Open returns a Nop and creates no file, which is the "off
+// means off" contract. Reloading on such a server therefore has to build the
+// recorder on demand, or a first-time grant after startup would still capture
+// nothing and the operator would conclude the reload is broken.
+func ReloadTelemetry() error {
+	cfg, err := telemetry.LoadConfig(telemetry.Home())
+	if err != nil {
+		return fmt.Errorf("telemetry reload: %w", err)
+	}
+	level := telemetry.EffectiveLevel(cfg, os.Getenv("LEANKG_TELEMETRY"))
+	if level == telemetry.Off {
+		// Nothing to raise. Lowering a live recorder to Off is still applied,
+		// so a mid-session withdrawal stops capture immediately.
+		if rec := telemetryRecorder(); rec != nil {
+			if err := rec.SetLevel(telemetry.Off); err != nil {
+				return fmt.Errorf("telemetry reload: %w", err)
+			}
+		}
+		return nil
+	}
+	// Build the recorder once for this process if startup found capture off.
+	telemetryBuildOnce.Do(func() {
+		st, oerr := telemetry.OpenStore(telemetry.Home(), false)
+		if oerr != nil {
+			fmt.Fprintf(os.Stderr, "telemetry reload: open ledger: %v\n", oerr)
+			return
+		}
+		stop, serr := telemetry.StartRetention(st, cfg.RetentionDays)
+		if serr != nil {
+			fmt.Fprintf(os.Stderr, "telemetry reload: retention: %v\n", serr)
+			return
+		}
+		telemetryStopMu.Lock()
+		telemetryStop = stop
+		telemetryStopMu.Unlock()
+		rec := telemetry.NewRecorder(st, level, cfg.MaxBodyBytes)
+		telemetryRec = rec
 	})
+	rec := telemetryRecorder()
+	if rec == nil {
+		return fmt.Errorf("telemetry reload: no recorder available")
+	}
+	if err := rec.SetLevel(level); err != nil {
+		return fmt.Errorf("telemetry reload: %w", err)
+	}
+	// Re-point the consumers at the (possibly new) recorder.
+	installTelemetrySinks(rec)
+	log.Printf("telemetry: consent reloaded at %s", level)
+	return nil
+}
+
+// telemetrySinks re-installs the process recorder into every consumer after a
+// live build. Each consumer holds the Recorder VALUE it was given at startup
+// (mcp.SetRecorder, memory.SetRecorder, session.SetRecorder, the REST and
+// ConnectRPC handlers), so raising a level on a freshly built recorder reaches
+// nobody until the sinks are pointed at it. Without this the reload logs
+// success and captures nothing — the exact "it does not work" report the reload
+// exists to prevent.
+var telemetrySinks []func(telemetry.Recorder)
+
+// AddTelemetrySink registers a consumer to be re-pointed when a reload builds
+// a recorder (serve registers its four sinks once, at startup).
+func AddTelemetrySink(fn func(telemetry.Recorder)) { telemetrySinks = append(telemetrySinks, fn) }
+
+// watchConsentReload reloads consent on SIGHUP until ctx is done. SIGHUP is the
+// conventional "re-read your config" signal, so it is what an operator already
+// knows to send; the dashboard's consent screen writes the same file and takes
+// effect on the next SIGHUP (or restart).
+func watchConsentReload(ctx context.Context) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGHUP)
+	go func() {
+		defer signal.Stop(ch)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ch:
+				if err := ReloadTelemetry(); err != nil {
+					log.Printf("telemetry reload: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+// registerMCPSink records one live MCP server so a consent reload can re-point
+// it. MCP servers are created per listener and lazily per project, so the sink
+// list cannot be known at startup; each New(engine) registers itself here as
+// it is built. The pointer is kept, not the value, because every consumer holds
+// the Recorder it was given at start.
+var (
+	mcpSinkMu sync.Mutex
+	mcpSinks  []interface{ SetRecorder(telemetry.Recorder) }
+)
+
+func registerMCPSink(srv interface{ SetRecorder(telemetry.Recorder) }) {
+	mcpSinkMu.Lock()
+	defer mcpSinkMu.Unlock()
+	mcpSinks = append(mcpSinks, srv)
+}
+
+// installTelemetrySinks re-points every consumer at rec.
+func installTelemetrySinks(rec telemetry.Recorder) {
+	for _, fn := range telemetrySinks {
+		fn(rec)
+	}
+	mcpSinkMu.Lock()
+	defer mcpSinkMu.Unlock()
+	for _, srv := range mcpSinks {
+		srv.SetRecorder(rec)
+	}
 }
