@@ -479,7 +479,7 @@ DS-01..DS-25 as specified. The work was split into eight parallel agents with di
 - **Version** not bumped: release-please owns `cmd/leankg/VERSION` (the v4.14 feature PR did not bump it either).
 - **SIGHUP config reload** not implemented: servers read consent at start; the dashboard re-reads it per request.
 - **SLOC baseline fallback** not wired: `Baseline` sees file names only, so an unreadable hit file counts as `none` rather than a guess.
-- **Reference memory hook** (`examples/hooks/leankg-memory`, DS-19) not shipped; "returned vs injected" stays "returned" until the hook reports kept ids.
+- ~~**Reference memory hook** (`examples/hooks/leankg-memory`, DS-19) not shipped.~~ **SHIPPED in #474** along with the bank-less `GET /api/v1/memory/inject` route it needs (the bank name embeds a hash of the cwd, so an external caller cannot know it and a wrong guess reads the wrong bank silently). The hook sends `X-LeanKG-Session`, and "returned vs injected" now distinguishes the rows the server returned from the rows the block carried.
 - **`leankg metrics --session`** keeps `--session` as a boolean (latest session) and adds `--session-id ID`, rather than changing the flag type.
 - **Remote dashboard mode** requires the bearer on every request, including the SPA; a browser needs a header-injecting proxy.
 - **Embed staleness stamp** is a content hash of `ui-dashboard` sources, not a commit id, so uncommitted edits count and source + embed can land in one commit.

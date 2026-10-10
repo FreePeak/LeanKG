@@ -275,8 +275,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				"banks": banks, "count": len(entries), "memories": memory.RankEntries(entries),
 			})
 		})
-		mux.HandleFunc("GET /api/v1/memory/banks/{bank}/inject", func(w http.ResponseWriter, r *http.Request) {
-			bank := r.PathValue("bank")
+		injectHandle := func(w http.ResponseWriter, r *http.Request, bank string) {
 			q := r.URL.Query()
 			scope, err := memory.ParseScope(q.Get("scope"))
 			if err != nil {
@@ -289,6 +288,16 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"count": len(entries), "text": text})
+		}
+		mux.HandleFunc("GET /api/v1/memory/banks/{bank}/inject", func(w http.ResponseWriter, r *http.Request) {
+			injectHandle(w, r, r.PathValue("bank"))
+		})
+		// The bank-less form is what an external hook uses: a hook cannot know
+		// the mnemopi bank name (it embeds a hash of the cwd), and guessing one
+		// reads the wrong bank silently. An empty bank means the server's own
+		// default for the scope, which is exactly what the hook wants.
+		mux.HandleFunc("GET /api/v1/memory/inject", func(w http.ResponseWriter, r *http.Request) {
+			injectHandle(w, r, "")
 		})
 	}
 	if cfg.hindsightCompat && mem != nil {
