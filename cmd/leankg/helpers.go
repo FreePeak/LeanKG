@@ -154,7 +154,7 @@ func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool)
 		indexTarget, res.Files, res.Elements, res.Relationships, res.Skipped)
 	// The count line ends the command with no obvious next step, and the one
 	// that matters (wire an agent) lives in a different verb.
-	fmt.Println("next: leankg install --target <client>  (claude-code | cursor | codex | gemini | opencode | omp)")
+	fmt.Println("next: leankg install --target <client>  (claude-code | cursor | codex | gemini | opencode | omp | xdev)")
 
 	// Issue #376: stamp the project in the fleet registry. Best-effort by
 	// contract — a fleet-bookkeeping failure must never turn a successful index
