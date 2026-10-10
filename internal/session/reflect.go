@@ -13,10 +13,13 @@ package session
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/memory"
 )
 
 // LessonsFile is the reflections artifact, relative to the project directory.
@@ -54,5 +57,35 @@ func ReflectOutcome(projectDir, question string, nodes []string, outcome, note s
 	if _, err := f.WriteString(entry); err != nil {
 		return "", fmt.Errorf("session: append reflection: %w", err)
 	}
+	// K5 "honest reflect": the entry above is the Rust contract, but it lands
+	// in <project>/.leankg/reflections while the memory layer roots itself at
+	// <project>/.leankg/memory and indexes only what it writes itself (a raw
+	// file append skips the FTS reindex, so it would still be invisible). Until
+	// now a recorded reflection was therefore a private diary: recorded, never
+	// recalled. Mirror it through the memory layer so recall can rank it.
+	//
+	// Best-effort by design: the Rust artifact above is already on disk, so a
+	// memory failure must not make `reflect` report failure for a reflection it
+	// did record.
+	if err := MirrorToMemory(projectDir, entry); err != nil {
+		log.Printf("session: reflection mirrored to memory: %v", err)
+	}
 	return path, nil
+}
+
+// ReflectTopicKey is the memory-layer path the mirrored reflection lands in.
+const ReflectTopicKey = "topics/REFLECTIONS.md"
+
+// MirrorToMemory appends a reflection entry into the memory layer's topic tree
+// through the layer's own write path, so the FTS index is updated and recall
+// can rank it. It opens the project's memory root, which is why it is separate
+// from ReflectOutcome: writing the Rust artifact never needs the memory layer,
+// and a caller that has a handle already can pass its own.
+func MirrorToMemory(projectDir, entry string) error {
+	m, err := memory.Open(projectDir, false)
+	if err != nil {
+		return err
+	}
+	defer m.Close()
+	return m.Append(ReflectTopicKey, entry)
 }

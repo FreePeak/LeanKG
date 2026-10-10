@@ -252,6 +252,35 @@ func (m *Memory) Create(path, content string) error {
 	return m.reindex(key)
 }
 
+// Append adds content to an existing memory file, creating it when absent,
+// and reindexes the key so the new lines become searchable rows. A raw file
+// append would skip the index, which is how a written-but-unfindable file
+// happens (found with the reflect mirroring, session/reflect.go MirrorToMemory).
+func (m *Memory) Append(path, content string) error {
+	full, key, err := m.resolve(path)
+	if err != nil {
+		return err
+	}
+	if err := bound(key, content); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(full, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return m.reindex(key)
+}
+
 // StrReplace replaces the single occurrence of old with new. Zero or
 // multiple occurrences fail with ErrAmbiguousMatch.
 func (m *Memory) StrReplace(path, old, new string) error {
