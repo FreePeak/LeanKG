@@ -90,7 +90,7 @@ export function FailuresPage() {
                               {c.action ? `.${c.action}` : ''}
                             </TableCell>
                             <TableCell className="max-w-xs truncate font-mono text-xs" title={c.command}>{c.command || '-'}</TableCell>
-                            <TableCell className="text-xs">{c.outcome_reason ? humanize(c.outcome_reason) : humanize(c.outcome)}</TableCell>
+                            <TableCell className="text-xs">{c.outcome_reason ?? humanize(c.outcome)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
