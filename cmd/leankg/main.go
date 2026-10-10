@@ -275,6 +275,9 @@ func cmdServe(args []string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// SIGHUP re-reads consent: an operator who grants or withdraws telemetry
+	// mid-session must not have to restart the server (plan v4.15 §8).
+	watchConsentReload(ctx)
 
 	dir := *project
 	if dir == "" {
@@ -339,6 +342,13 @@ afterSidecars:
 	// ConnectRPC call rows all go to it.
 	rec := telemetryRecorder()
 	defer closeTelemetry()
+	// The sinks are registered so a SIGHUP consent reload can re-point them at
+	// a recorder built after startup (capture was off then). Every consumer
+	// holds the value it was given, so a level change reaches nobody until this
+	// list is replayed.
+	AddTelemetrySink(memory.SetRecorder)
+	AddTelemetrySink(session.SetRecorder)
+
 	memory.SetRecorder(rec)
 	session.SetRecorder(rec)
 
@@ -452,6 +462,7 @@ afterSidecars:
 		srv := leankgmcp.New(engine)
 		srv.SetProjectRouter(router)
 		srv.SetRecorder(rec) // plan v4.15 DS-04: capture tools/call and identity
+		registerMCPSink(srv)
 		log.Printf("leankg serve (stdio) project=%s engine=%s", dir, st.Engine())
 		if err := srv.RunStdio(ctx); err != nil {
 			log.Fatalf("stdio: %v", err)
@@ -472,12 +483,14 @@ afterSidecars:
 		mcpSrv.SetProjectRouter(router)
 		mcpSrv.SetAuthStore(st)
 		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
+		registerMCPSink(mcpSrv)
 		h := httpMux(mcpSrv.HTTPHandler())
 		h = routeByProject(ctx, router, h, func(p *projects.Project) http.Handler {
 			pSrv := leankgmcp.New(p.Engine)
 			pSrv.SetProjectRouter(router)
 			pSrv.SetAuthStore(st)
 			pSrv.SetRecorder(rec)
+			registerMCPSink(pSrv)
 			return httpMux(pSrv.HTTPHandler())
 		})
 		// RegisterAutoConfig RETURNS the wrapped mux; the endpoint lives in
@@ -497,7 +510,11 @@ afterSidecars:
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
 		h = restauto.RegisterAutoConfig(h, engine)
-		h = rest.Capture(h, rec, telemetry.TransportREST)
+		// The REST capture handler is built explicitly so a consent reload can
+		// re-point its sink (a level raise that reached nobody was the bug).
+		cap := rest.NewCaptureHandler(rec, telemetry.TransportREST)
+		h = cap.Wrap(h)
+		AddTelemetrySink(cap.SetRecorder)
 		// /api/v1/auth/* is public by design: register/login/token are the
 		// bootstrap (the handlers enforce their own caller/account checks), and
 		// Rust registered them outside the auth middleware for the same reason.

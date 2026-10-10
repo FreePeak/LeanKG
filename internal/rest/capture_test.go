@@ -22,6 +22,9 @@ type captureRecorder struct {
 }
 
 func (r *captureRecorder) Level() telemetry.Level { return r.level }
+
+// SetLevel satisfies telemetry.Recorder; this fake keeps one level for its test.
+func (r *captureRecorder) SetLevel(telemetry.Level) error { return nil }
 func (r *captureRecorder) RecordCall(ev telemetry.CallEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

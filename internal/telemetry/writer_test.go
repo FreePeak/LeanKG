@@ -162,3 +162,68 @@ func TestRecorderNeverPanicsAfterClose(t *testing.T) {
 	rec.RecordCall(CallEvent{Tool: "query"})
 	rec.RecordMemory(MemoryEvent{Verb: "recall"})
 }
+
+// TestRecorderReloadRaisesLevelLive is the SIGHUP-consent half of the live
+// reload plan: an operator who grants consent mid-session must not need a
+// server restart for capture to start. Before this the level was fixed at
+// construction, and an Off recorder had no writer goroutine to raise.
+func TestRecorderReloadRaisesLevelLive(t *testing.T) {
+	st := openTestLedger(t)
+	rec := NewRecorder(st, Off, 1024).(*recorder)
+	if rec.Level() != Off {
+		t.Fatalf("Level = %q, want Off before the grant", rec.Level())
+	}
+	// Consent is granted: re-read the config and apply it to the live recorder.
+	if err := rec.SetLevel(Metadata); err != nil {
+		t.Fatalf("SetLevel(Metadata): %v", err)
+	}
+	if rec.Level() != Metadata {
+		t.Fatalf("Level = %q after SetLevel, want metadata", rec.Level())
+	}
+	rec.RecordCall(CallEvent{Tool: "query", Transport: TransportHTTP})
+	// Give the writer goroutine its beat, then read through a fresh handle.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stats, _ := reopenRO(t, st).Stats(context.Background())
+		if stats.Calls >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	stats, _ := reopenRO(t, st).Stats(context.Background())
+	if stats.Calls != 1 {
+		t.Fatalf("calls after the grant = %d, want 1 — a raised level must capture", stats.Calls)
+	}
+}
+
+// TestRecorderReloadLoweringTurnsCaptureOff covers the direction that matters
+// for the operator's "Off means off" expectation: dropping consent stops
+// capture without a restart, and in-flight events are not resurrected.
+func TestRecorderReloadLoweringTurnsCaptureOff(t *testing.T) {
+	st := openTestLedger(t)
+	rec := NewRecorder(st, Metadata, 1024).(*recorder)
+	rec.RecordCall(CallEvent{Tool: "query", Transport: TransportHTTP})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stats, _ := reopenRO(t, st).Stats(context.Background())
+		if stats.Calls >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := rec.SetLevel(Off); err != nil {
+		t.Fatalf("SetLevel(Off): %v", err)
+	}
+	if rec.Level() != Off {
+		t.Fatalf("Level = %q after SetLevel(Off)", rec.Level())
+	}
+	rec.RecordCall(CallEvent{Tool: "status", Transport: TransportHTTP})
+	time.Sleep(150 * time.Millisecond)
+	stats, _ := reopenRO(t, st).Stats(context.Background())
+	if stats.Calls != 1 {
+		t.Fatalf("calls = %d, want 1 — events after Off must not be captured", stats.Calls)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

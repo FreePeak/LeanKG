@@ -14,7 +14,10 @@ type lessonRecorder struct {
 	evs   []telemetry.MemoryEvent
 }
 
-func (r *lessonRecorder) Level() telemetry.Level         { return r.level }
+func (r *lessonRecorder) Level() telemetry.Level { return r.level }
+
+// SetLevel satisfies telemetry.Recorder; this fake keeps one level for its test.
+func (r *lessonRecorder) SetLevel(telemetry.Level) error { return nil }
 func (r *lessonRecorder) RecordCall(telemetry.CallEvent) {}
 func (r *lessonRecorder) RecordMemory(ev telemetry.MemoryEvent) {
 	r.mu.Lock()

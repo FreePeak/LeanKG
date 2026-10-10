@@ -325,6 +325,10 @@ type Store interface {
 // block and never return an error to the caller.
 type Recorder interface {
 	Level() Level
+	// SetLevel applies a live consent change (the SIGHUP / consent-screen
+	// reload). A recorder that cannot change level returns an error rather
+	// than silently ignoring the operator's choice.
+	SetLevel(level Level) error
 	RecordCall(ev CallEvent)
 	RecordMemory(ev MemoryEvent)
 	Close() error
@@ -334,6 +338,7 @@ type Recorder interface {
 type Nop struct{}
 
 func (Nop) Level() Level             { return Off }
+func (Nop) SetLevel(Level) error     { return nil } // nothing to change
 func (Nop) RecordCall(CallEvent)     {}
 func (Nop) RecordMemory(MemoryEvent) {}
 func (Nop) Close() error             { return nil }
