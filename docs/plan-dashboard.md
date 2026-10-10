@@ -424,7 +424,7 @@ There is no in-session counterfactual, so two clearly separated panels:
 - **Docs:** add a `docs/telemetry.md` covering what is recorded, where it is stored, consent and purge. Update AGENTS.md's CLI reference.
 - **Changes outside this repo, reported, not made (owner rule 10):**
   1. **xdev** (`FreePeak/xdev`, `internal/mcpclient/mcp.go`): set `XDEV_SESSION_ID` in the MCP child env and send the `X-LeanKG-Session` header on HTTP. This gives exact correlation for xdev.
-  2. **`~/.claude/hooks/leankg-memory`:** send `X-LeanKG-Session` and the kept ids. The repo ships the reference version in `examples/hooks/`.
+  2. ~~**`~/.claude/hooks/leankg-memory`:** send `X-LeanKG-Session` and the kept ids.~~ **DONE in #474 + #476**: the reference hook at `examples/hooks/leankg-memory` sends `X-LeanKG-Session`, and the inject route now reports `injected_ids` (additive) so the hook — or any caller — can state which rows it actually placed.
 
 ## 6. Decisions (owner, 2026-10-10)
 1. **`leankg dashboard` default:** starts the web server and opens the browser. `--format text|json` keeps today's output.
