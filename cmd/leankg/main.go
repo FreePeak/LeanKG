@@ -538,7 +538,11 @@ afterSidecars:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})
-		mux.Handle(path, handler)
+		// The descriptor types `args` as map<string,string>, so a typed action
+		// argument cannot be carried on this wire. The codec refuses by naming
+		// its own internal `value` field, which the caller never sent; this
+		// translates the refusal to name their value and this wire's limit.
+		mux.Handle(path, rpc.ArgsRefusalRecovery(handler))
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
 		go serveHTTP(ctx, auth.MiddlewareWithStore(st, mux), *rpcAddr)
 	}
