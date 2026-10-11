@@ -246,7 +246,7 @@ func (s *Server) registerTools() {
 				"payload": {"type": "string", "description": "payload to offload (action=session)"},
 				"summary": {"type": "string", "description": "offload summary (action=session)"},
 				"tags": {"type": "array", "items": {"type": "string"}, "description": "tags for action=memory command=session_retain (also accepted inside args.tags, or as one comma-separated string); persisted on the row so a later tag-scoped recall can match it"},
-				"args": {"type": "object", "description": "action params: turns[]/session_id/retained_through_user_turn/tags[]/scope/cwd/bank (memory session_retain); content/old/new (memory curation); mode/lines/fresh (read)"},
+				"args": {"type": "object", "description": "action params: turns[]/session_id/retained_through_user_turn/tags[]/scope/cwd/bank (memory session_retain); content/old/new (memory curation); mode/lines/fresh (read). For query: scope=all (default; the whole corpus, test fixtures and archived docs included) | code (production source only) | prod (code plus current docs) picks the population to RANK; an unknown value is an error; every answer reports retrieval.scope"},
 				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
 			}
 		}`),

@@ -395,6 +395,10 @@ func (s *PGStore) scanKnowledgeRanked(rows pgx.Rows) ([]KnowledgeEntry, error) {
 // embedding the query). The second result names the contributing arms, e.g.
 // "rrf(vector+tsvector+trigram)".
 func (s *PGStore) HybridSearch(modelID, query string, qvec []float32, limit int) ([]HybridHit, string, error) {
+	return s.HybridSearchScoped(modelID, query, qvec, limit, nil)
+}
+
+func (s *PGStore) HybridSearchScoped(modelID, query string, qvec []float32, limit int, keep func(Element) bool) ([]HybridHit, string, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -424,7 +428,7 @@ func (s *PGStore) HybridSearch(modelID, query string, qvec []float32, limit int)
 	var kwErr error
 
 	if len(qvec) > 0 {
-		hits, err := s.SearchVectors(modelID, qvec, window)
+		hits, err := s.SearchVectorsScoped(modelID, qvec, window, keep)
 		if err != nil {
 			return nil, "", fmt.Errorf("store: hybrid vector arm: %w", err)
 		}

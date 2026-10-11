@@ -15,6 +15,16 @@ type HybridSearcher interface {
 	HybridSearch(modelID, query string, qvec []float32, limit int) ([]HybridHit, string, error)
 }
 
+// ScopedHybridSearcher is HybridSearcher over a caller-selected population.
+type ScopedHybridSearcher interface {
+	HybridSearcher
+	// HybridSearchScoped is HybridSearch restricted to the rows keep admits.
+	// A nil keep is the unscoped default, byte for byte.
+	HybridSearchScoped(modelID, query string, qvec []float32, limit int, keep func(Element) bool) ([]HybridHit, string, error)
+	// SearchVectorsScoped is the vector arm restricted to the same population.
+	SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error)
+}
+
 var (
 	_ HybridSearcher = (*Store)(nil)
 	_ HybridSearcher = (*PGStore)(nil)
@@ -26,6 +36,10 @@ var (
 // is an error (core checked the stamp before embedding the query); a keyword
 // arm error or an empty keyword arm leaves a vector-only fusion.
 func (s *Store) HybridSearch(modelID, query string, qvec []float32, limit int) ([]HybridHit, string, error) {
+	return s.HybridSearchScoped(modelID, query, qvec, limit, nil)
+}
+
+func (s *Store) HybridSearchScoped(modelID, query string, qvec []float32, limit int, keep func(Element) bool) ([]HybridHit, string, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -34,7 +48,7 @@ func (s *Store) HybridSearch(modelID, query string, qvec []float32, limit int) (
 	var lists []RankList
 
 	if len(qvec) > 0 {
-		hits, err := s.SearchVectors(modelID, qvec, window)
+		hits, err := s.SearchVectorsScoped(modelID, qvec, window, keep)
 		if err != nil {
 			return nil, "", err
 		}
