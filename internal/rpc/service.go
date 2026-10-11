@@ -86,7 +86,19 @@ func (s *LeanKGService) Status(ctx context.Context, req *connect.Request[leankgv
 }
 
 func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[leankgv1.MemoryReadRequest]) (*connect.Response[leankgv1.MemoryReadResponse], error) {
-	out, err := s.engine.MemoryRead(req.Msg.Command, req.Msg.Path, req.Msg.Query, int(req.Msg.Limit))
+	// Route through the same dispatcher the MCP tool and the CLI use
+	// (query action=memory), so all three surfaces answer the SAME command
+	// vocabulary. Measured live before this: the RPC refused `session_recall`
+	// with "valid: view, snapshot, search" while MCP accepted "session_recall,
+	// memories, view, snapshot, search" — the agent protocol's own first
+	// instruction ("at session start call session_recall") was the one command
+	// a ConnectRPC client could not run.
+	out, err := s.engine.Query(ctx, core.QueryRequest{
+		Action: "memory",
+		Query:  req.Msg.Query,
+		Limit:  int(req.Msg.Limit),
+		Args:   protoArgs(map[string]string{"command": req.Msg.Command, "path": req.Msg.Path, "cwd": ""}),
+	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
