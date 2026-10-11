@@ -63,8 +63,7 @@ func resolveProjectDir(flagValue string) string {
 // project directory and the lazily-activated language registry wired, exactly
 // like the serving transports. The caller closes engine.Store().
 func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
-	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), projectcfg.PGURL(dir), "", mode)
+	st, err := openStore(context.Background(), dir, "", mode)
 	if err != nil {
 		return nil, err
 	}
@@ -127,8 +126,7 @@ func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool)
 		}
 		projectcfg.EnsureIdentityFieldsForDB(filepath.Join(dir, ".leankg"), abs)
 	}
-	st, err := store.OpenBackend(context.Background(), dir,
-		os.Getenv("LEANKG_DB_ENGINE"), projectcfg.PGURL(dir), "", store.RW)
+	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

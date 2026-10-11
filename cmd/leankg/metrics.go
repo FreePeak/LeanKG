@@ -33,8 +33,7 @@ func cmdMetrics(args []string) {
 	parseInterspersed("metrics", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
-	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
+	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
 	}
@@ -76,8 +75,7 @@ func cmdDashboard(args []string) {
 	parseInterspersed("dashboard", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
-	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
+	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
 	}
