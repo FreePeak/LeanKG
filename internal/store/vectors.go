@@ -286,6 +286,26 @@ const vectorSelectCols = `embedding_vectors.qualified_name,
 // ponytail: O(n) scan per query — fine to ~100k vectors at 384 dims (~0.15s
 // on M2 Pro); upgrade path is sqlite-vec when scale demands it.
 func (s *Store) SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error) {
+	return s.SearchVectorsScoped(modelID, q, k, nil)
+}
+
+// SearchVectorsScoped is SearchVectors over the caller's own population: keep
+// admits a row into the ranking. A nil keep means the whole corpus, so the
+// default is byte-for-byte what it was.
+//
+// The primitive exists because of a measured corpus, not a hunch: on this
+// repository's own store 22% of the elements are test fixtures and 37% are
+// archived docs, so 60% of the vector population is a document a working
+// engineer is not asking about — and a bare-symbol query ranks those documents
+// above the function. Both fusion arms rank over the same set, so no weight
+// pair closes the gap; scoping the SET is the only lever, and it is the
+// caller's decision.
+//
+// ponytail: the predicate runs inside the O(n) scan this arm already does, so
+// it costs one call per row and adds no second pass. The PostgreSQL arm cannot
+// push a Go predicate into its HNSW SQL (see pg_fts.go), which is why the
+// scope is a caller-side decision rather than a WHERE clause.
+func (s *Store) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
 	if len(q) == 0 {
 		return nil, nil
 	}
@@ -316,6 +336,9 @@ func (s *Store) SearchVectors(modelID string, q []float32, k int) ([]VectorSearc
 		v := decodeVec(buf)
 		if len(v) != len(q) {
 			continue // stamped collection mismatch should never reach here; skip defensively
+		}
+		if keep != nil && !keep(el) {
+			continue // outside the caller's population: never ranked at all
 		}
 		hits = append(hits, scored{el: el, val: cosine(q, v)})
 	}

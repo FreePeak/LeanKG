@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/ontology"
 	"github.com/FreePeak/LeanKG/internal/session"
@@ -757,4 +758,66 @@ func TestFileArgsConfinedToProject(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "read", Path: "in.go"}); err != nil {
 		t.Fatalf("in-project read refused: %v", err)
 	}
+}
+
+// TestQueryScopeStates pins the args.scope contract: the default is the whole
+// corpus; `code` and `prod` narrow it AND say so in retrieval.scope; an unknown
+// scope is an ERROR, never a silent full corpus (answering over everything when
+// the caller asked for a subset looks identical to the scope working).
+func TestQueryScopeStates(t *testing.T) {
+	e, mem := newEngine(t)
+	_ = mem
+	n := 400
+	for i := 0; i < n; i++ {
+		if err := e.st.UpsertElements([]store.Element{{
+			QualifiedName: fmt.Sprintf("pkg/a%d.go::A%d", i, i), ElementType: "func",
+			Name: fmt.Sprintf("A%d", i), FilePath: fmt.Sprintf("pkg/a%d.go", i), Language: "go", LineStart: 1,
+			Content: "memorable shared content in the corpus",
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string][]string{
+		"":      {"pkg/a0.go", "pkg/a1.go"},
+		"all":   {"pkg/a0.go", "pkg/a1.go"},
+		"code":  {"pkg/a0.go", "pkg/a1.go"},
+		"prod":  {"pkg/a0.go", "pkg/a1.go"},
+		"bogus": nil,
+		"Code":  nil, // the vocabulary is closed and case-sensitive
+	}
+	for scope, want := range files {
+		resp, err := e.Query(context.Background(), QueryRequest{Query: "memorable shared content", Limit: 2, Args: argsWith("scope", scope)})
+		if want == nil {
+			if err == nil || !strings.Contains(err.Error(), "unknown scope") {
+				t.Errorf("scope %q: err = %v, want it to refuse", scope, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("scope %q: %v", scope, err)
+		}
+		got, _ := resp["retrieval"].(map[string]any)
+		if got["scope"] != defaultScopeName(scope) {
+			t.Errorf("scope %q: retrieval.scope = %v, want %q", scope, got["scope"], defaultScopeName(scope))
+		}
+		hits, _ := resp["hits"].([]map[string]any)
+		if len(hits) == 0 {
+			t.Errorf("scope %q: no hits", scope)
+		}
+	}
+}
+
+func defaultScopeName(scope string) string {
+	if scope == "" {
+		return "all"
+	}
+	return scope
+}
+
+func argsWith(kv ...string) map[string]any {
+	m := map[string]any{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		m[kv[i]] = kv[i+1]
+	}
+	return m
 }

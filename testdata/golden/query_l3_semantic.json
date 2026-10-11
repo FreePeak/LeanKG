@@ -21,6 +21,7 @@
   "query": "compute the answer",
   "retrieval": {
     "reason": "reciprocal-rank fusion rrf(vector)",
-    "rung": "L3"
+    "rung": "L3",
+    "scope": "all"
   }
 }

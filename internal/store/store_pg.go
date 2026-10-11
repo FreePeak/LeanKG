@@ -746,11 +746,26 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 // ranked by cosine distance (HNSW index when present), hydrated against
 // code_elements. similarity = 1 - distance (the <=> operator's cosine distance).
 func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error) {
+	return s.SearchVectorsScoped(modelID, q, k, nil)
+}
+
+// SearchVectorsScoped is SearchVectors over a caller-selected population.
+//
+// ponytail: a Go predicate cannot be pushed into the SQL the HNSW index
+// serves, so this OVER-FETCHES (4·k, floor 64) and filters during the scan.
+// The ceiling: an aggressive predicate can see fewer than k hits even when
+// more matched, because the excluded rows were never fetched. Upgrade path is
+// a SQL-expressible WHERE clause on file_path/type. A nil keep is the unscoped
+// default, byte for byte.
+func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
 	if len(q) == 0 {
 		return nil, nil
 	}
 	if k < 0 {
 		k = 0
+	}
+	if keep != nil {
+		k = overfetchK(k)
 	}
 	rows, err := s.pool.Query(pgCtx, `SELECT v.qualified_name,
 		COALESCE(ce.element_type,''), COALESCE(ce.name, v.qualified_name), COALESCE(ce.file_path,''),
@@ -777,9 +792,25 @@ func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSea
 		if meta != "" && meta != "{}" {
 			_ = json.Unmarshal([]byte(meta), &h.Element.Metadata)
 		}
+		if keep != nil && !keep(h.Element) {
+			continue // outside the caller's population
+		}
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// overfetchK widens a scoped LIMIT so the predicate still sees k hits: a Go
+// predicate cannot be pushed into the HNSW SQL, so the rows it excludes must
+// have been fetched first.
+func overfetchK(k int) int {
+	if k < 0 {
+		k = 0
+	}
+	if w := 4 * k; w > 64 {
+		return w
+	}
+	return 64
 }
 
 // Watermark returns the current freshness sequence number.
