@@ -282,16 +282,19 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				writeErr(w, err)
 				return
 			}
-			text, injectedIDs, _, err := mem.FirstTurnMemoriesWithIDs(r.Context(), scope, q.Get("cwd"), bank, q.Get("query"))
+			text, injectedIDs, total, err := mem.FirstTurnMemoriesWithIDs(r.Context(), scope, q.Get("cwd"), bank, q.Get("query"))
 			if err != nil {
 				writeErr(w, err)
 				return
 			}
-			// injected_ids is additive: the count and the text are unchanged,
-			// so an older caller is unaffected. It lets a caller report which
-			// rows it actually placed in the prompt.
+			// injected_ids and total are additive: the count and the text are
+			// unchanged, so an older caller is unaffected. injected_ids lets a
+			// caller report which rows it actually placed in the prompt; total
+			// is how many rows the recall FOUND, so "the block shows 8" no
+			// longer reads as "there are 8" (FR-SMA-06's marker half — the
+			// block also names the hidden count in text).
 			writeJSON(w, http.StatusOK, map[string]any{
-				"count": len(injectedIDs), "text": text, "injected_ids": injectedIDs,
+				"count": len(injectedIDs), "text": text, "injected_ids": injectedIDs, "total": total,
 			})
 		}
 		mux.HandleFunc("GET /api/v1/memory/banks/{bank}/inject", func(w http.ResponseWriter, r *http.Request) {
