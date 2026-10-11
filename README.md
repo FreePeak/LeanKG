@@ -172,7 +172,7 @@ Peers in this space are mostly personal / single-repo. LeanKG is the **company p
 
 | Pillar | Ships as |
 | ------ | -------- |
-| Multi-repo server | MCP HTTP `:9699`; `LEANKG_PROJECT_DIRS` serves many projects with per-request `?project=` (REST) / `project` arg (MCP); sqlite default, PG opt-in |
+| Multi-repo server | MCP HTTP `:9699`; `LEANKG_PROJECT_DIRS` serves many projects, selected per request by `?project=<dir\|name>` (REST **and** MCP) or the MCP `project` tool argument; with neither, a multi-project server refuses rather than answering from the wrong graph. sqlite default, PG opt-in |
 | Env governance | `query --action env_conflicts`, per-env snapshots, `leankg obsidian` |
 | Ops & ownership | `query --action service_context` / `incidents`, `leankg incident` / `note` / `team-map` |
 | Req ↔ code | `leankg prd` / `prd-trace`, `query --action prd`, ontology traceability matrix |
