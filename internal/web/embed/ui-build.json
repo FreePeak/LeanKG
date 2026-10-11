@@ -1,1 +1,5 @@
-{"ui":"ui-v2","rev":"2026-08-01","feature":"FR-UI2-08"}
+{
+  "ui": "ui-v2",
+  "rev": "2026-10-11",
+  "feature": "embed rebuilt from current ui-v2/src by make go-ui-assets (the 2026-08-01/FR-UI2-08 stamp predates 3 later ui-v2/src commits); drift gated by make go-ui-assets-check"
+}

@@ -48,6 +48,20 @@ go-ui-assets:
 	find internal/web/embed -mindepth 1 ! -name ui-build.json -delete
 	cp -R ui-v2/dist/. internal/web/embed/
 
+# go-ui-assets-check is the ui-v2 drift gate (the dashboard got its
+# go-ui-dashboard-check in #496; ui-v2 had none). Measured 2026-10-11: a fresh
+# `npm run build` produced assets index-Cpk7crab.js/index-DNKHeHYu.css while the
+# tree embedded index-CwcVR9A7.js/index-BN6mYsjm.css — the SPA the e2e suite
+# tested was not the one the source builds, and nothing noticed. The build is
+# the real artifact, so the gate compares the fresh build against the embed
+# (ui-build.json is a provenance marker, not part of the build output). Fails
+# when they differ, in either direction.
+go-ui-assets-check:
+	npm --prefix ui-v2 run build
+	@cd ui-v2 && diff -r --exclude=ui-build.json dist ../internal/web/embed >/dev/null 2>&1 || \
+		{ echo "go-ui-assets-check: internal/web/embed is stale vs a fresh ui-v2 build; run make go-ui-assets and commit the embed"; exit 1; }
+	@echo "go-ui-assets-check: embed matches a fresh ui-v2 build"
+
 # Build the ui-dashboard SPA (DS-22/DS-25) and sync it into the dashboard
 # embed dir (`internal/dashboard/embed`). ui-build.json records a content
 # hash of the ui-dashboard sources (not a commit id, so uncommitted edits count
