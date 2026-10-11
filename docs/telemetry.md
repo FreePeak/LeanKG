@@ -42,6 +42,27 @@ Redaction runs before anything is queued. It masks:
 
 It also rewrites paths under your home directory to `~`.
 
+### How the client name and session id are decided
+
+`client name` comes from, in order: the `X-LeanKG-Client` request header, the
+`User-Agent` product token, or `unknown`. `client session id` comes from the
+`X-LeanKG-Session` header (HTTP) or, for a stdio spawn, the agent's own session
+variable in the **server's** environment: `CLAUDE_CODE_SESSION_ID`,
+`PI_SESSION_ID`, `XDEV_SESSION_ID`, `OPENCODE_SESSION_ID`.
+
+When neither is present the row is attributed by heuristic (client derived
+from the transport, session derived from a hash of the prompt+turn) and the
+dashboard labels it `correlation: heuristic` rather than `exact`. That label is
+the honest signal: a heuristic row is a good guess, not an identity.
+
+**Getting exact correlation for xdev** needs the agent side to export the
+session id, which is a change in the xdev repository (`XDEV_SESSION_ID` in the
+MCP child env, plus the `X-LeanKG-Session` header on HTTP). Until that lands,
+a shared server sees this session's calls as `curl`/`python-urllib` with
+`correlation: heuristic` — measured on this machine's own self-host, where a
+session's tool calls arrived exactly that way. The ledger still records them;
+they are simply not tied to a conversation.
+
 ## Transcript reading (separate grant)
 
 To work out whether LeanKG's answer was actually used, the dashboard can read the calling agent's own session transcript. It finds:

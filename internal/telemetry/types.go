@@ -293,6 +293,11 @@ type Stats struct {
 	DroppedEvents int64     `json:"dropped_events"`
 	OldestTS      time.Time `json:"oldest_ts"`
 	NewestTS      time.Time `json:"newest_ts"`
+	// Correlation is the exact-vs-heuristic split of the call rows: how much of
+	// this ledger can actually be joined to an agent conversation. A ledger
+	// dominated by heuristic rows is not broken, but an operator must be able
+	// to see it rather than infer it — `leankg telemetry status` prints it.
+	Correlation map[string]int64 `json:"correlation"`
 }
 
 // Store is the telemetry ledger. SQLite today (DS-03); PostgreSQL later

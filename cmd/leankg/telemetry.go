@@ -266,7 +266,10 @@ type telemetryStatusView struct {
 	RetentionDays   int              `json:"retention_days"`
 	MaxBodyBytes    int              `json:"max_body_bytes"`
 	Stats           *telemetry.Stats `json:"stats,omitempty"`
-	StatsError      string           `json:"stats_error,omitempty"`
+	// Correlation is the exact/heuristic split of the call rows, surfaced so
+	// the operator can see how much of the ledger is attributable.
+	Correlation map[string]int64 `json:"correlation,omitempty"`
+	StatsError  string           `json:"stats_error,omitempty"`
 }
 
 // telemetryStatus reports the config, effective level, grants and, when the
@@ -308,6 +311,9 @@ func telemetryStatus(home string, asJSON bool, out io.Writer) error {
 				v.Stats = &stats
 			}
 		}
+	}
+	if v.Stats != nil {
+		v.Correlation = v.Stats.Correlation
 	}
 	if asJSON {
 		enc := json.NewEncoder(out)
@@ -352,7 +358,26 @@ func printTelemetryStatus(out io.Writer, v telemetryStatusView) {
 		if !s.OldestTS.IsZero() {
 			fmt.Fprintf(out, "range:                %s .. %s\n", s.OldestTS.Format(time.RFC3339), s.NewestTS.Format(time.RFC3339))
 		}
+		if len(s.Correlation) > 0 {
+			// The attributable share: a ledger dominated by heuristic rows is
+			// not broken, but "exact" means the row carries an agent session id
+			// and can be joined to a conversation; "heuristic" means it cannot.
+			fmt.Fprintf(out, "correlation:          %s\n",
+				correlationSummary(s.Calls, s.Correlation))
+		}
 	}
+}
+
+// correlationSummary renders the exact/heuristic split as "1/233 exact (0.4%),
+// 232 heuristic", naming what a heuristic row lacks rather than just counting.
+func correlationSummary(total int64, split map[string]int64) string {
+	exact := split[telemetry.CorrExact]
+	heuristic := split[telemetry.CorrHeuristic]
+	pct := 0.0
+	if total > 0 {
+		pct = float64(exact) * 100 / float64(total)
+	}
+	return fmt.Sprintf("%d/%d exact (%.1f%%), %d heuristic", exact, total, pct, heuristic)
 }
 
 // parseSessionClients validates a --sessions list. "all" stands alone.
