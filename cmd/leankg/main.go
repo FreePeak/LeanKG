@@ -137,6 +137,8 @@ func main() {
 		cmdPRDTrace(os.Args[2:])
 	case "link":
 		cmdLink(os.Args[2:])
+	case "delete-annotation":
+		cmdDeleteAnnotation(os.Args[2:])
 	case "search-annotations":
 		cmdSearchAnnotations(os.Args[2:])
 	case "show-annotations":
@@ -219,7 +221,7 @@ Usage:
   leankg generate [--project DIR]
   leankg annotate <element> --description TEXT [--user-story ID] [--feature ID]
   leankg link <element> <id> [--kind story|feature]
-  leankg search-annotations <query> | show-annotations <element>
+  leankg search-annotations <query> | show-annotations <element> | delete-annotation <element>
   leankg mine-conversations --format claude|chatgpt|slack --input FILE_OR_DIR [--project DIR]
   leankg incident add --title T --severity P0|P1|P2|P3 --affected A,B --root-cause R --resolution X
                       [--prevention P] [--env production] [--ticket ID] [--project DIR]
