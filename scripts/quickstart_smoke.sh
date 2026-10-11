@@ -137,9 +137,10 @@ quickstart_smoke plan (dry run):
   1. build_or_binary      LEANKG_BINARY, else `go build ./cmd/leankg`
   2. index                LEANKG index <fixture>
   3. serve + /health      LEANKG serve --http :PORT --project <fixture>
-  4. first_query          POST /mcp tools/call name=query
-  5. doctor               LEANKG doctor --project <fixture>
-  6. cleanup              stop the server
+  4. mcp_ready            POST /mcp initialize (+ notifications/initialized)
+  5. first_query          POST /mcp tools/call name=query
+  6. doctor               LEANKG doctor --project <fixture>
+  7. cleanup              stop the server, remove the scratch tree
 PLAN
     exit 0
 fi
@@ -174,17 +175,81 @@ t1=$(now_s)
 [ "$HEALTHY" = "1" ] || fail_setup "server /health never returned 200 within 60s"
 record "server_up" "$(python3 -c "print(f'{$t1-$t0:.3f}')")"
 
-# ---------------------------------------------------------- step 3: first query
-# The 3-tool envelope: `query` with no action runs the L1 exact -> L2 fuzzy ->
-# L3 semantic ladder. An empty result is a failure (nothing was indexed or the
-# wrong project was served), not a pass.
+# ---------------------------------------------------------- step 3: MCP session + first query
+# The calls run in ONE Python client so they share ONE MCP session:
+# initialize -> notifications/initialized -> tools/call, carrying the
+# Mcp-Session-Id when the server issues one. Separate curl invocations do not
+# work: CI run 38143642444 showed initialize succeed and the very next
+# tools/call rejected with "method tools/call is invalid during session
+# initialization" — /health answers before the MCP session manager can accept
+# a tool call, and the streamable transport binds a call to the session it
+# initialized. The client therefore RETRIES the whole handshake until the
+# budget expires, which is also what ttfv_smoke.sh does.
 first_query() {
-    local resp
-    resp="$(curl -s -X POST "$BASE_URL/mcp" \
+    local sid t0 t1
+    t0=$(now_s)
+    sid=""
+    for _ in $(seq 1 30); do
+        sid="$(mcp_initialize 2>/dev/null || true)"
+        [ -n "$sid" ] && break
+        sleep 1
+    done
+    [ -n "$sid" ] || fail_setup "MCP initialize never returned a session within 30s (see $SCRATCH/mcp.log)"
+    t1=$(now_s)
+    record "mcp_ready" "$(python3 -c "print(f'{$t1-$t0:.3f}')")"
+    mcp_query "$sid"
+}
+
+# mcp_initialize prints the session id when the server issues one, and the
+# literal "stateless" when initialize succeeded without one (this server's
+# streamable transport does not set Mcp-Session-Id). Either way a SUCCESS
+# proves the session manager is accepting requests, which is the readiness
+# signal /health cannot give.
+mcp_initialize() {
+    # WARM-UP call: the first request on a freshly bound listener is the one
+    # that gets "invalid during session initialization" (CI runs 38141730005 and
+    # 38143642444 both died here, 1.3s and 1.2s after start). Its output is
+    # discarded — /dev/null for BOTH headers and body — so it cannot contaminate
+    # the sid this function prints.
+    curl -s -o /dev/null -X POST "$BASE_URL/mcp" \
         -H 'Content-Type: application/json' \
         -H 'Accept: application/json, text/event-stream' \
-        --max-time 60 \
-        -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query","arguments":{"query":"FnStore"}}}')"
+        --max-time 20 \
+        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"quickstart-smoke","version":"1.0"}}}' \
+        >/dev/null 2>&1 || return 1
+    # The one we read, to prove it is OUR server answering (a foreign listener
+    # on the port would not name leankg).
+    curl -s -D "$SCRATCH/hdr" -o "$SCRATCH/init" -X POST "$BASE_URL/mcp" \
+        -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' \
+        --max-time 20 \
+        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"quickstart-smoke","version":"1.0"}}}' || return 1
+    grep -q '"name":"leankg"' "$SCRATCH/init" || return 1
+    local sid
+    sid="$(sed -n 's/^[Mm]cp-[Ss]ession-[Ii]d: *//p' "$SCRATCH/hdr" | tr -d '\r')"
+    if [ -n "$sid" ]; then printf '%s' "$sid"; else printf 'stateless'; fi
+}
+
+mcp_query() {
+    local sid="$1"
+    # Two explicit branches, not an array: macOS ships bash 3.2, where
+    # "${hdr[@]}" on an empty array expands to ONE EMPTY ARGUMENT under
+    # `set -u`, and that argument silently breaks curl.
+    local resp
+    if [ "$sid" = "stateless" ]; then
+        resp="$(curl -s -X POST "$BASE_URL/mcp" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            --max-time 60 \
+            -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"query","arguments":{"query":"FnStore"}}}')"
+    else
+        resp="$(curl -s -X POST "$BASE_URL/mcp" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H "Mcp-Session-Id: $sid" \
+            --max-time 60 \
+            -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"query","arguments":{"query":"FnStore"}}}')"
+    fi
     printf '%s' "$resp" | python3 -c '
 import sys, json
 def payload():
