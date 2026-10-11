@@ -496,7 +496,7 @@ afterSidecars:
 		// RegisterAutoConfig RETURNS the wrapped mux; the endpoint lives in
 		// that returned handler, so serving the original one served everything
 		// except /api/v1/mcp/auto-config.
-		h = restauto.RegisterAutoConfig(h, engine)
+		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
 		go serveHTTP(ctx, h, addr)
 	}
 	if *restAddr != "" {
@@ -509,7 +509,7 @@ afterSidecars:
 		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
-		h = restauto.RegisterAutoConfig(h, engine)
+		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
 		// The REST capture handler is built explicitly so a consent reload can
 		// re-point its sink (a level raise that reached nobody was the bug).
 		cap := rest.NewCaptureHandler(rec, telemetry.TransportREST)

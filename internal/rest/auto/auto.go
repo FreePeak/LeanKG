@@ -58,14 +58,53 @@ func writeAutoJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// Router is the per-request project selector (internal/projects). It is an
+// interface so this package does not import the concrete router.
+type Router interface {
+	EngineFor(ctx context.Context, project string) (*core.Engine, error)
+	MultiProject() bool
+}
+
+// Option configures RegisterAutoConfig.
+type Option func(*config)
+
+type config struct{ router Router }
+
+// WithRouter lets the endpoint honour ?project=<dir or name>, the same
+// selector the query path uses.
+//
+// Without it the route wraps cmd's routeByProject, so its own mux matches the
+// path first and EVERY request goes to the default engine — measured live:
+// ?project=/another/repo still answered project=/…/freepeak/leankg. That made
+// #490's 409 advice ("send ?project=…") false, which is worse than no advice.
+// With it, the selector resolves before the engine is chosen.
+func WithRouter(r Router) Option { return func(c *config) { c.router = r } }
+
 // RegisterAutoConfig mounts POST /api/v1/mcp/auto-config on the mux.
 // The endpoint triggers background auto-index and/or auto-embed for the
-// served project; both default to off and must be explicitly enabled.
-func RegisterAutoConfig(h http.Handler, engine *core.Engine) http.Handler {
+// selected project; both default to off and must be explicitly enabled.
+func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) http.Handler {
+	var cfg config
+	for _, o := range opts {
+		o(&cfg)
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/", h)
 	mux.HandleFunc("POST /api/v1/mcp/auto-config", func(w http.ResponseWriter, r *http.Request) {
-		handleAutoConfig(w, r, engine)
+		eng := engine
+		// ?project= wins when a router is wired; without one we keep the
+		// single-engine behaviour a stdio spawn depends on.
+		if sel := r.URL.Query().Get("project"); sel != "" && cfg.router != nil {
+			resolved, err := cfg.router.EngineFor(r.Context(), sel)
+			if err != nil {
+				// Fail closed: an unknown selector never falls back to the
+				// default engine, and nothing is indexed.
+				writeAutoJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+				return
+			}
+			eng = resolved
+		}
+		handleAutoConfig(w, r, eng)
 	})
 	return mux
 }
