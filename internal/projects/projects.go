@@ -141,6 +141,16 @@ func (r *Router) List() []string {
 // Default is the serving process's own project directory.
 func (r *Router) Default() string { return r.def }
 
+// MultiProject reports whether more than one project is registered, which is
+// what makes an omitted `project` argument ambiguous (see mcp's fail-closed
+// rule). A single registered project — including the common one-project
+// server — is never ambiguous.
+func (r *Router) MultiProject() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.entries)+len(r.cfg.ExtraDirs) > 1
+}
+
 // resolve maps a selector to a registered canonical dir:
 //   - "" → default (never errors)
 //   - exact canonical dir match
