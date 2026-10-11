@@ -20,7 +20,7 @@
 
 | Milestone | Live items | Carry-forward items | Status |
 |---|---|---|---|
-| M1 — Zero-config attach | 3 | — | **IN_PROGRESS** (FR-ZCP-01 clause-2 roots/list DONE 87e18287; FR-ZCP-02 DONE 0aba41ad+d9ccd8b5; FR-ZCP-13 DONE b251046c) |
+| M1 — Zero-config attach | 3 | — | **IN_PROGRESS** (FR-ZCP-01 clause-2 roots/list DONE 87e18287; FR-ZCP-02 DONE 0aba41ad+d9ccd8b5; FR-ZCP-13 DONE b251046c; clause-3 cwd on auto-config DONE #490 — `POST /api/v1/mcp/auto-config` takes `cwd` and fails CLOSED (409 + the fix) when it is outside the project the endpoint serves, instead of silently indexing the served default; the answer now names `project`) |
 | FR-P2 | Project directory becomes optional — the store lives at a configurable path (config file/env); `leankg import ./` indexes cwd; MCP import tool guides agents on cwd import | — | **IN_PROGRESS** — `cmd/leankg --db` + `LEANKG_DB_PATH` env + `db.standalone_db_path` config key + `OpenBackend(dbPath)` + MCP import tool description updated |
 | M2 — One-tool surface | 2 | — | **IN_PROGRESS** (FR-ZCP-03 router+ladder DONE 4231d256; **v4.3.1 hard cutover DONE** — registry 1 tool + verb envelope; FR-ZCP-04 install --target DONE 1873c132 #363: opencode+omp writers, install --target, --register-cwd) |
 | M3 — Honest search | 2 | FR-HEA-02, FR-HEA-04 | **DONE** (FR-ZCP-06 freshness contract #347 — plus the writer-path snapshot refresh #297/#376/#279 needed to make it truthful; FR-ZCP-05 bridge tier + the PG `tsvector`/GIN/RRF remainder #273, verified live on this repo's PG store) |

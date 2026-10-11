@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,14 @@ type AutoConfigRequest struct {
 	IndexEnabled      bool `json:"index_enabled"`
 	EmbedEnabled      bool `json:"embed_enabled"`
 	EmbedDebounceSecs int  `json:"embed_debounce_seconds,omitempty"`
+	// CWD is the caller's working directory (FR-ZCP-01 clause 3). The route
+	// used to ignore it entirely and index engine.ProjectDir() — measured on a
+	// 298-project host, an agent working in one repo could only ever index the
+	// project the server happened to serve, and the response said nothing
+	// either way. It is resolved against the served project: when the cwd is
+	// inside it (or IS it) the served project is used; when it is not, the
+	// caller is told rather than silently indexing a project they are not in.
+	CWD string `json:"cwd"`
 }
 
 var (
@@ -81,10 +90,27 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 		go startAutoEmbed(ctx, st, projectDir, req.EmbedDebounceSecs)
 	}
 
+	// FR-ZCP-01 clause 3: a caller asking to auto-index the project it is
+	// working in must not silently index a different one. The routing layer
+	// selects the engine from ?project= (cmd/leankg/multiproject.go), so the
+	// engine this handler holds IS the selected project; a cwd outside it means
+	// the caller is working somewhere else and would get the wrong reindex.
+	// We refuse with the fix rather than acting on a project they are not in
+	// — the same fail-closed rule #480 applied to the query path.
+	if req.CWD != "" && !withinDir(projectDir, req.CWD) && !withinDir(req.CWD, projectDir) {
+		writeAutoJSON(w, http.StatusConflict, map[string]any{
+			"error":   "cwd is not inside the project this endpoint serves",
+			"cwd":     req.CWD,
+			"project": projectDir,
+			"fix":     "send the same ?project=<dir or name> on the request URL that you would send on a query, or run leankg index in that directory",
+		})
+		return
+	}
 	writeAutoJSON(w, http.StatusOK, map[string]any{
 		"index_enabled":          req.IndexEnabled,
 		"embed_enabled":          req.EmbedEnabled,
 		"embed_debounce_seconds": req.EmbedDebounceSecs,
+		"project":                projectDir,
 	})
 }
 
@@ -166,4 +192,21 @@ func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceS
 	} else {
 		log.Printf("auto-config: embed complete: embedded=%d skipped=%d failed=%d", res.Embed.Embedded, res.Embed.Skipped, res.Embed.Failed)
 	}
+}
+
+// withinDir reports whether path is dir itself or lives underneath it. Both
+// are canonicalized first, so a symlinked or relative cwd still resolves.
+func withinDir(dir, path string) bool {
+	if dir == "" || path == "" {
+		return false
+	}
+	d, err1 := filepath.Abs(dir)
+	p, err2 := filepath.Abs(path)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if d == p {
+		return true
+	}
+	return strings.HasPrefix(p, d+string(filepath.Separator))
 }
