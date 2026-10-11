@@ -870,6 +870,29 @@ func (s *SQLiteStore) Stats(ctx context.Context) (Stats, error) {
 			return st, fmt.Errorf("telemetry: stats: %w", err)
 		}
 	}
+	// The exact/heuristic split of the call rows.
+	st.Correlation = map[string]int64{}
+	rows, err := s.db.QueryContext(ctx, `SELECT correlation, COUNT(*) FROM calls GROUP BY correlation`)
+	if err != nil {
+		return st, fmt.Errorf("telemetry: stats: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			key string
+			n   int64
+		)
+		if err := rows.Scan(&key, &n); err != nil {
+			return st, fmt.Errorf("telemetry: stats: %w", err)
+		}
+		if key == "" {
+			key = CorrHeuristic // a row with no correlation is attributable to nobody
+		}
+		st.Correlation[key] += n
+	}
+	if err := rows.Err(); err != nil {
+		return st, fmt.Errorf("telemetry: stats: %w", err)
+	}
 	var lo, hi sql.NullInt64
 	if err := s.db.QueryRowContext(ctx, `SELECT MIN(ts), MAX(ts) FROM (
 		SELECT ts FROM calls UNION ALL SELECT ts FROM memory_events)`).Scan(&lo, &hi); err != nil {

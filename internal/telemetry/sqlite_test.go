@@ -461,3 +461,37 @@ func TestSQLiteUpsertSessionKeepsLinkFields(t *testing.T) {
 		t.Fatalf("link fields cleared by a call insert: path=%q status=%q", got.TranscriptPath, got.LinkStatus)
 	}
 }
+
+// TestStatsReportsCorrelationSplit is the operator-facing half of the session
+// identity gap: a ledger whose rows are heuristic cannot be joined to a
+// conversation, and the operator must be able to SEE that from the CLI rather
+// than infer it. Before this, Stats counted rows without saying how many were
+// attributable.
+func TestStatsReportsCorrelationSplit(t *testing.T) {
+	st := openTestLedger(t)
+	// One exact row (an identity carrying a session id) and one heuristic row
+	// (an identity without one). The row's Correlation is derived from the
+	// identity, exactly as the capture paths do it.
+	withSession := Identity{ClientName: "xdev", ClientSessionID: "s-1"}
+	withoutSession := Identity{ClientName: "curl"}
+	if err := st.InsertCalls(context.Background(), []CallEvent{{
+		ID: "a", Tool: "query", Transport: TransportHTTP, Identity: withSession,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.InsertCalls(context.Background(), []CallEvent{{
+		ID: "b", Tool: "query", Transport: TransportHTTP, Identity: withoutSession,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Stats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Correlation == nil {
+		t.Fatalf("Stats has no correlation split: %#v", got)
+	}
+	if got.Correlation[CorrExact] != 1 || got.Correlation[CorrHeuristic] != 1 {
+		t.Fatalf("correlation split = %v, want 1 exact and 1 heuristic", got.Correlation)
+	}
+}
