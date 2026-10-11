@@ -10,6 +10,19 @@
 
 ## Changelog
 
+### v4.15-bare-mcp-url — the client writers can no longer emit a stale `?project=` (2026-10-11)
+
+**Trigger:** on this machine, `xdev mcps` showed leankg online while the Cursor and Claude-plugin configs of the same repo pointed at `http://localhost:9699/mcp?project=/workspace-freepeak` — a Docker mount path that exists nowhere on the host. Every initialize failed with `unknown project "/workspace-freepeak"` (FR-ZCP-02 fail-closed), so the clients reading those configs dropped leankg from their tool list while the same server answered the bare URL normally.
+
+**Why the writers allowed it.** FR-ZCP-04 already says the emitted entry carries the bare URL, but that was prose only: `connect --http --url` and `install --http --url` passed `cfg.URL` straight through to every writer, so a caller carrying a query produced a query in the file.
+
+**What landed:**
+
+- **`bareURL` + `Config.mergedURL()`** (`cmd/leankg/connect.go`) strip query and fragment once, and all five writers go through it: `jsonEntry`'s three http branches, the Codex TOML line, and xdev's `url` key. Per-request project resolution (FR-ZCP-01: stdio cwd, HTTP roots/list) is what the suffix was standing in for, and an absolute path baked into a config is stale the moment the config leaves the machine that wrote it.
+- **`healthURLFor` strips too**, on its own argument — that was the one place a stray query survived the first cut of this guard, landing inside `/health` as `...?project=x/health` and silently breaking xdev's auto-start probe.
+- **`TestWriteClientHTTPURLHasNoQuery`** feeds `?project=/some/other/machine` to every client in `Clients()` and fails if any emitted config contains a `?`. The test's `testURL` is `http://localhost:9699` (no `/mcp`), so it also pins that no writer re-appends a path.
+
+
 ### v4.15-session-telemetry — what LeanKG did for your agents, measured on this machine (DS-01..DS-27) (2026-10-10)
 
 **Trigger:** the self-host loop had no way to answer the only question that matters about a context engine — did the answer actually get used, and how much reading did it save. Everything shipped so far was validated on throwaway fixtures and ephemeral runs; the effort numbers were unverifiable. This wave builds the measurement layer and the surface that shows it, consent first.
@@ -1053,4 +1066,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (#495: the ui-v2 e2e suite runs in CI for the first time — a new ui2-e2e job builds the Go binary, serves the EMBEDDED build over the pinned go-api fixture, runs vitest (47) and playwright (11) against what ships; two stale specs fixed along the way)
+*Last updated: 2026-10-11 (bareURL: connect/install can no longer emit a stale `?project=` — the writers strip query+fragment and a test feeds one to every client, closing the machine-config 404 that dropped leankg from Cursor's and the Claude plugin's tool lists)

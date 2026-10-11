@@ -103,7 +103,7 @@ func xdevEntry(cfg Config) map[string]any {
 	// carries the full serve argv instead.
 	return map[string]any{
 		"type":    "remote",
-		"url":     cfg.URL,
+		"url":     cfg.mergedURL(),
 		"enabled": true,
 		"autoStart": xdevAutoStart(
 			currentCommandForAutoStart(cfg), []string{"serve", "--http", ":9699", "--rest", ":9700", "--memory"},
@@ -177,7 +177,14 @@ func autoStartCWD(cfg Config) string {
 // healthURLFor derives the health probe from a remote URL. xdev derives
 // <scheme://host/health> itself, so this is belt-and-braces: it keeps the
 // answer identical when the URL carries a sub-path (a reverse proxy prefix).
+// healthURLFor derives the health probe from a remote URL. xdev derives
+// <scheme://host/health> itself, so this is belt-and-braces: it keeps the
+// answer identical when the URL carries a sub-path (a reverse proxy prefix).
+// It takes the raw caller URL, so strip before it — an un-stripped query
+// ended up INSIDE /health on the first cut of this guard, which is the one
+// place a stray `?project=` would still break the auto-start probe.
 func healthURLFor(url string) string {
+	url = bareURL(url)
 	url = strings.TrimSuffix(url, "/")
 	url = strings.TrimSuffix(url, "/mcp")
 	return url + "/health"

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -98,6 +99,29 @@ func jsonContainer(client string) string {
 	return "mcpServers"
 }
 
+// bareURL drops any query/fragment from a remote URL. Per-request project
+// resolution (FR-ZCP-01: stdio process cwd; HTTP roots/list) makes a
+// `?project=` suffix unnecessary on the happy path, and an absolute path
+// baked into a shared config is stale the moment that config leaves the
+// machine it was written on. Measured on this machine 2026-10-11: three
+// configs carrying `?project=/workspace-freepeak` — a Docker mount path that
+// exists nowhere on the host — failed every initialize with `unknown
+// project`, so the clients reading them dropped leankg from their tool list.
+// Stripping here means the one caller that can still pass such a URL cannot
+// reproduce that failure.
+func bareURL(u string) string {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return u // not a URL we can inspect: hand it through untouched
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+// mergedURL returns the URL every writer emits: bare, per FR-ZCP-04.
+func (c Config) mergedURL() string { return bareURL(c.URL) }
+
 // WriteClient writes or merges the leankg entry for client under homeDir.
 // JSON configs are read-modify-write (every sibling key and unknown field is
 // preserved); missing files and directories are created. Re-running with the
@@ -127,11 +151,11 @@ func jsonEntry(client string, cfg Config) map[string]any {
 	if cfg.Mode == "http" {
 		switch client {
 		case ClientOpencode:
-			return map[string]any{"type": "remote", "url": cfg.URL, "enabled": true}
+			return map[string]any{"type": "remote", "url": cfg.mergedURL(), "enabled": true}
 		case ClientOmp:
-			return map[string]any{"type": "http", "url": cfg.URL, "enabled": true}
+			return map[string]any{"type": "http", "url": cfg.mergedURL(), "enabled": true}
 		default: // claude-code, cursor, gemini
-			return map[string]any{"type": "http", "url": cfg.URL}
+			return map[string]any{"type": "http", "url": cfg.mergedURL()}
 		}
 	}
 	exe := cfg.Exe
@@ -295,7 +319,7 @@ func writeCodexTOML(path string, cfg Config) error {
 // Codex takes the full spawn command as a single TOML string array.
 func codexSectionLines(cfg Config) []string {
 	if cfg.Mode == "http" {
-		return []string{"url = " + strconv.Quote(cfg.URL)}
+		return []string{"url = " + strconv.Quote(cfg.mergedURL())}
 	}
 	// Codex spawns the full command array: exe first, then args.
 	// Empty Exe falls back to bare "leankg" (PATH), matching jsonEntry.
