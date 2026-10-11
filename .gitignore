@@ -86,3 +86,6 @@ generated_docs/
 .docs/
 .gemini/
 .omp-local/
+
+# Playwright screenshot artefacts from the ui-v2 e2e specs (local runs).
+docs/verification/

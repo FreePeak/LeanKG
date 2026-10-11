@@ -55,6 +55,11 @@ test.describe('UI v2 shell parity', () => {
       test.skip(true, 'backend not connected');
     }
     await expect(page.getByTestId('file-tree-panel')).toBeVisible();
+    // The node-type filter block is collapsed until the panel's "Filters"
+    // toggle is pressed (FileTreePanel.tsx: filtersOpen defaults false). This
+    // spec predates the collapsible panel and never ran — the e2e suite has no
+    // CI job and no local runner — so it kept asserting the expanded state.
+    await page.getByTestId('toggle-filters').click();
     await expect(page.getByTestId('node-type-filters')).toBeVisible();
     await page.getByTestId('reset-filters').click();
   });
@@ -86,11 +91,16 @@ test.describe('UI v2 shell parity', () => {
   });
 
   test('graph canvas fills viewport height (not a thin strip)', async ({ page }) => {
-    await page.goto('/?path=src/cli');
+    await page.goto('/?path=cmd');
+    // >= 1, not > 5: this suite is also meant to run on the small pinned
+    // fixture (examples/go-api-service, the same one the TTFV gate uses),
+    // whose service topology is exactly 5 nodes. The old `> 5` was written
+    // against a bigger graph and made the spec fixture-dependent, which is
+    // why it never survived a move to a deterministic project.
     await page.waitForFunction(() => {
       const t = document.querySelector('[data-testid="status-bar"]')?.textContent || '';
       const m = t.match(/nodes:\s*(\d+)/);
-      return m && Number(m[1]) > 5;
+      return m && Number(m[1]) >= 1;
     }, null, { timeout: 90_000 });
     await page.getByTestId('layout-tree').click();
     await page.waitForTimeout(1200);
@@ -112,7 +122,7 @@ test.describe('UI v2 shell parity', () => {
   });
 
   test('breadcrumbs mount after graph load', async ({ page }) => {
-    await page.goto('/?path=src/cli');
+    await page.goto('/?path=cmd');
     await page.waitForTimeout(2000);
     if (await page.getByTestId('onboarding').isVisible().catch(() => false)) {
       test.skip(true, 'backend not connected');
