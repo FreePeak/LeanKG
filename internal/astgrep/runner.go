@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -50,10 +51,28 @@ var (
 // caps the wait for output pipes after a kill: a wedged binary that spawned
 // grandchildren inheriting our stdout would otherwise hold Wait open past the
 // deadline (worst case runTimeout + ioGrace).
-const (
-	runTimeout = 10 * time.Second
+var (
+	runTimeout = envDuration("LEANKG_TEST_ASTGREP_TIMEOUT", 10*time.Second)
 	ioGrace    = 500 * time.Millisecond
 )
+
+// envDuration reads a budget from the environment, keeping the default when
+// it is unset or malformed.
+//
+// ponytail: this exists for one measured flake (CI run 38115374687: this
+// package AND internal/lsp both deadlined at 10s spawning a cold
+// ast-grep/gopls on the self-hosted Mac while a local test run shared the
+// machine). Ceiling: one env var per subprocess family, set by hand.
+// Upgrade path if it recurs: a shared testhelper.NewT(t) budget, or a
+// per-package TestMain that scales by runtime.NumCPU().
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
+}
 
 // Runner wraps one resolved ast-grep binary.
 type Runner struct {
