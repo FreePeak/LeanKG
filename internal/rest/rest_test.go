@@ -410,3 +410,40 @@ func TestInjectWithoutBankUsesTheServerDefault(t *testing.T) {
 		}
 	}
 }
+
+// TestInjectReportsInjectedIDs closes the last cross-repo gap the dashboard
+// plan named: a caller that injects memory into a prompt must be able to report
+// which rows it actually placed, or "returned vs injected" stays a guess. The
+// response carried a count only.
+func TestInjectReportsInjectedIDs(t *testing.T) {
+	e, mem := newEngine(t)
+	if _, err := mem.SessionRetainCtx(context.Background(), memory.ScopePerProject, "", "",
+		"ids-1", []string{"first injected row", "second injected row"}, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(Handler(e, mem))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/api/v1/memory/inject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var out struct {
+		Count       int      `json:"count"`
+		Text        string   `json:"text"`
+		InjectedIDs []string `json:"injected_ids"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Count == 0 {
+		t.Fatalf("count = 0, want the injected rows")
+	}
+	if len(out.InjectedIDs) != out.Count {
+		t.Fatalf("injected_ids = %v (len %d), want one id per injected row (count %d)", out.InjectedIDs, len(out.InjectedIDs), out.Count)
+	}
+	if !strings.Contains(out.Text, "first injected row") {
+		t.Fatalf("text = %q, want the injected content", out.Text)
+	}
+}

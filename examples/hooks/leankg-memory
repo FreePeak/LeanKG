@@ -117,7 +117,18 @@ def fetch_block(query: str) -> str:
         sys.stderr.write("leankg-memory: %s\n" % exc)
         return ""
     text = body.get("text") if isinstance(body, dict) else None
-    return text if isinstance(text, str) else ""
+    if not isinstance(text, str):
+        return ""
+    # Report the ids this block actually placed, on stderr: the dashboard's
+    # "returned vs injected" figure needs to know what the caller kept, and
+    # stdout belongs to the prompt.
+    ids = body.get("injected_ids") if isinstance(body, dict) else None
+    if isinstance(ids, list) and ids:
+        sys.stderr.write(
+            "leankg-memory: session=%s injected=%d ids=%s\n"
+            % (session_id() or "-", len(ids), ",".join(str(i) for i in ids))
+        )
+    return text
 
 
 def main() -> int:

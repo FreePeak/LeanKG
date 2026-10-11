@@ -96,6 +96,24 @@ func (m *Memory) FirstTurnMemories(scope Scope, cwd, bank, query string) (string
 	return m.FirstTurnMemoriesCtx(context.Background(), scope, cwd, bank, query)
 }
 
+// FirstTurnMemoriesWithIDs is FirstTurnMemories that also reports WHICH rows the
+// rendered block carries. An external caller that injects the block into a
+// prompt needs those ids to report what it actually placed — the
+// "returned vs injected" half the dashboard plan named as a cross-repo gap.
+func (m *Memory) FirstTurnMemoriesWithIDs(ctx context.Context, scope Scope, cwd, bank, query string) (text string, injectedIDs []string, all []Entry, err error) {
+	text, all, err = m.FirstTurnMemoriesCtx(ctx, scope, cwd, bank, query)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	// The block carries a prefix of the ranked rows (limit/token budget); its
+	// length is what recordInject records, so the same prefix is reported here.
+	_, n := injectRows(all, RecallLimit, InjectionTokenLimit)
+	for _, e := range all[:n] {
+		injectedIDs = append(injectedIDs, e.ID)
+	}
+	return text, injectedIDs, all, nil
+}
+
 // FirstTurnMemoriesCtx is FirstTurnMemories with the caller's context. It
 // records an inject event for the rows the block carries (see recordInject).
 func (m *Memory) FirstTurnMemoriesCtx(ctx context.Context, scope Scope, cwd, bank, query string) (string, []Entry, error) {
