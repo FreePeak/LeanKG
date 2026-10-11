@@ -278,6 +278,42 @@ func TestWriteClientHTTPShapes(t *testing.T) {
 	}
 }
 
+// TestWriteClientHTTPURLHasNoQuery pins the FR-ZCP-04 URL contract at the
+// writer, not just in the prose: a remote entry carries the bare URL and no
+// `?project=`. The server's per-request project resolution (FR-ZCP-01:
+// stdio cwd, HTTP roots/list) makes the suffix unnecessary, and a hardcoded
+// absolute path is a stale machine moment waiting to happen — measured
+// 2026-10-11 on this machine: three configs carrying
+// `?project=/workspace-freepeak` (a Docker mount that exists nowhere on the
+// host) made every initialize fail with `unknown project`, so the clients
+// that read them dropped leankg from their tool list entirely.
+func TestWriteClientHTTPURLHasNoQuery(t *testing.T) {
+	for _, client := range Clients() {
+		t.Run(client, func(t *testing.T) {
+			home := t.TempDir()
+			// A caller-supplied query is the shape that must not be
+			// forwarded: connect --http --url "...?project=..." is the
+			// exact invocation that produced the broken files above.
+			u := testURL + "?project=/some/other/machine"
+			if err := WriteClient(home, client, Config{Mode: "http", URL: u}); err != nil {
+				t.Fatal(err)
+			}
+			path, err := clientConfigPath(home, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "?") {
+				t.Fatalf("%s: emitted URL carries a query string, want the bare %q:\n%s",
+					client, testURL, data)
+			}
+		})
+	}
+}
+
 // TestWriteClientCodexStdio pins the generated TOML file byte-for-byte.
 func TestWriteClientCodexStdio(t *testing.T) {
 	home := t.TempDir()
