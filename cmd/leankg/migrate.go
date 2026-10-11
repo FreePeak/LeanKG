@@ -45,8 +45,7 @@ func cmdMigrate(args []string) {
 		os.Exit(2)
 	}
 	dir := resolveProjectDir(*project)
-	st, err := store.OpenBackend(context.Background(), dir, eng,
-		os.Getenv("LEANKG_PG_URL"), "", store.RW)
+	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -29,8 +28,7 @@ func cmdGC(args []string) {
 	if eng == "" {
 		eng = os.Getenv("LEANKG_DB_ENGINE")
 	}
-	st, err := store.OpenBackend(context.Background(), *project,
-		eng, projectcfg.PGURL(*project), "", store.RW)
+	st, err := openStore(context.Background(), *project, "", store.RW)
 	if err != nil {
 		fatalText(fmt.Errorf("gc: open store: %w", err))
 	}

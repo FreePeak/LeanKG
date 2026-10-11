@@ -33,8 +33,7 @@ func openVerbStore(project string, mode store.Mode) (store.Backend, string, erro
 	if dir == "" {
 		dir = envOr("LEANKG_PROJECT", ".")
 	}
-	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), "", mode)
+	st, err := openStore(context.Background(), dir, "", mode)
 	if err != nil {
 		return nil, dir, err
 	}
