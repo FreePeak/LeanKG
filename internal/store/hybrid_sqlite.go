@@ -5,6 +5,9 @@ import "strings"
 // ArmFTS5 labels the SQLite keyword arm in hybrid provenance.
 const ArmFTS5 = "fts5"
 
+// ArmName labels the exact-symbol-name arm in hybrid provenance.
+const ArmName = "name"
+
 // HybridSearcher is the capability the L3 rung fuses through (RS-12). It was
 // part of FTSBackend, which only PGStore implements, so SQLite's L3 was plain
 // cosine while PostgreSQL fused keyword and vector ranks.
@@ -57,6 +60,23 @@ func (s *Store) HybridSearch(modelID, query string, qvec []float32, limit int) (
 				keys = append(keys, m.Element.QualifiedName)
 			}
 			lists = append(lists, RankList{Name: ArmFTS5, Keys: keys})
+		}
+	}
+	// The name arm: the exact L1 lookup, fused in. Without it, a bare symbol
+	// name — the commonest question an agent asks — is ranked by the vector and
+	// keyword arms, which read content and not the name column. Measured on a
+	// real 10,000-element store: the exact symbol for "MultiProject" ranked 9th
+	// of 10 at L3, behind four functions that merely sounded related.
+	if name := strings.TrimSpace(query); name != "" && !strings.ContainsAny(name, " \t\n") {
+		if exact, err := s.FindExact(name); err == nil && len(exact) > 0 {
+			keys := make([]string, 0, len(exact))
+			for _, e := range exact {
+				if _, ok := byQN[e.QualifiedName]; !ok {
+					byQN[e.QualifiedName] = &HybridHit{Element: e}
+				}
+				keys = append(keys, e.QualifiedName)
+			}
+			lists = append(lists, RankList{Name: ArmName, Keys: keys})
 		}
 	}
 	if len(lists) == 0 {
