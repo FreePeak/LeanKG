@@ -118,7 +118,7 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 | RS-18 | P3 | One BM25 memory index (files + bank rows, `porter unicode61 remove_diacritics 2`) | DONE |
 | RS-19 | P3 | Dense memory recall fused by RRF (deferred) | DONE — dense arm fused by RRF above the calibrated noise floor; paraphrase recall 2/8 → 7/8 |
 | RS-20 | P3 | Retain cursors stored in the memory index (no full JSONL scans) | DONE |
-| RS-21 | P3 | MCP `query action=memory` view/snapshot | DONE |
+| RS-21 | P3 | MCP `query action=memory` view/snapshot; and the ConnectRPC `MemoryRead` answering the same vocabulary (session_recall/memories were MCP-only, so a second-wire client could not run the agent protocol's "recall at session start" command) | **DONE** (#494: RPC routes through the same dispatcher as MCP/CLI; a side effect is a superfluous-WriteHeader warning in an existing RPC test disappeared — the old path double-wrote the header) |
 | RS-22 | P4 | Delete dead `ToolAliases` / `ResolveEnvelope` | DONE — aliases stay retired; refusal names the replacement |
 | RS-23 | P4 | Project-relative paths in errors and payloads | DONE |
 | RS-24 | P4 | Dashboard `/api/query` honors `params.limit` | DONE |
