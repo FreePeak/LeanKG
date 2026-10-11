@@ -323,6 +323,18 @@ func cmdSearchAnnotations(args []string) {
 		verbFatal(err)
 	}
 	if len(results) == 0 {
+		// A miss must not read as "no such row": annot.Search matches the
+		// DESCRIPTION only (by design since the port), so a feature id or a
+		// qualified name that is stored and printed can never match. Measured
+		// 2026-10-11: an annotation carrying feature_id FR-ZZ is invisible to
+		// `search-annotations FR-ZZ` while `search-annotations <its
+		// description>` finds it, and the caller concludes the row is gone.
+		// Say so, and offer the two reads that can find it.
+		if all, _ := annot.All(st); len(all) > 0 {
+			fmt.Printf("No annotations found matching '%s'\n", query)
+			fmt.Printf("  (%d annotation(s) exist; search matches DESCRIPTION text only — try show-annotations <element>, or words from the description)\n", len(all))
+			return
+		}
 		fmt.Printf("No annotations found matching '%s'\n", query)
 		return
 	}
