@@ -138,7 +138,8 @@ from the checkout or pass `--project DIR` to pin one.
 
 ### Measured timings
 
-- **Go cold time-to-first-value (build → index → serve bind → first REST + MCP query): CI budget 300s, gate [Cold TTFV](.github/workflows/ci.yml), per-run numbers in the `ttfv-go-cold` artifact** — local cold-cache measurement 17.8s (macOS arm64); replaces the Rust-era `quickstart_smoke.sh`.
+- **Go cold time-to-first-value (build → index → serve bind → first REST + MCP query): CI budget 300s, gate [Cold TTFV](.github/workflows/ci.yml), per-run numbers in the `ttfv-go-cold` artifact** — local cold-cache measurement 17.8s (macOS arm64).
+- **Quickstart happy path (`leankg index` → `leankg serve --http` → first MCP `query` → `leankg doctor`), budget 300s, CI gate "Quickstart happy path (timed)" in the same job** — measured **1.4s** warm on a generated 10-file Go fixture (index 0.05s, server bind 1.08s, first query 0.05s, doctor 0.03s; macOS arm64, sqlite). `scripts/quickstart_smoke.sh` runs the same steps locally; `QUICKSTART_DRY_RUN=1` prints the plan without touching anything.
 
 ### Web UI
 

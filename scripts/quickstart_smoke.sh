@@ -1,225 +1,200 @@
 #!/usr/bin/env bash
-# quickstart_smoke.sh — H5 / FR-PLG-7: timed "< 5 min to first query result" smoke.
+# quickstart_smoke.sh — H5 / FR-PLG-7 / PRD T2: the timed happy path.
 #
-# Simulates a brand-new user end-to-end on the sqlite default engine:
-#   init -> migrate -> index -> mcp-http up -> first search_code hit -> doctor -> cleanup
-#
-# Usage:
-#   no environment needed — sqlite is the default storage engine
-#   scripts/quickstart_smoke.sh
+# Simulates a brand-new user end-to-end on the sqlite default engine, using
+# ONLY verbs the shipped binary has:
+#   leankg index -> leankg serve --http -> first MCP tools/call -> leankg doctor
 #
 # Env:
-#   LEANKG_DB_ENGINE         optional override (default: sqlite)
-#   QUICKSTART_DRY_RUN=1     print the step plan without executing anything
-#   QUICKSTART_SMOKE_PORT    MCP HTTP port (default 9711)
-#   QUICKSTART_BUDGET        wall-clock budget seconds (default 300)
+#   LEANKG_BINARY              path to a prebuilt leankg (else `go build`)
+#   QUICKSTART_DRY_RUN=1       print the step plan without executing anything
+#   QUICKSTART_SMOKE_PORT      MCP HTTP port (default 9712; the ttfv smoke owns 9711)
+#   QUICKSTART_BUDGET          wall-clock budget in seconds (default 300)
+#   QUICKSTART_PROJECT         project to index (default: a generated fixture)
 #
 # Exit codes: 0 = pass (< budget), 1 = over budget, 2 = setup/step error.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${QUICKSTART_SMOKE_PORT:-9711}"
-TIME_BUDGET=300
-TIME_BUDGET="${QUICKSTART_BUDGET:-$TIME_BUDGET}"
+# Default 9712, NOT 9711: the ttfv smoke runs in the SAME CI job, binds 9711
+# and cleans up on exit. A port the previous step just freed still answers an
+# in-flight /health for a beat, so a tools/call could land on a DYING session
+# and fail with "method tools/call is invalid during session initialization"
+# — measured in run 38136420276. Distinct port, and the health probe below
+# also requires our own pid to be alive.
+PORT="${QUICKSTART_SMOKE_PORT:-9712}"
+TIME_BUDGET="${QUICKSTART_BUDGET:-300}"
 DRY_RUN="${QUICKSTART_DRY_RUN:-0}"
-SCRATCH="/tmp/opencode/qs-smoke-$$"
+# mktemp -d, never a fixed /tmp/<name>: a fixed base collided with another
+# job's scratch on a shared runner (the frontend job writes its binary to
+# /tmp/leankg, which this fixed base made a directory and broke with
+# "/tmp/leankg: is a directory"). Same lesson as the ttfv smoke's own
+# fixtures: nothing in /tmp may assume it owns a name.
+SCRATCH="$(mktemp -d /tmp/leankg-quickstart.XXXXXX)"
 BASE_URL="http://127.0.0.1:$PORT"
 SERVER_PID=""
-TIMES=()   # "name|seconds" rows
+TIMES=()        # "name|seconds" rows
+NOTES=()        # free-form notes printed under the table
 
-# Resolve target/release/leankg honoring CARGO_TARGET_DIR and a global
-# ~/.cargo/config.toml target-dir override (worktrees share one cache dir).
-resolve_binary() {
-    local cfg_target="" b
-    if [ -f "$HOME/.cargo/config.toml" ]; then
-        cfg_target="$(sed -n 's/^[[:space:]]*target-dir[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$HOME/.cargo/config.toml" | head -1)"
-    fi
-    local candidates=(
-        "${CARGO_TARGET_DIR:+$CARGO_TARGET_DIR/release/leankg}"
-        "${cfg_target:+$cfg_target/release/leankg}"
-        "$REPO_ROOT/target/release/leankg"
-    )
-    for b in "${candidates[@]}"; do
-        if [ -n "$b" ] && [ -x "$b" ]; then
-            printf '%s\n' "$b"
-            return 0
-        fi
-    done
-    return 1
-}
-BINARY="$(resolve_binary || true)"
-
-log()  { printf '%s\n' "$*"; }
-err()  { printf '%s\n' "$*" >&2; }
-
+log() { printf '%s\n' "$*"; }
+err() { printf '%s\n' "$*" >&2; }
 now_s() { python3 -c 'import time; print(f"{time.time():.3f}")'; }
-
 record() { TIMES+=("$1|$2"); }
-row()    { printf '%s\n' "$1"; }
+
+# build_or_binary returns a runnable leankg.
+build_or_binary() {
+    if [ -n "${LEANKG_BINARY:-}" ] && [ -x "$LEANKG_BINARY" ]; then
+        # Probe it: an executable that is not leankg (`/bin/true`) would otherwise
+        # make every step "succeed" silently — /bin/true exits 0 for index,
+        # serve, doctor — and the gate would pass having measured nothing.
+        "$LEANKG_BINARY" version >/dev/null 2>&1 || return 1
+        printf '%s\n' "$LEANKG_BINARY"; return 0
+    fi
+    local found
+    found="$(command -v leankg || true)"
+    if [ -n "$found" ] && "$found" version >/dev/null 2>&1; then
+        printf '%s\n' "$found"; return 0
+    fi
+    CGO_ENABLED=0 go build -o "$SCRATCH/leankg" ./cmd/leankg || return 1
+    printf '%s\n' "$SCRATCH/leankg"
+}
 
 print_table() {
-    log "--------------------------------------------"
-    log "quickstart smoke — step timings"
-    for t in "${TIMES[@]}"; do
-        local name="${t%%|*}" secs="${t##*|}"
-        printf '%-28s|%10s s\n' "$name" "$secs"
+    printf '\n%-18s %10s\n' "step" "seconds"
+    local row
+    for row in "${TIMES[@]}"; do
+        printf '%-18s %10s\n' "${row%%|*}" "${row##*|}"
     done
-    printf '%-28s|%10s s\n' "TOTAL" "${TOTAL_SECS:-?}"
-    log "--------------------------------------------"
 }
 
-fail_setup() {
-    err "SETUP ERROR: $*"
-    cleanup_server
-    exit 2
-}
-
+fail_setup() { err "SETUP ERROR: $*"; cleanup_server; exit 2; }
 cleanup_server() {
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         kill "$SERVER_PID" 2>/dev/null || true
         wait "$SERVER_PID" 2>/dev/null || true
     fi
-    SERVER_PID=""
 }
-trap cleanup_server EXIT INT TERM
+# One EXIT trap, set once: stop the server, then remove the whole scratch tree.
+# A trap that only killed the server left the fixture (and its .leankg store)
+# behind, and a second `trap ... EXIT` would silently REPLACE this one rather
+# than add to it — which is why the first draft of this line ran with an empty
+# SCRATCH and removed nothing.
+on_exit() {
+    cleanup_server
+    [ -n "${SCRATCH:-}" ] && [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+}
+trap on_exit EXIT
 
+# gen_fixture writes a small deterministic Go project. The earlier fixture
+# generated Rust, which is why this script could never pass on the Go engine:
+# leankg has one language id per dialect group and no Rust extractor is wired
+# into the shipped registry path here.
+gen_fixture() {
+    mkdir -p "$SCRATCH/src"
+    for i in $(seq 0 9); do
+        cat > "$SCRATCH/src/fnstore_${i}.go" <<EOF
+// Package fixture module ${i} (deterministic, generated by quickstart_smoke.sh).
+package fixture
+
+type FnStore${i} struct {
+	ID    int
+	Label string
+}
+
+func NewFnStore${i}(id int) *FnStore${i} {
+	return &FnStore${i}{ID: id, Label: "fnstore-${i}"}
+}
+
+func (s *FnStore${i}) Lookup(key string) string {
+	if key == "" {
+		return ""
+	}
+	return s.Label
+}
+EOF
+    done
+    cat > "$SCRATCH/src/go.mod" <<EOF
+module qssmoke
+
+go 1.25
+EOF
+}
+
+# timed_step <name> <cmd...> — records seconds; a non-zero exit is a setup error.
 timed_step() {
-    # timed_step <name> <cmd...> — records seconds; setup-error on failure
     local name="$1"; shift
     local t0 t1 rc
     t0=$(now_s)
     "$@"; rc=$?
     t1=$(now_s)
-    [ $rc -eq 0 ] || fail_setup "step '$name' failed with rc=$rc"
+    [ "$rc" -eq 0 ] || fail_setup "step $name failed (rc=$rc)"
     record "$name" "$(python3 -c "print(f'{$t1-$t0:.3f}')")"
 }
 
-dry_run_plan() {
-    log "QUICKSTART_DRY_RUN=1 — plan only, nothing executed"
-    log "scratch dir would be: $SCRATCH"
-    log "binary:               $BINARY"
-    log "port:                 $PORT   budget: ${TIME_BUDGET}s"
-    log "--------------------------------------------"
-    record "init"        "-"
-    record "migrate"     "-"
-    record "index"       "-"
-    record "server_up"   "-"
-    record "first_query" "-"
-    record "doctor"      "-"
-    record "cleanup"     "-"
-    TOTAL_SECS="-"
-    print_table
-    exit 0
-}
-
-# ---------------------------------------------------------------- dry run out
 if [ "$DRY_RUN" = "1" ]; then
-    dry_run_plan
+    cat <<'PLAN'
+quickstart_smoke plan (dry run):
+  1. build_or_binary      LEANKG_BINARY, else `go build ./cmd/leankg`
+  2. index                LEANKG index <fixture>
+  3. serve + /health      LEANKG serve --http :PORT --project <fixture>
+  4. first_query          POST /mcp tools/call name=query
+  5. doctor               LEANKG doctor --project <fixture>
+  6. cleanup              stop the server
+PLAN
+    exit 0
 fi
 
-# ---------------------------------------------------------------- preflight
-command -v python3 >/dev/null 2>&1 || fail_setup "python3 is required for timing/json checks"
-command -v curl    >/dev/null 2>&1 || fail_setup "curl is required"
-# sqlite is the default engine — no PG configuration required. An inherited
-# LEANKG_PG_URL must not silently flip the engine: pin sqlite unless the
-# caller explicitly opted into another engine.
-export LEANKG_DB_ENGINE="${LEANKG_DB_ENGINE:-sqlite}"
-
-if [ -z "$BINARY" ]; then
-    log "binary not found — building once (cargo build --release)..."
-    (cd "$REPO_ROOT" && cargo build --release) || fail_setup "cargo build --release failed"
-    BINARY="$(resolve_binary || true)"
-fi
-[ -n "$BINARY" ] && [ -x "$BINARY" ] || fail_setup "no executable leankg binary (resolved: '$BINARY')"
-
-mkdir -p /tmp/opencode || fail_setup "cannot create /tmp/opencode"
+mkdir -p "$SCRATCH"
+BINARY="$(build_or_binary)" || fail_setup "could not build or find a leankg binary"
+PROJECT="${QUICKSTART_PROJECT:-$SCRATCH/src}"
+if [ "$PROJECT" = "$SCRATCH/src" ]; then gen_fixture; fi
 
 T_START=$(now_s)
-log "scratch project: $SCRATCH"
 
-# ---------------------------------------------------------------- step 1: fixture + init
-gen_fixture() {
-    mkdir -p "$SCRATCH/src"
-    for i in $(seq -w 0 9); do
-        cat > "$SCRATCH/src/fnstore_${i}.rs" <<EOF
-//! Quickstart fixture module ${i} (deterministic, generated by quickstart_smoke.sh).
+# ---------------------------------------------------------- step 1: index
+timed_step "index" bash -c "cd '$SCRATCH' && '$BINARY' index '$PROJECT'"
 
-pub struct FnStore${i} {
-    pub id: u32,
-    pub label: String,
-}
-
-impl FnStore${i} {
-    pub fn fnconfig_new_${i}(id: u32) -> Self {
-        Self { id, label: format!("fnstore-${i}-{}", id) }
-    }
-
-    pub fn fnlookup_${i}(&self, key: &str) -> Option<String> {
-        if key.is_empty() { None } else { Some(self.label.clone()) }
-    }
-}
-
-pub fn fntransform_${i}(input: &str) -> String {
-    let store = FnStore${i}::fnconfig_new_${i}(input.len() as u32);
-    store.fnlookup_${i}(input).unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn fnroundtrip_${i}() {
-        assert!(fntransform_${i}("x").contains("${i}"));
-    }
-}
-EOF
-    done
-}
-export -f gen_fixture
-export SCRATCH BINARY
-timed_step "init" bash -c "gen_fixture && cd '$SCRATCH' && '$BINARY' init"
-
-# ---------------------------------------------------------------- step 2: migrate
-timed_step "migrate" "$BINARY" migrate
-
-# ---------------------------------------------------------------- step 3: index
-# Run from the scratch dir: doc indexing scans a CWD-relative ./docs
-# (src/main.rs), which must not pick up the invoking repo's docs/.
-timed_step "index" bash -c "cd '$SCRATCH' && '$BINARY' index '$SCRATCH/src'"
-
-# ---------------------------------------------------------------- step 4: server up + health
+# ---------------------------------------------------------- step 2: server up + health
 t0=$(now_s)
-# --project must match the root the indexer keyed its PG schema from
-# (<scratch>/src, since index was called with that path) or queries hit an
-# empty sibling schema and return 0 elements.
-( cd "$SCRATCH" && exec env LEANKG_DB_ENGINE="${LEANKG_DB_ENGINE:-sqlite}" "$BINARY" mcp-http --port "$PORT" --project "$SCRATCH/src" ) >"/tmp/opencode/qs-smoke-$$-mcp.log" 2>&1 &
+( cd "$SCRATCH" && exec "$BINARY" serve --http "127.0.0.1:$PORT" --project "$PROJECT" ) \
+    >"$SCRATCH/mcp.log" 2>&1 &
 SERVER_PID=$!
 HEALTHY=0
 for _ in $(seq 1 60); do
+    # Our own process must still be alive AND the port must answer: a 200 from
+    # a server another step left behind (or a dying one) is not our readiness.
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        fail_setup "serve died during startup (see $SCRATCH/mcp.log)"
+    fi
     CODE="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/health" 2>/dev/null || true)"
-    if [ "$CODE" = "200" ]; then HEALTHY=1; break; fi
-    kill -0 "$SERVER_PID" 2>/dev/null || fail_setup "mcp-http died during startup (see /tmp/opencode/qs-smoke-$$-mcp.log)"
+    if [ "$CODE" = "200" ] && kill -0 "$SERVER_PID" 2>/dev/null; then HEALTHY=1; break; fi
     sleep 1
 done
 t1=$(now_s)
 [ "$HEALTHY" = "1" ] || fail_setup "server /health never returned 200 within 60s"
 record "server_up" "$(python3 -c "print(f'{$t1-$t0:.3f}')")"
 
-# ---------------------------------------------------------------- step 5: first query
-query_first() {
-    local payload resp
-    payload='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_code","arguments":{"query":"fn"}}}'
-    resp="$(curl -s -X POST "$BASE_URL/mcp?project=$SCRATCH/src" \
+# ---------------------------------------------------------- step 3: first query
+# The 3-tool envelope: `query` with no action runs the L1 exact -> L2 fuzzy ->
+# L3 semantic ladder. An empty result is a failure (nothing was indexed or the
+# wrong project was served), not a pass.
+first_query() {
+    local resp
+    resp="$(curl -s -X POST "$BASE_URL/mcp" \
         -H 'Content-Type: application/json' \
         -H 'Accept: application/json, text/event-stream' \
         --max-time 60 \
-        -d "$payload")"
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query","arguments":{"query":"FnStore"}}}')"
     printf '%s' "$resp" | python3 -c '
 import sys, json
-try:
-    d = json.load(sys.stdin)
-except Exception as e:
-    sys.exit(f"invalid JSON-RPC response: {e}")
+def payload():
+    raw = sys.stdin.read()
+    for line in raw.splitlines():
+        if line.startswith("data: "):
+            try: return json.loads(line[6:])
+            except Exception: pass
+    return json.loads(raw)
+d = payload()
 if d.get("error"):
     sys.exit("JSON-RPC error: " + json.dumps(d["error"]))
 r = d.get("result", {})
@@ -227,38 +202,29 @@ if r.get("isError"):
     sys.exit("tool reported isError=true")
 text = "".join(c.get("text", "") for c in r.get("content", []) if isinstance(c, dict))
 if not text.strip():
-    sys.exit("empty result — expected >=1 element")
-if "fn" not in text.lower():
-    sys.exit("result does not reference indexed symbols")
-print(text.splitlines()[0][:100])
+    sys.exit("empty result — the ladder found nothing")
+j = json.loads(text)
+hits = j.get("hits") or []
+if not hits:
+    sys.exit("no hits for a symbol the fixture defines")
+print("first hit: " + (hits[0].get("qualified_name") or hits[0].get("name") or "?")[:80])
 '
 }
-timed_step "first_query" query_first
+timed_step "first_query" first_query
 
-# ---------------------------------------------------------------- step 6: doctor
-timed_step "doctor" "$BINARY" doctor
+# ---------------------------------------------------------- step 4: doctor
+timed_step "doctor" "$BINARY" doctor --project "$PROJECT"
 
-# ---------------------------------------------------------------- step 7: cleanup
-t0=$(now_s)
-cleanup_server
-# Scratch schema drop: the per-project schema name is a SipHash of the project path
-# (src/db/backend.rs::schema_for_path) and no leankg CLI exposes a drop command,
-# so the scratch schema `leankg_p_*` is left in remote PG. Harmless (~10 elements).
-record_note="left"
-t1=$(now_s)
-record "cleanup" "$(python3 -c "print(f'{$t1-$t0:.3f}')")"
-
-# ---------------------------------------------------------------- verdict
+# ---------------------------------------------------------- verdict
 T_END=$(now_s)
 TOTAL_SECS="$(python3 -c "print(f'{$T_END-$T_START:.3f}')")"
+cleanup_server
 print_table
 
-OVER=$(python3 -c "print(1 if $TOTAL_SECS > $TIME_BUDGET else 0)")
+OVER="$(python3 -c "print(1 if $TOTAL_SECS > $TIME_BUDGET else 0)")"
 if [ "$OVER" = "1" ]; then
     err "FAIL: total ${TOTAL_SECS}s exceeds ${TIME_BUDGET}s budget"
-    log "note: scratch PG schema leankg_p_* left in place (no CLI exposes schema drop)"
     exit 1
 fi
 log "PASS: first query result in ${TOTAL_SECS}s (< ${TIME_BUDGET}s)"
-log "note: scratch PG schema leankg_p_* left in place (no CLI exposes schema drop)"
 exit 0
