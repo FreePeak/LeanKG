@@ -275,7 +275,6 @@ var pendingWiring = map[string]bool{
 	"LEANKG_ERROR_TRGM_UNAVAILABLE":        true,
 	"LEANKG_ERROR_METHOD_NOT_FOUND":        true,
 	"LEANKG_ERROR_READ_ONLY":               true,
-	"LEANKG_ERROR_MISSING_PARAM":           true,
 }
 
 // TestCatalogWiringAudit reports every catalog entry no call site can reach

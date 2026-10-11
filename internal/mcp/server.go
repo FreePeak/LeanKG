@@ -29,6 +29,11 @@ import (
 // internal/projects; nil keeps the single-engine behavior.
 type ProjectRouter interface {
 	EngineFor(ctx context.Context, project string) (*core.Engine, error)
+	// MultiProject reports whether more than one project is registered. With a
+	// single project the default engine is unambiguous, so an omitted
+	// `project` argument is not an error — a stdio spawn is one agent session
+	// over one project and must keep working.
+	MultiProject() bool
 }
 
 // Server wraps the go-sdk server over one core engine. When router is set,
@@ -71,9 +76,22 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 			return nil, err
 		}
 	}
+	// Fail closed: with several projects registered, an omitted `project` used
+	// to fall back to the serve process's cwd engine, so a question about
+	// another project got a confident answer built from the WRONG graph
+	// (measured live on a 298-project host: a term absent from the served
+	// project still returned 10 of its hits). The caller's question is
+	// unanswerable without knowing which graph to search, so we refuse.
 	p, _ := args["project"].(string)
 	if p == "" {
-		return s.engine, nil
+		if !s.router.MultiProject() {
+			// One project registered: the wrapped engine is the only answer, and
+			// an agent that never learned about `project` must keep working.
+			return s.engine, nil
+		}
+		return nil, errs.NewError(errs.MissingParam,
+			"this server serves multiple projects (LEANKG_PROJECT_DIRS), so a tool call must name one",
+			"add \"project\": \"<repo dir or name>\" to the tool arguments, or from inside a repo run `leankg query …` against that project's own server")
 	}
 	return s.router.EngineFor(ctx, p)
 }
