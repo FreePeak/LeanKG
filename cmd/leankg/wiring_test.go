@@ -334,3 +334,104 @@ func TestServeSurvivesUnusableEmbedProvider(t *testing.T) {
 		})
 	}
 }
+
+// TestUIV2LegacyRoutesServeData is the FR-GO-DASH acceptance criterion: every
+// one of the 11 legacy /api/* routes the ui-v2 SPA calls must answer REAL DATA
+// on the --ui listener, not the SPA fallback's index.html. The tracker row has
+// said "TODO — the SPA fallback answers those calls with index.html" since
+// 2026-09-11; measured live on 2026-10-11 all 11 return data, so this guard
+// turns a stale claim into either a passing fact or a build failure.
+func TestUIV2LegacyRoutesServeData(t *testing.T) {
+	bin := buildLeanKG(t)
+	proj := seedProject(t)
+	if out, err := exec.Command(bin, "index", proj, "--auto").CombinedOutput(); err != nil {
+		t.Fatalf("index: %v\n%s", err, out)
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "serve", "--read-only", "--ui", addr, "--project", proj)
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	get := func(path string) (int, string, string) {
+		t.Helper()
+		resp, err := http.Get("http://" + addr + path)
+		if err != nil {
+			return 0, "", ""
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(b)
+	}
+	post := func(path, body string) (int, string, string) {
+		t.Helper()
+		resp, err := http.Post("http://"+addr+path, "application/json", strings.NewReader(body))
+		if err != nil {
+			return 0, "", ""
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(b)
+	}
+
+	for deadline := time.Now().Add(20 * time.Second); ; {
+		code, _, _ := get("/health")
+		if code == 200 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	for _, tc := range []struct {
+		method, path, body string
+		want               int
+	}{
+		{"GET", "/api/index/status", "", 200},
+		{"GET", "/api/search?q=Handle", "", 200},
+		{"POST", "/api/query", `{"query":"Handle"}`, 200},
+		{"POST", "/api/query-graph", `{"question":"what exists"}`, 200},
+		{"GET", "/api/file?path=demo.go", "", 200},
+		{"GET", "/api/graph/children?node=Handle", "", 200},
+		{"GET", "/api/graph/clusters", "", 200},
+		{"GET", "/api/graph/report", "", 200},
+		{"GET", "/api/graph/service-topology", "", 200},
+	} {
+		var code int
+		var ctype, body string
+		if tc.method == "POST" {
+			code, ctype, body = post(tc.path, tc.body)
+		} else {
+			code, ctype, body = get(tc.path)
+		}
+		if code != tc.want {
+			t.Errorf("%s %s: %d (want %d) body=%s", tc.method, tc.path, code, tc.want, body)
+			continue
+		}
+		// The defect the row names: the SPA fallback would answer 200 text/html
+		// with the shell, so a 200 alone proves nothing.
+		if !strings.Contains(ctype, "json") {
+			t.Errorf("%s %s: content-type %q — the SPA fallback answered, not the data API", tc.method, tc.path, ctype)
+		}
+	}
+
+	// The shell and its assets still come from the embedded build.
+	if code, ctype, body := get("/"); code != 200 || !strings.Contains(ctype, "text/html") || !strings.Contains(body, `id="root"`) {
+		t.Errorf("GET /: %d %s (embedded ui-v2 shell not served)", code, ctype)
+	}
+	if code, ctype, _ := get("/favicon.svg"); code != 200 || !strings.Contains(ctype, "svg") {
+		t.Errorf("GET /favicon.svg: %d %s", code, ctype)
+	}
+}
