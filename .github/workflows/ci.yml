@@ -135,6 +135,14 @@ jobs:
       - name: Timed cold happy path
         run: bash scripts/ttfv_smoke.sh --json ttfv.json
         timeout-minutes: 10
+      # FR-PLG-7 / PRD T2: the same happy path, measured from the user's side,
+      # was written against the Rust CLI (leankg init, leankg mcp-http,
+      # search_code) and had therefore never run once. It now uses only verbs
+      # the shipped binary has and gates on the 300s budget, so the published
+      # "first query ≤ 5 min" claim is a measurement rather than an aspiration.
+      - name: Quickstart happy path (timed)
+        run: bash scripts/quickstart_smoke.sh
+        timeout-minutes: 10
       - name: Upload timing artifact
         if: always()
         uses: actions/upload-artifact@v4
