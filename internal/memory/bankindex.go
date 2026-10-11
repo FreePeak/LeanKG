@@ -250,6 +250,12 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 		if hits[i].score != hits[j].score {
 			return hits[i].score < hits[j].score // bm25: more negative = better
 		}
+		// K7: equal relevance prefers the newer row, so a stale row cannot
+		// outrank a fresh one with the same score. Bank order is the last
+		// tie-break (project before shared), unchanged for rows of one age.
+		if hits[i].e.Timestamp != hits[j].e.Timestamp {
+			return hits[i].e.Timestamp > hits[j].e.Timestamp
+		}
 		return hits[i].bank < hits[j].bank
 	})
 	seen := map[string]bool{}
