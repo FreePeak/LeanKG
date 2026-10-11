@@ -143,8 +143,8 @@ jobs:
           path: ttfv.json
           if-no-files-found: warn
 
-  ui2-e2e:
-    name: UI-v2 e2e (embedded build)
+  frontend:
+    name: Frontend (ui-v2 e2e + dashboard unit)
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
     # The e2e suite never ran anywhere before this job existed: the default
     # playwright config starts a vite dev server and assumes a backend on
@@ -168,7 +168,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: ui-v2/package-lock.json
+          cache-dependency-path: |
+            ui-v2/package-lock.json
+            ui-dashboard/package-lock.json
       - name: Go build (the binary whose embed the suite tests)
         run: CGO_ENABLED=0 go build -o /tmp/leankg ./cmd/leankg
       - name: npm ci (playwright + vitest deps)
@@ -193,3 +195,16 @@ jobs:
       - name: E2E against the embedded build
         run: E2E=1 FRONTEND_URL=http://127.0.0.1:9802 BACKEND_URL=http://127.0.0.1:9802 npx playwright test --config playwright.embedded.config.ts
         working-directory: ui-v2
+      # The dashboard SPA is the other shipped frontend (what `leankg
+      # dashboard` serves). Its 6 unit-test files / 45 tests ran in NO CI job
+      # before this one; measured 2026-10-11 — all green in 1.2s, so the only
+      # reason they were unguarded was that nothing invoked them.
+      - name: Dashboard unit tests (vitest)
+        run: npm ci --silent && npm test
+        working-directory: ui-dashboard
+      # The Makefile calls this "(CI gate)", but no workflow invoked it — so a
+      # dashboard source change could land without its embed, and
+      # `leankg dashboard` would keep serving the previous SPA while the
+      # stamp claimed otherwise. It is one sha256 tree hash: ~1s.
+      - name: Dashboard embed drift gate
+        run: make go-ui-dashboard-check
