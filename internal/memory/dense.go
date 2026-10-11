@@ -182,7 +182,15 @@ func fuseRRF(lists ...[]Entry) []Entry {
 			score[e.ID] += 1 / float64(rrfK+i+1)
 		}
 	}
-	sort.SliceStable(order, func(i, j int) bool { return score[order[i]] > score[order[j]] })
+	// Equal fusion score prefers the newer row (K7), matching the lexical
+	// tie-break in recallIndexed: a stale row must not outrank a fresh one just
+	// because the two arms agreed on it equally.
+	sort.SliceStable(order, func(i, j int) bool {
+		if score[order[i]] != score[order[j]] {
+			return score[order[i]] > score[order[j]]
+		}
+		return first[order[i]].Timestamp > first[order[j]].Timestamp
+	})
 	out := make([]Entry, len(order))
 	for i, id := range order {
 		out[i] = first[id]
