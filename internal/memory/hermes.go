@@ -28,7 +28,7 @@ func (m *Memory) Add(file, text string) error {
 	if err := bound(key, out); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(out), 0o644); err != nil {
+	if err := writeMemoryFile(full, out); err != nil {
 		return err
 	}
 	return m.reindex(key)
@@ -63,7 +63,7 @@ func (m *Memory) Remove(file, substr string) error {
 	if err := bound(key, out); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(out), 0o644); err != nil {
+	if err := writeMemoryFile(full, out); err != nil {
 		return err
 	}
 	return m.reindex(key)

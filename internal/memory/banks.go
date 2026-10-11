@@ -514,6 +514,7 @@ func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	for _, e := range entries {
+		e.Content = Redact(e.Content)
 		if err := enc.Encode(e); err != nil {
 			return fmt.Errorf("memory: encode entry: %w", err)
 		}

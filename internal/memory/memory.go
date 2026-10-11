@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
 
 // CoreFileBytes is the Hermes bound for MEMORY.md and USER.md. Writes that
@@ -246,7 +248,7 @@ func (m *Memory) Create(path, content string) error {
 	if err := bound(key, content); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := writeMemoryFile(full, content); err != nil {
 		return err
 	}
 	return m.reindex(key)
@@ -271,7 +273,9 @@ func (m *Memory) Append(path, content string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(content); err != nil {
+	// Bound() gates the bound; the redaction gate is the stream below, so an
+	// append cannot smuggle a pasted key in as text either.
+	if _, err := f.WriteString(Redact(content)); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -299,7 +303,7 @@ func (m *Memory) StrReplace(path, old, new string) error {
 	if err := bound(key, out); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(out), 0o644); err != nil {
+	if err := writeMemoryFile(full, out); err != nil {
 		return err
 	}
 	return m.reindex(key)
@@ -333,7 +337,7 @@ func (m *Memory) Insert(path, content string, insertLine int) error {
 	if err := bound(key, out); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(out), 0o644); err != nil {
+	if err := writeMemoryFile(full, out); err != nil {
 		return err
 	}
 	return m.reindex(key)
@@ -391,3 +395,23 @@ func bound(key, content string) error {
 	}
 	return nil
 }
+
+// writeMemoryFile is the ONE place memory bytes reach the filesystem: every
+// write verb calls it, so redaction (FR-SMA-06) cannot be skipped by a new
+// verb that forgot to call Redact itself. A read path never goes through it,
+// so a read never rewrites a file.
+func writeMemoryFile(full, content string) error {
+	return os.WriteFile(full, []byte(Redact(content)), 0o644)
+}
+
+// Redact masks secrets in MEMORY content before it reaches disk (FR-SMA-06).
+//
+// Every write verb already funnels through bound(), which is why this lives
+// here rather than in six call sites: the same lesson an operator writes
+// into a memory file is the one a telemetry row masks. Measured live before
+// this existed — `import action=memory command=create path=topics/probe.md
+// content=<fake keys>` wrote the file and grep found both keys INTACT.
+//
+// The caller's words are preserved (only the matched value is replaced), so
+// a redacted lesson still explains what it was about.
+func Redact(content string) string { return telemetry.Redact(content) }
