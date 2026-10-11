@@ -35,7 +35,7 @@ env -u LEANKG_TEST_PG_URL go test ./... -count=1 -timeout 300s
 # Fast-fail if the PG endpoint is unreachable (a wedged Docker daemon would
 # otherwise hang every probe for 120s+ and the gate would report a nameless FAIL).
 if ! timeout 5 psql "$PG_URL" -At -c "select 1" >/dev/null 2>&1; then
-  echo "FAIL: PostgreSQL unreachable at $PG_URL (start the pgvector container: docker compose -f docker-compose.500mb.yml up -d)" >&2
+  echo "FAIL: PostgreSQL unreachable at $PG_URL (start the pgvector container: docker compose -f scripts/pgvector.compose.yml up -d)" >&2
   exit 1
 fi
 echo "== PG store tests =="
@@ -65,13 +65,28 @@ assert_contains "sqlite embed reports 1 element" '"Embedded":1' "$out"
 echo "== end-to-end: postgres =="
 out=$(cd "$SMOKE/proj" && LEANKG_DB_ENGINE=postgres LEANKG_PG_URL="$PG_URL" "$SMOKE/leankg" index . 2>&1)
 assert_contains "pg index ran" "elements=1" "$out"
+
+# Capture the schema THIS RUN created, immediately after the index that made
+# it. The previous code picked `tail -1` of every leankg_% schema AT THE END of
+# the run: on a database that already holds the operator's project schemas that
+# drops the WRONG one — demonstrated live on the dev pgvector, where a decoy
+# schema named to sort later was dropped while the run's own leaked. Dropping a
+# schema is data loss, so the run now DROPS ONLY WHAT IT CREATED, by deriving
+# the name the same way the backend does: leankg_ + sha256(abs project dir)[:16]
+# (internal/store/store_pg.go pgSchemaForDir).
+PG_SCHEMA="leankg_$(python3 -c '
+import hashlib, os, sys
+p = os.path.realpath(sys.argv[1])
+print(hashlib.sha256(p.encode()).hexdigest()[:16])
+' "$SMOKE/proj")"
+EXISTS=$(psql "$PG_URL" -At -c "SELECT 1 FROM pg_namespace WHERE nspname='${PG_SCHEMA}'" 2>/dev/null || true)
+[ "$EXISTS" = "1" ] || { echo "FAIL: expected schema ${PG_SCHEMA} to exist after the pg index" >&2; exit 1; }
+# Prove the derivation matches what the run created: the query above found it.
+# The e2e continues; cleanup drops PG_SCHEMA at exit.
+
 out=$(cd "$SMOKE/proj" && LEANKG_DB_ENGINE=postgres LEANKG_PG_URL="$PG_URL" \
   LEANKG_EMBED_PROVIDER=deterministic LEANKG_EMBED_DIMS=16 "$SMOKE/leankg-embed" full 2>&1)
 assert_contains "pg embed self-identifies" '"backend":"postgres"' "$out"
 assert_contains "pg embed reports 1 element" '"Embedded":1' "$out"
-
-# Capture the schema this run created so cleanup can drop it.
-PG_SCHEMA=$(psql "$PG_URL" -At -c \
-  "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'leankg\_%' ORDER BY nspname" 2>/dev/null | tail -1 || true)
 
 echo "DUAL-ENGINE OK"

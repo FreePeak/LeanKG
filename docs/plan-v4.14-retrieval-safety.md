@@ -363,7 +363,12 @@ The keyword rung alone scores above the fused rung on the judged set (0.753 vs 0
 - **`memory create`:** still create-or-overwrite (the memory-tool contract), but the answer reports `overwrote: true|false`.
 - **`path` errors** now name the unknown endpoint.
 - **Hindsight `tags_match`** rejects unknown values with 400 instead of silently reading them as `any`.
-- **`make dual-engine` was unrunnable:** it `cd`'d into the removed `go/` directory, and with `LEANKG_TEST_PG_URL` exported its "sqlite" stage ran every package's PG tests in parallel against one database. Both fixed in `scripts/test-dual-engine.sh`. Its hint about `docker-compose.500mb.yml` names a file that no longer exists.
+- **`make dual-engine` was unrunnable:** it `cd`'d into the removed `go/` directory, and with `LEANKG_TEST_PG_URL` exported its "sqlite" stage ran every package's PG tests in parallel against one database. Both fixed in `scripts/test-dual-engine.sh`. Its hint named
+`docker-compose.500mb.yml`, a file the repo does not track (`.gitignore` lists
+it as operator-local, "never committed"), so the correction left the gate
+still unrunnable in a fresh clone — 2026-10-11: the compose is now
+`scripts/pgvector.compose.yml`, tracked, and both the script and CI point at
+it; the "Dual Engine" CI job starts it and runs the gate on every push.
 - **Local config (not in the repo):** the gitignored `.mcp.json` launched a removed Rust test binary; it now points at the running self-host over HTTP (`http://127.0.0.1:9699/mcp`) instead of spawning a second process on the same store. The stale `portfolio.db` row from the first validation run was removed with `leankg projects --forget`.
 - **A unit test touched a live service:** the local-provider test attached to the fixed port `127.0.0.1:9101`, which a real sidecar on the developer machine answered once fingerprinting existed. It now uses `httptest`.
 
