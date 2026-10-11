@@ -97,40 +97,57 @@ func (m *Memory) FirstTurnMemories(scope Scope, cwd, bank, query string) (string
 }
 
 // FirstTurnMemoriesWithIDs is FirstTurnMemories that also reports WHICH rows the
-// rendered block carries. An external caller that injects the block into a
-// prompt needs those ids to report what it actually placed — the
-// "returned vs injected" half the dashboard plan named as a cross-repo gap.
-func (m *Memory) FirstTurnMemoriesWithIDs(ctx context.Context, scope Scope, cwd, bank, query string) (text string, injectedIDs []string, all []Entry, err error) {
-	text, all, err = m.FirstTurnMemoriesCtx(ctx, scope, cwd, bank, query)
+// rendered block carries, plus every row the recall found behind it. An
+// external caller that injects the block into a prompt needs those ids to
+// report what it actually placed — the "returned vs injected" half the
+// dashboard plan named as a cross-repo gap — and `all` so that "how many
+// memories exist?" is answered with the truth rather than the block's
+// prefix.
+func (m *Memory) FirstTurnMemoriesWithIDs(ctx context.Context, scope Scope, cwd, bank, query string) (text string, injectedIDs []string, total int, err error) {
+	text, n, total, all, err := m.firstTurn(ctx, scope, cwd, bank, query)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, 0, err
 	}
-	// The block carries a prefix of the ranked rows (limit/token budget); its
-	// length is what recordInject records, so the same prefix is reported here.
-	_, n := injectRows(all, RecallLimit, InjectionTokenLimit)
 	for _, e := range all[:n] {
 		injectedIDs = append(injectedIDs, e.ID)
 	}
-	return text, injectedIDs, all, nil
+	return text, injectedIDs, total, nil
 }
 
 // FirstTurnMemoriesCtx is FirstTurnMemories with the caller's context. It
 // records an inject event for the rows the block carries (see recordInject).
 func (m *Memory) FirstTurnMemoriesCtx(ctx context.Context, scope Scope, cwd, bank, query string) (string, []Entry, error) {
+	text, _, _, all, err := m.firstTurn(ctx, scope, cwd, bank, query)
+	return text, all, err
+}
+
+// firstTurn is the one place the block is built: it returns the rendered
+// block, how many leading rows it carries, and EVERY row the recall found.
+// Callers that used to receive the capped list get the full one instead,
+// which is why this is one function rather than two (DRY: one render, one
+// inject record, one ranking).
+func (m *Memory) firstTurn(ctx context.Context, scope Scope, cwd, bank, query string) (string, int, int, []Entry, error) {
 	start := time.Now()
 	var banks []string
 	var entries []Entry
+	var total int // rows the recall found, before the block's limit
 	var err error
 	if query == "" {
+		// The cold arm already reads and parses every row of every bank (it
+		// then sorts and slices), so the true total costs nothing extra.
+		// The ranked arm does not: bm25 stops at the limit it was given, and
+		// widening it to count would cost a bigger scan on every prompt.
+		// Honest reporting is per-arm, and each arm says what it knows.
 		banks = m.sessionReadBanks(scope, cwd, bank)
-		entries, err = m.recentBanks(banks, RecallLimit)
+		entries, total, err = m.recentBanksCounting(banks, RecallLimit)
 	} else {
 		banks, entries, err = m.SessionRecallCtx(ctx, scope, cwd, bank, query, RecallLimit)
+		total = len(entries)
 	}
 	if err != nil {
-		return "", nil, err
+		return "", 0, 0, nil, err
 	}
-	text, n := injectRows(entries, RecallLimit, InjectionTokenLimit)
+	text, n := injectRows(entries, RecallLimit, InjectionTokenLimit, total)
 	recordInject(ctx, banks, entries[:n], text, start)
-	return text, entries, nil
+	return text, n, total, entries, nil
 }

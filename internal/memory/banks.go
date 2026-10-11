@@ -588,6 +588,15 @@ func (m *Memory) RecallFilteredCtx(ctx context.Context, banks []string, query st
 // shared), ranked newest-first with stable bank/file order on equal
 // timestamps; empty-content rows are skipped (never recallable).
 func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
+	rows, _, err := m.recentBanksCounting(banks, limit)
+	return rows, err
+}
+
+// recentBanksCounting is recentBanks that also reports how many rows the
+// banks hold. The cold path already parses every line of every file to sort
+// them, so the count is free — and it is what makes an injection block able
+// to say "22 more memories hidden" instead of silently showing a prefix.
+func (m *Memory) recentBanksCounting(banks []string, limit int) ([]Entry, int, error) {
 	var rows []Entry
 	seenIDs := map[string]bool{}
 	for _, bank := range banks {
@@ -596,7 +605,7 @@ func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, err
+			return nil, 0, err
 		}
 		for _, line := range strings.Split(string(data), "\n") {
 			if line == "" {
@@ -613,11 +622,12 @@ func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
 			rows = append(rows, e)
 		}
 	}
+	total := len(rows)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Timestamp > rows[j].Timestamp })
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
-	return rows, nil
+	return rows, total, nil
 }
 
 // InjectBlock renders ranked recall rows as the <memories>-equivalent
@@ -628,13 +638,13 @@ func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
 // (never a truncated half-memory). An empty result returns "" so callers
 // skip the block entirely.
 func InjectBlock(entries []Entry, limit, tokenBudget int) string {
-	text, _ := injectRows(entries, limit, tokenBudget)
+	text, _ := injectRows(entries, limit, tokenBudget, len(entries))
 	return text
 }
 
 // injectRows is InjectBlock that also reports how many leading entries the
 // block carries (the rows telemetry counts as injected).
-func injectRows(entries []Entry, limit, tokenBudget int) (string, int) {
+func injectRows(entries []Entry, limit, tokenBudget, total int) (string, int) {
 	if limit <= 0 {
 		limit = 8 // OMP recallLimit
 	}
@@ -661,6 +671,21 @@ func injectRows(entries []Entry, limit, tokenBudget int) (string, int) {
 	}
 	if n == 0 {
 		return "", 0
+	}
+	// FR-SMA-06 (truncation half): a budget is useless if it is invisible.
+	// The reader of this block cannot see the banks it came from, so it has
+	// no way to know it is looking at a PREFIX. Measured: 30 rows retained,
+	// 8 injected, and the block was silent about the other 22 — an agent
+	// reading it reasonably concluded that was the whole memory. A comment
+	// line inside the block is safe for the callers that render it as text
+	// and for an XML consumer it parses as a comment, so nothing has to
+	// strip it.
+	hidden := total - n
+	if hidden <= 0 {
+		hidden = len(entries) - n
+	}
+	if hidden > 0 {
+		fmt.Fprintf(&b, "\n<!-- %d more memories hidden by the injection budget of %d entries / %d tokens -->\n", hidden, limit, tokenBudget)
 	}
 	b.WriteString("</memories>")
 	return b.String(), n
