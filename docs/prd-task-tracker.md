@@ -193,7 +193,7 @@ The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01.
 | US-GF-10 | Expand language extractors toward Graphify breadth (Vue/Svelte done; Scala/Lua/Zig/shell/AppX open) | P3 | 3.10 | None — direct TODO (unmilestoned) |
 | US-GF-12 | Live SQL / Postgres schema introspection into the same graph | P3 | 3.10 | None — direct TODO (unmilestoned) |
 | FR-EMBED-R4 | (aspirational) Cold functions-only < 20 min on ~371k elements on reference M2 Pro 10c | P3 | 5.12 | Superseded by FR-ZCP-11 (correctness contract first; perf target rides M7's rebuild paths) |
-| FR-SMA-06 | Secret redaction before diary/lesson writes; truncation markers on injected lessons | P3 | 5.37 | None — direct TODO (unmilestoned) |
+| FR-SMA-06 | Secret redaction before diary/lesson writes; truncation markers on injected lessons | P3 | 5.37 | **PARTIAL** (#487) — the redaction half is DONE and verified live: every memory write now funnels through `writeMemoryFile` (plus the bank stream), which applies `telemetry.Redact`, so a fake `sk-…`/JWT pasted into a lesson is stored as `[REDACTED]`. Before the fix the file wrote verbatim (measured on the self-host). `TestMemoryWriteRedactsSecrets` (create/append/insert/add), `TestSessionRetainRedactsSecrets` (the transcript bank), `TestMemoryReadsUntouched` (a read never rewrites a file). Still open: truncation markers on INJECTED lessons |
 | US-SMA-05 | Worktree sessions share one memory scope | P3 | 3.32 | Closes via FR-SMA-05 |
 | US-SMA-06 | Memory writes never leak tokens; injection budgets auditable | P3 | 3.32 | Closes via FR-SMA-06 |
 | FR-ZG-06 | Second in-catalog embedding model (Model2Vec-class) + model-switch/rebuild docs | P3 | 5.38 | None — direct TODO (unmilestoned) |
