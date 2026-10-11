@@ -40,8 +40,15 @@ type ProjectRouter interface {
 // each tool call may name a project (args.project) and is served by that
 // project's engine; otherwise the wrapped engine answers.
 type Server struct {
-	engine    *core.Engine
-	router    ProjectRouter
+	engine *core.Engine
+	router ProjectRouter
+	// scoped marks a handler that is ALREADY serving one project (the
+	// routeByProject builder for a per-request ?project= selector). Such a
+	// handler must not fail closed when a call omits the project argument:
+	// the routing layer already answered that question, and asking again made
+	// every ?project= URL on the MCP listener unusable (measured live on the
+	// 298-project self-host). See TestScopedServerDoesNotReAskForProject.
+	scoped    bool
 	srv       *mcp.Server
 	authStore store.Backend // token store for HTTP callers; nil = env tokens only
 
@@ -64,6 +71,12 @@ func (s *Server) SetAuthStore(st store.Backend) { s.authStore = st }
 // silently falls back to the default project).
 func (s *Server) SetProjectRouter(r ProjectRouter) { s.router = r }
 
+// SetProjectScoped marks this Server as already scoped to one project, so a
+// call that omits the project argument is served by the engine it was built
+// with instead of being refused (cmd's routeByProject is what supplies that
+// engine). The argument, when present, still selects.
+func (s *Server) SetProjectScoped(v bool) { s.scoped = v }
+
 // engineFor picks the engine for one call: args.project when a router is
 // configured, else the wrapped engine.
 func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core.Engine, error) {
@@ -84,7 +97,7 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 	// unanswerable without knowing which graph to search, so we refuse.
 	p, _ := args["project"].(string)
 	if p == "" {
-		if !s.router.MultiProject() {
+		if s.scoped || !s.router.MultiProject() {
 			// One project registered: the wrapped engine is the only answer, and
 			// an agent that never learned about `project` must keep working.
 			return s.engine, nil

@@ -490,6 +490,11 @@ afterSidecars:
 		h = routeByProject(ctx, router, h, func(p *projects.Project) http.Handler {
 			pSrv := leankgmcp.New(p.Engine)
 			pSrv.SetProjectRouter(router)
+			// The routing layer already chose this project from ?project=;
+			// without this the handler asked for the argument again and failed
+			// closed, so every MCP client config carrying a ?project= suffix
+			// was unusable on a multi-project server.
+			pSrv.SetProjectScoped(true)
 			pSrv.SetAuthStore(st)
 			pSrv.SetRecorder(rec)
 			registerMCPSink(pSrv)
