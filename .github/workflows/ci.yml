@@ -241,6 +241,17 @@ jobs:
       - name: E2E against the embedded build
         run: E2E=1 FRONTEND_URL=http://127.0.0.1:9802 BACKEND_URL=http://127.0.0.1:9802 npx playwright test --config playwright.embedded.config.ts
         working-directory: ui-v2
+      # ui-v2's single-file build, rebuilt and diffed against what the binary
+      # embeds. Measured 2026-10-11: a fresh build produced index-Cpk7crab.js /
+      # index-DNKHeHYu.css while internal/web/embed still shipped
+      # index-CwcVR9A7.js / index-BN6mYsjm.css — the SPA every user got was not
+      # built from the source in the tree, and nothing noticed, because the e2e
+      # suite above tests the embed AS SHIPPED (so a stale embed can only ever
+      # pass). This step is what makes that suite mean something.
+      - name: ui-v2 embed drift gate
+        run: |
+          npm --prefix ui-v2 ci
+          make go-ui-assets-check
       # The dashboard SPA is the other shipped frontend (what `leankg
       # dashboard` serves). Its 6 unit-test files / 45 tests ran in NO CI job
       # before this one; measured 2026-10-11 — all green in 1.2s, so the only
