@@ -29,6 +29,19 @@ jobs:
   go-engine:
     name: Go Engine (build + vet + test)
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
+
+    # Two packages spawn external binaries under a fixed 10s budget
+    # (ast-grep, gopls). A COLD spawn was measured at 32s/37s on idle
+    # hardware, so 10s is already below the real cold cost; on this
+    # self-hosted Mac, shared with the operator's own work, it deadlined
+    # twice (run 38115374687: internal/astgrep + internal/lsp failed while
+    # every other package — including the change under test — was green, and
+    # the next run on main passed). Job-level so BOTH Test steps inherit it;
+    # the shipped defaults are unchanged, so a well-behaved runner is
+    # unaffected.
+    env:
+      LEANKG_TEST_ASTGREP_TIMEOUT: 120s
+      LEANKG_TEST_LSP_TIMEOUT: 120s
     steps:
       - uses: actions/checkout@v4
       # GOCACHE is pinned into the job's temp dir, so setup-go's cache key
@@ -54,6 +67,13 @@ jobs:
           GOCACHE: ${{ runner.temp }}/go-build
       - name: Build (tstree tag — exercises the CGO tier first)
         run: go build -tags tstree ./...
+      # Two packages spawn external binaries under a fixed 10s budget
+      # (ast-grep, gopls). On this self-hosted Mac, shared with whatever the
+      # operator is running, a COLD first spawn was measured at 32s/37s and
+      # deadlined twice (run 38115374687: internal/astgrep + internal/lsp
+      # both failed while every other package, including the change under
+      # test, was green). The env knobs widen those two budgets only; a
+      # well-behaved runner is unaffected because the default is unchanged.
       - name: Test (tstree tag)
         run: go test -tags tstree ./... -count=1 -timeout 300s
       # Tidy scans tagged files too (smacker is imported only under tstree);

@@ -27,7 +27,19 @@ var (
 // so tests can shrink it; 10s (raised from 5s) absorbs `go test` parallel
 // package load where a local sh-spawn fake server was observed to miss the
 // old 5s bound intermittently (3x gate flake, TestStartHandshakeAndClose).
-var handshakeTimeout = 10 * time.Second
+var handshakeTimeout = envDuration("LEANKG_TEST_LSP_TIMEOUT", 10*time.Second)
+
+// envDuration reads a budget from the environment, keeping the default when
+// it is unset or malformed. Same measured reason as astgrep's (CI run
+// 38115374687 deadlined at 10s spawning a cold gopls).
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
+}
 
 // Symbol is a normalized document or workspace symbol. Lines are 1-based
 // (LSP's 0-based line numbers are shifted on conversion); a hierarchical
