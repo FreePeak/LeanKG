@@ -110,4 +110,39 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 
 MCP HTTP `?project=` walks to the nearest `.leankg`; `LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL` switch storage. Never paste personal host paths into commits.
 
-*Last updated: 2026-09-14 (post-cutover hygiene sweep, Go tree restructure, single-run release pipeline + its CI guards)*
+## The self-host: ONE server, and how to restart it without being fooled
+
+`leankg serve` is supervised by launchd (`com.freepeak.leankg-serve`, program
+`~/.local/bin/leankg-serve-wrapper`, which scans `$LEANKG_SCAN_ROOT` and passes
+`--http 127.0.0.1:9699 --rest :9700 --memory --embed-provider local
+--hindsight-compat`). Restart it with:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.freepeak.leankg-serve
+```
+
+**A restart can leave a duplicate behind, and the duplicate can be the one
+answering you.** Measured 2026-10-12: a manually started server (`--http :9699`,
+wildcard) was still alive 2h41m later on the SAME ports as launchd's
+(`--http 127.0.0.1:9699`). Both bound successfully — different address families
+— and `curl 127.0.0.1:9699` reached whichever held the IPv4 socket. So a
+"restart then verify" loop can read a server it never restarted, and every
+conclusion drawn from it is about the wrong binary.
+
+Two habits that avoid it:
+
+```bash
+# 1. Find the LISTENERS, not the processes you meant to kill. A pkill pattern
+#    copied from the wrapper misses any server started with a different argv.
+lsof -nP -iTCP:9699 -sTCP:LISTEN    # expect exactly ONE pid
+lsof -nP -iTCP:9700 -sTCP:LISTEN    # and the same pid here
+
+# 2. Kill by the LISTENER's pid, then confirm the port is free before starting.
+kill -TERM <pid>; sleep 3; lsof -nP -iTCP:9699 -sTCP:LISTEN   # empty
+```
+
+Both ports must be owned by the SAME pid after a restart. If `:9699` answers but
+`:9700` returns `000`, a stale server holds the REST port and the fresh one lost
+it — the surface you are testing is half of two different processes.
+
+*Last updated: 2026-10-12 (self-host restart runbook: the duplicate-listener trap and the lsof check that catches it)*
