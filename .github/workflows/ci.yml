@@ -29,6 +29,14 @@ jobs:
   dual-engine:
     name: Dual Engine (sqlite + live pgvector)
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
+
+    # Same two budgets the go-engine job carries (#488). This job also runs the
+    # sqlite suite on the same self-hosted Mac, so it was exposed to the same
+    # cold-spawn flake: measured on #512, `TestRunPatternToleratesShapeDrift`
+    # deadlined at 10s while every other package in the job was green.
+    env:
+      LEANKG_TEST_ASTGREP_TIMEOUT: 120s
+      LEANKG_TEST_LSP_TIMEOUT: 120s
     # The PostgreSQL + pgvector tier was 100% unexecuted in every CI run: 14 test
     # files gate behind LEANKG_TEST_PG_URL, no workflow ever set it, and the
     # gate script's own documentation named a compose file nobody started.

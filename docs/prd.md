@@ -10,7 +10,41 @@
 
 ## Changelog
 
-### v4.15-ontology-note — an empty match set says why it is empty (2026-10-11)
+### v4.15-doctor-unindexed — the diagnosis says "not indexed", not the syscall that noticed (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR, wave 24.
+
+**Measured live on this machine 2026-10-11, from a directory with source and no
+store:**
+
+```
+$ leankg doctor
+FAIL store: store: read-only open of missing store /tmp/nostore/.leankg/leankg.db:
+  stat /tmp/nostore/.leankg/leankg.db: no such file or directory
+```
+
+The exit code (2) was already right. The **sentence** was not: it leaks the
+storage layer into a user-facing diagnosis — `read-only open of missing store`
+and a raw `stat` error — and never names the command that fixes it. A reader
+learns that something under `.leankg` is absent, not that **the project has not
+been indexed**.
+
+**What changed:**
+
+```
+FAIL not indexed: no store at /path/.leankg/leankg.db
+     run `leankg index .` in this project, then `leankg doctor` again
+```
+
+Any other store error keeps the original `FAIL store: …` line, so a genuine
+storage fault is still reported as one.
+
+**Verified:** `TestDoctorOnAnUnindexedProjectSaysWhatToRun` — exit 2, the
+command named, and **neither** leak string present. RED first: the guard failed
+on both counts against the old sentence. Gate: 62 packages ok, `go vet` clean,
+`gofmt` clean.
+
+ — an empty match set says why it is empty (2026-10-11)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR. Wave 22 fixed
 > "null was two different claims"; the SHAPE half of that is already on main
@@ -1264,4 +1298,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (v4.15-ontology-note: an empty ontology match set answered `{"matches":[]}` with nothing said about it, and an empty set has two meanings wanting opposite next steps — no catalog imported vs nothing matched. The note now names the cause and the step. The shape half of the same #449 wave is already covered for EVERY answer by RS-09's emptyLists. Also this loop: #510 annotate/link refuse an unindexed element, #509 lesson content, #508 notes readable, #507 lessons readable, M1/M2/M9/M-GO closed)
+*Last updated: 2026-10-11 (v4.15-doctor-unindexed: `leankg doctor` on an unindexed project printed 'read-only open of missing store' plus a raw stat error and never named `leankg index` — exit 2 was right, the sentence was not. Now it says 'not indexed' and names the command; any other store error keeps the storage-layer line. Re-landed from the dormant #449 wave 24. Also this loop: #511 ontology note, #510 annotate/link refuse, #509 lesson content, #508 notes readable, #507 lessons readable)
