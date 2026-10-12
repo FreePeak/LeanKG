@@ -15,6 +15,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -658,6 +659,15 @@ func cmdDoctor(args []string) int {
 	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
 	st, err := store.Open(filepath.Join(dbDir, "leankg.db"), store.RO)
 	if err != nil {
+		// A missing store is not a storage-layer event to the reader: it means
+		// the project has not been indexed. Naming the syscall ("read-only open
+		// of missing store", a raw stat error) buries the one action that fixes
+		// it, so the diagnosis states the state and the command.
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") {
+			fmt.Printf("FAIL not indexed: no store at %s\n", filepath.Join(dbDir, "leankg.db"))
+			fmt.Println("     run `leankg index .` in this project, then `leankg doctor` again")
+			return 2
+		}
 		fmt.Printf("FAIL store: %v\n", err)
 		return 2
 	}
