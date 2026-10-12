@@ -1448,8 +1448,25 @@ func (e *Engine) SessionRead(command, sessionID, nodeID string) (map[string]any,
 			refs[i] = e.relRef(refs[i])
 		}
 		return map[string]any{"command": "canvas", "session_id": sessionID, "refs": refs}, nil
+	case "lessons":
+		// A lesson was a black hole before this: `command=lesson` wrote one
+		// to .leankg/sessions/<id>/lessons.json and answered {"deduped":…},
+		// while nothing in the binary could read it back (measured live on the
+		// self-host: memory session_recall saw 0, canvas saw no refs, and
+		// offload recall reported "node not found"). Same shape #470 fixed for
+		// reflect — a lesson nothing can read is a discard with a JSON
+		// wrapper. `session_id` is what identifies the session; the search
+		// text rides `query` when a caller filters.
+		lessons, err := s.Lessons(sessionID)
+		if err != nil {
+			return nil, err
+		}
+		// No filter here on purpose: a lesson list is per-session and small, and
+		// a filter would mean threading a term through a signature that carries
+		// only the session id. The caller filters.
+		return map[string]any{"command": "lessons", "session_id": sessionID, "lessons": lessons}, nil
 	default:
-		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas)", command)
+		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas, lessons)", command)
 	}
 }
 
