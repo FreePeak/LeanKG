@@ -10,6 +10,51 @@
 
 ## Changelog
 
+### v4.15-lessons-readable — a recorded lesson is no longer write-only (2026-10-11)
+
+> **Trigger:** the last unchecked AC in this document's memory design (line ~821):
+> "retain → new session → recall injects the lesson". Verified live against the
+> 298-project self-host, and the write half of that AC was worse than the
+> wording: `import action=session command=lesson` wrote
+> `.leankg/sessions/<sid>/lessons.json` and answered `{"deduped":false}`, and
+> **no read surface in the binary could return it.**
+
+**Measured before the fix** — three read paths, three misses:
+
+| Read | Result |
+|---|---|
+| `query action=memory command=session_recall` | `count: 0` for every term tried |
+| `query action=session command=canvas` | `refs: []` |
+| `query action=session command=recall` | `session: node "" not found` |
+
+The file was not orphaned either — it was read back **once**, inside
+`session.addLesson`, purely to refuse a duplicate write. So a lesson was a
+discard with a JSON wrapper: it cost a write, survived on disk, and could
+never be heard from again. Same shape #470 fixed for reflect.
+
+**What changed:**
+
+- `session.Store.Lessons(sessionID)` returns the recorded lesson texts. It
+  reuses `readJSON` on the file `addLesson` already writes, so there is no
+  second parsing path and no second source of truth. A session with no
+  lessons — or no session directory at all — reads as an **empty list, never
+  an error**, because a fresh session asking "what did I learn here" must not
+  be told off.
+- `query action=session command=lessons` exposes it, answering
+  `{command, session_id, lessons}`.
+- The tool's `args` description now names the session read commands
+  (`recall|canvas|lessons`). It previously said only `command/node_id
+  (session)`, so an agent could not discover that `canvas` existed either —
+  the new command would have been unfindable in the same way.
+
+**Deliberately not built:** no text filter. A lesson list is per-session and
+small, and a filter would mean threading a term through a signature that
+carries only a session id. The caller filters.
+
+**Verified:** `TestLessonsAreReadable` — write, dedupe the same text twice
+into one row, read back the text intact, and an unknown session reads as empty
+without erroring. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
+
 ### v4.15-bare-mcp-url — the client writers can no longer emit a stale `?project=` (2026-10-11)
 
 **Trigger:** on this machine, `xdev mcps` showed leankg online while the Cursor and Claude-plugin configs of the same repo pointed at `http://localhost:9699/mcp?project=/workspace-freepeak` — a Docker mount path that exists nowhere on the host. Every initialize failed with `unknown project "/workspace-freepeak"` (FR-ZCP-02 fail-closed), so the clients reading those configs dropped leankg from their tool list while the same server answered the bare URL normally.
@@ -818,7 +863,7 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 **Service surface (v4.13.0, FR-ZCP-14).** The compat mount is a *service* only once it is readable and gated, not just writable. `GET /v1/default/banks/{bank}/stats` answers `{bank, entries, bytes, banks, last_retain, root}` (its absence made the client print "server unreachable" for a healthy server); `GET .../memories?offset=&limit=` lists newest-first with the unpaged `total`; `GET .../memories/{id}` resolves the wire id then the client's `document_id` and **404s** on an unknown id — a read-before-edit seam that answers 200-with-nothing is worse than no seam. Rows render through the same builder recall uses, so a read and a recall of one row are byte-identical. `serve --memory-global` hosts the bank root in `~/.leankg/memory`, making one process the memory service for several projects (opt-in: moving the root on a live deployment leaves its banks behind). Both memory prefixes now sit inside `auth`'s write gate — the compat alias previously let a Viewer retain what Contributor was required to write natively — with the last-segment rule keyed on the method, since `GET …/memories` (list) shares that path with `POST …/memories` (retain). `ponytail:` the read surface re-scans the bank JSONL per call, the same unindexed ceiling recall has (K7); past ~10⁴ rows/bank both want the FTS/L3 tier, not a per-route cache.
 
 - AC (mnemopi parity): an OMP session configured with LeanKG's memory endpoint retains at the same cadence boundaries and recalls the lesson on the next session's first turn inside a `<memories>`-equivalent envelope, with the turn cursor preventing duplicate retention after resume; deleting the project bank never leaves the harness's cursor claiming rows that no longer exist (cursor + rows agree).
-- AC (regression): retain → new session → recall injects the lesson (currently injects nothing — the v3.8.8 audit finding).
+- AC (regression): retain → new session → recall injects the lesson. **Met** — the retain half by `memory.RecallFiltered` + the bank path (#479 broke the newer-row tie), the lesson half by `session.Lessons` + `command=lessons` (v4.15-lessons-readable; before that a lesson was write-only, measurable as `count:0` from every read surface). Re-verified live on the 298-project self-host 2026-10-11.
 
 ### 3.6 Benchmark Rigor (FR-ZCP-08) — **P2**
 
@@ -1066,4 +1111,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (M-GO closed: the Go rewrite is complete and re-verified — every ported Rust surface live (gods/prd/prd-trace/obsidian/pack/pull/push/mine-conversations/metrics), three build shapes compile, `1a2d04b` removed the Rust tree and no Cargo.toml remains, and the v4.8.0 ledger it deferred to is closed. With M9 closed earlier, every milestone except M10 — the dogfood loop's own steady state — is DONE; #501 MCP ?project= routing, #503 tracker reconciliation, #492/#493 annotation write+read all landed)
+*Last updated: 2026-10-11 (v4.15-lessons-readable: a recorded lesson is no longer write-only — `session command=lesson` wrote lessons.json and `session_recall`/`canvas`/`recall` all returned empty, so `query action=session command=lessons` was added on a store reader that reuses addLesson's own JSON, and the memory AC on retain→recall now reads Met with its live evidence. Also this loop: M1/M2/M9/M-GO closed, MCP ?project= routing, the annotation write+read gap)

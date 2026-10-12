@@ -232,6 +232,35 @@ func (s *Store) addLesson(sessionID, text string) (deduped bool, err error) {
 	return false, nil
 }
 
+// Lessons returns every lesson recorded for a session, newest last, as plain
+// text. A session with no lessons (or no session directory at all) reads as
+// an empty list rather than an error: a fresh session asking "what did I learn
+// here" must not be told off.
+//
+// addLesson wrote this file since the Rust port and read it back only to avoid
+// rewriting a duplicate, so a lesson was write-only — measured live: it landed
+// in `.leankg/sessions/<sid>/lessons.json`, answer `{"deduped":false}`, and no
+// read surface in the binary (memory session_recall, session canvas, offload
+// recall) could see it. Lessons joins them.
+func (s *Store) Lessons(sessionID string) ([]string, error) {
+	dir, err := s.sessionDir(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	var lessons []lesson
+	if err := readJSON(filepath.Join(dir, "lessons.json"), &lessons); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("session: read lessons for %s: %w", sessionID, err)
+	}
+	out := make([]string, 0, len(lessons))
+	for _, l := range lessons {
+		out = append(out, l.Text)
+	}
+	return out, nil
+}
+
 func (s *Store) loadIndex(sessionID string) (*index, error) {
 	dir, err := s.sessionDir(sessionID)
 	if err != nil {
