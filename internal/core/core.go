@@ -1416,7 +1416,31 @@ func (e *Engine) sessionWrite(ctx context.Context, req ImportRequest) (map[strin
 		}
 		return map[string]any{"offloaded": e.relRef(ref)}, nil
 	case "lesson":
-		deduped, err := s.AddLessonCtx(ctx, get("session_id"), get("text"))
+		// The import schema advertises `summary` ("offload summary") and
+		// `text` for this arm, and only `text` was read — so a schema-shaped
+		// call wrote an EMPTY lesson and answered {"deduped":false}.
+		//
+		// Measured live on the 298-project self-host 2026-10-11, both shapes
+		// landing an empty row whose sha256 is the hash of "":
+		//
+		//	import action=session command=lesson session_id=s summary="…"
+		//	  -> {"deduped":false}   (lessons.json: {"text":""})
+		//	import action=session command=lesson session_id=s   (no content)
+		//	  -> {"deduped":false}   (the same empty row)
+		//
+		// A successful write of nothing, and the SECOND such call reports
+		// `deduped: true` — a duplicate of nothing. `text` still works.
+		text := get("text")
+		if strings.TrimSpace(text) == "" {
+			text = get("summary")
+		}
+		// And an empty lesson is REFUSED rather than stored: a write that
+		// cannot report itself empty is a write that cannot be wrong loudly,
+		// which is how the field mismatch above hid for this long.
+		if strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("session lesson requires text (or summary) — an empty lesson is unrecallable")
+		}
+		deduped, err := s.AddLessonCtx(ctx, get("session_id"), text)
 		if err != nil {
 			return nil, err
 		}
