@@ -10,7 +10,37 @@
 
 ## Changelog
 
-### v4.15-notes-readable — a team note is no longer write-only (2026-10-11)
+### v4.15-lesson-content — a lesson written from the schema's own field is no longer empty (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR. Six of its
+> fixes are on main; this one was not, and it was still a live defect.
+
+**Measured on main, live on the 298-project self-host, both shapes landing the
+same empty row (sha256 of `""`):**
+
+| Call | Answered | Stored |
+|---|---|---|
+| `import action=session command=lesson session_id=s summary="…"` | `{"deduped":false}` | `{"text":""}` |
+| `import action=session command=lesson session_id=s` (no content) | `{"deduped":false}` | the same empty row |
+
+The import schema advertises `summary` for this arm; `sessionWrite` read only
+`text`. So a schema-shaped call was a **successful write of nothing**, and the
+second such call reported `deduped: true` — a duplicate of nothing. The empty
+hash is the dedup key, so the surface could not tell one blank from another.
+
+**Both halves fixed:** `summary` feeds `text` for the lesson arm when `text` is
+empty (both spellings land), and an **empty lesson is refused** with a message
+that names the fix. The second half is the one that matters — a write that
+cannot report itself empty is a write that cannot be wrong loudly, which is how
+the field mismatch survived every earlier wave.
+
+**Verified:** `TestSessionLessonRequiresContent` — `text=` works, `summary=`
+works, no content is refused, whitespace-only is refused, and the store holds
+exactly the two real lessons (an empty row would mean a half-fix). RED first:
+reverting the fix fails the test with "an empty lesson was accepted". Gate: 62
+packages ok, `go vet` clean, `gofmt` clean.
+
+
 
 > **Trigger:** the write-only sweep. This is the third instance of one defect
 > shape in two days, so it is worth naming as a class rather than a bug:
@@ -1161,4 +1191,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (v4.15-notes-readable: a team note was write-only — the row landed in knowledge_entries and `note`/service-context/team-map/MCP/`/api/v2` all missed it, while three Rust read ports (NotesFor, AnnotationsForFeature, AnnotationsForEnvironment) sat in Go with zero production callers; `leankg note --target T` now lists them. Third instance of the write-surface-with-no-reader class after #470 reflect and #507 lessons. Also this loop: M1/M2/M9/M-GO closed, MCP ?project= routing, the annotation write+read gap)
+*Last updated: 2026-10-11 (v4.15-lesson-content: `command=lesson` read only `text` while the schema advertises `summary`, so a schema-shaped call wrote an EMPTY lesson and answered ok — measured live, both shapes landing the sha256-of-empty row, and a second such call reporting `deduped:true`, a duplicate of nothing. `summary` now feeds `text` and an empty lesson is refused. Re-landed from the dormant #449; also this loop: #508 notes readable, #507 lessons readable, M1/M2/M9/M-GO closed)
