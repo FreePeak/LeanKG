@@ -90,6 +90,8 @@ func cmdProjects(args []string) {
 	jsonOut := fs.Bool("json", false, "print the manifest as JSON")
 	fs.BoolVar(jsonOut, "j", false, "shorthand for --json")
 	forget := fs.String("forget", "", "remove DIR from the registry instead of listing")
+	prune := fs.Bool("prune", false, "forget every registration whose DIRECTORY no longer exists (a CI fixture that cleaned up after itself)")
+	apply := fs.Bool("apply", false, "with --prune, actually forget the rows (default is a dry run that lists them)")
 	parseInterspersed("projects", fs, args, 0)
 
 	ctx := context.Background()
@@ -105,6 +107,41 @@ func cmdProjects(args []string) {
 			os.Exit(1)
 		}
 		fmt.Printf("forgot %s\n", *forget)
+		return
+	}
+
+	if *prune {
+		// Measured on this machine 2026-10-11: the registry answered 108 rows
+		// with 84 of those directories already gone (CI fixtures under
+		// /private/tmp that registered themselves and were deleted with the
+		// run). StoreOnDisk was the only presence probe, and a missing store
+		// on a missing dir reads exactly like "registered but not yet
+		// indexed" — so the count could not be trusted and nothing could
+		// reclaim the rows. Dry by default: this touches a registry other
+		// tools share.
+		gone, err := portfolioreg.Prune(ctx, opts, !*apply)
+		if err != nil {
+			fatalJSON(err)
+		}
+		verb := "would forget"
+		if *apply {
+			verb = "forgot"
+		}
+		if *jsonOut {
+			printJSON(map[string]any{verb: gone, "count": len(gone), "applied": *apply})
+			return
+		}
+		if len(gone) == 0 {
+			fmt.Println("nothing to prune: every registered directory still exists")
+			return
+		}
+		fmt.Printf("%s %d registration(s) whose directory is gone:\n", verb, len(gone))
+		for _, d := range gone {
+			fmt.Printf("  %s\n", d)
+		}
+		if !*apply {
+			fmt.Println("(dry run — pass --apply to forget them)")
+		}
 		return
 	}
 
@@ -144,6 +181,12 @@ func cmdProjects(args []string) {
 		presence := "missing"
 		if e.StoreOnDisk {
 			presence = "on-disk"
+		}
+		// A row whose DIRECTORY is gone is not a project any more, whatever
+		// its store flag says — say so in the row rather than making the
+		// caller compare 108 dirs by hand.
+		if !e.DirExists {
+			presence = "dir-gone"
 		}
 		hotMark := "-"
 		if e.Hot {

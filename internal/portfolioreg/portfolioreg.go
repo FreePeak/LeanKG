@@ -343,7 +343,15 @@ type ManifestEntry struct {
 	Elements     int     `json:"elements"`
 	Files        int     `json:"files"`
 	StoreOnDisk  bool    `json:"store_on_disk"`
-	Hot          bool    `json:"hot"`
+	// DirExists is the T0 presence probe the manifest was missing: measured
+	// 2026-10-11, this registry answered count=104 with 83 of those
+	// directories already deleted (CI fixtures under /private/tmp that
+	// registered themselves and went away with the run). StoreOnDisk was the
+	// only probe, and a missing STORE on a missing DIR looks the same as a
+	// registered-but-not-yet-indexed project — so an agent asking "what can I
+	// query?" could not tell which rows were real.
+	DirExists bool `json:"dir_exists"`
+	Hot       bool `json:"hot"`
 }
 
 // Manifest builds the T0 summary. hot may be nil (nothing is labeled hot).
@@ -367,6 +375,7 @@ func ManifestOf(o Options, projects []store.ProjectRecord, hot *HotSet) []Manife
 			Project: p.Name, Dir: p.Dir, RegisteredAt: p.RegisteredAt,
 			LastIndexed: p.LastIndexed, Elements: p.ElementCount, Files: p.FileCount,
 			StoreOnDisk: storePresent(o.engine(), p.Dir),
+			DirExists:   dirPresent(p.Dir),
 			Hot:         containsDir(hotSet, p.Dir),
 		})
 	}
@@ -383,6 +392,56 @@ func storePresent(engine, dir string) bool {
 	}
 	_, err := os.Stat(target)
 	return err == nil
+}
+
+// dirPresent reports whether the registered directory still exists. A row
+// whose directory is gone is not a project any more, whatever its store flag
+// says.
+func dirPresent(dir string) bool {
+	_, err := os.Stat(dir)
+	return err == nil
+}
+
+// Prune removes registry rows whose directory no longer exists and returns the
+// dirs it forgot, sorted. DryRun reports what WOULD go without touching the
+// registry, which is what a caller wants before a destructive sweep of a
+// registry other tools share.
+//
+// A row whose directory EXISTS is never pruned, even when its store is
+// missing: that is a project registered-but-not-yet-indexed, which is a normal
+// state (the T0 manifest labels it StoreOnDisk=false and keeps the row).
+func Prune(ctx context.Context, o Options, dryRun bool) ([]string, error) {
+	projects, err := Projects(ctx, o)
+	if err != nil {
+		return nil, err
+	}
+	var gone []string
+	for _, p := range projects {
+		if !dirPresent(p.Dir) {
+			gone = append(gone, p.Dir)
+		}
+	}
+	sort.Strings(gone)
+	if dryRun || len(gone) == 0 {
+		return gone, nil
+	}
+	reg, err := Open(ctx, o, store.RW)
+	if err != nil {
+		return nil, err
+	}
+	defer reg.Close()
+	kept := gone[:0]
+	for _, dir := range gone {
+		ok, ferr := reg.ProjectForget(dir)
+		if ferr != nil {
+			return kept, ferr
+		}
+		if !ok {
+			continue // raced with another prune; not an error
+		}
+		kept = append(kept, dir)
+	}
+	return kept, nil
 }
 
 func containsDir(rows []store.ProjectRecord, dir string) bool {
