@@ -154,3 +154,91 @@ func TestRegisterProjectWithoutStoreStampsNothing(t *testing.T) {
 		t.Fatalf("name default = %q; want the directory base name", rows[0].Name)
 	}
 }
+
+// TestProjectsPruneVerb pins the CLI contract for the prune flag, end to end
+// through the verb: a dry run names the casualty and changes nothing, --apply
+// forgets it, and a project whose directory EXISTS is never touched even when
+// its store is missing (registered-but-not-yet-indexed is a normal row).
+//
+// Measured on this machine 2026-10-11 before this flag existed: the registry
+// answered 108 rows with 84 of those directories already gone (CI fixtures
+// under /private/tmp, plus removed worktrees). Nothing could reclaim them, and
+// the table could not say which rows were real — StoreOnDisk was the only
+// presence probe.
+func TestProjectsPruneVerb(t *testing.T) {
+	registry := filepath.Join(t.TempDir(), "portfolio.db")
+	t.Setenv(portfolioreg.DBPathEnv, registry)
+
+	live := t.TempDir()
+	never := t.TempDir() // on disk, no store: a legitimate row
+	vanished := filepath.Join(t.TempDir(), "vanished")
+	if err := os.MkdirAll(vanished, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, dir := range map[string]string{"live": live, "never": never, "vanished": vanished} {
+		if out := captureStdout(t, func() { cmdRegisterProject([]string{dir, "--name", name}) }); !strings.Contains(out, "registered") {
+			t.Fatalf("register %s: %s", name, out)
+		}
+	}
+	// Canonical, because Register resolves symlinks and macOS /tmp is one.
+	vanishedCanon, err := portfolioreg.Canonical(vanished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(vanished); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry run: names the casualty, changes nothing.
+	out := captureStdout(t, func() { cmdProjects([]string{"--prune"}) })
+	if !strings.Contains(out, vanishedCanon) {
+		t.Errorf("dry run did not name %s:\n%s", vanishedCanon, out)
+	}
+	if !strings.Contains(out, "dry run") {
+		t.Errorf("dry run does not say it is one:\n%s", out)
+	}
+	dryJSON := captureStdout(t, func() { cmdProjects([]string{"--json"}) })
+	if !strings.Contains(dryJSON, `"count": 3`) && !strings.Contains(dryJSON, `"count":3`) {
+		t.Fatalf("dry run changed the registry:\n%s", dryJSON)
+	}
+
+	// Apply: forgets exactly the vanished row.
+	out = captureStdout(t, func() { cmdProjects([]string{"--prune", "--apply"}) })
+	if !strings.Contains(out, "forgot 1 registration") {
+		t.Errorf("apply output:\n%s", out)
+	}
+	after := captureStdout(t, func() { cmdProjects([]string{"--json"}) })
+	if !strings.Contains(after, `"count": 2`) && !strings.Contains(after, `"count":2`) {
+		t.Fatalf("after apply:\n%s", after)
+	}
+	// The never-indexed project is still registered: its dir exists.
+	if !strings.Contains(after, `"project": "never"`) && !strings.Contains(after, `"project":"never"`) {
+		t.Errorf("prune dropped a live-but-unindexed project:\n%s", after)
+	}
+
+	// A second apply is a no-op, not an error.
+	out = captureStdout(t, func() { cmdProjects([]string{"--prune", "--apply"}) })
+	if !strings.Contains(out, "nothing to prune") {
+		t.Errorf("second apply:\n%s", out)
+	}
+}
+
+// TestProjectsTableMarksGoneDirs pins the table column: a row whose directory
+// is gone must not read as merely "missing" store.
+func TestProjectsTableMarksGoneDirs(t *testing.T) {
+	registry := filepath.Join(t.TempDir(), "portfolio.db")
+	t.Setenv(portfolioreg.DBPathEnv, registry)
+
+	gone := filepath.Join(t.TempDir(), "gone")
+	if err := os.MkdirAll(gone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() { cmdRegisterProject([]string{gone, "--name", "gone"}) })
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() { cmdProjects(nil) })
+	if !strings.Contains(out, "dir-gone") {
+		t.Errorf("table does not distinguish a vanished directory from a missing store:\n%s", out)
+	}
+}
