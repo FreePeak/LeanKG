@@ -1518,12 +1518,30 @@ func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
 }
 
 // OntologyMatches returns the last persisted match set.
+//
+// An EMPTY set has two meanings and they want opposite next steps: no catalog
+// was ever imported (import one — the answer will not change until you do), or
+// a catalog is imported and nothing matched (look harder, or the corpus is what
+// it is). Measured live on the 298-project self-host 2026-10-11: a store with
+// no catalog answered `{"matches":[]}` — an empty array with nothing said about
+// it, so a reader looks harder at a corpus that has no catalog to match
+// against. The note is added only for the empty case, so it still
+// distinguishes something.
+//
+// The SHAPE half of this (nil -> `[]`, never `null`) is owned by emptyLists
+// (RS-09) and applies to every answer.
 func (e *Engine) OntologyMatches() (map[string]any, error) {
 	matches, err := ontology.LoadMatches(e.st)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"matches": matches}, nil
+	out := map[string]any{"matches": matches}
+	if len(matches) == 0 {
+		out["note"] = "no concept catalog is imported for this project, so nothing can match; " +
+			"import one with `leankg import` (action=ontology). A NON-empty list means a catalog " +
+			"is imported and its concepts matched these elements."
+	}
+	return out, nil
 }
 
 // LanguagesStatus reports the lazy activation state: which languages are

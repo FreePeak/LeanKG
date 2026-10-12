@@ -10,7 +10,41 @@
 
 ## Changelog
 
-### v4.15-annotate-refuse — an annotation cannot attach to an element the index does not have (2026-10-11)
+### v4.15-ontology-note — an empty match set says why it is empty (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR. Wave 22 fixed
+> "null was two different claims"; the SHAPE half of that is already on main
+> through a better generic fix, so this is the half that remained.
+
+**Measured live on the 298-project self-host 2026-10-11, on a store with no
+catalog:** `query action=ontology args.cmd=matches` answered `{"matches":[]}` —
+an empty array with nothing said about it.
+
+**An empty array has two meanings and they want opposite next steps:**
+
+| Meaning | Next step |
+|---|---|
+| no catalog was ever imported | import one — the answer will not change until you do |
+| a catalog is imported, nothing matched | look harder, or the corpus is what it is |
+
+A reader that cannot tell them apart **looks harder at a corpus that has no
+catalog to match against**.
+
+**What changed:** an empty match set carries a `note` naming the cause and the
+next step. A NON-empty set does not, so the note still distinguishes something.
+
+**What was NOT re-landed, and why:** the shape half (nil → `[]`, never `null`)
+is already guaranteed for **every** answer by `emptyLists` (RS-09), which is a
+strictly better fix than normalising this one call site. The guard asserts both
+layers where each is actually guaranteed — the engine returns the raw slice, the
+envelope produces the array — so it does not claim the engine owns a
+normalisation it does not.
+
+**Verified:** `TestEmptyMatchesSaysWhyItIsEmpty`. RED first: reverting the note
+fails it with "an empty matches answer carries no note". Gate: 62 packages ok,
+`go vet` clean, `gofmt` clean.
+
+ — an annotation cannot attach to an element the index does not have (2026-10-11)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR. Wave 16 of that
 > loop drove every verb the product exposes; this is the instance it called the
@@ -1230,4 +1264,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (v4.15-annotate-refuse: `annotate` and `link` accepted a qualified_name the index does not have and persisted the row — measured live, exit 0, on an element `code_elements` cannot return, so the annotation was unreachable rather than merely wrong. Both now refuse before writing, naming the index as the reason. Re-landed from the dormant #449; also this loop: #509 lesson content, #508 notes readable, #507 lessons readable, M1/M2/M9/M-GO closed)
+*Last updated: 2026-10-11 (v4.15-ontology-note: an empty ontology match set answered `{"matches":[]}` with nothing said about it, and an empty set has two meanings wanting opposite next steps — no catalog imported vs nothing matched. The note now names the cause and the step. The shape half of the same #449 wave is already covered for EVERY answer by RS-09's emptyLists. Also this loop: #510 annotate/link refuse an unindexed element, #509 lesson content, #508 notes readable, #507 lessons readable, M1/M2/M9/M-GO closed)
