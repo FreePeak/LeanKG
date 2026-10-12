@@ -10,6 +10,56 @@
 
 ## Changelog
 
+### v4.15-notes-readable — a team note is no longer write-only (2026-10-11)
+
+> **Trigger:** the write-only sweep. This is the third instance of one defect
+> shape in two days, so it is worth naming as a class rather than a bug:
+> **a write surface with no reader**. #470 fixed it for `reflect`, #507 for
+> session `lessons`, and this for team `notes`.
+
+**Measured before, live on the 298-project self-host:** `leankg note --target
+leankg --content "…"` answered `Added note to 'leankg' (env: local)` and wrote
+the row (`NOTE-8ac3…`, `knowledge_type=general`, `tags=note`). Then every
+candidate reader missed:
+
+| Reader | Result |
+|---|---|
+| `leankg note` (any list shape) | none — the verb had no read subcommand |
+| `leankg service-context --service leankg` | `known_risks: null`, no notes |
+| `leankg team-map` | `[]` |
+| MCP | no notes action exists at all (agents cannot write one either) |
+| `GET /api/v2/notes` (and `/knowledge`) | **404** — no such route |
+
+**The readers were already written and never wired.** `orgknowledge.NotesFor`,
+`AnnotationsForFeature` and `AnnotationsForEnvironment` are ports of Rust
+`db::get_knowledge_by_element` / `_by_feature` / `_by_environment`, and all
+three had **zero production callers** — their only callers were their own
+tests. So the capability was paid for once and left unreachable.
+
+**What changed:** `leankg note --target T` **without** `--content` lists the
+notes anchored on that target, through `NotesFor` and the store reads that
+already existed. No new store API, no new parsing path.
+
+- **Read mode opens the store RO**, because a list must never need a writable
+  store.
+- **An empty list is named, not silent** (`No notes for 'x'`) — a mistyped
+  target and a genuinely empty one must not look the same, which is the same
+  lesson as #493's search hint.
+- **The write path is untouched**: with `--content` the verb does exactly what
+  it did before, so every existing caller and the Rust `note add` shape keep
+  working.
+
+**Deliberately not built:** no MCP action. Agents cannot write a note through
+MCP today, so an MCP read would expose rows only a human CLI could have
+created — a surface with no producer on that wire. Worth revisiting if notes
+become an agent-facing write.
+
+**Verified:** `TestNoteReadRoundTrip` (the reader is anchored: another
+target's note does not leak in, and an unknown target is an honest empty) and
+`TestNoteVerbListsWhenContentIsEmpty` (the CLI lists what it stored, and names
+an empty list). RED first: the verb answered `note content is required` for
+the list shape. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
+
 ### v4.15-lessons-readable — a recorded lesson is no longer write-only (2026-10-11)
 
 > **Trigger:** the last unchecked AC in this document's memory design (line ~821):
@@ -447,7 +497,7 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 - **Enterprise**: accounts/orgs/memberships/team_members/resource_ownership + `/api/v1/auth/*` (public bootstrap mounted outside the bearer gate); DB-backed tokens with expiry/revocation/scopes/last-used.
 - **Multi-project serving**: `LEANKG_PROJECT_DIRS` with per-request `?project=` / MCP `project` routing; single-project behavior byte-identical when unset. **doctor --deep**: 8 fleet checks with Rust exit semantics.
 - **Obsidian**: vault init/status, push (store→notes), pull (notes→Note elements, wiki-links, annotations), debounced watcher.
-- **CLI parity**: `run`, `detect-clusters`, `report`, `gods`, `ctags`, `cost`, `migrate`, `audit export|verify`, `auth register|token …`, `export`, `pack`, `generate`, `annotate`, `link`, `search-annotations` (matches DESCRIPTION text only, and says so on a miss), `show-annotations`, `delete-annotation`, `register`, `unregister`, `list`, `status-repo`, `tunnels`, `quality`, `reflect`, `refresh`, plus `query --action` passthrough.
+- **CLI parity**: `run`, `detect-clusters`, `report`, `gods`, `ctags`, `cost`, `migrate`, `audit export|verify`, `auth register|token …`, `export`, `pack`, `generate`, `annotate`, `link`, `search-annotations` (matches DESCRIPTION text only, and says so on a miss), `show-annotations`, `delete-annotation`, `note` (write with `--content`, list without it), `register`, `unregister`, `list`, `status-repo`, `tunnels`, `quality`, `reflect`, `refresh`, plus `query --action` passthrough.
 
 **Security deviation from Rust (deliberate):** `/api/v1/auth/register` and `/login` no longer serialize `password_hash` — the Rust port returned the PBKDF2 verifier (salt + KDF params + digest) to the caller, which is credential material leaving the process; the field is now in-process only (`json:"-"`), pinned by a test. The Go engine also enforces the bearer middleware on `/api/v1/status`-class routes and requires a valid token for revoke, where Rust checked presence only.
 
@@ -515,7 +565,7 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 | federation (client) | 0.1k | `internal/federation` — `leankg push`/`pull` ported as Rust had them (POST `/api/v2/graph/push` with `X-LeanKG-Token/-Engineer/-Env`; `pull` is a `/api/v2/status` connectivity probe). **Finding: no server — Rust's own Axum app included — ever served the push route**, so a real federation (receiver + auth + merge policy) remains a design task; tracked in #372 | **DONE** (client parity) |
 | conversation mining | 0.7k | `internal/convo` — Claude/ChatGPT/Slack export parsers, classify (decision/preference/milestone/problem), topic + code-target extraction, `decided_about` edges; `leankg mine-conversations --format … --input …`. Fixes a Rust defect where all but the last `decided_about` edge per file path were dropped | **DONE** |
 | persisted metrics | — | `context_metrics` ledger (migration 011, both backends) + `internal/metrics` — `leankg metrics` (since/tool/json/session/reset/retention/cleanup/seed) and the H10/FR-PLG-8 usage buckets behind `leankg dashboard`; recorded from the MCP dispatch like Rust (REST never recorded there either) | **DONE** |
-| org knowledge | — | `internal/orgknowledge` + store migration 010 (incidents, knowledge_entries, service_metadata, env_snapshots) — incident CRUD/query, team notes/annotations, env-conflict detection, service-context aggregate, team map; CLI `incident\|note\|env-conflicts\|service-context\|team-map` and `/api/v2/{incidents,env/diff,service/context}` | **DONE** |
+| org knowledge | — | `internal/orgknowledge` + store migration 010 (incidents, knowledge_entries, service_metadata, env_snapshots) — incident CRUD/query, team notes/annotations, env-conflict detection, service-context aggregate, team map; CLI `incident\|note` (write with `--content`, list without it — a note used to be write-only: the row landed in `knowledge_entries` and no surface could return it)\`env-conflicts\|service-context\|team-map` and `/api/v2/{incidents,env/diff,service/context}` | **DONE** |
 | PRD indexing | 0.3k | `internal/prdindex` — FR/US/AC extraction from a PRD document into requirement entities + knowledge rows + `implemented_by` edges to ontology workflows; `leankg prd` / `prd-trace` and `import{action:"prd"}` / `query{action:"prd"}`. Additive over Rust: AC lines are captured, and the id regex fix stops silently dropping `FR-ZCP-13`-shaped ids | **DONE** |
 | remote sources | 1.3k | `internal/sources` — git+ (shallow branch clone, full-clone+checkout fallback for tags/SHAs, fetch/advance), GCS (paginated listing, size cap), local tree; `index --source` / `refresh --source` now work (the old `--source is not supported` refusal is gone), with `--ref-name` and the `--auth` > `GITLAB_TOKEN` > `GIT_TOKEN` chain | **DONE** |
 | response token budget | 0.7k | `internal/budget` — per-action caps with the `_token_budget` marker, one-pass truncation, protected keys; applied on MCP responses. **Trimmed 2026-09-14:** Rust's `BudgetGuard` (wall-clock/RSS/iteration aborts, `getrusage` probes, `LEANKG_MAX_RSS_MB`) was ported but never wired to any call site — deleted rather than kept as a dead 256-line parallel surface (`TokenBudget`, the live half, is what `internal/mcp` enforces) | **DONE** (guard half removed as dead) |
@@ -1111,4 +1161,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (v4.15-lessons-readable: a recorded lesson is no longer write-only — `session command=lesson` wrote lessons.json and `session_recall`/`canvas`/`recall` all returned empty, so `query action=session command=lessons` was added on a store reader that reuses addLesson's own JSON, and the memory AC on retain→recall now reads Met with its live evidence. Also this loop: M1/M2/M9/M-GO closed, MCP ?project= routing, the annotation write+read gap)
+*Last updated: 2026-10-11 (v4.15-notes-readable: a team note was write-only — the row landed in knowledge_entries and `note`/service-context/team-map/MCP/`/api/v2` all missed it, while three Rust read ports (NotesFor, AnnotationsForFeature, AnnotationsForEnvironment) sat in Go with zero production callers; `leankg note --target T` now lists them. Third instance of the write-surface-with-no-reader class after #470 reflect and #507 lessons. Also this loop: M1/M2/M9/M-GO closed, MCP ?project= routing, the annotation write+read gap)

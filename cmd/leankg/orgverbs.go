@@ -164,13 +164,50 @@ func cmdIncident(args []string) {
 }
 
 // cmdNote ports `leankg note`: a team note anchored on a service or element.
+//
+// With --content it WRITES (the Rust `leankg note add` shape). Without it, it
+// LISTS the notes anchored on --target — a read the verb had no way to express,
+// which made a note write-only: `leankg note --target X --content …` stored a
+// knowledge_entries row and nothing in the binary could return it (no read
+// subcommand, service-context and team-map do not carry notes, no MCP notes
+// action, no /api/v2 notes route). Three Rust read ports sat in Go with zero
+// production callers. Same shape #470 fixed for reflect and #507 for lessons.
 func cmdNote(args []string) {
 	fs := flag.NewFlagSet("note", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	target := fs.String("target", "", "target service or element qualified name")
-	content := fs.String("content", "", "note content")
+	content := fs.String("content", "", "note content (omit to list the notes on --target)")
 	env := fs.String("env", "local", "environment")
 	parseInterspersed("note", fs, args, 0)
+
+	if strings.TrimSpace(*content) == "" {
+		// Read mode. RO, because a list must never need a writable store.
+		if strings.TrimSpace(*target) == "" {
+			fmt.Fprintln(os.Stderr, "usage: leankg note --target TARGET --content TEXT   (write)")
+			fmt.Fprintln(os.Stderr, "       leankg note --target TARGET                  (list)")
+			os.Exit(2)
+		}
+		withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
+			notes, err := k.NotesFor(*target)
+			if err != nil {
+				return err
+			}
+			if len(notes) == 0 {
+				// Named, not silent: an empty list and a mistyped target must
+				// not look the same to the caller.
+				fmt.Printf("No notes for '%s'\n", *target)
+				return nil
+			}
+			fmt.Printf("%d note(s) for '%s':\n", len(notes), *target)
+			for _, n := range notes {
+				fmt.Printf("\n  [%s] %s (%s)\n", n.Environment, n.ID, n.Author)
+				fmt.Printf("  %s\n", n.Content)
+			}
+			return nil
+		})
+		return
+	}
+
 	withOrgKnowledge(*project, store.RW, func(k *orgknowledge.Knowledge) error {
 		note, err := k.AddNote(*target, *content, *env, orgknowledge.AuthorFromEnv())
 		if err != nil {
