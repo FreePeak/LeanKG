@@ -10,7 +10,46 @@
 
 ## Changelog
 
-### v4.15-lesson-content — a lesson written from the schema's own field is no longer empty (2026-10-11)
+### v4.15-annotate-refuse — an annotation cannot attach to an element the index does not have (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR. Wave 16 of that
+> loop drove every verb the product exposes; this is the instance it called the
+> worst of the silent-write class.
+
+**Measured live on the 298-project self-host against a store that HAS an index:**
+
+```
+leankg annotate "pkg/does-not-exist.go::Nope" --description ghost
+  -> Created annotation for 'pkg/does-not-exist.go::Nope'      (exit 0)
+```
+
+and the row really landed — the annotation document held it, on an element
+`code_elements` does not contain. `leankg link` had the same hole.
+
+**Why this one is worse than a wrong answer.** An annotation is the one place a
+human writes what the code does *not* say. Attached to a typo'd or renamed
+identifier it is **unreachable**, not merely wrong: it never surfaces in a query
+(the element is not in the graph), never appears in `search-annotations` unless
+someone guesses to grep for it, and is never migrated when the element is
+renamed.
+
+**What changed:** `requireIndexedElement` refuses a `qualified_name` the index
+does not contain, **before any write**, for both `annotate` and `link`.
+
+- The refusal **names the index as the reason**, because a caller who only sees
+  "not found" cannot tell a typo from a stale index — and those want opposite
+  next steps (re-ask with the right name vs `leankg index`).
+- It does **not** suggest a near-match: an annotation is cheap to redo and
+  expensive to discover later, so refusing is the cheap side.
+- An empty name is refused with the way to find one (`leankg query <name>`).
+
+**Verified:** `TestAnnotateRefusesAnElementTheIndexDoesNotHave` — a real element
+is accepted (no false refusal), a missing one is refused naming both the element
+and the index, an empty one is refused, and **the refusal happens before the
+write** (the store stays clean). Gate: 62 packages ok, `go vet` clean, `gofmt`
+clean.
+
+
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR. Six of its
 > fixes are on main; this one was not, and it was still a live defect.
@@ -1191,4 +1230,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (v4.15-lesson-content: `command=lesson` read only `text` while the schema advertises `summary`, so a schema-shaped call wrote an EMPTY lesson and answered ok — measured live, both shapes landing the sha256-of-empty row, and a second such call reporting `deduped:true`, a duplicate of nothing. `summary` now feeds `text` and an empty lesson is refused. Re-landed from the dormant #449; also this loop: #508 notes readable, #507 lessons readable, M1/M2/M9/M-GO closed)
+*Last updated: 2026-10-11 (v4.15-annotate-refuse: `annotate` and `link` accepted a qualified_name the index does not have and persisted the row — measured live, exit 0, on an element `code_elements` cannot return, so the annotation was unreachable rather than merely wrong. Both now refuse before writing, naming the index as the reason. Re-landed from the dormant #449; also this loop: #509 lesson content, #508 notes readable, #507 lessons readable, M1/M2/M9/M-GO closed)

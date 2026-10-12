@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/annot"
@@ -238,6 +239,41 @@ func cmdGenerate(args []string) {
 	fmt.Printf("\nSaved to %s\n", path)
 }
 
+// requireIndexedElement refuses a qualified_name the index does not contain,
+// BEFORE any write. `annotate` and `link` are the only ways an agent records
+// business knowledge against a specific element — the prose a code reader
+// cannot get from the source — and both used to accept anything:
+//
+//	leankg annotate "pkg/does-not-exist.go::Nope" --description x
+//	  -> Created annotation for 'pkg/does-not-exist.go::Nope'   (exit 0)
+//
+// Measured live on the 298-project self-host 2026-10-11, and the row really
+// landed on an element `code_elements` does not contain. An annotation
+// attached to a typo'd or renamed identifier is worse than a wrong answer: it
+// never surfaces in a query (the element is not in the graph), never appears
+// in search-annotations unless someone guesses to grep for it, and is never
+// migrated when the element is renamed. The knowledge is not merely wrong, it
+// is unreachable.
+//
+// The refusal names the INDEX as the reason, because a caller who only sees
+// "not found" cannot tell a typo from a stale index — and those want opposite
+// next steps (re-ask with the right name vs `leankg index`). It does not
+// suggest a near-match: an annotation is cheap to redo and expensive to
+// discover later, so refusing is the cheap side.
+func requireIndexedElement(st store.Backend, element string) error {
+	if strings.TrimSpace(element) == "" {
+		return fmt.Errorf("element is required: pass the qualified_name an element has in the index, e.g. `leankg query <name>` to find it")
+	}
+	els, err := st.FindExact(element)
+	if err != nil {
+		return err
+	}
+	if len(els) == 0 {
+		return fmt.Errorf("no indexed element matches %q — annotations attach to an element the index has, so run `leankg index .` if this project is stale, or `leankg query <name>` to find the right qualified_name", element)
+	}
+	return nil
+}
+
 // cmdAnnotate ports `leankg annotate <element> --description ...`.
 func cmdAnnotate(args []string) {
 	fs := flag.NewFlagSet("annotate", flag.ExitOnError)
@@ -259,6 +295,9 @@ func cmdAnnotate(args []string) {
 	}
 	defer st.Close()
 
+	if err := requireIndexedElement(st, element); err != nil {
+		verbFatal(err)
+	}
 	created, err := annot.Annotate(st, element, *description, optString(*userStory), optString(*feature))
 	if err != nil {
 		verbFatal(err)
@@ -295,6 +334,9 @@ func cmdLink(args []string) {
 	}
 	defer st.Close()
 
+	if err := requireIndexedElement(st, element); err != nil {
+		verbFatal(err)
+	}
 	if err := annot.Link(st, element, id, *kind); err != nil {
 		verbFatal(err)
 	}
