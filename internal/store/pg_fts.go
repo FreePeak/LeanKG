@@ -100,6 +100,14 @@ type FuseRRFWeights struct {
 	TSVector float64
 	Trigram  float64
 	ILIKE    float64
+	// Keyword scales whichever keyword arm the engine has — TSVector on
+	// PostgreSQL, FTS5 on SQLite — so a caller's "<vector>,<keyword>" pair
+	// means the same thing on both backends.
+	Keyword float64
+	// Explicit marks Vector/Keyword as CALLER-SET, so a zero means "off"
+	// rather than "unset": the documented "1,0" drops the keyword arm, while
+	// the zero value of this struct keeps every arm at 1.
+	Explicit bool
 }
 
 const RRFK = 60
@@ -158,8 +166,20 @@ func FuseRRF(lists []RankList) []FusedHit {
 func (w FuseRRFWeights) armWeight(name string) float64 {
 	switch name {
 	case ArmVector:
+		if w.Explicit {
+			return w.Vector
+		}
 		if w.Vector != 0 {
 			return w.Vector
+		}
+	case ArmFTS5:
+		// The SQLite keyword arm (hybrid_sqlite.go). Same slot as TSVector:
+		// "the keyword arm", whichever engine supplies it.
+		if w.Explicit {
+			return w.Keyword
+		}
+		if w.Keyword != 0 {
+			return w.Keyword
 		}
 	case ArmTSVector:
 		if w.TSVector != 0 {
@@ -399,6 +419,13 @@ func (s *PGStore) HybridSearch(modelID, query string, qvec []float32, limit int)
 }
 
 func (s *PGStore) HybridSearchScoped(modelID, query string, qvec []float32, limit int, keep func(Element) bool) ([]HybridHit, string, error) {
+	return s.HybridSearchScopedWeighted(modelID, query, qvec, limit, keep, FuseRRFWeights{})
+}
+
+// HybridSearchScopedWeighted is HybridSearchScoped with the caller's per-arm
+// scaling (WeightedHybridSearcher). The zero FuseRRFWeights is every arm at 1,
+// so the plain method delegates here and the fusion lives in one place.
+func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float32, limit int, keep func(Element) bool, w FuseRRFWeights) ([]HybridHit, string, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -485,7 +512,12 @@ func (s *PGStore) HybridSearchScoped(modelID, query string, qvec []float32, limi
 		return nil, "", kwErr
 	}
 
-	fused := FuseRRF(lists)
+	var fused []FusedHit
+	if w.Explicit {
+		fused = FuseRRFWeighted(lists, w)
+	} else {
+		fused = FuseRRF(lists)
+	}
 	if len(fused) > limit {
 		fused = fused[:limit]
 	}
