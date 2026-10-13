@@ -114,14 +114,7 @@ func cmdProjects(args []string) {
 	}
 
 	if *prune {
-		// Measured on this machine 2026-10-11: the registry answered 108 rows
-		// with 84 of those directories already gone (CI fixtures under
-		// /private/tmp that registered themselves and were deleted with the
-		// run). StoreOnDisk was the only presence probe, and a missing store
-		// on a missing dir reads exactly like "registered but not yet
-		// indexed" — so the count could not be trusted and nothing could
-		// reclaim the rows. Dry by default: this touches a registry other
-		// tools share.
+		// Dry by default: this registry is shared (84 of 108 rows were gone, 2026-10-11).
 		// The postgres registry is shared by every host and its rows carry no host
 		// identity, so the destructive sweep is refused before any connection opens.
 		if *apply && opts.Engine == store.EnginePostgres {
@@ -191,9 +184,7 @@ func cmdProjects(args []string) {
 		if e.StoreOnDisk {
 			presence = "on-disk"
 		}
-		// A row whose DIRECTORY is gone is not a project any more, whatever
-		// its store flag says — say so in the row rather than making the
-		// caller compare 108 dirs by hand.
+		// A row whose DIRECTORY is gone is not a project any more, whatever its store flag says.
 		if !e.DirExists {
 			presence = "dir-gone"
 		}

@@ -26,15 +26,22 @@ with other tools; `--apply` forgets them, and a second `--apply` reports
 forgets only rows whose directory is gone: a registered project whose directory
 exists is never pruned, even with no store. The manifest gains `dir_exists` per
 row (`ManifestEntry.DirExists`), a presence probe independent of the store flag,
-and the T0 table prints `dir-gone` in the STORE column for those rows.
+and the T0 table prints `dir-gone` in the STORE column for those rows. Only a
+directory that answers ENOENT counts as gone (EACCES and other stat errors keep
+the row), and `--prune --apply` is refused on the postgres engine, where the
+shared registry has no host identity, so one host's prune could remove another
+host's rows; the dry run still works there.
 
 **Measured, on this machine's registry (2026-10-11):** the dry run named the 84
 and changed nothing (108 rows before and after). `--apply` forgot exactly those
 84, and the registry reads 24 rows, all with directories that exist.
 
 **Guards:** `TestManifestMarksGoneDirectories`,
-`TestPruneForgetsOnlyVanishedDirectories`, `TestProjectsPruneVerb`,
-`TestProjectsTableMarksGoneDirs`.
+`TestPruneForgetsOnlyVanishedDirectories`, `TestPruneKeepsRowsWhoseDirectoryCannotBeStatted`,
+`TestProjectsPruneVerb`, `TestProjectsTableMarksGoneDirs`,
+`TestProjectsPruneWithoutRegistry`, `TestProjectsPruneJSONContract`,
+`TestProjectsApplyRequiresPrune`, `TestProjectsPruneApplyRefusedOnPostgres`,
+`TestSuitePinsSQLiteEngine`.
 
 ### v4.15-name-arm-rarity — the name arm fires on prose, at a MEASURED bound (2026-10-13)
 
@@ -1498,4 +1505,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 - **FR-TYPE-02 (2026-09-21, removed 2026-10-16):** the `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) and its one call site (`convo.ClassifyWithJudge`) were deleted with the Laya/Jev integration: nothing outside tests ever built a judge via `judge.FromEnv`, so the package, its `LEANKG_JUDGE_*` env surface and its demo paths were dead code. Historical material: [`archive/judge/judge-use-cases.md`](archive/judge/judge-use-cases.md), [`archive/judge/laya-judge.html`](archive/judge/laya-judge.html). The deterministic keyword classifier (`convo.Classify`) is unaffected and remains the only classification path.
-*Last updated: 2026-10-16 (removed the Laya/Jev judge integration — `internal/judge` and `convo.ClassifyWithJudge` were dead code with no production caller; docs archived under `docs/archive/judge/`)*
+*Last updated: 2026-10-17 (portfolio-prune review fixes land: only ENOENT is gone, the `--json` shape is stable, `--apply` requires `--prune`, postgres `--apply` is refused, and the test process is pinned to sqlite; the Laya/Jev judge integration was removed 2026-10-16 and its docs archived under `docs/archive/judge/`)*

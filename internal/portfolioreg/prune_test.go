@@ -8,14 +8,7 @@ import (
 	"time"
 )
 
-// TestManifestMarksGoneDirectories is the measurement behind the prune verb.
-//
-// On this machine's own registry (measured 2026-10-11): `query action=portfolio`
-// answered count=104 while 83 of those directories no longer existed — CI
-// fixtures under /private/tmp that registered themselves and were deleted with
-// the run. StoreOnDisk was the only presence probe, and "no store on a missing
-// dir" is indistinguishable from "registered but never indexed", so an agent
-// asking "what can I query?" could not tell which of the 104 rows were real.
+// TestManifestMarksGoneDirectories pins dir_exists: 84 of 108 rows (2026-10-11) had a deleted directory.
 func TestManifestMarksGoneDirectories(t *testing.T) {
 	o := Options{DBPath: filepath.Join(t.TempDir(), "portfolio.db")}
 	ctx := context.Background()
@@ -32,8 +25,7 @@ func TestManifestMarksGoneDirectories(t *testing.T) {
 	if _, err := Register(ctx, o, gone, "gone", 0, 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	// The row outlives its directory: this is exactly how the 83 dead rows
-	// were made by CI runs that cleaned their own temp dirs.
+	// The row outlives its directory: this is how CI runs left 84 dead rows behind.
 	if err := os.RemoveAll(gone); err != nil {
 		t.Fatal(err)
 	}

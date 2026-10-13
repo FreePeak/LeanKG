@@ -362,13 +362,7 @@ type ManifestEntry struct {
 	Elements     int     `json:"elements"`
 	Files        int     `json:"files"`
 	StoreOnDisk  bool    `json:"store_on_disk"`
-	// DirExists is the T0 presence probe the manifest was missing: measured
-	// 2026-10-11, this registry answered count=104 with 83 of those
-	// directories already deleted (CI fixtures under /private/tmp that
-	// registered themselves and went away with the run). StoreOnDisk was the
-	// only probe, and a missing STORE on a missing DIR looks the same as a
-	// registered-but-not-yet-indexed project — so an agent asking "what can I
-	// query?" could not tell which rows were real.
+	// DirExists: 84 of 108 registered rows had a deleted directory (2026-10-11); StoreOnDisk hid it.
 	DirExists bool `json:"dir_exists"`
 	Hot       bool `json:"hot"`
 }
