@@ -426,8 +426,11 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method != "rrf("+ArmVector+"+"+ArmTSVector+"+"+ArmTrigram+")" {
-		t.Fatalf("method = %q; want all three arms", method)
+	// The name arm is fused in too (the ArmName ranking arm, gated on corpus
+	// rarity). It appears here because the fixture's query has a token rare
+	// enough to reach it — which is the arm working, not noise.
+	if method != "rrf("+ArmVector+"+"+ArmTSVector+"+"+ArmTrigram+"+"+ArmName+")" {
+		t.Fatalf("method = %q; want every arm that fired", method)
 	}
 	if len(hits) != 4 {
 		t.Fatalf("hits = %+v; want 4", hits)
@@ -437,7 +440,15 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 	if hits[0].Element.QualifiedName != "pkg.Delta" {
 		t.Fatalf("top hit = %s; want pkg.Delta", hits[0].Element.QualifiedName)
 	}
-	pgFloatClose(t, hits[0].Score, 2*(1/61.0)+1/64.0, "Delta fused score")
+	// The fused score is the sum of 1/(RRFK+rank) over every arm the hit
+	// appears in, so derive it from the ranks the answer reports rather than
+	// from a constant: the constant silently encoded "three arms", and the name
+	// arm changed that without changing the fusion.
+	want := 0.0
+	for _, rank := range hits[0].Ranks {
+		want += 1 / float64(RRFK+rank)
+	}
+	pgFloatClose(t, hits[0].Score, want, "Delta fused score")
 	if hits[1].Element.QualifiedName != "pkg.Alpha" {
 		t.Fatalf("second hit = %s; want pkg.Alpha", hits[1].Element.QualifiedName)
 	}
@@ -488,8 +499,9 @@ func TestPGHybridSearchWithoutVectors(t *testing.T) {
 	if len(hits) != 1 || hits[0].Element.QualifiedName != "pkg.Watermark" {
 		t.Fatalf("hits = %+v; want the keyword arms to carry the hit", hits)
 	}
-	if method != "rrf("+ArmTSVector+"+"+ArmTrigram+")" {
-		t.Fatalf("method = %q; want the two keyword arms", method)
+	// With no vectors, the keyword arms plus the name arm (see above).
+	if method != "rrf("+ArmTSVector+"+"+ArmTrigram+"+"+ArmName+")" {
+		t.Fatalf("method = %q; want the keyword arms plus the name arm", method)
 	}
 	if hits[0].Similarity != 0 {
 		t.Fatalf("similarity = %v; want 0 with no vector arm", hits[0].Similarity)
