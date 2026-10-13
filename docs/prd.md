@@ -10,7 +10,58 @@
 
 ## Changelog
 
-### v4.15-doctor-unindexed — the diagnosis says "not indexed", not the syscall that noticed (2026-10-11)
+### v4.15-args-weight — a caller-chosen fusion weight is validated, applied, and not over-claimed (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR (wave 17), and the
+> same class as #484: an argument the caller believes it set.
+
+**Measured live on the 298-project self-host, every shape accepted and ignored:**
+
+| `args.weight` | Answered | `retrieval.weight` |
+|---|---|---|
+| `3,1` | accepted | **absent** — ranking identical |
+| `1,0` | accepted | **absent** |
+| `0,0` | accepted | **absent** |
+| `banana` | accepted | **absent** |
+| `3` | accepted | **absent** |
+
+`0,0` ranks nothing and `banana` is not a weight: both are *unreadable*, not
+merely unapplied. `weight=0.0` and `weight=1.0` produced **byte-identical**
+rankings.
+
+**Three parts, each with its own guard:**
+
+1. **Validated before the ladder**, beside the scope contract — because L3
+   degrades to L2 without ever reading a weight, so validating inside the
+   semantic rung would silently accept a typo on exactly the stores where it is
+   hardest to notice. `"<vector>,<keyword>"`, two non-negative numbers, `0,0`
+   refused, `1,0` documented as dropping the keyword arm.
+2. **Applied** through `WeightedHybridSearcher` — a *separate* interface, the
+   house pattern (`ScopedHybridSearcher`), so no signature changes and a backend
+   without it keeps the unweighted default. `FuseRRFWeights` gained a `Keyword`
+   slot and an `Explicit` flag: a zero means *unset* (weight 1, today's
+   behaviour) while an explicit zero means *off*, which is what makes `1,0`
+   actually drop the arm.
+3. **Not over-claimed.** My own first version reported the weight
+   unconditionally, and an **L0** answer ("no elements indexed") claimed
+   `weight=3,1` — only L3 fuses two arms to scale. An answer naming a setting it
+   did not apply is the same defect as #491's advice naming a flag that did not
+   work.
+
+**A test that guarded nothing, corrected.** The first fixture used mirrored arms
+(vector `a,b` / keyword `b,a`), which ties — it passed even with the
+explicit-zero handling disabled. It also expected `alpha` to beat a key topping
+both arms, which was wrong about RRF rather than about the weight. Disjoint arms
+make scaling *and* dropping observable, and the RED check now fails when the
+handling is removed.
+
+**Verified:** `TestQueryWeightIsValidated` (four malformed shapes refused, four
+good ones accepted), `TestWeightIsNotClaimedByARungThatDoesNotUseIt`, and
+`TestFusionWeightChangesTheRanking` (vector-heavy, keyword-heavy, `1,0` drops,
+`0,1` drops, zero struct identical to unweighted). Gate: 62 packages ok,
+`go vet` clean, `gofmt` clean.
+
+ — the diagnosis says "not indexed", not the syscall that noticed (2026-10-11)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR, wave 24.
 
@@ -1298,4 +1349,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (v4.15-doctor-unindexed: `leankg doctor` on an unindexed project printed 'read-only open of missing store' plus a raw stat error and never named `leankg index` — exit 2 was right, the sentence was not. Now it says 'not indexed' and names the command; any other store error keeps the storage-layer line. Re-landed from the dormant #449 wave 24. Also this loop: #511 ontology note, #510 annotate/link refuse, #509 lesson content, #508 notes readable, #507 lessons readable)
+*Last updated: 2026-10-11 (v4.15-args-weight: `args.weight` was accepted in every shape and silently ignored — `banana`, `0,0` and even a well-formed `3,1` left retrieval.weight absent and the ranking byte-identical (the #484 class). Now validated before the ladder, applied through a WeightedHybridSearcher capability, and reported ONLY by the rung that uses it: my first version let an L0 answer claim weight=3,1. Also this loop: #512 doctor says 'not indexed', #513 the duplicate-listener runbook, #511 ontology note, #510 annotate/link refuse, #509 lesson content, #508 notes readable, #507 lessons readable)

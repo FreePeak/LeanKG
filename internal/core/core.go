@@ -598,6 +598,18 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if serr != nil {
 		return nil, serr
 	}
+	// The fusion weight is validated HERE, beside the scope contract and before
+	// the ladder, for the same reason: L3 degrades to L2 without ever reading a
+	// weight, so validating inside the semantic rung would silently accept a
+	// typo on exactly the stores where it is hardest to notice. Measured live on
+	// the 298-project self-host 2026-10-11 — every shape was accepted and
+	// ignored: `banana`, `3`, `0,0`, and even a well-formed `3,1` left
+	// retrieval.weight absent and the ranking identical. A caller who sets a
+	// weight believes it set one.
+	fw, werr := parseFusionWeight(argStr(req.Args, "weight"))
+	if werr != nil {
+		return nil, werr
+	}
 	demote := demotesTests(req.Action) && !mentionsTests(req.Query)
 	limit := req.Limit
 	if limit <= 0 {
@@ -610,6 +622,15 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if err == nil && out != nil {
 		if r, ok := out["retrieval"].(map[string]any); ok && r != nil {
 			r["scope"] = scopeName
+			// A weighted answer says so, for the same reason scope does — but
+			// ONLY when the rung that applies a weight actually ran. Measured on
+			// this branch: an L0 answer ("no elements indexed") claimed
+			// weight=3,1, and an L2 degrade would have too, while only L3 fuses
+			// two arms to scale. Claiming a setting the answer did not apply is
+			// the same defect as #491's false advice: the caller believes it.
+			if fw.raw != "" && r["rung"] == "L3" {
+				r["weight"] = fw.raw
+			}
 		}
 	}
 	if demote && out != nil {
@@ -987,13 +1008,28 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if serr != nil {
 		return nil, serr
 	}
+	// Query validated this already; parsed again here because the rung is also
+	// reachable as a pinned action. An unset weight is the default.
+	fw, _ := parseFusionWeight(argStr(args, "weight"))
 	// Issue #273 / RS-12: L3 fuses the cosine ranking with the keyword
 	// rankings by reciprocal rank fusion, because the scores live on unrelated
 	// scales (cosine, bm25/ts_rank, trigram similarity) and only their ranks
 	// are comparable — PostgreSQL over tsvector+trigram, SQLite over FTS5. An
 	// empty fusion falls through to the plain cosine rung below.
 	if hs, ok := e.st.(store.ScopedHybridSearcher); ok {
-		fused, arms, ferr := hs.HybridSearchScoped(modelID, q, qvec, limit, keep)
+		// A caller-chosen fusion weight is applied when the backend can scale
+		// its arms (both can). The weight was already validated in Query, so a
+		// malformed value never reaches here; the zero value keeps every arm at
+		// 1, byte for byte the unweighted path.
+		var fused []store.HybridHit
+		var arms string
+		var ferr error
+		if w, ok := e.st.(store.WeightedHybridSearcher); ok && fw.raw != "" {
+			fused, arms, ferr = w.HybridSearchScopedWeighted(modelID, q, qvec, limit, keep,
+				store.FuseRRFWeights{Vector: fw.vector, Keyword: fw.keyword, Explicit: true})
+		} else {
+			fused, arms, ferr = hs.HybridSearchScoped(modelID, q, qvec, limit, keep)
+		}
 		if ferr != nil {
 			return degrade(fmt.Sprintf("hybrid fusion failed (%v); degraded from L3", ferr))
 		}
@@ -1881,6 +1917,45 @@ const (
 //	prod  code plus current (non-archived) documentation
 //	all   everything, the default, spelled out so a caller can undo a narrower
 //	      scope it inherited
+//
+// fusionWeight is the caller's per-arm scaling for the L3 fusion, parsed from
+// `args.weight` as "<vector>,<keyword>" (e.g. "3,1", or "1,0" to drop the
+// keyword arm). The zero value is the default: both arms at 1, byte for byte
+// what every existing caller already gets.
+type fusionWeight struct {
+	vector  float64
+	keyword float64
+	raw     string
+}
+
+// parseFusionWeight validates the caller's weight. An UNSET value is not an
+// error and not an override — it is today's behaviour. Everything else must be
+// two non-negative numbers, because a weight the caller cannot read is worse
+// than no weight at all: `0,0` ranks nothing, and a typo must fail the same way
+// an unknown scope does rather than quietly ranking the default.
+func parseFusionWeight(raw string) (fusionWeight, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fusionWeight{vector: 1, keyword: 1}, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) != 2 {
+		return fusionWeight{}, fmt.Errorf("query weight %q must be \"<vector>,<keyword>\" (e.g. \"3,1\", or \"1,0\" to drop the keyword arm)", raw)
+	}
+	nums := make([]float64, 2)
+	for i, p := range parts {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil || v < 0 {
+			return fusionWeight{}, fmt.Errorf("query weight %q: %q is not a non-negative number", raw, strings.TrimSpace(p))
+		}
+		nums[i] = v
+	}
+	if nums[0] == 0 && nums[1] == 0 {
+		return fusionWeight{}, fmt.Errorf("query weight %q cannot be \"0,0\": both arms off ranks nothing", raw)
+	}
+	return fusionWeight{vector: nums[0], keyword: nums[1], raw: raw}, nil
+}
+
 func scopePredicate(scope string) (func(store.Element) bool, string, error) {
 	switch scope {
 	case "", ScopeAll:

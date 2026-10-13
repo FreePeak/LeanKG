@@ -25,9 +25,20 @@ type ScopedHybridSearcher interface {
 	SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error)
 }
 
+// WeightedHybridSearcher is ScopedHybridSearcher with a caller-chosen fusion
+// weight: "<vector>,<keyword>" scales the two rank lists before RRF combines
+// them. A separate interface (not a signature change) so every existing caller
+// and both backends keep compiling, and a backend without it simply keeps the
+// unweighted default — which the query path validates but does not require.
+type WeightedHybridSearcher interface {
+	ScopedHybridSearcher
+	HybridSearchScopedWeighted(modelID, query string, qvec []float32, limit int, keep func(Element) bool, w FuseRRFWeights) ([]HybridHit, string, error)
+}
+
 var (
-	_ HybridSearcher = (*Store)(nil)
-	_ HybridSearcher = (*PGStore)(nil)
+	_ HybridSearcher         = (*Store)(nil)
+	_ HybridSearcher         = (*PGStore)(nil)
+	_ WeightedHybridSearcher = (*PGStore)(nil)
 )
 
 // HybridSearch is the SQLite semantic rung: the cosine ranking and the FTS5
@@ -40,6 +51,14 @@ func (s *Store) HybridSearch(modelID, query string, qvec []float32, limit int) (
 }
 
 func (s *Store) HybridSearchScoped(modelID, query string, qvec []float32, limit int, keep func(Element) bool) ([]HybridHit, string, error) {
+	return s.HybridSearchScopedWeighted(modelID, query, qvec, limit, keep, FuseRRFWeights{})
+}
+
+// HybridSearchScopedWeighted is HybridSearchScoped with the caller's per-arm
+// scaling. The zero FuseRRFWeights is every arm at 1 — byte for byte the
+// unweighted path — so the plain method delegates here and there is ONE fusion
+// implementation rather than two.
+func (s *Store) HybridSearchScopedWeighted(modelID, query string, qvec []float32, limit int, keep func(Element) bool, w FuseRRFWeights) ([]HybridHit, string, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -96,7 +115,17 @@ func (s *Store) HybridSearchScoped(modelID, query string, qvec []float32, limit 
 	if len(lists) == 0 {
 		return nil, "", nil
 	}
-	fused := FuseRRF(lists)
+	// A weighted caller drops an arm entirely when its weight is 0 (the
+	// documented "1,0 drops the keyword arm"), which FuseRRFWeighted expresses
+	// as a zero scale — so the arm still contributes its provenance but no
+	// score. The unweighted path is the same call with every arm at 1.
+	weighted := w.Vector != 0 || w.Keyword != 0 || w.TSVector != 0 || w.Trigram != 0 || w.ILIKE != 0
+	var fused []FusedHit
+	if weighted {
+		fused = FuseRRFWeighted(lists, w)
+	} else {
+		fused = FuseRRF(lists)
+	}
 	if len(fused) > limit {
 		fused = fused[:limit]
 	}
