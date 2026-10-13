@@ -297,12 +297,30 @@ func Forget(ctx context.Context, o Options, dir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	forgot, err := forgetDirs(ctx, o, []string{canonical})
+	return len(forgot) > 0, err
+}
+
+// forgetDirs removes canonical dirs from the registry in one RW session and
+// returns the ones that had a row. A dir with no row is skipped, not an error:
+// a concurrent prune or forget may have removed it first.
+func forgetDirs(ctx context.Context, o Options, dirs []string) ([]string, error) {
 	reg, err := Open(ctx, o, store.RW)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer reg.Close()
-	return reg.ProjectForget(canonical)
+	forgot := []string{}
+	for _, dir := range dirs {
+		ok, ferr := reg.ProjectForget(dir)
+		if ferr != nil {
+			return forgot, ferr
+		}
+		if ok {
+			forgot = append(forgot, dir)
+		}
+	}
+	return forgot, nil
 }
 
 // Projects is the registry list (name-ordered; see store.ProjectList).
@@ -403,7 +421,7 @@ func pathPresent(path string) bool {
 }
 
 // Prune removes registry rows whose directory no longer exists and returns the
-// dirs it forgot, sorted. DryRun reports what WOULD go without touching the
+// dirs it forgot, sorted. dryRun reports what would go without touching the
 // registry, which is what a caller wants before a destructive sweep of a
 // registry other tools share.
 //
@@ -425,23 +443,7 @@ func Prune(ctx context.Context, o Options, dryRun bool) ([]string, error) {
 	if dryRun || len(gone) == 0 {
 		return gone, nil
 	}
-	reg, err := Open(ctx, o, store.RW)
-	if err != nil {
-		return nil, err
-	}
-	defer reg.Close()
-	kept := gone[:0]
-	for _, dir := range gone {
-		ok, ferr := reg.ProjectForget(dir)
-		if ferr != nil {
-			return kept, ferr
-		}
-		if !ok {
-			continue // raced with another prune; not an error
-		}
-		kept = append(kept, dir)
-	}
-	return kept, nil
+	return forgetDirs(ctx, o, gone)
 }
 
 func containsDir(rows []store.ProjectRecord, dir string) bool {
