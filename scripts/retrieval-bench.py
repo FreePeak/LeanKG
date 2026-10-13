@@ -113,6 +113,25 @@ def arms_of(answer, limit):
     return [k for _, k in sorted(vec)], [k for _, k in sorted(kw)]
 
 
+def in_store(server, qualified_name):
+    """True when the store actually holds this element.
+
+    A label pointing at an element the store does not have cannot be retrieved
+    by any arm, so it measures the label rather than the fusion — and the fix is
+    to repair the label, not to read the score.
+    """
+    try:
+        msg = server.call("tools/call", {"name": "query", "arguments": {
+            "query": qualified_name, "action": "element", "limit": 5}})
+        text = msg["result"]["content"][0]["text"]
+        hits = json.loads(text).get("hits") or []
+    except Exception:
+        # Never turn a probe failure into a stale-label verdict: a broken probe
+        # must not silently reclassify a real retrieval miss.
+        return True
+    return any(h.get("qualified_name") == qualified_name for h in hits)
+
+
 def served_order(answer, limit):
     """The order the server actually answered with, whatever arms it has."""
     return [h["qualified_name"] for h in answer.get("hits", [])[:limit]]
@@ -139,7 +158,7 @@ def rrf(vector, keyword, wv=1.0, wk=1.0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--binary", default="/tmp/leankg")
-    ap.add_argument("--project", default=".")
+    ap.add_argument("--project", default=".", help="project directory the stdio server serves; it must be the indexed checkout, not the worktree the script lives in")
     ap.add_argument("--limit", type=int, default=30, help="per-arm depth fetched and scored")
     ap.add_argument("--sweep", action="store_true", help="score every (vector, keyword) weight pair")
     ap.add_argument("--scope", default="", help="args.scope passed to every query (code|prod|all)")
@@ -153,6 +172,10 @@ def main():
         a = s.query(q, args.limit, args.scope)
         vec, kw = arms_of(a, args.limit)
         data.append((n, q, truth, vec, kw, served_order(a, args.limit)))
+    # Membership is probed while the session is OPEN: asking a closed server
+    # would fail and every label would read as present, which is how the first
+    # version of this check silently never fired.
+    in_store_map = {truth: in_store(s, truth) for _, _, truth, _, _, _ in data}
     s.close()
 
     n = len(data)
@@ -212,8 +235,27 @@ def main():
                 t10 += r <= 10
             print(f"{f'{wv},{kw}':<18} {t1:>4}/{n:<3} {t3:>4}/{n:<3} {t10:>4}/{n:<3}")
 
+    # A label whose element the store does not have measures the LABEL, not the
+    # fusion: it can never be retrieved by any arm. The label set's own rule is
+    # "a label that returns 0 is replaced, not tolerated", so say so loudly
+    # rather than reporting it as a retrieval miss. Two labels were stale the
+    # first time this ran on today's tree (StandaloneDBPath and ftsQuery had
+    # both MOVED files), which is exactly the drift this check catches.
+    unindexed = [(num, q, truth) for num, q, truth, vec, kw, served in data
+                 if score(vec, truth) is None and score(kw, truth) is None]
+    if unindexed:
+        # Distinguish "not in the store at all" from "in the store but neither
+        # arm ranked it": the first is a stale label, the second is a finding.
+        stale = [x for x in unindexed if not in_store_map.get(x[2], True)]
+        if stale:
+            print(f"\n{len(stale)} STALE label(s) — the element is not in this store, so the label measures nothing:")
+            for num, q, truth in stale:
+                print(f"  #{num:<3} {truth:<52} {q[:40]}")
+            print("  Fix the label (it usually MOVED) before reading any number above.")
+
     missing = [(num, q, truth) for num, q, truth, vec, kw, served in data
-               if score(vec, truth) is None and score(kw, truth) is None]
+               if score(vec, truth) is None and score(kw, truth) is None
+               and in_store_map.get(truth, True)]
     if missing:
         print(f"\n{len(missing)} label(s) in NEITHER arm — these measure the indexer or the embedded text, not the fusion:")
         for num, q, truth in missing:
