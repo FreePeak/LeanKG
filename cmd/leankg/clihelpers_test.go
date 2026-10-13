@@ -82,8 +82,17 @@ func runCLI(t *testing.T, args ...string) (string, string, int) {
 // fixture instead of beside the repo's own .leankg.
 func runCLIIn(t *testing.T, dir string, args ...string) (string, string, int) {
 	t.Helper()
+	return runCLIWith(t, dir, nil, args...)
+}
+
+// runCLIWith is runCLIIn with extra environment entries for the child only. A
+// later entry overrides an earlier one with the same key, so a test can pin a
+// variable (LEANKG_DB_ENGINE, say) without touching the test process's own.
+func runCLIWith(t *testing.T, dir string, env []string, args ...string) (string, string, int) {
+	t.Helper()
 	cmd := exec.Command(cliBinary(t), args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

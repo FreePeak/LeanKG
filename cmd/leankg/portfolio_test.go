@@ -314,3 +314,17 @@ func TestProjectsApplyRequiresPrune(t *testing.T) {
 		t.Fatalf("projects --apply: exit %d, stdout %q, stderr %q; want exit 1 and the usage error", code, stdout, stderr)
 	}
 }
+
+// TestProjectsPruneApplyRefusedOnPostgres: the postgres registry is shared by
+// every host and its rows carry no host identity, so a prune from one host
+// could remove another host's rows. The child gets no dsn and an empty HOME and
+// cwd, so even a missing refusal could not reach a database.
+func TestProjectsPruneApplyRefusedOnPostgres(t *testing.T) {
+	home := t.TempDir()
+	stdout, stderr, code := runCLIWith(t, home,
+		[]string{"HOME=" + home, "LEANKG_PROJECT=", "LEANKG_DB_ENGINE=postgres", "LEANKG_PG_URL="},
+		"projects", "--prune", "--apply")
+	if code != 1 || !strings.Contains(stderr, "no host identity") || !strings.Contains(stderr, "dry run") {
+		t.Fatalf("projects --prune --apply on postgres: exit %d, stdout %q, stderr %q; want exit 1 and the refusal", code, stdout, stderr)
+	}
+}

@@ -122,6 +122,12 @@ func cmdProjects(args []string) {
 		// indexed" — so the count could not be trusted and nothing could
 		// reclaim the rows. Dry by default: this touches a registry other
 		// tools share.
+		// The postgres registry is shared by every host and its rows carry no host
+		// identity, so the destructive sweep is refused before any connection opens.
+		if *apply && opts.Engine == store.EnginePostgres {
+			fatalJSON(errors.New("--prune --apply is refused on the postgres engine: the shared registry has no host identity, " +
+				"so a prune from one host could remove another host's rows. The dry run (leankg projects --prune) still works."))
+		}
 		gone, err := portfolioreg.Prune(ctx, opts, !*apply)
 		if err != nil {
 			fatalJSON(err)
