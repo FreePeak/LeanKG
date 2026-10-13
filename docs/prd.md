@@ -43,6 +43,56 @@ and changed nothing (108 rows before and after). `--apply` forgot exactly those
 `TestProjectsApplyRequiresPrune`, `TestProjectsPruneApplyRefusedOnPostgres`,
 `TestSuitePinsSQLiteEngine`.
 
+### v4.15-lsp-handshake-budget — the handshake gets its own budget, and the first failure its reason (2026-10-13)
+
+> **Trigger:** main went red twice on the self-hosted Mac under load. Run
+> 38381811991 failed `TestEnrichAcceptsRegistryActiveLanguages` at 14.02 s with
+> "no LSP-visible declarations to merge". Run 38364622057 failed
+> `TestEnrichTypedResolveOffByDefault` at 14.03 s with the same reason, and
+> `TestEnrichMergesLSPSymbolsIntoElements` (17.97 s) with one of its two files
+> merging nothing.
+
+**The mechanism, two defects in `internal/lsp/enrich.go`:**
+
+- **The handshake had the request's budget.** `documentSymbols` and `hover`
+  ran the spawn under a context that carries `timeout_ms` (default 5 s).
+  `StartCommand` derives its handshake context from the caller's, and a child
+  context cannot outlive its parent, so `initialize` ended at 5 s whatever
+  `handshakeTimeout` said (10 s, or `LEANKG_TEST_LSP_TIMEOUT` in CI). The CI
+  knob never reached this path. Each attempt was a 5 s deadline, so a language
+  failed in two of them: the 14 s above.
+- **The first failure was dropped.** `enrichLanguage` set `rep.Reason` only
+  once a second file had failed. A language whose only file failed kept an
+  empty reason, and the pass fell back to "no LSP-visible declarations to
+  merge".
+
+**Landed:**
+
+- `clientFor` spawns under `handshakeTimeout` and cancels as soon as the pooled
+  client is returned. Each request then gets its own `timeout_ms` budget. The
+  two-attempt respawn is unchanged.
+- Every failed file sets the language's `Reason`. The second failure still ends
+  the language. Its message reads `failed after N files`; the old wording was
+  "stopped answering after N files".
+
+**Behaviour change:** the production spawn budget moves from 5 s to
+`handshakeTimeout` (10 s). The worst case per file rises from 2 x 5 s to
+2 x (10 s + 5 s). `enrichTimeout` is still checked between files only.
+
+**Measured:**
+
+- RED, previous code: `TestEnrichHandshakeOutlivesRequestTimeout` fails with
+  `Merged = 0` at 2.84 s. `TestEnrichRecordsFirstFailureReason` fails with an
+  empty language reason at 0.93 s.
+- GREEN: the two tests pass in 1.44 s and 0.53 s. `go test -count=3
+  ./internal/lsp/` passes (81.8 s). `go test -race -count=1 ./internal/lsp/`
+  passes (43.0 s, no data race). `CGO_ENABLED=0 go build ./...` passes.
+
+**Guards:** `TestEnrichHandshakeOutlivesRequestTimeout` (a handshake slower than
+`timeout_ms` still merges) and `TestEnrichRecordsFirstFailureReason` (one failed
+file names the error at both levels). New fixtures: `FAKE_LSP_INIT_DELAY`
+delays `initialize`; `FAKE_LSP_MODE=crash` exits on `documentSymbol`.
+
 ### v4.15-name-arm-rarity — the name arm fires on prose, at a MEASURED bound (2026-10-13)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR. Its wave 17
@@ -1505,4 +1555,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 - **FR-TYPE-02 (2026-09-21, removed 2026-10-16):** the `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) and its one call site (`convo.ClassifyWithJudge`) were deleted with the Laya/Jev integration: nothing outside tests ever built a judge via `judge.FromEnv`, so the package, its `LEANKG_JUDGE_*` env surface and its demo paths were dead code. Historical material: [`archive/judge/judge-use-cases.md`](archive/judge/judge-use-cases.md), [`archive/judge/laya-judge.html`](archive/judge/laya-judge.html). The deterministic keyword classifier (`convo.Classify`) is unaffected and remains the only classification path.
-*Last updated: 2026-10-17 (portfolio-prune review fixes land: only ENOENT is gone, the `--json` shape is stable, `--apply` requires `--prune`, postgres `--apply` is refused, and the test process is pinned to sqlite; the Laya/Jev judge integration was removed 2026-10-16 and its docs archived under `docs/archive/judge/`)*
+*Last updated: 2026-10-17 (v4.15-lsp-handshake-budget: the enrichment spawn gets handshakeTimeout instead of timeout_ms, and a failed file records its reason; the two red CI runs are explained at the top of the changelog. Portfolio-prune review fixes also land: only ENOENT is gone, the `--json` shape is stable, `--apply` requires `--prune`, postgres `--apply` is refused, and the test process is pinned to sqlite. The Laya/Jev judge integration was removed 2026-10-16, its docs archived under `docs/archive/judge/`)*
