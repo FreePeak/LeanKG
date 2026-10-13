@@ -141,7 +141,9 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 		}
 		st, err := store.OpenPG(ctx, url, pgRegistryKey, mode)
 		if err != nil {
-			if mode == store.RO {
+			// Only a schema that does not exist is "no registry"; a dsn, connection
+			// or auth failure is a fault.
+			if errors.Is(err, store.ErrSchemaMissing) {
 				return nil, fmt.Errorf("%w: %v", ErrNoRegistry, err)
 			}
 			return nil, err

@@ -356,3 +356,24 @@ func TestProjectsPruneApplyRefusedOnPostgres(t *testing.T) {
 		t.Fatalf("projects --prune --apply on postgres: exit %d, stdout %q, stderr %q; want exit 1 and the refusal", code, stdout, stderr)
 	}
 }
+
+// TestProjectsUnreachablePostgresIsAnError: a postgres registry that cannot be
+// reached is a fault, not "no registry". The dry run reads nothing and changes
+// nothing, so a clean exit would tell the operator a lie. The dsn is a closed
+// localhost port: the child gets connection refused and no database is touched.
+// Only the child's env carries the postgres engine; the test process stays sqlite.
+func TestProjectsUnreachablePostgresIsAnError(t *testing.T) {
+	home := t.TempDir()
+	env := []string{
+		"HOME=" + home, "LEANKG_PROJECT=", "LEANKG_DB_ENGINE=postgres",
+		"LEANKG_PG_URL=postgres://leankg@127.0.0.1:1/none?sslmode=disable",
+	}
+	stdout, stderr, code := runCLIWith(t, home, env, "projects", "--prune")
+	if code != 1 || strings.Contains(stdout, "nothing to prune") || !strings.Contains(stderr, "connection refused") {
+		t.Errorf("projects --prune: exit %d, stdout %q, stderr %q; want exit 1 and the connection error", code, stdout, stderr)
+	}
+	stdout, stderr, code = runCLIWith(t, home, env, "projects")
+	if code != 1 || strings.Contains(stdout, "no projects registered") || !strings.Contains(stderr, "connection refused") {
+		t.Errorf("projects: exit %d, stdout %q, stderr %q; want exit 1 and the connection error", code, stdout, stderr)
+	}
+}
