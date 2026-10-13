@@ -14,6 +14,10 @@ target/
 .worktrees/
 .zcode/
 .leankg/
+# Retrieval label corpora that were not harvested from this repository: a
+# private corpus is a label file like any other (retrieval-bench.py --labels),
+# and it must live outside the repo, not in it.
+retrieval-labels-*.json
 .cargo_home/
 .DS_Store
 .leankg_backup/
