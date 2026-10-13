@@ -93,6 +93,9 @@ func cmdProjects(args []string) {
 	prune := fs.Bool("prune", false, "forget every registration whose DIRECTORY no longer exists (a CI fixture that cleaned up after itself)")
 	apply := fs.Bool("apply", false, "with --prune, actually forget the rows (default is a dry run that lists them)")
 	parseInterspersed("projects", fs, args, 0)
+	if *apply && !*prune {
+		fatalJSON(errors.New("--apply requires --prune"))
+	}
 
 	ctx := context.Background()
 	opts := portfolioOptions(*engine, resolveProjectDir(*project))
