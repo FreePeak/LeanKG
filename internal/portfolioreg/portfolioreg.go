@@ -430,6 +430,9 @@ func pathPresent(path string) bool {
 // state (the T0 manifest labels it StoreOnDisk=false and keeps the row).
 func Prune(ctx context.Context, o Options, dryRun bool) ([]string, error) {
 	projects, err := Projects(ctx, o)
+	if errors.Is(err, ErrNoRegistry) {
+		return []string{}, nil // an empty sweep, as FanOut reads a missing registry
+	}
 	if err != nil {
 		return nil, err
 	}
