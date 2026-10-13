@@ -436,7 +436,7 @@ func Prune(ctx context.Context, o Options, dryRun bool) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var gone []string
+	gone := []string{}
 	for _, p := range projects {
 		if !pathPresent(p.Dir) {
 			gone = append(gone, p.Dir)

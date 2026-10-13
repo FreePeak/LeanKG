@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -254,5 +255,52 @@ func TestProjectsPruneWithoutRegistry(t *testing.T) {
 	stdout, stderr, code = runCLI(t, "projects", "--prune", "--json")
 	if code != 0 || !strings.Contains(stdout, `"count": 0`) {
 		t.Fatalf("projects --prune --json without a registry: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// TestProjectsPruneJSONContract pins the machine-readable shape: pruned is always
+// an array (never null), and count and applied say what the run did.
+func TestProjectsPruneJSONContract(t *testing.T) {
+	t.Setenv(portfolioreg.DBPathEnv, filepath.Join(t.TempDir(), "portfolio.db"))
+	vanished := filepath.Join(t.TempDir(), "vanished")
+	if err := os.MkdirAll(vanished, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() { cmdRegisterProject([]string{vanished, "--name", "vanished"}) })
+	vanishedCanon, err := portfolioreg.Canonical(vanished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(vanished); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		want    []string
+		count   int
+		applied bool
+	}{
+		{"dry run", []string{"--prune", "--json"}, []string{vanishedCanon}, 1, false},
+		{"apply", []string{"--prune", "--apply", "--json"}, []string{vanishedCanon}, 1, true},
+		{"apply with nothing left", []string{"--prune", "--apply", "--json"}, []string{}, 0, true},
+	} {
+		out := captureStdout(t, func() { cmdProjects(tc.args) })
+		var got struct {
+			Pruned  *[]string `json:"pruned"`
+			Count   int       `json:"count"`
+			Applied bool      `json:"applied"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("%s: output %q: %v", tc.name, out, err)
+		}
+		if got.Pruned == nil {
+			t.Fatalf("%s: pruned is null or missing in %s; want an array", tc.name, out)
+		}
+		if !slices.Equal(*got.Pruned, tc.want) || got.Count != tc.count || got.Applied != tc.applied {
+			t.Errorf("%s: pruned=%v count=%d applied=%v; want %v, %d, %v",
+				tc.name, *got.Pruned, got.Count, got.Applied, tc.want, tc.count, tc.applied)
+		}
 	}
 }
