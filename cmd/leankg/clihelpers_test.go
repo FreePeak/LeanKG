@@ -32,6 +32,10 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv(portfolioreg.DBPathEnv, filepath.Join(regDir, "portfolio.db"))
+	// The engine is pinned for the same reason: an operator's LEANKG_DB_ENGINE
+	// or LEANKG_PG_URL must never route a test to a shared Postgres.
+	os.Setenv("LEANKG_DB_ENGINE", store.EngineSQLite)
+	os.Unsetenv("LEANKG_PG_URL")
 	buildDir := ""
 	if !testing.Short() {
 		var err error
@@ -56,6 +60,17 @@ func TestMain(m *testing.M) {
 	}
 	_ = os.RemoveAll(regDir)
 	os.Exit(code)
+}
+
+// TestSuitePinsSQLiteEngine: TestMain pins the engine for the whole process, so
+// no operator environment can route the --apply tests to a shared Postgres.
+func TestSuitePinsSQLiteEngine(t *testing.T) {
+	if got := os.Getenv("LEANKG_DB_ENGINE"); got != store.EngineSQLite {
+		t.Errorf("LEANKG_DB_ENGINE = %q in the test process; want %q", got, store.EngineSQLite)
+	}
+	if _, ok := os.LookupEnv("LEANKG_PG_URL"); ok {
+		t.Errorf("LEANKG_PG_URL is set in the test process; want it unset")
+	}
 }
 
 // cliBinary returns the shared binary path, skipping binary-level tests under
