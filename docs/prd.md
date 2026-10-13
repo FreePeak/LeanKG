@@ -67,7 +67,75 @@ it fuses with takes **327ms** on the same query — the gate is not the bottlene
 token reaches the arm and orders by specificity; a question of common words
 does not fire it). Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
 
- — a caller-chosen fusion weight is validated, applied, and not over-claimed (2026-10-11)
+### v4.15-retrieval-instrument — the bench got honest about what it measures (2026-10-13)
+
+> **Trigger:** the same loop sweep as the entry above, one iteration later. The
+> measurement instrument the rarity bound was derived from lived only on the
+> dormant #449 branch, and it was wrong in ways that read as retrieval findings.
+
+**Landed (#516):** `docs/retrieval-label-set.md` (84 questions, ground truth
+read by hand from this repository's own elements) and `scripts/retrieval-bench.py`
+— per-arm and fused scoring, so a bad fused answer says WHICH arm to fix.
+`scripts/retrieval-labels-corpus2.json` was **not** landed: it names elements of
+a different repository and carries material that must not be in this one.
+
+**The check the doc always claimed and nothing enforced:** a label whose element
+the store does not hold measures the LABEL, not the fusion, and it is now
+reported as **STALE** rather than as a retrieval miss. Building it found three
+defects, each of which had made it silently useless — the element probe read the
+wrong envelope key, it ran AFTER `s.close()`, and `--project` defaulted to `"."`,
+the worktree the script lives in (a store with 0 elements). The check then found
+the drift it exists for: `StandaloneDBPath` had moved to `internal/projectcfg`
+and `ftsQuery` to `internal/store`. Both labels repaired.
+
+**Landed (#517, open):** the bench stops on three ENVIRONMENT mistakes that read
+as retrieval results — a dead server (a `readline()` at EOF spun forever, so a
+server that never started printed nothing at all), a cold `--project`, and a
+vector arm that never ran because the collection's stamp does not match the
+provider (which reads as "the vector arm found nothing").
+
+**Measured, on the indexed checkout** (`bge-small-en-v1.5-384`, depth 30):
+vector 62/84 in-pool, keyword 17/84, fused 79/84, **0 stale**, 5 labels in
+neither arm. `LEANKG_EMBED_MODEL` must be the CATALOG id, not the `.gguf` file
+name the sidecar serves.
+
+**Leak repaired (#518, merged):** #515 had added
+`scripts/retrieval-labels-corpus2.json` to this PUBLIC repo although the session
+that merged it had already concluded it must not be there. It is deleted, and
+`retrieval-labels-*.json` is now ignored so the next harvested corpus cannot be
+committed by accident. The blob remains in the public history of its ancestors;
+rewriting that history is a separate, deliberate decision.
+
+### v4.15-ci-guard-interpreter — the guard builds the interpreter it needs (2026-10-13)
+
+> **Trigger:** #518 — a commit that deleted one unreferenced file — went red at
+> "Release workflow guards" with `error: externally-managed-environment` (PEP 668).
+
+The step's own comment said *"ubuntu runners ship PyYAML"*, but this job is
+**self-hosted**: the runner's launchd PATH puts `/opt/homebrew/bin` first, so
+`python3` is Homebrew 3.15, which has no PyYAML (3.14 and `/usr/local/bin` 3.12
+do), and pip3 refuses to install into it — the fallback could never succeed, and
+its failure read as "the guards found a violation" when nothing was wrong.
+
+**Fixed (#519, merged):** the step builds a throwaway venv under `$RUNNER_TEMP`
+with the one import, so it stops depending on what a given machine happens to
+have on PATH. A reader running the script by hand gets the same instructions in
+its docstring.
+
+**Also this wave:** the sidecar test readiness bound is env-overridable
+(`LEANKG_TEST_SIDECAR_TIMEOUT`, 120s on both test jobs) — same class and same fix
+as #488 — after the fake sidecar deadlined at 15s on a runner shared with the
+operator's own work while passing locally in 1.9-5.1s (#517).
+
+### v4.15-prd-truth — the changelog knew what it was, and said so halfway
+
+**Repaired in this commit:** four `### v4.15-*` headings had been replaced by a
+bare line, so each body sat orphaned under the entry above it and the section
+became ungreppable — `v4.15-fusion-weight` (whose title line was the whole
+orphan) plus `v4.15-doctor-truth`, `v4.15-empty-matches` and
+`v4.15-annotation-target`. Every heading restored; no body text changed.
+
+### v4.15-fusion-weight — a caller-chosen fusion weight is validated, applied, and not over-claimed (2026-10-11)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR (wave 17), and the
 > same class as #484: an argument the caller believes it set.
@@ -118,7 +186,7 @@ good ones accepted), `TestWeightIsNotClaimedByARungThatDoesNotUseIt`, and
 `0,1` drops, zero struct identical to unweighted). Gate: 62 packages ok,
 `go vet` clean, `gofmt` clean.
 
- — the diagnosis says "not indexed", not the syscall that noticed (2026-10-11)
+### v4.15-doctor-truth — the diagnosis says "not indexed", not the syscall that noticed (2026-10-11)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR, wave 24.
 
@@ -152,7 +220,7 @@ command named, and **neither** leak string present. RED first: the guard failed
 on both counts against the old sentence. Gate: 62 packages ok, `go vet` clean,
 `gofmt` clean.
 
- — an empty match set says why it is empty (2026-10-11)
+### v4.15-empty-matches — an empty match set says why it is empty (2026-10-11)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR. Wave 22 fixed
 > "null was two different claims"; the SHAPE half of that is already on main
@@ -186,7 +254,7 @@ normalisation it does not.
 fails it with "an empty matches answer carries no note". Gate: 62 packages ok,
 `go vet` clean, `gofmt` clean.
 
- — an annotation cannot attach to an element the index does not have (2026-10-11)
+### v4.15-annotation-target — an annotation cannot attach to an element the index does not have (2026-10-11)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR. Wave 16 of that
 > loop drove every verb the product exposes; this is the instance it called the
@@ -1406,4 +1474,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-13 (v4.15-name-arm-rarity: the name arm fired on 0 of 84 labelled questions because its gate was a SHAPE test (no whitespace) while agents ask in prose; it is now gated on corpus RARITY, implemented on both backends, at a bound swept from the labels (elements/5000: in-pool 73->80, top-1 50->49, versus elements/500's 77/84 firing and top-1 36). Also this loop: #514 args.weight validated+applied, #512 doctor says 'not indexed', #513 the duplicate-listener runbook)
+*Last updated: 2026-10-13 (v4.15-retrieval-instrument + v4.15-ci-guard-interpreter: the retrieval label set and its bench are in the tree, and the bench now reports a STALE label — an element the store cannot hold — instead of scoring it as a retrieval miss; 84 labels, 0 stale, vector 62/84 in-pool, keyword 17/84, fused 79/84. Also this loop: #517 makes the bench stop on the three ENVIRONMENT mistakes that read as retrieval results, #518 deleted the corpus2 that #515 had added to this PUBLIC repo and ignores retrieval-labels-*.json against a repeat, and #519 builds the venv the release guard needs instead of assuming a PATH python3 that has PyYAML.)*
