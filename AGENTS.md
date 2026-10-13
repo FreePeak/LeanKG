@@ -7,6 +7,8 @@
 ```bash
 make go-build            # CGO_ENABLED=0 binaries into bin/ (leankg, leankg-embed)
 make go-test             # go test ./... -count=1  (54 packages)
+go test ./internal/store/ -count=1                # one package
+go test ./internal/store/ -run TestWatermark -v   # one test; -run is an unanchored regex, so this matches TestWatermarkBumpsOnWrite (internal/store/store_test.go:215)
 make go-vet              # go vet ./...
 make go-bench            # benchmark/ab suite
 make go-build-tstree     # build with the tree-sitter tier (-tags tstree, CGO)
@@ -26,6 +28,13 @@ sidecar) or its own job (`ttfv`); **benchmarks (`make go-bench`,
 The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 300 s budget.
 
+### Testing conventions
+
+- Unit tests live in `_test.go` files beside the package they cover.
+- Fixtures live under `testdata/` (for example `internal/index/testdata/`).
+- Use `t.TempDir()` for tests that need filesystem access.
+- Tree-sitter tests need the `tstree` build tag (`internal/tstree/tstree_test.go:1`): `go test -tags tstree ./internal/tstree/ -count=1`.
+
 ## CLI Quick Reference
 
 |Command|Purpose|
@@ -34,11 +43,13 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 |`leankg index <dir> [--hook] [--no-embed]`|Index a repository (3-signal incremental). A git repo root with commits reads HEAD git objects (uncommitted/untracked/ignored files skipped; change detection by blob ID); a directory without its own `.git` or a repo with no commits keeps the filesystem scan. Then runs the incremental embed unless `--no-embed`; embed failure is reported, not fatal. `--hook` exits 0 without indexing when HEAD has more than `LEANKG_HOOK_MAX_FILES` (default 10000) indexable files (printing the manual `leankg index <dir>` to run instead), or when another index of the store is running; hook embed only attaches to a running local provider and skips (one `embed skipped:` line, exit 0) when more than `LEANKG_HOOK_MAX_EMBED` (default 500) elements need vectors|
 |`leankg writer --project <dir>`|Index-once + fsnotify reconcile loop (pairs with `serve --read-only`). For a git-backed store a new commit (change of `.git/logs/HEAD`) triggers a reindex; saving without committing does not change the graph|
 |`leankg query <text> [--kind name\|impact] [--depth N]`|CLI query (L1 exact → L2 fuzzy fallback; graph impact)|
+|`leankg impact <file> [--depth N]`|Impact radius of a file (same as `query <file> --kind impact`)|
 |`leankg-embed run\|full`|Incremental / stamp-guarded full embed (provider via `LEANKG_EMBED_*`). `leankg index` now runs the incremental embed itself|
 |`leankg-embed export\|import`|NDJSON offsite flow (pairs with `scripts/hf_embed_job.py`, the Hugging Face Job embedder). `import` stamps the collection exactly as the live provider would for the same `LEANKG_EMBED_*` environment, so a later `run` sees no drift; `--model/--revision/--dims/--distance` are optional and must agree with that environment|
 |`scripts/hf-embed.sh [--dry-run] [--yes] [--limit N] [--keep] <project-dir>`|EmbeddingGemma 2 bulk embed on a Hugging Face Job: export, upload to `LEANKG_HF_BUCKET`, `hf jobs uv run` of `scripts/hf_embed_job.py`, download, import. Without `--yes` it prints the estimate and exits 1; a run whose worst case (timeout x hourly price) exceeds `LEANKG_HF_MAX_USD` is refused. Configured by `LEANKG_HF_*`, `LEANKG_EMBED_*` and `HF_TOKEN` (see `.env.example`); never started by the session hook|
 |`leankg connect\|install --target claude\|cursor\|codex\|gemini\|opencode\|omp`|Client wiring (+ `--register-cwd` async SessionStart hook, matcher `startup\|resume`, running `leankg index --hook "$CLAUDE_PROJECT_DIR"`)|
 |`leankg doctor --project <dir>`|Store diagnostics|
+|`leankg status [--project <dir>]`|Health, inventory, freshness and embed state (JSON)|
 |`leankg dashboard [--addr 127.0.0.1:9701] [--no-open]`|Web dashboard (embedded `ui-dashboard`): per-session efficiency metrics, failures, memory, replay; `--format text\|json` keeps the usage tables|
 |`leankg telemetry status\|enable\|disable\|purge\|link\|import-ab`|Consent-gated capture (off by default) and transcript linking; see `docs/telemetry.md`|
 |`leankg metrics --session [--session-id ID]`|Latest (or named) agent session from the telemetry ledger|
@@ -107,6 +118,9 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 |`internal/sessionlink/`|read-only, consent-gated linking of calls to agent transcripts (one adapter per client)|
 |`internal/dashboard/`, `ui-dashboard/`|`leankg dashboard` server + SPA (`make go-ui-dashboard` builds and embeds it)|
 |`internal/tstree/`|vendored generated grammars (objc/dart/perl) — build-tag gated|
+|`internal/langs/`|language registry: which languages are indexed, and lazy activation per codebase|
+|`benchmark/ab/`|A/B benchmark harness (seeded `testing.B` suites, run with `make go-bench`)|
+|`ui-v2/`|graph explorer SPA (Vite + React); `make go-ui-assets` builds it into `internal/web/embed`|
 
 ## Multi-project setup
 
