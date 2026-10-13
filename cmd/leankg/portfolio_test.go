@@ -254,6 +254,38 @@ func TestProjectsPruneWithoutRegistry(t *testing.T) {
 	}
 }
 
+// TestProjectsUnreadableRegistryIsAnError: a registry file that exists but cannot
+// be stat'ed (EACCES from a locked parent) is a fault, not "no registry". Read as
+// "no registry" it printed a clean sweep and an empty listing over a registry the
+// verb never read.
+func TestProjectsUnreadableRegistryIsAnError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions, so the stat cannot fail")
+	}
+	parent := filepath.Join(t.TempDir(), "locked")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	registry := filepath.Join(parent, "portfolio.db")
+	if err := os.WriteFile(registry, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+	t.Setenv(portfolioreg.DBPathEnv, registry)
+
+	stdout, stderr, code := runCLI(t, "projects", "--prune")
+	if code != 1 || strings.Contains(stdout, "nothing to prune") || !strings.Contains(stderr, "permission denied") {
+		t.Errorf("projects --prune: exit %d, stdout %q, stderr %q; want exit 1 and the stat error", code, stdout, stderr)
+	}
+	stdout, stderr, code = runCLI(t, "projects")
+	if code != 1 || strings.Contains(stdout, "no projects registered") || !strings.Contains(stderr, "permission denied") {
+		t.Errorf("projects: exit %d, stdout %q, stderr %q; want exit 1 and the stat error", code, stdout, stderr)
+	}
+}
+
 // TestProjectsPruneJSONContract pins the machine-readable shape: pruned is always
 // an array (never null), and count and applied say what the run did.
 func TestProjectsPruneJSONContract(t *testing.T) {

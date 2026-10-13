@@ -160,7 +160,12 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 		}
 		if mode == store.RO {
 			if _, err := os.Stat(path); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrNoRegistry, path)
+				// Only a registry proven absent (ENOENT) is "no registry"; EACCES and
+				// other stat failures are faults, never an empty fleet.
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil, fmt.Errorf("%w: %s", ErrNoRegistry, path)
+				}
+				return nil, fmt.Errorf("portfolioreg: open registry: %w", err)
 			}
 		}
 		st, err := store.Open(path, mode)
