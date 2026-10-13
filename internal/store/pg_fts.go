@@ -508,6 +508,18 @@ func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float
 		}
 	}
 
+	// The name arm, for parity with SQLite (see hybrid_sqlite.go for the
+	// measurement that motivated it: the shape gate fired on 0 of 84 labelled
+	// questions because agents ask in prose, so the gate is corpus rarity).
+	if matches, err := s.FindByNameToken(query, window); err == nil && len(matches) > 0 {
+		keys := make([]string, 0, len(matches))
+		for _, m := range matches {
+			record(m.Element.QualifiedName, m.Element)
+			keys = append(keys, m.Element.QualifiedName)
+		}
+		lists = append(lists, RankList{Name: ArmName, Keys: keys})
+	}
+
 	if len(lists) == 0 {
 		return nil, "", kwErr
 	}

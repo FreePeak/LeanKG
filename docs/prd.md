@@ -10,7 +10,64 @@
 
 ## Changelog
 
-### v4.15-args-weight — a caller-chosen fusion weight is validated, applied, and not over-claimed (2026-10-11)
+### v4.15-name-arm-rarity — the name arm fires on prose, at a MEASURED bound (2026-10-13)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR. Its wave 17
+> replaced the name arm's gate; this is that change, re-derived on today's code
+> and re-measured rather than inherited.
+
+**The defect, measured on main over all 84 labelled questions in
+`docs/retrieval-label-set.md`:** the name arm fired on **ZERO** of them. It
+required a query with no whitespace — a bare symbol name — and agents ask in
+prose ("take the single-flight lock for embedding"), where the informative token
+is a plain lowercase word (`lock`, `stamp`, `runes`). A shape gate rejects
+exactly the tokens the arm exists for.
+
+**What changed:** the gate is now RARITY IN THIS CORPUS — a token that appears
+in many symbol names discriminates nothing; a rare one is the name the agent
+typed. Two filters: a small function-word list (deliberately not "English",
+because every word such a list omits is a real symbol name somewhere), then the
+rarity bound. Both backends implement it, and the arm is fused in the same
+`FuseRRF` as the vector and keyword arms.
+
+**The bound is swept, not guessed.** With the shape gate as control (top-1
+50/84, in-pool 73/84), on 10,885 elements:
+
+| bound | arm fired | top-1 | in-pool |
+|---|---|---|---|
+| 2 | 31/84 | 49 | **80** |
+| 5 | 48/84 | 44 | 80 |
+| 21 | 77/84 | 36 | 80 |
+
+The arm's **gain is bound-independent** — in-pool 73 → 80, it finds the answer
+in seven questions neither the keyword nor the vector arm reaches — while its
+**cost grows with the bound**: at 21 it fires on 77 of 84 questions and dilutes
+the top of the fusion by 14. `elements/5000` (bound 2 here) keeps nearly all of
+the gain for one point of top-1.
+
+**Two mistakes this change made and corrected, both by measuring:**
+
+1. The first rarity table counted TOKENS per distinct name (`GROUP BY name`),
+   which sees only exact repeats (Results ×29) and calls `read` rare — while the
+   LIKE it gates matches `read` as a SUBSTRING of 347 names. The table and the
+   query must measure the same thing; the count is now substring containment.
+2. A `bound := 5 // SWEEP` edit landed inside the COUNT function instead of the
+   comparison, so every token's count capped at 6 and a four-way sweep read
+   identical — a measurement that measured nothing. Fixed, and the sweep then
+   showed the real trade-off above.
+
+**Not re-landed:** #449's own `elements/500` (bound 21) — measured worse here,
+and the threshold is a corpus property, so it ships as `elements/5000` with
+`LEANKG_NAME_ARM_BOUND` to re-sweep per project.
+
+**Cost:** the new arm takes **49ms** on a prose question where the keyword arm
+it fuses with takes **327ms** on the same query — the gate is not the bottleneck.
+
+**Verified:** `TestFindByNameTokenFiresOnProse` (a prose question with a rare
+token reaches the arm and orders by specificity; a question of common words
+does not fire it). Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
+
+ — a caller-chosen fusion weight is validated, applied, and not over-claimed (2026-10-11)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR (wave 17), and the
 > same class as #484: an argument the caller believes it set.
@@ -1349,4 +1406,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-11 (v4.15-args-weight: `args.weight` was accepted in every shape and silently ignored — `banana`, `0,0` and even a well-formed `3,1` left retrieval.weight absent and the ranking byte-identical (the #484 class). Now validated before the ladder, applied through a WeightedHybridSearcher capability, and reported ONLY by the rung that uses it: my first version let an L0 answer claim weight=3,1. Also this loop: #512 doctor says 'not indexed', #513 the duplicate-listener runbook, #511 ontology note, #510 annotate/link refuse, #509 lesson content, #508 notes readable, #507 lessons readable)
+*Last updated: 2026-10-13 (v4.15-name-arm-rarity: the name arm fired on 0 of 84 labelled questions because its gate was a SHAPE test (no whitespace) while agents ask in prose; it is now gated on corpus RARITY, implemented on both backends, at a bound swept from the labels (elements/5000: in-pool 73->80, top-1 50->49, versus elements/500's 77/84 firing and top-1 36). Also this loop: #514 args.weight validated+applied, #512 doctor says 'not indexed', #513 the duplicate-listener runbook)
