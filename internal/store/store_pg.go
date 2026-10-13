@@ -300,6 +300,98 @@ func (s *PGStore) FindExact(name string) ([]Element, error) {
 	return pgScanElements(rows)
 }
 
+// nameTokenCounts is the rarity table the name arm gates on, on PostgreSQL.
+// Same query, same bound, same meaning as the SQLite one: a token must be rare
+// among symbol names to be worth a name search, and the bound is a fraction of
+// the ELEMENT count. The count is what the LIKE will MATCH (a SUBSTRING of the
+// name), and it stops at bound+1 because only the comparison matters.
+func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
+	var total int
+	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	bound := total / 500
+	if bound < 2 {
+		bound = 2
+	}
+	counts := map[string]int{}
+	for _, t := range toks {
+		pat := "%" + t + "%"
+		var n int
+		if err := s.pool.QueryRow(pgCtx,
+			`SELECT COUNT(*) FROM (SELECT 1 FROM code_elements WHERE name ILIKE $1 OR qualified_name ILIKE $1 LIMIT $2)`,
+			pat, bound+1).Scan(&n); err != nil {
+			return nil, 0, err
+		}
+		counts[t] = n
+	}
+	return counts, total, nil
+}
+
+// rareNameTokens is the shared gate (see the SQLite implementation for the
+// measurement that motivated it).
+func (s *PGStore) rareNameTokens(query string) ([]string, error) {
+	toks := nameTokens(query)
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	counts, total, err := s.nameTokenCounts(toks)
+	if err != nil {
+		return nil, err
+	}
+	bound := total / 500
+	if bound < 2 {
+		bound = 2
+	}
+	out := toks[:0]
+	for _, t := range toks {
+		if counts[t] > bound {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// FindByNameToken is the ArmName ranking arm on PostgreSQL: elements whose
+// SYMBOL NAME contains a rare token of the query, shortest name first. Same
+// contract as the SQLite arm.
+func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
+	toks, err := s.rareNameTokens(query)
+	if err != nil {
+		return nil, err
+	}
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var where []string
+	var args []any
+	for i, t := range toks {
+		where = append(where, fmt.Sprintf("(ce.name ILIKE $%d OR ce.qualified_name ILIKE $%d)", i+1, i+1))
+		args = append(args, "%"+t+"%")
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce
+		WHERE `+strings.Join(where, " OR ")+`
+		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
+		LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	els, err := pgScanElements(rows)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FuzzyMatch, 0, len(els))
+	for _, e := range els {
+		out = append(out, FuzzyMatch{Element: e})
+	}
+	return out, nil
+}
+
 // FindFuzzy implements the L2 rung's degraded arm: literal-substring recall
 // over name/qualified_name with no ranking signal at all.
 // Divergence from sqlite (documented): FTS5 provides bm25 ranking, which a

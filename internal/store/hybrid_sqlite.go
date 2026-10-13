@@ -95,22 +95,27 @@ func (s *Store) HybridSearchScopedWeighted(modelID, query string, qvec []float32
 			lists = append(lists, RankList{Name: ArmFTS5, Keys: keys})
 		}
 	}
-	// The name arm: the exact L1 lookup, fused in. Without it, a bare symbol
-	// name — the commonest question an agent asks — is ranked by the vector and
-	// keyword arms, which read content and not the name column. Measured on a
-	// real 10,000-element store: the exact symbol for "MultiProject" ranked 9th
-	// of 10 at L3, behind four functions that merely sounded related.
-	if name := strings.TrimSpace(query); name != "" && !strings.ContainsAny(name, " \t\n") {
-		if exact, err := s.FindExact(name); err == nil && len(exact) > 0 {
-			keys := make([]string, 0, len(exact))
-			for _, e := range exact {
-				if _, ok := byQN[e.QualifiedName]; !ok {
-					byQN[e.QualifiedName] = &HybridHit{Element: e}
-				}
-				keys = append(keys, e.QualifiedName)
+	// The name arm: symbol-name evidence fused in, gated on RARITY in this
+	// corpus rather than on the query's shape.
+	//
+	// The shape gate this replaces required a query with no whitespace — a bare
+	// symbol name — and measured on all 84 labelled questions in
+	// docs/retrieval-label-set.md it fired on ZERO of them, because agents ask
+	// in prose ("take the single-flight lock for embedding") and the
+	// informative token is a plain lowercase word (`lock`, `stamp`, `runes`).
+	// Rarity asks the right question instead: does this token appear in so many
+	// symbol names that it discriminates nothing? On this repository's 10,885
+	// elements `read` is in 347 names and `stamp` in 33, so the same bound
+	// rejects the first and keeps the second.
+	if matches, err := s.FindByNameToken(query, window); err == nil && len(matches) > 0 {
+		keys := make([]string, 0, len(matches))
+		for _, m := range matches {
+			if _, ok := byQN[m.Element.QualifiedName]; !ok {
+				byQN[m.Element.QualifiedName] = &HybridHit{Element: m.Element}
 			}
-			lists = append(lists, RankList{Name: ArmName, Keys: keys})
+			keys = append(keys, m.Element.QualifiedName)
 		}
+		lists = append(lists, RankList{Name: ArmName, Keys: keys})
 	}
 	if len(lists) == 0 {
 		return nil, "", nil

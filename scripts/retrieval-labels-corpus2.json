@@ -1,0 +1,410 @@
+[
+ [
+  "cmd/qa-agent/clean.go::cleanConfigValue",
+  "reads one config key, treating \"absent\" as empty"
+ ],
+ [
+  "cmd/qa-agent/doctor_targets.go::checkProfileTargets",
+  "dials every dialable target of one profile and returns human-readable results plus a failure count"
+ ],
+ [
+  "cmd/qa-agent/echo_bsd.go::readLineNoEcho",
+  "prints prompt to stderr, reads one line from the terminal attached to fd with echo disabled, and restores the original attributes. It returns the line without the trailing newline"
+ ],
+ [
+  "cmd/qa-agent/echo_linux.go::readLineNoEcho",
+  "prints prompt to stderr, reads one line from the terminal attached to fd with echo disabled, and restores the original attributes. It returns the line without the trailing newline"
+ ],
+ [
+  "cmd/qa-agent/echo_other.go::readLineNoEcho",
+  "is a stub on unsupported platforms; piped stdin still works"
+ ],
+ [
+  "cmd/qa-agent/eval.go::validMetricThreshold",
+  "checks the SHAPE of a --metric-threshold value. The name itself belongs to the sidecar's catalogue, which rejects an unknown name or a deterministic gate as bad input"
+ ],
+ [
+  "cmd/qa-agent/fetch.go::ingestConfigFromStore",
+  "builds ingest.Config from the store's config keys, with environment variable overrides"
+ ],
+ [
+  "cmd/qa-agent/heal.go::absentConfig",
+  "reports the one ConfigGet failure that is not a problem: a key nobody ever set, as opposed to a store that cannot answer"
+ ],
+ [
+  "cmd/qa-agent/install.go::installScope",
+  "validates --project and resolves it to an agents.Scope. The confinement rule lives in agents.CheckProject"
+ ],
+ [
+  "cmd/qa-agent/main.go::openStore",
+  "opens the SQLite store at the global --db path"
+ ],
+ [
+  "cmd/qa-agent/mcp.go::mcpRepoRoot",
+  "is the operator's side of plan_ticket's repository confine"
+ ],
+ [
+  "cmd/qa-agent/plan.go::printPackReview",
+  "renders the context pack before generation: ACs, journey outline, endpoint mapping, scan provenance, drift notes"
+ ],
+ [
+  "cmd/qa-agent/plan_import.go::validateImportedPlan",
+  "keeps a hand-authored file from silently producing an unrunnable plan: every case needs an id and at least one step, and every step needs to be either an HTTP call"
+ ],
+ [
+  "cmd/qa-agent/report.go::reportBaseURL",
+  "resolves the run environment's base_url, which turns each step's persisted request path into a runnable absolute URL in its cURL block. A run whose env profile was renamed or deleted is still reportable"
+ ],
+ [
+  "cmd/qa-agent/run.go::progressStore.Unwrap",
+  "lets narrow store accessors"
+ ],
+ [
+  "cmd/qa-agent/serve.go::servePlanner",
+  "is the dashboard's guided first run: the same buildPlan the CLI command runs, with the terminal rendering dropped. The repo to scan comes from the request"
+ ],
+ [
+  "cmd/qa-agent/setup.go::describe",
+  "names what was written, without echoing secret values"
+ ],
+ [
+  "cmd/qa-agent/show.go::printCaseHistory",
+  "prints each case's run-history classification and its last N recorded statuses"
+ ],
+ [
+  "cmd/qa-agent/skill_sync.go::skillCommandNames",
+  "lists every runnable command name in the real CLI tree, depth-first, deduplicated and sorted"
+ ],
+ [
+  "cmd/qa-agent/ticket.go::ticketArg",
+  "is the PreRunE of every command that names a stored plan by ticket: a pasted Jira issue URL becomes its issue key before the command reads the argument, so a ticket may be entered as a key or as the link Jira hands out anywhere qa-agent asks for one. Generation needs no wiring here"
+ ],
+ [
+  "internal/agents/agents.go::Home",
+  "returns the current user's home directory, or \"\" when it cannot be resolved"
+ ],
+ [
+  "internal/eval/eval.go::Options",
+  "is one audit request, straight off the CLI flags"
+ ],
+ [
+  "internal/eval/records.go::MetricState",
+  "classifies one record. The order is the contract: error and skipped are read before any score, because a record that produced no verdict must not be scored into pass or fail"
+ ],
+ [
+  "internal/eval/trend.go::Trend.Lines",
+  "renders the trend for the operator: one line of provenance, then one line per metric in name order"
+ ],
+ [
+  "internal/exec/allure.go::allureSpan",
+  "converts a step's persisted timestamp and observed latency into Allure's epoch-millisecond pair. ok=false for a row with no timestamp: the document then carries no timing rather than a fabricated one"
+ ],
+ [
+  "internal/exec/binding.go::binder.resolve",
+  "expands placeholders in s. Unknown names and failed credential lookups are errors"
+ ],
+ [
+  "internal/exec/checks.go::PingMySQL",
+  "dials the DSN and returns round-trip latency for health checks"
+ ],
+ [
+  "internal/exec/comment.go::firstLine",
+  "is the one-line summary of a multi-line failure"
+ ],
+ [
+  "internal/exec/datafactory.go::Factory.hexN",
+  "returns n hex characters drawn from r"
+ ],
+ [
+  "internal/exec/executor.go::sendOnce",
+  "sends the request exactly once and reads up to wireBodyLimit bytes"
+ ],
+ [
+  "internal/exec/jsonpath.go::asFloat",
+  "coerces a JSON-decoded value or expectation to float64 for the numeric comparison assertion"
+ ],
+ [
+  "internal/exec/junit.go::verdictSuite",
+  "renders the run's structured verdict as a one-testcase suite: PASS is clean with the reasoning as system-out, FAIL and UNVERIFIED report a <failure>, ERROR"
+ ],
+ [
+  "internal/exec/playground_api.go::PlaygroundResolve",
+  "expands {{cred:\u2026}} placeholders in s using the store"
+ ],
+ [
+  "internal/exec/report.go::buildCurl",
+  "renders one persisted step request as a POSIX curl command line.  Masking reuses the evidence-log rules and nothing else: the URL and body go through model.RedactString with model.DefaultRedactions, and the header lines come from formatHeaders"
+ ],
+ [
+  "internal/exec/repro.go::reproHalf",
+  "is one case that claimed a side of the pair, with the evidence this run persisted for it"
+ ],
+ [
+  "internal/exec/ui.go::CloseUISession",
+  "ends the shared browser session. The CLI never calls it"
+ ],
+ [
+  "internal/exec/verdict.go::failDetail",
+  "appends the first failing assertion of a result to its step ref"
+ ],
+ [
+  "internal/ingest/adf.go::adfNode.lines",
+  "renders the node subtree as plain-text lines"
+ ],
+ [
+  "internal/ingest/client.go::parseTicket",
+  "decodes the Jira tool response into a TicketRef. Servers differ in shape"
+ ],
+ [
+  "internal/ingest/comment.go::remoteIngestor.CommentTicket",
+  "implements Commenter on the MCP client. The arguments follow the live-verified `jira_add_comment` schema"
+ ],
+ [
+  "internal/ingest/ingest.go::Config",
+  "selects the Atlassian MCP transport.  Scheme \"remote\": Streamable-HTTP JSON-RPC 2.0 to MCPEndpoint"
+ ],
+ [
+  "internal/ingest/journey.go::cutOrdered",
+  "strips \"N.\" / \"N)\" returning the text and parsed number"
+ ],
+ [
+  "internal/ingest/jsonrpc.go::jsonRPCClient.ensureSession",
+  "performs the MCP initialize handshake once and captures the server-assigned mcp-session-id header required by stateful servers"
+ ],
+ [
+  "internal/ingest/key.go::TicketKey",
+  "reduces a ticket input to its ticket key: a pasted Jira issue URL"
+ ],
+ [
+  "internal/ingest/normalize.go::stemMatchesAC",
+  "checks exact equality against the AC heading stems"
+ ],
+ [
+  "internal/ingest/query.go::JiraQuery",
+  "reduces a pasted sprint/board input to the JQL it stands for: a Jira board or list URL yields its `jql` query parameter, URL-decoded; anything else is returned trimmed and unchanged, so a raw JQL string passes through as itself.  It is the query sibling of TicketKey, and the same rule: the human pastes how tickets actually get shared, and one function decides what they meant. A board URL with no jql parameter"
+ ],
+ [
+  "internal/ingest/search.go::JiraIssue",
+  "is one search hit from a Jira JQL query. It is a dashboard-level summary"
+ ],
+ [
+  "internal/llm/client.go::ResolveFrom",
+  "assembles a Config from store settings, overridden by the QA_AGENT_LLM_* environment variables"
+ ],
+ [
+  "internal/mcp/evidence.go::redactor",
+  "masks credential material on a read path. It carries the executor's own pattern set"
+ ],
+ [
+  "internal/mcp/mcp.go::server.planResult",
+  "projects a plan into tool output, sharing the CLI's AC matrix. Step headers and bodies are masked on the way out: a plan is supposed to hold {{cred:name}} references rather than values, but this is a read path and does not have to trust that"
+ ],
+ [
+  "internal/model/assertion.go::AssertionKind",
+  "is one assertion type the executor understands. The table below is the single source of the assertion vocabulary: the plan validator accepts exactly these types, the generation prompt advertises exactly these shapes, and the executor dispatch implements them.  It is data, not behaviour: evalAssertions' switch stays the reference implementation of each type's semantics. A kind the executor does not implement fails the parity test in internal/exec; a kind missing from the validator or the prompt fails the parity tests in internal/plan"
+ ],
+ [
+  "internal/model/people.go::Work",
+  "is one item on one user's list: a Jira issue, a GitHub issue, or something typed in by hand"
+ ],
+ [
+  "internal/model/proves.go::ReproHalf",
+  "reads a `proves` tag slot for the reproduction pairing: ProvesTagBefore, ProvesTagAfter, or \"\" when the slot claims neither.  `slot` is the tag together with its description"
+ ],
+ [
+  "internal/model/redact.go::RedactString",
+  "applies redaction patterns to s. Invalid patterns are skipped"
+ ],
+ [
+  "internal/model/ui.go::UIActionTypes",
+  "is the accepted Action.Type vocabulary. Keep in sync with exec.runUIActions, which rejects anything else as a plan error rather than guessing"
+ ],
+ [
+  "internal/plan/cases.go::userPrompt",
+  "assembles the generation request. authzSurface is the rendered ownership inference"
+ ],
+ [
+  "internal/plan/contract.go::Builder",
+  "produces the context pack and generated cases for a ticket"
+ ],
+ [
+  "internal/plan/heal.go::HealChange",
+  "is one proposed path edit, plus the validator's verdict on it. Violations is empty when the edited case still passes static plan validation; non-empty means the proposal is shown but --apply must refuse"
+ ],
+ [
+  "internal/plan/matrix.go::MatrixRow",
+  "is one line of the AC traceability matrix: an AC, every generated case that covers it, and how many of those cases fall in each coverage category. Categories are derived at build time from the cases themselves"
+ ],
+ [
+  "internal/plan/ownership.go::Ownership.Required",
+  "reports the endpoints the generation prompt must demand a cross-principal case for: eligible and groundable in the pack"
+ ],
+ [
+  "internal/plan/repro.go::reproViolations",
+  "returns every fatal defect in the reproduction half a case claims to be. The checks key off the tag alone, so an untagged case is judged exactly as it was before #19"
+ ],
+ [
+  "internal/plan/validate.go::emptyBindingViolation",
+  "flags malformed {{}} references in path, headers, or body"
+ ],
+ [
+  "internal/scan/gohelpers.go::joinPath",
+  "joins a group prefix and a route path the way routers do"
+ ],
+ [
+  "internal/scan/gorange.go::goScanner.authFor",
+  "returns the name of the longest auth rule covering path"
+ ],
+ [
+  "internal/scan/javarange.go::packageOf",
+  "reads a file's `package com.example.shop;` declaration"
+ ],
+ [
+  "internal/scan/openapi.go::responseSchema",
+  "picks the lowest-numbered 2xx response as the happy-path schema and collects every response status code into the Errors list"
+ ],
+ [
+  "internal/scan/pythonrange.go::pyScan.decorate",
+  "records one decorator registration, its handler and its auth"
+ ],
+ [
+  "internal/scan/scan.go::Scanner",
+  "produces a model.ApiSurface for the repository at dir. dir may be a bare directory or a git work tree; Commit is filled from git when available"
+ ],
+ [
+  "internal/scan/scanner.go::language.String",
+  "names the extractor for diagnostics and error text"
+ ],
+ [
+  "internal/scan/scope.go::scope.lookupPrefix",
+  "resolves a router variable to its accumulated prefix"
+ ],
+ [
+  "internal/scan/testdata/goapp/http_routes.go::CreateUserRequest",
+  "is bound from the JSON body of the user-creation route"
+ ],
+ [
+  "internal/scan/tsrange.go::tsScan.nestRoutes",
+  "records the routes of one decorated class method"
+ ],
+ [
+  "internal/scan/walker.go::walker.authFor",
+  "returns the longest registered auth rule covering path"
+ ],
+ [
+  "internal/setup/setup.go::Values",
+  "is a setup write. Every empty field means \"leave what is stored alone\""
+ ],
+ [
+  "internal/stepmode/loop.go::lineLoop.readEdit",
+  "collects a replacement payload inline: JSON lines terminated by a line containing only \".\""
+ ],
+ [
+  "internal/stepmode/session.go::findCase",
+  "locates a case by ID in a plan"
+ ],
+ [
+  "internal/stepmode/tui.go::isTerminal",
+  "reports whether f is attached to a character device"
+ ],
+ [
+  "internal/store/baseline.go::BaselinesFrom",
+  "adapts the Store returned by Open to the narrow Baselines surface. ok is false for any other implementation"
+ ],
+ [
+  "internal/store/env_admin.go::EnvAdminFrom",
+  "adapts the Store returned by Open to EnvAdmin. ok is false for any other implementation, including a wrapper that does not expose its inner store via `Unwrap"
+ ],
+ [
+  "internal/store/eval_audit_metric.go::EvalAuditMetric",
+  "is one metric's outcome inside one persisted audit"
+ ],
+ [
+  "internal/store/migrate.go::sqliteStore.migrate",
+  "creates the schema_migrations bookkeeping table and applies every pending migration, each in its own transaction"
+ ],
+ [
+  "internal/store/people.go::PeopleFrom",
+  "returns the people surface behind st, if it has one"
+ ],
+ [
+  "internal/store/run_index.go::RunIndexFrom",
+  "adapts the Store returned by Open to the narrow RunIndex interface. ok is false for any other implementation, so callers must treat the index as a convenience and fall back to ListRuns when it is absent"
+ ],
+ [
+  "internal/store/run_verdict.go::RunVerdictFrom",
+  "adapts the Store returned by Open to RunVerdictStore. ok is false for any other implementation. A wrapper that exposes the store it wraps via `Unwrap"
+ ],
+ [
+  "internal/store/scan_cache.go::CachedScan",
+  "is one stored scan plus the provenance it is keyed by"
+ ],
+ [
+  "internal/store/sqlite.go::sqliteStore.ExportTo",
+  "copies the database to path. Credential rows are dropped from the copy unless includeSecrets is true; in either mode only encrypted blobs move, never plaintext"
+ ],
+ [
+  "internal/tools/cdcmock/main.go::encodeAdsEvent",
+  "builds the exact bytes the CDC connector publishes"
+ ],
+ [
+  "internal/tools/seed19347/main.go::v1MenuForbidden",
+  "post FOOD-19352: pilot merchants"
+ ],
+ [
+  "internal/tools/seedadsflow/main.go::restaurantListCSV",
+  "builds the base64 CSV body field create_ad_campaign expects: proto bytes -> JSON base64; CSV = header row + one ID per row"
+ ],
+ [
+  "internal/tools/seedcdcprobe/main.go::evidenceStep",
+  "records a result set without asserting a shape: the value of this probe is the recorded rows themselves, and a brittle assertion would make the handoff probe fail cosmetically"
+ ],
+ [
+  "internal/tools/seedghostrepro/main.go::ensureProfileEnv",
+  "pre-configures the keys this plan needs, idempotently: the gateway edge, the two tunnel DSNs, and the full Cadence triple so the Setup sheet's Cadence HTTP base / domain are populated rather than blank. Credentials stay as {{cred:\u2026}} bindings, so nothing secret lands here. Overrides already present survive"
+ ],
+ [
+  "internal/tools/seedmenuall/main.go::step",
+  "is a shorthand for building a plan step"
+ ],
+ [
+  "internal/tools/seedmenuevidence/main.go::ensureStage",
+  "pins the profile keys this plan needs, leaving any value already set alone so a locally tailored profile is never overwritten"
+ ],
+ [
+  "internal/ui/ui.go::Playwright.call",
+  "invokes one tool and returns its text content. A tool-level error"
+ ],
+ [
+  "internal/webui/agents.go::Server.projectScope",
+  "resolves a ?project=/--project value into an agents.Scope, confined by the shared rule in agents.CheckProject"
+ ],
+ [
+  "internal/webui/apistatus.go::normalizeAPIPath",
+  "strips the query string and the Kong service prefix so the same endpoint recorded through be-merchant-gateway, be-food-gateway, or directly lands on one row"
+ ],
+ [
+  "internal/webui/envs.go::Server.handleProfileDelete",
+  "removes a profile's keys. Refusing the profile `run` defaults to when no --env is given keeps a one-click save from stranding every bare `qa-agent run` on the machine; the answer is to configure a different default, not to delete this one"
+ ],
+ [
+  "internal/webui/events.go::subscriber",
+  "is one open stream: a pending set of dirty topics plus a one-slot kick. A save can dirty several collections at once, so the topics accumulate rather than compete for one slot"
+ ],
+ [
+  "internal/webui/people.go::profileView",
+  "is one person's page: the profile, their team, their works, and what qa-agent has done as them"
+ ],
+ [
+  "internal/webui/planrun.go::Server.handlePlanStatus",
+  "reports one ticket's planning state, so a client that missed the event"
+ ],
+ [
+  "internal/webui/setup.go::setupView",
+  "is the panel's whole state: what is ready, and what is stored"
+ ],
+ [
+  "internal/webui/tasks.go::parseGhIssues",
+  "maps `gh issue list --json` output to dashboard tasks"
+ ]
+]
