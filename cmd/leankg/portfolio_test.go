@@ -304,3 +304,13 @@ func TestProjectsPruneJSONContract(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectsApplyRequiresPrune: --apply on its own would fall through to the
+// listing and ignore the flag, which reads like a sweep that ran.
+func TestProjectsApplyRequiresPrune(t *testing.T) {
+	t.Setenv(portfolioreg.DBPathEnv, filepath.Join(t.TempDir(), "missing.db"))
+	stdout, stderr, code := runCLI(t, "projects", "--apply")
+	if code != 1 || !strings.Contains(stderr, "--apply requires --prune") || stdout != "" {
+		t.Fatalf("projects --apply: exit %d, stdout %q, stderr %q; want exit 1 and the usage error", code, stdout, stderr)
+	}
+}
