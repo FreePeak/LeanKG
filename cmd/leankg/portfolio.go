@@ -128,7 +128,7 @@ func cmdProjects(args []string) {
 			verb = "forgot"
 		}
 		if *jsonOut {
-			printJSON(map[string]any{verb: gone, "count": len(gone), "applied": *apply})
+			printJSON(map[string]any{"pruned": gone, "count": len(gone), "applied": *apply})
 			return
 		}
 		if len(gone) == 0 {
