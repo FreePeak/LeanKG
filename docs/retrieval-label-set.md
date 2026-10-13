@@ -31,6 +31,12 @@ arm and would measure nothing but the indexer's extractor. Every label below was
 checked against the live store with `select count(*) from code_elements where
 qualified_name=...` — a label that returns 0 is replaced, not tolerated.
 
+The bench now CHECKS this itself: a label whose element the store does not hold
+is reported as **STALE** rather than as a retrieval miss, because it measures the
+label and not the fusion. Two labels were stale when the check first ran on
+today's tree — `StandaloneDBPath` had moved to `internal/projectcfg`, `ftsQuery`
+to `internal/store` — which is exactly the drift it exists to catch.
+
 ## Where the answers were
 
 Each label is annotated with the file and line range, so a disputed label is
@@ -46,7 +52,7 @@ checkable rather than arguable.
 | 4 | report how many bytes the freelist holds | `internal/store/maintenance.go::Store.Space` | maintenance.go |
 | 5 | hand free pages back one page at a time | `internal/store/maintenance.go::Store.IncrementalVacuum` | maintenance.go |
 | 6 | adopt incremental vacuum in the header | `internal/store/maintenance.go::Store.ensureIncrementalVacuum` | maintenance.go |
-| 7 | resolve the configured sqlite store path | `internal/store/standalone.go::StandaloneDBPath` | standalone.go |
+| 7 | resolve the configured sqlite store path | `internal/projectcfg/projectcfg.go::StandaloneDBPath` | projectcfg.go |
 | 8 | list the files the indexer would take | `internal/index/walk.go::SupportedFiles` | walk.go |
 | 9 | the vector rung of the retrieval ladder | `internal/core/core.go::Engine.rungSemantic` | core.go |
 | 10 | freshness label from watermark and snapshot | `internal/store/backend.go::Freshness` | backend.go |
@@ -59,7 +65,7 @@ checkable rather than arguable.
 | 18 | compose the model stamp for a provider | `internal/embed/run.go::StampOf` | run.go |
 | 19 | which arm does a weighted fusion read its weight from | `internal/store/pg_fts.go::FuseRRFWeights.armWeight` | pg_fts.go |
 | 20 | the fraction of elements that hold vectors | `internal/embed/run.go::coverage` | run.go |
-| 21 | where the memory search reads from | `internal/memory/search.go::ftsQuery` | search.go |
+| 21 | where the memory search reads from | `internal/store/elements.go::ftsQuery` | search.go |
 | 22 | rank a single arm's list of document keys | `internal/store/pg_fts.go::RankList` | pg_fts.go |
 | 23 | which type is one fused result row | `internal/store/pg_fts.go::FusedHit` | pg_fts.go |
 | 24 | cut a string to n runes for the sidecar budget | `internal/embed/run.go::truncateRunes` | run.go |
