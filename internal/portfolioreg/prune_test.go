@@ -120,3 +120,45 @@ func TestPruneForgetsOnlyVanishedDirectories(t *testing.T) {
 		t.Fatalf("second prune = %v, %v; want nothing and no error", again, err)
 	}
 }
+
+// TestPruneKeepsRowsWhoseDirectoryCannotBeStatted pins that only a directory
+// proven absent is gone. A stat that fails for another reason (here EACCES, from
+// a locked parent) says nothing about the directory, and the sweep is
+// destructive, so the row stays.
+func TestPruneKeepsRowsWhoseDirectoryCannotBeStatted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions, so the stat cannot fail")
+	}
+	o := Options{DBPath: filepath.Join(t.TempDir(), "portfolio.db")}
+	ctx := context.Background()
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "locked")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Register(ctx, o, dir, "locked", 0, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+	if would, err := Prune(ctx, o, true); err != nil || len(would) != 0 {
+		t.Errorf("dry run = %v, %v; want nothing: the directory exists, it is only unreadable", would, err)
+	}
+	if gone, err := Prune(ctx, o, false); err != nil || len(gone) != 0 {
+		t.Errorf("apply = %v, %v; want nothing forgotten", gone, err)
+	}
+	rows, err := Projects(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("registry has %d rows after apply; want the unreadable project kept", len(rows))
+	}
+	if entries, err := Manifest(ctx, o, nil); err != nil || len(entries) != 1 || !entries[0].DirExists {
+		t.Errorf("manifest = %+v, %v; want the unreadable directory reported as present", entries, err)
+	}
+}

@@ -39,6 +39,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -375,7 +376,7 @@ func ManifestOf(o Options, projects []store.ProjectRecord, hot *HotSet) []Manife
 			Project: p.Name, Dir: p.Dir, RegisteredAt: p.RegisteredAt,
 			LastIndexed: p.LastIndexed, Elements: p.ElementCount, Files: p.FileCount,
 			StoreOnDisk: storePresent(o.engine(), p.Dir),
-			DirExists:   dirPresent(p.Dir),
+			DirExists:   pathPresent(p.Dir),
 			Hot:         containsDir(hotSet, p.Dir),
 		})
 	}
@@ -390,16 +391,15 @@ func storePresent(engine, dir string) bool {
 	if engine != store.EnginePostgres {
 		target = filepath.Join(target, "leankg.db")
 	}
-	_, err := os.Stat(target)
-	return err == nil
+	return pathPresent(target)
 }
 
-// dirPresent reports whether the registered directory still exists. A row
-// whose directory is gone is not a project any more, whatever its store flag
-// says.
-func dirPresent(dir string) bool {
-	_, err := os.Stat(dir)
-	return err == nil
+// pathPresent is the one presence rule the manifest and the sweep share. Only a
+// path proven absent (ENOENT) is gone: any other stat failure (EACCES on a
+// locked parent) keeps the row, because the sweep is destructive.
+func pathPresent(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // Prune removes registry rows whose directory no longer exists and returns the
@@ -417,7 +417,7 @@ func Prune(ctx context.Context, o Options, dryRun bool) ([]string, error) {
 	}
 	var gone []string
 	for _, p := range projects {
-		if !dirPresent(p.Dir) {
+		if !pathPresent(p.Dir) {
 			gone = append(gone, p.Dir)
 		}
 	}
