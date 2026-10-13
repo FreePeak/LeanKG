@@ -242,3 +242,17 @@ func TestProjectsTableMarksGoneDirs(t *testing.T) {
 		t.Errorf("table does not distinguish a vanished directory from a missing store:\n%s", out)
 	}
 }
+
+// TestProjectsPruneWithoutRegistry: a single-repo deployment has no registry
+// file, and the sweep answers the way the listing does: nothing to prune, exit 0.
+func TestProjectsPruneWithoutRegistry(t *testing.T) {
+	t.Setenv(portfolioreg.DBPathEnv, filepath.Join(t.TempDir(), "missing.db"))
+	stdout, stderr, code := runCLI(t, "projects", "--prune")
+	if code != 0 || !strings.Contains(stdout, "nothing to prune") {
+		t.Fatalf("projects --prune without a registry: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	stdout, stderr, code = runCLI(t, "projects", "--prune", "--json")
+	if code != 0 || !strings.Contains(stdout, `"count": 0`) {
+		t.Fatalf("projects --prune --json without a registry: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
