@@ -321,3 +321,30 @@ func TestEnrichExpandedLanguageWithoutServerIsGraceful(t *testing.T) {
 		t.Errorf("element mutated: %v", m)
 	}
 }
+
+// TestEnrichHandshakeOutlivesRequestTimeout pins the budget split. The server
+// answers initialize after 1s: longer than timeout_ms (500ms), far inside the
+// handshake budget. The spawn must not be cut short by the request timeout, and
+// the requests that follow must still merge.
+func TestEnrichHandshakeOutlivesRequestTimeout(t *testing.T) {
+	fakeServerDir(t, "rich")
+	t.Setenv("FAKE_LSP_INIT_DELAY", "1")
+	dir, st := newTestStore(t)
+	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
+	writeFile(t, dir, "leankg.yaml",
+		"lsp:\n  timeout_ms: 500\n  servers:\n    go:\n      command: fake-lsp\n")
+	if err := st.UpsertElements([]store.Element{
+		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
+			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Enrich(st, dir, []string{"go"})
+	if err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if res.Merged == 0 {
+		t.Fatalf("Merged = 0 (reason %q, languages %+v): the spawn was cut short by timeout_ms", res.Reason, res.Languages)
+	}
+}

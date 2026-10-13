@@ -21,6 +21,8 @@ import (
 // Behaviour is selected with FAKE_LSP_MODE: hier (default) | flat | silent |
 // rich. rich mode answers per-URI documentSymbol payloads (with detail +
 // hierarchy) and hover docs, which the enrichment tests consume.
+// FAKE_LSP_INIT_DELAY=<seconds> delays the initialize answer, so a test can
+// make the handshake slower than the request timeout.
 const fakeLSP = `#!/bin/sh
 mode="${FAKE_LSP_MODE:-hier}"
 cr=$(printf '\r')
@@ -47,6 +49,7 @@ while :; do
   method=$(printf '%s' "$body" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
   case "$method" in
     initialize)
+      if [ -n "${FAKE_LSP_INIT_DELAY:-}" ]; then sleep "$FAKE_LSP_INIT_DELAY"; fi
       send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"capabilities\":{\"textDocumentSymbolProvider\":true}}}"
       ;;
     shutdown)
