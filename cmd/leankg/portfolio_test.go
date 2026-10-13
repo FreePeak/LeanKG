@@ -161,11 +161,7 @@ func TestRegisterProjectWithoutStoreStampsNothing(t *testing.T) {
 // forgets it, and a project whose directory EXISTS is never touched even when
 // its store is missing (registered-but-not-yet-indexed is a normal row).
 //
-// Measured on this machine 2026-10-11 before this flag existed: the registry
-// answered 108 rows with 84 of those directories already gone (CI fixtures
-// under /private/tmp, plus removed worktrees). Nothing could reclaim them, and
-// the table could not say which rows were real — StoreOnDisk was the only
-// presence probe.
+// Measured 2026-10-11: 84 of 108 registrations had deleted directories (docs/prd.md).
 func TestProjectsPruneVerb(t *testing.T) {
 	registry := filepath.Join(t.TempDir(), "portfolio.db")
 	t.Setenv(portfolioreg.DBPathEnv, registry)

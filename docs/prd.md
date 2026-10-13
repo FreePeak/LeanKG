@@ -26,15 +26,22 @@ with other tools; `--apply` forgets them, and a second `--apply` reports
 forgets only rows whose directory is gone: a registered project whose directory
 exists is never pruned, even with no store. The manifest gains `dir_exists` per
 row (`ManifestEntry.DirExists`), a presence probe independent of the store flag,
-and the T0 table prints `dir-gone` in the STORE column for those rows.
+and the T0 table prints `dir-gone` in the STORE column for those rows. Only a
+directory that answers ENOENT counts as gone (EACCES and other stat errors keep
+the row), and `--prune --apply` is refused on the postgres engine, where the
+shared registry has no host identity, so one host's prune could remove another
+host's rows; the dry run still works there.
 
 **Measured, on this machine's registry (2026-10-11):** the dry run named the 84
 and changed nothing (108 rows before and after). `--apply` forgot exactly those
 84, and the registry reads 24 rows, all with directories that exist.
 
 **Guards:** `TestManifestMarksGoneDirectories`,
-`TestPruneForgetsOnlyVanishedDirectories`, `TestProjectsPruneVerb`,
-`TestProjectsTableMarksGoneDirs`.
+`TestPruneForgetsOnlyVanishedDirectories`, `TestPruneKeepsRowsWhoseDirectoryCannotBeStatted`,
+`TestProjectsPruneVerb`, `TestProjectsTableMarksGoneDirs`,
+`TestProjectsPruneWithoutRegistry`, `TestProjectsPruneJSONContract`,
+`TestProjectsApplyRequiresPrune`, `TestProjectsPruneApplyRefusedOnPostgres`,
+`TestSuitePinsSQLiteEngine`.
 
 ### v4.15-name-arm-rarity — the name arm fires on prose, at a MEASURED bound (2026-10-13)
 
@@ -1500,4 +1507,4 @@ All superseded material is preserved and linked, not deleted:
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 
 - **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-13 (v4.15-retrieval-instrument + v4.15-ci-guard-interpreter: the retrieval label set and its bench are in the tree, and the bench now reports a STALE label — an element the store cannot hold — instead of scoring it as a retrieval miss; 84 labels, 0 stale, vector 62/84 in-pool, keyword 17/84, fused 79/84. Also this loop: #517 makes the bench stop on the three ENVIRONMENT mistakes that read as retrieval results, #518 deleted the corpus2 that #515 had added to this PUBLIC repo and ignores retrieval-labels-*.json against a repeat, and #519 builds the venv the release guard needs instead of assuming a PATH python3 that has PyYAML.)*
+*Last updated: 2026-10-13 (v4.15-retrieval-instrument + v4.15-ci-guard-interpreter: the retrieval label set and its bench are in the tree, and the bench now reports a STALE label — an element the store cannot hold — instead of scoring it as a retrieval miss; 84 labels, 0 stale, vector 62/84 in-pool, keyword 17/84, fused 79/84. Also this loop: #517 makes the bench stop on the three ENVIRONMENT mistakes that read as retrieval results, #518 deleted the corpus2 that #515 had added to this PUBLIC repo and ignores retrieval-labels-*.json against a repeat, and #519 builds the venv the release guard needs instead of assuming a PATH python3 that has PyYAML. The #504 portfolio-prune review fixes: only ENOENT is gone, the `--json` shape is stable, `--apply` needs `--prune`, postgres `--apply` is refused, and the test process is pinned to sqlite.)*
