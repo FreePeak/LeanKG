@@ -190,9 +190,10 @@ func (b *Bridge) enrichLanguage(rep *LangReport, dir, id, tier string, sc Server
 		root := b.WorkspaceFor(abs)
 		syms, err := b.documentSymbols(id, sc, root, abs)
 		if err != nil {
+			// Every failure is recorded; the second one ends the language.
 			failures++
+			rep.Reason = fmt.Sprintf("server %q failed after %d files: %v", sc.Command, rep.Files, err)
 			if failures > 1 {
-				rep.Reason = fmt.Sprintf("server %q stopped answering after %d files: %v", sc.Command, rep.Files, err)
 				return out
 			}
 			continue

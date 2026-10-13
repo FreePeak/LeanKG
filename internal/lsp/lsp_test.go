@@ -19,8 +19,9 @@ import (
 // fakeLSP is a POSIX-sh LSP server: it answers the handshake, serves canned
 // symbol payloads, and can be told to go mute on documentSymbol requests.
 // Behaviour is selected with FAKE_LSP_MODE: hier (default) | flat | silent |
-// rich. rich mode answers per-URI documentSymbol payloads (with detail +
-// hierarchy) and hover docs, which the enrichment tests consume.
+// rich | crash. rich mode answers per-URI documentSymbol payloads (with detail +
+// hierarchy) and hover docs, which the enrichment tests consume. crash exits on
+// the first documentSymbol request, so a test can see a server die mid-pass.
 // FAKE_LSP_INIT_DELAY=<seconds> delays the initialize answer, so a test can
 // make the handshake slower than the request timeout.
 const fakeLSP = `#!/bin/sh
@@ -59,6 +60,9 @@ while :; do
       send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"server hover documentation\"}}}"
       ;;
     textDocument/documentSymbol)
+      if [ "$mode" = crash ]; then
+        exit 1
+      fi
       if [ "$mode" = silent ]; then
         sleep 60
         continue
