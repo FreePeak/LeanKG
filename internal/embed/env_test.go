@@ -59,3 +59,26 @@ func TestAttachHookProviderPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestStartProviderRejectsWidthBeforeSpawn: an unsupported LEANKG_EMBED_DIMS for
+// a catalogued model is a configuration error, so it must fail before the
+// sidecar process exists. The sidecar command touches a marker; the marker must
+// stay absent.
+func TestStartProviderRejectsWidthBeforeSpawn(t *testing.T) {
+	setGemmaEnv(t, "", "300")
+	marker := filepath.Join(t.TempDir(), "spawned")
+	script := filepath.Join(t.TempDir(), "sidecar.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", script)
+
+	_, release, err := StartProvider(context.Background())
+	release()
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("StartProvider spawned the sidecar before rejecting the width")
+	}
+	if err == nil || !strings.Contains(err.Error(), "LEANKG_EMBED_DIMS=300") {
+		t.Fatalf("err = %v, want the width error naming LEANKG_EMBED_DIMS=300", err)
+	}
+}

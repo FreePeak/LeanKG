@@ -317,3 +317,46 @@ func TestIndexNoEmbedSkipsEmbedding(t *testing.T) {
 		t.Fatalf("--no-embed wrote %d vectors", n)
 	}
 }
+
+// TestIndexEndpointConfigFailsFast: a manual index whose LEANKG_EMBED_BASE_URL is
+// the bare llama-server root answers 200 with a top-level array. The run stops at
+// the first embeddings request, prints exactly one `embed skipped:` line that
+// names the /v1 root, and exits 0.
+func TestIndexEndpointConfigFailsFast(t *testing.T) {
+	hookEnv(t, "10")
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/embeddings" {
+			http.NotFound(w, r)
+			return
+		}
+		hits.Add(1)
+		_, _ = w.Write([]byte(`[{"index":0,"embedding":[[0.1,0.2]]}]`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+	t.Setenv("LEANKG_EMBED_MODEL", "embeddinggemma-2")
+	t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL)
+	dir := t.TempDir()
+	writeThreeGoFiles(t, dir)
+
+	stdout, stderr, code := runCLIIn(t, dir, "index", dir)
+	if code != 0 {
+		t.Fatalf("index with an endpoint configuration error must exit 0, got %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	var skipped []string
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, "embed skipped:") {
+			skipped = append(skipped, line)
+		}
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("want exactly one embed skipped line, got %d:\n%s", len(skipped), stdout)
+	}
+	if !strings.Contains(skipped[0], "/v1") {
+		t.Fatalf("embed skipped line must name the /v1 root fix: %s", skipped[0])
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("embeddings requests = %d, want 1", n)
+	}
+}

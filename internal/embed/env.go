@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,7 +23,8 @@ import (
 //	LEANKG_EMBED_MODEL        model id / catalog key (required for openai)
 //	LEANKG_EMBED_BASE_URL     OpenAI-compatible API root
 //	LEANKG_EMBED_API_KEY      bearer token; omitted from requests when empty
-//	LEANKG_EMBED_DIMS         vector dimensions
+//	LEANKG_EMBED_DIMS         vector dimensions (a catalog row accepts its native
+//	                          width or a Matryoshka truncation; anything else fails)
 //	LEANKG_EMBED_REVISION     pinned model revision
 //
 // Catalog precedence (issue #279: the stamp's identity must come from the
@@ -33,7 +35,9 @@ import (
 //     pin for the selected model > "<provider>:<model>" for a model the
 //     catalog does not know.
 //   - Dimensions: LEANKG_EMBED_DIMS > the catalog pin > 384 (the local
-//     sidecar family's width).
+//     sidecar family's width). For a catalogued model LEANKG_EMBED_DIMS must be
+//     the native width or one of the row's Matryoshka widths, else the
+//     constructor fails; a truncated width is served by withWidth.
 //   - Base URL: LEANKG_EMBED_BASE_URL > the catalog Endpoint > the public
 //     OpenAI root. Prefixes are catalog-only on purpose (Prefixes): they are
 //     model-card data, not configuration, and the stamp records them.
@@ -51,7 +55,7 @@ func FromEnv() (Provider, error) {
 	}
 	switch name {
 	case "deterministic":
-		dims, err := providerDims("deterministic", 0, defaultDims)
+		dims, _, err := providerDims("deterministic", defaultDims)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +92,7 @@ func StartProvider(ctx context.Context) (Provider, func(), error) {
 	}
 	switch name {
 	case "deterministic":
-		dims, err := providerDims("deterministic", 0, defaultDims)
+		dims, _, err := providerDims("deterministic", defaultDims)
 		if err != nil {
 			return nil, noop, err
 		}
@@ -100,6 +104,11 @@ func StartProvider(ctx context.Context) (Provider, func(), error) {
 		if baseURL := os.Getenv("LEANKG_EMBED_BASE_URL"); baseURL != "" {
 			p, err := newLocalProvider(baseURL)
 			return p, noop, err
+		}
+		// A width the model does not serve is a configuration error: reject it
+		// before a sidecar process exists, not after one has started and died.
+		if _, _, err := providerDims(localModel(), defaultDims); err != nil {
+			return nil, noop, err
 		}
 		cfg, err := SidecarConfigFromEnv()
 		if err != nil {
@@ -183,17 +192,50 @@ func providerName() (string, error) {
 	return name, nil
 }
 
-// providerDims resolves the vector width for a model through the catalog
-// precedence: explicit LEANKG_EMBED_DIMS > catalog pin > fallback.
-func providerDims(model string, explicit, fallback int) (int, error) {
-	if v := os.Getenv("LEANKG_EMBED_DIMS"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return 0, fmt.Errorf("embed: invalid LEANKG_EMBED_DIMS %q", v)
-		}
-		explicit = n
+// envDims reads LEANKG_EMBED_DIMS; 0 when unset.
+func envDims() (int, error) {
+	v := os.Getenv("LEANKG_EMBED_DIMS")
+	if v == "" {
+		return 0, nil
 	}
-	return ResolveDims(model, explicit, fallback)
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("embed: invalid LEANKG_EMBED_DIMS %q", v)
+	}
+	return n, nil
+}
+
+// providerDims resolves the widths for a model. native is the width the
+// provider's own wire returns: the catalog pin, or LEANKG_EMBED_DIMS / fallback
+// for an uncatalogued model. reported is the width the provider exposes: native,
+// or the Matryoshka truncation LEANKG_EMBED_DIMS selects from the row's Widths.
+func providerDims(model string, fallback int) (native, reported int, err error) {
+	explicit, err := envDims()
+	if err != nil {
+		return 0, 0, err
+	}
+	row, ok := Lookup(model)
+	if !ok {
+		n, err := ResolveDims(model, explicit, fallback)
+		return n, n, err
+	}
+	if explicit == 0 {
+		return row.Dims, row.Dims, nil
+	}
+	if !slices.Contains(row.Widths(), explicit) {
+		return 0, 0, fmt.Errorf("embed: LEANKG_EMBED_DIMS=%d is not a width %s serves (allowed: %s)",
+			explicit, model, widthList(row.Widths()))
+	}
+	return row.Dims, explicit, nil
+}
+
+// widthList renders widths for an error message: "768, 512, 256, 128".
+func widthList(widths []int) string {
+	parts := make([]string, len(widths))
+	for i, w := range widths {
+		parts[i] = strconv.Itoa(w)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // openAIProvider builds the remote OpenAI-compatible provider: LEANKG_EMBED_MODEL
@@ -204,7 +246,7 @@ func openAIProvider(name, fallbackBaseURL string) (Provider, error) {
 	if model == "" {
 		return nil, fmt.Errorf("embed: LEANKG_EMBED_MODEL is required for LEANKG_EMBED_PROVIDER=%s", name)
 	}
-	dims, err := providerDims(model, 0, defaultDims)
+	native, width, err := providerDims(model, defaultDims)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +257,8 @@ func openAIProvider(name, fallbackBaseURL string) (Provider, error) {
 	if baseURL == "" {
 		baseURL = fallbackBaseURL
 	}
-	return OpenAICompatible(baseURL, os.Getenv("LEANKG_EMBED_API_KEY"), model, dims, Pin(model, name)), nil
+	inner := OpenAICompatible(baseURL, os.Getenv("LEANKG_EMBED_API_KEY"), model, native, Pin(model, name))
+	return withWidth(inner, native, width), nil
 }
 
 // localProvider is the sidecar-backed provider. It reuses the
@@ -318,29 +361,42 @@ func (l *localProvider) TextBudget() int {
 	return 0
 }
 
-func newLocalProvider(baseURL string) (Provider, error) {
-	// llama-server loads exactly one GGUF; LEANKG_EMBED_MODEL may name it
-	// for the stamp but must not be empty (the stamp needs a model id).
-	model := os.Getenv("LEANKG_EMBED_MODEL")
-	if model == "" {
-		model = "local"
+// localModel is the model id the local provider stamps: LEANKG_EMBED_MODEL, or
+// "local" when unset. llama-server loads exactly one GGUF; the name only feeds
+// the stamp, so it must not be empty.
+func localModel() string {
+	if model := os.Getenv("LEANKG_EMBED_MODEL"); model != "" {
+		return model
 	}
-	dims, err := providerDims(model, 0, defaultDims)
+	return "local"
+}
+
+// localPinned reports whether the local provider's revision comes from a pin (the
+// operator's LEANKG_EMBED_REVISION, or a catalogued model) rather than from the
+// GGUF a running sidecar reports. Only a pinned revision is known without one.
+func localPinned(model string) bool {
+	_, inCatalog := Lookup(model)
+	return os.Getenv("LEANKG_EMBED_REVISION") != "" || inCatalog
+}
+
+func newLocalProvider(baseURL string) (Provider, error) {
+	model := localModel()
+	native, width, err := providerDims(model, defaultDims)
 	if err != nil {
 		return nil, err
 	}
-	_, inCatalog := Lookup(model)
-	return &localProvider{
+	inner := &localProvider{
 		openaiCompatible: &openaiCompatible{
 			baseURL:  baseURL,
 			apiKey:   os.Getenv("LEANKG_EMBED_API_KEY"),
 			model:    model,
-			dims:     dims,
+			dims:     native,
 			revision: Pin(model, "local"),
 			client:   &http.Client{},
 		},
-		pinned: os.Getenv("LEANKG_EMBED_REVISION") != "" || inCatalog,
-	}, nil
+		pinned: localPinned(model),
+	}
+	return withWidth(inner, native, width), nil
 }
 
 func (l *localProvider) Provider() string { return "local" }

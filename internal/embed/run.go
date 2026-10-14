@@ -2,6 +2,7 @@ package embed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 	"unicode/utf8"
@@ -63,12 +64,45 @@ func TextCap(p Provider) int {
 	textCap := maxContentChars
 	if p.Provider() == "local" {
 		budget := maxLocalTextChars
-		if tb, ok := p.(interface{ TextBudget() int }); ok && tb.TextBudget() > 0 {
-			budget = tb.TextBudget()
+		if tb := sidecarBudget(p); tb > 0 {
+			budget = tb
 		}
 		textCap = min(textCap, budget)
 	}
 	return textCap
+}
+
+// sidecarBudget is the text budget the local sidecar reports from /props, in
+// runes; 0 when p has none or the sidecar cannot be asked.
+func sidecarBudget(p Provider) int {
+	if tb, ok := unwrapProvider(p).(interface{ TextBudget() int }); ok {
+		return tb.TextBudget()
+	}
+	return 0
+}
+
+// planText is the text a live run sends for one element: documentText cut to
+// TextCap(p) runes, and whether it was cut. Run embeds it and ExportNDJSON
+// writes it, so an offsite embedder receives the string a live run would. The
+// provider prepends the document prefix on the wire (openaiCompatible.Embed),
+// so an export line is that prefix followed by this text.
+func planText(p Provider, e elementText) (text string, truncated bool) {
+	text = documentText(e)
+	limit := TextCap(p)
+	if utf8.RuneCountInString(text) > limit {
+		return truncateRunes(text, limit), true
+	}
+	return text, false
+}
+
+// documentInput is the exact string a live run's provider receives for one
+// element: planText with the model's document prefix, the same prefix
+// openaiCompatible.Embed prepends on the wire (prefixTexts). ExportNDJSON writes
+// it as the line's text, so the offsite embedder and the live run cannot drift.
+func documentInput(p Provider, e elementText) string {
+	text, _ := planText(p, e)
+	_, document := Prefixes(p.ModelID())
+	return prefixTexts(document, []string{text})[0]
 }
 
 // TruncateText cuts s to at most n runes.
@@ -92,23 +126,6 @@ func StampOf(p Provider) store.ModelStamp {
 		Dimensions:     p.Dimensions(),
 		Distance:       p.Distance(),
 		Provider:       p.Provider(),
-		ChunkerVersion: ChunkerVersion,
-		QueryPrefix:    q,
-		DocumentPrefix: d,
-	}
-}
-
-// stampFor is the writer-side stamp for an explicit identity (the NDJSON
-// import path, which has no live provider but must produce the identical stamp
-// a provider run would for the same model).
-func stampFor(modelID, revision, distance, provider string, dims int) store.ModelStamp {
-	q, d := Prefixes(modelID)
-	return store.ModelStamp{
-		ModelID:        modelID,
-		Revision:       revision,
-		Dimensions:     dims,
-		Distance:       distance,
-		Provider:       provider,
 		ChunkerVersion: ChunkerVersion,
 		QueryPrefix:    q,
 		DocumentPrefix: d,
@@ -215,11 +232,9 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 			rep.Skipped++
 			continue
 		}
-		text := documentText(e)
-		textCap := TextCap(p)
-		if utf8.RuneCountInString(text) > textCap {
+		text, cut := planText(p, e)
+		if cut {
 			rep.Truncations++
-			text = truncateRunes(text, textCap)
 		}
 		dirty = append(dirty, dirtyItem{file: e.File, qn: e.QN, text: text, hash: h})
 	}
@@ -342,6 +357,11 @@ func groupByFile(dirty []dirtyItem) [][]dirtyItem {
 // committed. An all-failed run is an unavailable provider — infra, not data —
 // and aborts with the provider's own error, preserving the pre-existing
 // fail-loud contract (found dogfooding `leankg-embed` on this repository).
+//
+// A permanent configuration error (ErrEndpointConfig: wrong base URL, refused
+// API key, a reply that is not an embeddings object) is not a poison element:
+// embedFiles returns it at once, before any retry or shrink, so a misconfigured
+// endpoint costs one request and writes nothing from the failing group.
 func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
 	var lastErr error
 	for _, group := range groups {
@@ -358,6 +378,9 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 			}
 			vecs, err := p.Embed(ctx, Document, texts)
 			if err != nil {
+				if errors.Is(err, ErrEndpointConfig) {
+					return err
+				}
 				// Per-item retry with shrink: a batch the provider rejected
 				// is retried item by item (healthy siblings still commit),
 				// and an item the provider rejects is HALVED and retried
@@ -378,6 +401,9 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 							break
 						}
 						if ierr != nil {
+							if errors.Is(ierr, ErrEndpointConfig) {
+								return ierr
+							}
 							lastErr = ierr
 						}
 						n := len([]rune(text)) / 2
