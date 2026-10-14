@@ -111,7 +111,9 @@ container, one port, `leankg serve --read-only --ui :$PORT`.
 ## Get Started
 
 ```bash
-# 1. Per project: one-shot index (sqlite default — zero config, store at .leankg/leankg.db)
+# 1. Per project: one-shot index, then an incremental embed (sqlite default — zero config,
+#    store at .leankg/leankg.db). In a git repo root it reads the HEAD commit's objects, so
+#    uncommitted, untracked and ignored files are not indexed. Add --no-embed to skip the embed.
 cd your-project
 leankg index .
 
@@ -127,8 +129,9 @@ leankg install --target claude-code --http --url http://127.0.0.1:9699/mcp
 ```
 
 Semantic (L3) search is the one optional layer: it needs embeddings. Set
-`LEANKG_EMBED_PROVIDER` (see `leankg-embed` usage) and run `leankg-embed run`;
-until then queries answer from exact + fuzzy matches.
+`LEANKG_EMBED_PROVIDER` (see `leankg-embed` usage); `leankg index` then embeds
+incrementally after indexing. Until an embed runs, queries answer from exact + fuzzy
+matches.
 
 Self-check any deployment: `leankg doctor` — prints the store path, element and
 file counts and the write watermark (exit 0 pass / 2 fail).
@@ -241,15 +244,16 @@ Discover with `query` — it routes down the ladder by default (L1 exact → L2 
 ## CLI
 
 ```bash
-leankg index .                          # one-shot index -> .leankg/leankg.db
-leankg writer                           # index once, then watch + re-index
+leankg index .                          # one-shot index + incremental embed -> .leankg/leankg.db (--no-embed skips the embed)
+leankg index --hook <dir>               # SessionStart mode: skips over LEANKG_HOOK_MAX_FILES (10000) files or LEANKG_HOOK_MAX_EMBED (500) elements needing vectors
+leankg writer                           # index once, then watch; a git-backed store re-indexes on each new commit (unsaved edits do not change the graph)
 leankg query "parseConfig"              # name lookup (exact, then fuzzy) — JSON out
 leankg query "parseConfig" --compress   # one line per result
 leankg impact src/main.go --depth 3     # blast radius of a file or element
 leankg status                           # health, inventory, freshness, embed state
 leankg doctor                           # store path, element/file counts, watermark
 leankg connect claude-code              # MCP entry: claude-code|cursor|codex|gemini|opencode|omp
-leankg install --target cursor          # same wiring, flag form (--register-cwd: claude-code hook)
+leankg install --target cursor          # same wiring, flag form (--register-cwd: async claude-code SessionStart hook running `index --hook`)
 leankg serve --stdio                    # MCP over stdio (what harnesses spawn)
 leankg serve --http 127.0.0.1:9699      # MCP over streamable HTTP (/mcp, /health)
 leankg serve --rest 127.0.0.1:8080      # REST API (/health, /api/v1/*)

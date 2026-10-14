@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -232,5 +234,50 @@ func TestRunSkipsEmbedOnBadProvider(t *testing.T) {
 	defer st.Close()
 	if n, err := st.ElementCount(); err != nil || n == 0 {
 		t.Fatalf("code stage did not persist before the embed failure: n=%d err=%v", n, err)
+	}
+}
+
+// TestEmbedStageSkipsWhenEmbedLockHeld: another embed run holding
+// <store>/.leankg/embed.lock turns this run into a skip, not an error, and it
+// writes no vectors. The store is indexed first with the embed failing on a
+// bogus provider, so the elements exist but have no vectors yet.
+func TestEmbedStageSkipsWhenEmbedLockHeld(t *testing.T) {
+	isolateEnv(t)
+	dir := newProject(t)
+	t.Setenv("LEANKG_EMBED_PROVIDER", "bogus")
+	if _, err := Run(context.Background(), Options{Project: dir, Path: dir}); err != nil {
+		t.Fatalf("seed Run: %v", err)
+	}
+	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
+
+	st, err := store.OpenBackend(context.Background(), dir, "", "", "", store.RW)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	p, release, err := embed.StartProvider(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+
+	unlock, err := flock.TryLock(filepath.Join(dir, ".leankg", "embed.lock"))
+	if err != nil {
+		t.Fatalf("hold embed.lock: %v", err)
+	}
+	defer unlock()
+
+	rep, skip, err := EmbedStage(context.Background(), st, dir, embed.StartProvider, "incremental")
+	if err != nil {
+		t.Fatalf("EmbedStage = %v, want a skip", err)
+	}
+	if skip == "" || !strings.Contains(skip, "embed.lock") {
+		t.Fatalf("skip = %q, want the held embed.lock named", skip)
+	}
+	if rep.Embedded != 0 {
+		t.Fatalf("report embedded = %d, want 0", rep.Embedded)
+	}
+	if n, err := st.VectorCount(p.ModelID()); err != nil || n != 0 {
+		t.Fatalf("vectors = %d (err %v), want 0", n, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -15,6 +16,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
+	"github.com/FreePeak/LeanKG/internal/refresh"
 	"github.com/FreePeak/LeanKG/internal/sources"
 	"github.com/FreePeak/LeanKG/internal/store"
 	"github.com/FreePeak/LeanKG/internal/summarize"
@@ -87,19 +89,82 @@ func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
 	return engine, nil
 }
 
+// hookMaxFilesDefault is the indexable-file count above which the SessionStart
+// hook leaves a git repo to a manual index.
+const hookMaxFilesDefault = 10000
+
+// hookMaxEmbedDefault is the embed backlog (elements that need vectors) above
+// which the SessionStart hook leaves the embed to a manual run.
+const hookMaxEmbedDefault = 500
+
+// hookLimit is the named env var when it parses as a positive integer, else def.
+func hookLimit(env string, def int) int {
+	if n, err := strconv.Atoi(os.Getenv(env)); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+// hookBigRepoSkip is the hook's size gate. A git repo root whose HEAD holds more
+// indexable files than LEANKG_HOOK_MAX_FILES is left for a manual run, and so is a repo
+// whose HEAD cannot be counted: the hook must not index what it could not size.
+// It returns the skip line to print, or "" when the run may proceed.
+func hookBigRepoSkip(dir string) string {
+	n, ok, err := index.HeadIndexableFiles(context.Background(), dir)
+	if err != nil {
+		return fmt.Sprintf("leankg index --hook: skipped %s: cannot count HEAD files: %v", dir, err)
+	}
+	limit := hookLimit("LEANKG_HOOK_MAX_FILES", hookMaxFilesDefault)
+	if !ok || n <= limit {
+		return ""
+	}
+	return fmt.Sprintf("leankg index --hook: skipped %s: %d indexable files in HEAD exceeds LEANKG_HOOK_MAX_FILES=%d; run it manually: leankg index %s",
+		dir, n, limit, dir)
+}
+
+// hookEmbedStart is the hook's provider policy for the embed stage. It attaches
+// the provider (never spawns one), counts the backlog that run would embed, and
+// refuses when that exceeds LEANKG_HOOK_MAX_EMBED. The refusal and a failed count
+// come back as the stage's skip reason, so the hook prints one `embed skipped:`
+// line and exits 0. Nothing is embedded before the gate passes.
+func hookEmbedStart(st store.Backend, storeDir string) func(context.Context) (embed.Provider, func(), error) {
+	return func(ctx context.Context) (embed.Provider, func(), error) {
+		p, release, err := embed.AttachHookProvider(ctx)
+		if err != nil {
+			return nil, release, err
+		}
+		n, err := embed.IncrementalBacklog(st, p)
+		if err != nil {
+			release()
+			return nil, func() {}, fmt.Errorf("cannot count embed backlog: %w", err)
+		}
+		if limit := hookLimit("LEANKG_HOOK_MAX_EMBED", hookMaxEmbedDefault); n > limit {
+			release()
+			return nil, func() {}, fmt.Errorf("%d elements need vectors, over LEANKG_HOOK_MAX_EMBED=%d; run it manually: leankg index %s", n, limit, storeDir)
+		}
+		return p, release, nil
+	}
+}
+
+// indexStoreDir is the project directory whose .leankg an index run writes to:
+// the project flag, else the target. With neither (`index --source <uri>` with no
+// positional argument) it is the cwd (Rust find_project_root), never the
+// filesystem root.
+func indexStoreDir(project, target string) string {
+	if project != "" {
+		return project
+	}
+	if target != "" {
+		return target
+	}
+	return "."
+}
+
 // runIndex performs a one-shot index run into the project store. A non-empty
 // source is a --source URI whose tree is synced into <project>/.leankg/sources
 // and indexed instead of target (Rust main.rs index path resolution).
 func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool) error {
-	dir := project
-	if dir == "" {
-		dir = target
-	}
-	if dir == "" {
-		// `index --source <uri>` with no positional argument: the project root
-		// is the cwd (Rust find_project_root), never the filesystem root.
-		dir = "."
-	}
+	dir := indexStoreDir(project, target)
 	indexTarget := target
 	if source != "" {
 		synced, err := sources.Resolve(context.Background(), dir, source, auth, refName, sources.CLIProgress{})
@@ -182,6 +247,34 @@ func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool)
 		fmt.Fprintf(os.Stderr, "%s: inventory snapshot: %v\n", "index", ierr)
 	}
 	return nil
+}
+
+// indexEmbed runs the incremental embed that follows a successful index, on the
+// project store at storeDir. A manual run may spawn the provider; the hook only
+// attaches (embed.AttachHookProvider) and only within LEANKG_HOOK_MAX_EMBED
+// (hookEmbedStart). It never fails the command: a skip or a failed embed prints
+// one `embed skipped:` line and returns.
+func indexEmbed(storeDir string, hook bool) {
+	ctx := context.Background()
+	st, err := openStore(ctx, storeDir, "", store.RW)
+	if err != nil {
+		fmt.Printf("embed skipped: open store: %v\n", err)
+		return
+	}
+	defer st.Close()
+	start := embed.StartProvider
+	if hook {
+		start = hookEmbedStart(st, storeDir)
+	}
+	rep, skipped, err := refresh.EmbedStage(ctx, st, storeDir, start, "incremental")
+	switch {
+	case err != nil:
+		fmt.Printf("embed skipped: %v\n", err)
+	case skipped != "":
+		fmt.Printf("embed skipped: %s\n", skipped)
+	default:
+		fmt.Printf("embedded %d elements (%d failed)\n", rep.Embedded, rep.Failed)
+	}
 }
 
 // parseInterspersed parses flags that may appear before OR after positionals

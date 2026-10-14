@@ -1,8 +1,6 @@
 package index
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,15 +20,7 @@ func TestLeadingDocCaptured(t *testing.T) {
 		{"java", "A.java", "class A {\n  /** Saves the row. */\n  @Override\n  public void save() {\n  }\n}\n", "save", "Saves the row", ""},
 	}
 	for _, c := range cases {
-		dir := t.TempDir()
-		path := filepath.Join(dir, c.file)
-		if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		fe, err := extractFileAs(c.file, path, c.lang)
-		if err != nil {
-			t.Fatal(err)
-		}
+		fe := extractFileAs(c.file, []byte(c.src), c.lang)
 		var found *indexedElem
 		for i := range fe.elements {
 			if fe.elements[i].name == c.name {
@@ -58,16 +48,8 @@ func TestLeadingDocCaptured(t *testing.T) {
 }
 
 func TestDocCommentProseIsNotACallEdge(t *testing.T) {
-	dir := t.TempDir()
 	src := "package a\n\nfunc Helper() {}\n\n// Caller explains that Helper is unrelated.\nfunc Caller() {}\n"
-	path := filepath.Join(dir, "a.go")
-	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	fe, err := extractFileAs("a.go", path, "go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	fe := extractFileAs("a.go", []byte(src), "go")
 	names := map[string][]string{}
 	for _, e := range fe.elements {
 		names[e.name] = append(names[e.name], e.qn)

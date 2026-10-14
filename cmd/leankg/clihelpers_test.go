@@ -32,6 +32,10 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv(portfolioreg.DBPathEnv, filepath.Join(regDir, "portfolio.db"))
+	// Hermeticity: `leankg index` embeds after it indexes, and the unset
+	// provider is local (it spawns llama-server). Every CLI child inherits this
+	// environment, so no test in the package reaches a real provider.
+	os.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
 	buildDir := ""
 	if !testing.Short() {
 		var err error

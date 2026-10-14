@@ -35,7 +35,7 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 	}
 
 	var res Result
-	handled, err := indexSpecialistFile(st, "AndroidManifest.xml", abs, int64(len(src)), 1, "hash", &res)
+	handled, err := indexSpecialistFile(st, "AndroidManifest.xml", src, int64(len(src)), 1, "hash", &res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 	}
 
 	// Unclaimed files report handled=false and write nothing.
-	unclaimed, err := indexSpecialistFile(st, "main.go", abs, 1, 1, "hash2", &res)
+	unclaimed, err := indexSpecialistFile(st, "main.go", src, 1, 1, "hash2", &res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestIndexKotlinExtrasPersists(t *testing.T) {
 	}
 
 	var res Result
-	if err := indexKotlinExtras(st, "ui/MainActivity.kt", abs, &res); err != nil {
+	if err := indexKotlinExtras(st, "ui/MainActivity.kt", src, &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.Elements == 0 {
@@ -127,5 +127,35 @@ func TestIndexKotlinExtrasPersists(t *testing.T) {
 	}
 	if len(fileRels) == 0 {
 		t.Fatal("kotlin extras relationships not persisted")
+	}
+}
+
+// TestIndexDirSpecialistDoesNotShiftNextRecord: a specialist file that writes
+// itself sits beside a generic file in the same directory. The generic file's
+// stored record must be its own, so the second run skips it.
+func TestIndexDirSpecialistDoesNotShiftNextRecord(t *testing.T) {
+	dir := t.TempDir()
+	manifest, err := os.ReadFile(filepath.Join("testdata", "AndroidManifest.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "AndroidManifest.xml"), manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc Main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	index(t, st, dir)
+	if res := index(t, st, dir); res.Files != 0 || res.Skipped != 2 {
+		t.Fatalf("unchanged rerun: %+v, want Files=0 Skipped=2", res)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -116,6 +118,56 @@ func StartProvider(ctx context.Context) (Provider, func(), error) {
 	default:
 		return nil, noop, fmt.Errorf("embed: unknown LEANKG_EMBED_PROVIDER %q (want local|openai|deterministic)", name)
 	}
+}
+
+// AttachHookProvider is the provider policy of `leankg index --hook` (the
+// SessionStart hook). It has StartProvider's signature so the embed stage takes
+// either, but it never spawns a process and never calls a remote endpoint: only
+// the in-process deterministic provider is allowed here, and a local provider
+// once it is attached to a loopback LEANKG_EMBED_BASE_URL. Anything else returns
+// an error that names the reason.
+func AttachHookProvider(ctx context.Context) (Provider, func(), error) {
+	noop := func() {}
+	name, err := providerName()
+	if err != nil {
+		return nil, noop, err
+	}
+	switch name {
+	case "deterministic":
+	case "local":
+		baseURL := os.Getenv("LEANKG_EMBED_BASE_URL")
+		if baseURL == "" {
+			return nil, noop, hookRefused("LEANKG_EMBED_BASE_URL is unset, so a sidecar would have to be spawned")
+		}
+		if !isLoopbackURL(baseURL) {
+			return nil, noop, hookRefused(fmt.Sprintf("LEANKG_EMBED_BASE_URL %s is not a loopback address", baseURL))
+		}
+	default:
+		return nil, noop, hookRefused(fmt.Sprintf("provider %q is not local or deterministic", name))
+	}
+	p, err := FromEnv()
+	return p, noop, err
+}
+
+// hookRefused is the error AttachHookProvider returns for a provider the hook
+// may not use.
+func hookRefused(reason string) error {
+	return fmt.Errorf("hook mode only attaches to a running local provider (%s)", reason)
+}
+
+// isLoopbackURL reports whether raw names a loopback host: localhost, or an IP
+// in 127.0.0.0/8 or ::1.
+func isLoopbackURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // defaultDims is the historical local-family (BGE-small / MiniLM) width, used
