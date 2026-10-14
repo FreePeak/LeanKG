@@ -30,6 +30,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/FreePeak/LeanKG/internal/gitobj"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -153,16 +154,19 @@ func (w *Watcher) Stop() {
 	<-w.done
 }
 
+// kindOf maps an fsnotify op to the OnEvent kind. Ops are bit flags and
+// kqueue can coalesce them (an overwrite is Write|Chmod), so each kind is
+// tested by bit, in priority order, rather than by exact equality.
 func kindOf(op fsnotify.Op) string {
-	switch op {
-	case fsnotify.Create:
+	switch {
+	case op.Has(fsnotify.Create):
 		return "create"
-	case fsnotify.Write:
-		return "write"
-	case fsnotify.Remove:
+	case op.Has(fsnotify.Remove):
 		return "remove"
-	case fsnotify.Rename:
+	case op.Has(fsnotify.Rename):
 		return "rename"
+	case op.Has(fsnotify.Write):
+		return "write"
 	default:
 		return "other"
 	}
@@ -172,7 +176,9 @@ func kindOf(op fsnotify.Op) string {
 // the single-flight lock <root>/.leankg/watch.lock (LOCK_EX|LOCK_NB — a
 // second Start on the same project returns ErrAlreadyWatching), and spawns
 // the event loop. The loop flushes coalesced paths after Debounce by calling
-// index.IndexDir once per flush; ctx.Done stops cleanly.
+// index.IndexDir once per flush; ctx.Done stops cleanly. For a git-backed root
+// (a repository top-level with a commit) the git dir is watched for HEAD
+// moves too, so a commit triggers the same flush.
 func Start(ctx context.Context, st store.Backend, root string, opts Options) (*Watcher, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -184,6 +190,10 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("watch: %s is not a directory", abs)
+	}
+	gitDir, _, err := gitobj.CommittedGitDir(ctx, abs)
+	if err != nil {
+		return nil, fmt.Errorf("watch: resolve git dir: %w", err)
 	}
 
 	// Single-flight lock: .leankg/watch.lock, exclusive, non-blocking.
@@ -210,7 +220,7 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 		lockFile.Close()
 		return nil, fmt.Errorf("watch: new notifier: %w", err)
 	}
-	if err := addDirs(notifier, abs); err != nil {
+	if err := addWatches(notifier, abs, gitDir); err != nil {
 		notifier.Close()
 		syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 		lockFile.Close()
@@ -258,6 +268,11 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 				if !ok {
 					return
 				}
+				// Of the git dir only HEAD moves count: index, objects and locks
+				// churn on every git command without changing the graph.
+				if gitDir != "" && inGitDir(ev.Name, gitDir) && filepath.Base(ev.Name) != "HEAD" {
+					continue
+				}
 				kind := kindOf(ev.Op)
 				if opts.OnEvent != nil {
 					opts.OnEvent(ev.Name, kind)
@@ -292,7 +307,7 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 				// rather than flushed first. Only one pass runs at a time —
 				// this goroutine owns both triggers.
 				pending = make(map[string]bool)
-				if err := addDirs(notifier, abs); err != nil {
+				if err := addWatches(notifier, abs, gitDir); err != nil {
 					_ = err // a lost subtree is retried next pass
 				}
 				if err := flushIndex(ctx, st, abs, opts); err != nil {
@@ -326,6 +341,36 @@ func flushIndex(ctx context.Context, st store.Backend, abs string, opts Options)
 	}
 	_, _ = store.RefreshInventory(st)
 	return nil
+}
+
+// addWatches adds the working tree and, when gitDir is set, the git dir.
+func addWatches(n *fsnotify.Watcher, root, gitDir string) error {
+	if err := addDirs(n, root); err != nil {
+		return err
+	}
+	if gitDir == "" {
+		return nil
+	}
+	return addGitDirs(n, gitDir)
+}
+
+// addGitDirs watches the git dir and its logs/ directory, both non-recursively:
+// a commit, checkout or reset appends to logs/HEAD, and a branch switch
+// rewrites HEAD.
+func addGitDirs(n *fsnotify.Watcher, gitDir string) error {
+	if err := n.Add(gitDir); err != nil {
+		return fmt.Errorf("watch: add git dir: %w", err)
+	}
+	// logs/ is absent when reflogs are off; then no commit signal is written.
+	_ = n.Add(filepath.Join(gitDir, "logs"))
+	return nil
+}
+
+// inGitDir reports whether name is a direct child of gitDir or of its logs/
+// directory, the only git paths addGitDirs watches.
+func inGitDir(name, gitDir string) bool {
+	d := filepath.Dir(name)
+	return d == gitDir || d == filepath.Join(gitDir, "logs")
 }
 
 // addDirs walks root adding every (non-skipped) directory to the notifier.

@@ -169,8 +169,8 @@ func TestHookCommandRuns(t *testing.T) {
 	bin := buildLeanKG(t)
 
 	expanded := hookCommand(bin)
-	if !strings.Contains(expanded, ` index "$CLAUDE_PROJECT_DIR"`) {
-		t.Fatalf("hook %q: expected `index \"$CLAUDE_PROJECT_DIR\"` (quoted, shell-expanded)", expanded)
+	if !strings.Contains(expanded, ` index --hook "$CLAUDE_PROJECT_DIR"`) {
+		t.Fatalf("hook %q: expected `index --hook \"$CLAUDE_PROJECT_DIR\"` (quoted, shell-expanded)", expanded)
 	}
 	proj := seedProject(t)
 	// Claude Code executes the hook through a shell and expands the variable;

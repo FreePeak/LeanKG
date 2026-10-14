@@ -3,6 +3,7 @@
 package index
 
 import (
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -16,11 +17,11 @@ import (
 // spans, which the regex tier cannot produce (it has no end line at all, and
 // it reports a package as "class").
 func TestExtractFileAsPerlTreeSitter(t *testing.T) {
-	fe, err := extractFileAs("lib/Billing/Invoice.pm",
-		filepath.Join("..", "tstree", "testdata", "perl", "modern.pm"), "perl")
+	src, err := os.ReadFile(filepath.Join("..", "tstree", "testdata", "perl", "modern.pm"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	fe := extractFileAs("lib/Billing/Invoice.pm", src, "perl")
 	got := map[string]string{}
 	for _, e := range fe.elements {
 		got[e.name] = e.etype + "@" + strconv.Itoa(e.start) + "-" + strconv.Itoa(e.end)

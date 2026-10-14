@@ -4,7 +4,15 @@
 
 ### Features
 
+* **index:** for a git repository root, `leankg index <dir>` reads the HEAD commit's git objects (`git ls-tree` / `git cat-file --batch`) instead of walking the filesystem; uncommitted, untracked, ignored, symlinked and submodule/nested-repo files are not indexed, and change detection compares git blob IDs so an unchanged rerun reads no file content. Directories without their own `.git` or with no commits keep the filesystem walk.
+* **index:** `leankg index` runs the incremental embed after indexing; `--no-embed` skips it. Embed failure is reported and skipped, not fatal.
+* **index:** `--hook` agent mode (used by the SessionStart hook) exits 0 without indexing when the HEAD tree exceeds `LEANKG_HOOK_MAX_FILES` (default 10000; prints the manual `leankg index <dir>` to run instead), or when another index of the store is running. A directory without its own `.git` or with no commits is scanned from the filesystem, hook mode included. Hook embedding attaches only to a running local provider and never spawns a sidecar or calls a remote provider. Hook embedding also skips, printing the manual `leankg index <dir>` to run instead, when more than `LEANKG_HOOK_MAX_EMBED` (default 500) elements need vectors; manual runs ignore the limit.
+* **writer:** for a git-backed store, a new commit triggers a reindex; saving a file without committing does not change the graph.
 * **embed:** spawn path for `LEANKG_EMBED_PROVIDER=local` serves the pinned bge-small-en-v1.5 GGUF by default (`internal/embed/sidecar.go`): `-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf --embeddings` when the file exists, otherwise `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` which self-downloads into the llama.cpp cache on first use; the not-found error names the download step. `leankg-embed run/full/export/import/status` and `leankg serve --embed-provider local` work out of the box with no hand-written `LEANKG_EMBED_SIDECAR_ARGS`.
+
+### Changes
+
+* **install:** the generated `--register-cwd` SessionStart hook is async, uses matcher `startup|resume`, and runs `leankg index --hook "$CLAUDE_PROJECT_DIR"`; re-running install replaces a previously generated `index "$CLAUDE_PROJECT_DIR"` entry instead of adding a second one.
 
 ## [0.34.0](https://github.com/FreePeak/LeanKG/compare/v0.33.0...v0.34.0) (2026-09-14)
 

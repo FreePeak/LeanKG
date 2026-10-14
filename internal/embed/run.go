@@ -211,7 +211,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	dirty := make([]dirtyItem, 0, len(elems))
 	for _, e := range elems {
 		h := contentHashHex(e.Content)
-		if mode == "incremental" && states[e.QN] == h {
+		if mode == "incremental" && !needsVector(e.QN, h, states) {
 			rep.Skipped++
 			continue
 		}
@@ -278,6 +278,36 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 		return rep, fmt.Errorf("embed: inventory snapshot: %w", err)
 	}
 	return rep, nil
+}
+
+// needsVector is the incremental selection, shared by Run and IncrementalBacklog
+// so the backlog a hook gate counts is the set a run embeds: an element needs a
+// vector when its content hash differs from the state stored for it, and an
+// element with no stored state at all always needs one. states is the
+// EmbeddingStateMap for the provider's model.
+func needsVector(qn, hash string, states map[string]string) bool {
+	return states[qn] != hash
+}
+
+// IncrementalBacklog counts the elements an incremental Run over st with provider
+// p would embed. It reads the store and never calls the provider, so a caller can
+// size the embed before it starts one.
+func IncrementalBacklog(st store.Backend, p Provider) (int, error) {
+	elems, err := readElements(st)
+	if err != nil {
+		return 0, err
+	}
+	states, err := st.EmbeddingStateMap(p.ModelID())
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range elems {
+		if needsVector(e.QN, contentHashHex(e.Content), states) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // groupByFile partitions the dirty plan into per-file write units, preserving

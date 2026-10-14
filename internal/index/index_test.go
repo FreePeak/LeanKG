@@ -147,10 +147,11 @@ func TestRelationships(t *testing.T) {
 
 // TestRelationshipsPerFile exercises the edge rules directly: dedupe,
 func TestRelationshipsPerFile(t *testing.T) {
-	fe, err := extractFile("sample.go", filepath.Join("testdata", "sample.go"))
+	src, err := os.ReadFile(filepath.Join("testdata", "sample.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	fe := extractFile("sample.go", src)
 	rels := goRels(fe)
 	// Signature-only names (a parameter type, a receiver) are references;
 	// a name used in the body is a call.
@@ -178,10 +179,11 @@ func TestRelationshipsPerFile(t *testing.T) {
 	}
 
 	// Python: contains edges at 1.0 coexisting with same-pair calls at 0.5.
-	py, err := extractFile("sample.py", filepath.Join("testdata", "sample.py"))
+	pySrc, err := os.ReadFile(filepath.Join("testdata", "sample.py"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	py := extractFile("sample.py", pySrc)
 	pyRels := goRels(py)
 	byType := map[string]int{}
 	for _, r := range pyRels {
@@ -338,10 +340,11 @@ func TestDeletion(t *testing.T) {
 
 // TestQualifiedNameFormat pins the documented `<rel/path>::<name>` shape.
 func TestQualifiedNameFormat(t *testing.T) {
-	fe, err := extractFile("sub/dir/sample.go", filepath.Join("testdata", "sample.go"))
+	src, err := os.ReadFile(filepath.Join("testdata", "sample.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	fe := extractFile("sub/dir/sample.go", src)
 	got := map[string]bool{}
 	for _, e := range fe.elements {
 		got[e.qn] = true

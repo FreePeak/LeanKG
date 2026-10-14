@@ -176,6 +176,37 @@ func TestRunFullThenIncrementalSkipsUnchanged(t *testing.T) {
 	}
 }
 
+// TestIncrementalBacklogMatchesRunDirty: the hook gate counts what an incremental
+// run would embed. Elements with no stored state count, and the count equals the
+// run's Dirty before the run, after it, and after an edit.
+func TestIncrementalBacklogMatchesRunDirty(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"), el("a::f3", "func f3() {}"))
+	p := Deterministic(8)
+	assertBacklog := func(want int) {
+		t.Helper()
+		got, err := IncrementalBacklog(st, p)
+		if err != nil {
+			t.Fatalf("IncrementalBacklog: %v", err)
+		}
+		if got != want {
+			t.Fatalf("IncrementalBacklog = %d, want %d", got, want)
+		}
+	}
+
+	assertBacklog(3)
+	if rep := mustRun(t, st, p, "incremental"); rep.Dirty != 3 {
+		t.Fatalf("first incremental run: Dirty = %d, want 3", rep.Dirty)
+	}
+	assertBacklog(0)
+
+	seed(t, st, el("a::f2", "func f2(x int) {}"))
+	assertBacklog(1)
+	if rep := mustRun(t, st, p, "incremental"); rep.Dirty != 1 {
+		t.Fatalf("incremental after edit: Dirty = %d, want 1", rep.Dirty)
+	}
+}
+
 func TestRunStampMismatchClearsAndRebuilds(t *testing.T) {
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))

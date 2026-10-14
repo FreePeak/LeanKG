@@ -33,6 +33,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/doctor"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/maintain"
 	leankgmcp "github.com/FreePeak/LeanKG/internal/mcp"
@@ -234,7 +235,7 @@ Usage:
   leankg team-map [--env production] [--project DIR]
   leankg serve  [--project DIR] [--stdio] [--http ADDR] [--rest ADDR] [--read-only] [--memory] [--embed-provider P]
   leankg setup [--reset] [--clone] [--index] [--embed] [--status]
-  leankg index <dir> [--source URI] [--ref-name REF] [--auth TOKEN] [--rebase-root]
+  leankg index <dir> [--hook] [--no-embed] [--source URI] [--ref-name REF] [--auth TOKEN] [--rebase-root]
   leankg prd [--source docs/prd.md] [--environment local] [--project DIR]
   leankg prd-trace [FEATURE_ID] [--project DIR]
   leankg push --remote URL --token TOKEN [--env local] [--project DIR]
@@ -729,6 +730,8 @@ func cmdIndex(args []string) {
 	auto := fs.Bool("auto", false, "first-run setup mode: index (and later embed) without asking again")
 	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
 	rebase := fs.Bool("rebase-root", false, "adopt this directory as the store's index root (after moving a checkout); without it a store built from another root refuses the walk")
+	hook := fs.Bool("hook", false, "SessionStart hook mode: exit 0 without indexing when HEAD exceeds LEANKG_HOOK_MAX_FILES or another index of the store is running; the embed is skipped when the backlog exceeds LEANKG_HOOK_MAX_EMBED")
+	noEmbed := fs.Bool("no-embed", false, "index only: skip the incremental embed that follows a successful index")
 	positional := parseInterspersed("index", fs, args, 1)
 	if *auto && *manual {
 		log.Fatal("index: --auto and --manual are mutually exclusive")
@@ -740,6 +743,36 @@ func cmdIndex(args []string) {
 	if len(positional) == 1 {
 		target = positional[0]
 	}
+	// The hook's size gate runs before any side effect: no setup-mode
+	// persistence, no .leankg, no store.
+	if *hook && *source == "" {
+		if msg := hookBigRepoSkip(target); msg != "" {
+			fmt.Println(msg)
+			return
+		}
+	}
+	// One index per store at a time. Hook mode gives up on a held lock so a
+	// session start never queues behind a running index; a manual run waits.
+	storeDir := indexStoreDir(*project, target)
+	lockPath := filepath.Join(storeDir, ".leankg", "index.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		log.Fatalf("index: create .leankg: %v", err)
+	}
+	var unlock func()
+	var err error
+	if *hook {
+		unlock, err = flock.TryLock(lockPath)
+		if errors.Is(err, flock.ErrHeld) {
+			fmt.Printf("leankg index --hook: skipped %s: another index of this store is running\n", storeDir)
+			return
+		}
+	} else {
+		unlock, err = flock.Lock(lockPath)
+	}
+	if err != nil {
+		log.Fatalf("index: lock %s: %v", lockPath, err)
+	}
+	defer unlock()
 
 	// FR-ZCP-13 first-run contract: exactly one auto/manual question per user,
 	// persisted. Precedence: flags > LEANKG_SETUP_MODE > the stored choice >
@@ -777,6 +810,9 @@ func cmdIndex(args []string) {
 
 	if err := runIndex(*project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
 		log.Fatalf("index: %v", err)
+	}
+	if !*noEmbed {
+		indexEmbed(storeDir, *hook)
 	}
 }
 

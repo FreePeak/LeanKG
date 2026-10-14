@@ -527,9 +527,9 @@ func TestRegisterCWDCreatesHook(t *testing.T) {
 		"hooks": map[string]any{
 			"SessionStart": []any{
 				map[string]any{
-					"matcher": "*",
+					"matcher": "startup|resume",
 					"hooks": []any{
-						map[string]any{"type": "command", "command": testExe + ` index "$CLAUDE_PROJECT_DIR"`},
+						map[string]any{"type": "command", "command": testExe + ` index --hook "$CLAUDE_PROJECT_DIR"`, "async": true},
 					},
 				},
 			},
@@ -584,6 +584,111 @@ func TestRegisterCWDIdempotent(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatalf("duplicate hook appended:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+// TestRegisterCWDReplacesLegacyGeneratedEntry: a previously generated entry
+// (the pre-async `index "$CLAUDE_PROJECT_DIR"` form) is replaced in place by
+// the current entry; unrelated entries keep their position and content.
+func TestRegisterCWDReplacesLegacyGeneratedEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[`+
+		`{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]},`+
+		`{"matcher":"*","hooks":[{"type":"command","command":"/old/bin/leankg index \"$CLAUDE_PROJECT_DIR\""}]}`+
+		`]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	want := []any{
+		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
+		hookEntryForTest(testExe),
+	}
+	if !reflect.DeepEqual(ss, want) {
+		t.Fatalf("got  %#v\nwant %#v", ss, want)
+	}
+}
+
+// TestRegisterCWDRemovesLegacyWhenCurrentPresent: the current entry is already
+// there but a legacy generated entry sits beside it. Left alone the hook would
+// run twice, so the legacy entry goes and the current one stays the only copy.
+func TestRegisterCWDRemovesLegacyWhenCurrentPresent(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[`+
+		`{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]},`+
+		`{"matcher":"startup|resume","hooks":[{"type":"command","command":"`+testExe+` index --hook \"$CLAUDE_PROJECT_DIR\"","async":true}]},`+
+		`{"matcher":"*","hooks":[{"type":"command","command":"/old/bin/leankg index \"$CLAUDE_PROJECT_DIR\""}]}`+
+		`]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	want := []any{
+		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
+		hookEntryForTest(testExe),
+	}
+	if !reflect.DeepEqual(ss, want) {
+		t.Fatalf("got  %#v\nwant %#v", ss, want)
+	}
+}
+
+// TestRegisterCWDKeepsCustomizedEntry: a leankg command with extra tokens is
+// the user's own wiring, not a generated entry, so it survives untouched and
+// the generated entry is appended after it.
+func TestRegisterCWDKeepsCustomizedEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	customised := `{"matcher":"*","hooks":[{"type":"command","command":"\"$HOME/.claude/hooks/freepeak-only\" env X=1 /path/leankg index --hook \"$CLAUDE_PROJECT_DIR\""}]}`
+	writeSeed(t, path, `{"hooks":{"SessionStart":[`+customised+`]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	var kept any
+	if err := json.Unmarshal([]byte(customised), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if len(ss) != 2 || !reflect.DeepEqual(ss[0], kept) {
+		t.Fatalf("customised entry not preserved: %#v", ss)
+	}
+	gen := ss[1].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if gen["command"] != testExe+` index --hook "$CLAUDE_PROJECT_DIR"` {
+		t.Fatalf("generated entry not appended: %#v", ss[1])
+	}
+}
+
+// TestRegisterCWDKeepsForeignHooksOfGeneratedEntry: a legacy leankg hook that
+// shares an entry with another hook loses only its own hook; the foreign one
+// stays in place and the generated entry follows it.
+func TestRegisterCWDKeepsForeignHooksOfGeneratedEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[{"matcher":"*","hooks":[`+
+		`{"type":"command","command":"/old/bin/leankg index \"$CLAUDE_PROJECT_DIR\""},`+
+		`{"type":"command","command":"echo keep"}]}]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	want := []any{
+		map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": "echo keep"}}},
+		hookEntryForTest(testExe),
+	}
+	if !reflect.DeepEqual(ss, want) {
+		t.Fatalf("got  %#v\nwant %#v", ss, want)
+	}
+}
+
+// hookEntryForTest spells out the generated entry for exe, independent of
+// hookEntry, so the assertions pin the wire shape.
+func hookEntryForTest(exe string) map[string]any {
+	return map[string]any{
+		"matcher": "startup|resume",
+		"hooks": []any{
+			map[string]any{"type": "command", "command": exe + ` index --hook "$CLAUDE_PROJECT_DIR"`, "async": true},
+		},
 	}
 }
 

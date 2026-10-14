@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -380,31 +381,128 @@ func replaceTOMLSection(text, header string, lines []string) string {
 // Claude Code SessionStart hook (register-cwd)
 // ---------------------------------------------------------------------------
 
+// hookMatcher limits the SessionStart hook to a fresh start or a resume.
+const hookMatcher = "startup|resume"
+
+// hookSuffix and legacyHookSuffix are the argument tails of the hook command.
+// legacyHookSuffix is the pre-async form; RegisterCWD replaces it in place.
+const (
+	hookSuffix       = ` index --hook "$CLAUDE_PROJECT_DIR"`
+	legacyHookSuffix = ` index "$CLAUDE_PROJECT_DIR"`
+)
+
 // hookCommand renders the SessionStart hook the writer owns. exe is the
 // resolved current executable (CurrentCommand()); bare "leankg" would depend
 // on the hook's PATH and silently no-op when it differs. $CLAUDE_PROJECT_DIR
 // is expanded by Claude Code at hook runtime and quoted, so project paths
-// with spaces survive the shell. The hook attaches-and-indexes the project
-// the way the Rust `add` verb did: `index` creates-or-updates that project's
-// store (incremental after the first run).
+// with spaces survive the shell. --hook keeps the run cheap and safe to fire
+// on every session start (see index's hook mode).
 func hookCommand(exe string) string {
 	if exe == "" {
 		exe = "leankg"
 	}
-	return exe + ` index "$CLAUDE_PROJECT_DIR"`
+	return exe + hookSuffix
+}
+
+// isGeneratedCommand reports whether cmd is a hook RegisterCWD wrote: an
+// executable token with no whitespace followed by either suffix. Anything
+// with extra tokens is user-customised and never matched.
+func isGeneratedCommand(cmd string) bool {
+	for _, suffix := range []string{hookSuffix, legacyHookSuffix} {
+		if exe, ok := strings.CutSuffix(cmd, suffix); ok && exe != "" && !strings.ContainsAny(exe, " \t\r\n") {
+			return true
+		}
+	}
+	return false
+}
+
+// hookEntry is the SessionStart entry RegisterCWD writes for exe.
+func hookEntry(exe string) map[string]any {
+	return map[string]any{
+		"matcher": hookMatcher,
+		"hooks":   []any{map[string]any{"type": "command", "command": hookCommand(exe), "async": true}},
+	}
+}
+
+// ownsCommand reports whether cmd is a hook RegisterCWD manages: the command it
+// writes now (also when the executable path holds whitespace), or a generated
+// command in either form.
+func ownsCommand(cmd, command string) bool {
+	return cmd == command || isGeneratedCommand(cmd)
+}
+
+// onlyCurrentHook reports whether sessionStart holds exactly one hook
+// RegisterCWD manages and it is the hook hookEntry(exe) would write: same
+// matcher, and running command asynchronously. Nothing else needs changing then.
+func onlyCurrentHook(sessionStart []any, command string) bool {
+	owned, current := 0, false
+	for _, item := range sessionStart {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		inner, _ := obj["hooks"].([]any)
+		for _, h := range inner {
+			hook, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			cmd, _ := hook["command"].(string)
+			if !ownsCommand(cmd, command) {
+				continue
+			}
+			owned++
+			current = cmd == command && hook["async"] == true && obj["matcher"] == hookMatcher
+		}
+	}
+	return owned == 1 && current
+}
+
+// withoutGeneratedHooks reports whether obj holds a hook RegisterCWD manages
+// and, when it does, returns the entry with those hooks removed. The returned
+// entry is nil when no other hook remains, so the caller drops it entirely.
+func withoutGeneratedHooks(obj map[string]any, command string) (map[string]any, bool) {
+	inner, ok := obj["hooks"].([]any)
+	if !ok {
+		return nil, false
+	}
+	var foreign []any
+	generated := false
+	for _, h := range inner {
+		if hook, ok := h.(map[string]any); ok {
+			if cmd, _ := hook["command"].(string); ownsCommand(cmd, command) {
+				generated = true
+				continue
+			}
+		}
+		foreign = append(foreign, h)
+	}
+	if !generated {
+		return nil, false
+	}
+	if len(foreign) == 0 {
+		return nil, true
+	}
+	kept := maps.Clone(obj)
+	kept["hooks"] = foreign
+	return kept, true
 }
 
 // RegisterCWD merges-or-creates the Claude Code SessionStart hook that
 // attaches the project on session start:
 //
-//	{"matcher": "*", "hooks": [{"type": "command", "command": exe + ` index "$CLAUDE_PROJECT_DIR"`}]}
+//	{"matcher": "startup|resume", "hooks": [{"type": "command", "command": exe + ` index --hook "$CLAUDE_PROJECT_DIR"`, "async": true}]}
 //
 // under hooks.SessionStart in <homeDir>/.claude/settings.json, preserving
-// every other hook and setting. Idempotent: when the identical command is
-// already present the file is left untouched. Only claude-code supports
-// hooks today; other clients return an error wrapping ErrUnsupportedClient.
-// exe is the resolved binary path to embed (empty falls back to "leankg");
-// the project itself is resolved at hook runtime via $CLAUDE_PROJECT_DIR.
+// every other hook and setting. Idempotent: when that entry is already the only
+// leankg hook present the file is left untouched. Generated leankg entries (the
+// current or the legacy command form, duplicates included) are replaced in
+// place by one current entry; a
+// customised leankg command is user wiring and is left alone. Only claude-code
+// supports hooks today; other clients return an error wrapping
+// ErrUnsupportedClient. exe is the resolved binary path to embed (empty falls
+// back to "leankg"); the project itself is resolved at hook runtime via
+// $CLAUDE_PROJECT_DIR.
 func RegisterCWD(homeDir, client, exe string) error {
 	if client != ClientClaudeCode {
 		return fmt.Errorf("register-cwd for %s: %w", client, ErrUnsupportedClient)
@@ -429,29 +527,34 @@ func RegisterCWD(homeDir, client, exe string) error {
 		}
 		sessionStart = nil
 	}
+	command := hookCommand(exe)
+	if onlyCurrentHook(sessionStart, command) {
+		return nil // identical hook already present, and no duplicate or legacy copy
+	}
+	next := make([]any, 0, len(sessionStart)+1)
+	placed := false
 	for _, item := range sessionStart {
 		obj, ok := item.(map[string]any)
 		if !ok {
+			next = append(next, item)
 			continue
 		}
-		inner, ok := obj["hooks"].([]any)
-		if !ok {
+		kept, generated := withoutGeneratedHooks(obj, command)
+		if !generated {
+			next = append(next, item)
 			continue
 		}
-		for _, h := range inner {
-			hook, ok := h.(map[string]any)
-			if !ok {
-				continue
-			}
-			if cmd, _ := hook["command"].(string); cmd == hookCommand(exe) {
-				return nil // identical hook already present
-			}
+		if kept != nil {
+			next = append(next, kept) // its non-leankg hooks survive in place
+		}
+		if !placed {
+			next = append(next, hookEntry(exe))
+			placed = true
 		}
 	}
-	sessionStart = append(sessionStart, map[string]any{
-		"matcher": "*",
-		"hooks":   []any{map[string]any{"type": "command", "command": hookCommand(exe)}},
-	})
-	hooks["SessionStart"] = sessionStart
+	if !placed {
+		next = append(next, hookEntry(exe))
+	}
+	hooks["SessionStart"] = next
 	return writeJSONFile(path, root)
 }

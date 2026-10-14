@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/gitobj/gittest"
 )
 
 // fixture builds a tree with the given marker files at the given relative
@@ -132,7 +134,7 @@ func TestActivateMarkerlessCensusDeep(t *testing.T) {
 		t.Fatalf("ExtOwner(.go) = %v ok=%v, want go", l, ok)
 	}
 	// One directory deeper than the bound stays unseen: a repo marker is the
-	// exact signal for those trees (ceiling documented on censusExts).
+	// exact signal for those trees (ceiling documented on activation).
 	if _, ok := r.ExtOwner(".zig"); ok {
 		t.Fatalf("zig past the census bound must stay unowned, got %v", r.Active())
 	}
@@ -488,5 +490,69 @@ func TestActivateWave2Census(t *testing.T) {
 	}
 	if _, ok := r.ExtOwner(".zig"); ok {
 		t.Fatalf(".zig must stay unowned while zig is inactive")
+	}
+}
+
+// TestActivateGitRootUsesHEADFiles: a repository root with a commit activates
+// from HEAD. The untracked app.py and pyproject.toml must not activate Python,
+// while the committed main.go and go.mod activate Go.
+func TestActivateGitRootUsesHEADFiles(t *testing.T) {
+	gittest.SkipWithoutGit(t)
+	root := t.TempDir()
+	gittest.Git(t, root, "init", "-q")
+	gittest.WriteFile(t, root, "main.go", "package main\n")
+	gittest.WriteFile(t, root, "go.mod", "module m\n")
+	gittest.Git(t, root, "add", "main.go", "go.mod")
+	gittest.Git(t, root, "commit", "-q", "-m", "init")
+	gittest.WriteFile(t, root, "app.py", "def a(): pass\n")
+	gittest.WriteFile(t, root, "pyproject.toml", "[project]\n")
+
+	r := NewRegistry()
+	if _, err := r.Activate(root); err != nil {
+		t.Fatal(err)
+	}
+	if !r.IsActive(Go) {
+		t.Fatalf("committed go sources must activate go, got %v", r.Active())
+	}
+	if r.IsActive(Python) {
+		t.Fatalf("untracked app.py and pyproject.toml must not activate python, got %v", r.Active())
+	}
+}
+
+// TestActivateUnbornRepoWalks: a repository with no commit has no HEAD tree,
+// so activation walks the disk as it does for any directory. The untracked
+// app.py activates Python.
+func TestActivateUnbornRepoWalks(t *testing.T) {
+	gittest.SkipWithoutGit(t)
+	root := t.TempDir()
+	gittest.Git(t, root, "init", "-q")
+	gittest.WriteFile(t, root, "app.py", "def a(): pass\n")
+
+	r := NewRegistry()
+	if _, err := r.Activate(root); err != nil {
+		t.Fatal(err)
+	}
+	if !r.IsActive(Python) {
+		t.Fatalf("unborn repo must walk the disk and activate python, got %v", r.Active())
+	}
+}
+
+// TestActivateIgnoresBrokenMarkerSymlink: a dangling go.mod symlink is no
+// marker, because the disk walk resolves markers as regular files. It must not
+// activate Go; the .py source still activates Python.
+func TestActivateIgnoresBrokenMarkerSymlink(t *testing.T) {
+	dir := fixture(t, nil, map[string]string{"app/main.py": "def a(): pass"})
+	if err := os.Symlink(filepath.Join(dir, "missing", "go.mod"), filepath.Join(dir, "go.mod")); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRegistry()
+	if _, err := r.Activate(dir); err != nil {
+		t.Fatal(err)
+	}
+	if r.IsActive(Go) {
+		t.Fatalf("a dangling go.mod symlink must not activate go, got %v", r.Active())
+	}
+	if !r.IsActive(Python) {
+		t.Fatalf("python must stay active, got %v", r.Active())
 	}
 }

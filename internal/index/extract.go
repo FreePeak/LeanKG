@@ -1,7 +1,6 @@
 package index
 
 import (
-	"os"
 	"regexp"
 	"strings"
 
@@ -78,19 +77,15 @@ var (
 	dartEnumConstantRe = regexp.MustCompile(`^[A-Za-z_$][\w$]*$`)
 )
 
-// extractFile extracts elements from one file on disk, tagging it with the
+// extractFile extracts elements from one file's content, tagging it with the
 // legacy static extension->language map.
-func extractFile(rel, abs string) (fileElements, error) {
-	return extractFileAs(rel, abs, extLang[extOf(rel)])
+func extractFile(rel string, src []byte) fileElements {
+	return extractFileAs(rel, src, extLang[extOf(rel)])
 }
 
-// extractFileAs extracts elements from one file on disk as the given
+// extractFileAs extracts elements from one file's content as the given
 // language tag (empty or unknown tags yield no elements).
-func extractFileAs(rel, abs, lang string) (fileElements, error) {
-	src, err := os.ReadFile(abs)
-	if err != nil {
-		return fileElements{}, err
-	}
+func extractFileAs(rel string, src []byte, lang string) fileElements {
 	lines := strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
 
 	// Tree-sitter tier first (tstree build only): richer symbol extraction
@@ -122,7 +117,7 @@ func extractFileAs(rel, abs, lang string) (fileElements, error) {
 		boundContent(fe.elements, lines)
 		// Grammar-derived call sites seed "calls" edges in relationships().
 		tsAttributeCalls(src, lang, fe.elements)
-		return fe, nil
+		return fe
 	}
 
 	var ms []match
@@ -153,7 +148,7 @@ func extractFileAs(rel, abs, lang string) (fileElements, error) {
 		ms, _ = matchLangExp(lang, lines)
 	}
 	if len(ms) == 0 {
-		return fileElements{rel: rel}, nil
+		return fileElements{rel: rel}
 	}
 
 	ends := make([]int, len(ms))
@@ -199,7 +194,7 @@ func extractFileAs(rel, abs, lang string) (fileElements, error) {
 	assignParents(fe.elements)
 	qualify(fe)
 	boundContent(fe.elements, lines)
-	return fe, nil
+	return fe
 }
 
 // fileElements holds the extraction output for one file.
