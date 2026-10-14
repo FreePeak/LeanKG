@@ -684,12 +684,16 @@ func TestFromEnv(t *testing.T) {
 // --- NDJSON export/import ------------------------------------------------------
 
 func TestNDJSONRoundTrip(t *testing.T) {
+	// The export resolves its provider from the environment, as the import does:
+	// the deterministic provider at width 8 is the identity both sides share.
+	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
+	t.Setenv("LEANKG_EMBED_DIMS", "8")
 	st1 := testStore(t)
 	els := []store.Element{el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"), el("b::g", "def g(): pass")}
 	seed(t, st1, els...)
 
 	var buf bytes.Buffer
-	if err := ExportNDJSON(context.Background(), st1, "m", &buf); err != nil {
+	if err := ExportNDJSON(context.Background(), st1, "deterministic-8", &buf); err != nil {
 		t.Fatalf("ExportNDJSON: %v", err)
 	}
 
@@ -745,12 +749,12 @@ func TestNDJSONRoundTrip(t *testing.T) {
 		t.Fatal("import: want 3 vectors")
 	}
 	cur, _ := st2.Stamp("deterministic-8")
-	if cur == nil || cur.Revision != "test:deterministic-v1" || cur.Dimensions != 8 || cur.Distance != "cosine" || cur.Provider != "ndjson" {
+	if cur == nil || cur.Revision != "test:deterministic-v1" || cur.Dimensions != 8 || cur.Distance != "cosine" || cur.Provider != "deterministic" {
 		t.Fatalf("import stamp: got %+v", cur)
 	}
 
 	buf2 := bytes.Buffer{}
-	if err := ExportNDJSON(context.Background(), st2, "m", &buf2); err != nil {
+	if err := ExportNDJSON(context.Background(), st2, "deterministic-8", &buf2); err != nil {
 		t.Fatal(err)
 	}
 	rep, err = ImportNDJSON(context.Background(), st2, "deterministic-8", "test:deterministic-v1", "cosine", 8, simulateOffsite(&buf2))
@@ -763,6 +767,10 @@ func TestNDJSONRoundTrip(t *testing.T) {
 }
 
 func TestImportNDJSONDimGuardAndOrphans(t *testing.T) {
+	t.Setenv("LEANKG_EMBED_PROVIDER", "openai")
+	t.Setenv("LEANKG_EMBED_MODEL", "m")
+	t.Setenv("LEANKG_EMBED_DIMS", "8")
+	t.Setenv("LEANKG_EMBED_REVISION", "rev")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 

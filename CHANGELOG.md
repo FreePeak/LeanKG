@@ -10,9 +10,19 @@
 * **writer:** for a git-backed store, a new commit triggers a reindex; saving a file without committing does not change the graph.
 * **embed:** spawn path for `LEANKG_EMBED_PROVIDER=local` serves the pinned bge-small-en-v1.5 GGUF by default (`internal/embed/sidecar.go`): `-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf --embeddings` when the file exists, otherwise `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` which self-downloads into the llama.cpp cache on first use; the not-found error names the download step. `leankg-embed run/full/export/import/status` and `leankg serve --embed-provider local` work out of the box with no hand-written `LEANKG_EMBED_SIDECAR_ARGS`.
 
+* **embed:** `embeddinggemma-2` catalog row (google/embeddinggemma-2 @ `914f7f8`, 768-d, document and query prefixes) for a llama.cpp sidecar serving the BF16 GGUF (`ggml-org/embeddinggemma-2-GGUF`, llama.cpp >= b11454); `.env.example` documents every embed and HF variable; README gains "Embedding providers" and "EmbeddingGemma 2 with a Hugging Face Storage Bucket".
+* **embed:** `LEANKG_EMBED_DIMS` truncates a catalogued model to its Matryoshka widths (512, 256 or 128 for `embeddinggemma-2`), re-normalized to unit length (`internal/embed/matryoshka.go`).
+* **scripts:** `scripts/hf-embed.sh` runs the EmbeddingGemma 2 bulk embed on a Hugging Face Job (export, upload to a bucket, `hf jobs uv run scripts/hf_embed_job.py`, download, import; `--dry-run`, `--yes`, `--limit N`, `--keep`). Cost guards: every run prints an estimate and a worst case (job timeout x hourly price); a run is refused without `--yes`, when the worst case exceeds `LEANKG_HF_MAX_USD` (default 0.50), or when the estimate exceeds the timeout.
+
 ### Changes
 
 * **install:** the generated `--register-cwd` SessionStart hook is async, uses matcher `startup|resume`, and runs `leankg index --hook "$CLAUDE_PROJECT_DIR"`; re-running install replaces a previously generated `index "$CLAUDE_PROJECT_DIR"` entry instead of adding a second one.
+* **embed:** a catalogued model with an unsupported `LEANKG_EMBED_DIMS` now fails at construction; only its native width or a Matryoshka width is accepted.
+* **embed:** a permanent endpoint configuration error (HTTP 404/405, HTTP 401/403, or a 200 reply that is not an OpenAI embeddings object, such as llama-server's native top-level array when `LEANKG_EMBED_BASE_URL` lacks `/v1`) stops the run after the first request with `ErrEndpointConfig`, naming the URL called and the fix. It is no longer retried or shrunk item by item, and the run writes no vectors; error text redacts the API key.
+* **embed:** `leankg-embed import` stamps the collection from the `LEANKG_EMBED_*` environment (model, revision, distance, width, prefixes). `--model`, `--revision`, `--dims` and `--distance` are optional overrides and must agree with it. `export` takes `--model` (required), which must agree with the same environment.
+* **embed:** an unpinned local sidecar needs `LEANKG_EMBED_REVISION` for `import` and `export`, because the revision cannot be read from a running sidecar.
+* **embed:** `export` refuses a local sidecar that reports no `n_ctx` on `/props`, since the live text cap is then unknown.
+* **scripts:** `scripts/embed_batch.py` is removed; use `scripts/hf-embed.sh` and `scripts/hf_embed_job.py`.
 
 ## [0.34.0](https://github.com/FreePeak/LeanKG/compare/v0.33.0...v0.34.0) (2026-09-14)
 

@@ -1433,8 +1433,9 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 | `LEANKG_EMBED_PROVIDER` | `local` | `local` \| `openai` \| `deterministic` |
 | `LEANKG_EMBED_BASE_URL` | — | attach to a running OpenAI-compatible endpoint (with `local`, skips the sidecar) |
 | `LEANKG_EMBED_API_KEY` | — | bearer for the embedding provider |
-| `LEANKG_EMBED_MODEL` / `_DIMS` / `_REVISION` | `local` / `384` / `local:<model>` | ModelStamp identity; a revision change invalidates the collection |
+| `LEANKG_EMBED_MODEL` / `_DIMS` / `_REVISION` | `local` / `384` / `local:<model>` | ModelStamp identity; a revision change invalidates the collection. `embeddinggemma-2` is a catalog row (google/embeddinggemma-2 @ `914f7f8`, 768-d, query `task: code retrieval \| query: `, document `title: none \| text: `) served by llama.cpp >= b11454 with the BF16 GGUF; Matryoshka `_DIMS` 512/256/128 serves a truncated, re-normalized vector (`TruncateNormalize`, stamp dims = the truncated width); any other `_DIMS` for a catalog row fails at construction |
 | `LEANKG_EMBED_SIDECAR_CMD` / `_ARGS` / `_PORT` / `_READY_SECS` | `llama-server` / pinned bge-small GGUF + `--embeddings` / `8080` / `120` | sidecar adopt-or-spawn (v4.13.6: a sidecar already answering `/v1/embeddings` on `_PORT` is adopted, not duplicated, and survives `release`) + bounded readiness; unset `_ARGS` serves `-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf` when present, else `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` (self-downloads) |
+| `LEANKG_HF_BUCKET` / `_MODEL_DIR` / `_WORK_DIR` / `_JOB_FLAVOR` / `_JOB_TIMEOUT` (+ `HF_TOKEN`) | — / `""` / `leankg` / `l4x1` / `30m` | read only by `scripts/hf-embed.sh` (EmbeddingGemma 2 bulk on a Hugging Face Job), never by the binaries; placeholders in `.env.example`; the session hook never starts a job |
 | `LEANKG_CACHE_MAX_TOKENS` | `500000` | compression session-cache budget |
 | `LEANKG_MAX_CACHE_ELEMENTS` | `50000` | mega-graph threshold (ontology-first discovery path) |
 | `LEANKG_PORTFOLIO_DB` | `$HOME/.leankg/portfolio.db` | fleet registry location (sqlite); the suite redirects it so tests never write user state |
