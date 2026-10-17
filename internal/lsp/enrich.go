@@ -190,9 +190,10 @@ func (b *Bridge) enrichLanguage(rep *LangReport, dir, id, tier string, sc Server
 		root := b.WorkspaceFor(abs)
 		syms, err := b.documentSymbols(id, sc, root, abs)
 		if err != nil {
+			// Every failure is recorded; the second one ends the language.
 			failures++
+			rep.Reason = fmt.Sprintf("server %q failed after %d files: %v", sc.Command, rep.Files, err)
 			if failures > 1 {
-				rep.Reason = fmt.Sprintf("server %q stopped answering after %d files: %v", sc.Command, rep.Files, err)
 				return out
 			}
 			continue
@@ -239,13 +240,12 @@ func (b *Bridge) enrichLanguage(rep *LangReport, dir, id, tier string, sc Server
 
 // documentSymbols fetches one document's symbols, respawning a dead pooled
 // server once (Rust bridge: a failed request drops the entry so the next call
-// spawns fresh). Each attempt is bounded by the configured request timeout.
+// spawns fresh). Each attempt's spawn is bounded by handshakeTimeout and its
+// request by the configured request timeout.
 func (b *Bridge) documentSymbols(id string, sc ServerConfig, root, abs string) ([]Symbol, error) {
 	var lastErr error
 	for range 2 {
-		ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout())
-		syms, err := b.getAndSymbols(ctx, id, sc, root, abs)
-		cancel()
+		syms, err := b.getAndSymbols(id, sc, root, abs)
 		if err == nil {
 			return syms, nil
 		}
@@ -255,22 +255,34 @@ func (b *Bridge) documentSymbols(id string, sc ServerConfig, root, abs string) (
 	return nil, lastErr
 }
 
-func (b *Bridge) getAndSymbols(ctx context.Context, id string, sc ServerConfig, root, abs string) ([]Symbol, error) {
-	c, err := b.manager.GetCommand(ctx, langs.Language(id), sc.Command, sc.Args, root, sc.InitializationOptions)
+func (b *Bridge) getAndSymbols(id string, sc ServerConfig, root, abs string) ([]Symbol, error) {
+	c, err := b.clientFor(id, sc, root)
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout())
+	defer cancel()
 	return c.DocumentSymbols(ctx, abs)
+}
+
+// clientFor returns the pooled server for (id, root), spawning it if needed.
+// The spawn and its initialize handshake get handshakeTimeout, not the request
+// timeout: a child context cannot outlive its parent, so a spawn that ran under
+// the request deadline ended at timeout_ms.
+func (b *Bridge) clientFor(id string, sc ServerConfig, root string) (*Client, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	defer cancel()
+	return b.manager.GetCommand(ctx, langs.Language(id), sc.Command, sc.Args, root, sc.InitializationOptions)
 }
 
 // hover sends one hover request positioned at the element's declaration.
 func (b *Bridge) hover(id string, sc ServerConfig, root, abs string, el *store.Element) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout())
-	defer cancel()
-	c, err := b.manager.GetCommand(ctx, langs.Language(id), sc.Command, sc.Args, root, sc.InitializationOptions)
+	c, err := b.clientFor(id, sc, root)
 	if err != nil {
 		return "", err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout())
+	defer cancel()
 	line := el.LineStart - 1
 	if line < 0 {
 		line = 0

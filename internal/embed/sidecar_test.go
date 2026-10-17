@@ -138,7 +138,7 @@ func TestSidecarLifecycle(t *testing.T) {
 	defer cancel()
 	sc, err := StartSidecar(ctx, SidecarConfig{
 		Command: script, Port: port,
-		ReadyTimeout: 15 * time.Second, PollInterval: 25 * time.Millisecond,
+		ReadyTimeout: sidecarReadyTimeout(), PollInterval: 25 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("StartSidecar: %v", err)
@@ -187,7 +187,7 @@ func TestSidecarShutdownOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sc, err := StartSidecar(ctx, SidecarConfig{
 		Command: script, Port: port,
-		ReadyTimeout: 15 * time.Second, PollInterval: 25 * time.Millisecond,
+		ReadyTimeout: sidecarReadyTimeout(), PollInterval: 25 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("StartSidecar: %v", err)
@@ -559,10 +559,12 @@ func TestStartSidecarSpawnsWhenPortStrangerHoldsIt(t *testing.T) {
 	}
 }
 
-// waitSidecarReady blocks until the fake sidecar on port answers /health.
+// waitSidecarReady blocks until the fake sidecar on port answers /health. It
+// uses the same overridable bound as the StartSidecar call sites: the wait and
+// the start have to agree, or a widened start bound still fails here.
 func waitSidecarReady(t *testing.T, port int) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(sidecarReadyTimeout())
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
 		if err == nil {
@@ -595,4 +597,21 @@ func freeTCPPort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// sidecarReadyTimeout is the readiness bound these tests give the fake sidecar.
+//
+// It is env-overridable for the same reason as the astgrep and lsp bounds
+// (#488): the fake re-execs the Go TEST BINARY, so starting it costs a full
+// process launch and Go runtime init, and on a self-hosted runner shared with
+// other CI jobs that occasionally exceeds the shipped 15s — measured failing
+// twice in one day with the fake "not ready within 15s" while the same tests
+// pass locally in 1.9-5.1s. The shipped default is unchanged.
+func sidecarReadyTimeout() time.Duration {
+	if v := os.Getenv("LEANKG_TEST_SIDECAR_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 15 * time.Second
 }

@@ -8,9 +8,9 @@
 │                                                                     │
 │  launchctl loads ~/Library/LaunchAgents/com.freepeak.*.plist        │
 │       │                                                             │
-│       ├─── com.freepeak.llama-embed ─────────────────────────────┐  │
-│       │    llama-server -m bge-small-en-v1.5 --port 9101         │  │
-│       │    [Embedding inference server]                          │  │
+│       ├─── com.freepeak.homemac-embed-tunnel ────────────────────┐  │
+│       │    EmbeddingGemma 2 BF16 (llama.cpp) on homemac          │  │
+│       │    [Embedding, reached over an SSH local port-forward]   │  │
 │       │                                                          │  │
 │       ├─── com.freepeak.leankg-serve ──────────────────────────┐ │  │
 │       │    leankg-serve-wrapper.sh                              │ │  │
@@ -29,9 +29,9 @@
         │                                                           │  │
         ▼                                                           ▼  │
   ┌──────────────┐    HTTP     ┌──────────────┐    HTTP    ┌─────────┐ │
-  │  DSH Session │ ──────────→ │ leankg serve │ ─────────→ │ llama   │ │
-  │  (Browser)   │  MCP :9699  │   :9699      │  :9101/v1  │ embed   │ │
-  │              │  REST :9700 │              │            │ :9101   │ │
+  │  DSH Session │ ──────────→ │ leankg serve │ ─────────→ │ Gemma 2 │ │
+  │  (Browser)   │  MCP :9699  │   :9699      │  :9103/v1  │ embed   │ │
+  │              │  REST :9700 │              │ tunnel     │ homemac │ │
   └──────────────┘             └──────┬───────┘            └─────────┘ │
                                        │                               │
                                        │ reads/writes                  │
@@ -97,8 +97,8 @@
                   │  1. Read elements    │
                   │  2. Hash-diff        │
                   │     (skip unchanged) │
-                  │  3. Batch → llama    │──→ POST :9101/v1/embeddings
-                  │  4. Store vectors    │←── { embedding: [384 floats] }
+                  │  3. Batch → embed    │──→ POST :9103/v1/embeddings
+                  │  4. Store vectors    │←── { embedding: [512 floats] }
                   │                      │
                   └──────────┬──────────┘
                              │
@@ -106,7 +106,7 @@
                   ┌─────────────────────┐
                   │  embedding_vectors   │
                   │  embedding_state     │  ← Vectors stored
-                  │  emb_stamp           │     (384-dim float32)
+                  │  emb_stamp           │     (512-dim float32)
                   └──────────┬──────────┘
                              │
                              │  User queries via MCP
@@ -251,12 +251,12 @@
 │  │  kind                 │     │  vec            BLOB  │          │
 │  │  content              │     │                      │          │
 │  │                       │     │  vec = struct {       │          │
-│  │  Used for:            │     │    float32[384]       │          │
+│  │  Used for:            │     │    float32[512]       │          │
 │  │  L1 exact match       │     │  }                    │          │
-│  │  L2 fuzzy match       │     │  = 1536 bytes         │          │
+│  │  L2 fuzzy match       │     │  = 2048 bytes         │          │
 │  └──────────────────────┘     │                      │          │
-│                                │  BGE-small-en-v1.5   │          │
-│                                │  384 dimensions      │          │
+│                                │  EmbeddingGemma 2    │          │
+│                                │  512 dims (truncated)│          │
 │                                │  cosine distance     │          │
 │                                └──────────────────────┘          │
 │                                                                  │
@@ -318,8 +318,8 @@
                 │  Vector search │
                 │               │
                 │  1. Embed     │
-                │     query →   │──→ POST :9101/v1/embeddings
-                │     [384-dim] │←── { embedding: [...] }
+                │     query →   │──→ POST :9103/v1/embeddings
+                │     [512-dim] │←── { embedding: [...] }
                 │               │
                 │  2. Cosine    │
                 │     similarity│
@@ -372,7 +372,7 @@
         │                                     ▼         │
         │                            ┌────────────────┐ │
         │                            │ POST            │ │
-        │                            │ :9101/v1/       │ │
+        │                            │ :9103/v1/       │ │
         │                            │ embeddings      │ │
         │                            │                 │ │
         │                            │ {               │ │
@@ -381,7 +381,7 @@
         │                            │    auth_login" │ │
         │                            │  ],            │ │
         │                            │  "model":      │ │
-        │                            │  "bge-small"   │ │
+        │                            │  "gemma-2"     │ │
         │                            │ }               │ │
         │                            └────────┬───────┘ │
         │                                     │         │
@@ -424,14 +424,14 @@
         ▼
     launchctl bootstrap
         │
-        ├──→ com.freepeak.llama-embed.plist
+        ├──→ com.freepeak.homemac-embed-tunnel.plist
         │     │
         │     ▼
-        │    llama-server -m bge-small-en-v1.5-f16.gguf \
-        │                  --embeddings -c 8192 --port 9101
+        │    ssh -N -L 127.0.0.1:9103:127.0.0.1:9101 homemac
+        │    (remote: EmbeddingGemma 2 BF16, llama.cpp b11609)
         │     │
         │     ▼
-        │    Health: GET :9101/health → {"status":"ok"}
+        │    Health: GET :9103/health → {"status":"ok"}
         │    (Ready for embedding requests)
         │
         ├──→ com.freepeak.leankg-serve.plist
@@ -446,7 +446,7 @@
         │    leankg serve --http :9699 --rest :9700 \
         │                --memory --embed-provider local
         │     │
-        │     ├── Attach to :9101 (LEANKG_EMBED_BASE_URL)
+        │     ├── Attach to :9103 (LEANKG_EMBED_BASE_URL)
         │     ├── Open default project (leankg repo)
         │     ├── Register 279 projects in router
         │     ├── Start REST listener on :9700
@@ -476,31 +476,31 @@
     ┌──────────────────────────────────────────────────────┐
     │ model_id  │ qualified_name          │ vec (BLOB)     │
     ├───────────┼─────────────────────────┼────────────────┤
-    │ local     │ AGENTS.md::Build & Test │ [1536 bytes]   │
+    │ local     │ AGENTS.md::Build & Test │ [2048 bytes]   │
     │           │                         │                │
     │           │                         │ ┌────────────┐ │
     │           │                         │ │ float32[0] │ │ -0.074273
     │           │                         │ │ float32[1] │ │ -0.001519
     │           │                         │ │ float32[2] │ │  0.016927
     │           │                         │ │ ...        │ │  ...
-    │           │                         │ │ float32[383]│ │ -0.016199
+    │           │                         │ │ float32[511]│ │ -0.016199
     │           │                         │ └────────────┘ │
     │           │                         │                │
     │           │                         │ L2 norm = 1.0  │
     │           │                         │ (normalized)   │
     ├───────────┼─────────────────────────┼────────────────┤
-    │ local     │ auth.go::LoginFunction  │ [1536 bytes]   │
-    │ local     │ auth.go::ValidateToken  │ [1536 bytes]   │
+    │ local     │ auth.go::LoginFunction  │ [2048 bytes]   │
+    │ local     │ auth.go::ValidateToken  │ [2048 bytes]   │
     │ ...       │ ...                     │ ...            │
     └──────────────────────────────────────────────────────┘
 
     Query-time cosine similarity:
     ┌──────────────────────────────────────────────────────┐
-    │ query_vec (384 floats, from llama :9101)              │
+    │ query_vec (512 floats, from Gemma :9103)              │
     │      ·                                               │
     │      ·  ← dot product                                │
     │      ·                                               │
-    │ stored_vec (384 floats, from embedding_vectors)       │
+    │ stored_vec (512 floats, from embedding_vectors)       │
     │                                                      │
     │ similarity = dot(query, stored) /                     │
     │              (||query|| × ||stored||)                  │
@@ -516,7 +516,7 @@
 
 ```
     ~/Library/LaunchAgents/
-    ├── com.freepeak.llama-embed.plist      # llama-server :9101
+    ├── com.freepeak.homemac-embed-tunnel.plist  # ssh -L :9103
     ├── com.freepeak.leankg-serve.plist     # leankg serve :9699/:9700
     └── com.freepeak.leankg-writer.plist    # leankg writer (file watcher)
 
@@ -544,5 +544,5 @@
     ~/logs/
     ├── leankg-serve.log                    # serve output
     ├── leankg-writer.log                   # writer output
-    └── llama-embed.log                     # embedding server output
+    └── homemac-embed-tunnel.log            # embedding tunnel output
 ```
