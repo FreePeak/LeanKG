@@ -150,15 +150,35 @@ Two habits that avoid it:
 ```bash
 # 1. Find the LISTENERS, not the processes you meant to kill. A pkill pattern
 #    copied from the wrapper misses any server started with a different argv.
-lsof -nP -iTCP:9699 -sTCP:LISTEN    # expect exactly ONE pid
+lsof -nP -iTCP:9699 -sTCP:LISTEN    # one line is not the same as one server
 lsof -nP -iTCP:9700 -sTCP:LISTEN    # and the same pid here
 
 # 2. Kill by the LISTENER's pid, then confirm the port is free before starting.
 kill -TERM <pid>; sleep 3; lsof -nP -iTCP:9699 -sTCP:LISTEN   # empty
 ```
 
-Both ports must be owned by the SAME pid after a restart. If `:9699` answers but
-`:9700` returns `000`, a stale server holds the REST port and the fresh one lost
-it — the surface you are testing is half of two different processes.
+**One pid is not the same as one line.** Measured 2026-10-12 (the case above)
+and again 2026-10-13: the duplicate ran `--http :9699` (wildcard → an **IPv6**
+socket) while launchd's runs `--http 127.0.0.1:9699` (an **IPv4** socket), so
+`lsof` prints TWO lines, one per address family, and both belong to servers that
+are both answering. Reading that as "one server per line" hides the duplicate;
+read it as "these are the sockets, they must all be the same pid".
 
-*Last updated: 2026-10-12 (self-host restart runbook: the duplicate-listener trap and the lsof check that catches it)*
+Keep the pid launchd claims, and kill the other:
+
+```bash
+lsof -nP -iTCP:9699 -sTCP:LISTEN          # two lines, two pids
+launchctl print gui/$(id -u)/com.freepeak.leankg-serve | grep pid   # the one to KEEP
+kill -TERM <the other pid>
+```
+
+The duplicate is also the one on **`localhost`**: a client that resolves
+`localhost` may reach `::1` and land on the wildcard server instead of the
+supervised one. And it holds no REST port — launchd's server won `:9700` — so
+`:9699` and `:9700` belong to *different* pids, which is the same broken state as
+the `000` case above, just harder to notice because nothing fails.
+
+After a restart, both ports must be owned by the SAME pid, and that pid must be
+the one `launchctl print` reports.
+
+*Last updated: 2026-10-13 (self-host runbook: two lsof lines are two SOCKETS, not two servers — read the pid, and keep launchd's)*
