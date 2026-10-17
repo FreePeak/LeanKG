@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/langs"
@@ -319,5 +320,63 @@ func TestEnrichExpandedLanguageWithoutServerIsGraceful(t *testing.T) {
 	}
 	if m := mustFind(t, st, "Program.cs::Main").Metadata; m != nil && m["lsp_enriched"] == true {
 		t.Errorf("element mutated: %v", m)
+	}
+}
+
+// TestEnrichHandshakeOutlivesRequestTimeout pins the budget split. The server
+// answers initialize after 1s: longer than timeout_ms (500ms), far inside the
+// handshake budget. The spawn must not be cut short by the request timeout, and
+// the requests that follow must still merge.
+func TestEnrichHandshakeOutlivesRequestTimeout(t *testing.T) {
+	fakeServerDir(t, "rich")
+	t.Setenv("FAKE_LSP_INIT_DELAY", "1")
+	dir, st := newTestStore(t)
+	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
+	writeFile(t, dir, "leankg.yaml",
+		"lsp:\n  timeout_ms: 500\n  servers:\n    go:\n      command: fake-lsp\n")
+	if err := st.UpsertElements([]store.Element{
+		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
+			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Enrich(st, dir, []string{"go"})
+	if err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if res.Merged == 0 {
+		t.Fatalf("Merged = 0 (reason %q, languages %+v): the spawn was cut short by timeout_ms", res.Reason, res.Languages)
+	}
+}
+
+// TestEnrichRecordsFirstFailureReason: a language whose only file fails records
+// why. A single failure used to leave the language's Reason empty, so the pass
+// reported "no LSP-visible declarations to merge" for a server that had died.
+func TestEnrichRecordsFirstFailureReason(t *testing.T) {
+	fakeServerDir(t, "crash")
+	dir, st := newTestStore(t)
+	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
+	writeFile(t, dir, "leankg.yaml",
+		"lsp:\n  servers:\n    go:\n      command: fake-lsp\n")
+	if err := st.UpsertElements([]store.Element{
+		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
+			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Enrich(st, dir, []string{"go"})
+	if err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if len(res.Languages) != 1 {
+		t.Fatalf("languages = %+v, want one entry", res.Languages)
+	}
+	if got := res.Languages[0].Reason; !strings.Contains(got, "server stream closed") {
+		t.Errorf("language reason = %q, want the documentSymbol failure named", got)
+	}
+	if !strings.Contains(res.Reason, "server stream closed") {
+		t.Errorf("top-level reason = %q, want the server failure named", res.Reason)
 	}
 }
