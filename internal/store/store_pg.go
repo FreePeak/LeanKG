@@ -35,6 +35,11 @@ type PGStore struct {
 	schema string
 }
 
+// ErrSchemaMissing is the read-only open of a project schema that does not
+// exist, the one OpenPG failure that means "no store yet". A bad dsn, a refused
+// connection or an auth failure is a different error and must not read as empty.
+var ErrSchemaMissing = errors.New("store: read-only open of missing store schema")
+
 // OpenPG opens the PostgreSQL+pgvector backend for one project directory.
 // Each project lives in its own schema (leankg_<sha256(dir)[:16]>); RW mode
 // creates the schema, RO mode requires it to exist (parity with sqlite's
@@ -80,7 +85,7 @@ func OpenPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, 
 	}
 	if !exists {
 		pool.Close()
-		return nil, fmt.Errorf("store: read-only open of missing store schema %s", schema)
+		return nil, fmt.Errorf("%w %s", ErrSchemaMissing, schema)
 	}
 	return s, nil
 }

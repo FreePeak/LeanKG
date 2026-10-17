@@ -10,6 +10,39 @@
 
 ## Changelog
 
+### v4.15-portfolio-prune — the portfolio registry can reclaim dead rows (2026-10-11)
+
+> **Trigger:** this machine's registry answered 108 rows, and 84 of them pointed
+> at directories that no longer existed: 80 temp dirs that tests and CI runs
+> registered and then deleted, and 4 removed worktrees. Each still answered as a
+> project, and nothing could reclaim them short of `--forget`, one row at a time.
+> The T0 manifest also printed `missing` for both a vanished directory and a
+> registered project that is not indexed yet.
+
+**Landed (#504, open):** `leankg projects --prune` lists the registrations whose
+directory is gone. It is a dry run by default, because this registry is shared
+with other tools; `--apply` forgets them, and a second `--apply` reports
+"nothing to prune" instead of failing. The sweep is `portfolioreg.Prune`, which
+forgets only rows whose directory is gone: a registered project whose directory
+exists is never pruned, even with no store. The manifest gains `dir_exists` per
+row (`ManifestEntry.DirExists`), a presence probe independent of the store flag,
+and the T0 table prints `dir-gone` in the STORE column for those rows. Only a
+directory that answers ENOENT counts as gone (EACCES and other stat errors keep
+the row), and `--prune --apply` is refused on the postgres engine, where the
+shared registry has no host identity, so one host's prune could remove another
+host's rows; the dry run still works there.
+
+**Measured, on this machine's registry (2026-10-11):** the dry run named the 84
+and changed nothing (108 rows before and after). `--apply` forgot exactly those
+84, and the registry reads 24 rows, all with directories that exist.
+
+**Guards:** `TestManifestMarksGoneDirectories`,
+`TestPruneForgetsOnlyVanishedDirectories`, `TestPruneKeepsRowsWhoseDirectoryCannotBeStatted`,
+`TestProjectsPruneVerb`, `TestProjectsTableMarksGoneDirs`,
+`TestProjectsPruneWithoutRegistry`, `TestProjectsPruneJSONContract`,
+`TestProjectsApplyRequiresPrune`, `TestProjectsPruneApplyRefusedOnPostgres`,
+`TestSuitePinsSQLiteEngine`.
+
 ### v4.15-name-arm-rarity — the name arm fires on prose, at a MEASURED bound (2026-10-13)
 
 > **Trigger:** the re-land sweep over the dormant #449 loop PR. Its wave 17
@@ -737,7 +770,7 @@ The pipeline then released for real: **v0.31.1 and v0.31.2 were cut automaticall
 | #61 | Vendored `tree-sitter-perl` v2.0.0 (MIT) regenerated to **ABI 14** (every published release targets ABI 15, which the Go runtime rejects), behind `//go:build tstree` on every `.c`/`.h`; module/method/import kinds with `use_statement` module-field resolution | On 1,398 real Perl files: **99.2 % clean parses vs 42.8 %** before (791 files recovered). Live: `Inventory.pm::stock_count`, `MyApp::Inventory`, Moose/`namespace::autoclean` imports and a v5.38 `sub tally ($self, $items)` all indexed |
 | #297 | graft's two-pass LLM-meaning pipeline: `file_summaries` checkpoint (migration **14**, model-pinned resume), pass 1 one-completion-per-file at temperature 0 behind a failure gate (5 consecutive → stop; terminal quota/auth → immediate), pass 2 JSON-validated node/relation synthesis with closed enums, markdown node files that preserve human notes, `leankg summarize`, opt-in post-index hook (default **off**) | 23 tests; the hook's default-off contract pinned so an index can never start spending tokens because a provider happens to be configured |
 | #372 | Federation **receiver** (`POST /api/v2/graph/push` + `GET /api/v2/graph`, mounted per project through `rest.Handler`), Contributor+ to write, upsert-by-identity apply that never deletes unmentioned rows and carries local content forward (the wire has no content slot), provenance into metadata; `pull` now fetches **and applies**, degrading to the Rust connectivity probe against a server without the route | Live push→pull round trip between two projects: 2 elements/1 relationship applied, incoming fields won the conflict, local content and unmentioned rows survived, provenance re-stamped |
-| #376 (with #277/#278) | Portfolio registry (migration **13**, sqlite `$LEANKG_PORTFOLIO_DB` or its own PG schema), register-on-index, T0 manifest / T1 hot-set fan-out running the **real** L0–L3 ladder inside each project with per-child attribution, `portfolio` query action, `register-project`/`projects` verbs, `doctor --deep` fleet leg with migration-drift vocabulary, `projects --forget` | Live over MCP: one `--action portfolio` call returned the Perl symbol from one child at L1 and this repo's documents at L3 in a single merged answer |
+| #376 (with #277/#278) | Portfolio registry (migration **13**, sqlite `$LEANKG_PORTFOLIO_DB` or its own PG schema), register-on-index, T0 manifest / T1 hot-set fan-out running the **real** L0–L3 ladder inside each project with per-child attribution, `portfolio` query action, `register-project`/`projects` verbs, `doctor --deep` fleet leg with migration-drift vocabulary, `projects --forget`, `projects --prune [--apply]` | Live over MCP: one `--action portfolio` call returned the Perl symbol from one child at L1 and this repo's documents at L3 in a single merged answer |
 | #73 | `leankg update [--check]`: Releases lookup, semver compare that never treats an unparseable version as equal, bounded download, archive verification (SHA-256 when published, else a content check that says so), atomic sibling-temp replace with `.old` rollback, `PermError` naming the exact `sudo` command, exit 1 when `--check` is behind | 33 tests; live end-to-end install replaced both binaries and the swapped binary ran; live `--check` reports the honest "no darwin-arm64 asset published yet" |
 
 **Plus the earlier mis-scoped closures:** #274/#272 (single-flight already existed; the real remainder was per-file atomic replace, which #279 shipped), #286, #27, #371.
@@ -1472,4 +1505,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 - **FR-TYPE-02 (2026-09-21, removed 2026-10-16):** the `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) and its one call site (`convo.ClassifyWithJudge`) were deleted with the Laya/Jev integration: nothing outside tests ever built a judge via `judge.FromEnv`, so the package, its `LEANKG_JUDGE_*` env surface and its demo paths were dead code. Historical material: [`archive/judge/judge-use-cases.md`](archive/judge/judge-use-cases.md), [`archive/judge/laya-judge.html`](archive/judge/laya-judge.html). The deterministic keyword classifier (`convo.Classify`) is unaffected and remains the only classification path.
-*Last updated: 2026-10-16 (removed the Laya/Jev judge integration — `internal/judge` and `convo.ClassifyWithJudge` were dead code with no production caller; docs archived under `docs/archive/judge/`)*
+*Last updated: 2026-10-17 (portfolio-prune review fixes land: only ENOENT is gone, the `--json` shape is stable, `--apply` requires `--prune`, postgres `--apply` is refused, and the test process is pinned to sqlite; the Laya/Jev judge integration was removed 2026-10-16 and its docs archived under `docs/archive/judge/`)*

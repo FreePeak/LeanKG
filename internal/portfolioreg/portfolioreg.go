@@ -39,6 +39,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -140,7 +141,9 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 		}
 		st, err := store.OpenPG(ctx, url, pgRegistryKey, mode)
 		if err != nil {
-			if mode == store.RO {
+			// Only a schema that does not exist is "no registry"; a dsn, connection
+			// or auth failure is a fault.
+			if errors.Is(err, store.ErrSchemaMissing) {
 				return nil, fmt.Errorf("%w: %v", ErrNoRegistry, err)
 			}
 			return nil, err
@@ -159,7 +162,12 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 		}
 		if mode == store.RO {
 			if _, err := os.Stat(path); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrNoRegistry, path)
+				// Only a registry proven absent (ENOENT) is "no registry"; EACCES and
+				// other stat failures are faults, never an empty fleet.
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil, fmt.Errorf("%w: %s", ErrNoRegistry, path)
+				}
+				return nil, fmt.Errorf("portfolioreg: open registry: %w", err)
 			}
 		}
 		st, err := store.Open(path, mode)
@@ -296,12 +304,30 @@ func Forget(ctx context.Context, o Options, dir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	forgot, err := forgetDirs(ctx, o, []string{canonical})
+	return len(forgot) > 0, err
+}
+
+// forgetDirs removes canonical dirs from the registry in one RW session and
+// returns the ones that had a row. A dir with no row is skipped, not an error:
+// a concurrent prune or forget may have removed it first.
+func forgetDirs(ctx context.Context, o Options, dirs []string) ([]string, error) {
 	reg, err := Open(ctx, o, store.RW)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer reg.Close()
-	return reg.ProjectForget(canonical)
+	forgot := []string{}
+	for _, dir := range dirs {
+		ok, ferr := reg.ProjectForget(dir)
+		if ferr != nil {
+			return forgot, ferr
+		}
+		if ok {
+			forgot = append(forgot, dir)
+		}
+	}
+	return forgot, nil
 }
 
 // Projects is the registry list (name-ordered; see store.ProjectList).
@@ -343,7 +369,9 @@ type ManifestEntry struct {
 	Elements     int     `json:"elements"`
 	Files        int     `json:"files"`
 	StoreOnDisk  bool    `json:"store_on_disk"`
-	Hot          bool    `json:"hot"`
+	// DirExists: 84 of 108 registered rows had a deleted directory (2026-10-11); StoreOnDisk hid it.
+	DirExists bool `json:"dir_exists"`
+	Hot       bool `json:"hot"`
 }
 
 // Manifest builds the T0 summary. hot may be nil (nothing is labeled hot).
@@ -367,6 +395,7 @@ func ManifestOf(o Options, projects []store.ProjectRecord, hot *HotSet) []Manife
 			Project: p.Name, Dir: p.Dir, RegisteredAt: p.RegisteredAt,
 			LastIndexed: p.LastIndexed, Elements: p.ElementCount, Files: p.FileCount,
 			StoreOnDisk: storePresent(o.engine(), p.Dir),
+			DirExists:   pathPresent(p.Dir),
 			Hot:         containsDir(hotSet, p.Dir),
 		})
 	}
@@ -381,8 +410,44 @@ func storePresent(engine, dir string) bool {
 	if engine != store.EnginePostgres {
 		target = filepath.Join(target, "leankg.db")
 	}
-	_, err := os.Stat(target)
-	return err == nil
+	return pathPresent(target)
+}
+
+// pathPresent is the one presence rule the manifest and the sweep share. Only a
+// path proven absent (ENOENT) is gone: any other stat failure (EACCES on a
+// locked parent) keeps the row, because the sweep is destructive.
+func pathPresent(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+// Prune removes registry rows whose directory no longer exists and returns the
+// dirs it forgot, sorted. dryRun reports what would go without touching the
+// registry, which is what a caller wants before a destructive sweep of a
+// registry other tools share.
+//
+// A row whose directory EXISTS is never pruned, even when its store is
+// missing: that is a project registered-but-not-yet-indexed, which is a normal
+// state (the T0 manifest labels it StoreOnDisk=false and keeps the row).
+func Prune(ctx context.Context, o Options, dryRun bool) ([]string, error) {
+	projects, err := Projects(ctx, o)
+	if errors.Is(err, ErrNoRegistry) {
+		return []string{}, nil // an empty sweep, as FanOut reads a missing registry
+	}
+	if err != nil {
+		return nil, err
+	}
+	gone := []string{}
+	for _, p := range projects {
+		if !pathPresent(p.Dir) {
+			gone = append(gone, p.Dir)
+		}
+	}
+	sort.Strings(gone)
+	if dryRun || len(gone) == 0 {
+		return gone, nil
+	}
+	return forgetDirs(ctx, o, gone)
 }
 
 func containsDir(rows []store.ProjectRecord, dir string) bool {
