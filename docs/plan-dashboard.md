@@ -68,7 +68,6 @@ This document is the working plan for one wave. When the wave lands, its outcome
 | token estimate = bytes/4 | `budget/tokens.go:18,263`, `compress.EstimateTokens` | one estimator, labelled as an estimate everywhere |
 | controlled A/B: `claude -p` with vs without LeanKG; turns, tokens, duration, tool and read counts, leak check | `benchmarks/cross_tool/run_one.sh:204-331`, `aggregate.py:204-272` | imported as the "controlled" evidence panel (DS-18) |
 | pinned trials, ≥3 per arm, blind judge, pitfalls checklist | `benchmark/ab/harness.go:44-54,86-98,228,374-473` | same rules for anything the dashboard calls "measured" |
-| typed judge | `internal/judge/judge.go:34-39` | optional relevance judging later; its graduation rule needs evidence first |
 
 ### 1.4 Coding-agent session stores (read-only survey; schema keys only)
 | Client | Location | Format | Exact correlation available? |
@@ -307,7 +306,7 @@ These come from linked windows only and are labelled *proxy* in the UI.
 - **Fallback-after-LeanKG:** within the next K = 5 tool calls the agent ran grep, glob or bash search, or read a file **not** in the hits, for the same task. This signals a miss or under-recall.
 - **Re-query:** another LeanKG call within 2 turns whose args share ≥ 50% of terms. This signals a poor first answer.
 - **Error recovery:** after an `error:*` or `zero_hit`, whether the agent followed the `guidance` (the next call matches the suggested action) or abandoned LeanKG for the rest of the turn.
-- **Rejected:** an LLM judge on every call. It costs money, adds latency, and violates the `judge` graduation rule (`judge.go:34-39`). It can run later as an opt-in batch over a sample.
+- **Rejected:** an LLM judge on every call. It costs money, adds latency, and would have to clear the graduation rule recorded in the archived judge notes ([`archive/judge/judge-use-cases.md`](archive/judge/judge-use-cases.md)): native rule first, judged only where a recorded experiment proves the native rule fails. It can run later as an opt-in batch over a sample.
 
 #### DS-18 Turns and time saved
 There is no in-session counterfactual, so two clearly separated panels:
