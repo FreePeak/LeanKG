@@ -13,8 +13,19 @@ set exists to measure the L3 fusion, so a label must not be answerable at L1.
 ```
 go build -o /tmp/leankg ./cmd/leankg
 LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 \
-LEANKG_EMBED_MODEL=bge-small-en-v1.5-f16.gguf LEANKG_EMBED_DIMS=384 \
-  python3 scripts/retrieval-bench.py
+LEANKG_EMBED_MODEL=bge-small-en-v1.5-384 LEANKG_EMBED_DIMS=384 \
+  python3 scripts/retrieval-bench.py --project <the indexed checkout>
+
+`LEANKG_EMBED_MODEL` must be the **catalog id** (`bge-small-en-v1.5-384`, the
+pinned 384-d entry in `internal/embed/catalog.go`), not the `.gguf` file name the
+sidecar serves. An id the catalog does not know gets a different
+`model_id`/`revision`, the stamp lookup finds no collection, and every query
+silently degrades to the keyword rung — which reads as "the vector arm found
+nothing" when the vector arm never ran. The bench stops on that now.
+
+`--project` must be the checkout the store was **indexed from**, not the worktree
+this script lives in: a store with no elements answers everything with an empty
+list, which reads as every label being stale.
 ```
 
 Reports, per arm and fused: `in-pool` (the label appeared in that arm at all),
@@ -35,7 +46,9 @@ The bench now CHECKS this itself: a label whose element the store does not hold
 is reported as **STALE** rather than as a retrieval miss, because it measures the
 label and not the fusion. Two labels were stale when the check first ran on
 today's tree — `StandaloneDBPath` had moved to `internal/projectcfg`, `ftsQuery`
-to `internal/store` — which is exactly the drift it exists to catch.
+to `internal/store` — which is exactly the drift it exists to catch. A third
+check stops the run when the *vector arm never ran at all* (a stamp-degraded
+query), because that reads as a retrieval finding and is an environment mistake.
 
 ## Where the answers were
 

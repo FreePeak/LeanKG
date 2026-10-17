@@ -14,8 +14,18 @@ and the code never drift apart.
 
     go build -o /tmp/leankg ./cmd/leankg
     LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 \
-    LEANKG_EMBED_MODEL=bge-small-en-v1.5-f16.gguf LEANKG_EMBED_DIMS=384 \
-      python3 scripts/retrieval-bench.py [--sweep] [--limit 30]
+    LEANKG_EMBED_MODEL=bge-small-en-v1.5-384 LEANKG_EMBED_DIMS=384 \
+      python3 scripts/retrieval-bench.py --project <the indexed checkout> [--sweep] [--limit 30]
+
+LEANKG_EMBED_MODEL must be a CATALOG id (`bge-small-en-v1.5-384`, the pinned
+384-d entry in internal/embed/catalog.go), NOT the .gguf file name the sidecar
+serves: an id the catalog does not know gets a different model_id and revision,
+the stamp lookup finds no collection, and every query silently degrades to the
+keyword rung — which reads as "the vector arm found nothing" instead of "the
+vector arm never ran". The bench stops on that instead of reporting it.
+
+--project must be the checkout the store was indexed from, not the worktree this
+script lives in: a store with no elements answers everything with an empty list.
 """
 import argparse
 import json
@@ -23,6 +33,8 @@ import os
 import re
 import subprocess
 import sys
+
+CATALOG_MODEL_ID = "bge-small-en-v1.5-384"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LABELS_MD = os.path.join(HERE, "..", "docs", "retrieval-label-set.md")
@@ -55,11 +67,11 @@ class Session:
     """One stdio MCP server; the arms come from the engine's own per-arm ranks."""
 
     def __init__(self, binary, project):
-        env = dict(os.environ)
+        self.binary = binary
         self.p = subprocess.Popen(
             [binary, "serve", "--stdio", "--project", project, "--memory"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            env=env, text=True, bufsize=1)
+            env=dict(os.environ), text=True, bufsize=1)
         self._id = 0
         self.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                  "clientInfo": {"name": "retrieval-bench", "version": "1"}})
@@ -69,7 +81,14 @@ class Session:
         self.p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params}) + "\n")
         self.p.stdin.flush()
         while True:
-            line = self.p.stdout.readline().strip()
+            line = self.p.stdout.readline()
+            if not line:
+                # The server exited (or was never alive). A silent EOF used to
+                # spin here forever, which is why a dead server read as a bench
+                # that printed nothing at all.
+                raise SystemExit(f"the server {self.binary!r} stopped answering after "
+                                 f"{self._id} call(s) — check the binary and --project")
+            line = line.strip()
             if not line:
                 continue
             try:
@@ -170,6 +189,31 @@ def main():
     data = []
     for n, q, truth, where in labels:
         a = s.query(q, args.limit, args.scope)
+        # A cold store answers every question with an empty list, so every label
+        # would read as STALE and the numbers would measure the wrong directory.
+        # Name the real cause before printing any number.
+        if a.get("freshness") == "cold":
+            s.close()
+            sys.exit(f"no elements in {args.project!r}: point --project at the indexed "
+                     f"checkout (leankg index <dir>), not the worktree this script lives in")
+        # A vector arm that degraded to the keyword rung is not a zero: it means
+        # the query never reached the fusion, and every number below would be
+        # reported as "the keyword arm alone" while looking like a real result.
+        ret = a.get("retrieval") or {}
+        why = ret.get("reason", "")
+        if ret.get("rung") == "L2" and "degraded from L3" in why:
+            s.close()
+            # The reason already names the cause; only add the fix that fits it,
+            # because a wrong model id and a stale collection want DIFFERENT
+            # commands and guessing wrong sends the reader to the wrong place.
+            if "stamp mismatch" in why or "chunker" in why:
+                hint = "run `leankg-embed full` to rebuild the collection"
+            elif "no vector collection" in why:
+                hint = (f"the model id must be a catalog id such as {CATALOG_MODEL_ID}, "
+                        f"not a .gguf file name")
+            else:
+                hint = "check the embedding provider before reading any number"
+            sys.exit(f"the vector arm never ran: {why}\n{hint}")
         vec, kw = arms_of(a, args.limit)
         data.append((n, q, truth, vec, kw, served_order(a, args.limit)))
     # Membership is probed while the session is OPEN: asking a closed server
