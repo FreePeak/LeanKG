@@ -13,6 +13,16 @@ on:
   pull_request:
     branches: [main]
 
+# One self-hosted Mac, one runner slot (labels `self-hosted,macOS,ARM64,leankg`),
+# and every job in this file needs it. Without a group, a push that arrives while
+# a suite is running queues a second full run behind it — measured 2026-10-17:
+# four runs (12 jobs, ~2.5 h of work) queued behind one 4-job run, and GitHub
+# reports that as "queued", indistinguishable from a hung runner. Superseded
+# pushes are dropped instead, so the slot always drains toward the current tip.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Jobs run on the owner's self-hosted macOS runner (labels below). Pull
 # requests from forks default to a GitHub-hosted runner, but a fork controls
 # this file in its own PR and can name the runner's labels, so this expression
@@ -29,7 +39,11 @@ jobs:
   dual-engine:
     name: Dual Engine (sqlite + live pgvector)
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
-
+    # 25m is a ceiling on a hang, not a budget: measured wall time on the
+    # self-hosted Mac is 1m20s-1m30s (run 39003423067), and the gate step
+    # carries its own 20m cap. Same reason as go-engine's cap — an uncapped
+    # wedged job holds the repo's only runner slot.
+    timeout-minutes: 25
     # Same two budgets the go-engine job carries (#488). This job also runs the
     # sqlite suite on the same self-hosted Mac, so it was exposed to the same
     # cold-spawn flake: measured on #512, `TestRunPatternToleratesShapeDrift`
@@ -76,6 +90,12 @@ jobs:
   go-engine:
     name: Go Engine (build + vet + test)
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
+    # 20m is a ceiling on a hang, not a budget: measured wall time on the
+    # self-hosted Mac is ~2m10s (05:18:54-05:21:02 on 2026-10-17), and the suite
+    # carries its own -timeout 300s. It matters because the runner has ONE slot:
+    # an uncapped wedged job holds the whole queue, and every later run sits in
+    # "queued" — which reads exactly like a broken runner.
+    timeout-minutes: 20
 
     # Two packages spawn external binaries under a fixed 10s budget
     # (ast-grep, gopls). A COLD spawn was measured at 32s/37s on idle
@@ -143,6 +163,12 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/guardvenv"
           "$RUNNER_TEMP/guardvenv/bin/python" -m pip install --quiet pyyaml
           "$RUNNER_TEMP/guardvenv/bin/python" scripts/release_workflow_guards.py
+          # ci.yml's own guards (concurrency group, per-job caps, the npm-cache
+          # rule every job on this one runner depends on). Same venv: no second
+          # PyYAML install, and the workflow that carries the invariants is the
+          # one that asserts them — so the next edit that drops a timeout has to
+          # argue with CI instead of queueing every later run behind a hang.
+          "$RUNNER_TEMP/guardvenv/bin/python" scripts/ci_workflow_guards.py
       # The release artifacts are CGO_ENABLED=0 (release.yml), and the
       # default build claims to be CGO-free. Runner images default to cgo=1,
       # so without this step a stray vendored C source (e.g. a grammar's .c
@@ -208,6 +234,10 @@ jobs:
   frontend:
     name: Frontend (ui-v2 e2e + dashboard unit)
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
+    # 25m covers the worst measured wall time (~5m50s, run 39003423067) with
+    # room for a cold embed, on the one runner slot this repo has. Same reason
+    # as go-engine's cap: a hang must fail the job, never hold the queue.
+    timeout-minutes: 25
     # The e2e suite never ran anywhere before this job existed: the default
     # playwright config starts a vite dev server and assumes a backend on
     # :8080, no workflow had a frontend job, and a bare local run skipped
@@ -226,7 +256,26 @@ jobs:
           cache-dependency-path: go.sum
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-      - uses: actions/setup-node@v4
+      # No `cache: npm` on the self-hosted runner, for the reason setup-go
+      # already documents in go-engine: the cache save/restore talks to GitHub's
+      # cache service and is pure overhead on a Mac that keeps ~/.npm on disk.
+      # Measured 2026-10-17: with the cache on, `setup-node` spent 3m40s-4m38s
+      # per run restoring a 216 MB tarball at ~1 MB/s (runs 38999592068,
+      # 39001709926, 39002635228, 39002760777) against a `npm ci` that completes
+      # in 24s from the local cache — and the same post-job save is what hung
+      # dsh-mux's runner. A GitHub-hosted runner (fork PRs) keeps it, through a
+      # SECOND setup-node step: `cache` is only read when it is non-empty, but
+      # the cache key is the HASH OF THE LOCK FILES, so a step that restores
+      # nothing is the only way to leave the self-hosted path with neither the
+      # 216 MB restore nor setup-node's checksum over two package-lock.json.
+      - name: Set up Node (self-hosted — no dependency cache)
+        if: runner.environment != 'github-hosted'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Set up Node (GitHub-hosted — with the npm cache)
+        if: runner.environment == 'github-hosted'
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm

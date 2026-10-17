@@ -189,6 +189,46 @@ that merged it had already concluded it must not be there. It is deleted, and
 committed by accident. The blob remains in the public history of its ancestors;
 rewriting that history is a separate, deliberate decision.
 
+### v4.15-runner-throughput — the one runner slot stops queueing behind itself (2026-10-17)
+
+> **Trigger:** every FreePeak repo looked stuck — LeanKG runs sitting `queued`
+> for 40+ minutes, actions "hanging". The runner was not broken: it was online,
+> `busy: true`, and cycling jobs normally.
+
+**Diagnosis (measured, not inferred):** this repo has exactly ONE self-hosted
+runner (`mac-m2pro-leankg`, labels `self-hosted,macOS,ARM64,leankg`, launchd
+`actions.runner.FreePeak-LeanKG.mac-m2pro-leankg`) and **one slot**, while `ci.yml`
+has four jobs per run. Nothing serialised runs, so each new push queued a
+complete second run behind the live one: at 05:20 UTC on 2026-10-17, four runs
+(39005159492, 39005153712, 39004248760, 39003423067 — 12 jobs, ~2.5 h at the
+measured 12-15 min/job) sat behind one live 4-job run. Deltas between
+`created_at` and the first job's `started_at` grew to **35 minutes** (run
+39003423067) and the frontend job waited 38 minutes for its turn. GitHub reports
+all of that as `queued`, which is exactly what a dead runner reports — hence the
+"runner not triggering" reading.
+
+**Fixed (this PR):** a workflow-level `concurrency` group keyed on
+`github.workflow-github.ref` with `cancel-in-progress: true`, so a superseded
+push is dropped instead of queued; `timeout-minutes` on all four jobs (20m
+go-engine, 25m dual-engine, 25m frontend; `ttfv` already had 12m) so a wedged
+job fails and frees the slot instead of holding the queue; and `setup-node`'s
+`cache: npm` moved behind `runner.environment == 'github-hosted'`, matching what
+`setup-go` already does in this file.
+
+**Measured cost of that cache on this runner:** with `cache: npm`,
+`setup-node` spent **3m40s-4m38s** per run restoring a 216 MB tarball at ~1 MB/s
+(runs 38999592068, 39001709926, 39002635228, 39002760777) against a `npm ci`
+that completes in **24 s** from the Mac's own `~/.npm`; the post-job save of the
+same cache is what hung dsh-mux's runner (`dsh-mux/ci.yml` documents it). The
+cache is unchanged for GitHub-hosted runners (fork PRs), through a second,
+`if`-gated `setup-node` step.
+
+**Guarded:** `scripts/ci_workflow_guards.py`, run beside the existing release
+guards in the `go-engine` job (same throwaway venv, no second PyYAML install).
+It asserts the concurrency group, a per-job cap on every job, and that no
+`setup-node` step can enable the npm cache on the self-hosted runner — the three
+invariants whose absence is invisible from GitHub's UI.
+
 ### v4.15-ci-guard-interpreter — the guard builds the interpreter it needs (2026-10-13)
 
 > **Trigger:** #518 — a commit that deleted one unreferenced file — went red at
@@ -1535,7 +1575,6 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 - **Precedence** (db path, high → low):
   1. `LEANKG_DB_PATH` environment variable.
   2. `db.standalone_db_path` key in `leankg.yaml` (see `DBConfig` in `internal/projectcfg`).
-  3. Default: `<project>/.leankg/leankg.db` (project-scoped mode, existing behavior).
 - **Serving**: `leankg serve --db <path>` (CLI flag, equivalent to env). When the flag/env is set, project-resolution sidecars (auto-index, setup pipeline, leankg.yaml anchor resolution) are skipped — the server has no checkout in this path (FR-P2-3).
 - **Importing**: users import data themselves via `leankg import ./` (indexes cwd with full absolute path as an indexable/embeddable target; embedding only fires if an embedding provider is configured — `LEANKG_EMBED_PROVIDER` / sidecar). The MCP `import` tool description guides agents to use `action=dir` with `path="."` to scope import to the current directory.
 
@@ -1555,4 +1594,4 @@ All superseded material is preserved and linked, not deleted:
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
 - **FR-TYPE-02 (2026-09-21, removed 2026-10-16):** the `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) and its one call site (`convo.ClassifyWithJudge`) were deleted with the Laya/Jev integration: nothing outside tests ever built a judge via `judge.FromEnv`, so the package, its `LEANKG_JUDGE_*` env surface and its demo paths were dead code. Historical material: [`archive/judge/judge-use-cases.md`](archive/judge/judge-use-cases.md), [`archive/judge/laya-judge.html`](archive/judge/laya-judge.html). The deterministic keyword classifier (`convo.Classify`) is unaffected and remains the only classification path.
-*Last updated: 2026-10-17 (v4.15-lsp-handshake-budget: the enrichment spawn gets handshakeTimeout instead of timeout_ms, and a failed file records its reason; the two red CI runs are explained at the top of the changelog. Portfolio-prune review fixes also land: only ENOENT is gone, the `--json` shape is stable, `--apply` requires `--prune`, postgres `--apply` is refused, and the test process is pinned to sqlite. The Laya/Jev judge integration was removed 2026-10-16, its docs archived under `docs/archive/judge/`)*
+*Last updated: 2026-10-17 (CI runner throughput: the single self-hosted runner slot no longer queues a whole run per push — workflow-level `concurrency` with `cancel-in-progress`, a `timeout-minutes` cap on every job, and `setup-node`'s npm cache confined to GitHub-hosted runners; guarded by `scripts/ci_workflow_guards.py`. Also today: v4.15-lsp-handshake-budget — the enrichment spawn gets handshakeTimeout instead of timeout_ms, and a failed file records its reason; the two red CI runs are explained at the top of the changelog. Portfolio-prune review fixes also land: only ENOENT is gone, the `--json` shape is stable, `--apply` requires `--prune`, postgres `--apply` is refused, and the test process is pinned to sqlite; the Laya/Jev judge integration was removed 2026-10-16 and its docs archived under `docs/archive/judge/`)*
