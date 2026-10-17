@@ -4,8 +4,6 @@
 
 <h1 align="center">LeanKG</h1>
 
-<p align="center"><strong>⚡ Implementation: 100% Go.</strong> The Rust engine was removed at the parity cutover; the whole engine is the root Go module <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG"><code>github.com/FreePeak/LeanKG</code></a>. See <a href="docs/prd.md">docs/prd.md</a> for the parity ledger. Build: <code>make go-build</code> · Test: <code>make go-test</code> · Bench: <code>make go-bench</code>.</p>
-
 <p align="center">
   <strong>Enterprise-ready code knowledge graph for AI coding agents</strong><br>
   Multi-repo · env governance · incidents &amp; services · req↔code · −65% tokens / −85% tool calls
@@ -24,7 +22,6 @@
 <p align="center">
   <a href="https://github.com/FreePeak/LeanKG/releases/latest"><img src="https://img.shields.io/github/v/release/FreePeak/LeanKG?label=release&logo=github" alt="Latest release"></a>
   <a href="https://pkg.go.dev/github.com/FreePeak/LeanKG"><img src="https://img.shields.io/badge/pkg.go.dev-LeanKG-00ADD8?logo=go&logoColor=white" alt="Go module reference"></a>
-  <a href="https://github.com/FreePeak/LeanKG/actions"><img src="https://img.shields.io/github/actions/workflow/status/FreePeak/LeanKG/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="https://github.com/FreePeak/LeanKG/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
@@ -36,36 +33,64 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-supported-blue.svg" alt="macOS">
-  <img src="https://img.shields.io/badge/Linux-supported-blue.svg" alt="Linux">
-  <img src="https://img.shields.io/badge/Docker-supported-2496ED?logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/Render-deployed-46e3b7?logo=render&logoColor=000000" alt="Deployed on Render">
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Claude_Code-blueviolet.svg" alt="Claude Code">
-  <img src="https://img.shields.io/badge/Cursor-blueviolet.svg" alt="Cursor">
-  <img src="https://img.shields.io/badge/Codex-blueviolet.svg" alt="Codex">
-  <img src="https://img.shields.io/badge/Gemini_CLI-blueviolet.svg" alt="Gemini CLI">
-  <img src="https://img.shields.io/badge/OpenCode-blueviolet.svg" alt="OpenCode">
-  <img src="https://img.shields.io/badge/omp-blueviolet.svg" alt="omp">
-</p>
-
-<p align="center">
   <img src="assets/banner.svg" alt="LeanKG" width="100%">
 </p>
 
 ---
 
-## Installation
+## What is LeanKG?
 
-### Prerequisites
+LeanKG is a code knowledge graph for AI coding agents, shipped as a single CGO-free Go binary
+(`github.com/FreePeak/LeanKG`, root module — see [pkg.go.dev](https://pkg.go.dev/github.com/FreePeak/LeanKG)).
+Where agents usually rebuild structure with grep → open files → huge context, LeanKG returns a
+targeted subgraph (callers, dependents, blast radius, tests, docs) plus a team layer (env,
+services, incidents, requirements) over MCP. The Rust engine was removed at the parity cutover;
+build with `make go-build`, test with `make go-test`. See [docs/prd.md](docs/prd.md) for the
+parity ledger.
+
+| Without | With LeanKG |
+| ------- | ----------- |
+| Many tool calls, large context | Surgical subgraph + TOON (~40% smaller payloads) |
+| No blast radius | Severity-graded impact |
+| Keyword only | Keyword + HNSW semantic + ontology |
+| Single-repo guesswork | Multi-repo index + ops tools |
+
+## Get Started
+
+```bash
+# 1. Per project: one-shot index, then an incremental embed (sqlite default — zero config,
+#    store at .leankg/leankg.db). In a git repo root it reads the HEAD commit's objects, so
+#    uncommitted, untracked and ignored files are not indexed. Add --no-embed to skip the embed.
+cd your-project
+leankg index .
+
+# 2. Wire up an AI client — one command (claude-code | cursor | codex | gemini | opencode | omp).
+#    The stdio entry is `serve --stdio --memory`: the agent gets the code graph AND the
+#    markdown memory layer (per-project at <project>/.leankg/memory), no second server.
+leankg install --target claude-code  # `connect claude-code` is the same writer
+#    Restart the client afterwards so it picks the entry up.
+
+# 3. ...or serve MCP over HTTP yourself (endpoint /mcp; GET /health returns 200 when ready)
+leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --memory
+leankg install --target claude-code --http --url http://127.0.0.1:9699/mcp
+```
+
+Semantic (L3) search is the one optional layer: it needs embeddings. Set
+`LEANKG_EMBED_PROVIDER` (see [docs/embedding.md](docs/embedding.md) and
+[`.env.example`](.env.example)); `leankg index` then embeds incrementally after
+indexing. Until an embed runs, queries answer from exact + fuzzy matches.
+
+Self-check any deployment: `leankg doctor` — prints the store path, element and
+file counts and the write watermark (exit 0 pass / 2 fail).
+
+MCP over HTTP: the server resolves the project from its process cwd — run it
+from the checkout or pass `--project DIR` to pin one.
+
+## Installation
 
 None — **sqlite is the default storage engine**. No Postgres, no Docker.
 
 Postgres remains available as an explicit opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) for server-scale deployments, but nothing in the default flow touches it.
-
-### Install
 
 **Published module** — the engine is a Go module, so the toolchain installs both
 binaries from [pkg.go.dev](https://pkg.go.dev/github.com/FreePeak/LeanKG) straight into `$(go env GOPATH)/bin`:
@@ -90,225 +115,16 @@ scripts/install-go.sh                # or: make install-go
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install-go.sh | bash
 ```
 
-### Container
-
-[Dockerfile](Dockerfile) is a three-stage CGO-free build: engine binaries, then a
-demo graph baked from a slice of this repo (the language `examples/`, the engine,
-the dashboard source), then an unprivileged runtime that serves that store
-read-only. The dashboard build is already embedded in the binary
-(`internal/web/embed`), so there is no Node stage.
+**Container** — [Dockerfile](Dockerfile) is a three-stage CGO-free build: engine binaries, then a
+demo graph baked from a slice of this repo, then an unprivileged runtime that serves that store
+read-only.
 
 ```bash
 docker build -t leankg .
 docker run --rm -p 8080:10000 -e PORT=10000 leankg   # dashboard + its /api on :8080
 ```
 
-This is the image [leankg.onrender.com](https://leankg.onrender.com) runs: one
-container, one port, `leankg serve --read-only --ui :$PORT`.
-
----
-
-## Get Started
-
-```bash
-# 1. Per project: one-shot index, then an incremental embed (sqlite default — zero config,
-#    store at .leankg/leankg.db). In a git repo root it reads the HEAD commit's objects, so
-#    uncommitted, untracked and ignored files are not indexed. Add --no-embed to skip the embed.
-cd your-project
-leankg index .
-
-# 2. Wire up an AI client — one command (claude-code | cursor | codex | gemini | opencode | omp).
-#    The stdio entry is `serve --stdio --memory`: the agent gets the code graph AND the
-#    markdown memory layer (per-project at <project>/.leankg/memory), no second server.
-leankg install --target claude-code  # `connect claude-code` is the same writer
-#    Restart the client afterwards so it picks the entry up.
-
-# 3. ...or serve MCP over HTTP yourself (endpoint /mcp; GET /health returns 200 when ready)
-leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --memory
-leankg install --target claude-code --http --url http://127.0.0.1:9699/mcp
-```
-
-Semantic (L3) search is the one optional layer: it needs embeddings. Set
-`LEANKG_EMBED_PROVIDER` (see [Embedding providers](#embedding-providers) and
-[`.env.example`](.env.example)); `leankg index` then embeds incrementally after
-indexing. Until an embed runs, queries answer from exact + fuzzy matches.
-
-Self-check any deployment: `leankg doctor` — prints the store path, element and
-file counts and the write watermark (exit 0 pass / 2 fail).
-
-MCP over HTTP: the server resolves the project from its process cwd — run it
-from the checkout or pass `--project DIR` to pin one.
-
-### Embedding providers
-
-LeanKG embeds through one provider, chosen by `LEANKG_EMBED_PROVIDER`: `local` (a
-llama.cpp sidecar or an attached endpoint, the default), `openai` (any OpenAI-compatible
-API) or `deterministic` (tests only). Every variable is listed with an example in
-[`.env.example`](.env.example); the `leankg-embed` usage text names the same set.
-The catalog rows (model id, pinned revision, dimensions, query and document prefixes)
-live in `internal/embed/catalog.go`.
-
-### EmbeddingGemma 2 with a Hugging Face Storage Bucket
-
-`embeddinggemma-2` (Google, 768 dimensions, Matryoshka truncation to 512/256/128) is served
-by llama.cpp. Bulk embedding is too slow on a laptop, so it is split:
-
-- **Bulk (on a Hugging Face Job):** `scripts/hf-embed.sh` exports the pending texts with
-  `leankg-embed export`, uploads them to your private Storage Bucket, runs
-  `scripts/hf_embed_job.py` as an `hf jobs uv run` job that loads the sentence-transformers
-  model from the bucket, downloads the vectors and imports them with `leankg-embed import`.
-  The import stamps the collection exactly as the local provider would for the same
-  `LEANKG_EMBED_*` environment (catalog revision, width, prefixes), so the next
-  `leankg-embed run` needs no `full` rebuild. Each vector line may be the native 768-d width
-  (reduced to the configured width) or the configured width; the export's `content_hash` is
-  recorded, so an element edited after export is re-embedded by the next run.
-- **Queries and hook backlogs (local):** the local llama.cpp sidecar serves query vectors and
-  the small backlogs that `leankg index --hook` embeds. The session hook never starts a job.
-
-Prerequisites:
-
-- llama.cpp `llama-server` release b11454 or newer.
-- The BF16 GGUF from [`ggml-org/embeddinggemma-2-GGUF`](https://huggingface.co/ggml-org/embeddinggemma-2-GGUF)
-  for the local sidecar.
-- The `hf` CLI, logged in (`hf auth login`), with HF Jobs credits (a job needs a positive balance).
-- The sentence-transformers model files of
-  [`google/embeddinggemma-2`](https://huggingface.co/google/embeddinggemma-2) at revision
-  `914f7f89142e33e77833254d9c9b90c3cef7303b`, uploaded to your bucket
-  (`<your-org>/<your-bucket>`).
-
-Local sidecar (the query side):
-
-```bash
-llama-server -m /path/to/embeddinggemma-2-BF16.gguf --embeddings --pooling mean \
-  -c 8192 -b 8192 -ub 8192 --parallel 1
-```
-
-Environment (placeholders only; the full list with comments is in `.env.example`):
-
-```bash
-export LEANKG_EMBED_PROVIDER=local
-export LEANKG_EMBED_MODEL=embeddinggemma-2
-export LEANKG_EMBED_DIMS=768                 # or 512, 256, 128 (re-normalized truncation)
-export LEANKG_HF_BUCKET=<your-org>/<your-bucket>
-export LEANKG_HF_MODEL_DIR=                  # model path inside the bucket; empty = root
-export LEANKG_HF_WORK_DIR=leankg             # default
-export LEANKG_HF_JOB_FLAVOR=l4x1             # default
-export LEANKG_HF_JOB_TIMEOUT=30m             # default
-export LEANKG_HF_MAX_USD=0.50                # default: budget for one run's worst case
-export LEANKG_EMBED_BASE_URL=http://127.0.0.1:8080/v1  # running sidecar; export reads its n_ctx
-export HF_TOKEN=                             # empty: use `hf auth login` instead
-```
-
-Commands (`scripts/hf-embed.sh [--dry-run] [--yes] [--limit N] [--keep] <project-dir>`):
-
-```bash
-scripts/hf-embed.sh <project-dir>                    # estimate and guards only; exits 1, uploads nothing
-scripts/hf-embed.sh --dry-run <project-dir>          # same plan plus the exact commands; exits 0, starts nothing
-scripts/hf-embed.sh --yes --limit 200 <project-dir>  # first run: export 200 elements, measure the rate
-scripts/hf-embed.sh --yes <project-dir>              # export, upload, run the HF Job, download, import
-```
-
-`--keep` leaves the run directory in the bucket after a successful import; by default it is
-removed. A failed job always keeps the run directory and imports nothing. `--dry-run` runs the
-same guards, so a plan that would be refused exits 1 with the reason.
-
-**Cost and safety.** Hugging Face Jobs bill per minute, and a personal account cannot set a
-spending cap, so the script enforces one. The worst case of a run is the job timeout times the
-hourly price of the flavor: `l4x1` at $0.80/h with the default 30m timeout is at most $0.40. The
-script refuses to upload when that worst case exceeds `LEANKG_HF_MAX_USD` (default 0.50), and when
-its own estimate (lines / `LEANKG_HF_EST_RATE` plus `LEANKG_HF_EST_OVERHEAD_MIN` for startup and
-dependency install) exceeds the timeout; the refusal names the variable to raise. Dependency
-installation inside the job is billed as well. Start with `--limit 200` to measure throughput,
-then set `LEANKG_HF_EST_RATE` to the measured texts per second. Only send code you are permitted
-to upload to a third-party service: the export is stored in your bucket and processed by a
-Hugging Face Job.
-
-Queries after the import use the local sidecar with the same model, so the query prefix and
-the stamp must match the bulk run; `leankg-embed status` shows the stamp that the collection
-was written under.
-
-### Measured timings
-
-- **Go cold time-to-first-value (build → index → serve bind → first REST + MCP query): CI budget 300s, gate [Cold TTFV](.github/workflows/ci.yml), per-run numbers in the `ttfv-go-cold` artifact** — local cold-cache measurement 17.8s (macOS arm64).
-- **Quickstart happy path (`leankg index` → `leankg serve --http` → first MCP `query` → `leankg doctor`), budget 300s, CI gate "Quickstart happy path (timed)" in the same job** — measured **1.4s** warm on a generated 10-file Go fixture (index 0.05s, server bind 1.08s, first query 0.05s, doctor 0.03s; macOS arm64, sqlite). `scripts/quickstart_smoke.sh` runs the same steps locally; `QUICKSTART_DRY_RUN=1` prints the plan without touching anything.
-
-### Web UI
-
-The embedded dashboard is served by `leankg serve --ui ADDR` (a ui-v2 build
-compiled into the binary). The dashboard's `/api/*` data endpoints are served
-on the same address; `serve --rest` exposes the `/api/v1/*` tool endpoints
-separately.
-
-For UI development, run the Vite dev server against a REST address (it proxies
-`/api` to `BACKEND_TARGET`, default `http://127.0.0.1:8080`):
-
-```bash
-# Terminal A — REST API
-leankg serve --rest 127.0.0.1:8080
-
-# Terminal B — hot-reload dev server
-cd ui-v2
-npm install
-npm run dev
-# open http://127.0.0.1:5173
-```
-
-Details: [ui-v2/README.md](ui-v2/README.md) · [docs/archive/web-ui.md](docs/archive/web-ui.md)
-
----
-
-## Enterprise Ready
-
-Peers in this space are mostly personal / single-repo. LeanKG is the **company platform**: shared index, ops graph, and measured agent economics.
-
-| Pillar | Ships as |
-| ------ | -------- |
-| Multi-repo server | MCP HTTP `:9699`; `LEANKG_PROJECT_DIRS` serves many projects, selected per request by `?project=<dir\|name>` (REST **and** MCP) or the MCP `project` tool argument; with neither, a multi-project server refuses rather than answering from the wrong graph. sqlite default, PG opt-in |
-| Env governance | `query --action env_conflicts`, per-env snapshots, `leankg obsidian` |
-| Ops & ownership | `query --action service_context` / `incidents`, `leankg incident` / `note` / `team-map` |
-| Req ↔ code | `leankg prd` / `prd-trace`, `query --action prd`, ontology traceability matrix |
-| Mega-graph | Frontier-local queries; 100k–700k+ elements |
-| Agent surface | **3** MCP tools (`import` / `query` / `status`) serving 30 actions (22 query + 8 import); peers typically ~1–17 raw tools |
-| Cost | A/B **−65% tokens**, **−85% tool calls**, **2.5×** vs grep/cat |
-
-| Capability | LeanKG | GitNexus | Graphify | Codanna | Context7 |
-| ---------- | ------ | -------- | -------- | ------- | -------- |
-| Multi-repo team deploy | Yes | Partial | Limited | Limited | n/a |
-| Env / incidents / team map | Yes | No | No | No | No |
-| PRD traceability | Yes | No | Partial | No | No |
-| Mega-graph (100k+) | Yes | Partial | Viz capped | Varies | n/a |
-| MCP surface | 3 tools / 30 actions | ~17 | ~10 | ~5 | docs only |
-
-Deep dives (archived): [ROI vs Graphify](docs/archive/reports/leankg-vs-graphify-company-roi-2026-07-21.md) · [Competitive one-pager](docs/archive/competitive-analysis.md) · [Research matrix](docs/archive/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md)
-
----
-
-## Why LeanKG?
-
-Agents normally rebuild structure with grep → open files → huge context. LeanKG returns a **targeted subgraph** (callers, dependents, blast radius, tests, docs) plus the **team layer** (env, services, incidents, requirements) over MCP.
-
-| Without | With LeanKG |
-| ------- | ----------- |
-| Many tool calls, large context | Surgical subgraph + TOON (~40% smaller payloads) |
-| No blast radius | Severity-graded impact |
-| Keyword only | Keyword + HNSW semantic + ontology |
-| Single-repo guesswork | Multi-repo index + ops tools |
-
----
-
-## Key Features
-
-- **MCP-native** — search, impact, call graphs, ontology, architecture, team knowledge
-- **SQLite default** (zero-config — no Postgres, no Docker required) with an opt-in Postgres/pgvector backend (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`)
-- **Ontology** — concept catalog + procedural layer (workflows, steps, decision points, failure modes), `query --action ontology`, `POST /api/v1/ontology/match`, and req↔code traceability via `leankg prd` / `prd-trace`
-- **Impact & deps** — `contains`, `calls`, `imports` edges; BFS blast radius (`leankg impact`)
-- **Web UI v2** — Force / Tree / Circles explorer (`cd ui-v2 && npm run dev`; the embedded build is served by `leankg serve --ui`)
-- **Deploy** — single CGO-free binary, no runtime deps: [Dockerfile](Dockerfile) builds a read-only demo image for Render, `/health` answers container probes, and `--ui` / `--http` / `--rest` / `--rpc` each bind their own address
-- **Languages** — 40 profiles: Go, Rust, TypeScript/TSX, JavaScript/JSX, Python, Markdown, Java, Kotlin, Swift, Objective-C, Dart, C/C++, C#, PHP, Ruby, Scala, Perl, Lua, Haskell, Elixir, Crystal, CUDA, Cypher, Elm, Erlang, F#, GLSL, HLSL, Nim, OCaml, SQL, PowerShell, Q#, Solidity, SystemVerilog, Verilog, Zig
-
----
-
-## MCP prefer-order
+## MCP surface
 
 Discover with `query` — it routes down the ladder by default (L1 exact → L2 keyword → L3 semantic; a natural-language question goes straight from an L1 miss to L3, which fuses keyword and vector ranks), degrades instead of erroring, and every answer carries `retrieval{rung,reason}` + `freshness`.
 
@@ -327,7 +143,29 @@ Discover with `query` — it routes down the ladder by default (L1 exact → L2 
 
 3 tools: `import` (index/PRD/memory/session/ontology/read) · `query` (ladder + graph verbs + actions) · `status` (inventory/freshness/config).
 
----
+## Features
+
+- **MCP-native** — search, impact, call graphs, ontology, architecture, team knowledge
+- **SQLite default** (zero-config — no Postgres, no Docker required) with an opt-in Postgres/pgvector backend (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`)
+- **Ontology** — concept catalog + procedural layer (workflows, steps, decision points, failure modes), `query --action ontology`, `POST /api/v1/ontology/match`, and req↔code traceability via `leankg prd` / `prd-trace`
+- **Impact & deps** — `contains`, `calls`, `imports` edges; BFS blast radius (`leankg impact`)
+- **Multi-repo server** — MCP HTTP `:9699`; `LEANKG_PROJECT_DIRS` serves many projects, selected per request by `?project=<dir|name>` (REST **and** MCP) or the MCP `project` tool argument; with neither, a multi-project server refuses rather than answering from the wrong graph. sqlite default, PG opt-in
+- **Env governance** — `query --action env_conflicts`, per-env snapshots, `leankg obsidian`
+- **Ops & ownership** — `query --action service_context` / `incidents`, `leankg incident` / `note` / `team-map`
+- **Req ↔ code** — `leankg prd` / `prd-trace`, `query --action prd`, ontology traceability matrix
+- **Web UI v2** — Force / Tree / Circles explorer (`cd ui-v2 && npm run dev`; the embedded build is served by `leankg serve --ui`)
+- **Deploy** — single CGO-free binary, no runtime deps: [Dockerfile](Dockerfile) builds a read-only demo image for Render, `/health` answers container probes, and `--ui` / `--http` / `--rest` / `--rpc` each bind their own address
+- **Languages** — 40 profiles: Go, Rust, TypeScript/TSX, JavaScript/JSX, Python, Markdown, Java, Kotlin, Swift, Objective-C, Dart, C/C++, C#, PHP, Ruby, Scala, Perl, Lua, Haskell, Elixir, Crystal, CUDA, Cypher, Elm, Erlang, F#, GLSL, HLSL, Nim, OCaml, SQL, PowerShell, Q#, Solidity, SystemVerilog, Verilog, Zig
+- **Agent economics** — A/B −65% tokens, −85% tool calls, 2.5× vs grep/cat; peers in this space are mostly personal / single-repo. Deep dives (archived): [competitive analysis](docs/archive/competitive-analysis.md) · [ROI vs Graphify](docs/archive/reports/leankg-vs-graphify-company-roi-2026-07-21.md) · [research matrix](docs/archive/analysis/leankg-competitive-research-and-improvement-strategy-2026-08-02.md)
+
+## Embeddings
+
+Semantic (L3) search needs embeddings; see [docs/embedding.md](docs/embedding.md) for providers (`local` / `openai` / `deterministic`), the EmbeddingGemma 2 + Hugging Face Storage Bucket bulk path, and the `.env.example` variable list. The catalog rows (model id, pinned revision, dimensions, prefixes) live in `internal/embed/catalog.go`.
+
+## Performance
+
+- **Go cold time-to-first-value** — 17.8s (macOS arm64); CI budget 300s, gate "Cold TTFV" in `.github/workflows/ci.yml`, per-run numbers in the `ttfv-go-cold` artifact.
+- **Quickstart happy path** — 1.4s warm on a generated 10-file Go fixture (index 0.05s, server bind 1.08s, first query 0.05s, doctor 0.03s); `scripts/quickstart_smoke.sh` runs the same steps locally (`QUICKSTART_DRY_RUN=1` prints the plan).
 
 ## CLI
 
@@ -352,94 +190,14 @@ leankg version
 
 UI hot-reload: `cd ui-v2 && npm install && npm run dev` → http://127.0.0.1:5173
 
-Full usage: `leankg help` and `leankg <command> --help`. The archived Rust-era
-CLI reference: [docs/archive/cli-reference.md](docs/archive/cli-reference.md)
+Full usage: `leankg help` and `leankg <command> --help`. Archived CLI reference: [docs/archive/cli-reference.md](docs/archive/cli-reference.md)
 
----
+## Known limits
 
-## Go module
-
-The engine is the root module `github.com/FreePeak/LeanKG`, versioned by the
-root `vX.Y.Z` release tags — so the proxy and
-[pkg.go.dev](https://pkg.go.dev/github.com/FreePeak/LeanKG) resolve real
-versions and `go install github.com/FreePeak/LeanKG/cmd/leankg@latest` builds
-the server + CLI straight from source.
-
-| | |
-|---|---|
-| **Surface** | exactly 3 MCP tools — `import` / `query` / `status` (pinned by `internal/mcp/server_test.go`). `query` routes the ladder (L1 exact → L2 keyword/FTS → L3 hybrid: vector + keyword ranks fused by RRF, which prose questions reach directly) and **degrades instead of erroring**, so every answer carries `retrieval{rung,reason}` + `freshness` |
-| **Storage** | SQLite (WAL, FTS5, float32-BLOB vectors, DB-resident watermark) by default; PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project and per-model HNSW — both behind `store.Backend` |
-| **Transports** | MCP stdio · MCP streamable HTTP (`--http`, `/mcp` + `/health`) · REST (`--rest`, `/health` + `/api/v1/*`) · ConnectRPC (`--rpc`) · embedded dashboard (`--ui`) |
-| **Indexing** | 40 language profiles (`internal/langs.Default`), AST tiers regex → ast-grep → tree-sitter (behind the `tstree` tag), 3-signal change detection, `writer` role with fsnotify reconcile |
-| **Embeddings** | `leankg-embed` binary + provider port (OpenAI-compatible / llama.cpp sidecar / deterministic). Every vector writer is `ModelStamp`-guarded, so a model change fails loudly instead of mixing vector spaces |
-
-### Layout
-
-```
-cmd/leankg/         serve (stdio | MCP HTTP | REST | RPC | dashboard) · index · writer
-                    query · impact · status · doctor · report · connect · install
-                    prd · prd-trace · incident · note · obsidian · push · pull · update
-cmd/leankg-embed/   run · full · export · import · status
-internal/store/     Backend interface + SQLite (WAL/FTS5/watermark) + PGStore (pgvector)
-internal/core/      3-tool envelope + L0–L3 ladder + memory/graph routing
-internal/index/     extractors, 3-signal detection, call-edge resolution
-internal/langs/     the 40 profiles, AST tiers, per-language LSP specs
-internal/graph/     impact · path · callers/callees · context · explain · clusters
-internal/ontology/  concept catalog + procedural workflows/traceability
-internal/mcp/       modelcontextprotocol/go-sdk adapters (stdio + streamable HTTP)
-internal/rest/      stdlib net/http REST surface
-internal/web/       ui-v2 dashboard via //go:embed (checked-in build) + its /api/*
-internal/embed/     provider port, ModelStamp guards, NDJSON export/import
-internal/memory/    full-markdown memory + mnemopi bank adapter
-internal/watch/     fsnotify reconcile (writer role)
-internal/golden/    Rust-vs-Go parity fixtures
-```
-
-### Build
-
-```bash
-go build ./... && go vet ./... && go test ./... -count=1   # CGO-free shape
-go build -tags tstree ./...                                # tree-sitter tier (CGO)
-```
-
-The dashboard build under `internal/web/embed` is checked in and re-synced by
-`make go-ui-assets`; its provenance marker is `embed/ui-build.json`.
-`scripts/test-dual-engine.sh` is the SQLite + live-PostgreSQL gate
-(`LEANKG_TEST_PG_URL` gates the PG half).
-
-### Known limits
-
-- **Call edges are package-scoped.** No import/type resolution, so a same-name
-  call in the same package resolves and cross-package dispatch is best-effort;
-  the upgrade path is tree-sitter symbol tables.
-- Heuristic guards, documented in `internal/index/relations.go`: files ≥ 1 MiB
-  are skipped as vendored/minified bundles, call targets shorter than 4
-  characters are dropped as noise, and outgoing calls are capped per element and
-  per file.
-- The **unit of scope is a repository.** A portfolio root (tens of thousands of
-  nested files) is not a project; register its children one at a time.
-- `--ui` binds an **unauthenticated** data API (`query`/`read`/import routes).
-  Bind it loopback or front it with a proxy — the public demo container serves
-  it `--read-only` against a disposable baked graph.
-
----
-
-## Docs
-
-The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/prd.md`) + task tracker (`docs/prd-task-tracker.md`). All historical design docs, analyses, reports, and plans are preserved under [`docs/archive/`](docs/archive/).
-
-| Doc | |
-| --- | --- |
-| [PRD](docs/prd.md) | Unified product requirements + HLD (single SoT) |
-| [Task tracker](docs/prd-task-tracker.md) | Done / in-progress / todo |
-| [Architecture (archived)](docs/archive/architecture.md) | Design & data model (historical) |
-| [MCP tools (archived)](docs/archive/mcp-tools.md) | Tool catalog (historical) |
-| [CLI (archived)](docs/archive/cli-reference.md) | All commands (historical) |
-| [Benchmarks (archived)](docs/archive/benchmark.md) | Methodology (historical) |
-| [Postgres migration (archived)](docs/archive/analysis/pg-migration-report.md) | Engine notes (historical) |
-| [AGENTS.md](AGENTS.md) | Agent notes |
-
----
+- **Call edges are package-scoped.** No import/type resolution, so a same-name call in the same package resolves and cross-package dispatch is best-effort; the upgrade path is tree-sitter symbol tables.
+- Heuristic guards in `internal/index/relations.go`: files ≥ 1 MiB are skipped as vendored/minified bundles, call targets shorter than 4 characters are dropped as noise, and outgoing calls are capped per element and per file.
+- The **unit of scope is a repository.** A portfolio root (tens of thousands of nested files) is not a project; register its children one at a time.
+- `--ui` binds an **unauthenticated** data API (`query`/`read`/import routes). Bind it loopback or front it with a proxy — the public demo container serves it `--read-only` against a disposable baked graph.
 
 ## Troubleshooting
 
@@ -451,7 +209,20 @@ The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/
 **Requirements:** macOS or Linux · Go 1.25+ only when building from source. No
 Docker, no Postgres — sqlite is the default store.
 
----
+## Documentation
+
+The documentation set lives in [`docs/`](docs/) — a single unified PRD (`docs/prd.md`) + task tracker (`docs/prd-task-tracker.md`). All historical design docs, analyses, reports, and plans are preserved under [`docs/archive/`](docs/archive/).
+
+| Doc | |
+| --- | --- |
+| [PRD](docs/prd.md) | Unified product requirements + HLD (single SoT) |
+| [Task tracker](docs/prd-task-tracker.md) | Done / in-progress / todo |
+| [Architecture (archived)](docs/archive/architecture.md) | Design & data model (historical) |
+| [MCP tools (archived)](docs/archive/mcp-tools.md) | Tool catalog (historical) |
+| [CLI (archived)](docs/archive/cli-reference.md) | All commands (historical) |
+| [Benchmarks (archived)](docs/archive/benchmark.md) | Methodology (historical) |
+| [Embeddings](docs/embedding.md) | Providers + EmbeddingGemma 2 / Hugging Face bulk path |
+| [AGENTS.md](AGENTS.md) | Agent notes |
 
 ## Contributing
 
