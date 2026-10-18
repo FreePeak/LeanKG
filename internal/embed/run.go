@@ -145,9 +145,7 @@ func stampDrift(cur, want store.ModelStamp) string {
 	if cur.Distance != want.Distance {
 		why = append(why, fmt.Sprintf("distance %q -> %q", cur.Distance, want.Distance))
 	}
-	if cur.Provider != want.Provider {
-		why = append(why, fmt.Sprintf("provider %q -> %q", cur.Provider, want.Provider))
-	}
+	// Provider is a transport label, not part of identity (ModelStamp.Matches).
 	if cur.ChunkerVersion != want.ChunkerVersion {
 		why = append(why, fmt.Sprintf("chunker_version %d -> %d", cur.ChunkerVersion, want.ChunkerVersion))
 	}
