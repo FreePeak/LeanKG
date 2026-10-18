@@ -305,10 +305,10 @@ rankings.
    refused, `1,0` documented as dropping the keyword arm.
 2. **Applied** through `WeightedHybridSearcher` — a *separate* interface, the
    house pattern (`ScopedHybridSearcher`), so no signature changes and a backend
-   without it keeps the unweighted default. `FuseRRFWeights` gained a `Keyword`
-   slot and an `Explicit` flag: a zero means *unset* (weight 1, today's
-   behaviour) while an explicit zero means *off*, which is what makes `1,0`
-   actually drop the arm.
+   without it keeps the store default. `FuseRRFWeights` gained a `Keyword`
+   slot and an `Explicit` flag: a zero means *unset* (weight 1; an unset caller
+   weight takes the 3:1 `DefaultFuseWeights`) while an explicit zero means *off*,
+   which is what makes `1,0` actually drop the arm.
 3. **Not over-claimed.** My own first version reported the weight
    unconditionally, and an **L0** answer ("no elements indexed") claimed
    `weight=3,1` — only L3 fuses two arms to scale. An answer naming a setting it

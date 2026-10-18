@@ -88,13 +88,9 @@ func hybridWindow(limit int) int {
 // rank, and a document absent from a pool must contribute nothing rather than
 // the fabricated 0.0 that normalization turns it into.
 
-// FuseRRFWeights is a future extension point — currently unused.
-// When introduced, it scales each arm contribution inside
-// a weighted variant of FuseRRF so a learned reranker can adjust
-// arm weights instead of the fixed RRFK formula (see the
-// primitive map, "Add weight params to FuseRRF"). Zero fields
-// leave the arm at RRFK; the slice (not the struct) is how you
-// drop an arm entirely.
+// FuseRRFWeights scales each arm's contribution in FuseRRFWeighted, the one
+// fusion both engines run. Zero fields leave the arm at 1; the slice (not the
+// struct) is how you drop an arm entirely unless Explicit makes a zero mean off.
 type FuseRRFWeights struct {
 	Vector   float64
 	TSVector float64
@@ -108,6 +104,15 @@ type FuseRRFWeights struct {
 	// rather than "unset": the documented "1,0" drops the keyword arm, while
 	// the zero value of this struct keeps every arm at 1.
 	Explicit bool
+}
+
+// DefaultFuseWeights is the fusion applied when the caller names no weight:
+// vector:keyword = 3:1. Under plain 1:1 RRF a lexical-only row at keyword rank
+// 1 (1/61) outranks the vector rank 1-8 target (1/63 to 1/68), which is what
+// the real-server sweeps measured. Not Explicit, so the lexical arms (tsvector,
+// trigram, ilike, name) keep weight 1. Both engines read this one value.
+func DefaultFuseWeights() FuseRRFWeights {
+	return FuseRRFWeights{Vector: 3, Keyword: 1}
 }
 
 const RRFK = 60
@@ -134,32 +139,7 @@ type FusedHit struct {
 // across the lists in the order given, so the earlier arm wins a tie and the
 // result never depends on map iteration.
 func FuseRRF(lists []RankList) []FusedHit {
-	type slot struct{ hit FusedHit }
-	var slots []*slot
-	byKey := map[string]*slot{}
-	for _, l := range lists {
-		seen := map[string]bool{}
-		for rank, key := range l.Keys {
-			if seen[key] {
-				continue // a key repeated inside one arm is credited once, at its best rank
-			}
-			seen[key] = true
-			s := byKey[key]
-			if s == nil {
-				s = &slot{hit: FusedHit{Key: key, Ranks: map[string]int{}}}
-				byKey[key] = s
-				slots = append(slots, s)
-			}
-			s.hit.Ranks[l.Name] = rank + 1
-			s.hit.Score += 1 / float64(RRFK+rank+1)
-		}
-	}
-	sort.SliceStable(slots, func(i, j int) bool { return slots[i].hit.Score > slots[j].hit.Score })
-	out := make([]FusedHit, len(slots))
-	for i, s := range slots {
-		out[i] = s.hit
-	}
-	return out
+	return FuseRRFWeighted(lists, FuseRRFWeights{})
 }
 
 // armWeight maps an arm name to its weight for weighted fusion.
@@ -419,12 +399,12 @@ func (s *PGStore) HybridSearch(modelID, query string, qvec []float32, limit int)
 }
 
 func (s *PGStore) HybridSearchScoped(modelID, query string, qvec []float32, limit int, keep func(Element) bool) ([]HybridHit, string, error) {
-	return s.HybridSearchScopedWeighted(modelID, query, qvec, limit, keep, FuseRRFWeights{})
+	return s.HybridSearchScopedWeighted(modelID, query, qvec, limit, keep, DefaultFuseWeights())
 }
 
 // HybridSearchScopedWeighted is HybridSearchScoped with the caller's per-arm
-// scaling (WeightedHybridSearcher). The zero FuseRRFWeights is every arm at 1,
-// so the plain method delegates here and the fusion lives in one place.
+// scaling (WeightedHybridSearcher). The plain method passes DefaultFuseWeights;
+// the zero FuseRRFWeights is every arm at 1.
 func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float32, limit int, keep func(Element) bool, w FuseRRFWeights) ([]HybridHit, string, error) {
 	if limit <= 0 {
 		limit = 50
@@ -524,12 +504,7 @@ func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float
 		return nil, "", kwErr
 	}
 
-	var fused []FusedHit
-	if w.Explicit {
-		fused = FuseRRFWeighted(lists, w)
-	} else {
-		fused = FuseRRF(lists)
-	}
+	fused := FuseRRFWeighted(lists, w)
 	if len(fused) > limit {
 		fused = fused[:limit]
 	}

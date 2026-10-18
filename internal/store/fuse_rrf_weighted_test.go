@@ -147,3 +147,101 @@ func keysOf(hits []FusedHit) []string {
 	}
 	return out
 }
+
+// TestDefaultFusionRanksVectorAboveLexicalOnlyRows pins the default weight
+// (vector:keyword = 3:1, applied when the caller names no weight). Under plain
+// 1:1 RRF, the keyword-only row x (rank 1 of its arm, 1/61) beats vector rank 3
+// (1/63); under the default, vector rank 3 scores 3/63 and wins. Lexical-only
+// rows are down-weighted, never dropped.
+func TestDefaultFusionRanksVectorAboveLexicalOnlyRows(t *testing.T) {
+	vector := RankList{Name: ArmVector, Keys: []string{"v1", "v2", "v3", "v4", "v5"}}
+	lexical := RankList{Name: ArmFTS5, Keys: []string{"x", "y"}}
+	got := FuseRRFWeighted([]RankList{vector, lexical}, DefaultFuseWeights())
+	pos := positionOf(got)
+	for _, k := range []string{"x", "y"} {
+		if _, ok := pos[k]; !ok {
+			t.Fatalf("lexical-only row %q was dropped: %v", k, keysOf(got))
+		}
+	}
+	if pos["v3"] > pos["x"] {
+		t.Errorf("default fusion order = %v: vector rank 3 (v3) must rank ahead of lexical-only x", keysOf(got))
+	}
+	// A row both arms rank first still leads.
+	both := FuseRRFWeighted([]RankList{vector, {Name: ArmFTS5, Keys: []string{"v1", "x", "y"}}}, DefaultFuseWeights())
+	if keysOf(both)[0] != "v1" {
+		t.Errorf("row in both arms should lead: %v", keysOf(both))
+	}
+}
+
+// TestExplicitEqualWeightsKeepPlainRRFOrder pins the other side of the default:
+// a caller who names "1,1" gets exactly the plain-RRF order and scores, so the
+// new default does not leak into explicit weights.
+func TestExplicitEqualWeightsKeepPlainRRFOrder(t *testing.T) {
+	lists := []RankList{
+		{Name: ArmVector, Keys: []string{"v1", "v2", "v3", "v4", "v5"}},
+		{Name: ArmFTS5, Keys: []string{"v1", "x", "y"}},
+	}
+	plain := FuseRRF(lists)
+	got := FuseRRFWeighted(lists, FuseRRFWeights{Vector: 1, Keyword: 1, Explicit: true})
+	if len(got) != len(plain) {
+		t.Fatalf("len = %d, want %d", len(got), len(plain))
+	}
+	for i := range plain {
+		if got[i].Key != plain[i].Key {
+			t.Fatalf("rank %d = %q, want %q (explicit 1,1 must equal plain RRF)", i+1, got[i].Key, plain[i].Key)
+		}
+		if d := math.Abs(got[i].Score - plain[i].Score); d > 1e-9 {
+			t.Fatalf("%s score = %v, want %v", got[i].Key, got[i].Score, plain[i].Score)
+		}
+	}
+}
+
+// TestSQLiteDefaultEntryAppliesDefaultWeights is the SQLite caller's half of
+// the one-home contract: the plain HybridSearch, with no weight, must score its
+// vector arm at DefaultFuseWeights().Vector. A single vector hit at rank 1 with
+// no lexical match scores weight/(RRFK+1): 3/61 under the default, 1/61 under
+// plain RRF. The PostgreSQL caller reads the same function (its half is in the
+// PG-gated TestPGHybridSearchFusesThreeArms, which needs the pgvector fixture).
+func TestSQLiteDefaultEntryAppliesDefaultWeights(t *testing.T) {
+	st := openTestStore(t)
+	if err := upsertVectorsFor(t, st, "m", Element{QualifiedName: "pkg/a.go::Alpha", Name: "Alpha", FilePath: "pkg/a.go"}); err != nil {
+		t.Fatal(err)
+	}
+	hits, method, err := st.HybridSearch("m", "zzqnomatch", []float32{1, 0, 0, 0}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != "rrf("+ArmVector+")" {
+		t.Fatalf("method = %q, want the vector arm alone", method)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	want := DefaultFuseWeights().Vector / float64(RRFK+1)
+	if d := math.Abs(hits[0].Score - want); d > 1e-9 {
+		t.Fatalf("vector-only score = %v, want %v (default vector weight %v)", hits[0].Score, want, DefaultFuseWeights().Vector)
+	}
+}
+
+// TestDefaultFuseWeightsIsOneSharedValue pins the single named default that
+// both engines read (T3). Vector 3, keyword 1, not explicit: an unset arm stays
+// at 1, so the name and trigram arms keep their weight of 1.
+func TestDefaultFuseWeightsIsOneSharedValue(t *testing.T) {
+	want := FuseRRFWeights{Vector: 3, Keyword: 1}
+	if got := DefaultFuseWeights(); got != want {
+		t.Fatalf("DefaultFuseWeights() = %+v, want %+v", got, want)
+	}
+	for _, arm := range []string{ArmTSVector, ArmTrigram, ArmILIKE, ArmName} {
+		if w := DefaultFuseWeights().armWeight(arm); w != 1 {
+			t.Errorf("arm %s weight = %v, want 1 (lexical arms stay at 1)", arm, w)
+		}
+	}
+}
+
+func positionOf(hits []FusedHit) map[string]int {
+	out := make(map[string]int, len(hits))
+	for i, h := range hits {
+		out[h.Key] = i
+	}
+	return out
+}

@@ -1017,16 +1017,19 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	// are comparable — PostgreSQL over tsvector+trigram, SQLite over FTS5. An
 	// empty fusion falls through to the plain cosine rung below.
 	if hs, ok := e.st.(store.ScopedHybridSearcher); ok {
-		// A caller-chosen fusion weight is applied when the backend can scale
-		// its arms (both can). The weight was already validated in Query, so a
-		// malformed value never reaches here; the zero value keeps every arm at
-		// 1, byte for byte the unweighted path.
+		// The fusion weight is the caller's when set, else the store default
+		// (store.DefaultFuseWeights, the same value both engines read). The
+		// weight was already validated in Query, so a malformed value never
+		// reaches here.
 		var fused []store.HybridHit
 		var arms string
 		var ferr error
-		if w, ok := e.st.(store.WeightedHybridSearcher); ok && fw.raw != "" {
-			fused, arms, ferr = w.HybridSearchScopedWeighted(modelID, q, qvec, limit, keep,
-				store.FuseRRFWeights{Vector: fw.vector, Keyword: fw.keyword, Explicit: true})
+		if w, ok := e.st.(store.WeightedHybridSearcher); ok {
+			weights := store.DefaultFuseWeights()
+			if fw.raw != "" {
+				weights = store.FuseRRFWeights{Vector: fw.vector, Keyword: fw.keyword, Explicit: true}
+			}
+			fused, arms, ferr = w.HybridSearchScopedWeighted(modelID, q, qvec, limit, keep, weights)
 		} else {
 			fused, arms, ferr = hs.HybridSearchScoped(modelID, q, qvec, limit, keep)
 		}
@@ -1920,8 +1923,7 @@ const (
 //
 // fusionWeight is the caller's per-arm scaling for the L3 fusion, parsed from
 // `args.weight` as "<vector>,<keyword>" (e.g. "3,1", or "1,0" to drop the
-// keyword arm). The zero value is the default: both arms at 1, byte for byte
-// what every existing caller already gets.
+// keyword arm). The zero value (raw == "") means the store default applies.
 type fusionWeight struct {
 	vector  float64
 	keyword float64
@@ -1929,14 +1931,14 @@ type fusionWeight struct {
 }
 
 // parseFusionWeight validates the caller's weight. An UNSET value is not an
-// error and not an override — it is today's behaviour. Everything else must be
+// error and not an override: it leaves the store default in force. Everything else must be
 // two non-negative numbers, because a weight the caller cannot read is worse
 // than no weight at all: `0,0` ranks nothing, and a typo must fail the same way
 // an unknown scope does rather than quietly ranking the default.
 func parseFusionWeight(raw string) (fusionWeight, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return fusionWeight{vector: 1, keyword: 1}, nil
+		return fusionWeight{}, nil
 	}
 	parts := strings.Split(raw, ",")
 	if len(parts) != 2 {
