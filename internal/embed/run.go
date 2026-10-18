@@ -186,7 +186,8 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	want := StampOf(p)
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the
 	// same hard-rebuild rule over the WHOLE identity — model, revision,
-	// dims, distance, provider, chunker version and prefix pair.
+	// dims, distance, chunker version and prefix pair. Provider is a
+	// transport label, not identity (ModelStamp.Matches).
 	//   full        + mismatch ⇒ clear + re-stamp (rebuild, never mixed)
 	//   incremental + mismatch ⇒ HARD FAIL with a rebuild directive — a
 	//                 flag slip (provider A full, provider B incremental)
@@ -196,7 +197,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	if err != nil {
 		return rep, err
 	}
-	if cur != nil && *cur != want {
+	if cur != nil && !cur.Matches(want) {
 		if mode != "full" {
 			return rep, fmt.Errorf(
 				"embed: stamp mismatch for %s (%s) — run `leankg-embed full` to rebuild the collection",

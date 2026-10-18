@@ -93,13 +93,19 @@ type overrideProvider struct {
 	inner             Provider
 	modelID, revision string
 	dims              int
+	provider          string // transport label override; "" keeps inner's
 }
 
 func (o overrideProvider) ModelID() string  { return o.modelID }
 func (o overrideProvider) Revision() string { return o.revision }
 func (o overrideProvider) Dimensions() int  { return o.dims }
 func (o overrideProvider) Distance() string { return o.inner.Distance() }
-func (o overrideProvider) Provider() string { return o.inner.Provider() }
+func (o overrideProvider) Provider() string {
+	if o.provider != "" {
+		return o.provider
+	}
+	return o.inner.Provider()
+}
 func (o overrideProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	return o.inner.Embed(ctx, kind, texts)
 }
@@ -840,6 +846,85 @@ func TestRunIncrementalMismatchHardFails(t *testing.T) {
 	}
 	if got := vectorCount(t, st, p1.ModelID()); got != before {
 		t.Fatalf("failed incremental run must not touch vectors: had %d, now %d", before, got)
+	}
+}
+
+// TestRunIncrementalIgnoresProviderLabel pins that Provider is a transport
+// label, not identity (ModelStamp.Matches): a collection stamped through an
+// openai-compatible provider is embedded incrementally by a local provider of
+// the same model, with no stamp mismatch, and the stored stamp row keeps the
+// provider it was written with.
+func TestRunIncrementalIgnoresProviderLabel(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+	stamped := overrideProvider{inner: Deterministic(8), modelID: "embeddinggemma-2", revision: "test:gemma-v1", dims: 8, provider: "openai"}
+	mustRun(t, st, stamped, "full")
+
+	local := stamped
+	local.provider = "local"
+	seed(t, st, el("a::f3", "func f3() {}"))
+	rep, err := Run(context.Background(), st, local, "incremental")
+	if err != nil {
+		t.Fatalf("incremental with provider label local over openai stamp: %v", err)
+	}
+	if rep.Embedded != 1 || rep.Skipped != 2 {
+		t.Fatalf("incremental: got %+v, want Embedded=1 Skipped=2", rep)
+	}
+	cur, err := st.Stamp("embeddinggemma-2")
+	if err != nil || cur == nil || cur.Provider != "openai" {
+		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
+	}
+	if n := vectorCount(t, st, "embeddinggemma-2"); n != 3 {
+		t.Fatalf("vectors: got %d, want 3", n)
+	}
+}
+
+// TestRunIncrementalRefusesRealStampDrift pins that the writer guard still
+// protects real identity drift: an incremental run against a stored stamp that
+// differs in one identity field refuses, names that field in the directive, and
+// writes no vectors and no stamp. Model is not a row here: a different model id
+// is a different collection (its own stamp row), so it cannot mismatch.
+func TestRunIncrementalRefusesRealStampDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		break_ func(*store.ModelStamp)
+		field  string
+	}{
+		{"revision", func(s *store.ModelStamp) { s.Revision += "-drift" }, "revision"},
+		{"dimensions", func(s *store.ModelStamp) { s.Dimensions++ }, "dimensions"},
+		{"distance", func(s *store.ModelStamp) { s.Distance = "dot" }, "distance"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testStore(t)
+			seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+			p := Deterministic(8)
+			mustRun(t, st, p, "full")
+			stored, err := st.Stamp(p.ModelID())
+			if err != nil || stored == nil {
+				t.Fatalf("stamp after full: %v %v", stored, err)
+			}
+			drifted := *stored
+			tc.break_(&drifted)
+			if err := st.WriteStamp(drifted); err != nil {
+				t.Fatal(err)
+			}
+			seed(t, st, el("a::f3", "func f3() {}"))
+			before := vectorCount(t, st, p.ModelID())
+
+			_, err = Run(context.Background(), st, p, "incremental")
+			if err == nil || !strings.Contains(err.Error(), "stamp mismatch") {
+				t.Fatalf("incremental drift error = %v, want stamp mismatch", err)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("drift error must name %q: %v", tc.field, err)
+			}
+			if got := vectorCount(t, st, p.ModelID()); got != before {
+				t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
+			}
+			if after, _ := st.Stamp(p.ModelID()); after == nil || *after != drifted {
+				t.Fatalf("refused run must leave the stored stamp: got %+v, want %+v", after, drifted)
+			}
+		})
 	}
 }
 
