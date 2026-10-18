@@ -309,3 +309,97 @@ func TestImportAcceptsHFJobOutputFormat(t *testing.T) {
 		t.Fatalf("import of HF job output: got %+v, want Embedded=2", rep)
 	}
 }
+
+// TestImportProviderLabelAloneKeepsVectors: Provider is a transport label
+// (ModelStamp.Matches). A collection stamped "openai" that an offsite import
+// under the "local" environment provider lands in must keep its vectors: the
+// new line is added, the originals survive, and the stored label is unchanged.
+func TestImportProviderLabelAloneKeepsVectors(t *testing.T) {
+	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+	if _, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector())); err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	stored, err := st.Stamp("embeddinggemma-2")
+	if err != nil || stored == nil {
+		t.Fatalf("stamp after first import: %v %v", stored, err)
+	}
+	stored.Provider = "openai"
+	if err := st.WriteStamp(*stored); err != nil {
+		t.Fatal(err)
+	}
+	before := storedVector(t, st, "embeddinggemma-2", "a::f1")
+	const original = 2
+
+	seed(t, st, el("a::f3", "func f3() {}"))
+	rep, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector()))
+	if err != nil {
+		t.Fatalf("import with provider label local over openai stamp: %v", err)
+	}
+	if rep.Embedded != 1 {
+		t.Fatalf("import: got %+v, want Embedded=1 (only the new element)", rep)
+	}
+	if n := vectorCount(t, st, "embeddinggemma-2"); n != original+1 {
+		t.Fatalf("vectors: got %d, want %d (originals kept, new one added)", n, original+1)
+	}
+	after := storedVector(t, st, "embeddinggemma-2", "a::f1")
+	for i := range before {
+		if before[i] != after[i] {
+			t.Fatalf("component %d of a::f1 changed: %v -> %v", i, before[i], after[i])
+		}
+	}
+	if cur, err := st.Stamp("embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
+		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
+	}
+}
+
+// TestImportRealStampDifferenceRewritesCollection pins the behaviour a real
+// identity difference (revision, dims or distance) keeps: the stored vectors
+// are cleared, the stamp is rewritten to the environment's, and every line is
+// embedded again.
+func TestImportRealStampDifferenceRewritesCollection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		break_ func(*store.ModelStamp)
+	}{
+		{"revision", func(s *store.ModelStamp) { s.Revision += "-drift" }},
+		{"dimensions", func(s *store.ModelStamp) { s.Dimensions++ }},
+		{"distance", func(s *store.ModelStamp) { s.Distance = "dot" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+			st := testStore(t)
+			seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+			if _, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector())); err != nil {
+				t.Fatalf("first import: %v", err)
+			}
+			stored, err := st.Stamp("embeddinggemma-2")
+			if err != nil || stored == nil {
+				t.Fatalf("stamp after first import: %v %v", stored, err)
+			}
+			tc.break_(stored)
+			if err := st.WriteStamp(*stored); err != nil {
+				t.Fatal(err)
+			}
+
+			rep, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector()))
+			if err != nil {
+				t.Fatalf("import over real %s drift: %v", tc.name, err)
+			}
+			if rep.Embedded != 2 {
+				t.Fatalf("import: got %+v, want Embedded=2 (collection rewritten)", rep)
+			}
+			if n := vectorCount(t, st, "embeddinggemma-2"); n != 2 {
+				t.Fatalf("vectors: got %d, want 2", n)
+			}
+			live, err := FromEnv()
+			if err != nil {
+				t.Fatalf("live provider: %v", err)
+			}
+			if cur, _ := st.Stamp("embeddinggemma-2"); cur == nil || *cur != StampOf(live) {
+				t.Fatalf("stamp = %+v, want rewritten to the live stamp %+v", cur, StampOf(live))
+			}
+		})
+	}
+}

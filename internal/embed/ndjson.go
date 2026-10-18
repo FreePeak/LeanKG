@@ -192,7 +192,7 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 	if err != nil {
 		return rep, err
 	}
-	if cur != nil && *cur != want {
+	if cur != nil && !cur.Matches(want) {
 		if err := st.ClearVectors(want.ModelID); err != nil {
 			return rep, err
 		}
