@@ -2,11 +2,12 @@
 
 Synthetic fixtures only. Run with:
 
-    python3 -I -m unittest scripts/test_retrieval_bench.py -v
+    python3 -I scripts/test_retrieval_bench.py
 """
 import importlib.util
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -208,6 +209,130 @@ class LabelFileExclusionTest(unittest.TestCase):
         kept, dropped = bench.drop_label_served(answer, {"docs/retrieval-label-set.md"})
         self.assertEqual([h["qualified_name"] for h in kept["hits"]], ["internal/a.go::A", "internal/b.go::B"])
         self.assertEqual(dropped, 1)
+
+
+def make_store(root, files, elements=(), vectors=0, vectors_table=True):
+    """A synthetic <root>/.leankg/leankg.db with the tables the bench reads, and the
+    given files written under root (paths in files that are not written stay missing)."""
+    os.makedirs(os.path.join(root, ".leankg"), exist_ok=True)
+    for path in files:
+        full = os.path.join(root, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w") as f:
+            f.write("needle here\n")
+    con = sqlite3.connect(os.path.join(root, ".leankg", "leankg.db"))
+    con.execute("CREATE TABLE code_files (path TEXT)")
+    con.executemany("INSERT INTO code_files VALUES (?)", [(p,) for p in files])
+    con.execute("CREATE TABLE code_elements (qualified_name TEXT, element_type TEXT, "
+                "file_path TEXT, line_start INT, line_end INT)")
+    con.executemany("INSERT INTO code_elements VALUES (?,?,?,?,?)", list(elements))
+    if vectors_table:
+        con.execute("CREATE TABLE embedding_vectors (model_id TEXT, qualified_name TEXT, vec BLOB)")
+        con.executemany("INSERT INTO embedding_vectors VALUES ('m', ?, x'00')",
+                        [(f"v{i}",) for i in range(vectors)])
+    con.commit()
+    con.close()
+
+
+class ZeroVectorStoreTest(unittest.TestCase):
+    """A store with no embedding vectors must not abort the run: its labels are
+    scored as non-L3 / no-vector. A store that HAS vectors but degrades still aborts."""
+
+    def test_store_vector_rows_counts_rows_and_tolerates_a_missing_table(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_store(d, [], vectors=0)
+            self.assertEqual(bench.store_vector_rows(d), 0)
+            make_store(os.path.join(d, "b"), [], vectors=3)
+            self.assertEqual(bench.store_vector_rows(os.path.join(d, "b")), 3)
+            make_store(os.path.join(d, "c"), [], vectors_table=False)
+            self.assertEqual(bench.store_vector_rows(os.path.join(d, "c")), 0)
+
+    def test_degraded_with_no_vectors_is_no_vector_not_an_abort(self):
+        ret = {"rung": "L2", "reason": "degraded from L3: no vector collection for model m"}
+        self.assertTrue(bench.no_vector_store(ret, 0))
+
+    def test_degraded_with_vectors_still_aborts(self):
+        ret = {"rung": "L2", "reason": "degraded from L3: stamp mismatch"}
+        self.assertFalse(bench.no_vector_store(ret, 5))
+
+    def test_an_l3_answer_is_never_no_vector(self):
+        self.assertFalse(bench.no_vector_store({"rung": "L3", "reason": ""}, 0))
+
+
+class BinaryNoticeTest(unittest.TestCase):
+    """rg prints 'path: binary file matches' with no NUL separator; it is a notice, not a hit."""
+
+    def test_notice_lines_are_skipped_and_counted(self):
+        out = ("internal/a.go\x003: needle here\n"
+               "assets/blob.bin: binary file matches (found \"\\0\" byte around offset 12)\n"
+               "internal/b.go\x0041: needle again\n")
+        found, notices = bench.parse_rg(out)
+        self.assertEqual(found, [("internal/a.go", 3), ("internal/b.go", 41)])
+        self.assertEqual(notices, 1)
+
+    def test_word_hits_survive_a_binary_notice_end_to_end(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_store(d, ["src/a.go"])
+            with open(os.path.join(d, "src", "blob.bin"), "wb") as f:
+                f.write(b"needle\x00\x01needle\n")
+            con = sqlite3.connect(os.path.join(d, ".leankg", "leankg.db"))
+            con.execute("INSERT INTO code_files VALUES ('src/blob.bin')")
+            con.commit()
+            con.close()
+            index = bench.GrepIndex(d)
+            self.assertEqual(index._word_hits("needle"), [("src/a.go", 1)])
+            self.assertEqual(index.binary_notices, 1)
+
+
+class MissingSourceTest(unittest.TestCase):
+    """Indexed files absent from the checkout must not abort the grep arm."""
+
+    def test_rg_exit_2_from_missing_paths_is_tolerable(self):
+        err = "rg: gone.go: No such file or directory (os error 2)\n"
+        self.assertTrue(bench.rg_failure_is_tolerable(2, err))
+        self.assertTrue(bench.rg_failure_is_tolerable(1, ""))
+        self.assertTrue(bench.rg_failure_is_tolerable(0, ""))
+
+    def test_rg_exit_2_for_any_other_error_still_aborts(self):
+        self.assertFalse(bench.rg_failure_is_tolerable(2, "regex parse error\n"))
+        self.assertFalse(bench.rg_failure_is_tolerable(2, "rg: gone.go: No such file or directory\nregex parse error\n"))
+
+    def test_missing_files_are_dropped_from_the_search_and_counted(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_store(d, ["present.go", "gone.go"])
+            os.remove(os.path.join(d, "gone.go"))
+            index = bench.GrepIndex(d)
+            self.assertEqual(index.files, ["present.go"])
+            self.assertEqual(index.missing, 1)
+            self.assertEqual(index._word_hits("needle"), [("present.go", 1)])
+
+
+class SweepTest(unittest.TestCase):
+    def test_sweep_grid_has_five_to_one_and_vector_only(self):
+        self.assertIn("5,1", bench.SWEEP_WEIGHTS)
+        self.assertIn("1,0", bench.SWEEP_WEIGHTS)
+
+    def test_sweep_progress_line_names_question_and_every_weight(self):
+        row = {"num": 7, "sweep": {"1,0": 2, "5,1": None}}
+        line = bench.sweep_progress(row)
+        self.assertTrue(line.startswith("sweep #7"))
+        self.assertIn("1,0=2", line)
+        self.assertIn("5,1=-", line)
+
+    def test_dump_records_carry_every_arm_and_weight_rank(self):
+        row = {"num": 3, "project": "/p", "question": "how is x?", "truth": "a::X",
+               "rung": "L3", "stale": False,
+               "served": ["a::X"], "element": ["a::X"], "names": [], "file": ["a.go"],
+               "spans": {"a::X": ("a.go", 1, 9)},
+               "sweep": {"1,0": 1, "5,1": None}}
+        rec = bench.dump_records([row])
+        self.assertEqual(rec, [{
+            "id": 3, "project": "/p", "question": "how is x?", "label": "a::X",
+            "rung": "L3", "stale": False, "scored": True,
+            "ranks": {"semantic": 1, "grep_element": 1, "grep_element_names": None,
+                      "grep_file": 1},
+            "sweep": {"1,0": 1, "5,1": None}}])
+        json.dumps(rec)
 
 
 if __name__ == "__main__":

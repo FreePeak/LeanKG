@@ -39,6 +39,10 @@ vector arm never ran". The bench stops on that instead of reporting it.
 script lives in: a store with no elements answers everything with an empty list.
 The grep arms read <project>/.leankg/leankg.db (SQLite, read-only); --scope
 narrows the semantic arm only, the grep arms always search the whole store.
+
+A store with no rows in embedding_vectors is not an abort: its labels are scored
+as "no-vector", listed apart with their project, and excluded from every arm.
+--dump-json PATH writes the per-question ranks of every arm and every --sweep weight.
 """
 import argparse
 import collections
@@ -71,7 +75,7 @@ DEFAULT_LABEL_FILE = "docs/retrieval-label-set.md"
 # from the next ranks of that deeper answer. The top ranks keep the served order.
 LABEL_REFILL = 10
 MIN_WORD = 4
-SWEEP_WEIGHTS = ["1,1", "1,2", "2,1", "1,3", "3,1", "1.5,1", "1,1.5", "2,2"]
+SWEEP_WEIGHTS = ["1,1", "1,2", "2,1", "1,3", "3,1", "5,1", "1.5,1", "1,1.5", "2,2", "1,0"]
 STOPWORDS = frozenset("""
     about above after again against also another because been before being
     between both could does doing down each even every from have here into
@@ -384,26 +388,84 @@ def content_words(question):
     return out
 
 
+def open_store_ro(project):
+    """Read-only connection to <project>/.leankg/leankg.db; exits when there is none."""
+    db = os.path.join(project, ".leankg", "leankg.db")
+    if not os.path.exists(db):
+        sys.exit(f"no SQLite store at {db}: the grep baselines read code_files and "
+                 f"code_elements from it")
+    return sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+
+
+def store_vector_rows(project):
+    """Rows in embedding_vectors; 0 when the table does not exist (a store never embedded)."""
+    con = open_store_ro(project)
+    try:
+        return con.execute("SELECT COUNT(*) FROM embedding_vectors").fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0
+    finally:
+        con.close()
+
+
+def no_vector_store(ret, vector_rows):
+    """True when a degraded L2 answer is only the symptom of a store with no vectors.
+
+    A store that HAS vectors and still degrades (wrong model, stale stamp) is not this:
+    that one must still stop the run, because its numbers would be keyword-only.
+    """
+    return (ret.get("rung") == "L2" and "degraded from L3" in ret.get("reason", "")
+            and vector_rows == 0)
+
+
+def parse_rg(stdout):
+    """(hits [(path, line)], notices) from `rg --null -n` output.
+
+    A binary file prints `path: binary file matches ...` with no NUL separator; that is
+    a notice, counted and skipped, never a hit.
+    """
+    found, notices = [], 0
+    for line in stdout.splitlines():
+        if "\0" not in line:
+            notices += 1
+            continue
+        path, rest = line.split("\0", 1)
+        num = rest.split(":", 1)[0]
+        if not num.isdigit():
+            notices += 1
+            continue
+        found.append((path, int(num)))
+    return found, notices
+
+
+def rg_failure_is_tolerable(returncode, stderr):
+    """rg exit 0 (hits) and 1 (no hit) are fine. Exit 2 is fine only when every error is
+    a missing path: the matches in the paths that exist are still valid."""
+    if returncode in (0, 1):
+        return True
+    lines = [l for l in stderr.splitlines() if l.strip()]
+    return returncode == 2 and bool(lines) and all("No such file or directory" in l for l in lines)
+
+
 class GrepIndex:
     """What the grep baselines read from one checkout's SQLite store, read-only.
 
-    code_files bounds the search (rg runs only over those paths); code_elements
-    gives the candidate spans the matches are credited to (candidate_spans) and the
-    full spans the file ranking reads.
+    code_files bounds the search (rg runs only over the paths that exist on disk; the
+    rest are counted in .missing); code_elements gives the candidate spans the matches
+    are credited to (candidate_spans) and the full spans the file ranking reads.
     """
 
     def __init__(self, project):
-        db = os.path.join(project, ".leankg", "leankg.db")
-        if not os.path.exists(db):
-            sys.exit(f"no SQLite store at {db}: the grep baselines read code_files and "
-                     f"code_elements from it")
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        con = open_store_ro(project)
         try:
-            self.files = [p for (p,) in con.execute("SELECT path FROM code_files ORDER BY path")]
+            listed = [p for (p,) in con.execute("SELECT path FROM code_files ORDER BY path")]
             elements = {qn: (kind, path, start, end) for qn, kind, path, start, end in con.execute(
                 "SELECT qualified_name, element_type, file_path, line_start, line_end FROM code_elements")}
         finally:
             con.close()
+        self.files = [p for p in listed if os.path.isfile(os.path.join(project, p))]
+        self.missing = len(listed) - len(self.files)
+        self.binary_notices = 0
         self.spans = {qn: (path, start, end) for qn, (_, path, start, end) in elements.items()}
         self.candidates = candidate_spans(elements)
         self.root = project
@@ -428,14 +490,16 @@ class GrepIndex:
         if word not in self._hits:
             found = []
             for i in range(0, len(self.files), RG_BATCH):
-                cmd = ["rg", "-i", "-n", "-F", "--no-heading", "--null", "-e", word, "--",
+                # -H: with one path in the batch rg drops the filename, and the NUL
+                # separator with it, so the line would be read as a binary notice.
+                cmd = ["rg", "-i", "-n", "-F", "-H", "--no-heading", "--null", "-e", word, "--",
                        *self.files[i:i + RG_BATCH]]
                 r = subprocess.run(cmd, cwd=self.root, capture_output=True, text=True, errors="replace")
-                if r.returncode not in (0, 1):  # 1 means no match
+                if not rg_failure_is_tolerable(r.returncode, r.stderr):
                     sys.exit(f"rg failed on {word!r}: {r.stderr.strip()}")
-                for line in r.stdout.splitlines():
-                    path, rest = line.split("\0", 1)
-                    found.append((path, int(rest.split(":", 1)[0])))
+                hits, notices = parse_rg(r.stdout)
+                found.extend(hits)
+                self.binary_notices += notices
             self._hits[word] = found
         return self._hits[word]
 
@@ -448,6 +512,29 @@ def grep_orders(index, question, label_set):
     names = rank_by_name(index.candidates, matches, words)
     file_spans = {path: (path, 1, index.line_count(path)) for path, _ in matches}
     return element, names, rank_elements(file_spans, matches), dropped
+
+
+def sweep_progress(row):
+    """One line per finished question during --sweep: its rank at every weight tried."""
+    return f"sweep #{row['num']} " + " ".join(
+        f"{w}={fmt_rank(r)}" for w, r in row["sweep"].items())
+
+
+def dump_records(rows):
+    """Per-question ranks for every arm and every sweep weight, one record per label.
+
+    ranks is None where the label is not in that arm's list; scored says whether the
+    label is in the denominator (rung L3, not STALE).
+    """
+    return [{"id": r["num"], "project": r["project"], "question": r["question"],
+             "label": r["truth"], "rung": r["rung"], "stale": r["stale"],
+             "scored": r["rung"] == "L3" and not r["stale"],
+             "ranks": {"semantic": score(r["served"], r["truth"]),
+                       "grep_element": score(r["element"], r["truth"]),
+                       "grep_element_names": score(r["names"], r["truth"]),
+                       "grep_file": score_file(r["file"], r["truth"], r["spans"])},
+             "sweep": dict(r["sweep"])}
+            for r in rows]
 
 
 def degraded_hint(why):
@@ -465,6 +552,7 @@ def degraded_hint(why):
 def run_project(binary, project, labels, args):
     """Score the labels that name this project. Returns one dict per label."""
     grep = GrepIndex(project)
+    vector_rows = store_vector_rows(project)
     s = Session(binary, project)
     labels_set = label_paths(args.labels, project)
     rows = []
@@ -479,16 +567,20 @@ def run_project(binary, project, labels, args):
                          f"checkout (leankg index <dir>), not the worktree this script lives in")
             # A vector arm that degraded to the keyword rung is not a zero: it means
             # the query never reached the fusion, and every number would be reported
-            # as a real result while measuring the keyword arm alone.
+            # as a real result while measuring the keyword arm alone. A store with no
+            # vectors at all is the one degrade that is expected: its labels are set aside.
             ret = a.get("retrieval") or {}
             why = ret.get("reason", "")
-            if ret.get("rung") == "L2" and "degraded from L3" in why:
+            no_vec = no_vector_store(ret, vector_rows)
+            if ret.get("rung") == "L2" and "degraded from L3" in why and not no_vec:
                 sys.exit(f"the vector arm never ran: {why}\n{degraded_hint(why)}")
             a, sem_dropped = without_label_hits(s, a, lab.question, args, labels_set)
             served = served_order(a, args.limit)
             element, names, file_, grep_dropped = grep_orders(grep, lab.question, labels_set)
             rows.append({"num": lab.num, "question": lab.question, "truth": lab.truth,
-                         "rung": ret.get("rung", "?"), "served": served,
+                         "project": project,
+                         "rung": "no-vector" if no_vec else ret.get("rung", "?"),
+                         "served": served,
                          "arms": arms_of(a, args.limit), "element": element, "names": names,
                          "file": file_,
                          "spans": grep.spans, "stale": False, "sweep": {},
@@ -496,7 +588,7 @@ def run_project(binary, project, labels, args):
         # Membership is probed while the session is OPEN: asking a closed server
         # would fail and every label would read as present.
         for row in rows:
-            if score(row["served"], row["truth"]) is None:
+            if row["rung"] == "L3" and score(row["served"], row["truth"]) is None:
                 row["stale"] = not in_store(s, row["truth"])
         if args.sweep:
             for row in rows:
@@ -506,8 +598,12 @@ def run_project(binary, project, labels, args):
                     a = s.query(row["question"], args.limit, args.scope, weight=w)
                     a, _ = without_label_hits(s, a, row["question"], args, labels_set, weight=w)
                     row["sweep"][w] = score(served_order(a, args.limit), row["truth"])
+                # Flushed per question, so a timeout still leaves every finished row.
+                print(sweep_progress(row), flush=True)
     finally:
         s.close()
+    print(f"{project}: {grep.missing} indexed file(s) missing from the checkout skipped; "
+          f"{grep.binary_notices} rg binary-file notice(s) skipped", flush=True)
     return rows
 
 
@@ -534,9 +630,12 @@ def main():
     ap.add_argument("--sweep", action="store_true", help="also score each fusion weight pair the server applies (args.weight)")
     ap.add_argument("--scope", default="", help="args.scope passed to every semantic query (code|prod|all)")
     ap.add_argument("--labels", default="", help="JSON label file: rows of [qualified_name, question] or [qualified_name, question, project]; default is the LeanKG markdown table")
+    ap.add_argument("--dump-json", default="", metavar="PATH", help="write the per-question ranks of every arm and every --sweep weight to PATH")
     args = ap.parse_args()
     if args.limit < max(CUTOFFS):
         ap.error(f"--limit must be at least {max(CUTOFFS)} so Hit@{max(CUTOFFS)} is read from the served list")
+    # Line-buffered, so a timeout that kills the run still leaves every line printed so far.
+    sys.stdout.reconfigure(line_buffering=True)
 
     labels = load_labels(args.labels or None)
     groups = collections.OrderedDict()
@@ -548,15 +647,19 @@ def main():
 
     # The scored set is the same for every arm: answered at L3 and not stale.
     scored = [r for r in rows if r["rung"] == "L3" and not r["stale"]]
-    not_l3 = [r for r in rows if r["rung"] != "L3"]
+    not_l3 = [r for r in rows if r["rung"] not in ("L3", "no-vector")]
+    no_vec = [r for r in rows if r["rung"] == "no-vector"]
     stale = [r for r in rows if r["rung"] == "L3" and r["stale"]]
     n_stale = len(stale)
+    if args.dump_json:
+        with open(args.dump_json, "w") as f:
+            json.dump(dump_records(rows), f, indent=1)
 
     print(f"{len(rows)} labels from {args.labels or 'docs/retrieval-label-set.md'} over "
           f"{len(groups)} store(s), served depth {args.limit}, "
           f"semantic scope={args.scope or 'full corpus'}, grep arms: full store")
     print(f"scored {len(scored)} (rung L3, not stale); excluded {len(not_l3)} not at L3, "
-          f"{n_stale} STALE")
+          f"{len(no_vec)} no-vector, {n_stale} STALE")
     dropped = {arm: sum(r["dropped"][k] for r in rows)
                for arm, k in (("semantic", "semantic"), ("grep_element", "grep"),
                               ("grep_element_names", "grep"), ("grep_file", "grep"))}
@@ -585,6 +688,10 @@ def main():
         print(f"\n{len(not_l3)} question(s) NOT answered at L3, excluded from every arm:")
         for r in not_l3:
             print(f"  #{r['num']:<4} rung {r['rung']:<4} {r['question'][:50]}")
+    if no_vec:
+        print(f"\n{len(no_vec)} question(s) on store(s) with NO vectors (non-L3 / no-vector), excluded from every arm:")
+        for r in no_vec:
+            print(f"  #{r['num']:<4} {r['project'][-40:]:<42} {r['question'][:40]}")
     if stale:
         print(f"\n{n_stale} STALE label(s): the element is not in its store, so no arm can find it; excluded from every arm:")
         for r in stale:
