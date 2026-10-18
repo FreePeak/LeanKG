@@ -28,10 +28,12 @@ this script lives in: a store with no elements answers everything with an empty
 list, which reads as every label being stale.
 ```
 
-Reports, per arm and fused: `in-pool` (the label appeared in that arm at all),
-`top-1 / top-3 / top-10`. The fused number is what a user sees; the per-arm
-numbers say WHICH arm to fix, which is the whole question when the fused score
-is bad.
+Reports three arms over the same questions: `semantic` (the order the server
+returned, `action=semantic`, top 10), `grep_element` and `grep_file` (`rg -F`
+over the indexed files, credited to the innermost element or ranked per file).
+Each arm gives `Hit@1/3/5/10` and `MRR@10` as counts over one denominator: the
+questions answered at rung L3 and not STALE. A question at another rung, or a
+STALE label, is listed and excluded from every arm.
 
 ## Only extractable symbols are labelled
 
