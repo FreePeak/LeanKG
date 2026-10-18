@@ -988,7 +988,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil || stamp == nil {
 		return degrade(fmt.Sprintf("no vector collection for model %s; degraded from L3", modelID))
 	}
-	if want := e.embedder.Stamp(); *stamp != want {
+	if want := e.embedder.Stamp(); !stamp.Matches(want) {
 		// Whole-identity comparison (issue #279): a chunker or prefix change is
 		// the same class of drift as a model change — mixed vector spaces must
 		// never be served, and the hint names the fix.
@@ -2029,9 +2029,7 @@ func stampDriftForLog(stored, want store.ModelStamp) string {
 	if stored.Distance != want.Distance {
 		diffs = append(diffs, fmt.Sprintf("distance %q", stored.Distance))
 	}
-	if stored.Provider != want.Provider {
-		diffs = append(diffs, fmt.Sprintf("provider %q", stored.Provider))
-	}
+	// Provider is a transport label, not part of identity (ModelStamp.Matches).
 	if stored.ChunkerVersion != want.ChunkerVersion {
 		diffs = append(diffs, fmt.Sprintf("chunker_version %d", stored.ChunkerVersion))
 	}

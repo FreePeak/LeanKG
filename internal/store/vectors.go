@@ -36,6 +36,21 @@ type VectorRow struct {
 	Vec           []float32
 }
 
+// Matches reports whether two stamps describe the same vector space. Provider
+// is a transport label (local vs. openai-compatible vs. deterministic), not a
+// property of the space: an HF-imported collection stamped "openai" is read
+// back by a "local" provider and must not be treated as drift. identityOnly
+// is kept for log formatting; see stampDrift.
+func (a ModelStamp) Matches(b ModelStamp) bool {
+	return a.ModelID == b.ModelID &&
+		a.Revision == b.Revision &&
+		a.Dimensions == b.Dimensions &&
+		a.Distance == b.Distance &&
+		a.ChunkerVersion == b.ChunkerVersion &&
+		a.QueryPrefix == b.QueryPrefix &&
+		a.DocumentPrefix == b.DocumentPrefix
+}
+
 // WriteStamp upserts the stamp for a model (writer side, after validation).
 // The full identity — model, revision, dims, distance, provider, chunker
 // version and the query/document prefix pair — is what a reader compares, so
