@@ -211,9 +211,11 @@ func checkRoot(st store.Backend, dir string, hasFiles bool) error {
 // size+mtime / content-hash signals, so an extractor change would otherwise
 // reach a store only as its files happen to change: v2 (RS-10, leading doc
 // comments in content; signature-only names as references) never reached
-// an existing store at all. A store recorded under another version
-// re-extracts every file once.
-const extractorVersion = "2"
+// an existing store at all; v3 (#531, word boundary after the TS/JS
+// `function` keyword) drops phantom elements such as `ality` from
+// `functionality`. A store recorded under another version re-extracts
+// every file once.
+const extractorVersion = "3"
 
 const extractorKVKey = "extractor_version"
 
