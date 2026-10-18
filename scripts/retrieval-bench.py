@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Retrieval bench: score the served L3 ranking against docs/retrieval-label-set.md.
 
-Three arms, one metric function, one denominator:
+Four arms, one metric function, one denominator:
 
-    semantic      the order the server returned: query action=semantic, limit=10
-    grep_element  `rg -i -n -F` once per question word over the indexed files;
-                  each matching line is credited to the innermost indexed element
-                  that contains it, elements ranked by distinct words matched
-    grep_file     the same word matches, ranked per file
+    semantic            the order the server returned: query action=semantic, limit=10
+    grep_element        `rg -i -n -F` once per question word over the indexed files;
+                        each matching line is credited to the innermost candidate
+                        element that contains it; candidates ranked by distinct words
+    grep_element_names  the same candidates, ranked by question words in the element
+                        NAME, then by distinct body words (a reader scanning for names)
+    grep_file           the same word matches, ranked per file
 
 Every arm is scored over the same questions: only those the server answered at
 rung L3, and not STALE. A question at any other rung is listed and excluded. A
@@ -18,8 +20,8 @@ The label set is parsed from the markdown so the questions, the ground truth
 and the code never drift apart.
 
     go build -o <scratch>/leankg ./cmd/leankg
-    LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 \
-    LEANKG_EMBED_MODEL=bge-small-en-v1.5-384 LEANKG_EMBED_DIMS=384 \
+    LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9103/v1 \
+    LEANKG_EMBED_MODEL=embeddinggemma-2 LEANKG_EMBED_DIMS=512 \
       python3 scripts/retrieval-bench.py --binary <scratch>/leankg --project <the indexed checkout> [--sweep]
 
 --labels FILE.json takes rows of [qualified_name, question] or
@@ -53,10 +55,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LABELS_MD = os.path.join(HERE, "..", "docs", "retrieval-label-set.md")
 ROW = re.compile(r"^\| (\d+) \| (.+?) \| `([^`]+)` \| (.+?) \|$", re.M)
 
+# Container kinds are not answers: a whole file, class or doc section matches almost
+# every word and is never the function a grep reader would name. They stay out of
+# the candidates once they run past MAX_CANDIDATE_LINES.
+CONTAINER_KINDS = frozenset({"file", "module", "package", "namespace", "class", "doc"})
+MAX_CANDIDATE_LINES = 200
 SERVED_DEPTH = 10  # how many hits the semantic arm is asked for and scored over
 CUTOFFS = (1, 3, 5, 10)  # Hit@k cutoffs; MRR is read at the largest one
 MRR_CUTOFF = 10
 RG_BATCH = 400  # file paths per rg call, to bound argv length
+# The label file quotes every question, so a hit in it is the question echoing
+# itself, not retrieval. It is dropped from every arm, always, whatever --labels says.
+DEFAULT_LABEL_FILE = "docs/retrieval-label-set.md"
+# Extra hits asked for when a label-file hit is dropped: the freed slots are filled
+# from the next ranks of that deeper answer. The top ranks keep the served order.
+LABEL_REFILL = 10
 MIN_WORD = 4
 SWEEP_WEIGHTS = ["1,1", "1,2", "2,1", "1,3", "3,1", "1.5,1", "1,1.5", "2,2"]
 STOPWORDS = frozenset("""
@@ -200,6 +213,65 @@ def in_store(server, qualified_name):
     return any(h.get("qualified_name") == qualified_name for h in hits)
 
 
+def label_paths(labels_arg, project):
+    """Repo-relative paths of the label files: hits in them never count.
+
+    The default markdown is always excluded. A --labels JSON counts only when it
+    lives under the project; outside it, no indexed hit can be in it.
+    """
+    out = {DEFAULT_LABEL_FILE}
+    if labels_arg:
+        rel = os.path.relpath(os.path.realpath(labels_arg), os.path.realpath(project))
+        if not rel.startswith(".."):
+            out.add(rel)
+    return out
+
+
+def served_file(hit):
+    return hit.get("file_path") or (hit.get("element") or {}).get("file_path") or ""
+
+
+def drop_label_served(answer, label_set):
+    """(answer with its label-file hits removed, how many were removed)."""
+    hits = answer.get("hits", [])
+    kept = [h for h in hits if served_file(h) not in label_set]
+    return dict(answer, hits=kept), len(hits) - len(kept)
+
+
+def refill_hits(hits, deeper, limit, label_set):
+    """hits (label-file hits already gone, served order), topped up to limit from the
+    deeper answer's next ranks, skipping label-file hits and anything already present."""
+    out = list(hits)
+    have = {h["qualified_name"] for h in out}
+    for h in deeper:
+        if len(out) >= limit:
+            break
+        if served_file(h) in label_set or h["qualified_name"] in have:
+            continue
+        out.append(h)
+        have.add(h["qualified_name"])
+    return out
+
+
+def without_label_hits(s, answer, question, args, label_set, weight=""):
+    """(semantic answer at args.limit without label-file hits, how many were dropped).
+
+    Only a drop triggers the deeper query, so an answer with no label-file hit is the
+    server's own answer, unchanged.
+    """
+    kept, dropped = drop_label_served(answer, label_set)
+    if dropped:
+        deeper = s.query(question, args.limit + LABEL_REFILL, args.scope, weight=weight)
+        kept["hits"] = refill_hits(kept["hits"], deeper.get("hits", []), args.limit, label_set)
+    return kept, dropped
+
+
+def drop_label_matches(matches, label_set):
+    """({(path, line): words} without label-file lines, how many lines were dropped)."""
+    kept = {loc: ws for loc, ws in matches.items() if loc[0] not in label_set}
+    return kept, len(matches) - len(kept)
+
+
 def served_order(answer, limit):
     """The order the server actually answered with, whatever arms it has."""
     return [h["qualified_name"] for h in answer.get("hits", [])[:limit]]
@@ -227,15 +299,24 @@ def evaluate(ranks, stale=0):
     return {"n": n, "stale": stale, "hits": hits, "mrr10": mrr / n if n else 0.0}
 
 
-def rank_elements(spans, matches):
-    """Rank span keys by how well they explain a question's word matches.
+def is_candidate(kind, start, end):
+    """Whether an indexed element may be named as the answer to a question."""
+    return not (kind in CONTAINER_KINDS and end - start + 1 > MAX_CANDIDATE_LINES)
 
-    spans:   {key: (path, start_line, end_line)}
-    matches: {(path, line): set of question words matched on that line}
 
-    Each matching line is credited to the innermost span that contains it. Spans
-    are ordered by distinct words matched (most first), then density (credits per
-    span line), then shorter span, then key. Spans with no credit are omitted.
+def candidate_spans(elements):
+    """{key: (path, start, end)} of the candidates, from {key: (kind, path, start, end)}."""
+    return {key: (path, start, end)
+            for key, (kind, path, start, end) in elements.items()
+            if is_candidate(kind, start, end)}
+
+
+def _credit(spans, matches):
+    """Credit each matching line to the innermost span containing it, and to nothing else.
+
+    An outer scope never inherits a line its inner element already explains, so the
+    innermost element is the one a reader reaches first. Returns (words, credits)
+    per span key: the distinct words credited, and the word-matches credited.
     """
     by_path = collections.defaultdict(list)
     for key, (path, start, end) in spans.items():
@@ -250,6 +331,19 @@ def rank_elements(spans, matches):
         _, key = min(inside)
         words[key] |= ws
         credits[key] += len(ws)
+    return words, credits
+
+
+def rank_elements(spans, matches):
+    """Rank candidate span keys by how well they explain a question's word matches.
+
+    spans:   {key: (path, start_line, end_line)}, already filtered by candidate_spans
+    matches: {(path, line): set of question words matched on that line}
+
+    Ordered by distinct words matched (most first), then matches per span line,
+    then shorter span, then key. Spans with no credit are omitted.
+    """
+    words, credits = _credit(spans, matches)
 
     def order(key):
         _, start, end = spans[key]
@@ -257,6 +351,28 @@ def rank_elements(spans, matches):
         return (-len(words[key]), -credits[key] / lines, end - start, key)
 
     return sorted(words, key=order)
+
+
+def rank_by_name(spans, matches, words):
+    """Rank candidates the way a reader scanning grep output for names does.
+
+    An element is ranked first by how many question words are a substring of one of
+    its name tokens (the qualified name split on non-alphanumerics, lowercased), then
+    by distinct body words, then matches per span line, then shorter span, then key.
+    Elements with neither a name hit nor a body credit are omitted.
+    """
+    body, credits = _credit(spans, matches)
+
+    def name_hits(key):
+        tokens = re.findall(r"[a-z0-9]+", key.lower())
+        return sum(1 for w in words if any(w in t for t in tokens))
+
+    def order(key):
+        _, start, end = spans[key]
+        lines = end - start + 1
+        return (-name_hits(key), -len(body[key]), -credits[key] / lines, end - start, key)
+
+    return sorted((k for k in spans if name_hits(k) or body[k]), key=order)
 
 
 def content_words(question):
@@ -272,7 +388,8 @@ class GrepIndex:
     """What the grep baselines read from one checkout's SQLite store, read-only.
 
     code_files bounds the search (rg runs only over those paths); code_elements
-    gives the spans the matches are credited to.
+    gives the candidate spans the matches are credited to (candidate_spans) and the
+    full spans the file ranking reads.
     """
 
     def __init__(self, project):
@@ -283,10 +400,12 @@ class GrepIndex:
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         try:
             self.files = [p for (p,) in con.execute("SELECT path FROM code_files ORDER BY path")]
-            self.spans = {qn: (path, start, end) for qn, path, start, end in con.execute(
-                "SELECT qualified_name, file_path, line_start, line_end FROM code_elements")}
+            elements = {qn: (kind, path, start, end) for qn, kind, path, start, end in con.execute(
+                "SELECT qualified_name, element_type, file_path, line_start, line_end FROM code_elements")}
         finally:
             con.close()
+        self.spans = {qn: (path, start, end) for qn, (_, path, start, end) in elements.items()}
+        self.candidates = candidate_spans(elements)
         self.root = project
         self._hits = {}
         self._lines = {}
@@ -321,12 +440,14 @@ class GrepIndex:
         return self._hits[word]
 
 
-def grep_orders(index, question):
-    """(element order, file order) of the grep baselines for one question."""
-    matches = index.matches(content_words(question))
-    element = rank_elements(index.spans, matches)
+def grep_orders(index, question, label_set):
+    """(element, element-by-name, file orders, dropped label-file lines) of the grep baselines."""
+    words = content_words(question)
+    matches, dropped = drop_label_matches(index.matches(words), label_set)
+    element = rank_elements(index.candidates, matches)
+    names = rank_by_name(index.candidates, matches, words)
     file_spans = {path: (path, 1, index.line_count(path)) for path, _ in matches}
-    return element, rank_elements(file_spans, matches)
+    return element, names, rank_elements(file_spans, matches), dropped
 
 
 def degraded_hint(why):
@@ -345,6 +466,7 @@ def run_project(binary, project, labels, args):
     """Score the labels that name this project. Returns one dict per label."""
     grep = GrepIndex(project)
     s = Session(binary, project)
+    labels_set = label_paths(args.labels, project)
     rows = []
     try:
         for lab in labels:
@@ -362,12 +484,15 @@ def run_project(binary, project, labels, args):
             why = ret.get("reason", "")
             if ret.get("rung") == "L2" and "degraded from L3" in why:
                 sys.exit(f"the vector arm never ran: {why}\n{degraded_hint(why)}")
+            a, sem_dropped = without_label_hits(s, a, lab.question, args, labels_set)
             served = served_order(a, args.limit)
-            element, file_ = grep_orders(grep, lab.question)
+            element, names, file_, grep_dropped = grep_orders(grep, lab.question, labels_set)
             rows.append({"num": lab.num, "question": lab.question, "truth": lab.truth,
                          "rung": ret.get("rung", "?"), "served": served,
-                         "arms": arms_of(a, args.limit), "element": element, "file": file_,
-                         "spans": grep.spans, "stale": False, "sweep": {}})
+                         "arms": arms_of(a, args.limit), "element": element, "names": names,
+                         "file": file_,
+                         "spans": grep.spans, "stale": False, "sweep": {},
+                         "dropped": {"semantic": sem_dropped, "grep": grep_dropped}})
         # Membership is probed while the session is OPEN: asking a closed server
         # would fail and every label would read as present.
         for row in rows:
@@ -379,6 +504,7 @@ def run_project(binary, project, labels, args):
                     continue
                 for w in SWEEP_WEIGHTS:
                     a = s.query(row["question"], args.limit, args.scope, weight=w)
+                    a, _ = without_label_hits(s, a, row["question"], args, labels_set, weight=w)
                     row["sweep"][w] = score(served_order(a, args.limit), row["truth"])
     finally:
         s.close()
@@ -430,10 +556,16 @@ def main():
           f"{len(groups)} store(s), served depth {args.limit}, "
           f"semantic scope={args.scope or 'full corpus'}, grep arms: full store")
     print(f"scored {len(scored)} (rung L3, not stale); excluded {len(not_l3)} not at L3, "
-          f"{n_stale} STALE\n")
+          f"{n_stale} STALE")
+    dropped = {arm: sum(r["dropped"][k] for r in rows)
+               for arm, k in (("semantic", "semantic"), ("grep_element", "grep"),
+                              ("grep_element_names", "grep"), ("grep_file", "grep"))}
+    print("label-file hits dropped before ranking (the label file quotes every question): "
+          + ", ".join(f"{arm} {n}" for arm, n in dropped.items()) + "\n")
     print_metrics([
         ("semantic", [score(r["served"], r["truth"]) for r in scored], n_stale),
         ("grep_element", [score(r["element"], r["truth"]) for r in scored], n_stale),
+        ("grep_element_names", [score(r["names"], r["truth"]) for r in scored], n_stale),
         ("grep_file", [score_file(r["file"], r["truth"], r["spans"]) for r in scored], n_stale),
     ])
 
@@ -442,10 +574,11 @@ def main():
         present = sum(1 for r in scored if r["truth"] in r["arms"][idx])
         print(f"  {label:<10} {present}/{len(scored)}")
 
-    print(f"\n{'#':<4}{'rung':<6}{'semantic':>9}{'grep_el':>9}{'grep_file':>10}  question")
+    print(f"\n{'#':<4}{'rung':<6}{'semantic':>9}{'grep_el':>9}{'by_name':>9}{'grep_file':>10}  question")
     for r in rows:
         print(f"{r['num']:<4}{r['rung']:<6}{fmt_rank(score(r['served'], r['truth'])):>9}"
               f"{fmt_rank(score(r['element'], r['truth'])):>9}"
+              f"{fmt_rank(score(r['names'], r['truth'])):>9}"
               f"{fmt_rank(score_file(r['file'], r['truth'], r['spans'])):>10}  {r['question'][:46]}")
 
     if not_l3:

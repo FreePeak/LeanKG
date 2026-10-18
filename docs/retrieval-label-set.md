@@ -12,12 +12,14 @@ set exists to measure the L3 fusion, so a label must not be answerable at L1.
 
 ```
 go build -o /tmp/leankg ./cmd/leankg
-LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 \
-LEANKG_EMBED_MODEL=bge-small-en-v1.5-384 LEANKG_EMBED_DIMS=384 \
+LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9103/v1 \
+LEANKG_EMBED_MODEL=embeddinggemma-2 LEANKG_EMBED_DIMS=512 \
   python3 scripts/retrieval-bench.py --project <the indexed checkout>
 
-`LEANKG_EMBED_MODEL` must be the **catalog id** (`bge-small-en-v1.5-384`, the
-pinned 384-d entry in `internal/embed/catalog.go`), not the `.gguf` file name the
+The sidecar on 9103 serves `embeddinggemma-2` (512-d). The bge sidecar this
+section used to name on 9101 is not running, so 9101 is no longer the default.
+`LEANKG_EMBED_MODEL` must be the **catalog id** (`embeddinggemma-2` here, or
+`bge-small-en-v1.5-384` on a bge sidecar), not the `.gguf` file name the
 sidecar serves. An id the catalog does not know gets a different
 `model_id`/`revision`, the stamp lookup finds no collection, and every query
 silently degrades to the keyword rung — which reads as "the vector arm found
@@ -28,12 +30,21 @@ this script lives in: a store with no elements answers everything with an empty
 list, which reads as every label being stale.
 ```
 
-Reports three arms over the same questions: `semantic` (the order the server
-returned, `action=semantic`, top 10), `grep_element` and `grep_file` (`rg -F`
-over the indexed files, credited to the innermost element or ranked per file).
+Reports four arms over the same questions: `semantic` (the order the server
+returned, `action=semantic`, top 10), `grep_element` (`rg -F` per question word;
+each matching line credited to the innermost candidate element, containers over
+200 lines and file/doc/module kinds excluded), `grep_element_names` (the same
+candidates ranked by question words in the element name, then body words) and
+`grep_file` (the same matches ranked per file).
 Each arm gives `Hit@1/3/5/10` and `MRR@10` as counts over one denominator: the
 questions answered at rung L3 and not STALE. A question at another rung, or a
 STALE label, is listed and excluded from every arm.
+
+The label file quotes every question verbatim, so any hit in it is the question
+echoing itself. `docs/retrieval-label-set.md` and the `--labels` JSON file are
+dropped from every arm before ranking, and the run prints how many hits each arm
+lost. A dropped semantic hit frees its slot, which is refilled from the next
+ranks; the top ranks keep the server's order.
 
 ## Only extractable symbols are labelled
 

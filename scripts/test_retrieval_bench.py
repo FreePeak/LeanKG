@@ -99,6 +99,47 @@ class RankElementsTest(unittest.TestCase):
         self.assertEqual(bench.rank_elements(spans, {("f.go", 12): {"w1"}}), ["A"])
 
 
+class CandidateTest(unittest.TestCase):
+    """Container scopes are not answers: a whole file, module or doc section is never
+    the function a developer would name."""
+
+    def test_container_kind_over_200_lines_is_not_a_candidate(self):
+        for kind in ("file", "module", "package", "namespace", "class", "doc"):
+            with self.subTest(kind=kind):
+                self.assertFalse(bench.is_candidate(kind, 1, 300))
+
+    def test_small_container_and_any_size_code_element_stay_candidates(self):
+        self.assertTrue(bench.is_candidate("class", 1, 40))
+        self.assertTrue(bench.is_candidate("function", 1, 350))
+        self.assertTrue(bench.is_candidate("method", 10, 40))
+
+    def test_lines_inside_a_skipped_container_earn_no_credit(self):
+        elements = {"Big": ("class", "f.go", 1, 300), "F": ("function", "f.go", 10, 20)}
+        matches = {("f.go", 12): {"w1"}, ("f.go", 50): {"w2"}}
+        spans = bench.candidate_spans(elements)
+        self.assertEqual(sorted(spans), ["F"])
+        self.assertEqual(bench.rank_elements(spans, matches), ["F"])
+
+
+class RankByNameTest(unittest.TestCase):
+    def test_question_words_in_the_name_rank_above_body_only_matches(self):
+        spans = {"a.go::Rank": ("a.go", 1, 10), "b.go::Other": ("b.go", 1, 10)}
+        matches = {("a.go", 5): {"rank"}, ("b.go", 5): {"rank", "fusion", "reciprocal"}}
+        self.assertEqual(bench.rank_by_name(spans, matches, ["rank", "fusion", "reciprocal"]),
+                         ["a.go::Rank", "b.go::Other"])
+
+    def test_name_ties_break_on_distinct_body_words(self):
+        spans = {"a.go::Rank": ("a.go", 1, 10), "b.go::RankAll": ("b.go", 1, 10)}
+        matches = {("a.go", 5): {"rank"}, ("b.go", 5): {"rank", "fusion", "reciprocal"}}
+        self.assertEqual(bench.rank_by_name(spans, matches, ["rank", "fusion", "reciprocal"]),
+                         ["b.go::RankAll", "a.go::Rank"])
+
+    def test_name_match_is_case_insensitive_substring_of_a_name_token(self):
+        spans = {"x.go::ParseRRFList": ("x.go", 1, 10)}
+        self.assertEqual(bench.rank_by_name(spans, {}, ["rrf"]), ["x.go::ParseRRFList"])
+        self.assertEqual(bench.rank_by_name(spans, {}, ["zebra"]), [])
+
+
 class ContentWordsTest(unittest.TestCase):
     def test_stopwords_short_words_and_duplicates_are_dropped(self):
         q = "How does the store take a lock, and does it lock?"
@@ -115,6 +156,58 @@ class LoadLabelsTest(unittest.TestCase):
             labels = bench.load_labels(path)
         self.assertEqual([(l.num, l.truth, l.project) for l in labels],
                          [(1, "a::X", None), (2, "b::Y", "/some/other")])
+
+
+class RefillTest(unittest.TestCase):
+    """Dropping a label-file hit frees a slot; the slot takes the next rank, and the
+    rest of the served order is left exactly as the server gave it."""
+
+    def test_freed_slots_take_the_next_ranks_without_reordering_the_top(self):
+        def hit(qn, path="internal/a.go"):
+            return {"qualified_name": qn, "file_path": path}
+        kept = [hit("A"), hit("B"), hit("C")]
+        deeper = [hit("A"), hit("L", "docs/retrieval-label-set.md"), hit("B"), hit("D"), hit("E")]
+        out = bench.refill_hits(kept, deeper, 4, {"docs/retrieval-label-set.md"})
+        self.assertEqual([h["qualified_name"] for h in out], ["A", "B", "C", "D"])
+
+
+class LabelFileExclusionTest(unittest.TestCase):
+    """The label file contains every question verbatim, so it must never count as a hit."""
+
+    def test_default_label_file_is_always_excluded(self):
+        self.assertEqual(bench.label_paths(None, "/repo"), {"docs/retrieval-label-set.md"})
+
+    def test_labels_json_inside_the_project_maps_to_its_repo_relative_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "evals"))
+            path = os.path.join(d, "evals", "labels.json")
+            open(path, "w").close()
+            self.assertEqual(bench.label_paths(path, d),
+                             {"docs/retrieval-label-set.md", "evals/labels.json"})
+
+    def test_grep_matches_on_the_label_file_are_dropped_and_counted(self):
+        matches = {("docs/retrieval-label-set.md", 12): {"cache", "evict"},
+                   ("docs/retrieval-label-set.md", 40): {"cache"},
+                   ("internal/cache.go", 7): {"cache"}}
+        kept, dropped = bench.drop_label_matches(matches, {"docs/retrieval-label-set.md"})
+        self.assertEqual(kept, {("internal/cache.go", 7): {"cache"}})
+        self.assertEqual(dropped, 2)
+
+    def test_label_file_cannot_win_element_ranking_once_dropped(self):
+        spans = {"docs/x.md::Q": ("docs/retrieval-label-set.md", 1, 209),
+                 "internal/cache.go::Evict": ("internal/cache.go", 1, 30)}
+        matches = {("docs/retrieval-label-set.md", 12): {"cache", "evict"},
+                   ("internal/cache.go", 7): {"cache"}}
+        kept, _ = bench.drop_label_matches(matches, {"docs/retrieval-label-set.md"})
+        self.assertEqual(bench.rank_elements(spans, kept), ["internal/cache.go::Evict"])
+
+    def test_served_hits_from_the_label_file_are_dropped_and_counted(self):
+        answer = {"hits": [{"qualified_name": "docs/x.md::Q", "file_path": "docs/retrieval-label-set.md"},
+                           {"qualified_name": "internal/a.go::A", "element": {"file_path": "internal/a.go"}},
+                           {"qualified_name": "internal/b.go::B", "file_path": "internal/b.go"}]}
+        kept, dropped = bench.drop_label_served(answer, {"docs/retrieval-label-set.md"})
+        self.assertEqual([h["qualified_name"] for h in kept["hits"]], ["internal/a.go::A", "internal/b.go::B"])
+        self.assertEqual(dropped, 1)
 
 
 if __name__ == "__main__":
