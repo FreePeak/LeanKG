@@ -101,16 +101,20 @@ type FuseRRFWeights struct {
 	// means the same thing on both backends.
 	Keyword float64
 	// Explicit marks Vector/Keyword as CALLER-SET, so a zero means "off"
-	// rather than "unset": the documented "1,0" drops the keyword arm, while
-	// the zero value of this struct keeps every arm at 1.
+	// rather than "unset": the documented "1,0" zero-weights the keyword arm
+	// (its rows stay in the list with score 0 and sort last), while the zero
+	// value of this struct keeps every arm at 1.
 	Explicit bool
 }
 
 // DefaultFuseWeights is the fusion applied when the caller names no weight:
 // vector:keyword = 3:1. Under plain 1:1 RRF a lexical-only row at keyword rank
-// 1 (1/61) outranks the vector rank 1-8 target (1/63 to 1/68), which is what
-// the real-server sweeps measured. Not Explicit, so the lexical arms (tsvector,
-// trigram, ilike, name) keep weight 1. Both engines read this one value.
+// 1 (1/61) ties vector rank 1 (1/61) and outranks vector ranks 2 to 8 (1/62 to
+// 1/68), which is what the real-server sweeps measured. Not Explicit, so the
+// lexical arms (tsvector, trigram, ilike, name) keep weight 1. Both engines read
+// this one value. The 3:1 figure was measured on the SQLite engine, which has two
+// lexical arms; PostgreSQL can have three (tsvector, trigram, name), so see
+// docs/prd.md for what that means for the default.
 func DefaultFuseWeights() FuseRRFWeights {
 	return FuseRRFWeights{Vector: 3, Keyword: 1}
 }
@@ -153,26 +157,31 @@ func (w FuseRRFWeights) armWeight(name string) float64 {
 			return w.Vector
 		}
 	case ArmFTS5:
-		// The SQLite keyword arm (hybrid_sqlite.go). Same slot as TSVector:
-		// "the keyword arm", whichever engine supplies it.
-		if w.Explicit {
-			return w.Keyword
-		}
-		if w.Keyword != 0 {
-			return w.Keyword
-		}
+		return w.keywordWeight(0)
 	case ArmTSVector:
-		if w.TSVector != 0 {
-			return w.TSVector
-		}
+		return w.keywordWeight(w.TSVector)
 	case ArmTrigram:
-		if w.Trigram != 0 {
-			return w.Trigram
-		}
+		return w.keywordWeight(w.Trigram)
 	case ArmILIKE:
-		if w.ILIKE != 0 {
-			return w.ILIKE
-		}
+		return w.keywordWeight(w.ILIKE)
+	}
+	return 1.0
+}
+
+// keywordWeight resolves a lexical arm's weight. A per-arm field the caller set
+// wins. Otherwise the arm takes the Keyword slot: an explicit zero means off, and
+// an unset Keyword means 1. Every keyword arm (FTS5 on SQLite; tsvector, trigram
+// and ILIKE on PostgreSQL) resolves here, so "<vector>,<keyword>" means the same
+// thing on both engines. The name arm is not a keyword arm and stays at 1.
+func (w FuseRRFWeights) keywordWeight(arm float64) float64 {
+	if arm != 0 {
+		return arm
+	}
+	if w.Explicit {
+		return w.Keyword
+	}
+	if w.Keyword != 0 {
+		return w.Keyword
 	}
 	return 1.0
 }

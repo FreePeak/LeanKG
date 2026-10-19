@@ -245,3 +245,44 @@ func positionOf(hits []FusedHit) map[string]int {
 	}
 	return out
 }
+
+// TestExplicitKeywordWeightReachesEveryPGLexicalArm pins that an explicit
+// "<vector>,<keyword>" pair governs the PostgreSQL keyword arms (tsvector,
+// trigram, ilike) as well as the SQLite FTS5 arm. Under "1,0" every lexical row
+// must stay in the fused list with score 0 and sort after the vector rows.
+func TestExplicitKeywordWeightReachesEveryPGLexicalArm(t *testing.T) {
+	lists := []RankList{
+		{Name: ArmVector, Keys: []string{"v1", "v2"}},
+		{Name: ArmTSVector, Keys: []string{"t1"}},
+		{Name: ArmTrigram, Keys: []string{"g1"}},
+		{Name: ArmILIKE, Keys: []string{"i1"}},
+	}
+	got := FuseRRFWeighted(lists, FuseRRFWeights{Vector: 1, Keyword: 0, Explicit: true})
+	if len(got) != 5 {
+		t.Fatalf("len = %d, want 5 (zero-weighted rows stay in the list): %v", len(got), keysOf(got))
+	}
+	if got[0].Key != "v1" || got[1].Key != "v2" {
+		t.Errorf("order = %v, want the vector rows first", keysOf(got))
+	}
+	for _, h := range got[2:] {
+		if h.Score != 0 {
+			t.Errorf("lexical row %q score = %v under 1,0, want 0", h.Key, h.Score)
+		}
+	}
+}
+
+// TestExplicitZeroVectorWeightZeroesTheVectorRow is the mirror of the test
+// above: "0,1" leaves the keyword rows scoring and the vector-only row at 0.
+func TestExplicitZeroVectorWeightZeroesTheVectorRow(t *testing.T) {
+	lists := []RankList{
+		{Name: ArmVector, Keys: []string{"v1"}},
+		{Name: ArmTSVector, Keys: []string{"t1"}},
+	}
+	got := FuseRRFWeighted(lists, FuseRRFWeights{Vector: 0, Keyword: 1, Explicit: true})
+	if len(got) != 2 || got[0].Key != "t1" {
+		t.Fatalf("order = %v, want the tsvector row first", keysOf(got))
+	}
+	if got[1].Key != "v1" || got[1].Score != 0 {
+		t.Errorf("vector-only row = %q score %v, want v1 score 0", got[1].Key, got[1].Score)
+	}
+}

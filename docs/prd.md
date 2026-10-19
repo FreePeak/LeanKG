@@ -302,30 +302,37 @@ rankings.
    degrades to L2 without ever reading a weight, so validating inside the
    semantic rung would silently accept a typo on exactly the stores where it is
    hardest to notice. `"<vector>,<keyword>"`, two non-negative numbers, `0,0`
-   refused, `1,0` documented as dropping the keyword arm.
+   refused, `1,0` documented as zero-weighting the keyword arm.
 2. **Applied** through `WeightedHybridSearcher` — a *separate* interface, the
    house pattern (`ScopedHybridSearcher`), so no signature changes and a backend
    without it keeps the store default. `FuseRRFWeights` gained a `Keyword`
    slot and an `Explicit` flag: a zero means *unset* (weight 1; an unset caller
    weight takes the 3:1 `DefaultFuseWeights`) while an explicit zero means *off*,
-   which is what makes `1,0` actually drop the arm.
+   which is what makes `1,0` actually zero-weight the arm (its rows stay in the list with score 0 and sort last).
 3. **Not over-claimed.** My own first version reported the weight
    unconditionally, and an **L0** answer ("no elements indexed") claimed
    `weight=3,1` — only L3 fuses two arms to scale. An answer naming a setting it
    did not apply is the same defect as #491's advice naming a flag that did not
    work.
 
+**The 3:1 default was measured on SQLite only.** The sweeps behind it ran on the
+SQLite engine, which has two lexical arms. PostgreSQL has up to three lexical
+arms at weight 1 each (tsvector, trigram or ILIKE, and name), so a row ranked
+first in all three ties vector rank 1 under the default (3 x 1/61 against 3/61
+for vector rank 1). PostgreSQL retrieval quality with the new default has not
+been benchmarked.
+
 **A test that guarded nothing, corrected.** The first fixture used mirrored arms
 (vector `a,b` / keyword `b,a`), which ties — it passed even with the
 explicit-zero handling disabled. It also expected `alpha` to beat a key topping
 both arms, which was wrong about RRF rather than about the weight. Disjoint arms
-make scaling *and* dropping observable, and the RED check now fails when the
+make scaling *and* zero-weighting observable, and the RED check now fails when the
 handling is removed.
 
 **Verified:** `TestQueryWeightIsValidated` (four malformed shapes refused, four
 good ones accepted), `TestWeightIsNotClaimedByARungThatDoesNotUseIt`, and
-`TestFusionWeightChangesTheRanking` (vector-heavy, keyword-heavy, `1,0` drops,
-`0,1` drops, zero struct identical to unweighted). Gate: 62 packages ok,
+`TestFusionWeightChangesTheRanking` (vector-heavy, keyword-heavy, `1,0` zero-weights,
+`0,1` zero-weights, zero struct identical to unweighted). Gate: 62 packages ok,
 `go vet` clean, `gofmt` clean.
 
 ### v4.15-doctor-truth — the diagnosis says "not indexed", not the syscall that noticed (2026-10-11)

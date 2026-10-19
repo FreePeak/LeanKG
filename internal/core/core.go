@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1947,7 +1948,7 @@ func parseFusionWeight(raw string) (fusionWeight, error) {
 	nums := make([]float64, 2)
 	for i, p := range parts {
 		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
-		if err != nil || v < 0 {
+		if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 			return fusionWeight{}, fmt.Errorf("query weight %q: %q is not a non-negative number", raw, strings.TrimSpace(p))
 		}
 		nums[i] = v
