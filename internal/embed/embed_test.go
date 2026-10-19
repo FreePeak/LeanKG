@@ -849,11 +849,13 @@ func TestRunIncrementalMismatchHardFails(t *testing.T) {
 	}
 }
 
-// TestRunIncrementalIgnoresProviderLabel pins that Provider is a transport
-// label, not identity (ModelStamp.Matches): a collection stamped through an
-// openai-compatible provider is embedded incrementally by a local provider of
-// the same model, with no stamp mismatch, and the stored stamp row keeps the
-// provider it was written with.
+// TestRunIncrementalIgnoresProviderLabel pins that a provider label which does
+// not change the text cap is not drift: a collection stamped "openai" (8000-rune
+// cap) is embedded incrementally under "openai-compatible" (same 8000-rune cap),
+// with no stamp mismatch, and the stored stamp row keeps the provider it was
+// written with. The label is "openai-compatible" rather than "local" because
+// "local" has a 1000-rune cap, and that case must refuse (see
+// TestRunIncrementalRefusesLabelThatChangesTextCap).
 func TestRunIncrementalIgnoresProviderLabel(t *testing.T) {
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
@@ -861,7 +863,7 @@ func TestRunIncrementalIgnoresProviderLabel(t *testing.T) {
 	mustRun(t, st, stamped, "full")
 
 	local := stamped
-	local.provider = "local"
+	local.provider = "openai-compatible"
 	seed(t, st, el("a::f3", "func f3() {}"))
 	rep, err := Run(context.Background(), st, local, "incremental")
 	if err != nil {
@@ -876,6 +878,40 @@ func TestRunIncrementalIgnoresProviderLabel(t *testing.T) {
 	}
 	if n := vectorCount(t, st, "embeddinggemma-2"); n != 3 {
 		t.Fatalf("vectors: got %d, want 3", n)
+	}
+}
+
+// TestRunIncrementalRefusesLabelThatChangesTextCap pins that a provider label
+// which changes the text cap is refused by an incremental run: an
+// openai-stamped collection (8000-rune cap) must not take a "local" run (1000-
+// rune cap), or the new element is cut differently from its neighbours. The
+// refusal names the stored label and the env fix, does not steer to a full
+// rebuild as the only option, and writes nothing.
+func TestRunIncrementalRefusesLabelThatChangesTextCap(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+	stamped := overrideProvider{inner: Deterministic(8), modelID: "embeddinggemma-2", revision: "test:gemma-v1", dims: 8, provider: "openai"}
+	mustRun(t, st, stamped, "full")
+	before := vectorCount(t, st, "embeddinggemma-2")
+
+	seed(t, st, el("a::big", strings.Repeat("x", 3000)))
+	local := stamped
+	local.provider = "local"
+	_, err := Run(context.Background(), st, local, "incremental")
+	if err == nil {
+		t.Fatal("incremental under label local over an openai stamp must refuse: the label changes the text cap")
+	}
+	if !strings.Contains(err.Error(), `"openai"`) || !strings.Contains(err.Error(), "LEANKG_EMBED_PROVIDER") {
+		t.Fatalf("refusal must name the stored label and LEANKG_EMBED_PROVIDER: %v", err)
+	}
+	if strings.Contains(err.Error(), "`leankg-embed full` to rebuild") {
+		t.Fatalf("refusal must not steer to a full rebuild as the fix: %v", err)
+	}
+	if got := vectorCount(t, st, "embeddinggemma-2"); got != before {
+		t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
+	}
+	if cur, err := st.Stamp("embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
+		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
 	}
 }
 

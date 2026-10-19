@@ -36,11 +36,13 @@ type VectorRow struct {
 	Vec           []float32
 }
 
-// Matches reports whether two stamps describe the same vector space. Provider
-// is a transport label (local vs. openai-compatible vs. deterministic), not a
-// property of the space: an HF-imported collection stamped "openai" is read
-// back by a "local" provider and must not be treated as drift. identityOnly
-// is kept for log formatting; see stampDrift.
+// Matches reports whether two stamps describe the same vector space: model id,
+// revision, dimensions, distance, chunker version and the query/document
+// prefix pair. Provider is excluded from that identity (a transport label, so
+// an HF-imported collection stamped "openai" is read back by a "local" provider
+// without drift), but it is not inert: internal/embed picks the per-text rune
+// cap from the label, so a writer that guards on identity must also compare the
+// cap (capForLabel), as the incremental run does.
 func (a ModelStamp) Matches(b ModelStamp) bool {
 	return a.ModelID == b.ModelID &&
 		a.Revision == b.Revision &&

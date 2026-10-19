@@ -61,15 +61,21 @@ type dirtyItem struct{ file, qn, text, hash string }
 // queries use the same cap, so a long query is truncated instead of failing
 // at the provider and degrading L3 (RS-15).
 func TextCap(p Provider) int {
-	textCap := maxContentChars
-	if p.Provider() == "local" {
-		budget := maxLocalTextChars
-		if tb := sidecarBudget(p); tb > 0 {
-			budget = tb
-		}
-		textCap = min(textCap, budget)
+	return capForLabel(p.Provider(), sidecarBudget(p))
+}
+
+// capForLabel is the rune cap for provider label `label` given the sidecar's
+// reported budget (0 = unknown): the general cap, narrowed to the local
+// family's budget for label "local". The single home of that rule; the
+// incremental stamp guard applies it to the stored label as well.
+func capForLabel(label string, budget int) int {
+	if label != "local" {
+		return maxContentChars
 	}
-	return textCap
+	if budget <= 0 {
+		budget = maxLocalTextChars
+	}
+	return min(maxContentChars, budget)
 }
 
 // sidecarBudget is the text budget the local sidecar reports from /props, in
@@ -187,7 +193,9 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the
 	// same hard-rebuild rule over the WHOLE identity — model, revision,
 	// dims, distance, chunker version and prefix pair. Provider is a
-	// transport label, not identity (ModelStamp.Matches).
+	// transport label, not identity (ModelStamp.Matches), but it selects the
+	// text cap (capForLabel), so a label change that changes the cap is drift
+	// too: vectors cut at two caps must not share one collection.
 	//   full        + mismatch ⇒ clear + re-stamp (rebuild, never mixed)
 	//   incremental + mismatch ⇒ HARD FAIL with a rebuild directive — a
 	//                 flag slip (provider A full, provider B incremental)
@@ -197,11 +205,21 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	if err != nil {
 		return rep, err
 	}
-	if cur != nil && !cur.Matches(want) {
+	budget := sidecarBudget(p)
+	capChanged := cur != nil && capForLabel(cur.Provider, budget) != capForLabel(want.Provider, budget)
+	if cur != nil && (!cur.Matches(want) || capChanged) {
 		if mode != "full" {
+			if !cur.Matches(want) {
+				return rep, fmt.Errorf(
+					"embed: stamp mismatch for %s (%s) — run `leankg-embed full` to rebuild the collection",
+					modelID, stampDrift(*cur, want))
+			}
 			return rep, fmt.Errorf(
-				"embed: stamp mismatch for %s (%s) — run `leankg-embed full` to rebuild the collection",
-				modelID, stampDrift(*cur, want))
+				"embed: provider label %q (text cap %d runes) differs from the stored label %q (text cap %d runes) for %s; "+
+					"the label changes the text cap, so new vectors would be cut differently — set LEANKG_EMBED_PROVIDER=%s to keep the stored cap, "+
+					"or run `leankg-embed full` only if a rebuild at the new cap is intended",
+				want.Provider, capForLabel(want.Provider, budget), cur.Provider, capForLabel(cur.Provider, budget),
+				modelID, cur.Provider)
 		}
 		if err := st.ClearVectors(modelID); err != nil {
 			return rep, err
