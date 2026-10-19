@@ -20,9 +20,17 @@ The label set is parsed from the markdown so the questions, the ground truth
 and the code never drift apart.
 
     go build -o <scratch>/leankg ./cmd/leankg
-    LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9103/v1 \
-    LEANKG_EMBED_MODEL=embeddinggemma-2 LEANKG_EMBED_DIMS=512 \
+    LEANKG_EMBED_PROVIDER=... LEANKG_EMBED_BASE_URL=... LEANKG_EMBED_MODEL=... \
+    LEANKG_EMBED_DIMS=... \
       python3 scripts/retrieval-bench.py --binary <scratch>/leankg --project <the indexed checkout> [--sweep]
+
+The script does not set or check the embedding endpoint itself: the served `leankg`
+binary reads LEANKG_EMBED_* (provider, base URL, model id, dims), and the bench only
+reads what that server answers. Two catalog ids are known to internal/embed/catalog.go:
+the default `bge-small-en-v1.5-384` (384-d) and `embeddinggemma-2` (768-d native,
+512/256/128 selectable through LEANKG_EMBED_DIMS). For a catalog id, LEANKG_EMBED_DIMS
+must be the native width or one of its Matryoshka widths; otherwise the server's
+embed constructor fails (internal/embed/env.go).
 
 --labels FILE.json takes rows of [qualified_name, question] or
 [qualified_name, question, project]; a row's own project overrides --project, so
@@ -52,6 +60,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import urllib.parse
 
 CATALOG_MODEL_ID = "bge-small-en-v1.5-384"
 
@@ -305,7 +314,8 @@ def evaluate(ranks, stale=0):
 
 def is_candidate(kind, start, end):
     """Whether an indexed element may be named as the answer to a question."""
-    return not (kind in CONTAINER_KINDS and end - start + 1 > MAX_CANDIDATE_LINES)
+    # end < start has no line to explain a match and would divide by zero in the ranking.
+    return end >= start and not (kind in CONTAINER_KINDS and end - start + 1 > MAX_CANDIDATE_LINES)
 
 
 def candidate_spans(elements):
@@ -394,16 +404,23 @@ def open_store_ro(project):
     if not os.path.exists(db):
         sys.exit(f"no SQLite store at {db}: the grep baselines read code_files and "
                  f"code_elements from it")
-    return sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    # quote(): '#' would end the path as a fragment and '?' start a query, dropping mode=ro.
+    return sqlite3.connect(f"file:{urllib.parse.quote(db)}?mode=ro", uri=True)
 
 
 def store_vector_rows(project):
-    """Rows in embedding_vectors; 0 when the table does not exist (a store never embedded)."""
+    """Rows in embedding_vectors; 0 only when that table does not exist (a store never embedded).
+
+    Any other OperationalError (locked, unreadable) propagates: reading it as zero rows
+    would exclude a store that has vectors as if it had none.
+    """
     con = open_store_ro(project)
     try:
+        has_table = con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                                "AND name = 'embedding_vectors'").fetchone()
+        if not has_table:
+            return 0
         return con.execute("SELECT COUNT(*) FROM embedding_vectors").fetchone()[0]
-    except sqlite3.OperationalError:
-        return 0
     finally:
         con.close()
 
@@ -425,7 +442,11 @@ def parse_rg(stdout):
     a notice, counted and skipped, never a hit.
     """
     found, notices = [], 0
-    for line in stdout.splitlines():
+    # split("\n"), not splitlines(): form feeds and unicode separators are content, and
+    # splitlines() would drift the line numbers away from rg's.
+    for line in stdout.split("\n"):
+        if not line:
+            continue
         if "\0" not in line:
             notices += 1
             continue
@@ -552,7 +573,11 @@ def degraded_hint(why):
 def run_project(binary, project, labels, args):
     """Score the labels that name this project. Returns one dict per label."""
     grep = GrepIndex(project)
-    vector_rows = store_vector_rows(project)
+    try:
+        vector_rows = store_vector_rows(project)
+    except sqlite3.OperationalError as e:
+        sys.exit(f"cannot count embedding_vectors in {project!r}: {e}; the run is aborted "
+                 f"before any label is scored (is another process holding the store?)")
     s = Session(binary, project)
     labels_set = label_paths(args.labels, project)
     rows = []

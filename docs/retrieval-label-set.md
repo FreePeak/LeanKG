@@ -11,15 +11,16 @@ set exists to measure the L3 fusion, so a label must not be answerable at L1.
 ## Method
 
 ```
-go build -o /tmp/leankg ./cmd/leankg
-LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9103/v1 \
-LEANKG_EMBED_MODEL=embeddinggemma-2 LEANKG_EMBED_DIMS=512 \
-  python3 scripts/retrieval-bench.py --project <the indexed checkout>
+go build -o <scratch>/leankg ./cmd/leankg
+LEANKG_EMBED_PROVIDER=... LEANKG_EMBED_BASE_URL=... LEANKG_EMBED_MODEL=... \
+LEANKG_EMBED_DIMS=... \
+  python3 scripts/retrieval-bench.py --binary <scratch>/leankg --project <the indexed checkout>
 
-The sidecar on 9103 serves `embeddinggemma-2` (512-d). The bge sidecar this
-section used to name on 9101 is not running, so 9101 is no longer the default.
-`LEANKG_EMBED_MODEL` must be the **catalog id** (`embeddinggemma-2` here, or
-`bge-small-en-v1.5-384` on a bge sidecar), not the `.gguf` file name the
+The embed endpoint is configured only through the LEANKG_EMBED_* env vars of the
+served binary (provider, base URL, model id, dims, API key where needed); the bench
+does not pick an endpoint of its own.
+`LEANKG_EMBED_MODEL` must be the **catalog id** (for example `embeddinggemma-2` or
+`bge-small-en-v1.5-384`), not the `.gguf` file name the
 sidecar serves. An id the catalog does not know gets a different
 `model_id`/`revision`, the stamp lookup finds no collection, and every query
 silently degrades to the keyword rung — which reads as "the vector arm found

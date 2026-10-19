@@ -10,6 +10,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location(
@@ -333,6 +334,69 @@ class SweepTest(unittest.TestCase):
                       "grep_file": 1},
             "sweep": {"1,0": 1, "5,1": None}}])
         json.dumps(rec)
+
+
+class StoreVectorRowsErrorTest(unittest.TestCase):
+    """Only a missing embedding_vectors table means zero rows. Any other OperationalError
+    (a locked or unreadable store) must propagate, or a store that has vectors would be
+    read as having none and its labels excluded without a word."""
+
+    def test_store_without_the_embedding_table_has_zero_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_store(d, [], vectors_table=False)
+            self.assertEqual(bench.store_vector_rows(d), 0)
+
+    def test_locked_store_raises_instead_of_reading_zero_rows(self):
+        class LockedConnection:
+            def execute(self, sql, *params):
+                raise sqlite3.OperationalError("database is locked")
+
+            def close(self):
+                pass
+
+        with mock.patch.object(bench, "open_store_ro", return_value=LockedConnection()):
+            with self.assertRaises(sqlite3.OperationalError):
+                bench.store_vector_rows("/unused")
+
+
+class ZeroLengthSpanTest(unittest.TestCase):
+    """A span that ends before it starts has no line to explain a match: never a candidate."""
+
+    def test_span_ending_before_it_starts_is_not_a_candidate(self):
+        self.assertFalse(bench.is_candidate("function", 10, 9))
+        self.assertTrue(bench.is_candidate("function", 10, 10))
+
+    def test_inverted_span_named_by_a_question_word_does_not_crash(self):
+        elements = {"f.go::Rank": ("function", "f.go", 10, 9), "g.go::Ok": ("function", "g.go", 1, 5)}
+        spans = bench.candidate_spans(elements)
+        self.assertEqual(sorted(spans), ["g.go::Ok"])
+        self.assertEqual(bench.rank_by_name(spans, {}, ["rank"]), [])
+        self.assertEqual(bench.rank_elements(spans, {("g.go", 2): {"rank"}}), ["g.go::Ok"])
+
+
+class StorePathEscapeTest(unittest.TestCase):
+    """The SQLite URI must escape the path: '#' starts a fragment and '?' starts a query."""
+
+    def test_project_path_with_hash_and_question_mark_opens_the_store(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "repo#1?v2")
+            make_store(root, ["a.go"])
+            con = bench.open_store_ro(root)
+            try:
+                self.assertEqual(con.execute("SELECT COUNT(*) FROM code_files").fetchone()[0], 1)
+            finally:
+                con.close()
+
+
+class ParseRgLineSplitTest(unittest.TestCase):
+    """Lines end at '\\n' only, as rg writes them: form feeds and unicode separators are
+    content, not line breaks, or the line numbers drift from rg's."""
+
+    def test_form_feed_and_unicode_line_separator_do_not_split_a_match(self):
+        out = "internal/a.go\x003: page\x0cbreak here\n"
+        found, notices = bench.parse_rg(out)
+        self.assertEqual(found, [("internal/a.go", 3)])
+        self.assertEqual(notices, 0)
 
 
 if __name__ == "__main__":
