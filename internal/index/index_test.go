@@ -435,3 +435,86 @@ func TestExtractorVersionReextractsOnce(t *testing.T) {
 		t.Fatalf("after upgrade: re-extracted %d files, want 0", res.Files)
 	}
 }
+
+// TestExtractorBumpPurgesPhantomKeepsVectors: a store indexed under extractor
+// version "2" holds a phantom element (`functionality: x` yielded `ality` before
+// the TS function word-boundary fix). The bump must re-extract the unchanged
+// file, drop the phantom, and keep the real element with its vector and
+// embedding_state rows (vectors are keyed by qualified name, not by file).
+func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
+	const model = "test-model"
+	dir := t.TempDir()
+	src := "const cfg = {\n  functionality: x,\n}\n\nexport function ping(x: number): number {\n  return x\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "app.ts"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	index(t, st, dir)
+	mustFind(t, st, "app.ts::ping")
+
+	// Simulate the pre-fix store: the phantom row and the old version stamp.
+	if err := st.UpsertElements([]store.Element{{
+		QualifiedName: "app.ts::ality", ElementType: "function", Name: "ality",
+		FilePath: "app.ts", Language: "typescript",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.KVSet(rootKVNamespace, extractorKVKey, "2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetEmbeddingStates(model, map[string]string{"app.ts::ping": "hash-ping"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertVectors(model, []store.VectorRow{{QualifiedName: "app.ts::ping", Vec: []float32{1, 0, 0}}}); err != nil {
+		t.Fatal(err)
+	}
+	statesBefore, err := st.EmbeddingStateMap(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vecsBefore, err := st.VectorCount(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	index(t, st, dir) // unchanged file, store stamped "2"
+
+	els, err := st.Elements()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range els {
+		if e.Name == "ality" {
+			t.Errorf("phantom element %q survived the extractor bump", e.QualifiedName)
+		}
+	}
+	mustFind(t, st, "app.ts::ping")
+	statesAfter, err := st.EmbeddingStateMap(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statesAfter) != len(statesBefore) || statesAfter["app.ts::ping"] != "hash-ping" {
+		t.Errorf("embedding_state changed: before %v, after %v", statesBefore, statesAfter)
+	}
+	vecsAfter, err := st.VectorCount(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vecsAfter != vecsBefore {
+		t.Fatalf("vector rows: before %d, after %d", vecsBefore, vecsAfter)
+	}
+	hits, err := st.SearchVectors(model, []float32{1, 0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Element.QualifiedName != "app.ts::ping" {
+		t.Fatalf("vector for app.ts::ping not retrievable: %+v", hits)
+	}
+}
