@@ -70,3 +70,22 @@ func TestWeightIsNotClaimedByARungThatDoesNotUseIt(t *testing.T) {
 		}
 	}
 }
+
+// TestParseFusionWeightRejectsNonFinite pins that NaN and the infinities are
+// refused. strconv.ParseFloat accepts all of them, and NaN passes a plain
+// `v < 0` check, so a non-finite weight would otherwise reach fusion.
+func TestParseFusionWeightRejectsNonFinite(t *testing.T) {
+	for _, bad := range []string{"NaN,1", "1,NaN", "+Inf,1", "1,-Inf", "Inf,Inf"} {
+		if _, err := parseFusionWeight(bad); err == nil {
+			t.Errorf("weight %q was accepted; want a refusal", bad)
+		}
+	}
+	for _, ok := range []string{"3,1", "1,1", "1,0", "0,1"} {
+		if _, err := parseFusionWeight(ok); err != nil {
+			t.Errorf("weight %q was refused: %v", ok, err)
+		}
+	}
+	if _, err := parseFusionWeight("0,0"); err == nil {
+		t.Errorf("weight 0,0 was accepted; want a refusal")
+	}
+}

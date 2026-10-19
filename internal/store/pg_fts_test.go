@@ -435,18 +435,20 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 	if len(hits) != 4 {
 		t.Fatalf("hits = %+v; want 4", hits)
 	}
-	// Delta is last by cosine but first by both keyword arms: 2*(1/61) beats
-	// Alpha's single 1/61.
+	// Delta is last by cosine but first by the keyword arms: under the 3:1
+	// default its three lexical ranks (1/61 each) plus vector rank 4 (3/64)
+	// beat Alpha's vector rank 1 alone (3/61).
 	if hits[0].Element.QualifiedName != "pkg.Delta" {
 		t.Fatalf("top hit = %s; want pkg.Delta", hits[0].Element.QualifiedName)
 	}
-	// The fused score is the sum of 1/(RRFK+rank) over every arm the hit
+	// The fused score is the sum of weight/(RRFK+rank) over every arm the hit
 	// appears in, so derive it from the ranks the answer reports rather than
 	// from a constant: the constant silently encoded "three arms", and the name
-	// arm changed that without changing the fusion.
+	// arm changed that without changing the fusion. The weight is the default
+	// (vector 3, lexical 1), read through the same armWeight the fusion uses.
 	want := 0.0
-	for _, rank := range hits[0].Ranks {
-		want += 1 / float64(RRFK+rank)
+	for arm, rank := range hits[0].Ranks {
+		want += DefaultFuseWeights().armWeight(arm) / float64(RRFK+rank)
 	}
 	pgFloatClose(t, hits[0].Score, want, "Delta fused score")
 	if hits[1].Element.QualifiedName != "pkg.Alpha" {
