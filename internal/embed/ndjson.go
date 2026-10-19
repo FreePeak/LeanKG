@@ -192,7 +192,10 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 	if err != nil {
 		return rep, err
 	}
-	if cur != nil && *cur != want {
+	// Provider-label-only differences are never cleared here: the producer's
+	// text cap is not recorded in the stamp, so import trusts the operator, and
+	// clearing on a label change would lose vectors.
+	if cur != nil && !cur.Matches(want) {
 		if err := st.ClearVectors(want.ModelID); err != nil {
 			return rep, err
 		}
