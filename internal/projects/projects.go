@@ -219,7 +219,11 @@ func (r *Router) resolve(selector string) (string, error) {
 // filesystem lets an unknown name land on whatever project happens to
 // contain the server's cwd (see resolve).
 func isPathSelector(selector string) bool {
-	return filepath.IsAbs(selector) || strings.ContainsRune(selector, filepath.Separator)
+	if filepath.IsAbs(selector) || strings.ContainsRune(selector, filepath.Separator) {
+		return true
+	}
+	// "." and ".." are places, not names.
+	return selector == "." || selector == ".."
 }
 
 // maxKnownProjectsInError bounds how many projects the unknown-project error

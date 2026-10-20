@@ -70,3 +70,26 @@ func TestPathInsideAProjectBeatsASameNamedProject(t *testing.T) {
 		t.Fatalf("resolve(api) = %s,%v want %s", got, err, canonical(named))
 	}
 }
+
+// TestDotSelectorIsAPlace pins that "." keeps meaning "here": it is a
+// path, so the ancestor walk may run and it resolves to the project that
+// contains the cwd. Treated as a NAME it would be matched against a
+// project's basename ("projects") and refused — and a client that sends
+// ?project=. would get an error instead of its own project.
+func TestDotSelectorIsAPlace(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The project that CONTAINS the cwd's directory.
+	containing := filepath.Dir(cwd)
+	r := NewRouter(containing, Config{})
+
+	got, err := r.resolve(".")
+	if err != nil {
+		t.Fatalf("resolve(.) failed: %v", err)
+	}
+	if got != canonical(containing) {
+		t.Fatalf("resolve(.) = %s, want %s", got, canonical(containing))
+	}
+}
