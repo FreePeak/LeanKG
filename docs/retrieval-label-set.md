@@ -219,3 +219,36 @@ almost nothing with the answer's symbol name (`cmdGC` vs "purges orphaned
 relationship edges", `coverage` vs "the fraction of elements that hold
 vectors"), and no arm built on names or keywords reaches them. That is the
 model's vocabulary, and it is the honest boundary of the code-side levers.
+
+## SQLite versus PostgreSQL under the 3:1 default
+
+Same source snapshot, same 11,392 stored vectors (one embedding model, 512-d)
+imported into both engines, the same 84 labels, served depth 10, default
+`vector:keyword` = 3:1. The grep arms read the SQLite file in both runs.
+
+| served semantic answer | SQLite | PostgreSQL |
+|---|---|---|
+| Hit@1 | 44/84 | 47/84 |
+| Hit@3 | 67/84 | 64/84 |
+| Hit@5 | 72/84 | 69/84 |
+| Hit@10 | 77/84 | 75/84 |
+| MRR@10 | 0.671 | 0.679 |
+
+The net gap is small, but the served rank of 32 of the 84 labels differs between
+the engines, in both directions. Two structural differences produce it:
+
+- **Keyword side.** PostgreSQL runs two lexical lists, tsvector and trigram, each
+  at weight 1 (`internal/store/pg_fts.go:465-508`). SQLite runs one FTS5 list
+  (`internal/store/hybrid_sqlite.go:83-103`). A row that both PostgreSQL lexical
+  arms rank first scores 2/61 under 3:1, which outranks vector ranks up to about
+  31. The single SQLite keyword rank 1 scores 1/61 and only reaches vector rank
+  about 123, beyond the hybrid window.
+- **Vector side.** The PostgreSQL vector arm is HNSW with pgvector's default
+  `hnsw.ef_search` of 40 (`internal/store/store_pg.go:654`, no `SET` in the
+  store). The hybrid window is 50 (`internal/store/pg_fts.go:68-73`), and a
+  `LIMIT 50` query on that index returns 40 rows, so the PostgreSQL vector list is
+  truncated at 40. SQLite ranks every stored vector exactly
+  (`internal/store/vectors.go:439-450`).
+
+Neither difference was fixed here: the measured PostgreSQL MRR is not lower than
+SQLite, and the ef_search change touches every PostgreSQL vector query.
