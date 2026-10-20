@@ -89,3 +89,47 @@ func TestDenseRecallFindsParaphrasesAboveFloor(t *testing.T) {
 		t.Fatalf("one-word query used the dense arm: %v", got)
 	}
 }
+
+// TestFuseRRFCharacterization pins the exact output of the dense-arm fusion
+// before it is considered for reuse elsewhere: fused score is the sum of
+// 1/(60+rank+1) over every occurrence, equal scores prefer the newer row, equal
+// score and age fall back to first appearance, and each output row carries the
+// content of its first occurrence with Score replaced by the fused sum.
+func TestFuseRRFCharacterization(t *testing.T) {
+	a := Entry{ID: "a", Content: "A-first", Timestamp: 100}
+	b := Entry{ID: "b", Content: "B-first", Timestamp: 200}
+	c := Entry{ID: "c", Content: "C", Timestamp: 300}
+	d := Entry{ID: "d", Content: "D", Timestamp: 300}
+	got := fuseRRF([]Entry{a, b, c}, []Entry{b, a, d})
+	wantIDs := []string{"b", "a", "c", "d"}
+	if len(got) != len(wantIDs) {
+		t.Fatalf("fused rows = %d, want %d", len(got), len(wantIDs))
+	}
+	for i, id := range wantIDs {
+		if got[i].ID != id {
+			t.Fatalf("order[%d] = %s, want %s (full: %v)", i, got[i].ID, id, got)
+		}
+	}
+	// Runtime float64 operands: untyped constant arithmetic would round differently.
+	rank := func(i int) float64 { return 1 / float64(60+i+1) }
+	wantScore := map[string]float64{"a": rank(0) + rank(1), "b": rank(1) + rank(0), "c": rank(2), "d": rank(2)}
+	for _, e := range got {
+		if e.Score != wantScore[e.ID] {
+			t.Fatalf("score[%s] = %v, want %v", e.ID, e.Score, wantScore[e.ID])
+		}
+	}
+	if got[0].Content != "B-first" {
+		t.Fatalf("content = %q, want the first occurrence's B-first", got[0].Content)
+	}
+
+	// Current behaviour, pinned on purpose: an ID that occurs twice in one
+	// list is credited for both occurrences (cross-bank dense rows can repeat
+	// an ID). The lexical arm dedupes instead; this arm does not.
+	dup := fuseRRF([]Entry{{ID: "x", Content: "first"}, {ID: "x", Content: "second"}})
+	if len(dup) != 1 || dup[0].Content != "first" {
+		t.Fatalf("duplicate id rows = %v, want one row with first occurrence's content", dup)
+	}
+	if want := rank(0) + rank(1); dup[0].Score != want {
+		t.Fatalf("duplicate id score = %v, want %v (both occurrences summed)", dup[0].Score, want)
+	}
+}
