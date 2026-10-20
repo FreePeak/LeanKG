@@ -29,6 +29,9 @@ type ModelStamp struct {
 	ChunkerVersion int    `json:"chunker_version"`
 	QueryPrefix    string `json:"query_prefix"`
 	DocumentPrefix string `json:"document_prefix"`
+	// TextCap is the per-text rune cap the vectors were written with (0 =
+	// not recorded). Provenance only: it is not part of Matches.
+	TextCap int `json:"text_cap"`
 }
 
 // VectorRow is one vector to persist: qualified name plus float32 components.
@@ -57,8 +60,9 @@ func (s StaleStampSweep) Empty() bool {
 // prefix pair. Provider is excluded from that identity (a transport label, so
 // an HF-imported collection stamped "openai" is read back by a "local" provider
 // without drift), but it is not inert: internal/embed picks the per-text rune
-// cap from the label, so a writer that guards on identity must also compare the
-// cap (capForLabel), as the incremental run does.
+// cap from the label. Matches ignores TextCap: the write cap is resolved once
+// per run by resolveWriteCap (stored cap, else label/budget rule, else pin, else
+// error), and the stored TextCap is what that resolver reads back.
 func (a ModelStamp) Matches(b ModelStamp) bool {
 	return a.ModelID == b.ModelID &&
 		a.Revision == b.Revision &&
@@ -74,14 +78,14 @@ func (a ModelStamp) Matches(b ModelStamp) bool {
 // version and the query/document prefix pair — is what a reader compares, so
 // every component is persisted.
 func (s *Store) WriteStamp(st ModelStamp) error {
-	if _, err := s.db.Exec(`INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider, chunker_version, query_prefix, document_prefix)
-		VALUES (?,?,?,?,?,?,?,?)
+	if _, err := s.db.Exec(`INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider, chunker_version, query_prefix, document_prefix, text_cap)
+		VALUES (?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(model_id) DO UPDATE SET revision=excluded.revision,
 			dimensions=excluded.dimensions, distance=excluded.distance, provider=excluded.provider,
 			chunker_version=excluded.chunker_version, query_prefix=excluded.query_prefix,
-			document_prefix=excluded.document_prefix`,
+			document_prefix=excluded.document_prefix, text_cap=excluded.text_cap`,
 		st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider,
-		st.ChunkerVersion, st.QueryPrefix, st.DocumentPrefix); err != nil {
+		st.ChunkerVersion, st.QueryPrefix, st.DocumentPrefix, st.TextCap); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
 	return s.BumpWatermark()
@@ -95,7 +99,7 @@ func (s *Store) Stamp(modelID string) (*ModelStamp, error) {
 	var st ModelStamp
 	err := s.db.QueryRow(stampSelect+` WHERE model_id = ?`, modelID).
 		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix)
+			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -147,7 +151,8 @@ func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) err
 // stampSelect is the shared read shape of emb_stamp (see Store.Stamp for the
 // COALESCE rationale).
 const stampSelect = `SELECT model_id, revision, dimensions, distance, provider,
-	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, '')
+	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, ''),
+	COALESCE(text_cap, 0)
 	FROM emb_stamp`
 
 // Stamps returns all persisted model stamps.
@@ -161,7 +166,7 @@ func (s *Store) Stamps() ([]ModelStamp, error) {
 	for rows.Next() {
 		var st ModelStamp
 		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix); err != nil {
+			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap); err != nil {
 			return nil, err
 		}
 		out = append(out, st)

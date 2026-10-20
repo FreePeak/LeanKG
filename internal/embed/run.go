@@ -11,9 +11,9 @@ import (
 )
 
 // ChunkerVersion versions the pipeline that turns a stored element into the
-// text a model embeds: per-element chunks keyed on qualified_name, the
-// maxContentChars rune cap, and the catalog's query/document prefix pair
-// applied at the provider boundary.
+// text a model embeds: per-element chunks keyed on qualified_name, the run's
+// write cap (writeCapFor, at most maxContentChars runes), and the catalog's
+// query/document prefix pair applied at the provider boundary.
 //
 // Bump it on ANY change to that construction. The value is carried on every
 // collection stamp, so a bump is a rebuild directive (incremental writers hard
@@ -48,6 +48,7 @@ type Report struct {
 	NoiseFloor  float64 `json:"NoiseFloor,omitempty"` // measured off-topic similarity ceiling (calibrate.go)
 	Coverage    float64
 	Duration    time.Duration
+	Notes       []string `json:"notes,omitempty"` // one-line operator notes (e.g. a kept stored text cap)
 }
 
 // dirtyItem is one element queued for embedding: the file it came from (the
@@ -60,6 +61,11 @@ type dirtyItem struct{ file, qn, text, hash string }
 // reports it (RS-14), else the conservative 512-token default. Documents and
 // queries use the same cap, so a long query is truncated instead of failing
 // at the provider and degrading L3 (RS-15).
+//
+// QUERY/MEMORY CALLERS ONLY (internal/core: query truncation and the memory
+// path). The write path must not use it: a /props answer that differs between
+// runs would move the write cap. Writers use writeCapFor, which keeps the cap
+// recorded in the stamp or refuses before any write.
 func TextCap(p Provider) int {
 	return capForLabel(p.Provider(), sidecarBudget(p))
 }
@@ -78,6 +84,79 @@ func capForLabel(label string, budget int) int {
 	return min(maxContentChars, budget)
 }
 
+// resolveWriteCap is the rune cap a writer embeds with, decided by rule order
+// and never by a silent fallback:
+//
+//  1. a cap already recorded in the stamp (stored > 0) wins, whatever the budget;
+//  2. a non-local label takes the general cap (capForLabel);
+//  3. the local label with a live sidecar budget takes min(8000, budget);
+//  4. the local label with an operator pin (LEANKG_EMBED_TEXT_CAP) takes the pin;
+//  5. otherwise the cap is undetermined and the error names both fixes.
+//
+// Pure: the caller reads /props (budget), the pin and the stamp. Unlike TextCap
+// there is no fallback default: an undetermined cap is an error.
+func resolveWriteCap(label string, budget, pin, stored int) (int, error) {
+	if stored > 0 {
+		return stored, nil
+	}
+	if label != "local" || budget > 0 {
+		return capForLabel(label, budget), nil
+	}
+	if pin > 0 {
+		return pin, nil
+	}
+	return 0, fmt.Errorf("embed: cannot determine the text cap for provider %q: the sidecar /props reported no budget; make the sidecar /props reachable, or set LEANKG_EMBED_TEXT_CAP (256-8000)", label)
+}
+
+// writeCapFor resolves the one write cap a run of provider p embeds with, from
+// the stored stamp cur (nil when there is none), the live /props budget and the
+// LEANKG_EMBED_TEXT_CAP pin. Run calls it once, before any write, so a /props
+// answer that changes mid-run cannot change the cut. ExportNDJSON calls it too,
+// so an export's text is the live cut.
+func writeCapFor(cur *store.ModelStamp, p Provider, mode string) (int, string, error) {
+	pin, err := textCapPin()
+	if err != nil {
+		return 0, "", err
+	}
+	return writeCap(mode, StampOf(p), cur, sidecarBudget(p), pin)
+}
+
+// writeCap is the rule behind writeCapFor, pure so each branch is testable.
+// want is the run's stamp, cur the stored one (nil when none), budget the live
+// sidecar budget (0 = unknown) and pin the operator pin (0 = none). It returns
+// the cap for this run and an operator note when the cap is kept over a larger
+// budget. The identity mismatch guard lives in Run, not here.
+//
+//	recorded cap (same identity,    ⇒ the cap, unless the budget moved it:
+//	  not full, > 0)                  budget lower   ⇒ refuse (n_ctx shrank)
+//	                                  budget higher  ⇒ keep the recorded cap, note
+//	                                  no budget, no pin ⇒ keep the recorded cap
+//	otherwise (no stamp, legacy 0,  ⇒ derived (resolveWriteCap); undetermined is
+//	  identity differs, or full)     an error, before anything is written
+func writeCap(mode string, want store.ModelStamp, cur *store.ModelStamp, budget, pin int) (int, string, error) {
+	derived, derr := resolveWriteCap(want.Provider, budget, pin, 0)
+	recorded := 0
+	if cur != nil && mode != "full" && cur.Matches(want) {
+		recorded = cur.TextCap
+	}
+	switch {
+	case recorded == 0:
+		return derived, "", derr
+	case derr != nil:
+		return recorded, "", nil
+	case derived < recorded:
+		return 0, "", fmt.Errorf(
+			"embed: %s was written at a %d-rune text cap, but the sidecar budget now derives %d runes, "+
+				"so new vectors would be cut shorter than the rest; restore the sidecar's n_ctx to at least %d "+
+				"(budget = n_ctx*2-64), or run `leankg-embed full` to rebuild the collection at %d runes",
+			want.ModelID, recorded, derived, (recorded+64+1)/2, derived)
+	case derived > recorded:
+		return recorded, fmt.Sprintf("embed: keeping the stored %d-rune text cap for %s; the sidecar budget allows %d runes",
+			recorded, want.ModelID, derived), nil
+	}
+	return recorded, "", nil
+}
+
 // sidecarBudget is the text budget the local sidecar reports from /props, in
 // runes; 0 when p has none or the sidecar cannot be asked.
 func sidecarBudget(p Provider) int {
@@ -88,13 +167,13 @@ func sidecarBudget(p Provider) int {
 }
 
 // planText is the text a live run sends for one element: documentText cut to
-// TextCap(p) runes, and whether it was cut. Run embeds it and ExportNDJSON
-// writes it, so an offsite embedder receives the string a live run would. The
-// provider prepends the document prefix on the wire (openaiCompatible.Embed),
-// so an export line is that prefix followed by this text.
-func planText(p Provider, e elementText) (text string, truncated bool) {
+// limit runes (the run's one write cap, writeCapFor), and whether it was cut.
+// Run embeds it and ExportNDJSON writes it, so an offsite embedder receives the
+// string a live run would. The provider prepends the document prefix on the
+// wire (openaiCompatible.Embed), so an export line is that prefix followed by
+// this text.
+func planText(limit int, e elementText) (text string, truncated bool) {
 	text = documentText(e)
-	limit := TextCap(p)
 	if utf8.RuneCountInString(text) > limit {
 		return truncateRunes(text, limit), true
 	}
@@ -105,8 +184,8 @@ func planText(p Provider, e elementText) (text string, truncated bool) {
 // element: planText with the model's document prefix, the same prefix
 // openaiCompatible.Embed prepends on the wire (prefixTexts). ExportNDJSON writes
 // it as the line's text, so the offsite embedder and the live run cannot drift.
-func documentInput(p Provider, e elementText) string {
-	text, _ := planText(p, e)
+func documentInput(p Provider, limit int, e elementText) string {
+	text, _ := planText(limit, e)
 	_, document := Prefixes(p.ModelID())
 	return prefixTexts(document, []string{text})[0]
 }
@@ -192,42 +271,42 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	want := StampOf(p)
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the
 	// same hard-rebuild rule over the WHOLE identity — model, revision,
-	// dims, distance, chunker version and prefix pair. Provider is a
-	// transport label, not identity (ModelStamp.Matches), but it selects the
-	// text cap (capForLabel), so a label change that changes the cap is drift
-	// too: vectors cut at two caps must not share one collection.
+	// dims, distance, chunker version and prefix pair (ModelStamp.Matches).
 	//   full        + mismatch ⇒ clear + re-stamp (rebuild, never mixed)
-	//   incremental + mismatch ⇒ HARD FAIL with a rebuild directive — a
-	//                 flag slip (provider A full, provider B incremental)
-	//                 must not silently wipe A's vectors
+	//   incremental + mismatch ⇒ HARD FAIL with a rebuild directive (writeCap)
 	//   no stamp    ⇒ write (first build, both modes)
 	cur, err := st.Stamp(modelID)
 	if err != nil {
 		return rep, err
 	}
-	budget := sidecarBudget(p)
-	capChanged := cur != nil && capForLabel(cur.Provider, budget) != capForLabel(want.Provider, budget)
-	if cur != nil && (!cur.Matches(want) || capChanged) {
-		if mode != "full" {
-			if !cur.Matches(want) {
-				return rep, fmt.Errorf(
-					"embed: stamp mismatch for %s (%s) — run `leankg-embed full` to rebuild the collection",
-					modelID, stampDrift(*cur, want))
-			}
-			return rep, fmt.Errorf(
-				"embed: provider label %q (text cap %d runes) differs from the stored label %q (text cap %d runes) for %s; "+
-					"the label changes the text cap, so new vectors would be cut differently — set LEANKG_EMBED_PROVIDER=%s to keep the stored cap, "+
-					"or run `leankg-embed full` only if a rebuild at the new cap is intended",
-				want.Provider, capForLabel(want.Provider, budget), cur.Provider, capForLabel(cur.Provider, budget),
-				modelID, cur.Provider)
-		}
+	if cur != nil && mode != "full" && !cur.Matches(want) {
+		return rep, fmt.Errorf(
+			"embed: stamp mismatch for %s (%s) — run `leankg-embed full` to rebuild the collection",
+			modelID, stampDrift(*cur, want))
+	}
+	// The text cap is decided once per run, before any write (writeCapFor).
+	writeLimit, note, err := writeCapFor(cur, p, mode)
+	if err != nil {
+		return rep, err
+	}
+	if note != "" {
+		rep.Notes = append(rep.Notes, note)
+	}
+	if cur != nil && (!cur.Matches(want) || (mode == "full" && cur.TextCap != writeLimit)) {
 		if err := st.ClearVectors(modelID); err != nil {
 			return rep, err
 		}
 		cur = nil
 	}
-	if cur == nil {
-		if err := st.WriteStamp(want); err != nil {
+	// Record the cap for a new collection, or fill in a legacy stamp (text_cap
+	// 0). A stored stamp's identity columns are written back exactly as stored.
+	if cur == nil || cur.TextCap != writeLimit {
+		stamp := want
+		if cur != nil {
+			stamp = *cur
+		}
+		stamp.TextCap = writeLimit
+		if err := st.WriteStamp(stamp); err != nil {
 			return rep, err
 		}
 	}
@@ -249,7 +328,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 			rep.Skipped++
 			continue
 		}
-		text, cut := planText(p, e)
+		text, cut := planText(writeLimit, e)
 		if cut {
 			rep.Truncations++
 		}

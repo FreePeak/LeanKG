@@ -609,14 +609,14 @@ func (s *PGStore) WriteStamp(st ModelStamp) error {
 	if err := s.ensureModelTables(st); err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(pgCtx, `INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider, chunker_version, query_prefix, document_prefix)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	if _, err := s.pool.Exec(pgCtx, `INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider, chunker_version, query_prefix, document_prefix, text_cap)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (model_id) DO UPDATE SET revision=excluded.revision,
 			dimensions=excluded.dimensions, distance=excluded.distance, provider=excluded.provider,
 			chunker_version=excluded.chunker_version, query_prefix=excluded.query_prefix,
-			document_prefix=excluded.document_prefix`,
+			document_prefix=excluded.document_prefix, text_cap=excluded.text_cap`,
 		st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider,
-		st.ChunkerVersion, st.QueryPrefix, st.DocumentPrefix); err != nil {
+		st.ChunkerVersion, st.QueryPrefix, st.DocumentPrefix, st.TextCap); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
 	return s.BumpWatermark()
@@ -664,7 +664,8 @@ func (s *PGStore) ensureModelTables(st ModelStamp) error {
 // pgStampSelect is the shared read shape of emb_stamp; COALESCE keeps
 // pre-migration rows readable (chunker 0 = unversioned, empty prefixes).
 const pgStampSelect = `SELECT model_id, revision, dimensions, distance, provider,
-	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, '')
+	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, ''),
+	COALESCE(text_cap, 0)
 	FROM emb_stamp`
 
 // Stamp returns the persisted stamp for a model; nil when none exists.
@@ -672,7 +673,7 @@ func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
 	var st ModelStamp
 	err := s.pool.QueryRow(pgCtx, pgStampSelect+` WHERE model_id = $1`, modelID).
 		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix)
+			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -693,7 +694,7 @@ func (s *PGStore) Stamps() ([]ModelStamp, error) {
 	for rows.Next() {
 		var st ModelStamp
 		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix); err != nil {
+			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap); err != nil {
 			return nil, err
 		}
 		out = append(out, st)

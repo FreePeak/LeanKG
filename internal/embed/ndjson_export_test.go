@@ -120,24 +120,100 @@ func TestExportTextEqualsLiveRunInput(t *testing.T) {
 	}
 }
 
-// TestExportRefusesLocalSidecarWithoutBudget: a local sidecar whose /props gives
-// no n_ctx leaves the live text cap unknown, so an export cannot match the live
-// run. It must fail and name the sidecar, not fall back to another cap.
-func TestExportRefusesLocalSidecarWithoutBudget(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(srv.Close)
-	setGemmaEnv(t, srv.URL, "")
+// exportLocalEnv points the export's environment at sc, the local sidecar the
+// run and the export both read.
+func exportLocalEnv(t *testing.T, sc *localSidecar) {
+	t.Helper()
+	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+	t.Setenv("LEANKG_EMBED_BASE_URL", sc.URL+"/v1")
+}
+
+// TestExportCutsAtStoredCapWhenPropsDown: a store whose stamp records a text cap
+// exports at that cap even when the sidecar's /props is down. The export text
+// must be the string the incremental run (also /props down) sends for the element.
+func TestExportCutsAtStoredCapWhenPropsDown(t *testing.T) {
+	hermeticLocalEnv(t)
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
+	sc := newLocalSidecar(t, 2048) // budget 4032 runes, recorded in the stamp
+	if _, err := localRun(t, st, sc, "full"); err != nil {
+		t.Fatalf("full: %v", err)
+	}
+	sc.takeInputs()
+
+	sc.setNCtx(0) // /props now 404
+	seed(t, st, el("a::big", "marker-big\n"+strings.Repeat("x", 9000)))
+	exportLocalEnv(t, sc)
+	var export bytes.Buffer
+	if err := ExportNDJSON(context.Background(), st, localModel(), &export); err != nil {
+		t.Fatalf("export with /props down and a stored cap: %v", err)
+	}
+	exported := map[string]string{}
+	sc2 := bufio.NewScanner(&export)
+	for sc2.Scan() {
+		var line exportLine
+		if err := json.Unmarshal(sc2.Bytes(), &line); err != nil {
+			t.Fatalf("decode export line: %v", err)
+		}
+		exported[line.QualifiedName] = line.Text
+	}
+	if n := utf8.RuneCountInString(exported["a::big"]); n != 4032 {
+		t.Fatalf("export text for a::big is %d runes, want the stored cap 4032", n)
+	}
+
+	if _, err := localRun(t, st, sc, "incremental"); err != nil {
+		t.Fatalf("incremental with /props down: %v", err)
+	}
+	var hits []string
+	for _, in := range sc.takeInputs() {
+		if strings.Contains(in, "marker-big") {
+			hits = append(hits, in)
+		}
+	}
+	if len(hits) != 1 || exported["a::big"] != hits[0] {
+		t.Fatalf("export text != live input for a::big: %d live inputs carry the marker", len(hits))
+	}
+}
+
+// TestExportRefusesWhenNoCapIsDeterminable: no stored cap, no /props budget and
+// no LEANKG_EMBED_TEXT_CAP pin leave the write cap undetermined, so the export
+// fails before writing and names the pin.
+func TestExportRefusesWhenNoCapIsDeterminable(t *testing.T) {
+	hermeticLocalEnv(t)
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	sc := newLocalSidecar(t, 0) // /props 404, no pin, no stamp
+	exportLocalEnv(t, sc)
 
 	var buf bytes.Buffer
-	err := ExportNDJSON(context.Background(), st, "embeddinggemma-2", &buf)
-	if err == nil || !strings.Contains(err.Error(), "n_ctx") {
-		t.Fatalf("export without /props: err = %v, want a refusal naming n_ctx", err)
+	err := ExportNDJSON(context.Background(), st, localModel(), &buf)
+	if err == nil || !strings.Contains(err.Error(), "LEANKG_EMBED_TEXT_CAP") {
+		t.Fatalf("export with nothing to determine the cap: err = %v, want a refusal naming LEANKG_EMBED_TEXT_CAP", err)
 	}
 	if buf.Len() != 0 {
 		t.Fatalf("refused export wrote %d bytes", buf.Len())
+	}
+}
+
+// TestExportUsesPinWhenNoBudgetOrStoredCap: with /props down and no stored cap,
+// the operator pin is the export's cut.
+func TestExportUsesPinWhenNoBudgetOrStoredCap(t *testing.T) {
+	hermeticLocalEnv(t)
+	t.Setenv("LEANKG_EMBED_TEXT_CAP", "1000")
+	st := testStore(t)
+	seed(t, st, el("a::big", strings.Repeat("x", 9000)))
+	sc := newLocalSidecar(t, 0) // /props 404
+	exportLocalEnv(t, sc)
+
+	var buf bytes.Buffer
+	if err := ExportNDJSON(context.Background(), st, localModel(), &buf); err != nil {
+		t.Fatalf("export with the pin and no /props: %v", err)
+	}
+	var line exportLine
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("decode export line: %v", err)
+	}
+	if n := utf8.RuneCountInString(line.Text); n != 1000 {
+		t.Fatalf("export text is %d runes, want the pinned 1000", n)
 	}
 }

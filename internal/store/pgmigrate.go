@@ -458,6 +458,11 @@ ALTER TABLE code_elements ADD COLUMN fts tsvector
 	) STORED;
 CREATE INDEX IF NOT EXISTS idx_code_elements_fts ON code_elements USING gin (fts);
 `},
+	{17, "embed-stamp-text-cap", nil, `
+-- Mirror of sqlite migration 017 (schema.go): the per-text rune cap the
+-- collection was written with. Provenance, not identity; 0 = not recorded.
+ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS text_cap INTEGER NOT NULL DEFAULT 0;
+`},
 }
 
 // Migrate applies all pending migrations (RW only). Migrations are applied in

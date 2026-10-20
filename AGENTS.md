@@ -54,6 +54,12 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 |`leankg telemetry status\|enable\|disable\|purge\|link\|import-ab`|Consent-gated capture (off by default) and transcript linking; see `docs/telemetry.md`|
 |`leankg metrics --session [--session-id ID]`|Latest (or named) agent session from the telemetry ledger|
 
+### Embedding text cap (write path)
+
+- `LEANKG_EMBED_TEXT_CAP` (integer, 256-8000 runes) is the operator's write cap. It is used only when the stamp has no recorded cap and the local sidecar's `/props` gives no budget. Any other value is an error. With no stored cap, no `/props` budget and no pin, `run`, `full` and `export` fail before any write and name the pin (exit 1 for the CLI).
+- `emb_stamp.text_cap` (migration 17) records the cap the collection was written with. `0` means not recorded: a pre-017 row, or a stamp written by `import`, which never records a cap. The first `run` or `full` fills it in. A recorded cap wins while the identity matches: a `/props` budget below it refuses an incremental run (`leankg-embed full` rebuilds at the new cap), and a larger budget keeps it with a note. `export` cuts at the same cap, so it works while `/props` is down.
+- Rollback: an old binary's `full` on a migrated store re-embeds at its own cap but leaves `text_cap` at the value the new binary recorded, so that stamp is stale. Restore the sqlite3 `.backup` taken before the upgrade. Without a backup, `UPDATE emb_stamp SET text_cap = 0;` makes the next run record the cap again; vectors the old binary wrote keep its cut, so follow it with `leankg-embed full`.
+
 ## SoT pairing
 
 Narrative + ACs: [`docs/prd.md`](docs/prd.md) (parity ledger + DEFERRED items). Statuses: [`docs/prd-task-tracker.md`](docs/prd-task-tracker.md).

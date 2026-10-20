@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -343,7 +344,9 @@ func (r *recordProvider) Embed(ctx context.Context, kind TextKind, texts []strin
 // the ONNX-era pipeline, which truncated. Found dogfooding `leankg-embed run`
 // on this repository: one 845-token element aborted the whole run.
 func TestRunLocalProviderTextBudget(t *testing.T) {
-	// local: a 4000-rune element is 512-token-safe-truncated and counted.
+	// local: a 4000-rune element is 512-token-safe-truncated and counted. No
+	// sidecar answers /props here, so the operator pin is the cap.
+	t.Setenv("LEANKG_EMBED_TEXT_CAP", fmt.Sprint(maxLocalTextChars))
 	st := testStore(t)
 	seed(t, st, el("a::big", strings.Repeat("x", 4000)))
 	p := &recordProvider{inner: Deterministic(8), provider: "local"}
@@ -881,12 +884,12 @@ func TestRunIncrementalIgnoresProviderLabel(t *testing.T) {
 	}
 }
 
-// TestRunIncrementalRefusesLabelThatChangesTextCap pins that a provider label
-// which changes the text cap is refused by an incremental run: an
-// openai-stamped collection (8000-rune cap) must not take a "local" run (1000-
-// rune cap), or the new element is cut differently from its neighbours. The
-// refusal names the stored label and the env fix, does not steer to a full
-// rebuild as the only option, and writes nothing.
+// TestRunIncrementalRefusesLabelThatChangesTextCap pins that an incremental run
+// whose budget-derived cap is lower than the recorded cap is refused: an
+// openai-stamped collection (recorded 8000-rune cap) must not take a "local" run
+// whose sidecar budget is 960 runes, or the new element is cut differently from
+// its neighbours. The refusal names `leankg-embed full` and the n_ctx fix, and
+// writes nothing.
 func TestRunIncrementalRefusesLabelThatChangesTextCap(t *testing.T) {
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
@@ -895,17 +898,13 @@ func TestRunIncrementalRefusesLabelThatChangesTextCap(t *testing.T) {
 	before := vectorCount(t, st, "embeddinggemma-2")
 
 	seed(t, st, el("a::big", strings.Repeat("x", 3000)))
-	local := stamped
-	local.provider = "local"
+	local := &budgetSeq{inner: overrideProvider{inner: Deterministic(8), modelID: "embeddinggemma-2", revision: "test:gemma-v1", dims: 8, provider: "local"}, budgets: []int{960}}
 	_, err := Run(context.Background(), st, local, "incremental")
 	if err == nil {
-		t.Fatal("incremental under label local over an openai stamp must refuse: the label changes the text cap")
+		t.Fatal("incremental with a 960-rune sidecar budget over an 8000-rune collection must refuse")
 	}
-	if !strings.Contains(err.Error(), `"openai"`) || !strings.Contains(err.Error(), "LEANKG_EMBED_PROVIDER") {
-		t.Fatalf("refusal must name the stored label and LEANKG_EMBED_PROVIDER: %v", err)
-	}
-	if strings.Contains(err.Error(), "`leankg-embed full` to rebuild") {
-		t.Fatalf("refusal must not steer to a full rebuild as the fix: %v", err)
+	if !strings.Contains(err.Error(), "leankg-embed full") || !strings.Contains(err.Error(), "n_ctx") {
+		t.Fatalf("refusal must name leankg-embed full and the n_ctx fix: %v", err)
 	}
 	if got := vectorCount(t, st, "embeddinggemma-2"); got != before {
 		t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
@@ -979,5 +978,318 @@ func TestRunCalibratesNoiseFloor(t *testing.T) {
 	other.ChunkerVersion++
 	if _, ok := ReadCalibration(st, other); ok {
 		t.Fatal("calibration leaked to another collection identity")
+	}
+}
+
+// --- write-side text cap: one cap per run, recorded in the stamp -----------
+
+// hermeticLocalEnv clears the operator knobs a local-sidecar test must not
+// inherit and pins the revision, so the stamp identity stays the same across
+// providers built from different /props answers.
+func hermeticLocalEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"LEANKG_EMBED_MODEL", "LEANKG_EMBED_DIMS", "LEANKG_EMBED_TEXT_CAP"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("LEANKG_EMBED_REVISION", "test-local-pin")
+}
+
+// localSidecar is an httptest stand-in for the llama.cpp sidecar: /v1/embeddings
+// answers local-width vectors and records each input; /props reports n_ctx while
+// it is set, and 404s when it is 0.
+type localSidecar struct {
+	*httptest.Server
+	mu     sync.Mutex
+	nctx   int
+	inputs []string
+}
+
+func newLocalSidecar(t *testing.T, nctx int) *localSidecar {
+	t.Helper()
+	sc := &localSidecar{nctx: nctx}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/props", func(w http.ResponseWriter, r *http.Request) {
+		sc.mu.Lock()
+		n := sc.nctx
+		sc.mu.Unlock()
+		if n == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{"model_path":"/models/bge-small-en-v1.5-f16.gguf","default_generation_settings":{"n_ctx":%d}}`, n)
+	})
+	mux.HandleFunc("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
+		var body embeddingsRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		sc.mu.Lock()
+		sc.inputs = append(sc.inputs, body.Input...)
+		sc.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(openAIResponse(t, body, defaultDims))
+	})
+	sc.Server = httptest.NewServer(mux)
+	t.Cleanup(sc.Close)
+	return sc
+}
+
+func (sc *localSidecar) setNCtx(n int) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.nctx = n
+}
+
+// takeInputs returns the texts the sidecar was sent since the last call.
+func (sc *localSidecar) takeInputs() []string {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	out := sc.inputs
+	sc.inputs = nil
+	return out
+}
+
+// localRun runs against sc with a fresh local provider, so each call sees the
+// sidecar's /props as it is now (a provider caches a successful fingerprint).
+func localRun(t *testing.T, st *store.Store, sc *localSidecar, mode string) (Report, error) {
+	t.Helper()
+	p, err := newLocalProvider(sc.URL + "/v1")
+	if err != nil {
+		t.Fatalf("newLocalProvider: %v", err)
+	}
+	return Run(context.Background(), st, p, mode)
+}
+
+func storedStamp(t *testing.T, st *store.Store, modelID string) store.ModelStamp {
+	t.Helper()
+	cur, err := st.Stamp(modelID)
+	if err != nil || cur == nil {
+		t.Fatalf("stamp for %s: %v %v", modelID, cur, err)
+	}
+	return *cur
+}
+
+// budgetSeq is a provider labelled "local" whose sidecar budget (TextBudget)
+// answers budgets[i] on the i-th call and the last value after that: a /props
+// that changes while a run is in flight. It records the document texts sent.
+type budgetSeq struct {
+	inner   Provider
+	budgets []int
+	calls   int
+	texts   []string
+}
+
+func (b *budgetSeq) ModelID() string  { return b.inner.ModelID() }
+func (b *budgetSeq) Revision() string { return b.inner.Revision() }
+func (b *budgetSeq) Dimensions() int  { return b.inner.Dimensions() }
+func (b *budgetSeq) Distance() string { return b.inner.Distance() }
+func (b *budgetSeq) Provider() string { return "local" }
+
+func (b *budgetSeq) TextBudget() int {
+	i := min(b.calls, len(b.budgets)-1)
+	b.calls++
+	return b.budgets[i]
+}
+
+func (b *budgetSeq) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
+	if kind == Document {
+		b.texts = append(b.texts, texts...)
+	}
+	return b.inner.Embed(ctx, kind, texts)
+}
+
+// (a) a recorded cap survives a /props outage: the incremental run embeds at
+// the stored cap and leaves the stamp alone.
+func TestWriteCapStoredCapSurvivesPropsOutage(t *testing.T) {
+	hermeticLocalEnv(t)
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	sc := newLocalSidecar(t, 2048) // budget 2*2048-64 = 4032 runes
+	if _, err := localRun(t, st, sc, "full"); err != nil {
+		t.Fatalf("full: %v", err)
+	}
+	stamped := storedStamp(t, st, localModel())
+	if stamped.TextCap != 4032 {
+		t.Fatalf("stamp TextCap = %d, want 4032", stamped.TextCap)
+	}
+	sc.takeInputs()
+
+	sc.setNCtx(0) // /props now 404
+	seed(t, st, el("a::big", strings.Repeat("x", 9000)))
+	if _, err := localRun(t, st, sc, "incremental"); err != nil {
+		t.Fatalf("incremental with /props down: %v", err)
+	}
+	// The sidecar also sees the calibration probes; the big element is the
+	// longest planned text and must be cut to exactly the stored cap.
+	if got := maxRuneLen(sc.takeInputs()); got != 4032 {
+		t.Fatalf("longest planned text = %d runes, want the stored cap 4032", got)
+	}
+	if got := storedStamp(t, st, localModel()); got != stamped {
+		t.Fatalf("stamp changed on a /props outage: got %+v, want %+v", got, stamped)
+	}
+}
+
+// maxRuneLen is the rune length of the longest text (0 when there are none).
+func maxRuneLen(texts []string) int {
+	longest := 0
+	for _, s := range texts {
+		longest = max(longest, utf8.RuneCountInString(s))
+	}
+	return longest
+}
+
+// (b) with no stamp, no /props and no pin, the cap cannot be determined: the
+// run fails before any write, so there is no vector and no stamp row.
+func TestWriteCapRefusesWhenNothingDeterminesIt(t *testing.T) {
+	for _, mode := range []string{"incremental", "full"} {
+		t.Run(mode, func(t *testing.T) {
+			hermeticLocalEnv(t)
+			st := testStore(t)
+			seed(t, st, el("a::f1", "func f1() {}"))
+			sc := newLocalSidecar(t, 0) // /props 404, no pin
+			if _, err := localRun(t, st, sc, mode); err == nil {
+				t.Fatal("run with no derivable write cap must fail")
+			} else if !strings.Contains(err.Error(), "LEANKG_EMBED_TEXT_CAP") {
+				t.Fatalf("error must name the pin: %v", err)
+			}
+			if n := vectorCount(t, st, localModel()); n != 0 {
+				t.Fatalf("refused run wrote %d vectors", n)
+			}
+			if n := stampRows(t, st); n != 0 {
+				t.Fatalf("refused run wrote %d stamp rows", n)
+			}
+		})
+	}
+}
+
+// (c) the operator pin is the cap when the sidecar cannot say, and it is
+// recorded in the stamp.
+func TestWriteCapPinUsedWhenNoBudget(t *testing.T) {
+	hermeticLocalEnv(t)
+	t.Setenv("LEANKG_EMBED_TEXT_CAP", "1000")
+	st := testStore(t)
+	seed(t, st, el("a::big", strings.Repeat("x", 9000)))
+	sc := newLocalSidecar(t, 0)
+	if _, err := localRun(t, st, sc, "full"); err != nil {
+		t.Fatalf("full with pin and no /props: %v", err)
+	}
+	if got := storedStamp(t, st, localModel()).TextCap; got != 1000 {
+		t.Fatalf("stamp TextCap = %d, want 1000", got)
+	}
+	if got := maxRuneLen(sc.takeInputs()); got != 1000 {
+		t.Fatalf("longest planned text = %d runes, want the pinned 1000", got)
+	}
+}
+
+// (d) a sidecar whose n_ctx shrank below the recorded cap: an incremental run
+// refuses and names `leankg-embed full`; a full run rebuilds at the new cap.
+func TestWriteCapSidecarShrinkRefusesIncrementalAndFullRestamps(t *testing.T) {
+	hermeticLocalEnv(t)
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	sc := newLocalSidecar(t, 4032) // budget 8000
+	if _, err := localRun(t, st, sc, "full"); err != nil {
+		t.Fatalf("full at 8000: %v", err)
+	}
+	if got := storedStamp(t, st, localModel()).TextCap; got != 8000 {
+		t.Fatalf("stamp TextCap = %d, want 8000", got)
+	}
+	before := vectorCount(t, st, localModel())
+
+	sc.setNCtx(512) // budget 960
+	seed(t, st, el("a::f2", "func f2() {}"))
+	if _, err := localRun(t, st, sc, "incremental"); err == nil || !strings.Contains(err.Error(), "leankg-embed full") {
+		t.Fatalf("incremental after n_ctx shrink: err = %v, want a refusal naming leankg-embed full", err)
+	}
+	if got := vectorCount(t, st, localModel()); got != before {
+		t.Fatalf("refused run touched vectors: had %d, now %d", before, got)
+	}
+	if got := storedStamp(t, st, localModel()).TextCap; got != 8000 {
+		t.Fatalf("refused run changed stamp TextCap to %d, want 8000", got)
+	}
+
+	if _, err := localRun(t, st, sc, "full"); err != nil {
+		t.Fatalf("full after n_ctx shrink: %v", err)
+	}
+	if got := storedStamp(t, st, localModel()).TextCap; got != 960 {
+		t.Fatalf("full re-stamp: TextCap = %d, want 960", got)
+	}
+}
+
+// (e) a sidecar budget above the recorded cap keeps the recorded cap and says so
+// in one note.
+func TestWriteCapKeepsStoredWhenSidecarBudgetGrows(t *testing.T) {
+	hermeticLocalEnv(t)
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	sc := newLocalSidecar(t, 2048) // budget 4032
+	if _, err := localRun(t, st, sc, "full"); err != nil {
+		t.Fatalf("full at 4032: %v", err)
+	}
+	sc.takeInputs()
+
+	sc.setNCtx(8192) // budget 16320, clamped to 8000 for the general cap
+	seed(t, st, el("a::big", strings.Repeat("x", 9000)))
+	rep, err := localRun(t, st, sc, "incremental")
+	if err != nil {
+		t.Fatalf("incremental with a larger budget: %v", err)
+	}
+	if got := storedStamp(t, st, localModel()).TextCap; got != 4032 {
+		t.Fatalf("stamp TextCap = %d, want the recorded 4032 kept", got)
+	}
+	if got := maxRuneLen(sc.takeInputs()); got != 4032 {
+		t.Fatalf("longest planned text = %d runes, want the kept cap 4032", got)
+	}
+	if len(rep.Notes) != 1 || !strings.Contains(rep.Notes[0], "4032") {
+		t.Fatalf("notes = %q, want one note naming the kept cap 4032", rep.Notes)
+	}
+}
+
+// (f) a legacy stamp (text_cap 0, written before migration 17) is filled in with
+// the resolved cap, and its identity columns are byte-identical.
+func TestWriteCapFillsLegacyStampWithoutTouchingIdentity(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	p := overrideProvider{inner: Deterministic(8), modelID: "embeddinggemma-2", revision: "test:gemma-v1", dims: 8, provider: "openai"}
+	mustRun(t, st, p, "full")
+	legacy := storedStamp(t, st, p.ModelID())
+	legacy.TextCap = 0
+	if err := st.WriteStamp(legacy); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, st, el("a::f2", "func f2() {}"))
+	mustRun(t, st, p, "incremental")
+
+	got := storedStamp(t, st, p.ModelID())
+	if got.TextCap != 8000 {
+		t.Fatalf("legacy stamp TextCap = %d, want 8000 filled in", got.TextCap)
+	}
+	got.TextCap = 0
+	if got != legacy {
+		t.Fatalf("identity changed by the fill-in: got %+v, want %+v", got, legacy)
+	}
+}
+
+// (g) /props answers OK for the run's first budget read and fails after it: the
+// whole run embeds at the one cap resolved at the start, never a mixed cut.
+func TestWriteCapOneCapPerRunWhenPropsFlips(t *testing.T) {
+	st := testStore(t)
+	seed(t, st,
+		el("a::b1", strings.Repeat("a", 2500)),
+		el("a::b2", strings.Repeat("b", 2500)),
+		el("a::b3", strings.Repeat("c", 2500)))
+	p := &budgetSeq{inner: Deterministic(8), budgets: []int{2000, 0}}
+	rep := mustRun(t, st, p, "full")
+	if rep.Truncations != 3 || len(p.texts) != 3 {
+		t.Fatalf("got Truncations=%d, %d texts; want 3 and 3", rep.Truncations, len(p.texts))
+	}
+	for i, text := range p.texts {
+		if n := utf8.RuneCountInString(text); n != 2000 {
+			t.Fatalf("text %d cut at %d runes, want the run's one cap of 2000 (a /props failure mid-run must not change it)", i, n)
+		}
+	}
+	if got := storedStamp(t, st, p.ModelID()).TextCap; got != 2000 {
+		t.Fatalf("stamp TextCap = %d, want 2000", got)
 	}
 }

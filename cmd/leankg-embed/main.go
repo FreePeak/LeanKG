@@ -201,6 +201,9 @@ func cmdRun(args []string, mode string) {
 	if err != nil {
 		log.Fatalf("run: %v (status recorded)", err)
 	}
+	for _, note := range report.Notes {
+		fmt.Fprintln(os.Stderr, note)
+	}
 	b, _ := json.Marshal(report)
 	fmt.Println(string(b))
 }

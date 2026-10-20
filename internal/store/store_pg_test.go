@@ -562,6 +562,41 @@ func TestPGNilReadersUseSentinel(t *testing.T) {
 	}
 }
 
+// TestPGStampTextCapRoundTrip mirrors TestStampTextCapRoundTrip onto
+// PostgreSQL (migration 017): the recorded cap persists, an upsert replaces
+// it, and a legacy row that never wrote the column reads back as 0.
+func TestPGStampTextCapRoundTrip(t *testing.T) {
+	s := openPGTest(t)
+	want := ModelStamp{
+		ModelID: "pg-cap-model", Revision: "r1", Dimensions: 4, Distance: "cosine",
+		Provider: "local", TextCap: 8000,
+	}
+	if err := s.WriteStamp(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Stamp(want.ModelID)
+	if err != nil || got == nil || got.TextCap != 8000 {
+		t.Fatalf("Stamp() = %+v, %v; want TextCap 8000", got, err)
+	}
+
+	want.TextCap = 4000
+	if err := s.WriteStamp(want); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Stamp(want.ModelID); err != nil || got == nil || got.TextCap != 4000 {
+		t.Fatalf("upsert must replace TextCap: %+v, %v; want 4000", got, err)
+	}
+
+	if _, err := s.pool.Exec(pgCtx, `INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider)
+		VALUES ('pg-cap-legacy', 'old', 8, 'cosine', 'local')`); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := s.Stamp("pg-cap-legacy")
+	if err != nil || legacy == nil || legacy.TextCap != 0 {
+		t.Fatalf("legacy stamp = %+v, %v; want TextCap 0 (not recorded)", legacy, err)
+	}
+}
+
 // TestPGStampIdentityAndPerFileReplace mirrors the sqlite pins onto the
 // PostgreSQL backend (issue #279): the chunker version and prefix pair
 // round-trip through emb_stamp, and ReplaceFileVectors commits one file's
