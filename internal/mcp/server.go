@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,14 +44,19 @@ type Server struct {
 	engine *core.Engine
 	router ProjectRouter
 	// scoped marks a handler that is ALREADY serving one project (the
-	// routeByProject builder for a per-request ?project= selector). Such a
+	// routeByProject builder for a per-request ?project= selector, or the
+	// stdio server, whose process was spawned for one repository). Such a
 	// handler must not fail closed when a call omits the project argument:
 	// the routing layer already answered that question, and asking again made
 	// every ?project= URL on the MCP listener unusable (measured live on the
 	// 298-project self-host). See TestScopedServerDoesNotReAskForProject.
-	scoped    bool
-	srv       *mcp.Server
-	authStore store.Backend // token store for HTTP callers; nil = env tokens only
+	scoped bool
+	// projectRequired marks the multi-project surface: the tool schemas
+	// require the `project` argument, so a client is told which project a
+	// call is about BEFORE it makes one.
+	projectRequired bool
+	srv             *mcp.Server
+	authStore       store.Backend // token store for HTTP callers; nil = env tokens only
 
 	// Capture (plan v4.15 DS-04/DS-05). rec defaults to telemetry.Nop; stdio
 	// is the identity of the one stdio session, guarded by stdioMu.
@@ -76,6 +82,27 @@ func (s *Server) SetProjectRouter(r ProjectRouter) { s.router = r }
 // with instead of being refused (cmd's routeByProject is what supplies that
 // engine). The argument, when present, still selects.
 func (s *Server) SetProjectScoped(v bool) { s.scoped = v }
+
+// Option configures a Server at construction time.
+type Option func(*Server)
+
+// WithProjectRequired marks the surface as multi-project: the tool schemas
+// then REQUIRE the `project` argument.
+//
+// The server refuses a call that omits it (engineFor fails closed — an
+// omitted project used to be answered from the serve process's cwd engine,
+// so a question about another project got a confident answer built from the
+// WRONG graph). That refusal used to reach the caller only as a runtime
+// error, AFTER the call: the model had already been told, by the schema, that
+// `project` was optional. Measured live on the 298-project self-host, an
+// agent's very first `status` call went out with no arguments and came back
+// LEANKG_ERROR_MISSING_PARAM.
+//
+// Requiring the argument in the schema puts the rule where the model reads
+// it. The server still fails closed if a call arrives without one.
+func WithProjectRequired(v bool) Option {
+	return func(s *Server) { s.projectRequired = v }
+}
 
 // engineFor picks the engine for one call: args.project when a router is
 // configured, else the wrapped engine.
@@ -128,8 +155,11 @@ const serverInstructions = `LeanKG is a code knowledge graph (exactly 3 tools: i
 const toolGuidance = "Agent protocol: query before bash/grep; project= only on multi-project HTTP; import once when cold; inspect retrieval/freshness/guidance; session_recall at start, session_retain (action=memory) and lesson (action=session) at end (memory scope=per-project|global|per-project-tagged); do not pin a rung unless intentional."
 
 // New builds the MCP server with the 3-tool registry.
-func New(engine *core.Engine) *Server {
+func New(engine *core.Engine, opts ...Option) *Server {
 	s := &Server{engine: engine, rec: telemetry.Nop{}}
+	for _, opt := range opts {
+		opt(s)
+	}
 	s.initStdioIdentity(os.Getenv)
 	s.srv = mcp.NewServer(&mcp.Implementation{
 		Name: "leankg", Version: version,
@@ -232,6 +262,40 @@ func textResult(v any) (*mcp.CallToolResult, error) {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil
 }
 
+// projectPropertyOptional is the `project` property as a single-project
+// server advertises it: present, but not required.
+//
+// projectPropertyRequired is the multi-project form. The server refuses a
+// call that omits the project (engineFor fails closed), so on that surface
+// the property is REQUIRED and the description says what to pass — the
+// model reads the schema BEFORE it makes the call, which is the only place
+// the rule can still be followed.
+const (
+	projectPropertyOptional = `"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}`
+	projectPropertyRequired = `"project": {"type": "string", "description": "REQUIRED on a multi-project server: the repository this call is about — a directory path or a project name (e.g. the current repository). The server refuses to guess which project a question is about, and naming one is what keeps the answer out of another project's graph."}`
+)
+
+// schema applies the server's project policy to one tool's advertised input
+// schema: on a multi-project server the `project` property becomes required.
+//
+// The alternative — leaving it optional and letting a call fail at runtime —
+// is what this replaces. Measured live on the 298-project self-host: an
+// agent's first `status` call carried no arguments, the schema said
+// `project` was optional, and the call came back
+// LEANKG_ERROR_MISSING_PARAM. The rule was in the error and in the server
+// instructions; it was NOT in the contract the model reads before calling.
+func (s *Server) schema(raw string) json.RawMessage {
+	prop := projectPropertyOptional
+	if s.projectRequired {
+		prop = projectPropertyRequired
+	}
+	out := strings.ReplaceAll(raw, projectPropertyOptional, prop)
+	if s.projectRequired {
+		out = strings.ReplaceAll(out, `"required": []`, `"required": ["project"]`)
+	}
+	return json.RawMessage(out)
+}
+
 func (s *Server) registerTools() {
 	s.srv.AddTool(&mcp.Tool{
 		Name: core.ToolImport,
@@ -241,7 +305,7 @@ func (s *Server) registerTools() {
 			"Legacy tool name 'set' is superseded by this tool. " +
 			"Use action=dir with path=\".\" to import the current directory as a scoped index target (FR-P2). " +
 			"Import only for first-time indexing or deliberate updates; indexing does not create vectors. " + toolGuidance,
-		InputSchema: json.RawMessage(`{
+		InputSchema: s.schema(`{
 			"type": "object",
 			"properties": {
 				"action": {"type": "string", "enum": ["repo", "dir", "docs", "prd", "memory", "session", "ontology", "read"], "description": "what to import (prd = index a PRD markdown document; read = compressed file read: args.mode/lines/fresh)"},
@@ -261,7 +325,8 @@ func (s *Server) registerTools() {
 				"tags": {"type": "array", "items": {"type": "string"}, "description": "tags for action=memory command=session_retain (also accepted inside args.tags, or as one comma-separated string); persisted on the row so a later tag-scoped recall can match it"},
 				"args": {"type": "object", "description": "action params: turns[]/session_id/retained_through_user_turn/tags[]/scope/cwd/bank (memory session_retain); content/old/new (memory curation); mode/lines/fresh (read). For query: scope=all (default; the whole corpus, test fixtures and archived docs included) | code (production source only) | prod (code plus current docs) picks the population to RANK; an unknown value is an error; every answer reports retrieval.scope"},
 				"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}
-			}
+			},
+			"required": []
 		}`),
 	}, s.handleImport)
 
@@ -272,7 +337,7 @@ func (s *Server) registerTools() {
 			"retrieval{rung,reason} + freshness. action=memory searches agent memory (args.command=view with args.path reads one file, =snapshot the MEMORY.md/USER.md core); " +
 			"action=exact|fuzzy|semantic pins a rung; graph verbs (impact/path/callers/callees/context/explain) and session/ontology reads are also available. " +
 			"Leave action empty/search for semantic questions; legacy tool name 'get' is superseded. " + toolGuidance,
-		InputSchema: json.RawMessage(`{
+		InputSchema: s.schema(`{
 			"type": "object",
 			"properties": {
 				"query": {"type": "string", "description": "search text, identifier, or memory search text"},
@@ -289,7 +354,7 @@ func (s *Server) registerTools() {
 		Name: core.ToolStatus,
 		Description: "LeanKG health: inventory, freshness (fresh|possibly_stale|cold), watermark, backend, embeddings state (stamped models, vectors), last embed run. " +
 			"Use status for health and coverage, not as a substitute for query. " + toolGuidance,
-		InputSchema: json.RawMessage(`{"type": "object", "properties": {"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}}}`),
+		InputSchema: s.schema(`{"type": "object", "properties": {"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}}, "required": []}`),
 	}, s.handleStatus)
 }
 

@@ -10,6 +10,80 @@
 
 ## Changelog
 
+### v4.15-mcp-project-scoping — the multi-project MCP surface says which project to name (2026-10-20)
+
+> **Trigger:** an xdev session called `leankg_status` and got
+> `LEANKG_ERROR_MISSING_PARAM: this server serves multiple projects
+> (LEANKG_PROJECT_DIRS), so a tool call must name one`. The self-host
+> registers 286 projects, so that is every call. Root causes, the evidence
+> and the fix: [`mcp-multi-project-scoping.md`](mcp-multi-project-scoping.md).
+>
+> **The real cause is not xdev's config.** The Go port never implemented
+> FR-ZCP-01 clause 2 (server-initiated `roots/list`, DONE in the Rust line
+> on 2026-09-04, commit 87e18287 — not in this repository's history), while
+> the v4.15-bare-mcp-url wave (2026-10-11) made every client writer strip
+> `?project=` and emit a bare URL **because** that resolution was supposed
+> to make the suffix unnecessary (`docs/prd.md:578`). On a single-project
+> server the bare URL still answers; on a multi-project server it cannot
+> resolve anything, so the server refuses and the client has nothing to
+> send. The tool schemas also advertised `project` as optional, so the model
+> had been told the argument was not needed — the rule lived only in the
+> error message and the server instructions.
+
+**Landed:**
+
+- **The requirement is now in the contract the client reads.** On a
+  multi-project server the tool schemas REQUIRE `project`
+  (`internal/mcp/server.go` — `WithProjectRequired`, `schema`), and the
+  property's description names what to pass. The friendly server error is
+  kept: LeanKG registers its tools with the SDK's low-level `ToolHandler`,
+  which performs no input validation, so the schema is a declaration to the
+  client and a project-less call still gets the actionable message. Single-
+  project servers and the `?project=` handler keep the argument optional.
+- **stdio answers for its own project again.** `leankg serve --stdio` is one
+  client over one repository (FR-ZCP-01 clause 1) and the engine resolves
+  the cwd — but the multi-project fail-closed rule defeated it at the
+  routing layer, so every host exporting `LEANKG_PROJECT_DIRS` had a broken
+  stdio surface. Measured live before the fix: `status` over stdio returned
+  `LEANKG_ERROR_MISSING_PARAM`. stdio and the `?project=` handler are now
+  scoped surfaces (`cmd/leankg/main.go` — `newScopedMCPServer`); the unscoped
+  HTTP surface still fails closed.
+- **The unknown-project error is bounded.** It named all 286 registered
+  projects as absolute paths — a context wall paid for on every retry. It
+  now names 10 and counts the rest (`internal/projects`).
+
+**FR-ZCP-01 needs a re-decision, not a port.** Its HTTP clause rides MCP
+`roots/list`, which is deprecated: "the roots feature is deprecated as of
+protocol version 2026-07-28 (SEP-2577). It remains functional during the
+deprecation window (at least twelve months)" (go-sdk `mcp/server.go`,
+`mcp/client.go`). Porting it from the Rust line would land on a 12-month
+feature and would need **every** client to implement it. On this machine
+the three clients solve the same problem three different ways — opencode
+bakes an absolute path into its config (what the bare-mcp-url wave removed
+as stale), Claude Code scopes to `/Users/linh.doan/work/be`, xdev cannot
+scope at all. The question the FR should now answer is "who supplies the
+project", not "which mechanism resolves it": the server cannot know the
+caller's repository (no cwd on the wire; roots is going away), and the
+client can — xdev already scopes its own REST graph client that way
+(`codeGraph.project` + `codeGraphExpectDir`).
+
+**Verified:** `go test ./internal/mcp/ ./internal/projects/ ./cmd/leankg/`
+(54 packages), `go vet ./...`, `gofmt` clean on the changed files; the
+tests are the contract — the multi-project schema requires `project`, the
+single-project and `?project=` schemas do not, stdio answers a project-less
+call over the wire, and the unscoped surface still refuses one. Live on the
+286-project self-host (a side instance on port 9799; the supervised server
+was never touched): `tools/list` → `required: ["project"]` unscoped and
+`[]` scoped/stdio; `status` with no arguments answers on stdio and is
+refused unscoped; `status` with `{"project":"leankg"}` answers with that
+project.
+
+**Two operational defects found on the way, both outside this repository:**
+an xdev session's MCP autoStart had started a **second** leankg server
+(`--http :9699`, wildcard, no `pidFile`) that answered alongside the
+launchd-supervised one — the duplicate the runbook warns about; and
+`freepeak/.mcp.json` carries the same projectless URL as xdev.
+
 ### v4.15-retrieval-miss-analysis — the TS/JS extractor no longer invents elements (2026-10-18)
 
 > **Trigger:** a 20-question benchmark (grep vs Gemma semantic search, 14 repos,
