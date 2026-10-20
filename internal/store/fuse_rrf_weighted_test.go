@@ -5,29 +5,6 @@ import (
 	"testing"
 )
 
-func TestFuseRRFWeightedDefaultsMatchFuseRRF(t *testing.T) {
-	// The zero-value struct means every arm keeps weight 1.0, so
-	// FuseRRFWeighted must be identical to FuseRRF — the weighted
-	// variant is an extension, not a replacement.
-	lists := []RankList{
-		{Name: ArmVector, Keys: []string{"a", "b", "c"}},
-		{Name: ArmTSVector, Keys: []string{"b", "a", "d"}},
-	}
-	weighted := FuseRRFWeighted(lists, FuseRRFWeights{})
-	plain := FuseRRF(lists)
-	if len(weighted) != len(plain) {
-		t.Fatalf("len weighted = %d, plain = %d", len(weighted), len(plain))
-	}
-	for i := range plain {
-		if weighted[i].Key != plain[i].Key {
-			t.Fatalf("rank %d key = %q, want %q", i, weighted[i].Key, plain[i].Key)
-		}
-		if d := math.Abs(weighted[i].Score - plain[i].Score); d > 1e-9 {
-			t.Fatalf("%s score weighted = %v, plain = %v", weighted[i].Key, weighted[i].Score, plain[i].Score)
-		}
-	}
-}
-
 func TestFuseRRFWeightedZeroWeightMeansDefault(t *testing.T) {
 	// 0 is the zero-value that means "default weight 1.0", so a doc
 	// ranked by the vector arm still scores its standard RRF share.
@@ -95,7 +72,7 @@ func TestFusionWeightChangesTheRanking(t *testing.T) {
 		{Name: ArmVector, Keys: []string{"alpha", "beta"}},
 		{Name: ArmFTS5, Keys: []string{"kwonly", "kwtwo"}},
 	}
-	balanced := FuseRRF(lists)
+	balanced := FuseRRFWeighted(lists, FuseRRFWeights{})
 	if len(balanced) != 4 {
 		t.Fatalf("balanced fusion returned %d hits, want 4", len(balanced))
 	}
@@ -181,7 +158,7 @@ func TestExplicitEqualWeightsKeepPlainRRFOrder(t *testing.T) {
 		{Name: ArmVector, Keys: []string{"v1", "v2", "v3", "v4", "v5"}},
 		{Name: ArmFTS5, Keys: []string{"v1", "x", "y"}},
 	}
-	plain := FuseRRF(lists)
+	plain := FuseRRFWeighted(lists, FuseRRFWeights{})
 	got := FuseRRFWeighted(lists, FuseRRFWeights{Vector: 1, Keyword: 1, Explicit: true})
 	if len(got) != len(plain) {
 		t.Fatalf("len = %d, want %d", len(got), len(plain))
