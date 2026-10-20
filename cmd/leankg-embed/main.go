@@ -9,7 +9,7 @@
 //	run       incremental embed of content-hash-diffed QNs
 //	full      rebuild everything (stamp-guarded; mismatch ⇒ clear + rebuild)
 //	export    NDJSON {qualified_name, content_hash, text} for offsite batching
-//	import    NDJSON {qualified_name, vec} from offsite batching (resumable)
+//	import    NDJSON {qualified_name, content_hash, vec} from offsite batching (resumable)
 //	status    last run, coverage, stamp (reads DB only)
 package main
 
@@ -61,7 +61,8 @@ Usage:
   leankg-embed run    [--project DIR]   incremental (hash-diffed) run
   leankg-embed full   [--project DIR]   full rebuild (stamp-guarded)
   leankg-embed export [--project DIR] [--model M] [--out FILE]   NDJSON export for offsite batching
-  leankg-embed import [--project DIR] [--model M] [--revision R] [--dims N] [--in FILE]
+  leankg-embed import [--project DIR] [--in FILE] [--model M] [--revision R] [--dims N] [--distance D]
+                                                     import vectors; the stamp is the live provider's
   leankg-embed status [--project DIR]                  last run / stamps / element count
 
 Providers (env): LEANKG_EMBED_PROVIDER=local|openai|deterministic (default local).
@@ -73,6 +74,14 @@ LEANKG_EMBED_SIDECAR_PORT (default 8080), LEANKG_EMBED_SIDECAR_READY_SECS (defau
 Attach instead with LEANKG_EMBED_BASE_URL.
 Remote: LEANKG_EMBED_BASE_URL, LEANKG_EMBED_API_KEY, LEANKG_EMBED_MODEL,
 LEANKG_EMBED_DIMS, LEANKG_EMBED_REVISION.
+
+import stamps the collection exactly as the live provider would for the same
+LEANKG_EMBED_* environment (catalog pin, prefixes, width), so a later
+'leankg-embed run' sees no drift. --model, --revision, --dims and --distance are
+optional: unset takes the environment's value; a value that differs from it is
+an error. A catalogued model needs no running sidecar. A line's vector may be
+the model's native width (reduced to the configured width) or the configured
+width. A line's content_hash, when present, is the state recorded for it.
 `)
 }
 
@@ -231,17 +240,14 @@ func cmdImport(args []string) {
 	fs := flag.NewFlagSet("import", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	in := fs.String("in", "", "input file (default stdin)")
-	modelID := fs.String("model", "", "model being imported (required)")
-	revision := fs.String("revision", "", "model revision pin (required)")
-	dims := fs.Int("dims", 0, "vector dimensions (required)")
-	distance := fs.String("distance", "cosine", "distance metric")
+	modelID := fs.String("model", "", "model id (default LEANKG_EMBED_MODEL; must agree with it)")
+	revision := fs.String("revision", "", "model revision (default: the live provider's pin; must agree)")
+	dims := fs.Int("dims", 0, "stored vector width (default: the live provider's width; must agree)")
+	distance := fs.String("distance", "", "distance metric (default cosine; must agree)")
 	if err := fs.Parse(args); err != nil {
 		log.Fatal(err)
 	}
 	bindPositional("import", fs.Args(), project)
-	if *modelID == "" || *revision == "" || *dims == 0 {
-		log.Fatal("import requires --model, --revision, --dims")
-	}
 	unlock, err := lock(projectDir(*project))
 	if err != nil {
 		log.Fatal(err)

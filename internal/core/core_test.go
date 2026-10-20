@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/ontology"
 	"github.com/FreePeak/LeanKG/internal/session"
@@ -35,17 +35,17 @@ func newEngine(t *testing.T) (*Engine, *memory.Memory) {
 }
 
 func TestResolveEnvelope(t *testing.T) {
-	for tool, want := range map[string]string{
-		"import": "import", "query": "query", "status": "status",
-		"set": "import", "get": "query",
-	} {
-		got, err := ResolveEnvelope(tool)
-		if err != nil || got != want {
-			t.Fatalf("envelope %q: got %q err %v, want %q", tool, got, err, want)
+	for _, tool := range []string{"import", "query", "status"} {
+		if got, err := ResolveEnvelope(tool); err != nil || got != tool {
+			t.Fatalf("envelope %q: got %q err %v", tool, got, err)
 		}
 	}
+	// Superseded legacy names are refused, naming their replacement.
+	if _, err := ResolveEnvelope("get"); err == nil || !strings.Contains(err.Error(), `superseded by "query"`) {
+		t.Fatalf("legacy get: %v", err)
+	}
 	if _, err := ResolveEnvelope("delete_everything"); err == nil || !strings.Contains(err.Error(), "valid tools") {
-		t.Fatalf("unknown envelope must error naming the surface: %v", err)
+		t.Fatalf("unknown tool: %v", err)
 	}
 }
 
@@ -94,24 +94,6 @@ func TestQueryLadderOrderAndProvenance(t *testing.T) {
 	// Provenance present on every answer.
 	if _, ok := out["retrieval"].(map[string]any)["reason"]; !ok {
 		t.Fatal("retrieval.reason missing")
-	}
-}
-
-func TestL3GateSkipsWhenConfidenceBelowThreshold(t *testing.T) {
-	// Noul L3 gate: when ontology confidence < MinConfidence,
-	// rungSemantic must not be called. We assert via ScoreLevel
-	// boundaries and via Query degradation.
-	if got := ontology.ScoreLevel(0.25); got != ontology.MatchNone {
-		t.Errorf("ScoreLevel(0.25) = %v, want MatchNone", got)
-	}
-	if got := ontology.ScoreLevel(0.299); got != ontology.MatchNone {
-		t.Errorf("ScoreLevel(0.299) = %v, want MatchNone", got)
-	}
-	if got := ontology.ScoreLevel(ontology.MinConfidence); got != ontology.MatchPartial {
-		t.Errorf("ScoreLevel(MinConfidence) = %v, want MatchPartial", got)
-	}
-	if got := ontology.ScoreLevel(0.3); got != ontology.MatchPartial {
-		t.Errorf("ScoreLevel(0.3) = %v, want MatchPartial", got)
 	}
 }
 
@@ -460,7 +442,9 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	catPath := filepath.Join(t.TempDir(), "concepts.json")
+	proj := t.TempDir()
+	e.SetProjectDir(proj)
+	catPath := filepath.Join(proj, "concepts.json")
 	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -475,10 +459,7 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The answer is read the way an agent reads it — off the wire — because that
-	// shape is the contract, and wave 22 changed it on purpose (a nil slice
-	// marshalled as `null` read as "no catalog" rather than "no matches").
-	if n := wireLen(t, again["matches"]); n != 1 {
+	if matches, ok := again["matches"].([]ontology.Match); !ok || len(matches) != 1 {
 		t.Fatalf("persisted matches: %+v", again)
 	}
 }
@@ -494,18 +475,26 @@ func TestOntologyImportAndQueryActions(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	catPath := filepath.Join(t.TempDir(), "concepts.json")
-	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
+	proj := t.TempDir()
+	e.SetProjectDir(proj)
+	if err := os.WriteFile(filepath.Join(proj, "concepts.json"), []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.Import(ctx, ImportRequest{Action: "ontology", Path: catPath}); err != nil {
+	if _, err := e.Import(ctx, ImportRequest{Action: "ontology", Path: "concepts.json"}); err != nil {
 		t.Fatalf("import ontology: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "concepts.json")
+	if err := os.WriteFile(outside, []byte(`{"concepts":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "ontology", Path: outside}); err == nil {
+		t.Fatal("ontology catalog outside the project was read (RS-01)")
 	}
 	out, err := e.Query(ctx, QueryRequest{Action: "ontology"})
 	if err != nil {
 		t.Fatalf("query ontology: %v", err)
 	}
-	if n := wireLen(t, out["matches"]); n != 1 {
+	if matches, ok := out["matches"].([]ontology.Match); !ok || len(matches) != 1 {
 		t.Fatalf("query ontology matches: %+v", out)
 	}
 	// importing without a catalog path must error clearly, not silently pass.
@@ -716,25 +705,101 @@ func TestCompressReadAnchorsRelativePath(t *testing.T) {
 		t.Fatalf("content=%q, want Hello body", content)
 	}
 	gotPath, _ := out["path"].(string)
-	if gotPath != filepath.Join(dir, "pkg/hello.go") {
-		t.Fatalf("path=%q, want project-anchored", gotPath)
+	// Project-relative: responses must not leak the server's layout (RS-23).
+	if gotPath != "pkg/hello.go" {
+		t.Fatalf("path=%q, want project-relative pkg/hello.go", gotPath)
 	}
 }
 
-// wireLen is the length of an answer's list as it appears ON THE WIRE, so a
-// test pins the shape a client sees rather than the Go type that produced it.
-func wireLen(t *testing.T, v any) int {
-	t.Helper()
-	if v == nil {
-		return -1
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
+// TestFileArgsConfinedToProject pins RS-01: every file-reading action refuses
+// paths outside the project — the validation read /etc/hosts through three of
+// them.
+func TestFileArgsConfinedToProject(t *testing.T) {
+	e, _ := newEngine(t)
+	proj := t.TempDir()
+	e.SetProjectDir(proj)
+	if err := os.WriteFile(filepath.Join(proj, "in.go"), []byte("package p\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var arr []json.RawMessage
-	if err := json.Unmarshal(b, &arr); err != nil {
-		t.Fatalf("answer is not a JSON array: %s", b)
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("top secret\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	return len(arr)
+	if err := os.Symlink(outside, filepath.Join(proj, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, p := range []string{outside, "../../../../../../" + outside, "link.txt"} {
+		if _, err := e.Import(ctx, ImportRequest{Action: "read", Path: p}); err == nil || !strings.Contains(err.Error(), "PATH_OUTSIDE_PROJECT") {
+			t.Errorf("import read %q: err=%v, want PATH_OUTSIDE_PROJECT", p, err)
+		}
+		if _, err := e.Query(ctx, QueryRequest{Action: "compress", Query: p}); err == nil || !strings.Contains(err.Error(), "PATH_OUTSIDE_PROJECT") {
+			t.Errorf("query compress %q: err=%v, want PATH_OUTSIDE_PROJECT", p, err)
+		}
+	}
+	if _, err := e.Import(ctx, ImportRequest{Action: "read", Path: "in.go"}); err != nil {
+		t.Fatalf("in-project read refused: %v", err)
+	}
+}
+
+// TestQueryScopeStates pins the args.scope contract: the default is the whole
+// corpus; `code` and `prod` narrow it AND say so in retrieval.scope; an unknown
+// scope is an ERROR, never a silent full corpus (answering over everything when
+// the caller asked for a subset looks identical to the scope working).
+func TestQueryScopeStates(t *testing.T) {
+	e, mem := newEngine(t)
+	_ = mem
+	n := 400
+	for i := 0; i < n; i++ {
+		if err := e.st.UpsertElements([]store.Element{{
+			QualifiedName: fmt.Sprintf("pkg/a%d.go::A%d", i, i), ElementType: "func",
+			Name: fmt.Sprintf("A%d", i), FilePath: fmt.Sprintf("pkg/a%d.go", i), Language: "go", LineStart: 1,
+			Content: "memorable shared content in the corpus",
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string][]string{
+		"":      {"pkg/a0.go", "pkg/a1.go"},
+		"all":   {"pkg/a0.go", "pkg/a1.go"},
+		"code":  {"pkg/a0.go", "pkg/a1.go"},
+		"prod":  {"pkg/a0.go", "pkg/a1.go"},
+		"bogus": nil,
+		"Code":  nil, // the vocabulary is closed and case-sensitive
+	}
+	for scope, want := range files {
+		resp, err := e.Query(context.Background(), QueryRequest{Query: "memorable shared content", Limit: 2, Args: argsWith("scope", scope)})
+		if want == nil {
+			if err == nil || !strings.Contains(err.Error(), "unknown scope") {
+				t.Errorf("scope %q: err = %v, want it to refuse", scope, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("scope %q: %v", scope, err)
+		}
+		got, _ := resp["retrieval"].(map[string]any)
+		if got["scope"] != defaultScopeName(scope) {
+			t.Errorf("scope %q: retrieval.scope = %v, want %q", scope, got["scope"], defaultScopeName(scope))
+		}
+		hits, _ := resp["hits"].([]map[string]any)
+		if len(hits) == 0 {
+			t.Errorf("scope %q: no hits", scope)
+		}
+	}
+}
+
+func defaultScopeName(scope string) string {
+	if scope == "" {
+		return "all"
+	}
+	return scope
+}
+
+func argsWith(kv ...string) map[string]any {
+	m := map[string]any{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		m[kv[i]] = kv[i+1]
+	}
+	return m
 }

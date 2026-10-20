@@ -6,6 +6,7 @@
   },
   "embeddings": [
     {
+      "coverage": 0.5,
       "dimensions": 8,
       "distance": "cosine",
       "model_id": "deterministic-8",
@@ -21,7 +22,9 @@
   "mode": "sqlite",
   "query_embedder": {
     "model_id": "deterministic-8",
-    "provider": "deterministic"
+    "provider": "deterministic",
+    "reachable": true,
+    "revision": "test:deterministic-v1"
   },
   "relationships": 1,
   "space": {

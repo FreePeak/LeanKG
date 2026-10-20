@@ -15,6 +15,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -32,6 +33,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/doctor"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/maintain"
 	leankgmcp "github.com/FreePeak/LeanKG/internal/mcp"
@@ -41,9 +43,10 @@ import (
 	"github.com/FreePeak/LeanKG/internal/rest"
 	restauto "github.com/FreePeak/LeanKG/internal/rest/auto"
 	"github.com/FreePeak/LeanKG/internal/rpc"
-	leankgv1connect "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1/leankgv1connect"
+	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/setupcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 	"github.com/FreePeak/LeanKG/internal/web"
 )
 
@@ -98,6 +101,8 @@ func main() {
 		cmdMetrics(os.Args[2:])
 	case "dashboard":
 		cmdDashboard(os.Args[2:])
+	case "telemetry":
+		cmdTelemetry(os.Args[2:])
 	case "auth":
 		cmdAuth(os.Args[2:])
 	case "tunnels":
@@ -134,6 +139,8 @@ func main() {
 		cmdPRDTrace(os.Args[2:])
 	case "link":
 		cmdLink(os.Args[2:])
+	case "delete-annotation":
+		cmdDeleteAnnotation(os.Args[2:])
 	case "search-annotations":
 		cmdSearchAnnotations(os.Args[2:])
 	case "show-annotations":
@@ -191,9 +198,12 @@ Usage:
   leankg gc [DIR] [--project DIR] [--engine sqlite|postgres]
   leankg audit export [--project DIR] [--since T] [--until T] [--format jsonl] [--out FILE]
   leankg audit verify [--project DIR] [--since T] [--until T]
-  leankg metrics [--project DIR] [--since N|Nd] [--tool NAME] [--json|-j] [--session]
+  leankg metrics [--project DIR] [--since N|Nd] [--tool NAME] [--json|-j] [--session] [--session-id ID]
                  [--reset] [--cleanup] [--retention DAYS] [--seed]
-  leankg dashboard [--project DIR] [--since 24h|7d|30d|2w] [--format text|json]
+  leankg dashboard [--addr 127.0.0.1:9701] [--no-open] [--project DIR] [--since 24h|7d|30d|2w]
+                   [--allow-remote --token T] [--format text|json]
+  leankg telemetry status [--json] | enable [--bodies] [--sessions LIST|all] [--yes] | disable
+                   | purge (--before 30d | --all) | link [--older-than 2m] | import-ab DIR
   leankg auth register     [--project DIR] --email EMAIL --password PW --name NAME
   leankg auth token create [--project DIR] --name NAME [--role admin|contributor|viewer]
                            [--account-id ID] [--org-id ID] [--scopes a,b] [--ttl 24h]
@@ -213,7 +223,7 @@ Usage:
   leankg generate [--project DIR]
   leankg annotate <element> --description TEXT [--user-story ID] [--feature ID]
   leankg link <element> <id> [--kind story|feature]
-  leankg search-annotations <query> | show-annotations <element>
+  leankg search-annotations <query> | show-annotations <element> | delete-annotation <element>
   leankg mine-conversations --format claude|chatgpt|slack --input FILE_OR_DIR [--project DIR]
   leankg incident add --title T --severity P0|P1|P2|P3 --affected A,B --root-cause R --resolution X
                       [--prevention P] [--env production] [--ticket ID] [--project DIR]
@@ -225,7 +235,7 @@ Usage:
   leankg team-map [--env production] [--project DIR]
   leankg serve  [--project DIR] [--stdio] [--http ADDR] [--rest ADDR] [--read-only] [--memory] [--embed-provider P]
   leankg setup [--reset] [--clone] [--index] [--embed] [--status]
-  leankg index <dir> [--source URI] [--ref-name REF] [--auth TOKEN]
+  leankg index <dir> [--hook] [--no-embed] [--source URI] [--ref-name REF] [--auth TOKEN] [--rebase-root]
   leankg prd [--source docs/prd.md] [--environment local] [--project DIR]
   leankg prd-trace [FEATURE_ID] [--project DIR]
   leankg push --remote URL --token TOKEN [--env local] [--project DIR]
@@ -242,11 +252,37 @@ service_context|portfolio (portfolio = #376 fleet read via the registry;
 queried through the same core wiring the MCP transports use).
 Time filters (audit --since/--until): RFC3339 | epoch seconds | 90s|30m|24h|7d.
 
-Defaults: --http :9699 (MCP streamable HTTP) and --rest :8080 (REST) when
+Defaults: --http 127.0.0.1:9699 (MCP streamable HTTP, loopback) and --rest :8080 (REST) when
 neither --stdio nor addresses are given; --project defaults to cwd.
 LEANKG_PROJECT_DIRS (comma-separated) registers extra projects; REST/MCP
 requests select one with ?project= (dir path or name).
 `)
+}
+
+// newScopedMCPServer builds the MCP server for a surface that already serves
+// ONE project:
+//
+//   - the stdio session — one process, spawned by one client in the
+//     repository it is working in, so the process's own project IS the
+//     answer;
+//   - the per-request `?project=` handler — the routing layer already chose
+//     the project before the handler ran.
+//
+// On both, the `project` argument stays optional and a call that omits it is
+// answered by the engine the surface was built with. The multi-project
+// fail-closed rule belongs to the UNSCOPED HTTP surface, where the caller is
+// remote and the server cannot know which project a question is about.
+//
+// Measured live on the 298-project self-host before this: a stdio session
+// (the client had spawned the process inside its own repository) was refused
+// with LEANKG_ERROR_MISSING_PARAM — "this server serves multiple projects"
+// — which contradicts the stdio contract this command documents. The
+// argument still selects another project when it is present.
+func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp.Server {
+	srv := leankgmcp.New(engine)
+	srv.SetProjectRouter(router)
+	srv.SetProjectScoped(true)
+	return srv
 }
 
 func cmdServe(args []string) {
@@ -269,6 +305,9 @@ func cmdServe(args []string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// SIGHUP re-reads consent: an operator who grants or withdraws telemetry
+	// mid-session must not have to restart the server (plan v4.15 §8).
+	watchConsentReload(ctx)
 
 	dir := *project
 	if dir == "" {
@@ -328,6 +367,21 @@ afterSidecars:
 		}
 	}
 
+	// Process-wide capture sink (plan v4.15): a no-op unless the user granted
+	// consent in telemetry.yaml. Memory and lesson events and the REST and
+	// ConnectRPC call rows all go to it.
+	rec := telemetryRecorder()
+	defer closeTelemetry()
+	// The sinks are registered so a SIGHUP consent reload can re-point them at
+	// a recorder built after startup (capture was off then). Every consumer
+	// holds the value it was given, so a level change reaches nobody until this
+	// list is replayed.
+	AddTelemetrySink(memory.SetRecorder)
+	AddTelemetrySink(session.SetRecorder)
+
+	memory.SetRecorder(rec)
+	session.SetRecorder(rec)
+
 	var mem *memory.Memory
 	if *withMemory {
 		// K1: --memory-global moves the bank root out of every indexed
@@ -364,12 +418,25 @@ afterSidecars:
 		}
 	}
 	if os.Getenv("LEANKG_EMBED_PROVIDER") != "" {
+		// A query-time embedder is an OPTION on the serve path, not a
+		// precondition: the engine serves exact (L1), fuzzy (L2), graph,
+		// memory, REST and UI without it, and the L3 rung already degrades
+		// with a reason when no embedder is wired (core.rungSemantic). So a
+		// provider that will not start — no llama.cpp installed, a port held
+		// by something else, a model that will not load — costs L3 and
+		// nothing else. It used to be log.Fatalf, which meant one failed
+		// sidecar took the whole MCP server down with it: an operator's
+		// server answered no health probe at all, and the client reported
+		// "unreachable" with no clue why (found 2026-10-03 driving
+		// xdev's autostart, where LEANKG_EMBED_SIDECAR_PORT pointed at a
+		// port a previous sidecar still held).
 		p, release, perr := embed.StartProvider(ctx)
 		if perr != nil {
-			log.Fatalf("embed provider: %v", perr)
+			log.Printf("embed provider unavailable — serving without L3 semantic: %v", perr)
+		} else {
+			defer release()
+			embedder = core.QueryEmbedderFromProvider(p)
 		}
-		defer release()
-		embedder = core.QueryEmbedderFromProvider(p)
 	}
 	engine := core.New(st, mem, embedder)
 	engine.SetProjectDir(dir) // enables the session actions
@@ -422,8 +489,9 @@ afterSidecars:
 		// stdio is one process-bound MCP session; per-project selection
 		// travels as the `project` tool argument, routed through the
 		// router hook.
-		srv := leankgmcp.New(engine)
-		srv.SetProjectRouter(router)
+		srv := newScopedMCPServer(engine, router)
+		srv.SetRecorder(rec) // plan v4.15 DS-04: capture tools/call and identity
+		registerMCPSink(srv)
 		log.Printf("leankg serve (stdio) project=%s engine=%s", dir, st.Engine())
 		if err := srv.RunStdio(ctx); err != nil {
 			log.Fatalf("stdio: %v", err)
@@ -433,18 +501,30 @@ afterSidecars:
 
 	addr := *httpAddr
 	if addr == "" && *restAddr == "" {
-		addr = ":9699"
+		// Loopback by default (RS-03): the MCP surface reads project files and
+		// indexes, and with no token configured every caller is Admin. Pass
+		// --http :9699 explicitly to listen on every interface.
+		addr = defaultHTTPAddr
 	}
 	if addr != "" {
-		mcpSrv := leankgmcp.New(engine)
+		warnIfExposed("MCP", addr, st)
+		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject()))
 		mcpSrv.SetProjectRouter(router)
+		mcpSrv.SetAuthStore(st)
+		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
+		registerMCPSink(mcpSrv)
 		h := httpMux(mcpSrv.HTTPHandler())
 		h = routeByProject(ctx, router, h, func(p *projects.Project) http.Handler {
-			pSrv := leankgmcp.New(p.Engine)
-			pSrv.SetProjectRouter(router)
+			pSrv := newScopedMCPServer(p.Engine, router)
+			pSrv.SetAuthStore(st)
+			pSrv.SetRecorder(rec)
+			registerMCPSink(pSrv)
 			return httpMux(pSrv.HTTPHandler())
 		})
-		restauto.RegisterAutoConfig(h, engine)
+		// RegisterAutoConfig RETURNS the wrapped mux; the endpoint lives in
+		// that returned handler, so serving the original one served everything
+		// except /api/v1/mcp/auto-config.
+		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
 		go serveHTTP(ctx, h, addr)
 	}
 	if *restAddr != "" {
@@ -457,11 +537,17 @@ afterSidecars:
 		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
-		restauto.RegisterAutoConfig(h, engine)
+		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
+		// The REST capture handler is built explicitly so a consent reload can
+		// re-point its sink (a level raise that reached nobody was the bug).
+		cap := rest.NewCaptureHandler(rec, telemetry.TransportREST)
+		h = cap.Wrap(h)
+		AddTelemetrySink(cap.SetRecorder)
 		// /api/v1/auth/* is public by design: register/login/token are the
 		// bootstrap (the handlers enforce their own caller/account checks), and
 		// Rust registered them outside the auth middleware for the same reason.
 		// Everything else sits behind the bearer gate.
+		warnIfExposed("REST", *restAddr, st)
 		root := http.NewServeMux()
 		root.Handle("/api/v1/auth/", auth.Routes(st))
 		root.Handle("/", auth.MiddlewareWithStore(st, h))
@@ -469,13 +555,21 @@ afterSidecars:
 		go serveHTTP(ctx, root, *restAddr)
 	}
 	if *rpcAddr != "" {
-		svc := rpc.NewLeanKGService(engine)
-		path, handler := leankgv1connect.NewLeanKGHandler(svc)
+		path, handler := rpc.Handler(engine, rec)
 		mux := http.NewServeMux()
-		// argsRefusalRecovery rewrites the codec's "invalid value for string
-		// field value: 2" — which names a descriptor field the caller never
-		// sent — into a refusal that names their argument and the wire's
-		// limitation (internal/rpc).
+		// Liveness for the same reason the MCP, REST and UI mounts carry one:
+		// FR-SELF-01 asks for /health on every listener, and a ConnectRPC
+		// mux answers 404 for everything but the service route, so an
+		// orchestrator probe against this address saw a dead server that was
+		// in fact serving. Same envelope as the other listeners.
+		mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		})
+		// The descriptor types `args` as map<string,string>, so a typed action
+		// argument cannot be carried on this wire. The codec refuses by naming
+		// its own internal `value` field, which the caller never sent; this
+		// translates the refusal to name their value and this wire's limit.
 		mux.Handle(path, rpc.ArgsRefusalRecovery(handler))
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
 		go serveHTTP(ctx, auth.MiddlewareWithStore(st, mux), *rpcAddr)
@@ -529,6 +623,40 @@ afterSidecars:
 	<-ctx.Done()
 }
 
+// defaultHTTPAddr is the MCP listener when serve is given no address.
+const defaultHTTPAddr = "127.0.0.1:9699"
+
+// exposedWithoutAuth reports whether addr listens beyond loopback while no
+// token gates its callers.
+func exposedWithoutAuth(addr string, gateOn bool) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return false
+	}
+	return !gateOn
+}
+
+// warnIfExposed logs the RS-03 warning: an MCP or REST listener on a
+// non-loopback address with no token configured serves every caller as
+// Admin (file reads inside the project, indexing, memory writes).
+func warnIfExposed(kind, addr string, st store.Backend) {
+	gateOn, err := auth.GateEnabled(st)
+	if err != nil {
+		log.Printf("warning: %s auth gate state unknown: %v", kind, err)
+		return
+	}
+	if exposedWithoutAuth(addr, gateOn) {
+		log.Printf("warning: %s listens on %s (beyond loopback) with no auth token configured — every caller is Admin. "+
+			"Bind 127.0.0.1, or set LEANKG_TOKEN_ADMIN / run `leankg auth token create`", kind, addr)
+	}
+}
+
 func cmdDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default: cwd, discovered upward for --deep)")
@@ -547,25 +675,17 @@ func cmdDoctor(args []string) int {
 	// find_project_root (nearest .leankg OR leankg.yaml), then the config's
 	// project_path anchor: doctor must inspect the store the server serves
 	// (Rust main.rs find_project_root + MCPServer::resolve_project_root).
-	// A configured standalone store (FR-P2) has no .leankg to discover, so
-	// the project-root walk is skipped and the store comes from the config.
-	dbPath := projectcfg.StandaloneDBPath(dir)
-	if dbPath == "" {
-		dir = projectcfg.FindProjectRoot(dir)
-		dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
-		dbPath = filepath.Join(dbDir, "leankg.db")
-	}
-	st, err := store.Open(dbPath, store.RO)
+	dir = projectcfg.FindProjectRoot(dir)
+	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
+	st, err := store.Open(filepath.Join(dbDir, "leankg.db"), store.RO)
 	if err != nil {
-		// A store that does not exist yet is a FIRST-RUN state, not a broken
-		// one: `status` already reports it as cold and exits 0, and
-		// `doctor --deep` already names the command. The raw open error
-		// ("read-only open of missing store …: no such file or directory")
-		// leaked the storage layer into a user-facing diagnosis and buried
-		// the only thing an agent can act on. Keep the path (so the operator
-		// sees WHERE the engine looked) and name the fix.
-		if _, statErr := os.Lstat(dbPath); os.IsNotExist(statErr) {
-			fmt.Printf("FAIL store: no store at %s — this project is not indexed yet; run `leankg index .` (then `leankg-embed run` for semantic search)\n", dbPath)
+		// A missing store is not a storage-layer event to the reader: it means
+		// the project has not been indexed. Naming the syscall ("read-only open
+		// of missing store", a raw stat error) buries the one action that fixes
+		// it, so the diagnosis states the state and the command.
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") {
+			fmt.Printf("FAIL not indexed: no store at %s\n", filepath.Join(dbDir, "leankg.db"))
+			fmt.Println("     run `leankg index .` in this project, then `leankg doctor` again")
 			return 2
 		}
 		fmt.Printf("FAIL store: %v\n", err)
@@ -628,6 +748,9 @@ func cmdIndex(args []string) {
 	authFlag := fs.String("auth", "", "credential for --source (git token or GCS access token)")
 	auto := fs.Bool("auto", false, "first-run setup mode: index (and later embed) without asking again")
 	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
+	rebase := fs.Bool("rebase-root", false, "adopt this directory as the store's index root (after moving a checkout); without it a store built from another root refuses the walk")
+	hook := fs.Bool("hook", false, "SessionStart hook mode: exit 0 without indexing when HEAD exceeds LEANKG_HOOK_MAX_FILES or another index of the store is running; the embed is skipped when the backlog exceeds LEANKG_HOOK_MAX_EMBED")
+	noEmbed := fs.Bool("no-embed", false, "index only: skip the incremental embed that follows a successful index")
 	positional := parseInterspersed("index", fs, args, 1)
 	if *auto && *manual {
 		log.Fatal("index: --auto and --manual are mutually exclusive")
@@ -639,6 +762,36 @@ func cmdIndex(args []string) {
 	if len(positional) == 1 {
 		target = positional[0]
 	}
+	// The hook's size gate runs before any side effect: no setup-mode
+	// persistence, no .leankg, no store.
+	if *hook && *source == "" {
+		if msg := hookBigRepoSkip(target); msg != "" {
+			fmt.Println(msg)
+			return
+		}
+	}
+	// One index per store at a time. Hook mode gives up on a held lock so a
+	// session start never queues behind a running index; a manual run waits.
+	storeDir := indexStoreDir(*project, target)
+	lockPath := filepath.Join(storeDir, ".leankg", "index.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		log.Fatalf("index: create .leankg: %v", err)
+	}
+	var unlock func()
+	var err error
+	if *hook {
+		unlock, err = flock.TryLock(lockPath)
+		if errors.Is(err, flock.ErrHeld) {
+			fmt.Printf("leankg index --hook: skipped %s: another index of this store is running\n", storeDir)
+			return
+		}
+	} else {
+		unlock, err = flock.Lock(lockPath)
+	}
+	if err != nil {
+		log.Fatalf("index: lock %s: %v", lockPath, err)
+	}
+	defer unlock()
 
 	// FR-ZCP-13 first-run contract: exactly one auto/manual question per user,
 	// persisted. Precedence: flags > LEANKG_SETUP_MODE > the stored choice >
@@ -674,8 +827,11 @@ func cmdIndex(args []string) {
 	// command the user typed.
 	_ = mode
 
-	if err := runIndex(*project, target, *source, *refName, sourceAuth(*authFlag)); err != nil {
+	if err := runIndex(*project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
 		log.Fatalf("index: %v", err)
+	}
+	if !*noEmbed {
+		indexEmbed(storeDir, *hook)
 	}
 }
 

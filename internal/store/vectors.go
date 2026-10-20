@@ -36,6 +36,23 @@ type VectorRow struct {
 	Vec           []float32
 }
 
+// Matches reports whether two stamps describe the same vector space: model id,
+// revision, dimensions, distance, chunker version and the query/document
+// prefix pair. Provider is excluded from that identity (a transport label, so
+// an HF-imported collection stamped "openai" is read back by a "local" provider
+// without drift), but it is not inert: internal/embed picks the per-text rune
+// cap from the label, so a writer that guards on identity must also compare the
+// cap (capForLabel), as the incremental run does.
+func (a ModelStamp) Matches(b ModelStamp) bool {
+	return a.ModelID == b.ModelID &&
+		a.Revision == b.Revision &&
+		a.Dimensions == b.Dimensions &&
+		a.Distance == b.Distance &&
+		a.ChunkerVersion == b.ChunkerVersion &&
+		a.QueryPrefix == b.QueryPrefix &&
+		a.DocumentPrefix == b.DocumentPrefix
+}
+
 // WriteStamp upserts the stamp for a model (writer side, after validation).
 // The full identity — model, revision, dims, distance, provider, chunker
 // version and the query/document prefix pair — is what a reader compares, so
@@ -270,8 +287,11 @@ type VectorSearchHit struct {
 	Similarity float64
 }
 
-// vectorSelectCols hydrates L3 hits: vector QN always present; element fields
-// fall back to the QN when no code element matches (docs, memory blobs).
+// vectorSelectCols hydrates L3 hits. The join is INNER (RS-05): a vector
+// whose element is gone is an orphan by the store's own definition
+// (DeleteOrphanVectors) — nothing writes vectors for non-elements and the
+// NDJSON import skips dead QNs — so a LEFT JOIN served only ghosts of deleted
+// code, ranked first for their own queries, until `leankg gc`.
 const vectorSelectCols = `embedding_vectors.qualified_name,
 	COALESCE(ce.element_type,''), COALESCE(ce.name, embedding_vectors.qualified_name),
 	COALESCE(ce.file_path,''), COALESCE(ce.line_start,0), COALESCE(ce.line_end,0),
@@ -286,27 +306,28 @@ func (s *Store) SearchVectors(modelID string, q []float32, k int) ([]VectorSearc
 	return s.SearchVectorsScoped(modelID, q, k, nil)
 }
 
-// SearchVectorsScoped is SearchVectors with an optional element filter, applied
-// to the hydrated element in the same pass the vectors are already scanned.
+// SearchVectorsScoped is SearchVectors over the caller's own population: keep
+// admits a row into the ranking. A nil keep means the whole corpus, so the
+// default is byte-for-byte what it was.
 //
-// It exists because a vector search has no notion of what a caller WANTS, and on
-// a real repository that is worth whole ranks. Measured on this repository's own
-// store (9,306 vectors), ranking "reciprocal rank fusion of ranked lists" by
-// cosine: rank 54 over the full collection, rank 7 over production code only. The
-// 6,027 vectors that push the answer out of the top ten are 1,879 test fixtures
-// and 4,148 documentation sections — a corpus this repository accumulated by
-// indexing itself. No weight can fix that, because both arms of the fusion rank
-// over the same set.
+// The primitive exists because of a measured corpus, not a hunch: on this
+// repository's own store 22% of the elements are test fixtures and 37% are
+// archived docs, so 60% of the vector population is a document a working
+// engineer is not asking about — and a bare-symbol query ranks those documents
+// above the function. Both fusion arms rank over the same set, so no weight
+// pair closes the gap; scoping the SET is the only lever, and it is the
+// caller's decision.
 //
-// keep is a caller decision, not a default, so nil keeps everything: an existing
-// caller is byte-for-byte unchanged, and a scoped caller pays one predicate per
-// row on a scan that was already O(n) and does not re-read.
+// ponytail: the predicate runs inside the O(n) scan this arm already does, so
+// it costs one call per row and adds no second pass. The PostgreSQL arm cannot
+// push a Go predicate into its HNSW SQL (see pg_fts.go), which is why the
+// scope is a caller-side decision rather than a WHERE clause.
 func (s *Store) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
 	if len(q) == 0 {
 		return nil, nil
 	}
 	rows, err := s.db.Query(`SELECT `+vectorSelectCols+`, embedding_vectors.vec
-		FROM embedding_vectors LEFT JOIN code_elements ce ON ce.qualified_name = embedding_vectors.qualified_name
+		FROM embedding_vectors JOIN code_elements ce ON ce.qualified_name = embedding_vectors.qualified_name
 		WHERE embedding_vectors.model_id = ?`, modelID)
 	if err != nil {
 		return nil, err
@@ -329,12 +350,12 @@ func (s *Store) SearchVectorsScoped(modelID string, q []float32, k int, keep fun
 		if meta != "" && meta != "{}" {
 			_ = json.Unmarshal([]byte(meta), &el.Metadata)
 		}
-		if keep != nil && !keep(el) {
-			continue
-		}
 		v := decodeVec(buf)
 		if len(v) != len(q) {
 			continue // stamped collection mismatch should never reach here; skip defensively
+		}
+		if keep != nil && !keep(el) {
+			continue // outside the caller's population: never ranked at all
 		}
 		hits = append(hits, scored{el: el, val: cosine(q, v)})
 	}

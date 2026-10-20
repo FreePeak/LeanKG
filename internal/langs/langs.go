@@ -16,6 +16,7 @@
 package langs
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"sync"
 
 	"github.com/FreePeak/LeanKG/internal/astgrep"
+	"github.com/FreePeak/LeanKG/internal/gitobj"
 )
 
 // Language identifies a supported language.
@@ -328,7 +330,9 @@ func (r *Registry) Lookup(name string) (Profile, bool) {
 
 // Activate detects the languages of codebase (including NESTED repos) and
 // marks exactly those active. Returns the per-repo-root mapping. Detection:
-//  1. walk to depth limit, honoring skipDirs;
+//  1. the file list: HEAD's committed files when codebase is a repository root
+//     with a commit (an untracked file cannot activate a language), otherwise
+//     a walk of the disk to the depth limit, honoring skipDirs;
 //  2. any directory containing a known repo marker file is a repo root;
 //  3. a root activates the languages whose marker it holds;
 //  4. fallback by extension census when no markers found at the top dir
@@ -336,10 +340,23 @@ func (r *Registry) Lookup(name string) (Profile, bool) {
 //  5. header ownership: .h belongs to the highest-priority activated language
 //     listing it in HeaderExts.
 func (r *Registry) Activate(codebase string) (map[string][]Language, error) {
-	roots, err := detectRoots(codebase)
+	abs, err := filepath.Abs(codebase)
 	if err != nil {
 		return nil, err
 	}
+	act := newActivation(abs)
+	blobs, fromHEAD, err := gitobj.HeadBlobs(context.Background(), abs)
+	if err != nil {
+		return nil, err
+	}
+	if fromHEAD {
+		for _, b := range blobs {
+			act.add(b.Path, func() bool { return true }) // a HEAD blob is a regular file
+		}
+	} else {
+		walkFiles(act)
+	}
+	roots := act.rootLangs()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.codebase = codebase
@@ -354,7 +371,7 @@ func (r *Registry) Activate(codebase string) (map[string][]Language, error) {
 	// Census ALWAYS supplements markers: a polyglot tree with one marker
 	// (e.g. pubspec.yaml) must not silence stray sources of other languages
 	// (stray .go files). Only census-hit languages activate here.
-	cens := censusExts(codebase)
+	cens := act.census
 	for _, l := range r.order {
 		if r.active[l] {
 			continue
@@ -512,95 +529,112 @@ func markerToLangs() map[string][]Language {
 	return m
 }
 
-// detectRoots walks codebase (bounded depth) and returns repo roots and the
-// languages each declares.
-func detectRoots(codebase string) (map[string][]Language, error) {
-	markers := markerToLangs()
-	exts := map[string]Language{}
-	for _, p := range Default {
-		for _, e := range p.Exts {
-			if _, dup := exts[e]; !dup {
-				exts[e] = p.Language
-			}
-		}
-	}
-	out := map[string][]Language{}
-	abs, err := filepath.Abs(codebase)
-	if err != nil {
-		return nil, err
-	}
-	baseDepth := strings.Count(abs, string(os.PathSeparator))
-	maxDepth := baseDepth + 4 // bounded walk: nested repos live shallow
+// scanDepth bounds detection: a marker file or a census file counts only when
+// its directory sits at most this many levels below the codebase root. Nested
+// repos live shallow; a repo marker deeper than this is out of scope.
+const scanDepth = 4
 
-	filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // unreadable subtrees: skip, never abort detection
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if path != abs && (skipDirs[name] || strings.HasPrefix(name, ".")) {
-				return filepath.SkipDir
-			}
-			depth := strings.Count(path, string(os.PathSeparator))
-			if depth > maxDepth {
-				return filepath.SkipDir
-			}
-			var found []Language
-			for mk, langs := range markers {
-				if st, err := os.Stat(filepath.Join(path, mk)); err == nil && !st.IsDir() {
-					found = append(found, langs...)
-				}
-			}
-			if len(found) > 0 {
-				set := map[Language]bool{}
-				var uniq []Language
-				for _, l := range found {
-					if !set[l] {
-						set[l] = true
-						uniq = append(uniq, l)
-					}
-				}
-				sort.Slice(uniq, func(i, j int) bool {
-					return langIndex(uniq[i]) < langIndex(uniq[j])
-				})
-				out[path] = uniq
-			}
-			return nil
-		}
-		return nil
-	})
-	return out, nil
+// skippedDirName reports whether detection prunes a directory of this name:
+// a skipDirs entry, or any dot-prefixed directory.
+func skippedDirName(name string) bool {
+	return skipDirs[name] || strings.HasPrefix(name, ".")
 }
 
-// censusExts counts known extensions in a bounded subtree below dir
-// (marker-less trees). The walk honors skipDirs and dot-dirs and is depth-
-// bounded like detectRoots (baseDepth+4): a marker-less tree whose sources
-// sit several directories down still activates its languages. Files deeper
-// than the bound stay unseen — a repo marker is the exact signal for those.
-func censusExts(dir string) map[string]int {
-	counts := map[string]int{}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return counts
+// activation is what detection learns from a codebase's files: the repo roots
+// with the languages their marker files declare, and the extension census.
+// The disk walk and the HEAD file list both feed it one path at a time, so the
+// two sources share one rule for skipped directories and depth. Marker-less
+// trees are covered by the census: its ceiling is that files deeper than
+// scanDepth stay unseen; a repo marker is the exact signal for those.
+type activation struct {
+	abs     string
+	markers map[string][]Language
+	roots   map[string][]Language // keyed by absolute repo-root directory
+	census  map[string]int        // file extension -> count
+}
+
+func newActivation(abs string) *activation {
+	return &activation{
+		abs:     abs,
+		markers: markerToLangs(),
+		roots:   map[string][]Language{},
+		census:  map[string]int{},
 	}
-	baseDepth := strings.Count(abs, string(os.PathSeparator))
-	filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+}
+
+// add takes one file path, slash-separated and relative to the codebase root.
+// isFile says whether a marker-named path is a real file; it is asked only for
+// marker names, so the disk walk stats nothing else.
+func (a *activation) add(rel string, isFile func() bool) {
+	parts := strings.Split(rel, "/")
+	dirs, name := parts[:len(parts)-1], parts[len(parts)-1]
+	if len(dirs) > scanDepth {
+		return
+	}
+	for _, d := range dirs {
+		if skippedDirName(d) {
+			return
+		}
+	}
+	a.census[filepath.Ext(name)]++
+	if langs, ok := a.markers[name]; ok && isFile() {
+		root := filepath.Join(append([]string{a.abs}, dirs...)...)
+		a.roots[root] = append(a.roots[root], langs...)
+	}
+}
+
+// rootLangs returns each repo root's languages, deduplicated and in activation
+// priority order.
+func (a *activation) rootLangs() map[string][]Language {
+	out := make(map[string][]Language, len(a.roots))
+	for root, found := range a.roots {
+		set := map[Language]bool{}
+		var uniq []Language
+		for _, l := range found {
+			if !set[l] {
+				set[l] = true
+				uniq = append(uniq, l)
+			}
+		}
+		sort.Slice(uniq, func(i, j int) bool {
+			return langIndex(uniq[i]) < langIndex(uniq[j])
+		})
+		out[root] = uniq
+	}
+	return out
+}
+
+// walkFiles feeds every file under a.abs to a, pruning the directories the
+// rules skip. The callback never fails, so WalkDir's error is always nil.
+func walkFiles(a *activation) {
+	baseDepth := strings.Count(a.abs, string(os.PathSeparator))
+	filepath.WalkDir(a.abs, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // unreadable subtrees: skip, never abort detection
 		}
 		if d.IsDir() {
-			if path != abs && (skipDirs[d.Name()] || strings.HasPrefix(d.Name(), ".")) {
+			if path != a.abs && skippedDirName(d.Name()) {
 				return filepath.SkipDir
 			}
-			if strings.Count(path, string(os.PathSeparator)) > baseDepth+4 {
+			if strings.Count(path, string(os.PathSeparator)) > baseDepth+scanDepth {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		counts[filepath.Ext(d.Name())]++
+		rel, rerr := filepath.Rel(a.abs, path)
+		if rerr != nil {
+			return nil
+		}
+		a.add(filepath.ToSlash(rel), func() bool { return statsAsFile(path) })
 		return nil
 	})
-	return counts
+}
+
+// statsAsFile reports whether path, following symlinks, is a non-directory.
+// A dangling symlink is not a file, so it cannot carry a repo marker.
+func statsAsFile(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 func langIndex(l Language) int {

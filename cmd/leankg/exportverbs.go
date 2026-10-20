@@ -34,8 +34,7 @@ func openVerbStore(project string, mode store.Mode) (store.Backend, string, erro
 	if dir == "" {
 		dir = envOr("LEANKG_PROJECT", ".")
 	}
-	st, err := store.OpenBackend(context.Background(), dir,
-		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), "", mode)
+	st, err := openStore(context.Background(), dir, "", mode)
 	if err != nil {
 		return nil, dir, err
 	}
@@ -213,20 +212,12 @@ func cmdPack(args []string) {
 		*output, m.Elements, m.Relationships, scope, hash)
 }
 
-// cmdGenerate ports `leankg generate`: render AGENTS.md from the graph.
-//
-// It PRINTS by default and writes only when the caller names a destination
-// with --out. It used to write `docs/AGENTS.md` in the current directory with
-// no flag and no announcement — a verb whose documented output is stdout had an
-// unannounced side effect on the user's tree, and in a repository whose `docs/`
-// is tracked, the next `git status` showed a file the operator never asked for
-// and never knew to review. Nothing is lost by printing: the body is still on
-// stdout, and a caller who wants the file names where it goes.
+// cmdGenerate ports `leankg generate`: render AGENTS.md from the graph and
+// write it to docs/AGENTS.md (the Rust destination).
 func cmdGenerate(args []string) {
 	fs := flag.NewFlagSet("generate", flag.ExitOnError)
 	template := fs.String("template", "", "template name (accepted for CLI parity; the Rust generator never read it)")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	out := fs.String("out", "", "write the body to this path instead of only printing it")
 	parseInterspersed("generate", fs, args, 0)
 	_ = template
 
@@ -240,65 +231,45 @@ func cmdGenerate(args []string) {
 	if err != nil {
 		verbFatal(err)
 	}
-	if *out == "" {
-		fmt.Printf("%s", body)
-		fmt.Println("\n(not written to disk — pass --out PATH to save it)")
-		return
-	}
-	path, err := docgen.WriteFileTo(*out, body)
+	fmt.Printf("Generated documentation:\n%s", body)
+	path, err := docgen.WriteFile("docs", body)
 	if err != nil {
 		verbFatal(err)
 	}
-	fmt.Printf("%s", body)
 	fmt.Printf("\nSaved to %s\n", path)
 }
 
-// requireIndexedElement refuses a qualified_name the index does not contain AND
-// a description with nothing in it, before any write. Both halves are the same
-// rule — a write must report itself empty AND unanchored — and the empty half
-// was found in the same wave as the anchored one: `annotate --description "   "`
-// wrote a whitespace annotation and answered "Created annotation", which is a
-// successful write of nothing in the same shape as wave 15's lesson field. `annotate` and `link` are the only ways an agent records
+// requireIndexedElement refuses a qualified_name the index does not contain,
+// BEFORE any write. `annotate` and `link` are the only ways an agent records
 // business knowledge against a specific element — the prose a code reader
 // cannot get from the source — and both used to accept anything:
 //
-//	leankg annotate "no.such.go::Nope" --description x   -> "Updated annotation"
-//	leankg link "no.such.go::Nope" STORY-1               -> "Linked"
+//	leankg annotate "pkg/does-not-exist.go::Nope" --description x
+//	  -> Created annotation for 'pkg/does-not-exist.go::Nope'   (exit 0)
 //
-// An annotation attached to a typo'd or renamed identifier is worse than a wrong
-// answer: it never surfaces in a query (the element is not in the graph), never
-// appears in search-annotations unless the agent guesses to grep for it, and is
-// never migrated when the element is renamed. The knowledge is not merely wrong,
-// it is unreachable.
+// Measured live on the 298-project self-host 2026-10-11, and the row really
+// landed on an element `code_elements` does not contain. An annotation
+// attached to a typo'd or renamed identifier is worse than a wrong answer: it
+// never surfaces in a query (the element is not in the graph), never appears
+// in search-annotations unless someone guesses to grep for it, and is never
+// migrated when the element is renamed. The knowledge is not merely wrong, it
+// is unreachable.
 //
-// The refusal names the index as the reason, because an agent that only sees
-// "not found" cannot tell a typo from a stale index — and the two want opposite
+// The refusal names the INDEX as the reason, because a caller who only sees
+// "not found" cannot tell a typo from a stale index — and those want opposite
 // next steps (re-ask with the right name vs `leankg index`). It does not
-// suggest a near-match: an annotation is cheap to redo and expensive to discover
-// later, so the cheap side is to refuse.
-func requireIndexedElement(st store.Backend, element, description string) error {
+// suggest a near-match: an annotation is cheap to redo and expensive to
+// discover later, so refusing is the cheap side.
+func requireIndexedElement(st store.Backend, element string) error {
 	if strings.TrimSpace(element) == "" {
 		return fmt.Errorf("element is required: pass the qualified_name an element has in the index, e.g. `leankg query <name>` to find it")
-	}
-	if strings.TrimSpace(description) == "" {
-		return fmt.Errorf("description is required: an annotation with no text is not a note about anything — say what the element does")
 	}
 	els, err := st.FindExact(element)
 	if err != nil {
 		return err
 	}
 	if len(els) == 0 {
-		// Name the store searched. Wave 20's regression sweep hit the hole this
-		// closes: a project indexed through LEANKG_DB_PATH, annotated WITHOUT
-		// it, produced exactly these words — and the advice (`leankg query
-		// <name>`) resolves the store the same way, so the caller was told the
-		// element does not exist by the very command meant to contradict it.
-		// Two situations, opposite fixes, one message; the store path is what
-		// tells them which. Same class as wave 1 (one verb reading a path only
-		// `serve` honoured) and wave 10 (freshness that could not see its own
-		// staleness): a diagnosis must not share its blind spot with its remedy.
-		return fmt.Errorf("no indexed element matches %q in %s — annotations attach to an element that store has; if the element is right, you are reading a different store than the one you indexed (LEANKG_DB_PATH / leankg.yaml db.standalone_db_path), otherwise run `leankg index .`",
-			element, st.Path())
+		return fmt.Errorf("no indexed element matches %q — annotations attach to an element the index has, so run `leankg index .` if this project is stale, or `leankg query <name>` to find the right qualified_name", element)
 	}
 	return nil
 }
@@ -324,10 +295,9 @@ func cmdAnnotate(args []string) {
 	}
 	defer st.Close()
 
-	if err := requireIndexedElement(st, element, *description); err != nil {
+	if err := requireIndexedElement(st, element); err != nil {
 		verbFatal(err)
 	}
-
 	created, err := annot.Annotate(st, element, *description, optString(*userStory), optString(*feature))
 	if err != nil {
 		verbFatal(err)
@@ -364,10 +334,9 @@ func cmdLink(args []string) {
 	}
 	defer st.Close()
 
-	if err := requireIndexedElement(st, element, "link"); err != nil {
+	if err := requireIndexedElement(st, element); err != nil {
 		verbFatal(err)
 	}
-
 	if err := annot.Link(st, element, id, *kind); err != nil {
 		verbFatal(err)
 	}
@@ -396,6 +365,18 @@ func cmdSearchAnnotations(args []string) {
 		verbFatal(err)
 	}
 	if len(results) == 0 {
+		// A miss must not read as "no such row": annot.Search matches the
+		// DESCRIPTION only (by design since the port), so a feature id or a
+		// qualified name that is stored and printed can never match. Measured
+		// 2026-10-11: an annotation carrying feature_id FR-ZZ is invisible to
+		// `search-annotations FR-ZZ` while `search-annotations <its
+		// description>` finds it, and the caller concludes the row is gone.
+		// Say so, and offer the two reads that can find it.
+		if all, _ := annot.All(st); len(all) > 0 {
+			fmt.Printf("No annotations found matching '%s'\n", query)
+			fmt.Printf("  (%d annotation(s) exist; search matches DESCRIPTION text only — try show-annotations <element>, or words from the description)\n", len(all))
+			return
+		}
 		fmt.Printf("No annotations found matching '%s'\n", query)
 		return
 	}

@@ -162,6 +162,7 @@ func TestCompatMountWriteRoutesGated(t *testing.T) {
 		{"compat read by id", "GET", "/v1/default/banks/omp/memories/123-0", http.StatusOK},
 		{"compat reflect", "POST", "/v1/default/banks/omp/reflect", http.StatusOK},
 		{"native retain still gated", "POST", "/api/v1/memory/banks/omp/memories", http.StatusForbidden},
+		{"compat document delete", "DELETE", "/v1/default/banks/omp/documents/doc-1", http.StatusForbidden},
 	}
 	for _, c := range calls {
 		t.Run(c.name, func(t *testing.T) {

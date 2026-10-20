@@ -10,14 +10,18 @@
       "line_start": 1,
       "name": "Alpha",
       "qualified_name": "src/alpha.go::Alpha",
-      "score": 0,
+      "ranks": {
+        "vector": 1
+      },
+      "score": 0.04918032786885246,
       "similarity": -0.3505250911615613
     }
   ],
   "limit": 1,
   "query": "compute the answer",
   "retrieval": {
-    "reason": "reciprocal-rank fusion vector",
-    "rung": "L3"
+    "reason": "reciprocal-rank fusion rrf(vector)",
+    "rung": "L3",
+    "scope": "all"
   }
 }

@@ -190,6 +190,14 @@ func (k *Knowledge) ServiceContextJSON(service, env string) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
+	// Lists are [] when empty, never null (RS-09); the optional scalars keep
+	// null for "unknown".
+	if ctx.RecentIncidents == nil {
+		ctx.RecentIncidents = []string{}
+	}
+	if ctx.KnownRisks == nil {
+		ctx.KnownRisks = []string{}
+	}
 	b, err := json.Marshal(ctx)
 	if err != nil {
 		return nil, err

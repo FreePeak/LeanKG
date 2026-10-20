@@ -20,15 +20,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"github.com/FreePeak/LeanKG/internal/langs"
-	"github.com/FreePeak/LeanKG/internal/lsp"
-	"io"
-	"io/fs"
-	"os"
+	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/gitobj"
+	"github.com/FreePeak/LeanKG/internal/langs"
+	"github.com/FreePeak/LeanKG/internal/lsp"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -48,9 +47,8 @@ type Result struct {
 	Skipped       int
 }
 
-// skipDirs are skipped path components during the walk; any dot-prefixed
-// directory is skipped as well, and so is any dot-prefixed FILE (see the
-// walk's name gate) — one rule for both, so the walk and indexDir cannot drift.
+// skipDirs are skipped path components during the walk and for git candidates;
+// any dot-prefixed directory is skipped as well (skippedDir).
 var skipDirs = map[string]bool{
 	".git": true, "target": true, "node_modules": true, "vendor": true,
 	".leankg": true, "dist": true, "build": true, ".worktrees": true,
@@ -110,11 +108,11 @@ func staticOwner(ext string) (string, bool) {
 	return l, ok
 }
 
-// IndexDir walks dir, re-extracts changed/new files, drops deleted ones and
-// returns per-run counters. Files whose size+mtime match the stored record or
-// whose SHA-256 matches ContentHash are skipped without any writes — UNLESS the
-// index was built by a different extractor (see IndexerVersion), in which case
-// the per-file signals are all true and all beside the point.
+// IndexDir indexes dir, re-extracts changed/new files, drops deleted ones and
+// returns per-run counters. A git repository root with a commit is indexed from
+// HEAD (committed content, change detection by blob ID); any other directory is
+// walked from disk. Walked files whose size+mtime match the stored record or
+// whose SHA-256 matches ContentHash are skipped without any writes.
 func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error) {
 	return IndexDirWith(ctx, st, dir, nil)
 }
@@ -132,18 +130,7 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 			return string(l), ok
 		}
 	}
-	// The extractor identity gate, before the walk: a store whose recorded
-	// indexer differs from this build is stale in a way no per-file comparison
-	// can detect, because the files are unchanged and only the CODE THAT READS
-	// THEM changed. Measured (wave 10): adding the doc comment to an element's
-	// stored content left 842 of 857 files unvisited, `doctor --deep` passed
-	// index-freshness, and the retrieval bench moved 65/84 -> 64/84 over a
-	// quietly half-old corpus.
-	stale, err := indexerChanged(st)
-	if err != nil {
-		return Result{}, err
-	}
-	res, err := indexDir(ctx, st, dir, owner, stale)
+	res, err := indexDir(ctx, st, dir, owner)
 	if err != nil {
 		return res, err
 	}
@@ -170,44 +157,69 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 	return res, nil
 }
 
-// indexerNamespace and indexerVersionKey are where the index records which
-// build of the extractor produced it.
+// Index-root tripwire (RS-02). Stored file paths are relative to the walk
+// root and the reconcile below deletes every stored path the walk does not
+// see, so walking a DIFFERENT root against an existing store reads the whole
+// project as deleted — `import repo <sibling>` replaced a 48-file index with
+// one file. The store records the root it was built from and refuses any
+// other; RebaseRoot is the deliberate escape for a moved checkout.
 const (
-	indexerNamespace  = "indexer"
-	indexerVersionKey = "version"
+	rootKVNamespace = "index"
+	rootKVKey       = "root"
 )
 
-// IndexerVersion is the identity of the extraction pipeline: bump it on ANY
-// change to what is EXTRACTED (which languages, which symbol kinds, how an
-// element's content/qualified_name/metadata is assembled). It is deliberately
-// separate from any "which files changed" logic, and it is the indexer's
-// counterpart to the embedding collection's ChunkerVersion stamp.
-//
-// ponytail: a hand-maintained integer, not a hash of the source tree. A hash
-// would be self-invalidating on any unrelated edit to the package, turning every
-// commit into a full reindex; the integer costs a bump per behavioural change,
-// which is the same discipline the embedding stamp already requires and the one
-// a reviewer can check in the diff.
-const IndexerVersion = 2
-
-// indexerChanged reports whether the store was built by a different extractor
-// (or by none — a store that never recorded one is assumed stale, so the first
-// run against a new build reindexes rather than trusting rows it cannot vouch
-// for).
-func indexerChanged(st store.Backend) (bool, error) {
-	got, ok, err := st.KVGet(indexerNamespace, indexerVersionKey)
-	if err != nil {
-		return false, err
+// CanonicalRoot is the form a walk root is recorded and compared in:
+// absolute and symlink-resolved, so /tmp and /private/tmp agree.
+func CanonicalRoot(dir string) string {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
 	}
-	return !ok || got != strconv.Itoa(IndexerVersion), nil
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	return filepath.Clean(dir)
 }
 
-// force re-extracts every file even when size+mtime/SHA-256 match: the run that
-// sets it did so because the EXTRACTOR changed, and a per-file comparison of
-// unchanged sources can never see that.
-func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc, force bool) (Result, error) {
-	var res Result
+// RebaseRoot records dir as the store's index root, replacing any previous
+// one (`leankg index --rebase-root` after moving a checkout).
+func RebaseRoot(st store.Backend, dir string) error {
+	return st.KVSet(rootKVNamespace, rootKVKey, CanonicalRoot(dir))
+}
 
+// checkRoot enforces the tripwire: a store with no recorded root (built
+// before RS-02, or empty) adopts dir; a store with files and a different
+// recorded root refuses the walk before anything is deleted.
+func checkRoot(st store.Backend, dir string, hasFiles bool) error {
+	want := CanonicalRoot(dir)
+	got, ok, err := st.KVGet(rootKVNamespace, rootKVKey)
+	if err != nil {
+		return err
+	}
+	if ok && got != "" && got != want && hasFiles {
+		return errs.NewError(errs.IndexRootMismatch,
+			fmt.Sprintf("this store was indexed from %q; walking %q would delete every element outside it", got, want),
+			"index the recorded root, open the other directory as its own project, or run `leankg index --rebase-root <dir>` if the checkout moved")
+	}
+	if !ok || got != want {
+		return st.KVSet(rootKVNamespace, rootKVKey, want)
+	}
+	return nil
+}
+
+// extractorVersion versions what the extractors put into an element
+// (content, boundaries, edge rules). Unchanged files are skipped by the
+// size+mtime / content-hash signals, so an extractor change would otherwise
+// reach a store only as its files happen to change: v2 (RS-10, leading doc
+// comments in content; signature-only names as references) never reached
+// an existing store at all; v3 (#531, word boundary after the TS/JS
+// `function` keyword) drops phantom elements such as `ality` from
+// `functionality`. A store recorded under another version re-extracts
+// every file once.
+const extractorVersion = "3"
+
+const extractorKVKey = "extractor_version"
+
+func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (res Result, err error) {
 	prev, err := st.Files()
 	if err != nil {
 		return res, err
@@ -216,86 +228,42 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	for _, f := range prev {
 		prevByRel[f.Path] = f
 	}
-
-	type candidate struct {
-		rel, abs, lang string
-		size           int64
-		mtimeNS        int64
+	if err := checkRoot(st, dir, len(prev) > 0); err != nil {
+		return res, err
 	}
-	var cands []candidate
-	onDisk := make(map[string]bool)
-
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err != nil {
-			return err
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if path == dir {
-				return nil
-			}
-			if skipDirs[name] || strings.HasPrefix(name, ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		// A dot-prefixed FILE is out, same as a dot-prefixed directory (the
-		// skipDirs branch above): the extension gate below cannot tell a
-		// tracked `.env.example` from a live `.env`, so without this every
-		// dotfile with a language extension entered the store — agent scratch
-		// files (`.*.md`), harness configs, and secret-shaped files that then
-		// get embedded, exported and pushed. Found live on this repository: a
-		// dot-prefixed PR scratch note answered the query "where is the single
-		// flight lock taken" at rank 1 on both arms, outranking the source
-		// documenting it.
-		//
-		// ponytail: name-based, not a denylist of secret filenames — one rule,
-		// and a denylist is always incomplete. The cost is that a deliberately
-		// dot-prefixed source file is not indexed; nothing in this repo tracks
-		// one, and `git ls-files` is the authority if that ever changes.
-		if strings.HasPrefix(name, ".") {
-			return nil
-		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if _, ok := owner(filepath.Ext(name)); !ok {
-			// Specialist-claimed files (AndroidManifest.xml, build.gradle,
-			// pom.xml, …) are indexed by their own extractor even though no
-			// language owns their extension.
-			if !SpecialistClaim(rel) {
-				return nil
-			}
-		}
-		if info, err := d.Info(); err == nil && info.Size() > maxIndexFileBytes {
-			res.SkippedLarge++ // vendored/minified bundles: not index material
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		onDisk[rel] = true
-		lang, _ := owner(filepath.Ext(name))
-		cands = append(cands, candidate{
-			rel: rel, abs: path, lang: lang,
-			size: info.Size(), mtimeNS: info.ModTime().UnixNano(),
-		})
-		return nil
-	})
+	ver, _, err := st.KVGet(rootKVNamespace, extractorKVKey)
 	if err != nil {
 		return res, err
 	}
+	reextract := len(prev) > 0 && ver != extractorVersion
 
-	// Deleted files: previously indexed, absent on disk.
+	// A repository root with commits is indexed from HEAD (committed content
+	// only, never the working tree). Any other directory walks the disk.
+	blobs, fromGit, err := gitobj.HeadBlobs(ctx, dir)
+	if err != nil {
+		return res, err
+	}
+	var cands []candidate
+	var rd *gitobj.Reader // git source only: one cat-file process per run
+	if fromGit {
+		cands = gitCandidates(blobs, owner, &res)
+		if rd, err = gitobj.NewReader(ctx, dir); err != nil {
+			return res, err
+		}
+		defer func() {
+			if cerr := rd.Close(); err == nil {
+				err = cerr
+			}
+		}()
+	} else if cands, err = walkCandidates(ctx, dir, owner, &res); err != nil {
+		return res, err
+	}
+	onDisk := make(map[string]bool, len(cands))
+	for _, c := range cands {
+		onDisk[c.rel] = true
+	}
+
+	// Deleted files: previously indexed, absent from the source.
 	for rel := range prevByRel {
 		if onDisk[rel] {
 			continue
@@ -312,8 +280,10 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		res.DeletedFiles++
 	}
 
-	// Changed/new files: 3-signal detection (size+mtime fast path, then
-	// SHA-256 confirmation). Extraction and writes are grouped PER DIRECTORY:
+	// Changed/new files. A git candidate is keyed by its blob ID: a stored record
+	// with the same key is skipped without reading anything. A walk candidate
+	// keeps the 3-signal check (size+mtime, then SHA-256). Extraction and writes
+	// are grouped PER DIRECTORY:
 	//   (a) memory stays bounded by one package at a time (a 40k-file tree
 	//       previously buffered every file's elements before writing);
 	//   (b) call targets are scoped to the same package — matching against a
@@ -323,10 +293,10 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	// Ceiling: no import/type resolution, so cross-package calls are not
 	// linked (upgrade path: tree-sitter symbol tables).
 	type changedFile struct {
-		rel, abs, lang, hash string
-		size                 int64
-		mtimeNS              int64
+		candidate
+		hash string
 	}
+	var rekeys []store.FileRecord // walk-written records that match a blob
 	byDir := map[string][]changedFile{}
 	var dirOrder []string
 	for _, c := range cands {
@@ -334,87 +304,130 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return res, err
 		}
 		rec, seen := prevByRel[c.rel]
-		if !force {
-			if seen && rec.Size == c.size && rec.MtimeNS == c.mtimeNS {
+		trusted := seen && !reextract
+		var hash string
+		if c.oid != "" {
+			hash = gitKey(c.oid)
+			if trusted && rec.ContentHash == hash {
 				res.Skipped++
 				continue
 			}
-		}
-		sum, err := fileSHA256(c.abs)
-		if err != nil {
-			return res, err
-		}
-		if !force && seen && rec.ContentHash == sum {
-			// Content identical despite size/mtime signal mismatch: skip, no
-			// writes (the stored record stays as-is per contract, so the next
-			// run re-hashes this file — acceptable).
-			res.Skipped++
-			continue
+			// Only a walk-written record can hold a SHA-256 of the bytes, so a
+			// record already keyed to a blob is changed without reading it.
+			if trusted && !isGitKey(rec.ContentHash) {
+				content, err := c.content(rd)
+				if err != nil {
+					return res, err
+				}
+				if rec.ContentHash == sha256Hex(content) {
+					// Same bytes, written by the walk: adopt the blob key, no extraction.
+					rekeys = append(rekeys, store.FileRecord{Path: c.rel, Size: c.size, ContentHash: hash})
+					res.Skipped++
+					continue
+				}
+			}
+		} else {
+			if trusted && rec.Size == c.size && rec.MtimeNS == c.mtimeNS {
+				res.Skipped++
+				continue
+			}
+			content, err := c.content(rd)
+			if err != nil {
+				return res, err
+			}
+			hash = sha256Hex(content)
+			if trusted && rec.ContentHash == hash {
+				// Content identical despite size/mtime signal mismatch: skip, no
+				// writes (the stored record stays as-is per contract, so the next
+				// run re-hashes this file — acceptable).
+				res.Skipped++
+				continue
+			}
 		}
 		d := dirOf(c.rel)
 		if _, ok := byDir[d]; !ok {
 			dirOrder = append(dirOrder, d)
 		}
-		byDir[d] = append(byDir[d], changedFile{
-			rel: c.rel, abs: c.abs, lang: c.lang, hash: sum,
-			size: c.size, mtimeNS: c.mtimeNS,
-		})
+		byDir[d] = append(byDir[d], changedFile{candidate: c, hash: hash})
+	}
+	if len(rekeys) > 0 {
+		if err := st.UpsertFiles(rekeys); err != nil {
+			return res, err
+		}
 	}
 
+	// pendingFile pairs each extracted file with its own record: a specialist
+	// file that writes itself is dropped here, so later files must not shift.
+	type pendingFile struct {
+		changedFile
+		fe  fileElements
+		src []byte
+	}
 	for _, d := range dirOrder {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
 		files := byDir[d]
-		extracted := make([]fileElements, 0, len(files))
+		pending := make([]pendingFile, 0, len(files))
 		names := map[string][]string{} // package-scoped call targets
 		for _, f := range files {
-			if handled, err := indexSpecialistFile(st, f.rel, f.abs, f.size, f.mtimeNS, f.hash, &res); err != nil {
+			src, err := f.content(rd)
+			if err != nil {
+				return res, err
+			}
+			if handled, err := indexSpecialistFile(st, f.rel, src, f.size, f.mtimeNS, f.hash, &res); err != nil {
 				return res, err
 			} else if handled {
 				continue // the specialist own its extraction AND its writes
 			}
-			fe, err := extractFileAs(f.rel, f.abs, f.lang)
-			if err != nil {
-				return res, err
-			}
-			extracted = append(extracted, fe)
+			fe := extractFileAs(f.rel, src, f.lang)
+			pending = append(pending, pendingFile{changedFile: f, fe: fe, src: src})
 			for _, e := range fe.elements {
 				names[e.name] = append(names[e.name], e.qn)
 			}
 		}
-		for i, fe := range extracted {
-			f := files[i]
-			if err := st.DeleteByFile(fe.rel); err != nil {
+		for _, p := range pending {
+			f := p.changedFile
+			if err := st.DeleteByFile(f.rel); err != nil {
 				return res, err
 			}
-			if err := st.UpsertElements(fe.toStore()); err != nil {
+			if err := st.UpsertElements(p.fe.toStore()); err != nil {
 				return res, err
 			}
-			rels := relationships(fe.elements, names)
+			rels := relationships(p.fe.elements, names)
 			if err := st.UpsertRelationships(rels); err != nil {
 				return res, err
 			}
 			if err := st.UpsertFiles([]store.FileRecord{{
-				Path: fe.rel, Size: f.size, MtimeNS: f.mtimeNS,
+				Path: f.rel, Size: f.size, MtimeNS: f.mtimeNS,
 				ContentHash: f.hash,
 			}}); err != nil {
 				return res, err
 			}
 			res.Files++
-			res.Elements += len(fe.elements)
+			res.Elements += len(p.fe.elements)
 			res.Relationships += len(rels)
 			if f.lang == "kotlin" {
-				if err := indexKotlinExtras(st, f.rel, f.abs, &res); err != nil {
+				if err := indexKotlinExtras(st, f.rel, p.src, &res); err != nil {
 					return res, err
 				}
 			}
 		}
 	}
-	// Record the identity LAST, so a run that failed above never stamps a store
-	// with an extractor that did not finish writing it.
-	if err := st.KVSet(indexerNamespace, indexerVersionKey, strconv.Itoa(IndexerVersion)); err != nil {
-		return res, err
+	// Vectors are keyed by qualified name and DeleteByFile does not own them,
+	// so every deleted file or removed symbol left a vector behind (RS-05).
+	// Sweep once per run that changed anything, instead of cascading inside
+	// DeleteByFile, which would also discard the vectors of a changed file's
+	// UNCHANGED symbols and force them to re-embed.
+	if res.DeletedFiles > 0 || res.Files > 0 {
+		if _, err := st.DeleteOrphanVectors(); err != nil {
+			return res, fmt.Errorf("index: reclaim orphan vectors: %w", err)
+		}
+	}
+	if ver != extractorVersion {
+		if err := st.KVSet(rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
+			return res, err
+		}
 	}
 	return res, nil
 }
@@ -442,15 +455,8 @@ func dirOf(rel string) string {
 	return "."
 }
 
-func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+// sha256Hex is the content hash a walk candidate is stored and compared under.
+func sha256Hex(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }

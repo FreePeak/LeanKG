@@ -116,7 +116,71 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("store: record migration %03d: %w", m.version, err)
 		}
 	}
-	return nil
+	return s.backfillFTSTerms()
+}
+
+// ftsTermsVersion versions what ftsContent writes; bump it when that changes
+// so existing stores rebuild their FTS rows once (a schema migration cannot:
+// the identifier split is Go code, not SQL).
+const ftsTermsVersion = "1"
+
+// backfillFTSTerms rebuilds every elements_fts row with the current
+// ftsContent once per ftsTermsVersion (RS-13: identifier-split names). Rows
+// written after this point already carry the terms; an unchanged file is
+// never re-extracted, so without this pass an existing store would keep the
+// old rows until each file changed.
+func (s *Store) backfillFTSTerms() error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('kv','elements_fts','code_elements')`).Scan(&n); err != nil {
+		return err
+	}
+	if n < 3 {
+		return nil // a partial (synthetic upgrade-test) schema: nothing to rebuild
+	}
+	if v, ok, err := s.KVGet("fts", "terms_version"); err != nil {
+		return err
+	} else if ok && v == ftsTermsVersion {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(`SELECT id, name, qualified_name, COALESCE(content,'') FROM code_elements`)
+	if err != nil {
+		return fmt.Errorf("store: fts backfill read: %w", err)
+	}
+	type row struct {
+		id int64
+		e  Element
+	}
+	var all []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.e.Name, &r.e.QualifiedName, &r.e.Content); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range all {
+		if _, err := tx.Exec(`DELETE FROM elements_fts WHERE rowid = ?`, r.id); err != nil {
+			return fmt.Errorf("store: fts backfill delete: %w", err)
+		}
+		if _, err := tx.Exec(`INSERT INTO elements_fts (rowid, name, qualified_name, content) VALUES (?, ?, ?, ?)`,
+			r.id, r.e.Name, r.e.QualifiedName, ftsContent(r.e)); err != nil {
+			return fmt.Errorf("store: fts backfill insert: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.KVSet("fts", "terms_version", ftsTermsVersion)
 }
 
 // MigrationStep is one embedded schema migration, identified by its

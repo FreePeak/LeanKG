@@ -441,6 +441,23 @@ ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS chunker_version INTEGER NOT NULL 
 ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS query_prefix TEXT NOT NULL DEFAULT '';
 ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS document_prefix TEXT NOT NULL DEFAULT '';
 `},
+	{16, "fts-identifier-terms", nil, `
+-- RS-13: the 'simple' parser keeps RotateStagingCredentials as ONE lexeme,
+-- so "rotate staging credentials" never matched it on the keyword arm. The
+-- tsvector gains the name split at case boundaries (weight A, like the name
+-- itself); underscores and hyphens already split. regexp_replace is
+-- IMMUTABLE, as a stored generated column requires. The SQLite engine gets
+-- the same terms through ftsContent (no PostgreSQL-style column there).
+ALTER TABLE code_elements DROP COLUMN IF EXISTS fts;
+ALTER TABLE code_elements ADD COLUMN fts tsvector
+	GENERATED ALWAYS AS (
+		setweight(to_tsvector('simple', name), 'A') ||
+		setweight(to_tsvector('simple', regexp_replace(regexp_replace(name, '([a-z0-9])([A-Z])', '\1 \2', 'g'), '([A-Z]+)([A-Z][a-z])', '\1 \2', 'g')), 'A') ||
+		setweight(to_tsvector('simple', qualified_name), 'B') ||
+		setweight(to_tsvector('simple', coalesce(content, '')), 'B')
+	) STORED;
+CREATE INDEX IF NOT EXISTS idx_code_elements_fts ON code_elements USING gin (fts);
+`},
 }
 
 // Migrate applies all pending migrations (RW only). Migrations are applied in

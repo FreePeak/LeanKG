@@ -623,3 +623,42 @@ func TestPGStampIdentityAndPerFileReplace(t *testing.T) {
 		t.Fatal("empty vector set must be refused")
 	}
 }
+
+// TestPGNoOrphanHitsAndIdentifierTerms pins RS-05 and RS-13 on PostgreSQL:
+// a vector whose element was deleted is never an L3 hit (before gc), and a
+// camelCase name is found by its words through the tsvector arm.
+func TestPGNoOrphanHitsAndIdentifierTerms(t *testing.T) {
+	s := openPGTest(t)
+	if err := s.UpsertElements([]Element{
+		{QualifiedName: "a.go::RotateStagingCredentials", ElementType: "function", Name: "RotateStagingCredentials", FilePath: "a.go", Language: "go", Content: "func RotateStagingCredentials() {}"},
+		{QualifiedName: "b.go::Keep", ElementType: "function", Name: "Keep", FilePath: "b.go", Language: "go", Content: "func Keep() {}"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hits, arm, err := s.SearchElementsFTS("rotate staging credentials", 5)
+	if err != nil || len(hits) == 0 || hits[0].Element.Name != "RotateStagingCredentials" {
+		t.Fatalf("identifier terms via %s: %v %+v", arm, err, hits)
+	}
+	st := ModelStamp{ModelID: "pg-ghost-model", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "unit"}
+	if err := s.WriteStamp(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertVectors(st.ModelID, []VectorRow{
+		{QualifiedName: "a.go::RotateStagingCredentials", Vec: []float32{1, 0, 0, 0}},
+		{QualifiedName: "b.go::Keep", Vec: []float32{0, 1, 0, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteByFile("a.go"); err != nil {
+		t.Fatal(err)
+	}
+	vh, err := s.SearchVectors(st.ModelID, []float32{1, 0, 0, 0}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range vh {
+		if h.Element.QualifiedName == "a.go::RotateStagingCredentials" {
+			t.Fatalf("deleted element served as a vector hit: %+v", h)
+		}
+	}
+}

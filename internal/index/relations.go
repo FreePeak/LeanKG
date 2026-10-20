@@ -2,6 +2,7 @@ package index
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -60,22 +61,46 @@ func relationships(els []indexedElem, nameTargets map[string][]string) []store.R
 		// Grammar-derived call sites first: they are exact (an objc selector
 		// resolves to the methods that spell it, not to a word token), so they
 		// do not consume the heuristic per-element edge budget below.
+		linked := map[string]bool{}
 		for _, sel := range e.calls {
 			for _, tqn := range nameTargets[sel] {
 				add(e.qn, tqn, "calls", 0.7)
+				linked[tqn] = true
 			}
 		}
 		outgoing := 0
-		for _, w := range wordRe.FindAllString(e.content, -1) {
+		// Scan the code only: a doc comment naming another function is
+		// prose, not a call site (RS-10 prepends it to content).
+		code := e.content
+		if e.docLen > 0 && e.docLen <= len(code) {
+			code = code[e.docLen:]
+		}
+		// A name used only in the declaration's signature — a parameter,
+		// return or receiver type — is a reference, not a call: `Engine.Query`
+		// does not call `Engine`. Names in the body (Python `Greeter()`, Go
+		// `Widget{}`) stay calls. impact follows both edge types.
+		sig, body := splitSignature(code)
+		inBody := map[string]bool{}
+		for _, w := range wordRe.FindAllString(body, -1) {
+			inBody[w] = true
+		}
+		for _, w := range wordRe.FindAllString(sig+"\n"+body, -1) {
 			if len(w) < minCallNameLen {
 				continue // short identifiers are noise, not call sites
+			}
+			rel := "calls"
+			if !inBody[w] {
+				rel = "references"
 			}
 			for _, target := range nameTargets[w] {
 				if outgoing >= maxEdgesPerElement {
 					break
 				}
+				if linked[target] {
+					continue // the grammar already linked this pair exactly
+				}
 				before := len(out)
-				add(e.qn, target, "calls", 0.5)
+				add(e.qn, target, rel, 0.5)
 				if len(out) > before {
 					outgoing++
 				}
@@ -89,4 +114,17 @@ func relationships(els []indexedElem, nameTargets map[string][]string) []store.R
 		}
 	}
 	return out
+}
+
+// splitSignature separates a declaration's signature (its first line up to
+// the opening brace, or up to the `):` of a Python-style def) from the rest.
+func splitSignature(code string) (sig, body string) {
+	first, rest, _ := strings.Cut(code, "\n")
+	if i := strings.Index(first, "{"); i >= 0 {
+		return first[:i], first[i:] + "\n" + rest
+	}
+	if i := strings.Index(first, "):"); i >= 0 {
+		return first[:i+2], first[i+2:] + "\n" + rest
+	}
+	return first, rest
 }

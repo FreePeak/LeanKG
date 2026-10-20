@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/bits"
@@ -26,6 +27,13 @@ type Entry struct {
 	Importance float64        `json:"importance"`
 	Cwd        string         `json:"cwd"`
 	Metadata   map[string]any `json:"metadata"`
+
+	// Score is the relative relevance of this row in the recall that
+	// returned it (higher is better). Recall sets it on the rows it returns:
+	// -bm25 for a lexical-only ranking, the reciprocal-rank-fusion sum when
+	// the dense arm contributed. Values compare only within one response.
+	// It is never persisted.
+	Score float64 `json:"-"`
 }
 
 // bankPath sanitizes the bank name and appends .jsonl, matching the Rust
@@ -199,7 +207,14 @@ type RetainResult struct {
 // back to this store's own project dir. The batch is idempotent per session
 // (store.rs:92-108): a retained_through_user_turn at or below the session's
 // stored cursor skips the whole batch.
-func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int) (RetainResult, error) {
+func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int, tags []string) (RetainResult, error) {
+	return m.SessionRetainCtx(context.Background(), scope, cwd, bank, sessionID, turns, throughUserTurn, tags)
+}
+
+// SessionRetainCtx is SessionRetain with the caller's context, so the retain
+// event joins the transport call that made it (telemetry.WithIdentity).
+func (m *Memory) SessionRetainCtx(ctx context.Context, scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int, tags []string) (RetainResult, error) {
+	start := time.Now()
 	if sessionID == "" {
 		return RetainResult{}, fmt.Errorf("memory: session_retain requires session_id")
 	}
@@ -214,6 +229,7 @@ func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns [
 		target = scope.WriteBank(BankName(m.scopeCwd(cwd)))
 	}
 	if seen, ok := m.sessionCursor(sessionID); ok && throughUserTurn <= seen {
+		recordRetain(ctx, target, 0, len(turns), 0, start)
 		return RetainResult{Bank: target, Skipped: len(turns), RetainedThroughUserTurn: seen}, nil
 	}
 	ms := time.Now().UnixMilli()
@@ -233,18 +249,13 @@ func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns [
 			Timestamp:  ms / 1000,
 			Importance: TranscriptImportance,
 			Cwd:        cwd,
-			Metadata: map[string]any{
-				"session_id":                 sessionID,
-				"source_id":                  sourceID,
-				"message_count":              len(turns),
-				"retained_through_user_turn": throughUserTurn,
-				"cwd":                        cwd,
-			},
+			Metadata:   entryMetadata(sessionID, sourceID, len(turns), throughUserTurn, cwd, tags),
 		})
 	}
 	if err := m.appendBank(target, entries); err != nil {
 		return RetainResult{}, err
 	}
+	recordRetain(ctx, target, len(entries), 0, 0, start)
 	return RetainResult{Bank: target, Written: len(entries), RetainedThroughUserTurn: throughUserTurn}, nil
 }
 
@@ -256,8 +267,14 @@ func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns [
 // in tagged mode; bank.rs:88-95). Returns the consulted banks plus the
 // ranked rows; limit <= 0 means 8 (the OMP recallLimit).
 func (m *Memory) SessionRecall(scope Scope, cwd, bank, query string, limit int) (banks []string, entries []Entry, err error) {
+	return m.SessionRecallCtx(context.Background(), scope, cwd, bank, query, limit)
+}
+
+// SessionRecallCtx is SessionRecall with the caller's context (see
+// SessionRetainCtx).
+func (m *Memory) SessionRecallCtx(ctx context.Context, scope Scope, cwd, bank, query string, limit int) (banks []string, entries []Entry, err error) {
 	banks = m.sessionReadBanks(scope, cwd, bank)
-	entries, err = m.RecallBanks(banks, query, limit)
+	entries, err = m.RecallBanksCtx(ctx, banks, query, limit)
 	return banks, entries, err
 }
 
@@ -287,36 +304,7 @@ func (m *Memory) scopeCwd(cwd string) string {
 // — session-keyed, so concurrent sessions sharing one bank never suppress
 // each other's batches; the REST Retain contract stays per-bank by design).
 func (m *Memory) sessionCursor(sessionID string) (int, bool) {
-	files, err := os.ReadDir(filepath.Join(m.root, "banks"))
-	if err != nil {
-		return 0, false
-	}
-	best, found := 0, false
-	for _, f := range files {
-		if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(m.root, "banks", f.Name()))
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			if line == "" {
-				continue
-			}
-			var e Entry
-			if json.Unmarshal([]byte(line), &e) != nil {
-				continue
-			}
-			if e.Metadata["session_id"] != sessionID {
-				continue
-			}
-			if n, ok := e.Metadata["retained_through_user_turn"].(float64); ok && (!found || int(n) > best) {
-				best, found = int(n), true
-			}
-		}
-	}
-	return best, found
+	return m.cursor("session", sessionID)
 }
 
 // Retain appends a transcript batch to a bank as JSONL, tagging every row's
@@ -325,9 +313,20 @@ func (m *Memory) sessionCursor(sessionID string) (int, bool) {
 // skipped entirely (resume-safety; the REST/mnemopi contract keys it per
 // bank — SessionRetain below keys the same check per session, matching the
 // reference handler).
-func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error {
-	if throughUserTurn <= m.bankCursor(bank) {
-		return nil
+//
+// The result says what happened: a skipped batch reports Skipped and the
+// stored cursor, never a write (RS-07: the REST handler answered
+// `retained: N` for batches this gate had dropped).
+func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) (RetainResult, error) {
+	return m.RetainCtx(context.Background(), bank, entries, throughUserTurn)
+}
+
+// RetainCtx is Retain with the caller's context (see SessionRetainCtx).
+func (m *Memory) RetainCtx(ctx context.Context, bank string, entries []Entry, throughUserTurn int) (RetainResult, error) {
+	start := time.Now()
+	if cur := m.bankCursor(bank); throughUserTurn <= cur {
+		recordRetain(ctx, bank, 0, len(entries), 0, start)
+		return RetainResult{Bank: bank, Skipped: len(entries), RetainedThroughUserTurn: cur}, nil
 	}
 	for i := range entries {
 		if entries[i].Metadata == nil {
@@ -336,7 +335,11 @@ func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error
 		entries[i].Metadata["retained_through_user_turn"] = throughUserTurn
 	}
 	applyEntryDefaults(entries)
-	return m.appendBank(bank, entries)
+	if err := m.appendBank(bank, entries); err != nil {
+		return RetainResult{}, err
+	}
+	recordRetain(ctx, bank, len(entries), 0, 0, start)
+	return RetainResult{Bank: bank, Written: len(entries), RetainedThroughUserTurn: throughUserTurn}, nil
 }
 
 // RetainRaw appends entries WITHOUT the user-turn cursor gate: same
@@ -346,8 +349,18 @@ func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) error
 // cursor would silently drop every write after the first (a missing cursor
 // is 0, and 0 <= 0 short-circuits).
 func (m *Memory) RetainRaw(bank string, entries []Entry) error {
+	return m.RetainRawCtx(context.Background(), bank, entries)
+}
+
+// RetainRawCtx is RetainRaw with the caller's context (see SessionRetainCtx).
+func (m *Memory) RetainRawCtx(ctx context.Context, bank string, entries []Entry) error {
+	start := time.Now()
 	applyEntryDefaults(entries)
-	return m.appendBank(bank, entries)
+	if err := m.appendBank(bank, entries); err != nil {
+		return err
+	}
+	recordRetain(ctx, bank, len(entries), 0, 0, start)
+	return nil
 }
 
 // applyEntryDefaults fills ID/Source/Timestamp/Importance exactly as the
@@ -374,9 +387,123 @@ func applyEntryDefaults(entries []Entry) {
 	}
 }
 
+// RetainReplacing is RetainRaw with Hindsight document upsert semantics:
+// every existing row whose metadata document_id is in replaceDocs is dropped
+// before entries are appended, under one lock so a concurrent retain never
+// lands between the drop and the append. An empty replaceDocs is RetainRaw.
+func (m *Memory) RetainReplacing(bank string, entries []Entry, replaceDocs []string) error {
+	_, err := m.RetainReplacingCtx(context.Background(), bank, entries, replaceDocs)
+	return err
+}
+
+// RetainReplacingCtx is RetainReplacing that also reports how many existing
+// rows the document upsert dropped (the replaced count). The count goes to
+// telemetry; the Hindsight retain response does not carry it.
+func (m *Memory) RetainReplacingCtx(ctx context.Context, bank string, entries []Entry, replaceDocs []string) (int, error) {
+	start := time.Now()
+	applyEntryDefaults(entries)
+	m.bankMu.Lock()
+	defer m.bankMu.Unlock()
+	replaced := 0
+	if len(replaceDocs) > 0 {
+		drop := make(map[string]bool, len(replaceDocs))
+		for _, d := range replaceDocs {
+			drop[d] = true
+		}
+		n, err := m.rewriteBankLocked(bank, func(e Entry) bool { return drop[entryDocumentID(e)] })
+		if err != nil {
+			return 0, err
+		}
+		replaced = n
+	}
+	if err := m.appendBankLocked(bank, entries); err != nil {
+		return replaced, err
+	}
+	recordRetain(ctx, bank, len(entries), 0, replaced, start)
+	return replaced, nil
+}
+
+// DeleteDocument removes every row of one document from a bank and reports
+// how many rows went. A missing bank or unknown document deletes nothing.
+func (m *Memory) DeleteDocument(bank, documentID string) (int, error) {
+	return m.DeleteDocumentCtx(context.Background(), bank, documentID)
+}
+
+// DeleteDocumentCtx is DeleteDocument with the caller's context (see
+// SessionRetainCtx).
+func (m *Memory) DeleteDocumentCtx(ctx context.Context, bank, documentID string) (int, error) {
+	if strings.TrimSpace(documentID) == "" {
+		return 0, nil
+	}
+	start := time.Now()
+	m.bankMu.Lock()
+	defer m.bankMu.Unlock()
+	n, err := m.rewriteBankLocked(bank, func(e Entry) bool { return entryDocumentID(e) == documentID })
+	if err != nil {
+		return 0, err
+	}
+	recordDelete(ctx, bank, n, start)
+	return n, nil
+}
+
+// entryDocumentID reads the client document id RetainRaw stored in metadata.
+func entryDocumentID(e Entry) string {
+	doc, _ := e.Metadata["document_id"].(string)
+	return doc
+}
+
+// rewriteBankLocked drops the rows drop selects and atomically replaces the
+// bank file (temp file + rename, so a crash leaves the old bank intact).
+// Lines that fail to parse are kept verbatim: a rewrite must never be the
+// thing that loses data. Callers hold bankMu.
+func (m *Memory) rewriteBankLocked(bank string, drop func(Entry) bool) (int, error) {
+	path := m.bankPath(bank)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("memory: read bank %s: %w", bank, err)
+	}
+	var kept strings.Builder
+	removed := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		var e Entry
+		if json.Unmarshal([]byte(line), &e) == nil && drop(e) {
+			removed++
+			continue
+		}
+		kept.WriteString(line)
+		kept.WriteByte('\n')
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(kept.String()), 0o644); err != nil {
+		return 0, fmt.Errorf("memory: rewrite bank %s: %w", bank, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return 0, fmt.Errorf("memory: rewrite bank %s: %w", bank, err)
+	}
+	if err := m.reindexBankLocked(bank); err != nil {
+		return removed, err
+	}
+	return removed, nil
+}
+
 // appendBank writes rows to the bank's JSONL, creating the banks dir on
 // first use. Raw append, no cursor logic — callers own idempotency.
 func (m *Memory) appendBank(bank string, entries []Entry) error {
+	m.bankMu.Lock()
+	defer m.bankMu.Unlock()
+	return m.appendBankLocked(bank, entries)
+}
+
+func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 	if err := os.MkdirAll(filepath.Join(m.root, "banks"), 0o755); err != nil {
 		return fmt.Errorf("memory: create banks dir: %w", err)
 	}
@@ -387,48 +514,32 @@ func (m *Memory) appendBank(bank string, entries []Entry) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	for _, e := range entries {
+		e.Content = Redact(e.Content)
 		if err := enc.Encode(e); err != nil {
 			return fmt.Errorf("memory: encode entry: %w", err)
 		}
 	}
-	return nil
+	return m.indexAppendLocked(bank, entries)
 }
 
-// BankCursor is bankCursor for a caller outside this package that must REPORT
-// the gate rather than only obey it: the REST retain route answers
-// `skipped` / `bank_cursor` so a cursor-gated re-send is visible to the client
-// instead of looking like a successful write. Reading is a public promise about
-// the store; writing is not — Retain stays the only writer.
-func (m *Memory) BankCursor(bank string) int { return m.bankCursor(bank) }
-
-// bankCursor reads the highest retained_through_user_turn stored in the
-// bank's JSONL (0 for a missing/empty bank).
+// bankCursor is the highest retained_through_user_turn stored in the bank
+// (0 for a missing/empty bank), kept in the index on every append (RS-20; it
+// used to re-read the bank JSONL on every retain).
 func (m *Memory) bankCursor(bank string) int {
-	data, err := os.ReadFile(m.bankPath(bank))
-	if err != nil {
-		return 0
-	}
-	max := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
-			continue
-		}
-		var e Entry
-		if json.Unmarshal([]byte(line), &e) != nil {
-			continue
-		}
-		if n, ok := e.Metadata["retained_through_user_turn"].(float64); ok && int(n) > max {
-			max = int(n)
-		}
-	}
-	return max
+	v, _ := m.cursor("bank", sanitizeBank(bank))
+	return v
 }
 
 // Recall returns up to limit entries scored by query-token overlap from one
 // bank. Zero-match entries never surface. limit <= 0 means 8 (OMP recall
 // limit).
 func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
-	return m.RecallBanks([]string{bank}, query, limit)
+	return m.RecallBanksCtx(context.Background(), []string{bank}, query, limit)
+}
+
+// RecallCtx is Recall with the caller's context (see SessionRetainCtx).
+func (m *Memory) RecallCtx(ctx context.Context, bank, query string, limit int) ([]Entry, error) {
+	return m.RecallBanksCtx(ctx, []string{bank}, query, limit)
 }
 
 // RecallBanks merges ranked recall across banks in order (Rust
@@ -437,75 +548,38 @@ func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
 // set is ranked score-descending (stable — bank order breaks ties, matching
 // the reference's append-then-sort). Missing banks read as empty.
 func (m *Memory) RecallBanks(banks []string, query string, limit int) ([]Entry, error) {
+	return m.RecallBanksCtx(context.Background(), banks, query, limit)
+}
+
+// RecallBanksCtx is RecallBanks with the caller's context (see
+// SessionRetainCtx).
+func (m *Memory) RecallBanksCtx(ctx context.Context, banks []string, query string, limit int) ([]Entry, error) {
+	return m.RecallFilteredCtx(ctx, banks, query, limit, nil)
+}
+
+// RecallFiltered is RecallBanks with an eligibility filter applied BEFORE
+// ranking and the limit, so a scope filter (hindsight tags) narrows the
+// candidate set instead of an already-truncated page. A nil keep admits all.
+func (m *Memory) RecallFiltered(banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
+	return m.RecallFilteredCtx(context.Background(), banks, query, limit, keep)
+}
+
+// RecallFilteredCtx is RecallFiltered with the caller's context: every recall
+// ends here, so this is the one place a recall event is recorded.
+func (m *Memory) RecallFilteredCtx(ctx context.Context, banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 8
 	}
-	// unique query tokens, lowercased
-	qSeen := map[string]bool{}
-	var qTokens []string
-	for _, t := range tokenize(query) {
-		if !qSeen[t] {
-			qSeen[t] = true
-			qTokens = append(qTokens, t)
-		}
+	start := time.Now()
+	// RS-18: bm25 over the index (porter stemming, accent folding, stopwords
+	// dropped from the query) instead of raw unique-token overlap over a full
+	// JSONL scan, where a row of stopwords outranked real content.
+	rows, denseIDs, err := m.recallIndexed(banks, query, limit, keep)
+	if err != nil {
+		return nil, err
 	}
-	if len(qTokens) == 0 {
-		return nil, nil
-	}
-	type scored struct {
-		e     Entry
-		score int
-	}
-	var matched []scored
-	seenIDs := map[string]bool{}
-	for _, bank := range banks {
-		data, err := os.ReadFile(m.bankPath(bank))
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			if line == "" {
-				continue
-			}
-			var e Entry
-			if json.Unmarshal([]byte(line), &e) != nil {
-				continue
-			}
-			if seenIDs[e.ID] {
-				continue
-			}
-			seenIDs[e.ID] = true
-			seen := map[string]bool{}
-			for _, t := range tokenize(e.Content) {
-				seen[t] = true
-			}
-			score := 0
-			for _, t := range qTokens {
-				if seen[t] {
-					score++
-				}
-			}
-			if score == 0 {
-				continue // zero-match entries never surface
-			}
-			matched = append(matched, scored{e, score})
-		}
-	}
-	if len(matched) == 0 {
-		return nil, nil
-	}
-	sort.SliceStable(matched, func(i, j int) bool { return matched[i].score > matched[j].score })
-	entries := make([]Entry, 0, min(limit, len(matched)))
-	for _, s := range matched {
-		if len(entries) == limit {
-			break
-		}
-		entries = append(entries, s.e)
-	}
-	return entries, nil
+	recordRecall(ctx, banks, query, limit, rows, denseIDs, start)
+	return rows, nil
 }
 
 // recentBanks returns the newest limit rows across the given banks — the
@@ -514,6 +588,15 @@ func (m *Memory) RecallBanks(banks []string, query string, limit int) ([]Entry, 
 // shared), ranked newest-first with stable bank/file order on equal
 // timestamps; empty-content rows are skipped (never recallable).
 func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
+	rows, _, err := m.recentBanksCounting(banks, limit)
+	return rows, err
+}
+
+// recentBanksCounting is recentBanks that also reports how many rows the
+// banks hold. The cold path already parses every line of every file to sort
+// them, so the count is free — and it is what makes an injection block able
+// to say "22 more memories hidden" instead of silently showing a prefix.
+func (m *Memory) recentBanksCounting(banks []string, limit int) ([]Entry, int, error) {
 	var rows []Entry
 	seenIDs := map[string]bool{}
 	for _, bank := range banks {
@@ -522,7 +605,7 @@ func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, err
+			return nil, 0, err
 		}
 		for _, line := range strings.Split(string(data), "\n") {
 			if line == "" {
@@ -539,11 +622,12 @@ func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
 			rows = append(rows, e)
 		}
 	}
+	total := len(rows)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Timestamp > rows[j].Timestamp })
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
-	return rows, nil
+	return rows, total, nil
 }
 
 // InjectBlock renders ranked recall rows as the <memories>-equivalent
@@ -554,6 +638,13 @@ func (m *Memory) recentBanks(banks []string, limit int) ([]Entry, error) {
 // (never a truncated half-memory). An empty result returns "" so callers
 // skip the block entirely.
 func InjectBlock(entries []Entry, limit, tokenBudget int) string {
+	text, _ := injectRows(entries, limit, tokenBudget, len(entries))
+	return text
+}
+
+// injectRows is InjectBlock that also reports how many leading entries the
+// block carries (the rows telemetry counts as injected).
+func injectRows(entries []Entry, limit, tokenBudget, total int) (string, int) {
 	if limit <= 0 {
 		limit = 8 // OMP recallLimit
 	}
@@ -579,16 +670,32 @@ func InjectBlock(entries []Entry, limit, tokenBudget int) string {
 		n++
 	}
 	if n == 0 {
-		return ""
+		return "", 0
+	}
+	// FR-SMA-06 (truncation half): a budget is useless if it is invisible.
+	// The reader of this block cannot see the banks it came from, so it has
+	// no way to know it is looking at a PREFIX. Measured: 30 rows retained,
+	// 8 injected, and the block was silent about the other 22 — an agent
+	// reading it reasonably concluded that was the whole memory. A comment
+	// line inside the block is safe for the callers that render it as text
+	// and for an XML consumer it parses as a comment, so nothing has to
+	// strip it.
+	hidden := total - n
+	if hidden <= 0 {
+		hidden = len(entries) - n
+	}
+	if hidden > 0 {
+		fmt.Fprintf(&b, "\n<!-- %d more memories hidden by the injection budget of %d entries / %d tokens -->\n", hidden, limit, tokenBudget)
 	}
 	b.WriteString("</memories>")
-	return b.String()
+	return b.String(), n
 }
 
 // RankedMemory is one row of the OMP recall/injection contract
 // {id, content, source, timestamp, score} (Rust handler.rs:3031-3041).
-// Score is the reference's constant 0.0 — the rank is carried by the list
-// order and OMP does not consume the value.
+// Score is the row's relative relevance in its recall (see Entry.Score):
+// non-increasing down the list, meaningful only within one response. The
+// list order is the authoritative rank; OMP does not consume the value.
 type RankedMemory struct {
 	ID        string  `json:"id"`
 	Content   string  `json:"content"`
@@ -601,7 +708,7 @@ type RankedMemory struct {
 func RankEntries(entries []Entry) []RankedMemory {
 	out := make([]RankedMemory, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, RankedMemory{ID: e.ID, Content: e.Content, Source: e.Source, Timestamp: e.Timestamp})
+		out = append(out, RankedMemory{ID: e.ID, Content: e.Content, Source: e.Source, Timestamp: e.Timestamp, Score: e.Score})
 	}
 	return out
 }
@@ -611,4 +718,24 @@ func tokenize(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
+}
+
+// entryMetadata builds a session_retain row's metadata. Tags are first-class
+// (K2): a caller passes them explicitly and they are persisted under the same
+// "tags" key the REST retain path and the Hindsight tag filters read, so a
+// tagged row is recallable by tag no matter which surface wrote it. An empty
+// tag list leaves the key absent rather than writing an empty array, which the
+// filters read as "untagged" (and "exact" then selects these rows).
+func entryMetadata(sessionID, sourceID string, messageCount, throughUserTurn int, cwd string, tags []string) map[string]any {
+	meta := map[string]any{
+		"session_id":                 sessionID,
+		"source_id":                  sourceID,
+		"message_count":              messageCount,
+		"retained_through_user_turn": throughUserTurn,
+		"cwd":                        cwd,
+	}
+	if len(tags) > 0 {
+		meta["tags"] = append([]string(nil), tags...)
+	}
+	return meta
 }

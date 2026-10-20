@@ -8,7 +8,7 @@ Public API (package lsp):
   func Available(spec *langs.LSPSpec) bool     // any command resolvable on PATH
   func Start(ctx context.Context, lang langs.Language, spec *langs.LSPSpec, rootDir string) (*Client, error)
       // spawns the first resolvable command, LSP initialize handshake with
-      // rootURI=file://rootDir, capabilities negotiation (no blocking waits >5s)
+      // rootURI=file://rootDir, capabilities negotiation (handshake bounded by handshakeTimeout, 10s)
   func (c *Client) DocumentSymbols(ctx context.Context, absPath string) ([]Symbol, error)
       // textDocument/didOpen + textDocument/documentSymbol; Symbol{Name,Kind,Range{StartLine,EndLine}}
   func (c *Client) WorkspaceSymbols(ctx context.Context, query string) ([]Symbol, error)
@@ -26,6 +26,7 @@ Public API (package lsp):
 Rules:
 - stdio JSON-RPC 2.0 with Content-Length framing (implement the framing;
   do NOT pull an LSP dependency — go.mod is frozen).
-- Never block >5s on a server that won't start: kill and return an error.
+- Never block >10s (handshakeTimeout) on a server that won't start: kill and return an error.
+  Each request after the handshake is bounded separately by the bridge's timeout_ms (default 5s).
 - Pool one process per (language, rootDir); reuse across calls.
 - All failures surface as typed errors (ErrNoServer, ErrTimeout, ErrProtocol).

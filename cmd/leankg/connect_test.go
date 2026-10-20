@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -53,6 +54,151 @@ func writeSeedJSON(t *testing.T, path string, root map[string]any) {
 // of a fresh stdio config for every JSON client. The claude-code and
 // cursor/gemini entries carry NO "type" key — enforced by the full-map
 // comparison.
+// TestWriteClientXdevYAML pins the xdev target (FR-ZCP-14 K9): xdev reads a
+// YAML mcp.yml, not JSON, so the writer must produce the shape its loader
+// parses and must preserve every sibling server. Unknown targets must list
+// xdev, so an operator who types the wrong one is told about it.
+func TestWriteClientXdevYAML(t *testing.T) {
+	home := t.TempDir()
+	seed := strings.Join([]string{
+		"# MCP servers for xdev",
+		"servers:",
+		"    atlassian:",
+		"        url: http://127.0.0.1:8081/mcp",
+		"        autoStart:",
+		"            command: /usr/local/bin/mcp-atlassian",
+		"",
+	}, "\n")
+	path := filepath.Join(home, ".xdev", "agent", "mcp.yml")
+	writeSeed(t, path, seed)
+
+	if err := WriteClient(home, ClientXdev, Config{Mode: "stdio", Exe: testExe}); err != nil {
+		t.Fatalf("WriteClient xdev: %v", err)
+	}
+	var root struct {
+		Servers map[string]map[string]any `yaml:"servers"`
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("written mcp.yml is not valid YAML: %v\n%s", err, data)
+	}
+	if _, ok := root.Servers["atlassian"]; !ok {
+		t.Fatal("sibling server atlassian was dropped")
+	}
+	entry, ok := root.Servers["leankg"]
+	if !ok {
+		t.Fatalf("leankg entry missing; servers = %v", root.Servers)
+	}
+	if entry["type"] != "stdio" || entry["command"] != testExe {
+		t.Fatalf("stdio entry = %v, want type=stdio command=%s", entry, testExe)
+	}
+	args, _ := entry["args"].([]any)
+	if len(args) < 3 || args[0] != "serve" || args[1] != "--stdio" || args[2] != "--memory" {
+		t.Fatalf("args = %v, want serve --stdio --memory", args)
+	}
+}
+
+// TestWriteClientXdevHTTPShape: the HTTP entry carries xdev's url key and no
+// command, so the streamable HTTP client is wired.
+func TestWriteClientXdevHTTPShape(t *testing.T) {
+	home := t.TempDir()
+	if err := WriteClient(home, ClientXdev, Config{Mode: "http", URL: testURL}); err != nil {
+		t.Fatalf("WriteClient xdev http: %v", err)
+	}
+	var root struct {
+		Servers map[string]map[string]any `yaml:"servers"`
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".xdev", "agent", "mcp.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("not valid YAML: %v", err)
+	}
+	entry := root.Servers["leankg"]
+	if entry == nil || entry["url"] != testURL {
+		t.Fatalf("http entry = %v, want url=%s", entry, testURL)
+	}
+	if _, ok := entry["command"]; ok {
+		t.Fatal("http entry must not carry a stdio command")
+	}
+}
+
+// TestXdevAutoStartSchema pins the autoStart block to xdev's AutoStartConfig
+// field set. #467 shipped five knobs xdev does not define (startupWaitSecs,
+// logFile, restartOnExit, restartBackoffSec, maxRestarts): the loader ignores
+// unknown keys, so the file read as configured while the restart supervision
+// it promised did not exist. The set below is checked against the consumer's
+// struct tags. pidFile is in the set because xdev declares it; note that xdev
+// does not read it yet, so a file with or without it behaves identically today
+// — this guard is about not inventing keys, not about a live behaviour.
+func TestXdevAutoStartSchema(t *testing.T) {
+	want := map[string]bool{
+		"command": true, "args": true, "cwd": true, "env": true,
+		"healthUrl": true, "healthTimeoutSec": true, "pidFile": true,
+	}
+	got := map[string]bool{}
+	for _, cfg := range []Config{
+		{Mode: "stdio", Exe: testExe},
+		{Mode: "http", URL: testURL},
+	} {
+		entry, _ := xdevEntry(cfg)["autoStart"].(map[string]any)
+		if entry == nil {
+			t.Fatalf("%s entry has no autoStart", cfg.Mode)
+		}
+		if len(entry) != len(want) {
+			t.Fatalf("%s autoStart has %d keys %v, want exactly %d: %v", cfg.Mode, len(entry), entry, len(want), want)
+		}
+		for k := range entry {
+			got[k] = true
+		}
+	}
+	for k := range want {
+		if !got[k] {
+			t.Fatalf("autoStart is missing %q", k)
+		}
+	}
+	for k := range got {
+		if !want[k] {
+			t.Fatalf("autoStart carries %q, which xdev's AutoStartConfig does not define", k)
+		}
+	}
+}
+
+// TestWriteClientXdevAutoStartsLeankg: xdev's autoStart block is what makes a
+// missing server self-heal, so the written stdio entry must carry one with the
+// health probe and the sidecar port that keeps startup alive.
+func TestWriteClientXdevAutoStart(t *testing.T) {
+	home := t.TempDir()
+	if err := WriteClient(home, ClientXdev, Config{Mode: "http", URL: testURL, Project: home}); err != nil {
+		t.Fatalf("WriteClient xdev: %v", err)
+	}
+	var root struct {
+		Servers map[string]struct {
+			AutoStart map[string]any `yaml:"autoStart"`
+		} `yaml:"servers"`
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".xdev", "agent", "mcp.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("not valid YAML: %v", err)
+	}
+	auto := root.Servers["leankg"].AutoStart
+	if auto == nil {
+		t.Fatal("http entry has no autoStart block; a stopped server would not self-heal")
+	}
+	for _, k := range []string{"command", "healthUrl", "healthTimeoutSec"} {
+		if _, ok := auto[k]; !ok {
+			t.Fatalf("autoStart is missing %q: %v", k, auto)
+		}
+	}
+}
+
 func TestWriteClientStdioShapes(t *testing.T) {
 	stdio := map[string]any{"command": testExe, "args": []any{"serve", "--stdio", "--memory"}}
 	cases := []struct {
@@ -127,6 +273,42 @@ func TestWriteClientHTTPShapes(t *testing.T) {
 			got := readJSON(t, filepath.Join(home, tc.rel))
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got  %#v\nwant %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWriteClientHTTPURLHasNoQuery pins the FR-ZCP-04 URL contract at the
+// writer, not just in the prose: a remote entry carries the bare URL and no
+// `?project=`. The server's per-request project resolution (FR-ZCP-01:
+// stdio cwd, HTTP roots/list) makes the suffix unnecessary, and a hardcoded
+// absolute path is a stale machine moment waiting to happen — measured
+// 2026-10-11 on this machine: three configs carrying
+// `?project=/workspace-freepeak` (a Docker mount that exists nowhere on the
+// host) made every initialize fail with `unknown project`, so the clients
+// that read them dropped leankg from their tool list entirely.
+func TestWriteClientHTTPURLHasNoQuery(t *testing.T) {
+	for _, client := range Clients() {
+		t.Run(client, func(t *testing.T) {
+			home := t.TempDir()
+			// A caller-supplied query is the shape that must not be
+			// forwarded: connect --http --url "...?project=..." is the
+			// exact invocation that produced the broken files above.
+			u := testURL + "?project=/some/other/machine"
+			if err := WriteClient(home, client, Config{Mode: "http", URL: u}); err != nil {
+				t.Fatal(err)
+			}
+			path, err := clientConfigPath(home, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "?") {
+				t.Fatalf("%s: emitted URL carries a query string, want the bare %q:\n%s",
+					client, testURL, data)
 			}
 		})
 	}
@@ -345,9 +527,9 @@ func TestRegisterCWDCreatesHook(t *testing.T) {
 		"hooks": map[string]any{
 			"SessionStart": []any{
 				map[string]any{
-					"matcher": "*",
+					"matcher": "startup|resume",
 					"hooks": []any{
-						map[string]any{"type": "command", "command": testExe + ` index "$CLAUDE_PROJECT_DIR"`},
+						map[string]any{"type": "command", "command": testExe + ` index --hook "$CLAUDE_PROJECT_DIR"`, "async": true},
 					},
 				},
 			},
@@ -405,6 +587,111 @@ func TestRegisterCWDIdempotent(t *testing.T) {
 	}
 }
 
+// TestRegisterCWDReplacesLegacyGeneratedEntry: a previously generated entry
+// (the pre-async `index "$CLAUDE_PROJECT_DIR"` form) is replaced in place by
+// the current entry; unrelated entries keep their position and content.
+func TestRegisterCWDReplacesLegacyGeneratedEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[`+
+		`{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]},`+
+		`{"matcher":"*","hooks":[{"type":"command","command":"/old/bin/leankg index \"$CLAUDE_PROJECT_DIR\""}]}`+
+		`]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	want := []any{
+		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
+		hookEntryForTest(testExe),
+	}
+	if !reflect.DeepEqual(ss, want) {
+		t.Fatalf("got  %#v\nwant %#v", ss, want)
+	}
+}
+
+// TestRegisterCWDRemovesLegacyWhenCurrentPresent: the current entry is already
+// there but a legacy generated entry sits beside it. Left alone the hook would
+// run twice, so the legacy entry goes and the current one stays the only copy.
+func TestRegisterCWDRemovesLegacyWhenCurrentPresent(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[`+
+		`{"matcher":"startup","hooks":[{"type":"command","command":"echo hi"}]},`+
+		`{"matcher":"startup|resume","hooks":[{"type":"command","command":"`+testExe+` index --hook \"$CLAUDE_PROJECT_DIR\"","async":true}]},`+
+		`{"matcher":"*","hooks":[{"type":"command","command":"/old/bin/leankg index \"$CLAUDE_PROJECT_DIR\""}]}`+
+		`]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	want := []any{
+		map[string]any{"matcher": "startup", "hooks": []any{map[string]any{"type": "command", "command": "echo hi"}}},
+		hookEntryForTest(testExe),
+	}
+	if !reflect.DeepEqual(ss, want) {
+		t.Fatalf("got  %#v\nwant %#v", ss, want)
+	}
+}
+
+// TestRegisterCWDKeepsCustomizedEntry: a leankg command with extra tokens is
+// the user's own wiring, not a generated entry, so it survives untouched and
+// the generated entry is appended after it.
+func TestRegisterCWDKeepsCustomizedEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	customised := `{"matcher":"*","hooks":[{"type":"command","command":"\"$HOME/.claude/hooks/freepeak-only\" env X=1 /path/leankg index --hook \"$CLAUDE_PROJECT_DIR\""}]}`
+	writeSeed(t, path, `{"hooks":{"SessionStart":[`+customised+`]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	var kept any
+	if err := json.Unmarshal([]byte(customised), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if len(ss) != 2 || !reflect.DeepEqual(ss[0], kept) {
+		t.Fatalf("customised entry not preserved: %#v", ss)
+	}
+	gen := ss[1].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if gen["command"] != testExe+` index --hook "$CLAUDE_PROJECT_DIR"` {
+		t.Fatalf("generated entry not appended: %#v", ss[1])
+	}
+}
+
+// TestRegisterCWDKeepsForeignHooksOfGeneratedEntry: a legacy leankg hook that
+// shares an entry with another hook loses only its own hook; the foreign one
+// stays in place and the generated entry follows it.
+func TestRegisterCWDKeepsForeignHooksOfGeneratedEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeSeed(t, path, `{"hooks":{"SessionStart":[{"matcher":"*","hooks":[`+
+		`{"type":"command","command":"/old/bin/leankg index \"$CLAUDE_PROJECT_DIR\""},`+
+		`{"type":"command","command":"echo keep"}]}]}}`)
+	if err := RegisterCWD(home, ClientClaudeCode, testExe); err != nil {
+		t.Fatal(err)
+	}
+	ss := readJSON(t, path)["hooks"].(map[string]any)["SessionStart"].([]any)
+	want := []any{
+		map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": "echo keep"}}},
+		hookEntryForTest(testExe),
+	}
+	if !reflect.DeepEqual(ss, want) {
+		t.Fatalf("got  %#v\nwant %#v", ss, want)
+	}
+}
+
+// hookEntryForTest spells out the generated entry for exe, independent of
+// hookEntry, so the assertions pin the wire shape.
+func hookEntryForTest(exe string) map[string]any {
+	return map[string]any{
+		"matcher": "startup|resume",
+		"hooks": []any{
+			map[string]any{"type": "command", "command": exe + ` index --hook "$CLAUDE_PROJECT_DIR"`, "async": true},
+		},
+	}
+}
+
 // TestRegisterCWDUnsupportedClient: only claude-code has a hook mechanism.
 func TestRegisterCWDUnsupportedClient(t *testing.T) {
 	for _, c := range []string{ClientCursor, ClientCodex, ClientGemini, ClientOpencode, ClientOmp} {
@@ -416,7 +703,7 @@ func TestRegisterCWDUnsupportedClient(t *testing.T) {
 
 // TestClients pins the supported set and order.
 func TestClients(t *testing.T) {
-	want := []string{"claude-code", "cursor", "codex", "gemini", "opencode", "omp"}
+	want := []string{"claude-code", "cursor", "codex", "gemini", "opencode", "omp", "xdev"}
 	if got := Clients(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Clients() = %v, want %v", got, want)
 	}

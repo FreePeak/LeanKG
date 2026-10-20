@@ -138,7 +138,7 @@ func TestSidecarLifecycle(t *testing.T) {
 	defer cancel()
 	sc, err := StartSidecar(ctx, SidecarConfig{
 		Command: script, Port: port,
-		ReadyTimeout: 15 * time.Second, PollInterval: 25 * time.Millisecond,
+		ReadyTimeout: sidecarReadyTimeout(), PollInterval: 25 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("StartSidecar: %v", err)
@@ -187,7 +187,7 @@ func TestSidecarShutdownOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sc, err := StartSidecar(ctx, SidecarConfig{
 		Command: script, Port: port,
-		ReadyTimeout: 15 * time.Second, PollInterval: 25 * time.Millisecond,
+		ReadyTimeout: sidecarReadyTimeout(), PollInterval: 25 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("StartSidecar: %v", err)
@@ -447,6 +447,137 @@ func TestSidecarNotFoundNamesDownload(t *testing.T) {
 	}
 }
 
+// TestStartSidecarAdoptsRunningSidecar is the guard for the crash that made
+// the MCP server unreachable: a llama-server already serving the configured
+// port (here: the fake sidecar started by hand, standing in for the one an
+// earlier session left behind) must be ADOPTED, not spawned a second time.
+// Spawning into a held port is what llama-server answers with "couldn't bind
+// HTTP server socket", and StartSidecar returned that crash as an error, so
+// `leankg serve` died during startup and never answered /health.
+func TestStartSidecarAdoptsRunningSidecar(t *testing.T) {
+	script := stubSidecarScript(t)
+	t.Setenv("LEANKG_EMBED_TEST_DIMS", "8")
+	port, err := freeTCPPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stand the "someone else's sidecar" up first, by hand.
+	existing := exec.Command(script, "--port", strconv.Itoa(port))
+	existing.Env = os.Environ()
+	if err := existing.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if existing.Process != nil {
+			_ = existing.Process.Kill()
+		}
+		_, _ = existing.Process.Wait()
+	}()
+	waitSidecarReady(t, port)
+
+	sc, err := StartSidecar(context.Background(), SidecarConfig{
+		Command: "leankg-no-such-sidecar-binary", // spawn would fail loudly
+		Port:    port, ReadyTimeout: 2 * time.Second, PollInterval: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("adopting a ready sidecar must not spawn: %v", err)
+	}
+	if !sc.adopted {
+		t.Fatal("sidecar was not adopted (a spawn was attempted)")
+	}
+	if want := fmt.Sprintf("http://127.0.0.1:%d/v1", port); sc.BaseURL() != want {
+		t.Fatalf("BaseURL: got %q, want %q", sc.BaseURL(), want)
+	}
+	// The adopted endpoint is really used for vectors.
+	vecs, err := OpenAICompatible(sc.BaseURL(), "", "fake", 8, "test").Embed(
+		context.Background(), Query, []string{"adopted"})
+	if err != nil {
+		t.Fatalf("Embed through adopted sidecar: %v", err)
+	}
+	if len(vecs) != 1 || len(vecs[0]) != 8 {
+		t.Fatalf("Embed: got %#v", vecs)
+	}
+	// Release must not kill a process we did not start: the adopted sidecar
+	// outlives our Shutdown, or an unrelated embedding server dies with our
+	// session.
+	if err := sc.Shutdown(); err != nil {
+		t.Fatalf("Shutdown (adopted): %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	conn, derr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+	if derr != nil {
+		t.Fatalf("Shutdown killed the adopted sidecar: %v", derr)
+	}
+	conn.Close()
+}
+
+// TestStartSidecarSpawnsWhenPortStrangerHoldsIt: a process that holds the port
+// but does NOT serve the embeddings wire is not a sidecar to adopt. Spawning
+// then fails the way llama-server fails, and the error must name the port and
+// both ways out — a bare "couldn't bind HTTP server socket" left an operator
+// (and a lease-restart loop) with nothing to act on.
+func TestStartSidecarSpawnsWhenPortStrangerHoldsIt(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() { // accept and answer nothing useful
+		for {
+			c, cerr := l.Accept()
+			if cerr != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
+	script := filepath.Join(t.TempDir(), "bindfail.sh")
+	if err := os.WriteFile(script,
+		[]byte("#!/bin/sh\necho \"start: couldn't bind HTTP server socket\" >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = StartSidecar(context.Background(), SidecarConfig{
+		Command: script, Port: l.Addr().(*net.TCPAddr).Port,
+		// Generous on purpose: the stub exits in milliseconds, so the
+		// exited-during-startup branch is what fires — and this test's
+		// assertion is about that branch's message. A 2s budget lost the
+		// race to the deadline when the whole suite ran in parallel and
+		// fork/exec of the stub was starved for that long.
+		ReadyTimeout: 20 * time.Second, PollInterval: 50 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("want the spawn failure for a port held by a non-sidecar")
+	}
+	for _, want := range []string{
+		"couldn't bind", strconv.Itoa(l.Addr().(*net.TCPAddr).Port),
+		"LEANKG_EMBED_SIDECAR_PORT", "LEANKG_EMBED_BASE_URL",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q misses %q", err, want)
+		}
+	}
+}
+
+// waitSidecarReady blocks until the fake sidecar on port answers /health. It
+// uses the same overridable bound as the StartSidecar call sites: the wait and
+// the start have to agree, or a widened start bound still fails here.
+func waitSidecarReady(t *testing.T, port int) {
+	t.Helper()
+	deadline := time.Now().Add(sidecarReadyTimeout())
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("sidecar on port %d never became ready", port)
+}
+
 func TestPortFlagPresent(t *testing.T) {
 	for _, args := range [][]string{{"--port", "9"}, {`--port=9`}, {"-m", "x", "--port=1"}} {
 		if !portFlagPresent(args) {
@@ -466,4 +597,21 @@ func freeTCPPort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// sidecarReadyTimeout is the readiness bound these tests give the fake sidecar.
+//
+// It is env-overridable for the same reason as the astgrep and lsp bounds
+// (#488): the fake re-execs the Go TEST BINARY, so starting it costs a full
+// process launch and Go runtime init, and on a self-hosted runner shared with
+// other CI jobs that occasionally exceeds the shipped 15s — measured failing
+// twice in one day with the fake "not ready within 15s" while the same tests
+// pass locally in 1.9-5.1s. The shipped default is unchanged.
+func sidecarReadyTimeout() time.Duration {
+	if v := os.Getenv("LEANKG_TEST_SIDECAR_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 15 * time.Second
 }

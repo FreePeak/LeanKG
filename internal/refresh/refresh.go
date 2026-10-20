@@ -10,6 +10,7 @@ package refresh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/docindex"
 	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/sources"
@@ -116,7 +118,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 	}
 	if docsDir != "" {
-		res.DocsResult, err = docindex.IndexDocs(ctx, st, docsDir)
+		res.DocsResult, err = docindex.IndexDocsUnder(ctx, st, project, docsDir)
 		if err != nil {
 			return res, fmt.Errorf("refresh: index docs %s: %w", docsDir, err)
 		}
@@ -125,26 +127,48 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	// 3. Embed — always incremental (see Options.Full on the Rust vestige).
-	// The provider comes from the LEANKG_EMBED_* environment and spawns the
-	// local sidecar on demand.
-	provider, release, err := embed.StartProvider(ctx)
-	if err != nil {
-		// Rust parity (main.rs maybe_run_embed): an unavailable embedder is a
-		// reported skip, not a failed refresh — code and docs are already
-		// indexed at this point, and the reason names the fix.
-		res.EmbedSkipped = err.Error()
-		return res, nil
-	}
-	defer release()
 	mode := "incremental"
 	if opts.Full {
 		mode = "full"
 	}
-	res.Embed, err = embed.Run(ctx, st, provider, mode)
+	res.Embed, res.EmbedSkipped, err = EmbedStage(ctx, st, project, embed.StartProvider, mode)
 	if err != nil {
 		return res, fmt.Errorf("refresh: embed: %w", err)
 	}
 	return res, nil
+}
+
+// EmbedStage is the embed stage shared by refresh and `leankg index`: one embed
+// run over st, serialized with leankg-embed through <storeDir>/.leankg/embed.lock.
+// start resolves the provider and the release that stops it: embed.StartProvider
+// for a manual run, embed.AttachHookProvider for the SessionStart hook.
+//
+// A run that cannot happen is a skip, not an error: an unavailable provider or a
+// lock another embed run holds comes back as a non-empty skip reason with a zero
+// report. The error is set only when embed.Run itself fails.
+func EmbedStage(ctx context.Context, st store.Backend, storeDir string, start func(context.Context) (embed.Provider, func(), error), mode string) (embed.Report, string, error) {
+	lockPath := filepath.Join(storeDir, ".leankg", "embed.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return embed.Report{}, "", fmt.Errorf("embed lock dir: %w", err)
+	}
+	unlock, err := flock.TryLock(lockPath)
+	if errors.Is(err, flock.ErrHeld) {
+		return embed.Report{}, "another embed run holds " + lockPath, nil
+	}
+	if err != nil {
+		return embed.Report{}, "", err
+	}
+	defer unlock()
+	provider, release, err := start(ctx)
+	if err != nil {
+		// Rust parity (main.rs maybe_run_embed): an unavailable embedder is a
+		// reported skip, not a failed refresh — code and docs are already
+		// indexed at this point, and the reason names the fix.
+		return embed.Report{}, err.Error(), nil
+	}
+	defer release()
+	rep, err := embed.Run(ctx, st, provider, mode)
+	return rep, "", err
 }
 
 // Render renders the Rust refresh verb output verbatim. The Rust handler

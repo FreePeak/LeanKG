@@ -30,7 +30,11 @@ const (
 	vecModel    = "bench-minilm-384"
 	vecDims     = 384
 	vecCount    = 1000
-	vecTopK     = 10
+	// vecCorpusFiles is how many synthetic files the vector benchmark indexes
+	// to own vecCount elements (writeCorpus emits 6 symbols per file, so 1000
+	// elements needs 167).
+	vecCorpusFiles = 167
+	vecTopK        = 10
 )
 
 // benchRand returns a seeded PCG RNG; fixtures must be byte-identical run
@@ -188,6 +192,23 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 		b.Fatalf("WriteStamp: %v", err)
 	}
 
+	// SearchVectors hydrates against code_elements with an INNER JOIN (RS-05):
+	// a vector whose element is gone is an orphan and is deliberately not
+	// served, so vectors alone return nothing. Index a corpus big enough to
+	// hold vecCount elements, then attach the vectors to qualified names that
+	// actually exist.
+	writeCorpus(b, dir, vecCorpusFiles)
+	if _, err := index.IndexDir(context.Background(), st, dir); err != nil {
+		b.Fatalf("index corpus: %v", err)
+	}
+	els, err := st.Elements()
+	if err != nil {
+		b.Fatalf("Elements: %v", err)
+	}
+	if len(els) < vecCount {
+		b.Fatalf("corpus produced %d elements, want at least %d", len(els), vecCount)
+	}
+
 	rng := benchRand(42)
 	rows := make([]store.VectorRow, vecCount)
 	for i := range rows {
@@ -195,7 +216,17 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 		for j := range v {
 			v[j] = rng.Float32()*2 - 1
 		}
-		rows[i] = store.VectorRow{QualifiedName: fmt.Sprintf("gen%03d::handler%03d", i, i), Vec: v}
+		rows[i] = store.VectorRow{QualifiedName: els[i].QualifiedName, Vec: v}
+	}
+	if err := st.UpsertVectors(vecModel, rows); err != nil {
+		b.Fatalf("UpsertVectors: %v", err)
+	}
+	for i := range rows {
+		v := make([]float32, vecDims)
+		for j := range v {
+			v[j] = rng.Float32()*2 - 1
+		}
+		rows[i] = store.VectorRow{QualifiedName: els[i].QualifiedName, Vec: v}
 	}
 	if err := st.UpsertVectors(vecModel, rows); err != nil {
 		b.Fatalf("UpsertVectors: %v", err)

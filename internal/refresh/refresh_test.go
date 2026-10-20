@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -62,8 +64,11 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	if !res.DocsIndexed || res.DocsDir != filepath.Join(dir, "docs") {
 		t.Fatalf("docs stage = indexed:%v dir:%q", res.DocsIndexed, res.DocsDir)
 	}
-	if res.DocsResult.Files == 0 || res.DocsResult.Elements == 0 {
-		t.Fatalf("docs stage counters = %+v", res.DocsResult)
+	// The code stage already indexes docs/guide.md under its project-relative
+	// key; the docs stage must see the same key (skip), not re-key it as
+	// guide.md and index a duplicate (RS-02/RS-08).
+	if res.DocsResult.Files+res.DocsResult.Skipped == 0 {
+		t.Fatalf("docs stage processed nothing: %+v", res.DocsResult)
 	}
 	if res.Embed.Mode != "incremental" {
 		t.Fatalf("embed mode = %q, want incremental", res.Embed.Mode)
@@ -94,6 +99,9 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	}
 	found := map[string]bool{}
 	for _, e := range els {
+		if e.ElementType == "doc" && !strings.HasPrefix(e.FilePath, "docs/") {
+			t.Fatalf("doc element keyed outside docs/: %q (%s)", e.QualifiedName, e.FilePath)
+		}
 		if e.ElementType == "function" {
 			found[e.Name] = true
 		}
@@ -226,5 +234,50 @@ func TestRunSkipsEmbedOnBadProvider(t *testing.T) {
 	defer st.Close()
 	if n, err := st.ElementCount(); err != nil || n == 0 {
 		t.Fatalf("code stage did not persist before the embed failure: n=%d err=%v", n, err)
+	}
+}
+
+// TestEmbedStageSkipsWhenEmbedLockHeld: another embed run holding
+// <store>/.leankg/embed.lock turns this run into a skip, not an error, and it
+// writes no vectors. The store is indexed first with the embed failing on a
+// bogus provider, so the elements exist but have no vectors yet.
+func TestEmbedStageSkipsWhenEmbedLockHeld(t *testing.T) {
+	isolateEnv(t)
+	dir := newProject(t)
+	t.Setenv("LEANKG_EMBED_PROVIDER", "bogus")
+	if _, err := Run(context.Background(), Options{Project: dir, Path: dir}); err != nil {
+		t.Fatalf("seed Run: %v", err)
+	}
+	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
+
+	st, err := store.OpenBackend(context.Background(), dir, "", "", "", store.RW)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	p, release, err := embed.StartProvider(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+
+	unlock, err := flock.TryLock(filepath.Join(dir, ".leankg", "embed.lock"))
+	if err != nil {
+		t.Fatalf("hold embed.lock: %v", err)
+	}
+	defer unlock()
+
+	rep, skip, err := EmbedStage(context.Background(), st, dir, embed.StartProvider, "incremental")
+	if err != nil {
+		t.Fatalf("EmbedStage = %v, want a skip", err)
+	}
+	if skip == "" || !strings.Contains(skip, "embed.lock") {
+		t.Fatalf("skip = %q, want the held embed.lock named", skip)
+	}
+	if rep.Embedded != 0 {
+		t.Fatalf("report embedded = %d, want 0", rep.Embedded)
+	}
+	if n, err := st.VectorCount(p.ModelID()); err != nil || n != 0 {
+		t.Fatalf("vectors = %d (err %v), want 0", n, err)
 	}
 }

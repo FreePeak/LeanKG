@@ -149,6 +149,54 @@ func TestPrefixesAppliedForBothTextKinds(t *testing.T) {
 	}
 }
 
+// TestEmbeddingGemma2CatalogPrefixes is the S1 seam: the local provider the
+// environment selects (LEANKG_EMBED_PROVIDER=local against a fake
+// OpenAI-compatible /embeddings endpoint) sends the literal EmbeddingGemma 2
+// prompt prefixes on the wire and stamps the pinned catalog identity.
+func TestEmbeddingGemma2CatalogPrefixes(t *testing.T) {
+	const (
+		wantDocPrefix   = "title: none | text: "
+		wantQueryPrefix = "task: code retrieval | query: "
+		wantRevision    = "914f7f89142e33e77833254d9c9b90c3cef7303b"
+	)
+	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+	t.Setenv("LEANKG_EMBED_MODEL", "embeddinggemma-2")
+	t.Setenv("LEANKG_EMBED_DIMS", "")
+	t.Setenv("LEANKG_EMBED_REVISION", "")
+	t.Setenv("LEANKG_EMBED_API_KEY", "")
+
+	var sent []string
+	srv := newOpenAITestServer(t, "", 768, func(body embeddingsRequest) {
+		sent = append(sent, body.Input...)
+	})
+	t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL)
+
+	p, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv: %v", err)
+	}
+	if _, err := p.Embed(context.Background(), Document, []string{"func f()"}); err != nil {
+		t.Fatalf("document embed: %v", err)
+	}
+	if _, err := p.Embed(context.Background(), Query, []string{"where is f"}); err != nil {
+		t.Fatalf("query embed: %v", err)
+	}
+	wantSent := []string{wantDocPrefix + "func f()", wantQueryPrefix + "where is f"}
+	if len(sent) != 2 || sent[0] != wantSent[0] || sent[1] != wantSent[1] {
+		t.Fatalf("sent = %q, want %q", sent, wantSent)
+	}
+
+	st := StampOf(p)
+	if st.ModelID != "embeddinggemma-2" || st.Revision != wantRevision || st.Dimensions != 768 || st.Provider != "local" {
+		t.Fatalf("stamp identity = %s / %s / %d / %s, want embeddinggemma-2 / %s / 768 / local",
+			st.ModelID, st.Revision, st.Dimensions, st.Provider, wantRevision)
+	}
+	if st.QueryPrefix != wantQueryPrefix || st.DocumentPrefix != wantDocPrefix {
+		t.Fatalf("stamp prefixes = %q / %q, want %q / %q",
+			st.QueryPrefix, st.DocumentPrefix, wantQueryPrefix, wantDocPrefix)
+	}
+}
+
 // --- stamp coupling for the chunker + prefixes (issue #279 parts 2 & 3) ------
 
 // TestRunStampRecordsPipelineIdentity pins that a writer stamps the chunker
@@ -296,6 +344,11 @@ func TestExportAppliesDocumentPrefix(t *testing.T) {
 	if !ok {
 		t.Fatal("jina row missing")
 	}
+	t.Setenv("LEANKG_EMBED_PROVIDER", "openai")
+	t.Setenv("LEANKG_EMBED_MODEL", model.Name)
+	t.Setenv("LEANKG_EMBED_DIMS", "")
+	t.Setenv("LEANKG_EMBED_REVISION", "")
+	t.Setenv("LEANKG_EMBED_BASE_URL", "")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 
@@ -307,7 +360,7 @@ func TestExportAppliesDocumentPrefix(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &line); err != nil {
 		t.Fatalf("decode export line: %v", err)
 	}
-	if line.Text != model.DocumentPrefix+"func f1() {}" {
+	if line.Text != model.DocumentPrefix+"function a::f1 — src/f.go\nfunc f1() {}" {
 		t.Fatalf("export text = %q, want document prefix applied", line.Text)
 	}
 	if line.ContentHash != contentHashHex("func f1() {}") {

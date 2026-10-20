@@ -2,6 +2,7 @@ package embed
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -61,6 +62,13 @@ type SidecarConfig struct {
 	Env          []string      // additional environment (parent env is inherited)
 	ReadyTimeout time.Duration // health-poll bound; default 120s
 	PollInterval time.Duration // health-poll cadence; default 250ms
+}
+
+// BaseURL is the OpenAI-compatible API root this config addresses
+// (e.g. "http://127.0.0.1:8080/v1"). Every method on Sidecar derives its
+// URL from here, so adoption and spawn cannot disagree on the endpoint.
+func (c SidecarConfig) BaseURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d/v1", c.Port)
 }
 
 // SidecarConfigFromEnv reads the sidecar environment:
@@ -131,8 +139,11 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// Sidecar is one running sidecar process. Shutdown is idempotent and
-// releases the whole process group, so llama-server's children die with it.
+// Sidecar is one sidecar endpoint: either a process this package spawned
+// (Shutdown releases the whole process group, so llama-server's children die
+// with it) or one already running that was adopted (Shutdown is a no-op —
+// someone else's process is not ours to kill). Shutdown is idempotent either
+// way.
 type Sidecar struct {
 	cmd     *exec.Cmd
 	port    int
@@ -140,14 +151,25 @@ type Sidecar struct {
 	exited  chan struct{} // closed when Wait returns
 	exitErr error         // valid after exited
 	done    chan struct{} // closed when Shutdown completed
+	adopted bool          // already running when we found the port busy
 	stopOne sync.Once
 }
 
-// StartSidecar spawns the sidecar process and polls its /health endpoint
-// until it reports ready (HTTP 200) or the startup budget is exhausted. The
-// caller must invoke Shutdown (also triggered automatically when ctx is
-// canceled). Startup failure always stops the process again before
+// StartSidecar returns a sidecar for cfg.Port: it spawns the configured
+// command and polls its /health endpoint until it reports ready (HTTP 200)
+// or the startup budget is exhausted, and ADOPTS a sidecar already serving
+// that port instead of spawning a second one. The caller must invoke
+// Shutdown (also triggered automatically when ctx is canceled); for a
+// spawned sidecar, startup failure always stops the process again before
 // returning the error.
+//
+// The port is a SHARED resource on a developer machine — the previous run's
+// sidecar, a hand-started llama-server, a dev ssh tunnel — and llama-server
+// answers an occupied port by crashing at once ("couldn't bind HTTP server
+// socket"). Spawning into it therefore turned a working machine into an
+// engine that died during startup, with a stderr tail as the only clue.
+// Adopting keeps the attach-or-spawn contract the PRD already claims: one
+// sidecar per port, whoever started it, nobody killing someone else's.
 func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 	if cfg.Port == 0 {
 		cfg.Port = defaultSidecarPort
@@ -157,6 +179,21 @@ func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 	}
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = defaultPollInterval
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Probe the ENDPOINT, not the port: something may hold the port and
+	// answer nothing on /health, and only an endpoint that really embeds
+	// deserves adoption. A stranger on the port must still surface as the
+	// actionable startup error below, never as a silently wrong provider.
+	if ready, err := probeEmbeddings(cfg.BaseURL()); err == nil && ready {
+		return &Sidecar{
+			port:    cfg.Port,
+			exited:  make(chan struct{}),
+			done:    make(chan struct{}),
+			adopted: true,
+		}, nil
 	}
 
 	args := append([]string(nil), cfg.Args...)
@@ -177,11 +214,12 @@ func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 		return nil, sidecarStartError(cfg.Command, err)
 	}
 	s := &Sidecar{
-		cmd:    cmd,
-		port:   cfg.Port,
-		stderr: stderr,
-		exited: make(chan struct{}),
-		done:   make(chan struct{}),
+		cmd:     cmd,
+		port:    cfg.Port,
+		stderr:  stderr,
+		exited:  make(chan struct{}),
+		done:    make(chan struct{}),
+		adopted: false,
 	}
 	go func() {
 		s.exitErr = cmd.Wait()
@@ -194,7 +232,17 @@ func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 		case ctx.Err() != nil:
 			return nil, fmt.Errorf("embed: sidecar startup canceled: %w", ctx.Err())
 		case errors.Is(err, errSidecarExited):
-			return nil, fmt.Errorf("embed: sidecar %q exited during startup: %s", cfg.Command, s.exitDetail())
+			detail := s.exitDetail()
+			// llama-server answers an occupied port with exactly one line —
+			// "couldn't bind HTTP server socket" — and a lease-restart
+			// crash-loops on it forever. Spell out the two honest ways out
+			// instead of leaving that line as the only clue.
+			if strings.Contains(detail, "couldn't bind") {
+				detail += fmt.Sprintf("; port %d is held by another process that does not serve "+
+					"/v1/embeddings — set LEANKG_EMBED_SIDECAR_PORT to a free port, or attach to it "+
+					"with LEANKG_EMBED_BASE_URL", cfg.Port)
+			}
+			return nil, fmt.Errorf("embed: sidecar %q exited during startup: %s", cfg.Command, detail)
 		default:
 			return nil, fmt.Errorf("embed: sidecar %q not ready within %s (health %s); "+
 				"check LEANKG_EMBED_SIDECAR_ARGS or attach to a running server via LEANKG_EMBED_BASE_URL",
@@ -216,12 +264,49 @@ func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 // e.g. "http://127.0.0.1:8080/v1".
 func (s *Sidecar) BaseURL() string { return fmt.Sprintf("http://127.0.0.1:%d/v1", s.port) }
 
+// probeEmbeddings asks the endpoint at an OpenAI-compatible base URL for one
+// vector and reports whether it really embeds. The model name is the
+// provider's own (never a real one): llama-server ignores it and serves the
+// GGUF it loaded, so the probe never depends on configuration. A non-2xx or a
+// body without an embedding is "not a sidecar", which is the answer that
+// keeps a stranger on the port out of the provider.
+func probeEmbeddings(baseURL string) (bool, error) {
+	body := strings.NewReader(`{"model":"leankg-adopt-probe","input":[" "]}`)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/embeddings", body)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return false, nil
+	}
+	var parsed embeddingsResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&parsed); err != nil {
+		return false, nil
+	}
+	return len(parsed.Data) > 0 && len(parsed.Data[0].Embedding) > 0, nil
+}
+
 func (s *Sidecar) healthURL() string { return fmt.Sprintf("http://127.0.0.1:%d/health", s.port) }
 
 // Shutdown terminates the sidecar process group: SIGTERM first, SIGKILL
 // after the grace period. Idempotent; safe to call from multiple goroutines.
+// An ADOPTED sidecar is left alone — release is the caller's contract, but
+// the process was never ours, and killing a stranger's embedding server
+// because our own session ended is worse than a no-op.
 func (s *Sidecar) Shutdown() error {
 	s.stopOne.Do(func() {
+		if s.adopted {
+			close(s.done)
+			return
+		}
 		select {
 		case <-s.exited: // died on its own; nothing to signal
 		default:

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -168,8 +169,8 @@ func TestHookCommandRuns(t *testing.T) {
 	bin := buildLeanKG(t)
 
 	expanded := hookCommand(bin)
-	if !strings.Contains(expanded, ` index "$CLAUDE_PROJECT_DIR"`) {
-		t.Fatalf("hook %q: expected `index \"$CLAUDE_PROJECT_DIR\"` (quoted, shell-expanded)", expanded)
+	if !strings.Contains(expanded, ` index --hook "$CLAUDE_PROJECT_DIR"`) {
+		t.Fatalf("hook %q: expected `index --hook \"$CLAUDE_PROJECT_DIR\"` (quoted, shell-expanded)", expanded)
 	}
 	proj := seedProject(t)
 	// Claude Code executes the hook through a shell and expands the variable;
@@ -247,5 +248,190 @@ func TestDashboardListenerServesHealthAndShell(t *testing.T) {
 	}
 	if code, ctype, _ := get("/favicon.svg"); code != 200 || !strings.Contains(ctype, "image/svg+xml") {
 		t.Fatalf("GET /favicon.svg: %d %s", code, ctype)
+	}
+}
+
+// TestServeSurvivesUnusableEmbedProvider is the guard for the defect that made
+// an MCP client report the server "unreachable": `serve --embed-provider
+// local` used to log.Fatal when the provider would not start, and a busy
+// sidecar port — a previous run's llama-server, a dev tunnel — is the common
+// way to get there. The server then died before binding, so the client's
+// health probe found nothing and the only trace was a llama-server stderr
+// tail in a log nobody reads. A query-time embedder is optional (L3 degrades
+// with a reason, see core.rungSemantic), so serve must bind and serve
+// anyway. Two cases: the sidecar port held by a stranger, and a sidecar
+// command that does not exist.
+func TestServeSurvivesUnusableEmbedProvider(t *testing.T) {
+	bin := buildLeanKG(t)
+	proj := seedProject(t)
+	if out, err := exec.Command(bin, "index", proj, "--auto").CombinedOutput(); err != nil {
+		t.Fatalf("index: %v\n%s", err, out)
+	}
+
+	// A port held by a process that is not an embedding endpoint.
+	hog, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hog.Close()
+	go func() {
+		for {
+			c, cerr := hog.Accept()
+			if cerr != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
+	for name, env := range map[string][]string{
+		"port held": {
+			"LEANKG_EMBED_SIDECAR_PORT=" + strconv.Itoa(hog.Addr().(*net.TCPAddr).Port),
+			"LEANKG_EMBED_SIDECAR_ARGS=-m unused.gguf --embeddings",
+		},
+		"no sidecar binary": {
+			"LEANKG_EMBED_SIDECAR_CMD=leankg-no-such-sidecar-binary",
+			"LEANKG_EMBED_SIDECAR_ARGS=-m unused.gguf --embeddings",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := l.Addr().String()
+			_ = l.Close()
+			cmd := exec.Command(bin, "serve", "--http", addr, "--project", proj, "--embed-provider", "local")
+			cmd.Env = append(os.Environ(), env...)
+			var logs strings.Builder
+			cmd.Stdout, cmd.Stderr = &logs, &logs
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("serve: %v", err)
+			}
+			defer func() {
+				_ = cmd.Process.Kill()
+				_, _ = cmd.Process.Wait()
+			}()
+			code := 0
+			deadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(deadline) && code != 200 {
+				resp, gerr := http.Get("http://" + addr + "/health")
+				if gerr == nil {
+					_ = resp.Body.Close()
+					code = resp.StatusCode
+				}
+				if code != 200 {
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+			if code != 200 {
+				t.Fatalf("GET /health = %d after 30s; the server must bind without a query embedder.\noutput:\n%s", code, logs.String())
+			}
+			// The degradation is reported, not swallowed.
+			if !strings.Contains(logs.String(), "embed provider unavailable") {
+				t.Fatalf("missing the degrade notice; output:\n%s", logs.String())
+			}
+		})
+	}
+}
+
+// TestUIV2LegacyRoutesServeData is the FR-GO-DASH acceptance criterion: every
+// one of the 11 legacy /api/* routes the ui-v2 SPA calls must answer REAL DATA
+// on the --ui listener, not the SPA fallback's index.html. The tracker row has
+// said "TODO — the SPA fallback answers those calls with index.html" since
+// 2026-09-11; measured live on 2026-10-11 all 11 return data, so this guard
+// turns a stale claim into either a passing fact or a build failure.
+func TestUIV2LegacyRoutesServeData(t *testing.T) {
+	bin := buildLeanKG(t)
+	proj := seedProject(t)
+	if out, err := exec.Command(bin, "index", proj, "--auto").CombinedOutput(); err != nil {
+		t.Fatalf("index: %v\n%s", err, out)
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "serve", "--read-only", "--ui", addr, "--project", proj)
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	get := func(path string) (int, string, string) {
+		t.Helper()
+		resp, err := http.Get("http://" + addr + path)
+		if err != nil {
+			return 0, "", ""
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(b)
+	}
+	post := func(path, body string) (int, string, string) {
+		t.Helper()
+		resp, err := http.Post("http://"+addr+path, "application/json", strings.NewReader(body))
+		if err != nil {
+			return 0, "", ""
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(b)
+	}
+
+	for deadline := time.Now().Add(20 * time.Second); ; {
+		code, _, _ := get("/health")
+		if code == 200 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	for _, tc := range []struct {
+		method, path, body string
+		want               int
+	}{
+		{"GET", "/api/index/status", "", 200},
+		{"GET", "/api/search?q=Handle", "", 200},
+		{"POST", "/api/query", `{"query":"Handle"}`, 200},
+		{"POST", "/api/query-graph", `{"question":"what exists"}`, 200},
+		{"GET", "/api/file?path=demo.go", "", 200},
+		{"GET", "/api/graph/children?node=Handle", "", 200},
+		{"GET", "/api/graph/clusters", "", 200},
+		{"GET", "/api/graph/report", "", 200},
+		{"GET", "/api/graph/service-topology", "", 200},
+	} {
+		var code int
+		var ctype, body string
+		if tc.method == "POST" {
+			code, ctype, body = post(tc.path, tc.body)
+		} else {
+			code, ctype, body = get(tc.path)
+		}
+		if code != tc.want {
+			t.Errorf("%s %s: %d (want %d) body=%s", tc.method, tc.path, code, tc.want, body)
+			continue
+		}
+		// The defect the row names: the SPA fallback would answer 200 text/html
+		// with the shell, so a 200 alone proves nothing.
+		if !strings.Contains(ctype, "json") {
+			t.Errorf("%s %s: content-type %q — the SPA fallback answered, not the data API", tc.method, tc.path, ctype)
+		}
+	}
+
+	// The shell and its assets still come from the embedded build.
+	if code, ctype, body := get("/"); code != 200 || !strings.Contains(ctype, "text/html") || !strings.Contains(body, `id="root"`) {
+		t.Errorf("GET /: %d %s (embedded ui-v2 shell not served)", code, ctype)
+	}
+	if code, ctype, _ := get("/favicon.svg"); code != 200 || !strings.Contains(ctype, "svg") {
+		t.Errorf("GET /favicon.svg: %d %s", code, ctype)
 	}
 }

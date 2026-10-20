@@ -7,9 +7,6 @@ package rpc
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"regexp"
-	"strings"
 
 	connect "connectrpc.com/connect"
 	leankgv1 "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1"
@@ -37,49 +34,6 @@ func NewLeanKGService(engine *core.Engine) *LeanKGService {
 //	unmarshal message: … proto: (line 1:48): invalid value for string field value: 2
 //
 // It names a field the caller never sent (`value`), not the argument they did
-// (`depth`). That is the wire-23 class of defect at its worst: a confident client
-// reading a message about its own request that cannot be about its own request.
-//
-// The descriptor is generated and the repository keeps no .proto source, so
-// retyping the map is a schema change with no regeneration story — a product
-// decision, not a patch. What is a patch is the LEGIBILITY: a caller must learn
-// which argument was refused and that this wire carries strings only. So the
-// codec's refusal is translated here, where the service knows what `args` means,
-// and the honest remedy is named alongside it.
-//
-// ponytail: a regexp against the codec's message. It is the only handle on the
-// offending argument — the codec reports a byte OFFSET, not a field path — and
-// it degrades to passing the original message through untouched, so a future
-// protobuf whose wording changes costs clarity and never correctness.
-var codecArgRefusal = regexp.MustCompile(`invalid value for string field value: (.+)$`)
-
-// argsWireNote explains the wire's own limitation, in the caller's terms.
-const argsWireNote = "this ConnectRPC descriptor types args as map<string,string>, so only STRING action args reach it " +
-	"(over MCP the same call takes any JSON value); send it as a string here, or use the MCP or REST surface for typed args"
-
-// explainArgsRefusal rewrites a codec refusal that names the internal map VALUE
-// field into one that names the caller's own argument.
-func explainArgsRefusal(err error) error {
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-	var _ = strings.TrimSpace
-	if !strings.Contains(msg, "string field value") {
-		return err
-	}
-	got := codecArgRefusal.FindStringSubmatch(msg)
-	if got == nil {
-		// The wording changed: pass the original through rather than guess.
-		return err
-	}
-	// The codec quotes the rejected value, e.g. `2` or `["a","b"]`. It does not
-	// say which KEY, so name what the caller can act on — the value they sent and
-	// the wire's limit — rather than invent a key.
-	value := strings.TrimSpace(got[1])
-	return fmt.Errorf("args value %s is not a string and this wire cannot carry it: %s (%v)",
-		value, argsWireNote, err)
-}
 
 // jsonOf marshals core's map[string]any payloads into the proto's string
 // field — the same JSON MCP text content and REST bodies carry (one wire
@@ -143,7 +97,19 @@ func (s *LeanKGService) Status(ctx context.Context, req *connect.Request[leankgv
 }
 
 func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[leankgv1.MemoryReadRequest]) (*connect.Response[leankgv1.MemoryReadResponse], error) {
-	out, err := s.engine.MemoryRead(req.Msg.Command, req.Msg.Path, req.Msg.Query, int(req.Msg.Limit))
+	// Route through the same dispatcher the MCP tool and the CLI use
+	// (query action=memory), so all three surfaces answer the SAME command
+	// vocabulary. Measured live before this: the RPC refused `session_recall`
+	// with "valid: view, snapshot, search" while MCP accepted "session_recall,
+	// memories, view, snapshot, search" — the agent protocol's own first
+	// instruction ("at session start call session_recall") was the one command
+	// a ConnectRPC client could not run.
+	out, err := s.engine.Query(ctx, core.QueryRequest{
+		Action: "memory",
+		Query:  req.Msg.Query,
+		Limit:  int(req.Msg.Limit),
+		Args:   protoArgs(map[string]string{"command": req.Msg.Command, "path": req.Msg.Path, "cwd": ""}),
+	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}

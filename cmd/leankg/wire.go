@@ -113,7 +113,7 @@ func cmdInstall(args []string) {
 	httpMode := fs.Bool("http", false, "remote entry instead of stdio")
 	url := fs.String("url", "", "remote MCP URL (with --http)")
 	project := fs.String("project", "", "explicit project path (stdio escape hatch)")
-	registerCWD := fs.Bool("register-cwd", false, "write a session-start hook running `leankg index <project>` (claude-code)")
+	registerCWD := fs.Bool("register-cwd", false, "write a session-start hook running `leankg index --hook <project>` (claude-code)")
 	parseInterspersed("install", fs, args, 0)
 	if *target == "" {
 		log.Fatalf("install requires --target (%s)", strings.Join(Clients(), "|"))

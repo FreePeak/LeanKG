@@ -147,15 +147,18 @@ func TestRelationships(t *testing.T) {
 
 // TestRelationshipsPerFile exercises the edge rules directly: dedupe,
 func TestRelationshipsPerFile(t *testing.T) {
-	fe, err := extractFile("sample.go", filepath.Join("testdata", "sample.go"))
+	src, err := os.ReadFile(filepath.Join("testdata", "sample.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	fe := extractFile("sample.go", src)
 	rels := goRels(fe)
-	wantCalls := [][2]string{
-		{"sample.go::greet", "sample.go::Widget"},
-		{"sample.go::Widget.Shout", "sample.go::greet"},
-		{"sample.go::Widget.Shout", "sample.go::Widget"},
+	// Signature-only names (a parameter type, a receiver) are references;
+	// a name used in the body is a call.
+	wantCalls := [][3]string{
+		{"sample.go::greet", "sample.go::Widget", "references"},
+		{"sample.go::Widget.Shout", "sample.go::greet", "calls"},
+		{"sample.go::Widget.Shout", "sample.go::Widget", "references"},
 	}
 	if len(rels) != len(wantCalls) {
 		t.Fatalf("go edges = %d (%v), want %d (dedupe/self-drop broken)", len(rels), rels, len(wantCalls))
@@ -164,8 +167,8 @@ func TestRelationshipsPerFile(t *testing.T) {
 		found := false
 		for _, r := range rels {
 			if r.Source == pair[0] && r.Target == pair[1] {
-				if r.RelType != "calls" || r.Confidence != 0.5 {
-					t.Errorf("edge %v: got %s/%v, want calls/0.5", pair, r.RelType, r.Confidence)
+				if r.RelType != pair[2] || r.Confidence != 0.5 {
+					t.Errorf("edge %v: got %s/%v, want %s/0.5", pair, r.RelType, r.Confidence, pair[2])
 				}
 				found = true
 			}
@@ -176,10 +179,11 @@ func TestRelationshipsPerFile(t *testing.T) {
 	}
 
 	// Python: contains edges at 1.0 coexisting with same-pair calls at 0.5.
-	py, err := extractFile("sample.py", filepath.Join("testdata", "sample.py"))
+	pySrc, err := os.ReadFile(filepath.Join("testdata", "sample.py"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	py := extractFile("sample.py", pySrc)
 	pyRels := goRels(py)
 	byType := map[string]int{}
 	for _, r := range pyRels {
@@ -336,10 +340,11 @@ func TestDeletion(t *testing.T) {
 
 // TestQualifiedNameFormat pins the documented `<rel/path>::<name>` shape.
 func TestQualifiedNameFormat(t *testing.T) {
-	fe, err := extractFile("sub/dir/sample.go", filepath.Join("testdata", "sample.go"))
+	src, err := os.ReadFile(filepath.Join("testdata", "sample.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	fe := extractFile("sub/dir/sample.go", src)
 	got := map[string]bool{}
 	for _, e := range fe.elements {
 		got[e.qn] = true
@@ -352,5 +357,164 @@ func TestQualifiedNameFormat(t *testing.T) {
 		if !got[want] {
 			t.Errorf("missing qualified name %q in %v", want, got)
 		}
+	}
+}
+
+// TestIndexRootTripwire pins RS-02 at the store level: a store built from one
+// root refuses a walk of another (before deleting anything), and RebaseRoot
+// is the deliberate escape.
+func TestIndexRootTripwire(t *testing.T) {
+	a := t.TempDir()
+	b := t.TempDir()
+	if err := os.WriteFile(filepath.Join(a, "a.go"), []byte("package a\n\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "b.go"), []byte("package b\n\nfunc B() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := IndexDir(ctx, st, a); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := st.ElementCount()
+	if _, err := IndexDir(ctx, st, b); err == nil || !strings.Contains(err.Error(), "INDEX_ROOT_MISMATCH") {
+		t.Fatalf("foreign root walk: err=%v, want INDEX_ROOT_MISMATCH", err)
+	}
+	if after, _ := st.ElementCount(); after != before {
+		t.Fatalf("refused walk mutated the store: %d -> %d", before, after)
+	}
+	if _, err := IndexDir(ctx, st, a); err != nil {
+		t.Fatalf("re-index of the recorded root: %v", err)
+	}
+	if err := RebaseRoot(st, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IndexDir(ctx, st, b); err != nil {
+		t.Fatalf("walk after RebaseRoot: %v", err)
+	}
+}
+
+// TestExtractorVersionReextractsOnce: a store indexed by an older extractor
+// re-extracts every file once (unchanged files included), then goes back to
+// skipping them.
+func TestExtractorVersionReextractsOnce(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\n// A does a thing.\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := IndexDir(ctx, st, dir); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := IndexDir(ctx, st, dir); res.Files != 0 {
+		t.Fatalf("unchanged tree re-extracted %d files", res.Files)
+	}
+	if err := st.KVSet(rootKVNamespace, extractorKVKey, "1"); err != nil { // simulate an older store
+		t.Fatal(err)
+	}
+	if res, _ := IndexDir(ctx, st, dir); res.Files != 1 {
+		t.Fatalf("older extractor version: re-extracted %d files, want 1", res.Files)
+	}
+	if res, _ := IndexDir(ctx, st, dir); res.Files != 0 {
+		t.Fatalf("after upgrade: re-extracted %d files, want 0", res.Files)
+	}
+}
+
+// TestExtractorBumpPurgesPhantomKeepsVectors: a store indexed under extractor
+// version "2" holds a phantom element (`functionality: x` yielded `ality` before
+// the TS function word-boundary fix). The bump must re-extract the unchanged
+// file, drop the phantom, and keep the real element with its vector and
+// embedding_state rows (vectors are keyed by qualified name, not by file).
+func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
+	const model = "test-model"
+	dir := t.TempDir()
+	src := "const cfg = {\n  functionality: x,\n}\n\nexport function ping(x: number): number {\n  return x\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "app.ts"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	index(t, st, dir)
+	mustFind(t, st, "app.ts::ping")
+
+	// Simulate the pre-fix store: the phantom row and the old version stamp.
+	if err := st.UpsertElements([]store.Element{{
+		QualifiedName: "app.ts::ality", ElementType: "function", Name: "ality",
+		FilePath: "app.ts", Language: "typescript",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.KVSet(rootKVNamespace, extractorKVKey, "2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetEmbeddingStates(model, map[string]string{"app.ts::ping": "hash-ping"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertVectors(model, []store.VectorRow{{QualifiedName: "app.ts::ping", Vec: []float32{1, 0, 0}}}); err != nil {
+		t.Fatal(err)
+	}
+	statesBefore, err := st.EmbeddingStateMap(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vecsBefore, err := st.VectorCount(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	index(t, st, dir) // unchanged file, store stamped "2"
+
+	els, err := st.Elements()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range els {
+		if e.Name == "ality" {
+			t.Errorf("phantom element %q survived the extractor bump", e.QualifiedName)
+		}
+	}
+	mustFind(t, st, "app.ts::ping")
+	statesAfter, err := st.EmbeddingStateMap(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statesAfter) != len(statesBefore) || statesAfter["app.ts::ping"] != "hash-ping" {
+		t.Errorf("embedding_state changed: before %v, after %v", statesBefore, statesAfter)
+	}
+	vecsAfter, err := st.VectorCount(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vecsAfter != vecsBefore {
+		t.Fatalf("vector rows: before %d, after %d", vecsBefore, vecsAfter)
+	}
+	hits, err := st.SearchVectors(model, []float32{1, 0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Element.QualifiedName != "app.ts::ping" {
+		t.Fatalf("vector for app.ts::ping not retrievable: %+v", hits)
 	}
 }

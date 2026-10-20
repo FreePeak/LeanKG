@@ -55,7 +55,7 @@ func TestShowTextReport(t *testing.T) {
 			CorrectElements: 9, TotalExpected: 10, Success: true},
 	)
 
-	got, err := Show(b, Options{Session: true})
+	got, err := Show(b, Options{Session: true, SessionText: "  claude-code:abc  3 calls\n"})
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
@@ -73,10 +73,21 @@ By Tool:
 By Day:
   @DAY@:  2 calls, 85.0% correct
 
-Session: Showing current session metrics not yet implemented
+Session:
+  claude-code:abc  3 calls
 `, "@DAY@", utcDay(anchor))
 	if got != want {
 		t.Fatalf("report text mismatch:\n got:\n%s\nwant:\n%s", got, want)
+	}
+
+	// --session with no telemetry session says how to get one (DS-16 replaced
+	// the Rust placeholder line).
+	none, err := Show(b, Options{Session: true})
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	if !strings.Contains(none, "Session: no telemetry session recorded") {
+		t.Fatalf("empty session must explain itself:\n%s", none)
 	}
 
 	// Without --session the placeholder line is absent (Rust printed it from the

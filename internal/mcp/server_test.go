@@ -3,11 +3,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -87,7 +89,7 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 	lower := strings.ToLower(initialize.Instructions)
 	for _, want := range []string{
 		"query before bash/grep",
-		"project= is required only on multi-project",
+		"project fixed",
 		"does not create vectors",
 		"session_recall",
 		"session_retain",
@@ -102,6 +104,12 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 	// The old "always pass project" wording trained agents wrong on stdio.
 	if strings.Contains(lower, "always pass project") {
 		t.Fatalf("instructions still force always-pass-project: %s", initialize.Instructions)
+	}
+	// A server that serves ONE project must not tell the model to name
+	// one: that was the conditional ("required only on multi-project HTTP
+	// servers") the model could not evaluate from the tool list.
+	if strings.Contains(lower, "project required") {
+		t.Fatalf("a single-project server must not demand a project: %s", initialize.Instructions)
 	}
 
 	res, err := session.ListTools(context.Background(), nil)
@@ -389,4 +397,121 @@ func TestMCPNewProtocolVersionOverHTTP(t *testing.T) {
 	if rec := post(false, ""); rec.Code != http.StatusOK {
 		t.Fatalf("legacy header-less tools/list: %d, want 200 — body: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// TestMCPHonorsDBMintedTokens pins RS-03: a token minted into the store (the
+// `leankg auth token create` path) must gate MCP HTTP exactly as it gates
+// REST. Before, MCP consulted env tokens only and stayed open as Admin.
+func TestMCPHonorsDBMintedTokens(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_VIEWER", "")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
+	dir := t.TempDir()
+	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := auth.Mint(st, auth.MintRequest{Name: "ci", Role: "viewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := core.New(st, nil, nil)
+	engine.SetProjectDir(dir)
+	srv := New(engine)
+	srv.SetAuthStore(st)
+	h := srv.HTTPHandler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/mcp", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no token with a DB token minted: %d, want 401", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+plain)
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatal("the DB-minted token was rejected")
+	}
+}
+
+// TestLegacyToolNamesResolve pins RS-22: legacy names are refused with their
+// replacement named, and an unknown tool gets the catalog error listing the
+// valid surface (not the SDK's bare "unknown tool").
+func TestLegacyToolNamesResolve(t *testing.T) {
+	session := newTestServer(t)
+	ctx := context.Background()
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get", Arguments: map[string]any{"action": "languages", "query": "x"}}); err == nil ||
+		!strings.Contains(err.Error(), `superseded by "query"`) {
+		t.Fatalf("legacy get must be refused naming its replacement: %v", err)
+	}
+	_, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "delete_everything", Arguments: map[string]any{}})
+	if err == nil || !strings.Contains(err.Error(), "valid tools: import, query, status") {
+		t.Fatalf("unknown tool error = %v, want the catalog error", err)
+	}
+}
+
+// TestMissingProjectFailsClosedUnderARouter is the safety half of #438: with
+// several projects registered, a call that omits `project` used to be answered
+// from the serve process's cwd engine, so a question about another project got
+// a confident answer built from the WRONG graph. Measured live on this machine's
+// own 298-project self-host: a query for a term that exists in no indexed file
+// of the served project returned 10 hits from it anyway.
+func TestMissingProjectFailsClosedUnderARouter(t *testing.T) {
+	s := newServerForTest(t)
+	s.SetProjectRouter(fakeRouter{multi: true})
+	if _, err := s.engineFor(context.Background(), nil); err == nil {
+		t.Fatal("a call with no project resolved an engine; under a router it must fail closed")
+	} else if !strings.Contains(err.Error(), "project") {
+		t.Fatalf("err = %v; it must name the missing project argument", err)
+	}
+	// A single registered project is not ambiguous, so an omitted argument
+	// keeps working — a stdio spawn is one agent session over one project.
+	one := newServerForTest(t)
+	one.SetProjectRouter(fakeRouter{multi: false})
+	if _, err := one.engineFor(context.Background(), nil); err != nil {
+		t.Fatalf("with one project registered an omitted project must still resolve: %v", err)
+	}
+	// With the argument present the router is the one that resolves it.
+	req := &mcp.CallToolRequest{}
+	req.Params = &mcp.CallToolParamsRaw{Name: "query"}
+	req.Params.Arguments = []byte(`{"project":"be-zlx"}`)
+	if _, err := s.engineFor(context.Background(), req); err == nil || !strings.Contains(err.Error(), "fakeRouter") {
+		t.Fatalf("with a project named the router must be consulted; err = %v", err)
+	}
+}
+
+// fakeRouter proves it was consulted: the default engine must not answer instead.
+type fakeRouter struct{ multi bool }
+
+func (fakeRouter) EngineFor(context.Context, string) (*core.Engine, error) {
+	return nil, fmt.Errorf("fakeRouter: consulted")
+}
+
+func (f fakeRouter) MultiProject() bool { return f.multi }
+
+// newServerForTest builds the Server under test (the go-sdk plumbing newTestServer
+// needs is not relevant to engine selection).
+func newServerForTest(t *testing.T) *Server {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := memory.Open(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := core.New(st, mem, nil)
+	engine.SetProjectDir(dir)
+	return New(engine)
 }

@@ -238,6 +238,14 @@ func TestModelStampAndVectors(t *testing.T) {
 		t.Fatalf("missing model stamp = %+v, want nil", none)
 	}
 
+	// Vector hits join their element (RS-05: a vector without one is an
+	// orphan and never a hit), so the QNs must exist as elements.
+	if err := s.UpsertElements([]Element{
+		{QualifiedName: "a", ElementType: "function", Name: "a", FilePath: "a.go", Language: "go"},
+		{QualifiedName: "b", ElementType: "function", Name: "b", FilePath: "b.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	vecs := []VectorRow{
 		{QualifiedName: "a", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "b", Vec: []float32{0, 1, 0, 0}},
@@ -476,5 +484,49 @@ func TestReplaceFileVectorsIsOneAtomicUnit(t *testing.T) {
 	// the file it claims to replace.
 	if err := s.ReplaceFileVectors("m", nil, nil); err == nil {
 		t.Fatal("empty vector set must be refused")
+	}
+}
+
+// TestIdentifierTermsReachFTS pins RS-13: a camelCase name is findable by its
+// words on the keyword rung, for new rows and for rows written before the
+// change (the Migrate backfill).
+func TestIdentifierTermsReachFTS(t *testing.T) {
+	for name, want := range map[string]string{
+		"RotateStagingCredentials": "rotate staging credentials",
+		"parseHTTPResponse":        "parse http response",
+		"load_config_file":         "load config file",
+		"Widget":                   "",
+	} {
+		if got := SplitIdentifier(name); got != want {
+			t.Errorf("SplitIdentifier(%q) = %q, want %q", name, got, want)
+		}
+	}
+	s := openTestStore(t)
+	if err := s.UpsertElements([]Element{{QualifiedName: "a.go::RotateStagingCredentials", ElementType: "function",
+		Name: "RotateStagingCredentials", FilePath: "a.go", Language: "go", Content: "func RotateStagingCredentials() {}"}}); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := s.FindFuzzy("rotate staging credentials", 5)
+	if err != nil || len(hits) == 0 {
+		t.Fatalf("split terms not searchable: %v %v", err, hits)
+	}
+	// Simulate a pre-RS-13 store: plain FTS row, backfill marker cleared.
+	if _, err := s.db.Exec(`DELETE FROM elements_fts`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO elements_fts (rowid, name, qualified_name, content) SELECT id, name, qualified_name, content FROM code_elements`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.KVSet("fts", "terms_version", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if hits, _ := s.FindFuzzy("staging", 5); len(hits) != 0 {
+		t.Fatal("precondition: old-style row should not match the split word")
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if hits, _ := s.FindFuzzy("staging", 5); len(hits) == 0 {
+		t.Fatal("backfill did not add split terms to existing rows")
 	}
 }

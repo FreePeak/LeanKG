@@ -851,3 +851,25 @@ func TestChildrenFilterElementTypes(t *testing.T) {
 		}
 	}
 }
+
+// TestQueryHonorsParamsLimit pins RS-24: params.limit caps the hit count
+// (it used to land in Args and be ignored, always answering 10).
+func TestQueryHonorsParamsLimit(t *testing.T) {
+	srv, _ := newServer(t)
+	var env envelope
+	if code := postJSON(t, srv.URL+"/api/query", `{"query":"auth","params":{"action":"fuzzy","limit":1}}`, &env); code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	var data struct {
+		Result struct {
+			Hits  []map[string]any `json:"hits"`
+			Limit int              `json:"limit"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Result.Limit != 1 || len(data.Result.Hits) > 1 {
+		t.Fatalf("limit=%d hits=%d, want limit 1 honored", data.Result.Limit, len(data.Result.Hits))
+	}
+}

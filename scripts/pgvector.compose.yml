@@ -1,0 +1,58 @@
+# LeanKG Postgres + pgvector, the tier `make dual-engine` and the "Dual Engine"
+# CI job run against (2026-09-04, moved under scripts/ and TRACKED 2026-10-11).
+#
+# Usage:   docker compose -f scripts/pgvector.compose.yml up -d
+# Health:  docker compose -f scripts/pgvector.compose.yml ps
+#
+# This file used to live at the repo root as docker-compose.500mb.yml, which
+# .gitignore lists as "created locally by the user; never committed" — so a
+# fresh clone (and CI) could not start the one database the acceptance gate
+# needs, and the gate's own error message named a file that did not exist.
+# There is nothing machine-local in it (no host paths, no extra mounts), so it
+# belongs in the repo; the local overrides stay ignored where they are.
+#
+# Host port 5433 (LeanKG dev default). Data volume `leankg-pgdata-500mb`
+# survives `compose down` (use `down -v` to wipe).
+#
+# PG tuning for a 500 MB container: small shared buffers, conservative
+# work/maintenance mem, low max connections. Cap enforced by compose
+# `mem_limit` (docker cgroup).
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: leankg-pg-500mb
+    mem_limit: 500m
+    memswap_limit: 500m
+    environment:
+      POSTGRES_DB: leankg
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    command: >
+      postgres
+      -c shared_buffers=96MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=48MB
+      -c max_connections=20
+      -c max_wal_size=512MB
+      -c checkpoint_timeout=15min
+      -c checkpoint_completion_target=0.9
+      -c wal_compression=on
+      -c autovacuum_max_workers=1
+      -c autovacuum_naptime=30s
+      -c bgwriter_delay=200ms
+      -c temp_buffers=8MB
+      -c jit=off
+    ports:
+      - "5433:5432"
+    volumes:
+      - leankg-pgdata-500mb:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d leankg"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+volumes:
+  leankg-pgdata-500mb:

@@ -12,7 +12,7 @@ Use the install script to install and configure MCP for your AI tool:
 curl -fsSL https://raw.githubusercontent.com/FreePeak/LeanKG/main/scripts/install.sh | bash -s -- <target>
 ```
 
-See [Installation](../README.md#installation) for supported targets.
+See [Installation](../README.md#get-started) for supported targets.
 
 ## Manual Setup
 

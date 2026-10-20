@@ -111,14 +111,16 @@ var memoryWritePrefixes = []string{
 
 // isWritePath reports whether a request mutates state. Path alone is not
 // enough: memory retain and memory list share one path, so the method decides
-// (GET /…/memories lists, POST /…/memories retains).
+// (GET /…/memories lists, POST /…/memories retains). Every DELETE under a
+// memory mount (document delete) is a write.
 func isWritePath(path, method string) bool {
 	for _, p := range writePrefixes {
 		if strings.HasPrefix(path, p) {
 			return true
 		}
 	}
-	if method != http.MethodPost || !strings.HasSuffix(path, "/memories") {
+	retain := method == http.MethodPost && strings.HasSuffix(path, "/memories")
+	if !retain && method != http.MethodDelete {
 		return false
 	}
 	for _, p := range memoryWritePrefixes {
@@ -146,6 +148,13 @@ func RoleForRequest(r *http.Request) (Role, error) {
 // DB-backed token store FIRST (revocable at runtime), then the env vars.
 func RoleForRequestWithStore(st store.Backend, r *http.Request) (Role, error) {
 	return fromEnv().classify(st, r)
+}
+
+// GateEnabled reports whether any live token (env or DB-backed) is
+// configured, i.e. whether HTTP callers must authenticate. serve uses it to
+// warn when a listener leaves the loopback interface with the gate open.
+func GateEnabled(st store.Backend) (bool, error) {
+	return fromEnv().tokensConfigured(st)
 }
 
 // AllowedTool reports whether role may invoke the MCP tool named tool.

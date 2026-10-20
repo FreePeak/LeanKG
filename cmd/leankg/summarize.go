@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
 	"github.com/FreePeak/LeanKG/internal/summarize"
 )
@@ -35,7 +34,7 @@ func cmdSummarize(args []string) {
 		dir = "."
 	}
 	ctx := context.Background()
-	st, err := store.OpenBackend(ctx, dir, os.Getenv("LEANKG_DB_ENGINE"), projectcfg.PGURL(dir), "", store.RW)
+	st, err := openStore(ctx, dir, "", store.RW)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "summarize: open store: %v\n", err)
 		os.Exit(1)

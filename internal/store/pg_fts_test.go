@@ -426,18 +426,31 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method != "rrf("+ArmVector+"+"+ArmTSVector+"+"+ArmTrigram+")" {
-		t.Fatalf("method = %q; want all three arms", method)
+	// The name arm is fused in too (the ArmName ranking arm, gated on corpus
+	// rarity). It appears here because the fixture's query has a token rare
+	// enough to reach it — which is the arm working, not noise.
+	if method != "rrf("+ArmVector+"+"+ArmTSVector+"+"+ArmTrigram+"+"+ArmName+")" {
+		t.Fatalf("method = %q; want every arm that fired", method)
 	}
 	if len(hits) != 4 {
 		t.Fatalf("hits = %+v; want 4", hits)
 	}
-	// Delta is last by cosine but first by both keyword arms: 2*(1/61) beats
-	// Alpha's single 1/61.
+	// Delta is last by cosine but first by the keyword arms: under the 3:1
+	// default its three lexical ranks (1/61 each) plus vector rank 4 (3/64)
+	// beat Alpha's vector rank 1 alone (3/61).
 	if hits[0].Element.QualifiedName != "pkg.Delta" {
 		t.Fatalf("top hit = %s; want pkg.Delta", hits[0].Element.QualifiedName)
 	}
-	pgFloatClose(t, hits[0].Score, 2*(1/61.0)+1/64.0, "Delta fused score")
+	// The fused score is the sum of weight/(RRFK+rank) over every arm the hit
+	// appears in, so derive it from the ranks the answer reports rather than
+	// from a constant: the constant silently encoded "three arms", and the name
+	// arm changed that without changing the fusion. The weight is the default
+	// (vector 3, lexical 1), read through the same armWeight the fusion uses.
+	want := 0.0
+	for arm, rank := range hits[0].Ranks {
+		want += DefaultFuseWeights().armWeight(arm) / float64(RRFK+rank)
+	}
+	pgFloatClose(t, hits[0].Score, want, "Delta fused score")
 	if hits[1].Element.QualifiedName != "pkg.Alpha" {
 		t.Fatalf("second hit = %s; want pkg.Alpha", hits[1].Element.QualifiedName)
 	}
@@ -488,8 +501,9 @@ func TestPGHybridSearchWithoutVectors(t *testing.T) {
 	if len(hits) != 1 || hits[0].Element.QualifiedName != "pkg.Watermark" {
 		t.Fatalf("hits = %+v; want the keyword arms to carry the hit", hits)
 	}
-	if method != "rrf("+ArmTSVector+"+"+ArmTrigram+")" {
-		t.Fatalf("method = %q; want the two keyword arms", method)
+	// With no vectors, the keyword arms plus the name arm (see above).
+	if method != "rrf("+ArmTSVector+"+"+ArmTrigram+"+"+ArmName+")" {
+		t.Fatalf("method = %q; want the keyword arms plus the name arm", method)
 	}
 	if hits[0].Similarity != 0 {
 		t.Fatalf("similarity = %v; want 0 with no vector arm", hits[0].Similarity)

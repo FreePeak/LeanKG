@@ -66,13 +66,14 @@ type Backend interface {
 	KVGet(namespace, key string) (string, bool, error)
 
 	FindExact(name string) ([]Element, error)
-	FindFuzzy(query string, limit int) ([]FuzzyMatch, error)
-	// FindByNameToken ranks elements whose SYMBOL NAME contains an
-	// identifier-shaped token of the query, ignoring the body entirely. It is
-	// the ArmName ranking arm: empty for a prose query, because the tokens must
-	// look like identifiers. Both backends implement it (LIKE / ILIKE), so the
-	// arm is engine-agnostic like every other rung.
+	// FindByNameToken ranks elements whose SYMBOL NAME contains a RARE token of
+	// the query, shortest name first. It is the ArmName ranking arm: the
+	// keyword arm reads content and matches words, the vector arm reads the
+	// body, so a question that paraphrases ("cut a string to n runes") reaches
+	// neither — the NAME is the evidence. Rarity is measured against the corpus
+	// (see rareNameTokens), not against a shape, because agents ask in prose.
 	FindByNameToken(query string, limit int) ([]FuzzyMatch, error)
+	FindFuzzy(query string, limit int) ([]FuzzyMatch, error)
 	ElementCount() (int, error)
 	RelationshipCount() (int, error)
 	ElementsByType() (map[string]int, error)

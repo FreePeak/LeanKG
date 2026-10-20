@@ -319,3 +319,32 @@ func TestIndexDocsHeadinglessFile(t *testing.T) {
 		t.Fatalf("file count: %d, want 1", n)
 	}
 }
+
+// TestIndexDocsUnderKeepsRootKeysAndScope pins RS-02/RS-08: indexing a docs
+// subdirectory keys files relative to the project root and reconciles only
+// inside that subdirectory — README.md at the root must survive.
+func TestIndexDocsUnderKeepsRootKeysAndScope(t *testing.T) {
+	dir, st := setupStore(t)
+	writeFile(t, dir, "README.md", "# Readme\n\nroot doc\n")
+	writeFile(t, dir, "docs/guide.md", "# Guide\n\nbody\n")
+	if _, err := IndexDocs(context.Background(), st, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IndexDocsUnder(context.Background(), st, dir, filepath.Join(dir, "docs")); err != nil {
+		t.Fatal(err)
+	}
+	files, err := st.Files()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range files {
+		got[f.Path] = true
+	}
+	if !got["README.md"] || !got["docs/guide.md"] || got["guide.md"] {
+		t.Fatalf("file records = %v, want README.md + docs/guide.md and no re-keyed guide.md", got)
+	}
+	if _, err := IndexDocsUnder(context.Background(), st, dir, t.TempDir()); err == nil {
+		t.Fatal("docs dir outside the root was accepted")
+	}
+}

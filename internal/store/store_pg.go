@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +34,11 @@ type PGStore struct {
 	dsn    string
 	schema string
 }
+
+// ErrSchemaMissing is the read-only open of a project schema that does not
+// exist, the one OpenPG failure that means "no store yet". A bad dsn, a refused
+// connection or an auth failure is a different error and must not read as empty.
+var ErrSchemaMissing = errors.New("store: read-only open of missing store schema")
 
 // OpenPG opens the PostgreSQL+pgvector backend for one project directory.
 // Each project lives in its own schema (leankg_<sha256(dir)[:16]>); RW mode
@@ -81,7 +85,7 @@ func OpenPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, 
 	}
 	if !exists {
 		pool.Close()
-		return nil, fmt.Errorf("store: read-only open of missing store schema %s", schema)
+		return nil, fmt.Errorf("%w %s", ErrSchemaMissing, schema)
 	}
 	return s, nil
 }
@@ -301,6 +305,98 @@ func (s *PGStore) FindExact(name string) ([]Element, error) {
 	return pgScanElements(rows)
 }
 
+// nameTokenCounts is the rarity table the name arm gates on, on PostgreSQL.
+// Same query, same bound, same meaning as the SQLite one: a token must be rare
+// among symbol names to be worth a name search, and the bound is a fraction of
+// the ELEMENT count. The count is what the LIKE will MATCH (a SUBSTRING of the
+// name), and it stops at bound+1 because only the comparison matters.
+func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
+	var total int
+	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	bound := total / 500
+	if bound < 2 {
+		bound = 2
+	}
+	counts := map[string]int{}
+	for _, t := range toks {
+		pat := "%" + t + "%"
+		var n int
+		if err := s.pool.QueryRow(pgCtx,
+			`SELECT COUNT(*) FROM (SELECT 1 FROM code_elements WHERE name ILIKE $1 OR qualified_name ILIKE $1 LIMIT $2)`,
+			pat, bound+1).Scan(&n); err != nil {
+			return nil, 0, err
+		}
+		counts[t] = n
+	}
+	return counts, total, nil
+}
+
+// rareNameTokens is the shared gate (see the SQLite implementation for the
+// measurement that motivated it).
+func (s *PGStore) rareNameTokens(query string) ([]string, error) {
+	toks := nameTokens(query)
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	counts, total, err := s.nameTokenCounts(toks)
+	if err != nil {
+		return nil, err
+	}
+	bound := total / 500
+	if bound < 2 {
+		bound = 2
+	}
+	out := toks[:0]
+	for _, t := range toks {
+		if counts[t] > bound {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// FindByNameToken is the ArmName ranking arm on PostgreSQL: elements whose
+// SYMBOL NAME contains a rare token of the query, shortest name first. Same
+// contract as the SQLite arm.
+func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
+	toks, err := s.rareNameTokens(query)
+	if err != nil {
+		return nil, err
+	}
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var where []string
+	var args []any
+	for i, t := range toks {
+		where = append(where, fmt.Sprintf("(ce.name ILIKE $%d OR ce.qualified_name ILIKE $%d)", i+1, i+1))
+		args = append(args, "%"+t+"%")
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce
+		WHERE `+strings.Join(where, " OR ")+`
+		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
+		LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	els, err := pgScanElements(rows)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FuzzyMatch, 0, len(els))
+	for _, e := range els {
+		out = append(out, FuzzyMatch{Element: e})
+	}
+	return out, nil
+}
+
 // FindFuzzy implements the L2 rung's degraded arm: literal-substring recall
 // over name/qualified_name with no ranking signal at all.
 // Divergence from sqlite (documented): FTS5 provides bm25 ranking, which a
@@ -322,65 +418,6 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
 		FROM code_elements ce
 		WHERE ce.name ILIKE $1 ESCAPE '\' OR ce.qualified_name ILIKE $1 ESCAPE '\'
 		ORDER BY length(ce.qualified_name) LIMIT $2`, pattern, limit)
-	if err != nil {
-		return nil, err
-	}
-	return scanFuzzyMatches(rows)
-}
-
-// nameTokenFreq is the rarity table the name arm gates on, on postgres. Same
-// query, same bound, same meaning as the sqlite one: a token must be rare among
-// symbol names to be worth a name search, and the bound is a fraction of the
-// ELEMENT count.
-func (s *PGStore) nameTokenFreq() (map[string]int, int, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT lower(name), COUNT(*) FROM code_elements GROUP BY lower(name)`)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	freq := map[string]int{}
-	elements := 0
-	for rows.Next() {
-		var name string
-		var n int
-		if err := rows.Scan(&name, &n); err != nil {
-			return nil, 0, err
-		}
-		freq[name] += n
-		elements += n
-	}
-	return freq, elements, rows.Err()
-}
-
-// FindByNameToken is the ArmName arm on postgres: the same identifier-shaped
-// tokens as the sqlite implementation (shared nameTokens, so both engines fire
-// the arm on exactly the same questions) with ILIKE instead of LIKE, because
-// Postgres' LIKE is case-sensitive.
-func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
-	freq, distinct, err := s.nameTokenFreq()
-	if err != nil {
-		return nil, err
-	}
-	toks := nameTokens(query, freq, distinct)
-	if len(toks) == 0 {
-		return nil, nil
-	}
-	if limit <= 0 {
-		limit = 50
-	}
-	var where []string
-	var args []any
-	for i, t := range toks {
-		n := i + 1
-		where = append(where, fmt.Sprintf("(ce.name ILIKE $%d ESCAPE '\\' OR ce.qualified_name ILIKE $%d ESCAPE '\\')", n, n))
-		args = append(args, "%"+escapeLike(t)+"%")
-	}
-	args = append(args, limit)
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+`, 0.0 AS score
-		FROM code_elements ce
-		WHERE `+strings.Join(where, " OR ")+`
-		ORDER BY length(ce.name), length(ce.qualified_name) LIMIT $`+strconv.Itoa(len(toks)+1),
-		args...)
 	if err != nil {
 		return nil, err
 	}
@@ -809,17 +846,14 @@ func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSea
 	return s.SearchVectorsScoped(modelID, q, k, nil)
 }
 
-// SearchVectorsScoped is SearchVectors restricted to the elements keep accepts.
-// A nil keep is exactly SearchVectors.
+// SearchVectorsScoped is SearchVectors over a caller-selected population.
 //
-// ponytail: keep is a Go predicate, so it cannot be pushed into the SQL the
-// HNSW index serves — the query over-fetches a bounded window and filters during
-// the scan, so a caller with an aggressive predicate can see FEWER than k hits
-// even when more matched. That is the ceiling; the upgrade path is a predicate
-// expressed as SQL (a path prefix, an element-type set) and pushed into the
-// WHERE clause, which is the only way to keep the index in the plan. The window
-// is 4x k with a floor, so the common case — a minority of rows filtered — is
-// unaffected.
+// ponytail: a Go predicate cannot be pushed into the SQL the HNSW index
+// serves, so this OVER-FETCHES (4·k, floor 64) and filters during the scan.
+// The ceiling: an aggressive predicate can see fewer than k hits even when
+// more matched, because the excluded rows were never fetched. Upgrade path is
+// a SQL-expressible WHERE clause on file_path/type. A nil keep is the unscoped
+// default, byte for byte.
 func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
 	if len(q) == 0 {
 		return nil, nil
@@ -827,9 +861,8 @@ func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep f
 	if k < 0 {
 		k = 0
 	}
-	fetch := k
 	if keep != nil {
-		fetch = max(k*4, 64)
+		k = overfetchK(k)
 	}
 	rows, err := s.pool.Query(pgCtx, `SELECT v.qualified_name,
 		COALESCE(ce.element_type,''), COALESCE(ce.name, v.qualified_name), COALESCE(ce.file_path,''),
@@ -837,9 +870,9 @@ func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep f
 		COALESCE(ce.parent_qualified,''), COALESCE(ce.content,''), COALESCE(ce.metadata::text,'{}'),
 		1 - (v.vec <=> $1::vector) AS similarity
 		FROM `+s.vecTable(modelID)+` v
-		LEFT JOIN code_elements ce ON ce.qualified_name = v.qualified_name
+		JOIN code_elements ce ON ce.qualified_name = v.qualified_name -- INNER: orphans are never hits (RS-05)
 		ORDER BY v.vec <=> $1::vector
-		LIMIT $2`, pgvector.NewVector(q), fetch)
+		LIMIT $2`, pgvector.NewVector(q), k)
 	if err != nil {
 		return nil, err
 	}
@@ -857,14 +890,24 @@ func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep f
 			_ = json.Unmarshal([]byte(meta), &h.Element.Metadata)
 		}
 		if keep != nil && !keep(h.Element) {
-			continue
+			continue // outside the caller's population
 		}
 		out = append(out, h)
-		if len(out) >= k {
-			break
-		}
 	}
 	return out, rows.Err()
+}
+
+// overfetchK widens a scoped LIMIT so the predicate still sees k hits: a Go
+// predicate cannot be pushed into the HNSW SQL, so the rows it excludes must
+// have been fetched first.
+func overfetchK(k int) int {
+	if k < 0 {
+		k = 0
+	}
+	if w := 4 * k; w > 64 {
+		return w
+	}
+	return 64
 }
 
 // Watermark returns the current freshness sequence number.

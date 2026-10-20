@@ -1,16 +1,20 @@
 import { test, expect, Page } from '@playwright/test';
 
-// Phase 5.5 T5.5.3 — WebUI regression against the Postgres-era backend.
+// Phase 5.5 T5.5.3 — WebUI regression.
 //
 // The UI talks to the leankg web server over `/api/*` (vite dev proxy →
-// BACKEND_TARGET). The web server is PostgreSQL-backed today
-// (see src/db/backend.rs resolve_engine),
-// so these tests exercise the real UI against the same GraphEngine surface
-// the tool sweep covered. Re-run with:
+// BACKEND_TARGET). Re-run with:
 //
-//   BACKEND_TARGET=http://127.0.0.1:9080 npx playwright test e2e/pg-regression.spec.ts
+//   FRONTEND_URL=http://127.0.0.1:8080 BACKEND_URL=http://127.0.0.1:8080 E2E=1 \
+//     npx playwright test e2e/pg-regression.spec.ts
 //
-// against `leankg web --port 9080 --project <fixture>`.
+// against `leankg serve --http :8080 --ui :8081 --project <fixture>`.
+//
+// The header used to say "PostgreSQL-backed today" and cite the Rust engine
+// (src/db/backend.rs, `leankg web`); the Go port has neither, and this suite
+// has no CI job and no local runner, so nobody re-read it. It exercises the
+// shipped UI, whatever engine the server was started with (sqlite by default,
+// postgres behind LEANKG_DB_ENGINE=postgres + LEANKG_PG_URL).
 
 const SCREENSHOT_DIR = '../docs/verification/';
 

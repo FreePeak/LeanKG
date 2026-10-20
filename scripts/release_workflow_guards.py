@@ -3,7 +3,17 @@
 been broken once. Every one of those breaks produced a GREEN run that published a
 release with no binaries — which is precisely what no CI status can catch.
 
+From the repository root:
+
     python3 scripts/release_workflow_guards.py
+
+This script imports PyYAML, and CI runs on a SELF-HOSTED runner whose `python3`
+is Homebrew's, which does not carry it and refuses to install into itself under
+PEP 668. The CI step builds a throwaway venv for the one import instead of
+assuming a Python on PATH. Locally, do the same:
+
+    python3 -m venv /tmp/guardvenv && /tmp/guardvenv/bin/pip install pyyaml
+    /tmp/guardvenv/bin/python scripts/release_workflow_guards.py
 
 Exits non-zero with one readable message per violation.
 """

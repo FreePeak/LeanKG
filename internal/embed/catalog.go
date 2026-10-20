@@ -67,6 +67,10 @@ type Model struct {
 	Endpoint string
 	// Dims is the vector width the model produces.
 	Dims int
+	// Matryoshka lists the truncated widths the model still serves below Dims
+	// (LEANKG_EMBED_DIMS selects one; see TruncateNormalize). Empty for a model
+	// trained at one width only.
+	Matryoshka []int
 	// QueryPrefix / DocumentPrefix are the asymmetric text prefixes the model
 	// was trained with. The provider applies them at BOTH document and query
 	// time, and they are recorded on the stamp so a prefix change can never
@@ -103,6 +107,23 @@ var catalogRows = []Model{
 		Repo:     "Xenova/all-MiniLM-L6-v2",
 		Revision: "751bff37182d3f1213fa05d7196b954e230abad9",
 		Dims:     384,
+	},
+	{
+		// EmbeddingGemma 2 (google/embeddinggemma-2), native 768-d. Served by a
+		// llama.cpp sidecar (llama-server >= b11454) from the BF16 GGUF
+		// ggml-org/embeddinggemma-2-GGUF; the pin is the google/embeddinggemma-2
+		// commit the prompts were read from, config_sentence_transformers.json
+		// "Document" and "CodeRetrieval". Matryoshka 512/256/128: LEANKG_EMBED_DIMS
+		// may select one (truncated and re-normalized); unset serves 768.
+		ID:             "embeddinggemma-2",
+		Provider:       "local",
+		Name:           "embeddinggemma-2",
+		Repo:           "google/embeddinggemma-2",
+		Revision:       "914f7f89142e33e77833254d9c9b90c3cef7303b",
+		Dims:           768,
+		Matryoshka:     []int{512, 256, 128},
+		QueryPrefix:    "task: code retrieval | query: ",
+		DocumentPrefix: "title: none | text: ",
 	},
 	{
 		// Reference registry.rs "qwen3-emb-4b-2560" (which pinned the version
@@ -178,6 +199,10 @@ func init() {
 }
 
 func normalizeModel(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+// Widths lists the vector widths the row serves: its native Dims first, then
+// its Matryoshka truncations.
+func (m Model) Widths() []int { return append([]int{m.Dims}, m.Matryoshka...) }
 
 // Models returns the pinned catalog rows (status/doctor reporting).
 func Models() []Model { return append([]Model(nil), catalogRows...) }

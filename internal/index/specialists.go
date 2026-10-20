@@ -2,7 +2,6 @@ package index
 
 import (
 	"bytes"
-	"os"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -97,15 +96,11 @@ func KotlinExtras(rel string, src []byte) ([]store.Element, []store.Relationship
 	return els, rels
 }
 
-// indexSpecialistFile extracts and persists one specialist-claimed file.
-// Returns handled=false when the file is not claimed (caller falls back to
-// generic extraction). Wiring: called from indexDir's changed-file loop
+// indexSpecialistFile extracts and persists one specialist-claimed file from
+// its content. Returns handled=false when the file is not claimed (caller falls
+// back to generic extraction). Wiring: called from indexDir's changed-file loop
 // BEFORE extractFileAs.
-func indexSpecialistFile(st store.Backend, rel, abs string, size, mtimeNS int64, hash string, res *Result) (bool, error) {
-	src, err := os.ReadFile(abs)
-	if err != nil {
-		return false, err
-	}
+func indexSpecialistFile(st store.Backend, rel string, src []byte, size, mtimeNS int64, hash string, res *Result) (bool, error) {
 	els, rels, claimed := ExtractSpecialist(rel, src)
 	if !claimed {
 		return false, nil
@@ -131,13 +126,9 @@ func indexSpecialistFile(st store.Backend, rel, abs string, size, mtimeNS int64,
 }
 
 // indexKotlinExtras persists the Kotlin-side Android extractor output for one
-// already-indexed .kt/.kts file. Wiring: called from indexDir after the
-// generic upsert for files with lang == "kotlin".
-func indexKotlinExtras(st store.Backend, rel, abs string, res *Result) error {
-	src, err := os.ReadFile(abs)
-	if err != nil {
-		return err
-	}
+// already-indexed .kt/.kts file, from its content. Wiring: called from indexDir
+// after the generic upsert for files with lang == "kotlin".
+func indexKotlinExtras(st store.Backend, rel string, src []byte, res *Result) error {
 	els, rels := KotlinExtras(rel, src)
 	if err := st.UpsertElements(els); err != nil {
 		return err

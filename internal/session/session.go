@@ -12,6 +12,7 @@
 package session
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -188,6 +189,21 @@ func (s *Store) Canvas(sessionID string) ([]Ref, error) {
 // AddLesson records a lesson for the session, dedup'd by SHA-256 of the
 // text. deduped is true when the text was already present (nothing written).
 func (s *Store) AddLesson(sessionID, text string) (deduped bool, err error) {
+	return s.AddLessonCtx(context.Background(), sessionID, text)
+}
+
+// AddLessonCtx is AddLesson with the caller's context, so the lesson event
+// joins the transport call that recorded it (telemetry.WithIdentity).
+func (s *Store) AddLessonCtx(ctx context.Context, sessionID, text string) (deduped bool, err error) {
+	start := time.Now()
+	deduped, err = s.addLesson(sessionID, text)
+	if err == nil {
+		recordLesson(ctx, deduped, start)
+	}
+	return deduped, err
+}
+
+func (s *Store) addLesson(sessionID, text string) (deduped bool, err error) {
 	dir, err := s.sessionDir(sessionID)
 	if err != nil {
 		return false, err
@@ -214,6 +230,35 @@ func (s *Store) AddLesson(sessionID, text string) (deduped bool, err error) {
 		return false, err
 	}
 	return false, nil
+}
+
+// Lessons returns every lesson recorded for a session, newest last, as plain
+// text. A session with no lessons (or no session directory at all) reads as
+// an empty list rather than an error: a fresh session asking "what did I learn
+// here" must not be told off.
+//
+// addLesson wrote this file since the Rust port and read it back only to avoid
+// rewriting a duplicate, so a lesson was write-only — measured live: it landed
+// in `.leankg/sessions/<sid>/lessons.json`, answer `{"deduped":false}`, and no
+// read surface in the binary (memory session_recall, session canvas, offload
+// recall) could see it. Lessons joins them.
+func (s *Store) Lessons(sessionID string) ([]string, error) {
+	dir, err := s.sessionDir(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	var lessons []lesson
+	if err := readJSON(filepath.Join(dir, "lessons.json"), &lessons); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("session: read lessons for %s: %w", sessionID, err)
+	}
+	out := make([]string, 0, len(lessons))
+	for _, l := range lessons {
+		out = append(out, l.Text)
+	}
+	return out, nil
 }
 
 func (s *Store) loadIndex(sessionID string) (*index, error) {

@@ -93,13 +93,19 @@ type overrideProvider struct {
 	inner             Provider
 	modelID, revision string
 	dims              int
+	provider          string // transport label override; "" keeps inner's
 }
 
 func (o overrideProvider) ModelID() string  { return o.modelID }
 func (o overrideProvider) Revision() string { return o.revision }
 func (o overrideProvider) Dimensions() int  { return o.dims }
 func (o overrideProvider) Distance() string { return o.inner.Distance() }
-func (o overrideProvider) Provider() string { return o.inner.Provider() }
+func (o overrideProvider) Provider() string {
+	if o.provider != "" {
+		return o.provider
+	}
+	return o.inner.Provider()
+}
 func (o overrideProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	return o.inner.Embed(ctx, kind, texts)
 }
@@ -173,6 +179,37 @@ func TestRunFullThenIncrementalSkipsUnchanged(t *testing.T) {
 	}
 	if vectorCount(t, st, p.ModelID()) != 3 {
 		t.Fatalf("after edit: want still 3 vectors")
+	}
+}
+
+// TestIncrementalBacklogMatchesRunDirty: the hook gate counts what an incremental
+// run would embed. Elements with no stored state count, and the count equals the
+// run's Dirty before the run, after it, and after an edit.
+func TestIncrementalBacklogMatchesRunDirty(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"), el("a::f3", "func f3() {}"))
+	p := Deterministic(8)
+	assertBacklog := func(want int) {
+		t.Helper()
+		got, err := IncrementalBacklog(st, p)
+		if err != nil {
+			t.Fatalf("IncrementalBacklog: %v", err)
+		}
+		if got != want {
+			t.Fatalf("IncrementalBacklog = %d, want %d", got, want)
+		}
+	}
+
+	assertBacklog(3)
+	if rep := mustRun(t, st, p, "incremental"); rep.Dirty != 3 {
+		t.Fatalf("first incremental run: Dirty = %d, want 3", rep.Dirty)
+	}
+	assertBacklog(0)
+
+	seed(t, st, el("a::f2", "func f2(x int) {}"))
+	assertBacklog(1)
+	if rep := mustRun(t, st, p, "incremental"); rep.Dirty != 1 {
+		t.Fatalf("incremental after edit: Dirty = %d, want 1", rep.Dirty)
 	}
 }
 
@@ -295,7 +332,9 @@ func (r *recordProvider) Distance() string { return r.inner.Distance() }
 func (r *recordProvider) Provider() string { return r.provider }
 
 func (r *recordProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
-	r.texts = append(r.texts, texts...)
+	if kind == Document { // query-kind calls are the calibration probes
+		r.texts = append(r.texts, texts...)
+	}
 	return r.inner.Embed(ctx, kind, texts)
 }
 
@@ -321,24 +360,15 @@ func TestRunLocalProviderTextBudget(t *testing.T) {
 			len(p.texts), got, maxLocalTextChars)
 	}
 
-	// The openai arm is not under a model-context budget, so its text keeps
-	// the name AND the whole body (v3's embedText, see elementtext_test.go).
 	st2 := testStore(t)
 	seed(t, st2, el("a::big", strings.Repeat("x", 4000)))
 	p2 := &recordProvider{inner: Deterministic(8), provider: "openai"}
 	rep2 := mustRun(t, st2, p2, "full")
-	wantText := embedText("a::big", strings.Repeat("x", 4000))
-	if rep2.Truncations != 0 || len(p2.texts) != 1 || p2.texts[0] != wantText {
-		t.Fatalf("openai run: got truncations=%d text rune len %d, want 0 and %d runes (name + full body)",
-			rep2.Truncations, runeLen(p2.texts), utf8.RuneCountInString(wantText))
+	// The document is the header line plus the full content (RS-11).
+	if rep2.Truncations != 0 || len(p2.texts) != 1 || !strings.HasSuffix(p2.texts[0], "\n"+strings.Repeat("x", 4000)) {
+		t.Fatalf("openai run: got truncations=%d, %d texts, want 0 and the full 4000-rune content",
+			rep2.Truncations, len(p2.texts))
 	}
-}
-
-func runeLen(texts []string) int {
-	if len(texts) == 0 {
-		return -1
-	}
-	return utf8.RuneCountInString(texts[0])
 }
 
 // longTextProvider fails any call containing a text over maxRunes, mimicking
@@ -591,7 +621,12 @@ func TestFromEnv(t *testing.T) {
 		if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "sidecar") {
 			t.Fatalf("want actionable sidecar error, got %v", err)
 		}
-		t.Setenv("LEANKG_EMBED_BASE_URL", "http://127.0.0.1:9101/v1")
+		// Hermetic: a sidecar with no /props (another OpenAI-compatible
+		// server) keeps the legacy identity. Never a fixed port — a real
+		// sidecar on this host would answer and fingerprint the test.
+		bare := httptest.NewServer(http.NotFoundHandler())
+		defer bare.Close()
+		t.Setenv("LEANKG_EMBED_BASE_URL", bare.URL+"/v1")
 		p, err := FromEnv()
 		if err != nil {
 			t.Fatal(err)
@@ -603,11 +638,44 @@ func TestFromEnv(t *testing.T) {
 		if !ok {
 			t.Fatalf("want *localProvider, got %T", p)
 		}
-		if o.baseURL != "http://127.0.0.1:9101/v1" {
+		if o.baseURL != bare.URL+"/v1" {
 			t.Fatalf("base URL: got %q", o.baseURL)
 		}
 		if o.ModelID() != "local" || o.Revision() != "local:local" {
 			t.Fatalf("stamp defaults: got %s/%s", o.ModelID(), o.Revision())
+		}
+	})
+
+	t.Run("local fingerprints the served model (RS-14)", func(t *testing.T) {
+		t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+		t.Setenv("LEANKG_EMBED_REVISION", "")
+		t.Setenv("LEANKG_EMBED_MODEL", "")
+		model := "/cache/hub/models--x--bge-gguf/snapshots/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-f16.gguf"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/props" {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write([]byte(`{"model_path":"` + model + `","default_generation_settings":{"n_ctx":512}}`))
+		}))
+		defer srv.Close()
+		t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL+"/v1")
+		p, err := FromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "local:bge-small-en-v1.5-f16.gguf@d32f8c040ea3b516330eeb75b72bcc2d3a780ab7"
+		if got := p.Revision(); got != want {
+			t.Fatalf("revision = %q, want %q", got, want)
+		}
+		if tb := p.(*localProvider).TextBudget(); tb != 960 {
+			t.Fatalf("text budget from n_ctx 512 = %d, want 960", tb)
+		}
+		// An explicit operator pin still wins.
+		t.Setenv("LEANKG_EMBED_REVISION", "my-pin")
+		p2, _ := FromEnv()
+		if p2.Revision() != "my-pin" {
+			t.Fatalf("explicit pin overridden: %q", p2.Revision())
 		}
 	})
 
@@ -622,12 +690,16 @@ func TestFromEnv(t *testing.T) {
 // --- NDJSON export/import ------------------------------------------------------
 
 func TestNDJSONRoundTrip(t *testing.T) {
+	// The export resolves its provider from the environment, as the import does:
+	// the deterministic provider at width 8 is the identity both sides share.
+	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
+	t.Setenv("LEANKG_EMBED_DIMS", "8")
 	st1 := testStore(t)
 	els := []store.Element{el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"), el("b::g", "def g(): pass")}
 	seed(t, st1, els...)
 
 	var buf bytes.Buffer
-	if err := ExportNDJSON(context.Background(), st1, "m", &buf); err != nil {
+	if err := ExportNDJSON(context.Background(), st1, "deterministic-8", &buf); err != nil {
 		t.Fatalf("ExportNDJSON: %v", err)
 	}
 
@@ -642,7 +714,7 @@ func TestNDJSONRoundTrip(t *testing.T) {
 	}
 	// readElements orders by qualified_name: a::f1 < a::f2 < b::g.
 	sum := sha256.Sum256([]byte("func f1() {}"))
-	if line.Text != "func f1() {}" || line.ContentHash != hex.EncodeToString(sum[:]) || line.QualifiedName != "a::f1" {
+	if line.Text != "function a::f1 — src/f.go\nfunc f1() {}" || line.ContentHash != hex.EncodeToString(sum[:]) || line.QualifiedName != "a::f1" {
 		t.Fatalf("export line: got %+v", line)
 	}
 	// Simulate the offsite workflow: export → embed elsewhere → import.
@@ -683,12 +755,12 @@ func TestNDJSONRoundTrip(t *testing.T) {
 		t.Fatal("import: want 3 vectors")
 	}
 	cur, _ := st2.Stamp("deterministic-8")
-	if cur == nil || cur.Revision != "test:deterministic-v1" || cur.Dimensions != 8 || cur.Distance != "cosine" || cur.Provider != "ndjson" {
+	if cur == nil || cur.Revision != "test:deterministic-v1" || cur.Dimensions != 8 || cur.Distance != "cosine" || cur.Provider != "deterministic" {
 		t.Fatalf("import stamp: got %+v", cur)
 	}
 
 	buf2 := bytes.Buffer{}
-	if err := ExportNDJSON(context.Background(), st2, "m", &buf2); err != nil {
+	if err := ExportNDJSON(context.Background(), st2, "deterministic-8", &buf2); err != nil {
 		t.Fatal(err)
 	}
 	rep, err = ImportNDJSON(context.Background(), st2, "deterministic-8", "test:deterministic-v1", "cosine", 8, simulateOffsite(&buf2))
@@ -701,6 +773,10 @@ func TestNDJSONRoundTrip(t *testing.T) {
 }
 
 func TestImportNDJSONDimGuardAndOrphans(t *testing.T) {
+	t.Setenv("LEANKG_EMBED_PROVIDER", "openai")
+	t.Setenv("LEANKG_EMBED_MODEL", "m")
+	t.Setenv("LEANKG_EMBED_DIMS", "8")
+	t.Setenv("LEANKG_EMBED_REVISION", "rev")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 
@@ -770,5 +846,138 @@ func TestRunIncrementalMismatchHardFails(t *testing.T) {
 	}
 	if got := vectorCount(t, st, p1.ModelID()); got != before {
 		t.Fatalf("failed incremental run must not touch vectors: had %d, now %d", before, got)
+	}
+}
+
+// TestRunIncrementalIgnoresProviderLabel pins that a provider label which does
+// not change the text cap is not drift: a collection stamped "openai" (8000-rune
+// cap) is embedded incrementally under "openai-compatible" (same 8000-rune cap),
+// with no stamp mismatch, and the stored stamp row keeps the provider it was
+// written with. The label is "openai-compatible" rather than "local" because
+// "local" has a 1000-rune cap, and that case must refuse (see
+// TestRunIncrementalRefusesLabelThatChangesTextCap).
+func TestRunIncrementalIgnoresProviderLabel(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+	stamped := overrideProvider{inner: Deterministic(8), modelID: "embeddinggemma-2", revision: "test:gemma-v1", dims: 8, provider: "openai"}
+	mustRun(t, st, stamped, "full")
+
+	local := stamped
+	local.provider = "openai-compatible"
+	seed(t, st, el("a::f3", "func f3() {}"))
+	rep, err := Run(context.Background(), st, local, "incremental")
+	if err != nil {
+		t.Fatalf("incremental with provider label local over openai stamp: %v", err)
+	}
+	if rep.Embedded != 1 || rep.Skipped != 2 {
+		t.Fatalf("incremental: got %+v, want Embedded=1 Skipped=2", rep)
+	}
+	cur, err := st.Stamp("embeddinggemma-2")
+	if err != nil || cur == nil || cur.Provider != "openai" {
+		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
+	}
+	if n := vectorCount(t, st, "embeddinggemma-2"); n != 3 {
+		t.Fatalf("vectors: got %d, want 3", n)
+	}
+}
+
+// TestRunIncrementalRefusesLabelThatChangesTextCap pins that a provider label
+// which changes the text cap is refused by an incremental run: an
+// openai-stamped collection (8000-rune cap) must not take a "local" run (1000-
+// rune cap), or the new element is cut differently from its neighbours. The
+// refusal names the stored label and the env fix, does not steer to a full
+// rebuild as the only option, and writes nothing.
+func TestRunIncrementalRefusesLabelThatChangesTextCap(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+	stamped := overrideProvider{inner: Deterministic(8), modelID: "embeddinggemma-2", revision: "test:gemma-v1", dims: 8, provider: "openai"}
+	mustRun(t, st, stamped, "full")
+	before := vectorCount(t, st, "embeddinggemma-2")
+
+	seed(t, st, el("a::big", strings.Repeat("x", 3000)))
+	local := stamped
+	local.provider = "local"
+	_, err := Run(context.Background(), st, local, "incremental")
+	if err == nil {
+		t.Fatal("incremental under label local over an openai stamp must refuse: the label changes the text cap")
+	}
+	if !strings.Contains(err.Error(), `"openai"`) || !strings.Contains(err.Error(), "LEANKG_EMBED_PROVIDER") {
+		t.Fatalf("refusal must name the stored label and LEANKG_EMBED_PROVIDER: %v", err)
+	}
+	if strings.Contains(err.Error(), "`leankg-embed full` to rebuild") {
+		t.Fatalf("refusal must not steer to a full rebuild as the fix: %v", err)
+	}
+	if got := vectorCount(t, st, "embeddinggemma-2"); got != before {
+		t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
+	}
+	if cur, err := st.Stamp("embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
+		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
+	}
+}
+
+// TestRunIncrementalRefusesRealStampDrift pins that the writer guard still
+// protects real identity drift: an incremental run against a stored stamp that
+// differs in one identity field refuses, names that field in the directive, and
+// writes no vectors and no stamp. Model is not a row here: a different model id
+// is a different collection (its own stamp row), so it cannot mismatch.
+func TestRunIncrementalRefusesRealStampDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		break_ func(*store.ModelStamp)
+		field  string
+	}{
+		{"revision", func(s *store.ModelStamp) { s.Revision += "-drift" }, "revision"},
+		{"dimensions", func(s *store.ModelStamp) { s.Dimensions++ }, "dimensions"},
+		{"distance", func(s *store.ModelStamp) { s.Distance = "dot" }, "distance"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testStore(t)
+			seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+			p := Deterministic(8)
+			mustRun(t, st, p, "full")
+			stored, err := st.Stamp(p.ModelID())
+			if err != nil || stored == nil {
+				t.Fatalf("stamp after full: %v %v", stored, err)
+			}
+			drifted := *stored
+			tc.break_(&drifted)
+			if err := st.WriteStamp(drifted); err != nil {
+				t.Fatal(err)
+			}
+			seed(t, st, el("a::f3", "func f3() {}"))
+			before := vectorCount(t, st, p.ModelID())
+
+			_, err = Run(context.Background(), st, p, "incremental")
+			if err == nil || !strings.Contains(err.Error(), "stamp mismatch") {
+				t.Fatalf("incremental drift error = %v, want stamp mismatch", err)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("drift error must name %q: %v", tc.field, err)
+			}
+			if got := vectorCount(t, st, p.ModelID()); got != before {
+				t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
+			}
+			if after, _ := st.Stamp(p.ModelID()); after == nil || *after != drifted {
+				t.Fatalf("refused run must leave the stored stamp: got %+v, want %+v", after, drifted)
+			}
+		})
+	}
+}
+
+// TestRunCalibratesNoiseFloor: every run that embeds records the collection's
+// noise floor for its exact identity; another identity reads nothing.
+func TestRunCalibratesNoiseFloor(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
+	p := Deterministic(8)
+	rep := mustRun(t, st, p, "full")
+	floor, ok := ReadCalibration(st, StampOf(p))
+	if !ok || rep.NoiseFloor != floor {
+		t.Fatalf("calibration: ok=%v floor=%v report=%v", ok, floor, rep.NoiseFloor)
+	}
+	other := StampOf(p)
+	other.ChunkerVersion++
+	if _, ok := ReadCalibration(st, other); ok {
+		t.Fatal("calibration leaked to another collection identity")
 	}
 }

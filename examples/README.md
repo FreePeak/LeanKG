@@ -171,3 +171,21 @@ A PHP example demonstrating class + method extraction.
 ## C++ / C#
 
 Existing examples under `cpp/` and `csharp/`.
+
+## Memory Hook (reference)
+
+**Location**: `hooks/leankg-memory`
+
+A reference `UserPromptSubmit` hook for Claude Code: on every prompt it fetches the `<memories>` injection block from a running LeanKG server and prints it to stdout. It sends `X-LeanKG-Session` (plus Client/Cwd) so the recall rows are attributable to the conversation that received them — the "returned vs injected" figure the dashboard shows depends on it.
+
+Two properties worth copying if you write your own:
+
+- **stdout is the prompt channel.** Every diagnostic goes to stderr and the hook exits 0 in every failure mode, so a stopped server can never inject its own error text into a prompt. Memory is additive, never a gate.
+- **It does not know the bank name.** The mnemopi bank name embeds a hash of the cwd, so guessing one reads the wrong bank silently. It calls `GET /api/v1/memory/inject` (no bank segment) and lets the server pick its default.
+
+Install and configuration: see the module docstring at the top of the file.
+
+```bash
+cp examples/hooks/leankg-memory ~/.claude/hooks/leankg-memory
+chmod +x ~/.claude/hooks/leankg-memory
+```

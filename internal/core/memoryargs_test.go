@@ -2,10 +2,14 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/memory"
+	"github.com/FreePeak/LeanKG/internal/session"
 )
 
 // The import tool's advertised MCP input schema publishes the curation fields
@@ -115,5 +119,189 @@ func TestMemoryWriteArgsShapeStillWorksAndArgsWins(t *testing.T) {
 	}
 	if string(got) != "args wins" {
 		t.Fatalf("precedence = %q, want %q (args must win over flat)", got, "args wins")
+	}
+}
+
+// TestMemoryRenameTopLevelNewPath pins RS-06: the advertised schema puts
+// new_path at the top level; it used to be dropped ("empty path").
+func TestMemoryRenameTopLevelNewPath(t *testing.T) {
+	e, _ := newEngine(t)
+	if _, err := e.Import(context.Background(), ImportRequest{Action: "memory", Command: "create", Path: "topics/a.md", Content: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Import(context.Background(), ImportRequest{Action: "memory", Command: "rename", Path: "topics/a.md", NewPath: "topics/b.md"}); err != nil {
+		t.Fatalf("rename with top-level new_path: %v", err)
+	}
+}
+
+// TestMemoryViewAndSnapshotOverQuery pins RS-21: an MCP agent can read a
+// memory file and the core snapshot through the query tool.
+func TestMemoryViewAndSnapshotOverQuery(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	if _, err := e.Import(ctx, ImportRequest{Action: "memory", Command: "create", Path: "topics/n.md", Content: "note body"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.Query(ctx, QueryRequest{Action: "memory", Args: map[string]any{"command": "view", "path": "topics/n.md"}})
+	if err != nil || out["content"] != "note body" {
+		t.Fatalf("view: %v %v", out, err)
+	}
+	out, err = e.Query(ctx, QueryRequest{Action: "memory", Args: map[string]any{"command": "snapshot"}})
+	if err != nil || out["command"] != "snapshot" {
+		t.Fatalf("snapshot: %v %v", out, err)
+	}
+	if _, err := e.Query(ctx, QueryRequest{Action: "memory", Args: map[string]any{"command": "view", "path": "../../etc/hosts"}}); err == nil {
+		t.Fatal("view escaped the memory root")
+	}
+}
+
+// TestErrorsAndRefsAreProjectRelative pins RS-23: no client-facing error or
+// session ref carries the server's absolute project path.
+func TestErrorsAndRefsAreProjectRelative(t *testing.T) {
+	e, _ := newEngine(t)
+	proj := t.TempDir()
+	e.SetProjectDir(proj)
+	ctx := context.Background()
+	_, err := e.Import(ctx, ImportRequest{Action: "memory", Command: "delete", Path: "topics/missing.md"})
+	if err == nil {
+		t.Fatal("deleting a missing memory file succeeded")
+	}
+	if root := e.projectRoot(); strings.Contains(err.Error(), root) || strings.Contains(err.Error(), proj) {
+		t.Fatalf("error leaks the project path: %v", err)
+	}
+	out, err := e.Import(ctx, ImportRequest{Action: "session", Command: "offload",
+		Args: map[string]any{"session_id": "s1", "node_id": "node-1", "payload": "p", "summary": "s"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := out["offloaded"].(session.Ref).Path; filepath.IsAbs(p) {
+		t.Fatalf("offload ref path is absolute: %s", p)
+	}
+}
+
+// TestMemoryCreateReportsOverwrite: create still overwrites (memory-tool
+// contract) but says so.
+func TestMemoryCreateReportsOverwrite(t *testing.T) {
+	e, _ := newEngine(t)
+	ctx := context.Background()
+	out, err := e.Import(ctx, ImportRequest{Action: "memory", Command: "create", Path: "topics/o.md", Content: "one"})
+	if err != nil || out["overwrote"] != false {
+		t.Fatalf("first create: %v %v", out, err)
+	}
+	out, err = e.Import(ctx, ImportRequest{Action: "memory", Command: "create", Path: "topics/o.md", Content: "two"})
+	if err != nil || out["overwrote"] != true {
+		t.Fatalf("second create must report overwrote=true: %v %v", out, err)
+	}
+}
+
+// TestMemorySearchRefusesUnknownCommand pins the shape of the memory read
+// surface: only the documented commands are accepted. Before this, the
+// `default` arm of the query-tool switch treated ANY unknown command as
+// `search`, so `command: "serch"` (a typo) returned an empty hit list instead
+// of the mistake. Found while diagnosing a "search returns nothing" report
+// that turned out to be a caller putting the term in args instead of `query`.
+func TestMemorySearchRefusesUnknownCommand(t *testing.T) {
+	e, _ := newEngine(t)
+	out, err := e.Query(context.Background(), QueryRequest{
+		Action: "memory",
+		Query:  "anything",
+		Args:   map[string]any{"command": "serch"},
+	})
+	if err == nil {
+		t.Fatalf("unknown memory read command was accepted: %#v", out)
+	}
+	if !strings.Contains(err.Error(), "unknown memory read command") {
+		t.Fatalf("err = %v, want it to name the read commands", err)
+	}
+	for _, want := range []string{"session_recall", "view", "snapshot", "search"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err %q does not list %q", err, want)
+		}
+	}
+}
+
+// TestMemorySearchTakesTheTermFromQueryOrArgs pins the read path that made a
+// live server look broken: the term rides the top-level `query`, matching the
+// tool's own schema and the session_recall path, but an agent that nests it
+// under args should still get results rather than a silent empty list.
+func TestMemorySearchTakesTheTermFromQueryOrArgs(t *testing.T) {
+	e, mem := newEngine(t)
+	if err := mem.Create("topics/probe.md", "zebra-unique-token lives here"); err != nil {
+		t.Fatal(err)
+	}
+	for name, req := range map[string]QueryRequest{
+		"top-level query": {Action: "memory", Query: "zebra-unique-token", Args: map[string]any{"command": "search"}},
+		"args query":      {Action: "memory", Args: map[string]any{"command": "search", "query": "zebra-unique-token"}},
+	} {
+		out, err := e.Query(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if hits, _ := out["hits"].([]memory.Hit); len(hits) == 0 {
+			t.Fatalf("%s: no hits for a term that exists", name)
+		}
+	}
+}
+
+// TestSessionRetainTagsThroughTheTool pins K2 at the tool boundary: the tag an
+// agent sends on session_retain must reach the row. The tool used to accept
+// tags nowhere in its schema and drop any tag a caller found anyway, so a
+// tag-scoped recall could never match conversation-retained memory.
+func TestSessionRetainTagsThroughTheTool(t *testing.T) {
+	e, mem := newEngine(t)
+	out, err := e.Import(context.Background(), ImportRequest{
+		Action:  "memory",
+		Command: "session_retain",
+		Args: map[string]any{
+			"session_id": "k2",
+			"turns":      []any{"a tagged turn"},
+			"tags":       []any{"project:leankg"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("session_retain: %v", err)
+	}
+	if ok, _ := out["ok"].(bool); !ok {
+		t.Fatalf("not ok: %#v", out)
+	}
+	var row memory.Entry
+	data, err := os.ReadFile(filepath.Join(mem.Root(), "banks", out["bank"].(string)+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)[0]), &row); err != nil {
+		t.Fatal(err)
+	}
+	if tags, _ := row.Metadata["tags"].([]any); len(tags) != 1 || tags[0] != "project:leankg" {
+		t.Fatalf("tags = %#v, want [project:leankg] on the row", row.Metadata["tags"])
+	}
+}
+
+// TestSessionRetainTagsAsCommaString accepts the other shape an agent sends:
+// one comma-separated field instead of a list.
+func TestSessionRetainTagsAsCommaString(t *testing.T) {
+	e, mem := newEngine(t)
+	out, err := e.Import(context.Background(), ImportRequest{
+		Action:  "memory",
+		Command: "session_retain",
+		Args: map[string]any{
+			"session_id": "k2b",
+			"turns":      []any{"a tagged turn"},
+			"tags":       "project:leankg, scope:local",
+		},
+	})
+	if err != nil {
+		t.Fatalf("session_retain: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(mem.Root(), "banks", out["bank"].(string)+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row memory.Entry
+	if err := json.Unmarshal([]byte(strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)[0]), &row); err != nil {
+		t.Fatal(err)
+	}
+	if tags, _ := row.Metadata["tags"].([]any); len(tags) != 2 || tags[0] != "project:leankg" || tags[1] != "scope:local" {
+		t.Fatalf("tags = %#v, want both tags split out of the string", row.Metadata["tags"])
 	}
 }

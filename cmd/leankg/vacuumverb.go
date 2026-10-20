@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/FreePeak/LeanKG/internal/maintain"
-	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -39,8 +38,7 @@ func cmdVacuum(args []string) {
 	if eng == "" {
 		eng = os.Getenv("LEANKG_DB_ENGINE")
 	}
-	st, err := store.OpenBackend(context.Background(), *project,
-		eng, projectcfg.PGURL(*project), "", store.RW)
+	st, err := openStore(context.Background(), *project, "", store.RW)
 	if err != nil {
 		fatalText(fmt.Errorf("vacuum: open store: %w", err))
 	}

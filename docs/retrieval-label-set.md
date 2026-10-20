@@ -11,16 +11,41 @@ set exists to measure the L3 fusion, so a label must not be answerable at L1.
 ## Method
 
 ```
-go build -o /tmp/leankg ./cmd/leankg
-LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:9101/v1 \
-LEANKG_EMBED_MODEL=bge-small-en-v1.5-f16.gguf LEANKG_EMBED_DIMS=384 \
-  python3 scripts/retrieval-bench.py
+go build -o <scratch>/leankg ./cmd/leankg
+LEANKG_EMBED_PROVIDER=... LEANKG_EMBED_BASE_URL=... LEANKG_EMBED_MODEL=... \
+LEANKG_EMBED_DIMS=... \
+  python3 scripts/retrieval-bench.py --binary <scratch>/leankg --project <the indexed checkout>
+
+The embed endpoint is configured only through the LEANKG_EMBED_* env vars of the
+served binary (provider, base URL, model id, dims, API key where needed); the bench
+does not pick an endpoint of its own.
+`LEANKG_EMBED_MODEL` must be the **catalog id** (for example `embeddinggemma-2` or
+`bge-small-en-v1.5-384`), not the `.gguf` file name the
+sidecar serves. An id the catalog does not know gets a different
+`model_id`/`revision`, the stamp lookup finds no collection, and every query
+silently degrades to the keyword rung — which reads as "the vector arm found
+nothing" when the vector arm never ran. The bench stops on that now.
+
+`--project` must be the checkout the store was **indexed from**, not the worktree
+this script lives in: a store with no elements answers everything with an empty
+list, which reads as every label being stale.
 ```
 
-Reports, per arm and fused: `in-pool` (the label appeared in that arm at all),
-`top-1 / top-3 / top-10`. The fused number is what a user sees; the per-arm
-numbers say WHICH arm to fix, which is the whole question when the fused score
-is bad.
+Reports four arms over the same questions: `semantic` (the order the server
+returned, `action=semantic`, top 10), `grep_element` (`rg -F` per question word;
+each matching line credited to the innermost candidate element, containers over
+200 lines and file/doc/module kinds excluded), `grep_element_names` (the same
+candidates ranked by question words in the element name, then body words) and
+`grep_file` (the same matches ranked per file).
+Each arm gives `Hit@1/3/5/10` and `MRR@10` as counts over one denominator: the
+questions answered at rung L3 and not STALE. A question at another rung, or a
+STALE label, is listed and excluded from every arm.
+
+The label file quotes every question verbatim, so any hit in it is the question
+echoing itself. `docs/retrieval-label-set.md` and the `--labels` JSON file are
+dropped from every arm before ranking, and the run prints how many hits each arm
+lost. A dropped semantic hit frees its slot, which is refilled from the next
+ranks; the top ranks keep the server's order.
 
 ## Only extractable symbols are labelled
 
@@ -30,6 +55,14 @@ unexported helpers, interface methods and named constants are **not**
 arm and would measure nothing but the indexer's extractor. Every label below was
 checked against the live store with `select count(*) from code_elements where
 qualified_name=...` — a label that returns 0 is replaced, not tolerated.
+
+The bench now CHECKS this itself: a label whose element the store does not hold
+is reported as **STALE** rather than as a retrieval miss, because it measures the
+label and not the fusion. Two labels were stale when the check first ran on
+today's tree — `StandaloneDBPath` had moved to `internal/projectcfg`, `ftsQuery`
+to `internal/store` — which is exactly the drift it exists to catch. A third
+check stops the run when the *vector arm never ran at all* (a stamp-degraded
+query), because that reads as a retrieval finding and is an environment mistake.
 
 ## Where the answers were
 
@@ -46,7 +79,7 @@ checkable rather than arguable.
 | 4 | report how many bytes the freelist holds | `internal/store/maintenance.go::Store.Space` | maintenance.go |
 | 5 | hand free pages back one page at a time | `internal/store/maintenance.go::Store.IncrementalVacuum` | maintenance.go |
 | 6 | adopt incremental vacuum in the header | `internal/store/maintenance.go::Store.ensureIncrementalVacuum` | maintenance.go |
-| 7 | resolve the configured sqlite store path | `internal/store/standalone.go::StandaloneDBPath` | standalone.go |
+| 7 | resolve the configured sqlite store path | `internal/projectcfg/projectcfg.go::StandaloneDBPath` | projectcfg.go |
 | 8 | list the files the indexer would take | `internal/index/walk.go::SupportedFiles` | walk.go |
 | 9 | the vector rung of the retrieval ladder | `internal/core/core.go::Engine.rungSemantic` | core.go |
 | 10 | freshness label from watermark and snapshot | `internal/store/backend.go::Freshness` | backend.go |
@@ -59,7 +92,7 @@ checkable rather than arguable.
 | 18 | compose the model stamp for a provider | `internal/embed/run.go::StampOf` | run.go |
 | 19 | which arm does a weighted fusion read its weight from | `internal/store/pg_fts.go::FuseRRFWeights.armWeight` | pg_fts.go |
 | 20 | the fraction of elements that hold vectors | `internal/embed/run.go::coverage` | run.go |
-| 21 | where the memory search reads from | `internal/memory/search.go::ftsQuery` | search.go |
+| 21 | where the memory search reads from | `internal/store/elements.go::ftsQuery` | search.go |
 | 22 | rank a single arm's list of document keys | `internal/store/pg_fts.go::RankList` | pg_fts.go |
 | 23 | which type is one fused result row | `internal/store/pg_fts.go::FusedHit` | pg_fts.go |
 | 24 | cut a string to n runes for the sidecar budget | `internal/embed/run.go::truncateRunes` | run.go |

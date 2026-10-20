@@ -105,7 +105,12 @@ func cmdProjects(args []string) {
 	jsonOut := fs.Bool("json", false, "print the manifest as JSON")
 	fs.BoolVar(jsonOut, "j", false, "shorthand for --json")
 	forget := fs.String("forget", "", "remove DIR from the registry instead of listing")
+	prune := fs.Bool("prune", false, "forget every registration whose DIRECTORY no longer exists (a CI fixture that cleaned up after itself)")
+	apply := fs.Bool("apply", false, "with --prune, actually forget the rows (default is a dry run that lists them)")
 	parseInterspersed("projects", fs, args, 0)
+	if *apply && !*prune {
+		fatalJSON(errors.New("--apply requires --prune"))
+	}
 
 	ctx := context.Background()
 	opts := portfolioOptions(*engine, resolveProjectDir(*project))
@@ -120,6 +125,40 @@ func cmdProjects(args []string) {
 			os.Exit(1)
 		}
 		fmt.Printf("forgot %s\n", *forget)
+		return
+	}
+
+	if *prune {
+		// Dry by default: this registry is shared (84 of 108 rows were gone, 2026-10-11).
+		// The postgres registry is shared by every host and its rows carry no host
+		// identity, so the destructive sweep is refused before any connection opens.
+		if *apply && opts.Engine == store.EnginePostgres {
+			fatalJSON(errors.New("--prune --apply is refused on the postgres engine: the shared registry has no host identity, " +
+				"so a prune from one host could remove another host's rows. The dry run (leankg projects --prune) still works."))
+		}
+		gone, err := portfolioreg.Prune(ctx, opts, !*apply)
+		if err != nil {
+			fatalJSON(err)
+		}
+		verb := "would forget"
+		if *apply {
+			verb = "forgot"
+		}
+		if *jsonOut {
+			printJSON(map[string]any{"pruned": gone, "count": len(gone), "applied": *apply})
+			return
+		}
+		if len(gone) == 0 {
+			fmt.Println("nothing to prune: every registered directory still exists")
+			return
+		}
+		fmt.Printf("%s %d registration(s) whose directory is gone:\n", verb, len(gone))
+		for _, d := range gone {
+			fmt.Printf("  %s\n", d)
+		}
+		if !*apply {
+			fmt.Println("(dry run — pass --apply to forget them)")
+		}
 		return
 	}
 
@@ -159,6 +198,10 @@ func cmdProjects(args []string) {
 		presence := "missing"
 		if e.StoreOnDisk {
 			presence = "on-disk"
+		}
+		// A row whose DIRECTORY is gone is not a project any more, whatever its store flag says.
+		if !e.DirExists {
+			presence = "dir-gone"
 		}
 		hotMark := "-"
 		if e.Hot {

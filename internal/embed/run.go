@@ -2,6 +2,7 @@ package embed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 	"unicode/utf8"
@@ -26,12 +27,9 @@ import (
 // (maxLocalTextChars) instead of the general cap — text a 512-token sidecar
 // can actually accept. Bumping the version rebuilds collections stamped v1,
 // where over-budget elements had no vectors at all (the run died on them).
-// v3: the embedded text carries the element's qualified name ahead of its body
-// (embedText). Measured on this repository's own collection: a vector built
-// from a body alone cannot tell `FuseRRF` from `FuseRRFWeighted` (0.618 cosine
-// against the intent question) while the qualified name lifts it to 0.696, and
-// 16 of 30 labelled retrieval questions had their answer in NEITHER arm's top
-// 30. A rebuild directive, not a silent re-cut of an existing collection.
+//
+// v3 (RS-11): the embedded text is documentText — a "<type> <name> — <file>"
+// header plus content (content now carries the leading doc comment, RS-10).
 const ChunkerVersion = 3
 
 // batchSize is the number of texts sent to the provider per call.
@@ -47,6 +45,7 @@ type Report struct {
 	Failed      int
 	Truncations int
 	Orphans     int
+	NoiseFloor  float64 `json:"NoiseFloor,omitempty"` // measured off-topic similarity ceiling (calibrate.go)
 	Coverage    float64
 	Duration    time.Duration
 }
@@ -55,6 +54,70 @@ type Report struct {
 // atomic write unit), its qualified name, the (possibly truncated) text to
 // send, and the full-content hash to record.
 type dirtyItem struct{ file, qn, text, hash string }
+
+// TextCap is the rune budget for one text sent to p: the general cap, or for
+// the local sidecar family the served model's real window when the sidecar
+// reports it (RS-14), else the conservative 512-token default. Documents and
+// queries use the same cap, so a long query is truncated instead of failing
+// at the provider and degrading L3 (RS-15).
+func TextCap(p Provider) int {
+	return capForLabel(p.Provider(), sidecarBudget(p))
+}
+
+// capForLabel is the rune cap for provider label `label` given the sidecar's
+// reported budget (0 = unknown): the general cap, narrowed to the local
+// family's budget for label "local". The single home of that rule; the
+// incremental stamp guard applies it to the stored label as well.
+func capForLabel(label string, budget int) int {
+	if label != "local" {
+		return maxContentChars
+	}
+	if budget <= 0 {
+		budget = maxLocalTextChars
+	}
+	return min(maxContentChars, budget)
+}
+
+// sidecarBudget is the text budget the local sidecar reports from /props, in
+// runes; 0 when p has none or the sidecar cannot be asked.
+func sidecarBudget(p Provider) int {
+	if tb, ok := unwrapProvider(p).(interface{ TextBudget() int }); ok {
+		return tb.TextBudget()
+	}
+	return 0
+}
+
+// planText is the text a live run sends for one element: documentText cut to
+// TextCap(p) runes, and whether it was cut. Run embeds it and ExportNDJSON
+// writes it, so an offsite embedder receives the string a live run would. The
+// provider prepends the document prefix on the wire (openaiCompatible.Embed),
+// so an export line is that prefix followed by this text.
+func planText(p Provider, e elementText) (text string, truncated bool) {
+	text = documentText(e)
+	limit := TextCap(p)
+	if utf8.RuneCountInString(text) > limit {
+		return truncateRunes(text, limit), true
+	}
+	return text, false
+}
+
+// documentInput is the exact string a live run's provider receives for one
+// element: planText with the model's document prefix, the same prefix
+// openaiCompatible.Embed prepends on the wire (prefixTexts). ExportNDJSON writes
+// it as the line's text, so the offsite embedder and the live run cannot drift.
+func documentInput(p Provider, e elementText) string {
+	text, _ := planText(p, e)
+	_, document := Prefixes(p.ModelID())
+	return prefixTexts(document, []string{text})[0]
+}
+
+// TruncateText cuts s to at most n runes.
+func TruncateText(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return truncateRunes(s, n)
+}
 
 // StampOf composes the collection identity provider p writes with: p's five
 // identity fields plus the two pipeline components a provider does not carry
@@ -75,23 +138,6 @@ func StampOf(p Provider) store.ModelStamp {
 	}
 }
 
-// stampFor is the writer-side stamp for an explicit identity (the NDJSON
-// import path, which has no live provider but must produce the identical stamp
-// a provider run would for the same model).
-func stampFor(modelID, revision, distance, provider string, dims int) store.ModelStamp {
-	q, d := Prefixes(modelID)
-	return store.ModelStamp{
-		ModelID:        modelID,
-		Revision:       revision,
-		Dimensions:     dims,
-		Distance:       distance,
-		Provider:       provider,
-		ChunkerVersion: ChunkerVersion,
-		QueryPrefix:    q,
-		DocumentPrefix: d,
-	}
-}
-
 // stampDrift names the stamp components that differ, so the rebuild directive
 // says WHY the collection is unusable rather than dumping two structs.
 func stampDrift(cur, want store.ModelStamp) string {
@@ -105,9 +151,7 @@ func stampDrift(cur, want store.ModelStamp) string {
 	if cur.Distance != want.Distance {
 		why = append(why, fmt.Sprintf("distance %q -> %q", cur.Distance, want.Distance))
 	}
-	if cur.Provider != want.Provider {
-		why = append(why, fmt.Sprintf("provider %q -> %q", cur.Provider, want.Provider))
-	}
+	// Provider is a transport label, not part of identity (ModelStamp.Matches).
 	if cur.ChunkerVersion != want.ChunkerVersion {
 		why = append(why, fmt.Sprintf("chunker_version %d -> %d", cur.ChunkerVersion, want.ChunkerVersion))
 	}
@@ -148,7 +192,10 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	want := StampOf(p)
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the
 	// same hard-rebuild rule over the WHOLE identity — model, revision,
-	// dims, distance, provider, chunker version and prefix pair.
+	// dims, distance, chunker version and prefix pair. Provider is a
+	// transport label, not identity (ModelStamp.Matches), but it selects the
+	// text cap (capForLabel), so a label change that changes the cap is drift
+	// too: vectors cut at two caps must not share one collection.
 	//   full        + mismatch ⇒ clear + re-stamp (rebuild, never mixed)
 	//   incremental + mismatch ⇒ HARD FAIL with a rebuild directive — a
 	//                 flag slip (provider A full, provider B incremental)
@@ -158,11 +205,21 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	if err != nil {
 		return rep, err
 	}
-	if cur != nil && *cur != want {
+	budget := sidecarBudget(p)
+	capChanged := cur != nil && capForLabel(cur.Provider, budget) != capForLabel(want.Provider, budget)
+	if cur != nil && (!cur.Matches(want) || capChanged) {
 		if mode != "full" {
+			if !cur.Matches(want) {
+				return rep, fmt.Errorf(
+					"embed: stamp mismatch for %s (%s) — run `leankg-embed full` to rebuild the collection",
+					modelID, stampDrift(*cur, want))
+			}
 			return rep, fmt.Errorf(
-				"embed: stamp mismatch for %s (%s) — run `leankg-embed full` to rebuild the collection",
-				modelID, stampDrift(*cur, want))
+				"embed: provider label %q (text cap %d runes) differs from the stored label %q (text cap %d runes) for %s; "+
+					"the label changes the text cap, so new vectors would be cut differently — set LEANKG_EMBED_PROVIDER=%s to keep the stored cap, "+
+					"or run `leankg-embed full` only if a rebuild at the new cap is intended",
+				want.Provider, capForLabel(want.Provider, budget), cur.Provider, capForLabel(cur.Provider, budget),
+				modelID, cur.Provider)
 		}
 		if err := st.ClearVectors(modelID); err != nil {
 			return rep, err
@@ -188,20 +245,13 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	dirty := make([]dirtyItem, 0, len(elems))
 	for _, e := range elems {
 		h := contentHashHex(e.Content)
-		if mode == "incremental" && states[e.QN] == h {
+		if mode == "incremental" && !needsVector(e.QN, h, states) {
 			rep.Skipped++
 			continue
 		}
-		// The text a model embeds LEADS with the element's qualified name,
-		// then the body — see embedText for the measurement behind it.
-		text := embedText(e.QN, e.Content)
-		textCap := maxContentChars
-		if p.Provider() == "local" {
-			textCap = min(textCap, maxLocalTextChars)
-		}
-		if utf8.RuneCountInString(text) > textCap {
+		text, cut := planText(p, e)
+		if cut {
 			rep.Truncations++
-			text = truncateRunes(text, textCap)
 		}
 		dirty = append(dirty, dirtyItem{file: e.File, qn: e.QN, text: text, hash: h})
 	}
@@ -219,6 +269,14 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 		return rep, err
 	}
 
+	// Reclaim vectors whose element is gone before measuring coverage: the
+	// run used to report `Orphans: N` and leave them to `leankg gc` while L3
+	// served them as hits (RS-05).
+	if _, err := st.DeleteOrphanVectors(); err != nil {
+		rep.Duration = time.Since(start)
+		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		return rep, fmt.Errorf("embed: reclaim orphan vectors: %w", err)
+	}
 	covered, orphans, err := readVectorCounts(st, modelID)
 	if err != nil {
 		rep.Duration = time.Since(start)
@@ -229,6 +287,16 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	rep.Coverage = coverage(covered, len(elems))
 	if rep.Failed > 0 {
 		status = "partial"
+	}
+	// Re-measure the noise floor whenever the collection changed (or was
+	// never measured for this identity). A calibration failure costs only the
+	// low-confidence flag and dense memory recall, never the run.
+	if _, ok := ReadCalibration(st, StampOf(p)); rep.Embedded > 0 || !ok {
+		if floor, ok, err := Calibrate(ctx, st, p); err == nil && ok {
+			rep.NoiseFloor = floor
+		}
+	} else if floor, ok := ReadCalibration(st, StampOf(p)); ok {
+		rep.NoiseFloor = floor
 	}
 	rep.Duration = time.Since(start)
 	if err := st.FinishEmbedRun(runID, status, rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
@@ -242,6 +310,36 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 		return rep, fmt.Errorf("embed: inventory snapshot: %w", err)
 	}
 	return rep, nil
+}
+
+// needsVector is the incremental selection, shared by Run and IncrementalBacklog
+// so the backlog a hook gate counts is the set a run embeds: an element needs a
+// vector when its content hash differs from the state stored for it, and an
+// element with no stored state at all always needs one. states is the
+// EmbeddingStateMap for the provider's model.
+func needsVector(qn, hash string, states map[string]string) bool {
+	return states[qn] != hash
+}
+
+// IncrementalBacklog counts the elements an incremental Run over st with provider
+// p would embed. It reads the store and never calls the provider, so a caller can
+// size the embed before it starts one.
+func IncrementalBacklog(st store.Backend, p Provider) (int, error) {
+	elems, err := readElements(st)
+	if err != nil {
+		return 0, err
+	}
+	states, err := st.EmbeddingStateMap(p.ModelID())
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range elems {
+		if needsVector(e.QN, contentHashHex(e.Content), states) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // groupByFile partitions the dirty plan into per-file write units, preserving
@@ -276,6 +374,11 @@ func groupByFile(dirty []dirtyItem) [][]dirtyItem {
 // committed. An all-failed run is an unavailable provider — infra, not data —
 // and aborts with the provider's own error, preserving the pre-existing
 // fail-loud contract (found dogfooding `leankg-embed` on this repository).
+//
+// A permanent configuration error (ErrEndpointConfig: wrong base URL, refused
+// API key, a reply that is not an embeddings object) is not a poison element:
+// embedFiles returns it at once, before any retry or shrink, so a misconfigured
+// endpoint costs one request and writes nothing from the failing group.
 func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
 	var lastErr error
 	for _, group := range groups {
@@ -292,6 +395,9 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 			}
 			vecs, err := p.Embed(ctx, Document, texts)
 			if err != nil {
+				if errors.Is(err, ErrEndpointConfig) {
+					return err
+				}
 				// Per-item retry with shrink: a batch the provider rejected
 				// is retried item by item (healthy siblings still commit),
 				// and an item the provider rejects is HALVED and retried
@@ -312,6 +418,9 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 							break
 						}
 						if ierr != nil {
+							if errors.Is(ierr, ErrEndpointConfig) {
+								return ierr
+							}
 							lastErr = ierr
 						}
 						n := len([]rune(text)) / 2
@@ -362,41 +471,6 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 func truncateRunes(s string, n int) string {
 	r := []rune(s)
 	return string(r[:n])
-}
-
-// embedText is the text a model embeds for one code element: the qualified
-// name first, then the body.
-//
-// The name is not decoration. A 384-d bge-small-en-v1.5 embeds a Go function
-// body as a bag of the identifiers that happen to appear in it, so
-// `FuseRRF` and `FuseRRFWeighted` — one a prefix of the other, bodies differing
-// by a dozen words — land on top of each other. Measured on this repository's
-// own collection with the pinned sidecar, cosine between the question
-// "reciprocal rank fusion of ranked lists" and that element:
-//
-//	body only            0.618
-//	bare name + body     0.672
-//	qualified name+body  0.696
-//
-// and a full retrieval bench (docs/retrieval-label-set.md, 30 labelled
-// questions) put 16 of them in NEITHER arm's top 30 before this change. For a
-// question phrased in prose the name is the only bridge between the question
-// and the symbol, so it is the part that must not be lost.
-//
-// The name leads, and that is not cosmetic: the local sidecar caps text at
-// maxLocalTextChars, so a leading name survives every budget while a trailing
-// one would be the first thing cut. The qualified name (file::Type.Method)
-// rather than the bare name, because the file disambiguates the symbol from
-// prose that uses the same words, and because it is the identifier an agent
-// actually searches for.
-func embedText(qn, content string) string {
-	if qn == "" {
-		return content
-	}
-	if content == "" {
-		return qn
-	}
-	return qn + "\n" + content
 }
 
 // coverage is the fraction of live elements holding vectors; a store with

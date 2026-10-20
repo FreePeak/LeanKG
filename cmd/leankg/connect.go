@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,11 +37,12 @@ const (
 	ClientGemini     = "gemini"
 	ClientOpencode   = "opencode"
 	ClientOmp        = "omp"
+	ClientXdev       = "xdev"
 )
 
 // Clients returns the supported client names.
 func Clients() []string {
-	return []string{ClientClaudeCode, ClientCursor, ClientCodex, ClientGemini, ClientOpencode, ClientOmp}
+	return []string{ClientClaudeCode, ClientCursor, ClientCodex, ClientGemini, ClientOpencode, ClientOmp, ClientXdev}
 }
 
 // Config describes the leankg entry written into a client config.
@@ -79,6 +82,10 @@ func clientConfigPath(homeDir, client string) (string, error) {
 		return filepath.Join(homeDir, ".config", "opencode", "opencode.json"), nil
 	case ClientOmp:
 		return filepath.Join(homeDir, ".omp", "agent", "mcp.json"), nil
+	case ClientXdev:
+		// xdev reads one MCP config, a YAML file, and has no `xdev mcp`
+		// subcommand of its own (docs/decisions/leankg-memory-backend K9).
+		return filepath.Join(homeDir, ".xdev", "agent", "mcp.yml"), nil
 	default:
 		return "", fmt.Errorf("unknown client %q (valid: %s)", client, strings.Join(Clients(), ", "))
 	}
@@ -93,6 +100,29 @@ func jsonContainer(client string) string {
 	return "mcpServers"
 }
 
+// bareURL drops any query/fragment from a remote URL. Per-request project
+// resolution (FR-ZCP-01: stdio process cwd; HTTP roots/list) makes a
+// `?project=` suffix unnecessary on the happy path, and an absolute path
+// baked into a shared config is stale the moment that config leaves the
+// machine it was written on. Measured on this machine 2026-10-11: three
+// configs carrying `?project=/workspace-freepeak` — a Docker mount path that
+// exists nowhere on the host — failed every initialize with `unknown
+// project`, so the clients reading them dropped leankg from their tool list.
+// Stripping here means the one caller that can still pass such a URL cannot
+// reproduce that failure.
+func bareURL(u string) string {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return u // not a URL we can inspect: hand it through untouched
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+// mergedURL returns the URL every writer emits: bare, per FR-ZCP-04.
+func (c Config) mergedURL() string { return bareURL(c.URL) }
+
 // WriteClient writes or merges the leankg entry for client under homeDir.
 // JSON configs are read-modify-write (every sibling key and unknown field is
 // preserved); missing files and directories are created. Re-running with the
@@ -105,8 +135,11 @@ func WriteClient(homeDir, client string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if client == ClientCodex {
+	switch client {
+	case ClientCodex:
 		return writeCodexTOML(path, cfg)
+	case ClientXdev:
+		return writeXdevYAML(path, cfg)
 	}
 	return writeJSONEntry(path, jsonContainer(client), jsonEntry(client, cfg))
 }
@@ -119,11 +152,11 @@ func jsonEntry(client string, cfg Config) map[string]any {
 	if cfg.Mode == "http" {
 		switch client {
 		case ClientOpencode:
-			return map[string]any{"type": "remote", "url": cfg.URL, "enabled": true}
+			return map[string]any{"type": "remote", "url": cfg.mergedURL(), "enabled": true}
 		case ClientOmp:
-			return map[string]any{"type": "http", "url": cfg.URL, "enabled": true}
+			return map[string]any{"type": "http", "url": cfg.mergedURL(), "enabled": true}
 		default: // claude-code, cursor, gemini
-			return map[string]any{"type": "http", "url": cfg.URL}
+			return map[string]any{"type": "http", "url": cfg.mergedURL()}
 		}
 	}
 	exe := cfg.Exe
@@ -287,7 +320,7 @@ func writeCodexTOML(path string, cfg Config) error {
 // Codex takes the full spawn command as a single TOML string array.
 func codexSectionLines(cfg Config) []string {
 	if cfg.Mode == "http" {
-		return []string{"url = " + strconv.Quote(cfg.URL)}
+		return []string{"url = " + strconv.Quote(cfg.mergedURL())}
 	}
 	// Codex spawns the full command array: exe first, then args.
 	// Empty Exe falls back to bare "leankg" (PATH), matching jsonEntry.
@@ -348,31 +381,128 @@ func replaceTOMLSection(text, header string, lines []string) string {
 // Claude Code SessionStart hook (register-cwd)
 // ---------------------------------------------------------------------------
 
+// hookMatcher limits the SessionStart hook to a fresh start or a resume.
+const hookMatcher = "startup|resume"
+
+// hookSuffix and legacyHookSuffix are the argument tails of the hook command.
+// legacyHookSuffix is the pre-async form; RegisterCWD replaces it in place.
+const (
+	hookSuffix       = ` index --hook "$CLAUDE_PROJECT_DIR"`
+	legacyHookSuffix = ` index "$CLAUDE_PROJECT_DIR"`
+)
+
 // hookCommand renders the SessionStart hook the writer owns. exe is the
 // resolved current executable (CurrentCommand()); bare "leankg" would depend
 // on the hook's PATH and silently no-op when it differs. $CLAUDE_PROJECT_DIR
 // is expanded by Claude Code at hook runtime and quoted, so project paths
-// with spaces survive the shell. The hook attaches-and-indexes the project
-// the way the Rust `add` verb did: `index` creates-or-updates that project's
-// store (incremental after the first run).
+// with spaces survive the shell. --hook keeps the run cheap and safe to fire
+// on every session start (see index's hook mode).
 func hookCommand(exe string) string {
 	if exe == "" {
 		exe = "leankg"
 	}
-	return exe + ` index "$CLAUDE_PROJECT_DIR"`
+	return exe + hookSuffix
+}
+
+// isGeneratedCommand reports whether cmd is a hook RegisterCWD wrote: an
+// executable token with no whitespace followed by either suffix. Anything
+// with extra tokens is user-customised and never matched.
+func isGeneratedCommand(cmd string) bool {
+	for _, suffix := range []string{hookSuffix, legacyHookSuffix} {
+		if exe, ok := strings.CutSuffix(cmd, suffix); ok && exe != "" && !strings.ContainsAny(exe, " \t\r\n") {
+			return true
+		}
+	}
+	return false
+}
+
+// hookEntry is the SessionStart entry RegisterCWD writes for exe.
+func hookEntry(exe string) map[string]any {
+	return map[string]any{
+		"matcher": hookMatcher,
+		"hooks":   []any{map[string]any{"type": "command", "command": hookCommand(exe), "async": true}},
+	}
+}
+
+// ownsCommand reports whether cmd is a hook RegisterCWD manages: the command it
+// writes now (also when the executable path holds whitespace), or a generated
+// command in either form.
+func ownsCommand(cmd, command string) bool {
+	return cmd == command || isGeneratedCommand(cmd)
+}
+
+// onlyCurrentHook reports whether sessionStart holds exactly one hook
+// RegisterCWD manages and it is the hook hookEntry(exe) would write: same
+// matcher, and running command asynchronously. Nothing else needs changing then.
+func onlyCurrentHook(sessionStart []any, command string) bool {
+	owned, current := 0, false
+	for _, item := range sessionStart {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		inner, _ := obj["hooks"].([]any)
+		for _, h := range inner {
+			hook, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			cmd, _ := hook["command"].(string)
+			if !ownsCommand(cmd, command) {
+				continue
+			}
+			owned++
+			current = cmd == command && hook["async"] == true && obj["matcher"] == hookMatcher
+		}
+	}
+	return owned == 1 && current
+}
+
+// withoutGeneratedHooks reports whether obj holds a hook RegisterCWD manages
+// and, when it does, returns the entry with those hooks removed. The returned
+// entry is nil when no other hook remains, so the caller drops it entirely.
+func withoutGeneratedHooks(obj map[string]any, command string) (map[string]any, bool) {
+	inner, ok := obj["hooks"].([]any)
+	if !ok {
+		return nil, false
+	}
+	var foreign []any
+	generated := false
+	for _, h := range inner {
+		if hook, ok := h.(map[string]any); ok {
+			if cmd, _ := hook["command"].(string); ownsCommand(cmd, command) {
+				generated = true
+				continue
+			}
+		}
+		foreign = append(foreign, h)
+	}
+	if !generated {
+		return nil, false
+	}
+	if len(foreign) == 0 {
+		return nil, true
+	}
+	kept := maps.Clone(obj)
+	kept["hooks"] = foreign
+	return kept, true
 }
 
 // RegisterCWD merges-or-creates the Claude Code SessionStart hook that
 // attaches the project on session start:
 //
-//	{"matcher": "*", "hooks": [{"type": "command", "command": exe + ` index "$CLAUDE_PROJECT_DIR"`}]}
+//	{"matcher": "startup|resume", "hooks": [{"type": "command", "command": exe + ` index --hook "$CLAUDE_PROJECT_DIR"`, "async": true}]}
 //
 // under hooks.SessionStart in <homeDir>/.claude/settings.json, preserving
-// every other hook and setting. Idempotent: when the identical command is
-// already present the file is left untouched. Only claude-code supports
-// hooks today; other clients return an error wrapping ErrUnsupportedClient.
-// exe is the resolved binary path to embed (empty falls back to "leankg");
-// the project itself is resolved at hook runtime via $CLAUDE_PROJECT_DIR.
+// every other hook and setting. Idempotent: when that entry is already the only
+// leankg hook present the file is left untouched. Generated leankg entries (the
+// current or the legacy command form, duplicates included) are replaced in
+// place by one current entry; a
+// customised leankg command is user wiring and is left alone. Only claude-code
+// supports hooks today; other clients return an error wrapping
+// ErrUnsupportedClient. exe is the resolved binary path to embed (empty falls
+// back to "leankg"); the project itself is resolved at hook runtime via
+// $CLAUDE_PROJECT_DIR.
 func RegisterCWD(homeDir, client, exe string) error {
 	if client != ClientClaudeCode {
 		return fmt.Errorf("register-cwd for %s: %w", client, ErrUnsupportedClient)
@@ -397,29 +527,34 @@ func RegisterCWD(homeDir, client, exe string) error {
 		}
 		sessionStart = nil
 	}
+	command := hookCommand(exe)
+	if onlyCurrentHook(sessionStart, command) {
+		return nil // identical hook already present, and no duplicate or legacy copy
+	}
+	next := make([]any, 0, len(sessionStart)+1)
+	placed := false
 	for _, item := range sessionStart {
 		obj, ok := item.(map[string]any)
 		if !ok {
+			next = append(next, item)
 			continue
 		}
-		inner, ok := obj["hooks"].([]any)
-		if !ok {
+		kept, generated := withoutGeneratedHooks(obj, command)
+		if !generated {
+			next = append(next, item)
 			continue
 		}
-		for _, h := range inner {
-			hook, ok := h.(map[string]any)
-			if !ok {
-				continue
-			}
-			if cmd, _ := hook["command"].(string); cmd == hookCommand(exe) {
-				return nil // identical hook already present
-			}
+		if kept != nil {
+			next = append(next, kept) // its non-leankg hooks survive in place
+		}
+		if !placed {
+			next = append(next, hookEntry(exe))
+			placed = true
 		}
 	}
-	sessionStart = append(sessionStart, map[string]any{
-		"matcher": "*",
-		"hooks":   []any{map[string]any{"type": "command", "command": hookCommand(exe)}},
-	})
-	hooks["SessionStart"] = sessionStart
+	if !placed {
+		next = append(next, hookEntry(exe))
+	}
+	hooks["SessionStart"] = next
 	return writeJSONFile(path, root)
 }

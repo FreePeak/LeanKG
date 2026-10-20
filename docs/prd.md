@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.35.0-the-second-wire-cannot-say-what-it-refused
-**Date:** 2026-09-30
+**Version:** 4.15.0-session-telemetry
+**Date:** 2026-10-08
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
@@ -9,6 +9,88 @@
 ---
 
 ## Changelog
+
+### v4.16-project-selector-fail-closed — an unknown project no longer answers from another one (2026-10-20)
+
+> **Trigger:** reviewing the v4.15-mcp-project-scoping work on the live
+> 286-project self-host. The schema now tells the model to name a project,
+> so the model names one — and a name that matches nothing came back with
+> an answer anyway.
+>
+> ```
+> {"project":"totally-not-a-real-project-xyz"}
+>   → the leankg project's status, 11,246 elements, no error
+> ?project=totally-not-a-real-project-xyz
+>   → HTTP 200
+> ```
+
+> The serve process's cwd is the leankg repository, and on the self-host that
+> repository is a REGISTERED project. The resolver canonicalized a bare name
+> against the cwd and then walked up the filesystem, so a name that matched
+> nothing climbed to the cwd and resolved to that project. That is the
+> silent wrong-project fallback FR-ZCP-02 forbids, and it is the exact
+> failure the fail-closed rule exists to prevent: a confident answer built
+> from the WRONG graph, handed to a model that asked about a repository
+> that is not there.
+
+**Landed:**
+
+- **The ancestor walk is for paths only.** A path says "this place"; a bare
+  name says "this project". A name now matches a project's basename or
+  errors. The order changed for paths too: a path inside a registered
+  project resolves to THAT project even when its basename is also another
+  project's name.
+- **The two errors are actionable.** "unknown project" says how to pick one
+  — the absolute path of the repository you are in, since a path inside a
+  project resolves to that project — and lists the known projects as name
+  and path, bounded to 10 with a count of the rest. "ambiguous" names the
+  candidates instead of only saying that some exist.
+- **A path to a file that does not exist yet routes to its project.**
+  `EvalSymlinks` fails outright when the leaf is missing, so a
+  not-yet-created file came back unresolved while the project directory it
+  points into came back resolved, and the two never compared equal.
+- **The agent protocol says what THIS surface requires.** The initialize
+  response carried one hedged sentence for every surface ("project= is
+  required only on multi-project HTTP servers") — a condition the model
+  cannot evaluate, since it sees the tool list and not the server's
+  environment. A multi-project server now says the project is REQUIRED and
+  how to supply it; a server that serves one project says it is fixed.
+
+**The test that should have caught it passed for the wrong reason.** The
+rule "an explicit unknown key never falls back to the default" had a test,
+and it was green — because the test process's cwd was not a registered
+project, so the walk climbed out of the repository and found nothing. The
+new test puts the cwd INSIDE a registered project, which is the live
+configuration.
+
+**Verified:** `go test ./internal/projects/ ./internal/mcp/ ./cmd/leankg/`,
+`go vet ./...`, `gofmt` clean; live on the 286-project self-host, a bogus
+project NAME is now refused with the actionable error (an absolute path
+outside every project already was), and `?project=<bogus name>` answers
+404 instead of the cwd project's data.
+
+**OD1 is closed.** The xdev autoStart recipe bound the wildcard `:9699`
+while the launchd supervisor holds `127.0.0.1:9699` — different address
+families, so the duplicate bound successfully and a client resolving
+`localhost` to `::1` reached the DUPLICATE (a single-project server, since
+the recipe sets no `LEANKG_PROJECT_DIRS`: its schema did not require a
+project, and its answers came from the wrong graph). The recipe now binds
+`127.0.0.1:9699`, and the duplicate was re-created on purpose to measure
+it: `bind: address already in use`, and `lsof` shows the supervisor as the
+only listener.
+
+## Dogfood waves 1-24 (FR-SELF-04, PR #449)
+
+These are the loop's own entries, kept as the record of what it found and
+measured. Most of them were landed separately, in the newer line above, with
+newer designs: the name arm became `v4.15-name-arm-rarity`, the fusion weight
+became `v4.15-fusion-weight` and #535, the annotation guard became
+`v4.15-annotation-target`, the bench became `v4.15-retrieval-instrument` and
+#533, the extractor identity became #534. Where a wave and that line differ,
+the line above is the shipped one; what follows is the evidence the loop
+produced, and the parts of it that line did not carry (the store the refusal
+searched, the memory write target, the REST list shapes, the advertised
+contract).
 
 ### v4.35.0-the-second-wire-cannot-say-what-it-refused — ConnectRPC (2026-10-01)
 
@@ -643,6 +725,712 @@ Per arm at depth 100 scoped: vector in-pool **10 → 19**, keyword **11 → 17**
 
 **Loop status:** 5 defects found, 5 fixed, 0 open from this wave (3 waves to date across the repo: 12 + 5). Next candidates the wave surfaced but did not chase: L3 fusion has no weight control yet (both arms are unweighted, so a strong-vector/weak-keyword disagreement ties at rank 1 — the `FuseRRFWeights` extension point exists and is still unused); `impact` returns its hits as `hits[]` while every other graph verb returns a verb-named key; `session` reads still hard-error on a missing `args.command` where `memory` now answers.
 
+### v4.15-mcp-project-scoping — the multi-project MCP surface says which project to name (2026-10-20)
+
+> **Trigger:** an xdev session called `leankg_status` and got
+> `LEANKG_ERROR_MISSING_PARAM: this server serves multiple projects
+> (LEANKG_PROJECT_DIRS), so a tool call must name one`. The self-host
+> registers 286 projects, so that is every call. Root causes, the evidence
+> and the fix: [`mcp-multi-project-scoping.md`](mcp-multi-project-scoping.md).
+>
+> **The real cause is not xdev's config.** The Go port never implemented
+> FR-ZCP-01 clause 2 (server-initiated `roots/list`, DONE in the Rust line
+> on 2026-09-04, commit 87e18287 — not in this repository's history), while
+> the v4.15-bare-mcp-url wave (2026-10-11) made every client writer strip
+> `?project=` and emit a bare URL **because** that resolution was supposed
+> to make the suffix unnecessary (`docs/prd.md:578`). On a single-project
+> server the bare URL still answers; on a multi-project server it cannot
+> resolve anything, so the server refuses and the client has nothing to
+> send. The tool schemas also advertised `project` as optional, so the model
+> had been told the argument was not needed — the rule lived only in the
+> error message and the server instructions.
+
+**Landed:**
+
+- **The requirement is now in the contract the client reads.** On a
+  multi-project server the tool schemas REQUIRE `project`
+  (`internal/mcp/server.go` — `WithProjectRequired`, `schema`), and the
+  property's description names what to pass. The friendly server error is
+  kept: LeanKG registers its tools with the SDK's low-level `ToolHandler`,
+  which performs no input validation, so the schema is a declaration to the
+  client and a project-less call still gets the actionable message. Single-
+  project servers and the `?project=` handler keep the argument optional.
+- **stdio answers for its own project again.** `leankg serve --stdio` is one
+  client over one repository (FR-ZCP-01 clause 1) and the engine resolves
+  the cwd — but the multi-project fail-closed rule defeated it at the
+  routing layer, so every host exporting `LEANKG_PROJECT_DIRS` had a broken
+  stdio surface. Measured live before the fix: `status` over stdio returned
+  `LEANKG_ERROR_MISSING_PARAM`. stdio and the `?project=` handler are now
+  scoped surfaces (`cmd/leankg/main.go` — `newScopedMCPServer`); the unscoped
+  HTTP surface still fails closed.
+- **The unknown-project error is bounded.** It named all 286 registered
+  projects as absolute paths — a context wall paid for on every retry. It
+  now names 10 and counts the rest (`internal/projects`).
+
+**FR-ZCP-01 needs a re-decision, not a port.** Its HTTP clause rides MCP
+`roots/list`, which is deprecated: "the roots feature is deprecated as of
+protocol version 2026-07-28 (SEP-2577). It remains functional during the
+deprecation window (at least twelve months)" (go-sdk `mcp/server.go`,
+`mcp/client.go`). Porting it from the Rust line would land on a 12-month
+feature and would need **every** client to implement it. On this machine
+the three clients solve the same problem three different ways — opencode
+bakes an absolute path into its config (what the bare-mcp-url wave removed
+as stale), Claude Code scopes to `/Users/linh.doan/work/be`, xdev cannot
+scope at all. The question the FR should now answer is "who supplies the
+project", not "which mechanism resolves it": the server cannot know the
+caller's repository (no cwd on the wire; roots is going away), and the
+client can — xdev already scopes its own REST graph client that way
+(`codeGraph.project` + `codeGraphExpectDir`).
+
+**Verified:** `go test ./internal/mcp/ ./internal/projects/ ./cmd/leankg/`
+(54 packages), `go vet ./...`, `gofmt` clean on the changed files; the
+tests are the contract — the multi-project schema requires `project`, the
+single-project and `?project=` schemas do not, stdio answers a project-less
+call over the wire, and the unscoped surface still refuses one. Live on the
+286-project self-host (a side instance on port 9799; the supervised server
+was never touched): `tools/list` → `required: ["project"]` unscoped and
+`[]` scoped/stdio; `status` with no arguments answers on stdio and is
+refused unscoped; `status` with `{"project":"leankg"}` answers with that
+project.
+
+**Two operational defects found on the way, both outside this repository:**
+an xdev session's MCP autoStart had started a **second** leankg server
+(`--http :9699`, wildcard, no `pidFile`) that answered alongside the
+launchd-supervised one — the duplicate the runbook warns about; and
+`freepeak/.mcp.json` carries the same projectless URL as xdev.
+
+### v4.15-retrieval-miss-analysis — the TS/JS extractor no longer invents elements (2026-10-18)
+
+> **Trigger:** a 20-question benchmark (grep vs Gemma semantic search, 14 repos,
+> 70,465 elements) found two top-10 slots of a *semantic* query occupied by
+> elements that do not exist: `tsFuncRe` matched `functionality:` and captured
+> `ality` as a function name. Those phantoms are embedded, indexed and ranked
+> like real declarations. The same run's misses are written up, with the other
+> five root causes (benchmark labels, embedding-stamp drift, keyword-only rows
+> in semantic windows, element dilution beside file-level strength, and a name
+> arm that never fires), in [`retrieval-miss-analysis.md`](retrieval-miss-analysis.md).
+
+**Landed:** `tsFuncRe` requires a word boundary after the keyword
+(`function\b`), so `functionality`, `functionDefs` and `functionName` no longer
+yield elements while `function f()`, `export default async function main()` and
+`function* gen()` are unchanged. Guarded by
+`TestMatchTSFunctionKeywordNeedsWordBoundary` (`internal/index/extract_tsfunc_test.go`).
+Re-indexing the affected repos is part of the follow-up in the analysis doc, not
+this change.
+
+### v4.15-portfolio-prune — the portfolio registry can reclaim dead rows (2026-10-11)
+
+> **Trigger:** this machine's registry answered 108 rows, and 84 of them pointed
+> at directories that no longer existed: 80 temp dirs that tests and CI runs
+> registered and then deleted, and 4 removed worktrees. Each still answered as a
+> project, and nothing could reclaim them short of `--forget`, one row at a time.
+> The T0 manifest also printed `missing` for both a vanished directory and a
+> registered project that is not indexed yet.
+
+**Landed (#504, open):** `leankg projects --prune` lists the registrations whose
+directory is gone. It is a dry run by default, because this registry is shared
+with other tools; `--apply` forgets them, and a second `--apply` reports
+"nothing to prune" instead of failing. The sweep is `portfolioreg.Prune`, which
+forgets only rows whose directory is gone: a registered project whose directory
+exists is never pruned, even with no store. The manifest gains `dir_exists` per
+row (`ManifestEntry.DirExists`), a presence probe independent of the store flag,
+and the T0 table prints `dir-gone` in the STORE column for those rows. Only a
+directory that answers ENOENT counts as gone (EACCES and other stat errors keep
+the row), and `--prune --apply` is refused on the postgres engine, where the
+shared registry has no host identity, so one host's prune could remove another
+host's rows; the dry run still works there.
+
+**Measured, on this machine's registry (2026-10-11):** the dry run named the 84
+and changed nothing (108 rows before and after). `--apply` forgot exactly those
+84, and the registry reads 24 rows, all with directories that exist.
+
+**Guards:** `TestManifestMarksGoneDirectories`,
+`TestPruneForgetsOnlyVanishedDirectories`, `TestPruneKeepsRowsWhoseDirectoryCannotBeStatted`,
+`TestProjectsPruneVerb`, `TestProjectsTableMarksGoneDirs`,
+`TestProjectsPruneWithoutRegistry`, `TestProjectsPruneJSONContract`,
+`TestProjectsApplyRequiresPrune`, `TestProjectsPruneApplyRefusedOnPostgres`,
+`TestSuitePinsSQLiteEngine`.
+
+### v4.15-lsp-handshake-budget — the handshake gets its own budget, and the first failure its reason (2026-10-13)
+
+> **Trigger:** main went red twice on the self-hosted Mac under load. Run
+> 38381811991 failed `TestEnrichAcceptsRegistryActiveLanguages` at 14.02 s with
+> "no LSP-visible declarations to merge". Run 38364622057 failed
+> `TestEnrichTypedResolveOffByDefault` at 14.03 s with the same reason, and
+> `TestEnrichMergesLSPSymbolsIntoElements` (17.97 s) with one of its two files
+> merging nothing.
+
+**The mechanism, two defects in `internal/lsp/enrich.go`:**
+
+- **The handshake had the request's budget.** `documentSymbols` and `hover`
+  ran the spawn under a context that carries `timeout_ms` (default 5 s).
+  `StartCommand` derives its handshake context from the caller's, and a child
+  context cannot outlive its parent, so `initialize` ended at 5 s whatever
+  `handshakeTimeout` said (10 s, or `LEANKG_TEST_LSP_TIMEOUT` in CI). The CI
+  knob never reached this path. Each attempt was a 5 s deadline, so a language
+  failed in two of them: the 14 s above.
+- **The first failure was dropped.** `enrichLanguage` set `rep.Reason` only
+  once a second file had failed. A language whose only file failed kept an
+  empty reason, and the pass fell back to "no LSP-visible declarations to
+  merge".
+
+**Landed:**
+
+- `clientFor` spawns under `handshakeTimeout` and cancels as soon as the pooled
+  client is returned. Each request then gets its own `timeout_ms` budget. The
+  two-attempt respawn is unchanged.
+- Every failed file sets the language's `Reason`. The second failure still ends
+  the language. Its message reads `failed after N files`; the old wording was
+  "stopped answering after N files".
+
+**Behaviour change:** the production spawn budget moves from 5 s to
+`handshakeTimeout` (10 s). The worst case per file rises from 2 x 5 s to
+2 x (10 s + 5 s). `enrichTimeout` is still checked between files only.
+
+**Measured:**
+
+- RED, previous code: `TestEnrichHandshakeOutlivesRequestTimeout` fails with
+  `Merged = 0` at 2.84 s. `TestEnrichRecordsFirstFailureReason` fails with an
+  empty language reason at 0.93 s.
+- GREEN: the two tests pass in 1.44 s and 0.53 s. `go test -count=3
+  ./internal/lsp/` passes (81.8 s). `go test -race -count=1 ./internal/lsp/`
+  passes (43.0 s, no data race). `CGO_ENABLED=0 go build ./...` passes.
+
+**Guards:** `TestEnrichHandshakeOutlivesRequestTimeout` (a handshake slower than
+`timeout_ms` still merges) and `TestEnrichRecordsFirstFailureReason` (one failed
+file names the error at both levels). New fixtures: `FAKE_LSP_INIT_DELAY`
+delays `initialize`; `FAKE_LSP_MODE=crash` exits on `documentSymbol`.
+
+### v4.15-name-arm-rarity — the name arm fires on prose, at a MEASURED bound (2026-10-13)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR. Its wave 17
+> replaced the name arm's gate; this is that change, re-derived on today's code
+> and re-measured rather than inherited.
+
+**The defect, measured on main over all 84 labelled questions in
+`docs/retrieval-label-set.md`:** the name arm fired on **ZERO** of them. It
+required a query with no whitespace — a bare symbol name — and agents ask in
+prose ("take the single-flight lock for embedding"), where the informative token
+is a plain lowercase word (`lock`, `stamp`, `runes`). A shape gate rejects
+exactly the tokens the arm exists for.
+
+**What changed:** the gate is now RARITY IN THIS CORPUS — a token that appears
+in many symbol names discriminates nothing; a rare one is the name the agent
+typed. Two filters: a small function-word list (deliberately not "English",
+because every word such a list omits is a real symbol name somewhere), then the
+rarity bound. Both backends implement it, and the arm is fused in the same
+`FuseRRF` as the vector and keyword arms.
+
+**The bound is swept, not guessed.** With the shape gate as control (top-1
+50/84, in-pool 73/84), on 10,885 elements:
+
+| bound | arm fired | top-1 | in-pool |
+|---|---|---|---|
+| 2 | 31/84 | 49 | **80** |
+| 5 | 48/84 | 44 | 80 |
+| 21 | 77/84 | 36 | 80 |
+
+The arm's **gain is bound-independent** — in-pool 73 → 80, it finds the answer
+in seven questions neither the keyword nor the vector arm reaches — while its
+**cost grows with the bound**: at 21 it fires on 77 of 84 questions and dilutes
+the top of the fusion by 14. `elements/5000` (bound 2 here) keeps nearly all of
+the gain for one point of top-1.
+
+**Two mistakes this change made and corrected, both by measuring:**
+
+1. The first rarity table counted TOKENS per distinct name (`GROUP BY name`),
+   which sees only exact repeats (Results ×29) and calls `read` rare — while the
+   LIKE it gates matches `read` as a SUBSTRING of 347 names. The table and the
+   query must measure the same thing; the count is now substring containment.
+2. A `bound := 5 // SWEEP` edit landed inside the COUNT function instead of the
+   comparison, so every token's count capped at 6 and a four-way sweep read
+   identical — a measurement that measured nothing. Fixed, and the sweep then
+   showed the real trade-off above.
+
+**Not re-landed:** #449's own `elements/500` (bound 21) — measured worse here,
+and the threshold is a corpus property, so it ships as `elements/5000` with
+`LEANKG_NAME_ARM_BOUND` to re-sweep per project.
+
+**Cost:** the new arm takes **49ms** on a prose question where the keyword arm
+it fuses with takes **327ms** on the same query — the gate is not the bottleneck.
+
+**Verified:** `TestFindByNameTokenFiresOnProse` (a prose question with a rare
+token reaches the arm and orders by specificity; a question of common words
+does not fire it). Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
+
+### v4.15-retrieval-instrument — the bench got honest about what it measures (2026-10-13)
+
+> **Trigger:** the same loop sweep as the entry above, one iteration later. The
+> measurement instrument the rarity bound was derived from lived only on the
+> dormant #449 branch, and it was wrong in ways that read as retrieval findings.
+
+**Landed (#516):** `docs/retrieval-label-set.md` (84 questions, ground truth
+read by hand from this repository's own elements) and `scripts/retrieval-bench.py`
+— per-arm and fused scoring, so a bad fused answer says WHICH arm to fix.
+`scripts/retrieval-labels-corpus2.json` was **not** landed: it names elements of
+a different repository and carries material that must not be in this one.
+
+**The check the doc always claimed and nothing enforced:** a label whose element
+the store does not hold measures the LABEL, not the fusion, and it is now
+reported as **STALE** rather than as a retrieval miss. Building it found three
+defects, each of which had made it silently useless — the element probe read the
+wrong envelope key, it ran AFTER `s.close()`, and `--project` defaulted to `"."`,
+the worktree the script lives in (a store with 0 elements). The check then found
+the drift it exists for: `StandaloneDBPath` had moved to `internal/projectcfg`
+and `ftsQuery` to `internal/store`. Both labels repaired.
+
+**Landed (#517, open):** the bench stops on three ENVIRONMENT mistakes that read
+as retrieval results — a dead server (a `readline()` at EOF spun forever, so a
+server that never started printed nothing at all), a cold `--project`, and a
+vector arm that never ran because the collection's stamp does not match the
+provider (which reads as "the vector arm found nothing").
+
+**Measured, on the indexed checkout** (`bge-small-en-v1.5-384`, depth 30):
+vector 62/84 in-pool, keyword 17/84, fused 79/84, **0 stale**, 5 labels in
+neither arm. `LEANKG_EMBED_MODEL` must be the CATALOG id, not the `.gguf` file
+name the sidecar serves.
+
+**Leak repaired (#518, merged):** #515 had added
+`scripts/retrieval-labels-corpus2.json` to this PUBLIC repo although the session
+that merged it had already concluded it must not be there. It is deleted, and
+`retrieval-labels-*.json` is now ignored so the next harvested corpus cannot be
+committed by accident. The blob remains in the public history of its ancestors;
+rewriting that history is a separate, deliberate decision.
+
+### v4.15-runner-throughput — the one runner slot stops queueing behind itself (2026-10-17)
+
+> **Trigger:** every FreePeak repo looked stuck — LeanKG runs sitting `queued`
+> for 40+ minutes, actions "hanging". The runner was not broken: it was online,
+> `busy: true`, and cycling jobs normally.
+
+**Diagnosis (measured, not inferred):** this repo has exactly ONE self-hosted
+runner (`mac-m2pro-leankg`, labels `self-hosted,macOS,ARM64,leankg`, launchd
+`actions.runner.FreePeak-LeanKG.mac-m2pro-leankg`) and **one slot**, while `ci.yml`
+has four jobs per run. Nothing serialised runs, so each new push queued a
+complete second run behind the live one: at 05:20 UTC on 2026-10-17, four runs
+(39005159492, 39005153712, 39004248760, 39003423067 — 12 jobs, ~2.5 h at the
+measured 12-15 min/job) sat behind one live 4-job run. Deltas between
+`created_at` and the first job's `started_at` grew to **35 minutes** (run
+39003423067) and the frontend job waited 38 minutes for its turn. GitHub reports
+all of that as `queued`, which is exactly what a dead runner reports — hence the
+"runner not triggering" reading.
+
+**Fixed (this PR):** a workflow-level `concurrency` group keyed on
+`github.workflow-github.ref` with `cancel-in-progress: true`, so a superseded
+push is dropped instead of queued; `timeout-minutes` on all four jobs (20m
+go-engine, 25m dual-engine, 25m frontend; `ttfv` already had 12m) so a wedged
+job fails and frees the slot instead of holding the queue; and `setup-node`'s
+`cache: npm` moved behind `runner.environment == 'github-hosted'`, matching what
+`setup-go` already does in this file.
+
+**Measured cost of that cache on this runner:** with `cache: npm`,
+`setup-node` spent **3m40s-4m38s** per run restoring a 216 MB tarball at ~1 MB/s
+(runs 38999592068, 39001709926, 39002635228, 39002760777) against a `npm ci`
+that completes in **24 s** from the Mac's own `~/.npm`; the post-job save of the
+same cache is what hung dsh-mux's runner (`dsh-mux/ci.yml` documents it). The
+cache is unchanged for GitHub-hosted runners (fork PRs), through a second,
+`if`-gated `setup-node` step.
+
+**Guarded:** `scripts/ci_workflow_guards.py`, run beside the existing release
+guards in the `go-engine` job (same throwaway venv, no second PyYAML install).
+It asserts the concurrency group, a per-job cap on every job, and that no
+`setup-node` step can enable the npm cache on the self-hosted runner — the three
+invariants whose absence is invisible from GitHub's UI.
+
+### v4.15-ci-guard-interpreter — the guard builds the interpreter it needs (2026-10-13)
+
+> **Trigger:** #518 — a commit that deleted one unreferenced file — went red at
+> "Release workflow guards" with `error: externally-managed-environment` (PEP 668).
+
+The step's own comment said *"ubuntu runners ship PyYAML"*, but this job is
+**self-hosted**: the runner's launchd PATH puts `/opt/homebrew/bin` first, so
+`python3` is Homebrew 3.15, which has no PyYAML (3.14 and `/usr/local/bin` 3.12
+do), and pip3 refuses to install into it — the fallback could never succeed, and
+its failure read as "the guards found a violation" when nothing was wrong.
+
+**Fixed (#519, merged):** the step builds a throwaway venv under `$RUNNER_TEMP`
+with the one import, so it stops depending on what a given machine happens to
+have on PATH. A reader running the script by hand gets the same instructions in
+its docstring.
+
+**Also this wave:** the sidecar test readiness bound is env-overridable
+(`LEANKG_TEST_SIDECAR_TIMEOUT`, 120s on both test jobs) — same class and same fix
+as #488 — after the fake sidecar deadlined at 15s on a runner shared with the
+operator's own work while passing locally in 1.9-5.1s (#517).
+
+### v4.15-prd-truth — the changelog knew what it was, and said so halfway
+
+**Repaired in this commit:** four `### v4.15-*` headings had been replaced by a
+bare line, so each body sat orphaned under the entry above it and the section
+became ungreppable — `v4.15-fusion-weight` (whose title line was the whole
+orphan) plus `v4.15-doctor-truth`, `v4.15-empty-matches` and
+`v4.15-annotation-target`. Every heading restored; no body text changed.
+
+### v4.15-fusion-weight — a caller-chosen fusion weight is validated, applied, and not over-claimed (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR (wave 17), and the
+> same class as #484: an argument the caller believes it set.
+
+**Measured live on the 298-project self-host, every shape accepted and ignored:**
+
+| `args.weight` | Answered | `retrieval.weight` |
+|---|---|---|
+| `3,1` | accepted | **absent** — ranking identical |
+| `1,0` | accepted | **absent** |
+| `0,0` | accepted | **absent** |
+| `banana` | accepted | **absent** |
+| `3` | accepted | **absent** |
+
+`0,0` ranks nothing and `banana` is not a weight: both are *unreadable*, not
+merely unapplied. `weight=0.0` and `weight=1.0` produced **byte-identical**
+rankings.
+
+**Three parts, each with its own guard:**
+
+1. **Validated before the ladder**, beside the scope contract — because L3
+   degrades to L2 without ever reading a weight, so validating inside the
+   semantic rung would silently accept a typo on exactly the stores where it is
+   hardest to notice. `"<vector>,<keyword>"`, two non-negative numbers, `0,0`
+   refused, `1,0` documented as zero-weighting the keyword arm.
+2. **Applied** through `WeightedHybridSearcher` — a *separate* interface, the
+   house pattern (`ScopedHybridSearcher`), so no signature changes and a backend
+   without it keeps the store default. `FuseRRFWeights` gained a `Keyword`
+   slot and an `Explicit` flag: a zero means *unset* (weight 1; an unset caller
+   weight takes the 3:1 `DefaultFuseWeights`) while an explicit zero means *off*,
+   which is what makes `1,0` actually zero-weight the arm (its rows stay in the list with score 0 and sort last).
+3. **Not over-claimed.** My own first version reported the weight
+   unconditionally, and an **L0** answer ("no elements indexed") claimed
+   `weight=3,1` — only L3 fuses two arms to scale. An answer naming a setting it
+   did not apply is the same defect as #491's advice naming a flag that did not
+   work.
+
+**The 3:1 default was measured on SQLite only.** The sweeps behind it ran on the
+SQLite engine, which has two lexical arms. PostgreSQL has up to three lexical
+arms at weight 1 each (tsvector, trigram or ILIKE, and name), so a row ranked
+first in all three ties vector rank 1 under the default (3 x 1/61 against 3/61
+for vector rank 1). PostgreSQL retrieval quality with the new default has not
+been benchmarked.
+
+**A test that guarded nothing, corrected.** The first fixture used mirrored arms
+(vector `a,b` / keyword `b,a`), which ties — it passed even with the
+explicit-zero handling disabled. It also expected `alpha` to beat a key topping
+both arms, which was wrong about RRF rather than about the weight. Disjoint arms
+make scaling *and* zero-weighting observable, and the RED check now fails when the
+handling is removed.
+
+**Verified:** `TestQueryWeightIsValidated` (four malformed shapes refused, four
+good ones accepted), `TestWeightIsNotClaimedByARungThatDoesNotUseIt`, and
+`TestFusionWeightChangesTheRanking` (vector-heavy, keyword-heavy, `1,0` zero-weights,
+`0,1` zero-weights, zero struct identical to unweighted). Gate: 62 packages ok,
+`go vet` clean, `gofmt` clean.
+
+### v4.15-doctor-truth — the diagnosis says "not indexed", not the syscall that noticed (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR, wave 24.
+
+**Measured live on this machine 2026-10-11, from a directory with source and no
+store:**
+
+```
+$ leankg doctor
+FAIL store: store: read-only open of missing store /tmp/nostore/.leankg/leankg.db:
+  stat /tmp/nostore/.leankg/leankg.db: no such file or directory
+```
+
+The exit code (2) was already right. The **sentence** was not: it leaks the
+storage layer into a user-facing diagnosis — `read-only open of missing store`
+and a raw `stat` error — and never names the command that fixes it. A reader
+learns that something under `.leankg` is absent, not that **the project has not
+been indexed**.
+
+**What changed:**
+
+```
+FAIL not indexed: no store at /path/.leankg/leankg.db
+     run `leankg index .` in this project, then `leankg doctor` again
+```
+
+Any other store error keeps the original `FAIL store: …` line, so a genuine
+storage fault is still reported as one.
+
+**Verified:** `TestDoctorOnAnUnindexedProjectSaysWhatToRun` — exit 2, the
+command named, and **neither** leak string present. RED first: the guard failed
+on both counts against the old sentence. Gate: 62 packages ok, `go vet` clean,
+`gofmt` clean.
+
+### v4.15-empty-matches — an empty match set says why it is empty (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR. Wave 22 fixed
+> "null was two different claims"; the SHAPE half of that is already on main
+> through a better generic fix, so this is the half that remained.
+
+**Measured live on the 298-project self-host 2026-10-11, on a store with no
+catalog:** `query action=ontology args.cmd=matches` answered `{"matches":[]}` —
+an empty array with nothing said about it.
+
+**An empty array has two meanings and they want opposite next steps:**
+
+| Meaning | Next step |
+|---|---|
+| no catalog was ever imported | import one — the answer will not change until you do |
+| a catalog is imported, nothing matched | look harder, or the corpus is what it is |
+
+A reader that cannot tell them apart **looks harder at a corpus that has no
+catalog to match against**.
+
+**What changed:** an empty match set carries a `note` naming the cause and the
+next step. A NON-empty set does not, so the note still distinguishes something.
+
+**What was NOT re-landed, and why:** the shape half (nil → `[]`, never `null`)
+is already guaranteed for **every** answer by `emptyLists` (RS-09), which is a
+strictly better fix than normalising this one call site. The guard asserts both
+layers where each is actually guaranteed — the engine returns the raw slice, the
+envelope produces the array — so it does not claim the engine owns a
+normalisation it does not.
+
+**Verified:** `TestEmptyMatchesSaysWhyItIsEmpty`. RED first: reverting the note
+fails it with "an empty matches answer carries no note". Gate: 62 packages ok,
+`go vet` clean, `gofmt` clean.
+
+### v4.15-annotation-target — an annotation cannot attach to an element the index does not have (2026-10-11)
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR. Wave 16 of that
+> loop drove every verb the product exposes; this is the instance it called the
+> worst of the silent-write class.
+
+**Measured live on the 298-project self-host against a store that HAS an index:**
+
+```
+leankg annotate "pkg/does-not-exist.go::Nope" --description ghost
+  -> Created annotation for 'pkg/does-not-exist.go::Nope'      (exit 0)
+```
+
+and the row really landed — the annotation document held it, on an element
+`code_elements` does not contain. `leankg link` had the same hole.
+
+**Why this one is worse than a wrong answer.** An annotation is the one place a
+human writes what the code does *not* say. Attached to a typo'd or renamed
+identifier it is **unreachable**, not merely wrong: it never surfaces in a query
+(the element is not in the graph), never appears in `search-annotations` unless
+someone guesses to grep for it, and is never migrated when the element is
+renamed.
+
+**What changed:** `requireIndexedElement` refuses a `qualified_name` the index
+does not contain, **before any write**, for both `annotate` and `link`.
+
+- The refusal **names the index as the reason**, because a caller who only sees
+  "not found" cannot tell a typo from a stale index — and those want opposite
+  next steps (re-ask with the right name vs `leankg index`).
+- It does **not** suggest a near-match: an annotation is cheap to redo and
+  expensive to discover later, so refusing is the cheap side.
+- An empty name is refused with the way to find one (`leankg query <name>`).
+
+**Verified:** `TestAnnotateRefusesAnElementTheIndexDoesNotHave` — a real element
+is accepted (no false refusal), a missing one is refused naming both the element
+and the index, an empty one is refused, and **the refusal happens before the
+write** (the store stays clean). Gate: 62 packages ok, `go vet` clean, `gofmt`
+clean.
+
+
+
+> **Trigger:** the re-land sweep over the dormant #449 loop PR. Six of its
+> fixes are on main; this one was not, and it was still a live defect.
+
+**Measured on main, live on the 298-project self-host, both shapes landing the
+same empty row (sha256 of `""`):**
+
+| Call | Answered | Stored |
+|---|---|---|
+| `import action=session command=lesson session_id=s summary="…"` | `{"deduped":false}` | `{"text":""}` |
+| `import action=session command=lesson session_id=s` (no content) | `{"deduped":false}` | the same empty row |
+
+The import schema advertises `summary` for this arm; `sessionWrite` read only
+`text`. So a schema-shaped call was a **successful write of nothing**, and the
+second such call reported `deduped: true` — a duplicate of nothing. The empty
+hash is the dedup key, so the surface could not tell one blank from another.
+
+**Both halves fixed:** `summary` feeds `text` for the lesson arm when `text` is
+empty (both spellings land), and an **empty lesson is refused** with a message
+that names the fix. The second half is the one that matters — a write that
+cannot report itself empty is a write that cannot be wrong loudly, which is how
+the field mismatch survived every earlier wave.
+
+**Verified:** `TestSessionLessonRequiresContent` — `text=` works, `summary=`
+works, no content is refused, whitespace-only is refused, and the store holds
+exactly the two real lessons (an empty row would mean a half-fix). RED first:
+reverting the fix fails the test with "an empty lesson was accepted". Gate: 62
+packages ok, `go vet` clean, `gofmt` clean.
+
+
+
+> **Trigger:** the write-only sweep. This is the third instance of one defect
+> shape in two days, so it is worth naming as a class rather than a bug:
+> **a write surface with no reader**. #470 fixed it for `reflect`, #507 for
+> session `lessons`, and this for team `notes`.
+
+**Measured before, live on the 298-project self-host:** `leankg note --target
+leankg --content "…"` answered `Added note to 'leankg' (env: local)` and wrote
+the row (`NOTE-8ac3…`, `knowledge_type=general`, `tags=note`). Then every
+candidate reader missed:
+
+| Reader | Result |
+|---|---|
+| `leankg note` (any list shape) | none — the verb had no read subcommand |
+| `leankg service-context --service leankg` | `known_risks: null`, no notes |
+| `leankg team-map` | `[]` |
+| MCP | no notes action exists at all (agents cannot write one either) |
+| `GET /api/v2/notes` (and `/knowledge`) | **404** — no such route |
+
+**The readers were already written and never wired.** `orgknowledge.NotesFor`,
+`AnnotationsForFeature` and `AnnotationsForEnvironment` are ports of Rust
+`db::get_knowledge_by_element` / `_by_feature` / `_by_environment`, and all
+three had **zero production callers** — their only callers were their own
+tests. So the capability was paid for once and left unreachable.
+
+**What changed:** `leankg note --target T` **without** `--content` lists the
+notes anchored on that target, through `NotesFor` and the store reads that
+already existed. No new store API, no new parsing path.
+
+- **Read mode opens the store RO**, because a list must never need a writable
+  store.
+- **An empty list is named, not silent** (`No notes for 'x'`) — a mistyped
+  target and a genuinely empty one must not look the same, which is the same
+  lesson as #493's search hint.
+- **The write path is untouched**: with `--content` the verb does exactly what
+  it did before, so every existing caller and the Rust `note add` shape keep
+  working.
+
+**Deliberately not built:** no MCP action. Agents cannot write a note through
+MCP today, so an MCP read would expose rows only a human CLI could have
+created — a surface with no producer on that wire. Worth revisiting if notes
+become an agent-facing write.
+
+**Verified:** `TestNoteReadRoundTrip` (the reader is anchored: another
+target's note does not leak in, and an unknown target is an honest empty) and
+`TestNoteVerbListsWhenContentIsEmpty` (the CLI lists what it stored, and names
+an empty list). RED first: the verb answered `note content is required` for
+the list shape. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
+
+### v4.15-lessons-readable — a recorded lesson is no longer write-only (2026-10-11)
+
+> **Trigger:** the last unchecked AC in this document's memory design (line ~821):
+> "retain → new session → recall injects the lesson". Verified live against the
+> 298-project self-host, and the write half of that AC was worse than the
+> wording: `import action=session command=lesson` wrote
+> `.leankg/sessions/<sid>/lessons.json` and answered `{"deduped":false}`, and
+> **no read surface in the binary could return it.**
+
+**Measured before the fix** — three read paths, three misses:
+
+| Read | Result |
+|---|---|
+| `query action=memory command=session_recall` | `count: 0` for every term tried |
+| `query action=session command=canvas` | `refs: []` |
+| `query action=session command=recall` | `session: node "" not found` |
+
+The file was not orphaned either — it was read back **once**, inside
+`session.addLesson`, purely to refuse a duplicate write. So a lesson was a
+discard with a JSON wrapper: it cost a write, survived on disk, and could
+never be heard from again. Same shape #470 fixed for reflect.
+
+**What changed:**
+
+- `session.Store.Lessons(sessionID)` returns the recorded lesson texts. It
+  reuses `readJSON` on the file `addLesson` already writes, so there is no
+  second parsing path and no second source of truth. A session with no
+  lessons — or no session directory at all — reads as an **empty list, never
+  an error**, because a fresh session asking "what did I learn here" must not
+  be told off.
+- `query action=session command=lessons` exposes it, answering
+  `{command, session_id, lessons}`.
+- The tool's `args` description now names the session read commands
+  (`recall|canvas|lessons`). It previously said only `command/node_id
+  (session)`, so an agent could not discover that `canvas` existed either —
+  the new command would have been unfindable in the same way.
+
+**Deliberately not built:** no text filter. A lesson list is per-session and
+small, and a filter would mean threading a term through a signature that
+carries only a session id. The caller filters.
+
+**Verified:** `TestLessonsAreReadable` — write, dedupe the same text twice
+into one row, read back the text intact, and an unknown session reads as empty
+without erroring. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
+
+### v4.15-bare-mcp-url — the client writers can no longer emit a stale `?project=` (2026-10-11)
+
+**Trigger:** on this machine, `xdev mcps` showed leankg online while the Cursor and Claude-plugin configs of the same repo pointed at `http://localhost:9699/mcp?project=/workspace-freepeak` — a Docker mount path that exists nowhere on the host. Every initialize failed with `unknown project "/workspace-freepeak"` (FR-ZCP-02 fail-closed), so the clients reading those configs dropped leankg from their tool list while the same server answered the bare URL normally.
+
+**Why the writers allowed it.** FR-ZCP-04 already says the emitted entry carries the bare URL, but that was prose only: `connect --http --url` and `install --http --url` passed `cfg.URL` straight through to every writer, so a caller carrying a query produced a query in the file.
+
+**What landed:**
+
+- **`bareURL` + `Config.mergedURL()`** (`cmd/leankg/connect.go`) strip query and fragment once, and all five writers go through it: `jsonEntry`'s three http branches, the Codex TOML line, and xdev's `url` key. Per-request project resolution (FR-ZCP-01: stdio cwd, HTTP roots/list) is what the suffix was standing in for, and an absolute path baked into a config is stale the moment the config leaves the machine that wrote it.
+- **`healthURLFor` strips too**, on its own argument — that was the one place a stray query survived the first cut of this guard, landing inside `/health` as `...?project=x/health` and silently breaking xdev's auto-start probe.
+- **`TestWriteClientHTTPURLHasNoQuery`** feeds `?project=/some/other/machine` to every client in `Clients()` and fails if any emitted config contains a `?`. The test's `testURL` is `http://localhost:9699` (no `/mcp`), so it also pins that no writer re-appends a path.
+
+
+### v4.15-session-telemetry — what LeanKG did for your agents, measured on this machine (DS-01..DS-27) (2026-10-10)
+
+**Trigger:** the self-host loop had no way to answer the only question that matters about a context engine — did the answer actually get used, and how much reading did it save. Everything shipped so far was validated on throwaway fixtures and ephemeral runs; the effort numbers were unverifiable. This wave builds the measurement layer and the surface that shows it, consent first.
+
+- **Off by default.** `leankg telemetry status|enable|disable|purge|link|import-ab` gates every capture path behind `$LEANKG_HOME/telemetry.yaml`. No file, no queue, no transcript read until consent is given; `LEANKG_TELEMETRY=off|metadata` can only lower a level for one process. Levels: `off` (nothing), `metadata` (tool/action/command, outcome + reason, error code, rung/confidence/freshness, hits and named files, latency, pre/post-budget tokens, baseline and tokens saved, client name/version/session, argument keys + SHA-256), `bodies` (plus redacted, 16 KiB-capped arguments and response bodies). Redaction masks bearer tokens/JWTs, `sk-`/`ghp_`/`AKIA`/`xox*` keys, `password=`/`token=`/`secret=` values and PEM keys, and rewrites `$HOME` to `~` — before anything is queued.
+- **One per-user ledger.** MCP, REST, Hindsight and ConnectRPC calls land in `$LEANKG_HOME/telemetry.db` (SQLite WAL, async batched so no call ever blocks), with a `telemetry.Store` interface that a PostgreSQL backend (DS-27) can adopt. Retention defaults to 30 days; `telemetry purge --before 30d|--all` deletes.
+- **Honest numbers.** An outcome classifier labels each call, a file-read baseline estimates tokens saved, and the evidence page separates an **observational** panel (labelled confounded, not causal) from a **controlled A/B** panel (measured, from `leankg telemetry import-ab <dir>`) — no counterfactual figure is ever presented as measurement.
+- **Session linking (separate grant, read-only).** Opt-in per client (Claude Code, xdev, omp, pi, opencode experimental; grok/codex/gemini experimental), it reads the calling agent's own transcript **in the dashboard process, never during a tool call**, stores only a redacted capped window around each call, and powers the session replay. Without a grant the replay shows the captured LeanKG calls, labelled as such.
+- **`leankg dashboard`.** An embedded SPA (React 19, Vite, Tailwind 4, assistant-ui) on `127.0.0.1:9701` with overview, sessions + replay, failures with the guidance returned, tools with the rung mix, memory, evidence and settings. `--format text|json` keeps the previous usage tables (DS-20). Same-origin + per-session CSRF token on the consent POST; CSP, `X-Frame-Options: DENY`, `nosniff`, `no-referrer` on every response; remote mode requires a bearer on every route.
+
+**Verified:** `go test ./...` (61 packages incl. sandbox-`HOME` telemetry tests), `go vet`, `-race` on the telemetry/sessionlink/dashboard/mcp/rest/rpc/memory packages, `CGO_ENABLED=0` build, `ui-dashboard` typecheck + 45 unit tests + production build, `make go-ui-dashboard-check`; parity tests prove byte-identical MCP/REST responses with capture off/on; a sandbox run with no consent creates no `telemetry*` file and opens no transcript path; capture overhead is within run-to-run noise at `metadata`. Post-merge live smoke on the owner machine (v4.15 + #462 + #463): a real MCP/REST session captured with exact correlation and rungs, every `/api/dashboard/v1` route 200, every SPA page rendered with no console errors, and `telemetry disable` + restart proven to write zero rows.
+
+**Deferred, on the record:** DS-27 (PostgreSQL telemetry store); DS-00 (live per-client probe — Grok/Codex/Gemini adapters stay experimental); SLOC baseline fallback (an unreadable hit file counts as `none`, never a guess). SIGHUP consent reload (#475) and the reference memory hook (#474) were listed here after their own records landed further down the file; the injection route reports the ids it actually placed in `injected_ids` (#476), so the hook logs `injected=N ids=…` and the dashboard's "returned vs injected" figure finally has both halves.
+
+### v4.14.0-retrieval-safety — the validation wave: safety, correctness, semantic quality, memory recall (RS-01..RS-26) (2026-10-08)
+
+**Trigger:** an isolated end-to-end validation of v0.34.0 (241 scripted checks over MCP HTTP + stdio, REST, ConnectRPC, dashboard and a read-only reader, plus fault injection): 210 passed, 12 failed, 19 notes. Root causes, designs and per-item outcomes: [`plan-v4.14-retrieval-safety.md`](plan-v4.14-retrieval-safety.md) §7.
+
+- **Safety.** File arguments are confined to the project through `os.Root` (`LEANKG_ERROR_PATH_OUTSIDE_PROJECT`; `/etc/hosts` was readable through `import read`, `query compress` and `query lsp`). `import repo|dir` accepts only the project root, and the store refuses a reconcile against any root other than the one it was built from (`LEANKG_ERROR_INDEX_ROOT_MISMATCH`, `leankg index --rebase-root`): a sibling import had wiped a 48-file index. `serve` defaults to `127.0.0.1:9699`, warns when MCP/REST leave loopback with no token, and MCP now honors DB-minted tokens.
+- **Budget.** The MCP token budget shrinks answers (item text, then tail items) and never drops the primary list or the envelope; it used to delete `hits` from semantic answers and `content` from full reads, because its protected keys were the Rust engine's.
+- **Correctness.** No ghost vectors (INNER JOIN + orphan sweep after index and embed); `memory rename` honors the advertised `new_path` (schema↔struct parity test); REST retain reports what it wrote; `import docs` and `leankg refresh` key docs project-relative instead of re-keying and deleting them; empty lists are `[]`.
+- **Semantic quality.** Doc comments are part of element content; the embedded text is a `"<type> <name> — <file>"` document (`ChunkerVersion` 3 — run `leankg-embed full` once); SQLite L3 fuses vector and FTS5 ranks by RRF and prose questions reach it directly; camelCase names are searchable by their words; the local sidecar's model is fingerprinted from `/props`. On the same corpus and model: pinned semantic MRR 0.188 → 0.679; function/method share of semantic hits 1% → 72%; prose questions answered by L3 0/16 → all.
+- **Memory.** One BM25 index (porter stemming, accent folding, query stopwords) over memory files and bank rows; retain cursors kept in the index; `query action=memory` can `view`/`snapshot`. With a query embedder, recall also fuses a dense arm (paraphrase recall top-3 2/8 → 7/8), admitting meaning-only matches above the calibrated noise floor.
+- **"No answer" signal.** Each embed run calibrates the collection's noise floor from off-topic probes; L3 answers that do not beat it are marked `retrieval.confidence: "low"` (unrelated questions 14/15 flagged, on-topic 0/28).
+
+**Verified:** `go test ./...` (default and `-tags tstree`), `go vet`, `make dual-engine` on pgvector 17; the validation harness against the new build: 244/244 pass. On the whole repository with independent query sets (40 random doc-comment paraphrases, 29 commit subjects): exact-element hit@10 8/40 → 37/40 (MRR 0.096 → 0.752); confirmed on two more repositories (xdev, onegw; 120 commit subjects each), where a test-file demotion keeps the ladder ahead of the old build on both implementation-only and all-files scoring. Upgrade rehearsed on a copy of the live self-host store (an `extractor_version` marker now re-extracts old stores once); the operator runbook is in the plan §7.
+
+**Rejected (measured):** BGE query prefix (no gain on the fused rung); long-element chunking (three variants, each costing 0.07–0.13 code-question MRR for modest doc-tail gains the keyword arm already covers).
+
+### v4.13.7-hindsight-semantics — the compat mount answers the way Hindsight does (FR-ZCP-14 K8) (2026-10-07)
+
+**Trigger:** wiring Claude Code as a third client of the shared `omp` bank (beside omp and xdev) surfaced three places where `--hindsight-compat` diverged from the wire it claims to speak. On the live bank, 169 of 192 rows were untagged (xdev `global`-scoped retains) and a `tags:["project:leankg"], tags_match:"any"` recall returned **0** rows although a matching tagged row existed.
+
+- **Untagged rows are global (Hindsight `engine/search/tags.py`).** `any` (the default) and `all` admit untagged rows beside the matching tagged ones; `any_strict`/`all_strict` exclude them; `exact` is tag-set equality, and an empty `exact` scope selects only untagged rows. The mount previously excluded untagged rows in every mode, so every `global`-scoped memory was invisible to a `per-project-tagged` client.
+- **Filter before limit.** Recall ranked the top 64 rows and only then applied the tag filter, so a tagged row ranked below 64 untagged ones never surfaced. `memory.RecallFiltered` applies the eligibility filter before ranking and the page limit (Hindsight filters at the database level). Pinned by `TestHindsightCompatTagFilterBeforeLimit` (1 tagged row behind 80 higher-scoring rows).
+- **K8 — document upsert + delete.** A retain item with a `document_id` now replaces that document's earlier rows (`update_mode:"replace"`, the Hindsight default); `"append"` keeps them. `DELETE /v1/default/banks/{bank}/documents/{document_id}` drops a document and answers `{success, document_id, memory_units_deleted}`; the auth gate treats every DELETE under a memory mount as a write. Rows carry `document_id` on list/recall/by-id so a client can reconcile. The JSONL rewrite is temp-file + rename under a per-process bank mutex, and unparseable lines are kept verbatim. Effect on omp: its full-session retains (`document_id = session id`) stop accumulating one copy of the transcript per retain.
+- **Protocol text:** rule 6 named `command=lesson` under `action=memory`, where it errors; it now reads `import action=session command=lesson`.
+
+**Verified:** `go test ./...`, `go vet`, `gofmt` clean; new/changed tests `TestHindsightCompatWire` (mode matrix), `TestHindsightCompatTagFilterBeforeLimit`, `TestHindsightCompatDocumentUpsertAndDelete`, `TestCompatMountWriteRoutesGated` (Viewer 403 on document delete).
+
+**Remaining (FR-ZCP-14):** K2 first-class tags, K5 honest reflect, K7 recall ranking (token overlap, no index/decay/embeddings), K9 `connect --target xdev`.
+
+### v4.13.6-sidecar-adopt — one failed embedder no longer takes the server down (2026-10-03)
+
+**Trigger:** `xdev mcps` reporting `leankg unreachable` on the operator's own machine. xdev probes `GET /health` and, on a miss, launches the `autoStart` recipe from its config; the recipe was right, the binary was right, and the server still never came up.
+
+**Reproduced by running the exact launch command by hand.** The MCP listener never bound: `embed provider: embed: sidecar "llama-server" exited during startup: exit status 1; stderr: … E srv start: couldn't bind HTTP server socket, hostname: 127.0.0.1, port 9101`. Two defects stacked:
+
+- **`internal/embed/sidecar.go` spawned into an occupied port.** `LEANKG_EMBED_SIDECAR_PORT=9101` was chosen because the gateway holds the default 8080 — but an earlier `leankg serve` had left a `llama-server` on 9101 (parent pid 1: nothing ever reaped it, because the sidecar is spawned in its own process group). `StartSidecar` always spawned, llama-server always crashes on a busy port, so the port's owner became the one reason the engine could not start. `StartProvider` already had an attach path (`LEANKG_EMBED_BASE_URL`), but the *spawn* path had no equivalent — so the PRD's "attach-or-spawn" claim (§ embeddings) was half true.
+- **`cmd/leankg` treated that crash as fatal.** `serve` called `log.Fatalf("embed provider: %v", perr)` on a query-time embedder that is an **option**: L1/L2, graph verbs, memory, REST and the dashboard all work without one, and `core.rungSemantic` already degrades L3 to L2 with a `retrieval.reason`. One unusable provider therefore removed the whole server — which is exactly what an MCP client reports as "unreachable", with the real cause trapped in a stderr tail nobody reads (xdev detaches auto-started servers to `/dev/null`).
+
+**What landed:**
+
+- **`StartSidecar` adopts a sidecar already serving the port** instead of spawning a rival into it. The probe asks the endpoint for one real embedding (`POST /v1/embeddings`, 3 s bound) rather than trusting the port, so a stranger on that port is still not adopted — it surfaces as the actionable startup error, now naming the port and both ways out (`LEANKG_EMBED_SIDECAR_PORT` / `LEANKG_EMBED_BASE_URL`). An adopted sidecar is **not** killed on `Shutdown`: it is not ours to kill, and the process-group kill exists for children we spawned.
+- **`serve` degrades instead of dying.** Provider failure now logs `embed provider unavailable — serving without L3 semantic: …` and the listener binds — the same "unavailable-never-fatal" shape `refresh`/`rest/auto` use (`EmbedSkipped`, a reported skip rather than a failed run).
+
+**Tests:** `TestStartSidecarAdoptsRunningSidecar` (a hand-started sidecar is adopted, used for real vectors, and survives our `Shutdown`), `TestStartSidecarSpawnsWhenPortStrangerHoldsIt` (a non-embedding listener is not adopted; the error names the port and both fixes), and `TestServeSurvivesUnusableEmbedProvider` — the real binary, `serve --embed-provider local`, two unusable-provider shapes (busy port, missing binary), each required to answer `/health` 200 within 30 s and to print the degrade notice. Verified to fail on the pre-fix code (`GET /health = 0 after 30s`).
+
+**Verified live:** the fixed binary against the operator's real store — `/health` 200, MCP `initialize` + `tools/list` + `tools/call query action=semantic` answering `retrieval {"rung":"L3","reason":"vector similarity (cosine)"}` **through the adopted sidecar**, and the pre-existing llama-server still running after leankg exited. `make go-build`, `make go-vet`, `make go-test` green (both tag sets). Two local failures that first showed up here were **not** mine and not `origin/main`'s: a stray `/tmp/.leankg` store on this box (an earlier leankg run with `cwd=/tmp`) is a project-root marker above every `t.TempDir()` fixture, so `TestFindProjectRootWalksUp` and `TestFRZCP13SetupModePersistence` both fail with the store present and both pass with it moved aside — a machine-state hazard worth knowing before blaming a branch (CI, with a clean `/tmp`, has been green on `main` all along).
+
+### v4.13.5-graph-seed-resolve — short-name graph verbs + dead-token REST unlock (2026-09-30)
+
 ### v4.13.5-graph-seed-resolve — short-name graph verbs + dead-token REST unlock (2026-09-30)
 
 **Trigger:** live MCP matrix against the dogfood server. `query action=callers|callees|impact|path` with a bare function name (`ServeProjectDirs`) returned empty/`reachable:false` even though the element and its `calls` edges were indexed; REST `:9701` answered every route with 401 after leftover smoke-test tokens; `import action=read` / `query action=compress` with a project-relative path opened against the server cwd and ENOENT'd.
@@ -730,7 +1518,7 @@ Per arm at depth 100 scoped: vector in-pool **10 → 19**, keyword **11 → 17**
 - **What landed:** `leankg serve --hindsight-compat` (REST listener, requires `--memory`) mounts the exact wire omp's `memory.backend:"hindsight"` client speaks — `PUT /v1/default/banks/{bank}` (ensure, always 200), `POST .../memories` (`items[]` with `content/timestamp/context/metadata/document_id/tags`), `POST .../memories/recall` → `{results:[{text,…}]}`, `POST .../reflect` → `{text}` digest. One file (`internal/rest/hindsight.go`) as an **additive alias** — the native `/api/v1/memory/*` surface is unchanged, and without the flag the compat routes 404 (pinned by test).
 - **Why no upstream PR was needed:** `memory.backend` is a closed enum, but the `hindsight` arm takes `hindsight.apiUrl` — speaking the server side of that wire lights up auto-retain, `<memories>` injection and the memory tools with zero omp changes. The earlier "upstream `memory.backend:\"mcp\"` PR" path stays available but is no longer the only door.
 - **Cursor trap (the #406 class, memory side):** the hindsight retain wire has no `retained_through_user_turn`, and `Memory.Retain` gates on `throughUserTurn <= bankCursor` — a cursorless 0 write would have been **silently dropped after the first batch**. New `memory.RetainRaw` shares Retain's id/source/timestamp/importance defaults but appends unconditionally; pinned by `TestRetainRawNoCursor`.
-- **Mapping policy:** client tags ride in entry metadata and filter recall (`all`/`all_strict` require every tag, else intersection; page = 8, the OMP recall limit); `update_mode:"replace"` is treated as append (JSONL has no per-document revision); documents/mental-models endpoints are deliberately not mounted — the wiring disables mental models client-side.
+- **Mapping policy:** client tags ride in entry metadata and filter recall (`all`/`all_strict` require every tag, else intersection; page = 8, the OMP recall limit); `update_mode:"replace"` is treated as append (JSONL has no per-document revision — superseded by v4.13.7: replace upserts, documents DELETE is mounted); mental-models endpoints are deliberately not mounted — the wiring disables mental models client-side.
 - **Verified:** in-process httptest suite (wire walk + 404-without-flag) and a LIVE probe replaying `hindsight/client.ts` call shapes byte-for-byte against a scratch `serve --hindsight-compat` — bank ensure, 2-item retain + second-batch retain, ranked tag-scoped recall, disjoint-tag exclusion, reflect digest: all PASS. Harness wiring: `memory.backend="hindsight"`, `hindsight.apiUrl=<rest>`, `hindsight.mentalModelsEnabled=false`.
 - **Shipped as v0.34.0** (release PR #422, run `34871489633`): 4 platform tarballs, `latest` pointer correct, proxy origin resolves the tag, `go install github.com/FreePeak/LeanKG/cmd/leankg@v0.34.0` → `leankg 0.34.0`, zero `go/v0.34*` mirror tags (job retired in #415).
 
@@ -822,7 +1610,7 @@ No new capability; the point of M10 is that every surface — including the diag
 
 **Module landing page (PR #396):** `go/README.md` — the page pkg.go.dev renders for the module — was still the W1 slice note: PostgreSQL and ConnectRPC listed as deferred (both shipped), `internal/ports/` in a layout where no such package exists, "7 packages" against the tree's 54, a link to a document #377 moved to `docs/archive/analysis/`, and the Rust line still described as "released and in maintenance" two waves after it was deleted. Rewritten to the current surface, layout and ceilings, with each claim read back against the code and both `go install` lines run for real.
 
-**Open, on the record:** `ConnectRPC` (`--rpc`) still has no `/health`, so FR-SELF-01's "`/health` on every listener" AC is met on the MCP, REST and dashboard listeners only. `docs/mcp-tool-contract.md` is still generated from the deleted `src/mcp/tools.rs` and documents the Rust-era `set`/`get` pair rather than `import`/`query`.
+**Closed since:** FR-SELF-01's "`/health` on every listener" AC is now met on all four listeners — #463 gave the ConnectRPC (`--rpc`) mount the JSON health envelope the other three already returned. `docs/mcp-tool-contract.md` is now generated from the LIVE Go registry (#473): `TestToolContractDoc` renders it from `ListTools` and fails the build when the checked-in document drifts, so the Rust-era `set`/`get` table cannot come back. The 76-tool Rust record is retained at `docs/archive/mcp-tool-contract.md`.
 
 ### v4.11.0-selfhost-dogfood-loop — the plan, anchored: LeanKG serves itself first (2026-09-14)
 
@@ -887,7 +1675,7 @@ The pipeline then released for real: **v0.31.1 and v0.31.2 were cut automaticall
 | #61 | Vendored `tree-sitter-perl` v2.0.0 (MIT) regenerated to **ABI 14** (every published release targets ABI 15, which the Go runtime rejects), behind `//go:build tstree` on every `.c`/`.h`; module/method/import kinds with `use_statement` module-field resolution | On 1,398 real Perl files: **99.2 % clean parses vs 42.8 %** before (791 files recovered). Live: `Inventory.pm::stock_count`, `MyApp::Inventory`, Moose/`namespace::autoclean` imports and a v5.38 `sub tally ($self, $items)` all indexed |
 | #297 | graft's two-pass LLM-meaning pipeline: `file_summaries` checkpoint (migration **14**, model-pinned resume), pass 1 one-completion-per-file at temperature 0 behind a failure gate (5 consecutive → stop; terminal quota/auth → immediate), pass 2 JSON-validated node/relation synthesis with closed enums, markdown node files that preserve human notes, `leankg summarize`, opt-in post-index hook (default **off**) | 23 tests; the hook's default-off contract pinned so an index can never start spending tokens because a provider happens to be configured |
 | #372 | Federation **receiver** (`POST /api/v2/graph/push` + `GET /api/v2/graph`, mounted per project through `rest.Handler`), Contributor+ to write, upsert-by-identity apply that never deletes unmentioned rows and carries local content forward (the wire has no content slot), provenance into metadata; `pull` now fetches **and applies**, degrading to the Rust connectivity probe against a server without the route | Live push→pull round trip between two projects: 2 elements/1 relationship applied, incoming fields won the conflict, local content and unmentioned rows survived, provenance re-stamped |
-| #376 (with #277/#278) | Portfolio registry (migration **13**, sqlite `$LEANKG_PORTFOLIO_DB` or its own PG schema), register-on-index, T0 manifest / T1 hot-set fan-out running the **real** L0–L3 ladder inside each project with per-child attribution, `portfolio` query action, `register-project`/`projects` verbs, `doctor --deep` fleet leg with migration-drift vocabulary, `projects --forget` | Live over MCP: one `--action portfolio` call returned the Perl symbol from one child at L1 and this repo's documents at L3 in a single merged answer |
+| #376 (with #277/#278) | Portfolio registry (migration **13**, sqlite `$LEANKG_PORTFOLIO_DB` or its own PG schema), register-on-index, T0 manifest / T1 hot-set fan-out running the **real** L0–L3 ladder inside each project with per-child attribution, `portfolio` query action, `register-project`/`projects` verbs, `doctor --deep` fleet leg with migration-drift vocabulary, `projects --forget`, `projects --prune [--apply]` | Live over MCP: one `--action portfolio` call returned the Perl symbol from one child at L1 and this repo's documents at L3 in a single merged answer |
 | #73 | `leankg update [--check]`: Releases lookup, semver compare that never treats an unparseable version as equal, bounded download, archive verification (SHA-256 when published, else a content check that says so), atomic sibling-temp replace with `.old` rollback, `PermError` naming the exact `sudo` command, exit 1 when `--check` is behind | 33 tests; live end-to-end install replaced both binaries and the swapped binary ran; live `--check` reports the honest "no darwin-arm64 asset published yet" |
 
 **Plus the earlier mis-scoped closures:** #274/#272 (single-flight already existed; the real remainder was per-file atomic replace, which #279 shipped), #286, #27, #371.
@@ -955,12 +1743,12 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 - **Compression**: the full Rust pipeline in `internal/compress` (8 reader modes, cargo-test/git-diff/shell command compressors, 7 response shapers, session cache, entropy, symbol map, LITM), reachable through the 3-tool envelope (`import{action:"read"}`, `query{action:"compress"}`) and the CLI.
 - **LSP bridge**: project-configured server catalog + typed call-edge resolution + index-time enrichment, **gated on project config** so default indexing is unchanged; tag→catalog mapping spans every registry language.
 - **Android/Gradle/Maven**: 14 specialist extractors with fixtures, wired through the shared walk/doctor gate.
-- **Embeddings**: llama.cpp sidecar lifecycle (spawn, bounded health poll, process-group shutdown, attach-or-spawn, actionable failure — never fake vectors) + `leankg-embed` wiring.
+- **Embeddings**: llama.cpp sidecar lifecycle (adopt-or-spawn, bounded health poll, process-group shutdown for a sidecar we spawned, actionable failure — never fake vectors) + `leankg-embed` wiring. A query-time embedder is **optional on every serving path**: `serve` logs `embed provider unavailable — serving without L3 semantic` and binds (v4.13.6), because L3 already degrades to L2 with a `retrieval.reason`. + `leankg-embed` wiring.
 - **Languages**: registry 13 → **40** (all 27 remaining examples/ languages), objc/dart tree-sitter grammars vendored with objc message-send call edges and dart ctor/factory/enum elements.
 - **Enterprise**: accounts/orgs/memberships/team_members/resource_ownership + `/api/v1/auth/*` (public bootstrap mounted outside the bearer gate); DB-backed tokens with expiry/revocation/scopes/last-used.
 - **Multi-project serving**: `LEANKG_PROJECT_DIRS` with per-request `?project=` / MCP `project` routing; single-project behavior byte-identical when unset. **doctor --deep**: 8 fleet checks with Rust exit semantics.
 - **Obsidian**: vault init/status, push (store→notes), pull (notes→Note elements, wiki-links, annotations), debounced watcher.
-- **CLI parity**: `run`, `detect-clusters`, `report`, `gods`, `ctags`, `cost`, `migrate`, `audit export|verify`, `auth register|token …`, `export`, `pack`, `generate`, `annotate`, `link`, `search-annotations`, `show-annotations`, `register`, `unregister`, `list`, `status-repo`, `tunnels`, `quality`, `reflect`, `refresh`, plus `query --action` passthrough.
+- **CLI parity**: `run`, `detect-clusters`, `report`, `gods`, `ctags`, `cost`, `migrate`, `audit export|verify`, `auth register|token …`, `export`, `pack`, `generate`, `annotate`, `link`, `search-annotations` (matches DESCRIPTION text only, and says so on a miss), `show-annotations`, `delete-annotation`, `note` (write with `--content`, list without it), `register`, `unregister`, `list`, `status-repo`, `tunnels`, `quality`, `reflect`, `refresh`, plus `query --action` passthrough.
 
 **Security deviation from Rust (deliberate):** `/api/v1/auth/register` and `/login` no longer serialize `password_hash` — the Rust port returned the PBKDF2 verifier (salt + KDF params + digest) to the caller, which is credential material leaving the process; the field is now in-process only (`json:"-"`), pinned by a test. The Go engine also enforces the bearer middleware on `/api/v1/status`-class routes and requires a valid token for revoke, where Rust checked presence only.
 
@@ -976,7 +1764,7 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 **Fixed**
 - **ast-grep probe drops the deprecated `sg` alias** (`internal/astgrep`): `New()` resolves only `ast-grep`. The previous name-only probe of `sg` accepted util-linux's set-group command on Linux, so `query{action:"pattern"}` shelled out to a binary that prints no JSON and returned a hard error instead of the documented L2 degrade, while `internal/langs.astGrepPresent()` (the same name check) advertised a live ast-grep tier in `status`. `sg` is deprecated upstream and validating an alias would have cost a process spawn per probe — dropping it removes the whole impostor class without one. Regression tests: `TestNewIgnoresSgAlias` (rejects `sg` without executing it) + `TestAstGrepPresentIgnoresSgAlias` (tier stays dark).
 - **Client wiring spawned a command that does not exist** (`cmd/leankg`): `connect` and `install --target` wrote `["mcp-stdio"]` (± `--project`) as the stdio entry, but the Go binary has no `mcp-stdio` subcommand — the real mode is `serve --stdio`. Every wired client (claude-code, cursor, codex, gemini, opencode, omp) spawned a process that died before answering. The tests pinned the broken string, so the suite could not see it; `TestStdioSpawnServesMCP` now builds the binary and drives the emitted argv over stdio (initialize → initialized → tools/list = `import`/`query`/`status`), so future wiring regressions fail loudly. Stdio entries stay projectless by default (FR-ZCP-04 URL contract); `--project` remains the explicit escape hatch.
-- **SessionStart hook ran a verb that does not exist** (`cmd/leankg`): `install --register-cwd` wrote `leankg add $CLAUDE_PROJECT_DIR` into `~/.claude/settings.json`, and the Go binary has no `add` case — Claude Code would fail the hook every session. The Go attach-and-index equivalent is `index`, which is what the hook now runs (creating-or-updating that project's store, incremental after the first run); `TestHookCommandRuns` executes the expanded hook through a shell — with a space in the project path — and requires the store it promises; the hook embeds the resolved exe (`CurrentCommand()`) and quotes the variable, so neither PATH nor spaces can silently no-op it.
+- **SessionStart hook ran a verb that does not exist** (`cmd/leankg`): `install --register-cwd` wrote `leankg add $CLAUDE_PROJECT_DIR` into `~/.claude/settings.json`, and the Go binary has no `add` case — Claude Code would fail the hook every session. The Go attach-and-index equivalent is `index`, which the hook now runs as `index --hook` (creating-or-updating that project's store, incremental after the first run); `TestHookCommandRuns` executes the expanded hook through a shell — with a space in the project path — and requires the store it promises; the hook embeds the resolved exe (`CurrentCommand()`) and quotes the variable, so neither PATH nor spaces can silently no-op it.
 - **Dangling gitlink**: `benchmark/corpora/docs` was committed as a submodule reference with no `.gitmodules` entry — `git submodule update --init` and `--recurse-submodules` clones failed (`fatal: No url found for submodule path 'benchmark/corpora/docs'` in CI's own post-job). Removed.
 - **Install surface**: `scripts/release.sh` (drove the deleted `Cargo.toml`, referenced nowhere) removed; `scripts/install-go.sh` now clones over HTTPS instead of `git@github.com:` and prints the verified `install --target <client>` next step.
 - **Version stamp**: MCP `serverInfo` reported the stale marker `0.31.0-go-w1`; it reports `0.31.0` again, with `internal/mcp/version_test.go` failing if it drifts from `cmd/leankg/VERSION`.
@@ -1011,7 +1799,7 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 | mcp transports + envelope | 16.4k | `internal/mcp` (official go-sdk, stdio+streamable HTTP) + `internal/rpc` (ConnectRPC gRPC/gRPC-Web/JSON) + `internal/rest` | **DONE** |
 | graph/query traversal | 15.2k | `internal/graph` — Impact/ShortestPath/Callers/Callees/Context/Explain, wired as query actions | **DONE** (connection verbs; ontology-walk provenance = deferred, see below) |
 | indexer extractor+call graph | 11k | `internal/index` + `internal/docindex` — **13 default languages** (go, rust, ts, tsx, js, jsx, py, md, java, kotlin, swift, objective-c, flutter/dart) with **lazy per-codebase activation** (`internal/langs`): nested repos activate their own slice; \`IndexDirWith(reg)\` routes extraction through the registry. Extraction tiers: regex (all 13, always), tree-sitter (`tstree` build tag, 10 grammars — objc/dart treesitter absent in the bundled set), ast-grep (\`query{action:"pattern"}\`, degrades to L2 when the CLI is absent), LSP (\`query{action:"lsp"}\`, server pooled per (lang,dir), idle-evicted, consulted at query time). Live-verified indexing all 13 + runtime activation. vs Rust's 43 grammars | **DONE for the 13 defaults; broader language list = future tree-sitter grammar additions** |
-| embeddings | 8.2k | `internal/embed` + `cmd/leankg-embed` — Provider port (OpenAI-compatible = API + llama.cpp sidecar), **sidecar lifecycle management** (`embed.StartProvider`: spawn `LEANKG_EMBED_SIDECAR_CMD` (default `llama-server`), bounded `/health` readiness poll, process-group SIGTERM→SIGKILL shutdown on cancel/release; unset `LEANKG_EMBED_SIDECAR_ARGS` now serves the pinned bge-small-en-v1.5 GGUF (`-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf` or `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` self-download); absent sidecar fails actionably — never fake vectors), ModelStamp guards, NDJSON offsite | **DONE** |
+| embeddings | 8.2k | `internal/embed` + `cmd/leankg-embed` — Provider port (OpenAI-compatible = API + llama.cpp sidecar), **sidecar lifecycle management** (`embed.StartProvider`: spawn `LEANKG_EMBED_SIDECAR_CMD` (default `llama-server`), bounded `/health` readiness poll, **adopt-or-spawn** (v4.13.6: a sidecar already serving the port is adopted, probed for one real `/v1/embeddings` vector, and never killed on release — a busy port used to be a startup crash), process-group SIGTERM→SIGKILL shutdown on cancel/release for a sidecar we spawned; unset `LEANKG_EMBED_SIDECAR_ARGS` now serves the pinned bge-small-en-v1.5 GGUF (`-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf` or `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` self-download); absent sidecar fails actionably — never fake vectors), ModelStamp guards, NDJSON offsite | **DONE** |
 | web api+ui | 5.8k | `internal/web` (go:embed ui build, SPA fallback) + `APIHandler` (all 11 legacy dashboard endpoints: index status, search, query, query-graph, file, graph children/expand-service/clusters/report/service-topology, project switch) + REST `/api/v1/*` | **DONE** — the `-ui` address mounts `/api/` ahead of the SPA; unknown `api/*` returns a JSON 404; verified live (every route JSON, SPA preserved). Port of `src/web/*` + `src/graph/{query,nl_query,clustering,provenance}.rs`; #371 closed |
 | cli/connect/install | 2.2k+1.4k | `cmd/leankg` — serve/index/writer/doctor/connect/install for 6 clients, --register-cwd hooks | **DONE** |
 | ontology | 4.0k | `internal/ontology` — concept catalog + element matching + kv persistence + **procedural workflows** (YAML loader/sync/marker), **traceability** (`trace`, `feature_flow`, `traceability_matrix`), concept search, safe-discover for mega-graphs, and the ontology-guided downward traversal; reachable via `import{action:"ontology"}` (dir = workflow sync) and `query{action:"ontology", args:{cmd: matches\|trace\|status\|concept_search\|feature_flow\|traceability}}` over MCP/REST/CLI | **DONE** |
@@ -1028,7 +1816,7 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 | federation (client) | 0.1k | `internal/federation` — `leankg push`/`pull` ported as Rust had them (POST `/api/v2/graph/push` with `X-LeanKG-Token/-Engineer/-Env`; `pull` is a `/api/v2/status` connectivity probe). **Finding: no server — Rust's own Axum app included — ever served the push route**, so a real federation (receiver + auth + merge policy) remains a design task; tracked in #372 | **DONE** (client parity) |
 | conversation mining | 0.7k | `internal/convo` — Claude/ChatGPT/Slack export parsers, classify (decision/preference/milestone/problem), topic + code-target extraction, `decided_about` edges; `leankg mine-conversations --format … --input …`. Fixes a Rust defect where all but the last `decided_about` edge per file path were dropped | **DONE** |
 | persisted metrics | — | `context_metrics` ledger (migration 011, both backends) + `internal/metrics` — `leankg metrics` (since/tool/json/session/reset/retention/cleanup/seed) and the H10/FR-PLG-8 usage buckets behind `leankg dashboard`; recorded from the MCP dispatch like Rust (REST never recorded there either) | **DONE** |
-| org knowledge | — | `internal/orgknowledge` + store migration 010 (incidents, knowledge_entries, service_metadata, env_snapshots) — incident CRUD/query, team notes/annotations, env-conflict detection, service-context aggregate, team map; CLI `incident\|note\|env-conflicts\|service-context\|team-map` and `/api/v2/{incidents,env/diff,service/context}` | **DONE** |
+| org knowledge | — | `internal/orgknowledge` + store migration 010 (incidents, knowledge_entries, service_metadata, env_snapshots) — incident CRUD/query, team notes/annotations, env-conflict detection, service-context aggregate, team map; CLI `incident\|note` (write with `--content`, list without it — a note used to be write-only: the row landed in `knowledge_entries` and no surface could return it)\`env-conflicts\|service-context\|team-map` and `/api/v2/{incidents,env/diff,service/context}` | **DONE** |
 | PRD indexing | 0.3k | `internal/prdindex` — FR/US/AC extraction from a PRD document into requirement entities + knowledge rows + `implemented_by` edges to ontology workflows; `leankg prd` / `prd-trace` and `import{action:"prd"}` / `query{action:"prd"}`. Additive over Rust: AC lines are captured, and the id regex fix stops silently dropping `FR-ZCP-13`-shaped ids | **DONE** |
 | remote sources | 1.3k | `internal/sources` — git+ (shallow branch clone, full-clone+checkout fallback for tags/SHAs, fetch/advance), GCS (paginated listing, size cap), local tree; `index --source` / `refresh --source` now work (the old `--source is not supported` refusal is gone), with `--ref-name` and the `--auth` > `GITLAB_TOKEN` > `GIT_TOKEN` chain | **DONE** |
 | response token budget | 0.7k | `internal/budget` — per-action caps with the `_token_budget` marker, one-pass truncation, protected keys; applied on MCP responses. **Trimmed 2026-09-14:** Rust's `BudgetGuard` (wall-clock/RSS/iteration aborts, `getrusage` probes, `LEANKG_MAX_RSS_MB`) was ported but never wired to any call site — deleted rather than kept as a dead 256-line parallel surface (`TokenBudget`, the live half, is what `internal/mcp` enforces) | **DONE** (guard half removed as dead) |
@@ -1351,7 +2139,7 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 
 **URL contract.** Default stdio entry: `<current exe> serve --stdio` — **no `--project` flag** (server resolves from process cwd, FR-ZCP-01 clause 1). `--http --url URL` emits the bare URL (e.g. `http://localhost:9699/mcp`) — no `?project=` suffix (server-initiated `roots/list` resolution; the Go `--remote` and `--docker` flags do not exist — Docker was a Rust-line exception with a container-mount table, and the Go engine has no Docker mode). `--project PATH` remains the explicit escape hatch and is the only way a `--project` flag gets emitted.
 
-**`--register-cwd`.** Writes a Claude Code session-start hook running `<exe> index "$CLAUDE_PROJECT_DIR"` (exe resolved via `CurrentCommand()`; the variable quoted for the shell) — real effect: attaches-and-indexes the project (`index` creates-or-updates that project's store, incremental after the first run). The Rust-era `leankg add` verb has no Go case. It does **not** write a cwd→project table: the persistent session-registration table is FR-ZCP-01 clause 3, explicitly out of scope here. Clients with no hook mechanism get a printed note naming the manual command (zero dead ends).
+**`--register-cwd`.** Writes an async Claude Code SessionStart hook with matcher `startup|resume`, running `<exe> index --hook "$CLAUDE_PROJECT_DIR"` (exe resolved via `CurrentCommand()`; the variable quoted for the shell). Re-running install replaces a previously generated `index "$CLAUDE_PROJECT_DIR"` entry instead of adding a second one. Real effect: attaches-and-indexes the project (`index` creates-or-updates that project's store, incremental after the first run; `--hook` gates it: no-op only when the HEAD tree exceeds `LEANKG_HOOK_MAX_FILES` (the manual `leankg index <dir>` is printed instead) or another index of the store is running; a directory without its own `.git` or with no commits is scanned from the filesystem as usual; hook embedding only attaches to an already running local provider and skips when more than `LEANKG_HOOK_MAX_EMBED` (default 500) elements need vectors, printing the manual `leankg index <dir>` instead). The Rust-era `leankg add` verb has no Go case. It does **not** write a cwd→project table: the persistent session-registration table is FR-ZCP-01 clause 3, explicitly out of scope here. Clients with no hook mechanism get a printed note naming the manual command (zero dead ends).
 
 **Zero dead ends.** `install` output always prints the next step: if the cwd project is unindexed, print `leankg index <cwd>`; always print "restart the client". The `import` tool's repo action is the tool-form of the same registration.
 
@@ -1376,7 +2164,7 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 **Service surface (v4.13.0, FR-ZCP-14).** The compat mount is a *service* only once it is readable and gated, not just writable. `GET /v1/default/banks/{bank}/stats` answers `{bank, entries, bytes, banks, last_retain, root}` (its absence made the client print "server unreachable" for a healthy server); `GET .../memories?offset=&limit=` lists newest-first with the unpaged `total`; `GET .../memories/{id}` resolves the wire id then the client's `document_id` and **404s** on an unknown id — a read-before-edit seam that answers 200-with-nothing is worse than no seam. Rows render through the same builder recall uses, so a read and a recall of one row are byte-identical. `serve --memory-global` hosts the bank root in `~/.leankg/memory`, making one process the memory service for several projects (opt-in: moving the root on a live deployment leaves its banks behind). Both memory prefixes now sit inside `auth`'s write gate — the compat alias previously let a Viewer retain what Contributor was required to write natively — with the last-segment rule keyed on the method, since `GET …/memories` (list) shares that path with `POST …/memories` (retain). `ponytail:` the read surface re-scans the bank JSONL per call, the same unindexed ceiling recall has (K7); past ~10⁴ rows/bank both want the FTS/L3 tier, not a per-route cache.
 
 - AC (mnemopi parity): an OMP session configured with LeanKG's memory endpoint retains at the same cadence boundaries and recalls the lesson on the next session's first turn inside a `<memories>`-equivalent envelope, with the turn cursor preventing duplicate retention after resume; deleting the project bank never leaves the harness's cursor claiming rows that no longer exist (cursor + rows agree).
-- AC (regression): retain → new session → recall injects the lesson (currently injects nothing — the v3.8.8 audit finding).
+- AC (regression): retain → new session → recall injects the lesson. **Met** — the retain half by `memory.RecallFiltered` + the bank path (#479 broke the newer-row tie), the lesson half by `session.Lessons` + `command=lessons` (v4.15-lessons-readable; before that a lesson was write-only, measurable as `count:0` from every read surface). Re-verified live on the 298-project self-host 2026-10-11.
 
 ### 3.6 Benchmark Rigor (FR-ZCP-08) — **P2**
 
@@ -1583,15 +2371,14 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 | `LEANKG_EMBED_PROVIDER` | `local` | `local` \| `openai` \| `deterministic` |
 | `LEANKG_EMBED_BASE_URL` | — | attach to a running OpenAI-compatible endpoint (with `local`, skips the sidecar) |
 | `LEANKG_EMBED_API_KEY` | — | bearer for the embedding provider |
-| `LEANKG_EMBED_MODEL` / `_DIMS` / `_REVISION` | `local` / `384` / `local:<model>` | ModelStamp identity; a revision change invalidates the collection |
-| `LEANKG_EMBED_SIDECAR_CMD` / `_ARGS` / `_PORT` / `_READY_SECS` | `llama-server` / pinned bge-small GGUF + `--embeddings` / `8080` / `120` | sidecar spawn + bounded readiness; unset `_ARGS` serves `-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf` when present, else `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` (self-downloads) |
+| `LEANKG_EMBED_MODEL` / `_DIMS` / `_REVISION` | `local` / `384` / `local:<model>` | ModelStamp identity; a revision change invalidates the collection. `embeddinggemma-2` is a catalog row (google/embeddinggemma-2 @ `914f7f8`, 768-d, query `task: code retrieval \| query: `, document `title: none \| text: `) served by llama.cpp >= b11454 with the BF16 GGUF; Matryoshka `_DIMS` 512/256/128 serves a truncated, re-normalized vector (`TruncateNormalize`, stamp dims = the truncated width); any other `_DIMS` for a catalog row fails at construction |
+| `LEANKG_EMBED_SIDECAR_CMD` / `_ARGS` / `_PORT` / `_READY_SECS` | `llama-server` / pinned bge-small GGUF + `--embeddings` / `8080` / `120` | sidecar adopt-or-spawn (v4.13.6: a sidecar already answering `/v1/embeddings` on `_PORT` is adopted, not duplicated, and survives `release`) + bounded readiness; unset `_ARGS` serves `-m ~/.leankg/models/bge-small-en-v1.5-f16.gguf` when present, else `-hf CompendiumLabs/bge-small-en-v1.5-gguf:f16` (self-downloads) |
+| `LEANKG_HF_BUCKET` / `_MODEL_DIR` / `_WORK_DIR` / `_JOB_FLAVOR` / `_JOB_TIMEOUT` (+ `HF_TOKEN`) | — / `""` / `leankg` / `l4x1` / `30m` | read only by `scripts/hf-embed.sh` (EmbeddingGemma 2 bulk on a Hugging Face Job), never by the binaries; placeholders in `.env.example`; the session hook never starts a job |
 | `LEANKG_CACHE_MAX_TOKENS` | `500000` | compression session-cache budget |
 | `LEANKG_MAX_CACHE_ELEMENTS` | `50000` | mega-graph threshold (ontology-first discovery path) |
 | `LEANKG_PORTFOLIO_DB` | `$HOME/.leankg/portfolio.db` | fleet registry location (sqlite); the suite redirects it so tests never write user state |
 | `LEANKG_PORTFOLIO_MAX_REPOS` | `8` | hot-set cap for a portfolio fan-out; re-read per fan-out, so it is a serving knob |
 | `LEANKG_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | — | the #297 summarize pass (OpenAI-compatible `/chat/completions`, temperature pinned 0) |
-| `LEANKG_JUDGE_URL` / `_API_KEY` / `_MODEL` / `_TIMEOUT_SECS` | — / — / `jev-1.13.0` / `30` | `internal/judge` Server backend (System One provider API: Jev or Jev-compatible Laya endpoint); unset = no provider calls |
-| `LEANKG_JUDGE_SIDECAR_URL` | — | `internal/judge` Local backend attach point (Laya `laya-serve` sidecar); neither URL set = nil judge, native rules, zero calls |
 | `LEANKG_SUMMARIZE_AFTER_INDEX` | off | opt-in post-index LLM pass; default off so indexing can never spend tokens unprompted |
 | `LEANKG_UPDATE_MAX_MB` | `128` | `leankg update` download ceiling; over-cap is an error, never a truncation |
 | `GITHUB_TOKEN` | — | raises the `leankg update` API rate limit; absence only warns (anonymous calls work) |
@@ -1603,7 +2390,6 @@ Everything below is *known*, with its consequence stated — none of it is a sil
 - **Precedence** (db path, high → low):
   1. `LEANKG_DB_PATH` environment variable.
   2. `db.standalone_db_path` key in `leankg.yaml` (see `DBConfig` in `internal/projectcfg`).
-  3. Default: `<project>/.leankg/leankg.db` (project-scoped mode, existing behavior).
 - **Serving**: `leankg serve --db <path>` (CLI flag, equivalent to env). When the flag/env is set, project-resolution sidecars (auto-index, setup pipeline, leankg.yaml anchor resolution) are skipped — the server has no checkout in this path (FR-P2-3).
 - **Importing**: users import data themselves via `leankg import ./` (indexes cwd with full absolute path as an indexable/embeddable target; embedding only fires if an embedding provider is configured — `LEANKG_EMBED_PROVIDER` / sidecar). The MCP `import` tool description guides agents to use `action=dir` with `path="."` to scope import to the current directory.
 
@@ -1622,6 +2408,5 @@ All superseded material is preserved and linked, not deleted:
 - **Simplicity research sprint (2026-09-04, three parallel scouts):** repo friction audit (file:line — 76/73 tools, 103 CLI verbs, 116 env names, 10-step walkthrough, error-copy gaps); competitor mechanics (zg, context7, serena, Desktop Commander, gitleaks — live-fetched URLs); onboarding playbooks (Supabase/Convex TTFV, Stripe error codes, clig.dev, Vercel, Stack Overflow 2025) → findings folded into §2.6, §3.9 (FR-ZCP-12), §5 M8, §6
 - **One-tool ladder + setup-contract design (2026-09-04, two scouts):** retrieval-engine inventory (exact/regex, ontology keyword, pgvector ANN+rerank, graph BFS) with capability probes (`state.has_any`, `::relations`, `index_inventory`), the unregistered `orchestrate` parser, and the zero-FTS schema audit → folded into §3.1 (FR-ZCP-13), §3.2 (ladder), §3.3 (bridge tier)
 - **Rust→Go rewrite feasibility study (2026-09-10):** [archive/analysis/go-rewrite-analysis.md](archive/analysis/go-rewrite-analysis.md) — 168k-LOC audit with pros/cons, shipped-vs-vision gap table (target ≈90% already live), Go target architecture (WAL sqlite + PG/pgvector, watermark freshness, MCP/REST/ConnectRPC from one core, provider-first embeddings), 7-wave migration plan, evidence index
-
-- **FR-TYPE-02 (2026-09-21):** `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) + one LIVE call site (convo `ClassifyWithJudge`: keyword-first, judge only on the KindGeneral branch, confidence-gated) + [`judge-use-cases.md`](judge-use-cases.md) (Laya deep-dive from the HF source, function_calling cookbook patterns, 8 use cases: UC-3 LIVE, UC-1/2/4/6/7 CANDIDATE, UC-5/8 likely never) + interactive diagram [`diagrams/laya-judge.html`](diagrams/laya-judge.html) (archify showcase 9/9, three guided views: backbone / judge branch / never-judges). Laya (`convaiinnovations/laya`, Apache 2.0) replaces the rejected Jev provider path with a local-first option: same three primitives (choice/score/noul), ~33 ms single-forward-pass batching, $0 self-hosted. **DONE** via #434 + #435.
-*Last updated: 2026-10-01 (FR-SELF-04 dogfood wave 24, #449: the second transport. ConnectRPC's generated descriptor types `args` as map<string,string>, so EVERY non-string action arg (limit, depth, insert_line, retained_through_user_turn, the array-valued turns) is UNREACHABLE on that wire — an agent that learned the contract over MCP and replays it there gets a protobuf type error. The refusal named `value`, a descriptor field the caller never sent, instead of `depth`, the argument they did. The codec detail is now kept in parentheses after a sentence that shows the rejected value, states the wire's limitation, and names MCP/REST as the surface that accepts it; it has to be an HTTP wrapper because the failure happens while DECODING, before any handler or interceptor. The honest limit is recorded, not papered over: the codec gives a byte OFFSET, not a field path, so the key is unrecoverable without buffering every request body. And the descriptor itself is NOT changed — it is generated code and the repo keeps no .proto source, so retyping the map is a schema decision recorded as an open question rather than a workaround that hides it. 32 found / 32 fixed / 0 open across twenty-four waves. Prior: FR-SELF-04 dogfood wave 23, #449: the last axis — the MCP wire itself, the schema an agent reads to decide what to call. The defect is in the ADVERTISEMENT, not the engine: (1) two names for one value (`limit` top-level and `args.limit`) with no statement of which wins, so an agent sending both gets the other (live: limit=2 + args.limit=1 -> 2 hits); (2) six working ontology sub-commands advertised nowhere, `args.cmd` being prose that named none; (3) four advertised actions unusable without an argument the schema never mentions at the point of use (path→args.to, pattern→args.pattern, lsp→args.lang, service_context→args.service). Fixed in the schema only, precedence unchanged so no caller breaks; live, 21 of 23 advertised actions are now formable from the schema alone. The read-side twin of waves 15-17: wave 16 made an annotation REFUSE an unanchored target, this makes the annotation's own contract FORMABLE. The test reads the schema off the wire through tools/list — the registered Go value is not what an agent sees, and reading the source would have passed against every one of these defects. 31 found / 31 fixed / 0 open across twenty-three waves. Prior: FR-SELF-04 dogfood wave 22, #449: the last unswept surface, and the last shape. Every REST route driven, checking statuses AND bodies of failures AND empty answers. Three routes answered a nil slice as `null`: /api/v1/ontology/matches, /api/v2/incidents, /api/v1/memory/banks/{bank}/recall — on a project with no catalog `null` reads as 'no concept appears in this corpus' when it means 'no catalog was imported', and the three are different facts with OPPOSITE next steps. core.AnySlice normalises nil to [] at the three sites and each answer carries one sentence naming what an empty list can mean there — deliberately not picking between causes the engine cannot distinguish, which would be the same defect one level down. Two existing tests asserted the Go TYPE ([]ontology.Match) rather than the wire shape and broke on the fix, correctly: a test pinning the Go type was pinning an implementation detail and would have blocked it — wave 18's lesson again. 30 found / 30 fixed / 0 open across twenty-two waves, and every surface the product exposes has now been enumerated and driven. Prior: FR-SELF-04 dogfood wave 21, #449: wave 20's convergence applied to doctor --deep. `index-freshness` reported "2 missing file(s) not indexed" with a hint that a delta "usually means the index was built from a different root" — and never named the root, so the reader could not rule out the one cause the hint named; it now names the root it walked and samples the unindexed files, as the STALE branch one case above already did. `embedding-coverage` reported "1% uncovered" — identical whether vectors were never built (`leankg-embed run`) or the collection was built for a DIFFERENT model (`leankg-embed full`) — and named neither; it now reads the store's own stamp (behind an optional probe so no existing Probes implementation changes) and says which collection the percentage is about. Same distinction wave 10 drew: the store's identity, not the environment's. 29 found / 29 fixed / 0 open across twenty-one waves. Prior: FR-SELF-04 dogfood wave 20, #449: a REGRESSION sweep — every battery from the previous nineteen waves re-run against the current binary on a project indexed through LEANKG_DB_PATH. Twenty of twenty-one checks passed unchanged, including waves 18/19's mechanism changes (protected keys, typed-slice normalisation, marker shape, cut list). The one failure was the last hole in wave 16's guard: `annotate` refuses a qualified_name the index lacks and advises `leankg query <name>` — but the refusal and its advice resolve the store the SAME way, so a caller reading the wrong store is told the element does not exist by the very command meant to contradict it. Two situations, opposite fixes, identical words. The refusal now names the store path it searched. That is the loop's class at its third layer (wave 1: one verb read a path only serve honoured; wave 10: freshness blind to its own staleness; here: a diagnosis sharing its blind spot with its remedy), and the convergence of twenty waves: a diagnosis must name the thing it looked at, or it cannot be acted on. 28 found / 28 fixed / 0 open. Prior: FR-SELF-04 dogfood wave 19, #449: the truncation marker now names WHAT it cut, so a caller can act on it. Wave 18 stopped a populated answer arriving as only its marker; this wave asked what that left behind and found the marker reported `truncated: true` with pre=40330 and actual=3820 — 20,510 tokens gone with no way to learn whether `hits` went 200 → 12 or a key was dropped, so no next limit could be chosen. The truncator already knew; the information was discarded where the marker is built, and is now collected (truncateValueCut/truncateObjectCut, old entry points kept as wrappers), sorted and deduplicated, and carried on both Stats and the wire. Live: search limit=200 and limit=500 both report cut=["hits"] with 18 hits delivered. The sweep behind it — every REST route at a 200-token envelope and every list-shaped action at a large limit — found this as the only remaining silent emptiness, so the fix is in the mechanism, not in another verb. 27 found / 27 fixed / 0 open across nineteen waves. Prior: FR-SELF-04 dogfood wave 18, #449: the read surfaces enumerated, and a populated answer that arrived as nothing but its own truncation marker. `query action=ontology` answered {"_token_budget":{"pre_truncation_tokens":17184,"actual":22,"truncated":true}} while the store held 673 matches — two causes, both invisible in review: `matches` was missing from the protected-key set, and a TYPED slice ([]ontology.Match) matched no truncation case, so nothing shrank and the payload key was deleted whole. `matches` is now protected and typed collections are normalised before truncation gives up; live, the same call returns 126 matches with the marker stating exactly what was trimmed. The transferable finding is the wave's own first test: written against []any it PASSED against the broken code, because the fixture was in the one shape that happens to work. 26 found / 26 fixed / 0 open across eighteen waves. Prior: FR-SELF-04 dogfood wave 17, #449: the wave-15/16 rule applied to EVERY remaining write verb rather than to the instance that revealed it, and three verbs failed it. `leankg generate` printed its body and then wrote docs/AGENTS.md into the current directory with no flag and no announcement — the rule one level up: waves 15/16 wrote nothing, this wrote something where the caller did not name it — so it is print-only by default and writes only to a caller-given --out. `annotate --description "   "` stored a whitespace annotation and answered 'Created', because wave 16's guard checked the target and not the text; now refused. `obsidian push` with no vault printed an honest refusal and exited 0, so a caller driving it by $? believed a push happened; now exits 2. TestWriteVerbRuleHoldsAcrossTheProduct makes the next write verb a case rather than a surprise. 25 found / 25 fixed / 0 open across seventeen waves. Prior: FR-SELF-04 dogfood wave 16, #449: every verb the product exposes (55) enumerated and the undriven ones called, and two write verbs accept anything. `leankg annotate` and `leankg link` reported SUCCESS and persisted a record for a qualified_name the index does not contain — the worst instance of the silent-write class, because an annotation is the one place a human writes what the code does NOT say, so a typo'd or renamed identifier makes the knowledge stored and unreachable. Fixed with one guard before any write, naming the index as the reason and `leankg index .` / `leankg query <name>` as the way out. With wave 15 this completes a rule: a write must be able to report itself EMPTY and UNANCHORED. 22 found / 22 fixed / 0 open across sixteen waves. Prior: FR-SELF-04 dogfood wave 15, #449: back to wrong ANSWERS, and the first target was the surface nobody calls. A session LESSON written with the field the schema names (`summary`) was stored EMPTY and answered {'deduped':false} — a successful write of nothing, the fourth instance of that class (after withFlatArgs for memory, REST retain, and dot-files) — because fourteen waves of batteries read memory and offloaded sessions and not one ever wrote a lesson. summary now feeds text, and an empty lesson is REFUSED: a write that cannot report itself empty is a write that cannot be wrong loudly. The wave also corrected its own first test a third time, having probed with a two-character node_id the validator correctly rejects. 21 found / 21 fixed / 0 open. Prior: FR-SELF-04 dogfood wave 14, #449: `query args.weight`, the escape hatch that makes both options measurable and picks neither. Measured before built on all four cells: unset is byte-identical to today's behaviour (16/49/13/92 top-1), and set per population every cell reaches the best wave 13 predicted (59/51/55/92). A zero weight DROPS its arm rather than defaulting to 1.0 (store's armWeight treats 0 as unset, so '1,0' would have silently become '1,1'), retrieval.reason names the arms actually fused, and an unparseable weight is refused at the query boundary rather than inside L3 where a vectorless store would never read it. The wave also corrected its own first test twice: it asserted a fractional weight and whitespace were errors, and its fixture had elements but no vectors so it was asserting the L2 path under an L3 name. 20 found / 20 fixed / 0 open across fourteen waves. Prior: FR-SELF-04 dogfood wave 13, #449: the ADAPTIVE weight wave 12 proposed does not exist. scripts/retrieval-policy-sweep.py scores constants, agree_boost, agree_gate, top_overlap and vector-only over the arms the engine already returns, on all four label cells. agree_gate wins by maximin (40) and max-sum (238) against the shipped constant's 13/170 — and is byte-identical to VECTOR-ONLY in every cell, which is the tell: when the arms disagree the keyword arm contributes nothing measurable, so gating is the degenerate policy, not an adaptive one. agree_boost is a complete no-op at every gamma, because scaling the top reciprocal-rank term cannot move it past a term it does not scale. Gating is not free either: +20-40 top-1 on behaviour cells, -8-9 on doc-derived cells. So the decision is 'which question population do you optimise for', which is a product call, and no engine change ships. Prior: FR-SELF-04 dogfood wave 12, #449: a BEHAVIOUR-derived label set, and it corrects this document's own waves 5 and 6. Questions sharing ZERO tokens with the answer's doc comment (137 on corpus 1, 94 on corpus 2) cannot be answered by comment-matching, so they cannot flatter wave 9. On them the keyword arm is nearly blind (top-1 3/137, 7/94) while the vector arm is strong (59/137, 55/94) — and the FUSION IS WORSE THAN THE VECTOR ARM ALONE (18/137, 13/94). The weight sweep is no longer flat: (3,1) gives 30/57/102 against the shipped (1,1)'s 18/32/70. But the four-cell table shows that buys behaviour labels at the cost of doc-derived ones (49→48, 92→88), so a FIXED weight cannot be right for both populations and no default was changed: the table and both label sets are committed instead, because shipping a constant picked from one cell is what wave 8 did wrong. Prior: FR-SELF-04 dogfood wave 11, #449: a SECOND corpus, because every retrieval number in waves 4-10 was measured on the repository the tool was written for. Corpus 2 is qa-agent (246 files, 2,576 elements, Go+Python+MD, 119 documented packages) with 102 questions derived by the same mechanical protocol, and scripts/retrieval-bench.py gained --labels to score them. THE GAINS REPLICATE, larger: fused top-1 3/102 → 92/102, top-10 36/102 → 102/102 (corpus 1: 3/84 → 49/84 and 20/84 → 71/84), with the keyword arm moving 62 → 102 as wave 9's doc-comment capture lands on text that arm reads directly. Two findings corpus 1 could not produce: a scope can COST a label (scope=code scores 101/102 vs 102/102 — a filter has a price, and the engine reports retrieval.scope), and the weight sweep reaches the same conclusion on two independent corpora (top-1 spans 46-51 of 84 and 79-94 of 102, (1,1) inside the spread in both, no pair dominating). Stated against this wave's own numbers: corpus 2's labels are 100% doc-comment-derived and wave 9 makes doc comments indexable, so it flatters wave 9; a behaviour-derived label set is wave 12. Prior: FR-SELF-04 dogfood wave 10, #449: the index records the extractor's identity, so a change to the indexer rebuilds the index instead of being invisible. Reconciliation compared size+mtime and SHA-256 — both properties of the SOURCE — so a change to the code that READS it was a no-op: wave 9's re-index skipped 842 of 857 files, doctor passed freshness, and the bench moved 65/84 → 64/84 over a half-old corpus; the only cure was rm -rf .leankg. internal/index.IndexerVersion now lives in the kv table, the staleness decision is made once and handed into the per-file skip, and the identity is stamped only after a successful walk. Live: forced-stale run went files=15 skipped=842 → files=858 skipped=0, the next run incremental again, bench unmoved. 19 found / 19 fixed / 0 open across ten waves. Prior: FR-SELF-04 dogfood wave 9, #449: the stored element content now leads with the element's own contiguous doc comment, and the retrieval gains stop being a model ceiling. Wave 8 concluded the remaining 17 misses were the model's vocabulary; checking the claim rather than accepting it showed 14 of them shared 3+ words with their answer's doc comment and nine WERE it minus the symbol name — 2,596 of 4,175 Go elements (62%) had a comment the engine never stored, and a doc comment is exactly what a question paraphrases. Same 84 labels, both corpora rebuilt: fused in-pool 65/84 → 81/84, top-1 8/84 → 49/84, top-10 34/84 → 71/84 (origin/main 47/84, 3/84, 20/84). A second, worse defect fell out and is recorded, not fixed: index reconciliation is by content hash, so a change to the EXTRACTOR cannot invalidate the index — the first re-index skipped 842 of 857 files, doctor passed freshness, and the corpus was quietly half-old. Prior: FR-SELF-04 dogfood wave 8, #449: the loop's own numbers, A/B'd against origin/main. Both corpora rebuilt from scratch and embedded by their own binary; the label set grew 30 → 84 unique questions, derived mechanically (one documented symbol per package, fixed seed, doc comment minus the name, every label a live row, every loop-created symbol excluded). On the same 84 labels at depth 100: fused in-pool 47/84 → 65/84, top-10 20/84 → 34/84, with the keyword control unmoved at 47/84 on both builds. The A/B also exposed a defect in the BENCH — it read origin/main's vector column as 0/84 because that engine never emits per-arm ranks; it now scores the served answer for an engine that has one arm. No new engine defect this wave: the remaining surface is a recall ceiling, not a correctness one. Prior: FR-SELF-04 dogfood wave 7, #449: 3 more defects, 17 found / 17 fixed / 0 open across seven waves, and with this wave every surface the product exposes has been driven at least once. REST: the retain route acknowledged a body it could not read (`{}`, or `items` instead of `entries` -> 200 retained:0) and reported the count SENT rather than the count WRITTEN, so a cursor-gated re-send looked like a successful write. `register-project` registered a path that does not exist and told the operator to index it, leaving a permanent unresolvable hot-set entry. `obsidian push --vault <a file>` printed 'Push complete / Failed: 1' and exited 0. The pattern is the finding: six waves of the same class — a SHAPE the engine did not check. Prior: FR-SELF-04 dogfood wave 6, #449: 2 more defects, 14 found / 14 fixed / 0 open across six waves. (a) A third fusion arm that reads symbol NAMES — and the first cut's gate (identifier SHAPE) fired on only 2/30 labelled questions because agents ask in prose; replaced with corpus RARITY (a token is worth a name search when few symbol names contain it) plus a 40-word function-word stop list, because an unseen token counts as rare and rarity alone would let 'the' through. Measured: fused in-pool 16→24, keyword 11→18. One fixture was changed because the new arm correctly beat it — a decoy sharing a word with the question is a name-collision decoy, not keyword noise. (b) The memory WRITE side, never driven before: withFlatArgs folded `file` but not `path`, so add/replace/remove were unreachable with the field the schema documents for them and answered 'invalid memory path: empty path' for a file the agent had named. Prior: FR-SELF-04 dogfood wave 5, #449: the ranking POPULATION is the caller's decision. Per-label diagnosis ruled out staleness, stamping and zero-norm vectors (a fresh sidecar embed reproduces the stored vector at cosine 1.0000) and located the cause: of 9,306 vectors only 3,279 are production code, the rest test fixtures and docs this repo accumulated by indexing itself, and against code alone FuseRRF ranks 7 instead of 54. Both arms rank over the same set, which is why two waves of weight sweeping could not have found it. `store.SearchVectorsScoped` (both backends, nil = the old behaviour) + `query args.scope` code|prod|all, applied to both arms, unknown scope an error, retrieval.scope reported. Measured: fused in-pool 16→23, vector 10→19, keyword 11→17 at depth 100; the default row is unchanged. 13 found / 13 fixed / 0 open across five waves; what remains is a model ceiling. Prior: FR-SELF-04 dogfood wave 4, #449: the retrieval ceiling was UPSTREAM of the fusion. A 30-label ground-truth set (docs/retrieval-label-set.md) and a per-arm bench (scripts/retrieval-bench.py) went in the repo first; baseline was vector 4/30 in-pool, fused 14/30, with 16/30 labels in NEITHER arm. The fix embeds `<qualified_name>\n<body>` (ChunkerVersion 2→3, a rebuild directive): measured cosine 0.618 body-only → 0.696 with the name, and after a full re-embed vector in-pool 4→10, fused top-10 5→11, keyword unchanged as predicted. 12 found / 12 fixed / 0 open across four waves. Prior: FR-SELF-04 dogfood wave 3, #449: 2 more defects, 11 found / 11 fixed / 0 open across three waves — `doctor` on a first-run project now names the command instead of leaking the storage error, and the import description states the store rule. Three candidates closed WITHOUT a change on measurement: the multi-project HTTP path was already fixed by wave 1 (origin/main builds a second empty store, this branch does not); the RRF tie-break repair is provably a no-op (a same-arm-count tie implies an equal best rank); and a 12-question weight sweep puts the retrieval ceiling in arm RECALL, not fusion. Prior: FR-SELF-04 dogfood wave 2, #449: 4 more defects, 9 found / 9 fixed / 0 open across the two waves — the index walk skips dot-DIRECTORIES but not dot-FILES (a scratch note outranked the real answer, and .env-shaped secrets could enter an embedded store), `leankg index ./nope` reported success and created a store at a missing path, `impact` answered under the ladder's `hits` key, and `action=session` could not be asked what it supports. Prior: FR-SELF-04 dogfood loop wave 1, #449: one configured store for FR-P2 (`LEANKG_DB_PATH` / `db.standalone_db_path` now honoured by every verb, doctor and leankg-embed); the ladder reaches L3 on an embedded project instead of short-circuiting at L2, and sqlite L3 fuses the vector and keyword arms by RRF; unresolvable graph seeds and mistyped memory commands answer with guidance instead of failing or reading as an empty result. Prior: graph verbs resolve bare names via FindExact; REST unlocks when only dead DB tokens remain; compress/read anchors relative paths at projectDir. Prior storage maintenance restored: `internal/maintain` hourly vacuum pass over `store.Backend` + the memory FTS index, `LEANKG_VACUUM_INTERVAL_HOURS`, new `leankg vacuum` verb, `status` now reports a `space` block; the gc.rs row's "Go's runtime GC returns memory itself" rationale is corrected. Prior: 2026-09-21 v4.13.1.)*
+- **FR-TYPE-02 (2026-09-21, removed 2026-10-16):** the `internal/judge` abstraction (Server + Local backends over the Jev-compatible state+questions wire, `FromEnv` selection, unavailable-never-fatal) and its one call site (`convo.ClassifyWithJudge`) were deleted with the Laya/Jev integration: nothing outside tests ever built a judge via `judge.FromEnv`, so the package, its `LEANKG_JUDGE_*` env surface and its demo paths were dead code. Historical material: [`archive/judge/judge-use-cases.md`](archive/judge/judge-use-cases.md), [`archive/judge/laya-judge.html`](archive/judge/laya-judge.html). The deterministic keyword classifier (`convo.Classify`) is unaffected and remains the only classification path.
+*Last updated: 2026-10-18 (v4.15-retrieval-miss-analysis: the 20-question grep-vs-Gemma benchmark's misses are written up in [retrieval-miss-analysis.md](retrieval-miss-analysis.md) — six root causes; fix 1 landed: `tsFuncRe` gained a word boundary so the TS/JS extractor stops minting phantom elements such as `ality` from `functionality:`, guarded by `TestMatchTSFunctionKeywordNeedsWordBoundary`. Prior: 2026-10-17 (CI runner throughput: the single self-hosted runner slot no longer queues a whole run per push — workflow-level `concurrency` with `cancel-in-progress`, a `timeout-minutes` cap on every job, and `setup-node`'s npm cache confined to GitHub-hosted runners; guarded by `scripts/ci_workflow_guards.py`. Also today: v4.15-lsp-handshake-budget — the enrichment spawn gets handshakeTimeout instead of timeout_ms, and a failed file records its reason; the two red CI runs are explained at the top of the changelog. Portfolio-prune review fixes also land: only ENOENT is gone, the `--json` shape is stable, `--apply` requires `--prune`, postgres `--apply` is refused, and the test process is pinned to sqlite; the Laya/Jev judge integration was removed 2026-10-16 and its docs archived under `docs/archive/judge/`))*

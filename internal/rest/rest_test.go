@@ -2,11 +2,14 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -283,13 +286,22 @@ func TestSessionAndOntologyEndpoints(t *testing.T) {
 	_ = e.Store().UpsertElements([]store.Element{
 		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
 	})
-	catPath := filepath.Join(t.TempDir(), "c.json")
+	catPath := filepath.Join(dir, "c.json")
 	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Auth","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, err = httpPost(srv.URL+"/api/v1/ontology/match", map[string]any{"catalog": catPath})
+	res, err = httpPost(srv.URL+"/api/v1/ontology/match", map[string]any{"catalog": "c.json"})
 	if err != nil || res.status != 200 {
 		t.Fatalf("ontology match: %d %v %s", res.status, err, res.body)
+	}
+	// A catalog outside the project is refused, never read (RS-01).
+	outside := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(outside, []byte(`{"concepts":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ = httpPost(srv.URL+"/api/v1/ontology/match", map[string]any{"catalog": outside}); res.status != 400 ||
+		!strings.Contains(string(res.body), "LEANKG_ERROR_PATH_OUTSIDE_PROJECT") {
+		t.Fatalf("outside catalog: %d %s", res.status, res.body)
 	}
 	res, err = httpGet(srv.URL + "/api/v1/ontology/matches")
 	if err != nil || res.status != 200 {
@@ -316,4 +328,122 @@ func getJSON(t *testing.T, url string, out any) int {
 		}
 	}
 	return resp.StatusCode
+}
+
+// TestNativeRetainAcknowledgesWhatItWrote pins RS-07: a retain without a
+// cursor lands (it used to read as cursor 0 and be dropped), and a batch the
+// cursor gate skips is reported as skipped — never as `retained: N`.
+func TestNativeRetainAcknowledgesWhatItWrote(t *testing.T) {
+	e, mem := newEngine(t)
+	srv := httptest.NewServer(Handler(e, mem))
+	defer srv.Close()
+	post := func(body map[string]any) map[string]any {
+		t.Helper()
+		res, err := httpPost(srv.URL+"/api/v1/memory/banks/b1/memories", body)
+		if err != nil || res.status != 200 {
+			t.Fatalf("retain: %d %v %s", res.status, err, res.body)
+		}
+		var out map[string]any
+		_ = json.Unmarshal(res.body, &out)
+		return out
+	}
+	recall := func(q string) int {
+		res, _ := httpPost(srv.URL+"/api/v1/memory/banks/b1/recall", map[string]any{"query": q})
+		var out struct {
+			Entries []any `json:"entries"`
+		}
+		_ = json.Unmarshal(res.body, &out)
+		return len(out.Entries)
+	}
+	if out := post(map[string]any{"entries": []any{map[string]any{"content": "zebras without a cursor"}}}); out["retained"] != float64(1) {
+		t.Fatalf("no-cursor retain: %v", out)
+	}
+	if recall("zebras") != 1 {
+		t.Fatal("no-cursor retain was not written")
+	}
+	if out := post(map[string]any{"entries": []any{map[string]any{"content": "giraffes at turn one"}}, "through_user_turn": 1}); out["retained"] != float64(1) {
+		t.Fatalf("cursor 1: %v", out)
+	}
+	out := post(map[string]any{"entries": []any{map[string]any{"content": "lions again at one"}}, "through_user_turn": 1})
+	if out["retained"] != float64(0) || out["skipped"] != float64(1) {
+		t.Fatalf("repeated cursor must report skipped, got %v", out)
+	}
+	if recall("lions") != 0 {
+		t.Fatal("skipped batch was written")
+	}
+}
+
+// TestInjectWithoutBankUsesTheServerDefault is the route the reference hook
+// (examples/hooks/leankg-memory) depends on. The bank name embeds a hash of
+// the cwd, so an external caller cannot know it; guessing one reads the wrong
+// bank silently, which is why the hook used to return nothing at all.
+func TestInjectWithoutBankUsesTheServerDefault(t *testing.T) {
+	e, mem := newEngine(t)
+	srv := httptest.NewServer(Handler(e, mem))
+	defer srv.Close()
+
+	// A row in the bank the scope selects by default.
+	if _, err := mem.SessionRetainCtx(context.Background(), memory.ScopePerProject, "", "",
+		"hook-1", []string{"a row an external hook must see"}, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/api/v1/memory/inject", "/api/v1/memory/inject?query=hook"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, resp.StatusCode, body)
+		}
+		var out struct {
+			Count int    `json:"count"`
+			Text  string `json:"text"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		if out.Count == 0 || !strings.Contains(out.Text, "an external hook must see") {
+			t.Fatalf("GET %s: count=%d text=%q — the bank-less route must read the default bank", path, out.Count, out.Text)
+		}
+	}
+}
+
+// TestInjectReportsInjectedIDs closes the last cross-repo gap the dashboard
+// plan named: a caller that injects memory into a prompt must be able to report
+// which rows it actually placed, or "returned vs injected" stays a guess. The
+// response carried a count only.
+func TestInjectReportsInjectedIDs(t *testing.T) {
+	e, mem := newEngine(t)
+	if _, err := mem.SessionRetainCtx(context.Background(), memory.ScopePerProject, "", "",
+		"ids-1", []string{"first injected row", "second injected row"}, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(Handler(e, mem))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/api/v1/memory/inject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var out struct {
+		Count       int      `json:"count"`
+		Text        string   `json:"text"`
+		InjectedIDs []string `json:"injected_ids"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Count == 0 {
+		t.Fatalf("count = 0, want the injected rows")
+	}
+	if len(out.InjectedIDs) != out.Count {
+		t.Fatalf("injected_ids = %v (len %d), want one id per injected row (count %d)", out.InjectedIDs, len(out.InjectedIDs), out.Count)
+	}
+	if !strings.Contains(out.Text, "first injected row") {
+		t.Fatalf("text = %q, want the injected content", out.Text)
+	}
 }

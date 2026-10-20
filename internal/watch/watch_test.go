@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+
+	"github.com/FreePeak/LeanKG/internal/gitobj/gittest"
+	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -373,5 +377,107 @@ func TestReconcileDisabledByOption(t *testing.T) {
 	}
 	if el.saw("reconcile") {
 		t.Fatal("reconcile pass ran though Options.Reconcile < 0 disables it")
+	}
+}
+
+// --- git-backed roots (commit signal) -----------------------------------------
+
+// startGitWatch builds a git repository whose HEAD commit holds a.go with
+// Before(), indexes it once, and starts a watcher on its root. Reconciliation
+// is off, so only the watcher's own signals can trigger a re-index.
+func startGitWatch(t *testing.T, debounce time.Duration) (store.Backend, *eventLog, string) {
+	t.Helper()
+	gittest.SkipWithoutGit(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	st := openStore(t)
+	root := t.TempDir()
+	gittest.Git(t, root, "init", "-q")
+	gittest.WriteFile(t, root, "a.go", "package a\n\nfunc Before() {}\n")
+	gittest.Git(t, root, "add", "a.go")
+	gittest.Git(t, root, "commit", "-q", "-m", "init")
+	if _, err := index.IndexDir(ctx, st, root); err != nil {
+		t.Fatalf("IndexDir: %v", err)
+	}
+	if !hasExact(st, "Before") {
+		t.Fatal("initial index did not read the committed Before()")
+	}
+
+	w, err := Start(ctx, st, root, Options{Debounce: debounce, Reconcile: -1})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(w.Stop)
+	return st, newEventLog(w), root
+}
+
+func hasExact(st store.Backend, name string) bool {
+	els, err := st.FindExact(name)
+	return err == nil && len(els) > 0
+}
+
+// TestWatchGitRootReindexesOnCommit: a commit moves HEAD, so the watcher must
+// re-index even though the only files it changed live under .git.
+func TestWatchGitRootReindexesOnCommit(t *testing.T) {
+	const debounce = 100 * time.Millisecond
+	st, el, root := startGitWatch(t, debounce)
+
+	gittest.WriteFile(t, root, "a.go", "package a\n\nfunc After() {}\n")
+	await(t, 10*time.Second, func() bool { return el.saw("write") })
+	// Let the save's own flush run while HEAD still says Before, so the commit
+	// below is the only signal left that can move the graph.
+	time.Sleep(3 * debounce)
+	gittest.Git(t, root, "commit", "-q", "-am", "after")
+
+	await(t, 10*time.Second, func() bool {
+		return hasExact(st, "After") && !hasExact(st, "Before")
+	})
+}
+
+// TestWatchGitRootIgnoresUncommittedSave: a save without a commit must not
+// change the graph, because IndexDir reads HEAD objects, not the working tree.
+// Passes before and after the commit trigger; it guards the contract.
+func TestWatchGitRootIgnoresUncommittedSave(t *testing.T) {
+	const debounce = 100 * time.Millisecond
+	st, el, root := startGitWatch(t, debounce)
+
+	gittest.WriteFile(t, root, "a.go", "package a\n\nfunc Dirty() {}\n")
+	await(t, 10*time.Second, func() bool { return el.saw("write") })
+	// Three debounce intervals: any flush this save would trigger has run.
+	time.Sleep(3 * debounce)
+
+	if hasExact(st, "Dirty") {
+		t.Error("uncommitted working-tree edit reached the graph")
+	}
+	if !hasExact(st, "Before") {
+		t.Error("graph lost the committed Before() after an uncommitted save")
+	}
+}
+
+// TestKindOfCombinedOps: an overwrite on macOS kqueue can arrive as one event
+// carrying NOTE_WRITE and NOTE_ATTRIB together, so fsnotify reports Write|Chmod.
+// kindOf must still map every combined op to the documented OnEvent kind.
+func TestKindOfCombinedOps(t *testing.T) {
+	cases := []struct {
+		name string
+		op   fsnotify.Op
+		want string
+	}{
+		{"write", fsnotify.Write, "write"},
+		{"write|chmod", fsnotify.Write | fsnotify.Chmod, "write"},
+		{"create", fsnotify.Create, "create"},
+		{"create|write", fsnotify.Create | fsnotify.Write, "create"},
+		{"remove", fsnotify.Remove, "remove"},
+		{"remove|write", fsnotify.Remove | fsnotify.Write, "remove"},
+		{"rename", fsnotify.Rename, "rename"},
+		{"rename|chmod", fsnotify.Rename | fsnotify.Chmod, "rename"},
+		{"chmod", fsnotify.Chmod, "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := kindOf(tc.op); got != tc.want {
+				t.Errorf("kindOf(%s) = %q, want %q", tc.op, got, tc.want)
+			}
+		})
 	}
 }

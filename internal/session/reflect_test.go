@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/memory"
 )
 
 func readLessons(t *testing.T, path string) string {
@@ -75,5 +77,58 @@ func TestReflectOutcomeCreatesProjectTree(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".leankg", "reflections", "LESSONS.md")); err != nil {
 		t.Fatalf("LESSONS.md missing: %v", err)
+	}
+}
+
+// TestReflectionInvisibleToTheMemoryLayer is the K5 "honest reflect" check,
+// written against the real consumer: memory.Open roots itself at
+// <project>/.leankg/memory (internal/memory/memory.go:89), while reflections
+// land in <project>/.leankg/reflections/LESSONS.md. If the two trees never
+// meet, a reflection is a private diary -- recorded, never recalled -- and the
+// package comment's claim that this file feeds the lesson source recall ranks
+// is false.
+func TestReflectionIsRecallableThroughTheMemoryLayer(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ReflectOutcome(dir, "where is the token budget applied", []string{"core.applyBudget"}, "useful", "found it"); err != nil {
+		t.Fatalf("ReflectOutcome: %v", err)
+	}
+	m, err := memory.Open(dir, false)
+	if err != nil {
+		t.Fatalf("memory.Open: %v", err)
+	}
+	defer m.Close()
+	// The reflection must be reachable the way recall reaches a memory: the
+	// layer's own search over its FTS index. A raw file append would leave the
+	// file present and the index empty, which is the bug this pins.
+	hits, err := m.Search("token budget", 10)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	var bodies string
+	for _, h := range hits {
+		bodies += h.Snippet + "\n"
+	}
+	if !strings.Contains(bodies, "where is the token budget applied") {
+		t.Fatalf("a recorded reflection is invisible to the memory layer: %d hits, none mention it", len(hits))
+	}
+}
+
+// TestMirroredReflectionKeepsTheRustArtifactIntact pins that the K5 mirror is
+// additive: the Rust-contract file at .leankg/reflections/LESSONS.md keeps its
+// exact shape (parity tests above depend on it) and the copy is what the
+// memory layer indexes.
+func TestMirroredReflectionKeepsTheRustArtifactIntact(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ReflectOutcome(dir, "where is auth?", nil, "useful", "n"); err != nil {
+		t.Fatalf("ReflectOutcome: %v", err)
+	}
+	rust := readLessons(t, filepath.Join(dir, ".leankg", "reflections", "LESSONS.md"))
+	pattern := regexp.MustCompile(`^\n## \d+ — useful\n\n- Question: where is auth\?\n- Nodes: \(none\)\n- Outcome: useful\n- Note: n\n\n$`)
+	if !pattern.MatchString(rust) {
+		t.Fatalf("Rust artifact shape changed: %q", rust)
+	}
+	mirrored := readLessons(t, filepath.Join(dir, ".leankg", "memory", "topics", "REFLECTIONS.md"))
+	if mirrored != rust {
+		t.Fatalf("mirror differs from the Rust artifact:\nrust:    %q\nmirror: %q", rust, mirrored)
 	}
 }

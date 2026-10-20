@@ -327,7 +327,7 @@ func (x *StatusResponse) GetJson() string {
 
 type MemoryReadRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Command       string                 `protobuf:"bytes,1,opt,name=command,proto3" json:"command,omitempty"` // view | snapshot | search
+	Command       string                 `protobuf:"bytes,1,opt,name=command,proto3" json:"command,omitempty"` // session_recall | memories | view | snapshot | search (same vocabulary as the MCP tool)
 	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
 	Query         string                 `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
 	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`

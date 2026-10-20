@@ -47,18 +47,38 @@ const maxContent = 8000
 // ATX headings inside fenced code blocks are handled, indented/setext
 // headings and inline HTML are not (upgrade path: goldmark in a later wave).
 func IndexDocs(ctx context.Context, st store.Backend, dir string) (Result, error) {
+	return IndexDocsUnder(ctx, st, dir, dir)
+}
+
+// IndexDocsUnder indexes the .md files under dir with paths keyed relative to
+// root, the project root the store's other records are keyed against, and
+// reconciles deletions only inside dir. Keying against dir itself (IndexDocs
+// with a subdirectory) re-keyed docs/prd.md as prd.md and deleted every other
+// .md record of the project — `leankg refresh` did exactly that with its
+// <project>/docs default (RS-02/RS-08).
+func IndexDocsUnder(ctx context.Context, st store.Backend, root, dir string) (Result, error) {
 	var res Result
+
+	root, dir = canonical(root), canonical(dir)
+	relDir, err := filepath.Rel(root, dir)
+	if err != nil || relDir == ".." || strings.HasPrefix(relDir, ".."+string(filepath.Separator)) {
+		return res, fmt.Errorf("docindex: %s is not inside %s", dir, root)
+	}
+	relDir = filepath.ToSlash(relDir)
+	inScope := func(rel string) bool {
+		return relDir == "." || rel == relDir || strings.HasPrefix(rel, relDir+"/")
+	}
 
 	prev, err := st.Files()
 	if err != nil {
 		return res, err
 	}
-	// Only doc-index records participate: Files() also carries records
-	// written by internal/index for code files, which docindex must not
-	// touch (they are cleaned up by IndexDir, not here).
+	// Only doc-index records under dir participate: Files() also carries
+	// records written by internal/index for code files, which docindex must
+	// not touch (they are cleaned up by IndexDir, not here).
 	prevByRel := make(map[string]store.FileRecord)
 	for _, f := range prev {
-		if strings.EqualFold(filepath.Ext(f.Path), ".md") {
+		if strings.EqualFold(filepath.Ext(f.Path), ".md") && inScope(f.Path) {
 			prevByRel[f.Path] = f
 		}
 	}
@@ -86,7 +106,7 @@ func IndexDocs(ctx context.Context, st store.Backend, dir string) (Result, error
 		if !d.Type().IsRegular() || !strings.EqualFold(filepath.Ext(name), ".md") {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
@@ -119,7 +139,7 @@ func IndexDocs(ctx context.Context, st store.Backend, dir string) (Result, error
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		abs := filepath.Join(dir, filepath.FromSlash(rel))
+		abs := filepath.Join(root, filepath.FromSlash(rel))
 		info, err := os.Stat(abs)
 		if err != nil {
 			return res, err
@@ -162,6 +182,18 @@ func IndexDocs(ctx context.Context, st store.Backend, dir string) (Result, error
 		res.Elements += len(els)
 	}
 	return res, nil
+}
+
+// canonical makes p absolute and symlink-resolved when it exists, so a root
+// and a dir spelled differently (/tmp vs /private/tmp) still relate.
+func canonical(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	return p
 }
 
 func fileSHA256(path string) (string, error) {

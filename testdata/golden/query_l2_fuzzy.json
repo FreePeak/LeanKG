@@ -28,6 +28,7 @@
   "query": "beta",
   "retrieval": {
     "reason": "FTS5 keyword match",
-    "rung": "L2"
+    "rung": "L2",
+    "scope": "all"
   }
 }

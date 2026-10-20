@@ -9,12 +9,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/FreePeak/LeanKG/internal/astgrep"
 	"github.com/FreePeak/LeanKG/internal/compress"
@@ -28,6 +30,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/ontology"
 	"github.com/FreePeak/LeanKG/internal/orgknowledge"
+	"github.com/FreePeak/LeanKG/internal/pathguard"
 	"github.com/FreePeak/LeanKG/internal/prdindex"
 	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -42,9 +45,11 @@ const (
 	ToolStatus = "status"
 )
 
-// ToolAliases maps legacy tool names (v4.4 surface) to their Go-engine
-// equivalents; one minor release of aliasing per the deprecation policy.
-var ToolAliases = map[string]string{
+// supersededTools names the removed v4.4 tool names and their replacement.
+// They are REJECTED (the aliasing window has closed and the wire test pins
+// the refusal); the error says which tool to call instead (RS-22: a declared
+// alias map that no call site read promised routing that never existed).
+var supersededTools = map[string]string{
 	"set": ToolImport,
 	"get": ToolQuery,
 }
@@ -75,6 +80,7 @@ type Engine struct {
 	langsReg   *langs.Registry            // lazy language activation for the opened codebase
 	lspManager *lsp.Manager               // lazy per-(lang,dir) LSP server pool (query time only)
 	embedder   QueryEmbedder              // optional; nil ⇒ L3 degrades with reason
+	embedProbe embedHealth                // cached reachability of the embedder (status)
 	compressor *compress.LeanKGCompressor // context compression (reader/cmd/response paths, Rust parity)
 }
 
@@ -83,13 +89,65 @@ type Engine struct {
 func (e *Engine) SetLangsRegistry(reg *langs.Registry) { e.langsReg = reg }
 
 // SetProjectDir records the project directory (enable
-// import{action:"session"} for offloading bulky tool payloads).
-func (e *Engine) SetProjectDir(dir string) { e.projectDir = dir }
+// import{action:"session"} for offloading bulky tool payloads). A relative
+// dir is made absolute against the cwd now, so absolute client paths compare
+// against a real root (the CLI default is ".").
+func (e *Engine) SetProjectDir(dir string) {
+	if dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+	}
+	e.projectDir = dir
+}
 
 // SetEmbedder wires the query-time embedder after construction. The CLI's
 // one-shot verbs build an engine before they know whether a provider endpoint
 // is configured; serve passes it to New directly.
-func (e *Engine) SetEmbedder(em QueryEmbedder) { e.embedder = em }
+func (e *Engine) SetEmbedder(em QueryEmbedder) {
+	e.embedder = em
+	e.wireMemoryVectors()
+}
+
+// wireMemoryVectors gives the memory layer the dense recall arm (RS-19)
+// when a query embedder that can embed documents is wired.
+func (e *Engine) wireMemoryVectors() {
+	if e.mem == nil {
+		return
+	}
+	if _, ok := e.embedder.(documentEmbedder); ok && e.embedder != nil {
+		e.mem.SetVectorizer(memVectorizer{e: e})
+		return
+	}
+	e.mem.SetVectorizer(nil)
+}
+
+// documentEmbedder is the optional half of a query embedder that embeds
+// stored text (memory rows) rather than questions.
+type documentEmbedder interface {
+	EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+// memVectorizer adapts the engine's embedder and calibrated noise floor to
+// memory.Vectorizer.
+type memVectorizer struct{ e *Engine }
+
+func (v memVectorizer) Key() string {
+	s := v.e.embedder.Stamp()
+	return fmt.Sprintf("%s|%s|%s|%d|%d|%s|%s", s.ModelID, s.Revision, s.Provider, s.Dimensions, s.ChunkerVersion, s.QueryPrefix, s.DocumentPrefix)
+}
+
+func (v memVectorizer) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	return v.e.embedder.EmbedQuery(ctx, text)
+}
+
+func (v memVectorizer) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
+	return v.e.embedder.(documentEmbedder).EmbedDocuments(ctx, texts)
+}
+
+func (v memVectorizer) Floor() (float64, bool) {
+	return embed.ReadCalibration(v.e.st, v.e.embedder.Stamp())
+}
 
 // ProjectDir reports the project directory the engine is bound to (the metric
 // ledger records it as each row's project_path).
@@ -97,7 +155,11 @@ func (e *Engine) ProjectDir() string { return e.projectDir }
 
 // New builds an Engine. mem may be nil (memory actions then error).
 func New(st store.Backend, mem *memory.Memory, embedder QueryEmbedder) *Engine {
-	return &Engine{st: st, mem: mem, embedder: embedder, compressor: compress.New()}
+	e := &Engine{st: st, mem: mem, embedder: embedder, compressor: compress.New()}
+	if embedder != nil {
+		e.wireMemoryVectors()
+	}
+	return e
 }
 
 // Store exposes the underlying backend (transports needing raw reads).
@@ -113,6 +175,9 @@ func QueryEmbedderFromProvider(p embed.Provider) QueryEmbedder {
 type providerEmbedder struct{ p embed.Provider }
 
 func (a providerEmbedder) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	// A query longer than the model window used to fail at the sidecar (HTTP
+	// 500) and degrade L3 to keywords; embed its head instead (RS-15).
+	text = embed.TruncateText(text, embed.TextCap(a.p))
 	vecs, err := a.p.Embed(ctx, embed.Query, []string{text})
 	if err != nil {
 		return nil, err
@@ -121,6 +186,16 @@ func (a providerEmbedder) EmbedQuery(ctx context.Context, text string) ([]float3
 		return nil, fmt.Errorf("embed: query returned %d vectors, want 1", len(vecs))
 	}
 	return vecs[0], nil
+}
+
+// EmbedDocuments embeds stored text (memory rows) under the provider's
+// document kind, each cut to the provider's text budget.
+func (a providerEmbedder) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
+	cut := make([]string, len(texts))
+	for i, t := range texts {
+		cut[i] = embed.TruncateText(t, embed.TextCap(a.p))
+	}
+	return a.p.Embed(ctx, embed.Document, cut)
 }
 
 // Stamp exposes the provider's full collection identity (issue #279).
@@ -132,18 +207,19 @@ func (a providerEmbedder) Describe() (string, string) {
 
 func (a providerEmbedder) Revision() string { return a.p.Revision() }
 
-// ResolveEnvelope maps a requested tool name to the canonical tool, applying
-// aliases. Unknown names hard-fail naming the valid surface (error-catalog
-// posture carried over from FR-ZCP-12).
+// ResolveEnvelope validates a requested tool name against the three-tool
+// registry. Unknown names hard-fail naming the valid surface (error-catalog
+// posture carried over from FR-ZCP-12); a superseded legacy name also names
+// its replacement.
 func ResolveEnvelope(tool string) (string, error) {
 	if tool == ToolImport || tool == ToolQuery || tool == ToolStatus {
 		return tool, nil
 	}
-	if canonical, ok := ToolAliases[tool]; ok {
-		return canonical, nil
+	cause := fmt.Sprintf("tool %q is not in this server's registry — valid tools: import, query, status", tool)
+	if repl, ok := supersededTools[tool]; ok {
+		cause += fmt.Sprintf(" (%q was superseded by %q)", tool, repl)
 	}
-	return "", errs.NewError(errs.UnknownTool,
-		fmt.Sprintf("tool %q is not in this server's registry — valid tools: import, query, status (legacy aliases: set, get)", tool), "")
+	return "", errs.NewError(errs.UnknownTool, cause, "")
 }
 
 // freshness derives the status/query freshness label; the derivation itself is
@@ -171,7 +247,49 @@ type ImportRequest struct {
 	Summary   string         `json:"summary,omitempty"`
 	SessionID string         `json:"session_id,omitempty"`
 	NodeID    string         `json:"node_id,omitempty"`
+	NewPath   string         `json:"new_path,omitempty"`
 	InsertAt  *int           `json:"insert_line,omitempty"`
+	// Tags is the first-class tag list for action=memory command=session_retain
+	// (K2). normalizeTags folds it into args.tags, so one lookup path serves
+	// both call shapes.
+	Tags []string `json:"tags,omitempty"`
+}
+
+// splitCommaList turns "a, b" into ["a","b"]; an empty or blank string
+// yields nothing, so an absent tag list stays absent rather than becoming an
+// empty slice the tag filters would read as a (wrong) request.
+func splitCommaList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// normalizeTags is the one place the tag input is canonicalised (K2): the
+// advertised list field, a list already under args, and the comma-separated
+// string an agent sends against a single advertised field all become one
+// []string under args.tags, so the retain path reads a single representation.
+// An absent tag list stays absent — an empty slice would read as an explicit
+// (and wrong) tag request to the filters.
+func (r ImportRequest) normalizeTags() ImportRequest {
+	switch v := r.Args["tags"].(type) {
+	case string:
+		if split := splitCommaList(v); len(split) > 0 {
+			r.Args["tags"] = split
+		} else {
+			delete(r.Args, "tags")
+		}
+	case []string:
+		r.Args["tags"] = append([]string(nil), v...)
+	case nil:
+		if len(r.Tags) > 0 {
+			r.Args["tags"] = append([]string(nil), r.Tags...)
+		}
+	}
+	return r
 }
 
 // withFlatArgs folds the top-level curation fields into Args so one lookup
@@ -179,46 +297,22 @@ type ImportRequest struct {
 // explicit args key is never overridden by the flat one. Before this, a
 // schema-shaped call (content at the top level) reported ok:true and wrote an
 // EMPTY file — the agent's memory silently lost the write.
-//
-// The TARGET file is folded under BOTH names, and that is not a convenience.
-// The import schema advertises the target twice — `path` for
-// create/str_replace/insert/delete/rename, `file` for add/replace/remove — and
-// the two command families read opposite fields. So an agent that used the
-// other one got `memory: invalid memory path: empty path` for a file it had
-// named, which reads like an engine bug rather than a field-name mismatch. One
-// lookup, either name: the schema can name the target either way and the engine
-// finds it.
 func (r ImportRequest) withFlatArgs() ImportRequest {
 	flat := map[string]any{}
 	for k, v := range map[string]string{
 		"content": r.Content, "old": r.Old, "new": r.New, "text": r.Text,
 		"file": r.File, "payload": r.Payload, "summary": r.Summary,
-		"session_id": r.SessionID, "node_id": r.NodeID,
+		"session_id": r.SessionID, "node_id": r.NodeID, "new_path": r.NewPath,
 	} {
 		if v != "" {
 			flat[k] = v
-		}
-	}
-	// Path fills whichever name the command family reads, without overwriting a
-	// field the caller actually set: `file` is the schema's name for the
-	// add/replace/remove target, `path` for the create/str_replace family.
-	// Filling both when only one was sent is what makes either spelling work.
-	if r.Path != "" {
-		if _, ok := flat["file"]; !ok {
-			flat["file"] = r.Path
-		}
-		flat["path"] = r.Path
-	}
-	if r.File != "" {
-		if _, ok := flat["path"]; !ok {
-			flat["path"] = r.File
 		}
 	}
 	if r.InsertAt != nil {
 		flat["insert_line"] = *r.InsertAt
 	}
 	if len(flat) == 0 {
-		return r
+		return r.normalizeTags()
 	}
 	merged := make(map[string]any, len(r.Args)+len(flat))
 	for k, v := range flat {
@@ -228,20 +322,29 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 		merged[k] = v
 	}
 	r.Args = merged
-	return r
+	return r.normalizeTags()
 }
 
 // Import handles the import tool: repo/dir indexing or memory curation writes.
 // The flat curation fields are folded into Args first, so a schema-shaped call
 // (content at the top level) and an args-shaped call behave identically.
 func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any, error) {
+	out, err := e.importAction(ctx, req)
+	return out, e.scrubPaths(err)
+}
+
+func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[string]any, error) {
 	req = req.withFlatArgs()
 	switch req.Action {
 	case "docs":
 		if req.Path == "" {
 			return nil, fmt.Errorf("import docs requires path")
 		}
-		res, err := docindex.IndexDocs(ctx, e.st, req.Path)
+		dir, _, err := e.projectPath(req.Path)
+		if err != nil {
+			return nil, err
+		}
+		res, err := docindex.IndexDocsUnder(ctx, e.st, e.projectRoot(), dir)
 		if err != nil {
 			return nil, fmt.Errorf("docindex %s: %w", req.Path, err)
 		}
@@ -259,7 +362,11 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		if env == "" {
 			env = "local"
 		}
-		res, err := prdindex.IndexDocument(ctx, e.st, e.projectDir, req.Path, env)
+		_, relDoc, err := e.projectPath(req.Path)
+		if err != nil {
+			return nil, err
+		}
+		res, err := prdindex.IndexDocument(ctx, e.st, e.projectRoot(), relDoc, env)
 		if err != nil {
 			return nil, err
 		}
@@ -303,23 +410,27 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 		}
 		return map[string]any{"indexed": indexed, "status": status}, nil
 	case "memory":
-		return e.memoryWrite(req)
+		return e.memoryWrite(ctx, req)
 	case "session":
-		return e.sessionWrite(req)
+		return e.sessionWrite(ctx, req)
 	case "read":
 		return e.compressRead(req)
 	case "ontology":
 		if req.Path == "" {
 			return nil, fmt.Errorf("import ontology requires path (ontology dir or concept catalog JSON)")
 		}
-		if info, err := os.Stat(req.Path); err == nil && info.IsDir() {
-			stats, err := ontology.LoadWorkflows(e.st, req.Path)
+		opath, _, err := e.projectPath(req.Path)
+		if err != nil {
+			return nil, err
+		}
+		if info, err := os.Stat(opath); err == nil && info.IsDir() {
+			stats, err := ontology.LoadWorkflows(e.st, opath)
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{"ontology": "synced", "stats": stats}, nil
 		}
-		return e.OntologyMatch(req.Path)
+		return e.OntologyMatch(opath)
 	case "":
 		return nil, fmt.Errorf("import requires action (repo, dir, docs, prd, memory, session, ontology, read)")
 	default:
@@ -401,7 +512,15 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 	}
 	if e.embedder != nil {
 		modelID, provider := e.embedder.Describe()
-		out["query_embedder"] = map[string]any{"model_id": modelID, "provider": provider}
+		reachable, perr := e.embedProbe.check(e.embedder)
+		qe := map[string]any{"model_id": modelID, "provider": provider,
+			"revision": e.embedder.Revision(), "reachable": reachable}
+		if perr != "" {
+			// status used to report healthy with the provider down while every
+			// L3 query degraded (RS-15); say so where the agent looks.
+			qe["error"] = perr
+		}
+		out["query_embedder"] = qe
 	}
 	if e.langsReg != nil {
 		tiers := e.langsReg.Tiers()
@@ -434,9 +553,17 @@ func (e *Engine) embeddingsState() []map[string]any {
 		return []map[string]any{}
 	}
 	states := make([]map[string]any, 0, len(stamps))
+	els, _ := e.st.ElementCount()
 	for _, st := range stamps {
 		vecs, _ := e.st.VectorCount(st.ModelID)
+		// RS-25: freshness tracks the index only, so a store with un-embedded
+		// elements still read "fresh"; coverage says how much L3 can see.
+		coverage := 0.0
+		if els > 0 {
+			coverage = float64(min(vecs, els)) / float64(els)
+		}
 		states = append(states, map[string]any{
+			"coverage":   coverage,
 			"model_id":   st.ModelID,
 			"revision":   st.Revision,
 			"dimensions": st.Dimensions,
@@ -463,23 +590,125 @@ type QueryRequest struct {
 // with their own payload shape (command/banks/count) and do not.
 // "memory" additionally dispatches on args.command (session_recall, memories).
 func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, error) {
+	// Resolve the scope ONCE, before the ladder, so an unknown value is refused
+	// even when the ladder answers at L1/L2 — otherwise a caller asking for
+	// `code` over a corpus with no vectors would silently get the full corpus
+	// from the keyword rung — and so the answer can always name the population
+	// it ranked, whichever rung served it.
+	_, scopeName, serr := scopePredicate(argStr(req.Args, "scope"))
+	if serr != nil {
+		return nil, serr
+	}
+	// The fusion weight is validated HERE, beside the scope contract and before
+	// the ladder, for the same reason: L3 degrades to L2 without ever reading a
+	// weight, so validating inside the semantic rung would silently accept a
+	// typo on exactly the stores where it is hardest to notice. Measured live on
+	// the 298-project self-host 2026-10-11 — every shape was accepted and
+	// ignored: `banana`, `3`, `0,0`, and even a well-formed `3,1` left
+	// retrieval.weight absent and the ranking identical. A caller who sets a
+	// weight believes it set one.
+	fw, werr := parseFusionWeight(argStr(req.Args, "weight"))
+	if werr != nil {
+		return nil, werr
+	}
+	demote := demotesTests(req.Action) && !mentionsTests(req.Query)
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if demote {
+		req.Limit = limit * 2 // a wider window so implementations below the cut can move up
+	}
+	out, err := e.query(ctx, req)
+	if err == nil && out != nil {
+		if r, ok := out["retrieval"].(map[string]any); ok && r != nil {
+			r["scope"] = scopeName
+			// A weighted answer says so, for the same reason scope does — but
+			// ONLY when the rung that applies a weight actually ran. Measured on
+			// this branch: an L0 answer ("no elements indexed") claimed
+			// weight=3,1, and an L2 degrade would have too, while only L3 fuses
+			// two arms to scale. Claiming a setting the answer did not apply is
+			// the same defect as #491's false advice: the caller believes it.
+			if fw.raw != "" && r["rung"] == "L3" {
+				r["weight"] = fw.raw
+			}
+		}
+	}
+	if demote && out != nil {
+		if hits := hitsOf(out); len(hits) > 0 {
+			out["hits"] = demoteTestHits(hits, limit)
+		}
+		out["limit"] = limit
+	}
+	if out != nil {
+		out, _ = emptyLists(out).(map[string]any)
+	}
+	return out, e.scrubPaths(err)
+}
+
+// scrubPaths rewrites the project's absolute path out of a client-facing
+// error (RS-23): an OS error such as `remove /Users/…/topics/x.md: no such
+// file` told any caller where the server's checkout lives. Catalog errors
+// keep their type and code; only the cause text changes.
+func (e *Engine) scrubPaths(err error) error {
+	if err == nil || e.projectDir == "" {
+		return err
+	}
+	scrub := func(msg string) string {
+		for _, root := range []string{e.projectRoot(), filepath.Clean(e.projectDir)} {
+			msg = strings.ReplaceAll(msg, root+string(filepath.Separator), "")
+			msg = strings.ReplaceAll(msg, root, ".")
+		}
+		return msg
+	}
+	var ce *errs.Error
+	if errors.As(err, &ce) {
+		cp := *ce
+		cp.Cause = scrub(cp.Cause)
+		return &cp
+	}
+	if msg := scrub(err.Error()); msg != err.Error() {
+		return errors.New(msg)
+	}
+	return err
+}
+
+// relRef reports a session ref with a project-relative path (RS-23).
+func (e *Engine) relRef(r session.Ref) session.Ref {
+	if rel, err := filepath.Rel(e.projectDir, r.Path); err == nil && !strings.HasPrefix(rel, "..") {
+		r.Path = filepath.ToSlash(rel)
+	}
+	return r
+}
+
+func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, error) {
 	switch req.Action {
 	case "memory":
 		switch cmd := argStr(req.Args, "command"); cmd {
-		case "":
-			// No command: the documented memory search over the
-			// full-markdown memory files (command=search is the same call).
-			return e.MemoryRead("search", "", req.Query, req.Limit)
 		case "session_recall", "memories":
-			return e.SessionMemoryRead(cmd, req.Query, req.Limit, req.Args)
+			return e.SessionMemoryReadCtx(ctx, cmd, req.Query, req.Limit, req.Args)
+		case "view":
+			// RS-21: read one memory file by path (was ConnectRPC-only).
+			path := argStr(req.Args, "path")
+			if path == "" {
+				path = req.Query
+			}
+			return e.MemoryRead("view", path, "", 0)
+		case "snapshot":
+			return e.MemoryRead("snapshot", "", "", 0)
 		case "search":
-			return e.MemoryRead("search", "", req.Query, req.Limit)
+			// The search term rides the top-level `query`, not args.query: the
+			// tool's own schema advertises `query` as the search text, and
+			// session_recall takes it from the same place. A command nobody
+			// spelled correctly used to fall through to here and search, which
+			// reported an empty result instead of the typo.
+			term := req.Query
+			if term == "" {
+				term = argStr(req.Args, "query")
+			}
+			return e.MemoryRead("search", "", term, req.Limit)
 		default:
-			// A command that does not exist must say so. Falling through to
-			// the search answered a typo ("recal") as a confident empty hit
-			// list, which reads to an agent as "the recall found nothing"
-			// rather than "that command is not a command".
-			return nil, fmt.Errorf("unknown memory command %q (valid: search, session_recall, memories)", cmd)
+			return nil, fmt.Errorf("unknown memory read command %q (valid: session_recall, memories, view, snapshot, search)", cmd)
 		}
 	case "ontology":
 		cmd := argStr(req.Args, "cmd")
@@ -573,14 +802,6 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if req.Query == "" {
 		return nil, fmt.Errorf("query requires query text")
 	}
-	// Validate the fusion weight HERE, beside the rest of the argument
-	// contract, for two reasons the L3 path alone could not give: a typo must be
-	// an error even when the store has no vectors (L3 degrades to L2 without ever
-	// reading a weight, so validating inside rungSemantic would silently accept
-	// it), and an invalid weight must fail the same way an invalid scope does.
-	if _, err := parseFusionWeight(argStr(req.Args, "weight")); err != nil {
-		return nil, err
-	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10
@@ -596,12 +817,12 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "fuzzy":
 		return e.rungFuzzy(req.Query, limit, resp, true)
 	case "semantic":
-		return e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope"), argStr(req.Args, "weight"))
+		return e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args)
 	case "impact", "path", "callers", "callees", "context", "explain":
 		return e.graphAction(ctx, req, resp)
 	}
 
-	// Ladder router: L0 cold → L1 exact → L3 semantic → L2 fuzzy.
+	// Ladder router: L0 cold → L1 exact → L2 fuzzy → L3 semantic.
 	if els == 0 {
 		resp["retrieval"] = map[string]any{"rung": "L0", "reason": "no elements indexed"}
 		resp["hits"] = []any{}
@@ -612,25 +833,33 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 		return resp, nil
 	}
+	// RS-12: a prose question goes to the hybrid L3 rung (keyword + vector
+	// fused) whenever a query embedder is wired. The keyword rung ORs every
+	// term, so it is never empty for prose and the ladder used to stop there:
+	// 16 of 16 natural-language questions were answered by keyword alone.
+	// Identifier-shaped queries keep L1 → L2 → L3. The Noul confidence gate
+	// still holds L3 back for queries the ontology rates as noise.
+	if e.embedder != nil && isProse(req.Query) {
+		if conf, _ := ontology.OntologyConfidence(e.st, req.Query); conf == 0 || conf >= ontology.MinConfidence {
+			delete(resp, "guidance")
+			return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args))
+		}
+	}
+	// pin=true: the rung knows which keyword arm served the hits, so it owns
+	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
+	if _, err := e.rungFuzzy(req.Query, limit, resp, true); err == nil && len(hitsOf(resp)) > 0 {
+		return resp, nil
+	}
 	// Noul L3 gate: ontology confidence below MinConfidence
 	// (0.3) justifies no embedding call — degrade to L2.
 	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
 	if conf > 0 && conf < ontology.MinConfidence {
 		return withEmptyHint(e.rungFuzzy(req.Query, limit, resp, true))
 	}
-	// The vector rung is tried BEFORE the keyword rung, which is the order
-	// D-2026-09-04-4 states (L3 with vectors, L2 without): the whole point of
-	// the semantic tier is to outrank keyword noise, and returning as soon as
-	// L2 produced any hit made it unreachable — an intent question was answered
-	// with whichever elements happened to contain its words. Live on this repo
-	// before the fix: "how are search results ranked and fused" returned three
-	// archive-report headings; L3 on the same query ranked the function that
-	// implements the answer first.
-	//
-	// No capability probe is needed: rungSemantic degrades to L2 itself when
-	// the collection is absent, the stamp drifted, or the provider is
-	// unreachable, each with its own reason. pin=true so that reason survives.
-	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, argStr(req.Args, "scope"), argStr(req.Args, "weight")))
+	// The empty L2 pass above left "No keyword match…" guidance; L3 sets its
+	// own (an outage reads as an outage, not as a phrasing problem — RS-15).
+	delete(resp, "guidance")
+	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args))
 }
 
 func hitsOf(resp map[string]any) []map[string]any {
@@ -736,33 +965,11 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (
 	return resp, nil
 }
 
-// rungSemantic is L3: embed the query via the wired provider and rank the
-// collection by FUSING the vector arm with the keyword arm (reciprocal rank
-// fusion, the same combination the PostgreSQL path already runs as
-// HybridSearch). Provider failure or absent wiring DEGRADES to L2 — never a
-// hard error (issue #368 AC: query-time provider failure degrades the ladder
-// with retrieval.reason).
-//
-// Fusing rather than picking one arm is the point. Live on this repository
-// before the fix, a question whose answer is CODE ("where is the single flight
-// lock taken") was answered by the vector arm with three archived run reports
-// and by the keyword arm with cmd/leankg-embed/main.go::lock — the element
-// that IS the answer. The two arms are strong on different corpora: vectors
-// carry phrasing similarity into prose, keywords carry the identifier out of
-// a code symbol. Neither ordering is right, and whichever rung won outright
-// lost half the corpus. RRF is scale-free, so both survive with their own
-// weights and the disagreement between them becomes visible in the per-arm
-// ranks each hit carries.
-func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, argz ...string) (map[string]any, error) {
-	// argz carries the caller's optional query args (scope, weight); variadic so
-	// the pinned-rung and ladder call sites stay one call each.
-	scope, weight := "", ""
-	if len(argz) > 0 {
-		scope = argz[0]
-	}
-	if len(argz) > 1 {
-		weight = argz[1]
-	}
+// rungSemantic is L3: embed the query via the wired provider, cosine top-k
+// over the first stamped collection. Provider failure or absent wiring
+// DEGRADES to L2 — never a hard error (issue #368 AC: query-time provider
+// failure degrades the ladder with retrieval.reason).
+func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, args map[string]any) (map[string]any, error) {
 	degrade := func(reason string) (map[string]any, error) {
 		if pin {
 			resp["retrieval"] = map[string]any{"rung": "L2", "reason": reason}
@@ -782,7 +989,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil || stamp == nil {
 		return degrade(fmt.Sprintf("no vector collection for model %s; degraded from L3", modelID))
 	}
-	if want := e.embedder.Stamp(); *stamp != want {
+	if want := e.embedder.Stamp(); !stamp.Matches(want) {
 		// Whole-identity comparison (issue #279): a chunker or prefix change is
 		// the same class of drift as a model change — mixed vector spaces must
 		// never be served, and the hint names the fix.
@@ -793,340 +1000,110 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err != nil {
 		return degrade(fmt.Sprintf("embedding provider failed (%v); degraded from L3", err))
 	}
-
-	// The scope is the caller's decision about which population to rank, and
-	// it applies to BOTH arms: scoping only the vector arm would leave the
-	// keyword arm free to reintroduce the test fixture the caller excluded,
-	// which is the answer they asked not to see. See scopeFilter for the
-	// measured motivation (rank 54 -> 7 on this repository's own store).
-	keep, scopeName, err := scopeFilter(e.st, scope)
-	if err != nil {
-		return nil, err
+	// The caller may name the population to rank (args.scope). Applied to BOTH
+	// arms through the store's scoped search, so the keyword arm cannot
+	// reintroduce the very rows the caller excluded; and reported in the
+	// answer, so a narrowed corpus is visible rather than inferred. An unknown
+	// scope is an error, never a silent full corpus.
+	keep, scopeName, serr := scopePredicate(argStr(args, "scope"))
+	if serr != nil {
+		return nil, serr
 	}
-	fw, err := parseFusionWeight(weight)
-	if err != nil {
-		return nil, err
+	// Query validated this already; parsed again here because the rung is also
+	// reachable as a pinned action. An unset weight is the default.
+	fw, _ := parseFusionWeight(argStr(args, "weight"))
+	// Issue #273 / RS-12: L3 fuses the cosine ranking with the keyword
+	// rankings by reciprocal rank fusion, because the scores live on unrelated
+	// scales (cosine, bm25/ts_rank, trigram similarity) and only their ranks
+	// are comparable — PostgreSQL over tsvector+trigram, SQLite over FTS5. An
+	// empty fusion falls through to the plain cosine rung below.
+	if hs, ok := e.st.(store.ScopedHybridSearcher); ok {
+		// The fusion weight is the caller's when set, else the store default
+		// (store.DefaultFuseWeights, the same value both engines read). The
+		// weight was already validated in Query, so a malformed value never
+		// reaches here.
+		var fused []store.HybridHit
+		var arms string
+		var ferr error
+		if w, ok := e.st.(store.WeightedHybridSearcher); ok {
+			weights := store.DefaultFuseWeights()
+			if fw.raw != "" {
+				weights = store.FuseRRFWeights{Vector: fw.vector, Keyword: fw.keyword, Explicit: true}
+			}
+			fused, arms, ferr = w.HybridSearchScopedWeighted(modelID, q, qvec, limit, keep, weights)
+		} else {
+			fused, arms, ferr = hs.HybridSearchScoped(modelID, q, qvec, limit, keep)
+		}
+		if ferr != nil {
+			return degrade(fmt.Sprintf("hybrid fusion failed (%v); degraded from L3", ferr))
+		}
+		if len(fused) > 0 {
+			out := make([]map[string]any, 0, len(fused))
+			for _, h := range fused {
+				m := shapeElement(h.Element)
+				m["similarity"] = h.Similarity
+				m["score"] = h.Score // the fused RRF score, not a single-arm score
+				m["ranks"] = h.Ranks
+				out = append(out, m)
+			}
+			resp["hits"] = out
+			resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms, "scope": scopeName}
+			best, seen := 0.0, false
+			for _, h := range fused {
+				if _, ok := h.Ranks[store.ArmVector]; ok && (!seen || h.Similarity > best) {
+					best, seen = h.Similarity, true
+				}
+			}
+			e.annotateConfidence(resp, *stamp, best, seen)
+			return withEmptyHint(resp, nil)
+		}
 	}
-
-	// The keyword arm is FUSED, not consulted afterwards. It comes from
-	// FindFuzzy — the store's own L2 rung — rather than the FTSBackend's
-	kw, err := e.findFuzzyScoped(q, limit, keep)
-	if err != nil {
-		return degrade(fmt.Sprintf("keyword arm failed (%v); degraded from L3", err))
-	}
-	vectors, err := e.st.SearchVectorsScoped(modelID, qvec, limit, keep)
+	hits, err := scopedVectors(e.st, modelID, qvec, limit, keep)
 	if err != nil {
 		return degrade(fmt.Sprintf("vector search failed (%v); degraded from L3", err))
 	}
-	// The NAME arm, third and weakest: it reads symbol names only, so it reaches
-	// a helper whose body says nothing useful for the question — which is where
-	// the other two arms are weakest (measured on this repository's own store:
-	// `truncateRunes` ranks 755 and `coverage` 1776 over production code alone,
-	// while 18 of the 30 labelled questions contain a token of the answer's own
-	// symbol name). Empty for a prose question by construction, so a normal
-	// question is unaffected.
-	names, err := e.findNameScoped(q, limit, keep)
-	if err != nil {
-		return degrade(fmt.Sprintf("name arm failed (%v); degraded from L3", err))
-	}
-	fused, elements, ranks, scores := fuseQueryRanks(vectors, kw, names, fw, limit)
-	if len(fused) == 0 {
-		return withEmptyHint(e.rungFuzzy(q, limit, resp, true))
-	}
-	out := make([]map[string]any, 0, len(fused))
-	for _, qn := range fused {
-		m := shapeElement(elements[qn])
-		m["score"] = scores[qn]
-		if r, ok := ranks[qn]; ok {
-			m["ranks"] = r
-		}
-		if sim, ok := vectorSim(vectors, qn); ok {
-			m["similarity"] = sim
-		}
+	out := make([]map[string]any, 0, len(hits))
+	for _, h := range hits {
+		m := shapeElement(h.Element)
+		m["similarity"] = h.Similarity
 		out = append(out, m)
 	}
 	resp["hits"] = out
-	arms := "vector"
-	if fw.keyword > 0 && len(kw) > 0 {
-		arms += "+keyword"
+	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)", "scope": scopeName}
+	if len(hits) > 0 {
+		e.annotateConfidence(resp, *stamp, hits[0].Similarity, true)
 	}
-	if len(names) > 0 {
-		arms += "+name"
-	}
-	retrieval := map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms}
-	if scopeName != "" {
-		// A scoped answer must SAY it is scoped: an agent that asked for
-		// production code and got a narrower corpus should be able to see that
-		// from the answer alone, not infer it.
-		retrieval["scope"] = scopeName
-	}
-	if fw.raw != "" {
-		// A weighted answer must say so, for the same reason scope does: an
-		// agent reading the ranking needs to know it was not the default.
-		retrieval["weight"] = fw.raw
-	}
-	resp["retrieval"] = retrieval
 	return withEmptyHint(resp, nil)
 }
 
-// scopeFilter resolves the query's `args.scope` into an element predicate, and
-// the name to report it under. "" (the default) is nil — the full corpus, which
-// is what every existing caller and every existing answer sees.
-//
-// The values are the populations a caller actually wants to separate, measured
-// on this repository's own store: 9,306 vectors of which 1,879 are test
-// fixtures and 4,148 are documentation, and ranking "reciprocal rank fusion of
-// ranked lists" puts internal/store/pg_fts.go::FuseRRF at rank 54 over the whole
-// corpus and rank 7 over code. `code` is production source; `prod` is `code`
-// plus current (non-archived) docs; `all` is the full corpus, spelled out so an
-// agent can undo a narrower scope it inherited.
-//
-// An unknown scope is an error rather than a silent full corpus: answering over
-// everything when the caller asked for a subset looks exactly like the scope
-// working, and the difference is invisible in the answer.
-func scopeFilter(_ store.Backend, scope string) (func(store.Element) bool, string, error) {
-	switch scope {
-	case "":
-		return nil, "", nil
-	case "all":
-		return nil, "all", nil
-	case "code", "src":
-		return func(el store.Element) bool { return isProductionCode(el.FilePath) }, "code", nil
-	case "prod", "production":
-		return func(el store.Element) bool {
-			return isProductionCode(el.FilePath) || isCurrentDoc(el.FilePath)
-		}, "prod", nil
-	default:
-		return nil, "", fmt.Errorf("unknown query scope %q (valid: code, prod, all)", scope)
+// annotateConfidence marks an L3 answer whose best vector hit does not beat
+// the collection's calibrated noise floor (embed.Calibrate): the question is
+// probably not about this codebase, so the hits are the nearest unrelated
+// text. The hits stay — the flag and guidance tell the agent not to trust
+// them. Collections never calibrated (an embed run before this change) get
+// no flag at all rather than a guessed one.
+func (e *Engine) annotateConfidence(resp map[string]any, stamp store.ModelStamp, best float64, seen bool) {
+	floor, ok := embed.ReadCalibration(e.st, stamp)
+	if !ok {
+		return
 	}
-}
-
-// isProductionCode reports whether a path is source the project ships rather
-// than a test or a fixture. A test file is a _test.go sibling or anything under
-// a testdata/ directory — the convention every language in this repo's registry
-// already follows for its own fixtures.
-func isProductionCode(path string) bool {
-	if strings.Contains(path, "testdata/") || strings.Contains(path, "/test/") {
-		return false
+	r, _ := resp["retrieval"].(map[string]any)
+	if r == nil {
+		return
 	}
-	base := path
-	if i := strings.LastIndexByte(path, '/'); i >= 0 {
-		base = path[i+1:]
+	if !seen || best <= floor {
+		r["confidence"] = "low"
+		resp["guidance"] = fmt.Sprintf("No strong semantic match: the best hit (similarity %.3f) scores no higher than text unrelated to this codebase (noise floor %.3f). The question may be outside this project; rephrase with its terms, or try a keyword/identifier query.", best, floor)
+		return
 	}
-	for _, suffix := range []string{
-		"_test.go", "_test.py", ".test.ts", ".test.tsx", ".test.js", ".spec.ts",
-		"_test.rb", "_spec.rb", "Test.java", "Tests.cs",
-	} {
-		if strings.HasSuffix(base, suffix) {
-			return false
-		}
-	}
-	return true
-}
-
-// isCurrentDoc reports whether a documentation path is current rather than
-// superseded: docs/archive/ is real content and stays in the corpus, but
-// `prod` excludes it because an archive describes a state the project left.
-func isCurrentDoc(path string) bool {
-	return strings.HasPrefix(path, "docs/") && !strings.HasPrefix(path, "docs/archive/")
-}
-
-// fusionWeight is the parsed form of `args.weight`: the two fusion weights the
-// caller asked for, plus the raw text so the answer can report it back.
-type fusionWeight struct {
-	vector, keyword float64
-	raw             string
-	ok              bool
-}
-
-// parseFusionWeight reads `"<vector>,<keyword>"` — the same convention
-// `scripts/retrieval-policy-sweep.py` prints, so a number measured offline can
-// be pasted in without translation. Unset is exactly today's behaviour, (1,1).
-//
-// Why an escape hatch and not a better default. Waves 12 and 13 measured the
-// trade over four cells (two corpora, two label protocols) and found no single
-// weighting that is right for all of them:
-//
-//	                        corpus1/behaviour  corpus1/doc  corpus2/behaviour  corpus2/doc
-//	(1,1) — the default                  16/137       49/84           13/94        92/102
-//	(3,1)                               30/137       48/84           21/94        88/102
-//	keyword arm dropped (1,0)           59/137       40/84           55/94        84/102
-//
-// A keyword arm that cannot corroborate contributes nothing measurable to the
-// fused order — wave 13's `agree_gate` was byte-identical to vector-only in
-// every cell — so on behaviour-shaped questions, which name a concept and
-// contain none of the document's words, dropping it is right; on keyword-shaped
-// questions it is the arm carrying the answer. Which population a deployment
-// serves is a product decision no query reveals, so the lever is the same shape
-// as `args.scope`: named, optional, reported back, inert when absent.
-//
-// Everything but a well-formed non-negative pair is an ERROR. A tuning knob
-// that silently falls back on a typo is the class of defect waves 1-11 of this
-// loop exist to remove — an agent would believe it asked for (3,1) and be
-// served (1,1) with no way to tell.
-//
-// ponytail: a two-number string, not a nested object. The whole surface is
-// "how much do you trust each arm", and a flat "<vector>,<keyword>" is
-// unambiguous, trivially reportable, and copy-pasteable out of the bench. It
-// grows into an object the day a third arm needs its own knob, which is the day
-// a caller has three different questions to ask.
-func parseFusionWeight(raw string) (fusionWeight, error) {
-	if strings.TrimSpace(raw) == "" {
-		// Unset is not an error and not an override: it is today's behaviour.
-		return fusionWeight{vector: 1, keyword: 1, ok: true}, nil
-	}
-	parts := strings.Split(strings.TrimSpace(raw), ",")
-	if len(parts) != 2 {
-		return fusionWeight{}, fmt.Errorf("query weight %q must be \"<vector>,<keyword>\" (e.g. \"3,1\" or \"1,0\" to drop the keyword arm)", raw)
-	}
-	nums := make([]float64, 2)
-	for i, p := range parts {
-		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
-		if err != nil || v < 0 {
-			return fusionWeight{}, fmt.Errorf("query weight %q: %q is not a non-negative number", raw, strings.TrimSpace(p))
-		}
-		nums[i] = v
-	}
-	if nums[0] == 0 && nums[1] == 0 {
-		return fusionWeight{}, fmt.Errorf("query weight %q cannot be \"0,0\": both arms off ranks nothing", raw)
-	}
-	return fusionWeight{vector: nums[0], keyword: nums[1], raw: strings.TrimSpace(raw), ok: true}, nil
-}
-
-// nameArmWeight is the name arm's scale in the L3 fusion.
-//
-// ponytail: 0.6, chosen because the arm fires on a SUBSTRING of a symbol name,
-// which is a much weaker signal than a body that discusses the question or a
-// keyword that matches it — and because the failure it must not cause is
-// visible: a question mentioning "Fuse" would otherwise pull every
-// FuseRRFWeighted / FuseRRFWeights / fuseQueryRanks element to the same rank-1
-// score and lose the fusion's ability to break that tie on evidence. One
-// number, one place; the sweep in scripts/retrieval-bench.py --sweep is the
-// gate if it ever needs revisiting.
-const nameArmWeight = 0.6
-
-// findNameScoped is the name arm with the same element filter the other two arms
-// got — scoping only the vector arm would let the other arms reintroduce exactly
-// the fixture the caller excluded.
-func (e *Engine) findNameScoped(q string, limit int, keep func(store.Element) bool) ([]store.FuzzyMatch, error) {
-	matches, err := e.st.FindByNameToken(q, limit)
-	if err != nil || keep == nil {
-		return matches, err
-	}
-	out := matches[:0]
-	for _, m := range matches {
-		if keep(m.Element) {
-			out = append(out, m)
-		}
-	}
-	return out, nil
-}
-
-// findFuzzyScoped is the keyword arm with the same element filter the vector arm
-// got. The filter is applied AFTER FindFuzzy, so a scoped caller that filters
-// aggressively can see fewer than `limit` keyword hits even when more matched —
-// the same ceiling the scoped vector search documents.
-func (e *Engine) findFuzzyScoped(q string, limit int, keep func(store.Element) bool) ([]store.FuzzyMatch, error) {
-	matches, err := e.st.FindFuzzy(q, limit)
-	if err != nil || keep == nil {
-		return matches, err
-	}
-	out := matches[:0]
-	for _, m := range matches {
-		if keep(m.Element) {
-			out = append(out, m)
-		}
-	}
-	return out, nil
-}
-
-// vectorSim finds a vector arm's similarity for one qualified name.
-func vectorSim(vectors []store.VectorSearchHit, qn string) (float64, bool) {
-	for _, v := range vectors {
-		if v.Element.QualifiedName == qn {
-			return v.Similarity, true
-		}
-	}
-	return 0, false
-}
-
-// fuseQueryRanks reciprocal-rank fuses the arms into one key order and returns,
-// per key, the element, the per-arm ranks and the fused score. The element maps
-// are keyed by qualified name so the caller never re-queries the store; a key
-// only one arm returned still appears, carrying that arm's rank.
-//
-// The name arm is weighted BELOW the other two (nameArmWeight): a query token
-// appearing inside a symbol name is weaker evidence than a body that discusses
-// the question, and an unweighted arm would let "Fuse" drag in every symbol whose
-// name contains it.
-func fuseQueryRanks(vectors []store.VectorSearchHit, kw, names []store.FuzzyMatch, fw fusionWeight, limit int) ([]string, map[string]store.Element, map[string]map[string]int, map[string]float64) {
-	lists := make([]store.RankList, 0, 3)
-	elements := map[string]store.Element{}
-	ranks := map[string]map[string]int{}
-	scores := map[string]float64{}
-	if len(vectors) > 0 && fw.vector > 0 {
-		keys := make([]string, 0, len(vectors))
-		for _, v := range vectors {
-			keys = append(keys, v.Element.QualifiedName)
-			elements[v.Element.QualifiedName] = v.Element
-		}
-		lists = append(lists, store.RankList{Name: store.ArmVector, Keys: keys})
-	}
-	if fw.vector == 0 {
-		for _, v := range vectors {
-			elements[v.Element.QualifiedName] = v.Element
-		}
-	}
-	// A keyword weight of ZERO drops the arm. It cannot be expressed as a
-	// 0-valued weight: store's armWeight treats a 0 field as "unset" and
-	// substitutes 1.0, so "1,0" would silently become "1,1" — the exact
-	// silent fallback this hatch exists to prevent. Wave 13 measured that
-	// dropping the arm is the whole win (59/137 and 55/94 on behaviour labels),
-	// so the intent is honoured where it is known.
-	if len(kw) > 0 && fw.keyword > 0 {
-		keys := make([]string, 0, len(kw))
-		for _, m := range kw {
-			keys = append(keys, m.Element.QualifiedName)
-			elements[m.Element.QualifiedName] = m.Element
-		}
-		lists = append(lists, store.RankList{Name: store.ArmTSVector, Keys: keys})
-	}
-	if fw.keyword == 0 && len(kw) > 0 {
-		// A dropped arm's documents are still reportable (an agent asked to
-		// rank without the keyword arm may still want to see what it excluded),
-		// but they must not be fused or ranked.
-		for _, m := range kw {
-			elements[m.Element.QualifiedName] = m.Element
-		}
-	}
-	if len(names) > 0 {
-		keys := make([]string, 0, len(names))
-		for _, m := range names {
-			keys = append(keys, m.Element.QualifiedName)
-			elements[m.Element.QualifiedName] = m.Element
-		}
-		lists = append(lists, store.RankList{Name: store.ArmName, Keys: keys})
-	}
-	fused := store.FuseRRFWeighted(lists, store.FuseRRFWeights{
-		Vector:   fw.vector,
-		TSVector: fw.keyword,
-		Name:     nameArmWeight,
-	})
-	out := make([]string, 0, len(fused))
-	for _, h := range fused {
-		out = append(out, h.Key)
-		if len(out) >= limit {
-			break
-		}
-		ranks[h.Key] = h.Ranks
-		scores[h.Key] = h.Score
-	}
-	return out, elements, ranks, scores
+	r["confidence"] = "normal"
 }
 
 // --- memory actions (ride the 3-tool surface; #369) ---
 
-func (e *Engine) memoryWrite(req ImportRequest) (map[string]any, error) {
+// ctx carries the caller identity (telemetry.WithIdentity) into memory
+// events (DS-09).
+func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest) (map[string]any, error) {
 	if e.mem == nil {
 		return nil, fmt.Errorf("memory not initialized")
 	}
@@ -1155,13 +1132,24 @@ func (e *Engine) memoryWrite(req ImportRequest) (map[string]any, error) {
 		if cwd == "" {
 			cwd = e.projectDir
 		}
-		res, serr := e.mem.SessionRetain(scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"))
+		// K2: tags are first-class on the retain path, so a tag-scoped recall
+		// can match what a conversation wrote. argStrs also accepts a
+		// comma-separated string ("a,b"), which is the shape an agent most
+		// often sends when the schema names one field.
+		tags := argStrs(req.Args, "tags")
+		res, serr := e.mem.SessionRetainCtx(ctx, scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"), tags)
 		if serr != nil {
 			return nil, serr
 		}
 		return map[string]any{"ok": true, "command": "session_retain", "bank": res.Bank, "written": res.Written, "skipped": res.Skipped, "retained_through_user_turn": res.RetainedThroughUserTurn}, nil
 	case "create":
-		err = e.mem.Create(get("path"), get("content"))
+		// create keeps the memory-tool contract (create or overwrite), but an
+		// overwrite is reported, never silent.
+		existed := e.mem.Exists(get("path"))
+		if err = e.mem.Create(get("path"), get("content")); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "command": req.Command, "overwrote": existed}, nil
 	case "str_replace":
 		err = e.mem.StrReplace(get("path"), get("old"), get("new"))
 	case "insert":
@@ -1269,6 +1257,38 @@ func NLRoute(q string) string {
 	return q
 }
 
+// isProse reports whether q reads as a natural-language question rather than
+// a symbol lookup: at least two words, none of them code-shaped (camelCase,
+// snake_case, dotted/qualified paths, call syntax).
+func isProse(q string) bool {
+	fields := strings.Fields(q)
+	if len(fields) < 2 {
+		return false
+	}
+	for _, f := range fields {
+		if codeShaped(strings.Trim(f, ".,;:?!\"'`")) {
+			return false
+		}
+	}
+	return true
+}
+
+func codeShaped(w string) bool {
+	if strings.ContainsAny(w, "_.:/()[]{}<>=") {
+		return true
+	}
+	// camelCase / PascalCase: an interior capital in a word that also has
+	// lowercase letters. All-caps words are acronyms (JSON, RPC, XML), not
+	// code — they used to keep prose questions off the L3 rung.
+	hasLower := strings.IndexFunc(w, unicode.IsLower) >= 0
+	for i, r := range w {
+		if i > 0 && unicode.IsUpper(r) && hasLower {
+			return true
+		}
+	}
+	return false
+}
+
 func looksLikeIdentifier(s string) bool {
 	if s == "" {
 		return false
@@ -1313,27 +1333,10 @@ func (e *Engine) resolveGraphSeed(seed string) (string, error) {
 // graphAction routes the connection verbs (Rust graph/query.rs parity) to
 // internal/graph. The query string may be a bare name or a qualified name —
 // bare names are resolved via FindExact before traversal.
-//
-// A seed or target that no element resolves to is an ANSWER with recovery
-// guidance, never graph.ErrUnknownNode: that error reached the agent as a
-// failed tool call reading `graph: unknown node`, naming neither the verb nor
-// the seed nor a next step, and it made the same typo look like a broken verb.
 func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
 	g := func() map[string]any {
 		resp["action"] = req.Action
 		return resp
-	}
-	// One recovery sentence for an unresolvable end of the walk: name WHICH
-	// end was not found, quote it, and give the one step that fixes it. That
-	// is what lets an agent tell a typo from a verb that is misconfigured.
-	// The value is the string the lookup was given, not the verb.
-	unresolved := func(what, value string) (map[string]any, error) {
-		resp["hits"] = []any{}
-		resp["reachable"] = false
-		resp["guidance"] = fmt.Sprintf(
-			"No indexed element matches the %s %q; resolve it with query (action empty) to a qualified_name, then retry %s with that exact QN.",
-			what, value, req.Action)
-		return g(), nil
 	}
 	seed, err := e.resolveGraphSeed(req.Query)
 	if err != nil {
@@ -1348,19 +1351,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// result-count concept, not a traversal depth.
 		depth := argInt(req.Args, "depth", 2)
 		hits, err := graph.Impact(e.st, seed, depth)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
 		if err != nil {
 			return nil, err
 		}
-		// The result carries the VERB's name, like every other graph verb:
-		// impact under `hits` was the same key the search ladder uses, and
-		// these are different shapes (qualified_name + depth, not elements),
-		// so the plausible reading of a 21-entry `hits` was "21 elements
-		// matched a text query" when it meant "21 nodes depend on this". The
-		// alias stays so an agent that learned `hits` is not broken.
-		resp["impact"] = hits
 		resp["hits"] = hits
 		return g(), nil
 	case "path":
@@ -1380,7 +1373,13 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
 		path, err := graph.ShortestPath(e.st, seed, to, maxDepth)
 		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("target (args.to)", toRaw)
+			// Name the end that is unknown: "graph: unknown node" left the
+			// caller guessing which of from/to to fix.
+			for _, end := range []struct{ label, qn string }{{"from (query)", seed}, {"to (args.to)", to}} {
+				if els, ferr := e.st.FindExact(end.qn); ferr == nil && len(els) == 0 {
+					return nil, fmt.Errorf("%w: %s endpoint %q is not an indexed element; resolve it with query (action empty) and retry with its qualified_name", err, end.label, end.qn)
+				}
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -1396,9 +1395,6 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "callers":
 		qns, err := graph.Callers(e.st, seed)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
 		if err != nil {
 			return nil, err
 		}
@@ -1409,9 +1405,6 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "callees":
 		qns, err := graph.Callees(e.st, seed)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
 		if err != nil {
 			return nil, err
 		}
@@ -1422,9 +1415,6 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "context":
 		out, err := graph.Context(e.st, seed, req.Limit)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
 		if err != nil {
 			return nil, err
 		}
@@ -1434,9 +1424,6 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "explain":
 		out, err := graph.Explain(e.st, seed)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
 		if err != nil {
 			return nil, err
 		}
@@ -1451,7 +1438,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 // sessionWrite/read wire internal/session into the 3-tool surface: bulky tool
 // payloads are offloaded to .leankg/sessions/<id>/refs/<node>.md and restored
 // bit-for-bit by session_recall (Rust session/mod.rs parity).
-func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
+func (e *Engine) sessionWrite(ctx context.Context, req ImportRequest) (map[string]any, error) {
 	if e.projectDir == "" {
 		return nil, fmt.Errorf("session offload requires a project directory")
 	}
@@ -1467,12 +1454,22 @@ func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"offloaded": ref}, nil
+		return map[string]any{"offloaded": e.relRef(ref)}, nil
 	case "lesson":
-		// The schema names `summary` as the lesson's content field, and only
-		// `text` was read, so a schema-shaped call wrote an EMPTY lesson and
-		// answered {"deduped":false} — a successful write of nothing, which
-		// is the class waves 6, 7 and 11 exist to remove. `text` still works.
+		// The import schema advertises `summary` ("offload summary") and
+		// `text` for this arm, and only `text` was read — so a schema-shaped
+		// call wrote an EMPTY lesson and answered {"deduped":false}.
+		//
+		// Measured live on the 298-project self-host 2026-10-11, both shapes
+		// landing an empty row whose sha256 is the hash of "":
+		//
+		//	import action=session command=lesson session_id=s summary="…"
+		//	  -> {"deduped":false}   (lessons.json: {"text":""})
+		//	import action=session command=lesson session_id=s   (no content)
+		//	  -> {"deduped":false}   (the same empty row)
+		//
+		// A successful write of nothing, and the SECOND such call reports
+		// `deduped: true` — a duplicate of nothing. `text` still works.
 		text := get("text")
 		if strings.TrimSpace(text) == "" {
 			text = get("summary")
@@ -1483,7 +1480,7 @@ func (e *Engine) sessionWrite(req ImportRequest) (map[string]any, error) {
 		if strings.TrimSpace(text) == "" {
 			return nil, fmt.Errorf("session lesson requires text (or summary) — an empty lesson is unrecallable")
 		}
-		deduped, err := s.AddLesson(get("session_id"), text)
+		deduped, err := s.AddLessonCtx(ctx, get("session_id"), text)
 		if err != nil {
 			return nil, err
 		}
@@ -1511,23 +1508,41 @@ func (e *Engine) SessionRead(command, sessionID, nodeID string) (map[string]any,
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"command": "canvas", "session_id": sessionID, "refs": refs}, nil
-	default:
-		if command == "" {
-			// No command is not a mistake here: a session read carries no
-			// query text, so the command IS the request, and the only way to
-			// discover what the verb supports is to call it. Answer with the
-			// valid set (the same posture action=memory now takes) rather than
-			// failing a tool call an agent cannot interpret.
-			return map[string]any{"commands": []string{"recall", "canvas"}}, nil
+		for i := range refs {
+			refs[i] = e.relRef(refs[i])
 		}
-		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas)", command)
+		return map[string]any{"command": "canvas", "session_id": sessionID, "refs": refs}, nil
+	case "lessons":
+		// A lesson was a black hole before this: `command=lesson` wrote one
+		// to .leankg/sessions/<id>/lessons.json and answered {"deduped":…},
+		// while nothing in the binary could read it back (measured live on the
+		// self-host: memory session_recall saw 0, canvas saw no refs, and
+		// offload recall reported "node not found"). Same shape #470 fixed for
+		// reflect — a lesson nothing can read is a discard with a JSON
+		// wrapper. `session_id` is what identifies the session; the search
+		// text rides `query` when a caller filters.
+		lessons, err := s.Lessons(sessionID)
+		if err != nil {
+			return nil, err
+		}
+		// No filter here on purpose: a lesson list is per-session and small, and
+		// a filter would mean threading a term through a signature that carries
+		// only the session id. The caller filters.
+		return map[string]any{"command": "lessons", "session_id": sessionID, "lessons": lessons}, nil
+	default:
+		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas, lessons)", command)
 	}
 }
 
 // OntologyMatch loads a concept catalog and matches it against indexed
 // elements (internal/ontology); matches are persisted in kv for later reads.
 func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
+	// The catalog is a project file like any other import input (RS-01): the
+	// REST /api/v1/ontology/match route reaches this method directly.
+	catalogPath, _, err := e.projectPath(catalogPath)
+	if err != nil {
+		return nil, err
+	}
 	cat, err := ontology.LoadCatalog(catalogPath)
 	if err != nil {
 		return nil, err
@@ -1542,47 +1557,29 @@ func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
 	return map[string]any{"concepts": len(cat.Concepts), "matches": matches}, nil
 }
 
-// anySlice renders any slice as []any, turning a NIL slice into an EMPTY one.
-// Go marshals nil as `null` and empty as `[]`, and for a list answer the second
-// is the honest "nothing to report": `null` reads as "this field was never
-// populated", which for a corpus-derived answer is a claim about configuration
-// wearing the clothes of a result.
-//
-// It lives here (not only in internal/rest) because the same answer reaches MCP
-// and REST from one engine method, and the wire shape must not depend on which
-// transport asked.
-// AnySlice is exported so internal/rest shares ONE definition of the empty-vs-null
-// wire shape rather than re-deriving it per transport.
-func AnySlice[T any](in []T) []any {
-	out := make([]any, 0, len(in))
-	for _, v := range in {
-		out = append(out, v)
-	}
-	return out
-}
-
 // OntologyMatches returns the last persisted match set.
+//
+// An EMPTY set has two meanings and they want opposite next steps: no catalog
+// was ever imported (import one — the answer will not change until you do), or
+// a catalog is imported and nothing matched (look harder, or the corpus is what
+// it is). Measured live on the 298-project self-host 2026-10-11: a store with
+// no catalog answered `{"matches":[]}` — an empty array with nothing said about
+// it, so a reader looks harder at a corpus that has no catalog to match
+// against. The note is added only for the empty case, so it still
+// distinguishes something.
+//
+// The SHAPE half of this (nil -> `[]`, never `null`) is owned by emptyLists
+// (RS-09) and applies to every answer.
 func (e *Engine) OntologyMatches() (map[string]any, error) {
 	matches, err := ontology.LoadMatches(e.st)
 	if err != nil {
 		return nil, err
 	}
-	// A nil match set means no catalog was ever imported (LoadMatches returns
-	// nil when the kv row is absent) — a configuration fact, not a result.
-	// Without the note it reaches the wire as `{"matches": null}`, which reads
-	// as "no concept appears in this corpus" and sends the reader to look
-	// harder instead of importing a catalog.
-	// LoadMatches returns a nil slice when no catalog was ever imported (the kv
-	// row is absent), and Go marshals nil as `null` — which reads as "no concept
-	// appears in this corpus" rather than "no catalog exists", and sends the
-	// reader to look harder instead of importing one. Normalise to an empty
-	// array and say what an empty one means here. `matches` is []ontology.Match,
-	// so it goes through the same anySlice shape the REST sites use.
-	out := map[string]any{"matches": AnySlice(matches)}
+	out := map[string]any{"matches": matches}
 	if len(matches) == 0 {
-		out["note"] = "no concept catalog is imported for this project; import one with " +
-			"`leankg import` (or the import tool, action=ontology). A NON-empty list means a " +
-			"catalog is imported and its concepts matched these elements."
+		out["note"] = "no concept catalog is imported for this project, so nothing can match; " +
+			"import one with `leankg import` (action=ontology). A NON-empty list means a catalog " +
+			"is imported and its concepts matched these elements."
 	}
 	return out, nil
 }
@@ -1693,9 +1690,12 @@ func (e *Engine) lspQuery(ctx context.Context, req QueryRequest, resp map[string
 	}
 	switch command {
 	case "document":
-		path := argStr(req.Args, "path")
-		if path == "" {
+		if argStr(req.Args, "path") == "" {
 			return nil, fmt.Errorf("lsp document requires args.path (file to inspect)")
+		}
+		path, _, err := e.projectPath(argStr(req.Args, "path"))
+		if err != nil {
+			return nil, err
 		}
 		syms, err := client.DocumentSymbols(ctx, path)
 		if err != nil {
@@ -1770,12 +1770,12 @@ func (e *Engine) compressRead(req ImportRequest) (map[string]any, error) {
 	if req.Path == "" {
 		return nil, fmt.Errorf("import read requires path")
 	}
-	// Relative paths mean "in this project" — same contract as import repo/dir.
-	// Without the anchor, MCP clients sending internal/foo.go open against the
-	// server process cwd (often a different repo) and fail with ENOENT.
-	path := req.Path
-	if !filepath.IsAbs(path) && e.projectDir != "" {
-		path = filepath.Join(e.projectDir, path)
+	// Relative paths mean "in this project" — same contract as import repo/dir
+	// — and every path must STAY in the project (RS-01): an absolute path, a
+	// `..` climb or an escaping symlink is refused, never read.
+	path, rel, err := e.projectPath(req.Path)
+	if err != nil {
+		return nil, err
 	}
 	modeName := argStr(req.Args, "mode")
 	mode, ok := compress.ParseMode(modeName)
@@ -1792,7 +1792,7 @@ func (e *Engine) compressRead(req ImportRequest) (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"path":            path,
+		"path":            rel,
 		"mode":            res.Mode.String(),
 		"content":         res.Content,
 		"tokens":          res.Tokens,
@@ -1865,6 +1865,12 @@ func (e *Engine) compressRun(req QueryRequest) (map[string]any, error) {
 // memories (the <memories> first-turn injection text). args: scope, cwd
 // (default the project dir), bank (bank-name mode override).
 func (e *Engine) SessionMemoryRead(command, query string, limit int, args map[string]any) (map[string]any, error) {
+	return e.SessionMemoryReadCtx(context.Background(), command, query, limit, args)
+}
+
+// SessionMemoryReadCtx is SessionMemoryRead with the caller ctx, so recall
+// events carry the caller identity (DS-09).
+func (e *Engine) SessionMemoryReadCtx(ctx context.Context, command, query string, limit int, args map[string]any) (map[string]any, error) {
 	if e.mem == nil {
 		return nil, fmt.Errorf("memory not initialized")
 	}
@@ -1878,13 +1884,13 @@ func (e *Engine) SessionMemoryRead(command, query string, limit int, args map[st
 	}
 	switch command {
 	case "session_recall":
-		banks, entries, err := e.mem.SessionRecall(scope, cwd, argStr(args, "bank"), query, limit)
+		banks, entries, err := e.mem.SessionRecallCtx(ctx, scope, cwd, argStr(args, "bank"), query, limit)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"command": "session_recall", "banks": banks, "count": len(entries), "memories": memory.RankEntries(entries)}, nil
 	case "memories":
-		text, entries, err := e.mem.FirstTurnMemories(scope, cwd, argStr(args, "bank"), query)
+		text, entries, err := e.mem.FirstTurnMemoriesCtx(ctx, scope, cwd, argStr(args, "bank"), query)
 		if err != nil {
 			return nil, err
 		}
@@ -1894,20 +1900,119 @@ func (e *Engine) SessionMemoryRead(command, query string, limit int, args map[st
 	}
 }
 
+// ScopeAll / ScopeCode / ScopeProd name the retrieval populations a caller can
+// ask for. The default is the whole corpus, byte for byte.
+const (
+	ScopeAll  = "all"
+	ScopeCode = "code"
+	ScopeProd = "prod"
+)
+
+// scopePredicate maps an args.scope value to the population it selects. An
+// empty value means the whole corpus (the default); an unknown value is an
+// ERROR, never a silent full corpus — answering over everything when the
+// caller asked for a subset looks identical to the scope working.
+//
+// The populations are measured, not intuited: on this repository's own store
+// 22% of the elements are test fixtures and 37% are archived docs, so 60% of
+// the vector population is a document a working engineer is not asking about.
+//
+//	code  production source only
+//	prod  code plus current (non-archived) documentation
+//	all   everything, the default, spelled out so a caller can undo a narrower
+//	      scope it inherited
+//
+// fusionWeight is the caller's per-arm scaling for the L3 fusion, parsed from
+// `args.weight` as "<vector>,<keyword>" (e.g. "3,1", or "1,0" to drop the
+// keyword arm). The zero value (raw == "") means the store default applies.
+type fusionWeight struct {
+	vector  float64
+	keyword float64
+	raw     string
+}
+
+// parseFusionWeight validates the caller's weight. An UNSET value is not an
+// error and not an override: it leaves the store default in force. Everything else must be
+// two non-negative numbers, because a weight the caller cannot read is worse
+// than no weight at all: `0,0` ranks nothing, and a typo must fail the same way
+// an unknown scope does rather than quietly ranking the default.
+func parseFusionWeight(raw string) (fusionWeight, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fusionWeight{}, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) != 2 {
+		return fusionWeight{}, fmt.Errorf("query weight %q must be \"<vector>,<keyword>\" (e.g. \"3,1\", or \"1,0\" to drop the keyword arm)", raw)
+	}
+	nums := make([]float64, 2)
+	for i, p := range parts {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			return fusionWeight{}, fmt.Errorf("query weight %q: %q is not a non-negative number", raw, strings.TrimSpace(p))
+		}
+		nums[i] = v
+	}
+	if nums[0] == 0 && nums[1] == 0 {
+		return fusionWeight{}, fmt.Errorf("query weight %q cannot be \"0,0\": both arms off ranks nothing", raw)
+	}
+	return fusionWeight{vector: nums[0], keyword: nums[1], raw: raw}, nil
+}
+
+func scopePredicate(scope string) (func(store.Element) bool, string, error) {
+	switch scope {
+	case "", ScopeAll:
+		return nil, ScopeAll, nil
+	case ScopeCode:
+		return func(e store.Element) bool {
+			return !isFixturePath(e.FilePath) && !isArchivedPath(e.FilePath)
+		}, ScopeCode, nil
+	case ScopeProd:
+		return func(e store.Element) bool { return !isFixturePath(e.FilePath) }, ScopeProd, nil
+	}
+	return nil, "", fmt.Errorf("unknown scope %q (valid: all, code, prod)", scope)
+}
+
+func isFixturePath(fp string) bool {
+	return strings.Contains(fp, "testdata") || strings.HasSuffix(fp, "_test.go") ||
+		strings.Contains(fp, "/fixtures/") || strings.HasSuffix(fp, "fixtures.js")
+}
+
+func isArchivedPath(fp string) bool { return strings.HasPrefix(fp, "docs/archive/") }
+
+// scopedVectors is the plain-cosine fallback of the L3 rung, over the caller's
+// population. It is reached only when no fused hybrid search answered, so a
+// store without the scoped vocabulary still degrades the way it always did.
+func scopedVectors(st store.Backend, modelID string, q []float32, k int, keep func(store.Element) bool) ([]store.VectorSearchHit, error) {
+	if sc, ok := st.(store.ScopedHybridSearcher); ok {
+		return sc.SearchVectorsScoped(modelID, q, k, keep)
+	}
+	return st.SearchVectors(modelID, q, k)
+}
+
 // argStrs reads a string-array arg (nil-safe). MCP turns arrive JSON-decoded
 // as []any of strings.
 func argStrs(m map[string]any, key string) []string {
 	if m == nil {
 		return nil
 	}
-	list, _ := m[key].([]any)
-	out := make([]string, 0, len(list))
-	for _, v := range list {
-		if sv, ok := v.(string); ok {
-			out = append(out, sv)
+	// []string first: the flat-curation fold normalises lists to that type, and
+	// a []any miss would silently drop a caller's tags.
+	switch v := m[key].(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if sv, ok := item.(string); ok {
+				out = append(out, sv)
+			}
 		}
+		return out
+	case string:
+		return splitCommaList(v)
 	}
-	return out
+	return nil
 }
 
 // stampDriftForLog names the differing stamp components (revision plus any
@@ -1927,9 +2032,7 @@ func stampDriftForLog(stored, want store.ModelStamp) string {
 	if stored.Distance != want.Distance {
 		diffs = append(diffs, fmt.Sprintf("distance %q", stored.Distance))
 	}
-	if stored.Provider != want.Provider {
-		diffs = append(diffs, fmt.Sprintf("provider %q", stored.Provider))
-	}
+	// Provider is a transport label, not part of identity (ModelStamp.Matches).
 	if stored.ChunkerVersion != want.ChunkerVersion {
 		diffs = append(diffs, fmt.Sprintf("chunker_version %d", stored.ChunkerVersion))
 	}
@@ -1943,6 +2046,28 @@ func stampDriftForLog(stored, want store.ModelStamp) string {
 		diffs = append(diffs, fmt.Sprintf("live revision %s", want.Revision))
 	}
 	return strings.Join(diffs, ", ")
+}
+
+// projectPath confines a client-supplied file argument to the project root
+// (RS-01). Relative paths are taken from the root; absolute paths, `..`
+// climbs and symlinks leaving the root are refused with
+// LEANKG_ERROR_PATH_OUTSIDE_PROJECT. rel is root-relative, for responses
+// that must not leak the server's filesystem layout.
+func (e *Engine) projectPath(p string) (abs, rel string, err error) {
+	return pathguard.Resolve(e.projectDir, p)
+}
+
+// projectRoot is the symlink-resolved project directory (cwd when the engine
+// has none), the base every stored file path is relative to.
+func (e *Engine) projectRoot() string {
+	root := e.projectDir
+	if root == "" {
+		root, _ = os.Getwd()
+	}
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		return r
+	}
+	return root
 }
 
 // resolveIndexTarget turns an import path into the directory to index.
@@ -1975,9 +2100,20 @@ func (e *Engine) resolveIndexTarget(path string) (string, error) {
 		if r, err := filepath.EvalSymlinks(root); err == nil {
 			root = r
 		}
-		if abs != root && strings.HasPrefix(abs, root+string(filepath.Separator)) {
-			return "", fmt.Errorf("import %s: %q is a subdirectory of the project %q; indexing a subtree would delete every element outside it (the store reconciles against the walk root) — run `leankg index %s` as its own project, or index the project root",
-				"repo|dir", path, root, abs)
+		// RS-02: the walk root must BE the project root. A subtree reads every
+		// file outside it as deleted; a sibling, ancestor or unrelated root
+		// reads the whole project as deleted (validation: `import repo
+		// <sibling>` reported deleted_files 48 and left one element; `import
+		// repo /private/tmp` grew the store to 2.2 GB). Only "." / the root
+		// itself is an index target for this engine's store.
+		if abs != root {
+			kind := "is not the project root"
+			if strings.HasPrefix(abs, root+string(filepath.Separator)) {
+				kind = "is a subdirectory of the project"
+			}
+			return "", errs.NewError(errs.IndexRootMismatch,
+				fmt.Sprintf("import repo|dir: %q %s; indexing it into this project's store would delete every element outside it (the store reconciles against the walk root)", path, kind),
+				`index the project root (path "."), run `+"`leankg index <dir>`"+` to make the other directory its own project, or select it with project= on a multi-project server`)
 		}
 	}
 	return abs, nil

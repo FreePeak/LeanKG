@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -92,12 +94,52 @@ func ftsSync(tx *sql.Tx, e Element) error {
 	return nil
 }
 
+// SplitIdentifier spells a code identifier as words — camelCase, PascalCase
+// (acronyms kept together), snake_case and kebab-case — lowercased; "" when
+// the name has nothing to split. FTS5's unicode61 tokenizer keeps
+// RotateStagingCredentials as one token, so "rotate staging credentials" never
+// matched it on the keyword rung (RS-13).
+func SplitIdentifier(name string) string {
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	rs := []rune(name)
+	for i, r := range rs {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ' ':
+			flush()
+			continue
+		case unicode.IsUpper(r) && len(cur) > 0:
+			prevLower := unicode.IsLower(rs[i-1]) || unicode.IsDigit(rs[i-1])
+			nextLower := i+1 < len(rs) && unicode.IsLower(rs[i+1])
+			if prevLower || (unicode.IsUpper(rs[i-1]) && nextLower) {
+				flush()
+			}
+		}
+		cur = append(cur, r)
+	}
+	flush()
+	if len(words) < 2 {
+		return ""
+	}
+	return strings.Join(words, " ")
+}
+
 func ftsContent(e Element) string {
 	// Bound the indexed text: content is the source snippet already; cap it so
 	// the FTS index does not balloon on generated files.
 	const maxContent = 8000
 	c := ClipUTF8(e.Content, maxContent)
-	return e.Name + " " + e.QualifiedName + " " + c
+	head := e.Name
+	if terms := SplitIdentifier(e.Name); terms != "" {
+		head += " " + terms
+	}
+	return head + " " + e.QualifiedName + " " + c
 }
 
 // UpsertRelationships writes a batch of relationships in one transaction.
@@ -225,65 +267,201 @@ func (s *Store) DeleteOrphanRelationships() (int, error) {
 	return int(n), s.BumpWatermark()
 }
 
-// FindExact implements the L1 rung: exact (case-insensitive) match on element
-// name or qualified name.
-func (s *Store) FindExact(name string) ([]Element, error) {
-	rows, err := s.db.Query(`SELECT `+elementCols+` FROM code_elements ce
-		WHERE ce.name = ? COLLATE NOCASE OR ce.qualified_name = ? COLLATE NOCASE
-		ORDER BY length(ce.qualified_name) LIMIT 200`, name, name)
+// nameTokens extracts the tokens of a query worth searching for in a SYMBOL
+// NAME. It is the gate that keeps the name arm from being a noise machine, and
+// it is deliberately NOT a shape test: measured against the labelled questions
+// in docs/retrieval-label-set.md, a capital/underscore/digit test let the arm
+// fire on 0 of 84 questions, because agents ask in PROSE ("take the
+// single-flight lock for embedding") and the informative token is a plain
+// lowercase word (`lock`, `stamp`, `runes`).
+//
+// Two filters, in order:
+//
+//  1. length and duplicates — at least 3 characters, so "go" and "a" never
+//     become name searches;
+//  2. RARITY IN THIS CORPUS. A token inside many symbol names ("read" in 142,
+//     "text" in 210) discriminates nothing and returns a wall of near-identical
+//     names; a rare token is the one an agent typed because it IS the answer's
+//     name. Rarity is measured from the store, so it adapts to the project
+//     rather than to the author's guesses about English — a stop-list can never
+//     be complete, and every word it omits is a real symbol name somewhere
+//     (`lock`, `stamp`, `list`, `run`).
+//
+// An UNSEEN token counts as rare (that is how `runes` reaches an arm on a
+// corpus that happens not to contain it), which is why the small function-word
+// list is not optional: rarity alone would let "the" through on any project.
+//
+// total is the ELEMENT count, not the distinct-name count: a three-element
+// fixture would otherwise make every English word "rare" and the arm would fire
+// on prose, which is exactly the noise it must not produce.
+func nameTokens(query string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range strings.FieldsFunc(query, func(r rune) bool {
+		return !(r == '_' || r == '.' || unicode.IsLetter(r) || unicode.IsDigit(r))
+	}) {
+		low := strings.ToLower(f)
+		if len(f) < 3 || seen[low] || nameStopWords[low] {
+			continue
+		}
+		seen[low] = true
+		out = append(out, low)
+	}
+	return out
+}
+
+// nameArmBound is the rarity bound: a token may appear in at most this many
+// symbol names and still count as evidence. It is a fraction of the ELEMENT
+// count (elements/5000, floor 2), so it is scale-free — a three-element fixture
+// cannot make every English word "rare".
+//
+// The divisor is MEASURED, not chosen. Swept against the 84 labelled questions
+// in docs/retrieval-label-set.md on this repository's 10,885 elements, with the
+// old shape gate as the control (top-1 50/84, in-pool 73/84):
+//
+//	bound  arm fired   top-1   in-pool
+//	  2      31/84      49      80      <- elements/5000
+//	  3      36/84      48      80
+//	  5      48/84      44      80
+//	  8      58/84      41      80
+//	 21      77/84      36      80      <- elements/500
+//
+// The arm's GAIN is bound-independent (in-pool 73 -> 80: it finds the answer in
+// seven questions neither the keyword nor the vector arm reaches), but its COST
+// grows with the bound: at 21 it fires on 77 of 84 questions and dilutes the
+// top of the fusion by 14. A tight bound keeps nearly all of the gain for one
+// point of top-1.
+//
+// LEANKG_NAME_ARM_BOUND overrides it, because the threshold is a corpus
+// property: a different project should re-run the sweep rather than inherit
+// this number.
+func nameArmBound(total int) int {
+	bound := total / 5000
+	if bound < 2 {
+		bound = 2
+	}
+	if v := os.Getenv("LEANKG_NAME_ARM_BOUND"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			bound = n
+		}
+	}
+	return bound
+}
+
+// rareNameTokens is nameTokens narrowed to the tokens this CORPUS cannot answer
+// with a wall of near-identical names: a token inside many symbol names
+// discriminates nothing, while a rare one is the name an agent typed because it
+// IS the answer.
+//
+// The bound is a fraction of the ELEMENT count (elements/500, floor 2), so it is
+// scale-free: on this repository's 10,885 elements a token may appear in at most
+// 21 names, which measured against the real corpus separates `lock` (95) and
+// `stamp` (33) from the noise, and on a three-element fixture the floor of 2
+// stops every English word from counting as rare.
+func (s *Store) rareNameTokens(query string) ([]string, error) {
+	toks := nameTokens(query)
+	if len(toks) == 0 {
+		return nil, nil
+	}
+	// The bound is a fraction of the ELEMENT count, so it is scale-free. The
+	// env override exists so a threshold can be SWEPT against the labelled set
+	// rather than guessed; it is read here and passed down, so the count's SQL
+	// LIMIT and the comparison cannot disagree.
+	// The total is needed to DERIVE the bound before counting, so read it first
+	// (one COUNT, then the token counts are capped at bound+1).
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
+		return nil, err
+	}
+	bound := nameArmBound(total)
+	counts, _, err := s.nameTokenCounts(toks, bound)
 	if err != nil {
 		return nil, err
 	}
-	return scanElements(rows)
-}
-
-const elementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path, ce.line_start, ce.line_end, ce.language, COALESCE(ce.parent_qualified,''), ce.content, COALESCE(ce.metadata,'{}')`
-
-func scanElements(rows *sql.Rows) ([]Element, error) {
-	defer rows.Close()
-	var out []Element
-	for rows.Next() {
-		var e Element
-		var meta string
-		if err := rows.Scan(&e.QualifiedName, &e.ElementType, &e.Name, &e.FilePath, &e.LineStart, &e.LineEnd, &e.Language, &e.ParentQualified, &e.Content, &meta); err != nil {
-			return nil, err
+	out := toks[:0]
+	for _, t := range toks {
+		if counts[t] > bound {
+			continue // too common to discriminate
 		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &e.Metadata)
-		}
-		out = append(out, e)
+		out = append(out, t)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-// FuzzyMatch is one L2 hit with its bm25 relevance score (lower is better).
-type FuzzyMatch struct {
-	Element Element
-	Score   float64
+// nameStopWords is the SMALL set of function words that must never reach a name
+// search. It is deliberately tiny and deliberately not "English": every word
+// here is one the arm must reject regardless of how rare it is in the corpus,
+// and every word NOT here gets the rarity test instead.
+var nameStopWords = map[string]bool{
+	"the": true, "and": true, "for": true, "not": true, "but": true,
+	"you": true, "your": true, "its": true, "are": true, "was": true, "were": true,
+	"can": true, "did": true, "has": true, "had": true, "out": true,
+	"own": true, "same": true, "too": true, "very": true, "just": true, "into": true,
+	"that": true, "this": true, "then": true, "than": true, "when": true,
+	"how": true, "what": true, "where": true, "which": true, "who": true, "why": true,
+	"with": true, "from": true, "use": true, "used": true, "using": true,
+	"one": true, "two": true, "all": true, "any": true, "some": true, "each": true,
+	"does": true, "get": true, "via": true, "per": true, "upon": true, "there": true, "here": true,
 }
 
-// FindByNameToken ranks elements whose SYMBOL NAME contains an identifier-shaped
-// token of the query, shortest (most specific) name first. It is the ArmName
-// ranking arm, and it reads the name alone: the FTS arm reads
-// name + qualified_name + content but only for words that MATCH, and a vector
-// embedding reads the body — so a question that paraphrases ("cut a string to
-// n runes") or names a two-line helper whose body says nothing useful
-// (`coverage`) reaches neither.
+// nameTokenCounts returns, for each CANDIDATE token of the query, how many
+// elements have it as a SUBSTRING of their symbol name or qualified name, plus
+// the total ELEMENT count (the rarity bound's denominator).
 //
-// The tokens become quoted LIKE patterns, so user input can never inject SQL,
-// and a token must be identifier-shaped (see nameTokens) so ordinary prose never
-// summons this arm and fills the result with every element that has a common
-// word in its name. Matching is case-insensitive on both sides because Go symbol
-// names and an agent's question do not agree about case.
+// One SQL COUNT per token — 1-3 queries for a normal question — because the
+// alternatives both measured badly: enumerating every substring of every name
+// costs ~6ms per 200 names (≈330ms per query on this repository's 10,885
+// elements, plus a 100k-entry map), and scanning every row in Go is
+// O(elements x tokens) per query. The gate must not cost more than the arm it
+// guards.
 //
-// The score is 0 for every hit: this arm does not rank by RELEVANCE, it ranks by
-// specificity (shortest name first), and the fusion only needs the order.
+// The unit counted is what the LIKE will MATCH: FindByNameToken searches
+// "%token%", a substring of the name. Tokenizing both sides would call `read`
+// rare while the LIKE matches 347 names that merely contain it — measured on
+// this corpus: `read` 347, `text` 307, `get` 292, `list` 136, `lock` 95,
+// `stamp` 33.
+func (s *Store) nameTokenCounts(toks []string, bound int) (map[string]int, int, error) {
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if bound < 1 {
+		bound = 1
+	}
+	counts := map[string]int{}
+	for _, t := range toks {
+		// The count is only needed to decide RARITY, so it STOPS at bound+1:
+		// the question is "does this token appear in more than bound names",
+		// never "how many". A LIMIT on the subquery makes a common token cost a
+		// short indexed-ish scan instead of a full one — measured on this
+		// repository's 10,885 elements, a prose question with four candidate
+		// tokens took 402ms unbounded.
+		pat := "%" + t + "%"
+		var n int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM (SELECT 1 FROM code_elements WHERE name LIKE ? COLLATE NOCASE OR qualified_name LIKE ? COLLATE NOCASE LIMIT ?)`,
+			pat, pat, bound+1).Scan(&n); err != nil {
+			return nil, 0, err
+		}
+		counts[t] = n
+	}
+	return counts, total, nil
+}
+
+// FindByNameToken ranks elements whose SYMBOL NAME contains a rare token of the
+// query, shortest (most specific) name first. It is the ArmName ranking arm, and
+// it reads the name alone: the FTS arm reads name + qualified_name + content but
+// only for words that MATCH, and a vector embedding reads the body — so a
+// question that paraphrases ("cut a string to n runes") reaches neither.
+//
+// Tokens become LIKE patterns with the argument bound (never concatenated), and
+// the score is 0 for every hit: this arm ranks by SPECIFICITY, not relevance,
+// and the fusion only needs the order.
 func (s *Store) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
-	freq, distinct, err := s.nameTokenFreq()
+	toks, err := s.rareNameTokens(query)
 	if err != nil {
 		return nil, err
 	}
-	toks := nameTokens(query, freq, distinct)
 	if len(toks) == 0 {
 		return nil, nil
 	}
@@ -324,107 +502,41 @@ func (s *Store) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
 	return out, rows.Err()
 }
 
-// nameTokens extracts the tokens of a query that are worth searching for in a
-// SYMBOL NAME. It is the gate that keeps the name arm from being a noise
-// machine, and it had to get much more permissive than a shape test: measured
-// against the 30 labelled questions in docs/retrieval-label-set.md, a
-// capital/underscore/digit shape test let the arm fire on 2 of 30 — because
-// agents ask in PROSE ("take the single-flight lock for embedding") and the
-// informative token is lowercase (`lock`, `stamp`, `runes`).
-//
-// Two filters, in order:
-//
-//  1. length and duplicates — a token must be at least 3 characters, so "go"
-//     and "a" never become name searches;
-//  2. RARITY IN THIS CORPUS. A token that appears inside a large number of
-//     symbol names ("read" in 142 of them, "text" in 210) discriminates nothing,
-//     and searching on it would return a wall of near-identical names. A token
-//     that is rare is the one an agent typed because it is the answer's name.
-//
-// The rarity bound is what replaced the stop-list, and it is strictly better:
-// a stop-list of English words can never be complete, and every word it omits is
-// a real symbol name somewhere (`lock`, `stamp`, `list`, `run`). Rarity is
-// measured from the store itself, so it adapts to the project rather than to
-// the author's guesses about English.
-// total is the ELEMENT count (not the distinct-name count): see the bound below.
-func nameTokens(query string, freq map[string]int, total int) []string {
-	stop := stopWords
-	fields := strings.FieldsFunc(query, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' && r != '.'
-	})
-	// A token must be rare among symbol names to count. The bound is a
-	// fraction of the ELEMENTS, not of the distinct names: a fixture corpus of
-	// three elements would otherwise make every English word "rare" and the
-	// arm would fire on prose, which is exactly the noise it must not produce.
-	// total is the element count, so the bound is scale-free.
-	bound := total / 500
-	if bound < 2 {
-		bound = 2
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, f := range fields {
-		low := strings.ToLower(f)
-		if len(f) < 3 || seen[low] {
-			continue
-		}
-		seen[low] = true
-		if stop[low] {
-			continue
-		}
-		// Rare in this corpus. An UNSEEN token counts as rare (it is how "runes"
-		// reaches an arm on a corpus that happens not to have it), which is why
-		// the stop list above is not optional: rarity alone would let "the"
-		// through on any project.
-		if freq[low] > bound {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
-}
-
-// stopWords is the SMALL set of function words that must never reach a name
-// search. It is deliberately tiny and deliberately not "English": every word
-// here is one a name arm must reject regardless of how rare it is in the
-// corpus, and every word NOT here gets the rarity test instead. A larger list
-// would re-introduce the failure this design exists to avoid — dropping a real
-// symbol name because the author guessed it was an English word.
-var stopWords = map[string]bool{
-	"the": true, "and": true, "for": true, "not": true, "but": true,
-	"you": true, "your": true, "its": true, "are": true, "was": true, "were": true,
-	"can": true, "did": true, "has": true, "had": true, "out": true,
-	"own": true, "same": true, "too": true, "very": true, "just": true, "into": true,
-	"that": true, "this": true, "then": true, "than": true, "when": true,
-	"how": true, "what": true, "where": true, "which": true, "who": true, "why": true,
-	"with": true, "from": true, "use": true, "used": true, "using": true,
-	"one": true, "two": true, "all": true, "any": true, "some": true, "each": true,
-	"does": true, "get": true, "via": true, "per": true, "upon": true, "there": true, "here": true,
-}
-
-// nameTokenFreq returns how many elements carry each distinct symbol name, and
-// the total ELEMENT count (the rarity bound's denominator). It is the table
-// nameTokens consults, and it is one GROUP BY over the names it needs — cheap
-// enough to run per scoped arm, and never on a miss (an arm with no tokens does
-// no work at all).
-func (s *Store) nameTokenFreq() (map[string]int, int, error) {
-	rows, err := s.db.Query(`SELECT name, COUNT(*) FROM code_elements GROUP BY name`)
+// FindExact implements the L1 rung: exact (case-insensitive) match on element
+// name or qualified name.
+func (s *Store) FindExact(name string) ([]Element, error) {
+	rows, err := s.db.Query(`SELECT `+elementCols+` FROM code_elements ce
+		WHERE ce.name = ? COLLATE NOCASE OR ce.qualified_name = ? COLLATE NOCASE
+		ORDER BY length(ce.qualified_name) LIMIT 200`, name, name)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
+	return scanElements(rows)
+}
+
+const elementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path, ce.line_start, ce.line_end, ce.language, COALESCE(ce.parent_qualified,''), ce.content, COALESCE(ce.metadata,'{}')`
+
+func scanElements(rows *sql.Rows) ([]Element, error) {
 	defer rows.Close()
-	freq := map[string]int{}
-	elements := 0
+	var out []Element
 	for rows.Next() {
-		var name string
-		var n int
-		if err := rows.Scan(&name, &n); err != nil {
-			return nil, 0, err
+		var e Element
+		var meta string
+		if err := rows.Scan(&e.QualifiedName, &e.ElementType, &e.Name, &e.FilePath, &e.LineStart, &e.LineEnd, &e.Language, &e.ParentQualified, &e.Content, &meta); err != nil {
+			return nil, err
 		}
-		freq[strings.ToLower(name)] += n
-		elements += n
+		if meta != "" && meta != "{}" {
+			_ = json.Unmarshal([]byte(meta), &e.Metadata)
+		}
+		out = append(out, e)
 	}
-	return freq, elements, rows.Err()
+	return out, rows.Err()
+}
+
+// FuzzyMatch is one L2 hit with its bm25 relevance score (lower is better).
+type FuzzyMatch struct {
+	Element Element
+	Score   float64
 }
 
 // FindFuzzy implements the L2 rung over FTS5. The query is tokenized into

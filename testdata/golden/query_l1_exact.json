@@ -16,6 +16,7 @@
   "query": "Alpha",
   "retrieval": {
     "reason": "exact identifier match",
-    "rung": "L1"
+    "rung": "L1",
+    "scope": "all"
   }
 }
