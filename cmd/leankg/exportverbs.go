@@ -212,12 +212,20 @@ func cmdPack(args []string) {
 		*output, m.Elements, m.Relationships, scope, hash)
 }
 
-// cmdGenerate ports `leankg generate`: render AGENTS.md from the graph and
-// write it to docs/AGENTS.md (the Rust destination).
+// cmdGenerate ports `leankg generate`: render AGENTS.md from the graph.
+//
+// It PRINTS by default and writes only when the caller names a destination
+// with --out. It used to write `docs/AGENTS.md` in the current directory with
+// no flag and no announcement — a verb whose documented output is stdout had
+// an unannounced side effect on the user's tree, and in a repository whose
+// `docs/` is tracked, the next `git status` showed a file the operator never
+// asked for and never knew to review. Nothing is lost by printing: the body
+// is still on stdout, and a caller who wants the file names where it goes.
 func cmdGenerate(args []string) {
 	fs := flag.NewFlagSet("generate", flag.ExitOnError)
 	template := fs.String("template", "", "template name (accepted for CLI parity; the Rust generator never read it)")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
+	out := fs.String("out", "", "write the body to this path instead of only printing it")
 	parseInterspersed("generate", fs, args, 0)
 	_ = template
 
@@ -231,11 +239,16 @@ func cmdGenerate(args []string) {
 	if err != nil {
 		verbFatal(err)
 	}
-	fmt.Printf("Generated documentation:\n%s", body)
-	path, err := docgen.WriteFile("docs", body)
+	if *out == "" {
+		fmt.Printf("%s", body)
+		fmt.Println("\n(not written to disk — pass --out PATH to save it)")
+		return
+	}
+	path, err := docgen.WriteFileTo(*out, body)
 	if err != nil {
 		verbFatal(err)
 	}
+	fmt.Printf("%s", body)
 	fmt.Printf("\nSaved to %s\n", path)
 }
 
@@ -260,9 +273,18 @@ func cmdGenerate(args []string) {
 // next steps (re-ask with the right name vs `leankg index`). It does not
 // suggest a near-match: an annotation is cheap to redo and expensive to
 // discover later, so refusing is the cheap side.
-func requireIndexedElement(st store.Backend, element string) error {
+//
+// The write must also report itself EMPTY: `annotate --description "   "`
+// wrote a whitespace annotation and answered "Created annotation" — a
+// successful write of nothing, in the same shape as a lesson written with no
+// text. description is the note the caller passed; a caller with no note to
+// write has not asked for an annotation.
+func requireIndexedElement(st store.Backend, element, description string) error {
 	if strings.TrimSpace(element) == "" {
 		return fmt.Errorf("element is required: pass the qualified_name an element has in the index, e.g. `leankg query <name>` to find it")
+	}
+	if strings.TrimSpace(description) == "" {
+		return fmt.Errorf("description is required: an annotation with no text is not a note about anything — say what the element does")
 	}
 	els, err := st.FindExact(element)
 	if err != nil {
@@ -305,7 +327,7 @@ func cmdAnnotate(args []string) {
 	}
 	defer st.Close()
 
-	if err := requireIndexedElement(st, element); err != nil {
+	if err := requireIndexedElement(st, element, *description); err != nil {
 		verbFatal(err)
 	}
 	created, err := annot.Annotate(st, element, *description, optString(*userStory), optString(*feature))
@@ -344,7 +366,9 @@ func cmdLink(args []string) {
 	}
 	defer st.Close()
 
-	if err := requireIndexedElement(st, element); err != nil {
+	// A link's note is the id it points at, so the emptiness check has
+	// nothing to say here: pass the link itself, never an empty string.
+	if err := requireIndexedElement(st, element, "link "+id); err != nil {
 		verbFatal(err)
 	}
 	if err := annot.Link(st, element, id, *kind); err != nil {

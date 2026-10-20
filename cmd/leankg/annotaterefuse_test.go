@@ -44,11 +44,11 @@ func TestAnnotateRefusesAnElementTheIndexDoesNotHave(t *testing.T) {
 	}
 
 	// 1. A qualified_name the index has is accepted (no false refusal).
-	if err := requireIndexedElement(st, "pkg/a.go::Do"); err != nil {
+	if err := requireIndexedElement(st, "pkg/a.go::Do", "a note about Do"); err != nil {
 		t.Fatalf("a real element was refused: %v", err)
 	}
 	// 2. One it does not have is refused, naming the index as the reason.
-	err = requireIndexedElement(st, "pkg/does-not-exist.go::Nope")
+	err = requireIndexedElement(st, "pkg/does-not-exist.go::Nope", "a note about Nope")
 	if err == nil {
 		t.Fatal("an element the index does not have was accepted — the annotation would be unreachable")
 	}
@@ -60,7 +60,7 @@ func TestAnnotateRefusesAnElementTheIndexDoesNotHave(t *testing.T) {
 		t.Errorf("refusal does not name the index as the reason (a typo and a stale index want opposite next steps): %v", err)
 	}
 	// 3. An empty name is refused too, with the way to find one.
-	if err := requireIndexedElement(st, "   "); err == nil {
+	if err := requireIndexedElement(st, "   ", "a note"); err == nil {
 		t.Error("an empty element was accepted")
 	}
 	// 4. And the refusal happens BEFORE the write: the store stays clean.
