@@ -270,6 +270,29 @@ server that launchd already supervises, or it should bind `127.0.0.1:9699`
 (the same address as the supervisor) so a second bind fails loudly instead
 of silently creating a second server.
 
+**Closed 2026-10-20.** The recipe now binds `127.0.0.1:9699`, and the
+duplicate was re-created on purpose to measure what happens now:
+
+```text
+$ leankg serve --http 127.0.0.1:9699 --rest :9700 …     # the autoStart command
+  leankg: http 127.0.0.1:9699: listen tcp 127.0.0.1:9699: bind: address already in use
+$ lsof -nP -iTCP:9699 -sTCP:LISTEN
+  leankg 59329 … TCP 127.0.0.1:9699 (LISTEN)     ← the supervisor, and only it
+```
+
+The same command with the old wildcard `:9699` bound successfully (a
+different address family), which is how the duplicate existed at all: the
+supervisor holds the IPv4 socket, the autoStart took the IPv6 one, and a
+client that resolves `localhost` to `::1` reached the DUPLICATE — one
+serving a single project (the autoStart sets no `LEANKG_PROJECT_DIRS`), so
+its schema did not require a project and its answers came from the wrong
+graph. Failing loudly is the correct outcome: the supervisor is already
+serving, and the health probe on 9699 answers from it.
+
+`serveHTTP` does not exit on a bind failure (`cmd/leankg/helpers.go:44` —
+it prints and returns), so a duplicate that cannot bind is a process with
+no sockets: harmless, and it dies with the session.
+
 ### OD2 — `freepeak/.mcp.json` has the same defect as xdev
 
 ```json

@@ -69,6 +69,16 @@ project NAME is now refused with the actionable error (an absolute path
 outside every project already was), and `?project=<bogus name>` answers
 404 instead of the cwd project's data.
 
+**OD1 is closed.** The xdev autoStart recipe bound the wildcard `:9699`
+while the launchd supervisor holds `127.0.0.1:9699` — different address
+families, so the duplicate bound successfully and a client resolving
+`localhost` to `::1` reached the DUPLICATE (a single-project server, since
+the recipe sets no `LEANKG_PROJECT_DIRS`: its schema did not require a
+project, and its answers came from the wrong graph). The recipe now binds
+`127.0.0.1:9699`, and the duplicate was re-created on purpose to measure
+it: `bind: address already in use`, and `lsof` shows the supervisor as the
+only listener.
+
 ### v4.15-mcp-project-scoping — the multi-project MCP surface says which project to name (2026-10-20)
 
 > **Trigger:** an xdev session called `leankg_status` and got
