@@ -60,6 +60,10 @@ type dirtyItem struct{ file, qn, text, hash string }
 // reports it (RS-14), else the conservative 512-token default. Documents and
 // queries use the same cap, so a long query is truncated instead of failing
 // at the provider and degrading L3 (RS-15).
+//
+// QUERY/MEMORY CALLERS ONLY (internal/core: query truncation and the memory
+// path). The write path must not use it: a flaky /props would silently drop the
+// write cap to 1000 and flip the stamp guard. Writers use resolveWriteCap.
 func TextCap(p Provider) int {
 	return capForLabel(p.Provider(), sidecarBudget(p))
 }
@@ -76,6 +80,30 @@ func capForLabel(label string, budget int) int {
 		budget = maxLocalTextChars
 	}
 	return min(maxContentChars, budget)
+}
+
+// resolveWriteCap is the rune cap a writer embeds with, decided by rule order
+// and never by a silent fallback:
+//
+//  1. a cap already recorded in the stamp (stored > 0) wins, whatever the budget;
+//  2. a non-local label takes the general cap (capForLabel);
+//  3. the local label with a live sidecar budget takes min(8000, budget);
+//  4. the local label with an operator pin (LEANKG_EMBED_TEXT_CAP) takes the pin;
+//  5. otherwise the cap is undetermined and the error names both fixes.
+//
+// Pure: the caller reads /props (budget), the pin and the stamp. Unlike TextCap
+// there is no 1000 default here.
+func resolveWriteCap(label string, budget, pin, stored int) (int, error) {
+	if stored > 0 {
+		return stored, nil
+	}
+	if label != "local" || budget > 0 {
+		return capForLabel(label, budget), nil
+	}
+	if pin > 0 {
+		return pin, nil
+	}
+	return 0, fmt.Errorf("embed: cannot determine the text cap for provider %q: the sidecar /props reported no budget; make the sidecar /props reachable, or set LEANKG_EMBED_TEXT_CAP (256-8000)", label)
 }
 
 // sidecarBudget is the text budget the local sidecar reports from /props, in

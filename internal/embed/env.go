@@ -379,6 +379,21 @@ func localPinned(model string) bool {
 	return os.Getenv("LEANKG_EMBED_REVISION") != "" || inCatalog
 }
 
+// textCapPin is the operator's write-cap pin, LEANKG_EMBED_TEXT_CAP, in runes.
+// Unset or empty is 0 (no pin). A value that is not a number, or lies outside
+// [256, 8000], is an error: a typo must not silently choose the write cap.
+func textCapPin() (int, error) {
+	raw := os.Getenv("LEANKG_EMBED_TEXT_CAP")
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 256 || n > maxContentChars {
+		return 0, fmt.Errorf("embed: LEANKG_EMBED_TEXT_CAP=%q: want an integer in [256, %d]", raw, maxContentChars)
+	}
+	return n, nil
+}
+
 func newLocalProvider(baseURL string) (Provider, error) {
 	model := localModel()
 	native, width, err := providerDims(model, defaultDims)
