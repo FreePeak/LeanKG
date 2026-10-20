@@ -1614,13 +1614,25 @@ func (e *Engine) OntologyMatches() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"matches": matches}
+	out := map[string]any{"matches": NonNil(matches)}
 	if len(matches) == 0 {
 		out["note"] = "no concept catalog is imported for this project, so nothing can match; " +
 			"import one with `leankg import` (action=ontology). A NON-empty list means a catalog " +
 			"is imported and its concepts matched these elements."
 	}
 	return out, nil
+}
+
+// NonNil returns list as a non-nil slice.
+//
+// Go marshals a nil slice as `null` and an empty slice as `[]`, and the two
+// are DIFFERENT answers — "never configured" and "configured and found
+// nothing" — so a list answer must not collapse them into one shape.
+func NonNil[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
 }
 
 // LanguagesStatus reports the lazy activation state: which languages are
