@@ -403,3 +403,36 @@ func TestImportRealStampDifferenceRewritesCollection(t *testing.T) {
 		})
 	}
 }
+
+// TestImportNeverOverwritesStoredTextCap: an import never knows the cap the
+// producer cut its text at, so it must not change the stored one. A fresh stamp
+// is written with text_cap 0 (the first run fills it in); a stamp that already
+// holds a cap keeps it through a re-import at the same identity.
+func TestImportNeverOverwritesStoredTextCap(t *testing.T) {
+	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	if _, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector())); err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	if got := storedStamp(t, st, "embeddinggemma-2").TextCap; got != 0 {
+		t.Fatalf("fresh import stamp TextCap = %d, want 0 (not recorded)", got)
+	}
+
+	stored := storedStamp(t, st, "embeddinggemma-2")
+	stored.TextCap = 4032
+	if err := st.WriteStamp(stored); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, st, el("a::f2", "func f2() {}"))
+	rep, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector()))
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if rep.Embedded != 1 {
+		t.Fatalf("second import: got %+v, want Embedded=1 (only the new element)", rep)
+	}
+	if got := storedStamp(t, st, "embeddinggemma-2").TextCap; got != 4032 {
+		t.Fatalf("import overwrote the stored text cap: TextCap = %d, want 4032", got)
+	}
+}

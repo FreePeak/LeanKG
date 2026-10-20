@@ -124,18 +124,16 @@ func matchImportFlag[T comparable](flag string, given, resolved T) error {
 //
 // The provider is resolved from the LEANKG_EMBED_* environment exactly as the
 // import is (resolveImport); modelID is the --model flag and must agree with
-// it. A local sidecar must report its n_ctx from /props: when it cannot, the
-// export fails rather than cap at a different length than the live run.
+// it. The cut is the same write cap an incremental run resolves (writeCapFor):
+// the stored cap when the stamp has one, so an export works while /props is
+// down. With no stored cap, no /props budget and no LEANKG_EMBED_TEXT_CAP pin
+// the cap is undetermined and the export fails before writing anything.
 func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Writer) error {
 	target, err := resolveImport(modelID, "", "", 0)
 	if err != nil {
 		return err
 	}
 	p := target.provider
-	if p.Provider() == "local" && sidecarBudget(p) == 0 {
-		return fmt.Errorf("embed: export: the local sidecar at %q reported no n_ctx on /props, so the live text cap "+
-			"cannot be known; start the sidecar and set LEANKG_EMBED_BASE_URL to it", os.Getenv("LEANKG_EMBED_BASE_URL"))
-	}
 	cur, err := st.Stamp(p.ModelID())
 	if err != nil {
 		return err
@@ -200,9 +198,12 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 	if err != nil {
 		return rep, err
 	}
-	// Provider-label-only differences are never cleared here: the producer's
-	// text cap is not recorded in the stamp, so import trusts the operator, and
-	// clearing on a label change would lose vectors.
+	// Provider-label-only differences are never cleared here: Matches ignores the
+	// label, so a matching stored stamp is left as it is, text_cap included. An
+	// import never records a cap: the producer's cut is not known here. A fresh
+	// stamp is written with text_cap 0 and the first run fills it in; a real
+	// identity change clears the collection and rewrites the stamp, also with 0,
+	// because the old cap described vectors that are gone.
 	if cur != nil && !cur.Matches(want) {
 		if err := st.ClearVectors(want.ModelID); err != nil {
 			return rep, err
