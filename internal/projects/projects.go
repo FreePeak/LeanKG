@@ -154,9 +154,9 @@ func (r *Router) MultiProject() bool {
 // resolve maps a selector to a registered canonical dir:
 //   - "" → default (never errors)
 //   - exact canonical dir match
-//   - exact name (basename) match; ambiguous names error
-//   - a filesystem path whose ancestor walk finds a registered project
-//     (a file inside a routed project routes to that project)
+//   - a PATH whose ancestor walk finds a registered project (a file or
+//     subdirectory inside a routed project routes to that project)
+//   - a NAME matching a project's basename; ambiguous names error
 //
 // Resolve maps a selector (dir path or name) to a registered project's
 // canonical directory WITHOUT opening it — no store open, no Migrate, no
@@ -170,27 +170,56 @@ func (r *Router) resolve(selector string) (string, error) {
 	if selector == "" {
 		return r.def, nil
 	}
-	if sel := canonical(selector); sel != "" {
-		if contains(r.List(), sel) {
-			return sel, nil
-		}
-		name := filepath.Base(sel)
-		match, nerr := r.byName(name)
-		if nerr != nil {
-			return "", fmt.Errorf("ambiguous project %q — several registered projects share that name", selector)
-		}
-		if match != "" {
-			return match, nil
-		}
-		// Ancestor walk: the selector may be a file or subdirectory of a
-		// registered project (Rust find_leankg_for_path parity).
+	sel := canonical(selector)
+	if sel == "" {
+		return "", r.unknownProjectError(selector)
+	}
+	if contains(r.List(), sel) {
+		return sel, nil
+	}
+	// The ancestor walk is for PATHS only (Rust find_leankg_for_path
+	// parity): the selector may be a file or subdirectory of a registered
+	// project.
+	//
+	// It used to run for EVERY selector, and a bare name was canonicalized
+	// against the serve process's cwd — so an unknown name ("leankgg")
+	// walked up to the cwd, and on a host whose cwd IS a registered project
+	// it resolved to THAT project. Measured live on the 286-project
+	// self-host: {"project":"totally-not-a-real-project-xyz"} answered with
+	// the leankg project's status (11,246 elements) instead of an error,
+	// and ?project=totally-not-a-real-project-xyz answered 200. That is
+	// the silent wrong-project fallback FR-ZCP-02 forbids, and it is the
+	// exact failure the fail-closed rule exists to prevent: a confident
+	// answer built from the WRONG graph.
+	if isPathSelector(selector) {
 		for dir := sel; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 			if contains(r.List(), dir) {
 				return dir, nil
 			}
 		}
 	}
-	return "", r.unknownProjectError(selector)
+	// A bare name (or a path that is inside no project) matches by
+	// basename. Several matches are ambiguous — the error names them.
+	matches := r.byName(filepath.Base(sel))
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return "", r.unknownProjectError(selector)
+	default:
+		return "", r.ambiguousProjectError(selector, matches)
+	}
+}
+
+// isPathSelector reports whether a selector is a PATH rather than a bare
+// project name: absolute, or carrying a separator.
+//
+// The distinction decides whether the ancestor walk may run. A path says
+// "this place"; a name says "this project". Letting a name walk up the
+// filesystem lets an unknown name land on whatever project happens to
+// contain the server's cwd (see resolve).
+func isPathSelector(selector string) bool {
+	return filepath.IsAbs(selector) || strings.ContainsRune(selector, filepath.Separator)
 }
 
 // maxKnownProjectsInError bounds how many projects the unknown-project error
@@ -201,10 +230,11 @@ func (r *Router) resolve(selector string) (string, error) {
 // selector takes (a directory path, or a name).
 const maxKnownProjectsInError = 10
 
-// unknownProjectError names the selector that failed and a bounded sample of
-// the projects the server does serve. The list is truncated with a count of
-// the remainder rather than dropped: "which projects exist?" is a real
-// question, and the answer must not be a 30 KB string.
+// unknownProjectError names the selector that failed, says how to pick a
+// project, and lists a bounded sample of the projects the server does serve.
+// The list is truncated with a count of the remainder rather than dropped:
+// "which projects exist?" is a real question, and the answer must not be a
+// 30 KB string.
 func (r *Router) unknownProjectError(selector string) error {
 	known := r.List()
 	shown, more := known, 0
@@ -212,28 +242,50 @@ func (r *Router) unknownProjectError(selector string) error {
 		more = len(shown) - maxKnownProjectsInError
 		shown = shown[:maxKnownProjectsInError]
 	}
-	msg := fmt.Sprintf("unknown project %q — known projects: %s",
-		selector, strings.Join(shown, ", "))
+	// Name and path: the name is what a caller can pass back, the path is
+	// what makes it unambiguous (names repeat across a 286-project host).
+	parts := make([]string, 0, len(shown))
+	for _, d := range shown {
+		parts = append(parts, fmt.Sprintf("%s (%s)", filepath.Base(d), d))
+	}
+	msg := fmt.Sprintf("unknown project %q — pass the absolute path of the repository you are working in "+
+		"(a path inside a registered project resolves to that project), or the project's name; known projects: %s",
+		selector, strings.Join(parts, ", "))
 	if more > 0 {
 		msg += fmt.Sprintf(" (+%d more)", more)
 	}
 	return errors.New(msg + " (queries never fall back to another project's data)")
 }
 
-var errAmbiguousName = errors.New("ambiguous project name")
+// ambiguousProjectError names every registered project that shares the
+// selector's name, so the caller can pick one by path instead of guessing.
+// The old message said "several registered projects share that name" and
+// stopped there: on a 286-project host the caller had no way to choose, so
+// the call could only be retried with a guess.
+func (r *Router) ambiguousProjectError(selector string, matches []string) error {
+	shown, more := matches, 0
+	if len(shown) > maxKnownProjectsInError {
+		more = len(shown) - maxKnownProjectsInError
+		shown = shown[:maxKnownProjectsInError]
+	}
+	msg := fmt.Sprintf("ambiguous project %q — %d registered projects share that name: %s",
+		selector, len(matches), strings.Join(shown, ", "))
+	if more > 0 {
+		msg += fmt.Sprintf(" (+%d more)", more)
+	}
+	return errors.New(msg + " — pass the absolute path instead")
+}
 
-func (r *Router) byName(name string) (string, error) {
-	var hit string
-	found := false
+// byName returns every registered project whose basename is name. More than
+// one is ambiguous; the caller decides what to do about it.
+func (r *Router) byName(name string) []string {
+	var hits []string
 	for _, d := range r.List() {
 		if filepath.Base(d) == name {
-			if found {
-				return "", errAmbiguousName
-			}
-			hit, found = d, true
+			hits = append(hits, d)
 		}
 	}
-	return hit, nil
+	return hits
 }
 
 // EngineFor returns the project's engine, opening it on first use.
