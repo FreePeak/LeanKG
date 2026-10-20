@@ -87,6 +87,50 @@ func TestScopedServerKeepsProjectOptional(t *testing.T) {
 	}
 }
 
+// TestMultiProjectInstructionsDemandAProject is the second place the rule is
+// read: the agent protocol the server hands out at initialize (clients put
+// it in the model's system prompt).
+//
+// The old text hedged both surfaces in one sentence — "project= is
+// required only on multi-project HTTP servers" — which reads as a condition
+// the model cannot evaluate: it sees the tool list, not the server's
+// environment. On the 286-project self-host that is exactly the inference
+// that went wrong, and the agent's first call carried no project at all.
+func TestMultiProjectInstructionsDemandAProject(t *testing.T) {
+	_, session := newProjectServerForTest(t, WithProjectRequired(true))
+	initialize := session.InitializeResult()
+	if initialize == nil {
+		t.Fatal("client has no initialize result")
+	}
+	lower := strings.ToLower(initialize.Instructions)
+	for _, want := range []string{"project required", "every tool call must name one", "absolute path"} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("multi-project instructions missing %q: %s", want, initialize.Instructions)
+		}
+	}
+	if strings.Contains(lower, "project fixed") {
+		t.Fatalf("a multi-project server must not claim its project is fixed: %s", initialize.Instructions)
+	}
+}
+
+// TestSingleProjectInstructionsFixTheProject is the other half: a server
+// that serves one project tells the model to omit the argument, so an agent
+// that never learned about `project` keeps working.
+func TestSingleProjectInstructionsFixTheProject(t *testing.T) {
+	_, session := newProjectServerForTest(t)
+	initialize := session.InitializeResult()
+	if initialize == nil {
+		t.Fatal("client has no initialize result")
+	}
+	lower := strings.ToLower(initialize.Instructions)
+	if !strings.Contains(lower, "project fixed") {
+		t.Fatalf("single-project instructions must say the project is fixed: %s", initialize.Instructions)
+	}
+	if strings.Contains(lower, "project required") {
+		t.Fatalf("a single-project server must not demand a project: %s", initialize.Instructions)
+	}
+}
+
 // toolSchema is one tool's advertised schema, reduced to what this test
 // cares about.
 type toolSchema struct {
