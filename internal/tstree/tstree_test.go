@@ -71,10 +71,10 @@ func TestExtractObjC(t *testing.T) {
 	// @implementation; the widest span wins, so both point at the definition.
 	want := []Def{
 		{Kind: "type", Name: "Greeter", StartLine: 3, EndLine: 5},
-		{Kind: "method", Name: "greet", StartLine: 4, EndLine: 4},
+		{Kind: "method", Name: "greet", Parent: "Greeter", StartLine: 4, EndLine: 4},
 		{Kind: "type", Name: "Person", StartLine: 12, EndLine: 19},
-		{Kind: "method", Name: "sayHello", StartLine: 13, EndLine: 15},
-		{Kind: "method", Name: "setName:age:", StartLine: 16, EndLine: 18},
+		{Kind: "method", Name: "sayHello", Parent: "Person", StartLine: 13, EndLine: 15},
+		{Kind: "method", Name: "setName:age:", Parent: "Person", StartLine: 16, EndLine: 18},
 		{Kind: "function", Name: "main", StartLine: 21, EndLine: 23},
 		{Kind: "function", Name: "describe", StartLine: 25, EndLine: 27},
 	}
@@ -122,25 +122,29 @@ func TestExtractDart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Animal.speak (abstract member) and Dog.speak (override) both span one
-	// line, so the first occurrence wins; legs/swim/tag/add keep their bodies.
+	// Animal.speak (abstract member) and Dog.speak (override) are DIFFERENT
+	// methods on different owners, so both are extracted — the dedupe key
+	// carries the owner, so one cannot swallow the other. Before that, the
+	// pair collapsed into a single `speak` and Dog's override was lost from
+	// the graph entirely; legs/swim/tag/add keep their bodies.
 	want := []Def{
 		{Kind: "type", Name: "Animal", StartLine: 3, EndLine: 5},
-		{Kind: "method", Name: "speak", StartLine: 4, EndLine: 4},
+		{Kind: "method", Name: "speak", Parent: "Animal", StartLine: 4, EndLine: 4},
 		{Kind: "type", Name: "Dog", StartLine: 7, EndLine: 15},
-		{Kind: "method", Name: "legs", StartLine: 10, EndLine: 10},
-		{Kind: "constructor", Name: "Dog", StartLine: 11, EndLine: 11},
-		{Kind: "constructor", Name: "named", StartLine: 12, EndLine: 12},
-		{Kind: "constructor", Name: "puppy", StartLine: 13, EndLine: 13},
-		{Kind: "constructor", Name: "other", StartLine: 14, EndLine: 14},
+		{Kind: "method", Name: "speak", Parent: "Dog", StartLine: 9, EndLine: 9},
+		{Kind: "method", Name: "legs", Parent: "Dog", StartLine: 10, EndLine: 10},
+		{Kind: "constructor", Name: "Dog", Parent: "Dog", StartLine: 11, EndLine: 11},
+		{Kind: "constructor", Name: "named", Parent: "Dog", StartLine: 12, EndLine: 12},
+		{Kind: "constructor", Name: "puppy", Parent: "Dog", StartLine: 13, EndLine: 13},
+		{Kind: "constructor", Name: "other", Parent: "Dog", StartLine: 14, EndLine: 14},
 		{Kind: "type", Name: "Swimmer", StartLine: 17, EndLine: 19},
-		{Kind: "method", Name: "swim", StartLine: 18, EndLine: 18},
+		{Kind: "method", Name: "swim", Parent: "Swimmer", StartLine: 18, EndLine: 18},
 		{Kind: "type", Name: "Color", StartLine: 21, EndLine: 21},
-		{Kind: "constant", Name: "red", StartLine: 21, EndLine: 21},
-		{Kind: "constant", Name: "green", StartLine: 21, EndLine: 21},
-		{Kind: "constant", Name: "blue", StartLine: 21, EndLine: 21},
+		{Kind: "constant", Name: "red", Parent: "Color", StartLine: 21, EndLine: 21},
+		{Kind: "constant", Name: "green", Parent: "Color", StartLine: 21, EndLine: 21},
+		{Kind: "constant", Name: "blue", Parent: "Color", StartLine: 21, EndLine: 21},
 		{Kind: "type", Name: "AnimalX", StartLine: 23, EndLine: 25},
-		{Kind: "method", Name: "tag", StartLine: 24, EndLine: 24},
+		{Kind: "method", Name: "tag", Parent: "AnimalX", StartLine: 24, EndLine: 24},
 		{Kind: "function", Name: "add", StartLine: 27, EndLine: 29},
 	}
 	assertDefs(t, defs, want)
@@ -243,25 +247,30 @@ func firstBadNode(src []byte, lang string) string {
 // assertDefs compares the extracted set as a whole, so a fixture that grows an
 // unexpected definition (or loses one) fails loudly instead of silently
 // passing a subset check.
+//
+// The key carries the OWNER as well as the kind and the name: a member's
+// identity is its owner plus its name, so `Animal.speak` and `Dog.speak` are
+// two definitions, not one. Keying by name alone would silently drop one.
 func assertDefs(t *testing.T, got, want []Def) {
 	t.Helper()
+	key := func(d Def) string { return d.Kind + " " + d.Parent + " " + d.Name }
 	byKey := map[string]Def{}
 	for _, d := range got {
-		byKey[d.Kind+" "+d.Name] = d
+		byKey[key(d)] = d
 	}
 	for _, w := range want {
-		g, ok := byKey[w.Kind+" "+w.Name]
+		g, ok := byKey[key(w)]
 		if !ok {
-			t.Errorf("missing def %s %q (got %s)", w.Kind, w.Name, formatDefs(got))
+			t.Errorf("missing def %s %q (owner %q) (got %s)", w.Kind, w.Name, w.Parent, formatDefs(got))
 			continue
 		}
 		if g.StartLine != w.StartLine || g.EndLine != w.EndLine {
-			t.Errorf("%s %q lines = %d..%d, want %d..%d", w.Kind, w.Name, g.StartLine, g.EndLine, w.StartLine, w.EndLine)
+			t.Errorf("%s %q (owner %q) lines = %d..%d, want %d..%d", w.Kind, w.Name, w.Parent, g.StartLine, g.EndLine, w.StartLine, w.EndLine)
 		}
-		delete(byKey, w.Kind+" "+w.Name)
+		delete(byKey, key(w))
 	}
 	for _, extra := range byKey {
-		t.Errorf("unexpected def %s %q at lines %d..%d", extra.Kind, extra.Name, extra.StartLine, extra.EndLine)
+		t.Errorf("unexpected def %s %q (owner %q) at lines %d..%d", extra.Kind, extra.Name, extra.Parent, extra.StartLine, extra.EndLine)
 	}
 }
 
@@ -324,7 +333,7 @@ func TestExtractIgnoresNonDefinitions(t *testing.T) {
 	}
 	assertDefs(t, objcDefs, []Def{
 		{Kind: "type", Name: "Widget", StartLine: 8, EndLine: 15},
-		{Kind: "method", Name: "run", StartLine: 9, EndLine: 14},
+		{Kind: "method", Name: "run", Parent: "Widget", StartLine: 9, EndLine: 14},
 	})
 
 	dartDefs, err := Extract([]byte(dartJunkFixture), "dart")
@@ -333,11 +342,11 @@ func TestExtractIgnoresNonDefinitions(t *testing.T) {
 	}
 	assertDefs(t, dartDefs, []Def{
 		{Kind: "type", Name: "Factory", StartLine: 3, EndLine: 9},
-		{Kind: "constructor", Name: "Factory", StartLine: 4, EndLine: 4},
-		{Kind: "constructor", Name: "named", StartLine: 5, EndLine: 5},
-		{Kind: "constructor", Name: "create", StartLine: 6, EndLine: 6},
+		{Kind: "constructor", Name: "Factory", Parent: "Factory", StartLine: 4, EndLine: 4},
+		{Kind: "constructor", Name: "named", Parent: "Factory", StartLine: 5, EndLine: 5},
+		{Kind: "constructor", Name: "create", Parent: "Factory", StartLine: 6, EndLine: 6},
 		{Kind: "function", Name: "main", StartLine: 11, EndLine: 16},
-		{Kind: "function", Name: "inner", StartLine: 14, EndLine: 14},
+		{Kind: "function", Name: "inner", Parent: "main", StartLine: 14, EndLine: 14},
 	})
 }
 
