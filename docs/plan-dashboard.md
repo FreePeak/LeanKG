@@ -1,6 +1,6 @@
 # Plan v4.15 — session telemetry, efficiency metrics and the web dashboard
 
-**Status:** IMPLEMENTED on branch `feat/v4.15-dashboard` (2026-10-10), uncommitted pending owner review; see §8 for outcomes and deviations. · **Tracks:** `DS-01..DS-27` (added to [`prd-task-tracker.md`](prd-task-tracker.md) on approval) · **PRD entry:** v4.15.0 (added on approval)
+**Status:** IMPLEMENTED and MERGED. The wave landed as [PR #458](https://github.com/FreePeak/LeanKG/pull/458) (merged 2026-10-10), with follow-ups [PR #462](https://github.com/FreePeak/LeanKG/pull/462) (dashboard failure reason shown verbatim) and [PR #475](https://github.com/FreePeak/LeanKG/pull/475) (telemetry consent reloads on SIGHUP). §8 holds the outcome and deviations; DS-26 and DS-27 remain deferred. · **Tracks:** `DS-01..DS-27` (rows in [`prd-task-tracker.md`](prd-task-tracker.md))
 **Source:** an owner request (2026-10-10) plus four parallel code and source surveys of `e34e1ce` (v0.34.0): the CLI, MCP, web and storage internals; the existing measurement code; the agent memory server; and the on-disk session formats of seven coding agents. Every "today" claim below cites the line it was read from.
 
 This document is the working plan for one wave. When the wave lands, its outcome moves into the PRD changelog and this file is archived under `docs/archive/`.
