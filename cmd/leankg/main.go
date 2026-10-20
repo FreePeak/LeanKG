@@ -259,6 +259,32 @@ requests select one with ?project= (dir path or name).
 `)
 }
 
+// newScopedMCPServer builds the MCP server for a surface that already serves
+// ONE project:
+//
+//   - the stdio session — one process, spawned by one client in the
+//     repository it is working in, so the process's own project IS the
+//     answer;
+//   - the per-request `?project=` handler — the routing layer already chose
+//     the project before the handler ran.
+//
+// On both, the `project` argument stays optional and a call that omits it is
+// answered by the engine the surface was built with. The multi-project
+// fail-closed rule belongs to the UNSCOPED HTTP surface, where the caller is
+// remote and the server cannot know which project a question is about.
+//
+// Measured live on the 298-project self-host before this: a stdio session
+// (the client had spawned the process inside its own repository) was refused
+// with LEANKG_ERROR_MISSING_PARAM — "this server serves multiple projects"
+// — which contradicts the stdio contract this command documents. The
+// argument still selects another project when it is present.
+func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp.Server {
+	srv := leankgmcp.New(engine)
+	srv.SetProjectRouter(router)
+	srv.SetProjectScoped(true)
+	return srv
+}
+
 func cmdServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
@@ -463,8 +489,7 @@ afterSidecars:
 		// stdio is one process-bound MCP session; per-project selection
 		// travels as the `project` tool argument, routed through the
 		// router hook.
-		srv := leankgmcp.New(engine)
-		srv.SetProjectRouter(router)
+		srv := newScopedMCPServer(engine, router)
 		srv.SetRecorder(rec) // plan v4.15 DS-04: capture tools/call and identity
 		registerMCPSink(srv)
 		log.Printf("leankg serve (stdio) project=%s engine=%s", dir, st.Engine())
@@ -490,13 +515,7 @@ afterSidecars:
 		registerMCPSink(mcpSrv)
 		h := httpMux(mcpSrv.HTTPHandler())
 		h = routeByProject(ctx, router, h, func(p *projects.Project) http.Handler {
-			pSrv := leankgmcp.New(p.Engine)
-			pSrv.SetProjectRouter(router)
-			// The routing layer already chose this project from ?project=;
-			// without this the handler asked for the argument again and failed
-			// closed, so every MCP client config carrying a ?project= suffix
-			// was unusable on a multi-project server.
-			pSrv.SetProjectScoped(true)
+			pSrv := newScopedMCPServer(p.Engine, router)
 			pSrv.SetAuthStore(st)
 			pSrv.SetRecorder(rec)
 			registerMCPSink(pSrv)
