@@ -48,6 +48,7 @@ type Report struct {
 	NoiseFloor  float64 `json:"NoiseFloor,omitempty"` // measured off-topic similarity ceiling (calibrate.go)
 	Coverage    float64
 	Duration    time.Duration
+	Notes       []string `json:"notes,omitempty"` // one-line operator notes (e.g. a kept stored text cap)
 }
 
 // dirtyItem is one element queued for embedding: the file it came from (the
