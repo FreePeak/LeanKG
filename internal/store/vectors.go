@@ -60,10 +60,9 @@ func (s StaleStampSweep) Empty() bool {
 // prefix pair. Provider is excluded from that identity (a transport label, so
 // an HF-imported collection stamped "openai" is read back by a "local" provider
 // without drift), but it is not inert: internal/embed picks the per-text rune
-// cap from the label, so a writer that guards on identity must also compare the
-// cap (capForLabel), as the incremental run does. TextCap is excluded too: it
-// records which cap the vectors were written with, and is persisted for the
-// write-cap resolver rather than compared here.
+// cap from the label. Matches ignores TextCap: the write cap is resolved once
+// per run by resolveWriteCap (stored cap, else label/budget rule, else pin, else
+// error), and the stored TextCap is what that resolver reads back.
 func (a ModelStamp) Matches(b ModelStamp) bool {
 	return a.ModelID == b.ModelID &&
 		a.Revision == b.Revision &&
