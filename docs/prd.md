@@ -10,6 +10,65 @@
 
 ## Changelog
 
+### v4.16-project-selector-fail-closed — an unknown project no longer answers from another one (2026-10-20)
+
+> **Trigger:** reviewing the v4.15-mcp-project-scoping work on the live
+> 286-project self-host. The schema now tells the model to name a project,
+> so the model names one — and a name that matches nothing came back with
+> an answer anyway.
+>
+> ```
+> {"project":"totally-not-a-real-project-xyz"}
+>   → the leankg project's status, 11,246 elements, no error
+> ?project=totally-not-a-real-project-xyz
+>   → HTTP 200
+> ```
+
+> The serve process's cwd is the leankg repository, and on the self-host that
+> repository is a REGISTERED project. The resolver canonicalized a bare name
+> against the cwd and then walked up the filesystem, so a name that matched
+> nothing climbed to the cwd and resolved to that project. That is the
+> silent wrong-project fallback FR-ZCP-02 forbids, and it is the exact
+> failure the fail-closed rule exists to prevent: a confident answer built
+> from the WRONG graph, handed to a model that asked about a repository
+> that is not there.
+
+**Landed:**
+
+- **The ancestor walk is for paths only.** A path says "this place"; a bare
+  name says "this project". A name now matches a project's basename or
+  errors. The order changed for paths too: a path inside a registered
+  project resolves to THAT project even when its basename is also another
+  project's name.
+- **The two errors are actionable.** "unknown project" says how to pick one
+  — the absolute path of the repository you are in, since a path inside a
+  project resolves to that project — and lists the known projects as name
+  and path, bounded to 10 with a count of the rest. "ambiguous" names the
+  candidates instead of only saying that some exist.
+- **A path to a file that does not exist yet routes to its project.**
+  `EvalSymlinks` fails outright when the leaf is missing, so a
+  not-yet-created file came back unresolved while the project directory it
+  points into came back resolved, and the two never compared equal.
+- **The agent protocol says what THIS surface requires.** The initialize
+  response carried one hedged sentence for every surface ("project= is
+  required only on multi-project HTTP servers") — a condition the model
+  cannot evaluate, since it sees the tool list and not the server's
+  environment. A multi-project server now says the project is REQUIRED and
+  how to supply it; a server that serves one project says it is fixed.
+
+**The test that should have caught it passed for the wrong reason.** The
+rule "an explicit unknown key never falls back to the default" had a test,
+and it was green — because the test process's cwd was not a registered
+project, so the walk climbed out of the repository and found nothing. The
+new test puts the cwd INSIDE a registered project, which is the live
+configuration.
+
+**Verified:** `go test ./internal/projects/ ./internal/mcp/ ./cmd/leankg/`,
+`go vet ./...`, `gofmt` clean; live on the 286-project self-host, a bogus
+project NAME is now refused with the actionable error (an absolute path
+outside every project already was), and `?project=<bogus name>` answers
+404 instead of the cwd project's data.
+
 ### v4.15-mcp-project-scoping — the multi-project MCP surface says which project to name (2026-10-20)
 
 > **Trigger:** an xdev session called `leankg_status` and got
