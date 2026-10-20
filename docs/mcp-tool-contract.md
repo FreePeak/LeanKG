@@ -22,6 +22,13 @@ To change the surface: edit the registry, run `go test ./internal/mcp -run TestT
 
 _None. The Go registry's tool count has only ever shrunk (76 Rust tools to 3), which is a rewrite, not a deprecation._
 
+## The `project` property
+
+Optional on a server that serves ONE project: a single-project server, a stdio session, or a `?project=` handler.
+REQUIRED on a multi-project server (`LEANKG_PROJECT_DIRS`): that server serves several repositories and refuses a call that does not name one.
+The refusal is the point — an omitted project used to be answered from the server's own cwd, so a question about another repository got a confident answer built from the WRONG graph.
+Name it with the absolute path of the repository you are working in (a path inside a registered project resolves to that project) or the project's name.
+
 ## Tools
 
 | Tool | Description | Input properties |

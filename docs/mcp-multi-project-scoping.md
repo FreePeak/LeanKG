@@ -125,6 +125,46 @@ LeanKG REST client with it: `codeGraph.project` +
 the model supply the argument, which unblocks the reported failure; RC4 is
 what makes it not depend on the model.
 
+### RC5 — a project selector that matched NOTHING answered from the cwd's project
+
+Found while reviewing RC1's fix on the live self-host, 2026-10-20.
+
+The serve process's cwd is the leankg repository, and on the self-host that
+repository is a **registered** project. The resolver canonicalized a bare
+name against the cwd and then walked up the filesystem, so a name that
+matched nothing climbed to the cwd and resolved to that project:
+
+```text
+$ curl -s -X POST 'http://127.0.0.1:9699/mcp' -d '{"method":"tools/call",
+    "params":{"name":"status","arguments":{"project":"totally-not-a-real-project-xyz"}}}'
+  → the leankg project's status: 11,246 elements, no error
+
+$ curl -o /dev/null -w '%{http_code}' -X POST \
+    'http://127.0.0.1:9699/mcp?project=totally-not-a-real-project-xyz' …
+  → 200
+```
+
+An **absolute** path outside every project was refused correctly
+(`unknown project "/tmp/definitely-not-a-project"`), so the hole was in the
+NAME branch only — the one the model is told to use.
+
+This is the silent wrong-project fallback FR-ZCP-02 forbids, and it is what
+the fail-closed rule exists to prevent: a confident answer built from the
+WRONG graph, handed to a model that asked about a repository that is not
+there. The schema change (RC1) made the model name a project on every
+call, which is exactly when this hole starts to matter.
+
+**Why the test was green:** the rule had a test, and it passed — because the
+test process's cwd was not a registered project, so the walk climbed out of
+the repository and found nothing. The live configuration is the opposite:
+the cwd IS a project.
+
+**Fix:** the ancestor walk is for PATHS only ("this place"); a bare NAME
+matches a project's basename or errors. The order changed for paths too: a
+path inside a registered project resolves to THAT project even when its
+basename is also another project's name. Both errors now say how to pick a
+project, and the ambiguous one names its candidates.
+
 ---
 
 ## 3. What changed in LeanKG
@@ -134,6 +174,9 @@ what makes it not depend on the model.
 | `project` is REQUIRED in the tool schemas on a multi-project server | `internal/mcp/server.go:103`, `:274-297`, `cmd/leankg/main.go:511` | RC1 — the rule reaches the model before the call |
 | stdio and `?project=` are scoped surfaces | `cmd/leankg/main.go:262-283`, `:492`, `:518` | RC2 — one session, one project |
 | the unknown-project error is bounded | `internal/projects/projects.go:196-220` | RC3 — no context wall |
+| the agent protocol states what THIS surface requires | `internal/mcp/server.go` — `instructions()`, `projectRuleRequired` / `projectRuleFixed` | RC1 — the sentence the model reads must not be a condition it cannot evaluate |
+| a selector that matches nothing errors instead of climbing to the cwd's project | `internal/projects/projects.go` — `resolve()`, `isPathSelector` | RC5 — no wrong-graph answers |
+| both selector errors say how to pick a project, and name the candidates | `internal/projects/projects.go` — `unknownProjectError`, `ambiguousProjectError` | RC5 — a retry needs a next step |
 
 Behaviour after the fix, measured on the 286-project self-host:
 
@@ -142,6 +185,14 @@ Behaviour after the fix, measured on the 286-project self-host:
 | stdio | `[]` | **answers** with the session's own project |
 | HTTP `?project=leankg` | `[]` | **answers** with that project |
 | HTTP (unscoped, 286 projects) | `["project"]` | refused, with the actionable error |
+
+| Selector | Before | After |
+|---|---|---|
+| `{"project":"<a name that matches nothing>"}` | answered from the cwd's project | refused, with the actionable error |
+| `?project=<a name that matches nothing>` | 200, the cwd's project | 404, with the actionable error |
+| `{"project":"/abs/path/outside/every/project"}` | refused | refused (unchanged) |
+| `{"project":"/abs/path/inside/a/project"}` | that project | that project (unchanged) |
+| `{"project":"<a name>"}` | that project | that project (unchanged) |
 
 ---
 
@@ -238,7 +289,10 @@ Any client that reads that file hits RC1 exactly as xdev did.
   OD1 — and it does not produce this error: the duplicate is configured
   identically).
 - **Not the fail-closed rule.** That rule is the reason the failure is
-  *safe*. It was kept; what changed is that the model is now told.
+  *safe*. It was kept; what changed is that the model is now told. (It did
+  turn out to have a hole of its own — RC5 — but in the SELECTOR, not in the
+  rule: a selector that matched nothing was answered from the cwd's
+  project. That is fixed too.)
 
 ---
 

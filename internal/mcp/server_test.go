@@ -89,7 +89,7 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 	lower := strings.ToLower(initialize.Instructions)
 	for _, want := range []string{
 		"query before bash/grep",
-		"project= is required only on multi-project",
+		"project fixed",
 		"does not create vectors",
 		"session_recall",
 		"session_retain",
@@ -104,6 +104,12 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 	// The old "always pass project" wording trained agents wrong on stdio.
 	if strings.Contains(lower, "always pass project") {
 		t.Fatalf("instructions still force always-pass-project: %s", initialize.Instructions)
+	}
+	// A server that serves ONE project must not tell the model to name
+	// one: that was the conditional ("required only on multi-project HTTP
+	// servers") the model could not evaluate from the tool list.
+	if strings.Contains(lower, "project required") {
+		t.Fatalf("a single-project server must not demand a project: %s", initialize.Instructions)
 	}
 
 	res, err := session.ListTools(context.Background(), nil)

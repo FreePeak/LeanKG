@@ -42,6 +42,11 @@ func renderContract(t *testing.T) string {
 	b.WriteString("- Additive optional properties do not break the contract.\n\n")
 	b.WriteString("## Deprecation history\n\n")
 	b.WriteString("_None. The Go registry's tool count has only ever shrunk (76 Rust tools to 3), which is a rewrite, not a deprecation._\n\n")
+	b.WriteString("## The `project` property\n\n")
+	b.WriteString("Optional on a server that serves ONE project: a single-project server, a stdio session, or a `?project=` handler.\n")
+	b.WriteString("REQUIRED on a multi-project server (`LEANKG_PROJECT_DIRS`): that server serves several repositories and refuses a call that does not name one.\n")
+	b.WriteString("The refusal is the point — an omitted project used to be answered from the server's own cwd, so a question about another repository got a confident answer built from the WRONG graph.\n")
+	b.WriteString("Name it with the absolute path of the repository you are working in (a path inside a registered project resolves to that project) or the project's name.\n\n")
 	b.WriteString("## Tools\n\n")
 	b.WriteString("| Tool | Description | Input properties |\n|---|---|---|\n")
 	for _, tool := range res.Tools {
@@ -81,17 +86,28 @@ func sortedStrings(in []string) []string {
 // TestToolContractDoc is the drift guard. It fails when
 // docs/mcp-tool-contract.md is not exactly what the live registry renders, so
 // a tool added to the registry without the doc following it breaks the build
-// instead of quietly lying. Re-render with the same test and commit both.
+// instead of quietly lying. Re-render with the same test and commit both:
+//
+//	LEANKG_UPDATE_CONTRACT_DOC=1 go test ./internal/mcp -run TestToolContractDoc
 func TestToolContractDoc(t *testing.T) {
 	want := renderContract(t)
-	got, err := os.ReadFile("../../docs/mcp-tool-contract.md")
+	const path = "../../docs/mcp-tool-contract.md"
+	if os.Getenv("LEANKG_UPDATE_CONTRACT_DOC") == "1" {
+		if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		t.Logf("%s re-rendered", path)
+		return
+	}
+	got, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read docs/mcp-tool-contract.md: %v", err)
+		t.Fatalf("read %s: %v", path, err)
 	}
 	if string(got) != want {
-		t.Fatalf("docs/mcp-tool-contract.md is stale (%d bytes on disk, %d bytes live).\n"+
-			"First divergence:\n%s\nRe-render with the same test and commit both.",
-			len(got), len(want), firstDiff(string(got), want))
+		t.Fatalf("%s is stale (%d bytes on disk, %d bytes live).\n"+
+			"First divergence:\n%s\n"+
+			"Re-render with LEANKG_UPDATE_CONTRACT_DOC=1 go test ./internal/mcp -run TestToolContractDoc and commit both.",
+			path, len(got), len(want), firstDiff(string(got), want))
 	}
 }
 

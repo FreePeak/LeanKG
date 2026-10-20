@@ -93,13 +93,18 @@ type Option func(*Server)
 // omitted project used to be answered from the serve process's cwd engine,
 // so a question about another project got a confident answer built from the
 // WRONG graph). That refusal used to reach the caller only as a runtime
-// error, AFTER the call: the model had already been told, by the schema, that
-// `project` was optional. Measured live on the 298-project self-host, an
-// agent's very first `status` call went out with no arguments and came back
-// LEANKG_ERROR_MISSING_PARAM.
+// error, AFTER the call: the model had already been told, by the schema,
+// that `project` was optional. Measured live on the 298-project self-host,
+// an agent's very first `status` call went out with no arguments and came
+// back LEANKG_ERROR_MISSING_PARAM.
 //
 // Requiring the argument in the schema puts the rule where the model reads
 // it. The server still fails closed if a call arrives without one.
+//
+// The same flag also picks the agent protocol this surface advertises
+// (instructions): a multi-project server says the project is REQUIRED, a
+// server that serves one project says it is fixed. The SDK copies the
+// options at construction, so the surface policy has to be known then.
 func WithProjectRequired(v bool) Option {
 	return func(s *Server) { s.projectRequired = v }
 }
@@ -144,13 +149,44 @@ const version = "0.34.0" // x-release-please-version
 // serverInstructions is returned during MCP initialization. MCP clients may
 // add this to the model's system prompt; the shorter toolGuidance below keeps
 // the same rules visible to clients that only render tools/list.
-const serverInstructions = `LeanKG is a code knowledge graph (exactly 3 tools: import, query, status). Agent protocol:
+//
+// The project clause is per SURFACE (projectRuleRequired / projectRuleFixed).
+// One text that hedged both — "project= is required only on multi-project
+// HTTP servers" — left the model to work out whether THIS server was one,
+// which is the inference it cannot make: it sees the tool list, not the
+// server's environment. Measured on the 286-project self-host, an agent's
+// first call went out with no arguments because the sentence read as a
+// conditional that did not apply to it.
+const serverInstructionsTemplate = `LeanKG is a code knowledge graph (exactly 3 tools: import, query, status). Agent protocol:
 1. For code discovery, call query before bash/grep/read. Leave action empty (or use search) for the L1 exact -> L2 fuzzy -> L3 semantic ladder; pin exact/fuzzy/semantic only when that rung is intentional. Once you have a qualified name, prefer impact/path/callers/callees/context over re-grepping.
-2. project= is required only on multi-project HTTP servers (LEANKG_PROJECT_DIRS / ?project=). Stdio and single-project serve resolve from the server process cwd — omit project there. Pass project=<repo basename or absolute path> when the server hosts more than one repo; never assume another project's store.
+2. %s
 3. Inspect retrieval{rung,reason}, guidance (when present), and freshness. If a store is cold, import it once with action=repo, path=<absolute repository path>, then query; do not re-import on every turn. On zero hits, follow guidance instead of abandoning LeanKG for bash.
 4. Importing indexes elements but does not create vectors. If L3 is required, run ` + "`leankg-embed run`" + ` (or ` + "`leankg-embed full`" + ` on stamp drift); a degraded L3 is not proof that the query ladder is broken.
 5. Use status for health, freshness, resolved project_dir, and embedding coverage — not as a substitute for query.
 6. Keep context across sessions: at session start call query action=memory with args.command=session_recall (or memories). At session end call import action=memory command=session_retain with session_id + turns[] (args.scope=per-project|global|per-project-tagged, args.cwd optional); durable lessons use import action=session command=lesson with session_id + text.`
+
+// projectRuleRequired is the project clause for a server that serves several
+// projects. The tool schema already requires the argument there; the clause
+// says how to fill it in — the absolute path of the repository the caller is
+// working in, which is what the server can resolve.
+const projectRuleRequired = `PROJECT REQUIRED: this server serves several repositories and cannot guess which one a question is about, so EVERY tool call must name one — "project" is the absolute path of the repository you are working in (a path inside a registered project resolves to that project) or the project's name. A call that omits it is refused, and no answer is ever built from another project's store.`
+
+// projectRuleFixed is the project clause for a server that already serves one
+// project: a single-project server, a stdio session, or a ?project= handler.
+// The argument stays optional there, and passing one selects a DIFFERENT
+// project than the one this session serves.
+const projectRuleFixed = `PROJECT FIXED: this server already serves one project, so every call may omit "project" — pass it only to deliberately select another registered project.`
+
+// instructions renders the agent protocol for THIS surface. The SDK copies
+// the options at construction, so the surface policy has to be known then
+// (see WithProjectRequired).
+func (s *Server) instructions() string {
+	rule := projectRuleFixed
+	if s.projectRequired {
+		rule = projectRuleRequired
+	}
+	return strings.Replace(serverInstructionsTemplate, "%s", rule, 1)
+}
 
 const toolGuidance = "Agent protocol: query before bash/grep; project= only on multi-project HTTP; import once when cold; inspect retrieval/freshness/guidance; session_recall at start, session_retain (action=memory) and lesson (action=session) at end (memory scope=per-project|global|per-project-tagged); do not pin a rung unless intentional."
 
@@ -164,7 +200,7 @@ func New(engine *core.Engine, opts ...Option) *Server {
 	s.srv = mcp.NewServer(&mcp.Implementation{
 		Name: "leankg", Version: version,
 		Description: "LeanKG code knowledge graph (3 tools: import/query/status): query for code discovery and memory recall; import for indexing and session_retain.",
-	}, &mcp.ServerOptions{Instructions: serverInstructions})
+	}, &mcp.ServerOptions{Instructions: s.instructions()})
 	s.registerTools()
 	// capture stays outermost: it sees name-resolution failures (DS-04).
 	s.srv.AddReceivingMiddleware(s.capture, resolveToolNames)
