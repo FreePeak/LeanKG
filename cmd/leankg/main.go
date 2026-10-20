@@ -483,7 +483,7 @@ afterSidecars:
 	}
 	if addr != "" {
 		warnIfExposed("MCP", addr, st)
-		mcpSrv := leankgmcp.New(engine)
+		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject()))
 		mcpSrv.SetProjectRouter(router)
 		mcpSrv.SetAuthStore(st)
 		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
