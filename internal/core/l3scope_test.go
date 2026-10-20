@@ -64,8 +64,12 @@ func TestL3ScopeArgReachesTheVectorArm(t *testing.T) {
 		if len(hitsOf(out)) < 2 {
 			t.Fatalf("unscoped query must see both elements, got %v", out["hits"])
 		}
-		if _, ok := out["retrieval"].(map[string]any)["scope"]; ok {
-			t.Errorf("an unscoped answer must not claim a scope: %v", out["retrieval"])
+		// The answer says WHICH population it ranked, always: an answer is
+		// never silently narrower than the corpus, and "all" is the honest
+		// name for the corpus the caller did not narrow.
+		r := out["retrieval"].(map[string]any)
+		if r["scope"] != "all" {
+			t.Errorf("an unscoped answer must name the population it ranked, got %v", r)
 		}
 	})
 

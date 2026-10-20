@@ -73,10 +73,12 @@ func TestL3FusesANameArm(t *testing.T) {
 	e.SetProjectDir(dir)
 	ctx := context.Background()
 
-	// A PROSE question that names the symbol: the ladder must reach L3 (an exact
-	// identifier query short-circuits at L1 by design, which is a different and
-	// already-correct path).
-	out, err := e.Query(ctx, QueryRequest{Query: "where is truncateRunes used", Limit: 10})
+	// A PROSE question whose rare word is part of the symbol's name: the
+	// ladder must reach L3 (RS-12 sends a prose question to the fused rung
+	// when an embedder is wired, because the keyword rung ORs every term and
+	// would otherwise answer every intent question with whichever elements
+	// happened to contain its words).
+	out, err := e.Query(ctx, QueryRequest{Query: "cut a string to n runes", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

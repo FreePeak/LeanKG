@@ -468,10 +468,18 @@ func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float
 		} else if len(matches) > 0 {
 			keys := make([]string, 0, len(matches))
 			for _, m := range matches {
+				// The caller's population applies to EVERY arm (see
+				// hybrid_sqlite.go): scoping only the vector arm lets the
+				// keyword arms put back exactly what the caller excluded.
+				if keep != nil && !keep(m.Element) {
+					continue
+				}
 				record(m.Element.QualifiedName, m.Element).kw = m.Score
 				keys = append(keys, m.Element.QualifiedName)
 			}
-			lists = append(lists, RankList{Name: ArmTSVector, Keys: keys})
+			if len(keys) > 0 {
+				lists = append(lists, RankList{Name: ArmTSVector, Keys: keys})
+			}
 		}
 	}
 
@@ -490,10 +498,15 @@ func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float
 		} else if len(matches) > 0 {
 			keys := make([]string, 0, len(matches))
 			for _, m := range matches {
+				if keep != nil && !keep(m.Element) {
+					continue
+				}
 				record(m.Element.QualifiedName, m.Element).trigram = m.Score
 				keys = append(keys, m.Element.QualifiedName)
 			}
-			lists = append(lists, RankList{Name: name, Keys: keys})
+			if len(keys) > 0 {
+				lists = append(lists, RankList{Name: name, Keys: keys})
+			}
 		}
 	}
 
@@ -503,10 +516,17 @@ func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float
 	if matches, err := s.FindByNameToken(query, window); err == nil && len(matches) > 0 {
 		keys := make([]string, 0, len(matches))
 		for _, m := range matches {
+			// The name arm is scoped like the others: it reads symbol names,
+			// and a fixture's name is exactly what a name query matches.
+			if keep != nil && !keep(m.Element) {
+				continue
+			}
 			record(m.Element.QualifiedName, m.Element)
 			keys = append(keys, m.Element.QualifiedName)
 		}
-		lists = append(lists, RankList{Name: ArmName, Keys: keys})
+		if len(keys) > 0 {
+			lists = append(lists, RankList{Name: ArmName, Keys: keys})
+		}
 	}
 
 	if len(lists) == 0 {
