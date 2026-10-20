@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -20,6 +21,12 @@ func cmdGC(args []string) {
 	fs := flag.NewFlagSet("gc", flag.ExitOnError)
 	project := fs.String("project", ".", "project directory whose store is purged (default cwd)")
 	engine := fs.String("engine", "", "storage engine: sqlite|postgres (default: LEANKG_DB_ENGINE, else sqlite)")
+	// --keep-model names the collection to KEEP; every other collection is
+	// dropped. Without it every collection is kept (the pre-existing
+	// behavior). The live collection is the one the query path searches —
+	// the embedder's model id.
+	var keepModels stringList
+	fs.Var(&keepModels, "keep-model", "model id to keep (repeatable); without it every collection is kept")
 	positional := parseInterspersed("gc", fs, args, 1)
 	if len(positional) == 1 {
 		*project = positional[0]
@@ -44,7 +51,14 @@ func cmdGC(args []string) {
 	if err != nil {
 		fatalText(fmt.Errorf("gc: vectors: %w", err))
 	}
-	if n > 0 || v > 0 {
+	var stale store.StaleStampSweep
+	if len(keepModels) > 0 {
+		stale, err = st.DeleteStaleStamps(keepModels)
+		if err != nil {
+			fatalText(fmt.Errorf("gc: stale stamps: %w", err))
+		}
+	}
+	if n > 0 || v > 0 || !stale.Empty() {
 		// Same contract as every other CLI writer (index/pull/summarize):
 		// the purge bumped the watermark, and the freshness comparison reads
 		// the inventory snapshot — without this refresh a just-gc'd project
@@ -55,4 +69,18 @@ func cmdGC(args []string) {
 		}
 	}
 	fmt.Printf("gc: purged %d orphan relationship(s), %d orphan vector(s) from %s\n", n, v, *project)
+	if !stale.Empty() {
+		fmt.Printf("gc: dropped %d stale collection(s) (%d vectors, %d state rows)\n",
+			stale.Models, stale.Vectors, stale.State)
+	}
+}
+
+// stringList is a repeatable string flag value.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }

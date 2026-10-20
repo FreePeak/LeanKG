@@ -55,8 +55,80 @@ type Options struct {
 	// MinFreeBytes is the freelist floor below which the pass only
 	// checkpoints (0 = the built-in 1 MB floor).
 	MinFreeBytes int64
+	// KeepModelIDs are the vector collections that survive the stale-stamp
+	// sweep. Empty (the default) means "keep every collection": a caller
+	// that does not know which collection is live — a server with no
+	// embedder wired, a read-only store — must not be able to delete it.
+	// The server passes the embedder's model id here, which is exactly the
+	// collection the L3 rung queries.
+	KeepModelIDs []string
 	// Logf receives one line per pass; nil discards.
 	Logf func(format string, args ...any)
+}
+
+// SweepResult reports what one reclaim sweep removed.
+type SweepResult struct {
+	// OrphanEdges is the number of relationship edges whose endpoint no
+	// longer exists.
+	OrphanEdges int `json:"orphan_edges"`
+	// OrphanVectors is the number of vector rows whose element is gone.
+	OrphanVectors int `json:"orphan_vectors"`
+	// StaleModels is the number of vector collections dropped.
+	StaleModels int `json:"stale_models"`
+	// StaleVectors is the number of vector rows dropped with them.
+	StaleVectors int `json:"stale_vectors"`
+	// StaleState is the number of embedding-state rows dropped with them.
+	StaleState int `json:"stale_state"`
+}
+
+// Empty reports whether the sweep removed nothing.
+func (s SweepResult) Empty() bool {
+	return s.OrphanEdges == 0 && s.OrphanVectors == 0 &&
+		s.StaleModels == 0 && s.StaleVectors == 0 && s.StaleState == 0
+}
+
+// Sweep purges the rows a store accumulates without ever reading them:
+//
+//   - edges into a deleted file (DeleteByFile owns the edges a file
+//     SOURCES, but the edges pointing INTO it from other files survive
+//     until their sources are re-indexed — incremental index never
+//     revisits them);
+//   - vectors for elements that no longer exist (the residue
+//     `leankg-embed` reports as Orphans);
+//   - vector collections under a model id nobody queries any more.
+//
+// Every step is best-effort: a step that fails leaves its rows for the
+// next pass, so the error is logged and the sweep continues. The stale-stamp
+// step needs Options.KeepModelIDs — with no keep list it is skipped
+// entirely, because dropping the live collection is not recoverable.
+func Sweep(st store.Backend, opts Options) SweepResult {
+	var out SweepResult
+	logf := opts.Logf
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	if n, err := st.DeleteOrphanRelationships(); err != nil {
+		logf("maintain: orphan relationships: %v", err)
+	} else {
+		out.OrphanEdges = n
+	}
+	if n, err := st.DeleteOrphanVectors(); err != nil {
+		logf("maintain: orphan vectors: %v", err)
+	} else {
+		out.OrphanVectors = n
+	}
+	if len(opts.KeepModelIDs) == 0 {
+		return out
+	}
+	sw, err := st.DeleteStaleStamps(opts.KeepModelIDs)
+	if err != nil {
+		logf("maintain: stale stamps: %v", err)
+		return out
+	}
+	out.StaleModels = sw.Models
+	out.StaleVectors = sw.Vectors
+	out.StaleState = sw.State
+	return out
 }
 
 // Result is what one pass did and how much it recovered.
@@ -71,6 +143,9 @@ type Result struct {
 	WALBytes     int64  `json:"wal_bytes,omitempty"`
 	Vacuumed     bool   `json:"vacuumed"`
 	Checkpointed bool   `json:"checkpointed"`
+	// Sweep reports what the reclaim sweep removed before the vacuum
+	// handed the space back to the filesystem.
+	Sweep SweepResult `json:"sweep"`
 }
 
 // Pass runs the maintenance sequence over one store handle.
@@ -110,7 +185,29 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 		return res, fmt.Errorf("maintain: enable incremental vacuum: %w", err)
 	}
 
-	if before.FreeBytes >= opts.MinFreeBytes {
+	// The sweep runs BEFORE the vacuum, and that order is the whole point:
+	// the sweep returns rows to the freelist, the vacuum hands the
+	// freelist back to the filesystem. The other order reclaims the space
+	// one pass later — a day late at the default interval.
+	res.Sweep = Sweep(st, opts)
+	if !res.Sweep.Empty() {
+		logf("maintain: swept %d orphan edge(s), %d orphan vector(s), %d stale collection(s) (%d vectors) from %s",
+			res.Sweep.OrphanEdges, res.Sweep.OrphanVectors,
+			res.Sweep.StaleModels, res.Sweep.StaleVectors, before.Path)
+	}
+
+	// The sweep grows the freelist by whatever it removed, so the vacuum
+	// decision reads a FRESH probe: a store whose freelist was empty
+	// before the sweep may hold megabytes now, and the pre-sweep number
+	// would skip the reclaim and leave the space on the freelist for a
+	// whole interval.
+	freelist := before.FreeBytes
+	if after, err := st.Space(); err == nil {
+		freelist = after.FreeBytes
+	} else {
+		logf("maintain: re-probe space before vacuum: %v", err)
+	}
+	if freelist >= opts.MinFreeBytes {
 		if err := st.IncrementalVacuum(opts.MaxPages); err != nil {
 			// Not fatal: the checkpoint below still applies, and the next
 			// pass retries the reclaim.
@@ -182,14 +279,57 @@ func CompactMemory(mem *memory.Memory, opts Options) {
 // LEANKG_VACUUM_INTERVAL_HOURS=0 keeps the Rust engine's documented
 // "disabled" semantics.
 func Run(ctx context.Context, st store.Backend, mem *memory.Memory, opts Options, interval, firstIdle time.Duration) {
+	RunFleet(ctx, func() []Target {
+		return []Target{{Store: st, Mem: mem}}
+	}, opts, interval, firstIdle)
+}
+
+// Target is one store a fleet pass sweeps.
+type Target struct {
+	// Store is the store handle; a nil Store is skipped.
+	Store store.Backend
+	// Mem is the memory layer's store for the same project, if any.
+	Mem *memory.Memory
+	// Label names the target in the log lines.
+	Label string
+	// Close releases the handle after the pass. A fleet target is opened
+	// for the pass and closed again (the serving process does not want 285
+	// project stores resident); the default project's handle is owned by
+	// the server, so its Close is nil.
+	Close func()
+}
+
+// RunFleet drives the pass over a SET of stores on one ticker: a serving
+// process fronts many project stores, and the default one is not the only
+// one that fills up. The default project is maintained by Run; the projects
+// a multi-project server ROUTES to are the ones that used to accumulate
+// junk with nothing ever reclaiming it.
+//
+// targets is called at the start of every pass, so the caller decides which
+// stores exist at that moment (a routed project appears the moment it is
+// indexed). A target whose Store is nil is skipped; its Close, when set,
+// runs after the pass.
+func RunFleet(ctx context.Context, targets func() []Target, opts Options, interval, firstIdle time.Duration) {
 	if interval <= 0 {
 		return
 	}
 	pass := func() {
-		if _, err := Pass(st, opts); err != nil && opts.Logf != nil {
-			opts.Logf("maintain: %v", err)
+		for _, t := range targets() {
+			if t.Store == nil {
+				continue
+			}
+			if _, err := Pass(t.Store, opts); err != nil && opts.Logf != nil {
+				if t.Label == "" {
+					opts.Logf("maintain: %v", err)
+				} else {
+					opts.Logf("maintain[%s]: %v", t.Label, err)
+				}
+			}
+			CompactMemory(t.Mem, opts)
+			if t.Close != nil {
+				t.Close()
+			}
 		}
-		CompactMemory(mem, opts)
 	}
 	go func() {
 		if firstIdle > 0 {

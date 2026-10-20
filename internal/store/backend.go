@@ -44,6 +44,19 @@ type Backend interface {
 	// file left its vectors behind forever. Returns the number of vector
 	// rows removed.
 	DeleteOrphanVectors() (int, error)
+	// DeleteStaleStamps drops every vector collection that is not in keep:
+	// its vectors, its embedding state and its stamp row. A collection is
+	// stale when nothing queries it any more — the L3 rung selects the
+	// collection BY the embedder's model id (core.rungSemantic), so a
+	// collection under any other id is never searched and never rebuilt
+	// (an embedder writes only its own id). Every model swap used to
+	// double the vector footprint because nothing ever dropped the old
+	// collection; that is the gap the scheduled maintenance pass closes.
+	//
+	// An empty keep is a NO-OP: a caller that does not know which
+	// collection is live (a server with no embedder wired) must not be able
+	// to delete the live one. Returns what the sweep removed.
+	DeleteStaleStamps(keep []string) (StaleStampSweep, error)
 
 	// space maintenance (the reclaim half of DeleteByFile/gc: those return
 	// rows to the freelist, these return the freelist to the filesystem).

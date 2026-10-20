@@ -88,6 +88,14 @@ func cmdVacuum(args []string) {
 		fmt.Printf("%d\n", res.Reclaimed)
 		return
 	}
+	// The pass also SWEEPS first (orphan edges, orphan vectors), so the
+	// space it reclaimed may be space it made by deleting rows. Report
+	// both: "reclaimed 40MB" alone would hide what was removed.
 	fmt.Printf("vacuum: %s reclaimed %d bytes (%d -> %d, freelist %d -> %d, wal %d)\n",
 		res.Engine, res.Reclaimed, res.Before, res.After, res.FreeBefore, res.FreeAfter, res.WALBytes)
+	if !res.Sweep.Empty() {
+		fmt.Printf("vacuum: swept %d orphan edge(s), %d orphan vector(s), %d stale collection(s) (%d vectors, %d state rows)\n",
+			res.Sweep.OrphanEdges, res.Sweep.OrphanVectors,
+			res.Sweep.StaleModels, res.Sweep.StaleVectors, res.Sweep.StaleState)
+	}
 }

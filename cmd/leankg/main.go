@@ -195,7 +195,7 @@ Usage:
   leankg cost [--project DIR] [--format text|json]
   leankg vacuum [DIR] [--project DIR] [--engine sqlite|postgres] [--full] [--max-pages N]
   leankg migrate [--project DIR] [--engine sqlite|postgres]
-  leankg gc [DIR] [--project DIR] [--engine sqlite|postgres]
+  leankg gc [DIR] [--project DIR] [--engine sqlite|postgres] [--keep-model ID]
   leankg audit export [--project DIR] [--since T] [--until T] [--format jsonl] [--out FILE]
   leankg audit verify [--project DIR] [--since T] [--until T]
   leankg metrics [--project DIR] [--since N|Nd] [--tool NAME] [--json|-j] [--session] [--session-id ID]
@@ -396,20 +396,9 @@ afterSidecars:
 		log.Printf("leankg memory root %s", mem.Root())
 	}
 
-	// Storage maintenance: the Rust engine's hourly vacuum scheduler
-	// (FR-V2-08), restored in Go. gc and DeleteByFile return deleted rows to
-	// SQLite's freelist; this returns the freelist to the filesystem, plus a
-	// WAL truncate — and, when --memory is on, the same for the memory FTS
-	// index. Skipped under --read-only (a reader takes no lock it may need to
-	// rewrite) and disabled by LEANKG_VACUUM_INTERVAL_HOURS=0. Placed after
-	// memory.Open so the pass can compact the FTS index too.
-	if mode == store.RW {
-		interval := maintain.IntervalFromEnv(os.Getenv)
-		if interval > 0 {
-			log.Printf("maintenance: vacuum every %s (0 disables)", interval)
-		}
-		maintain.Run(ctx, st, mem, maintain.Options{Logf: log.Printf}, interval, maintain.FirstIdle)
-	}
+	// Storage maintenance runs LATER, once the router exists: a serving
+	// process fronts many project stores, and the default one is not the
+	// only one that fills up. See the fleet block below.
 
 	var embedder core.QueryEmbedder
 	if *embedProvider != "" {
@@ -480,6 +469,68 @@ afterSidecars:
 	defer router.Close()
 	if extra := router.List(); len(extra) > 1 {
 		log.Printf("projects registered: %s", strings.Join(extra, ", "))
+	}
+
+	// Storage maintenance: the Rust engine's hourly vacuum scheduler
+	// (FR-V2-08), restored in Go, extended to a FLEET.
+	//
+	// One pass does three things per store: it purges the rows nobody
+	// reads any more (edges into deleted files, vectors for deleted
+	// elements, and vector collections under a model id the query path no
+	// longer uses), it returns the freelist to the filesystem, and it
+	// truncates the WAL sidecar — and, when --memory is on, the same for
+	// the memory FTS index.
+	//
+	// The fleet is the part that matters on a multi-project host: this
+	// process fronts every LEANKG_PROJECT_DIRS project, and before this
+	// only the DEFAULT project's store was ever maintained — the routed
+	// projects filled up with nothing reclaiming them.
+	//
+	// The stale-collection purge needs to know which collection is live.
+	// The L3 rung queries the collection under the embedder's model id
+	// (core.rungSemantic), so that id is exactly the keep set. With no
+	// embedder wired the keep set is empty and the purge is skipped
+	// entirely: a server that cannot say which collection is live must not
+	// be able to delete it.
+	//
+	// Skipped under --read-only (a reader takes no lock it may need to
+	// rewrite) and disabled by LEANKG_VACUUM_INTERVAL_HOURS=0.
+	if mode == store.RW {
+		interval := maintain.IntervalFromEnv(os.Getenv)
+		var keepModelIDs []string
+		if embedder != nil {
+			if id, _ := embedder.Describe(); id != "" {
+				keepModelIDs = []string{id}
+			}
+		}
+		if interval > 0 {
+			log.Printf("maintenance: sweep+vacuum every %s over %d project(s) (0 disables)",
+				interval, len(router.List()))
+		}
+		maintain.RunFleet(ctx, func() []maintain.Target {
+			out := []maintain.Target{{Store: st, Mem: mem, Label: filepath.Base(dir)}}
+			for _, d := range router.List() {
+				if d == router.Default() {
+					continue
+				}
+				// Only a store that already exists: opening a missing one
+				// would CREATE it (and its schema) for a project nobody
+				// has indexed yet.
+				if !maintenanceStoreExists(ctx, d, eng) {
+					continue
+				}
+				bs, err := store.OpenBackend(ctx, d, eng, os.Getenv("LEANKG_PG_URL"), "", store.RW)
+				if err != nil {
+					log.Printf("maintenance: open %s: %v", d, err)
+					continue
+				}
+				out = append(out, maintain.Target{
+					Store: bs, Label: filepath.Base(d),
+					Close: func() { _ = bs.Close() },
+				})
+			}
+			return out
+		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle)
 	}
 
 	if *stdio {
@@ -655,6 +706,27 @@ func warnIfExposed(kind, addr string, st store.Backend) {
 		log.Printf("warning: %s listens on %s (beyond loopback) with no auth token configured — every caller is Admin. "+
 			"Bind 127.0.0.1, or set LEANKG_TOKEN_ADMIN / run `leankg auth token create`", kind, addr)
 	}
+}
+
+// maintenanceStoreExists reports whether the project at dir already HAS a
+// store, so the maintenance fleet does not open (and thereby create) one for
+// a project nobody indexed.
+//
+// SQLite: the store file is on disk, so a stat decides it. PostgreSQL: the
+// store is a schema, and opening it read-write CREATES a missing schema — so
+// the probe is a read-only open, which reports ErrSchemaMissing instead of
+// creating anything.
+func maintenanceStoreExists(ctx context.Context, dir, engine string) bool {
+	if engine == store.EngineSQLite {
+		_, err := os.Stat(filepath.Join(dir, ".leankg", "leankg.db"))
+		return err == nil
+	}
+	probe, err := store.OpenBackend(ctx, dir, engine, os.Getenv("LEANKG_PG_URL"), "", store.RO)
+	if err != nil {
+		return false
+	}
+	_ = probe.Close()
+	return true
 }
 
 func cmdDoctor(args []string) int {
