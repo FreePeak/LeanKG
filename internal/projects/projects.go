@@ -190,8 +190,34 @@ func (r *Router) resolve(selector string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("unknown project %q — known projects: %s (queries never fall back to another project's data)",
-		selector, strings.Join(r.List(), ", "))
+	return "", r.unknownProjectError(selector)
+}
+
+// maxKnownProjectsInError bounds how many projects the unknown-project error
+// names. The self-host registers every repository under the scan root — 286
+// of them on the machine this was measured on — and an error that lists all
+// of them is a wall of absolute paths in the caller's context. An agent pays
+// for that wall on every retry, and the caller already knows the two forms a
+// selector takes (a directory path, or a name).
+const maxKnownProjectsInError = 10
+
+// unknownProjectError names the selector that failed and a bounded sample of
+// the projects the server does serve. The list is truncated with a count of
+// the remainder rather than dropped: "which projects exist?" is a real
+// question, and the answer must not be a 30 KB string.
+func (r *Router) unknownProjectError(selector string) error {
+	known := r.List()
+	shown, more := known, 0
+	if len(shown) > maxKnownProjectsInError {
+		more = len(shown) - maxKnownProjectsInError
+		shown = shown[:maxKnownProjectsInError]
+	}
+	msg := fmt.Sprintf("unknown project %q — known projects: %s",
+		selector, strings.Join(shown, ", "))
+	if more > 0 {
+		msg += fmt.Sprintf(" (+%d more)", more)
+	}
+	return errors.New(msg + " (queries never fall back to another project's data)")
 }
 
 var errAmbiguousName = errors.New("ambiguous project name")
