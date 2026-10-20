@@ -701,6 +701,88 @@ func (s *PGStore) Stamps() ([]ModelStamp, error) {
 	return out, rows.Err()
 }
 
+// DeleteStaleStamps drops every vector collection that is not in keep.
+//
+// Postgres keeps one pair of tables per collection (embedding_vectors_<model>
+// / embedding_state_<model>), so a stale collection is dropped by dropping
+// its tables — the rows do not go to a freelist the way SQLite's do, but
+// the space is released immediately. The stamp row goes with them.
+//
+// An empty keep is a NO-OP (see the Backend contract). A collection whose
+// tables have already vanished is skipped, not fatal: the stamp is cleaned
+// up either way. The watermark bumps only when rows actually go.
+func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
+	keep = cleanModelIDs(keep)
+	if len(keep) == 0 {
+		return StaleStampSweep{}, nil
+	}
+	keepSet := make(map[string]bool, len(keep))
+	for _, k := range keep {
+		keepSet[k] = true
+	}
+	// A store whose keep collection is ABSENT is not stale — it is BEHIND
+	// (see the SQLite implementation for the reasoning). Dropping its only
+	// collection would destroy embed work for no gain.
+	have := false
+	for _, k := range keep {
+		var present bool
+		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(k)).Scan(&present); err != nil {
+			return StaleStampSweep{}, err
+		}
+		if !present {
+			continue
+		}
+		var n int
+		if err := s.pool.QueryRow(pgCtx, `SELECT 1 FROM `+s.vecTable(k)+` LIMIT 1`).Scan(&n); err != nil {
+			if err == pgx.ErrNoRows {
+				continue
+			}
+			return StaleStampSweep{}, err
+		}
+		have = true
+		break
+	}
+	if !have {
+		return StaleStampSweep{}, nil
+	}
+	stamps, err := s.Stamps()
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
+	var out StaleStampSweep
+	for _, ms := range stamps {
+		if keepSet[ms.ModelID] {
+			continue
+		}
+		var present bool
+		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&present); err != nil {
+			return out, err
+		}
+		if present {
+			var n int
+			if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM `+s.vecTable(ms.ModelID)).Scan(&n); err != nil {
+				return out, err
+			}
+			out.Vectors += n
+			if _, err := s.pool.Exec(pgCtx, `DROP TABLE IF EXISTS `+s.vecTable(ms.ModelID)); err != nil {
+				return out, err
+			}
+		}
+		if _, err := s.pool.Exec(pgCtx, `DROP TABLE IF EXISTS `+s.stateTable(ms.ModelID)); err != nil {
+			return out, err
+		}
+		tag, err := s.pool.Exec(pgCtx, `DELETE FROM emb_stamp WHERE model_id = $1`, ms.ModelID)
+		if err != nil {
+			return out, err
+		}
+		out.Models += int(tag.RowsAffected())
+	}
+	if out.Models == 0 && out.Vectors == 0 {
+		return out, nil
+	}
+	return out, s.BumpWatermark()
+}
+
 // EmbeddingStateMap returns qualified_name -> content_hash for a model.
 func (s *PGStore) EmbeddingStateMap(modelID string) (map[string]string, error) {
 	rows, err := s.pool.Query(pgCtx, `SELECT qualified_name, content_hash FROM `+s.stateTable(modelID))

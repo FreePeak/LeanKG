@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -34,6 +35,21 @@ type ModelStamp struct {
 type VectorRow struct {
 	QualifiedName string
 	Vec           []float32
+}
+
+// StaleStampSweep reports what a stale-collection purge removed.
+type StaleStampSweep struct {
+	// Models is the number of vector collections dropped.
+	Models int `json:"models"`
+	// Vectors is the number of vector rows dropped.
+	Vectors int `json:"vectors"`
+	// State is the number of embedding-state rows dropped.
+	State int `json:"state"`
+}
+
+// Empty reports whether the sweep removed nothing.
+func (s StaleStampSweep) Empty() bool {
+	return s.Models == 0 && s.Vectors == 0 && s.State == 0
 }
 
 // Matches reports whether two stamps describe the same vector space: model id,
@@ -279,6 +295,104 @@ func (s *Store) VectorCount(modelID string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM embedding_vectors WHERE model_id = ?`, modelID).Scan(&n)
 	return n, err
+}
+
+// DeleteStaleStamps drops every vector collection that is not in keep.
+//
+// The SQLite layout keeps every collection's rows in one shared table, keyed
+// by model_id, so the purge is three DELETEs against a NOT IN list. The stamp
+// row goes with them: a stamp without vectors is a collection the L3 rung
+// would select and then find empty.
+//
+// An empty keep is a NO-OP (see the Backend contract): the caller that does
+// not know which collection is live must not be able to delete it. The
+// watermark bumps only when rows actually go, like every other purge here.
+func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
+	keep = cleanModelIDs(keep)
+	if len(keep) == 0 {
+		return StaleStampSweep{}, nil
+	}
+	ph := make([]string, len(keep))
+	args := make([]any, len(keep))
+	for i, k := range keep {
+		ph[i] = "?"
+		args[i] = k
+	}
+	in := strings.Join(ph, ",")
+
+	// A store whose keep collection is ABSENT is not stale — it is BEHIND.
+	// Its only collection is under some other model id: the project was
+	// embedded before the model changed, or the offsite path wrote a
+	// different id, or the embedder is mid-migration. Dropping that
+	// collection destroys embed work for no gain — the vectors ARE the
+	// store's searchable content, and the operator needs them (or a
+	// re-embed) either way. The L3 rung for such a project already
+	// degrades to L2, which is a truth about the store, not a licence to
+	// delete it.
+	var have int
+	err := s.db.QueryRow(`SELECT 1 FROM embedding_vectors WHERE model_id IN (`+in+`) LIMIT 1`, args...).Scan(&have)
+	if err != nil && err != sql.ErrNoRows {
+		return StaleStampSweep{}, err
+	}
+	if have == 0 {
+		return StaleStampSweep{}, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	vres, err := tx.Exec(`DELETE FROM embedding_vectors WHERE model_id NOT IN (`+in+`)`, args...)
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
+	nv, err := vres.RowsAffected()
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
+	sres, err := tx.Exec(`DELETE FROM embedding_state WHERE model_id NOT IN (`+in+`)`, args...)
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
+	ns, err := sres.RowsAffected()
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
+	mres, err := tx.Exec(`DELETE FROM emb_stamp WHERE model_id NOT IN (`+in+`)`, args...)
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
+	nm, err := mres.RowsAffected()
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
+	if nv == 0 && ns == 0 && nm == 0 {
+		return StaleStampSweep{}, nil // rollback via defer: a no-op purges nothing, not even the watermark
+	}
+	if err := tx.Commit(); err != nil {
+		return StaleStampSweep{}, err
+	}
+	out := StaleStampSweep{Models: int(nm), Vectors: int(nv), State: int(ns)}
+	return out, s.BumpWatermark()
+}
+
+// cleanModelIDs normalizes a keep list: empty entries dropped, duplicates
+// collapsed, order preserved. A keep list of only empty strings is as empty
+// as no keep list at all, which is why the emptiness check runs AFTER this.
+func cleanModelIDs(ids []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // VectorSearchHit is one L3 hit with cosine similarity.

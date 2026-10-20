@@ -1,7 +1,7 @@
 # LeanKG PRD — Unified Product Document
 
-**Version:** 4.15.0-session-telemetry
-**Date:** 2026-10-08
+**Version:** 4.17-scheduled-reclaim
+**Date:** 2026-10-20
 **Status:** Active Development — **single source of truth** (this document + `docs/prd-task-tracker.md`; all historical documents preserved under [`docs/archive/`](archive/)). **Operating focus from 2026-09-14: the self-host dogfood loop (§3.10, M10)** — this repo served by its own dynamic HTTP server (MCP + REST + dashboard), indexed, embedded, memorized; LeanKG builds LeanKG first, then scales outward to nested-repo parents.
 **Codebase Version:** 0.34.0 (Go engine at the repository root — module `github.com/FreePeak/LeanKG`, moved out of `go/` per #403; root-tagged releases since v0.33.0; the Rust tree was removed in f7624143)
 **Storage:** SQLite WAL default (FTS5 L2 rung, float32-BLOB vectors, DB-resident watermarks); PostgreSQL + pgvector opt-in (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`) with schema-per-project, per-model HNSW and the advisory-locked audit chain.
@@ -9,6 +9,97 @@
 ---
 
 ## Changelog
+
+### v4.17-scheduled-reclaim — the store cleans itself up, on a schedule, across every project the server fronts (2026-10-20)
+
+> **Trigger:** an operator asked why LeanKG was eating the disk, and the
+> answer was a measurement, not a hunch. On the self-host, 2.9 GB of LeanKG
+> footprint resolved to: a 1.2 GB bulk index of the portfolio root that
+> nothing could reach, 538 MB of stale binary copies, a 117 MB manual
+> backup, and — inside the live stores — 18,438 rows belonging to two
+> ABANDONED embedding collections.
+>
+> The abandoned collections were the interesting part. `emb_stamp` keeps
+> every model a store ever embedded with, and the vectors and
+> `embedding_state` rows under each one live forever:
+> `ClearVectors` is called only for the CURRENT model, when its stamp
+> drifts (internal/embed/run.go:224). Nothing ever dropped a collection
+> the model id no longer named. The L3 rung searches exactly one
+> collection — the one under the embedder's model id (core.rungSemantic)
+> — so the other two were pure weight: 27 MB of vectors and 18,438 state
+> rows in the leankg store alone, and the next model swap would double
+> it again.
+>
+> The second finding was bigger: the maintenance pass ran on the DEFAULT
+> project's store and nothing else. A serving process fronts every
+> `LEANKG_PROJECT_DIRS` project — 286 of them on the self-host — and the
+> routed projects accumulated orphans with nothing ever reclaiming them.
+
+**Landed:**
+
+- **The reclaim sweep is part of the maintenance pass.** One pass now
+  purges, then reclaims: orphan edges (the ones pointing INTO a deleted
+  file, which `DeleteByFile` does not own), orphan vectors (the residue
+  `leankg-embed` reports as Orphans), and vector collections under a
+  model id nothing queries any more. The sweep runs BEFORE the vacuum,
+  because the sweep returns rows to the freelist and the vacuum hands
+  the freelist to the filesystem — the other order reclaims the space an
+  interval late.
+- **The live collection is named by the query path, so the purge cannot
+  guess wrong.** The keep set is the embedder's model id, which is
+  precisely the collection the L3 rung queries. A server with no embedder
+  wired has an EMPTY keep set, and an empty keep set is a no-op: a
+  process that cannot say which collection is live must not be able to
+  delete it.
+- **A store whose keep collection is ABSENT is BEHIND, not STALE.** The
+  first fleet run got this wrong and paid for it — see the incident
+  below. The rule now is: the sweep only drops a collection when the
+  store HAS the keep collection, so a store that has not caught up with
+  the current model keeps its vectors instead of losing them.
+- **The pass is a FLEET.** It sweeps the server's own project and every
+  project the server routes to, each opened for the pass and closed
+  again (the serving process does not want 286 stores resident), and only
+  when its store already exists on disk — opening a missing one would
+  CREATE it, and its schema, for a project nobody has indexed.
+- **`leankg gc --keep-model ID`** exposes the same purge to an operator
+  who runs a store with no server in front of it. Without the flag every
+  collection is kept, which is the pre-existing behavior.
+
+**Verified live** (2026-10-20, the built binary against real stores):
+a seeded second collection was dropped by the server's own ticker
+(`maintain: swept … 1 stale collection(s) (500 vectors)`) and by
+`leankg gc --keep-model embeddinggemma-2`; a three-project server swept
+all three; a second pass over the same stores was a no-op.
+
+**The first fleet run destroyed 30,680 vectors, and the fix is the rule
+it violated.** The fleet's first pass dropped the ONLY collection of
+three projects (`be-knowledge-graph` 22,064, `be-restaurant` 5,332,
+`be-food-finder` 3,284). The cause: those stores were embedded under
+model id `local` — the old default, before `LEANKG_EMBED_MODEL` became
+`embeddinggemma-2` — while the server's embedder reported
+`embeddinggemma-2`. The sweep saw a collection outside the keep set and
+dropped it, and a store whose only collection is dropped has nothing
+left to search. Those three projects' L3 was ALREADY degraded (the
+server searched for a collection they did not have), which is a truth
+about the store, not a licence to delete it: the vectors were the
+project's searchable content, and an operator mid-migration needs them
+or has to re-embed them.
+
+The rule is now **"drop a stale collection only when the store HAS the
+keep collection"**. A store that has not caught up with the current
+model is BEHIND, not STALE. The regression is pinned by
+`TestDeleteStaleStampsKeepsACollectionTheStoreDoesNotHaveTheKeepFor`
+and `TestPassKeepsACollectionWhenTheKeepOneIsAbsent` — the E2E that
+should have caught it seeded the keep collection in every fixture, so
+it passed for the wrong reason, and the fleet was the first place the
+gap showed. The three projects were re-embedded under
+`embeddinggemma-2` afterwards, which also repairs their L3.
+
+**Left alone on purpose.** The `leankg writer` gets the orphan sweep and
+the vacuum (it is the process that produces the garbage) but NOT the
+stale-collection purge: it has no query embedder, so it cannot name the
+live collection. Dropping a collection is not recoverable; leaving one
+behind costs disk.
 
 ### v4.16-project-selector-fail-closed — an unknown project no longer answers from another one (2026-10-20)
 
