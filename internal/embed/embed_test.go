@@ -344,7 +344,9 @@ func (r *recordProvider) Embed(ctx context.Context, kind TextKind, texts []strin
 // the ONNX-era pipeline, which truncated. Found dogfooding `leankg-embed run`
 // on this repository: one 845-token element aborted the whole run.
 func TestRunLocalProviderTextBudget(t *testing.T) {
-	// local: a 4000-rune element is 512-token-safe-truncated and counted.
+	// local: a 4000-rune element is 512-token-safe-truncated and counted. No
+	// sidecar answers /props here, so the operator pin is the cap.
+	t.Setenv("LEANKG_EMBED_TEXT_CAP", fmt.Sprint(maxLocalTextChars))
 	st := testStore(t)
 	seed(t, st, el("a::big", strings.Repeat("x", 4000)))
 	p := &recordProvider{inner: Deterministic(8), provider: "local"}
@@ -1118,21 +1120,23 @@ func TestWriteCapStoredCapSurvivesPropsOutage(t *testing.T) {
 	if _, err := localRun(t, st, sc, "incremental"); err != nil {
 		t.Fatalf("incremental with /props down: %v", err)
 	}
-	inputs := sc.takeInputs()
-	if len(inputs) != 1 || utf8.RuneCountInString(inputs[0]) != 4032 {
-		t.Fatalf("planned texts: got %d, rune lengths %v; want one text of exactly 4032 runes", len(inputs), runeLens(inputs))
+	// The sidecar also sees the calibration probes; the big element is the
+	// longest planned text and must be cut to exactly the stored cap.
+	if got := maxRuneLen(sc.takeInputs()); got != 4032 {
+		t.Fatalf("longest planned text = %d runes, want the stored cap 4032", got)
 	}
 	if got := storedStamp(t, st, localModel()); got != stamped {
 		t.Fatalf("stamp changed on a /props outage: got %+v, want %+v", got, stamped)
 	}
 }
 
-func runeLens(texts []string) []int {
-	out := make([]int, len(texts))
-	for i, s := range texts {
-		out[i] = utf8.RuneCountInString(s)
+// maxRuneLen is the rune length of the longest text (0 when there are none).
+func maxRuneLen(texts []string) int {
+	longest := 0
+	for _, s := range texts {
+		longest = max(longest, utf8.RuneCountInString(s))
 	}
-	return out
+	return longest
 }
 
 // (b) with no stamp, no /props and no pin, the cap cannot be determined: the
@@ -1173,8 +1177,8 @@ func TestWriteCapPinUsedWhenNoBudget(t *testing.T) {
 	if got := storedStamp(t, st, localModel()).TextCap; got != 1000 {
 		t.Fatalf("stamp TextCap = %d, want 1000", got)
 	}
-	if inputs := sc.takeInputs(); len(inputs) != 1 || utf8.RuneCountInString(inputs[0]) != 1000 {
-		t.Fatalf("planned texts rune lengths %v, want one of 1000", runeLens(inputs))
+	if got := maxRuneLen(sc.takeInputs()); got != 1000 {
+		t.Fatalf("longest planned text = %d runes, want the pinned 1000", got)
 	}
 }
 
@@ -1234,8 +1238,8 @@ func TestWriteCapKeepsStoredWhenSidecarBudgetGrows(t *testing.T) {
 	if got := storedStamp(t, st, localModel()).TextCap; got != 4032 {
 		t.Fatalf("stamp TextCap = %d, want the recorded 4032 kept", got)
 	}
-	if inputs := sc.takeInputs(); len(inputs) != 1 || utf8.RuneCountInString(inputs[0]) != 4032 {
-		t.Fatalf("planned texts rune lengths %v, want one of 4032", runeLens(inputs))
+	if got := maxRuneLen(sc.takeInputs()); got != 4032 {
+		t.Fatalf("longest planned text = %d runes, want the kept cap 4032", got)
 	}
 	if len(rep.Notes) != 1 || !strings.Contains(rep.Notes[0], "4032") {
 		t.Fatalf("notes = %q, want one note naming the kept cap 4032", rep.Notes)

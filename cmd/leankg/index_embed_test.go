@@ -15,10 +15,19 @@ import (
 
 // embedServer is an httptest OpenAI-compatible /v1/embeddings endpoint that
 // answers every text with a dims-wide vector and counts the requests it sees.
+// propsJSON512 is a sidecar /props answer for a 512-token model (text budget
+// 960 runes).
+const propsJSON512 = `{"model_path":"/models/bge-small-en-v1.5-f16.gguf","default_generation_settings":{"n_ctx":512}}`
+
 func embedServer(t *testing.T, dims int) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/props" {
+			// A llama.cpp sidecar reports its context here; the local write cap needs it.
+			_, _ = w.Write([]byte(propsJSON512))
+			return
+		}
 		hits.Add(1)
 		var body struct {
 			Input []string `json:"input"`
@@ -326,6 +335,10 @@ func TestIndexEndpointConfigFailsFast(t *testing.T) {
 	hookEnv(t, "10")
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/props" {
+			_, _ = w.Write([]byte(propsJSON512))
+			return
+		}
 		if r.URL.Path != "/embeddings" {
 			http.NotFound(w, r)
 			return

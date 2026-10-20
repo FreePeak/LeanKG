@@ -115,7 +115,7 @@ func matchImportFlag[T comparable](flag string, given, resolved T) error {
 // embedding workflow's input format (export → embed elsewhere → import).
 //
 // text is the EXACT string the live provider receives for the element
-// (documentInput): the capped document text (TextCap, the same cut Run makes)
+// (documentInput): the capped document text (the write cap Run resolves)
 // with the model's pinned document prefix (issue #279 part 2). Otherwise an
 // offsite embedder would build vectors from different text, or unprefixed
 // vectors that then land in a collection whose queries are embedded WITH the
@@ -136,6 +136,14 @@ func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Wr
 		return fmt.Errorf("embed: export: the local sidecar at %q reported no n_ctx on /props, so the live text cap "+
 			"cannot be known; start the sidecar and set LEANKG_EMBED_BASE_URL to it", os.Getenv("LEANKG_EMBED_BASE_URL"))
 	}
+	cur, err := st.Stamp(p.ModelID())
+	if err != nil {
+		return err
+	}
+	limit, _, err := writeCapFor(cur, p, "incremental")
+	if err != nil {
+		return err
+	}
 	elems, err := readElements(st)
 	if err != nil {
 		return err
@@ -146,7 +154,7 @@ func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Wr
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := enc.Encode(exportLine{QualifiedName: e.QN, ContentHash: contentHashHex(e.Content), Text: documentInput(p, e)}); err != nil {
+		if err := enc.Encode(exportLine{QualifiedName: e.QN, ContentHash: contentHashHex(e.Content), Text: documentInput(p, limit, e)}); err != nil {
 			return fmt.Errorf("embed: export %s: %w", e.QN, err)
 		}
 	}
