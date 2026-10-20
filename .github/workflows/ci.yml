@@ -87,6 +87,15 @@ jobs:
       - name: Dual-engine acceptance gate
         run: make dual-engine
         timeout-minutes: 20
+      # Teardown belongs to the step that started the fixture. Measured
+      # 2026-10-17: run 38989829770 started pgvector on the self-hosted runner
+      # and never stopped it — `leankg-pg-500mb` was still holding port 5433
+      # four hours later, until the next run reused the name. `if: always()`
+      # so a failed or timed-out gate still removes the container; the plain
+      # `down` keeps the `leankg-pgdata-500mb` volume (only `-v` wipes it).
+      - name: Stop pgvector
+        if: always()
+        run: docker compose -f scripts/pgvector.compose.yml down
   go-engine:
     name: Go Engine (build + vet + test)
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64","leankg"]') }}
