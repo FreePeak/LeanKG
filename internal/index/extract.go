@@ -110,6 +110,16 @@ func extractFileAs(rel string, src []byte, lang string) fileElements {
 				// detection (a one-line body has none).
 				e.recv = d.Owner
 			}
+			if d.Kind == "method" && d.Owner != "" {
+				// A Go method's owning type is its RECEIVER, and the receiver
+				// is not an enclosing node — a Go method is a sibling of its
+				// type, not a child of it — so line-based parent detection
+				// cannot find it. Without recv the method's qualified name was
+				// "<file>::Method" instead of "<file>::Type.Method", and the
+				// same repository indexed under `-tags tstree` answered
+				// DIFFERENT qualified names than the shipped CGO-free build.
+				e.recv = d.Owner
+			}
 			fe.elements = append(fe.elements, e)
 		}
 		assignParents(fe.elements)

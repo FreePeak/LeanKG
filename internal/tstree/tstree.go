@@ -174,13 +174,29 @@ func Extract(src []byte, lang string) ([]Def, error) {
 			return
 		}
 		if et, ok := kindSpec[n.Type()]; ok && !suppressed(parentType, n.Type()) {
-			if name := nameOf(n, src); name != "" {
+			name := nameOf(n, src)
+			// A Go method's identity is its RECEIVER plus its name, and a Go
+			// type's name lives on the type_spec/type_alias child rather than
+			// on the type_declaration node. Neither shape is the generic
+			// "name field" the other grammars use, so both are resolved here
+			// (see goDefName): without them the grammar tier dropped every
+			// Go type and merged same-named methods across types, so the same
+			// repository indexed under `-tags tstree` answered DIFFERENT
+			// qualified names than the shipped CGO-free build.
+			owner := parentName
+			if name == "" {
+				name = goDefName(n, src)
+			}
+			if owner == "" {
+				owner = goReceiverType(n, src)
+			}
+			if name != "" {
 				out = append(out, Def{
 					Kind:      et,
 					Name:      name,
 					StartLine: int(n.StartPoint().Row) + 1,
 					EndLine:   int(n.EndPoint().Row) + 1,
-					Parent:    parentName,
+					Parent:    owner,
 				})
 				parentName = name
 			}
@@ -190,14 +206,16 @@ func Extract(src []byte, lang string) ([]Def, error) {
 		}
 	}
 	walk(root, "", "", 0)
-	// Dedupe by kind+name, keeping the widest span: objc and dart declare a
-	// member in one place (@interface, abstract member) and define it in
+	// Dedupe by kind+OWNER+name, keeping the widest span: objc and dart declare
+	// a member in one place (@interface, abstract member) and define it in
 	// another (@implementation, override), and only the definition carries the
-	// real end line.
+	// real end line. The owner is in the key because a Go method's identity
+	// is its receiver plus its name: keyed by name alone, `A.String` and
+	// `B.String` collapsed into one definition.
 	at := map[string]int{}
 	var uniq []Def
 	for _, d := range out {
-		key := d.Kind + "\x1f" + d.Name
+		key := d.Kind + "\x1f" + d.Parent + "\x1f" + d.Name
 		i, ok := at[key]
 		if !ok {
 			at[key] = len(uniq)
@@ -240,6 +258,69 @@ func nameOf(n *sitter.Node, src []byte) string {
 		return strings.TrimSpace(name.Content(src))
 	}
 	return firstIdentifierLike(n, src)
+}
+
+// goDefName resolves the name of a Go definition whose name is not on the node
+// itself.
+//
+// A Go type declaration is `type_declaration > type_spec > type_identifier`,
+// and the type's name is on the type_spec (or, for an alias, on the
+// type_alias). The type_declaration node has no "name" field, so the generic
+// lookup above returns nothing and the type was dropped from the graph
+// entirely — measured on this repository's 260 Go files, the grammar tier
+// indexed 33 types where the regex tier found 533.
+//
+// A grouped declaration (`type ( A struct{}; B struct{} )`) puts one
+// type_spec per member, so the name is taken from the FIRST spec; the
+// remaining specs are separate definitions of their own (the walk descends
+// into them).
+func goDefName(n *sitter.Node, src []byte) string {
+	switch n.Type() {
+	case "type_declaration":
+		for i := 0; i < int(n.NamedChildCount()); i++ {
+			c := n.NamedChild(i)
+			switch c.Type() {
+			case "type_spec", "type_alias":
+				if name := c.ChildByFieldName("name"); name != nil {
+					return strings.TrimSpace(name.Content(src))
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// goReceiverType resolves the owning type of a Go method from its receiver:
+// `func (a *A) String()` names A. The receiver is a parameter list, so the
+// type is the identifier inside it (`*A` and `A` both yield A).
+//
+// Without it a Go method had no owner, so its qualified name was
+// `<file>::String` instead of `<file>::A.String` — and two types' methods
+// with the same name were indistinguishable.
+func goReceiverType(n *sitter.Node, src []byte) string {
+	if n.Type() != "method_declaration" {
+		return ""
+	}
+	recv := n.ChildByFieldName("receiver")
+	if recv == nil {
+		return ""
+	}
+	var found string
+	var find func(*sitter.Node, int)
+	find = func(x *sitter.Node, depth int) {
+		if x == nil || depth > 6 || found != "" {
+			return
+		}
+		if x.Type() == "type_identifier" {
+			found = strings.TrimSpace(x.Content(src))
+			return
+		}
+		for i := 0; i < int(x.NamedChildCount()); i++ {
+			find(x.NamedChild(i), depth+1)
+		}
+	}
+	find(recv, 0)
+	return found
 }
 
 // dartConstructorName resolves the constructor's own member name, without the

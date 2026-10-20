@@ -131,10 +131,15 @@ func TestNewErrorRendersAndMatchesByCode(t *testing.T) {
 }
 
 // goFilesUnder walks root and returns every .go file, skipping the directories
-// that are not part of this tree's module. `.worktrees/` is the important one:
-// it holds OTHER checkouts of this repository, each with its own copy of every
-// source file, and a worktree's own test fixtures (which deliberately plant
-// codes like LEANKG_ERROR_TOTALLY_NEW) used to fail the main checkout's gate.
+// that are not part of this tree's module. The worktree directories are the
+// important ones: they hold OTHER checkouts of this repository, each with its
+// own copy of every source file, and a worktree's own test fixtures (which
+// deliberately plant codes like LEANKG_ERROR_TOTALLY_NEW) used to fail the
+// main checkout's gate.
+//
+// `.claude/` joins `.worktrees/` for the same reason: the agent harness parks
+// its worktrees under `.claude/worktrees/`, so a checkout with one open
+// failed this gate on the OTHER checkout's fixtures.
 func goFilesUnder(t *testing.T, root, skipDir string) []string {
 	t.Helper()
 	var files []string
@@ -144,7 +149,7 @@ func goFilesUnder(t *testing.T, root, skipDir string) []string {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == ".worktrees" || name == "testdata" || name == "node_modules" || name == "vendor" {
+			if name == ".git" || name == ".worktrees" || name == ".claude" || name == "testdata" || name == "node_modules" || name == "vendor" {
 				return fs.SkipDir
 			}
 			if skipDir != "" && path == skipDir {

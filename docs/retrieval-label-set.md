@@ -73,7 +73,7 @@ checkable rather than arguable.
 
 | # | question | ground-truth qualified_name | where |
 |---|---|---|---|
-| 1 | reciprocal rank fusion of ranked lists | `internal/store/pg_fts.go::FuseRRF` | pg_fts.go |
+| 1 | reciprocal rank fusion of ranked lists | `internal/memory/dense.go::fuseRRF` | dense.go |
 | 2 | the weighted variant of rank fusion | `internal/store/pg_fts.go::FuseRRFWeighted` | pg_fts.go |
 | 3 | the Store constructor that opens sqlite | `internal/store/store.go::Open` | store.go |
 | 4 | report how many bytes the freelist holds | `internal/store/maintenance.go::Store.Space` | maintenance.go |
