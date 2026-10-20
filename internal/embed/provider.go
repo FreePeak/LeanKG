@@ -24,8 +24,11 @@ const (
 // counts one truncation per element (contract §internal/embed).
 const maxContentChars = 8000
 
-// maxLocalTextChars is the embedding-text budget for the local sidecar
-// family: llama.cpp serving a BERT-size GGUF embedder (bge-small-en-v1.5,
+// maxLocalTextChars is the query-side fallback budget for the local sidecar
+// family (TextCap, when /props gives no budget). The write path never uses it:
+// with no stored cap, no /props budget and no LEANKG_EMBED_TEXT_CAP pin a run
+// or export refuses (resolveWriteCap). The reason for the figure: llama.cpp
+// serving a BERT-size GGUF embedder (bge-small-en-v1.5,
 // all-MiniLM-L6-v2 — both 512-token training context) REJECTS longer inputs
 // with HTTP 500 instead of truncating the way the ONNX-era in-process
 // pipeline did. One oversized element otherwise aborts the whole run — found

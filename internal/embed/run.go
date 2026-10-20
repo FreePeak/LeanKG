@@ -11,9 +11,9 @@ import (
 )
 
 // ChunkerVersion versions the pipeline that turns a stored element into the
-// text a model embeds: per-element chunks keyed on qualified_name, the
-// maxContentChars rune cap, and the catalog's query/document prefix pair
-// applied at the provider boundary.
+// text a model embeds: per-element chunks keyed on qualified_name, the run's
+// write cap (writeCapFor, at most maxContentChars runes), and the catalog's
+// query/document prefix pair applied at the provider boundary.
 //
 // Bump it on ANY change to that construction. The value is carried on every
 // collection stamp, so a bump is a rebuild directive (incremental writers hard
@@ -63,8 +63,9 @@ type dirtyItem struct{ file, qn, text, hash string }
 // at the provider and degrading L3 (RS-15).
 //
 // QUERY/MEMORY CALLERS ONLY (internal/core: query truncation and the memory
-// path). The write path must not use it: a flaky /props would silently drop the
-// write cap to 1000 and flip the stamp guard. Writers use writeCapFor.
+// path). The write path must not use it: a /props answer that differs between
+// runs would move the write cap. Writers use writeCapFor, which keeps the cap
+// recorded in the stamp or refuses before any write.
 func TextCap(p Provider) int {
 	return capForLabel(p.Provider(), sidecarBudget(p))
 }
@@ -93,7 +94,7 @@ func capForLabel(label string, budget int) int {
 //  5. otherwise the cap is undetermined and the error names both fixes.
 //
 // Pure: the caller reads /props (budget), the pin and the stamp. Unlike TextCap
-// there is no 1000 default here.
+// there is no fallback default: an undetermined cap is an error.
 func resolveWriteCap(label string, budget, pin, stored int) (int, error) {
 	if stored > 0 {
 		return stored, nil
