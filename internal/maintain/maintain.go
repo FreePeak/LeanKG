@@ -133,19 +133,42 @@ func Sweep(st store.Backend, opts Options) SweepResult {
 
 // Result is what one pass did and how much it recovered.
 type Result struct {
-	Engine       string `json:"engine"`
-	Path         string `json:"path"`
-	Before       int64  `json:"before_bytes"`
-	After        int64  `json:"after_bytes"`
-	Reclaimed    int64  `json:"reclaimed_bytes"`
-	FreeBefore   int64  `json:"free_before_bytes"`
-	FreeAfter    int64  `json:"free_after_bytes"`
-	WALBytes     int64  `json:"wal_bytes,omitempty"`
-	Vacuumed     bool   `json:"vacuumed"`
-	Checkpointed bool   `json:"checkpointed"`
+	Engine     string `json:"engine"`
+	Path       string `json:"path"`
+	Before     int64  `json:"before_bytes"`
+	After      int64  `json:"after_bytes"`
+	Reclaimed  int64  `json:"reclaimed_bytes"`
+	FreeBefore int64  `json:"free_before_bytes"`
+	FreeAfter  int64  `json:"free_after_bytes"`
+	WALBytes   int64  `json:"wal_bytes,omitempty"`
+	Vacuumed   bool   `json:"vacuumed"`
+	// Checkpointed reports whether the WAL sidecar was checkpointed.
+	Checkpointed bool `json:"checkpointed"`
+	// Grew is the bytes the store GREW during the pass. A pass is not always a
+	// shrink: the one-time auto_vacuum header upgrade rewrites the store, and
+	// on a small store that rewrite lands a few kilobytes LARGER (the header
+	// change plus the incremental-vacuum bookkeeping). Reclaimed and Grew are
+	// therefore two halves of one signed delta, and exactly one of them is
+	// non-zero — a pass can never both reclaim and grow.
+	Grew int64 `json:"grew_bytes"`
 	// Sweep reports what the reclaim sweep removed before the vacuum
 	// handed the space back to the filesystem.
 	Sweep SweepResult `json:"sweep"`
+}
+
+// ReclaimSummary says what the pass did to the store's size, in the words a
+// reader can act on. A pass that grew the store says so, rather than
+// reporting the growth as a negative amount reclaimed: "reclaimed -4096
+// bytes" reads as a bug in the tool and hides the fact that the pass did
+// exactly what it was asked to do.
+//
+// The delta is derived from Before/After, so a Result built by hand (a test,
+// a caller that did not run Pass) still reports the truth.
+func (r Result) ReclaimSummary() string {
+	if r.After > r.Before {
+		return fmt.Sprintf("grew %d bytes", r.After-r.Before)
+	}
+	return fmt.Sprintf("reclaimed %d bytes", r.Before-r.After)
 }
 
 // Pass runs the maintenance sequence over one store handle.
@@ -228,9 +251,19 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 	} else {
 		logf("maintain: re-probe space: %v", err)
 	}
-	if res.Reclaimed = res.Before - res.After; res.Reclaimed > 0 {
+	// The signed delta is split into its two halves, so a pass that grew the
+	// store never reports a negative amount as "reclaimed".
+	if res.After > res.Before {
+		res.Grew = res.After - res.Before
+	} else {
+		res.Reclaimed = res.Before - res.After
+	}
+	if res.Reclaimed > 0 {
 		logf("maintain: reclaimed %d bytes (%d -> %d) from %s",
 			res.Reclaimed, res.Before, res.After, res.Path)
+	} else if res.Grew > 0 {
+		logf("maintain: store grew %d bytes (%d -> %d) from %s",
+			res.Grew, res.Before, res.After, res.Path)
 	}
 	return res, nil
 }
