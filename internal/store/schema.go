@@ -419,4 +419,13 @@ ALTER TABLE emb_stamp ADD COLUMN chunker_version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE emb_stamp ADD COLUMN query_prefix TEXT NOT NULL DEFAULT '';
 ALTER TABLE emb_stamp ADD COLUMN document_prefix TEXT NOT NULL DEFAULT '';
 `})
+	// 016 is the PostgreSQL-only FTS step (pgmigrate.go), so the sqlite ledger
+	// skips it: 017 keeps both ledgers on the same version for the same step.
+	migrations = append(migrations, migration{17, "embed-stamp-text-cap", `
+-- The per-text rune cap the collection's vectors were written with. It is
+-- provenance for the write-cap resolver (internal/embed), not identity: Matches
+-- ignores it. 0 means the cap was never recorded (a pre-017 row), which the
+-- resolver treats as "derive it again", never as a cap of zero.
+ALTER TABLE emb_stamp ADD COLUMN text_cap INTEGER NOT NULL DEFAULT 0;
+`})
 }

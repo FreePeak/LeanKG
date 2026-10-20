@@ -422,6 +422,46 @@ func TestStampIdentityColumns(t *testing.T) {
 	}
 }
 
+// TestStampTextCapRoundTrip pins the recorded per-text cap (migration 017):
+// it persists through WriteStamp, is read back by Stamp and Stamps, an upsert
+// replaces it, and a row written before the column existed reads back as 0
+// ("cap not recorded") rather than as a guessed value.
+func TestStampTextCapRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	want := ModelStamp{
+		ModelID: "cap-model", Revision: "r1", Dimensions: 4, Distance: "cosine",
+		Provider: "local", TextCap: 8000,
+	}
+	if err := s.WriteStamp(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Stamp(want.ModelID)
+	if err != nil || got == nil || got.TextCap != 8000 {
+		t.Fatalf("Stamp() = %+v, %v; want TextCap 8000", got, err)
+	}
+
+	want.TextCap = 4000
+	if err := s.WriteStamp(want); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Stamp(want.ModelID); err != nil || got == nil || got.TextCap != 4000 {
+		t.Fatalf("upsert must replace TextCap: %+v, %v; want 4000", got, err)
+	}
+	all, err := s.Stamps()
+	if err != nil || len(all) != 1 || all[0].TextCap != 4000 {
+		t.Fatalf("Stamps() = %+v, %v; want one row with TextCap 4000", all, err)
+	}
+
+	if _, err := s.db.Exec(`INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider)
+		VALUES ('cap-legacy', 'old', 8, 'cosine', 'local')`); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := s.Stamp("cap-legacy")
+	if err != nil || legacy == nil || legacy.TextCap != 0 {
+		t.Fatalf("legacy stamp = %+v, %v; want TextCap 0 (not recorded)", legacy, err)
+	}
+}
+
 // TestReplaceFileVectorsIsOneAtomicUnit pins the per-file write contract:
 // vectors and their embedding_state rows land together, a repeated call
 // replaces (never duplicates) a qualified name, an empty set is refused, and
