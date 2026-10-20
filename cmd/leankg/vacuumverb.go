@@ -63,12 +63,19 @@ func cmdVacuum(args []string) {
 			fatalText(fmt.Errorf("vacuum: %w", err))
 		}
 		if *quiet {
+			// A rewrite can leave the store bigger; the number is the space
+			// returned, so a growth is reported as a negative reclaim rather
+			// than a signed delta an operator has to decode.
 			fmt.Printf("%d\n", before.SizeBytes-after.SizeBytes)
 			return
 		}
-		fmt.Printf("vacuum: %s full rewrite %d -> %d bytes (freed %d) on %s\n",
+		// The full rewrite can leave the store bigger (the auto_vacuum header
+		// upgrade), so the summary names the outcome instead of printing a
+		// negative "freed" figure.
+		fmt.Printf("vacuum: %s full rewrite %d -> %d bytes (%s) on %s\n",
 			st.Engine(), before.SizeBytes, after.SizeBytes,
-			before.SizeBytes-after.SizeBytes, before.Path)
+			maintain.Result{Before: before.SizeBytes, After: after.SizeBytes}.ReclaimSummary(),
+			before.Path)
 		return
 	}
 
@@ -91,8 +98,12 @@ func cmdVacuum(args []string) {
 	// The pass also SWEEPS first (orphan edges, orphan vectors), so the
 	// space it reclaimed may be space it made by deleting rows. Report
 	// both: "reclaimed 40MB" alone would hide what was removed.
-	fmt.Printf("vacuum: %s reclaimed %d bytes (%d -> %d, freelist %d -> %d, wal %d)\n",
-		res.Engine, res.Reclaimed, res.Before, res.After, res.FreeBefore, res.FreeAfter, res.WALBytes)
+	//
+	// The summary names what happened rather than printing a signed delta:
+	// the one-time auto_vacuum header upgrade can make the store BIGGER, and
+	// "reclaimed -4096 bytes" reads as a bug in the tool.
+	fmt.Printf("vacuum: %s %s (%d -> %d, freelist %d -> %d, wal %d)\n",
+		res.Engine, res.ReclaimSummary(), res.Before, res.After, res.FreeBefore, res.FreeAfter, res.WALBytes)
 	if !res.Sweep.Empty() {
 		fmt.Printf("vacuum: swept %d orphan edge(s), %d orphan vector(s), %d stale collection(s) (%d vectors, %d state rows)\n",
 			res.Sweep.OrphanEdges, res.Sweep.OrphanVectors,
