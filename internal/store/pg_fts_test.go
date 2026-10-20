@@ -20,7 +20,7 @@ func pgFloatClose(t *testing.T, got, want float64, what string) {
 }
 
 func TestFuseRRFSingleListPreservesOrderAndScores(t *testing.T) {
-	fused := FuseRRF([]RankList{{Name: ArmVector, Keys: []string{"a", "b", "c"}}})
+	fused := FuseRRFWeighted([]RankList{{Name: ArmVector, Keys: []string{"a", "b", "c"}}}, FuseRRFWeights{})
 	if len(fused) != 3 {
 		t.Fatalf("len = %d; want 3 (%+v)", len(fused), fused)
 	}
@@ -42,11 +42,11 @@ func TestFuseRRFSingleListPreservesOrderAndScores(t *testing.T) {
 // The whole point of fusion: a document several arms agree on outranks the top
 // of any single arm, even though the arms' scores are on unrelated scales.
 func TestFuseRRFCreditsMultiArmAgreement(t *testing.T) {
-	fused := FuseRRF([]RankList{
+	fused := FuseRRFWeighted([]RankList{
 		{Name: ArmVector, Keys: []string{"solo", "shared"}},
 		{Name: ArmTSVector, Keys: []string{"shared"}},
 		{Name: ArmTrigram, Keys: []string{"shared"}},
-	})
+	}, FuseRRFWeights{})
 	if len(fused) != 2 {
 		t.Fatalf("len = %d; want 2 (%+v)", len(fused), fused)
 	}
@@ -74,7 +74,7 @@ func TestFuseRRFTiesBreakOnFirstAppearance(t *testing.T) {
 		{{Name: ArmVector, Keys: []string{"x"}}, {Name: ArmTSVector, Keys: []string{"y"}}},
 		{{Name: ArmTSVector, Keys: []string{"y"}}, {Name: ArmVector, Keys: []string{"x"}}},
 	} {
-		fused := FuseRRF(lists)
+		fused := FuseRRFWeighted(lists, FuseRRFWeights{})
 		if len(fused) != 2 || fused[0].Score != fused[1].Score {
 			t.Fatalf("expected two tied hits, got %+v", fused)
 		}
@@ -85,15 +85,15 @@ func TestFuseRRFTiesBreakOnFirstAppearance(t *testing.T) {
 }
 
 func TestFuseRRFEdgeCases(t *testing.T) {
-	if got := FuseRRF(nil); len(got) != 0 {
+	if got := FuseRRFWeighted(nil, FuseRRFWeights{}); len(got) != 0 {
 		t.Fatalf("no lists -> %+v; want empty", got)
 	}
-	if got := FuseRRF([]RankList{{Name: ArmVector}, {Name: ArmTSVector, Keys: []string{}}}); len(got) != 0 {
+	if got := FuseRRFWeighted([]RankList{{Name: ArmVector}, {Name: ArmTSVector, Keys: []string{}}}, FuseRRFWeights{}); len(got) != 0 {
 		t.Fatalf("empty lists -> %+v; want empty", got)
 	}
 	// A key repeated inside one arm (an arm that emits the same document twice)
 	// is credited once, at its best rank.
-	got := FuseRRF([]RankList{{Name: ArmVector, Keys: []string{"dup", "dup"}}})
+	got := FuseRRFWeighted([]RankList{{Name: ArmVector, Keys: []string{"dup", "dup"}}}, FuseRRFWeights{})
 	if len(got) != 1 {
 		t.Fatalf("dup keys fused to %d hits; want 1", len(got))
 	}

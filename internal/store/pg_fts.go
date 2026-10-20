@@ -1,7 +1,7 @@
 // PostgreSQL full-text search for the keyword rung (issue #273): a GIN-indexed
 // tsvector generated column (pgmigrate.go migration 012) ranked with ts_rank,
 // ILIKE + pg_trgm similarity as the fallback for queries that carry no
-// lexemes, and reciprocal-rank fusion (FuseRRF) of the vector / tsvector /
+// lexemes, and reciprocal-rank fusion (FuseRRFWeighted) of the vector / tsvector /
 // trigram rankings behind the PostgreSQL semantic rung.
 //
 // SQLite's FTS5 path is deliberately untouched: nothing in this file is
@@ -27,7 +27,7 @@ import (
 // generated column of migration 012).
 const pgTSConfig = "'simple'"
 
-// Ranking-arm names, as they appear in FuseRRF's RankList labels and in the
+// Ranking-arm names, as they appear in FuseRRFWeighted's RankList labels and in the
 // provenance strings returned by SearchElementsFTS and HybridSearch.
 const (
 	ArmVector   = "vector"
@@ -121,7 +121,7 @@ func DefaultFuseWeights() FuseRRFWeights {
 
 const RRFK = 60
 
-// RankList is one arm's ranked output feeding FuseRRF: document keys in
+// RankList is one arm's ranked output feeding FuseRRFWeighted: document keys in
 // descending relevance (rank 1 first). Name labels the arm for provenance.
 type RankList struct {
 	Name string
@@ -136,14 +136,6 @@ type FusedHit struct {
 	Key   string         `json:"key"`
 	Score float64        `json:"score"`
 	Ranks map[string]int `json:"ranks"`
-}
-
-// FuseRRF merges pre-ranked lists by reciprocal rank fusion and returns every
-// distinct key, best score first. Ties break on the order keys first appeared
-// across the lists in the order given, so the earlier arm wins a tie and the
-// result never depends on map iteration.
-func FuseRRF(lists []RankList) []FusedHit {
-	return FuseRRFWeighted(lists, FuseRRFWeights{})
 }
 
 // armWeight maps an arm name to its weight for weighted fusion.
@@ -186,11 +178,13 @@ func (w FuseRRFWeights) keywordWeight(arm float64) float64 {
 	return 1.0
 }
 
-// FuseRRFWeighted is FuseRRF with per-arm score scaling: score +=
-// weight[arm] / (K + rank + 1). It keeps the same RRFK convention, tie
-// break and arm-order logic as FuseRRF, so a caller can upweight or
-// downweight a ranking arm (the primitive map's "learned reranker
-// replaces fixed RRFK") without perturbing how missing ranks are treated.
+// FuseRRFWeighted merges pre-ranked lists by reciprocal rank fusion and returns
+// every distinct key, best score first. Each arm adds weight[arm] / (RRFK + rank
+// + 1), so a caller can upweight or downweight a ranking arm (the primitive map's
+// "learned reranker replaces fixed RRFK") without perturbing how missing ranks
+// are treated. The zero FuseRRFWeights leaves every arm at weight 1. Ties break
+// on the order keys first appeared across the lists in the order given, so the
+// earlier arm wins a tie and the result never depends on map iteration.
 func FuseRRFWeighted(lists []RankList, w FuseRRFWeights) []FusedHit {
 	type slot struct{ hit FusedHit }
 	var slots []*slot

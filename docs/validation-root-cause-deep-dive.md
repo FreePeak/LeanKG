@@ -5,6 +5,13 @@
 **Companion docs:** `docs/retrieval-miss-analysis.md`, `docs/retrieval-label-set.md`  
 **Scope of this document:** root causes behind the measured miss pattern, code evidence, best-practice fixes, verification gates. No implementation in this pass.
 
+> **Number check (2026-10-20).** The scoreboard (§1), the per-store coverage
+> table (§2.1) and the RC4/RC5 symptom tables were re-checked against the
+> validation report named above. The Oct-18 draft of §1 and §2.1 did not match
+> that report and was corrected. Store names in the tables are anonymised in
+> this public copy; the report maps them. Figures that the report does not
+> publish (nDCG, the grep element-level row) are not stated here. These figures come from the 2026-10-18 validation report and predate #531, #532, #534 and #535 (3:1 vector fusion), and there is no re-run on disk, so none of them is a current measurement.
+
 > **Status refreshed 2026-10-20.** The analysis below is the Oct-18 reading of
 > the validation run and it still stands as the diagnosis; what changed since is
 > how much of it has LANDED. **RC2's extractor fix shipped** (#531, the
@@ -26,16 +33,15 @@
 
 The validation run is **not** an embedding-quality failure. Gemma coverage is high (96.6% of elements have vectors). The scoreboard is dragged down by five independent defects that sit *around* the vectors: phantom index rows, stamp transport friction, hybrid fusion mixing evidence classes, missing within-file expansion, and a benchmark that under-counts true hits.
 
-| Metric (HTML report) | Semantic | Grep baseline |
+| Metric (validation report, 20 questions) | Semantic | Grep baseline |
 |---|---|---|
-| File-level Hit@5 | **80%** (16/20) | 90% (18/20) |
-| Element-level Hit@5 | **30%** (6/20) | 55% (11/20) |
-| File MRR | 0.617 | 0.825 |
-| Element MRR | 0.233 | 0.458 |
-| File nDCG@10 | 0.676 | 0.847 |
-| Element nDCG@10 | 0.298 | 0.528 |
+| File-level Hit@5 | **100%** (20/20) | 40% (8/20) |
+| File MRR | 0.730 | 0.262 |
+| Element-level Hit@5, all 20 questions as published | **70%** (14/20) | not published |
+| Element-level Hit@5, 15 exactly-qualified labels | **73.3%** (11/15) | not published |
+| Element MRR, all 20 questions | 0.495 | not published |
 
-**Read of the gap:** semantic is ~10pp behind grep on *files* and ~25pp behind on *elements*. File-level retrieval already works. The element gap is mostly ranking/window composition and label/index hygiene — not “Gemma cannot embed code.”
+**Read of the gap:** semantic is ahead of grep on *files* (100% vs 40% Hit@5). Element level is the weak spot: 70% over all 20 questions and 73.3% over the 15 exactly-qualified labels. The report publishes no grep element row, so an element-level comparison with grep is open. The element gap is mostly ranking/window composition and label/index hygiene — not “Gemma cannot embed code.”
 
 **One-line diagnosis:** L3 is often answering with the wrong *kind* of evidence (FTS-only rows, phantoms, wrong symbol in the right file), or not answering at all (stamp degrade), while the bench sometimes asks for a name the graph never stored.
 
@@ -45,23 +51,29 @@ The validation run is **not** an embedding-quality failure. Gemma coverage is hi
 
 ### 2.1 Per-repo gemma coverage (from report)
 
-| Repo | Elements | Gemma vectors | Coverage |
-|---|---:|---:|---:|
-| claude-code | 13,956 | 13,956 | 100% |
-| db-mcp-server | 305 | 305 | 100% |
-| gmail-mcp | 190 | 190 | 100% |
-| go-common | 8,523 | 8,523 | 100% |
-| laya | 2,185 | 2,185 | 100% |
-| laya-proxy | 337 | 337 | 100% |
-| leankg | 11,323 | 11,274 | 99.6% (49 short) |
-| opencode | 6,146 | 6,146 | 100% |
-| rea | 5,908 | 5,908 | 100% |
-| rea-go | 3,311 | 3,311 | 100% |
-| xdev | 11,482 | 9,390 | **81.8% (2,092 short)** |
-| ZCode | 8,535 | 8,535 | 100% |
-| *(plus remaining of 18 stores)* | | | |
+| Store | Elements | Gemma vectors | Coverage | Missing | Phantoms |
+|---|---:|---:|---:|---:|---:|
+| S01 | 20,604 | 20,604 | 100.00% | 0 | 3 |
+| S02 | 3,620 | 3,620 | 100.00% | 0 | 0 |
+| S03 | 3,257 | 3,257 | 100.00% | 0 | 0 |
+| S04 | 2,031 | 2,031 | 100.00% | 0 | 0 |
+| S05 | 1,971 | 1,971 | 100.00% | 0 | 0 |
+| S06 | 59 | 59 | 100.00% | 0 | 0 |
+| S07 | 3,266 | 3,266 | 100.00% | 0 | 0 |
+| S08 | 17,218 | 17,218 | 100.00% | 0 | 30 |
+| S09 | 4,291 | 4,291 | 100.00% | 0 | 0 |
+| S10 | 3,118 | 3,118 | 100.00% | 0 | 98 |
+| S11 | 117 | 117 | 100.00% | 0 | 0 |
+| S12 | 1,442 | 1,442 | 100.00% | 0 | 0 |
+| S13 | 11,484 | 9,392 | **81.78% (2,092 short)** | 2,092 | 0 |
+| S14 (not benchmarked) | 725 | 0 | 0.00% | 725 | 0 |
+| leankg (not benchmarked) | 11,110 | 11,061 | 99.56% (49 short) | 49 | 1 |
+| S16 (not benchmarked) | 24 | 24 | 100.00% | 0 | 0 |
+| **Total (16 stores in totals)** | **84,337** | **81,471** | **96.6%** | 2,866 | 132 |
 
-**Coverage decay pattern:** a re-index that adds/replaces elements without a matching embed pass leaves new rows vector-less. `leankg index` is supposed to run incremental embed unless `--no-embed`; hook mode can *skip* embed when the pending set exceeds `LEANKG_HOOK_MAX_EMBED` (default 500). That is the operational root of xdev’s 2,092 hole and leankg’s 49 hole — not model failure.
+Two further stores (S17, S18) returned a query error (`no such column: chunker_version`) and are not in the totals. The per-store counts above are the report's rows; the Oct-18 draft of this table had different store rows and counts and is replaced.
+
+**Coverage decay pattern:** a re-index that adds/replaces elements without a matching embed pass leaves new rows vector-less. `leankg index` is supposed to run incremental embed unless `--no-embed`; hook mode can *skip* embed when the pending set exceeds `LEANKG_HOOK_MAX_EMBED` (default 500). That is the operational root of S13’s 2,092 hole and leankg’s 49 hole — not model failure.
 
 ### 2.2 Miss shape (element-level)
 
@@ -74,7 +86,7 @@ From the HTML miss table and `docs/retrieval-miss-analysis.md`:
 | **Stamp degrade** | L3 never ran | provider string ≠ collection provider |
 | **STALE label** | GT not in `code_elements` | extractor gap or label points at non-emitted symbol |
 
-File-level Hit@5 = 80% while element Hit@5 = 30% is the strongest single signal: **we often know the file and still fail the symbol.**
+File-level Hit@5 = 100% while element Hit@5 = 70% (all 20 questions) is the strongest single signal: **we often know the file and still fail the symbol.** Q2, Q11 and Q16 are the report's clean examples (§3, RC5).
 
 ---
 
@@ -86,7 +98,7 @@ File-level Hit@5 = 80% while element Hit@5 = 30% is the strongest single signal:
 
 **Evidence:**
 - Label contract in `docs/retrieval-label-set.md`: ground truth is a full `qualified_name` checked against `code_elements`.
-- Multi-repo HTML harness still carries bare / partially-qualified labels on some of the 20 cross-repo questions (report §3 / fix plan item 3).
+- Multi-repo HTML harness still carries bare / partially-qualified labels on 5 of the 20 cross-repo questions (Q3, Q6, Q7, Q9, Q19; report RC1 / fix plan item 3). Each omits the receiver, e.g. the store row is `Type.method`, the label is `method`.
 - In-tree bench already knows STALE vs miss; multi-repo gather path did not always print the **valid-label denominator**.
 
 **Root cause:** The scorer compares strings, not “same symbol.” Without receiver/type/package, Go methods and common names collide. Counting STALE labels as misses confuses indexer debt with ranker debt.
@@ -103,23 +115,23 @@ File-level Hit@5 = 80% while element Hit@5 = 30% is the strongest single signal:
 
 ### RC2 — TS/JS extractor phantoms (`function` prefix absorption)
 
-**Symptom:** Retrieval windows contain non-symbols such as `functionisBrowser`, `functiongenerateObject`, `functiontoJSONSchema`. They occupy hybrid slots and dilute true neighbors.
+**Symptom:** Retrieval windows contain non-symbols, e.g. the tail `ality` captured from `functionality` (Q15). The report counts 132 phantoms across four stores (98 in S10, 30 in S08, 3 in S01, 1 in leankg). They occupy hybrid slots and dilute true neighbors.
 
 **Code evidence:**
 
-```48:50:internal/index/extract.go
-// Word boundary after "function" so "functionisBrowser" / "functiongenerateObject"
-// (minified or ASI-joined source) cannot absorb the keyword into the name.
-var tsFuncRe = regexp.MustCompile(`(?m)(?:export\s+)?(?:async\s+)?function\b\s+\*?\s*(?P<name>[A-Za-z_$][\w$]*)\s*\(`)
+```48:48:internal/index/extract.go
+tsFuncRe   = regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\b\s*\*?\s*([A-Za-z_]\w*)`)
 ```
 
-**Root cause:** Older `function\s+` (no `\b`) let the keyword glue to the identifier when source was minified or ASI-joined. Phantoms were written as `code_elements`, then **embedded**, so they become first-class vector citizens.
+Before #531 (commit `226825c`), line 48 read `function\s*` with no `\b` (`git show 226825c^:internal/index/extract.go`).
+
+**Root cause:** Older `function\s*` (no `\b`) let the keyword glue to the identifier when source was minified or ASI-joined. Phantoms were written as `code_elements`, then **embedded**, so they become first-class vector citizens.
 
 **Status:** Regex fix **landed** in tree. Report still sees phantoms because **stores were not rebuilt** after the fix. Index replaces per-file elements, but only for files touched by a new index; stale DB rows + their vectors persist until re-index + re-embed of affected projects.
 
 **Best practice:**
 1. Keep `\b` (and prefer tree-sitter tier `-tags tstree` for TS/JS long-term — regex extractors will keep inventing edge-case phantoms).
-2. Regression test: fixture source containing `functionisBrowser` must emit **zero** elements (or only real `function isBrowser` forms).
+2. Regression test: fixture source containing `functionality` must not emit an element named `ality` (only real `function name(` declarations may emit).
 3. Operational: after extractor fixes, `leankg index <dir>` then embed to completion; assert `qualified_name NOT LIKE 'function%' OR qualified_name GLOB 'function'` style invariants in doctor/status.
 4. Optional one-shot SQL purge of `function[a-zA-Z]%` phantoms is safe only when paired with re-index (do not delete real names that legitimately start with “function”).
 
@@ -137,18 +149,18 @@ stamp mismatch: collection differs from the live provider
 run `leankg-embed full` to rebuild
 ```
 
-Gemma collection written with `provider=local`; bench queried through an OpenAI-compatible proxy alias. **Same model, same dims, different provider string → every similarity null → FTS-only answers.** A 100% embedded store becomes L3-dark for a config alias.
+Gemma collection written with `provider=local`; bench queried through an OpenAI-compatible proxy alias. **Same model, same dims, different provider string → every similarity null → FTS-only answers.** A 100% embedded store becomes L3-dark for a config alias. The report shows this for 1 of 20 questions (Q20, the only degraded one).
 
 **Code evidence:**
 
-```2015:2034:internal/core/core.go
-// stampDriftForLog names the differing stamp components …
-if stored.Provider != want.Provider {
-    diffs = append(diffs, fmt.Sprintf("provider %q", stored.Provider))
-}
+```1024:1025:internal/core/core.go
+return degrade(fmt.Sprintf("stamp mismatch: collection differs from the live provider (%s); degraded from L3; run `leankg-embed full` to rebuild",
+    stampDriftForLog(*stamp, want)))
 ```
 
-Stamp compare is intentionally strict (model, dims, distance, provider, chunker, prefixes, revision). That is correct when provider implies **different embedding math**. It is incorrect when provider is only a **client transport label** (`local` vs OpenAI-compatible wrapper in front of the same llama.cpp / gemma process).
+`stampDriftForLog` (`internal/core/core.go:2110-2138`) used to compare `stored.Provider` against `want.Provider`. #532 removed that branch; provider is now only a comment at `core.go:2124`. `ModelStamp.Matches` (`internal/store/vectors.go:62-70`) compares model id, revision, dimensions, distance, chunker version and the prefix pair, and excludes provider.
+
+The Oct-18 compare was strict on provider too. That was correct when provider implies **different embedding math**, and incorrect when provider is only a **client transport label** (`local` vs OpenAI-compatible wrapper in front of the same llama.cpp / gemma process).
 
 **Root cause:** `ModelStamp.Provider` mixes two concepts:
 - **Embedding identity** (what bytes produced the vector), and
@@ -172,22 +184,21 @@ Recommended: **A + catalog id as SoT**. Catalog already pins `model_id`/dims; pr
 
 **Symptom (HTML):**
 
-| Q | Repo | sim=0 slots | window |
+| Q | Store | sim=0 slots | window |
 |---|---|---:|---:|
-| 7 | xdev | **4** | 10 |
-| 14 | claude-code | 3 | 10 |
-| 17–18 | ZCode | 2 | 10 |
+| 7 | S13 | **4** | 10 |
+| 14 | S03 | 3 | 10 |
+| 17–18 | S01 | 2 | 10 |
 | 1,5,6 | various | 1 | 10 |
 
 Q7 gives **4/10** slots to rows the vector arm never placed, ahead of cosine-scored candidates.
 
-**Code evidence:**
+**Code evidence** (`internal/store/hybrid_sqlite.go`, `HybridSearchScopedWeighted`):
 
-```69:96:internal/store/hybrid_sqlite.go
-// vector arm → Similarity set
-// FTS5 arm → HybridHit{Element} with Similarity left zero; KeywordScore set
-lists = append(lists, RankList{Name: ArmFTS5, Keys: keys})
-```
+- line 75: vector hit, `Similarity` set from the vector arm.
+- line 96: FTS5-only hit, `HybridHit` created with `Similarity` left at zero.
+- line 99: `KeywordScore` set from the FTS5 match.
+- line 103: FTS5 keys appended as a rank list.
 
 RRF (`FuseRRF` / weighted variant) merges **rank positions**, not scores. An FTS-only hit at rank 1 gets the same RRF mass as a vector rank-1 hit. After fusion, the shared top-N window is what the user sees as “semantic.” Provenance still says `rrf(vector+fts5)` even when half the window has `sim=0`.
 
@@ -201,7 +212,7 @@ RRF (`FuseRRF` / weighted variant) merges **rank positions**, not scores. An FTS
      - primary: `has_vector_evidence` (sim > 0) before keyword-only;
      - secondary: RRF score / weighted RRF;
      - tertiary: cosine then bm25.
-2. **Or** weighted RRF with vector weight > keyword on the semantic path (PG already has `FuseRRFWeighted` / `HybridSearchScopedWeighted`; SQLite path should expose the same weights core uses).
+2. **Or** weighted RRF with vector weight > keyword on the semantic path. Both backends now share it: `FuseRRFWeighted` (`internal/store/pg_fts.go:194`), the 3:1 `DefaultFuseWeights` (`pg_fts.go:118-120`, #535), and the SQLite `HybridSearchScopedWeighted` (`internal/store/hybrid_sqlite.go:60`).
 3. **Or** split API: `hybrid` vs `semantic_strict` (vector-only window) — only if agents need both; don’t add a third rung without a caller.
 4. Never drop keyword-only entirely: they save exact-identifier paraphrases; they must not **occupy** semantic top-k ahead of scored neighbors.
 
@@ -213,11 +224,11 @@ RRF (`FuseRRF` / weighted variant) merges **rank positions**, not scores. An FTS
 
 **Symptom (HTML):**
 
-| Q | Repo | file rank | element rank | GT-file entries in window |
+| Q | Store | file rank | element rank | GT-file entries in window |
 |---|---|---:|---|---:|
-| 11 | laya-proxy | **1** | absent | 6 |
-| 16 | opencode | **1** | absent | 2 |
-| 2 | rea-go | 5 | absent | 2 |
+| 11 | S06 | **1** | absent | 6 |
+| 16 | S08 | **1** | absent | 2 |
+| 2 | S11 | 5 | absent | 2 |
 
 Retrieval finds the right file (twice at rank 1) while the answering element never appears. Multiple other symbols from that file pad the window.
 
@@ -237,21 +248,25 @@ Retrieval finds the right file (twice at rank 1) while the answering element nev
 
 ### RC6 — Name arm rarity gate silences the arm on natural-language questions
 
-**Symptom:** Reasons include `rrf(vector+fts5+name)` on 9/20 questions, yet the arm does not move the needle when the query has **no literal symbol token**. Conversely, when the query *is* a rare identifier paraphrase, the gate may still drop tokens that are common in a large monorepo graph.
+**Symptom:** Reasons include `rrf(vector+fts5+name)` on 9/20 questions, yet the arm does not move the needle when the query has **no literal symbol token** (the report: none of those 9 contains the target symbol's name). Conversely, when the query *is* a rare identifier paraphrase, the gate may still drop tokens that are common in a large monorepo graph.
 
 **Code evidence:**
 
-```98:99:internal/store/hybrid_sqlite.go
+```107:108:internal/store/hybrid_sqlite.go
 // The name arm: symbol-name evidence fused in, gated on RARITY in this
 // corpus rather than on the query's shape.
 ```
 
-```361:388:internal/store/elements.go
-// bound := elements/500 (floor 2); tokens with count > bound dropped
-func (s *Store) rareNameTokens(query string) ([]string, error) { … }
+```339:342:internal/store/elements.go
+bound := total / 5000
+if bound < 2 {
+    bound = 2
+}
 ```
 
-**Root cause:** Name arm is designed for **rare symbol tokens in the query string**, not for semantic paraphrases. Natural-language bench questions (“the Store constructor that opens sqlite”) contain English words, not `Open`. Seeing `+name` in provenance only means rare tokens were *attempted*; it does not mean a useful name hit entered RRF. Treating RC6 as “raise the bound” without provenance will thrash precision on large graphs (e.g. token `lock` with 95 hits).
+`nameArmBound` (`elements.go:338-339`) is the live divisor, elements/5000 with floor 2. `rareNameTokens` is at `elements.go:361`. Its doc comment (`elements.go:356`) still says elements/500; that comment is stale against the code and is reported here, not changed.
+
+**Root cause:** Name arm is designed for **rare symbol tokens in the query string**, not for semantic paraphrases. Natural-language bench questions (“the Store constructor that opens sqlite”) contain English words, not `Open`. Seeing `+name` in provenance only means rare tokens were *attempted*; it does not mean a useful name hit entered RRF. Treating RC6 as “raise the bound” without provenance will thrash precision on large graphs (the sweep at `elements.go:315-335` and the comment at `elements.go:356-359` were measured on leankg's own 10,885-element store, not on the 18-store corpus; they cite token `lock` with 95 hits).
 
 **Best practice:**
 1. **Instrument first:** per query, log `name_tokens_kept`, `name_hits`, `name_hits_in_fused_top10`. Re-measure before touching the bound.
@@ -267,7 +282,7 @@ func (s *Store) rareNameTokens(query string) ([]string, error) { … }
 
 ### 4.1 Index without completed embed → coverage decay
 
-- **xdev 81.8%** (2092 missing vectors), **leankg 99.6%** (49 short) after reindex-without-reembed style operations.
+- **S13 81.78%** (2,092 missing vectors), **leankg 99.56%** (49 short) after reindex-without-reembed style operations.
 - Hook path: `leankg index --hook` may skip embed over `LEANKG_HOOK_MAX_EMBED`.
 - Best practice: treat **coverage %** and **stamp match** as first-class SLOs in `leankg status` / doctor; CI or dogfood gate `coverage >= 99.5%` on dogfood repos; never run validation when stamp degraded or coverage below threshold.
 
@@ -278,25 +293,24 @@ func (s *Store) rareNameTokens(query string) ([]string, error) { … }
 
 ### 4.3 Grep is not the enemy
 
-- Grep file Hit@5 90% vs semantic 80% is acceptable if semantic wins on paraphrase questions grep cannot see.
-- Publish **side-by-side forever** (report already does). Optimization target: close element gap without regressing file; beat grep on paraphrase subset, not on exact-string subset.
+- Grep file Hit@5 is 40% against semantic 100% in this run, so the file-level comparison favours semantic. The grep column stays as the baseline the report publishes side by side.
+- Publish **side-by-side forever** (report already does). Optimization target: close element gap without regressing file; beat grep on paraphrase subset, not on exact-string subset. The report has no grep element row, so that comparison has to be added before a gain can be claimed.
 
 ---
 
 ## 5. Best-practice target architecture (retrieval)
 
-```
-query
-  ├─ L0/L1 exact          → identifier present? stop
-  ├─ L2 fuzzy/FTS         → keyword fallback
-  └─ L3 semantic
-        ├─ stamp gate     → identity = catalog model+dims+chunker+prefixes
-        │                    (provider normalized; else degrade loud)
-        ├─ embed query
-        ├─ hybrid recall  → vector ∥ FTS5 ∥ rare-name  (wide window)
-        ├─ rank policy    → vector-evidence first, then RRF mass
-        ├─ file expand    → if file dominates, pull in-file candidates
-        └─ return top-k   → provenance: arms + sim + keyword + why
+```mermaid
+flowchart TD
+    Q["query"] --> L01["L0/L1 exact: identifier present? stop"]
+    Q --> L2["L2 fuzzy/FTS: keyword fallback"]
+    Q --> L3["L3 semantic"]
+    L3 --> G["stamp gate: identity = catalog model+dims+chunker+prefixes (provider normalized; else degrade loud)"]
+    G --> E["embed query"]
+    E --> H["hybrid recall: vector, FTS5, rare-name (wide window)"]
+    H --> R["rank policy: vector evidence first, then RRF mass"]
+    R --> F["file expand: if file dominates, pull in-file candidates"]
+    F --> T["return top-k: provenance = arms, sim, keyword, why"]
 ```
 
 Principles:
@@ -346,8 +360,8 @@ From the HTML report, expanded with measurable thresholds:
 | Element metrics denominator | **valid labels only**, printed |
 | Gemma coverage on dogfood stores | **≥ 99.5%** (or documented hole) |
 | `sim=0` rows above vector rows when vector pool ≥ k | **0** |
-| File Hit@5 | **≥ 85%** (hold or beat 80%) |
-| Element Hit@5 on valid labels | **≥ 55%** first milestone (match grep), stretch **≥ 65%** |
+| File Hit@5 | **≥ 100%** is the Oct-18 reading (pre-#535, not re-measured); re-run and then hold, do not treat 100% as current |
+| Element Hit@5 on valid labels | **≥ 55%** first milestone and **≥ 65%** stretch; the Oct-18 run already reads 73.3% on 15 valid labels, so the open gate is the grep element row (not published), needed for "match grep" |
 | File / element / grep columns | always published side by side |
 | Report | **regenerated**, not hand-edited |
 
@@ -385,7 +399,7 @@ Runnable checks (minimal):
 
 ## 10. Bottom line
 
-Gemma vectors on this corpus are **good enough to find the right file 80% Hit@5**. The system loses element-level quality because:
+Gemma vectors on this corpus are **good enough to find the right file 100% Hit@5 (20/20)**. The system loses element-level quality because:
 
 1. it sometimes **does not run L3** (stamp alias),  
 2. it **pollutes** the graph and the window (phantoms, sim=0 crowding),  
