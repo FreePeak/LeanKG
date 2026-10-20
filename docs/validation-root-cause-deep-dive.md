@@ -10,7 +10,7 @@
 > validation report named above. The Oct-18 draft of §1 and §2.1 did not match
 > that report and was corrected. Store names in the tables are anonymised in
 > this public copy; the report maps them. Figures that the report does not
-> publish (nDCG, the grep element-level row) are not stated here.
+> publish (nDCG, the grep element-level row) are not stated here. These figures come from the 2026-10-18 validation report and predate #531, #532, #534 and #535 (3:1 vector fusion), and there is no re-run on disk, so none of them is a current measurement.
 
 > **Status refreshed 2026-10-20.** The analysis below is the Oct-18 reading of
 > the validation run and it still stands as the diagnosis; what changed since is
@@ -193,14 +193,12 @@ Recommended: **A + catalog id as SoT**. Catalog already pins `model_id`/dims; pr
 
 Q7 gives **4/10** slots to rows the vector arm never placed, ahead of cosine-scored candidates.
 
-**Code evidence:**
+**Code evidence** (`internal/store/hybrid_sqlite.go`, `HybridSearchScopedWeighted`):
 
-```68:103:internal/store/hybrid_sqlite.go
-// :75  vector hit   -> HybridHit{..., Similarity: h.Similarity}
-// :96  FTS5-only    -> h = &HybridHit{Element: m.Element}  (Similarity left zero)
-// :99  KeywordScore = m.Score
-lists = append(lists, RankList{Name: ArmFTS5, Keys: keys})   // :103
-```
+- line 75: vector hit, `Similarity` set from the vector arm.
+- line 96: FTS5-only hit, `HybridHit` created with `Similarity` left at zero.
+- line 99: `KeywordScore` set from the FTS5 match.
+- line 103: FTS5 keys appended as a rank list.
 
 RRF (`FuseRRF` / weighted variant) merges **rank positions**, not scores. An FTS-only hit at rank 1 gets the same RRF mass as a vector rank-1 hit. After fusion, the shared top-N window is what the user sees as “semantic.” Provenance still says `rrf(vector+fts5)` even when half the window has `sim=0`.
 
@@ -362,7 +360,7 @@ From the HTML report, expanded with measurable thresholds:
 | Element metrics denominator | **valid labels only**, printed |
 | Gemma coverage on dogfood stores | **≥ 99.5%** (or documented hole) |
 | `sim=0` rows above vector rows when vector pool ≥ k | **0** |
-| File Hit@5 | **≥ 100%** (hold the Oct-18 value) |
+| File Hit@5 | **≥ 100%** is the Oct-18 reading (pre-#535, not re-measured); re-run and then hold, do not treat 100% as current |
 | Element Hit@5 on valid labels | **≥ 55%** first milestone and **≥ 65%** stretch; the Oct-18 run already reads 73.3% on 15 valid labels, so the open gate is the grep element row (not published), needed for "match grep" |
 | File / element / grep columns | always published side by side |
 | Report | **regenerated**, not hand-edited |
