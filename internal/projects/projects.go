@@ -386,6 +386,15 @@ func (r *Router) Close() error {
 
 // canonical absolutizes a dir (resolving symlinks where possible) so
 // path spellings route identically. Empty input stays empty.
+// canonical returns the absolute, symlink-resolved form of dir.
+//
+// EvalSymlinks fails outright when the LEAF does not exist, so a path to a
+// not-yet-created file (/work/api/new.go) came back unresolved while the
+// project directory it points into came back resolved — and the two never
+// compared equal, so a path inside a registered project failed to route to
+// it. The deepest existing ancestor is resolved instead and the missing
+// tail is re-appended, so a selector resolves the same way whether or not
+// the file it names exists yet.
 func canonical(dir string) string {
 	if dir == "" {
 		return ""
@@ -397,5 +406,21 @@ func canonical(dir string) string {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		return resolved
 	}
-	return abs
+	// Walk up to the deepest ancestor that exists, resolve it, and put the
+	// missing tail back.
+	var tail []string
+	for cur := abs; ; {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs // nothing above the root exists either
+		}
+		tail = append([]string{filepath.Base(cur)}, tail...)
+		cur = parent
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			for _, part := range tail {
+				resolved = filepath.Join(resolved, part)
+			}
+			return resolved
+		}
+	}
 }
