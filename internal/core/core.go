@@ -297,6 +297,15 @@ func (r ImportRequest) normalizeTags() ImportRequest {
 // explicit args key is never overridden by the flat one. Before this, a
 // schema-shaped call (content at the top level) reported ok:true and wrote an
 // EMPTY file — the agent's memory silently lost the write.
+//
+// The TARGET file is folded under BOTH names, and that is not a convenience.
+// The import schema advertises the target twice — `path` for
+// create/str_replace/insert/delete/rename, `file` for add/replace/remove — and
+// the two command families read opposite fields. So an agent that used the
+// other one got `memory: invalid memory path: empty path` for a file it had
+// named, which reads like an engine bug rather than a field-name mismatch. One
+// lookup, either name: the schema can name the target either way and the engine
+// finds it.
 func (r ImportRequest) withFlatArgs() ImportRequest {
 	flat := map[string]any{}
 	for k, v := range map[string]string{
@@ -306,6 +315,21 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 	} {
 		if v != "" {
 			flat[k] = v
+		}
+	}
+	// Path fills whichever name the command family reads, without overwriting a
+	// field the caller actually set: `file` is the schema's name for the
+	// add/replace/remove target, `path` for the create/str_replace family.
+	// Filling both when only one was sent is what makes either spelling work.
+	if r.Path != "" {
+		if _, ok := flat["file"]; !ok {
+			flat["file"] = r.Path
+		}
+		flat["path"] = r.Path
+	}
+	if r.File != "" {
+		if _, ok := flat["path"]; !ok {
+			flat["path"] = r.File
 		}
 	}
 	if r.InsertAt != nil {
@@ -696,12 +720,16 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 			return e.MemoryRead("view", path, "", 0)
 		case "snapshot":
 			return e.MemoryRead("snapshot", "", "", 0)
-		case "search":
+		case "search", "":
 			// The search term rides the top-level `query`, not args.query: the
 			// tool's own schema advertises `query` as the search text, and
 			// session_recall takes it from the same place. A command nobody
 			// spelled correctly used to fall through to here and search, which
 			// reported an empty result instead of the typo.
+			//
+			// An ABSENT command is not a typo: a bare memory read carries no
+			// command at all, and the search is the documented shape for it.
+			// Only a command that is present and wrong is an error.
 			term := req.Query
 			if term == "" {
 				term = argStr(req.Args, "query")
@@ -1338,6 +1366,23 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		resp["action"] = req.Action
 		return resp
 	}
+	// One recovery sentence for an unresolvable end of the walk: name WHICH
+	// end was not found, quote it, and give the one step that fixes it. That
+	// is what lets an agent tell a typo from a verb that is misconfigured.
+	// The value is the string the lookup was given, not the verb.
+	//
+	// An unresolvable end is an ANSWER, never graph.ErrUnknownNode: that error
+	// reached the agent as a failed tool call reading `graph: unknown node`,
+	// naming neither the verb nor the seed nor a next step, and it made the
+	// same typo look like a broken verb.
+	unresolved := func(what, value string) (map[string]any, error) {
+		resp["hits"] = []any{}
+		resp["reachable"] = false
+		resp["guidance"] = fmt.Sprintf(
+			"No indexed element matches the %s %q; resolve it with query (action empty) to a qualified_name, then retry %s with that exact QN.",
+			what, value, req.Action)
+		return g(), nil
+	}
 	seed, err := e.resolveGraphSeed(req.Query)
 	if err != nil {
 		return nil, err
@@ -1351,9 +1396,19 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// result-count concept, not a traversal depth.
 		depth := argInt(req.Args, "depth", 2)
 		hits, err := graph.Impact(e.st, seed, depth)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
+		// The result carries the VERB's name, like every other graph verb:
+		// impact under `hits` was the same key the search ladder uses, and
+		// these are different shapes (qualified_name + depth, not elements),
+		// so the plausible reading of a 21-entry `hits` was "21 elements
+		// matched a text query" when it meant "21 nodes depend on this". The
+		// alias stays so an agent that learned `hits` is not broken.
+		resp["impact"] = hits
 		resp["hits"] = hits
 		return g(), nil
 	case "path":
@@ -1374,10 +1429,12 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		path, err := graph.ShortestPath(e.st, seed, to, maxDepth)
 		if errors.Is(err, graph.ErrUnknownNode) {
 			// Name the end that is unknown: "graph: unknown node" left the
-			// caller guessing which of from/to to fix.
+			// caller guessing which of from/to to fix. And answer, rather
+			// than fail: the end that does not resolve is a fact the caller
+			// can act on.
 			for _, end := range []struct{ label, qn string }{{"from (query)", seed}, {"to (args.to)", to}} {
 				if els, ferr := e.st.FindExact(end.qn); ferr == nil && len(els) == 0 {
-					return nil, fmt.Errorf("%w: %s endpoint %q is not an indexed element; resolve it with query (action empty) and retry with its qualified_name", err, end.label, end.qn)
+					return unresolved(end.label, end.qn)
 				}
 			}
 		}
@@ -1395,6 +1452,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "callers":
 		qns, err := graph.Callers(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1405,6 +1465,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "callees":
 		qns, err := graph.Callees(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1415,6 +1478,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "context":
 		out, err := graph.Context(e.st, seed, req.Limit)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1424,6 +1490,9 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	case "explain":
 		out, err := graph.Explain(e.st, seed)
+		if errors.Is(err, graph.ErrUnknownNode) {
+			return unresolved("seed", req.Query)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1530,6 +1599,14 @@ func (e *Engine) SessionRead(command, sessionID, nodeID string) (map[string]any,
 		// only the session id. The caller filters.
 		return map[string]any{"command": "lessons", "session_id": sessionID, "lessons": lessons}, nil
 	default:
+		if command == "" {
+			// No command is not a mistake here: a session read carries no
+			// query text, so the command IS the request, and the only way to
+			// discover what the verb supports is to call it. Answer with the
+			// valid set (the same posture action=memory now takes) rather than
+			// failing a tool call an agent cannot interpret.
+			return map[string]any{"commands": []string{"recall", "canvas", "lessons"}}, nil
+		}
 		return nil, fmt.Errorf("unknown session read command %q (valid: recall, canvas, lessons)", command)
 	}
 }
@@ -1575,13 +1652,25 @@ func (e *Engine) OntologyMatches() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"matches": matches}
+	out := map[string]any{"matches": NonNil(matches)}
 	if len(matches) == 0 {
 		out["note"] = "no concept catalog is imported for this project, so nothing can match; " +
 			"import one with `leankg import` (action=ontology). A NON-empty list means a catalog " +
 			"is imported and its concepts matched these elements."
 	}
 	return out, nil
+}
+
+// NonNil returns list as a non-nil slice.
+//
+// Go marshals a nil slice as `null` and an empty slice as `[]`, and the two
+// are DIFFERENT answers — "never configured" and "configured and found
+// nothing" — so a list answer must not collapse them into one shape.
+func NonNil[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
 }
 
 // LanguagesStatus reports the lazy activation state: which languages are

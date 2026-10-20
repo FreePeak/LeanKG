@@ -128,7 +128,15 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"incidents": incidents})
+		// A list answer says whether there IS a list to return: `null` and
+		// `[]` are different answers ("never configured" and "configured and
+		// found nothing"), and the note names the causes an empty list can
+		// have at this route without pretending to pick between them.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"incidents": core.NonNil(incidents),
+			"note": "no incidents recorded for this filter; an empty list means either no incident store is " +
+				"configured (`leankg incident import` to add one) or nothing matched the filter",
+		})
 	})
 	mux.HandleFunc("GET /api/v2/env/diff", func(w http.ResponseWriter, r *http.Request) {
 		conflicts, err := org.FindEnvConflicts(r.URL.Query().Get("service"))
@@ -162,7 +170,15 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			// (NOT "text" — pinned here and in tests so harness authors
 			// don't hit the same mismatch twice).
 			var body struct {
-				Entries []memory.Entry `json:"entries"`
+				// Pointer: the entries array must be PRESENT. With a plain
+				// slice, `{}`, `{"items":[...]}` (the name the
+				// hindsight-compat mount on this same listener uses) and an
+				// empty body all decoded to a nil slice and answered
+				// `200 {"ok":true,"retained":0}`: a client whose field name did
+				// not match got a successful retain of nothing, with no way to
+				// tell. Absent is not zero; only an EXPLICIT `"entries": []` is a
+				// legitimate no-op.
+				Entries *[]memory.Entry `json:"entries"`
 				// Pointer: an ABSENT cursor means "no gate" (append, like the
 				// hindsight mount). Decoded as int it read as 0, which the
 				// cursor gate treats as already retained — every cursor-less
@@ -172,10 +188,17 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			if !decode(w, r, &body) {
 				return
 			}
+			if body.Entries == nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "entries is required (an explicit \"entries\": [] is a valid no-op; " +
+						"this route reads `entries`, not the hindsight-compat mount's `items`)",
+				})
+				return
+			}
 			// Trust boundary: an empty-content entry is permanently
 			// unrecallable (zero-match filtering) — reject rather than
 			// silently swallow it.
-			for i, e := range body.Entries {
+			for i, e := range *body.Entries {
 				if strings.TrimSpace(e.Content) == "" {
 					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"error": fmt.Sprintf("entries[%d].content is empty — empty entries would be unrecallable", i),
@@ -185,14 +208,14 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			}
 			var res memory.RetainResult
 			if body.ThroughUserTurn == nil {
-				if err := mem.RetainRawCtx(r.Context(), bank, body.Entries); err != nil {
+				if err := mem.RetainRawCtx(r.Context(), bank, *body.Entries); err != nil {
 					writeErr(w, err)
 					return
 				}
-				res = memory.RetainResult{Bank: bank, Written: len(body.Entries)}
+				res = memory.RetainResult{Bank: bank, Written: len(*body.Entries)}
 			} else {
 				var err error
-				if res, err = mem.RetainCtx(r.Context(), bank, body.Entries, *body.ThroughUserTurn); err != nil {
+				if res, err = mem.RetainCtx(r.Context(), bank, *body.Entries, *body.ThroughUserTurn); err != nil {
 					writeErr(w, err)
 					return
 				}
@@ -216,7 +239,14 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+			// The list is never null: an empty bank and a bank that was never
+			// configured are different answers, and the note says which is
+			// which at this route.
+			writeJSON(w, http.StatusOK, map[string]any{
+				"entries": core.NonNil(entries),
+				"note": "bank " + bank + " holds nothing matching this query; recall matches on query tokens, " +
+					"and an empty query matches nothing",
+			})
 		})
 		// FR-ZCP-07 session surface (hindsight-shaped): retain with a
 		// session-keyed cursor, recall merged across the scope's banks, and the

@@ -223,7 +223,13 @@ func TestImportDocsRelativeAnchorsAtProject(t *testing.T) {
 }
 
 // TestPathNamesTheUnknownEndpoint: an unknown path endpoint is named, not
-// reported as a bare "graph: unknown node".
+// reported as a bare "graph: unknown node" — and the answer says which END
+// did not resolve, because a caller that cannot tell "your symbol is not in
+// the index" from "this graph verb is broken" has nothing to act on.
+//
+// It is an ANSWER, not a failed tool call: the request was well formed, the
+// world simply does not contain that element, and every other graph verb
+// answers a zero-hit result with guidance rather than an error.
 func TestPathNamesTheUnknownEndpoint(t *testing.T) {
 	dir := writeProject(t)
 	e := engineAt(t, dir)
@@ -231,9 +237,16 @@ func TestPathNamesTheUnknownEndpoint(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := e.Query(ctx, QueryRequest{Action: "path", Query: "RootOne", Args: map[string]any{"to": "NoSuchThing"}})
-	if err == nil || !strings.Contains(err.Error(), `to (args.to) endpoint "NoSuchThing"`) {
-		t.Fatalf("err = %v, want the unknown 'to' endpoint named", err)
+	out, err := e.Query(ctx, QueryRequest{Action: "path", Query: "RootOne", Args: map[string]any{"to": "NoSuchThing"}})
+	if err != nil {
+		t.Fatalf("path with an unknown endpoint must answer, not fail the call: %v", err)
+	}
+	if out["reachable"] != false {
+		t.Fatalf("reachable = %v, want false: %+v", out["reachable"], out)
+	}
+	guidance, _ := out["guidance"].(string)
+	if !strings.Contains(guidance, "to (args.to)") || !strings.Contains(guidance, "NoSuchThing") {
+		t.Fatalf("guidance must name the unknown 'to' endpoint, got %q", guidance)
 	}
 }
 

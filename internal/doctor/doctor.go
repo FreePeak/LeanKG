@@ -233,7 +233,13 @@ func openProbes(ctx context.Context, projectDir, engine, pgURL string) (Probes, 
 }
 
 func sqliteProbes(projectDir string) (*dbProbes, error) {
-	dbPath := filepath.Join(projectDir, ".leankg", "leankg.db")
+	// The configured store wins: standalone mode (FR-P2) has no
+	// <project>/.leankg at all, and the doctor's job is to report on the
+	// store the engine actually uses — not the one the default would build.
+	dbPath := store.StandaloneDBPath(projectDir)
+	if dbPath == "" {
+		dbPath = filepath.Join(projectDir, ".leankg", "leankg.db")
+	}
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil, fmt.Errorf("doctor: no store at %s (run `leankg index` first): %w", dbPath, err)
 	}
@@ -360,6 +366,34 @@ func (p *dbProbes) EmbeddedNames() ([]string, bool, error) {
 		return nil, true, err
 	}
 	return names, true, nil
+}
+
+// stampedModels is an OPTIONAL probe: an implementation that can report which
+// embedding models the store carries implements it, and the coverage check uses
+// it to say what the COLLECTION was built with. It is optional so no existing
+// Probes implementation (or test stub) has to change to be useful everywhere
+// else — the finding degrades to the model-less wording when it is absent.
+type stampedModels interface {
+	StampedModelIDs() ([]string, error)
+}
+
+// StampedModelIDs lists the embedding models this store has stamped, so the
+// coverage finding can say which collection the percentage is about.
+func (p *dbProbes) StampedModelIDs() ([]string, error) {
+	rows, err := p.db.Query(`SELECT model_id FROM emb_stamp ORDER BY model_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // unreachableProbes substitutes for a dead backend handle: every probe
@@ -652,12 +686,13 @@ func checkIndexFreshness(p Probes, env Env) Finding {
 			stale = append(stale, rel)
 		}
 	}
-	missingCount := 0
+	var missing []string
 	for _, d := range disk {
 		if !indexedRel[d] {
-			missingCount++
+			missing = append(missing, d)
 		}
 	}
+	missingCount := len(missing)
 
 	if len(indexed) == 0 && len(disk) > 0 {
 		return Finding{check, StatusFail,
@@ -670,10 +705,7 @@ func checkIndexFreshness(p Probes, env Env) Finding {
 	}
 	switch {
 	case stalePct > 50:
-		samples := stale
-		if len(samples) > 3 {
-			samples = samples[:3]
-		}
+		samples := samplePaths(stale)
 		return Finding{check, StatusFail,
 			fmt.Sprintf("%d/%d indexed paths (%d%%) no longer exist on disk; e.g. %s",
 				len(stale), len(fsIndexed), stalePct, strings.Join(samples, ", ")),
@@ -683,11 +715,30 @@ func checkIndexFreshness(p Probes, env Env) Finding {
 			fmt.Sprintf("%d indexed file(s), all present on disk (%d synthetic URI entries skipped)",
 				len(fsIndexed), len(indexed)-len(fsIndexed)), ""}
 	default:
+		// Name what was inspected. This is the check users hit most often,
+		// and its own hint tells them a delta "usually means the index was
+		// built from a different root" — which they cannot rule out, because
+		// the root is not in the message. The STALE branch one case above
+		// already samples paths; this branch threw the same information away,
+		// so a count was all a reader got. Wave 20's rule, applied here: a
+		// diagnosis must name the thing it looked at.
 		return Finding{check, StatusWarn,
-			fmt.Sprintf("%d missing file(s) not indexed, %d stale (%d%%)", missingCount, len(stale), stalePct),
-			"Run `leankg index` (or watch mode) to refresh; a large delta usually means " +
-				"the index was built from a different root or env."}
+			fmt.Sprintf("%d missing file(s) not indexed, %d stale (%d%%), under %s; e.g. %s",
+				missingCount, len(stale), stalePct, env.ProjectRoot,
+				strings.Join(samplePaths(missing), ", ")),
+			"Run `leankg index` (or watch mode) to refresh; if the paths above ARE " +
+				"supposed to be indexed, the index was built from a different root or env " +
+				"— compare that root with the one this check names."}
 	}
+}
+
+// samplePaths caps a path list at three, deterministically (sorted by the
+// caller), so a finding can name examples without printing a thousand.
+func samplePaths(paths []string) []string {
+	if len(paths) > 3 {
+		return paths[:3]
+	}
+	return paths
 }
 
 // relPath normalizes a stored file_path spelling to a project-root-
@@ -707,7 +758,7 @@ func fileExists(path string) bool {
 }
 
 // checkEmbeddingCoverage: embedding_state coverage over code_elements.
-func checkEmbeddingCoverage(p Probes, _ Env) Finding {
+func checkEmbeddingCoverage(p Probes, env Env) Finding {
 	const check = "embedding-coverage"
 	qns, err := p.QualifiedNames()
 	if err != nil {
@@ -738,17 +789,37 @@ func checkEmbeddingCoverage(p Probes, _ Env) Finding {
 		embedded[n] = true
 	}
 	covered := 0
+	var gaps []string
 	for q := range unique {
 		if embedded[q] {
 			covered++
+			continue
 		}
+		gaps = append(gaps, q)
 	}
 	uncoveredPct := 100 - covered*100/len(unique)
 	if uncoveredPct == 0 {
 		return Finding{check, StatusPass, fmt.Sprintf("%d/%d elements embedded", covered, len(unique)), ""}
 	}
-	return Finding{check, StatusWarn, fmt.Sprintf("%d%% uncovered (%d/%d embedded)", uncoveredPct, covered, len(unique)),
-		"Run `leankg embed` to build vectors for new/changed elements so semantic search stays complete."}
+	// Name the MODEL too, not just the gap: an uncovered collection has two
+	// causes with opposite fixes — vectors never built (run `leankg-embed run`)
+	// and vectors built for a DIFFERENT model (run `leankg-embed full`) — and
+	// the count is identical either way, so the percentage alone cannot tell the
+	// reader which. Wave 20's rule again: a diagnosis must name the thing it
+	// looked at. Read from the store, not from the environment: what the reader
+	// needs is which collection this percentage is about.
+	model := "(model not reported)"
+	if sm, ok := p.(stampedModels); ok {
+		if ids, merr := sm.StampedModelIDs(); merr == nil && len(ids) > 0 {
+			model = strings.Join(ids, ",")
+		}
+	}
+	return Finding{check, StatusWarn,
+		fmt.Sprintf("%d%% uncovered (%d/%d embedded; collection: %s); e.g. %s",
+			uncoveredPct, covered, len(unique), model, strings.Join(samplePaths(gaps), ", ")),
+		"Run `leankg-embed run` to build vectors for new/changed elements. If this names a model " +
+			"other than your configured one, the collection was built for a different model and " +
+			"`leankg-embed full` rebuilds it."}
 }
 
 // checkPoolEnv: LEANKG_PG_POOL_SIZE / LEANKG_PG_POOL_WAIT_MS sanity.

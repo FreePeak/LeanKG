@@ -1,0 +1,550 @@
+[
+ [
+  "benchmark/ab/abrun/main.go::execJudge",
+  "where is the code that handles exec judge"
+ ],
+ [
+  "benchmark/ab/harness.go::uniqueValues",
+  "where is the code that handles unique values"
+ ],
+ [
+  "cmd/leankg-embed/main.go::cmdExport",
+  "where is the code that handles cmd export"
+ ],
+ [
+  "cmd/leankg/audit.go::parseAuditWindow",
+  "where is the code that handles parse audit window"
+ ],
+ [
+  "cmd/leankg/auth.go::cmdAuthToken",
+  "where is the code that handles cmd auth token"
+ ],
+ [
+  "cmd/leankg/connect.go::atomicWrite",
+  "where is the code that handles atomic write"
+ ],
+ [
+  "cmd/leankg/exportverbs.go::optString",
+  "where is the code that handles opt string"
+ ],
+ [
+  "cmd/leankg/featureverbs.go::cmdListRepos",
+  "where is the code that handles cmd repos"
+ ],
+ [
+  "cmd/leankg/helpers.go::serveHTTP",
+  "where is the code that handles serve http"
+ ],
+ [
+  "cmd/leankg/main.go::cmdDoctor",
+  "where is the code that handles cmd doctor"
+ ],
+ [
+  "cmd/leankg/multiproject.go::projectRouting.ServeHTTP",
+  "where is the code that handles serve http"
+ ],
+ [
+  "cmd/leankg/orgverbs.go::printOrgJSON",
+  "where is the code that handles print org json"
+ ],
+ [
+  "cmd/leankg/prd.go::cmdPRDTrace",
+  "where is the code that handles cmd prdtrace"
+ ],
+ [
+  "cmd/leankg/query.go::printJSON",
+  "where is the code that handles print json"
+ ],
+ [
+  "cmd/leankg/wire.go::registerHint",
+  "where is the code that handles register hint"
+ ],
+ [
+  "examples/go-api-service/cmd/server/main.go::loadConfig",
+  "where is the code that handles load config"
+ ],
+ [
+  "examples/go-api-service/internal/api/handler.go::Handler.parseIntParam",
+  "where is the code that handles parse int param"
+ ],
+ [
+  "examples/go-api-service/internal/middleware/middleware.go::responseWriter.WriteHeader",
+  "where is the code that handles write header"
+ ],
+ [
+  "examples/go-api-service/internal/models/order.go::OrderRepository",
+  "where is the code that handles order repository"
+ ],
+ [
+  "examples/go-api-service/internal/models/user.go::CreateUserRequest",
+  "where is the code that handles create user request"
+ ],
+ [
+  "examples/go-api-service/internal/repository/order_repository.go::OrderRepository",
+  "where is the code that handles order repository"
+ ],
+ [
+  "examples/go-api-service/internal/repository/user_repository.go::UserRepository",
+  "where is the code that handles user repository"
+ ],
+ [
+  "examples/go-api-service/internal/services/order_service.go::OrderService",
+  "where is the code that handles order service"
+ ],
+ [
+  "examples/go-api-service/internal/services/user_service.go::NewUserService",
+  "where is the code that handles user service"
+ ],
+ [
+  "examples/go-api-service/pkg/logger/logger.go::logger.formatMessage",
+  "where is the code that handles format message"
+ ],
+ [
+  "internal/auth/http.go::decodeBody",
+  "where is the code that handles decode body"
+ ],
+ [
+  "internal/compress/cargotest.go::NewCargoTestCompressorWithMaxFailures",
+  "where is the code that handles cargo compressor"
+ ],
+ [
+  "internal/compress/compress.go::stringsCount",
+  "where is the code that handles strings count"
+ ],
+ [
+  "internal/compress/entropy.go::EntropyAnalyzer.FilterLowEntropyLines",
+  "where is the code that handles filter low entropy"
+ ],
+ [
+  "internal/compress/gitdiff.go::GitDiffCompressor.CompressStatOnly",
+  "where is the code that handles compress only"
+ ],
+ [
+  "internal/compress/litm.go::categoryPriority",
+  "where is the code that handles category priority"
+ ],
+ [
+  "internal/compress/modes.go::ParseLinesRange",
+  "where is the code that handles parse range"
+ ],
+ [
+  "internal/compress/reader.go::removeSyntaxNoise",
+  "where is the code that handles remove syntax noise"
+ ],
+ [
+  "internal/compress/response.go::ResponseCompressor.CompressSearchCode",
+  "where is the code that handles compress search"
+ ],
+ [
+  "internal/compress/sessioncache.go::SessionCache.evictIfNeededLocked",
+  "where is the code that handles evict needed locked"
+ ],
+ [
+  "internal/compress/shell.go::CompressionPattern",
+  "where is the code that handles compression pattern"
+ ],
+ [
+  "internal/compress/signatures.go::extractRustSignatures",
+  "where is the code that handles extract rust signatures"
+ ],
+ [
+  "internal/compress/symbolmap.go::ShouldRegister",
+  "where is the code that handles should register"
+ ],
+ [
+  "internal/compress/textdiff.go::fullReplaceEdits",
+  "where is the code that handles full replace edits"
+ ],
+ [
+  "internal/convo/parsers.go::chatGPTNode",
+  "where is the code that handles chat gptnode"
+ ],
+ [
+  "internal/convo/types.go::appendUnique",
+  "where is the code that handles append unique"
+ ],
+ [
+  "internal/core/core.go::providerEmbedder.EmbedQuery",
+  "where is the code that handles embed query"
+ ],
+ [
+  "internal/doctor/doctor.go::checkEmbeddingCoverage",
+  "where is the code that handles check embedding"
+ ],
+ [
+  "internal/embed/catalog.go::normalizeModel",
+  "where is the code that handles normalize model"
+ ],
+ [
+  "internal/embed/env.go::newLocalProvider",
+  "where is the code that handles local provider"
+ ],
+ [
+  "internal/embed/openai.go::embeddingsResponse",
+  "where is the code that handles embeddings response"
+ ],
+ [
+  "internal/embed/run.go::truncateRunes",
+  "where is the code that handles truncate runes"
+ ],
+ [
+  "internal/embed/sidecar.go::envOrSidecar",
+  "where is the code that handles env sidecar"
+ ],
+ [
+  "internal/export/export.go::filterEdges",
+  "where is the code that handles filter edges"
+ ],
+ [
+  "internal/export/formats.go::streamRelationship",
+  "where is the code that handles stream relationship"
+ ],
+ [
+  "internal/export/markdown.go::renderClusterDetails",
+  "where is the code that handles render cluster details"
+ ],
+ [
+  "internal/federation/federation.go::wireElements",
+  "where is the code that handles wire elements"
+ ],
+ [
+  "internal/federation/server.go::writeJSON",
+  "where is the code that handles write json"
+ ],
+ [
+  "internal/graph/graph.go::countByRelType",
+  "where is the code that handles count rel"
+ ],
+ [
+  "internal/index/android_manifest.go::ExtractAndroidManifest",
+  "where is the code that handles extract android manifest"
+ ],
+ [
+  "internal/index/android_nav_jetpack.go::ExtractJetpackNavXML",
+  "where is the code that handles extract nav"
+ ],
+ [
+  "internal/index/android_nav_kotlin.go::ExtractFragmentNav",
+  "where is the code that handles extract nav"
+ ],
+ [
+  "internal/index/android_resrefs.go::ExtractResourceLinks",
+  "where is the code that handles extract resource"
+ ],
+ [
+  "internal/index/android_workmanager.go::ExtractWorkManager",
+  "where is the code that handles extract manager"
+ ],
+ [
+  "internal/index/extract.go::indexedElem",
+  "where is the code that handles indexed elem"
+ ],
+ [
+  "internal/index/extract_langexp.go::matchLua",
+  "where is the code that handles match lua"
+ ],
+ [
+  "internal/index/extract_langexp2.go::matchPowerShell",
+  "where is the code that handles match power shell"
+ ],
+ [
+  "internal/index/gradle.go::nilIfEmpty",
+  "where is the code that handles nil empty"
+ ],
+ [
+  "internal/index/index.go::staticOwner",
+  "where is the code that handles static owner"
+ ],
+ [
+  "internal/judge/local.go::judgeModel",
+  "where is the code that handles judge model"
+ ],
+ [
+  "internal/judge/server.go::wireQuestion",
+  "where is the code that handles wire question"
+ ],
+ [
+  "internal/langs/langs.go::langIndex",
+  "where is the code that handles lang index"
+ ],
+ [
+  "internal/langs/lookup.go::execLookPath",
+  "where is the code that handles exec look"
+ ],
+ [
+  "internal/lsp/bridge.go::decodeLocations",
+  "where is the code that handles decode locations"
+ ],
+ [
+  "internal/lsp/client.go::Client.dropPending",
+  "where is the code that handles drop pending"
+ ],
+ [
+  "internal/lsp/config.go::parseYAMLSubset",
+  "where is the code that handles parse yamlsubset"
+ ],
+ [
+  "internal/lsp/enrich.go::absInt",
+  "where is the code that handles abs int"
+ ],
+ [
+  "internal/lsp/framing.go::readFrame",
+  "where is the code that handles read frame"
+ ],
+ [
+  "internal/lsp/hybrid.go::TypedHit",
+  "where is the code that handles typed hit"
+ ],
+ [
+  "internal/lsp/manager.go::lspKey",
+  "where is the code that handles lsp key"
+ ],
+ [
+  "internal/lsp/registry.go::DetectLanguageByExtension",
+  "where is the code that handles detect language"
+ ],
+ [
+  "internal/mcp/server.go::Server.registerTools",
+  "where is the code that handles register tools"
+ ],
+ [
+  "internal/memory/banks.go::RetainResult",
+  "where is the code that handles retain result"
+ ],
+ [
+  "internal/memory/memory.go::replaceOnce",
+  "where is the code that handles replace once"
+ ],
+ [
+  "internal/obsidian/note.go::sanitizeNoteSeg",
+  "where is the code that handles sanitize seg"
+ ],
+ [
+  "internal/obsidian/sync.go::PullResult",
+  "where is the code that handles pull result"
+ ],
+ [
+  "internal/ontology/discover.go::slicePage",
+  "where is the code that handles slice page"
+ ],
+ [
+  "internal/ontology/loader.go::strPtr",
+  "where is the code that handles str ptr"
+ ],
+ [
+  "internal/ontology/procedural.go::NormalizeAliases",
+  "where is the code that handles normalize aliases"
+ ],
+ [
+  "internal/ontology/query.go::workflowFromElementAliases",
+  "where is the code that handles workflow element aliases"
+ ],
+ [
+  "internal/ontology/sync.go::TouchSyncedMarker",
+  "where is the code that handles touch synced marker"
+ ],
+ [
+  "internal/ontology/traversal.go::resolveCodeRefsFallback",
+  "where is the code that handles resolve refs fallback"
+ ],
+ [
+  "internal/orgknowledge/conflicts.go::EnvConflict",
+  "where is the code that handles env conflict"
+ ],
+ [
+  "internal/orgknowledge/notes.go::Knowledge.DeleteAnnotation",
+  "where is the code that handles delete annotation"
+ ],
+ [
+  "internal/orgknowledge/servicecontext.go::versionFromMetadata",
+  "where is the code that handles version metadata"
+ ],
+ [
+  "internal/orgknowledge/teammap.go::TeamMapEntry",
+  "where is the code that handles map entry"
+ ],
+ [
+  "internal/pack/pack.go::marshalJSON",
+  "where is the code that handles marshal json"
+ ],
+ [
+  "internal/portfolioreg/portfolioreg.go::ChildResult",
+  "where is the code that handles child result"
+ ],
+ [
+  "internal/prdindex/prdindex.go::joinParagraph",
+  "where is the code that handles join paragraph"
+ ],
+ [
+  "internal/projectcfg/projectcfg.go::DocConfig",
+  "where is the code that handles doc config"
+ ],
+ [
+  "internal/projectcfg/yamlmigrate.go::parseYAML",
+  "where is the code that handles parse yaml"
+ ],
+ [
+  "internal/projects/projects.go::ParseDirs",
+  "where is the code that handles parse dirs"
+ ],
+ [
+  "internal/registry/registry.go::Registry.UpdateLastIndexed",
+  "where is the code that handles update last indexed"
+ ],
+ [
+  "internal/rest/auto/auto.go::writeAutoJSON",
+  "where is the code that handles write auto json"
+ ],
+ [
+  "internal/rest/hindsight.go::handlerConfig",
+  "where is the code that handles handler config"
+ ],
+ [
+  "internal/rest/rest.go::writeJSON",
+  "where is the code that handles write json"
+ ],
+ [
+  "internal/rpc/leankg/v1/leankg.pb.go::StatusRequest.ProtoReflect",
+  "where is the code that handles proto reflect"
+ ],
+ [
+  "internal/rpc/leankg/v1/leankgv1connect/leankg.connect.go::leanKGClient",
+  "where is the code that handles lean kgclient"
+ ],
+ [
+  "internal/rpc/service.go::LeanKGService.MemoryRead",
+  "where is the code that handles memory read"
+ ],
+ [
+  "internal/session/session.go::Store.refsDir",
+  "where is the code that handles refs dir"
+ ],
+ [
+  "internal/sources/gcs.go::pruneEmptyDirs",
+  "where is the code that handles prune dirs"
+ ],
+ [
+  "internal/sources/git.go::GitSource.MaterializeEphemeral",
+  "where is the code that handles materialize ephemeral"
+ ],
+ [
+  "internal/sources/local.go::LocalSource.MaterializeEphemeral",
+  "where is the code that handles materialize ephemeral"
+ ],
+ [
+  "internal/sources/sources.go::invalidURI",
+  "where is the code that handles invalid uri"
+ ],
+ [
+  "internal/store/backend.go::Store.VectorCoverage",
+  "where is the code that handles vector coverage"
+ ],
+ [
+  "internal/store/elements.go::scanElements",
+  "where is the code that handles scan elements"
+ ],
+ [
+  "internal/store/maintenance_pg.go::PGStore.EnsureIncrementalVacuum",
+  "where is the code that handles ensure incremental vacuum"
+ ],
+ [
+  "internal/store/pg_accounts.go::PGStore.OrgMembershipUpsert",
+  "where is the code that handles membership upsert"
+ ],
+ [
+  "internal/store/pg_fts.go::PGStore.scanKnowledgeRanked",
+  "where is the code that handles scan knowledge ranked"
+ ],
+ [
+  "internal/store/pg_metrics.go::PGStore.CleanupMetrics",
+  "where is the code that handles cleanup metrics"
+ ],
+ [
+  "internal/store/pg_orgknowledge.go::int64PtrIfSet",
+  "where is the code that handles int64 ptr"
+ ],
+ [
+  "internal/store/pg_tokens.go::PGStore.TokenTouch",
+  "where is the code that handles token touch"
+ ],
+ [
+  "internal/store/pgerr.go::fmtPGNotReady",
+  "where is the code that handles fmt pgnot ready"
+ ],
+ [
+  "internal/store/store_accounts.go::scanOrgMember",
+  "where is the code that handles scan org member"
+ ],
+ [
+  "internal/store/store_audit.go::auditHash",
+  "where is the code that handles audit hash"
+ ],
+ [
+  "internal/store/store_metrics.go::ProjectUsage",
+  "where is the code that handles project usage"
+ ],
+ [
+  "internal/store/store_orgknowledge.go::nullInt64Ptr",
+  "where is the code that handles null int64 ptr"
+ ],
+ [
+  "internal/store/store_pg.go::PGStore.EmbeddingStateMap",
+  "where is the code that handles embedding state map"
+ ],
+ [
+  "internal/store/summaries.go::scanFileSummary",
+  "where is the code that handles scan summary"
+ ],
+ [
+  "internal/store/vectors.go::decodeVec",
+  "where is the code that handles decode vec"
+ ],
+ [
+  "internal/summarize/gate.go::gate.fatalReason",
+  "where is the code that handles fatal reason"
+ ],
+ [
+  "internal/summarize/llm.go::chatResponse",
+  "where is the code that handles chat response"
+ ],
+ [
+  "internal/summarize/synthesize.go::countNodes",
+  "where is the code that handles count nodes"
+ ],
+ [
+  "internal/update/github.go::apiDetail",
+  "where is the code that handles api detail"
+ ],
+ [
+  "internal/update/install.go::syncDir",
+  "where is the code that handles sync dir"
+ ],
+ [
+  "internal/update/versions.go::parseVersion",
+  "where is the code that handles parse version"
+ ],
+ [
+  "internal/watch/watch.go::dotPrefixed",
+  "where is the code that handles dot prefixed"
+ ],
+ [
+  "internal/web/api.go::nodeProperties",
+  "where is the code that handles node properties"
+ ],
+ [
+  "internal/web/api_file.go::projectDirsFromEnv",
+  "where is the code that handles project dirs env"
+ ],
+ [
+  "internal/web/api_graph.go::apiH.graphChildren",
+  "where is the code that handles graph children"
+ ],
+ [
+  "internal/web/api_report.go::qnMatchesTerm",
+  "where is the code that handles matches term"
+ ],
+ [
+  "internal/web/clustering.go::weightedEdge",
+  "where is the code that handles weighted edge"
+ ]
+]

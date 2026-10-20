@@ -676,15 +676,24 @@ func cmdDoctor(args []string) int {
 	// project_path anchor: doctor must inspect the store the server serves
 	// (Rust main.rs find_project_root + MCPServer::resolve_project_root).
 	dir = projectcfg.FindProjectRoot(dir)
-	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
-	st, err := store.Open(filepath.Join(dbDir, "leankg.db"), store.RO)
+	// The CONFIGURED store wins: standalone mode (FR-P2) has no
+	// <project>/.leankg at all, and the doctor's job is to report on the
+	// store the engine actually uses. Reading the project-scoped path
+	// instead made the diagnosis say "not indexed" about a project that
+	// WAS indexed — into the store the env named.
+	dbPath := store.StandaloneDBPath(dir)
+	if dbPath == "" {
+		dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
+		dbPath = filepath.Join(dbDir, "leankg.db")
+	}
+	st, err := store.Open(dbPath, store.RO)
 	if err != nil {
 		// A missing store is not a storage-layer event to the reader: it means
 		// the project has not been indexed. Naming the syscall ("read-only open
 		// of missing store", a raw stat error) buries the one action that fixes
 		// it, so the diagnosis states the state and the command.
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") {
-			fmt.Printf("FAIL not indexed: no store at %s\n", filepath.Join(dbDir, "leankg.db"))
+			fmt.Printf("FAIL not indexed: no store at %s\n", dbPath)
 			fmt.Println("     run `leankg index .` in this project, then `leankg doctor` again")
 			return 2
 		}
@@ -761,6 +770,25 @@ func cmdIndex(args []string) {
 	target := ""
 	if len(positional) == 1 {
 		target = positional[0]
+	}
+	// The walk root must EXIST, and that is checked BEFORE the store dir is
+	// created: the store lives at <target>/.leankg, so creating the store
+	// creates the very path the caller named — and the check inside runIndex
+	// then sees a directory that exists only because of this run. `leankg
+	// index ./nope` printed the ordinary success line and exited 0, after
+	// which every downstream signal (status cold, doctor empty) agreed that
+	// the project was healthy and had indexed nothing.
+	if *source == "" && target != "" {
+		info, serr := os.Stat(target)
+		if serr != nil {
+			if os.IsNotExist(serr) {
+				log.Fatalf("index: refusing to index %s: no such file or directory (an empty existing directory indexes fine — this is a path that does not exist)", target)
+			}
+			log.Fatalf("index: refusing to index %s: %v", target, serr)
+		}
+		if !info.IsDir() {
+			log.Fatalf("index: refusing to index %s: not a directory", target)
+		}
 	}
 	// The hook's size gate runs before any side effect: no setup-mode
 	// persistence, no .leankg, no store.

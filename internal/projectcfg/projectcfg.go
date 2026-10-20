@@ -7,10 +7,10 @@
 //
 // The Rust readers this port answers for:
 //
+//	load_config / the `.unwrap_or_default()` sites -> Load / LoadOrDefault
 //	db_config_from_cwd        -> DBConfigFromDir
 //	MCPServer::resolve_project_root_raw -> ResolveProjectDBDir
 //	main::find_project_root   -> FindProjectRoot
-//	load_config / the `.unwrap_or_default()` sites -> Load / LoadOrDefault
 //
 // Divergence (deliberate, no serde equivalent): yaml.v3 leaves any field the
 // document does not mention at its pre-seeded value, so a PRESENT-but-partial
@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 
 	"github.com/FreePeak/LeanKG/internal/lsp"
+	"github.com/FreePeak/LeanKG/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -402,16 +403,12 @@ func DBConfigFromDir(dir string) *DBConfig {
 // directory: the LEANKG_DB_PATH environment variable > the nearest
 // leankg.yaml `db.standalone_db_path` > "" (the store's default
 // <project>/.leankg/leankg.db). Empty means "use project-scoped store".
+//
+// The precedence itself lives in store.StandaloneDBPath, which OpenBackend
+// (the one place every verb opens a store) consults — so this is a re-export,
+// not a second ladder that can drift from the one the store actually uses.
 func StandaloneDBPath(dir string) string {
-	if v := os.Getenv("LEANKG_DB_PATH"); v != "" {
-		return v
-	}
-	if db := DBConfigFromDir(dir); db != nil {
-		if db.StandaloneDBPath != "" {
-			return db.StandaloneDBPath
-		}
-	}
-	return ""
+	return store.StandaloneDBPath(dir)
 }
 
 // PGURL is the Postgres DSN for one project directory: the LEANKG_PG_URL

@@ -139,15 +139,25 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 }
 
 // EmbedStage is the embed stage shared by refresh and `leankg index`: one embed
-// run over st, serialized with leankg-embed through <storeDir>/.leankg/embed.lock.
+// run over st, serialized with leankg-embed through <storeDir>/embed.lock.
 // start resolves the provider and the release that stops it: embed.StartProvider
 // for a manual run, embed.AttachHookProvider for the SessionStart hook.
+//
+// The lock belongs NEXT TO THE STORE, not next to the project: a standalone
+// store (FR-P2) has no <project>/.leankg at all, and the lock must not create
+// one — that is what made the embed stage die with "open
+// .../.leankg/embed.lock: no such file or directory" the moment the store
+// moved out of the project.
 //
 // A run that cannot happen is a skip, not an error: an unavailable provider or a
 // lock another embed run holds comes back as a non-empty skip reason with a zero
 // report. The error is set only when embed.Run itself fails.
 func EmbedStage(ctx context.Context, st store.Backend, storeDir string, start func(context.Context) (embed.Provider, func(), error), mode string) (embed.Report, string, error) {
-	lockPath := filepath.Join(storeDir, ".leankg", "embed.lock")
+	lockDir := filepath.Dir(store.StandaloneDBPath(storeDir))
+	if lockDir == "" || lockDir == "." {
+		lockDir = filepath.Join(storeDir, ".leankg")
+	}
+	lockPath := filepath.Join(lockDir, "embed.lock")
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return embed.Report{}, "", fmt.Errorf("embed lock dir: %w", err)
 	}

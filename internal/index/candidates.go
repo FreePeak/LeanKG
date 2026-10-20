@@ -38,6 +38,9 @@ func gitCandidates(blobs []gitobj.Blob, owner extOwnerFunc, res *Result) []candi
 		if inSkippedDir(b.Path) {
 			continue
 		}
+		if dotFile(b.Path) {
+			continue
+		}
 		lang, ok := fileLang(b.Path, owner)
 		if !ok {
 			continue
@@ -85,6 +88,9 @@ func walkCandidates(ctx context.Context, dir string, owner extOwnerFunc, res *Re
 		if !d.Type().IsRegular() {
 			return nil
 		}
+		if dotFile(d.Name()) {
+			return nil
+		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
@@ -115,6 +121,24 @@ func walkCandidates(ctx context.Context, dir string, owner extOwnerFunc, res *Re
 // skipDirs entry, or any dot-prefixed directory.
 func skippedDir(name string) bool {
 	return skipDirs[name] || strings.HasPrefix(name, ".")
+}
+
+// dotFile reports whether a FILE is out because its name starts with a dot.
+//
+// A dot-prefixed FILE is out for the same reason a dot-prefixed directory is:
+// the extension gate cannot tell a tracked `.env.example` from a live `.env`,
+// so without this every dotfile with a language extension entered the store —
+// agent scratch files (`.*.md`), harness configs, and secret-shaped files that
+// then get embedded, exported and pushed. Found live on this repository: a
+// dot-prefixed PR scratch note answered the query "where is the single flight
+// lock taken" at rank 1 on both arms, outranking the source documenting it.
+//
+// ponytail: name-based, not a denylist of secret filenames — one rule, and a
+// denylist is always incomplete. The cost is that a deliberately dot-prefixed
+// source file is not indexed; nothing in this repo tracks one, and `git
+// ls-files` is the authority if that ever changes.
+func dotFile(name string) bool {
+	return strings.HasPrefix(name, ".")
 }
 
 // inSkippedDir reports whether a repo-relative file path sits under a directory

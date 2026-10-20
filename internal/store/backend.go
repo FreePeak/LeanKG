@@ -99,6 +99,12 @@ type Backend interface {
 	// has a live element vs. rows whose QN disappeared.
 	VectorCoverage(modelID string) (covered, orphans int, err error)
 	SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error)
+	// SearchVectorsScoped is SearchVectors restricted to the elements keep
+	// accepts; a nil keep is exactly SearchVectors. A caller that wants to rank
+	// production code without test fixtures and archived prose otherwise ranks
+	// over the same collection, and the filter costs one predicate per row on a
+	// scan both backends already do.
+	SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error)
 
 	// freshness watermark (DB-resident; readers never bump)
 	Watermark() (seq, at int64, err error)
@@ -254,9 +260,18 @@ func (s *Store) VectorCoverage(modelID string) (covered, orphans int, err error)
 // OpenBackend opens the engine's storage for a project directory.
 // engine is EngineSQLite (default) or EnginePostgres (dsn via env
 // LEANKG_PG_URL or the pgURL argument when non-empty).
+//
+// dbPath is the caller's explicit SQLite store path (serve's --db flag). When
+// it is empty the LEANKG_DB_PATH / leankg.yaml db.standalone_db_path override
+// is resolved HERE, so the configured store is what every caller gets — a
+// verb passing "" no longer silently lands on <project>/.leankg/leankg.db
+// while `serve` reads the configured file.
 func OpenBackend(ctx context.Context, projectDir, engine, pgURL, dbPath string, mode Mode) (Backend, error) {
 	switch engine {
 	case "", EngineSQLite:
+		if dbPath == "" {
+			dbPath = StandaloneDBPath(projectDir)
+		}
 		if dbPath != "" {
 			return Open(dbPath, mode)
 		}

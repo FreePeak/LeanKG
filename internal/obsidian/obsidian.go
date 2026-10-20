@@ -132,9 +132,18 @@ type VaultStatus struct {
 // Status reports whether the vault exists and how many markdown files it
 // holds. Like the Rust status, the count includes the vault README.
 func (e *Engine) Status() (VaultStatus, error) {
-	if _, err := os.Stat(e.vault); err != nil {
+	info, err := os.Stat(e.vault)
+	if err != nil {
 		// Rust: a missing vault path reports initialized=false, count=0.
 		return VaultStatus{}, nil
+	}
+	// A path that EXISTS but is not a directory is not a vault with zero notes;
+	// it is the wrong path, and saying "initialized, 0 notes" is what let
+	// `obsidian push --vault <a file>` report "Push complete / Notes generated:
+	// 0 / Failed: 1" and exit 0 — every note failed and the CLI claimed
+	// success. Refuse it here, where every obsidian verb already asks.
+	if !info.IsDir() {
+		return VaultStatus{}, fmt.Errorf("obsidian: vault path is not a directory: %s", e.vault)
 	}
 	notes, err := walkMarkdown(e.vault)
 	if err != nil {

@@ -24,6 +24,17 @@ func NewLeanKGService(engine *core.Engine) *LeanKGService {
 	return &LeanKGService{engine: engine}
 }
 
+// The generated descriptor types `args` as map<string,string>: a protobuf
+// comment on the field even says clients "may send typed values over other
+// transports", which is true and is also the whole problem. Over this wire every
+// NON-STRING action argument is unreachable — `limit`, `depth`, `insert_line`,
+// `retained_through_user_turn`, and the array-valued `turns` — and the refusal
+// the caller gets is the codec's:
+//
+//	unmarshal message: … proto: (line 1:48): invalid value for string field value: 2
+//
+// It names a field the caller never sent (`value`), not the argument they did
+
 // jsonOf marshals core's map[string]any payloads into the proto's string
 // field — the same JSON MCP text content and REST bodies carry (one wire
 // shape, three transports).

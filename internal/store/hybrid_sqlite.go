@@ -83,6 +83,14 @@ func (s *Store) HybridSearchScopedWeighted(modelID, query string, qvec []float32
 		if matches, err := s.FindFuzzy(query, window); err == nil && len(matches) > 0 {
 			keys := make([]string, 0, len(matches))
 			for _, m := range matches {
+				// The caller's population applies to EVERY arm. Scoping only
+				// the vector arm lets the keyword arm reintroduce exactly the
+				// fixture the caller excluded: `args.scope=code` answered
+				// with a test file, because the vector arm dropped it and the
+				// FTS5 arm put it back.
+				if keep != nil && !keep(m.Element) {
+					continue
+				}
 				h := byQN[m.Element.QualifiedName]
 				if h == nil {
 					h = &HybridHit{Element: m.Element}
@@ -91,7 +99,9 @@ func (s *Store) HybridSearchScopedWeighted(modelID, query string, qvec []float32
 				h.KeywordScore = m.Score
 				keys = append(keys, m.Element.QualifiedName)
 			}
-			lists = append(lists, RankList{Name: ArmFTS5, Keys: keys})
+			if len(keys) > 0 {
+				lists = append(lists, RankList{Name: ArmFTS5, Keys: keys})
+			}
 		}
 	}
 	// The name arm: symbol-name evidence fused in, gated on RARITY in this
@@ -109,12 +119,19 @@ func (s *Store) HybridSearchScopedWeighted(modelID, query string, qvec []float32
 	if matches, err := s.FindByNameToken(query, window); err == nil && len(matches) > 0 {
 		keys := make([]string, 0, len(matches))
 		for _, m := range matches {
+			// The name arm is scoped like the others: it reads symbol names,
+			// and a fixture's name is exactly what a name query matches.
+			if keep != nil && !keep(m.Element) {
+				continue
+			}
 			if _, ok := byQN[m.Element.QualifiedName]; !ok {
 				byQN[m.Element.QualifiedName] = &HybridHit{Element: m.Element}
 			}
 			keys = append(keys, m.Element.QualifiedName)
 		}
-		lists = append(lists, RankList{Name: ArmName, Keys: keys})
+		if len(keys) > 0 {
+			lists = append(lists, RankList{Name: ArmName, Keys: keys})
+		}
 	}
 	if len(lists) == 0 {
 		return nil, "", nil

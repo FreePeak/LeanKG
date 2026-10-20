@@ -49,6 +49,21 @@ func cmdRegisterProject(args []string) {
 	}
 	target := positional[0]
 
+	// The path must EXIST. "Registered, not indexed" is a legitimate state for a
+	// real directory that has no store yet; a path that is not there is a typo,
+	// and registering one puts a permanent hot-set manifest entry that can never
+	// resolve, while telling the operator to index a path that does not exist.
+	// `leankg index` refuses the same input for the same reason (wave 2); the
+	// registry verb is the same class of command and must agree.
+	if info, serr := os.Stat(target); serr != nil {
+		if os.IsNotExist(serr) {
+			fatalJSON(fmt.Errorf("register-project: no such directory: %s", target))
+		}
+		fatalJSON(fmt.Errorf("register-project: %w", serr))
+	} else if !info.IsDir() {
+		fatalJSON(fmt.Errorf("register-project: not a directory: %s", target))
+	}
+
 	ctx := context.Background()
 	opts := portfolioOptions(*engine, resolveProjectDir(*project))
 
