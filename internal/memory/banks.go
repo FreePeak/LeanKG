@@ -226,10 +226,7 @@ func (m *Memory) SessionRetainCtx(ctx context.Context, scope Scope, cwd, bank, s
 	if throughUserTurn < 0 {
 		return RetainResult{}, fmt.Errorf("memory: retained_through_user_turn must be >= 0")
 	}
-	target := bank
-	if target == "" {
-		target = scope.WriteBank(BankName(m.scopeCwd(cwd)))
-	}
+	target := m.WriteBank(scope, cwd, bank)
 	if seen, ok := m.sessionCursor(sessionID); ok && throughUserTurn <= seen {
 		recordRetain(ctx, target, 0, len(turns), 0, start)
 		return RetainResult{Bank: target, Skipped: len(turns), RetainedThroughUserTurn: seen}, nil
@@ -278,6 +275,22 @@ func (m *Memory) SessionRecallCtx(ctx context.Context, scope Scope, cwd, bank, q
 	banks = m.sessionReadBanks(scope, cwd, bank)
 	entries, err = m.RecallBanksCtx(ctx, banks, query, limit)
 	return banks, entries, err
+}
+
+// WriteBank resolves the bank a write targets for the (scope, cwd, bank)
+// triple: a non-empty bank names one bank exactly (the REST /banks/{bank}
+// mode); otherwise scope.WriteBank maps the cwd's mnemopi bank (bank.rs
+// write_bank; Global targets the shared bank instead). An empty cwd falls
+// back to this store's own project dir.
+//
+// It is the ONE resolution path: SessionRetain and the bank-row delete both
+// go through it, so a row is always written to and deleted from the same
+// bank.
+func (m *Memory) WriteBank(scope Scope, cwd, bank string) string {
+	if bank != "" {
+		return bank
+	}
+	return scope.WriteBank(BankName(m.scopeCwd(cwd)))
 }
 
 // sessionReadBanks resolves the read-bank list for the (scope, cwd, bank)
