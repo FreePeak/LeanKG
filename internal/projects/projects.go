@@ -304,8 +304,11 @@ func (r *Router) EngineFor(ctx context.Context, selector string) (*core.Engine, 
 
 // Open resolves the selector and lazily opens the project's store,
 // engine, and memory (built exactly like the serving process builds the
-// default: same engine selection, same Migrate, same language
-// activation).
+// default: same engine selection, same language activation).
+//
+// It never migrates the store: a routed project is served, and a read must
+// not rewrite the schema of the store it reads. A project with no store is
+// refused as not indexed (see Config.open).
 func (r *Router) Open(ctx context.Context, selector string) (*Project, error) {
 	dir, err := r.resolve(selector)
 	if err != nil {
@@ -340,15 +343,31 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	// Postgres schema key matches what the project declares. cfg.PGURL stays
 	// process-wide — Rust had a single db tier from db_config_from_cwd.
 	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
-	st, err := store.OpenBackend(ctx, filepath.Dir(dbDir), engineName, cfg.PGURL, "", cfg.Mode)
+	projectDir := filepath.Dir(dbDir)
+	// A READ must not rewrite the store it reads.
+	//
+	// Opening a routed project used to Migrate() it, so a single query
+	// against a project whose store was one migration behind silently
+	// rewrote that store's schema — and a query against a project nobody
+	// had indexed CREATED the store, schema and all, which then made that
+	// project look indexed forever. The write path owns the schema: the
+	// import path migrates the store it is about to write to
+	// (core.Engine.Import), and `leankg index` / `leankg migrate` own it
+	// outside the server.
+	//
+	// So the router asks FIRST whether there is a store to serve, and
+	// refuses a project that has none: the same rule the maintenance fleet
+	// and the CLI verbs already follow.
+	exists, err := store.Exists(ctx, projectDir, engineName, cfg.PGURL)
+	if err != nil {
+		return nil, fmt.Errorf("projects: check store for %s: %w", dir, err)
+	}
+	if !exists {
+		return nil, notIndexedError(dir, engineName, projectDir)
+	}
+	st, err := store.OpenBackend(ctx, projectDir, engineName, cfg.PGURL, "", cfg.Mode)
 	if err != nil {
 		return nil, fmt.Errorf("projects: open store for %s: %w", dir, err)
-	}
-	if cfg.Mode != store.RO {
-		if err := st.Migrate(); err != nil {
-			_ = st.Close()
-			return nil, fmt.Errorf("projects: migrate %s: %w", dir, err)
-		}
 	}
 	var mem *memory.Memory
 	if cfg.Memory {
@@ -367,6 +386,19 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	}
 	eng.SetLangsRegistry(reg)
 	return &Project{Dir: dir, Name: filepath.Base(dir), Store: st, Engine: eng, Memory: mem}, nil
+}
+
+// notIndexedError is the refusal a routed project earns when it has no
+// store to serve. It names the project, the store it does not have, and the
+// command that creates one — a refusal that names its subject, so the
+// operator does not have to guess which half of the setup is missing.
+func notIndexedError(dir, engine, projectDir string) error {
+	subject := store.SQLitePath(projectDir)
+	if engine == store.EnginePostgres {
+		subject = fmt.Sprintf("%s (postgres schema)", dir)
+	}
+	return fmt.Errorf("projects: project %s is not indexed: no store at %s — run `leankg index %s` to create it",
+		filepath.Base(dir), subject, dir)
 }
 
 // Close closes every project store the router opened itself. The seeded

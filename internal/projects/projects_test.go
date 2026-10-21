@@ -131,18 +131,31 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 		t.Fatal("default routing must return the seeded engine, not a second handle")
 	}
 
-	// The extra project opens lazily: its .leankg/leankg.db does not
-	// exist until the first routed request.
+	// The extra project is INDEXED: a routed project is served, so it has a
+	// store to serve. Opening it never creates one — a project with no
+	// store is refused as not indexed (see
+	// TestRoutedProjectWithoutAStoreIsRefused) — and it never migrates one
+	// either (see TestRoutedReadDoesNotMigrateTheStore).
+	alphaStore, err := store.OpenBackend(ctx, dirA, "sqlite", "", "", store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := alphaStore.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := alphaStore.Close(); err != nil {
+		t.Fatal(err)
+	}
 	dbPath := filepath.Join(dirA, ".leankg", "leankg.db")
-	if _, err := os.Stat(dbPath); err == nil {
-		t.Fatal("extra project must not be opened before first use")
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("the indexed project must have a store: %v", err)
+	}
+	if _, ok := r.entries[canonical(dirA)]; ok {
+		t.Fatal("the extra project must not be opened before first use")
 	}
 	first, err := r.EngineFor(ctx, "alpha")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := os.Stat(dbPath); err != nil {
-		t.Fatalf("routed open must create the store: %v", err)
 	}
 	second, err := r.EngineFor(ctx, dirA)
 	if err != nil {
@@ -165,9 +178,9 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 }
 
 // TestResolveDoesNotOpenStore pins the read-only contract of Resolve: the
-// dashboard's switch endpoint calls it on every POST, and Open would run
-// Migrate() (a write), open memory and activate languages on the target — a
-// UI action must not mutate a project it merely asks about.
+// dashboard's switch endpoint calls it on every POST, and Open opens memory
+// and activates languages on the target — a UI action must not mutate a
+// project it merely asks about.
 func TestResolveDoesNotOpenStore(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	r := NewRouter(a, Config{ExtraDirs: []string{b}})

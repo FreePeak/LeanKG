@@ -147,6 +147,21 @@ Design, decisions and gates: [`plan-dashboard.md`](plan-dashboard.md). Capture a
 | DS-26 | P4 | Ask-about-my-metrics chat | DEFERRED — needs an LLM provider decision |
 | DS-27 | P4 | PostgreSQL telemetry store | DEFERRED |
 
+## v4.18-no-migrate-on-read — a read must not rewrite the store it reads (2026-10-21, branch `fix/no-migrate-on-read`)
+
+| item | status | evidence |
+|---|---|---|
+| A read migrated the store it read | **MEASURED** | `Config.open` (`internal/projects/projects.go`) called `st.Migrate()` after opening a ROUTED project's store — so a read-intent query rewrote the schema of a store that was behind, in the read path |
+| A read CREATED a project that was never indexed | **MEASURED** | opening a missing store read-write creates it: the engine's probe left the file behind after a read, and a read-write open with no schema answered `no such table: code_elements` — a broken store, materialised by a question |
+| The per-request intent cannot reach the open | **MEASURED** | `Router.Open` opens with the SERVER context and caches one handle per project dir; the HTTP MCP surface serves reads AND writes over that same handle |
+| The router follows the rule the codebase already had | **DONE** | `store.Exists` + `store.SQLitePath` (`internal/store/existence.go`, new) — a `stat` for sqlite, a read-only probe for postgres, never a write; the same rule `maintenanceStoreExists` applies to the maintenance fleet |
+| A project with no store is refused, not created | **DONE** | `Config.open` refuses: *"project alpha is not indexed: no store at …/.leankg/leankg.db — run `leankg index …` to create it"*; nothing is left behind — no store, no schema, no `.leankg/` directory |
+| The write path owns the schema | **DONE** | `Engine.Import` migrates the store it is about to write to, for the store-writing actions (`docs`, `prd`, `repo`, `dir`, `ontology`); the memory actions write markdown files and the compress read reads, so neither migrates; a read-only store is left alone and the write reports the refusal itself |
+| PostgreSQL covered | **DONE** | `(*PGStore).Mode()` — the PostgreSQL twin of `(*Store).Mode`, so the read-only check covers both backends |
+| The regression tests | **DONE** | `internal/projects/read_does_not_migrate_test.go` (a read leaves `schema_migrations` untouched on a genuine pre-017 store; a project with no store is refused and leaves nothing behind) and `internal/core/import_migrates_test.go` (an import migrates the store it writes to). All three fail before the change and pass after it |
+
+**Why:** the schema is the writer's to maintain. A reader that migrates on open makes the drift invisible, creates stores for projects nobody indexed, and makes the fleet doctor's verdict depend on who looked first.
+
 ## v4.14 — retrieval + safety fix wave (2026-10-08, branch `fix/v4.14-retrieval-safety`)
 
 Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](plan-v4.14-retrieval-safety.md). P0 ships first and independently; RS-10/11/14 ship together (one `leankg-embed full`).
