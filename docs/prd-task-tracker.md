@@ -221,6 +221,16 @@ The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01.
 | FR-ZG-06 | Second in-catalog embedding model (Model2Vec-class) + model-switch/rebuild docs | P3 | 5.38 | None — direct TODO (unmilestoned) |
 | US-ZG-06 | Quick constrained-hardware indexes without the ONNX stack | P3 | 3.33 | Closes via FR-ZG-06 |
 
+## v4.18-ci-release-gate — the release commit that shipped untested, and the gate that could not have stopped it (2026-10-21, branch `fix/ci-release-gate`)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-CI-01 | A push to `main` must never be path-filtered away from CI | **DONE** | `.github/workflows/ci.yml` — the `push: branches: [main]` trigger lost its `paths-ignore`. Measured on the v0.35.0 release commit `24e8dbb`: it changed exactly the four files the filter listed, and it has **no** CI run (`actions/runs?head_sha=24e8dbb` returns the `Release` run only) — the release shipped untested |
+| FR-CI-02 | A failed (or absent) CI run must block a merge | **DONE** | Ruleset `20681464` now carries a `required_status_checks` rule with the four CI job contexts, read off a real run (`39468558804`, commit `3074f22d`): `Dual Engine (sqlite + live pgvector)`, `Go Engine (build + vet + test)`, `Cold TTFV Gate (Go, < 300s)`, `Frontend (ui-v2 e2e + dashboard unit)`. `deletion`, `non_fast_forward`, `creation` and the squash-only `pull_request` rule are unchanged; `strict_required_status_checks_policy` is off (the PR head must be tested, not rebased) |
+| FR-CI-03 | The invariant must be enforced by CI, not by a comment | **DONE** | `scripts/ci_workflow_guards.py` gained two checks — the push-to-main path filter must not cover a release metadata file, and the four required contexts must still be job names — and runs in the `Go Engine` job. Proved by breaking it: re-adding `paths-ignore` → exit 1 with one line per file; renaming a job → exit 1 on the missing context; restored → exit 0. The three pre-existing invariants still pass |
+
+**Why:** the untested release was not an accident — the trigger filtered it out on purpose and the ruleset had no status checks to notice; both halves are now closed, and the second half is pinned by a guard so the next edit has to argue with CI.
+
 ## Done
 
 | ID | Title | Evidence |
