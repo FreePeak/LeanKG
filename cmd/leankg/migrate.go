@@ -31,6 +31,16 @@ type migrateResult struct {
 // cmdMigrate applies the embedded schema migrations to a project's store and
 // prints the applied/skipped result as JSON (Rust `leankg migrate` parity:
 // main.rs CLICommand::Migrate printed "applied: <id>" / "up to date: <id>").
+//
+// It never CREATES the store it migrates. Opening a missing store read-write
+// creates it (file, schema and all), so `leankg migrate --project DIR` on a
+// project nobody indexed materialised a store where none belonged — and a
+// stray <dir>/.leankg is enough to make every project-root walk above it
+// latch onto the wrong project. Migrating a project that has no store is
+// also not a request anyone can make sense of: there is nothing to migrate
+// until the project is indexed, and indexing is what creates the store (with
+// every migration already applied). So the verb refuses and names the
+// command that does create one.
 func cmdMigrate(args []string) {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
@@ -45,6 +55,14 @@ func cmdMigrate(args []string) {
 		os.Exit(2)
 	}
 	dir := resolveProjectDir(*project)
+	// The guard asks about the store openStore will ACTUALLY open, which is
+	// the env-selected engine — the --engine flag only labels the JSON
+	// result below, it does not pick the backend.
+	openEng := verbEngine()
+	if !verbStoreExists(context.Background(), dir, openEng) {
+		refuseNotIndexed("migrate", dir, openEng,
+			"run `leankg index .` in this project first — it creates the store and applies every migration, so `leankg migrate` then reports them up to date")
+	}
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)

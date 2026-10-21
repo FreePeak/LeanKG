@@ -17,6 +17,17 @@ import (
 // The verb opens the store read-write on purpose: --reset, --cleanup and --seed
 // write, and Migrate has to be able to add the ledger table (migration 011) to a
 // store created before it.
+//
+// It never CREATES that store. Opening a missing store read-write creates it
+// (file, schema and all), so a metrics run against a project nobody indexed
+// materialised a store where none belonged — and a stray <dir>/.leankg is
+// enough to make every project-root walk above it latch onto the wrong
+// project. So the run asks first (verbStoreExists) and, when there is no
+// store, refuses with the diagnosis `leankg doctor` prints for the same state.
+//
+// The rule in one line: EVERY metrics run — the read-only default and the
+// write flags alike — requires an existing store. A write run cannot reset
+// what does not exist, and the read run must not create what does not.
 func cmdMetrics(args []string) {
 	fs := flag.NewFlagSet("metrics", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
@@ -33,6 +44,11 @@ func cmdMetrics(args []string) {
 	parseInterspersed("metrics", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
+	eng := verbEngine()
+	if !verbStoreExists(context.Background(), dir, eng) {
+		refuseNotIndexed("metrics", dir, eng,
+			"run `leankg index .` in this project, then `leankg metrics` again")
+	}
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
@@ -75,6 +91,11 @@ func cmdDashboard(args []string) {
 	parseInterspersed("dashboard", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
+	eng := verbEngine()
+	if !verbStoreExists(context.Background(), dir, eng) {
+		refuseNotIndexed("dashboard", dir, eng,
+			"run `leankg index .` in this project, then `leankg dashboard` again")
+	}
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
