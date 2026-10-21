@@ -511,29 +511,13 @@ afterSidecars:
 			log.Printf("maintenance: sweep+vacuum every %s over %d project(s) (0 disables)",
 				interval, len(router.List()))
 		}
+		// The memory layer of the default project gets the same keep set:
+		// it names the vector collections that survive the stale sweep.
+		if mem != nil {
+			mem.SetKeepModelIDs(keepModelIDs)
+		}
 		maintain.RunFleet(ctx, func() []maintain.Target {
-			out := []maintain.Target{{Store: st, Mem: mem, Label: filepath.Base(dir)}}
-			for _, d := range router.List() {
-				if d == router.Default() {
-					continue
-				}
-				// Only a store that already exists: opening a missing one
-				// would CREATE it (and its schema) for a project nobody
-				// has indexed yet.
-				if !maintenanceStoreExists(ctx, d, eng) {
-					continue
-				}
-				bs, err := store.OpenBackend(ctx, d, eng, os.Getenv("LEANKG_PG_URL"), "", store.RW)
-				if err != nil {
-					log.Printf("maintenance: open %s: %v", d, err)
-					continue
-				}
-				out = append(out, maintain.Target{
-					Store: bs, Label: filepath.Base(d),
-					Close: func() { _ = bs.Close() },
-				})
-			}
-			return out
+			return fleetTargets(ctx, dir, st, mem, router.List(), eng, keepModelIDs)
 		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle)
 	}
 
@@ -733,6 +717,63 @@ func maintenanceStoreExists(ctx context.Context, dir, engine string) bool {
 	}
 	_ = probe.Close()
 	return true
+}
+
+// fleetTargets builds the maintenance fleet: the default project's store
+// and memory layer, plus every routed project that has a store on disk AND
+// a memory index.
+//
+// The memory layer of a ROUTED project used to be skipped entirely: the
+// fleet set Mem only for the default project, so the routed projects'
+// memory indexes were never compacted. Measured: xdev/.leankg/memory/
+// index.db sat at 4 KB plus a 124.8 KB WAL, untouched for a week, with the
+// duplicate rows still in the bank file.
+func fleetTargets(ctx context.Context, defaultDir string, st store.Backend, mem *memory.Memory, routed []string, eng string, keepModelIDs []string) []maintain.Target {
+	out := []maintain.Target{{Store: st, Mem: mem, Label: filepath.Base(defaultDir)}}
+	for _, d := range routed {
+		if d == defaultDir {
+			continue
+		}
+		// Only a store that already exists: opening a missing one
+		// would CREATE it (and its schema) for a project nobody
+		// has indexed yet.
+		if !maintenanceStoreExists(ctx, d, eng) {
+			continue
+		}
+		bs, err := store.OpenBackend(ctx, d, eng, os.Getenv("LEANKG_PG_URL"), "", store.RW)
+		if err != nil {
+			log.Printf("maintenance: open %s: %v", d, err)
+			continue
+		}
+		t := maintain.Target{Store: bs, Label: filepath.Base(d)}
+		closeTarget := func() { _ = bs.Close() }
+		if pm := openProjectMemory(d, keepModelIDs); pm != nil {
+			t.Mem = pm
+			closeTarget = func() { _ = pm.Close(); _ = bs.Close() }
+		}
+		t.Close = closeTarget
+		out = append(out, t)
+	}
+	return out
+}
+
+// openProjectMemory opens the memory layer of a project that HAS one, and
+// returns nil for a project that has none.
+//
+// The existence probe matters: memory.Open CREATES the tree (the root, the
+// core files and the index), so a maintenance pass must not give a project
+// that never used memory a memory tree.
+func openProjectMemory(dir string, keepModelIDs []string) *memory.Memory {
+	if _, err := os.Stat(filepath.Join(dir, ".leankg", "memory", "index.db")); err != nil {
+		return nil
+	}
+	m, err := memory.Open(dir, false)
+	if err != nil {
+		log.Printf("maintenance: open memory %s: %v", dir, err)
+		return nil
+	}
+	m.SetKeepModelIDs(keepModelIDs)
+	return m
 }
 
 func cmdDoctor(args []string) int {
