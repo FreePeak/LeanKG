@@ -41,15 +41,10 @@ func TestAutoSweepForgetsRowsOfVanishedDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A store file under a live project must survive the sweep: the sweep
+	// A real store under a live project must survive the sweep: the sweep
 	// removes REGISTRY ROWS, never files.
+	newStoreWithRoot(t, live, live)
 	storeFile := filepath.Join(live, ".leankg", "leankg.db")
-	if err := os.MkdirAll(filepath.Dir(storeFile), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(storeFile, []byte("not a real db"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	rep, err := AutoSweep(ctx, o)
 	if err != nil {
