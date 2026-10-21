@@ -290,6 +290,16 @@ directory broke the entire test suite.
 | FR-3T-04 | Live validation: this repo indexed into SQLite; 3-tool smoke (search/status/router) over MCP HTTP; persistence across restart | **P1** | M9 | DONE 2026-09-07 (581 files / 9522 vectors; L1/L2/L3 verified live; follow-up bugs #286 crash-on-concurrent-embed, #287 fuzzy regex escaping, #288 positional-rule audit) |
 | FR-ZCP-12 (remainder) | Measured-simplicity T2 (CI-timed published TTFV ≤ 5 min) — T1 error catalog DONE; T3 superseded by v4.3.1's CI-enforced one-tool invariant (landed) | P1 | M8 | **DONE** #280 — `scripts/ttfv_smoke.sh` + the `ttfv` CI job with a cold-cache artifact; README publishes the measured number |
 
+## v4.19-telemetry-retention — the ledger must be swept, and it must shrink (2026-10-21, branch fix/telemetry-retention)
+
+| Item | Status | Evidence |
+|------|--------|----------|
+| The retention sweeper runs for a ledger that exists, whatever the capture level is | **DONE** | `TestOpenWithCaptureOffStillSweepsAnExistingLedger` (internal/telemetry/retention_regression_test.go) — fails on the pre-fix code with "Open returned Nop for an existing ledger: no retention sweeper is installed", passes after; the expired row is gone and the fresh one is kept |
+| A failed sweep is surfaced, not discarded | **DONE** | `TestRetentionSweepErrorIsRecorded` — fails on the pre-fix code with "the sweep failure was dropped: no \"last_error\" row in meta"; the error is logged and written to the ledger's `meta` table under `last_error` |
+| The purge reclaims the A/B runs with the same retention window | **DONE** | `TestPurgeRemovesExpiredABRuns` — fails on the pre-fix code with "the expired A/B run survived the purge"; `DELETE FROM ab_runs WHERE imported_at < ?` |
+| A new ledger is created with incremental auto-vacuum, and a purge gives the freed pages back | **DONE** | `TestPurgeReclaimsPagesAndTruncatesTheWAL` — fails on the pre-fix code with "auto_vacuum = 0, want 2 (INCREMENTAL)"; after the purge the page count drops, `freelist_count` is 0 and the `-wal` file is 0 bytes |
+| An existing ledger can be converted to incremental auto-vacuum, with consent | **DONE** | `telemetry.EnableIncrementalVacuum(path)` (internal/telemetry/sqlite.go) — opt-in: it rewrites the file (`PRAGMA auto_vacuum=INCREMENTAL; VACUUM;`), so it is never run automatically on a live ledger. A CLI verb for it belongs to cmd/leankg and is left to the caller |
+
 ## v4.18-dashboard-flags — one flag set for the dashboard verb (2026-10-21, branch fix/dashboard-flags)
 
 | Item | Status | Evidence |
