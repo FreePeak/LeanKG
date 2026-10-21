@@ -374,6 +374,33 @@ The two search calls now say the same thing about the same answer — `hits` was
 
 **Loop status: 27 defects found, 27 fixed, 0 open** across nineteen waves.
 
+### v4.18-ci-release-gate — the release commit that shipped untested, and the gate that could not have stopped it (2026-10-21)
+
+**Trigger:** the v0.35.0 release (PR #551, merged 2026-10-20 17:45:33) touched exactly four files — `CHANGELOG.md`, `.release-please-manifest.json`, `cmd/leankg/VERSION`, `internal/mcp/server.go` — and the release commit `24e8dbb` that landed on `main` has **no CI run at all**: `actions/runs?head_sha=24e8dbb` returns exactly one run, and it is `Release`, not `CI`. The version bump the release exists for was never tested.
+
+**Two causes, and both of them were silent.**
+
+1. **The trigger filtered the release out.** `push: branches: [main]` in `.github/workflows/ci.yml` carried a `paths-ignore` listing **exactly those four files**. The filter's own comment — "the release PR already ran CI" — was true of the PR and false of the merge commit: a merge commit is a different commit, and it is the one `main` carries.
+2. **The gate had no teeth.** Repository ruleset `20681464` carried **no `required_status_checks`**, so a red CI run could not have blocked a merge either. Run `39468719087` (CI, `pull_request` @ `59d40361`) is what the gate actually did: created 17:44:36, ended 17:45:34, **zero jobs**, conclusion `failure` — the branch was deleted before a runner picked the run up. A report nobody reads is not a gate.
+
+**The fix, in both halves.**
+
+| half | before | after |
+|---|---|---|
+| the trigger | `paths-ignore: [CHANGELOG.md, .release-please-manifest.json, cmd/leankg/VERSION, internal/mcp/server.go]` on `push: branches: [main]` | no path filter at all — **every** push to `main` runs the suite |
+| the gate | ruleset `20681464`: `deletion`, `non_fast_forward`, `creation`, `pull_request` (squash only) — no status checks | the same four rules **plus** a `required_status_checks` rule carrying the four CI job contexts |
+
+The contexts are the CI job NAMES, read off a real run (`39468558804`, commit `3074f22d`): `Dual Engine (sqlite + live pgvector)`, `Go Engine (build + vet + test)`, `Cold TTFV Gate (Go, < 300s)`, `Frontend (ui-v2 e2e + dashboard unit)`. `strict_required_status_checks_policy` is off on purpose: the requirement is that the PR's own head commit was tested, not that the branch is rebased onto a moving `main` — with one runner slot, a strict policy would turn every `main` push into a re-run demand.
+
+**Enforced, not documented.** `scripts/ci_workflow_guards.py` is a CI step (it runs inside the `Go Engine` job) and now pins two more invariants:
+
+- **the push-to-main trigger cannot path-filter away a release metadata file** — a `paths-ignore` entry covering one of the four files, or a positive `paths` filter that cannot reach one, fails the guard. The files are matched by name against GitHub's path-filter glob (`*` does not cross `/`, `**` does), so `cmd/leankg/**` is caught as well as `cmd/leankg/VERSION`.
+- **the four required check contexts must still be produced by a job** — GitHub takes a job's check context from the job's `name:`, so renaming `Go Engine (build + vet + test)` would leave the ruleset waiting for a context no run reports, and the merge would hang in "Expected — Waiting for status to be reported" forever.
+
+**Proved by breaking it:** re-adding the `paths-ignore` makes the guard exit 1 with one line per ignored file; renaming a job makes it exit 1 on the missing context; the restored file exits 0. The three pre-existing invariants (the concurrency group with `cancel-in-progress`, per-job `timeout-minutes`, the hosted-only npm cache) are untouched and still pass.
+
+**Test:** the guard is the test — `scripts/ci_workflow_guards.py`, run in the `Go Engine` job on every push and every PR. `go build -p=2 ./...` and `go vet ./...` clean; no Go code changed.
+
 ### v4.29.0-envelope-eats-the-answer — a populated answer that arrived as nothing but its own truncation marker (2026-09-30)
 
 **Trigger:** wave 18 of the loop (FR-SELF-04, still on PR #449), which enumerated the READ surfaces the way waves 16 and 17 enumerated the write verbs: every action in the query schema, called once, checking whether each answer is POPULATED rather than merely successful. One was not.
