@@ -209,6 +209,19 @@ directory broke the entire test suite.
 | FR-3T-04 | Live validation: this repo indexed into SQLite; 3-tool smoke (search/status/router) over MCP HTTP; persistence across restart | **P1** | M9 | DONE 2026-09-07 (581 files / 9522 vectors; L1/L2/L3 verified live; follow-up bugs #286 crash-on-concurrent-embed, #287 fuzzy regex escaping, #288 positional-rule audit) |
 | FR-ZCP-12 (remainder) | Measured-simplicity T2 (CI-timed published TTFV ≤ 5 min) — T1 error catalog DONE; T3 superseded by v4.3.1's CI-enforced one-tool invariant (landed) | P1 | M8 | **DONE** #280 — `scripts/ttfv_smoke.sh` + the `ttfv` CI job with a cold-cache artifact; README publishes the measured number |
 
+## v4.18-dashboard-flags — one flag set for the dashboard verb (2026-10-21, branch fix/dashboard-flags)
+
+| Item | Status | Evidence |
+|------|--------|----------|
+| `leankg dashboard --addr 127.0.0.1:9701 --no-open --format text` exits 0 and prints the usage tables | **DONE** | `TestDashboardAcceptsTheWebFlagsWithTheFormatFlag` (cmd/leankg/dashboard_flags_test.go) — fails on the pre-fix code with the measured `flag provided but not defined: -addr` (exit 2), passes after |
+| The dashboard verb has ONE flag set, and the mode comes from the parsed values | **DONE** | `parseDashboardFlags` declares `-addr`/`-no-open`/`-allow-remote`/`-token`/`-project`/`-since`/`-format` together; `cmdDashboard` switches on the named `dashboardModeWeb`/`dashboardModeTables`; `dashboardWantsText` (the argv scan) deleted — pinned by `TestParseDashboardFlagsDecidesTheModeFromTheParsedValues` and `TestParseDashboardFlagsReadsTheWebFlagsTheTablesModeAlsoDeclares` |
+| `--format json` reaches the table path and emits the JSON payload | **DONE** | `TestDashboardFormatJSONEmitsJSON` (cmd/leankg/dashboard_flags_test.go) — exit 0, stdout parses as JSON with `totals`/`by_tool`/`by_day`/`by_project`/`patterns`, and no web-server banner |
+| A bare `leankg dashboard` still reaches the WEB path (DS-20) | **DONE** | `TestBareDashboardTakesTheWebPath` — the parsed flags of a bare invocation are the web mode with the default addr; asserted on the PARSED values, never by running the verb (the web path binds a port, opens a browser and serves until a signal) |
+| The web mode keeps its refusals | **DONE** | `dashboard.CheckListen` untouched: a non-loopback listen still needs `--allow-remote` + `--token` (`TestRunDashboardWebRefusesNonLoopbackWithoutAllowRemote`, `TestRunDashboardWebRemoteNeedsToken`); the browser is still opened only without `--no-open` (`TestRunDashboardWebNoOpenSkipsBrowser`) |
+| The regression test binds no port and opens no browser | **DONE** | the test runs the tables mode under a 60s timeout and asserts the web-server banner is ABSENT from stdout — the server never started, so nothing was bound and no browser was opened |
+
+**Why:** the verb's contract was published in two flag sets that contradicted each other, and the mode was chosen by scanning argv — so the invocation both `AGENTS.md:53` and `docs/plan-dashboard.md:330` document could not run, and its usage listed only half the verb's flags.
+
 ## Todo — carry-forward from archive (original IDs preserved)
 
 | ID | Title (from archive) | Priority | Archive PRD § | Live mapping |
