@@ -36,6 +36,21 @@ func TestParseDashboardFlagsDecidesTheModeFromTheParsedValues(t *testing.T) {
 	}
 }
 
+// TestBareDashboardTakesTheWebPath: a bare `leankg dashboard` starts the web
+// dashboard (DS-20). The decision is asserted on the PARSED flags, never by
+// running the verb: the web path binds a port, opens a browser and serves
+// until a signal, so a bare run in a test would hang and leave a listener
+// behind.
+func TestBareDashboardTakesTheWebPath(t *testing.T) {
+	f := parseDashboardFlags(nil)
+	if f.mode != dashboardModeWeb {
+		t.Errorf("bare `leankg dashboard` mode = %v, want the web mode", f.mode)
+	}
+	if f.addr != defaultDashboardAddr {
+		t.Errorf("bare `leankg dashboard` addr = %q, want %q", f.addr, defaultDashboardAddr)
+	}
+}
+
 // TestParseDashboardFlagsReadsTheWebFlagsTheTablesModeAlsoDeclares: the
 // documented `leankg dashboard --addr 127.0.0.1:9701 --no-open --format text`
 // must parse in ONE pass — the web flags and the table flags are one set.

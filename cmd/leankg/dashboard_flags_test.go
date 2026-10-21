@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// This file is BLACK BOX: it drives the built `leankg` binary and reads what
+// the process printed, so it also compiles against the pre-fix source — which
+// is what makes it a regression test rather than a description of the fix.
+
 // runDashboardCLI runs `leankg dashboard ...` in a throwaway project dir and
 // returns stdout, stderr and the exit code. The run is bounded by a timeout:
 // if the verb wrongly took the web path it would serve until a signal, and
@@ -93,20 +97,5 @@ func TestDashboardFormatJSONEmitsJSON(t *testing.T) {
 		if _, ok := payload[key]; !ok {
 			t.Errorf("JSON payload is missing %q: %s", key, stdout)
 		}
-	}
-}
-
-// TestBareDashboardTakesTheWebPath: a bare `leankg dashboard` starts the web
-// dashboard (DS-20). The decision is asserted on the PARSED flags, never by
-// running the verb: the web path binds a port, opens a browser and serves
-// until a signal, so a bare run in a test would hang and leave a listener
-// behind.
-func TestBareDashboardTakesTheWebPath(t *testing.T) {
-	f := parseDashboardFlags(nil)
-	if f.mode != dashboardModeWeb {
-		t.Errorf("bare `leankg dashboard` mode = %v, want the web mode", f.mode)
-	}
-	if f.addr != defaultDashboardAddr {
-		t.Errorf("bare `leankg dashboard` addr = %q, want %q", f.addr, defaultDashboardAddr)
 	}
 }
