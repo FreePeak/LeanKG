@@ -474,6 +474,24 @@ func (e *Engine) refreshInventory() (store.Inventory, error) {
 // embed-pipeline state read from DB tables (no in-process coupling with
 // leankg-embed — issue #368 AC). Provider disclosure is part of the egress
 // contract: status always names the active embedding provider.
+//
+// healthy is DERIVED, never asserted. The rule: healthy is true iff every
+// read that FEEDS A PUBLISHED FIELD succeeded. The inventory counts
+// (elements/relationships/files/watermark) fail the whole call when they
+// cannot be read, so they never reach a payload. The embeddings layer was
+// the one read left that could still degrade a delivered payload: a store
+// whose emb_stamp table cannot be listed used to publish an EMPTY embeddings
+// list — indistinguishable from "no embeddings configured" — next to a
+// hardcoded healthy:true, while the store actually held thousands of
+// vectors.
+//
+// So the embeddings read decides healthy, and its failure is NAMED in the
+// payload (embeddings_error) instead of being swallowed into an empty list.
+// Provider reachability is a separate fact (query_embedder.reachable): an
+// unreachable query provider degrades the L3 rung, it does not make the
+// store unreadable, so it never touches healthy. Reads whose failure simply
+// OMITS their field (space, last_embed_run) publish no substitute value and
+// so do not falsify the payload either.
 func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 	els, err := e.st.ElementCount()
 	if err != nil {
@@ -495,9 +513,13 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The embeddings state is read BEFORE the payload is built: it is the
+	// one read whose failure used to be swallowed, so it is the one read
+	// that decides healthy.
+	emb, embErr := e.embeddingsState(els)
 	out := map[string]any{
 		"backend":          e.st.Engine(),
-		"healthy":          true,
+		"healthy":          embErr == nil,
 		"store":            e.st.Path(),
 		"mode":             e.st.Engine(),
 		"elements":         els,
@@ -507,7 +529,17 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 		"watermark":        map[string]any{"seq": seq, "at": at},
 		"freshness":        e.freshness(els),
 		"tools":            []string{ToolImport, ToolQuery, ToolStatus},
-		"embeddings":       e.embeddingsState(),
+		"embeddings":       emb,
+	}
+	if embErr != nil {
+		// The embeddings state could not be read. Say so in the payload
+		// instead of letting an empty list pass for "nothing is embedded":
+		// healthy is already false, and this names the read that failed.
+		// The list itself is nil (JSON null), not an empty array, so a
+		// consumer can tell "the read failed" from "there are no
+		// embeddings configured" (an empty array) without reading the
+		// error field.
+		out["embeddings_error"] = embErr.Error()
 	}
 	// Space is a no-write probe (PRAGMA page_count/freelist_count on SQLite,
 	// pg_database_size on Postgres), so it is safe on a read-only handle and
@@ -571,15 +603,40 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 	return out, nil
 }
 
-func (e *Engine) embeddingsState() []map[string]any {
+// embeddingsState reads the embed-pipeline state from the store: one entry
+// per stamped model, with its vector count and the L3 coverage it implies.
+//
+// The layer read can FAIL — a store whose emb_stamp table cannot be listed
+// (a schema the read does not understand) fails the query outright — and
+// that failure is RETURNED, not swallowed. Swallowing it turned "the
+// embeddings layer is unreadable" into "there are no embeddings", which is
+// a different fact, and Status published healthy:true next to it.
+//
+// Two failure shapes, and the caller tells them apart by the LIST:
+//
+//   - the stamp listing failed: no list at all (nil) plus the error. The
+//     caller publishes a null list, never an empty array, so "the read
+//     failed" cannot be mistaken for "nothing is embedded".
+//   - one model's vector count failed: the models that could be counted
+//     are still published, the failed one is named in the error.
+//
+// els is the element count Status already read (it fails the whole call when
+// that read fails), passed in so the coverage math does not query it twice.
+func (e *Engine) embeddingsState(els int) ([]map[string]any, error) {
 	stamps, err := e.st.Stamps()
 	if err != nil {
-		return []map[string]any{}
+		return nil, fmt.Errorf("read embedding stamps: %w", err)
 	}
 	states := make([]map[string]any, 0, len(stamps))
-	els, _ := e.st.ElementCount()
+	var errs []error
 	for _, st := range stamps {
-		vecs, _ := e.st.VectorCount(st.ModelID)
+		vecs, err := e.st.VectorCount(st.ModelID)
+		if err != nil {
+			// A count that could not be read is not a count of zero: the
+			// model is left out of the list and named in the error instead.
+			errs = append(errs, fmt.Errorf("count vectors for model %q: %w", st.ModelID, err))
+			continue
+		}
 		// RS-25: freshness tracks the index only, so a store with un-embedded
 		// elements still read "fresh"; coverage says how much L3 can see.
 		coverage := 0.0
@@ -596,7 +653,7 @@ func (e *Engine) embeddingsState() []map[string]any {
 			"vectors":    vecs,
 		})
 	}
-	return states
+	return states, errors.Join(errs...)
 }
 
 // QueryRequest is the query tool payload.
