@@ -377,12 +377,22 @@ answers; a store that records a root nobody has any more is unrepairable
 dead weight that nothing could see. Both were invisible because the only
 thing that ever touched the registry was a human.
 
-**Verified:** `go build -p=2 ./...`, `go vet ./internal/portfolioreg/`,
-`gofmt` clean, `go test ./internal/portfolioreg/ -count=1` green. Each
+**The caller is wired.** The sweep rides the SAME tick as the store
+maintenance in the serve path (`cmd/leankg/main.go`) — the fleet-target
+callback runs once per pass — so the registry is swept as often as the
+fleet is maintained, with no second ticker, and it is quiet on a healthy
+registry.
+
+**Verified:** `go build -p=2 ./...`, `go vet ./cmd/leankg/ ./internal/portfolioreg/`,
+`gofmt` clean, `go test ./cmd/leankg/ ./internal/portfolioreg/ -count=1`
+green. Each
 regression test fails on `origin/main` (`22dd194`, the sweep API does not
 exist there) and passes on this branch. The root-mismatch test plants its
 root through `index.RebaseRoot` — the indexer's own writer — so a rename
 of the root key fails the test rather than silently blinding the check.
+The caller's own tests pin that the sweep forgets a vanished project,
+keeps a live one, and that the serve path actually CALLS the sweep inside
+the maintenance tick.
 
 **Measured on the live registry** (run against a COPY of
 `~/.leankg/portfolio.db`; the live file was never opened for write):

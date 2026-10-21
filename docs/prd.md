@@ -303,18 +303,26 @@ this branch (the server refuses with the fix named).
   only implicitly in the manual `Prune` verb, and nothing automatic
   applied it.
 
-**Not done here (deliberately):** the caller. `AutoSweep` is exposed in
-`internal/portfolioreg`; the maintenance or serve path that should call it
-on a timer is outside this package's file ownership, so the one-line
-caller change is described in the PR body rather than made here.
+**The caller is wired.** The sweep rides the SAME tick as the store
+maintenance in the serve path (`cmd/leankg/main.go`): the fleet-target
+callback `maintain.RunFleet` runs once per pass, so the registry is swept
+as often as the fleet is maintained, with no second ticker. It is quiet on
+a healthy registry — the log line prints only when a row was removed or a
+root mismatch was found. Under `--read-only` the whole maintenance block
+is skipped, so a reader never writes the registry.
 
-**Verified:** `go build -p=2 ./...`, `go vet ./internal/portfolioreg/`,
-`gofmt` clean, `go test ./internal/portfolioreg/ -count=1` green. Each of
+**Verified:** `go build -p=2 ./...`, `go vet ./cmd/leankg/ ./internal/portfolioreg/`,
+`gofmt` clean, `go test ./cmd/leankg/ ./internal/portfolioreg/ -count=1`
+green. Each of
 the three regression tests fails on `origin/main` (`22dd194`) — the sweep
 API does not exist there — and passes on this branch. The root-mismatch
 test plants its root through `index.RebaseRoot`, the indexer's own writer,
 so a rename of the root key fails the test instead of silently blinding
-the detection.
+the detection. The caller's own tests (`cmd/leankg/registrysweep_test.go`)
+pin both halves: that the sweep forgets a vanished project and keeps a
+live one, and — by reading `main.go`, the way internal/index's label guard
+does — that the serve path actually CALLS the sweep inside the
+maintenance tick.
 
 **Measured on the live registry** (run against a COPY of
 `~/.leankg/portfolio.db`; the live file was never opened for write):
