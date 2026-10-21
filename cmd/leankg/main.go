@@ -738,8 +738,12 @@ func maintenanceStoreExists(ctx context.Context, dir, engine string) bool {
 // mismatch is REPORTED, never acted on: only a human can decide between
 // rebasing the root and forgetting the project).
 //
-// It is quiet on a healthy registry: nothing is removed and nothing is
-// reported, so the log line below is the only thing it ever prints.
+// It is quiet on a healthy registry: the log line below prints only when a
+// row was removed or a mismatch was found.
+//
+// Like the store maintenance it rides, the sweep does not run when the
+// maintenance loop is disabled (LEANKG_VACUUM_INTERVAL_HOURS=0): the
+// registry is swept as often as the fleet is maintained, and not more often.
 func sweepRegistry(ctx context.Context, eng string) {
 	rep, err := portfolioreg.AutoSweep(ctx, portfolioreg.Options{
 		Engine: eng,
