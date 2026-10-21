@@ -195,6 +195,33 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 | RS-25 | P4 | `status.embedding_coverage` | DONE |
 | RS-26 | P4 | Document that `memory create` overwrites | DONE |
 
+## v4.19-reconcile-with-head — the store mirrors the tree, and the payload says so (2026-10-21, branch fix/reconcile-with-head)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-REC-01 | The hourly fleet pass reconciles the store with the project's HEAD | **DONE** | `internal/maintain/reconcile.go` — `ReconcileHead` removes the store content of the paths HEAD no longer contains. It reuses the index's own delete step (`index.DeleteFiles`, extracted from the index run) instead of a second copy of the delete logic. Wired into the fleet pass (`internal/maintain/maintain.go`), before the reclaim pass, so the space the deleted rows leave behind is returned in the same pass. |
+| FR-REC-02 | The delete is provably scoped to git-indexed stores | **DONE** | Three conditions, all required: (1) the store's recorded index root is a git repository with a READABLE HEAD — an unborn or unreadable HEAD deletes nothing; (2) the stored `code_files.content_hash` for that path starts with `git:` — the marker the git-object index writes, so a filesystem-scanned store (SHA-256 hashes) can NEVER be pruned against a tree it knows nothing about; (3) the path is ABSENT from HEAD — a path HEAD contains is never deleted, whatever mode it has. Pinned by `internal/maintain/reconcile_test.go`: `TestReconcileHeadRemovesPathDeletedFromHead` (the path's elements, relationships AND vectors are gone), `TestReconcileHeadKeepsPathStillInHead`, `TestReconcileHeadLeavesFilesystemStoreAlone` (a store whose hashes are SHA-256 is not touched even when pointed at a git repo whose HEAD lacks the path), `TestReconcileHeadNoRepositoryDeletesNothing`, `TestReconcileHeadUnbornHEADDeletesNothing`. |
+| FR-REC-03 | The fleet pass actually does it (wiring, not just the helper) | **DONE** | `internal/maintain/fleet_reconcile_test.go` — `TestFleetPassReconcilesStoreWithHEAD` drives `RunFleet` itself: a file deleted and committed, then the hourly pass runs, and the stale elements are gone. Verified to FAIL on `origin/main` (the pass leaves them) and to PASS on this branch. |
+| FR-REC-04 | The payload tells the truth about the tree | **DONE** | `internal/store/headstate.go` records the git commit id the store was indexed from (namespace `index`, key `head` — the same kv table the index uses for its root marker) and compares it with the current HEAD. `status` gains **`head_sync`**: `match` | `stale` | `unknown` (`unknown` = not git-indexed, head id never recorded, or HEAD unreadable — never a freshness claim that was not proven). Pinned by `internal/core/headstate_test.go`: `TestStatusHeadSyncTellsTheTreeMoved` (match right after indexing → stale after a commit deletes a file → match after re-indexing) and `TestStatusHeadSyncUnknownWithoutGit`. |
+| FR-REC-05 | The recorded id and the stored content describe one tree | **DONE** | The index lists the blobs of the commit HEAD names AT THAT MOMENT (`gitobj.HeadSnapshot`) and records that commit — so a HEAD that moves mid-run cannot make the store claim a commit it never read. `internal/index/index.go` records the id at the end of a successful run; a filesystem-scanned store records the EMPTY id (it was not built from a git tree, and claiming one would be a lie the reconcile would act on). |
+| FR-REC-06 | The existing freshness semantics are untouched | **DONE** | `store.Freshness` is not modified: `fresh`/`possibly_stale`/`cold` keep their exact meaning (the doctor and the fleet read them), and `head_sync` is a NEW field beside them. An UNCHANGED head id is not rewritten (`store.SetHead` compares first), so a no-op index run does not bump the write watermark and turn a fresh store `possibly_stale`. |
+| FR-REC-07 | Gates | **DONE** | `go build -p=2 ./...`, `go vet ./internal/maintain/ ./internal/core/ ./internal/index/ ./internal/store/ ./internal/gitobj/`, `gofmt -l cmd internal` empty, `go test ./internal/maintain/ ./internal/core/ ./internal/index/ ./internal/store/ ./internal/gitobj/ -count=1` green. |
+
+**Why:** a store is a copy of a tree, and nothing kept the copy honest —
+1,397 paths and 13,006 elements of one project (59 %) had been deleted from
+its repository 5.3 days earlier and were still being served, while every
+store in scope reported `freshness: fresh`. Freshness could not say
+otherwise: it compares two counters inside the SAME database, so it can
+prove the store has not been written since the inventory snapshot, and never
+that the tree has not moved.
+
+**The safety gate is the point.** A wrong delete destroys live,
+still-queried content, so the reconcile deletes a path only when the
+recorded root is a git repository with a readable HEAD, the stored content
+hash for that path starts with `git:` (the git-object index's marker), and
+the path is absent from HEAD. A store that was not git-indexed records a
+SHA-256 hash instead, so **it can never be touched by this pass**.
+
 ## v4.18-stamp-pre017 — the L3 rung names the read error instead of a collection that was never missing (2026-10-21, branch fix/stamp-pre017)
 
 **Why:** a store that has not run migration 017 made every stamp read die

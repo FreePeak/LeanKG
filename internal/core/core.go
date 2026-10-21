@@ -540,7 +540,7 @@ func (e *Engine) refreshInventory() (store.Inventory, error) {
 //     provider degrades the L3 rung, it does not make the store unreadable.
 //   - Reads whose failure simply OMITS their field (space, last_embed_run):
 //     they publish no substitute value, so they falsify nothing.
-func (e *Engine) Status(_ context.Context) (map[string]any, error) {
+func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 	els, err := e.st.ElementCount()
 	if err != nil {
 		return nil, err
@@ -576,8 +576,15 @@ func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 		"elements_by_type": byType,
 		"watermark":        map[string]any{"seq": seq, "at": at},
 		"freshness":        e.freshness(els),
-		"tools":            []string{ToolImport, ToolQuery, ToolStatus},
-		"embeddings":       emb,
+		// head_sync says whether the store still mirrors the tree it was
+		// indexed from. It is the signal freshness cannot give: freshness
+		// compares two counters inside the same database, so a store 5.3
+		// days and 59 % behind HEAD still reported "fresh". "unknown" means
+		// the store was not git-indexed or HEAD could not be read — never
+		// a freshness claim that was not proven.
+		"head_sync":  store.HeadSync(ctx, e.st),
+		"tools":      []string{ToolImport, ToolQuery, ToolStatus},
+		"embeddings": emb,
 	}
 	if embErr != nil {
 		// The embeddings state could not be read. Say so in the payload

@@ -905,6 +905,66 @@ live in the `-wal` until it checkpoints, so an `immutable=1` reader would
 serve STALE DATA. The read-only guarantee is not worth trading for a
 sidecar that disappears on close.
 
+### v4.19-reconcile-with-head — the store mirrors the tree, and the payload says so (2026-10-21)
+
+**The defect, in two halves.** A store is a copy of a tree, and nothing kept
+the copy honest.
+
+| measured | before |
+|---|---|
+| `be-knowledge-graph` store: paths HEAD no longer contains | **1,397** (13,006 elements — 59 % of its 22,164) |
+| how far behind HEAD that store was | **5.3 days** |
+| `x-trader` store: stale files | 5 files = 67 elements + 198 relationships + 67 vectors |
+| in-scope stores reporting `freshness: fresh` | **16 of 16**, including the 59 %-behind one |
+
+**Half one — the store never reconciled with the tree.** `leankg index`
+deletes the files a walk does not see, but the hourly maintenance pass only
+swept orphans and vacuumed: nothing compared a store against the
+repository's HEAD. So a deleted file's elements, relationships and vectors
+stayed in the store until somebody re-indexed the project by hand, and every
+reader was served that stale content meanwhile.
+
+**Half two — freshness could not see the drift.** `store.Freshness` compares
+`write_watermark.seq` with `inventory.LastInventorySeq`: two counters inside
+the SAME database. It can prove the store has not been written since the
+inventory snapshot; it can never prove the TREE has not moved. Hence 16/16
+"fresh", including a store 5.3 days behind.
+
+**The fix.**
+
+*Reconcile with HEAD* (`internal/maintain/reconcile.go`): the hourly fleet
+pass now removes the store content of the paths HEAD no longer contains. It
+reuses the index's own delete step — `index.DeleteFiles`, extracted from the
+index run — rather than writing a second copy of the delete logic.
+
+**The safety gate is the point of this section.** A wrong delete destroys
+live, still-queried content, so a path is deleted only when ALL of these
+hold:
+
+1. the store's recorded index root is a git repository whose HEAD is
+   **readable** (an unborn or unreadable HEAD deletes nothing);
+2. the stored `code_files.content_hash` for that path starts with **`git:`**
+   — the marker the git-object index writes, so the store's copy of the path
+   IS the committed content. A filesystem-scanned store records a SHA-256
+   there instead, so **a store that was not git-indexed can never be
+   touched**; and
+3. the path is **ABSENT from HEAD**. A path HEAD contains is never deleted,
+   whatever mode it has.
+
+**Truthful freshness** (`internal/store/headstate.go`): the git commit id the
+store was indexed from is recorded through the same `kv` table the index
+uses for its root marker (namespace `index`, key `head`), and compared with
+the current HEAD at status time. The status payload gains **`head_sync`**:
+`match` | `stale` | `unknown`. `unknown` means the store was not git-indexed,
+the head id was never recorded, or HEAD cannot be read — never a freshness
+claim that was not proven.
+
+**Non-breaking by construction.** The existing `fresh`/`possibly_stale`/
+`cold` labels keep their exact meaning (the doctor and the fleet read them);
+`head_sync` is a NEW field beside them, not a redefinition. An unchanged
+head id is not rewritten, so a no-op index run does not bump the write
+watermark and turn a fresh store `possibly_stale`.
+
 ### v4.33.0-null-was-two-claims — the last unswept surface, and the last shape (2026-10-01)
 
 **Trigger:** wave 22 of the loop (FR-SELF-04, still on PR #449), sweeping the last surface the previous twenty-one had not: every REST route, checking the status **and** the body of each failure **and** each empty answer.
