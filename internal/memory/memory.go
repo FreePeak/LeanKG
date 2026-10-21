@@ -71,6 +71,9 @@ type Memory struct {
 	// vec is the optional dense recall arm (dense.go); vecMu guards it.
 	vecMu sync.Mutex
 	vec   Vectorizer
+	// keepModelIDs names the vector collections that survive the stale
+	// sweep (dense.go). Empty means "keep every collection".
+	keepModelIDs []string
 }
 
 // Open opens (creating if needed) the memory tree for projectDir, or the

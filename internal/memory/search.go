@@ -225,6 +225,13 @@ func (m *Memory) Compact() error {
 	if _, err := m.fts.Exec(`PRAGMA incremental_vacuum`); err != nil {
 		return fmt.Errorf("memory: incremental vacuum: %w", err)
 	}
+	// The stale vector collections go with them: a collection under a model
+	// id nobody queries any more is dead weight (dense.go keys vectors by
+	// model, so nothing ever looked at it again). The live collection is
+	// never touched.
+	if _, _, err := m.PruneStaleVectors(); err != nil {
+		return fmt.Errorf("memory: prune stale vectors: %w", err)
+	}
 	if _, err := m.fts.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		return fmt.Errorf("memory: wal_checkpoint(TRUNCATE): %w", err)
 	}

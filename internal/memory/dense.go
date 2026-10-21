@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -36,6 +37,97 @@ func (m *Memory) SetVectorizer(v Vectorizer) {
 	m.vecMu.Lock()
 	m.vec = v
 	m.vecMu.Unlock()
+}
+
+// SetKeepModelIDs names the vector collections that survive the stale
+// sweep. Empty (the default) means "keep every collection": a caller that
+// does not know which collection is live must not be able to delete it —
+// the same rule the store-side sweep follows (maintain.DeleteStaleStamps).
+//
+// The serve path sets it to the query embedder's model id, which is the
+// collection the dense arm reads.
+func (m *Memory) SetKeepModelIDs(ids []string) {
+	m.vecMu.Lock()
+	defer m.vecMu.Unlock()
+	m.keepModelIDs = append([]string(nil), ids...)
+}
+
+// modelIDOf is the model id part of a vector space key
+// ("model|revision|provider|dims|chunker|prefixes"): the model id is the
+// first field, the rest describes the space the model was embedded in.
+func modelIDOf(key string) string {
+	if i := strings.IndexByte(key, '|'); i >= 0 {
+		return key[:i]
+	}
+	return key
+}
+
+// PruneStaleVectors drops the vector collections under a model id the
+// memory index does not use any more, and reports how many collections and
+// rows went.
+//
+// It mirrors the store-side stale-stamp sweep: only the collections that
+// are NOT live go, and with no live collection known, nothing is dropped at
+// all. The live collection is the wired vectorizer's, unless the caller
+// named the keep set explicitly (the serve path names the embedder's model
+// id, which is the same collection).
+//
+// Measured before this existed: the memory index held 427 vectors
+// (655,872 B) under the stale model id "local|bge-small-en-v1.5-f16.gguf|
+// local|384" next to the live collection's 690 rows (1,413,120 B), and the
+// old collection was never collected — dense.go keys vectors by model, so
+// nothing ever looked at it again.
+func (m *Memory) PruneStaleVectors() (models int, vectors int, err error) {
+	m.vecMu.Lock()
+	defer m.vecMu.Unlock()
+	keep := m.keepModelIDs
+	if len(keep) == 0 && m.vec != nil {
+		if id := modelIDOf(m.vec.Key()); id != "" {
+			keep = []string{id}
+		}
+	}
+	live := make(map[string]bool, len(keep))
+	for _, id := range keep {
+		if id != "" {
+			live[id] = true
+		}
+	}
+	if len(live) == 0 {
+		// Nothing is known to be live: keep every collection.
+		return 0, 0, nil
+	}
+	rows, err := m.fts.Query(`SELECT model, COUNT(*) FROM memory_vectors GROUP BY model`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("memory: read vector collections: %w", err)
+	}
+	type stale struct {
+		model string
+		count int
+	}
+	var drop []stale
+	for rows.Next() {
+		var model string
+		var count int
+		if err := rows.Scan(&model, &count); err != nil {
+			rows.Close()
+			return 0, 0, fmt.Errorf("memory: read vector collections: %w", err)
+		}
+		if !live[modelIDOf(model)] {
+			drop = append(drop, stale{model, count})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("memory: read vector collections: %w", err)
+	}
+	for _, d := range drop {
+		if _, err := m.fts.Exec(`DELETE FROM memory_vectors WHERE model = ?`, d.model); err != nil {
+			return models, vectors, fmt.Errorf("memory: prune vector collection %s: %w", d.model, err)
+		}
+		models++
+		vectors += d.count
+	}
+	return models, vectors, nil
 }
 
 func (m *Memory) vectorizer() Vectorizer {
