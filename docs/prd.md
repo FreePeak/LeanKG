@@ -921,9 +921,15 @@ reconcile moved the watermark and left the inventory behind. The signal then
 said "the tree may have moved" about a store that had just been made to MATCH
 the tree, and the doctor's own hint was *"re-index the stale projects"*.
 
-**The fix.** The reconcile refreshes the inventory when it has deleted
-content (`store.RefreshInventory`), exactly as the core layer does after an
-index: the summary of what the store holds must match the store.
+**The fix.** The reconcile makes the store's summary match the store: when the
+inventory is behind the watermark — because this pass deleted content, or
+because an earlier pass did — it is refreshed (`store.RefreshInventory`),
+exactly as the core layer does after an index. The refresh is CONDITIONAL on
+the inventory actually being behind, because every content-writing path
+refreshes it already (the CLI index, the core import, the watcher, the
+embedder, `gc`); that keeps the hourly pass from writing to every store every
+hour, and it heals the two live projects the first pass of the wave left
+saying `possibly_stale`.
 
 **Measured on the live fleet, before the fix:** `agentloop` and `x-trader`
 reported `possibly_stale`; after it, every in-scope project reports `fresh`
@@ -935,6 +941,8 @@ again, and the doctor's fleet verdict is unchanged otherwise.
 reconciled store is not a stale one") and PASS with the fix.
 `TestReconcileRefreshesTheInventoryCounts` — FAIL on `origin/main` ("the
 inventory says 2 elements, the store holds 1"), PASS with the fix.
+`TestReconcileHealsAnInventoryLeftBehind` — FAIL on `origin/main` ("the pass
+must heal the inventory it left behind"), PASS with the fix.
 
 ### v4.19-reconcile-with-head — the store mirrors the tree, and the payload says so (2026-10-21)
 

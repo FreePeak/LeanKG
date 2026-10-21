@@ -117,7 +117,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 	}
 	if len(missing) == 0 {
 		res.Reason = "nothing to delete"
-		return res, nil
+		return res, healInventory(st)
 	}
 	before, err := st.ElementCount()
 	if err != nil {
@@ -152,12 +152,37 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 	// advances that watermark (DeleteByFile and DeleteFileRecord both bump
 	// it), so without this the store would report "possibly_stale" the
 	// moment it was reconciled — the signal would say "the tree may have
-	// moved" about a store that was just made to MATCH the tree. The index
-	// refreshes the inventory for the same reason, and the reconcile has to
-	// do it too, or it makes the fleet's own doctor tell operators to
-	// re-index stores that are now more correct than they were.
-	if _, err := store.RefreshInventory(st); err != nil {
-		return res, fmt.Errorf("maintain: refresh inventory after reconcile: %w", err)
+	// moved" about a store that was just made to MATCH the tree.
+	return res, healInventory(st)
+}
+
+// healInventory makes the store's summary match the store.
+//
+// The index refreshes the inventory for the same reason, and the reconcile
+// has to do it too, or it makes the fleet's own doctor tell operators to
+// re-index stores that are now more correct than they were.
+//
+// The refresh is conditional on the inventory actually being behind: every
+// content-writing path refreshes it (the CLI index, the core import, the
+// watcher, the embedder, `gc`), so a summary that is behind the watermark is
+// one this pass invalidated — and the conditional keeps the pass from writing
+// to every store every hour. It also heals a store an EARLIER reconcile left
+// behind, which is exactly the state the live fleet was in when this rule
+// was written.
+func healInventory(st store.Backend) error {
+	seq, _, err := st.Watermark()
+	if err != nil {
+		return fmt.Errorf("maintain: read watermark after reconcile: %w", err)
 	}
-	return res, nil
+	inv, err := st.LoadInventory()
+	if err != nil {
+		return fmt.Errorf("maintain: read inventory after reconcile: %w", err)
+	}
+	if inv != nil && inv.LastInventorySeq == seq {
+		return nil
+	}
+	if _, err := store.RefreshInventory(st); err != nil {
+		return fmt.Errorf("maintain: refresh inventory after reconcile: %w", err)
+	}
+	return nil
 }
