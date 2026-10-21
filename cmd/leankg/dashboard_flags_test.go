@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // This file is BLACK BOX: it drives the built `leankg` binary and reads what
@@ -50,6 +52,31 @@ func runDashboardCLI(t *testing.T, dir string, args ...string) (string, string, 
 	return stdout.String(), stderr.String(), code
 }
 
+// seedDashboardStore creates the project store the tables path reads, at the
+// path the child process is pointed at (LEANKG_DB_PATH).
+//
+// The tables path opens the project store read-write, and a read-write open
+// CREATES a missing store. A `leankg dashboard --format text` against a
+// project nobody indexed would therefore materialise a `.leankg` where none
+// belonged. So the store is seeded here: these tests are about FLAG ROUTING
+// (one FlagSet, `--format` selects the tables, the web flags survive), not
+// about store creation, and seeding keeps them honest about that.
+func seedDashboardStore(t *testing.T, dir string) {
+	t.Helper()
+	path := filepath.Join(dir, "leankg.db")
+	st, err := store.Open(path, store.RW)
+	if err != nil {
+		t.Fatalf("seed store %s: %v", path, err)
+	}
+	if err := st.Migrate(); err != nil {
+		_ = st.Close()
+		t.Fatalf("migrate store %s: %v", path, err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close store %s: %v", path, err)
+	}
+}
+
 // TestDashboardAcceptsTheWebFlagsWithTheFormatFlag is the regression test for
 // the `leankg dashboard --addr 127.0.0.1:9701 --no-open --format text`
 // failure: the mode was chosen by scanning argv for "--format", so the WHOLE
@@ -62,6 +89,7 @@ func runDashboardCLI(t *testing.T, dir string, args ...string) (string, string, 
 // the command is given a timeout rather than a port to free.
 func TestDashboardAcceptsTheWebFlagsWithTheFormatFlag(t *testing.T) {
 	dir := t.TempDir()
+	seedDashboardStore(t, dir)
 	stdout, stderr, code := runDashboardCLI(t, dir, "--addr", "127.0.0.1:9701", "--no-open", "--format", "text")
 	if code != 0 {
 		t.Fatalf("dashboard --addr 127.0.0.1:9701 --no-open --format text exited %d\nstdout=%q\nstderr=%q", code, stdout, stderr)
@@ -82,6 +110,7 @@ func TestDashboardAcceptsTheWebFlagsWithTheFormatFlag(t *testing.T) {
 // script against. The web banner must be absent, so no port was bound.
 func TestDashboardFormatJSONEmitsJSON(t *testing.T) {
 	dir := t.TempDir()
+	seedDashboardStore(t, dir)
 	stdout, stderr, code := runDashboardCLI(t, dir, "--format", "json")
 	if code != 0 {
 		t.Fatalf("dashboard --format json exited %d\nstdout=%q\nstderr=%q", code, stdout, stderr)
