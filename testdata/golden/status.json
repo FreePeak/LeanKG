@@ -17,6 +17,7 @@
   ],
   "files": 0,
   "freshness": "possibly_stale",
+  "head_sync": "unknown",
   "healthy": true,
   "memory_root": "<PROJECT>/.leankg/memory",
   "mode": "sqlite",

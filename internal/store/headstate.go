@@ -119,7 +119,10 @@ func CompareHead(stored, current string) string {
 // from somewhere else.
 func HeadSync(ctx context.Context, st Backend) string {
 	head, ok, err := Head(st)
-	if err != nil || !ok {
+	if err != nil || !ok || head == "" {
+		// No head id: the store was not built from a git tree (or predates
+		// the fact). No git call is made — most stores are in this state,
+		// and the status path runs it on every request.
 		return HeadSyncUnknown
 	}
 	root, ok, err := RecordedRoot(st)
