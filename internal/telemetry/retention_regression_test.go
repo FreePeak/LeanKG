@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,6 +46,18 @@ func TestOpenWithCaptureOffStillSweepsAnExistingLedger(t *testing.T) {
 	defer rec.Close()
 	if _, isNop := rec.(Nop); isNop {
 		t.Fatal("Open returned Nop for an existing ledger: no retention sweeper is installed")
+	}
+	// The first sweep runs in the background; wait for it rather than
+	// guessing. The interface is declared here so this test also compiles
+	// against the unfixed code, where the assertion simply fails.
+	sw, ok := rec.(interface{ sweptSignal() <-chan struct{} })
+	if !ok {
+		t.Fatalf("Open returned %T for an existing ledger: it owns no retention sweeper", rec)
+	}
+	select {
+	case <-sw.sweptSignal():
+	case <-time.After(30 * time.Second):
+		t.Fatal("the first retention sweep did not finish")
 	}
 
 	after, err := OpenStore(home, true)
@@ -180,6 +193,51 @@ func TestPurgeReclaimsPagesAndTruncatesTheWAL(t *testing.T) {
 	}
 	if fi, err := os.Stat(path + "-wal"); err == nil && fi.Size() > 0 {
 		t.Fatalf("the write-ahead log is %d bytes after the purge, want 0", fi.Size())
+	}
+}
+
+// D.4 — an existing ledger (created before new ledgers got the mode at
+// creation time) can be converted to incremental auto-vacuum, on request.
+// The conversion is opt-in: it rewrites the whole file.
+func TestEnableIncrementalVacuumConvertsAnExistingLedger(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "telemetry.db")
+
+	// A ledger in the old mode: opened without the auto_vacuum setting, the
+	// way a ledger created before this fix was. The table is named so it
+	// does not collide with the schema migration.
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE legacy_rows (id TEXT PRIMARY KEY, ts INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("create legacy_rows: %v", err)
+	}
+	var mode int
+	if err := db.QueryRowContext(context.Background(), `PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		t.Fatalf("PRAGMA auto_vacuum: %v", err)
+	}
+	if mode != 0 {
+		t.Fatalf("the fixture ledger is in auto_vacuum mode %d, want 0 (the old mode)", mode)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if err := EnableIncrementalVacuum(path); err != nil {
+		t.Fatalf("EnableIncrementalVacuum: %v", err)
+	}
+
+	after, err := OpenSQLite(path, false)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer after.Close()
+	if err := after.db.QueryRowContext(context.Background(), `PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		t.Fatalf("PRAGMA auto_vacuum: %v", err)
+	}
+	if mode != 2 {
+		t.Fatalf("auto_vacuum = %d after the conversion, want 2 (INCREMENTAL)", mode)
 	}
 }
 

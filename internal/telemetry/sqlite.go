@@ -178,12 +178,19 @@ func EnableIncrementalVacuum(path string) error {
 		return err
 	}
 	defer st.Close()
-	if _, err := st.db.ExecContext(context.Background(), `PRAGMA auto_vacuum = INCREMENTAL`); err != nil {
+	// Both statements run on one connection: the mode is a property of the
+	// connection that VACUUM then applies.
+	conn, err := st.db.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("telemetry: vacuum: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), `PRAGMA auto_vacuum = INCREMENTAL`); err != nil {
 		return fmt.Errorf("telemetry: set auto_vacuum: %w", err)
 	}
 	// VACUUM rewrites the database and applies the mode set above. It
-	// cannot run inside a transaction, so it runs on its own connection.
-	if _, err := st.db.ExecContext(context.Background(), `VACUUM`); err != nil {
+	// cannot run inside a transaction.
+	if _, err := conn.ExecContext(context.Background(), `VACUUM`); err != nil {
 		return fmt.Errorf("telemetry: vacuum: %w", err)
 	}
 	return nil
@@ -947,20 +954,6 @@ func (s *SQLiteStore) SetMeta(ctx context.Context, key, value string) error {
 			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 		return err
 	})
-}
-
-// Meta reads a key from the ledger's meta table. The second result is false
-// when the key is absent.
-func (s *SQLiteStore) Meta(ctx context.Context, key string) (string, bool, error) {
-	var v string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, key).Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("telemetry: meta %s: %w", key, err)
-	}
-	return v, true, nil
 }
 
 // Stats reports sizes, row counts, the time range and dropped events.

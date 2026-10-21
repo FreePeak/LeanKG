@@ -29,29 +29,26 @@ type metaRecorder interface {
 // retentionSweepAt deletes rows older than days before now. A non-positive
 // days value means the default window.
 //
-// A failure is not swallowed: it is logged and recorded in the ledger's meta
-// table. A sweep that fails silently lets the ledger grow without bound,
-// which is exactly what the retention window exists to prevent.
+// A failure is recorded in the ledger's meta table before the error is
+// returned: a sweep that fails silently lets the ledger grow without
+// bound, which is exactly what the retention window exists to prevent.
 func retentionSweepAt(ctx context.Context, st Store, days int, now time.Time) (int64, error) {
 	if days <= 0 {
 		days = DefaultRetentionDays
 	}
 	n, err := st.Purge(ctx, now.AddDate(0, 0, -days))
 	if err != nil {
-		reportLedgerError(ctx, st, err)
+		recordLedgerError(ctx, st, err)
 	}
 	return n, err
 }
 
-// reportLedgerError surfaces a ledger-level failure: it is logged and, when
-// the store can record it, written to the ledger's meta table. The meta row
-// is what an operator reads later; the log line is what a running server
-// shows now.
+// recordLedgerError writes a ledger-level failure to the ledger's meta
+// table, so an operator can read it back later.
 //
 // The meta write gets its own context: the sweep's context may already be
 // expired, and a failure must still be recorded.
-func reportLedgerError(ctx context.Context, st Store, err error) {
-	log.Printf("telemetry: ledger: %v", err)
+func recordLedgerError(ctx context.Context, st Store, err error) {
 	m, ok := st.(metaRecorder)
 	if !ok {
 		return
@@ -71,6 +68,16 @@ type sweeper struct {
 	refs int
 	stop chan struct{}
 	done chan struct{}
+	// swept is closed once the first sweep has finished, so a caller (and
+	// a test) can wait for it instead of guessing.
+	swept chan struct{}
+}
+
+// retentionHandle is what an open path holds: the stop function of the
+// sweeper and the signal that the first sweep has finished.
+type retentionHandle struct {
+	stop  func()
+	swept <-chan struct{}
 }
 
 var sweepers = struct {
@@ -90,14 +97,14 @@ func StartRetention(st Store, days int) (func(), error) {
 	if st == nil {
 		return func() {}, nil
 	}
-	return startRetention(st, days), nil
+	return startRetention(st, days).stop, nil
 }
 
-// startRetention sweeps st now and then daily until the returned stop
-// function is called. A store that knows its own path joins the sweeper
-// for that path, so the two open paths (Open and a consent reload) share
-// one ticker over one file.
-func startRetention(st Store, days int) (stop func()) {
+// startRetention sweeps st now and then daily until the returned handle's
+// stop function is called. A store that knows its own path joins the
+// sweeper for that path, so the two open paths (Open and a consent reload)
+// share one ticker over one file.
+func startRetention(st Store, days int) *retentionHandle {
 	if p, ok := st.(interface{ Path() string }); ok && p.Path() != "" {
 		return startPathRetention(p.Path(), days)
 	}
@@ -105,32 +112,40 @@ func startRetention(st Store, days int) (stop func()) {
 }
 
 // startPathRetention starts (or joins) the retention sweeper for the ledger
-// at path and returns a stop function that releases this holder.
+// at path and returns a handle that releases this holder.
 //
-// The first sweep runs before it returns, so a ledger that is opened is
-// swept for expired rows at once and then daily (DS-02). The sweeper owns
-// its own handle to the ledger, so it keeps working whichever handle opened
-// it and never interferes with the recorder's writes.
-func startPathRetention(path string, days int) (stop func()) {
+// The sweeper owns its own handle to the ledger: it keeps working whichever
+// handle opened it, and it never interferes with the recorder's writes. The
+// first sweep runs in the background, so opening a ledger never blocks on
+// the purge (which waits for any other process reading the file).
+func startPathRetention(path string, days int) *retentionHandle {
 	sweepers.mu.Lock()
 	if s, ok := sweepers.m[path]; ok {
 		s.refs++
 		sweepers.mu.Unlock()
-		return releaser(path, s)
+		return &retentionHandle{stop: releaser(path, s), swept: s.swept}
 	}
-	s := &sweeper{refs: 1, stop: make(chan struct{}), done: make(chan struct{})}
+	s := &sweeper{refs: 1, stop: make(chan struct{}), done: make(chan struct{}), swept: make(chan struct{})}
 	sweepers.m[path] = s
 	sweepers.mu.Unlock()
 
 	st, err := openLedger(path)
 	if err != nil {
 		log.Printf("telemetry: retention: open %s: %v", path, err)
-	} else {
-		sweepLedger(st, days)
+		sweepers.mu.Lock()
+		delete(sweepers.m, path)
+		sweepers.mu.Unlock()
+		close(s.stop)
+		close(s.done)
+		close(s.swept)
+		return &retentionHandle{stop: func() {}, swept: s.swept}
 	}
 
 	go func() {
 		defer close(s.done)
+		defer st.Close()
+		sweepLedger(st, days)
+		close(s.swept)
 		t := time.NewTicker(retentionEvery)
 		defer t.Stop()
 		for {
@@ -142,19 +157,21 @@ func startPathRetention(path string, days int) (stop func()) {
 			}
 		}
 	}()
-	return releaser(path, s)
+	return &retentionHandle{stop: releaser(path, s), swept: s.swept}
 }
 
 // startStoreRetention sweeps st now and then daily until the returned stop
 // function is called. It is the fallback for a store that does not know its
 // own path.
-func startStoreRetention(st Store, days int) (stop func()) {
+func startStoreRetention(st Store, days int) *retentionHandle {
+	swept := make(chan struct{})
 	done := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
 		defer func() { _ = recover() }()
 		sweepLedger(st, days)
+		close(swept)
 		t := time.NewTicker(retentionEvery)
 		defer t.Stop()
 		for {
@@ -167,22 +184,25 @@ func startStoreRetention(st Store, days int) (stop func()) {
 		}
 	}()
 	var once sync.Once
-	return func() {
-		once.Do(func() {
-			close(done)
-			<-finished
-		})
+	return &retentionHandle{
+		swept: swept,
+		stop: func() {
+			once.Do(func() {
+				close(done)
+				<-finished
+			})
+		},
 	}
 }
 
-// sweepLedger runs one retention sweep and surfaces a failure instead of
-// dropping it: retentionSweepAt logs the error and records it in the
-// ledger's meta table, so a sweep that fails silently cannot let the
-// ledger grow without bound.
+// sweepLedger runs one retention sweep. A failure is logged (the ledger
+// meta row records it too) so it cannot pass unnoticed.
 func sweepLedger(st Store, days int) {
 	ctx, cancel := context.WithTimeout(context.Background(), sweepTimeout)
 	defer cancel()
-	_, _ = retentionSweepAt(ctx, st, days, time.Now())
+	if _, err := retentionSweepAt(ctx, st, days, time.Now()); err != nil {
+		log.Printf("telemetry: retention sweep failed: %v", err)
+	}
 }
 
 // releaser returns the stop function of the sweeper for path. The sweeper
