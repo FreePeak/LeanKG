@@ -158,6 +158,21 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 
 The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01..04` (§Done).
 
+## v4.18-status-health-signal — healthy is derived, not asserted (2026-10-21, branch fix/status-health-signal)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-STAT-01 | `status.healthy` is derived from the reads the payload publishes, not asserted | **DONE** | `internal/core/core.go` assigned `"healthy": true` as a constant — the only assignment in non-test code. The rule now: healthy is true iff every read that feeds a published field succeeded. The inventory counts already fail the whole call when unreadable, so the embeddings layer (the one read that could still degrade a delivered payload) decides it. A store whose `emb_stamp` listing fails is NOT healthy. |
+| FR-STAT-02 | A failed embeddings read is NAMED in the payload, not swallowed into an empty list | **DONE** | `embeddingsState()` swallowed a failed `Stamps()` read and returned `[]map[string]any{}`, so the payload said "no embeddings configured" while the store held thousands of vectors. The error is returned now; the payload carries `embeddings_error` with the cause, and the `embeddings` list is published as null (unknown) rather than an empty array — an empty ARRAY still means "read succeeded, nothing embedded". A per-model vector-count failure is reported the same way (the countable models are still published, the failed one is named). |
+| FR-STAT-03 | Provider reachability is a SEPARATE fact and never folds into `healthy` | **DONE** | `query_embedder.reachable` (with its own `error`) stays independent: an unreachable query provider degrades the L3 rung, it does not make the store unreadable. Pinned by `TestStatusProviderUnreachableIsNotUnhealthy`. |
+| FR-STAT-04 | A healthy payload is unchanged | **DONE** | Same fields, same `healthy: true`, no `embeddings_error` key on a healthy store; the golden status payload (`testdata/golden/status.json`) still matches byte-for-byte and `go test ./internal/golden/` is green. |
+| FR-STAT-05 | Regression test that fails on the pre-fix code | **DONE** | `internal/core/statushealth_test.go`: `TestStatusUnhealthyWhenEmbeddingsReadFails` (verified to FAIL with `origin/main`'s `internal/core/core.go` in place, PASS after), `TestStatusHealthyStoreReportsHealthy`, `TestStatusHealthyStoreWithoutEmbeddings`, `TestStatusProviderUnreachableIsNotUnhealthy`. `go build -p=2 ./...` and `go vet ./...` clean; `go test ./internal/core/ ./internal/mcp/ -count=1` green with the embed env cleared. |
+
+**Why:** a health field that is a constant reports FALSE HEALTH — it says the
+store is fine in exactly the situation where the operator most needs to know
+it is not, and the swallowed read turned "the embeddings layer is
+unreadable" into "there are no embeddings", which is a different fact.
+
 ## Done — 2026-09-04 implementation sprint (v4.3.0 wave 1–3)
 
 | ID | Title | Evidence |
