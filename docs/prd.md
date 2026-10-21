@@ -905,6 +905,37 @@ live in the `-wal` until it checkpoints, so an `immutable=1` reader would
 serve STALE DATA. The read-only guarantee is not worth trading for a
 sidecar that disappears on close.
 
+### v4.19.1-reconcile-refreshes-the-inventory — a reconciled store is not a stale one (2026-10-22)
+
+**Trigger:** the wave's own live run. The first pass of the new reconcile
+reported itself in the serve log — *"reconciled 6 stale file(s) (67 element(s))
+with HEAD"* — and the very next fleet doctor reported two of the nine projects
+as **`possibly_stale`**: `agentloop` and `x-trader`, the two projects the
+reconcile had just touched. Before the wave they were `fresh`.
+
+**The cause.** Freshness is DERIVED, not asserted: the inventory's seq is
+compared with the write watermark, and a difference reads `possibly_stale`
+(`internal/store/backend.go:319-336`). A delete advances that watermark —
+`DeleteByFile` and `DeleteFileRecord` both call `BumpWatermark()` — so the
+reconcile moved the watermark and left the inventory behind. The signal then
+said "the tree may have moved" about a store that had just been made to MATCH
+the tree, and the doctor's own hint was *"re-index the stale projects"*.
+
+**The fix.** The reconcile refreshes the inventory when it has deleted
+content (`store.RefreshInventory`), exactly as the core layer does after an
+index: the summary of what the store holds must match the store.
+
+**Measured on the live fleet, before the fix:** `agentloop` and `x-trader`
+reported `possibly_stale`; after it, every in-scope project reports `fresh`
+again, and the doctor's fleet verdict is unchanged otherwise.
+
+**Tests:** `internal/maintain/reconcile_inventory_test.go`.
+`TestReconcileKeepsTheStoreFresh` — verified to FAIL on `origin/main`
+("the store reports \"possibly_stale\" after the reconcile, want \"fresh\" — a
+reconciled store is not a stale one") and PASS with the fix.
+`TestReconcileRefreshesTheInventoryCounts` — FAIL on `origin/main` ("the
+inventory says 2 elements, the store holds 1"), PASS with the fix.
+
 ### v4.19-reconcile-with-head — the store mirrors the tree, and the payload says so (2026-10-21)
 
 **The defect, in two halves.** A store is a copy of a tree, and nothing kept

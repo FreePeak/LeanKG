@@ -195,6 +195,13 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 | RS-25 | P4 | `status.embedding_coverage` | DONE |
 | RS-26 | P4 | Document that `memory create` overwrites | DONE |
 
+## v4.19.1-reconcile-refreshes-the-inventory — a reconciled store is not a stale one (2026-10-22, branch fix/reconcile-refresh-inventory)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-RI-01 | A reconcile refreshes the inventory it invalidated | **DONE** | Freshness is DERIVED: `internal/store/backend.go:319-336` compares the inventory's seq with the write watermark, and a delete advances that watermark (`DeleteByFile` and `DeleteFileRecord` both call `BumpWatermark()`). So the v4.19 reconcile made the two projects it touched report **`possibly_stale`** — the signal said "the tree may have moved" about a store that had just been made to MATCH the tree, and the doctor's hint was "re-index the stale projects". `internal/maintain/reconcile.go` now calls `store.RefreshInventory(st)` after a delete, exactly as the core layer does after an index. Test `TestReconcileKeepsTheStoreFresh` — FAIL on `origin/main` ("the store reports \"possibly_stale\" after the reconcile, want \"fresh\""), PASS with the fix. |
+| FR-RI-02 | The inventory's counts follow the store | **DONE** | The inventory is the store's own summary of what it holds, so a reconcile that removed content must leave the summary matching the store. Test `TestReconcileRefreshesTheInventoryCounts` — FAIL on `origin/main` ("the inventory says 2 elements, the store holds 1"), PASS with the fix. |
+
 ## v4.19-reconcile-with-head — the store mirrors the tree, and the payload says so (2026-10-21, branch fix/reconcile-with-head)
 
 | ID | Title | Status | Evidence |

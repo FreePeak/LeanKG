@@ -146,5 +146,18 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 	if _, err := st.DeleteOrphanRelationships(); err != nil {
 		return res, fmt.Errorf("maintain: reclaim orphan relationships: %w", err)
 	}
+	// The inventory is the store's own summary of what it holds, and
+	// freshness is DERIVED from it: the inventory's seq is compared with the
+	// write watermark, and a difference reads "possibly_stale". A delete
+	// advances that watermark (DeleteByFile and DeleteFileRecord both bump
+	// it), so without this the store would report "possibly_stale" the
+	// moment it was reconciled — the signal would say "the tree may have
+	// moved" about a store that was just made to MATCH the tree. The index
+	// refreshes the inventory for the same reason, and the reconcile has to
+	// do it too, or it makes the fleet's own doctor tell operators to
+	// re-index stores that are now more correct than they were.
+	if _, err := store.RefreshInventory(st); err != nil {
+		return res, fmt.Errorf("maintain: refresh inventory after reconcile: %w", err)
+	}
 	return res, nil
 }
