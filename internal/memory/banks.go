@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/bits"
@@ -452,6 +454,52 @@ func entryDocumentID(e Entry) string {
 	return doc
 }
 
+// contentDocumentID is the stable content identity of a bank row: a hash of
+// the normalized body.
+//
+// It exists because the row id cannot be the identity. applyEntryDefaults
+// mints ids per WRITE ("<unixnano>-<index>"), so two rows of the same body
+// never share an id and a dedupe keyed on the id can never fire — measured
+// on the live leankg memory bank: 448 rows, 304 distinct bodies, the worst
+// group 67 copies of one 46-byte body, and a recall for it returned the same
+// sentence 72 times. This hash is the one identity that IS the same for the
+// same body, so the rewrite path (which selects rows by document id) can
+// collapse them.
+func contentDocumentID(content string) string {
+	sum := sha256.Sum256([]byte(normalizeBody(content)))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// normalizeBody folds a body to its identity form: runs of whitespace
+// collapsed to one space, ends trimmed. Two bodies that differ only in
+// spacing are the same memory.
+func normalizeBody(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// rowDocID is the row's document identity: the client's metadata document_id
+// when it has one, else the content fallback. This is the "document_id
+// fallback" — a row the client wrote without a document id still has one
+// identity, and it is derived from the body, so it is stable across writes.
+func rowDocID(e Entry) string {
+	if d := entryDocumentID(e); d != "" {
+		return d
+	}
+	return contentDocumentID(e.Content)
+}
+
+// rowKey is a bank row's identity for the dedupe: the document identity
+// together with the hash of the body.
+//
+// The body is part of the key on purpose: one client document may span
+// several rows (a chunked upload keeps one document_id and one row per
+// chunk), and those rows share a document id but differ in body — they are
+// NOT duplicates. Rows that share BOTH the identity and the body are the
+// same memory written twice, and only those collapse.
+func rowKey(e Entry) string {
+	return rowDocID(e) + "\x00" + contentDocumentID(e.Content)
+}
+
 // rewriteBankLocked drops the rows drop selects and atomically replaces the
 // bank file (temp file + rename, so a crash leaves the old bank intact).
 // Lines that fail to parse are kept verbatim: a rewrite must never be the
@@ -507,19 +555,60 @@ func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 	if err := os.MkdirAll(filepath.Join(m.root, "banks"), 0o755); err != nil {
 		return fmt.Errorf("memory: create banks dir: %w", err)
 	}
+	// The dedupe runs BEFORE the append: a row written without a client
+	// document id is identified by its body, so writing the same body again
+	// REPLACES the row instead of appending a second copy of it. Rows the
+	// client owns (an explicit metadata.document_id) are left alone — their
+	// lifecycle is the client's (the Hindsight replace/append contract), and
+	// the explicit replace path drops them.
+	if err := m.dedupeBankLocked(bank, entries); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(m.bankPath(bank), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("memory: open bank %s: %w", bank, err)
 	}
 	defer f.Close()
 	enc := json.NewEncoder(f)
-	for _, e := range entries {
+	for i := range entries {
+		e := entries[i]
 		e.Content = Redact(e.Content)
+		if e.Metadata == nil {
+			// Share the map with the caller's entry, so the indexed row
+			// carries the same content id the file does.
+			entries[i].Metadata = map[string]any{}
+			e.Metadata = entries[i].Metadata
+		}
+		if _, ok := e.Metadata["content_id"]; !ok {
+			e.Metadata["content_id"] = contentDocumentID(e.Content)
+		}
 		if err := enc.Encode(e); err != nil {
 			return fmt.Errorf("memory: encode entry: %w", err)
 		}
 	}
 	return m.indexAppendLocked(bank, entries)
+}
+
+// dedupeBankLocked drops the existing rows the incoming entries supersede:
+// every row of the same body that the client did not give a document id to.
+//
+// Rows with a client document id survive — the client owns their lifecycle
+// (the Hindsight replace/append contract), and a chunked document keeps one
+// document id across rows with DIFFERENT bodies. Only a row whose identity
+// AND body match an incoming row is a duplicate of it.
+func (m *Memory) dedupeBankLocked(bank string, entries []Entry) error {
+	keys := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if entryDocumentID(e) != "" {
+			continue // client-owned row: its replace/append contract applies
+		}
+		keys[rowKey(Entry{Content: Redact(e.Content)})] = true
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	_, err := m.rewriteBankLocked(bank, func(e Entry) bool { return keys[rowKey(e)] })
+	return err
 }
 
 // bankCursor is the highest retained_through_user_turn stored in the bank
