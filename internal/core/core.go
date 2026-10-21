@@ -359,6 +359,17 @@ func (e *Engine) Import(ctx context.Context, req ImportRequest) (map[string]any,
 
 func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[string]any, error) {
 	req = req.withFlatArgs()
+	// The write path owns the schema. The server no longer migrates a store
+	// when it opens it — a read must not rewrite the store it reads — so the
+	// actions that write to the STORE migrate it first. Without this, an
+	// import into a store whose schema was behind failed with "no such
+	// table" and the operator had no way to tell that the store, not the
+	// import, was out of date.
+	if writesStore(req.Action) {
+		if err := e.ensureStoreSchema(); err != nil {
+			return nil, err
+		}
+	}
 	switch req.Action {
 	case "docs":
 		if req.Path == "" {
@@ -460,6 +471,36 @@ func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[strin
 	default:
 		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory, session, ontology, prd)", req.Action)
 	}
+}
+
+// writesStore reports whether an import action writes to the STORE (as
+// opposed to the markdown memory, which is files, and the compress read,
+// which reads). Those actions need the store's schema to be current: the
+// server no longer migrates a store when it opens it — a read must not
+// rewrite the store it reads — so the write path owns the migration.
+func writesStore(action string) bool {
+	switch action {
+	case "docs", "prd", "repo", "dir", "ontology":
+		return true
+	}
+	return false
+}
+
+// ensureStoreSchema applies the pending migrations to the store this engine
+// writes to.
+//
+// It is idempotent — a store that is already current is left alone — and it
+// does nothing for a read-only store: there the write that follows reports
+// the refusal itself ("attempt to write a readonly database"), which names
+// the real cause, while a migration error would name the schema.
+func (e *Engine) ensureStoreSchema() error {
+	if m, ok := e.st.(interface{ Mode() store.Mode }); ok && m.Mode() == store.RO {
+		return nil
+	}
+	if err := e.st.Migrate(); err != nil {
+		return fmt.Errorf("migrate store before write: %w", err)
+	}
+	return nil
 }
 
 // refreshInventory recomputes and persists the inventory snapshot. The logic

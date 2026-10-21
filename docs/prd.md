@@ -170,6 +170,73 @@ project, and its answers came from the wrong graph). The recipe now binds
 it: `bind: address already in use`, and `lsof` shows the supervisor as the
 only listener.
 
+### v4.18-no-migrate-on-read — a read must not rewrite the store it reads (2026-10-21)
+
+**Trigger:** a read-intent MCP query mutated the store of the project it
+asked about. `Config.open` (`internal/projects/projects.go`) opened a ROUTED
+project's store and then called `st.Migrate()` on it, on the way to answering
+a query. Two consequences, both measured:
+
+- **A query migrated a store that was behind.** The routed project's schema
+  was rewritten in the read path, where nobody asked for a write — and the
+  fleet doctor's "behind by N" verdict then depended on WHO looked first.
+- **A query created a project that was never indexed.** Opening a missing
+  store read-write CREATES it, so one query against an unindexed project
+  left a store, a schema and a `.leankg/` directory behind, and the project
+  then looked indexed forever. Measured with the engine's own probe: after a
+  read-only open the file did not exist, after the read it did, and a
+  read-write open with no schema answered `no such table: code_elements` —
+  a broken store, materialised by a question.
+
+**The rule the codebase already knew.** The maintenance fleet in
+`cmd/leankg/main.go` opens a routed project only when
+`maintenanceStoreExists` says there is a store, and says why in a comment:
+*"Only a store that already exists: opening a missing one would CREATE it
+(and its schema) for a project nobody has indexed yet."* The router did not
+follow it, and the writer verbs did not either (they now refuse, naming the
+store and the command that creates it).
+
+**Why a per-request intent cannot fix it.** The router opens a routed project
+with the SERVER's context and caches ONE handle per project directory
+(`Router.Open` → `Router.EngineFor`), and the HTTP MCP surface serves reads
+AND writes over that same handle. The MCP layer knows the tool of each call,
+but the open happens once, before the call. So the intent cannot reach the
+open — the fix has to be structural.
+
+**The fix — the read path reads, the write path writes:**
+
+- **`internal/projects/projects.go`** — `Config.open` no longer migrates. It
+  asks first whether there is a store to serve (`store.Exists`: a `stat` for
+  sqlite, a read-only probe for postgres) and refuses a project that has
+  none: *"project alpha is not indexed: no store at …/.leankg/leankg.db — run
+  `leankg index …` to create it"*. A refused project leaves nothing behind —
+  no store, no schema, no `.leankg/` directory.
+- **`internal/core/core.go`** — the write path owns the schema:
+  `Engine.Import` migrates the store it is about to write to, for the
+  actions that write to the store (`docs`, `prd`, `repo`, `dir`,
+  `ontology`). The memory actions write markdown files, and the compress
+  read reads, so neither migrates. A read-only store is left alone: the
+  write that follows reports the refusal itself, which names the real cause.
+- **`internal/store/existence.go`** (new) — `store.Exists` and
+  `store.SQLitePath`, the "is there a store to serve" question, asked without
+  writing.
+- **`internal/store/store_pg.go`** — `(*PGStore).Mode()`, the PostgreSQL
+  twin of `(*Store).Mode`, so the read-only check covers both backends.
+
+**Consequences, stated rather than hidden.** An import into a routed project
+that has NO store is now refused ("not indexed — run `leankg index <dir>`")
+instead of silently creating a schema; an indexed routed project still
+accepts writes, and its store is migrated by the write path. A routed project
+whose store is behind is no longer silently migrated by a read — the doctor's
+verdict becomes stable and honest (the pre-017 stamp read is already
+tolerant, see `v4.18-stamp-pre017`).
+
+**Verified:** `go build -p=2 ./...` clean; `go vet ./...` clean; the three
+regression tests fail before the change and pass after it (a read leaves
+`schema_migrations` untouched on a genuine pre-017 store; a project with no
+store is refused and leaves nothing behind; an import migrates the store it
+writes to).
+
 ## Dogfood waves 1-24 (FR-SELF-04, PR #449)
 
 These are the loop's own entries, kept as the record of what it found and

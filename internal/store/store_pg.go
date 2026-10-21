@@ -40,6 +40,11 @@ type PGStore struct {
 // connection or an auth failure is a different error and must not read as empty.
 var ErrSchemaMissing = errors.New("store: read-only open of missing store schema")
 
+// Mode reports how the store was opened — the PostgreSQL twin of
+// (*Store).Mode, so a caller that must not write (the write path skips the
+// migration on a reader) can ask either backend.
+func (s *PGStore) Mode() Mode { return s.mode }
+
 // OpenPG opens the PostgreSQL+pgvector backend for one project directory.
 // Each project lives in its own schema (leankg_<sha256(dir)[:16]>); RW mode
 // creates the schema, RO mode requires it to exist (parity with sqlite's
