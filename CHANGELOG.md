@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.35.1](https://github.com/FreePeak/LeanKG/compare/v0.35.0...v0.35.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ci:** test every push to main and require CI before a merge ([#553](https://github.com/FreePeak/LeanKG/issues/553)) ([3e25834](https://github.com/FreePeak/LeanKG/commit/3e25834fea065c151a452e2cb73688faa1bda0dc))
+* **cli:** metrics, dashboard and migrate refuse a project that has no store ([#556](https://github.com/FreePeak/LeanKG/issues/556)) ([5b5d51e](https://github.com/FreePeak/LeanKG/commit/5b5d51e6715eef7ed70d36439f5817d72e261ce2))
+* **dashboard:** give the dashboard verb one flag set ([#554](https://github.com/FreePeak/LeanKG/issues/554)) ([ff8e405](https://github.com/FreePeak/LeanKG/commit/ff8e4051a37faed1cee0c63cde7c365b5fa69aa1))
+* **projects:** a read must not rewrite the store it reads ([#560](https://github.com/FreePeak/LeanKG/issues/560)) ([9d7bd24](https://github.com/FreePeak/LeanKG/commit/9d7bd24fb087fceb899258d098f719baaa1e9888))
+* **serve:** pin the self-host scan root to the projects LeanKG owns ([#552](https://github.com/FreePeak/LeanKG/issues/552)) ([5e829cc](https://github.com/FreePeak/LeanKG/commit/5e829cce9f71fb6aff393b29c3f48fe4ce700f44))
+* **serve:** refuse a non-loopback bind with no auth token ([#558](https://github.com/FreePeak/LeanKG/issues/558)) ([4af470d](https://github.com/FreePeak/LeanKG/commit/4af470d0b9b019d331fbf2d934bf53b79fcc56a4))
+* **status:** derive healthy from the reads the payload publishes ([#555](https://github.com/FreePeak/LeanKG/issues/555)) ([723d7dc](https://github.com/FreePeak/LeanKG/commit/723d7dc4ae81eeee5fabda507995dad98367907f))
+* **store:** read the model stamp on a pre-017 store, and name the read error ([#557](https://github.com/FreePeak/LeanKG/issues/557)) ([1939784](https://github.com/FreePeak/LeanKG/commit/1939784ea0107319df374b3c7fe77072e0c84d22))
+
 ## [0.35.0](https://github.com/FreePeak/LeanKG/compare/v0.34.0...v0.35.0) (2026-10-20)
 
 
