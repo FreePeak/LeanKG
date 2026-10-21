@@ -251,8 +251,8 @@ this branch (the server refuses with the fix named).
 
 > **Trigger:** auditing the fleet registry against the live self-host. The
 > registry is the SERVER-side project table — the org-scale list of what a
-> deployment serves. Two facts about it were measured on the live 42-project
-> fleet:
+> deployment serves (9 registered projects on the live fleet). Two facts
+> about it were measured:
 >
 > ```
 > grep -rn "portfolioreg.Prune\|portfolioreg.Forget" --include=*.go .
@@ -315,6 +315,21 @@ API does not exist there — and passes on this branch. The root-mismatch
 test plants its root through `index.RebaseRoot`, the indexer's own writer,
 so a rename of the root key fails the test instead of silently blinding
 the detection.
+
+**Measured on the live registry** (run against a COPY of
+`~/.leankg/portfolio.db`; the live file was never opened for write):
+
+```
+removed=0 kept=9 no_store=1 unreadable=0 root_mismatch=0
+  NO_STORE /Users/linh.doan/work/harvey/freepeak/games
+```
+
+The live registry has no row whose directory is gone, so the sweep
+removes nothing — a healthy registry is untouched. The one `no_store` row
+is `games`: a live directory with real content (`HACKATHON.md`,
+`MOBILE.md`, `RULES.md`, …) and no `.leankg` store — registered, never
+indexed. The sweep reports it and keeps it, which is the rule above
+applied to the live fleet.
 
 ### v4.16-project-selector-fail-closed — an unknown project no longer answers from another one (2026-10-20)
 

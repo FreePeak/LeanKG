@@ -384,6 +384,13 @@ exist there) and passes on this branch. The root-mismatch test plants its
 root through `index.RebaseRoot` — the indexer's own writer — so a rename
 of the root key fails the test rather than silently blinding the check.
 
+**Measured on the live registry** (run against a COPY of
+`~/.leankg/portfolio.db`; the live file was never opened for write):
+`removed=0 kept=9 no_store=1 unreadable=0 root_mismatch=0`, with the one
+`no_store` row being `games` — a live directory with real content and no
+`.leankg` store, i.e. registered and never indexed. The sweep reports it
+and keeps it, and removes nothing: a healthy registry is untouched.
+
 ## v4.18-ci-release-gate — the release commit that shipped untested, and the gate that could not have stopped it (2026-10-21, branch `fix/ci-release-gate`)
 
 | ID | Title | Status | Evidence |
