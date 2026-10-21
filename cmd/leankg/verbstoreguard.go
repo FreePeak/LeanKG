@@ -19,6 +19,37 @@ func verbEngine() string {
 	return envOr("LEANKG_DB_ENGINE", store.EngineSQLite)
 }
 
+// requireStore refuses a verb whose project has no store, before the verb
+// opens one.
+//
+// Opening a MISSING store read-write CREATES it (file, schema and all). So a
+// verb that opens without asking materialises a store for a project nobody
+// indexed — and a stray <dir>/.leankg is enough to make every project-root
+// walk above it latch onto the wrong project
+// (internal/projectcfg.FindProjectRoot walks up and takes the first ancestor
+// that owns a .leankg entry or a leankg.yaml).
+//
+// The refusal is the diagnosis `leankg doctor` prints for the same state, and
+// exits with doctor's FAIL code (2).
+func requireStore(verb, dir string) {
+	eng := verbEngine()
+	if verbStoreExists(context.Background(), dir, eng) {
+		return
+	}
+	refuseNotIndexed(verb, dir, eng, storeHint(verb))
+}
+
+// storeHint is the recovery sentence for each refusing verb: the command that
+// creates the store. A refusal the caller cannot act on is not a diagnosis.
+func storeHint(verb string) string {
+	switch verb {
+	case "migrate":
+		return "run `leankg index .` in this project first — it creates the store and applies every migration, so `leankg migrate` then reports them up to date"
+	default:
+		return fmt.Sprintf("run `leankg index .` in this project, then `leankg %s` again", verb)
+	}
+}
+
 // verbStoreExists reports whether the project at dir already HAS a store.
 //
 // It is the shared guard (maintenanceStoreExists, cmd/leankg/main.go) — the

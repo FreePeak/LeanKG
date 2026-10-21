@@ -44,11 +44,7 @@ func cmdMetrics(args []string) {
 	parseInterspersed("metrics", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
-	eng := verbEngine()
-	if !verbStoreExists(context.Background(), dir, eng) {
-		refuseNotIndexed("metrics", dir, eng,
-			"run `leankg index .` in this project, then `leankg metrics` again")
-	}
+	requireStore("metrics", dir)
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
@@ -91,11 +87,7 @@ func cmdDashboard(args []string) {
 	parseInterspersed("dashboard", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
-	eng := verbEngine()
-	if !verbStoreExists(context.Background(), dir, eng) {
-		refuseNotIndexed("dashboard", dir, eng,
-			"run `leankg index .` in this project, then `leankg dashboard` again")
-	}
+	requireStore("dashboard", dir)
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)

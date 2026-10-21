@@ -55,14 +55,7 @@ func cmdMigrate(args []string) {
 		os.Exit(2)
 	}
 	dir := resolveProjectDir(*project)
-	// The guard asks about the store openStore will ACTUALLY open, which is
-	// the env-selected engine — the --engine flag only labels the JSON
-	// result below, it does not pick the backend.
-	openEng := verbEngine()
-	if !verbStoreExists(context.Background(), dir, openEng) {
-		refuseNotIndexed("migrate", dir, openEng,
-			"run `leankg index .` in this project first — it creates the store and applies every migration, so `leankg migrate` then reports them up to date")
-	}
+	requireStore("migrate", dir)
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
