@@ -448,9 +448,27 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 		var reclaimed, grew int64
 		var metricsPruned, runsPruned, runsClosed int64
 		var compacted, stores int
+		var reconciledFiles, reconciledElements int
 		for _, t := range targets() {
 			if t.Store == nil {
 				continue
+			}
+			// The HEAD reconcile: make the store match the tree it mirrors.
+			// It runs BEFORE the reclaim pass, so the space the deleted
+			// rows leave behind is returned to the filesystem in the same
+			// pass. A store that was not built from a git tree, or whose
+			// HEAD cannot be read, is left untouched.
+			if rc, err := ReconcileHead(ctx, t.Store); err != nil {
+				if opts.Logf != nil {
+					if t.Label == "" {
+						opts.Logf("maintain: reconcile with HEAD: %v", err)
+					} else {
+						opts.Logf("maintain[%s]: reconcile with HEAD: %v", t.Label, err)
+					}
+				}
+			} else {
+				reconciledFiles += rc.DeletedFiles
+				reconciledElements += rc.DeletedElements
 			}
 			res, err := Pass(t.Store, passOpts)
 			if err != nil && opts.Logf != nil {
@@ -488,8 +506,10 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 		if opts.Logf != nil && summaryEvery > 0 && (passNo == 1 || passNo%summaryEvery == 0) {
 			opts.Logf("maintain: %d pass(es) over %d store(s): reclaimed %d bytes, grew %d bytes, "+
 				"pruned %d metric row(s) and %d embed-run row(s), closed %d stuck run(s), "+
-				"compacted the FTS index of %d store(s)",
-				passNo, stores, reclaimed, grew, metricsPruned, runsPruned, runsClosed, compacted)
+				"compacted the FTS index of %d store(s), "+
+				"reconciled %d stale file(s) (%d element(s)) with HEAD",
+				passNo, stores, reclaimed, grew, metricsPruned, runsPruned, runsClosed, compacted,
+				reconciledFiles, reconciledElements)
 		}
 	}
 	go func() {

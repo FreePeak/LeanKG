@@ -164,8 +164,8 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 // one file. The store records the root it was built from and refuses any
 // other; RebaseRoot is the deliberate escape for a moved checkout.
 const (
-	rootKVNamespace = "index"
-	rootKVKey       = "root"
+	rootKVNamespace = store.IndexKVNamespace
+	rootKVKey       = store.RootKVKey
 )
 
 // CanonicalRoot is the form a walk root is recorded and compared in:
@@ -178,6 +178,48 @@ func CanonicalRoot(dir string) string {
 		dir = r
 	}
 	return filepath.Clean(dir)
+}
+
+// IsGitKeyed reports whether a stored content hash names a git blob
+// ("git:<blob oid>") rather than the SHA-256 of walked bytes.
+//
+// It is the marker that says "this store was built from the repository's
+// objects": only such a record can be compared against a tree, because only
+// such a record's content is guaranteed to BE the tree's content. A
+// filesystem-scanned store records SHA-256 hashes and must never be pruned
+// against a git tree.
+func IsGitKeyed(contentHash string) bool {
+	return isGitKey(contentHash)
+}
+
+// DeleteFiles removes the store content of the given file paths: the
+// elements and relationships the files own, and their file records.
+//
+// It is the shared delete step of the incremental index reconcile (a file the
+// walk does not see any more) and of the maintenance reconcile against HEAD
+// (a file the tree does not contain any more), so both remove a file the
+// same way.
+//
+// It does NOT touch vectors: vectors are keyed by qualified name, not by
+// file, and a vector whose element is gone is an ORPHAN — removed by the
+// orphan sweep (store.DeleteOrphanVectors), never by a per-file delete
+// (which would also discard the vectors of a changed file's unchanged
+// symbols).
+func DeleteFiles(ctx context.Context, st store.Backend, paths []string) (int, error) {
+	n := 0
+	for _, p := range paths {
+		if err := ctx.Err(); err != nil {
+			return n, err
+		}
+		if err := st.DeleteByFile(p); err != nil {
+			return n, err
+		}
+		if err := st.DeleteFileRecord(p); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 // RebaseRoot records dir as the store's index root, replacing any previous
@@ -239,7 +281,12 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 
 	// A repository root with commits is indexed from HEAD (committed content
 	// only, never the working tree). Any other directory walks the disk.
-	blobs, fromGit, err := gitobj.HeadBlobs(ctx, dir)
+	//
+	// The blobs are listed for the commit HEAD names AT THIS MOMENT, not for
+	// a moving HEAD: the commit id is recorded alongside them, and the two
+	// must describe the same tree (a HEAD that moves between the listing and
+	// the record would make the store claim a commit it never read).
+	headCommit, blobs, fromGit, err := gitobj.HeadSnapshot(ctx, dir)
 	if err != nil {
 		return res, err
 	}
@@ -264,21 +311,18 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	}
 
 	// Deleted files: previously indexed, absent from the source.
+	var missing []string
 	for rel := range prevByRel {
 		if onDisk[rel] {
 			continue
 		}
-		if err := ctx.Err(); err != nil {
-			return res, err
-		}
-		if err := st.DeleteByFile(rel); err != nil {
-			return res, err
-		}
-		if err := st.DeleteFileRecord(rel); err != nil {
-			return res, err
-		}
-		res.DeletedFiles++
+		missing = append(missing, rel)
 	}
+	deleted, err := DeleteFiles(ctx, st, missing)
+	if err != nil {
+		return res, err
+	}
+	res.DeletedFiles += deleted
 
 	// Changed/new files. A git candidate is keyed by its blob ID: a stored record
 	// with the same key is skipped without reading anything. A walk candidate
@@ -428,6 +472,17 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		if err := st.KVSet(rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
 			return res, err
 		}
+	}
+	// Record the commit this store now mirrors, so a reader can tell whether
+	// the TREE moved since the index ran (store.HeadSync). The freshness
+	// label cannot: it compares two counters inside the same database.
+	//
+	// The recorded id is the commit whose blobs this run READ — not HEAD read
+	// again afterwards — so the record and the content describe one tree. A
+	// filesystem-scanned store records the empty id: it was not built from a
+	// git tree, and claiming one would be a lie the reconcile would act on.
+	if err := store.SetHead(st, headCommit); err != nil {
+		return res, err
 	}
 	return res, nil
 }
