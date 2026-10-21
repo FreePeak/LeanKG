@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,18 @@ func TestStatusUnhealthyWhenEmbeddingsReadFails(t *testing.T) {
 	// field, it does not empty the whole status.
 	if out["elements"] != 1 {
 		t.Fatalf("the inventory must still be published: %v", out["elements"])
+	}
+	// On the WIRE the failed read is a null list, not an empty array: an
+	// empty array still means "read succeeded, nothing is embedded".
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"embeddings":null`) {
+		t.Fatalf("a failed embeddings read must marshal as null, not []: %s", raw)
+	}
+	if strings.Contains(string(raw), `"embeddings":[]`) {
+		t.Fatalf("a failed embeddings read must not marshal as an empty array: %s", raw)
 	}
 }
 

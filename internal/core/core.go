@@ -476,7 +476,7 @@ func (e *Engine) refreshInventory() (store.Inventory, error) {
 // contract: status always names the active embedding provider.
 //
 // healthy is DERIVED, never asserted. The rule: healthy is true iff every
-// read that FEEDS A PUBLISHED FIELD succeeded. The inventory counts
+// STORE read that FEEDS A PUBLISHED FIELD succeeded. The inventory counts
 // (elements/relationships/files/watermark) fail the whole call when they
 // cannot be read, so they never reach a payload. The embeddings layer was
 // the one read left that could still degrade a delivered payload: a store
@@ -487,11 +487,12 @@ func (e *Engine) refreshInventory() (store.Inventory, error) {
 //
 // So the embeddings read decides healthy, and its failure is NAMED in the
 // payload (embeddings_error) instead of being swallowed into an empty list.
-// Provider reachability is a separate fact (query_embedder.reachable): an
-// unreachable query provider degrades the L3 rung, it does not make the
-// store unreadable, so it never touches healthy. Reads whose failure simply
-// OMITS their field (space, last_embed_run) publish no substitute value and
-// so do not falsify the payload either.
+// Two facts are deliberately NOT folded into healthy:
+//
+//   - Provider reachability (query_embedder.reachable): an unreachable query
+//     provider degrades the L3 rung, it does not make the store unreadable.
+//   - Reads whose failure simply OMITS their field (space, last_embed_run):
+//     they publish no substitute value, so they falsify nothing.
 func (e *Engine) Status(_ context.Context) (map[string]any, error) {
 	els, err := e.st.ElementCount()
 	if err != nil {
