@@ -38,6 +38,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/maintain"
 	leankgmcp "github.com/FreePeak/LeanKG/internal/mcp"
 	"github.com/FreePeak/LeanKG/internal/memory"
+	"github.com/FreePeak/LeanKG/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/projects"
 	"github.com/FreePeak/LeanKG/internal/rest"
@@ -517,6 +518,11 @@ afterSidecars:
 			mem.SetKeepModelIDs(keepModelIDs)
 		}
 		maintain.RunFleet(ctx, func() []maintain.Target {
+			// The REGISTRY sweep rides the same tick as the store
+			// maintenance: a row for a project that left the fleet must not
+			// outlive it, and nothing else ever pruned the registry. The
+			// callback runs once per pass, so this is once per tick.
+			sweepRegistry(ctx, eng)
 			return fleetTargets(ctx, dir, st, mem, router.List(), eng, keepModelIDs)
 		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle)
 	}
@@ -717,6 +723,40 @@ func maintenanceStoreExists(ctx context.Context, dir, engine string) bool {
 	}
 	_ = probe.Close()
 	return true
+}
+
+// sweepRegistry prunes the fleet registry on the maintenance tick.
+//
+// The registry is the SERVER-side list of what this deployment serves, and
+// until the sweep existed nothing ever pruned it: a row for a project that
+// left the fleet outlived the project forever, and the fleet kept answering
+// questions about directories that no longer existed.
+//
+// The sweep removes REGISTRY ROWS only — never a file — keeps every row
+// whose directory is still a live project, and reports the stores whose
+// recorded index root no longer matches the directory they live in (a
+// mismatch is REPORTED, never acted on: only a human can decide between
+// rebasing the root and forgetting the project).
+//
+// It is quiet on a healthy registry: the log line below prints only when a
+// row was removed or a mismatch was found.
+//
+// Like the store maintenance it rides, the sweep does not run when the
+// maintenance loop is disabled (LEANKG_VACUUM_INTERVAL_HOURS=0): the
+// registry is swept as often as the fleet is maintained, and not more often.
+func sweepRegistry(ctx context.Context, eng string) {
+	rep, err := portfolioreg.AutoSweep(ctx, portfolioreg.Options{
+		Engine: eng,
+		PGURL:  os.Getenv("LEANKG_PG_URL"),
+	})
+	if err != nil {
+		log.Printf("maintenance: registry sweep: %v", err)
+		return
+	}
+	if len(rep.Removed) > 0 || len(rep.RootMismatch) > 0 {
+		log.Printf("maintenance: registry sweep removed %d row(s) for vanished project(s), %d store(s) record a different index root",
+			len(rep.Removed), len(rep.RootMismatch))
+	}
 }
 
 // fleetTargets builds the maintenance fleet: the default project's store

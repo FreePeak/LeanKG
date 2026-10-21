@@ -363,6 +363,44 @@ directory broke the entire test suite.
 | FR-ZG-06 | Second in-catalog embedding model (Model2Vec-class) + model-switch/rebuild docs | P3 | 5.38 | None — direct TODO (unmilestoned) |
 | US-ZG-06 | Quick constrained-hardware indexes without the ONNX stack | P3 | 3.33 | Closes via FR-ZG-06 |
 
+## v4.19-registry-auto-prune — the registry forgets nothing on its own, and a store whose root moved is reported (2026-10-21, branch `fix/registry-auto-prune`)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-REG-01 | The fleet registry must prune itself, without a human at a terminal | **DONE** | `internal/portfolioreg/sweep.go` — `AutoSweep` forgets the rows whose project directory is gone. Measured on the live registry before the fix: `portfolioreg.Prune` and `portfolioreg.Forget` had exactly ONE caller each (`cmd/leankg/portfolio.go:119` and `:139`, both manual verbs), so dead rows accumulated forever (the T0 manifest records "84 of 108 registered rows had a deleted directory", 2026-10-11). The sweep removes **registry rows only, never a file**, keeps every row whose directory is still live, and is a no-op on a healthy registry |
+| FR-REG-02 | "The store is present" must mean the store belongs HERE, not just that a file exists | **DONE** | `CheckStore` opens a project's store READ-ONLY and reports `ok` / `no_store` / `unreadable` / `root_mismatch`. The old probe (`portfolioreg.go:408-430`) was ENOENT-only, so a store recording a different index root counted as present. Measured: `…/work/be/backend/be-qa-data-migration/.leankg/leankg.db` (14.3 MB) records the root `…/work/be/platform-saas/be-doppel`, which is GONE, and `internal/index/index.go:185-206` refuses to walk a store from a different root, so it can never be repaired. The sweep REPORTS the mismatch — the store file and the row both survive |
+| FR-REG-03 | The rule for a registry row with no store must be explicit | **DONE** | A row's life is bound to the project **DIRECTORY**, not to the store: a registered project whose directory is still live keeps its row even with no store (registered, never indexed — a legitimate state, and the live registry's `games` row is exactly that), and a row whose directory is gone goes. The rule was implicit in the manual `Prune` verb only; nothing automatic applied it |
+
+**Why:** the registry is the server-side list of what a deployment serves.
+A row that outlives its project keeps a dead project in the fleet's
+answers; a store that records a root nobody has any more is unrepairable
+dead weight that nothing could see. Both were invisible because the only
+thing that ever touched the registry was a human.
+
+**The caller is wired.** The sweep rides the SAME tick as the store
+maintenance in the serve path (`cmd/leankg/main.go`) — the fleet-target
+callback runs once per pass — so the registry is swept as often as the
+fleet is maintained, with no second ticker, and it is quiet on a healthy
+registry.
+
+**Verified:** `go build -p=2 ./...`, `go vet ./cmd/leankg/ ./internal/portfolioreg/`,
+`gofmt` clean, `go test ./cmd/leankg/ ./internal/portfolioreg/ -count=1`
+green. Each
+regression test fails on `origin/main` (`22dd194`, the sweep API does not
+exist there) and passes on this branch. The root-mismatch test plants its
+root through `index.RebaseRoot` — the indexer's own writer — so a rename
+of the root key fails the test rather than silently blinding the check.
+The caller's own tests pin that the sweep forgets a vanished project,
+keeps a live one, and that the serve path actually CALLS the sweep inside
+the maintenance tick.
+
+**Measured on the live registry** (run against a COPY of
+`~/.leankg/portfolio.db`; the live file was never opened for write):
+`removed=0 kept=9 no_store=1 unreadable=0 root_mismatch=0`, with the one
+`no_store` row being `games` — a live directory with real content and no
+`.leankg` store, i.e. registered and never indexed. The sweep reports it
+and keeps it, and removes nothing: a healthy registry is untouched.
+
 ## v4.18-ci-release-gate — the release commit that shipped untested, and the gate that could not have stopped it (2026-10-21, branch `fix/ci-release-gate`)
 
 | ID | Title | Status | Evidence |

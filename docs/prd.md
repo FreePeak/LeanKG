@@ -247,6 +247,98 @@ test sees "leankg serve (REST) on :49313" and fails.
 test fails on `origin/main` (the server binds and answers) and passes on
 this branch (the server refuses with the fix named).
 
+### v4.19-registry-auto-prune — the registry forgets nothing on its own, and a store whose root moved is reported (2026-10-21)
+
+> **Trigger:** auditing the fleet registry against the live self-host. The
+> registry is the SERVER-side project table — the org-scale list of what a
+> deployment serves (9 registered projects on the live fleet). Two facts
+> about it were measured:
+>
+> ```
+> grep -rn "portfolioreg.Prune\|portfolioreg.Forget" --include=*.go .
+>   → cmd/leankg/portfolio.go:119   (the manual --forget verb)
+>   → cmd/leankg/portfolio.go:139   (the manual --prune verb)
+> ```
+>
+> One caller each, both a human at a terminal. **Nothing pruned the
+> registry automatically**, so a row for a project that left the fleet
+> outlived the project forever — the same failure the T0 manifest already
+> records ("84 of 108 registered rows had a deleted directory", 2026-10-11),
+> and the fleet kept answering questions about directories that no longer
+> existed.
+>
+> And "the store is present" was a pure ENOENT probe
+> (`portfolioreg.go:408-430`): a store whose **recorded index root** no
+> longer matches the directory it sits in counted as present. Measured on
+> this machine: `…/work/be/backend/be-qa-data-migration/.leankg/leankg.db`
+> (14.3 MB) records the root `…/work/be/platform-saas/be-doppel` — a
+> directory that is GONE — while the directory it now sits in is a
+> different, live git repo. That store can never be repaired either: the
+> index root guard (`internal/index/index.go:185-206`) refuses to walk a
+> store from a different root, because every path in a store is relative
+> to the root it was built from. It is dead weight that no sweep, doctor
+> or route can see.
+
+**Landed:**
+
+- **`AutoSweep` is the automatic prune** (`internal/portfolioreg/sweep.go`).
+  It forgets the rows whose project directory is gone and reports the rows
+  that need a human. It is safe to run unattended on the live registry: it
+  removes **registry rows only**, never a file; a row whose directory is
+  still live is never removed, whatever state its store is in; and a sweep
+  of a healthy registry changes nothing at all. A missing registry is an
+  empty report, not an error.
+- **`CheckStore` says what a project's store actually is**, opening it
+  READ-ONLY: `ok`, `no_store`, `unreadable`, or `root_mismatch`. A
+  `root_mismatch` — the store records an index root that is not the
+  directory it lives in — is **reported, never deleted**. The store file
+  and the row both survive; only a human can decide whether to rebase the
+  root or forget the project.
+- **The rule for a row with no store is now explicit.** A registry row's
+  life is bound to the project **DIRECTORY**, not to the store. A
+  registered project whose directory is still a live project keeps its row
+  even when it has no store (registered, never indexed — a legitimate
+  state, and the `games` row in the live registry is exactly that), and a
+  row whose directory no longer exists goes. Before this, that rule lived
+  only implicitly in the manual `Prune` verb, and nothing automatic
+  applied it.
+
+**The caller is wired.** The sweep rides the SAME tick as the store
+maintenance in the serve path (`cmd/leankg/main.go`): the fleet-target
+callback `maintain.RunFleet` runs once per pass, so the registry is swept
+as often as the fleet is maintained, with no second ticker. It is quiet on
+a healthy registry — the log line prints only when a row was removed or a
+root mismatch was found. Under `--read-only` the whole maintenance block
+is skipped, so a reader never writes the registry.
+
+**Verified:** `go build -p=2 ./...`, `go vet ./cmd/leankg/ ./internal/portfolioreg/`,
+`gofmt` clean, `go test ./cmd/leankg/ ./internal/portfolioreg/ -count=1`
+green. Each of
+the three regression tests fails on `origin/main` (`22dd194`) — the sweep
+API does not exist there — and passes on this branch. The root-mismatch
+test plants its root through `index.RebaseRoot`, the indexer's own writer,
+so a rename of the root key fails the test instead of silently blinding
+the detection. The caller's own tests (`cmd/leankg/registrysweep_test.go`)
+pin both halves: that the sweep forgets a vanished project and keeps a
+live one, and — by reading `main.go`, the way internal/index's label guard
+does — that the serve path actually CALLS the sweep inside the
+maintenance tick.
+
+**Measured on the live registry** (run against a COPY of
+`~/.leankg/portfolio.db`; the live file was never opened for write):
+
+```
+removed=0 kept=9 no_store=1 unreadable=0 root_mismatch=0
+  NO_STORE /Users/linh.doan/work/harvey/freepeak/games
+```
+
+The live registry has no row whose directory is gone, so the sweep
+removes nothing — a healthy registry is untouched. The one `no_store` row
+is `games`: a live directory with real content (`HACKATHON.md`,
+`MOBILE.md`, `RULES.md`, …) and no `.leankg` store — registered, never
+indexed. The sweep reports it and keeps it, which is the rule above
+applied to the live fleet.
+
 ### v4.16-project-selector-fail-closed — an unknown project no longer answers from another one (2026-10-20)
 
 > **Trigger:** reviewing the v4.15-mcp-project-scoping work on the live
