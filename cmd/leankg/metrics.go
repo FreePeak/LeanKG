@@ -63,18 +63,19 @@ func cmdMetrics(args []string) {
 // H10/FR-PLG-8 usage buckets as text or JSON, unchanged: the buckets come from
 // store.Backend (Rust run_dashboard over dashboard/mod.rs), so the default
 // sqlite engine serves them too.
+//
+// The mode comes from the ONE dashboard flag set (cmd/leankg/dashboard_web.go):
+// --format asks for the tables, its absence asks for the server. Both modes
+// read the same flags, so `leankg dashboard --addr 127.0.0.1:9701 --no-open
+// --format text` is one valid invocation.
 func cmdDashboard(args []string) {
-	if !dashboardWantsText(args) {
-		cmdDashboardWeb(args)
+	opts := parseDashboardFlags(args)
+	if !opts.formatSet {
+		cmdDashboardWeb(opts)
 		return
 	}
-	fs := flag.NewFlagSet("dashboard", flag.ExitOnError)
-	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	since := fs.String("since", "", "window: <N>h, <N>d or <N>w (e.g. 24h, 7d, 30d); default all time")
-	format := fs.String("format", "text", "output format: text|json")
-	parseInterspersed("dashboard", fs, args, 0)
 
-	dir := resolveProjectDir(*project)
+	dir := resolveProjectDir(opts.project)
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
@@ -84,7 +85,7 @@ func cmdDashboard(args []string) {
 		fatalJSON(err)
 	}
 
-	out, err := metrics.Dashboard(st, metrics.DashboardOptions{Since: *since, Format: *format})
+	out, err := metrics.Dashboard(st, metrics.DashboardOptions{Since: opts.since, Format: opts.format})
 	if err != nil {
 		// Rust exits non-zero on an invalid --since window or --format value.
 		fmt.Fprintln(os.Stderr, "dashboard:", err)

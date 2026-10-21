@@ -12,7 +12,9 @@ import (
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
 
-func TestDashboardWantsTextOnlyWithFormatFlag(t *testing.T) {
+// TestParseDashboardFlagsDecidesTheModeFromTheParsedValues: the mode is
+// decided by what the ONE flag set parsed, not by a scan of argv.
+func TestParseDashboardFlagsDecidesTheModeFromTheParsedValues(t *testing.T) {
 	cases := map[string]bool{
 		"":                                false,
 		"--project /tmp/x":                false,
@@ -27,15 +29,34 @@ func TestDashboardWantsTextOnlyWithFormatFlag(t *testing.T) {
 		if in != "" {
 			args = strings.Fields(in)
 		}
-		if got := dashboardWantsText(args); got != want {
-			t.Errorf("dashboardWantsText(%q) = %v, want %v", in, got, want)
+		if got := parseDashboardFlags(args).formatSet; got != want {
+			t.Errorf("parseDashboardFlags(%q).formatSet = %v, want %v", in, got, want)
 		}
+	}
+}
+
+// TestParseDashboardFlagsReadsTheWebFlagsTheTablesModeAlsoDeclares: the
+// documented `leankg dashboard --addr 127.0.0.1:9701 --no-open --format text`
+// must parse in ONE pass — the web flags and the table flags are one set.
+func TestParseDashboardFlagsReadsTheWebFlagsTheTablesModeAlsoDeclares(t *testing.T) {
+	f := parseDashboardFlags([]string{"--addr", "127.0.0.1:9701", "--no-open", "--format", "text"})
+	if !f.formatSet {
+		t.Error("--format must select the tables mode")
+	}
+	if f.addr != "127.0.0.1:9701" {
+		t.Errorf("addr = %q, want 127.0.0.1:9701", f.addr)
+	}
+	if !f.noOpen {
+		t.Error("--no-open must be read from the same flag set")
+	}
+	if f.format != "text" {
+		t.Errorf("format = %q, want text", f.format)
 	}
 }
 
 func TestRunDashboardWebRefusesNonLoopbackWithoutAllowRemote(t *testing.T) {
 	t.Setenv("LEANKG_HOME", t.TempDir())
-	err := runDashboardWeb(context.Background(), []string{"--addr", "0.0.0.0:0", "--no-open"}, io.Discard, nil)
+	err := runDashboardWeb(context.Background(), parseDashboardFlags([]string{"--addr", "0.0.0.0:0", "--no-open"}), io.Discard, nil)
 	if err == nil || !strings.Contains(err.Error(), "allow-remote") {
 		t.Fatalf("err = %v, want an allow-remote refusal", err)
 	}
@@ -43,7 +64,7 @@ func TestRunDashboardWebRefusesNonLoopbackWithoutAllowRemote(t *testing.T) {
 
 func TestRunDashboardWebRemoteNeedsToken(t *testing.T) {
 	t.Setenv("LEANKG_HOME", t.TempDir())
-	err := runDashboardWeb(context.Background(), []string{"--addr", "0.0.0.0:0", "--allow-remote", "--no-open"}, io.Discard, nil)
+	err := runDashboardWeb(context.Background(), parseDashboardFlags([]string{"--addr", "0.0.0.0:0", "--allow-remote", "--no-open"}), io.Discard, nil)
 	if err == nil || !strings.Contains(err.Error(), "token") {
 		t.Fatalf("err = %v, want a token refusal", err)
 	}
@@ -71,7 +92,7 @@ func TestRunDashboardWebServesAndOpensStubbedBrowser(t *testing.T) {
 		return nil
 	}
 	var out strings.Builder
-	err := runDashboardWeb(ctx, []string{"--addr", "127.0.0.1:0", "--since", "7d"}, &out, opener)
+	err := runDashboardWeb(ctx, parseDashboardFlags([]string{"--addr", "127.0.0.1:0", "--since", "7d"}), &out, opener)
 	if err != nil {
 		t.Fatalf("runDashboardWeb: %v", err)
 	}
@@ -97,7 +118,7 @@ func TestRunDashboardWebNoOpenSkipsBrowser(t *testing.T) {
 	}()
 	called := false
 	opener := func(string) error { called = true; return nil }
-	if err := runDashboardWeb(ctx, []string{"--addr", "127.0.0.1:0", "--no-open"}, io.Discard, opener); err != nil {
+	if err := runDashboardWeb(ctx, parseDashboardFlags([]string{"--addr", "127.0.0.1:0", "--no-open"}), io.Discard, opener); err != nil {
 		t.Fatalf("runDashboardWeb: %v", err)
 	}
 	if called {
