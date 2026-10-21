@@ -92,18 +92,25 @@ func HeadBlobs(ctx context.Context, root string) (blobs []Blob, ok bool, err err
 	return blobs, true, nil
 }
 
-// HeadCommit returns the commit id HEAD points at, when root is a
-// repository's top-level directory with a commit. ok is false for anything
-// HeadBlobs would also refuse (a subdirectory, a non-git directory, an
-// unborn HEAD): the caller has no tree to compare against.
+// HeadCommit returns the commit id HEAD points at, when the repository at
+// root has one. ok is false when there is no commit to name: a directory
+// that is not a repository, or a repository with an unborn HEAD.
+//
+// It is deliberately one cheap git call: the status path asks for it on every
+// status request, and three subprocesses per request is a price nobody
+// notices until the fleet answers a hundred statuses a minute.
 func HeadCommit(ctx context.Context, root string) (string, bool, error) {
-	if !IsRepoRoot(ctx, root) || headUnborn(ctx, root) {
-		return "", false, nil
-	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, stderr, err := runGit(ctx, root, "rev-parse", "HEAD")
+	out, stderr, err := runGit(ctx, root, "rev-parse", "--verify", "HEAD")
 	if err != nil {
+		var ee *exec.ExitError
+		// Exit 1: HEAD names no commit (unborn). Exit 128: not a
+		// repository. Neither is a head, and neither is an error worth
+		// reporting — the caller answers "unknown" either way.
+		if errors.As(err, &ee) && (ee.ExitCode() == 1 || ee.ExitCode() == 128) {
+			return "", false, nil
+		}
 		return "", false, gitErr("git rev-parse HEAD failed", stderr, err)
 	}
 	return strings.TrimSpace(string(out)), true, nil

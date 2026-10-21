@@ -48,7 +48,20 @@ const (
 // SetHead records the git commit id the store was indexed from. An empty id
 // records "this store was not built from a git tree" (a filesystem-scanned
 // store), which is a fact, not the absence of one.
+//
+// An UNCHANGED value is not rewritten: the write bumps the store's write
+// watermark, and the freshness label compares that watermark with the
+// inventory snapshot. A no-op index run that recorded the same commit again
+// would therefore make a perfectly fresh store report "possibly_stale" —
+// the freshness label must keep meaning what it means.
 func SetHead(st Backend, head string) error {
+	cur, ok, err := Head(st)
+	if err != nil {
+		return err
+	}
+	if ok && cur == head {
+		return nil
+	}
 	return st.KVSet(IndexKVNamespace, HeadKVKey, head)
 }
 

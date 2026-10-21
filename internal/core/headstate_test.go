@@ -11,6 +11,16 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
+// The head_sync wire values, spelled out rather than read from the store
+// package: this file must also compile against a tree that has no head-state
+// API at all, so that "the status payload cannot see that the tree moved" is
+// a FAILURE of the behaviour under test, not a build error.
+const (
+	wantHeadSyncMatch   = "match"
+	wantHeadSyncStale   = "stale"
+	wantHeadSyncUnknown = "unknown"
+)
+
 // gitRepoWithFile builds a git repository with one committed Go file and
 // returns its directory.
 func gitRepoWithFile(t *testing.T) string {
@@ -66,8 +76,8 @@ func TestStatusHeadSyncTellsTheTreeMoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := headSyncOf(t, out); got != store.HeadSyncMatch {
-		t.Fatalf("head_sync = %q; want %q right after indexing", got, store.HeadSyncMatch)
+	if got := headSyncOf(t, out); got != wantHeadSyncMatch {
+		t.Fatalf("head_sync = %q; want %q right after indexing", got, wantHeadSyncMatch)
 	}
 
 	// The tree moves: a commit that deletes the indexed file. The store
@@ -82,8 +92,8 @@ func TestStatusHeadSyncTellsTheTreeMoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := headSyncOf(t, out); got != store.HeadSyncStale {
-		t.Fatalf("head_sync = %q; want %q after the tree moved", got, store.HeadSyncStale)
+	if got := headSyncOf(t, out); got != wantHeadSyncStale {
+		t.Fatalf("head_sync = %q; want %q after the tree moved", got, wantHeadSyncStale)
 	}
 	// The old freshness label is NOT touched by this: it keeps its meaning
 	// (two counters in one database), and head_sync is the new signal.
@@ -99,8 +109,8 @@ func TestStatusHeadSyncTellsTheTreeMoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := headSyncOf(t, out); got != store.HeadSyncMatch {
-		t.Fatalf("head_sync = %q; want %q after re-indexing", got, store.HeadSyncMatch)
+	if got := headSyncOf(t, out); got != wantHeadSyncMatch {
+		t.Fatalf("head_sync = %q; want %q after re-indexing", got, wantHeadSyncMatch)
 	}
 }
 
@@ -127,7 +137,7 @@ func TestStatusHeadSyncUnknownWithoutGit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := headSyncOf(t, out); got != store.HeadSyncUnknown {
-		t.Fatalf("head_sync = %q; want %q for a store that was not git-indexed", got, store.HeadSyncUnknown)
+	if got := headSyncOf(t, out); got != wantHeadSyncUnknown {
+		t.Fatalf("head_sync = %q; want %q for a store that was not git-indexed", got, wantHeadSyncUnknown)
 	}
 }
