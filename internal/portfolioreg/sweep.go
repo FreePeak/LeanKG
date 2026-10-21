@@ -214,10 +214,7 @@ func AutoSweep(ctx context.Context, o Options) (SweepReport, error) {
 // the verdict is StoreOK.
 func CheckStore(ctx context.Context, o Options, dir string) (StoreStatus, error) {
 	st := StoreStatus{Dir: dir, Reason: StoreOK}
-	// A shared store is one file for many projects: its recorded root is
-	// the owner's, so comparing it with this directory would report every
-	// project as a mismatch.
-	shared := store.StandaloneDBPath(dir) != ""
+	shared := storeIsShared(o.engine(), dir)
 	child, err := o.OpenChild(ctx, dir)
 	if err != nil {
 		if storeAbsent(err) {
@@ -244,6 +241,24 @@ func CheckStore(ctx context.Context, o Options, dir string) (StoreStatus, error)
 	}
 	st.Reason = StoreRootMismatch
 	return st, nil
+}
+
+// storeIsShared reports whether a project's store lives OUTSIDE the
+// project — one file for many projects, whose recorded index root therefore
+// names the project that OWNS it, not this one. Comparing the two would
+// report every other project as a root mismatch, which is exactly the cry
+// wolf the root check must not do.
+//
+// Only SQLite honours LEANKG_DB_PATH and a leankg.yaml standalone_db_path.
+// The Postgres engine keeps ONE SCHEMA PER PROJECT on a shared server and
+// ignores both, so a PG project's recorded root is always its own and the
+// exemption must not apply to it — even when LEANKG_DB_PATH happens to be
+// set in the environment.
+func storeIsShared(engine, dir string) bool {
+	if engine == store.EnginePostgres {
+		return false
+	}
+	return store.StandaloneDBPath(dir) != ""
 }
 
 // storeAbsent reports whether an open failure means "there is no store here"

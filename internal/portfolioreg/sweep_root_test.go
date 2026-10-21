@@ -230,3 +230,58 @@ func TestSweepKeepsLiveProjectWithoutStore(t *testing.T) {
 		t.Fatalf("rows = %+v, want only the live project kept", rows)
 	}
 }
+
+// TestCheckStoreIgnoresASharedStore pins the shared-store exemption: a
+// store that lives OUTSIDE the project (LEANKG_DB_PATH, or a leankg.yaml
+// standalone_db_path) is one file for many projects, so its recorded root
+// names the project that owns it — not this one. Comparing the two would
+// report every other project as a root mismatch, which is exactly the cry
+// wolf the root check must not do.
+//
+// The Postgres half matters too: the PG engine keeps ONE SCHEMA PER
+// PROJECT on a shared server and ignores LEANKG_DB_PATH entirely, so a PG
+// project's recorded root is always its own and the exemption must not
+// apply to it.
+func TestCheckStoreIgnoresASharedStore(t *testing.T) {
+	shared := filepath.Join(t.TempDir(), "shared.db")
+	if err := os.WriteFile(shared, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	o := Options{DBPath: filepath.Join(t.TempDir(), "portfolio.db")}
+
+	// A store built from a DIFFERENT project, shared with this one.
+	other := t.TempDir()
+	st, err := store.Open(shared, store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.RebaseRoot(st, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv(store.StandalonePathEnv, shared)
+	verdict, err := CheckStore(context.Background(), o, dir)
+	if err != nil {
+		t.Fatalf("check store: %v", err)
+	}
+	if verdict.Reason != StoreOK {
+		t.Errorf("shared store: reason = %q, want %q (a shared store's root is its owner's)", verdict.Reason, StoreOK)
+	}
+
+	// The Postgres half: the PG engine keeps one schema per project and
+	// IGNORES LEANKG_DB_PATH, so its projects' recorded roots are always
+	// their own — the exemption must not swallow them.
+	if storeIsShared(store.EnginePostgres, dir) {
+		t.Errorf("postgres project reported as a shared store: its recorded root is its own")
+	}
+	if !storeIsShared(store.EngineSQLite, dir) {
+		t.Errorf("sqlite project with LEANKG_DB_PATH set reported as NOT shared")
+	}
+}
