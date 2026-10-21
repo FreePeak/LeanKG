@@ -81,7 +81,7 @@ func (a ModelStamp) Matches(b ModelStamp) bool {
 // statement ("no such column: text_cap") — which is how a pre-017 store
 // made the L3 rung report a missing collection for a collection that holds
 // thousands of vectors. Each optional column therefore carries a documented
-// default (0 = "never recorded" / "unversioned", ” = "no prefix"), and a
+// default (0 = "never recorded" / "unversioned", "" = "no prefix"), and a
 // store missing the column reads and writes that default.
 var stampOptionalCols = []struct {
 	name string
