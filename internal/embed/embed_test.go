@@ -588,7 +588,11 @@ func TestOpenAICompatibleErrorIncludesBodySnippet(t *testing.T) {
 func TestFromEnv(t *testing.T) {
 	t.Run("deterministic", func(t *testing.T) {
 		t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
+		t.Setenv("LEANKG_EMBED_MODEL", "")
+		t.Setenv("LEANKG_EMBED_BASE_URL", "")
 		t.Setenv("LEANKG_EMBED_DIMS", "16")
+		t.Setenv("LEANKG_EMBED_REVISION", "")
+		t.Setenv("LEANKG_EMBED_API_KEY", "")
 		p, err := FromEnv()
 		if err != nil {
 			t.Fatal(err)
@@ -600,6 +604,14 @@ func TestFromEnv(t *testing.T) {
 
 	t.Run("openai requires model", func(t *testing.T) {
 		t.Setenv("LEANKG_EMBED_PROVIDER", "openai")
+		// The absent case is the point of this case, so it is stated, not
+		// inherited: an operator's exported LEANKG_EMBED_MODEL must not make
+		// the openai provider look configured.
+		t.Setenv("LEANKG_EMBED_MODEL", "")
+		t.Setenv("LEANKG_EMBED_BASE_URL", "")
+		t.Setenv("LEANKG_EMBED_DIMS", "")
+		t.Setenv("LEANKG_EMBED_REVISION", "")
+		t.Setenv("LEANKG_EMBED_API_KEY", "")
 		if _, err := FromEnv(); err == nil {
 			t.Fatal("want error when LEANKG_EMBED_MODEL unset for openai")
 		}
@@ -618,6 +630,14 @@ func TestFromEnv(t *testing.T) {
 
 	t.Run("local attaches to an explicit base URL", func(t *testing.T) {
 		t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+		// Both halves of this case are stated: no endpoint to attach to (the
+		// absent case), and the explicit one (the present case). The model
+		// stays unset so the local identity is the legacy "local"/"local:local".
+		t.Setenv("LEANKG_EMBED_MODEL", "")
+		t.Setenv("LEANKG_EMBED_DIMS", "")
+		t.Setenv("LEANKG_EMBED_REVISION", "")
+		t.Setenv("LEANKG_EMBED_API_KEY", "")
+		t.Setenv("LEANKG_EMBED_BASE_URL", "")
 		// Attach constructor: without a base URL there is nothing to attach
 		// to and it must fail with an actionable error, never silently
 		// produce vectors.

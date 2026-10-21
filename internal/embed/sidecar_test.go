@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/embed/embedtest"
 )
 
 // TestMain doubles as the fake llama-server sidecar used by the spawn
@@ -27,6 +29,12 @@ func TestMain(m *testing.M) {
 		runFakeSidecarProcess()
 		return
 	}
+	// Hermeticity: the embed provider is configured entirely by the
+	// LEANKG_EMBED_* environment, so an operator's exported values (a running
+	// sidecar's URL, a catalogued model, a width) would otherwise decide what
+	// these tests assert. The package starts from an UNCONFIGURED embed
+	// environment; a test that needs a value sets it explicitly.
+	embedtest.UnsetProcess()
 	os.Exit(m.Run())
 }
 
@@ -200,6 +208,11 @@ func TestSidecarShutdownOnContextCancel(t *testing.T) {
 func TestStartProviderSpawnsSidecar(t *testing.T) {
 	script := stubSidecarScript(t)
 	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+	// The spawn path is the subject: no endpoint to attach to, and no
+	// catalogued model whose widths would reject the width below.
+	t.Setenv("LEANKG_EMBED_BASE_URL", "")
+	t.Setenv("LEANKG_EMBED_MODEL", "")
+	t.Setenv("LEANKG_EMBED_REVISION", "")
 	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", script)
 	t.Setenv("LEANKG_EMBED_TEST_DIMS", "8")
 	port, err := freeTCPPort()
@@ -256,6 +269,11 @@ func TestStartProviderAttachesToRunningSidecar(t *testing.T) {
 	t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL+"/v1")
 	t.Setenv("LEANKG_EMBED_API_KEY", "sk-test")
 	t.Setenv("LEANKG_EMBED_DIMS", "2")
+	// The attach path is the subject: the endpoint is the one above, and the
+	// model stays unset so the width below is not rejected by a catalogued
+	// row.
+	t.Setenv("LEANKG_EMBED_MODEL", "")
+	t.Setenv("LEANKG_EMBED_REVISION", "")
 	// Poison the spawn path: if StartProvider tried to spawn this, it must fail loudly.
 	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", "leankg-no-such-sidecar-binary")
 
@@ -278,6 +296,12 @@ func TestStartProviderAttachesToRunningSidecar(t *testing.T) {
 
 func TestStartProviderSidecarAbsentFailsActionably(t *testing.T) {
 	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+	// The absent sidecar is the subject: with no endpoint to attach to, the
+	// spawn path is the only one left, and it must fail loudly.
+	t.Setenv("LEANKG_EMBED_BASE_URL", "")
+	t.Setenv("LEANKG_EMBED_MODEL", "")
+	t.Setenv("LEANKG_EMBED_REVISION", "")
+	t.Setenv("LEANKG_EMBED_DIMS", "")
 	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", "leankg-no-such-sidecar-binary")
 	_, _, err := StartProvider(context.Background())
 	if err == nil {

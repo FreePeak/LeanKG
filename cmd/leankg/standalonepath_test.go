@@ -84,6 +84,12 @@ func TestStandaloneEmbedRunIsSelfContained(t *testing.T) {
 	t.Setenv("LEANKG_DB_ENGINE", "")
 	t.Setenv("LEANKG_PG_URL", "")
 	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic") // offline; no sidecar
+	// The stamped identity is the deterministic provider's own: no catalogued
+	// model, and the default width. An operator's exported model and width
+	// would rename the collection, and the coverage query below would match
+	// nothing.
+	t.Setenv("LEANKG_EMBED_MODEL", "")
+	t.Setenv("LEANKG_EMBED_DIMS", "")
 
 	proj := t.TempDir()
 	if err := os.WriteFile(filepath.Join(proj, "p.go"),

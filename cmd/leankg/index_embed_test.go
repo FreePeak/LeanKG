@@ -176,6 +176,10 @@ func TestIndexHookAttachesToRunningLocalProvider(t *testing.T) {
 	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
 	t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL+"/v1")
 	t.Setenv("LEANKG_EMBED_DIMS", "4")
+	// The fixture serves 4 dimensions and names no model: the legacy local
+	// identity. An operator's catalogued model would carry its own widths, and
+	// a width the model does not serve is refused before a vector is written.
+	t.Setenv("LEANKG_EMBED_MODEL", "")
 	dir := t.TempDir()
 	writeThreeGoFiles(t, dir)
 
