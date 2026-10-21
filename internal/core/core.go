@@ -1014,7 +1014,15 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	// stamp contract: drift DEGRADES to L2, never silently wrong answers.
 	modelID, _ := e.embedder.Describe()
 	stamp, err := e.st.Stamp(modelID)
-	if err != nil || stamp == nil {
+	if err != nil {
+		// A READ ERROR is not a missing collection: the collection may well
+		// exist (measured: 2314 vectors in the store) while the stamp row
+		// could not be read. Reporting "no vector collection" here named a
+		// false cause and sent the operator to rebuild a collection that was
+		// there all along. The read error is surfaced verbatim instead.
+		return degrade(fmt.Sprintf("vector collection stamp for model %s could not be read (%v); degraded from L3", modelID, err))
+	}
+	if stamp == nil {
 		return degrade(fmt.Sprintf("no vector collection for model %s; degraded from L3", modelID))
 	}
 	if want := e.embedder.Stamp(); !stamp.Matches(want) {

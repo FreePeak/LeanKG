@@ -609,14 +609,11 @@ func (s *PGStore) WriteStamp(st ModelStamp) error {
 	if err := s.ensureModelTables(st); err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(pgCtx, `INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider, chunker_version, query_prefix, document_prefix, text_cap)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (model_id) DO UPDATE SET revision=excluded.revision,
-			dimensions=excluded.dimensions, distance=excluded.distance, provider=excluded.provider,
-			chunker_version=excluded.chunker_version, query_prefix=excluded.query_prefix,
-			document_prefix=excluded.document_prefix, text_cap=excluded.text_cap`,
-		st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider,
-		st.ChunkerVersion, st.QueryPrefix, st.DocumentPrefix, st.TextCap); err != nil {
+	shape, err := s.stampShape()
+	if err != nil {
+		return fmt.Errorf("store: stamp shape: %w", err)
+	}
+	if _, err := s.pool.Exec(pgCtx, stampUpsertFor(shape.cols, func(i int) string { return fmt.Sprintf("$%d", i) }), stampValues(st, shape.cols)...); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
 	return s.BumpWatermark()
@@ -661,17 +658,51 @@ func (s *PGStore) ensureModelTables(st ModelStamp) error {
 	return nil
 }
 
-// pgStampSelect is the shared read shape of emb_stamp; COALESCE keeps
-// pre-migration rows readable (chunker 0 = unversioned, empty prefixes).
-const pgStampSelect = `SELECT model_id, revision, dimensions, distance, provider,
-	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, ''),
-	COALESCE(text_cap, 0)
-	FROM emb_stamp`
+// stampColumns probes the emb_stamp columns this schema carries. A store
+// that predates a stamp migration has no such column, and naming it would
+// fail the whole read. A schema with no emb_stamp table at all yields no
+// columns; the read then fails with PostgreSQL's own "relation
+// \"emb_stamp\" does not exist", which is the truth about that store.
+func (s *PGStore) stampColumns() (stampColumnSet, error) {
+	rows, err := s.pool.Query(pgCtx, `SELECT a.attname::text FROM pg_attribute a
+		WHERE a.attrelid = to_regclass('emb_stamp') AND a.attnum > 0 AND NOT a.attisdropped`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := stampColumnSet{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
+}
 
-// Stamp returns the persisted stamp for a model; nil when none exists.
+// stampShape probes this schema's emb_stamp columns and builds the read
+// shape from them.
+func (s *PGStore) stampShape() (*stampShape, error) {
+	cols, err := s.stampColumns()
+	if err != nil {
+		return nil, err
+	}
+	return &stampShape{cols: cols, selectSQL: stampSelectFor(cols)}, nil
+}
+
+// Stamp returns the persisted stamp for a model; nil when none exists. The
+// read shape follows the schema the store actually has: an optional column
+// the schema does not have AT ALL is projected as its documented default
+// (text_cap 0 = "cap never recorded") instead of failing the read with
+// "column \"text_cap\" does not exist".
 func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
+	shape, err := s.stampShape()
+	if err != nil {
+		return nil, err
+	}
 	var st ModelStamp
-	err := s.pool.QueryRow(pgCtx, pgStampSelect+` WHERE model_id = $1`, modelID).
+	err = s.pool.QueryRow(pgCtx, shape.selectSQL+` WHERE model_id = $1`, modelID).
 		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
 			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -683,9 +714,14 @@ func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
 	return &st, nil
 }
 
-// Stamps returns all persisted model stamps.
+// Stamps returns all persisted model stamps. The read shape follows the
+// store's schema exactly like PGStore.Stamp's.
 func (s *PGStore) Stamps() ([]ModelStamp, error) {
-	rows, err := s.pool.Query(pgCtx, pgStampSelect)
+	shape, err := s.stampShape()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(pgCtx, shape.selectSQL)
 	if err != nil {
 		return nil, err
 	}
