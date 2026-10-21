@@ -73,31 +73,156 @@ func (a ModelStamp) Matches(b ModelStamp) bool {
 		a.DocumentPrefix == b.DocumentPrefix
 }
 
+// stampOptionalCols are the emb_stamp columns that a LATER migration added:
+// the collection identity trio (chunker_version, query_prefix,
+// document_prefix — migration 015) and the per-text cap (text_cap —
+// migration 017). A store that has not run that migration has no such
+// column, and naming a missing column in a statement fails the WHOLE
+// statement ("no such column: text_cap") — which is how a pre-017 store
+// made the L3 rung report a missing collection for a collection that holds
+// thousands of vectors. Each optional column therefore carries a documented
+// default (0 = "never recorded" / "unversioned", "" = "no prefix"), and a
+// store missing the column reads and writes that default.
+var stampOptionalCols = []struct {
+	name string
+	def  string // the documented default, projected when the column is absent
+	val  func(ModelStamp) any
+}{
+	{name: "chunker_version", def: "0", val: func(st ModelStamp) any { return st.ChunkerVersion }},
+	{name: "query_prefix", def: "''", val: func(st ModelStamp) any { return st.QueryPrefix }},
+	{name: "document_prefix", def: "''", val: func(st ModelStamp) any { return st.DocumentPrefix }},
+	{name: "text_cap", def: "0", val: func(st ModelStamp) any { return st.TextCap }},
+}
+
+// stampColumnSet is the set of emb_stamp columns a store's schema carries.
+type stampColumnSet map[string]bool
+
+// stampSelectFor builds the emb_stamp read shape for the columns a store
+// actually has: the identity columns always, plus the optional ones the
+// schema carries. An optional column the store lacks is projected as its
+// documented default, so the row shape — and the scan behind it — never
+// changes with the schema version.
+func stampSelectFor(cols stampColumnSet) string {
+	sel := []string{"model_id", "revision", "dimensions", "distance", "provider"}
+	for _, c := range stampOptionalCols {
+		if cols[c.name] {
+			sel = append(sel, "COALESCE("+c.name+", "+c.def+")")
+			continue
+		}
+		sel = append(sel, c.def)
+	}
+	return "SELECT " + strings.Join(sel, ", ") + " FROM emb_stamp"
+}
+
+// stampUpsertFor builds the emb_stamp upsert for the columns a store
+// actually has. The identity columns are always written; an optional column
+// the store lacks is left out of the statement AND of the ON CONFLICT
+// update, so a pre-017 store stays writable and its stamp reads back the
+// documented default for the column it does not have.
+func stampUpsertFor(cols stampColumnSet, placeholder func(int) string) string {
+	names := []string{"model_id", "revision", "dimensions", "distance", "provider"}
+	for _, c := range stampOptionalCols {
+		if cols[c.name] {
+			names = append(names, c.name)
+		}
+	}
+	ph := make([]string, len(names))
+	for i := range names {
+		ph[i] = placeholder(i + 1)
+	}
+	sets := make([]string, 0, len(names)-1)
+	for _, n := range names[1:] {
+		sets = append(sets, n+"=excluded."+n)
+	}
+	return "INSERT INTO emb_stamp (" + strings.Join(names, ", ") + ") VALUES (" +
+		strings.Join(ph, ", ") + ") ON CONFLICT(model_id) DO UPDATE SET " + strings.Join(sets, ", ")
+}
+
+// stampValues returns the stamp values in the column order stampUpsertFor
+// writes: the identity columns, then the optional ones the store carries.
+func stampValues(st ModelStamp, cols stampColumnSet) []any {
+	vals := []any{st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider}
+	for _, c := range stampOptionalCols {
+		if cols[c.name] {
+			vals = append(vals, c.val(st))
+		}
+	}
+	return vals
+}
+
+// stampShape is the read/write shape of emb_stamp for one store: the
+// columns its schema carries and the SELECT built from them.
+//
+// It is NOT cached across calls: the shape changes when a migration runs,
+// and a server that opened the store before the writer migrated it would
+// otherwise keep reading through the older shape. The probe is one catalog
+// query, cheap next to the vector scan that follows it.
+type stampShape struct {
+	cols      stampColumnSet
+	selectSQL string
+}
+
 // WriteStamp upserts the stamp for a model (writer side, after validation).
 // The full identity — model, revision, dims, distance, provider, chunker
 // version and the query/document prefix pair — is what a reader compares, so
 // every component is persisted.
 func (s *Store) WriteStamp(st ModelStamp) error {
-	if _, err := s.db.Exec(`INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider, chunker_version, query_prefix, document_prefix, text_cap)
-		VALUES (?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(model_id) DO UPDATE SET revision=excluded.revision,
-			dimensions=excluded.dimensions, distance=excluded.distance, provider=excluded.provider,
-			chunker_version=excluded.chunker_version, query_prefix=excluded.query_prefix,
-			document_prefix=excluded.document_prefix, text_cap=excluded.text_cap`,
-		st.ModelID, st.Revision, st.Dimensions, st.Distance, st.Provider,
-		st.ChunkerVersion, st.QueryPrefix, st.DocumentPrefix, st.TextCap); err != nil {
+	shape, err := s.stampShape()
+	if err != nil {
+		return fmt.Errorf("store: stamp shape: %w", err)
+	}
+	if _, err := s.db.Exec(stampUpsertFor(shape.cols, func(int) string { return "?" }), stampValues(st, shape.cols)...); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
 	return s.BumpWatermark()
 }
 
+// stampColumns probes the emb_stamp columns this store's schema carries.
+// A store that never had the table (or that predates the stamp migrations)
+// yields no optional columns; the read then fails with the driver's own
+// "no such table: emb_stamp", which is the truth about that store.
+func (s *Store) stampColumns() (stampColumnSet, error) {
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('emb_stamp')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := stampColumnSet{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
+}
+
+// stampShape probes this store's emb_stamp columns and builds the read
+// shape from them.
+func (s *Store) stampShape() (*stampShape, error) {
+	cols, err := s.stampColumns()
+	if err != nil {
+		return nil, err
+	}
+	return &stampShape{cols: cols, selectSQL: stampSelectFor(cols)}, nil
+}
+
 // Stamp returns the persisted stamp for a model; nil when none exists.
-// chunker_version/prefix columns are read through COALESCE so a database
-// migrated before they existed still yields a usable stamp (chunker 0 =
-// "unversioned", which every writer treats as a mismatch demanding a rebuild).
+// The read is shaped by the columns the store's schema actually has: the
+// optional ones (chunker_version/prefixes/text_cap) are read through COALESCE
+// so a row written before they existed still yields a usable stamp (chunker
+// 0 = "unversioned", which every writer treats as a mismatch demanding a
+// rebuild), and a column the schema does not have AT ALL is projected as its
+// documented default (text_cap 0 = "cap never recorded") instead of failing
+// the read with "no such column".
 func (s *Store) Stamp(modelID string) (*ModelStamp, error) {
+	shape, err := s.stampShape()
+	if err != nil {
+		return nil, err
+	}
 	var st ModelStamp
-	err := s.db.QueryRow(stampSelect+` WHERE model_id = ?`, modelID).
+	err = s.db.QueryRow(shape.selectSQL+` WHERE model_id = ?`, modelID).
 		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
 			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
 	if err == sql.ErrNoRows {
@@ -148,16 +273,14 @@ func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) err
 	return s.BumpWatermark()
 }
 
-// stampSelect is the shared read shape of emb_stamp (see Store.Stamp for the
-// COALESCE rationale).
-const stampSelect = `SELECT model_id, revision, dimensions, distance, provider,
-	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, ''),
-	COALESCE(text_cap, 0)
-	FROM emb_stamp`
-
-// Stamps returns all persisted model stamps.
+// Stamps returns all persisted model stamps. The read shape follows the
+// store's schema exactly like Store.Stamp's.
 func (s *Store) Stamps() ([]ModelStamp, error) {
-	rows, err := s.db.Query(stampSelect)
+	shape, err := s.stampShape()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(shape.selectSQL)
 	if err != nil {
 		return nil, err
 	}
