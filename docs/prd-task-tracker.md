@@ -158,6 +158,24 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 
 The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01..04` (§Done).
 
+## v4.18-cmd-verb-surface — a verb that opens a store read-write creates one, so it must ask first (2026-10-21, branch fix/cmd-verb-surface)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-VERB-01 | `metrics` refuses a project that has NO store, and creates none | **DONE** | Opening a missing store read-write CREATES it, so `leankg metrics` materialised `<dir>/.leankg/` for a project nobody indexed. It now asks `maintenanceStoreExists` (the CLI's shared guard, `cmd/leankg/main.go:719`) first and refuses with doctor's shape: `FAIL not indexed: no store at <path> (project <dir>)` + the `leankg index .` fix, exit 2, on stderr. The verb still opens read-write — `--reset`/`--cleanup`/`--seed` write, and `Migrate` must be able to add the telemetry ledger table (migration 011) to a store created before it. |
+| FR-VERB-02 | `dashboard --format text\|json` refuses a project that has NO store, and creates none | **DONE** | Same guard, same refusal. The text/JSON mode reads the project store, so it requires one; the WEB dashboard serves the telemetry ledger from `$HOME` and never opens a project store, so it is untouched — the guard sits AFTER the web-mode routing. |
+| FR-VERB-03 | `migrate --project <dir>` refuses a project that has NO store, and creates none | **DONE** | Same guard; the refusal names `leankg index .` as the command that creates the store and applies every migration, so `leankg migrate` then reports them up to date. `TestMigrateCLI` now seeds the state it means to test — "a store whose migration ledger is empty", what a project indexed by an older leankg looks like — because `migrate` no longer creates the store itself. |
+| FR-VERB-04 | The refusal is a DIAGNOSIS, not a payload | **DONE** | The message goes to stderr (these verbs print their payload on stdout — a metrics summary, a dashboard table, a migrate result are all stdout contracts) and stdout stays EMPTY, so a JSON consumer never sees a half-written document. Exit code 2, doctor's FAIL code. |
+| FR-VERB-05 | One guard, not two — the shared one | **DONE** | The check reuses `maintenanceStoreExists`, the definition the maintenance fleet already uses, so the fleet and the verbs can never disagree about a project. Two resolutions it does not model are answered alongside it: a standalone store (FR-P2 — `LEANKG_DB_PATH` / `leankg.yaml db.standalone_db_path`) is the configured FILE, and the postgres DSN a verb opens is the PROJECT's (`projectcfg.PGURL`) — the shared guard probes with the environment alone. A postgres probe that fails for any reason OTHER than a missing schema is not a verdict about the project, so the verb proceeds and its own open reports the real error. |
+| FR-VERB-06 | Regression test that fails on the pre-fix code | **DONE** | `cmd/leankg/verbstoreguard_test.go`: `TestWriterVerbsRefuseAnUnindexedProject` (four verbs against a store-less project: exit 2, "not indexed" on stderr, empty stdout, and NO `<dir>/.leankg` afterwards — verified to FAIL on `origin/main`, where each exited 0 and left a store behind) and `TestWriterVerbsStillRunOnAnIndexedProject` (a project that HAS a store keeps working, so a guard that refused everything cannot pass the test above). `go build -p=2 ./...` and `go vet ./...` clean; `go test ./cmd/leankg/ -count=1` green with the embed env cleared. |
+| FR-VERB-07 | The repo-wide blast radius, recorded | **DONE** | The portfolio registry holds a row for `/private/tmp` (name `tmp`), so a writer sweep materialised `/private/tmp/.leankg` — and that ONE stray directory breaks the whole repo test suite, because `internal/projectcfg.FindProjectRoot` walks up and latches onto the first ancestor owning a `.leankg` entry or a `leankg.yaml` (`mkdir -p /private/tmp/.leankg` → `FAIL internal/projectcfg`; `rm -rf` → ok). A read verb cannot cause that; three write-ish verbs could. |
+
+**Why:** a verb that opens a store read-write creates one when it is
+missing, so "I only wanted to LOOK" is not a state the verb can reach — the
+side effect is the store's existence, and a stray `.leankg` in an ancestor
+re-points every project-root resolution below it, which is how one
+directory broke the entire test suite.
+
 ## Done — 2026-09-04 implementation sprint (v4.3.0 wave 1–3)
 
 | ID | Title | Evidence |

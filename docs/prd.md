@@ -239,6 +239,106 @@ The codec's detail is kept in parentheses so nothing is lost; the actionable sen
 
 **Loop status: 31 defects found, 31 fixed, 0 open** across twenty-three waves.
 
+### v4.18-cmd-verb-surface — a verb that opens a store read-write creates one, so it must ask first (2026-10-21)
+
+**Trigger:** the fix wave's severity ranking, and the measurement behind it.
+Three verbs opened a project's store read-write WITHOUT asking whether the
+project had one. Opening a MISSING store creates it — the file, the schema
+and all — so each materialised a store for a project nobody indexed:
+
+```
+$ leankg metrics --project /tmp/never-indexed    # exit 0, creates /tmp/never-indexed/.leankg/
+$ leankg dashboard --format json --project DIR   # exit 0, creates DIR/.leankg/
+$ leankg migrate --project DIR                   # exit 0, creates DIR/.leankg/
+```
+
+**The blast radius is not local, and that is what makes it severe.** The
+portfolio registry holds a row for `/private/tmp` (name `tmp`), so a writer
+sweep over the fleet materialises `/private/tmp/.leankg` — and that ONE
+stray directory breaks the WHOLE REPO TEST SUITE:
+
+```
+$ mkdir -p /private/tmp/.leankg
+$ go test ./internal/projectcfg/
+FAIL internal/projectcfg  "no marker: got \"/tmp\", want \"/tmp/TestFindProjectRootWalksUp.../002\""
+$ rm -rf /private/tmp/.leankg
+$ go test ./internal/projectcfg/    # ok
+```
+
+Mechanism: `internal/projectcfg/projectcfg.go:272` `FindProjectRoot` walks
+up and latches onto the first ancestor that owns a `.leankg` entry or a
+`leankg.yaml` — so one stray directory in an ancestor re-points EVERY
+project-root resolution below it. A read verb that cannot create a store
+cannot cause that; three write-ish verbs could.
+
+**The rule, now written down:** a verb that opens a store read-write asks
+whether the store EXISTS before it opens one, and refuses when it does not.
+
+The check is the CLI's existing shared guard — `maintenanceStoreExists`
+(`cmd/leankg/main.go:719`), the one definition of "this project has a
+store" the maintenance fleet already uses — so the fleet and the verbs can
+never disagree about a project. Two resolutions the shared guard does not
+model are answered alongside it, because they ask about a store that is NOT
+at `<dir>/.leankg/leankg.db`: a **standalone** store (FR-P2 —
+`LEANKG_DB_PATH` / `leankg.yaml db.standalone_db_path`) is the configured
+FILE, and the **postgres** DSN a verb opens is the PROJECT's
+(`projectcfg.PGURL`: the environment first, then `leankg.yaml db.url`),
+while the shared guard probes with the environment alone. A postgres probe
+that fails for any reason OTHER than a missing schema (a bad DSN, a refused
+connection) is not a verdict about the project, so the verb proceeds and
+its own open reports the real error.
+
+**The refusal is the diagnosis `leankg doctor` prints for the same state**,
+and exits with doctor's FAIL code (2):
+
+```
+FAIL not indexed: no store at /tmp/never-indexed/.leankg/leankg.db (project /tmp/never-indexed)
+     run `leankg index .` in this project, then `leankg metrics` again
+```
+
+It goes to **stderr**, because these verbs print their payload on stdout —
+doctor's own report IS its stdout, but a metrics summary, a dashboard table
+and a migrate result are all stdout contracts, and a text line in the middle
+of one corrupts it.
+
+**The semantics, decided rather than defaulted.** `metrics` needs read-write
+for `--reset`, `--cleanup` and `--seed`, and for `Migrate` to add the
+telemetry ledger table (migration 011) to a store created before it — so
+EVERY metrics run requires an existing store, the read-only default and the
+write flags alike: a write run cannot reset what does not exist, and the
+read run must not create what does not. `dashboard`'s text/JSON mode reads
+the project store, so it requires one; the web dashboard serves the
+telemetry ledger from `$HOME` and never opens a project store, so it is
+untouched. `migrate` on a project with no store is not a request anyone can
+make sense of — there is nothing to migrate until the project is indexed,
+and indexing is what creates the store with every migration already applied
+— so the refusal names `leankg index .` as the command that does create one.
+`status`, `query` and `doctor` keep their existing behaviour and exit codes.
+
+**Tests:** `TestWriterVerbsRefuseAnUnindexedProject` (for a project
+directory with NO store, `metrics`, `dashboard --format text`,
+`dashboard --format json` and `migrate` each exit 2 with the diagnosis on
+stderr, an EMPTY stdout, and NO store on disk — verified to FAIL on
+`origin/main`, where every one of them exited 0 and left a store behind) and
+`TestWriterVerbsStillRunOnAnIndexedProject` (a project that HAS a store
+keeps working, so a guard that refused everything cannot pass the test
+above). `TestMigrateCLI` now seeds the state it means to test — "a store
+whose migration ledger is empty", which is what a project indexed by an
+older leankg looks like — because `migrate` no longer creates the store
+itself. `go build -p=2 ./...` and `go vet ./...` clean;
+`go test ./cmd/leankg/ -count=1` green with the embed env cleared.
+
+**A related side effect, measured and left alone:** `leankg status` opens
+the store read-only, and SQLite's WAL mode creates a `-wal`/`-shm` sidecar
+next to it while the handle is open (both are removed on a clean close, so
+nothing is left behind). That is a property of WAL, not of the verb: the
+store is opened with `query_only(ON)`, and the sidecars appear because the
+DATABASE FILE is in WAL mode. Avoiding them would need `immutable=1`, which
+tells SQLite the file cannot change — and a live writer's committed rows
+live in the `-wal` until it checkpoints, so an `immutable=1` reader would
+serve STALE DATA. The read-only guarantee is not worth trading for a
+sidecar that disappears on close.
+
 ### v4.33.0-null-was-two-claims — the last unswept surface, and the last shape (2026-10-01)
 
 **Trigger:** wave 22 of the loop (FR-SELF-04, still on PR #449), sweeping the last surface the previous twenty-one had not: every REST route, checking the status **and** the body of each failure **and** each empty answer.
