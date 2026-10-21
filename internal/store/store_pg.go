@@ -1121,6 +1121,35 @@ func (s *PGStore) LastEmbedRunAny() (*EmbedRun, error) {
 		`SELECT `+pgEmbedRunCols+` FROM embed_runs ORDER BY id DESC LIMIT 1`))
 }
 
+// PruneEmbedRuns trims the embed-run ledger: it closes out the runs still
+// marked "running" past the cutoff and deletes the finished runs older than
+// it. The newest row is kept — it names the store's current collection
+// (CurrentModelID). Mirrors the SQLite implementation (vectors.go).
+func (s *PGStore) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
+	var out EmbedRunPrune
+	cut := embedRunCutoff(cutoff)
+	tag, err := s.pool.Exec(pgCtx, `UPDATE embed_runs SET status='failed', finished_at=`+pgNow+`
+		WHERE status='running' AND started_at < $1`, cut)
+	if err != nil {
+		return out, fmt.Errorf("store: close out stale embed runs: %w", err)
+	}
+	out.Closed = tag.RowsAffected()
+	tag, err = s.pool.Exec(pgCtx, `DELETE FROM embed_runs
+		WHERE started_at < $1 AND status <> 'running'
+		  AND id <> (SELECT COALESCE(MAX(id), 0) FROM embed_runs)`, cut)
+	if err != nil {
+		return out, fmt.Errorf("store: prune embed runs: %w", err)
+	}
+	out.Pruned = tag.RowsAffected()
+	return out, nil
+}
+
+// CompactFTS is a no-op on PostgreSQL. The keyword rung here is a GIN-indexed
+// tsvector column (pg_fts.go), not an FTS5 segment list, so there is nothing
+// to merge: PostgreSQL's own autovacuum reclaims what the index churn leaves
+// behind. The SQLite implementation (elements.go) is the one that merges.
+func (s *PGStore) CompactFTS() error { return nil }
+
 // LastEmbedRun returns the most recent run for a model; nil when none.
 func (s *PGStore) LastEmbedRun(modelID string) (*EmbedRun, error) {
 	return pgScanEmbedRun(s.pool.QueryRow(pgCtx,

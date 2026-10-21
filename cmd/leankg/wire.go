@@ -67,11 +67,30 @@ func cmdWriter(args []string) {
 	// Same maintenance pass `serve` runs, over the writer's own handle: the
 	// writer is the process that actually produces the garbage (DeleteByFile
 	// on every re-index), so it is the one that should hand the space back.
+	//
+	// The writer also passes the keep set for the stale-collection sweep,
+	// which it used to omit entirely: with no keep list the sweep skipped
+	// that step, so an abandoned embedding collection was never pruned —
+	// the machinery existed and its trigger never fired. The live
+	// collection is derived per pass from the store's own embed-run
+	// history (the newest run names the collection the project is
+	// embedded under), because the live collection changes when the
+	// project is re-embedded under a new model: a keep set frozen at
+	// start-up would delete the CURRENT collection.
 	interval := maintain.IntervalFromEnv(os.Getenv)
 	if interval > 0 {
 		log.Printf("writer: maintenance every %s (0 disables)", interval)
 	}
-	maintain.Run(ctx, st, nil, maintain.Options{Logf: log.Printf}, interval, maintain.FirstIdle)
+	maintain.Run(ctx, st, nil, maintain.Options{
+		Logf: log.Printf,
+		KeepModelIDsFunc: func(b store.Backend) []string {
+			id, err := store.CurrentModelID(b)
+			if err != nil || id == "" {
+				return nil
+			}
+			return []string{id}
+		},
+	}, interval, maintain.FirstIdle)
 	log.Printf("writer: watching %s (Ctrl-C to stop)", dir)
 	<-ctx.Done()
 	w.Stop()

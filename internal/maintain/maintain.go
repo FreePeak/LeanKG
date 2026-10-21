@@ -32,19 +32,33 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/memory"
+	"github.com/FreePeak/LeanKG/internal/metrics"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Defaults for the periodic pass. The interval is the Rust engine's
-// LEANKG_VACUUM_INTERVAL_HOURS default (1h), restored; the page cap and the
-// freelist floor are new and exist because a full sweep of a
-// multi-hundred-MB freelist would stall a serving MCP server for seconds,
-// while anything under a megabyte is noise.
+// LEANKG_VACUUM_INTERVAL_HOURS default (1h), restored; the page cap is new
+// and exists because a full sweep of a multi-hundred-MB freelist would stall
+// a serving MCP server for seconds.
+//
+// There is deliberately NO built-in freelist floor: the 1 MB floor this
+// package used to carry meant the scheduled pass reclaimed nothing at all
+// (every store's freelist was below it — the live leankg store held 745 KB
+// against a 1 MB floor), so the reclaim machinery never ran.
 const (
 	DefaultInterval = time.Hour
 	DefaultMaxPages = 4096
-	minFreeBytes    = 1 << 20
-	FirstIdle       = 30 * time.Second
+	// DefaultCompactFTSEvery is how many passes fall between two FTS
+	// compactions. Compaction rewrites the whole keyword index, so it must
+	// not run on every tick; at the default 1h interval this is a daily
+	// compaction.
+	DefaultCompactFTSEvery = 24
+	// DefaultSummaryEvery is how many passes fall between two summary
+	// lines. A pass that reclaims nothing, prunes nothing and compacts
+	// nothing used to be invisible; the summary is what makes it visible
+	// without spamming the log every tick.
+	DefaultSummaryEvery = 24
+	FirstIdle           = 30 * time.Second
 )
 
 // Options configures one maintenance pass.
@@ -53,7 +67,10 @@ type Options struct {
 	// returns (0 = DefaultMaxPages).
 	MaxPages int
 	// MinFreeBytes is the freelist floor below which the pass only
-	// checkpoints (0 = the built-in 1 MB floor).
+	// checkpoints. 0 (the default) reclaims as soon as the freelist holds
+	// anything at all; a negative value never reclaims. The floor is the
+	// caller's, not the package's: a built-in floor is what stopped the
+	// scheduled pass from reclaiming anything.
 	MinFreeBytes int64
 	// KeepModelIDs are the vector collections that survive the stale-stamp
 	// sweep. Empty (the default) means "keep every collection": a caller
@@ -62,6 +79,29 @@ type Options struct {
 	// The server passes the embedder's model id here, which is exactly the
 	// collection the L3 rung queries.
 	KeepModelIDs []string
+	// KeepModelIDsFunc derives the keep set for one store at pass time.
+	// It wins over KeepModelIDs when set, and it is what a writer needs:
+	// the live collection changes between passes (a re-embed under a new
+	// model), so a keep set frozen at start-up would delete the CURRENT
+	// collection. The func is asked the same question every pass: which
+	// collection is live for this store?
+	KeepModelIDsFunc func(st store.Backend) []string
+	// PruneLedgers runs the retention sweeps over the append-only ledgers
+	// (context_metrics, embed_runs). The scheduled pass sets it; the
+	// one-shot `leankg vacuum` does not, so that verb stays a
+	// space-reclaim tool.
+	PruneLedgers bool
+	// CompactFTS compacts the keyword index on this pass (SQLite: merge
+	// the FTS5 segments and rebuild the index from the content table). It
+	// rewrites the whole index, so the scheduler turns it on every
+	// CompactFTSEvery passes, not on every tick.
+	CompactFTS bool
+	// CompactFTSEvery is how many passes fall between two FTS
+	// compactions (0 = DefaultCompactFTSEvery; negative = never).
+	CompactFTSEvery int
+	// SummaryEvery is how many passes fall between two summary lines
+	// (0 = DefaultSummaryEvery; negative = never).
+	SummaryEvery int
 	// Logf receives one line per pass; nil discards.
 	Logf func(format string, args ...any)
 }
@@ -79,6 +119,13 @@ type SweepResult struct {
 	StaleVectors int `json:"stale_vectors"`
 	// StaleState is the number of embedding-state rows dropped with them.
 	StaleState int `json:"stale_state"`
+	// MetricsPruned is the number of context_metrics rows the retention
+	// sweep deleted.
+	MetricsPruned int64 `json:"metrics_pruned"`
+	// EmbedRuns reports what the embed-run ledger prune removed.
+	EmbedRuns store.EmbedRunPrune `json:"embed_runs"`
+	// FTSCompacted reports whether the keyword index was compacted.
+	FTSCompacted bool `json:"fts_compacted"`
 }
 
 // Empty reports whether the sweep removed nothing.
@@ -99,8 +146,13 @@ func (s SweepResult) Empty() bool {
 //
 // Every step is best-effort: a step that fails leaves its rows for the
 // next pass, so the error is logged and the sweep continues. The stale-stamp
-// step needs Options.KeepModelIDs — with no keep list it is skipped
-// entirely, because dropping the live collection is not recoverable.
+// step needs a keep list — Options.KeepModelIDs, or the per-pass
+// Options.KeepModelIDsFunc — and with no keep list it is skipped entirely,
+// because dropping the live collection is not recoverable.
+//
+// The retention sweeps over the append-only ledgers (context_metrics,
+// embed_runs) run only when Options.PruneLedgers is set, which the
+// scheduler does and the one-shot verb does not.
 func Sweep(st store.Backend, opts Options) SweepResult {
 	var out SweepResult
 	logf := opts.Logf
@@ -117,10 +169,37 @@ func Sweep(st store.Backend, opts Options) SweepResult {
 	} else {
 		out.OrphanVectors = n
 	}
-	if len(opts.KeepModelIDs) == 0 {
+	if opts.PruneLedgers {
+		// The embed-run ledger is trimmed FIRST: the keep set below is
+		// derived from it (the newest run names the live collection), and
+		// the prune keeps that newest row.
+		pr, err := st.PruneEmbedRuns(time.Now().AddDate(0, 0, -metrics.DefaultRetentionDays))
+		if err != nil {
+			logf("maintain: prune embed runs: %v", err)
+		} else {
+			out.EmbedRuns = pr
+		}
+		if n, err := st.CleanupMetrics(metrics.DefaultRetentionDays); err != nil {
+			logf("maintain: cleanup metrics: %v", err)
+		} else {
+			out.MetricsPruned = n
+		}
+	}
+	if opts.CompactFTS {
+		if err := st.CompactFTS(); err != nil {
+			logf("maintain: fts compaction: %v", err)
+		} else {
+			out.FTSCompacted = true
+		}
+	}
+	keep := opts.KeepModelIDs
+	if opts.KeepModelIDsFunc != nil {
+		keep = opts.KeepModelIDsFunc(st)
+	}
+	if len(keep) == 0 {
 		return out
 	}
-	sw, err := st.DeleteStaleStamps(opts.KeepModelIDs)
+	sw, err := st.DeleteStaleStamps(keep)
 	if err != nil {
 		logf("maintain: stale stamps: %v", err)
 		return out
@@ -180,9 +259,6 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 	if opts.MaxPages == 0 {
 		opts.MaxPages = DefaultMaxPages
 	}
-	if opts.MinFreeBytes == 0 {
-		opts.MinFreeBytes = minFreeBytes
-	}
 	logf := opts.Logf
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -230,7 +306,12 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 	} else {
 		logf("maintain: re-probe space before vacuum: %v", err)
 	}
-	if freelist >= opts.MinFreeBytes {
+	// The floor is the CALLER's now: 0 means "reclaim as soon as there is
+	// anything to reclaim", and a negative floor never reclaims. The old
+	// built-in 1 MB floor is what stopped this from ever running — every
+	// store's freelist sat below it, so the hourly pass freed 0 bytes
+	// fleet-wide while the machinery looked healthy.
+	if opts.MinFreeBytes >= 0 && freelist > 0 && freelist >= opts.MinFreeBytes {
 		if err := st.IncrementalVacuum(opts.MaxPages); err != nil {
 			// Not fatal: the checkpoint below still applies, and the next
 			// pass retries the reclaim.
@@ -346,22 +427,69 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 	if interval <= 0 {
 		return
 	}
+	compactEvery := opts.CompactFTSEvery
+	if compactEvery == 0 {
+		compactEvery = DefaultCompactFTSEvery
+	}
+	summaryEvery := opts.SummaryEvery
+	if summaryEvery == 0 {
+		summaryEvery = DefaultSummaryEvery
+	}
+	passNo := 0
 	pass := func() {
+		passNo++
+		passOpts := opts
+		// The scheduled pass is the retention pass: the append-only
+		// ledgers are pruned here, not by the one-shot verb.
+		passOpts.PruneLedgers = true
+		// Compaction rewrites the whole keyword index, so it runs on a
+		// slow cadence rather than on every tick.
+		passOpts.CompactFTS = opts.CompactFTS || (compactEvery > 0 && passNo%compactEvery == 0)
+		var reclaimed, grew int64
+		var metricsPruned, runsPruned, runsClosed int64
+		var compacted, stores int
 		for _, t := range targets() {
 			if t.Store == nil {
 				continue
 			}
-			if _, err := Pass(t.Store, opts); err != nil && opts.Logf != nil {
+			res, err := Pass(t.Store, passOpts)
+			if err != nil && opts.Logf != nil {
 				if t.Label == "" {
 					opts.Logf("maintain: %v", err)
 				} else {
 					opts.Logf("maintain[%s]: %v", t.Label, err)
 				}
 			}
+			if err == nil {
+				stores++
+				reclaimed += res.Reclaimed
+				grew += res.Grew
+				metricsPruned += res.Sweep.MetricsPruned
+				runsPruned += res.Sweep.EmbedRuns.Pruned
+				runsClosed += res.Sweep.EmbedRuns.Closed
+				if res.Sweep.FTSCompacted {
+					compacted++
+				}
+			}
 			CompactMemory(t.Mem, opts)
 			if t.Close != nil {
 				t.Close()
 			}
+		}
+		// A pass that reclaims nothing, prunes nothing and compacts
+		// nothing used to leave no trace at all, which is why a sweep
+		// that did nothing ran for weeks without anyone noticing. The
+		// summary is low-frequency on purpose (daily at the default
+		// interval): it says what actually happened, not that a tick
+		// happened.
+		// The first pass always reports: a fleet that has just started must
+		// say what it did, not wait a day for the first summary. After that
+		// the cadence keeps the log quiet.
+		if opts.Logf != nil && summaryEvery > 0 && (passNo == 1 || passNo%summaryEvery == 0) {
+			opts.Logf("maintain: %d pass(es) over %d store(s): reclaimed %d bytes, grew %d bytes, "+
+				"pruned %d metric row(s) and %d embed-run row(s), closed %d stuck run(s), "+
+				"compacted the FTS index of %d store(s)",
+				passNo, stores, reclaimed, grew, metricsPruned, runsPruned, runsClosed, compacted)
 		}
 	}
 	go func() {

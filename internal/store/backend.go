@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Engine names the storage backends.
@@ -69,6 +70,19 @@ type Backend interface {
 	IncrementalVacuum(maxPages int) error
 	Vacuum() error
 	EnsureIncrementalVacuum() error
+	// CompactFTS compacts the keyword index: SQLite merges the FTS5
+	// segments and rebuilds the index from the content table; PostgreSQL
+	// has no segment list to merge (its keyword rung is a GIN-indexed
+	// tsvector column) and the implementation there is a no-op. It is a
+	// write — a read-only handle refuses it — and it rewrites the whole
+	// index, so the scheduler runs it on a slow cadence, not every pass.
+	CompactFTS() error
+	// PruneEmbedRuns trims the embed-run ledger: it closes out the runs
+	// still marked "running" past the cutoff (a run that was killed
+	// mid-flight otherwise claims to be running forever) and deletes the
+	// finished runs older than it. The newest row is never deleted — it
+	// names the store's current collection (CurrentModelID).
+	PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error)
 	// relationship reads (graph traversal seeds; pure-Go BFS lives in internal/graph)
 	Outgoing(source string) ([]Relationship, error)
 	Incoming(target string) ([]Relationship, error)
