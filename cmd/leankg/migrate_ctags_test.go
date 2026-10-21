@@ -10,11 +10,19 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-// TestMigrateCLI pins the applied/skipped result: a fresh project applies the
-// embedded plan on the first run and reports everything up to date on the
-// second.
+// TestMigrateCLI pins the applied/skipped result: a store that has NOT been
+// migrated yet applies the embedded plan on the first run and reports
+// everything up to date on the second.
+//
+// The store has to EXIST for that: `leankg migrate` refuses a project that
+// has no store (it would have to create one, and a store created where
+// none belongs is the defect this branch fixes — see
+// TestWriterVerbsRefuseAnUnindexedProject). The state under test is
+// therefore "a store whose migration ledger is empty", which is what a
+// project indexed by an older leankg looks like.
 func TestMigrateCLI(t *testing.T) {
 	dir := t.TempDir()
+	seedUnmigratedStore(t, dir)
 
 	stdout, stderr, code := runCLI(t, "migrate", "--project", dir)
 	if code != 0 {

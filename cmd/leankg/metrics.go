@@ -33,6 +33,7 @@ func cmdMetrics(args []string) {
 	parseInterspersed("metrics", fs, args, 0)
 
 	dir := resolveProjectDir(*project)
+	requireStore("metrics", dir)
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
@@ -76,6 +77,7 @@ func cmdDashboard(args []string) {
 	}
 
 	dir := resolveProjectDir(opts.project)
+	requireStore("dashboard", dir)
 	st, err := openStore(context.Background(), dir, "", store.RW)
 	if err != nil {
 		fatalJSON(err)
