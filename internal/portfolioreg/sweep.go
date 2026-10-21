@@ -224,7 +224,7 @@ func CheckStore(ctx context.Context, o Options, dir string) (StoreStatus, error)
 		st.Reason = StoreUnreadable
 		return st, err
 	}
-	st.StorePath = child.Path()
+	st.StorePath = storePath(o.engine(), child, dir)
 	root, ok, kerr := child.KVGet(rootKVNamespace, rootKVKey)
 	_ = child.Close()
 	if kerr != nil {
@@ -241,6 +241,21 @@ func CheckStore(ctx context.Context, o Options, dir string) (StoreStatus, error)
 	}
 	st.Reason = StoreRootMismatch
 	return st, nil
+}
+
+// storePath names the store a verdict was read from, in a form that
+// identifies the PROJECT.
+//
+// SQLite stores are one file per project, so the file path is the
+// identity. Postgres stores are one SCHEMA per project on a shared
+// server, and the backend's own path is the redacted DSN — the same for
+// every project, so it cannot name one. There the project's directory is
+// the identity.
+func storePath(engine string, child store.Backend, dir string) string {
+	if engine == store.EnginePostgres {
+		return dir
+	}
+	return child.Path()
 }
 
 // storeIsShared reports whether a project's store lives OUTSIDE the
