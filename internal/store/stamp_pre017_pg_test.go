@@ -29,8 +29,12 @@ func openPGPre017Store(t *testing.T) *PGStore {
 		_, _ = s.pool.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+s.schema+` CASCADE`)
 		_ = s.Close()
 	})
+	// The ledger is the ENGINE'S OWN: pgmigrate.go creates it with
+	// `applied_at TEXT NOT NULL`, and pgNow (to_char(...)) yields text, so a
+	// TIMESTAMPTZ column would reject the engine's own insert. This fixture
+	// must be the schema a real pre-017 store has, or it proves nothing.
 	if _, err := s.pool.Exec(pgCtx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
+		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
 		t.Fatalf("ledger: %v", err)
 	}
 	for _, m := range pgMigrations {
