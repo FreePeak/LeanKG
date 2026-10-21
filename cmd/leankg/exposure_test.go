@@ -1,8 +1,16 @@
 package main
 
-import "testing"
+import (
+	"testing"
 
-// TestExposedWithoutAuth pins the RS-03 warning rule.
+	"github.com/FreePeak/LeanKG/internal/servebind"
+)
+
+// TestExposedWithoutAuth pins the RS-03 exposure rule: a listener beyond
+// loopback with no token configured serves every caller as Admin.
+//
+// The rule now lives in internal/servebind (the policy every serve
+// listener is judged by); this test keeps the shape the CLI depends on.
 func TestExposedWithoutAuth(t *testing.T) {
 	for _, c := range []struct {
 		addr   string
@@ -17,8 +25,8 @@ func TestExposedWithoutAuth(t *testing.T) {
 		{"192.168.1.5:9699", false, true},
 		{":9699", true, false},
 	} {
-		if got := exposedWithoutAuth(c.addr, c.gateOn); got != c.want {
-			t.Errorf("exposedWithoutAuth(%q, %v) = %v, want %v", c.addr, c.gateOn, got, c.want)
+		if got := servebind.Exposed(c.addr, c.gateOn); got != c.want {
+			t.Errorf("Exposed(%q, %v) = %v, want %v", c.addr, c.gateOn, got, c.want)
 		}
 	}
 	if defaultHTTPAddr != "127.0.0.1:9699" {

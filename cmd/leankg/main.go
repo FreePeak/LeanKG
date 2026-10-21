@@ -2,7 +2,7 @@
 // from one core. Role flags:
 //
 //	leankg serve --stdio                       MCP over stdio (coding tools)
-//	leankg serve --http :9699 --rest :8080     MCP HTTP + REST API
+//	leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080   MCP HTTP + REST API
 //	leankg serve --read-only ...               RO store handle (reader role)
 //	leankg index <dir>                         one-shot index run
 //	leankg doctor                              store diagnostics
@@ -43,6 +43,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/rest"
 	restauto "github.com/FreePeak/LeanKG/internal/rest/auto"
 	"github.com/FreePeak/LeanKG/internal/rpc"
+	"github.com/FreePeak/LeanKG/internal/servebind"
 	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/setupcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -557,8 +558,37 @@ afterSidecars:
 		// --http :9699 explicitly to listen on every interface.
 		addr = defaultHTTPAddr
 	}
+	// Exposure gate (RS-03, enforced): a listener that leaves the loopback
+	// interface is REFUSED unless a token gates its callers. With the gate
+	// off every caller resolves to Admin, so a wildcard bind hands the
+	// project graph, the file reader and the memory write path to every
+	// host that can route to this machine — the measured defect (2026-10-21:
+	// a LAN POST to the REST listener answered {"written":1}). The refusal
+	// names the fix instead of warning and binding anyway.
+	//
+	// The UI listener is deliberately NOT gated here: the dashboard is
+	// public by design (the Render demo serves --read-only --ui :${PORT}),
+	// so it keeps its own warning.
+	gateOn, gateErr := auth.GateEnabled(st)
+	if gateErr != nil {
+		// An unknown gate state fails closed: treat it as "no token", so a
+		// non-loopback bind is refused rather than silently exposed.
+		log.Printf("warning: auth gate state unknown: %v", gateErr)
+		gateOn = false
+	}
+	for _, l := range []struct {
+		kind servebind.Kind
+		addr string
+	}{
+		{servebind.KindMCP, addr},
+		{servebind.KindREST, *restAddr},
+		{servebind.KindRPC, *rpcAddr},
+	} {
+		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
+			log.Fatalf("serve: %v", err)
+		}
+	}
 	if addr != "" {
-		warnIfExposed("MCP", addr, st)
 		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject()))
 		mcpSrv.SetProjectRouter(router)
 		mcpSrv.SetAuthStore(st)
@@ -598,7 +628,6 @@ afterSidecars:
 		// bootstrap (the handlers enforce their own caller/account checks), and
 		// Rust registered them outside the auth middleware for the same reason.
 		// Everything else sits behind the bearer gate.
-		warnIfExposed("REST", *restAddr, st)
 		root := http.NewServeMux()
 		root.Handle("/api/v1/auth/", auth.Routes(st))
 		root.Handle("/", auth.MiddlewareWithStore(st, h))
@@ -662,10 +691,15 @@ afterSidecars:
 		uiMux.Handle("/api/", dash)
 		uiMux.Handle("/", web.Handler())
 		log.Printf("leankg serve (UI) on %s", *uiAddr)
-		if host, _, err := net.SplitHostPort(*uiAddr); err == nil && host != "127.0.0.1" && host != "localhost" && host != "::1" {
-			bound := host
-			if bound == "" {
-				bound = "all interfaces" // `--ui :PORT` — the container/PaaS shape
+		// The UI listener is deliberately NOT gated by the exposure rule: the
+		// dashboard is public by design (the Render demo serves
+		// --read-only --ui :${PORT} to the internet), so it keeps a loud
+		// warning instead of a refusal. Its API (query/read/import) is
+		// unauthenticated either way.
+		if !servebind.IsLoopback(*uiAddr) {
+			bound := "all interfaces" // `--ui :PORT` — the container/PaaS shape
+			if host, _, err := net.SplitHostPort(*uiAddr); err == nil && host != "" {
+				bound = host
 			}
 			log.Printf("warning: dashboard bound to %s — its API (query/file/import) is unauthenticated; bind loopback or front it with a proxy", bound)
 		}
@@ -676,37 +710,6 @@ afterSidecars:
 
 // defaultHTTPAddr is the MCP listener when serve is given no address.
 const defaultHTTPAddr = "127.0.0.1:9699"
-
-// exposedWithoutAuth reports whether addr listens beyond loopback while no
-// token gates its callers.
-func exposedWithoutAuth(addr string, gateOn bool) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
-	if host == "localhost" {
-		return false
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return false
-	}
-	return !gateOn
-}
-
-// warnIfExposed logs the RS-03 warning: an MCP or REST listener on a
-// non-loopback address with no token configured serves every caller as
-// Admin (file reads inside the project, indexing, memory writes).
-func warnIfExposed(kind, addr string, st store.Backend) {
-	gateOn, err := auth.GateEnabled(st)
-	if err != nil {
-		log.Printf("warning: %s auth gate state unknown: %v", kind, err)
-		return
-	}
-	if exposedWithoutAuth(addr, gateOn) {
-		log.Printf("warning: %s listens on %s (beyond loopback) with no auth token configured — every caller is Admin. "+
-			"Bind 127.0.0.1, or set LEANKG_TOKEN_ADMIN / run `leankg auth token create`", kind, addr)
-	}
-}
 
 // maintenanceStoreExists reports whether the project at dir already HAS a
 // store, so the maintenance fleet does not open (and thereby create) one for
