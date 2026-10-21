@@ -15,22 +15,23 @@ import (
 // TestParseDashboardFlagsDecidesTheModeFromTheParsedValues: the mode is
 // decided by what the ONE flag set parsed, not by a scan of argv.
 func TestParseDashboardFlagsDecidesTheModeFromTheParsedValues(t *testing.T) {
-	cases := map[string]bool{
-		"":                                false,
-		"--project /tmp/x":                false,
-		"--addr 127.0.0.1:9701 --no-open": false,
-		"--format json":                   true,
-		"--format=text":                   true,
-		"-format text":                    true,
-		"--since 7d --format json":        true,
+	cases := map[string]dashboardMode{
+		"":                                dashboardModeWeb,
+		"--project /tmp/x":                dashboardModeWeb,
+		"--addr 127.0.0.1:9701 --no-open": dashboardModeWeb,
+		"--format json":                   dashboardModeTables,
+		"--format=text":                   dashboardModeTables,
+		"-format text":                    dashboardModeTables,
+		"--since 7d --format json":        dashboardModeTables,
+		"--addr 127.0.0.1:9701 --no-open --format text": dashboardModeTables,
 	}
 	for in, want := range cases {
 		var args []string
 		if in != "" {
 			args = strings.Fields(in)
 		}
-		if got := parseDashboardFlags(args).formatSet; got != want {
-			t.Errorf("parseDashboardFlags(%q).formatSet = %v, want %v", in, got, want)
+		if got := parseDashboardFlags(args).mode; got != want {
+			t.Errorf("parseDashboardFlags(%q).mode = %v, want %v", in, got, want)
 		}
 	}
 }
@@ -40,8 +41,8 @@ func TestParseDashboardFlagsDecidesTheModeFromTheParsedValues(t *testing.T) {
 // must parse in ONE pass — the web flags and the table flags are one set.
 func TestParseDashboardFlagsReadsTheWebFlagsTheTablesModeAlsoDeclares(t *testing.T) {
 	f := parseDashboardFlags([]string{"--addr", "127.0.0.1:9701", "--no-open", "--format", "text"})
-	if !f.formatSet {
-		t.Error("--format must select the tables mode")
+	if f.mode != dashboardModeTables {
+		t.Errorf("mode = %v, want the tables mode", f.mode)
 	}
 	if f.addr != "127.0.0.1:9701" {
 		t.Errorf("addr = %q, want 127.0.0.1:9701", f.addr)

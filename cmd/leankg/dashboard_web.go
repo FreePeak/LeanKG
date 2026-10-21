@@ -20,6 +20,21 @@ import (
 
 const defaultDashboardAddr = "127.0.0.1:9701"
 
+// dashboardMode is what `leankg dashboard` runs: the usage tables or the web
+// dashboard. It is decided from the PARSED flags — the mode is a property of
+// the values, never of the spelling of the command line.
+type dashboardMode int
+
+const (
+	// dashboardModeWeb serves the dashboard and opens the browser. It is the
+	// default (DS-20): a bare `leankg dashboard` starts the server, so the
+	// web mode is the zero value — an unset mode is never silently the
+	// tables.
+	dashboardModeWeb dashboardMode = iota
+	// dashboardModeTables renders the usage buckets as text or JSON.
+	dashboardModeTables
+)
+
 // dashboardFlags is the ONE flag set of `leankg dashboard`: the usage tables
 // and the web dashboard read the same definitions, so a single invocation
 // can carry both (`leankg dashboard --addr 127.0.0.1:9701 --no-open
@@ -36,9 +51,9 @@ type dashboardFlags struct {
 	project     string
 	since       string
 	format      string
-	// formatSet records that --format was given: the tables are the mode,
-	// the web dashboard is the default (DS-20).
-	formatSet bool
+	// mode is the parsed mode: the tables when --format was given, the web
+	// dashboard otherwise (DS-20).
+	mode dashboardMode
 }
 
 // parseDashboardFlags parses the one `leankg dashboard` flag set. Flags may
@@ -61,9 +76,10 @@ func parseDashboardFlags(args []string) *dashboardFlags {
 	// Visit reports the flags that were actually given, so the mode comes
 	// from the parsed values and not from a scan of argv: --format=text and
 	// --format "" both ask for the tables, no --format asks for the server.
+	f.mode = dashboardModeWeb
 	fs.Visit(func(fl *flag.Flag) {
 		if fl.Name == "format" {
-			f.formatSet = true
+			f.mode = dashboardModeTables
 		}
 	})
 	return f

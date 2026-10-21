@@ -70,7 +70,7 @@ func cmdMetrics(args []string) {
 // --format text` is one valid invocation.
 func cmdDashboard(args []string) {
 	opts := parseDashboardFlags(args)
-	if !opts.formatSet {
+	if opts.mode == dashboardModeWeb {
 		cmdDashboardWeb(opts)
 		return
 	}
