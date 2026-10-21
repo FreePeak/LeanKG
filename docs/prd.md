@@ -598,6 +598,74 @@ Three facts it already had, all discarded. It walked the tree: it could print th
 
 **Loop status: 29 defects found, 29 fixed, 0 open** across twenty-one waves — and the shape of waves 15 through 21 is one sentence applied seven times: *a write must report itself empty and unanchored; a read must be populated; a diagnosis must name its subject.*
 
+### v4.18-test-env-hermeticity — the suite's result must not depend on the operator's shell (2026-10-21)
+
+**Trigger:** the fix wave's acceptance gate — `go test ./...` had to be
+green both with the embed environment CLEARED and with it SET to the values
+an operator's shell plausibly exports. It was green only when cleared. With
+the ambient configuration exported (`LEANKG_EMBED_PROVIDER=local`,
+`LEANKG_EMBED_MODEL=embeddinggemma-2`,
+`LEANKG_EMBED_BASE_URL=http://127.0.0.1:9103/v1`, `LEANKG_EMBED_DIMS=512`)
+four tests failed:
+
+```
+--- FAIL: TestIndexHookAttachesToRunningLocalProvider   cmd/leankg/index_embed_test.go:173
+--- FAIL: TestStandaloneEmbedRunIsSelfContained         cmd/leankg/standalonepath_test.go:83
+--- FAIL: TestServeSurvivesUnusableEmbedProvider        cmd/leankg/wiring_test.go:264
+--- FAIL: TestRunIndexesCodeDocsAndEmbeds               internal/refresh/refresh_test.go:50
+```
+
+**The root cause is that the embed provider is configured ENTIRELY by the
+environment**, and nothing in the test surface said so. Every embed reader
+reads its variable with `os.Getenv` and compares it against `""` — there is
+no `os.LookupEnv` anywhere on the `LEANKG_EMBED_*` names, so an unset
+variable and an empty one are the same thing, and that empty state is the
+neutral baseline. The provider name, the model, the endpoint and the width
+are four separate knobs, and a test that inherited the ambient ones was
+asserting about THAT MACHINE rather than about the code under test. Each
+failure is that mistake, once per knob:
+
+| test | what it inherited | what it asserted |
+|---|---|---|
+| `TestIndexHookAttachesToRunningLocalProvider` | the ambient 768-wide catalogued model | a 4-wide fixture; the model's own widths do not include 4, so the attach was refused |
+| `TestStandaloneEmbedRunIsSelfContained` | the ambient model and width | `st.VectorCoverage("deterministic-384")` — a stamped collection named by something else matches nothing |
+| `TestServeSurvivesUnusableEmbedProvider` | the ambient endpoint | a BROKEN sidecar under test; the server attached to the operator's RUNNING sidecar instead, so the degradation never happened |
+| `TestRunIndexesCodeDocsAndEmbeds` | the ambient model and width | a vector count under the deterministic collection the test pinned |
+
+**The fix has three layers, and the guard is the one that keeps them
+honest.**
+
+- **A shared helper** — `internal/embed/embedtest` names the eleven
+  `LEANKG_EMBED_*` variables (`Vars`), the plausible operator configuration
+  (`HostileEnv`), and the two ways to neutralise it: `Clear(t)` for one test
+  and `UnsetProcess()` for a whole test binary.
+- **A package `TestMain` that starts from an unconfigured environment.**
+  `cmd/leankg` and `internal/refresh` now call `embedtest.UnsetProcess()`
+  before anything else, so the binary — and every CLI child it spawns —
+  starts from the same baseline everywhere, whatever the operator's shell
+  exported. A test that needs a value states it.
+- **Tests that state what they depend on.** Each of the four tests now
+  sets the variables its subject is about (`LEANKG_EMBED_MODEL=""`,
+  `LEANKG_EMBED_DIMS=""`, an explicit `LEANKG_EMBED_BASE_URL=""` for the
+  spawned server), so each is correct on its own and not only under the
+  package's `TestMain`. `internal/refresh`'s `isolateEnv` helper states the
+  WHOLE embed baseline — provider, endpoint, model, width, revision, API key
+  — instead of half of it.
+
+**The guard is a CHILD process, because a guard that runs in the same
+process cannot see the defect.** `embedtest.RunInHostileEnv(t, pattern)`
+re-runs the matching tests in a child whose embed environment IS the
+hostile one, and fails when that child fails. The child is marked so the
+package's own `TestMain` does not wipe the hostile environment before the
+test runs — otherwise the guard would assert nothing. Each package carries
+one: `TestSuiteIsGreenUnderAnExportedEmbedEnv`.
+
+**Test:** `TestSuiteIsGreenUnderAnExportedEmbedEnv` in `internal/embed`,
+`cmd/leankg` and `internal/refresh` — the suite must be green under the
+hostile environment. Verified green with the embed environment CLEARED and
+with it SET to the hostile values. `go build -p=2 ./...`, `go vet ./...` and
+`gofmt` clean.
+
 ### v4.31.0-the-refusal-names-its-store — twenty waves, re-run (2026-10-01)
 
 **Trigger:** wave 20 of the loop (FR-SELF-04, still on PR #449), and deliberately a different KIND of wave: a regression sweep. Every battery from the nineteen previous waves, re-run against the current binary on a scratch project indexed through `LEANKG_DB_PATH`, to confirm that a wave which changes a shared mechanism has not quietly undone an earlier one.

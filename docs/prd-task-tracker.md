@@ -66,6 +66,25 @@ Two defects this block used to carry, both corrected above: it counted **FR-GO-D
 | FR-GO-MEM | #369: full-markdown memory — MEMORY.md/USER.md bounded 2200B error-not-truncate, topics/, Claude-Code file commands + traversal rejection, Hermes substring sugar, FTS5 reindex-on-write, mnemopi banks adapter (wyhash64 port) | 2026-09-10 | **DONE** on feat/go-rewrite — 11 tests incl. exact snapshot-header pin, symlink escape, overflow, ambiguous match, cursor resume, zero-match filter; hindsight HTTP endpoints landed in internal/rest |
 
 
+## v4.18-test-env-hermeticity — the suite's result must not depend on the operator's shell (2026-10-21, branch `fix/test-env-hermeticity`)
+
+**Why:** the embed provider is configured entirely by the `LEANKG_EMBED_*`
+environment, and every reader treats an empty value as "not configured" — so
+an unset variable IS the neutral baseline. A test that inherited the
+operator's exported values was asserting about that machine, not about the
+code: four tests failed under the plausible ambient configuration and passed
+with it cleared.
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-ENV-01 | A shared helper names the embed baseline and how to neutralise it | **DONE** | `internal/embed/embedtest/embedtest.go` — `Vars` (the eleven `LEANKG_EMBED_*` names), `HostileEnv` (the plausible operator configuration), `Clear(t)` (one test), `UnsetProcess()` (one test binary) |
+| FR-ENV-02 | The `cmd/leankg` test binary starts from an unconfigured embed environment | **DONE** | `cmd/leankg/clihelpers_test.go:28` — `embedtest.UnsetProcess()` is the first statement of `TestMain`, so the binary and every CLI child it spawns start from the same baseline whatever the shell exported |
+| FR-ENV-03 | The `internal/refresh` test binary starts from an unconfigured embed environment | **DONE** | `internal/refresh/embedenv_test.go:15` — a new `TestMain` calls `embedtest.UnsetProcess()` then `os.Exit(m.Run())` (the package had no `TestMain` before) |
+| FR-ENV-04 | `internal/refresh`'s `isolateEnv` states the WHOLE embed baseline, not half of it | **DONE** | `internal/refresh/refresh_test.go:35` — it now sets `LEANKG_EMBED_PROVIDER`, `_BASE_URL`, `_MODEL`, `_DIMS`, `_REVISION` and `_API_KEY`; before, the ambient model and width won and the stamped collection was not the one the test asserted about (`refresh_test.go:117`) |
+| FR-ENV-05 | The three `cmd/leankg` tests state the variables their subject depends on | **DONE** | `cmd/leankg/index_embed_test.go:182` (`LEANKG_EMBED_MODEL=""` — the 4-wide fixture), `cmd/leankg/standalonepath_test.go:91-92` (`LEANKG_EMBED_MODEL=""`, `LEANKG_EMBED_DIMS=""` — the deterministic collection), `cmd/leankg/wiring_test.go:305-312` (the spawned `serve` child gets `LEANKG_EMBED_BASE_URL=""` and `LEANKG_EMBED_MODEL=""`, so it faces the broken sidecar under test and not the operator's running one) |
+| FR-ENV-06 | A guard fails the build when the suite's result depends on the environment | **DONE** | `embedtest.RunInHostileEnv` re-runs the matching tests in a CHILD process whose embed environment IS `HostileEnv`; the child is marked so the package's `TestMain` does not wipe the hostile environment before the test runs (otherwise the guard asserts nothing). Guards: `internal/embed/envhermetic_test.go:18`, `cmd/leankg/embedenv_test.go:25`, `internal/refresh/embedenv_test.go:33` — each named `TestSuiteIsGreenUnderAnExportedEmbedEnv` |
+| FR-ENV-07 | The suite is green both with the embed environment cleared and with it set to the hostile values | **DONE** | `go test ./internal/embed/ ./internal/refresh/ ./cmd/leankg/ -count=1` green under `LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_MODEL=embeddinggemma-2 LEANKG_EMBED_BASE_URL=http://127.0.0.1:9103/v1 LEANKG_EMBED_DIMS=512` AND under `env -u` for all four. `go build -p=2 ./...`, `go vet ./...` and `gofmt -l cmd/leankg internal/embed internal/refresh` clean |
+
 ## v4.17 — scheduled reclaim: the store cleans itself up (2026-10-20, branch `feat/v4.17-scheduled-reclaim`)
 
 | ID | Title | Status | Evidence |

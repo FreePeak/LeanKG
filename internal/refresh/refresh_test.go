@@ -26,10 +26,20 @@ func mustWrite(t *testing.T, path, content string) {
 // isolateEnv pins the embedding provider to the offline deterministic
 // implementation and the engine to sqlite, so no sidecar spawn and no ambient
 // Postgres config leaks into the run.
+//
+// It states the WHOLE embed baseline, not half of it: the provider name is
+// only one of the knobs, and the model, the width, the revision and the API
+// key decide what the stamped collection IS. An operator's exported
+// LEANKG_EMBED_MODEL would otherwise rename the collection this test writes,
+// and the vector count it asserts would match nothing.
 func isolateEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
 	t.Setenv("LEANKG_EMBED_BASE_URL", "")
+	t.Setenv("LEANKG_EMBED_MODEL", "")
+	t.Setenv("LEANKG_EMBED_DIMS", "")
+	t.Setenv("LEANKG_EMBED_REVISION", "")
+	t.Setenv("LEANKG_EMBED_API_KEY", "")
 	t.Setenv("LEANKG_DB_ENGINE", "")
 	t.Setenv("LEANKG_PG_URL", "")
 }

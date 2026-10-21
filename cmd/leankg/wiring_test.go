@@ -302,7 +302,14 @@ func TestServeSurvivesUnusableEmbedProvider(t *testing.T) {
 			addr := l.Addr().String()
 			_ = l.Close()
 			cmd := exec.Command(bin, "serve", "--http", addr, "--project", proj, "--embed-provider", "local")
-			cmd.Env = append(os.Environ(), env...)
+			// The server must face the sidecar under test, not the operator's:
+			// an inherited LEANKG_EMBED_BASE_URL would attach it to a running
+			// sidecar and the failure under test would never happen. An empty
+			// value and an absent value are equivalent for every embed reader.
+			cmd.Env = append(append(os.Environ(),
+				"LEANKG_EMBED_BASE_URL=",
+				"LEANKG_EMBED_MODEL=",
+			), env...)
 			var logs strings.Builder
 			cmd.Stdout, cmd.Stderr = &logs, &logs
 			if err := cmd.Start(); err != nil {

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/FreePeak/LeanKG/internal/embed/embedtest"
 	"github.com/FreePeak/LeanKG/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -20,6 +21,11 @@ import (
 var cliBin string
 
 func TestMain(m *testing.M) {
+	// Hermeticity: the embed provider is configured entirely by the
+	// LEANKG_EMBED_* environment, so the test binary starts from an
+	// UNCONFIGURED embed environment whatever the operator's shell exported.
+	// A test that needs one states it.
+	embedtest.UnsetProcess()
 	flag.Parse()
 	// Hermeticity: `leankg index` stamps the fleet registry (#376), whose
 	// default location is $HOME/.leankg/portfolio.db. A test suite must never
