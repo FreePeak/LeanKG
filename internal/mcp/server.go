@@ -144,7 +144,7 @@ func (s *Server) engineFor(ctx context.Context, req *mcp.CallToolRequest) (*core
 // version is reported as the MCP serverInfo version. It must match the release
 // stamp in cmd/leankg/VERSION — release-please bumps both via their
 // x-release-please-version markers; version_test.go fails on drift.
-const version = "0.35.0" // x-release-please-version
+const version = "0.35.1" // x-release-please-version
 
 // serverInstructions is returned during MCP initialization. MCP clients may
 // add this to the model's system prompt; the shorter toolGuidance below keeps
