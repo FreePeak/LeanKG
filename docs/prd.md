@@ -214,6 +214,69 @@ The codec's detail is kept in parentheses so nothing is lost; the actionable sen
 
 **Loop status: 32 defects found, 32 fixed, 0 open** across twenty-four waves — and the wave's other finding is a decision the loop is NOT taking silently: **the second wire's `args` cannot carry typed values, and retyping the descriptor needs a `.proto` source this repository does not have.** That is recorded here as an open schema question rather than patched around, because a workaround that hides it would be the twenty-fifth instance of the class this loop exists to remove.
 
+### v4.18-status-health-signal — healthy is derived, not asserted (2026-10-21)
+
+**Trigger:** the fix wave's severity ranking put "status reports FALSE
+HEALTH" fourth. The measurement is one line of code — `internal/core/core.go`
+assigned `"healthy": true` as a CONSTANT, and `embeddingsState()` swallowed
+the one read whose failure could still degrade a delivered payload:
+
+```go
+"healthy": true,                        // the only assignment in non-test code
+...
+stamps, err := e.st.Stamps()
+if err != nil { return []map[string]any{} }   // the error is SWALLOWED
+```
+
+So a store whose `emb_stamp` table could not be listed published
+`"embeddings": []` — an empty list that reads as "no embeddings configured" —
+next to `healthy: true`, while the store actually held thousands of vectors.
+The operator was told the store had no embeddings; it had thousands, and the
+failure was invisible in the payload entirely.
+
+**The rule, now written down:** `healthy` is true iff every read that FEEDS A
+PUBLISHED FIELD succeeded.
+
+- The inventory counts (elements / relationships / files / by-type /
+  watermark) already fail the whole call when they cannot be read, so they
+  never reach a payload — a delivered payload means those succeeded.
+- The embeddings layer was the one read left that could still degrade a
+  delivered payload. It now decides `healthy`: a store whose stamps listing
+  fails is NOT healthy.
+- Reads whose failure simply OMITS their field (`space`, `last_embed_run`)
+  publish no substitute value, so they do not falsify the payload either.
+
+**The failure is named, not swallowed.** A failed stamps listing returns the
+error instead of an empty list; the payload carries `embeddings_error` with
+the cause, and the `embeddings` list is published as **null** (unknown), not
+as an empty array. That is what makes the two cases distinguishable: an
+empty ARRAY means "the read succeeded and there are no embeddings
+configured", a null list plus `embeddings_error` means "the read failed".
+A per-model vector-count failure is reported the same way — the models that
+could be counted are still published, the failed one is named in the error.
+
+**Provider reachability stays a separate fact.** `query_embedder.reachable`
+is its own field with its own error: an unreachable query provider degrades
+the L3 rung, it does not make the store unreadable, so it never touches
+`healthy`. A healthy store with a dead provider is healthy, and a degraded
+L3 is reported where the agent looks for it.
+
+**A healthy payload is byte-for-byte what it was:** the same fields, the same
+`healthy: true`, no `embeddings_error` key. Only the failure case adds a
+field, so existing consumers and the golden payload are untouched.
+
+**Tests:** `TestStatusUnhealthyWhenEmbeddingsReadFails` (a store whose
+stamps read fails reports `healthy: false`, names the cause in
+`embeddings_error`, publishes no list, and still delivers the rest of the
+payload — verified to FAIL on the pre-fix code), `TestStatusHealthyStoreReportsHealthy`
+and `TestStatusHealthyStoreWithoutEmbeddings` (a readable store is healthy
+either way, and the no-embeddings case publishes an EMPTY list with no
+error — the other half of the distinction), and
+`TestStatusProviderUnreachableIsNotUnhealthy` (a dead query provider does not
+make the store unhealthy). `go build -p=2 ./...` and `go vet ./...` clean;
+`go test ./internal/core/ ./internal/mcp/ -count=1` green with the embed
+env cleared.
+
 ### v4.34.0-the-advertised-contract — a call the agent cannot form is not published (2026-10-01)
 
 **Trigger:** wave 23 of the loop (FR-SELF-04, still on PR #449), enumerating the last axis the previous twenty-two waves had not touched: **the MCP wire itself** — the schema an agent reads to decide what to call, and whether every advertised call can actually be formed from it.
