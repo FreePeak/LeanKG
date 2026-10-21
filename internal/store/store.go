@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	_ "modernc.org/sqlite"
 )
@@ -49,10 +50,18 @@ func Open(path string, mode Mode) (*Store, error) {
 	}
 
 	dsn := "file:" + path + "?_pragma=busy_timeout(10000)"
+	newFile := false
 	if mode == RO {
 		dsn += "&_pragma=query_only(ON)"
 	} else {
-		dsn += "&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"
+		// An EXISTING store keeps its page size: SQLite adopts a new one
+		// only while a VACUUM rewrites the file, and that rewrite is the
+		// operator's call (UpgradePageSize), never this package's.
+		newFile = newStoreFile(path)
+		if !newFile {
+			dsn += "&_pragma=journal_mode(WAL)"
+		}
+		dsn += "&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -61,6 +70,26 @@ func Open(path string, mode Mode) (*Store, error) {
 	// SQLite handles are cheap; serialize writes through one conn to keep
 	// batch transactions deadlock-free under modernc's driver.
 	db.SetMaxOpenConns(1)
+	if newFile {
+		// A NEW store is created with the larger page size, so a vector row
+		// no longer owns a whole page (see DefaultPageSize for the
+		// arithmetic and the measured saving).
+		//
+		// The order is the whole trick: SQLite keeps the page size in the
+		// file header, and switching the database into WAL writes that
+		// header — so the page size has to be set BEFORE the journal mode,
+		// which is why a NEW store does not take journal_mode from the DSN
+		// (the driver's pragmas run at connect, before this code can set
+		// the page size on an empty file).
+		if _, err := db.Exec("PRAGMA page_size = " + strconv.Itoa(DefaultPageSize)); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("store: set page size: %w", err)
+		}
+		if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("store: enable WAL: %w", err)
+		}
+	}
 	s := &Store{db: db, mode: mode, path: path}
 	return s, nil
 }
@@ -70,6 +99,15 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // Path returns the store file path.
 func (s *Store) Path() string { return s.path }
+
+// newStoreFile reports whether path is a database file that does not exist
+// yet (or is an empty placeholder). SQLite takes the page size from the first
+// write to the file, so only such a file can be created with a chosen page
+// size; an existing database keeps the one it was created with.
+func newStoreFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err != nil || fi.Size() == 0
+}
 
 // Mode reports how the store was opened.
 func (s *Store) Mode() Mode { return s.mode }
