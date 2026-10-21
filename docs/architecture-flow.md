@@ -14,9 +14,10 @@
 │       │                                                          │  │
 │       ├─── com.freepeak.leankg-serve ──────────────────────────┐ │  │
 │       │    leankg-serve-wrapper.sh                              │ │  │
-│       │      ├── scan ~/work/ → 279 repos                      │ │  │
-│       │      ├── export LEANKG_PROJECT_DIRS=<279 paths>        │ │  │
-│       │      └── exec leankg serve --http :9699 --rest :9700   │ │  │
+│       │      ├── scan ~/work/harvey/freepeak → 42 repos        │ │  │
+│       │      ├── export LEANKG_PROJECT_DIRS=<42 paths>         │ │  │
+│       │      └── exec leankg serve --http 127.0.0.1:9699       │ │  │
+│       │          --rest 127.0.0.1:9700 --memory                │ │  │
 │       │    [MCP + REST API + query-time embedding]              │ │  │
 │       │                                                         │ │  │
 │       └─── com.freepeak.leankg-writer ───────────────────────┐ │ │  │
@@ -46,12 +47,12 @@
   │
   ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 279 Project Stores (lazy-opened on first query)                      │
+│ 42 Project Stores (lazy-opened on first query)                       │
 │                                                                       │
 │  ~/work/harvey/freepeak/leankg/.leankg/leankg.db       ← default    │
 │  ~/work/harvey/freepeak/agent-platform/.leankg/leankg.db            │
-│  ~/work/be/backend/.leankg/leankg.db                               │
-│  ... (279 total)                                                    │
+│  ~/work/harvey/freepeak/qa-agent/.leankg/leankg.db                  │
+│  ... (42 total)                                                     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -439,16 +440,16 @@
         │     ▼
         │    leankg-serve-wrapper.sh
         │     │
-        │     ├── scan ~/work/ → 279 git repos
-        │     ├── export LEANKG_PROJECT_DIRS=<279 paths>
+        │     ├── scan ~/work/harvey/freepeak → 42 git repos
+        │     ├── export LEANKG_PROJECT_DIRS=<42 paths>
         │     │
         │     ▼
-        │    leankg serve --http :9699 --rest :9700 \
+        │    leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:9700 \
         │                --memory --embed-provider local
         │     │
         │     ├── Attach to :9103 (LEANKG_EMBED_BASE_URL)
         │     ├── Open default project (leankg repo)
-        │     ├── Register 279 projects in router
+        │     ├── Register 42 projects in router
         │     ├── Start REST listener on :9700
         │     ├── Start MCP listener on :9699
         │     │
@@ -517,14 +518,15 @@
 ```
     ~/Library/LaunchAgents/
     ├── com.freepeak.homemac-embed-tunnel.plist  # ssh -L :9103
-    ├── com.freepeak.leankg-serve.plist     # leankg serve :9699/:9700
+    ├── com.freepeak.leankg-serve.plist     # leankg serve 127.0.0.1:9699/9700
     └── com.freepeak.leankg-writer.plist    # leankg writer (file watcher)
 
     ~/.local/bin/
     ├── leankg                              # main binary
     ├── leankg-embed                        # embed pipeline binary
-    ├── leankg-scan-repos                   # scan ~/work/ for repos
-    └── leankg-serve-wrapper                # wrapper: scan + serve
+    ├── leankg-scan-repos                   # scan ~/work/harvey/freepeak for repos
+    └── leankg-serve-wrapper                # wrapper: scan (scoped) + serve
+                                          # (installed from scripts/ in this repo)
 
     ~/.dsh/
     ├── AGENTS.md                           # auto-import instructions

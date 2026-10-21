@@ -253,6 +253,19 @@ The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01.
 *Last updated: 2026-09-30 (v4.13.3 agent-ux-protocol: memory protocol + empty-hit guidance + status.project_dir)*
 
 
+## v4.18-scan-root-scope — the served fleet must be the projects LeanKG owns (2026-10-21, branch `fix/scan-root-narrow`)
+
+| item | status | evidence |
+|---|---|---|
+| The live scope was wrong | **MEASURED** | `~/.local/bin/leankg-serve-wrapper` computed `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work}"` and the plist set no `LEANKG_SCAN_ROOT` → 287 repos under `~/work`, **231 of them `~/work/be`** (out of scope since 2026-10-13; `~/work/be` is served by be-kg) |
+| The scan root is versioned in the repo | **DONE** | `scripts/leankg-serve-wrapper.sh` + `scripts/leankg-scan-repos.sh` — default `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work/harvey/freepeak}"` (42 repos), `LEANKG_SCAN_ROOT` overrides it; the wrapper `exec`s `leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:9700 --memory --embed-provider local --hindsight-compat` |
+| The rule is checked, not asserted | **DONE** | `scripts/test-scan-root.sh` (`make scan-root-check`): fake `HOME`, one repo inside the root and one outside, stub `leankg` binary → `SCAN-ROOT OK`. Widening the default back to `$HOME/work` in a copy makes it **fail** on the out-of-scope repo |
+| The docs taught the old scope | **DONE** | `docs/architecture-flow.md` (fleet diagram, runbook, file listing), `docs/mcp-multi-project-scoping.md` (fact row + scope note; the 286 counts kept as the measurement of the defect), the PRD's wildcard-bind examples, and the shared-server hint `scripts/install-go.sh` prints |
+| The live files | **OPEN (operator)** | `~/.local/bin/leankg-serve-wrapper` and the plist's `LEANKG_SCAN_ROOT` are installed by the operator; this PR ships the repo-side definition only |
+| `AGENTS.md` CLI table | **REPORTED** | still shows the wildcard `--http :9699 --rest :8080` and the wrapper's `--rest :9700`; owned by the loopback-bind change, not edited here |
+
+**Why:** every repo in `LEANKG_PROJECT_DIRS` is a project the server will answer for, so the served fleet is an answer surface — its boundary has to be a reviewed, versioned default with a test, not a shell default that lives outside the repository.
+
 ## Repo hygiene (non-PRD)
 
 | Item | Detail |
