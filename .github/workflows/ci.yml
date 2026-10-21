@@ -3,13 +3,25 @@ name: CI
 on:
   push:
     branches: [main]
-    # Release Please merges only bump version metadata; the release PR
-    # already ran CI. Skipping avoids a duplicate ~5m suite on every release.
-    paths-ignore:
-      - 'CHANGELOG.md'
-      - '.release-please-manifest.json'
-      - 'cmd/leankg/VERSION'
-      - 'internal/mcp/server.go'
+    # NO paths-ignore here — and there must never be one again.
+    #
+    # Measured 2026-10-20: the filter that stood here listed exactly the four
+    # files a release-please merge touches, so the v0.35.0 release commit
+    # (24e8dbb) was path-filtered OUT of CI on its way to main:
+    # `actions/runs?head_sha=24e8dbb` returns the Release run and NO CI run, so
+    # the release commit shipped untested. The filter's own comment ("the
+    # release PR already ran CI") was true of the PR and false of the merge
+    # commit — a different commit, the one main actually carries.
+    #
+    # The release metadata is exactly what most needs the suite: `cmd/leankg/
+    # VERSION` is the version source of truth and `internal/mcp/server.go`
+    # carries the release-please version stamp the binary reports. A filter
+    # that skips those skips the files most likely to break a release.
+    #
+    # The duplicate ~5m suite the filter used to avoid is a duplicate of the
+    # SUITE, not of the commit: the PR run tests the PR head, this run tests
+    # the merge commit. The concurrency group below drops a superseded push
+    # instead of queueing it, so the extra run costs one slot, not a backlog.
   pull_request:
     branches: [main]
 

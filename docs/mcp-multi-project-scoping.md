@@ -20,7 +20,7 @@ refuses — correctly — and the client has nothing to send.
 
 | Fact | Evidence |
 |---|---|
-| The self-host serves **286 projects** from one process | `LEANKG_PROJECT_DIRS` is built by `leankg-scan-repos $HOME/work` (maxdepth 4, every git repo) and exported by `~/.local/bin/leankg-serve-wrapper` |
+| The self-host serves **42 projects** from one process | `LEANKG_PROJECT_DIRS` is built by `leankg-scan-repos` (maxdepth 4, every git repo under the scan root) and exported by `~/.local/bin/leankg-serve-wrapper`. The scan root is `$HOME/work/harvey/freepeak` (`LEANKG_SCAN_ROOT` overrides it) |
 | The MCP surface refuses a project-less call when several projects are registered | `internal/mcp/server.go:109` (`engineFor`) |
 | The refusal is deliberate, and the reason is measured | `internal/mcp/server.go:119-124` — a term absent from the served project still returned 10 hits from it |
 | A `project` argument exists and works | tool schema property `project`; `internal/projects/projects.go:169` (`resolve`) accepts a directory path, a project name, or a path inside one |
@@ -28,6 +28,17 @@ refuses — correctly — and the client has nothing to send.
 | The failing client is xdev | `~/.xdev/agent/mcp.yml` registers `leankg` at `http://localhost:9699/mcp` — the projectless URL |
 | xdev's MCP client cannot add a project | `xdev/internal/mcpclient/mcp.go:30` (`ServerConfig`) has no field that can carry one; `mcp.go:324` (`remoteTool.Execute`) forwards the agent's arguments verbatim |
 | The Go engine has **no** project auto-resolution | `grep -rn "roots/list\|ListRoots" internal/ cmd/` → no implementation; only comments (`cmd/leankg/connect.go:104`) that assume it exists |
+
+**The 286 below are the pre-2026-10-21 fleet.** The scan root was `$HOME/work`,
+so 231 of the repos it found (287 measured on 2026-10-21) were `~/work/be`
+company code that was never in scope: LeanKG runs only under
+`~/work/harvey/freepeak`, and `~/work/be` is served by be-kg. The scan root is
+now `$HOME/work/harvey/freepeak` — 42 repos — and the counts in this document
+are kept as the measurement of the defect. The scope is now versioned in this
+repository: `scripts/leankg-serve-wrapper.sh` and
+`scripts/leankg-scan-repos.sh` (default `$HOME/work/harvey/freepeak`,
+overridable with `LEANKG_SCAN_ROOT`), with the rule pinned by
+`scripts/test-scan-root.sh`.
 
 ---
 
@@ -274,7 +285,7 @@ of silently creating a second server.
 duplicate was re-created on purpose to measure what happens now:
 
 ```text
-$ leankg serve --http 127.0.0.1:9699 --rest :9700 …     # the autoStart command
+$ leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:9700 …  # the autoStart command
   leankg: http 127.0.0.1:9699: listen tcp 127.0.0.1:9699: bind: address already in use
 $ lsof -nP -iTCP:9699 -sTCP:LISTEN
   leankg 59329 … TCP 127.0.0.1:9699 (LISTEN)     ← the supervisor, and only it

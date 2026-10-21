@@ -183,6 +183,85 @@ produced, and the parts of it that line did not carry (the store the refusal
 searched, the memory write target, the REST list shapes, the advertised
 contract).
 
+### v4.18-stamp-pre017 — the L3 rung names the read error instead of a collection that was never missing (2026-10-21)
+
+**The defect, measured.** The L3 rung degraded on a store that had never
+run migration 017 (`embed-stamp-text-cap`), and it named a cause that was
+false. `internal/store/vectors.go` read the stamp with one unconditional
+statement:
+
+```sql
+SELECT model_id, revision, dimensions, distance, provider,
+	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, ''),
+	COALESCE(text_cap, 0)
+	FROM emb_stamp
+```
+
+`text_cap` came with migration 017. On a store that has not run it, the
+column does not exist, and the whole read dies with
+`OperationalError: no such column: text_cap` — the `COALESCE` protects
+against a NULL *value*, not against a missing *column*.
+
+Then `internal/core/core.go` made it worse:
+
+```go
+stamp, err := e.st.Stamp(modelID)
+if err != nil || stamp == nil {
+	return degrade(fmt.Sprintf("no vector collection for model %s; degraded from L3", modelID))
+}
+```
+
+The read error was swallowed into the missing-collection branch, so the
+operator was told **"no vector collection"** about a store that holds
+**2314 vectors**. The advice that follows a missing collection is a
+rebuild; a rebuild cannot fix a column that the reader cannot name, so the
+operator was sent to do work that could not have helped, against a cause
+that was not the cause.
+
+**What is fixed.** The stamp read and write now follow the columns the
+store's schema ACTUALLY has: the optional columns are probed once per call
+(`pragma_table_info('emb_stamp')` on sqlite, `pg_attribute` on PostgreSQL),
+and an optional column the schema does not have is projected as its
+documented default — `text_cap` 0 = "cap never recorded", `chunker_version`
+0 = "unversioned", empty prefixes. The row shape, and the scan behind it,
+never change with the schema version, so a pre-017 store reads and writes
+its stamps. The PostgreSQL twin gets the same treatment (PG 16 is the last
+version before the cap column; sqlite has no 016, so its pre-017 schema is
+015).
+
+The degrade reason now separates the two failures the old line conflated:
+
+- a stamp that could not be READ →
+  `vector collection stamp for model <id> could not be read (<error>); degraded from L3`
+- a collection that genuinely does not exist → unchanged:
+  `no vector collection for model <id>; degraded from L3`
+
+The read error is surfaced verbatim, so the operator can see the column the
+reader could not find. A healthy L3 says exactly what it said before.
+
+**Tests.** `TestStampReadsPre017Store` and
+`TestWriteStampOnPre017Store` (sqlite) and `TestPGStampReadsPre017Store` /
+`TestPGStampAfterMigratingPre017Store` (PostgreSQL, gated on
+`LEANKG_TEST_PG_URL`) build a REAL pre-017 store — the engine's own
+migration DDL, applied in order, up to version 015 (sqlite) / 016 (PG),
+with 017 NOT applied — and assert the stamp reads back with `text_cap` 0
+and the identity intact. `TestStampAfterMigratingPre017Store` pins that
+the migration still turns the store into a normal one: the legacy row reads
+as "cap never recorded" and a stamp written afterwards records its cap.
+
+`TestL3DegradeReasonNamesUnreadableStamp` and
+`TestL3DegradeReasonStillSaysNoVectorCollection` (internal/core) pin the
+two reasons apart: the unreadable stamp names the read error and does NOT
+claim a missing collection; the missing collection still says "no vector
+collection".
+
+Verified: `go build -p=2 ./...`, `go vet ./...`, `go test ./internal/store/
+./internal/core/ -count=1` green (embed env cleared). Each new test was
+checked to FAIL on `origin/main` — the store tests with the defect's own
+`no such column: text_cap`, the core test with the false reason
+`"no vector collection for model deterministic-4; degraded from L3"` — and
+to PASS on this branch.
+
 ### v4.35.0-the-second-wire-cannot-say-what-it-refused — ConnectRPC (2026-10-01)
 
 **Trigger:** wave 24 of the loop (FR-SELF-04, still on PR #449), the axis after wave 23: **the other transport.** ConnectRPC serves the same engine over a second wire with its own generated descriptor, and nothing in the previous twenty-three waves had driven it.
@@ -213,6 +292,69 @@ The codec's detail is kept in parentheses so nothing is lost; the actionable sen
 **Tests:** `TestTheSecondWireRejectsTheSameShapeTheFirstDoes` (the top-level `limit` works on both wires; the `args` form MCP silently overrides is REJECTED here, and the answer must lead with the wire's limitation) and `TestNonStringArgsAreNamedOnRefusal` (a number and an array each get a refusal that shows the value and names a surface that accepts it). Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
 
 **Loop status: 32 defects found, 32 fixed, 0 open** across twenty-four waves — and the wave's other finding is a decision the loop is NOT taking silently: **the second wire's `args` cannot carry typed values, and retyping the descriptor needs a `.proto` source this repository does not have.** That is recorded here as an open schema question rather than patched around, because a workaround that hides it would be the twenty-fifth instance of the class this loop exists to remove.
+
+### v4.18-status-health-signal — healthy is derived, not asserted (2026-10-21)
+
+**Trigger:** the fix wave's severity ranking put "status reports FALSE
+HEALTH" fourth. The measurement is one line of code — `internal/core/core.go`
+assigned `"healthy": true` as a CONSTANT, and `embeddingsState()` swallowed
+the one read whose failure could still degrade a delivered payload:
+
+```go
+"healthy": true,                        // the only assignment in non-test code
+...
+stamps, err := e.st.Stamps()
+if err != nil { return []map[string]any{} }   // the error is SWALLOWED
+```
+
+So a store whose `emb_stamp` table could not be listed published
+`"embeddings": []` — an empty list that reads as "no embeddings configured" —
+next to `healthy: true`, while the store actually held thousands of vectors.
+The operator was told the store had no embeddings; it had thousands, and the
+failure was invisible in the payload entirely.
+
+**The rule, now written down:** `healthy` is true iff every read that FEEDS A
+PUBLISHED FIELD succeeded.
+
+- The inventory counts (elements / relationships / files / by-type /
+  watermark) already fail the whole call when they cannot be read, so they
+  never reach a payload — a delivered payload means those succeeded.
+- The embeddings layer was the one read left that could still degrade a
+  delivered payload. It now decides `healthy`: a store whose stamps listing
+  fails is NOT healthy.
+- Reads whose failure simply OMITS their field (`space`, `last_embed_run`)
+  publish no substitute value, so they do not falsify the payload either.
+
+**The failure is named, not swallowed.** A failed stamps listing returns the
+error instead of an empty list; the payload carries `embeddings_error` with
+the cause, and the `embeddings` list is published as **null** (unknown), not
+as an empty array. That is what makes the two cases distinguishable: an
+empty ARRAY means "the read succeeded and there are no embeddings
+configured", a null list plus `embeddings_error` means "the read failed".
+A per-model vector-count failure is reported the same way — the models that
+could be counted are still published, the failed one is named in the error.
+
+**Provider reachability stays a separate fact.** `query_embedder.reachable`
+is its own field with its own error: an unreachable query provider degrades
+the L3 rung, it does not make the store unreadable, so it never touches
+`healthy`. A healthy store with a dead provider is healthy, and a degraded
+L3 is reported where the agent looks for it.
+
+**A healthy payload is byte-for-byte what it was:** the same fields, the same
+`healthy: true`, no `embeddings_error` key. Only the failure case adds a
+field, so existing consumers and the golden payload are untouched.
+
+**Tests:** `TestStatusUnhealthyWhenEmbeddingsReadFails` (a store whose
+stamps read fails reports `healthy: false`, names the cause in
+`embeddings_error`, publishes no list, and still delivers the rest of the
+payload — verified to FAIL on the pre-fix code), `TestStatusHealthyStoreReportsHealthy`
+and `TestStatusHealthyStoreWithoutEmbeddings` (a readable store is healthy
+either way, and the no-embeddings case publishes an EMPTY list with no
+error — the other half of the distinction), and
+`TestStatusProviderUnreachableIsNotUnhealthy` (a dead query provider does not
+make the store unhealthy). `go build -p=2 ./...` and `go vet ./...` clean;
+`go test ./internal/core/ ./internal/mcp/ -count=1` green with the embed
+env cleared.
 
 ### v4.34.0-the-advertised-contract — a call the agent cannot form is not published (2026-10-01)
 
@@ -425,6 +567,23 @@ the index has, so run `leankg index .` if this project is stale, or `leankg quer
 
 **Loop status: 28 defects found, 28 fixed, 0 open** across twenty waves — and no wave since wave 13 has found a defect the previous nineteen had already fixed, which is the first thing this sweep set out to test and the answer it produced.
 
+### v4.18-scan-root-scope — the served fleet must be the projects LeanKG owns (2026-10-21)
+
+**Trigger:** the self-host scope rule (2026-10-13) says LeanKG runs only under `~/work/harvey/freepeak`, and `~/work/be` is served by be-kg. The served fleet said otherwise. `~/.local/bin/leankg-serve-wrapper` computed `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work}"` and the launchd plist set no `LEANKG_SCAN_ROOT`, so the wrapper swept **every** git repo under `~/work`. Measured 2026-10-21: **287 repos, 231 of them `~/work/be`** company code that was never in scope. That is why the live server answered for projects nobody put it in charge of — and why a project-less call was refused at all: the multi-project refusal fires on fleet size, and the fleet was mostly out-of-scope code.
+
+**The definition was not in the repository.** The scan root lived in two files outside it (`~/.local/bin/leankg-serve-wrapper`, `~/.local/bin/leankg-scan-repos`) plus the launchd plist, so it could not be reviewed, diffed or tested — only re-measured on the live machine, and the wrong default survived every re-measure because nobody could see it in a diff.
+
+**The fix — the scope is versioned, and it is checked:**
+
+- **`scripts/leankg-serve-wrapper.sh`** — the wrapper, drop-in installable as `~/.local/bin/leankg-serve-wrapper`. Default `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work/harvey/freepeak}"`; `LEANKG_SCAN_ROOT` overrides it. The scan is the same `find … -maxdepth 4 -name .git -type d`; the serve invocation is the same, with **loopback** binds: `--http 127.0.0.1:9699 --rest 127.0.0.1:9700 --memory --embed-provider local --hindsight-compat`.
+- **`scripts/leankg-scan-repos.sh`** — the standalone scanner, same default root, same output format.
+- **`scripts/test-scan-root.sh`** (`make scan-root-check`) — builds a fake `HOME` holding one repo inside the root and one outside it, runs the real scripts against it with a stub `leankg` binary (no server is started, nothing outside the temp dir is touched), and asserts: the in-scope repo **is** registered, the out-of-scope `~/work/be` repo is **not**, the two scripts agree, the binds are loopback, and `LEANKG_SCAN_ROOT` still widens the scope on purpose. It fails when the default is widened back to `$HOME/work` — verified by widening the default in a copy of the scripts, where the test fails on the out-of-scope repo.
+- **The docs that taught the old scope now teach the new one:** `docs/architecture-flow.md` (the fleet diagram, the runbook, the file listing), `docs/mcp-multi-project-scoping.md` (the fact row; the 286 counts stay as the measurement of the defect), the wildcard-bind examples in this PRD, and the shared-server hint `scripts/install-go.sh` prints.
+
+**Verified:** `bash scripts/test-scan-root.sh` → `SCAN-ROOT OK`; `sh -n` clean on all three scripts; `go build -p=2 ./...` clean; `go vet ./...` clean; `go test ./cmd/leankg/ -count=1` green with the embed env cleared.
+
+**Not in this change:** the live `~/.local/bin` copies and the launchd plist are the operator's to install (the wrapper ships in the repo; the plist sets `LEANKG_SCAN_ROOT` explicitly). `AGENTS.md`'s CLI table still shows the wildcard `--http :9699 --rest :8080` form and the wrapper's old bind — that file is owned by the loopback-bind change and is reported here, not edited.
+
 ### v4.30.0-the-marker-names-what-it-cut — a report you cannot act on is not a mechanism (2026-10-01)
 
 **Trigger:** wave 19 of the loop (FR-SELF-04, still on PR #449), finishing the job wave 18 opened. Wave 18 stopped a populated answer arriving as nothing but its own marker. This wave asked what that fix left behind — and the answer was that **the marker was not usable either.**
@@ -456,6 +615,33 @@ The two search calls now say the same thing about the same answer — `hits` was
 **Test:** `TestTheMarkerSaysWhatWasCut` — a trimmed key must be named, a key that SURVIVED must not be (naming it would send the caller to re-query for nothing), and the list must reach the wire. Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
 
 **Loop status: 27 defects found, 27 fixed, 0 open** across nineteen waves.
+
+### v4.18-ci-release-gate — the release commit that shipped untested, and the gate that could not have stopped it (2026-10-21)
+
+**Trigger:** the v0.35.0 release (PR #551, merged 2026-10-20 17:45:33) touched exactly four files — `CHANGELOG.md`, `.release-please-manifest.json`, `cmd/leankg/VERSION`, `internal/mcp/server.go` — and the release commit `24e8dbb` that landed on `main` has **no CI run at all**: `actions/runs?head_sha=24e8dbb` returns exactly one run, and it is `Release`, not `CI`. The version bump the release exists for was never tested.
+
+**Two causes, and both of them were silent.**
+
+1. **The trigger filtered the release out.** `push: branches: [main]` in `.github/workflows/ci.yml` carried a `paths-ignore` listing **exactly those four files**. The filter's own comment — "the release PR already ran CI" — was true of the PR and false of the merge commit: a merge commit is a different commit, and it is the one `main` carries.
+2. **The gate had no teeth.** Repository ruleset `20681464` carried **no `required_status_checks`**, so a red CI run could not have blocked a merge either. Run `39468719087` (CI, `pull_request` @ `59d40361`) is what the gate actually did: created 17:44:36, ended 17:45:34, **zero jobs**, conclusion `failure` — the branch was deleted before a runner picked the run up. A report nobody reads is not a gate.
+
+**The fix, in both halves.**
+
+| half | before | after |
+|---|---|---|
+| the trigger | `paths-ignore: [CHANGELOG.md, .release-please-manifest.json, cmd/leankg/VERSION, internal/mcp/server.go]` on `push: branches: [main]` | no path filter at all — **every** push to `main` runs the suite |
+| the gate | ruleset `20681464`: `deletion`, `non_fast_forward`, `creation`, `pull_request` (squash only) — no status checks | the same four rules **plus** a `required_status_checks` rule carrying the four CI job contexts |
+
+The contexts are the CI job NAMES, read off a real run (`39468558804`, commit `3074f22d`): `Dual Engine (sqlite + live pgvector)`, `Go Engine (build + vet + test)`, `Cold TTFV Gate (Go, < 300s)`, `Frontend (ui-v2 e2e + dashboard unit)`. `strict_required_status_checks_policy` is off on purpose: the requirement is that the PR's own head commit was tested, not that the branch is rebased onto a moving `main` — with one runner slot, a strict policy would turn every `main` push into a re-run demand.
+
+**Enforced, not documented.** `scripts/ci_workflow_guards.py` is a CI step (it runs inside the `Go Engine` job) and now pins two more invariants:
+
+- **the push-to-main trigger cannot path-filter away a release metadata file** — a `paths-ignore` entry covering one of the four files, or a positive `paths` filter that cannot reach one, fails the guard. The files are matched by name against GitHub's path-filter glob (`*` does not cross `/`, `**` does), so `cmd/leankg/**` is caught as well as `cmd/leankg/VERSION`.
+- **the four required check contexts must still be produced by a job** — GitHub takes a job's check context from the job's `name:`, so renaming `Go Engine (build + vet + test)` would leave the ruleset waiting for a context no run reports, and the merge would hang in "Expected — Waiting for status to be reported" forever.
+
+**Proved by breaking it:** re-adding the `paths-ignore` makes the guard exit 1 with one line per ignored file; renaming a job makes it exit 1 on the missing context; the restored file exits 0. The three pre-existing invariants (the concurrency group with `cancel-in-progress`, per-job `timeout-minutes`, the hosted-only npm cache) are untouched and still pass.
+
+**Test:** the guard is the test — `scripts/ci_workflow_guards.py`, run in the `Go Engine` job on every push and every PR. `go build -p=2 ./...` and `go vet ./...` clean; no Go code changed.
 
 ### v4.29.0-envelope-eats-the-answer — a populated answer that arrived as nothing but its own truncation marker (2026-09-30)
 
@@ -1696,7 +1882,7 @@ without erroring. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
 **Trigger:** a first-run audit of the install + first-value path for a user who has neither a LeanKG checkout nor a configured agent. Three defects made that path fail outright or deliver half the product; a fourth left the memory layer structurally unreachable for every user who followed the documented commands.
 
 - **The source installer was dead.** `scripts/install-go.sh` (the `make install-go` and `curl … | bash` path, README §Installation) still did `cd "$WORK/leankg/go"` — a directory the #403 module-root move deleted — so under `set -e` it aborted at the first build step, every time. It also wrote the build output to `$WORK`, the same path the clone occupied, which `go build` refuses once the clone is a directory. Both fixed (clone into `$WORK/src`, output into `$WORK/bin`), and its self-verification now runs `leankg version` instead of `doctor --project $(mktemp -d)`, which always printed `FAIL store: read-only open of missing store …` and was swallowed by `|| true` — a broken install looked like a clean one. No CI step covered the installer, which is how the stale `cd` survived the cutover.
-- **The installer printed wrong next steps** (`leankg serve -http 127.0.0.1:9699 -rest … -memory`; the flags are `--http :9699 --rest :8080`) and omitted the client-wiring step entirely. The message is now the two-command path, in order, with the optional shared-server and embeddings notes marked optional.
+- **The installer printed wrong next steps** (`leankg serve -http 127.0.0.1:9699 -rest … -memory`; the flags are `--http 127.0.0.1:9699 --rest 127.0.0.1:8080`) and omitted the client-wiring step entirely. The message is now the two-command path, in order, with the optional shared-server and embeddings notes marked optional.
 - **Memory was unreachable through the documented install.** `install`/`connect` wrote the stdio argv `serve --stdio`, and `--memory` is the only switch that opens the memory layer (`cmd/leankg` builds `core.New` with a nil `*memory.Memory` otherwise), so every agent's first `import action=memory` returned the bare error `memory not initialized` and the README/PRD describe no way to fix it. The stdio argv is now `serve --stdio --memory`: one command wires the code graph AND the markdown memory layer (per-project `<project>/.leankg/memory`), which is what the product already claims to be. Guarded behaviorally by `TestStdioSpawnServesMCP`, which now drives a real memory write over the exact argv the client configs carry (it fails with `memory not initialized` if `--memory` is dropped again).
 - **`leankg index` ended with a dead end.** The command printed a count line and nothing else, so the second half of getting value (wiring an agent) was undiscoverable from the terminal. It now prints the one next command.
 
@@ -1772,7 +1958,7 @@ No new capability; the point of M10 is that every surface — including the diag
 
 ### v4.11.2-selfhost-validated — the self-host ran on itself; every defect it found is fixed (2026-09-14)
 
-**Trigger:** M10/S1 executed for real on this repository. The dynamic HTTP server came up over this checkout (`leankg serve --http :9699 --rest :9700 --ui :9701 --memory --embed-provider local`) with a pinned local embedder (`llama-server` serving `bge-small-en-v1.5` GGUF, 384-d). All five S1 gates passed; the run (and the first S3 step) then surfaced six real engine defects, each fixed with a failing-first test.
+**Trigger:** M10/S1 executed for real on this repository. The dynamic HTTP server came up over this checkout (`leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:9700 --ui 127.0.0.1:9701 --memory --embed-provider local`) with a pinned local embedder (`llama-server` serving `bge-small-en-v1.5` GGUF, 384-d). All five S1 gates passed; the run (and the first S3 step) then surfaced six real engine defects, each fixed with a failing-first test.
 
 **S1 self-host — verified live, not inferred:**
 - **Index:** this repo reconciled into sqlite (`9,025 elements`, `19,662 relationships`, `807 files`); `doctor --deep` → `orphaned-relationships PASS`, `duplicate-names PASS`, `migrations 14/14`.
@@ -1823,7 +2009,7 @@ No new capability; the point of M10 is that every surface — including the diag
 
 **Anchored as §3.10 (FR-SELF-01..04) and milestone M10:**
 
-1. **S1 — bootstrap.** Gate: the in-flight refactor wave lands on `main` (the uncommitted Docker/Render deploy service, the `go/vX.Y.Z` module-tag mirror job, the `serve` `/health` liveness route). Then `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` runs long-lived against this checkout; the repo is indexed, embedded with the pinned `LEANKG_EMBED_*` identity (ModelStamp-guarded, so L3 answers rather than degrades), and the memory layer is live (markdown + `session_retain`/`session_recall`).
+1. **S1 — bootstrap.** Gate: the in-flight refactor wave lands on `main` (the uncommitted Docker/Render deploy service, the `go/vX.Y.Z` module-tag mirror job, the `serve` `/health` liveness route). Then `leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --ui 127.0.0.1:8081 --memory` runs long-lived against this checkout; the repo is indexed, embedded with the pinned `LEANKG_EMBED_*` identity (ModelStamp-guarded, so L3 answers rather than degrades), and the memory layer is live (markdown + `session_retain`/`session_recall`).
 2. **S2 — dogfood.** All further LeanKG development flows through the self-host: impact/callers before touching an exported symbol, tested-by/traceability before closing, recall when reopening a session. Every wrong, stale or empty answer the loop produces is an engine defect — fixed failing-test-first, then reindex-and-re-ask. "LeanKG first" means the tool earns its claims on its own codebase before anyone else's.
 3. **S3 — scale.** When the loop is smooth, add **small parent directories with nested repos** to the same server (registry + `LEANKG_PROJECT_DIRS`, T0 manifest / T1 hot-set, cap 8, never eager). Measured guardrail stays in force: never bulk-index the `freepeak` portfolio root (99,574 files → multi-GB store); scale = repos added to the registry one at a time.
 4. **S4 — keep building, fixing.** The loop is the end state, not a phase to exit: each indexing/embedding/memory wave on real code surfaces defects; the PRD status tracks the cycle.
@@ -2429,7 +2615,7 @@ LeanKG as harness memory **via MCP** (no fork of OMP's closed `memory.backend` e
 **Narrative.** Everything shipped so far was validated against throwaway fixtures and ephemeral dogfood runs. From this revision the operating mode inverts: LeanKG's own repository is served by a long-lived dynamic HTTP front door — one binary, MCP streamable HTTP (`/mcp`) + REST (`/api/*`) + the embedded dashboard, with per-connection project resolution (`?project=` / nearest-`.leankg` walk / `LEANKG_PROJECT_DIRS`) — continuously indexed, embedded with a pinned provider, and memorizing. That self-host then becomes *the* tool used to build LeanKG. The stages are a ladder: each gates on the previous one reporting clean.
 
 **FR-SELF-01 — Bootstrap the self-host (P0; gate **satisfied 2026-09-14 by v4.11.1**)**
-- The deploy wave this gate waited on has landed: [Dockerfile](../Dockerfile) + the Render service (rebuilt from the Go image), the `go/vX.Y.Z` module-tag mirror in `release.yml`, and the `serve` `/health` liveness route on the dashboard listener. Run: `leankg serve --http :9699 --rest :8080 --ui :8081 --memory` against this checkout (sqlite store in `.leankg/`).
+- The deploy wave this gate waited on has landed: [Dockerfile](../Dockerfile) + the Render service (rebuilt from the Go image), the `go/vX.Y.Z` module-tag mirror in `release.yml`, and the `serve` `/health` liveness route on the dashboard listener. Run: `leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --ui 127.0.0.1:8081 --memory` against this checkout (sqlite store in `.leankg/`).
 - Index this repo (`leankg index .`), embed with the pinned identity (`leankg-embed run`; `LEANKG_EMBED_*` ModelStamp-guarded — L3 must answer with `retrieval` provenance, not degrade), and turn memory on: the markdown layer + `session_retain`/`session_recall`.
 - AC: `/health` on every listener; `status` shows `fresh` coverage for this repo; L1/L2/L3 verified live on its own elements; retain→recall round-trip survives a server restart; `doctor --deep` clean.
 
@@ -2490,7 +2676,7 @@ Order: M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8, with M8's T1 tier (e
    go build ./... && ./bin/leankg index . --auto     # this repo -> .leankg/leankg.db
    env LEANKG_EMBED_PROVIDER=local LEANKG_EMBED_BASE_URL=http://127.0.0.1:8085/v1 \
        LEANKG_EMBED_MODEL=bge-small-en-v1.5-384 bin/leankg-embed full .
-   bin/leankg serve --http :9699 --rest :9700 --ui :9701 --memory --embed-provider local --hindsight-compat --project .
+   bin/leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:9700 --ui 127.0.0.1:9701 --memory --embed-provider local --hindsight-compat --project .
    ```
    Ports 9700/9701, not 8080/8081: the live onegw gateway owns 8080 (pre-flight `lsof -iTCP -sTCP:LISTEN` first) — including for the sidecar: `--embed-provider local` **without** `LEANKG_EMBED_BASE_URL` spawns the pinned-GGUF llama-server on :8080 (default `LEANKG_EMBED_SIDECAR_ARGS`; v0.35.0-dev+ — before that it spawned a model-less `llama-server` and crash-looped) and serve crash-loops when the port is taken. With it, serve ATTACHes the running sidecar — a serve process never orphans a spawned one.
    `--hindsight-compat` (#414, v0.34.0+) additionally serves omp's Hindsight wire on the REST listener, so the harness's native agent memory points here: `memory.backend: hindsight` + `hindsight.apiUrl: http://127.0.0.1:9700` + `hindsight.mentalModelsEnabled: false` in `~/.omp/agent/config.yml` (e2e-proven 2026-09-14: a real `omp -p` session retained `zebra-cantaloupe-42` through the mount into bank `omp`, and a fresh session reproduced it from the recall injection).

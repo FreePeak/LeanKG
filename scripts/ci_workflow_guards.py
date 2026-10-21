@@ -3,10 +3,11 @@
 hard-to-read CI incident on the repository's ONE self-hosted macOS runner
 (labels `self-hosted,macOS,ARM64,leankg`).
 
-The failure mode shared by all three is that it does not look like a failure:
-a job waiting for the single runner slot reports `queued`, which is exactly
-what a broken runner reports too, so every one of these was first diagnosed by
-hand from runner state on the Mac.
+The failure mode shared by all of them is that it does not look like a
+failure: a job waiting for the single runner slot reports `queued`, which is
+exactly what a broken runner reports too, so every one of these was first
+diagnosed by hand from runner state on the Mac. The last one is worse — a
+push that never ran reports NOTHING at all.
 
 From the repository root:
 
@@ -24,6 +25,7 @@ Exits non-zero with one readable message per violation.
 """
 
 import os
+import re
 import sys
 
 import yaml
@@ -31,12 +33,70 @@ import yaml
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 
+# The files a release-please merge touches. A push to main that changes any
+# of them must run the suite: `cmd/leankg/VERSION` is the version source of
+# truth and `internal/mcp/server.go` carries the release-please version stamp
+# the binary reports. Measured 2026-10-20: the v0.35.0 release commit
+# (24e8dbb) changed exactly these four files, the push trigger path-filtered
+# them out, and the release shipped untested.
+RELEASE_METADATA_FILES = (
+    "CHANGELOG.md",
+    ".release-please-manifest.json",
+    "cmd/leankg/VERSION",
+    "internal/mcp/server.go",
+)
+
+# The check contexts repository ruleset 20681464 requires on every PR. A
+# renamed job would leave the ruleset pointing at a context no run reports,
+# and the merge would sit "Expected — Waiting for status to be reported"
+# forever; this guard fails the build instead.
+REQUIRED_CHECK_CONTEXTS = (
+    "Dual Engine (sqlite + live pgvector)",
+    "Go Engine (build + vet + test)",
+    "Cold TTFV Gate (Go, < 300s)",
+    "Frontend (ui-v2 e2e + dashboard unit)",
+)
+
 failures = []
 
 
 def check(cond, label, why):
     if not cond:
         failures.append(f"{label}\n      {why}")
+
+
+def gh_path_match(pattern, path):
+    """GitHub path-filter glob: `*` does not cross `/`, `**` does."""
+    regex = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**", i):
+            regex.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            regex.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            regex.append("[^/]")
+            i += 1
+        else:
+            regex.append(re.escape(pattern[i]))
+            i += 1
+    return re.fullmatch("".join(regex), path) is not None
+
+
+def pattern_covers(pattern, path):
+    """True when the pattern matches the file itself or a directory holding it."""
+    if gh_path_match(pattern, path):
+        return True
+    parts = path.split("/")
+    for i in range(1, len(parts)):
+        prefix = "/".join(parts[:i])
+        # GitHub treats a pattern that matches a directory as covering every
+        # file under it, with or without the trailing slash.
+        if gh_path_match(pattern, prefix) or gh_path_match(pattern, prefix + "/"):
+            return True
+    return False
 
 
 def main():
@@ -105,13 +165,75 @@ def main():
             "`if: runner.environment == 'github-hosted'`.",
         )
 
+    # 4. A push to main must be able to reach CI.
+    #
+    # Measured 2026-10-20: the push trigger carried a `paths-ignore` listing
+    # exactly the four files a release-please merge touches, so the v0.35.0
+    # release commit (24e8dbb) was filtered out of CI on its way to main
+    # (`actions/runs?head_sha=24e8dbb` returns the Release run and no CI run)
+    # and the release shipped untested. A filter on this trigger must not be
+    # able to cover a release metadata file, and a positive `paths` filter
+    # must be able to reach one.
+    triggers = doc.get("on", doc.get(True)) or {}
+    push = triggers.get("push") or {}
+    if not isinstance(push, dict):
+        push = {}
+    push_branches = push.get("branches")
+    push_ignored_branches = push.get("branches-ignore") or []
+    check(
+        (push_branches is None or "main" in push_branches)
+        and "main" not in push_ignored_branches,
+        "the push trigger no longer covers main",
+        "a push to main is the only run that tests the commit main carries; "
+        "keep `branches: [main]` (or no branch filter at all) on the push trigger.",
+    )
+    ignored = [str(p) for p in (push.get("paths-ignore") or [])]
+    included = [str(p) for p in (push.get("paths") or [])]
+    for name in RELEASE_METADATA_FILES:
+        for pattern in ignored:
+            check(
+                not pattern_covers(pattern, name),
+                f"the push trigger path-ignores {name!r}",
+                "release metadata must never be filtered out of CI: a commit that "
+                "changes only this file would never be tested, and v0.35.0 shipped "
+                "exactly because all four release files were ignored (commit "
+                "24e8dbb). Drop the paths-ignore.",
+            )
+        if included:
+            check(
+                any(pattern_covers(pattern, name) for pattern in included),
+                f"the push trigger's paths filter excludes {name!r}",
+                "a positive path filter only runs the workflow when a changed file "
+                "matches it, so a commit that changes only this file would never "
+                "reach CI.",
+            )
+
+    # 5. The jobs the repository ruleset requires must keep their names.
+    #
+    # Ruleset 20681464 requires these four contexts on every PR. GitHub
+    # records a job's check context from the job's `name:`, so renaming one
+    # leaves the ruleset waiting for a context no run will ever report.
+    job_names = {str(job.get("name") or key) for key, job in jobs.items()}
+    for context in REQUIRED_CHECK_CONTEXTS:
+        check(
+            context in job_names,
+            f"no job reports the check context {context!r}",
+            "repository ruleset 20681464 requires this context on every PR; a "
+            "renamed job would leave the merge waiting for a status that is "
+            "never reported.",
+        )
+
     if failures:
         print("ci.yml guards failed:", file=sys.stderr)
         for item in failures:
             print("  - " + item, file=sys.stderr)
         return 1
 
-    print("ci.yml guards ok: concurrency cancels, every job is capped, npm cache is hosted-only")
+    print(
+        "ci.yml guards ok: concurrency cancels, every job is capped, npm cache is "
+        "hosted-only, pushes to main cannot be path-filtered away, required check "
+        "contexts are intact"
+    )
     return 0
 
 

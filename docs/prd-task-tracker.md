@@ -147,6 +147,24 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 | RS-25 | P4 | `status.embedding_coverage` | DONE |
 | RS-26 | P4 | Document that `memory create` overwrites | DONE |
 
+## v4.18-stamp-pre017 — the L3 rung names the read error instead of a collection that was never missing (2026-10-21, branch fix/stamp-pre017)
+
+**Why:** a store that has not run migration 017 made every stamp read die
+with `no such column: text_cap`, and `core.rungSemantic` swallowed that
+error into "no vector collection for model X" — naming a cause that was
+false about a store holding 2314 vectors, and sending the operator to
+rebuild a collection that was there all along.
+
+| item | status | evidence |
+|------|--------|----------|
+| Stamp read on a pre-017 store | DONE | `internal/store/stamp_pre017_test.go` — `TestStampReadsPre017Store` (real pre-017 fixture: the engine's own migration DDL up to 015, 017 NOT applied; reads back with `text_cap` 0 and the identity intact) and `TestStampAfterMigratingPre017Store` (the migration still turns the store normal: legacy row "cap never recorded", a fresh write records its cap) |
+| Stamp write on a pre-017 store | DONE | `TestWriteStampOnPre017Store` — the upsert carries only the columns the schema has, so the write does not die with "no such column" either |
+| PostgreSQL twin | DONE | `internal/store/stamp_pre017_pg_test.go` — `TestPGStampReadsPre017Store` / `TestPGStampAfterMigratingPre017Store` against a real pre-017 PG schema (migrations to 016), gated on `LEANKG_TEST_PG_URL` like the other PG tests |
+| Degrade reason separates "unreadable" from "missing" | DONE | `internal/core/l3stampreason_test.go` — `TestL3DegradeReasonNamesUnreadableStamp` (the reason names the read error and does NOT claim a missing collection) and `TestL3DegradeReasonStillSaysNoVectorCollection` (a collection that genuinely does not exist still says "no vector collection") |
+| Read shape follows the schema | DONE | `internal/store/vectors.go` + `internal/store/store_pg.go` — the optional columns are probed per call (`pragma_table_info` / `pg_attribute`); an absent one is projected as its documented default (`text_cap` 0 = "cap never recorded"), so the row shape never changes with the schema version |
+| Gates | DONE | `go build -p=2 ./...`, `go vet ./...`, `gofmt` clean, `go test ./internal/store/ ./internal/core/ -count=1` green (embed env cleared) |
+| Fail-on-main proof | DONE | each new test fails on `origin/main` — the store tests with the defect's own `no such column: text_cap`, the core test with the false reason `"no vector collection for model deterministic-4; degraded from L3"` — and passes on this branch |
+
 ## M10 — self-host dogfood loop (v4.11.0, the operating plan)
 
 | ID | Title | Priority | Status | Gate / exit criteria |
@@ -157,6 +175,21 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 | FR-SELF-04 | Keep building, keep fixing: the loop is the end state — every wave surfaces defects, engine fixes ship via release-please, this PRD + tracker stay the status ledger | **P0** | TODO (steady state after S1–S3) | Dogfood-found defect rate > 0 with fix rate keeping pace; no milestone regresses; self-host up whenever development happens |
 
 The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01..04` (§Done).
+
+## v4.18-status-health-signal — healthy is derived, not asserted (2026-10-21, branch fix/status-health-signal)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-STAT-01 | `status.healthy` is derived from the reads the payload publishes, not asserted | **DONE** | `internal/core/core.go` assigned `"healthy": true` as a constant — the only assignment in non-test code. The rule now: healthy is true iff every read that feeds a published field succeeded. The inventory counts already fail the whole call when unreadable, so the embeddings layer (the one read that could still degrade a delivered payload) decides it. A store whose `emb_stamp` listing fails is NOT healthy. |
+| FR-STAT-02 | A failed embeddings read is NAMED in the payload, not swallowed into an empty list | **DONE** | `embeddingsState()` swallowed a failed `Stamps()` read and returned `[]map[string]any{}`, so the payload said "no embeddings configured" while the store held thousands of vectors. The error is returned now; the payload carries `embeddings_error` with the cause, and the `embeddings` list is published as null (unknown) rather than an empty array — an empty ARRAY still means "read succeeded, nothing embedded". A per-model vector-count failure is reported the same way (the countable models are still published, the failed one is named). |
+| FR-STAT-03 | Provider reachability is a SEPARATE fact and never folds into `healthy` | **DONE** | `query_embedder.reachable` (with its own `error`) stays independent: an unreachable query provider degrades the L3 rung, it does not make the store unreadable. Pinned by `TestStatusProviderUnreachableIsNotUnhealthy`. |
+| FR-STAT-04 | A healthy payload is unchanged | **DONE** | Same fields, same `healthy: true`, no `embeddings_error` key on a healthy store; the golden status payload (`testdata/golden/status.json`) still matches byte-for-byte and `go test ./internal/golden/` is green. |
+| FR-STAT-05 | Regression test that fails on the pre-fix code | **DONE** | `internal/core/statushealth_test.go`: `TestStatusUnhealthyWhenEmbeddingsReadFails` (verified to FAIL with `origin/main`'s `internal/core/core.go` in place, PASS after), `TestStatusHealthyStoreReportsHealthy`, `TestStatusHealthyStoreWithoutEmbeddings`, `TestStatusProviderUnreachableIsNotUnhealthy`. `go build -p=2 ./...` and `go vet ./...` clean; `go test ./internal/core/ ./internal/mcp/ -count=1` green with the embed env cleared. |
+
+**Why:** a health field that is a constant reports FALSE HEALTH — it says the
+store is fine in exactly the situation where the operator most needs to know
+it is not, and the swallowed read turned "the embeddings layer is
+unreadable" into "there are no embeddings", which is a different fact.
 
 ## Done — 2026-09-04 implementation sprint (v4.3.0 wave 1–3)
 
@@ -252,6 +285,16 @@ directory broke the entire test suite.
 | FR-ZG-06 | Second in-catalog embedding model (Model2Vec-class) + model-switch/rebuild docs | P3 | 5.38 | None — direct TODO (unmilestoned) |
 | US-ZG-06 | Quick constrained-hardware indexes without the ONNX stack | P3 | 3.33 | Closes via FR-ZG-06 |
 
+## v4.18-ci-release-gate — the release commit that shipped untested, and the gate that could not have stopped it (2026-10-21, branch `fix/ci-release-gate`)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-CI-01 | A push to `main` must never be path-filtered away from CI | **DONE** | `.github/workflows/ci.yml` — the `push: branches: [main]` trigger lost its `paths-ignore`. Measured on the v0.35.0 release commit `24e8dbb`: it changed exactly the four files the filter listed, and it has **no** CI run (`actions/runs?head_sha=24e8dbb` returns the `Release` run only) — the release shipped untested |
+| FR-CI-02 | A failed (or absent) CI run must block a merge | **DONE** | Ruleset `20681464` now carries a `required_status_checks` rule with the four CI job contexts, read off a real run (`39468558804`, commit `3074f22d`): `Dual Engine (sqlite + live pgvector)`, `Go Engine (build + vet + test)`, `Cold TTFV Gate (Go, < 300s)`, `Frontend (ui-v2 e2e + dashboard unit)`. `deletion`, `non_fast_forward`, `creation` and the squash-only `pull_request` rule are unchanged; `strict_required_status_checks_policy` is off (the PR head must be tested, not rebased) |
+| FR-CI-03 | The invariant must be enforced by CI, not by a comment | **DONE** | `scripts/ci_workflow_guards.py` gained two checks — the push-to-main path filter must not cover a release metadata file, and the four required contexts must still be job names — and runs in the `Go Engine` job. Proved by breaking it: re-adding `paths-ignore` → exit 1 with one line per file; renaming a job → exit 1 on the missing context; restored → exit 0. The three pre-existing invariants still pass |
+
+**Why:** the untested release was not an accident — the trigger filtered it out on purpose and the ruleset had no status checks to notice; both halves are now closed, and the second half is pinned by a guard so the next edit has to argue with CI.
+
 ## Done
 
 | ID | Title | Evidence |
@@ -270,6 +313,19 @@ directory broke the entire test suite.
 | REL-SHIP-09 | v0.34.0 cut for #414 (feat commit → release PR opened automatically, no `Release-As` needed this time); release-merge CI parked in `action_required` again → `gh run rerun` | run 34871489633 success; 4 tarballs, `latest` = v0.34.0, proxy `.info` origin resolves tag→`68e9de9`, `go install …@v0.34.0` → `leankg 0.34.0`, zero `go/v0.34*` mirror tags |
 *Last updated: 2026-09-30 (v4.13.3 agent-ux-protocol: memory protocol + empty-hit guidance + status.project_dir)*
 
+
+## v4.18-scan-root-scope — the served fleet must be the projects LeanKG owns (2026-10-21, branch `fix/scan-root-narrow`)
+
+| item | status | evidence |
+|---|---|---|
+| The live scope was wrong | **MEASURED** | `~/.local/bin/leankg-serve-wrapper` computed `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work}"` and the plist set no `LEANKG_SCAN_ROOT` → 287 repos under `~/work`, **231 of them `~/work/be`** (out of scope since 2026-10-13; `~/work/be` is served by be-kg) |
+| The scan root is versioned in the repo | **DONE** | `scripts/leankg-serve-wrapper.sh` + `scripts/leankg-scan-repos.sh` — default `SCAN_ROOT="${LEANKG_SCAN_ROOT:-$HOME/work/harvey/freepeak}"` (42 repos), `LEANKG_SCAN_ROOT` overrides it; the wrapper `exec`s `leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:9700 --memory --embed-provider local --hindsight-compat` |
+| The rule is checked, not asserted | **DONE** | `scripts/test-scan-root.sh` (`make scan-root-check`): fake `HOME`, one repo inside the root and one outside, stub `leankg` binary → `SCAN-ROOT OK`. Widening the default back to `$HOME/work` in a copy makes it **fail** on the out-of-scope repo |
+| The docs taught the old scope | **DONE** | `docs/architecture-flow.md` (fleet diagram, runbook, file listing), `docs/mcp-multi-project-scoping.md` (fact row + scope note; the 286 counts kept as the measurement of the defect), the PRD's wildcard-bind examples, and the shared-server hint `scripts/install-go.sh` prints |
+| The live files | **OPEN (operator)** | `~/.local/bin/leankg-serve-wrapper` and the plist's `LEANKG_SCAN_ROOT` are installed by the operator; this PR ships the repo-side definition only |
+| `AGENTS.md` CLI table | **REPORTED** | still shows the wildcard `--http :9699 --rest :8080` and the wrapper's `--rest :9700`; owned by the loopback-bind change, not edited here |
+
+**Why:** every repo in `LEANKG_PROJECT_DIRS` is a project the server will answer for, so the served fleet is an answer surface — its boundary has to be a reviewed, versioned default with a test, not a shell default that lives outside the repository.
 
 ## Repo hygiene (non-PRD)
 
