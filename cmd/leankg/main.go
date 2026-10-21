@@ -2,7 +2,7 @@
 // from one core. Role flags:
 //
 //	leankg serve --stdio                       MCP over stdio (coding tools)
-//	leankg serve --http :9699 --rest :8080     MCP HTTP + REST API
+//	leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080   MCP HTTP + REST API
 //	leankg serve --read-only ...               RO store handle (reader role)
 //	leankg index <dir>                         one-shot index run
 //	leankg doctor                              store diagnostics
@@ -43,6 +43,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/rest"
 	restauto "github.com/FreePeak/LeanKG/internal/rest/auto"
 	"github.com/FreePeak/LeanKG/internal/rpc"
+	"github.com/FreePeak/LeanKG/internal/servebind"
 	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/setupcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -252,8 +253,11 @@ service_context|portfolio (portfolio = #376 fleet read via the registry;
 queried through the same core wiring the MCP transports use).
 Time filters (audit --since/--until): RFC3339 | epoch seconds | 90s|30m|24h|7d.
 
-Defaults: --http 127.0.0.1:9699 (MCP streamable HTTP, loopback) and --rest :8080 (REST) when
-neither --stdio nor addresses are given; --project defaults to cwd.
+Defaults: --http 127.0.0.1:9699 (MCP streamable HTTP, loopback) when neither
+--stdio nor an address is given; --project defaults to cwd.
+A --http/--rest/--rpc address beyond loopback is REFUSED unless a bearer
+token is configured (leankg auth token create, or LEANKG_TOKEN_ADMIN);
+--ui is the one deliberately public listener.
 LEANKG_PROJECT_DIRS (comma-separated) registers extra projects; REST/MCP
 requests select one with ?project= (dir path or name).
 `)
@@ -290,14 +294,14 @@ func cmdServe(args []string) {
 	project := fs.String("project", "", "project directory (default cwd)")
 	dbFlag := fs.String("db", "", "standalone SQLite store file path (default empty = <project>/.leankg/leankg.db); sets the project directory optional (FR-P2)")
 	stdio := fs.Bool("stdio", false, "serve MCP over stdio")
-	httpAddr := fs.String("http", "", "MCP streamable HTTP address (e.g. :9699)")
-	restAddr := fs.String("rest", "", "REST API address (e.g. :8080)")
+	httpAddr := fs.String("http", "", "MCP streamable HTTP address (e.g. 127.0.0.1:9699; a non-loopback address needs an auth token)")
+	restAddr := fs.String("rest", "", "REST API address (e.g. 127.0.0.1:8080; a non-loopback address needs an auth token)")
 	readOnly := fs.Bool("read-only", false, "open the store read-only (reader role)")
 	withMemory := fs.Bool("memory", false, "enable the markdown memory layer")
 	engineName := fs.String("engine", "", "storage engine: sqlite|postgres (default: LEANKG_DB_ENGINE, else sqlite; postgres needs LEANKG_PG_URL)")
 	embedProvider := fs.String("embed-provider", "", "query-time embedder: openai|local|deterministic (env LEANKG_EMBED_* configure it; empty = L3 degrades with reason)")
-	rpcAddr := fs.String("rpc", "", "ConnectRPC address (gRPC + gRPC-Web + JSON, e.g. :9090)")
-	uiAddr := fs.String("ui", "", "dashboard address serving the embedded ui-v2 build (e.g. :8080)")
+	rpcAddr := fs.String("rpc", "", "ConnectRPC address (gRPC + gRPC-Web + JSON, e.g. 127.0.0.1:9090; a non-loopback address needs an auth token)")
+	uiAddr := fs.String("ui", "", "dashboard address serving the embedded ui-v2 build (e.g. 127.0.0.1:8081; deliberately public — its API is unauthenticated)")
 	hindsightCompat := fs.Bool("hindsight-compat", false, "on the REST listener, mount the Hindsight-wire compat aliases (/v1/default/banks/...) that omp's memory.backend=hindsight speaks; requires --memory")
 	memoryGlobal := fs.Bool("memory-global", false, "keep the memory layer in ~/.leankg/memory instead of <project>/.leankg/memory (shared/portfolio memory root; requires --memory)")
 	if err := fs.Parse(args); err != nil {
@@ -557,8 +561,37 @@ afterSidecars:
 		// --http :9699 explicitly to listen on every interface.
 		addr = defaultHTTPAddr
 	}
+	// Exposure gate (RS-03, enforced): a listener that leaves the loopback
+	// interface is REFUSED unless a token gates its callers. With the gate
+	// off every caller resolves to Admin, so a wildcard bind hands the
+	// project graph, the file reader and the memory write path to every
+	// host that can route to this machine — the measured defect (2026-10-21:
+	// a LAN POST to the REST listener answered {"written":1}). The refusal
+	// names the fix instead of warning and binding anyway.
+	//
+	// The UI listener is deliberately NOT gated here: the dashboard is
+	// public by design (the Render demo serves --read-only --ui :${PORT}),
+	// so it keeps its own warning.
+	gateOn, gateErr := auth.GateEnabled(st)
+	if gateErr != nil {
+		// An unknown gate state fails closed: treat it as "no token", so a
+		// non-loopback bind is refused rather than silently exposed.
+		log.Printf("warning: auth gate state unknown: %v", gateErr)
+		gateOn = false
+	}
+	for _, l := range []struct {
+		kind servebind.Kind
+		addr string
+	}{
+		{servebind.KindMCP, addr},
+		{servebind.KindREST, *restAddr},
+		{servebind.KindRPC, *rpcAddr},
+	} {
+		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
+			log.Fatalf("serve: %v", err)
+		}
+	}
 	if addr != "" {
-		warnIfExposed("MCP", addr, st)
 		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject()))
 		mcpSrv.SetProjectRouter(router)
 		mcpSrv.SetAuthStore(st)
@@ -598,7 +631,6 @@ afterSidecars:
 		// bootstrap (the handlers enforce their own caller/account checks), and
 		// Rust registered them outside the auth middleware for the same reason.
 		// Everything else sits behind the bearer gate.
-		warnIfExposed("REST", *restAddr, st)
 		root := http.NewServeMux()
 		root.Handle("/api/v1/auth/", auth.Routes(st))
 		root.Handle("/", auth.MiddlewareWithStore(st, h))
@@ -662,10 +694,15 @@ afterSidecars:
 		uiMux.Handle("/api/", dash)
 		uiMux.Handle("/", web.Handler())
 		log.Printf("leankg serve (UI) on %s", *uiAddr)
-		if host, _, err := net.SplitHostPort(*uiAddr); err == nil && host != "127.0.0.1" && host != "localhost" && host != "::1" {
-			bound := host
-			if bound == "" {
-				bound = "all interfaces" // `--ui :PORT` — the container/PaaS shape
+		// The UI listener is deliberately NOT gated by the exposure rule: the
+		// dashboard is public by design (the Render demo serves
+		// --read-only --ui :${PORT} to the internet), so it keeps a loud
+		// warning instead of a refusal. Its API (query/read/import) is
+		// unauthenticated either way.
+		if !servebind.IsLoopback(*uiAddr) {
+			bound := "all interfaces" // `--ui :PORT` — the container/PaaS shape
+			if host, _, err := net.SplitHostPort(*uiAddr); err == nil && host != "" {
+				bound = host
 			}
 			log.Printf("warning: dashboard bound to %s — its API (query/file/import) is unauthenticated; bind loopback or front it with a proxy", bound)
 		}
@@ -676,37 +713,6 @@ afterSidecars:
 
 // defaultHTTPAddr is the MCP listener when serve is given no address.
 const defaultHTTPAddr = "127.0.0.1:9699"
-
-// exposedWithoutAuth reports whether addr listens beyond loopback while no
-// token gates its callers.
-func exposedWithoutAuth(addr string, gateOn bool) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
-	if host == "localhost" {
-		return false
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return false
-	}
-	return !gateOn
-}
-
-// warnIfExposed logs the RS-03 warning: an MCP or REST listener on a
-// non-loopback address with no token configured serves every caller as
-// Admin (file reads inside the project, indexing, memory writes).
-func warnIfExposed(kind, addr string, st store.Backend) {
-	gateOn, err := auth.GateEnabled(st)
-	if err != nil {
-		log.Printf("warning: %s auth gate state unknown: %v", kind, err)
-		return
-	}
-	if exposedWithoutAuth(addr, gateOn) {
-		log.Printf("warning: %s listens on %s (beyond loopback) with no auth token configured — every caller is Admin. "+
-			"Bind 127.0.0.1, or set LEANKG_TOKEN_ADMIN / run `leankg auth token create`", kind, addr)
-	}
-}
 
 // maintenanceStoreExists reports whether the project at dir already HAS a
 // store, so the maintenance fleet does not open (and thereby create) one for

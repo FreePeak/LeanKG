@@ -149,7 +149,7 @@ Discover with `query` — it routes down the ladder by default (L1 exact → L2 
 - **SQLite default** (zero-config — no Postgres, no Docker required) with an opt-in Postgres/pgvector backend (`LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`)
 - **Ontology** — concept catalog + procedural layer (workflows, steps, decision points, failure modes), `query --action ontology`, `POST /api/v1/ontology/match`, and req↔code traceability via `leankg prd` / `prd-trace`
 - **Impact & deps** — `contains`, `calls`, `imports` edges; BFS blast radius (`leankg impact`)
-- **Multi-repo server** — MCP HTTP `:9699`; `LEANKG_PROJECT_DIRS` serves many projects, selected per request by `?project=<dir|name>` (REST **and** MCP) or the MCP `project` tool argument; with neither, a multi-project server refuses rather than answering from the wrong graph. sqlite default, PG opt-in
+- **Multi-repo server** — MCP HTTP `127.0.0.1:9699`; `LEANKG_PROJECT_DIRS` serves many projects, selected per request by `?project=<dir|name>` (REST **and** MCP) or the MCP `project` tool argument; with neither, a multi-project server refuses rather than answering from the wrong graph. sqlite default, PG opt-in
 - **Env governance** — `query --action env_conflicts`, per-env snapshots, `leankg obsidian`
 - **Ops & ownership** — `query --action service_context` / `incidents`, `leankg incident` / `note` / `team-map`
 - **Req ↔ code** — `leankg prd` / `prd-trace`, `query --action prd`, ontology traceability matrix
@@ -187,6 +187,16 @@ leankg serve --ui 127.0.0.1:8081        # embedded dashboard (/api/* data API se
 leankg serve --rpc 127.0.0.1:9090       # ConnectRPC (gRPC + gRPC-Web + JSON)
 leankg version
 ```
+
+**A non-loopback bind is refused.** `leankg serve --http/--rest/--rpc <non-loopback>`
+exits with an error unless a bearer token is configured, because with no token
+every caller resolves to Admin — the project graph, the file reader and the
+memory write path would all be open to the LAN. Two ways out: bind a loopback
+address (the default), or configure a token first
+(`leankg auth token create`, or `LEANKG_TOKEN_ADMIN` / `LEANKG_TOKEN_CONTRIBUTOR`
+/ `LEANKG_TOKEN_VIEWER`). `--ui` is the one deliberately public listener (the
+container demo serves it `--read-only` against a disposable baked graph), so it
+keeps a warning instead of a refusal.
 
 UI hot-reload: `cd ui-v2 && npm install && npm run dev` → http://127.0.0.1:5173
 

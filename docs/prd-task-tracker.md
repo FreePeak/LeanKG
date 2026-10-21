@@ -79,6 +79,20 @@ Two defects this block used to carry, both corrected above: it counted **FR-GO-D
 **Left alone on purpose:** the `leankg writer` gets the orphan sweep and the vacuum but NOT the stale-collection purge — it has no query embedder, so it cannot name the live collection, and dropping a collection is not recoverable while leaving one behind only costs disk.
 
 
+## v4.18-serve-bind-loopback — a wildcard bind is refused, not warned about (2026-10-21, branch `fix/serve-bind-loopback`)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-SERVE-01 | A non-loopback MCP/REST/ConnectRPC bind is REFUSED when no auth token is configured | **DONE** | `internal/servebind.Check` (the policy, mirroring `internal/dashboard.CheckListen`) + `cmd/leankg/main.go` applies it to all three listeners BEFORE any socket binds. The error names both fixes: bind `127.0.0.1`, or `leankg auth token create` / `LEANKG_TOKEN_ADMIN`. The old `warnIfExposed` (warn, then bind anyway) is gone |
+| FR-SERVE-02 | The ConnectRPC listener had NO exposure check at all | **DONE** | It was never in the warning path. It is now covered by the same pre-flight check as MCP and REST — `TestServeBindRefusesExposedRPCAndMCP` refuses `--rpc :PORT` and `--http :PORT` with the same message |
+| FR-SERVE-03 | The UI listener stays public (the Render demo serves `--read-only --ui :${PORT}`) | **DONE (deliberate exception)** | The demo path is unchanged: the UI listener keeps its loud warning, not a refusal. The refusal covers only the three data listeners |
+| FR-SERVE-04 | Loopback REST keeps working — the omp memory backend depends on `http://127.0.0.1:9700` | **DONE** | `TestServeBindAcceptsLoopbackREST` starts the REST listener on `127.0.0.1` with no token and it comes up. The default MCP bind stays `127.0.0.1:9699` |
+| FR-SERVE-05 | The shipped commands are loopback-correct | **DONE** | `AGENTS.md` (CLI table + self-host runbook), `README.md`, `scripts/install-go.sh` and the xdev autoStart recipe now show/bind `127.0.0.1` instead of the wildcard `:9699` / `:8080` / `:9700` |
+
+**Why:** with the auth gate off, every caller resolves to Admin, so a wildcard bind put the project graph, the file reader and the memory write path on the LAN — measured 2026-10-21, a LAN POST to the REST listener answered `{"written":1}`. The old code logged that risk and bound anyway; a warning is not a control.
+
+**Verified:** `go build -p=2 ./...`, `go vet ./...`, `gofmt` clean, `go test ./cmd/leankg/ ./internal/servebind/ -count=1` green. The regression test fails on `origin/main` (the pre-fix server binds the wildcard and answers) and passes on this branch (it refuses with the fix named).
+
 ## v4.15 — session telemetry, efficiency metrics and the web dashboard (2026-10-10, branch `feat/v4.15-dashboard`)
 
 Design, decisions and gates: [`plan-dashboard.md`](plan-dashboard.md). Capture and transcript reading are off until the owner consents.

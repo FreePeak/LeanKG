@@ -101,12 +101,16 @@ func xdevEntry(cfg Config) map[string]any {
 	// A remote entry never spawns a stdio command: the URL is the server. The
 	// autoStart block is the local fallback for when that server is down, so it
 	// carries the full serve argv instead.
+	//
+	// The argv binds LOOPBACK: a wildcard bind is refused without an auth
+	// token (RS-03, enforced), and the fallback is a local process anyway —
+	// the client reaches it over the loopback interface.
 	return map[string]any{
 		"type":    "remote",
 		"url":     cfg.mergedURL(),
 		"enabled": true,
 		"autoStart": xdevAutoStart(
-			currentCommandForAutoStart(cfg), []string{"serve", "--http", ":9699", "--rest", ":9700", "--memory"},
+			currentCommandForAutoStart(cfg), []string{"serve", "--http", "127.0.0.1:9699", "--rest", "127.0.0.1:9700", "--memory"},
 			cfg, healthURLFor(cfg.URL),
 		),
 	}
