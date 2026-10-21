@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.35.2](https://github.com/FreePeak/LeanKG/compare/v0.35.1...v0.35.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **index:** a markdown heading stores its own text, not its descendants' ([#565](https://github.com/FreePeak/LeanKG/issues/565)) ([46a4dfa](https://github.com/FreePeak/LeanKG/commit/46a4dfa4db9c7344057108a2ccebc32c6cb15453))
+* **index:** reconcile the store with HEAD, and report head_sync ([#571](https://github.com/FreePeak/LeanKG/issues/571)) ([a20681c](https://github.com/FreePeak/LeanKG/commit/a20681c532bc14c8d3853a116ffb0afbb247f307))
+* **maintain:** make the hourly pass do its job, and say what it did ([#566](https://github.com/FreePeak/LeanKG/issues/566)) ([22dd194](https://github.com/FreePeak/LeanKG/commit/22dd1949de79eb7302596a574cee33d97e6cc782))
+* **memory:** content identity, bank compaction, fleet memory sweep, MCP bank delete ([#564](https://github.com/FreePeak/LeanKG/issues/564)) ([ed42e76](https://github.com/FreePeak/LeanKG/commit/ed42e762065e17146ee144903e2c1fec98d24af6))
+* **portfolioreg:** an automatic registry prune, and a store whose index root moved is reported ([#568](https://github.com/FreePeak/LeanKG/issues/568)) ([d96cdba](https://github.com/FreePeak/LeanKG/commit/d96cdba527bf0dac18b7aea6103890cc4e305a68))
+* **store:** give a new store a page that can hold three vectors ([#567](https://github.com/FreePeak/LeanKG/issues/567)) ([7d768b0](https://github.com/FreePeak/LeanKG/commit/7d768b058ef7226fbfb27929b878f95cd625baae))
+* **telemetry:** sweep the ledger whatever the capture level, and let it shrink ([#570](https://github.com/FreePeak/LeanKG/issues/570)) ([cd8e51a](https://github.com/FreePeak/LeanKG/commit/cd8e51af24bab59e5f2db575a05a332fcad524ef))
+
 ## [0.35.1](https://github.com/FreePeak/LeanKG/compare/v0.35.0...v0.35.1) (2026-10-21)
 
 
