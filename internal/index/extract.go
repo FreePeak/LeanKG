@@ -2,10 +2,14 @@ package index
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
+
+// maxContent bounds one element's stored content, in characters.
+const maxContent = 8000
 
 // match is one raw regex hit before line-range resolution.
 type match struct {
@@ -168,20 +172,11 @@ func extractFileAs(rel string, src []byte, lang string) fileElements {
 			ends[i] = pyBodyEnd(lines, m)
 		}
 	case "md":
-		// A section extends to just before the next heading of a strictly
-		// higher level, so nested headings stay line-contained in their parent.
-		for i, m := range ms {
-			ends[i] = len(lines)
-			for j := i + 1; j < len(ms); j++ {
-				if ms[j].indent < m.indent {
-					ends[i] = ms[j].line - 1
-					break
-				}
-			}
-			if ends[i] < m.line {
-				ends[i] = m.line
-			}
-		}
+		// A section extends to just before the next heading of the SAME or a
+		// HIGHER level. The old rule (the next strictly HIGHER level) let a
+		// `##` swallow every section that followed it, so a document's text
+		// was stored once per heading that preceded it.
+		ends = mdSectionEnds(ms, len(lines))
 	default:
 		for i := range ms {
 			ends[i] = len(lines)
@@ -203,6 +198,11 @@ func extractFileAs(rel string, src []byte, lang string) fileElements {
 	}
 	assignParents(fe.elements)
 	qualify(fe)
+	if lang == "md" {
+		mdUniqueNames(fe.elements)
+		markdownContent(fe.elements, ms, ends, lines)
+		return fe
+	}
 	boundContent(fe.elements, lines)
 	return fe
 }
@@ -329,6 +329,140 @@ func matchMarkdown(lines []string) []match {
 		}
 	}
 	return ms
+}
+
+// mdSectionEnds resolves the line range of every markdown heading: a section
+// runs from its heading line to just before the next heading of the SAME or a
+// HIGHER level, so a section never contains a sibling's body.
+//
+// The old rule stopped at the next strictly HIGHER level, which made every
+// `##` of a document reach past all of its following siblings: on the live
+// leankg store the 249 markdown files (3,407,965 B on disk) expanded to
+// 14,545,212 B of `doc` content, 4.27x, and the worst file
+// (docs/archive/workflow-opencode-agent.md, 19,509 B on disk) expanded to
+// 290,340 B, 14.9x.
+func mdSectionEnds(ms []match, nlines int) []int {
+	ends := make([]int, len(ms))
+	for i, m := range ms {
+		end := nlines
+		for j := i + 1; j < len(ms); j++ {
+			if ms[j].indent <= m.indent {
+				end = ms[j].line - 1
+				break
+			}
+		}
+		if end < m.line {
+			end = m.line
+		}
+		ends[i] = end
+	}
+	return ends
+}
+
+// markdownContent fills the stored text of every markdown element.
+//
+// The shape: ONE element per heading, and a heading's text is its OWN lines
+// plus the TITLES of its descendant headings, never a descendant's body. The
+// document's own top-level heading keeps the WHOLE document, so
+// document-level summarization keeps working. Every other heading keeps its
+// own text, which lands the total at about 2x the source size instead of the
+// 4.27x the ancestor-copy shape produced (the same paragraph used to be
+// stored once per ancestor).
+func markdownContent(els []indexedElem, ms []match, ends []int, lines []string) {
+	owner := mdDocOwner(ms)
+	for i := range els {
+		if i == owner {
+			// The document owner holds the whole document, preamble included.
+			els[i].start = 1
+			els[i].end = len(lines)
+			els[i].content = store.ClipUTF8(strings.Join(lines, "\n"), maxContent)
+			continue
+		}
+		keep := mdKeepLines(i, ms, ends)
+		parts := make([]string, 0, len(keep))
+		for _, ln := range keep {
+			parts = append(parts, lines[ln-1])
+		}
+		els[i].content = store.ClipUTF8(strings.Join(parts, "\n"), maxContent)
+	}
+}
+
+// mdDocOwner returns the index of the heading that owns the document: the
+// first heading of the file's top level (the lowest heading level present).
+// A file that starts at `##` has no `#` title, and its first heading plays
+// that role, so document-level summarization keeps working for it too.
+func mdDocOwner(ms []match) int {
+	if len(ms) == 0 {
+		return -1
+	}
+	owner := 0
+	for i, m := range ms {
+		if m.indent < ms[owner].indent {
+			owner = i
+		}
+	}
+	return owner
+}
+
+// mdKeepLines returns the lines one markdown heading stores: its own lines
+// plus the titles of its descendant headings, never a descendant's body.
+func mdKeepLines(i int, ms []match, ends []int) []int {
+	start, end := ms[i].line, ends[i]
+	keep := make([]int, 0, end-start+1)
+	for ln := start; ln <= end; ln++ {
+		if ln == start || mdIsDescendantTitle(i, ms, ends, ln) || !mdInDescendantBody(i, ms, ends, ln) {
+			keep = append(keep, ln)
+		}
+	}
+	return keep
+}
+
+// mdInDescendantBody reports whether the line falls inside the BODY of one of
+// the heading's descendants. An ancestor must not store that text a second
+// time: the descendant's own element holds it.
+func mdInDescendantBody(i int, ms []match, ends []int, line int) bool {
+	for j := i + 1; j < len(ms) && ms[j].line <= ends[i]; j++ {
+		if line > ms[j].line && line <= ends[j] {
+			return true
+		}
+	}
+	return false
+}
+
+// mdIsDescendantTitle reports whether the line is the heading line of one of
+// the heading's descendants. A title is the outline of the section and is
+// kept; a body is not.
+func mdIsDescendantTitle(i int, ms []match, ends []int, line int) bool {
+	for j := i + 1; j < len(ms) && ms[j].line <= ends[i]; j++ {
+		if ms[j].line == line {
+			return true
+		}
+	}
+	return false
+}
+
+// mdUniqueNames disambiguates repeated heading titles inside one file. Two
+// headings with the same text ("## Notes" twice) would share a qualified
+// name, and the store's UNIQUE index on qualified_name would silently drop
+// one of them: the file would hold fewer elements than it has headings. The
+// suffix mirrors the doc indexer's own slug disambiguation.
+func mdUniqueNames(els []indexedElem) {
+	used := make(map[string]bool, len(els))
+	for i := range els {
+		q := els[i].qn
+		if !used[q] {
+			used[q] = true
+			continue
+		}
+		for n := 2; ; n++ {
+			cand := q + " (" + strconv.Itoa(n) + ")"
+			if !used[cand] {
+				els[i].qn = cand
+				used[cand] = true
+				break
+			}
+		}
+	}
 }
 
 func matchJava(lines []string) []match {
@@ -547,7 +681,6 @@ func qualify(fe fileElements) {
 // The slice GROWS (lines[docStart-1:e]), so a body is never shortened to make
 // room, and an element with no comment is byte-identical to what it was.
 func boundContent(els []indexedElem, lines []string) {
-	const maxContent = 8000
 	for i := range els {
 		s, e := els[i].start, els[i].end
 		if s < 1 {
