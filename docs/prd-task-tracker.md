@@ -158,6 +158,17 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 
 The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01..04` (§Done).
 
+## Done — 2026-09-04 implementation sprint (v4.3.0 wave 1–3)
+
+| ID | Title | Evidence |
+|----|-------|----------|
+| FR-ZCP-02 | Lazy auto-attach + background first index; silent fallback killed; `freshness: cold` | 0aba41ad + d9ccd8b5 — 13 fr_zcp02 tests; auto-attach default-ON, LEANKG_AUTO_ATTACH=0 opt-out, inline ensure_project_indexed removed from request path, mcp_status carries indexing state. **The silent fallback was still alive in the SELECTOR (2026-10-20, v4.16-project-selector-fail-closed)**: a project name that matched nothing was canonicalized against the server's cwd and the ancestor walk climbed to the cwd — which on the 286-project self-host IS a registered project — so it answered from there. Measured live: `{"project":"totally-not-a-real-project-xyz"}` → the leankg project's status (11,246 elements), `?project=<bogus name>` → HTTP 200. The ancestor walk is for PATHS only now; a name matches a basename or errors; the old test had passed because the test process's cwd was not a registered project |
+| FR-ZCP-03 | `leankg_context` capability router with L0–L3 degradation ladder | 4231d256 + a86a771c (kick wiring) — src/mcp/router.rs 1142 lines, 23 unit tests; Tier markers on all 77 tool descriptions; safe_discover de-rotted; kg_semantic_context no-vector degrade |
+| FR-ZCP-05 (bridge tier) | pg_trgm fuzzy baseline for the L2 rung | 7d902461 + 3a68d571 — migration 007, fuzzy_find_elements/suggest_element_names seams, trgm_available probe, live tests on throwaway DBs |
+| FR-ZCP-12 (T1) | Error catalog + claim hygiene | c5b4b991 + 8c5b9cce — src/errors.rs 14 codes, 43 migrated sites, 4-test CI lint (coverage + dead-entry + completeness, enforcement proven), README tool-count fix |
+| FR-ZCP-13 | First-run setup contract + `leankg add` | b251046c — src/setup_config.rs (10 tests), precedence flag>env>stored>TTY-prompt>manual-default, detached background index <2s return, status --json, setup --reset |
+| FR-ZCP-01 (clause 2) | Server-initiated roots/list HTTP resolution | 87e18287 — see In Progress note; 24 tests |
+
 ## v4.18-cmd-verb-surface — a verb that opens a store read-write creates one, so it must ask first (2026-10-21, branch fix/cmd-verb-surface)
 
 | ID | Title | Status | Evidence |
@@ -175,17 +186,6 @@ missing, so "I only wanted to LOOK" is not a state the verb can reach — the
 side effect is the store's existence, and a stray `.leankg` in an ancestor
 re-points every project-root resolution below it, which is how one
 directory broke the entire test suite.
-
-## Done — 2026-09-04 implementation sprint (v4.3.0 wave 1–3)
-
-| ID | Title | Evidence |
-|----|-------|----------|
-| FR-ZCP-02 | Lazy auto-attach + background first index; silent fallback killed; `freshness: cold` | 0aba41ad + d9ccd8b5 — 13 fr_zcp02 tests; auto-attach default-ON, LEANKG_AUTO_ATTACH=0 opt-out, inline ensure_project_indexed removed from request path, mcp_status carries indexing state. **The silent fallback was still alive in the SELECTOR (2026-10-20, v4.16-project-selector-fail-closed)**: a project name that matched nothing was canonicalized against the server's cwd and the ancestor walk climbed to the cwd — which on the 286-project self-host IS a registered project — so it answered from there. Measured live: `{"project":"totally-not-a-real-project-xyz"}` → the leankg project's status (11,246 elements), `?project=<bogus name>` → HTTP 200. The ancestor walk is for PATHS only now; a name matches a basename or errors; the old test had passed because the test process's cwd was not a registered project |
-| FR-ZCP-03 | `leankg_context` capability router with L0–L3 degradation ladder | 4231d256 + a86a771c (kick wiring) — src/mcp/router.rs 1142 lines, 23 unit tests; Tier markers on all 77 tool descriptions; safe_discover de-rotted; kg_semantic_context no-vector degrade |
-| FR-ZCP-05 (bridge tier) | pg_trgm fuzzy baseline for the L2 rung | 7d902461 + 3a68d571 — migration 007, fuzzy_find_elements/suggest_element_names seams, trgm_available probe, live tests on throwaway DBs |
-| FR-ZCP-12 (T1) | Error catalog + claim hygiene | c5b4b991 + 8c5b9cce — src/errors.rs 14 codes, 43 migrated sites, 4-test CI lint (coverage + dead-entry + completeness, enforcement proven), README tool-count fix |
-| FR-ZCP-13 | First-run setup contract + `leankg add` | b251046c — src/setup_config.rs (10 tests), precedence flag>env>stored>TTY-prompt>manual-default, detached background index <2s return, status --json, setup --reset |
-| FR-ZCP-01 (clause 2) | Server-initiated roots/list HTTP resolution | 87e18287 — see In Progress note; 24 tests |
 
 ## Todo — live v4.1.x–v4.3.0 items (ordered)
 
