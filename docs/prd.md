@@ -480,6 +480,68 @@ make the store unhealthy). `go build -p=2 ./...` and `go vet ./...` clean;
 `go test ./internal/core/ ./internal/mcp/ -count=1` green with the embed
 env cleared.
 
+### v4.19-memory-lifecycle — a memory row the agent cannot delete, and a dedupe that can never fire (2026-10-21)
+
+**Trigger:** the self-host audit, reading the live leankg memory bank
+`xdev-gateway.jsonl`: 448 rows for 304 distinct bodies, the worst group 67
+copies of one 46-byte body, and a recall for that body returned the same
+sentence 72 times.
+
+**C.1 — the dedupe that can never fire.** The recall path dedupes on the row
+`id`, but the id is minted per WRITE (`"<unixnano>-<index>"`), so two rows of
+the same body never share one and the dedupe never fires. The rewrite path
+that could collapse them selects rows by `metadata.document_id`, and 666 of
+the 756 live rows had none. **Seam:** the row's identity. A row written
+without a client document id now carries a content identity — the sha256 of
+the normalized body — as its `document_id` fallback, and the write path drops
+the rows that identity supersedes before it appends. Rows the client owns
+(an explicit `metadata.document_id`) are exempt: the Hindsight
+replace/append contract is theirs, and a chunked document keeps every chunk.
+
+**C.2 — no delete for bank rows on the MCP surface.** The only delete in the
+system was the REST route (`DELETE /v1/default/banks/{bank}/documents/{id}`),
+so an MCP client — the primary surface for the omp memory backend — could
+never remove a memory row. The import tool's command enumeration now carries
+`delete_document`, resolved through the one bank-resolution path
+(`memory.WriteBank`), answering with the deleted-row count.
+
+**C.3 — compaction touched only the FTS side.** `Compact()` reclaimed the
+FTS index and left the bank JSONL alone, so the duplicates stayed on disk
+where the source of truth lives (~88.6 KB/day, ~45 rows/day). The compaction
+now rewrites every bank file with the duplicate rows collapsed, crash-safely
+(temp file + rename) and with no row lost — a line that does not parse is
+kept verbatim.
+
+**C.4 — memory maintenance never reached the fleet.** The fleet builder set
+`Mem` only for the default project, so the routed projects' memory indexes
+were never compacted (measured: `xdev/.leankg/memory/index.db` at 4 KB plus a
+124.8 KB WAL, untouched for a week). The fleet now opens the memory layer of
+every routed project that HAS one; a project without one is skipped, because
+opening the layer would create the tree.
+
+**C.5 — the stale memory vector collection.** `dense.go` keys vectors by
+model, so a collection under a model id nobody queries any more is never
+collected: the live index held 427 vectors (655,872 B) under
+`local|bge-small-en-v1.5-f16.gguf|local|384` next to the live collection's
+690 rows (1,413,120 B). The sweep mirrors the store-side stale-stamp sweep:
+the collections that are not live go, and with no live collection known
+nothing is dropped at all.
+
+**Tests:** `internal/memory/contentid_test.go` (the same body retained 3
+times leaves ONE row and recalls once; distinct bodies all survive; a
+client-owned chunked document keeps every chunk; an explicit replace still
+wins; a rewrite leaves no temp file and loses no row),
+`internal/memory/compaction_test.go` (after compaction the bank holds one
+copy of a duplicated body and every distinct body survives),
+`internal/memory/lifecycle_test.go` (the stale collection is swept, the live
+one survives, and a sweep with no live model known removes nothing),
+`internal/mcp/delete_document_test.go` (an MCP `import` command that deletes
+a document removes exactly that row, a delete without a document_id is
+refused, the schema advertises the command) and
+`cmd/leankg/fleetmemory_test.go` (one fleet pass compacts the memory index of
+every project that has one; a project without one gets no memory tree).
+Every one of them was verified to FAIL on `origin/main`.
+
 ### v4.34.0-the-advertised-contract — a call the agent cannot form is not published (2026-10-01)
 
 **Trigger:** wave 23 of the loop (FR-SELF-04, still on PR #449), enumerating the last axis the previous twenty-two waves had not touched: **the MCP wire itself** — the schema an agent reads to decide what to call, and whether every advertised call can actually be formed from it.
