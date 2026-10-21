@@ -375,6 +375,14 @@ directory broke the entire test suite.
 
 **Why:** every repo in `LEANKG_PROJECT_DIRS` is a project the server will answer for, so the served fleet is an answer surface — its boundary has to be a reviewed, versioned default with a test, not a shell default that lives outside the repository.
 
+## v4.19-markdown-sections — a heading stores its own text, not its descendants' (2026-10-21, branch fix/markdown-sections)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-MD-01 | A heading stores its own text, never its descendants' bodies | **DONE** | `internal/index/extract.go`: a section now ends at the next heading of the SAME or a HIGHER level (`mdSectionEnds`), and each heading's stored text is its own lines plus its descendants' TITLES (`markdownContent`, `mdKeepLines`). The document's top-level heading keeps the whole document, so document-level summarization keeps working. Measured live: 4,566 `doc` elements held 14,545,212 of 20,234,194 content bytes (71.9 %) for 3,407,965 B of markdown on disk — 4.27×, worst file 14.9×. Test `TestMarkdownSectionsDoNotStoreDescendantBodies` — FAIL on `origin/main` ("stored bytes = 1627 (source 403, pre-fix 1627)"), PASS on this branch. |
+| FR-MD-02 | Repeated heading titles get distinct qualified names | **DONE** | Two headings with the same text in one file shared the qualified name `<rel>::<heading>`, and the store's UNIQUE index on `qualified_name` silently dropped one of them — the file would hold fewer elements than it has headings. `mdUniqueNames` now suffixes repeats, mirroring the doc indexer's own slug disambiguation. Test `TestMarkdownRepeatedHeadingsGetDistinctNames` — FAIL on `origin/main` ("duplicate qualified name \"doc.md::Notes\": the store would drop one of them"), PASS on this branch. |
+| FR-MD-03 | The element COUNT and the key scheme are unchanged | **DONE** | The change is a content-shape fix, not a re-keying: one element per heading, as before. The residual collision with the doc indexer (`internal/docindex` writes the same `file_path` under `<rel>#<slug>`) is reported in the PR body and left to the parent — `internal/docindex` is not this branch's file. |
+
 ## Repo hygiene (non-PRD)
 
 | Item | Detail |

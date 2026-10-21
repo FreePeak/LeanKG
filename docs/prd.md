@@ -10,6 +10,50 @@
 
 ## Changelog
 
+### v4.19-markdown-sections — a heading stores its own text, not its descendants' (2026-10-21)
+
+**Trigger:** a measurement of the live leankg store's own content. 4,566 of its
+11,584 elements are `doc`, and they hold 14,545,212 of the store's 20,234,194
+content bytes — **71.9 %** of everything LeanKG stores — for 249 markdown files
+that are 3,407,965 B on disk. The expansion is **4.27×**; the worst file
+expands **14.9×** (`docs/archive/workflow-opencode-agent.md`: 19,509 B on disk
+→ 290,340 B stored).
+
+**The cause.** `internal/index/extract.go` resolved a heading's section as "up
+to the next heading of a strictly HIGHER level". A `##` therefore reached past
+every `##` that followed it, so a document's text was stored once per heading
+that preceded it: the same paragraph lived in the `#` element, in its `##`
+element, and in every deeper element beneath it.
+
+**What changed.** One element per heading, as before — the element COUNT and
+the key scheme are unchanged. A heading's text is now its OWN lines plus the
+TITLES of its descendant headings, never a descendant's body. The document's
+own top-level heading keeps the WHOLE document, so document-level
+summarization keeps working, and a file that starts at `##` (no `#` title)
+promotes its first heading to the same role. The total lands at about 2× the
+source size instead of 4.27×.
+
+**A second defect, found on the way.** Two headings with the same text in one
+file (`## Notes` twice) produced the SAME qualified name (`<rel>::<heading>`),
+and the store's UNIQUE index on `qualified_name` silently dropped one of them:
+the file would hold fewer elements than it has headings. Repeated titles now
+carry a numeric suffix, mirroring the doc indexer's own slug disambiguation.
+
+**Tests:** `internal/index/markdown_sections_test.go`.
+`TestMarkdownSectionsDoNotStoreDescendantBodies` — verified to FAIL on
+`origin/main` ("stored bytes = 1627, want <= 60% of the pre-fix 1627";
+"stored bytes: 1627 (source 403, pre-fix 1627)") and PASS on this branch.
+`TestMarkdownRepeatedHeadingsGetDistinctNames` — FAIL on `origin/main`
+("duplicate qualified name \"doc.md::Notes\": the store would drop one of
+them"), PASS on this branch.
+
+**Residual, reported not fixed here:** the markdown indexer
+(`internal/index/extract.go`, key `<rel>::<heading>`) and the doc indexer
+(`internal/docindex/docindex.go`, key `<rel>#<slug>`) write the SAME
+`file_path` with DIFFERENT key schemes, so the source-scoped `DeleteByFile`
+wipes the other indexer's rows. This branch does not touch
+`internal/docindex`.
+
 ### v4.17-scheduled-reclaim — the store cleans itself up, on a schedule, across every project the server fronts (2026-10-20)
 
 > **Trigger:** an operator asked why LeanKG was eating the disk, and the
