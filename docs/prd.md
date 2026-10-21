@@ -101,6 +101,51 @@ stale-collection purge: it has no query embedder, so it cannot name the
 live collection. Dropping a collection is not recoverable; leaving one
 behind costs disk.
 
+### v4.19-store-page-size — a vector row no longer owns a whole page (2026-10-21)
+
+**Trigger:** a `dbstat` measurement of the live leankg store's own pages. The
+`embedding_vectors` table held 46,936,064 bytes, of which **22,256,720 bytes —
+16 % of the whole 138,678,272-byte store — was unused page space**, and the
+rows were one per page: 11,429 rows, `AVG(LENGTH(vec))` = 2,048.0, and not one
+overflow page.
+
+**The arithmetic.** With `page_size = 4096` the max local payload is
+`usable − 35 = 4,061` bytes, and one vector row is 2,134 bytes (a 2,048-byte
+float32 blob for 512 dims plus its row overhead). **Two rows never fit in one
+page**, so every vector owned a whole 4 KiB page with 1,948 bytes (48 %) of it
+empty. With `page_size = 8192` the max local payload is 8,157 and three rows
+fit per page: ~2,734 bytes per vector.
+
+**What changed**
+
+- **A NEW store is created with the 8 KiB page.** The order is the whole
+  trick: SQLite keeps the page size in the file header, and switching the
+  database into WAL writes that header, so the page size has to be set BEFORE
+  the journal mode — which is why a new store does not take `journal_mode`
+  from the DSN (the driver's pragmas run at connect, before the page size can
+  be set on an empty file).
+- **An EXISTING store keeps its page size.** SQLite adopts a new one only
+  while a VACUUM rewrites the file, and rewriting a live store's file layout
+  is an operator's decision, not this package's.
+- **The upgrade is opt-in and lossless:** `leankg vacuum --page-size 8192`
+  runs `PRAGMA journal_mode = DELETE` → `PRAGMA page_size = N` → `VACUUM` →
+  `PRAGMA journal_mode = WAL` (a WAL database cannot change its page size at
+  all), and it counts the vector rows before and after: a rewrite that lost a
+  vector is a bug, not a compaction, and the count says so.
+
+**Measured, on a 300-vector store:** 1,236,992 bytes at 4 KiB against
+**835,584 bytes at 8 KiB — 32.4 % smaller**, with every vector byte-identical.
+
+**Not done, on purpose:** the vector blob format is unchanged and
+`sqlite-vec` is not adopted — it would invalidate every existing vector and
+force a full re-embed.
+
+**Tests:** `internal/store/pagesize_test.go`.
+`TestNewStoreUsesTheLargerPageSize` — verified to FAIL on `origin/main`
+("a new store has page_size 4096, want 8192") and PASS on this branch.
+`TestExistingStoreKeepsItsPageSize`, `TestUpgradePageSizePreservesEveryVector`
+(hash of every vector byte, before and after), `TestUpgradePageSizeRefusesAnImpossibleSize`.
+
 ### v4.18-serve-bind-loopback — a wildcard bind is refused, not warned about (2026-10-21)
 
 > **Trigger:** the fix wave measured the live server instead of reasoning

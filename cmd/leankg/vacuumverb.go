@@ -29,6 +29,7 @@ func cmdVacuum(args []string) {
 	engine := fs.String("engine", "", "storage engine: sqlite|postgres (default: LEANKG_DB_ENGINE, else sqlite)")
 	full := fs.Bool("full", false, "rewrite the whole store (whole-file VACUUM) instead of a bounded incremental reclaim")
 	maxPages := fs.Int("max-pages", maintain.DefaultMaxPages, "free pages a bounded incremental pass returns (ignored by --full)")
+	pageSize := fs.Int("page-size", 0, "rewrite the store with this page size (e.g. 8192): an opt-in, lossless whole-file rewrite that stops every vector row from owning a whole page (sqlite only)")
 	quiet := fs.Bool("quiet", false, "print only the bytes reclaimed")
 	positional := parseInterspersed("vacuum", fs, args, 1)
 	if len(positional) == 1 {
@@ -45,6 +46,31 @@ func cmdVacuum(args []string) {
 	defer st.Close()
 	if err := st.Migrate(); err != nil {
 		fatalText(fmt.Errorf("vacuum: migrate: %w", err))
+	}
+
+	if *pageSize > 0 {
+		if eng == "postgres" {
+			fatalText(fmt.Errorf("vacuum: --page-size applies to the sqlite engine only"))
+		}
+		// The rewrite needs the write lock and a second copy of the file, so
+		// the store is closed first and the rewrite runs on its own
+		// connection. It is opt-in and never automatic: rewriting a live
+		// store's file layout is an operator's decision.
+		path := st.Path()
+		if err := st.Close(); err != nil {
+			fatalText(fmt.Errorf("vacuum: close store: %w", err))
+		}
+		res, err := store.UpgradePageSize(path, *pageSize)
+		if err != nil {
+			fatalText(fmt.Errorf("vacuum: page size: %w", err))
+		}
+		if *quiet {
+			fmt.Printf("%d\n", res.AfterBytes-res.BeforeBytes)
+			return
+		}
+		fmt.Printf("vacuum: %s page size %d -> %d (%d -> %d bytes), %d vector(s) preserved\n",
+			path, res.Before, res.After, res.BeforeBytes, res.AfterBytes, res.Vectors)
+		return
 	}
 
 	if *full {

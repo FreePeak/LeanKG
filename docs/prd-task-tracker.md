@@ -362,6 +362,15 @@ directory broke the entire test suite.
 *Last updated: 2026-09-30 (v4.13.3 agent-ux-protocol: memory protocol + empty-hit guidance + status.project_dir)*
 
 
+## v4.19-store-page-size — a vector row no longer owns a whole page (2026-10-21, branch fix/store-page-size)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-PS-01 | A NEW store is created with the 8 KiB page | **DONE** | `internal/store/store.go`: a store that does not exist yet takes `PRAGMA page_size = 8192` before the journal mode (SQLite keeps the page size in the file header, and switching into WAL writes that header — so the order is the whole trick). Measured with dbstat on the live leankg store: 11,429 vector rows of 2,048 B, one per 4 KiB page, 22,256,720 bytes (16 % of the 138,678,272-byte store) of unused page space. Test `TestNewStoreUsesTheLargerPageSize` — FAIL on `origin/main` ("a new store has page_size 4096, want 8192"), PASS on this branch. |
+| FR-PS-02 | An EXISTING store keeps its page size | **DONE** | SQLite adopts a new page size only while a VACUUM rewrites the file, and rewriting a live store's file layout is the operator's decision. `internal/store/store.go` only sets the page size for a file that does not exist yet (or is an empty placeholder). Test `TestExistingStoreKeepsItsPageSize` — an existing 4096-byte store stays at 4096 even after the auto-vacuum header upgrade's VACUUM. |
+| FR-PS-03 | The upgrade is opt-in and LOSSLESS | **DONE** | `leankg vacuum --page-size N` (`cmd/leankg/vacuumverb.go`) runs `store.UpgradePageSize`: `PRAGMA journal_mode = DELETE` → `PRAGMA page_size = N` → `VACUUM` → `PRAGMA journal_mode = WAL` (a WAL database cannot change its page size at all), and it counts the vector rows before and after — a rewrite that lost a vector fails instead of reporting success. Measured on a 300-vector store: 1,236,992 bytes at 4 KiB against 835,584 bytes at 8 KiB (−32.4 %), every vector byte-identical. Tests `TestUpgradePageSizePreservesEveryVector` (hash of every vector byte, before and after), `TestUpgradePageSizeRefusesAnImpossibleSize`. |
+| FR-PS-04 | The vector format and the engine are untouched | **DONE** | The blob format is unchanged and `sqlite-vec` is NOT adopted: it would invalidate every existing vector and force a full re-embed. No vector is deleted by any path in this change. |
+
 ## v4.18-scan-root-scope — the served fleet must be the projects LeanKG owns (2026-10-21, branch `fix/scan-root-narrow`)
 
 | item | status | evidence |
