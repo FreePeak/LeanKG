@@ -475,6 +475,63 @@ checked to FAIL on `origin/main` — the store tests with the defect's own
 `"no vector collection for model deterministic-4; degraded from L3"` — and
 to PASS on this branch.
 
+### v4.19-telemetry-retention — the ledger must be swept, and it must shrink (2026-10-21)
+
+**Trigger:** the telemetry ledger audit of the live self-host. Four defects
+in `internal/telemetry`, all of them the same class: the ledger grows
+forever and nobody notices, because nothing enforces the retention window
+that the config promises.
+
+**D.1 — the sweeper was installed only when capture was on.**
+`internal/telemetry/open.go` returned `Nop{}, nil` when the effective level
+was `Off`, *before* `OpenSQLite` and `startRetention`. With capture off
+there was therefore no ledger and no sweeper; a ledger that already existed
+was never reclaimed, and the gap lasted until the next consent reload.
+The retention window is a promise about the ledger's size, not about
+whether the server records anything today, so the sweeper now runs for a
+ledger that exists whatever the capture level is. The sweeper is keyed by
+ledger path, so the two open paths (the normal open and a later consent
+reload) share one ticker over one file instead of racing two.
+
+**D.2 — the sweep error was discarded.** `retention.go` ran the sweep
+under a one-minute timeout and dropped the error (`_, _ = …`), so a failing
+sweep was invisible: the ledger kept growing and nothing said why. The
+error is now logged *and* recorded in the ledger's `meta` table under
+`last_error`, so it is visible to a later `leankg telemetry status` read and
+not only to whoever was watching the log.
+
+**D.3 — the purge never touched `ab_runs`.** The purge listed `calls`,
+`memory_events`, `session_links` and `sessions`, while the A/B runs table
+was inserted into at the same rate and never deleted. It is now purged with
+the same retention window (`imported_at < cutoff`).
+
+**D.4 — the ledger never shrank.** The DSN set no `auto_vacuum`, so
+`PRAGMA incremental_vacuum` is a documented no-op on that file: the freed
+pages stayed on the freelist and the file only ever grew. Measured on the
+live `~/.leankg/telemetry.db`: 10,063,872 B plus a 3,135,352 B WAL,
+`auto_vacuum=0`, `freelist_count=0`, `page_count=2464`, holding 12,148
+calls / 2,937 memory_events / 735 sessions at ~1,118 calls/day — no purge
+had ever run. A ledger created from now on is created with
+`auto_vacuum=INCREMENTAL`, the purge runs `PRAGMA incremental_vacuum` to
+hand the freed pages back, and the sweep runs
+`PRAGMA wal_checkpoint(TRUNCATE)` so the `-wal` file does not keep growing.
+An existing ledger needs the one-time `PRAGMA auto_vacuum=INCREMENTAL;
+VACUUM;`, exposed as the opt-in `telemetry.EnableIncrementalVacuum` — it
+rewrites the whole file, so it is never run automatically on a live ledger.
+
+The default retention window stays 30 days (`DefaultRetentionDays`): the
+calls ledger costs ≈8.7× the bytes per usage unit of `context_metrics`
+(230 B/row), so the window, not the vacuum, is the real lever.
+
+**Regression tests** (one per defect, `internal/telemetry/retention_regression_test.go`),
+each verified to FAIL on `origin/main` and PASS on this branch:
+`TestOpenWithCaptureOffStillSweepsAnExistingLedger` (main: "Open returned
+Nop for an existing ledger"), `TestRetentionSweepErrorIsRecorded` (main:
+"the sweep failure was dropped: no \"last_error\" row in meta"),
+`TestPurgeRemovesExpiredABRuns` (main: "the expired A/B run survived the
+purge"), `TestPurgeReclaimsPagesAndTruncatesTheWAL` (main: "auto_vacuum =
+0, want 2 (INCREMENTAL)").
+
 ### v4.35.0-the-second-wire-cannot-say-what-it-refused — ConnectRPC (2026-10-01)
 
 **Trigger:** wave 24 of the loop (FR-SELF-04, still on PR #449), the axis after wave 23: **the other transport.** ConnectRPC serves the same engine over a second wire with its own generated descriptor, and nothing in the previous twenty-three waves had driven it.
