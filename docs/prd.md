@@ -183,6 +183,85 @@ produced, and the parts of it that line did not carry (the store the refusal
 searched, the memory write target, the REST list shapes, the advertised
 contract).
 
+### v4.18-stamp-pre017 — the L3 rung names the read error instead of a collection that was never missing (2026-10-21)
+
+**The defect, measured.** The L3 rung degraded on a store that had never
+run migration 017 (`embed-stamp-text-cap`), and it named a cause that was
+false. `internal/store/vectors.go` read the stamp with one unconditional
+statement:
+
+```sql
+SELECT model_id, revision, dimensions, distance, provider,
+	COALESCE(chunker_version, 0), COALESCE(query_prefix, ''), COALESCE(document_prefix, ''),
+	COALESCE(text_cap, 0)
+	FROM emb_stamp
+```
+
+`text_cap` came with migration 017. On a store that has not run it, the
+column does not exist, and the whole read dies with
+`OperationalError: no such column: text_cap` — the `COALESCE` protects
+against a NULL *value*, not against a missing *column*.
+
+Then `internal/core/core.go` made it worse:
+
+```go
+stamp, err := e.st.Stamp(modelID)
+if err != nil || stamp == nil {
+	return degrade(fmt.Sprintf("no vector collection for model %s; degraded from L3", modelID))
+}
+```
+
+The read error was swallowed into the missing-collection branch, so the
+operator was told **"no vector collection"** about a store that holds
+**2314 vectors**. The advice that follows a missing collection is a
+rebuild; a rebuild cannot fix a column that the reader cannot name, so the
+operator was sent to do work that could not have helped, against a cause
+that was not the cause.
+
+**What is fixed.** The stamp read and write now follow the columns the
+store's schema ACTUALLY has: the optional columns are probed once per call
+(`pragma_table_info('emb_stamp')` on sqlite, `pg_attribute` on PostgreSQL),
+and an optional column the schema does not have is projected as its
+documented default — `text_cap` 0 = "cap never recorded", `chunker_version`
+0 = "unversioned", empty prefixes. The row shape, and the scan behind it,
+never change with the schema version, so a pre-017 store reads and writes
+its stamps. The PostgreSQL twin gets the same treatment (PG 16 is the last
+version before the cap column; sqlite has no 016, so its pre-017 schema is
+015).
+
+The degrade reason now separates the two failures the old line conflated:
+
+- a stamp that could not be READ →
+  `vector collection stamp for model <id> could not be read (<error>); degraded from L3`
+- a collection that genuinely does not exist → unchanged:
+  `no vector collection for model <id>; degraded from L3`
+
+The read error is surfaced verbatim, so the operator can see the column the
+reader could not find. A healthy L3 says exactly what it said before.
+
+**Tests.** `TestStampReadsPre017Store` and
+`TestWriteStampOnPre017Store` (sqlite) and `TestPGStampReadsPre017Store` /
+`TestPGStampAfterMigratingPre017Store` (PostgreSQL, gated on
+`LEANKG_TEST_PG_URL`) build a REAL pre-017 store — the engine's own
+migration DDL, applied in order, up to version 015 (sqlite) / 016 (PG),
+with 017 NOT applied — and assert the stamp reads back with `text_cap` 0
+and the identity intact. `TestStampAfterMigratingPre017Store` pins that
+the migration still turns the store into a normal one: the legacy row reads
+as "cap never recorded" and a stamp written afterwards records its cap.
+
+`TestL3DegradeReasonNamesUnreadableStamp` and
+`TestL3DegradeReasonStillSaysNoVectorCollection` (internal/core) pin the
+two reasons apart: the unreadable stamp names the read error and does NOT
+claim a missing collection; the missing collection still says "no vector
+collection".
+
+Verified: `go build -p=2 ./...`, `go vet ./...`, `go test ./internal/store/
+./internal/core/ -count=1` green (embed env cleared). Each new test was
+checked to FAIL on `origin/main` — the store tests with the defect's own
+`no such column: text_cap`, the core test with the false reason
+`"no vector collection for model deterministic-4; degraded from L3"` — and
+to PASS on this branch.
+
 ### v4.35.0-the-second-wire-cannot-say-what-it-refused — ConnectRPC (2026-10-01)
 
 **Trigger:** wave 24 of the loop (FR-SELF-04, still on PR #449), the axis after wave 23: **the other transport.** ConnectRPC serves the same engine over a second wire with its own generated descriptor, and nothing in the previous twenty-three waves had driven it.

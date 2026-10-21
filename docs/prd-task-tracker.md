@@ -147,6 +147,24 @@ Root causes, designs, tests and PR order: [`plan-v4.14-retrieval-safety.md`](pla
 | RS-25 | P4 | `status.embedding_coverage` | DONE |
 | RS-26 | P4 | Document that `memory create` overwrites | DONE |
 
+## v4.18-stamp-pre017 — the L3 rung names the read error instead of a collection that was never missing (2026-10-21, branch fix/stamp-pre017)
+
+**Why:** a store that has not run migration 017 made every stamp read die
+with `no such column: text_cap`, and `core.rungSemantic` swallowed that
+error into "no vector collection for model X" — naming a cause that was
+false about a store holding 2314 vectors, and sending the operator to
+rebuild a collection that was there all along.
+
+| item | status | evidence |
+|------|--------|----------|
+| Stamp read on a pre-017 store | DONE | `internal/store/stamp_pre017_test.go` — `TestStampReadsPre017Store` (real pre-017 fixture: the engine's own migration DDL up to 015, 017 NOT applied; reads back with `text_cap` 0 and the identity intact) and `TestStampAfterMigratingPre017Store` (the migration still turns the store normal: legacy row "cap never recorded", a fresh write records its cap) |
+| Stamp write on a pre-017 store | DONE | `TestWriteStampOnPre017Store` — the upsert carries only the columns the schema has, so the write does not die with "no such column" either |
+| PostgreSQL twin | DONE | `internal/store/stamp_pre017_pg_test.go` — `TestPGStampReadsPre017Store` / `TestPGStampAfterMigratingPre017Store` against a real pre-017 PG schema (migrations to 016), gated on `LEANKG_TEST_PG_URL` like the other PG tests |
+| Degrade reason separates "unreadable" from "missing" | DONE | `internal/core/l3stampreason_test.go` — `TestL3DegradeReasonNamesUnreadableStamp` (the reason names the read error and does NOT claim a missing collection) and `TestL3DegradeReasonStillSaysNoVectorCollection` (a collection that genuinely does not exist still says "no vector collection") |
+| Read shape follows the schema | DONE | `internal/store/vectors.go` + `internal/store/store_pg.go` — the optional columns are probed per call (`pragma_table_info` / `pg_attribute`); an absent one is projected as its documented default (`text_cap` 0 = "cap never recorded"), so the row shape never changes with the schema version |
+| Gates | DONE | `go build -p=2 ./...`, `go vet ./...`, `gofmt` clean, `go test ./internal/store/ ./internal/core/ -count=1` green (embed env cleared) |
+| Fail-on-main proof | DONE | each new test fails on `origin/main` — the store tests with the defect's own `no such column: text_cap`, the core test with the false reason `"no vector collection for model deterministic-4; degraded from L3"` — and passes on this branch |
+
 ## M10 — self-host dogfood loop (v4.11.0, the operating plan)
 
 | ID | Title | Priority | Status | Gate / exit criteria |
