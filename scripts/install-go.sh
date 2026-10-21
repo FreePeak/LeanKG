@@ -52,7 +52,7 @@ code graph and the markdown memory layer. Restart the agent afterwards to pick
 the entry up.
 
 Shared server instead of one spawn per client (optional; adds REST + UI ports):
-  leankg serve --http :9699 --rest :8080 --ui :8081 --memory
+  leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --ui 127.0.0.1:8081 --memory
   leankg install --target claude-code --http --url http://127.0.0.1:9699/mcp
 
 Semantic (L3) search needs embeddings: set LEANKG_EMBED_PROVIDER (see the

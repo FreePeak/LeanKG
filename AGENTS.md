@@ -39,7 +39,7 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 
 |Command|Purpose|
 |---|---|
-|`leankg serve --http :9699 --rest :8080 --memory`|MCP HTTP + REST + memory (add `--rpc :9090` ConnectRPC, `--ui :8081` dashboard, `--read-only` reader role)|
+|`leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --memory`|MCP HTTP + REST + memory (add `--rpc 127.0.0.1:9090` ConnectRPC, `--ui 127.0.0.1:8081` dashboard, `--read-only` reader role). A non-loopback `--http`/`--rest`/`--rpc` bind is REFUSED unless a token is configured (`leankg auth token create` / `LEANKG_TOKEN_ADMIN`) — see the exposure rule below. `--ui` is the one deliberately public listener (the container demo)|
 |`leankg index <dir> [--hook] [--no-embed]`|Index a repository (3-signal incremental). A git repo root with commits reads HEAD git objects (uncommitted/untracked/ignored files skipped; change detection by blob ID); a directory without its own `.git` or a repo with no commits keeps the filesystem scan. Then runs the incremental embed unless `--no-embed`; embed failure is reported, not fatal. `--hook` exits 0 without indexing when HEAD has more than `LEANKG_HOOK_MAX_FILES` (default 10000) indexable files (printing the manual `leankg index <dir>` to run instead), or when another index of the store is running; hook embed only attaches to a running local provider and skips (one `embed skipped:` line, exit 0) when more than `LEANKG_HOOK_MAX_EMBED` (default 500) elements need vectors|
 |`leankg writer --project <dir>`|Index-once + fsnotify reconcile loop (pairs with `serve --read-only`). For a git-backed store a new commit (change of `.git/logs/HEAD`) triggers a reindex; saving without committing does not change the graph|
 |`leankg query <text> [--kind name\|impact] [--depth N]`|CLI query (L1 exact → L2 fuzzy fallback; graph impact)|
@@ -65,7 +65,7 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 Narrative + ACs: [`docs/prd.md`](docs/prd.md) (parity ledger + DEFERRED items). Statuses: [`docs/prd-task-tracker.md`](docs/prd-task-tracker.md).
 
 **Current milestone (2026-09-14, PRD v4.11.0): M10 — the self-host dogfood loop.** Once the in-flight
-refactor waves land, bring up the dynamic HTTP server (`leankg serve --http :9699 --rest :8080 --ui :8081 --memory`)
+refactor waves land, bring up the dynamic HTTP server (`leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --ui 127.0.0.1:8081 --memory`)
 over this repository — index + embed + memorize — and use it to build/fix LeanKG itself (PRD §3.10 + §5.1 runbook)
 before scaling to small nested-repo parents. Never bulk-index the `freepeak` portfolio root.
 
@@ -136,19 +136,31 @@ MCP HTTP `?project=` walks to the nearest `.leankg`; `LEANKG_DB_ENGINE=postgres`
 
 `leankg serve` is supervised by launchd (`com.freepeak.leankg-serve`, program
 `~/.local/bin/leankg-serve-wrapper`, which scans `$LEANKG_SCAN_ROOT` and passes
-`--http 127.0.0.1:9699 --rest :9700 --memory --embed-provider local
+`--http 127.0.0.1:9699 --rest 127.0.0.1:9700 --memory --embed-provider local
 --hindsight-compat`). Restart it with:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.freepeak.leankg-serve
 ```
 
+**A non-loopback bind is REFUSED, not warned about.** `leankg serve
+--http/--rest/--rpc <non-loopback>` exits with an error unless a bearer token
+is configured (env `LEANKG_TOKEN_ADMIN`/`_CONTRIBUTOR`/`_VIEWER`, or a token
+minted by `leankg auth token create`). With the gate off every caller resolves
+to Admin, so the old behaviour (warn, then bind anyway) put the project graph,
+the file reader and the memory write path on the LAN — measured 2026-10-21, a
+LAN POST to the REST listener answered `{"written":1}`. The refusal names both
+ways out: bind `127.0.0.1`, or configure a token first. `--ui` is the ONE
+deliberately public listener (the container demo serves `--read-only --ui
+:${PORT}` to the internet), so it keeps a loud warning instead of a refusal.
+Rule + test: `internal/servebind`, `cmd/leankg/servebind_test.go`.
+
 **A restart can leave a duplicate behind, and the duplicate can be the one
 answering you.** Measured 2026-10-12: a manually started server (`--http :9699`,
 wildcard) was still alive 2h41m later on the SAME ports as launchd's
 (`--http 127.0.0.1:9699`). Both bound successfully — different address families
 — and `curl 127.0.0.1:9699` reached whichever held the IPv4 socket. So a
-"restart then verify" loop can read a server it never restarted, and every
+"restart then verify" loop can read a server you never restarted, and every
 conclusion drawn from it is about the wrong binary.
 
 Two habits that avoid it:

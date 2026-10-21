@@ -101,6 +101,63 @@ stale-collection purge: it has no query embedder, so it cannot name the
 live collection. Dropping a collection is not recoverable; leaving one
 behind costs disk.
 
+### v4.18-serve-bind-loopback — a wildcard bind is refused, not warned about (2026-10-21)
+
+> **Trigger:** the fix wave measured the live server instead of reasoning
+> about it. `leankg serve --rest :9700` bound the REST listener to the IPv6
+> wildcard and every LAN interface, and with no `LEANKG_TOKEN_*` in the
+> environment and no token in the store the auth gate was OFF — so every
+> caller resolved to Admin.
+>
+> ```
+> curl http://192.168.100.199:9700/api/v1/status      → 200
+> POST http://192.168.100.199:9700/v1/default/banks/lanprobe-1792524856/memories
+>                                                     → 200 {"written":1}
+> ```
+>
+> A LAN host read the project graph, wrote to the memory banks, and could
+> index. The code KNEW: `warnIfExposed` logged "every caller is Admin" and
+> then bound the listener anyway. A warning is not a control.
+
+**Landed:**
+
+- **The refusal replaces the warning.** `internal/servebind` holds the
+  policy; `cmd/leankg/main.go` applies it to the MCP, REST and ConnectRPC
+  listeners before any socket is bound. A non-loopback address with the gate
+  OFF is an error, and the error names both ways out: bind `127.0.0.1`, or
+  configure a token first (`leankg auth token create`, or
+  `LEANKG_TOKEN_ADMIN` / `_CONTRIBUTOR` / `_VIEWER`). The rule mirrors the
+  dashboard's existing precedent (`internal/dashboard.CheckListen`).
+- **The ConnectRPC listener had no exposure check at all** — it was never
+  in the warning path, so it is now covered by the same rule, as is the MCP
+  listener (the surface that indexes and imports, so the widest door of the
+  three).
+- **The UI listener is deliberately excluded.** The dashboard is public by
+  design — the Render demo serves `leankg serve --read-only --ui :${PORT}`
+  to the internet — so it keeps its loud warning instead of a refusal. That
+  is a conscious exception, not an oversight.
+- **Loopback is untouched.** The omp memory backend depends on
+  `http://127.0.0.1:9700` (hindsight-compat), and the default MCP bind was
+  already `127.0.0.1:9699`; both keep working with no token at all.
+- **The shipped commands are loopback-correct.** The docs and the install
+  script showed `--http :9699 --rest :8080` wildcard forms; they now show
+  `127.0.0.1`. The xdev autoStart recipe (which spawned the wildcard and
+  duplicated the launchd supervisor's port) binds loopback too.
+
+**The test that should have caught it did not exist.** The old
+`TestExposedWithoutAuth` pinned the WARNING RULE — a boolean predicate that
+said "this address is exposed" and then let the caller ignore it. The new
+`cmd/leankg/servebind_test.go` checks the PROCESS: a non-loopback `--rest`
+with no token must exit non-zero with the actionable message, the same bind
+with a token must come up, the loopback REST listener must still serve, and
+the RPC and MCP listeners must refuse too. On the pre-fix code the same
+test sees "leankg serve (REST) on :49313" and fails.
+
+**Verified:** `go build -p=2 ./...`, `go vet ./...`, `gofmt` clean,
+`go test ./cmd/leankg/ ./internal/servebind/ -count=1` green; the regression
+test fails on `origin/main` (the server binds and answers) and passes on
+this branch (the server refuses with the fix named).
+
 ### v4.16-project-selector-fail-closed — an unknown project no longer answers from another one (2026-10-20)
 
 > **Trigger:** reviewing the v4.15-mcp-project-scoping work on the live
