@@ -247,6 +247,75 @@ test sees "leankg serve (REST) on :49313" and fails.
 test fails on `origin/main` (the server binds and answers) and passes on
 this branch (the server refuses with the fix named).
 
+### v4.19-registry-auto-prune — the registry forgets nothing on its own, and a store whose root moved is reported (2026-10-21)
+
+> **Trigger:** auditing the fleet registry against the live self-host. The
+> registry is the SERVER-side project table — the org-scale list of what a
+> deployment serves. Two facts about it were measured on the live 42-project
+> fleet:
+>
+> ```
+> grep -rn "portfolioreg.Prune\|portfolioreg.Forget" --include=*.go .
+>   → cmd/leankg/portfolio.go:119   (the manual --forget verb)
+>   → cmd/leankg/portfolio.go:139   (the manual --prune verb)
+> ```
+>
+> One caller each, both a human at a terminal. **Nothing pruned the
+> registry automatically**, so a row for a project that left the fleet
+> outlived the project forever — the same failure the T0 manifest already
+> records ("84 of 108 registered rows had a deleted directory", 2026-10-11),
+> and the fleet kept answering questions about directories that no longer
+> existed.
+>
+> And "the store is present" was a pure ENOENT probe
+> (`portfolioreg.go:408-430`): a store whose **recorded index root** no
+> longer matches the directory it sits in counted as present. Measured on
+> this machine: `…/work/be/backend/be-qa-data-migration/.leankg/leankg.db`
+> (14.3 MB) records the root `…/work/be/platform-saas/be-doppel` — a
+> directory that is GONE — while the directory it now sits in is a
+> different, live git repo. That store can never be repaired either: the
+> index root guard (`internal/index/index.go:185-206`) refuses to walk a
+> store from a different root, because every path in a store is relative
+> to the root it was built from. It is dead weight that no sweep, doctor
+> or route can see.
+
+**Landed:**
+
+- **`AutoSweep` is the automatic prune** (`internal/portfolioreg/sweep.go`).
+  It forgets the rows whose project directory is gone and reports the rows
+  that need a human. It is safe to run unattended on the live registry: it
+  removes **registry rows only**, never a file; a row whose directory is
+  still live is never removed, whatever state its store is in; and a sweep
+  of a healthy registry changes nothing at all. A missing registry is an
+  empty report, not an error.
+- **`CheckStore` says what a project's store actually is**, opening it
+  READ-ONLY: `ok`, `no_store`, `unreadable`, or `root_mismatch`. A
+  `root_mismatch` — the store records an index root that is not the
+  directory it lives in — is **reported, never deleted**. The store file
+  and the row both survive; only a human can decide whether to rebase the
+  root or forget the project.
+- **The rule for a row with no store is now explicit.** A registry row's
+  life is bound to the project **DIRECTORY**, not to the store. A
+  registered project whose directory is still a live project keeps its row
+  even when it has no store (registered, never indexed — a legitimate
+  state, and the `games` row in the live registry is exactly that), and a
+  row whose directory no longer exists goes. Before this, that rule lived
+  only implicitly in the manual `Prune` verb, and nothing automatic
+  applied it.
+
+**Not done here (deliberately):** the caller. `AutoSweep` is exposed in
+`internal/portfolioreg`; the maintenance or serve path that should call it
+on a timer is outside this package's file ownership, so the one-line
+caller change is described in the PR body rather than made here.
+
+**Verified:** `go build -p=2 ./...`, `go vet ./internal/portfolioreg/`,
+`gofmt` clean, `go test ./internal/portfolioreg/ -count=1` green. Each of
+the three regression tests fails on `origin/main` (`22dd194`) — the sweep
+API does not exist there — and passes on this branch. The root-mismatch
+test plants its root through `index.RebaseRoot`, the indexer's own writer,
+so a rename of the root key fails the test instead of silently blinding
+the detection.
+
 ### v4.16-project-selector-fail-closed — an unknown project no longer answers from another one (2026-10-20)
 
 > **Trigger:** reviewing the v4.15-mcp-project-scoping work on the live
