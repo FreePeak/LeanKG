@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,20 +150,72 @@ CREATE TABLE meta (
 INSERT INTO meta(key, value) VALUES ('dropped_events', '0');
 `}
 
+// isNewLedger reports whether path is a ledger that does not exist yet (or
+// is an empty file). Only such a ledger can be created with incremental
+// auto-vacuum: the setting is locked in once the first table exists.
+func isNewLedger(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return errors.Is(err, os.ErrNotExist)
+	}
+	return fi.Size() == 0
+}
+
+// EnableIncrementalVacuum converts an existing ledger to incremental
+// auto-vacuum, so that a purge can hand the pages it frees back to the
+// filesystem. The conversion rewrites the whole file (SQLite needs a VACUUM
+// to change the mode of a non-empty database), so it is opt-in: a caller
+// must decide, and it must not run automatically on a live ledger.
+//
+// It is the one-time step for a ledger that was created before new ledgers
+// got the mode at creation time.
+func EnableIncrementalVacuum(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("telemetry: no ledger at %s: %w", path, err)
+	}
+	st, err := OpenSQLite(path, false)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if _, err := st.db.ExecContext(context.Background(), `PRAGMA auto_vacuum = INCREMENTAL`); err != nil {
+		return fmt.Errorf("telemetry: set auto_vacuum: %w", err)
+	}
+	// VACUUM rewrites the database and applies the mode set above. It
+	// cannot run inside a transaction, so it runs on its own connection.
+	if _, err := st.db.ExecContext(context.Background(), `VACUUM`); err != nil {
+		return fmt.Errorf("telemetry: vacuum: %w", err)
+	}
+	return nil
+}
+
 // OpenSQLite opens the ledger at path. readOnly never creates the file and
 // returns an error wrapping os.ErrNotExist when it is missing (DS-03).
+//
+// A ledger that is created here is created with incremental auto-vacuum, so
+// a purge can hand the pages it frees back to the filesystem. The setting
+// can only be chosen while the file is still empty, so it is chosen at
+// creation; an existing ledger keeps its mode until EnableIncrementalVacuum
+// converts it, which is opt-in because it rewrites the whole file.
 func OpenSQLite(path string, readOnly bool) (*SQLiteStore, error) {
+	newLedger := false
 	if readOnly {
 		if _, err := os.Stat(path); err != nil {
 			return nil, fmt.Errorf("telemetry: open %s: %w", path, err)
 		}
-	} else if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("telemetry: create dir: %w", err)
+	} else {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return nil, fmt.Errorf("telemetry: create dir: %w", err)
+		}
+		newLedger = isNewLedger(path)
 	}
 	dsn := "file:" + path + "?_pragma=busy_timeout(10000)"
 	if readOnly {
 		dsn += "&_pragma=query_only(ON)"
 	} else {
+		if newLedger {
+			dsn += "&_auto_vacuum=INCREMENTAL"
+		}
 		dsn += "&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	}
 	db, err := sql.Open("sqlite", dsn)
@@ -819,9 +872,14 @@ func (s *SQLiteStore) ABRuns(ctx context.Context) ([]ABRun, error) {
 	return out, rows.Err()
 }
 
-// Purge deletes calls, memory events and links older than before, then
-// sessions that no longer have calls or memory events. It returns the number
-// of rows removed from those tables.
+// Purge deletes calls, memory events, A/B runs and links older than before,
+// then sessions that no longer have calls or memory events. It returns the
+// number of rows removed from those tables.
+//
+// The purge also reclaims what it freed: the pages go back to the
+// filesystem (incremental auto-vacuum, a no-op on a ledger that is not in
+// that mode) and the write-ahead log is checkpointed and truncated, so a
+// swept ledger shrinks instead of holding every deleted row's pages.
 func (s *SQLiteStore) Purge(ctx context.Context, before time.Time) (int64, error) {
 	var removed int64
 	err := s.write(ctx, func(q querier) error {
@@ -830,6 +888,7 @@ func (s *SQLiteStore) Purge(ctx context.Context, before time.Time) (int64, error
 			`DELETE FROM calls WHERE ts < ?`,
 			`DELETE FROM memory_events WHERE ts < ?`,
 			`DELETE FROM session_links WHERE linked_at < ? OR call_id NOT IN (SELECT id FROM calls)`,
+			`DELETE FROM ab_runs WHERE imported_at < ?`,
 		} {
 			res, err := q.ExecContext(ctx, stmt, b)
 			if err != nil {
@@ -845,7 +904,63 @@ func (s *SQLiteStore) Purge(ctx context.Context, before time.Time) (int64, error
 			  AND id NOT IN (SELECT session_id FROM memory_events)`)
 		return err
 	})
-	return removed, err
+	if err != nil {
+		return removed, err
+	}
+	if err := s.reclaim(ctx); err != nil {
+		return removed, err
+	}
+	return removed, nil
+}
+
+// reclaim gives the pages a purge freed back to the filesystem and
+// truncates the write-ahead log. incremental_vacuum is a documented no-op on
+// a ledger that is not in incremental auto-vacuum mode, which is why a
+// ledger created before that mode keeps its pages until it is converted
+// (EnableIncrementalVacuum).
+func (s *SQLiteStore) reclaim(ctx context.Context) error {
+	if s.readOnly {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `PRAGMA incremental_vacuum`); err != nil {
+		return fmt.Errorf("telemetry: reclaim: %w", err)
+	}
+	// TRUNCATE resets the WAL to zero length, so the -wal file does not keep
+	// growing between sweeps. It cannot run while another process reads the
+	// ledger, which is reported as busy rather than as an error.
+	var busy, walFrames, checkpointed int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &walFrames, &checkpointed); err != nil {
+		return fmt.Errorf("telemetry: checkpoint: %w", err)
+	}
+	if busy != 0 {
+		log.Printf("telemetry: wal checkpoint busy: another process is reading the ledger")
+	}
+	return nil
+}
+
+// SetMeta records a key/value pair in the ledger's meta table. It is how a
+// ledger-level failure (a failed retention sweep) becomes visible in the
+// ledger itself rather than only in a log line.
+func (s *SQLiteStore) SetMeta(ctx context.Context, key, value string) error {
+	return s.write(ctx, func(q querier) error {
+		_, err := q.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+		return err
+	})
+}
+
+// Meta reads a key from the ledger's meta table. The second result is false
+// when the key is absent.
+func (s *SQLiteStore) Meta(ctx context.Context, key string) (string, bool, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("telemetry: meta %s: %w", key, err)
+	}
+	return v, true, nil
 }
 
 // Stats reports sizes, row counts, the time range and dropped events.
