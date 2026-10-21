@@ -57,8 +57,9 @@ trap 'rm -rf "$TMP"' EXIT
 
 HOME_DIR="$TMP/home"
 INSIDE="$HOME_DIR/work/harvey/freepeak/inside-repo"
+INSIDE2="$HOME_DIR/work/harvey/freepeak/second-inside-repo"
 OUTSIDE="$HOME_DIR/work/be/outside-repo"
-mkdir -p "$INSIDE/.git" "$OUTSIDE/.git" "$TMP/bin"
+mkdir -p "$INSIDE/.git" "$INSIDE2/.git" "$OUTSIDE/.git" "$TMP/bin"
 
 # The stub records what the wrapper would have started.
 cat > "$TMP/bin/leankg" <<'STUB'
@@ -73,19 +74,29 @@ run_wrapper() {
     LEANKG_BIN="$TMP/bin/leankg" \
     LEANKG_STUB_ARGS="$TMP/args" \
     LEANKG_STUB_FLEET="$TMP/fleet" \
-    "$WRAPPER" >/dev/null
+    "$WRAPPER" > "$TMP/wrapper.log"
 }
 
 echo "== the default scope excludes ~/work/be =="
 run_wrapper
 FLEET="$(cat "$TMP/fleet")"
 ARGS="$(cat "$TMP/args")"
+WRAPPER_LOG="$(cat "$TMP/wrapper.log")"
+
+# The wrapper's own count must be the number of registered projects, not the
+# number of lines in a one-line comma-separated list.
+assert_contains "2 projects registered" "$WRAPPER_LOG" \
+  "the wrapper must report the real fleet size"
 
 assert_contains "$INSIDE" "$FLEET" "the in-scope repo must be registered"
+assert_contains "$INSIDE2" "$FLEET" "the second in-scope repo must be registered"
 assert_not_contains "$OUTSIDE" "$FLEET" "a repo outside the scope must NOT be registered"
 assert_not_contains "/work/be/" "$FLEET" "no ~/work/be repo may be registered"
-[ "$(printf '%s' "$FLEET" | awk -F, 'NF && length($0) {n++} END {print n+0}')" = "1" ] \
-  || fail "the default fleet must hold the in-scope repo and nothing else (got: $FLEET)"
+# The fleet is ONE comma-separated line, so the count is the number of
+# comma-separated fields - not the number of lines. Counting lines would
+# report 1 for every fleet and the assertion below would be vacuous.
+[ "$(printf '%s' "$FLEET" | awk -F, 'NF {n+=NF} END {print n+0}')" = "2" ] \
+  || fail "the default fleet must hold the two in-scope repos and nothing else (got: $FLEET)"
 grep -q 'work/harvey/freepeak' "$WRAPPER" \
   || fail "the wrapper's default scan root must be \$HOME/work/harvey/freepeak"
 grep -q 'work/harvey/freepeak' "$SCAN" \

@@ -40,7 +40,7 @@ LEANKG_PROJECT_DIRS="$(find "$SCAN_ROOT" -maxdepth 4 -name .git -type d 2>/dev/n
   | sed 's/,$//')"
 export LEANKG_PROJECT_DIRS
 
-project_count="$(printf '%s' "$LEANKG_PROJECT_DIRS" | awk -F, 'NF && length($0) {n++} END {print n+0}')"
+project_count="$(printf '%s' "$LEANKG_PROJECT_DIRS" | awk -F, 'NF {n+=NF} END {print n+0}')"
 if [ "$project_count" -eq 0 ]; then
   echo "leankg-serve-wrapper: no git repo under $SCAN_ROOT - serving the default project only" >&2
 fi
