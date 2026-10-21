@@ -133,3 +133,57 @@ func TestReconcileRefreshesTheInventoryCounts(t *testing.T) {
 		t.Errorf("the inventory did not shrink: %d -> %d elements", before.TotalElements, after.TotalElements)
 	}
 }
+
+// TestReconcileHealsAnInventoryLeftBehind: a store an EARLIER reconcile
+// invalidated — its watermark moved, its summary did not — must be healed even
+// when this pass has nothing to delete. That is the state the live fleet was
+// in when this rule was written: two projects reported "possibly_stale"
+// because the first pass of the wave deleted their content, and the fix that
+// only refreshed the inventory on a delete would have left them saying so
+// until somebody re-indexed them.
+func TestReconcileHealsAnInventoryLeftBehind(t *testing.T) {
+	gittest.SkipWithoutGit(t)
+	dir := gitRepo(t)
+	st := openStore(t)
+	ctx := context.Background()
+
+	if _, err := index.IndexDir(ctx, st, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RefreshInventory(st); err != nil {
+		t.Fatalf("refresh inventory: %v", err)
+	}
+	n, err := st.ElementCount()
+	if err != nil {
+		t.Fatalf("element count: %v", err)
+	}
+	if got := store.Freshness(st, n); got != store.FreshnessFresh {
+		t.Fatalf("the fixture store is %q, want %q", got, store.FreshnessFresh)
+	}
+
+	// Simulate the earlier reconcile: a delete advances the watermark and
+	// leaves the inventory behind.
+	if err := st.DeleteByFile("gone-long-ago.go"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	n, err = st.ElementCount()
+	if err != nil {
+		t.Fatalf("element count: %v", err)
+	}
+	if got := store.Freshness(st, n); got != store.FreshnessPossiblyStale {
+		t.Fatalf("the fixture store is %q after the delete, want %q", got, store.FreshnessPossiblyStale)
+	}
+
+	// This pass has nothing to delete — HEAD still contains every stored
+	// path — and the store must still be healed.
+	res, err := ReconcileHead(ctx, st)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res.DeletedFiles != 0 {
+		t.Fatalf("reconcile = %+v, want nothing deleted", res)
+	}
+	if got := store.Freshness(st, n); got != store.FreshnessFresh {
+		t.Fatalf("the store reports %q after the reconcile, want %q — the pass must heal the inventory it left behind", got, store.FreshnessFresh)
+	}
+}
