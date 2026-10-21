@@ -344,19 +344,22 @@ func (s *Server) registerTools() {
 			"names another file — in that case EVERY verb (import, query, status, doctor, leankg-embed) reads THAT " +
 			"store and no store appears under the project, so the path you import does not decide where the data lives; " +
 			"status reports it in the store field. " +
-			"Import only for first-time indexing or deliberate updates; indexing does not create vectors. " + toolGuidance,
+			"Import only for first-time indexing or deliberate updates; indexing does not create vectors. " +
+			"action=memory command=delete_document removes one bank row by document_id (the REST mount had this delete; the MCP surface did not). " + toolGuidance,
 		InputSchema: s.schema(`{
 			"type": "object",
 			"properties": {
 				"action": {"type": "string", "enum": ["repo", "dir", "docs", "prd", "memory", "session", "ontology", "read"], "description": "what to import (prd = index a PRD markdown document; read = compressed file read: args.mode/lines/fresh)"},
 				"path": {"type": "string", "description": "repository/directory to index, or memory file path (e.g. MEMORY.md, topics/x.md)"},
-				"command": {"type": "string", "enum": ["create", "str_replace", "insert", "delete", "rename", "add", "replace", "remove", "session_retain", "offload", "lesson"], "description": "memory write command (action=memory; session_retain carries transcript turns in args), or session command (action=session: offload|lesson)"},
+				"command": {"type": "string", "enum": ["create", "str_replace", "insert", "delete", "delete_document", "rename", "add", "replace", "remove", "session_retain", "offload", "lesson"], "description": "memory write command (action=memory; session_retain carries transcript turns in args; delete_document removes a bank row by document_id), or session command (action=session: offload|lesson)"},
 				"content": {"type": "string"},
 				"old": {"type": "string"},
 				"new": {"type": "string"},
 				"insert_line": {"type": "integer"},
 				"new_path": {"type": "string"},
 				"file": {"type": "string", "description": "memory file for add/replace/remove"},
+				"document_id": {"type": "string", "description": "the bank row to remove (action=memory command=delete_document); the id a retain stored, or the row id"},
+				"bank": {"type": "string", "description": "the memory bank to act on (action=memory; defaults to the project's own bank)"},
 				"text": {"type": "string"},
 				"session_id": {"type": "string", "description": "session id (action=session; also action=memory command=session_retain)"},
 				"node_id": {"type": "string", "description": "offload node id (action=session)"},

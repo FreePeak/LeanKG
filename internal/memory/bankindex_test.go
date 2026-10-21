@@ -14,10 +14,14 @@ func TestRecallTieBreaksRecency(t *testing.T) {
 	m := openTest(t)
 	oldTS := time.Now().Add(-90 * 24 * time.Hour).Unix()
 	newTS := time.Now().Unix()
-	if err := m.RetainRaw("probe", []Entry{{ID: "old-1", Content: "alpha probe row", Timestamp: oldTS}}); err != nil {
+	// The two rows carry a client document id on purpose: the write path
+	// collapses two rows of the SAME body that no client owns (that is the
+	// content-identity dedupe), so a fixture that needs two identical rows
+	// to rank against each other has to be client-owned.
+	if err := m.RetainRaw("probe", []Entry{{ID: "old-1", Content: "alpha probe row", Timestamp: oldTS, Metadata: map[string]any{"document_id": "probe-doc"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.RetainRaw("probe", []Entry{{ID: "new-1", Content: "alpha probe row", Timestamp: newTS}}); err != nil {
+	if err := m.RetainRaw("probe", []Entry{{ID: "new-1", Content: "alpha probe row", Timestamp: newTS, Metadata: map[string]any{"document_id": "probe-doc"}}}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := m.RecallBanks([]string{"probe"}, "alpha probe", 2)

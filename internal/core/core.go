@@ -249,6 +249,11 @@ type ImportRequest struct {
 	NodeID    string         `json:"node_id,omitempty"`
 	NewPath   string         `json:"new_path,omitempty"`
 	InsertAt  *int           `json:"insert_line,omitempty"`
+	// DocumentID names the bank row a delete_document command removes, and
+	// Bank names the bank it lives in. They ride the same flat shape as the
+	// other curation fields, so one lookup path serves both call shapes.
+	DocumentID string `json:"document_id,omitempty"`
+	Bank       string `json:"bank,omitempty"`
 	// Tags is the first-class tag list for action=memory command=session_retain
 	// (K2). normalizeTags folds it into args.tags, so one lookup path serves
 	// both call shapes.
@@ -312,6 +317,7 @@ func (r ImportRequest) withFlatArgs() ImportRequest {
 		"content": r.Content, "old": r.Old, "new": r.New, "text": r.Text,
 		"file": r.File, "payload": r.Payload, "summary": r.Summary,
 		"session_id": r.SessionID, "node_id": r.NodeID, "new_path": r.NewPath,
+		"document_id": r.DocumentID, "bank": r.Bank,
 	} {
 		if v != "" {
 			flat[k] = v
@@ -1291,6 +1297,32 @@ func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest) (map[string
 		err = e.mem.Insert(get("path"), get("content"), getInt("insert_line"))
 	case "delete":
 		err = e.mem.Delete(get("path"))
+	case "delete_document":
+		// The bank-row delete. The REST mount had it (DELETE
+		// /v1/default/banks/{bank}/documents/{id}) and the MCP surface did
+		// not, so an MCP client — the primary surface for the omp memory
+		// backend — could never remove a memory row.
+		docID := strings.TrimSpace(get("document_id"))
+		if docID == "" {
+			return nil, fmt.Errorf("memory: delete_document requires a document_id")
+		}
+		scope, serr := memory.ParseScope(get("scope"))
+		if serr != nil {
+			return nil, serr
+		}
+		cwd := get("cwd")
+		if cwd == "" {
+			cwd = e.projectDir
+		}
+		bankName := e.mem.WriteBank(scope, cwd, get("bank"))
+		n, derr := e.mem.DeleteDocumentCtx(ctx, bankName, docID)
+		if derr != nil {
+			return nil, derr
+		}
+		return map[string]any{
+			"ok": true, "command": "delete_document", "bank": bankName,
+			"document_id": docID, "memory_units_deleted": n,
+		}, nil
 	case "rename":
 		err = e.mem.Rename(get("path"), get("new_path"))
 	case "add":
@@ -1300,7 +1332,7 @@ func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest) (map[string
 	case "remove":
 		err = e.mem.Remove(get("file"), get("text"))
 	default:
-		return nil, fmt.Errorf("unknown memory command %q (valid: create, str_replace, insert, delete, rename, add, replace, remove, session_retain)", req.Command)
+		return nil, fmt.Errorf("unknown memory command %q (valid: create, str_replace, insert, delete, delete_document, rename, add, replace, remove, session_retain)", req.Command)
 	}
 	if err != nil {
 		return nil, err
