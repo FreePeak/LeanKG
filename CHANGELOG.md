@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.35.2](https://github.com/FreePeak/LeanKG/compare/v0.35.1...v0.35.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **index:** a markdown heading stores its own text, not its descendants' ([#565](https://github.com/FreePeak/LeanKG/issues/565)) ([46a4dfa](https://github.com/FreePeak/LeanKG/commit/46a4dfa4db9c7344057108a2ccebc32c6cb15453))
+* **index:** reconcile the store with HEAD, and report head_sync ([#571](https://github.com/FreePeak/LeanKG/issues/571)) ([a20681c](https://github.com/FreePeak/LeanKG/commit/a20681c532bc14c8d3853a116ffb0afbb247f307))
+* **telemetry:** sweep the ledger whatever the capture level, and let it shrink ([#570](https://github.com/FreePeak/LeanKG/issues/570)) ([cd8e51a](https://github.com/FreePeak/LeanKG/commit/cd8e51af24bab59e5f2db575a05a332fcad524ef))
+
 ## [0.35.1](https://github.com/FreePeak/LeanKG/compare/v0.35.0...v0.35.1) (2026-10-21)
 
 
