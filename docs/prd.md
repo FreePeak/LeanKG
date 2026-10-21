@@ -643,6 +643,66 @@ Those are **different facts with opposite next steps** — import a catalog, imp
 
 **Tests:** `TestDashboardAcceptsTheWebFlagsWithTheFormatFlag` runs the documented invocation end to end and requires exit 0, the usage tables on stdout, and **no** web-server banner (the server must not have started, so no port was bound and no browser was opened). `TestDashboardFormatJSONEmitsJSON` runs `--format json` end to end and requires the JSON payload (`totals`, `by_tool`, `by_day`, `by_project`, `patterns`) and no banner. `TestBareDashboardTakesTheWebPath` asserts that a bare `leankg dashboard` parses to the web mode — on the PARSED flags, never by running the verb, because the web path binds a port, opens a browser and serves until a signal, so a bare run in a test would hang and leave a listener behind. `TestParseDashboardFlagsDecidesTheModeFromTheParsedValues` and `TestParseDashboardFlagsReadsTheWebFlagsTheTablesModeAlsoDeclares` pin the mode rule and the single-set read. `TestDashboardAcceptsTheWebFlagsWithTheFormatFlag` fails on the pre-fix code with the measured `flag provided but not defined: -addr` and exit 2.
 
+### v4.19-scheduled-reclaim-real — the hourly pass does its job, and says so (2026-10-21)
+
+**Trigger:** a measurement of the live self-host's own maintenance log. The
+server logs *"maintenance: sweep+vacuum every 1h0m0s over 42 project(s)"* —
+the pass runs, it visits every project, and it reclaims **zero bytes**. Not
+because the machinery is broken: because every step of it is gated on a
+threshold that never fires, or reachable only from a verb nobody runs. Five
+defects, one shape — **the machinery exists and its trigger does not**.
+
+**What the measurement said (live store, read-only copy):**
+
+- the reclaim floor was `1 MiB` and the leankg store's freelist was
+  **745,472 B** — below the floor, so the hourly pass freed nothing, on every
+  store
+- `context_metrics` held **6,166 rows** and grew ~167/day; the only retention
+  sweep over it (`CleanupMetrics`) was reachable only from the manual
+  `leankg metrics` verb, and `is_deleted` is never set to 1 anywhere
+- the writer ran the pass with **no keep list**, and `Sweep` returns early
+  without one — so `DeleteStaleStamps` never ran and an abandoned embedding
+  collection was never pruned (the defect the v4.17 changelog claimed was
+  fixed; its trigger was never wired)
+- **zero** `'optimize'` / `'merge'` / `'rebuild'` calls exist in the repo: the
+  keyword index is never compacted. The leankg store carried a **9.4 MB**
+  `elements_fts_idx` over **3,065 segments** — 31 % of the 138 MB store
+- `embed_runs` was append-only (**36 rows**, one of them — id 21 — still
+  marked `running` with `dirty=1620`, a run that ended weeks ago), and
+  `RunFleet` logged only on failure, so a pass that did nothing left no trace
+
+**What changed**
+
+- **The floor is the caller's.** `Options.MinFreeBytes` now means "0 = reclaim
+  as soon as there is anything to reclaim; negative = never reclaim". The
+  built-in 1 MiB floor is gone: it was the reason the hourly pass reclaimed
+  nothing fleet-wide.
+- **The writer passes a keep set, derived per pass.** `Options.KeepModelIDsFunc`
+  asks the store which collection is live — `store.CurrentModelID`, the model
+  of the newest embed run — at every pass, so a keep set frozen at start-up
+  cannot delete the collection a re-embed just created.
+- **The scheduled pass prunes the append-only ledgers.** `context_metrics`
+  (30-day window, the one the metrics package already defines) and
+  `embed_runs` (old finished runs deleted, runs stuck in `running` past the
+  cutoff closed out rather than deleted, the newest row never deleted because
+  it names the live collection). The one-shot `leankg vacuum` does not prune:
+  it stays a space-reclaim tool.
+- **The keyword index is compacted.** `Backend.CompactFTS` merges the FTS5
+  segments on a slow cadence (daily at the default interval, never every tick —
+  it rewrites the index); the PostgreSQL implementation is a no-op, because its
+  keyword rung is a GIN-indexed `tsvector` column, not a segment list.
+- **The pass is visible.** `RunFleet` logs what the pass did — bytes reclaimed,
+  rows pruned, stuck runs closed, indexes compacted — on the first pass and
+  then on a low cadence.
+
+**Tests:** `internal/maintain/scheduled_reclaim_test.go` and
+`internal/store/embed_runs_prune_test.go`. The three that compile on
+`origin/main` were run there and FAILED, with the defect in the message:
+`the pass skipped a 90112-byte freelist`, `the fleet never pruned the metric
+ledger: 2 rows remain`, `the fleet never logged what the pass did`. The rest
+(`KeepModelIDsFunc`, `CurrentModelID`, `CompactFTS`, `PruneEmbedRuns`) need an
+API that did not exist before this change.
+
 ### v4.32.0-every-diagnosis-names-its-subject — the convergence, applied to doctor (2026-10-01)
 
 **Trigger:** wave 21 of the loop (FR-SELF-04, still on PR #449), which took wave 20's convergence — **a diagnosis must name the thing it looked at, or it cannot be acted on** — and applied it to the largest diagnosis in the product: `doctor --deep`, the surface a user reaches for precisely when something is wrong, and therefore the one that cannot afford to be vague.

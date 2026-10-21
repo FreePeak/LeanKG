@@ -224,6 +224,16 @@ rebuild a collection that was there all along.
 
 The deploy/brand/module surface FR-SELF-01 was gated on shipped as `REL-SHIP-01..04` (§Done).
 
+## v4.19-scheduled-reclaim-real — the hourly pass does its job, and says so (2026-10-21, branch fix/scheduled-reclaim-real)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-SR-01 | The reclaim floor is the caller's, and the built-in one is gone | **DONE** | `internal/maintain/maintain.go`: `minFreeBytes = 1 << 20` deleted; `Options.MinFreeBytes` is now 0 = reclaim whenever there is a freelist, negative = never. Live measurement: every store's freelist sat below the old floor (leankg: 745,472 B against 1,048,576 B), so the hourly pass freed 0 bytes fleet-wide. Test `TestPassReclaimsAFreelistBelowTheOldOneMegabyteFloor` — FAIL on `origin/main` ("the pass skipped a 90112-byte freelist"), PASS on this branch. |
+| FR-SR-02 | The scheduled pass prunes the append-only ledgers | **DONE** | `context_metrics` (6,166 rows live, ~167/day, `is_deleted` never set anywhere) is pruned through the existing `CleanupMetrics` window (`internal/metrics.DefaultRetentionDays`); `embed_runs` (36 rows, id 21 stuck `running`) is trimmed by the new `Backend.PruneEmbedRuns`, which closes stuck runs out and never deletes the newest row (it names the live collection). The one-shot `leankg vacuum` does not prune — it stays a space-reclaim tool. Test `TestRunFleetPrunesTheOldMetricRows` — FAIL on `origin/main` ("the fleet never pruned the metric ledger: 2 rows remain"), PASS on this branch. |
+| FR-SR-03 | The writer passes a keep set, derived per pass | **DONE** | `cmd/leankg/wire.go` passes `Options.KeepModelIDsFunc`, which asks `store.CurrentModelID` (the newest embed run's model) at every pass — a keep set frozen at start-up would delete the collection a re-embed had just created. Tests `TestSweepDropsTheStaleCollectionWithTheKeepFunc`, `TestCurrentModelIDNamesTheNewestRun`. |
+| FR-SR-04 | The keyword index is compacted on a slow cadence | **DONE** | `Backend.CompactFTS` (SQLite: `INSERT INTO elements_fts(elements_fts) VALUES('optimize')`; PostgreSQL: a no-op, because its keyword rung is a GIN-indexed `tsvector` column, not a segment list). The repo carried **zero** optimize/merge/rebuild calls; the live leankg store carried a 9.4 MB `elements_fts_idx` over 3,065 segments. Tests `TestSweepCompactsTheKeywordIndex`, `TestCompactFTSKeepsEveryRow`, `TestCompactFTSRefusesAReadOnlyHandle`. |
+| FR-SR-05 | A pass that does nothing says so | **DONE** | `RunFleet` logs bytes reclaimed, metric rows pruned, embed-run rows pruned, stuck runs closed and indexes compacted — on the first pass and then on a low cadence. Before, `RunFleet` logged only on failure, which is why a sweep that did nothing ran for weeks unnoticed. Test `TestRunFleetLogsWhatThePassDid` — FAIL on `origin/main` ("the fleet never logged what the pass did"), PASS on this branch. |
+
 ## v4.18-status-health-signal — healthy is derived, not asserted (2026-10-21, branch fix/status-health-signal)
 
 | ID | Title | Status | Evidence |

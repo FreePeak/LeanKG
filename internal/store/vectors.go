@@ -752,6 +752,82 @@ func (s *Store) FinishEmbedRun(id int64, status string, embedded, skipped, faile
 	return err
 }
 
+// EmbedRunPrune reports what one prune of the embed-run ledger removed.
+type EmbedRunPrune struct {
+	// Pruned is the number of finished run rows deleted (older than the
+	// cutoff).
+	Pruned int64 `json:"pruned"`
+	// Closed is the number of rows that were still marked "running" past
+	// the cutoff and were closed out instead of deleted.
+	Closed int64 `json:"closed"`
+}
+
+// embedRunCutoff renders the cutoff in the ledger's own timestamp format
+// (started_at is written as strftime('%Y-%m-%dT%H:%M:%fZ','now') on SQLite
+// and as the same shape on PostgreSQL), so the comparison is a plain string
+// comparison on both engines.
+func embedRunCutoff(cutoff time.Time) string {
+	return cutoff.UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+// PruneEmbedRuns trims the embed-run ledger: it closes out the runs that were
+// still marked "running" when they should have finished, and deletes the
+// finished runs older than the cutoff.
+//
+// The ledger was append-only: every `leankg-embed run` appended a row and
+// nothing ever removed one, so a long-lived store accumulated one row per run
+// forever — and a run that was killed mid-flight stayed in state "running"
+// forever, which is what `status` then reported as the last embed run.
+//
+// The newest row is never deleted: it names the store's current collection
+// (CurrentModelID), and the stale-collection sweep derives its keep set from
+// it. A row that is still "running" is closed out, not deleted, so the
+// history of the interrupted run survives.
+func (s *Store) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
+	var out EmbedRunPrune
+	cut := embedRunCutoff(cutoff)
+	res, err := s.db.Exec(`UPDATE embed_runs SET status='failed', finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		WHERE status='running' AND started_at < ?`, cut)
+	if err != nil {
+		return out, fmt.Errorf("store: close out stale embed runs: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		out.Closed = n
+	}
+	res, err = s.db.Exec(`DELETE FROM embed_runs
+		WHERE started_at < ? AND status <> 'running'
+		  AND id <> (SELECT COALESCE(MAX(id), 0) FROM embed_runs)`, cut)
+	if err != nil {
+		return out, fmt.Errorf("store: prune embed runs: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		out.Pruned = n
+	}
+	return out, nil
+}
+
+// CurrentModelID reports the model id of the store's most recent embed run —
+// the collection the next embed extends and the one the L3 rung queries.
+//
+// It is derived from the run ledger rather than from the stamps, because a
+// stamp carries no timestamp: two collections can both be stamped and nothing
+// in emb_stamp says which one is live. The run ledger does, because the
+// newest run is the one that wrote last.
+//
+// An empty id means "the store has never been embedded" — the caller must
+// treat that as "the current collection is unknown", not as "no collection is
+// current".
+func CurrentModelID(st Backend) (string, error) {
+	run, err := st.LastEmbedRunAny()
+	if err != nil {
+		return "", err
+	}
+	if run == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(run.ModelID), nil
+}
+
 // LastEmbedRunAny returns the most recent embed run across all models.
 func (s *Store) LastEmbedRunAny() (*EmbedRun, error) {
 	row := s.db.QueryRow(`SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
