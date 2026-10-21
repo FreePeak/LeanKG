@@ -285,32 +285,6 @@ Three facts it already had, all discarded. It walked the tree: it could print th
 
 **Loop status: 29 defects found, 29 fixed, 0 open** across twenty-one waves — and the shape of waves 15 through 21 is one sentence applied seven times: *a write must report itself empty and unanchored; a read must be populated; a diagnosis must name its subject.*
 
-### v4.31.0-the-refusal-names-its-store — twenty waves, re-run (2026-10-01)
-
-**Trigger:** wave 20 of the loop (FR-SELF-04, still on PR #449), and deliberately a different KIND of wave: a regression sweep. Every battery from the nineteen previous waves, re-run against the current binary on a scratch project indexed through `LEANKG_DB_PATH`, to confirm that a wave which changes a shared mechanism has not quietly undone an earlier one.
-
-**Twenty of twenty-one checks passed unchanged.** The standalone store is read by every verb and no project-scoped store is created; dot-files are skipped; `index` refuses a missing path; `doctor` names its command; REST retain refuses an unreadable body and reports `skipped` on a cursor-gated re-send; `register-project` refuses a missing path; `obsidian push` exits 2 with no vault and works after `init`; `generate` prints and writes nothing without `--out`; the extractor's identity is stamped; the ontology answer keeps its payload and reports `cut: ["matches"]`. Waves 18 and 19's mechanism changes — the protected-key set, the typed-slice normalisation, the marker shape, the cut list — broke nothing.
-
-**The one failure was not a regression but the last hole in wave 16's guard**, and the sweep found it only because it ran the batteries against a store that was not the one it had indexed.
-
-**The defect.** `annotate` refuses a `qualified_name` the index does not have and advises `leankg query <name>` to find the right one — but **the refusal and its own advice resolve the store the same way.** A project indexed through `LEANKG_DB_PATH=/tmp/store.sqlite` holds `main.go::Alpha`; run `leankg annotate "main.go::Alpha"` from it without the env var and the guard answered:
-
-```
-no indexed element matches "main.go::Alpha" — annotations attach to an element
-the index has, so run `leankg index .` if this project is stale, or `leankg query
-<name>` to find the right qualified_name
-```
-
-…while the project-scoped store it actually opened holds a different index. The message was accurate about what it searched and useless about the only thing the caller needs. **Two situations — a typo, and the wrong store — produced identical words, and they have opposite fixes.** Following the advice made it worse: `query` opens the same wrong store and says the same thing.
-
-**The fix is one clause:** the refusal names the store path it searched. Live, the three cases now read differently — the wrong store shows `./.leankg/leankg.db` and names the override that would point elsewhere, the correct store works, and a real typo shows `/tmp/store.sqlite` so the caller knows the lookup was in the right place.
-
-**This is the same class at its third layer, and the loop has now hit it three times.** Wave 1: one verb read a store path only `serve` honoured. Wave 10: freshness could not see its own staleness. Here: **a diagnosis that shares its blind spot with its remedy** — the advice resolves exactly the thing the failure could not see. The generalisation twenty waves have converged on is small and worth stating: **a diagnosis must name the thing it looked at, or it cannot be acted on.** Wave 19's truncation marker and this refusal are that same requirement, in a report and in an error.
-
-**Test:** `TestTheRefusalNamesTheStoreItSearched` — the refusal names the store path, and keeps naming the rebuild. Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
-
-**Loop status: 28 defects found, 28 fixed, 0 open** across twenty waves — and no wave since wave 13 has found a defect the previous nineteen had already fixed, which is the first thing this sweep set out to test and the answer it produced.
-
 ### v4.18-test-env-hermeticity — the suite's result must not depend on the operator's shell (2026-10-21)
 
 **Trigger:** the fix wave's acceptance gate — `go test ./...` had to be
@@ -378,6 +352,32 @@ one: `TestSuiteIsGreenUnderAnExportedEmbedEnv`.
 hostile environment. Verified green with the embed environment CLEARED and
 with it SET to the hostile values. `go build -p=2 ./...`, `go vet ./...` and
 `gofmt` clean.
+
+### v4.31.0-the-refusal-names-its-store — twenty waves, re-run (2026-10-01)
+
+**Trigger:** wave 20 of the loop (FR-SELF-04, still on PR #449), and deliberately a different KIND of wave: a regression sweep. Every battery from the nineteen previous waves, re-run against the current binary on a scratch project indexed through `LEANKG_DB_PATH`, to confirm that a wave which changes a shared mechanism has not quietly undone an earlier one.
+
+**Twenty of twenty-one checks passed unchanged.** The standalone store is read by every verb and no project-scoped store is created; dot-files are skipped; `index` refuses a missing path; `doctor` names its command; REST retain refuses an unreadable body and reports `skipped` on a cursor-gated re-send; `register-project` refuses a missing path; `obsidian push` exits 2 with no vault and works after `init`; `generate` prints and writes nothing without `--out`; the extractor's identity is stamped; the ontology answer keeps its payload and reports `cut: ["matches"]`. Waves 18 and 19's mechanism changes — the protected-key set, the typed-slice normalisation, the marker shape, the cut list — broke nothing.
+
+**The one failure was not a regression but the last hole in wave 16's guard**, and the sweep found it only because it ran the batteries against a store that was not the one it had indexed.
+
+**The defect.** `annotate` refuses a `qualified_name` the index does not have and advises `leankg query <name>` to find the right one — but **the refusal and its own advice resolve the store the same way.** A project indexed through `LEANKG_DB_PATH=/tmp/store.sqlite` holds `main.go::Alpha`; run `leankg annotate "main.go::Alpha"` from it without the env var and the guard answered:
+
+```
+no indexed element matches "main.go::Alpha" — annotations attach to an element
+the index has, so run `leankg index .` if this project is stale, or `leankg query
+<name>` to find the right qualified_name
+```
+
+…while the project-scoped store it actually opened holds a different index. The message was accurate about what it searched and useless about the only thing the caller needs. **Two situations — a typo, and the wrong store — produced identical words, and they have opposite fixes.** Following the advice made it worse: `query` opens the same wrong store and says the same thing.
+
+**The fix is one clause:** the refusal names the store path it searched. Live, the three cases now read differently — the wrong store shows `./.leankg/leankg.db` and names the override that would point elsewhere, the correct store works, and a real typo shows `/tmp/store.sqlite` so the caller knows the lookup was in the right place.
+
+**This is the same class at its third layer, and the loop has now hit it three times.** Wave 1: one verb read a store path only `serve` honoured. Wave 10: freshness could not see its own staleness. Here: **a diagnosis that shares its blind spot with its remedy** — the advice resolves exactly the thing the failure could not see. The generalisation twenty waves have converged on is small and worth stating: **a diagnosis must name the thing it looked at, or it cannot be acted on.** Wave 19's truncation marker and this refusal are that same requirement, in a report and in an error.
+
+**Test:** `TestTheRefusalNamesTheStoreItSearched` — the refusal names the store path, and keeps naming the rebuild. Full suite green (54 packages), `go vet ./...` clean, `gofmt` clean.
+
+**Loop status: 28 defects found, 28 fixed, 0 open** across twenty waves — and no wave since wave 13 has found a defect the previous nineteen had already fixed, which is the first thing this sweep set out to test and the answer it produced.
 
 ### v4.30.0-the-marker-names-what-it-cut — a report you cannot act on is not a mechanism (2026-10-01)
 
