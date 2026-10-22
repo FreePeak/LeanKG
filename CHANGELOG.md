@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.35.3](https://github.com/FreePeak/LeanKG/compare/v0.35.2...v0.35.3) (2026-10-22)
+
+
+### Bug Fixes
+
+* **maintain:** a reconciled store is not a stale one ([#573](https://github.com/FreePeak/LeanKG/issues/573)) ([9061d69](https://github.com/FreePeak/LeanKG/commit/9061d69c288f6602c1e7f2ccaed923768447bb52))
+* **maintain:** heal the inventory a reconcile left behind ([#574](https://github.com/FreePeak/LeanKG/issues/574)) ([944f614](https://github.com/FreePeak/LeanKG/commit/944f6141eba6378daf1bc2fffffee4209cdd0b37))
+
+### Miscellaneous Chores
+
+* declare the 0.35.3 release version ([#575](https://github.com/FreePeak/LeanKG/issues/575)) ([20af689](https://github.com/FreePeak/LeanKG/commit/20af6898a609544f83e46acef539a03d4ceede51))
+
 ## [0.35.2](https://github.com/FreePeak/LeanKG/compare/v0.35.1...v0.35.2) (2026-10-21)
 
 
