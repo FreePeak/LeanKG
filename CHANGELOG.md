@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.3](https://github.com/FreePeak/LeanKG/compare/v0.35.2...v0.35.3) (2026-10-22)
+
+
+### Miscellaneous Chores
+
+* declare the 0.35.3 release version ([#575](https://github.com/FreePeak/LeanKG/issues/575)) ([20af689](https://github.com/FreePeak/LeanKG/commit/20af6898a609544f83e46acef539a03d4ceede51))
+
 ## [0.35.2](https://github.com/FreePeak/LeanKG/compare/v0.35.1...v0.35.2) (2026-10-21)
 
 
