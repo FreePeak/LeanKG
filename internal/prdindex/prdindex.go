@@ -16,7 +16,7 @@
 // `implemented_by` edge from the requirement to the workflow GID. Element
 // storage is what keeps the link edges resolvable — doctor --deep flags
 // relationships whose endpoints are not elements — and what makes every
-// requirement reachable through the 3-tool query envelope with no extra
+// requirement reachable through the 4-tool query envelope with no extra
 // wiring (an exact query for the FR/US id lands on the element name).
 // Requirements are indexed under the synthetic file path "prd://<doc>"
 // (the same convention as ontology:// and session://), so a re-index is a

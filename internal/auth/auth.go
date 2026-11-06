@@ -5,7 +5,7 @@
 // Bearer tokens resolve DB-first: the internal/store `tokens` table (minted
 // and revocable at runtime) wins over the env vars
 // LEANKG_TOKEN_{ADMIN,CONTRIBUTOR,VIEWER}, which stay as the static fallback;
-// absence of any configured token disables the gate (local default = no
+// absence of any configured token and of any site-admin account disables the gate (local default = no
 // auth, same posture as the Rust local mode).
 package auth
 
@@ -150,11 +150,29 @@ func RoleForRequestWithStore(st store.Backend, r *http.Request) (Role, error) {
 	return fromEnv().classify(st, r)
 }
 
-// GateEnabled reports whether any live token (env or DB-backed) is
-// configured, i.e. whether HTTP callers must authenticate. serve uses it to
-// warn when a listener leaves the loopback interface with the gate open.
+// GateEnabled reports whether HTTP callers must authenticate: a live token (env
+// or DB-backed) is configured, or a site-admin account exists. serve uses it to
+// refuse a non-loopback bind with the gate open.
 func GateEnabled(st store.Backend) (bool, error) {
 	return fromEnv().tokensConfigured(st)
+}
+
+// RoleOrAnonymous resolves an HTTP caller for the MCP gate. A request with no
+// Authorization header is anonymous while the gate is on, and Admin while it is
+// off (the local default). A lookup error that leaves the gate state unknown
+// counts as on: the caller is anonymous, never Admin. A request that carries an
+// Authorization header resolves exactly like RoleForRequestWithStore, so a bad
+// or expired token is still an error.
+func RoleOrAnonymous(st store.Backend, r *http.Request) (role Role, anonymous bool, err error) {
+	if r.Header.Get("Authorization") != "" {
+		role, err := RoleForRequestWithStore(st, r)
+		return role, false, err
+	}
+	gated, gateErr := GateEnabled(st)
+	if gateErr != nil || gated {
+		return Viewer, true, nil
+	}
+	return Admin, false, nil
 }
 
 // AllowedTool reports whether role may invoke the MCP tool named tool.
@@ -173,7 +191,7 @@ func AllowedTool(role Role, tool string) bool {
 // Token precedence: DB-backed tokens (st, the internal/store `tokens` table —
 // minted and revocable at runtime) are consulted first; the env vars
 // LEANKG_TOKEN_{ADMIN,CONTRIBUTOR,VIEWER} are the fallback. With no token
-// configured in either source the gate is disabled (local default = Admin).
+// configured in either source and no site-admin account exists, the gate is disabled (local default = Admin).
 //
 // Ceiling: gate enablement counts LIVE tokens only — soft-revoked and expired
 // DB rows do not keep the gate on (they can never authenticate). Operators who

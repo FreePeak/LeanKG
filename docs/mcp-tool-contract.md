@@ -3,7 +3,7 @@
 
 # MCP Tool Contract
 
-Generated from the live tool registry (`leankgmcp.New(...).registerTools`, via `ListTools`). **3 tools.**
+Generated from the live tool registry (`leankgmcp.New(...).registerTools`, via `ListTools`). **4 tools.**
 To change the surface: edit the registry, run `go test ./internal/mcp -run TestToolContractDoc`, commit both.
 
 ## Stability tiers
@@ -20,7 +20,7 @@ To change the surface: edit the registry, run `go test ./internal/mcp -run TestT
 
 ## Deprecation history
 
-_None. The Go registry's tool count has only ever shrunk (76 Rust tools to 3), which is a rewrite, not a deprecation._
+_None. The Go registry's tool count shrank from 76 Rust tools to 3, which is a rewrite, not a deprecation; authenticate is the one tool added since (3 to 4)._
 
 ## The `project` property
 
@@ -33,6 +33,7 @@ Name it with the absolute path of the repository you are working in (a path insi
 
 | Tool | Description | Input properties |
 |---|---|---|
+| `authenticate` | Log in as the site admin with username and password. Returns a revocable bearer token (role admin, expires after 24 hours). Send it as Authorization: Bearer <token> on later HTTP requests. Over HTTP, authenticate is the only tool a caller without a token may use. Takes no project argument. | password, username |
 | `import` | Import content into LeanKG: index a repository or directory of repositories (action=repo|dir, path), or curate agent memory (action=memory, command=create|str_replace|insert|delete|rename|add|replace|remove; create overwrites an existing file). Legacy tool name 'set' is superseded by this tool. Use action=dir with path="." to import the current directory as a scoped index target (FR-P2). The st... | action, args, bank, command, content, document_id, file, insert_line, new, new_path, node_id, old, path, payload, project, session_id, summary, tags, text |
 | `query` | Query LeanKG. Empty action routes down the ladder: L1 exact identifier → L2 fuzzy keyword → L3 semantic (vectors). Every answer carries retrieval{rung,reason} + freshness. action=memory searches agent memory (args.command=view with args.path reads one file, =snapshot the MEMORY.md/USER.md core); action=exact|fuzzy|semantic pins a rung; graph verbs (impact/path/callers/callees/context/explai... | action, args, limit, project, query |
 | `status` | LeanKG health: inventory, freshness (fresh|possibly_stale|cold), watermark, backend, embeddings state (stamped models, vectors), last embed run. Use status for health and coverage, not as a substitute for query. Agent protocol: query before bash/grep; project= only on multi-project HTTP; import once when cold; inspect retrieval/freshness/guidance; session_recall at start, session_retain (action... | project |

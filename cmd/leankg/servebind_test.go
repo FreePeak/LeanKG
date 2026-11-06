@@ -7,6 +7,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/servebind"
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // TestServeBindRefusesExposedREST pins the RS-03 exposure rule end to end:
@@ -183,4 +187,39 @@ func tokenFreeEnv() []string {
 func freePortStr(t *testing.T) string {
 	t.Helper()
 	return strconv.Itoa(freePort(t))
+}
+
+// TestServeBindAcceptsWildcardWithSiteAdmin pins that a site-admin account counts
+// as "auth configured". serve feeds servebind the same probe this test runs
+// (auth.GateEnabled over the store), so a wildcard REST bind is refused while
+// nothing gates the callers and allowed once the site admin exists.
+func TestServeBindAcceptsWildcardWithSiteAdmin(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
+	t.Setenv("LEANKG_TOKEN_VIEWER", "")
+	st, err := store.Open(t.TempDir()+"/.leankg/leankg.db", store.RW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	check := func() error {
+		t.Helper()
+		gateOn, err := auth.GateEnabled(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return servebind.Check(servebind.KindREST, ":9700", servebind.Options{GateOn: gateOn})
+	}
+	if err := check(); err == nil {
+		t.Fatal("a wildcard bind with no token and no site admin must be refused")
+	}
+	if _, err := auth.CreateSiteAdmin(st, "ops", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(); err != nil {
+		t.Fatalf("a wildcard bind with a site admin must be allowed: %v", err)
+	}
 }

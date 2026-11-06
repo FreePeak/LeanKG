@@ -48,7 +48,7 @@ LeanKG uses `tree-sitter` for parsing. If you want to add a new language:
 3. Add testdata fixtures and define how code elements (functions, classes, imports) map to the graph schema.
 
 ### Improving MCP Tools
-The agent-facing registry is pinned at exactly three tools — `import`, `query`, `status` — with capabilities as actions/verbs inside that envelope. To extend it:
+The agent-facing registry is pinned at exactly four tools — `import`, `query`, `status`, `authenticate` — with capabilities as actions/verbs inside that envelope. To extend it:
 1. Add the action in `internal/core` and wire it through the MCP/REST/CLI transports.
 2. Ensure the output is **token-optimized** (we aim for high signal-to-noise ratios).
 

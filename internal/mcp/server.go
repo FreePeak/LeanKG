@@ -1,7 +1,7 @@
 // Package mcp wires the core engine into the Model Context Protocol using
 // the official go-sdk: stdio (local coding tools) and streamable HTTP
-// (shared servers). The registry is EXACTLY three tools — import, query,
-// status (legacy set/get were renamed; the PRD deprecation policy applies to
+// (shared servers). The registry is EXACTLY four tools — import, query,
+// status, authenticate (legacy set/get were renamed; the PRD deprecation policy applies to
 // the action namespace, this is the v0.31 tool-name cutover).
 package mcp
 
@@ -157,7 +157,7 @@ const version = "0.35.3" // x-release-please-version
 // server's environment. Measured on the 286-project self-host, an agent's
 // first call went out with no arguments because the sentence read as a
 // conditional that did not apply to it.
-const serverInstructionsTemplate = `LeanKG is a code knowledge graph (exactly 3 tools: import, query, status). Agent protocol:
+const serverInstructionsTemplate = `LeanKG is a code knowledge graph (exactly 4 tools: import, query, status, authenticate). Agent protocol:
 1. For code discovery, call query before bash/grep/read. Leave action empty (or use search) for the L1 exact -> L2 fuzzy -> L3 semantic ladder; pin exact/fuzzy/semantic only when that rung is intentional. Once you have a qualified name, prefer impact/path/callers/callees/context over re-grepping.
 2. %s
 3. Inspect retrieval{rung,reason}, guidance (when present), and freshness. If a store is cold, import it once with action=repo, path=<absolute repository path>, then query; do not re-import on every turn. On zero hits, follow guidance instead of abandoning LeanKG for bash.
@@ -190,7 +190,7 @@ func (s *Server) instructions() string {
 
 const toolGuidance = "Agent protocol: query before bash/grep; project= only on multi-project HTTP; import once when cold; inspect retrieval/freshness/guidance; session_recall at start, session_retain (action=memory) and lesson (action=session) at end (memory scope=per-project|global|per-project-tagged); do not pin a rung unless intentional."
 
-// New builds the MCP server with the 3-tool registry.
+// New builds the MCP server with the 4-tool registry.
 func New(engine *core.Engine, opts ...Option) *Server {
 	s := &Server{engine: engine, rec: telemetry.Nop{}}
 	for _, opt := range opts {
@@ -199,11 +199,11 @@ func New(engine *core.Engine, opts ...Option) *Server {
 	s.initStdioIdentity(os.Getenv)
 	s.srv = mcp.NewServer(&mcp.Implementation{
 		Name: "leankg", Version: version,
-		Description: "LeanKG code knowledge graph (3 tools: import/query/status): query for code discovery and memory recall; import for indexing and session_retain.",
+		Description: "LeanKG code knowledge graph (4 tools: import/query/status/authenticate): query for code discovery and memory recall; import for indexing and session_retain; authenticate for the site-admin login.",
 	}, &mcp.ServerOptions{Instructions: s.instructions()})
 	s.registerTools()
 	// capture stays outermost: it sees name-resolution failures (DS-04).
-	s.srv.AddReceivingMiddleware(s.capture, resolveToolNames)
+	s.srv.AddReceivingMiddleware(s.capture, resolveToolNames, anonymousGate)
 	return s
 }
 
@@ -225,15 +225,47 @@ func resolveToolNames(next mcp.MethodHandler) mcp.MethodHandler {
 	}
 }
 
+// anonymousGate is the one place the anonymous HTTP caller is restricted (no
+// Authorization header while the gate is on). It lets through the protocol
+// handshake, tools/list and the login tool, and refuses every other method and
+// tool with the unauthorized error that names authenticate. Stdio and token
+// callers never carry the anonymous flag, so they pass straight through.
+func anonymousGate(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if !anonymousOf(ctx) || anonymousMayCall(method, req) {
+			return next(ctx, method, req)
+		}
+		return nil, errs.NewError(errs.Unauthorized,
+			"this server requires a bearer token: call the authenticate tool with the site-admin username and password, then send Authorization: Bearer <token>", "")
+	}
+}
+
+// anonymousMayCall is the anonymous allow-list: the handshake methods (initialize,
+// the 2026-07-28 discover handshake, ping, the initialized notification),
+// tools/list, and tools/call for authenticate only.
+func anonymousMayCall(method string, req mcp.Request) bool {
+	switch method {
+	case methodInitialize, methodDiscover, "notifications/initialized", "ping", "tools/list":
+		return true
+	case methodToolsCall:
+		call, ok := req.(*mcp.CallToolRequest)
+		return ok && call.Params != nil && call.Params.Name == core.ToolAuthenticate
+	}
+	return false
+}
+
 // RunStdio serves MCP over stdin/stdout (blocks until the client disconnects).
 func (s *Server) RunStdio(ctx context.Context) error {
 	return s.srv.Run(ctx, &mcp.StdioTransport{})
 }
 
-// HTTPHandler returns the streamable-HTTP MCP handler (mount under /mcp)
-// wrapped in RBAC: the role is resolved from the Authorization header and
-// enforced per tool call inside the handlers (MCP carries capability in the
-// JSON-RPC body, so path middleware cannot see it).
+// HTTPHandler returns the streamable-HTTP MCP handler (mount under /mcp).
+// The HTTP layer only resolves the caller (a bad or expired bearer token is
+// 401; a request with no Authorization header while the gate is on is
+// anonymous). What the caller may do is decided in the MCP layer: the
+// anonymousGate middleware for the anonymous restriction, allowTool for RBAC
+// (MCP carries capability in the JSON-RPC body, so path middleware cannot see
+// it).
 func (s *Server) HTTPHandler() http.Handler {
 	// Stateless: true is required, not an optimization. go-sdk refuses protocol
 	// >= 2026-07-28 on any stateful HTTP server, and that version arrives in the
@@ -250,12 +282,12 @@ func (s *Server) HTTPHandler() http.Handler {
 		&mcp.StreamableHTTPOptions{Stateless: true, PropagateRequestCancellation: true},
 	)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role, err := auth.RoleForRequestWithStore(s.authStore, r)
+		role, anonymous, err := auth.RoleOrAnonymous(s.authStore, r)
 		if err != nil {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		ctx := withRole(r.Context(), role)
+		ctx := withCaller(r.Context(), caller{role: role, anonymous: anonymous})
 		if s.recorder().Level() != telemetry.Off {
 			ctx = telemetry.WithIdentity(ctx, identityFromHeaders(r), telemetry.TransportHTTP)
 		}
@@ -265,19 +297,33 @@ func (s *Server) HTTPHandler() http.Handler {
 
 type ctxKey int
 
-const roleKey ctxKey = 0
+// caller is who an HTTP request resolved to. anonymous is set when the gate is
+// on and the request carried no Authorization header. A context without a
+// caller (stdio, which is inherently local) is Admin and not anonymous.
+type caller struct {
+	role      auth.Role
+	anonymous bool
+}
 
-func withRole(ctx context.Context, role auth.Role) context.Context {
-	return context.WithValue(ctx, roleKey, role)
+const callerKey ctxKey = 0
+
+func withCaller(ctx context.Context, c caller) context.Context {
+	return context.WithValue(ctx, callerKey, c)
 }
 
 // roleOf returns the caller role (Admin when ungated, which is the local
 // default; stdio transport is inherently local).
 func roleOf(ctx context.Context) auth.Role {
-	if r, ok := ctx.Value(roleKey).(auth.Role); ok {
-		return r
+	if c, ok := ctx.Value(callerKey).(caller); ok {
+		return c.role
 	}
 	return auth.Admin
+}
+
+// anonymousOf reports whether the caller is the anonymous HTTP principal.
+func anonymousOf(ctx context.Context) bool {
+	c, ok := ctx.Value(callerKey).(caller)
+	return ok && c.anonymous
 }
 
 // allowTool enforces RBAC per tool call (MCP body capability).
@@ -399,6 +445,16 @@ func (s *Server) registerTools() {
 			"Use status for health and coverage, not as a substitute for query. " + toolGuidance,
 		InputSchema: s.schema(`{"type": "object", "properties": {"project": {"type": "string", "description": "target project (dir path or name); only meaningful when the server serves multiple projects (LEANKG_PROJECT_DIRS)"}}, "required": []}`),
 	}, s.handleStatus)
+
+	// authenticate is server-level: it takes no project, so it is NOT run
+	// through s.schema (which would add a required `project`).
+	s.srv.AddTool(&mcp.Tool{
+		Name: core.ToolAuthenticate,
+		Description: "Log in as the site admin with username and password. Returns a revocable bearer token " +
+			"(role admin, expires after 24 hours). Send it as Authorization: Bearer <token> on later HTTP requests. " +
+			"Over HTTP, authenticate is the only tool a caller without a token may use. Takes no project argument.",
+		InputSchema: json.RawMessage(authenticateSchema),
+	}, s.handleAuthenticate)
 }
 
 // metricEval is the per-call token accounting finishCall derives once and

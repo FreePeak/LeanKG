@@ -21,7 +21,7 @@ make dual-engine     # sqlite + live-PostgreSQL acceptance gate
 - `cmd/leankg` is the single binary: serve / index / query / impact / writer /
   connect / install / setup / doctor / status / run / export / obsidian / …
   `cmd/leankg-embed` is the embedding pipeline.
-- Exactly three MCP tools — `import`, `query`, `status` — plus REST, ConnectRPC
+- Exactly four MCP tools — `import`, `query`, `status`, `authenticate` — plus REST, ConnectRPC
   and the embedded ui-v2 dashboard, all funnelling into `internal/core`.
 - Storage sits behind `store.Backend` (SQLite default, PostgreSQL+pgvector
   opt-in via `LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL`).

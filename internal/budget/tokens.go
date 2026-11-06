@@ -31,7 +31,7 @@ type ToolBudget struct {
 //
 // The first thirteen rows are the Rust `max_tokens_for_tool` arms (legacy MCP
 // tool names; unknown names get DefaultMaxTokens). The tables then extend the
-// same map to the surface this Go engine actually serves: the 3-tool MCP
+// same map to the surface this Go engine actually serves: the 4-tool MCP
 // registry routes work through the query tool's action names
 // (core.QueryRequest.Action), so `semantic_search` is reached as action
 // `semantic` and must not silently fall back to the 1000-token default.

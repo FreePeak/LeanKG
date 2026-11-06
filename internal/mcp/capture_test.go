@@ -223,7 +223,7 @@ func TestCaptureRecordsRBACRefusal(t *testing.T) {
 	rec := &fakeRec{level: telemetry.Metadata}
 	srv := New(engine)
 	srv.SetRecorder(rec)
-	viewer := withRole(context.Background(), auth.Viewer)
+	viewer := withCaller(context.Background(), caller{role: auth.Viewer})
 	if err := directCall(t, srv, viewer, core.ToolImport, `{"action":"repo","path":"."}`); err == nil {
 		t.Fatal("viewer import must be refused")
 	}

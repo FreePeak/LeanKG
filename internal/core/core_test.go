@@ -250,8 +250,8 @@ func TestStatusShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools := out["tools"].([]string)
-	if len(tools) != 3 {
-		t.Fatalf("status tools = %v, want exactly 3", tools)
+	if len(tools) != 4 {
+		t.Fatalf("status tools = %v, want exactly 4", tools)
 	}
 	if out["freshness"] != "cold" {
 		t.Fatalf("freshness: %v", out["freshness"])
@@ -404,7 +404,7 @@ func TestL3StampDriftDegrades(t *testing.T) {
 }
 
 // TestSessionOffloadRoundTripThroughCore proves internal/session is reachable
-// from the 3-tool surface (not dead code): import{action:"session"} offloads,
+// from the 4-tool surface (not dead code): import{action:"session"} offloads,
 // the query tool's session action recalls it bit-for-bit, and the canvas lists it.
 func TestSessionOffloadRoundTripThroughCore(t *testing.T) {
 	e, _ := newEngine(t)

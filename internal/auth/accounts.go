@@ -48,6 +48,17 @@ const (
 	passwordSaltLen    = 16
 )
 
+// minPasswordLength is the shortest password any account may be created with.
+const minPasswordLength = 8
+
+// ValidatePassword enforces the password policy every account creation shares.
+func ValidatePassword(password string) error {
+	if len(password) < minPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minPasswordLength)
+	}
+	return nil
+}
+
 // HashPassword encodes a password verifier:
 // `pbkdf2-sha256$<iterations>$<salt-hex>$<key-hex>`. A fresh random salt is
 // generated per call, so equal passwords never share a verifier.
@@ -154,8 +165,8 @@ func Register(st store.Backend, email, password, name string) (store.Account, er
 	if !strings.Contains(email, "@") {
 		return store.Account{}, errors.New("invalid email")
 	}
-	if len(password) < 8 {
-		return store.Account{}, errors.New("password must be at least 8 characters")
+	if err := ValidatePassword(password); err != nil {
+		return store.Account{}, err
 	}
 	if _, found, err := st.AccountByEmail(email); err != nil {
 		return store.Account{}, err

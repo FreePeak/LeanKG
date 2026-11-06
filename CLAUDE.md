@@ -22,8 +22,10 @@ make dual-engine     # sqlite + live-PostgreSQL acceptance gate
   `-X main.version=`). `internal/mcp/server.go` carries a second copy pinned by
   a drift test. `.github/workflows/release.yml` cuts the tag and publishes the
   four binaries in one run.
-- The MCP surface is exactly three tools — `import`, `query`, `status` — with the
-  action vocabulary resolved in `internal/core`.
+- The MCP surface is exactly four tools — `import`, `query`, `status`,
+  `authenticate` — with the action vocabulary resolved in `internal/core`. The
+  auth model (login, HTTP bearer gate, admin bootstrap) is in
+  [AGENTS.md](AGENTS.md#auth-and-the-http-gate).
 - Storage goes through the `store.Backend` interface (SQLite default,
   PostgreSQL+pgvector opt-in). Consumers take `store.Backend`, never a concrete
   store.

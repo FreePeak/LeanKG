@@ -14,7 +14,7 @@ func TestMaxTokensForToolTable(t *testing.T) {
 		"kg_context":          4000,
 		"get_impact_radius":   6000,
 		"unknown_tool":        DefaultMaxTokens,
-		// Go query actions routed through the 3-tool registry.
+		// Go query actions routed through the 4-tool registry.
 		"semantic": 4000,
 		"read":     8000,
 		"impact":   6000,

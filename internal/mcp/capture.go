@@ -222,6 +222,7 @@ func (s *Server) captureCall(ctx context.Context, level telemetry.Level, rec tel
 	// resolveToolNames rewrote the name to its canonical form when it resolved.
 	s.noteClient(ctx, clientInfoOf(req))
 	raw := []byte(call.Params.Arguments)
+	secret := secretCall(call.Params.Name)
 	id, transport := s.identityFor(ctx)
 	top := readCallFields(raw)
 	ev := telemetry.CallEvent{
@@ -236,12 +237,14 @@ func (s *Server) captureCall(ctx context.Context, level telemetry.Level, rec tel
 		Project:     top.project,
 		Identity:    id,
 		Correlation: id.Correlation(),
-		ArgsHash:    telemetry.ArgsHash(raw),
-		ArgKeys:     telemetry.ArgKeys(raw),
+	}
+	if !secret {
+		ev.ArgsHash = telemetry.ArgsHash(raw)
+		ev.ArgKeys = telemetry.ArgKeys(raw)
 	}
 
 	var body string
-	if res != nil {
+	if res != nil && !secret {
 		body = resultText(res)
 	}
 	if sc.set {
@@ -261,7 +264,9 @@ func (s *Server) captureCall(ctx context.Context, level telemetry.Level, rec tel
 		ev.BaselineMethod = telemetry.BaselineNone
 	}
 	if level == telemetry.Bodies {
-		ev.ArgsRedacted = string(raw)
+		if !secret {
+			ev.ArgsRedacted = string(raw)
+		}
 		if res != nil {
 			ev.BodyRedacted = body
 		} else if err != nil {
@@ -271,6 +276,12 @@ func (s *Server) captureCall(ctx context.Context, level telemetry.Level, rec tel
 	emitCall(rec, ev)
 	return res, err
 }
+
+// secretCall reports a tool whose arguments or result carry a credential:
+// authenticate takes a password and returns a bearer token. Capture still records
+// that the call happened and how it ended, but never its arguments (hash, keys,
+// body) or its result body.
+func secretCall(tool string) bool { return tool == core.ToolAuthenticate }
 
 func applyClassification(ev *telemetry.CallEvent, c telemetry.Classification) {
 	ev.Outcome = c.Outcome
