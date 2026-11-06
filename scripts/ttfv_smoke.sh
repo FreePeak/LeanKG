@@ -215,7 +215,7 @@ if (init["result"].get("serverInfo") or {}).get("name") != "leankg":
 rpc("notifications/initialized", {})
 tools = rpc("tools/list", {}, mid=2)["result"]["tools"]
 names = sorted(t["name"] for t in tools)
-if names != ["import", "query", "status"]:
+if names != ["authenticate", "import", "query", "status"]:
     raise SystemExit(f"unexpected tool surface: {names}")
 call = rpc("tools/call", {"name": "query", "arguments": {"query": term, "limit": 5}}, mid=3)["result"]
 if call.get("isError"):
