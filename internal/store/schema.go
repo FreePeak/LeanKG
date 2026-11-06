@@ -428,4 +428,11 @@ ALTER TABLE emb_stamp ADD COLUMN document_prefix TEXT NOT NULL DEFAULT '';
 -- resolver treats as "derive it again", never as a cap of zero.
 ALTER TABLE emb_stamp ADD COLUMN text_cap INTEGER NOT NULL DEFAULT 0;
 `})
+	// The site-admin marker: accounts had no role, and the bootstrap admin
+	// (leankg auth admin init) needs one durable flag to find. The partial
+	// index covers only the admin rows, so AdminExists stays a point probe.
+	migrations = append(migrations, migration{18, "site-admin-marker", `
+ALTER TABLE accounts ADD COLUMN site_admin INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_accounts_site_admin ON accounts (site_admin) WHERE site_admin = 1;
+`})
 }

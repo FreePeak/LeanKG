@@ -32,6 +32,9 @@ import (
 func TestMultiProjectSchemaRequiresProject(t *testing.T) {
 	_, session := newProjectServerForTest(t, WithProjectRequired(true))
 	for _, tool := range listSchemas(t, session) {
+		if tool.name == core.ToolAuthenticate {
+			continue // server-level login: takes no project, see TestAuthenticateSchemaIsServerLevel
+		}
 		if !containsStr(tool.required, "project") {
 			t.Errorf("tool %q on a multi-project server must REQUIRE project; required = %v",
 				tool.name, tool.required)

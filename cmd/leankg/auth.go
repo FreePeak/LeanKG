@@ -1,13 +1,17 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/envfile"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -16,7 +20,7 @@ import (
 // `auth list-tokens` / `auth revoke` live under `auth token list|revoke` here.
 func cmdAuth(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "auth: expected a subcommand (register | token create|list|revoke)")
+		fmt.Fprintln(os.Stderr, "auth: expected a subcommand (register | token create|list|revoke | admin init)")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -24,10 +28,178 @@ func cmdAuth(args []string) {
 		authRegister(args[1:])
 	case "token":
 		cmdAuthToken(args[1:])
+	case "admin":
+		cmdAuthAdmin(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "auth: unknown subcommand %q (valid: register | token create|list|revoke)\n", args[0])
+		fmt.Fprintf(os.Stderr, "auth: unknown subcommand %q (valid: register | token create|list|revoke | admin init)\n", args[0])
 		os.Exit(2)
 	}
+}
+
+func cmdAuthAdmin(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "auth admin: expected a subcommand (init)")
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "init":
+		authAdminInit(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "auth admin: unknown subcommand %q (valid: init)\n", args[0])
+		os.Exit(2)
+	}
+}
+
+// Env-file keys that carry the site-admin credentials.
+const (
+	adminUsernameKey = "LEANKG_ADMIN_USERNAME"
+	adminPasswordKey = "LEANKG_ADMIN_PASSWORD"
+)
+
+// adminInitOutcome says what bootstrapAdmin did.
+type adminInitOutcome int
+
+const (
+	adminCreatedGenerated adminInitOutcome = iota + 1
+	adminCreatedFromEnv
+	adminAlreadyInitialised
+	adminAlreadyInitialisedTightened
+)
+
+// authAdminInit bootstraps the one site-admin account (`leankg auth admin
+// init`). The plaintext password lives only in the env file; the store keeps a
+// PBKDF2 verifier. The output never prints the password.
+func authAdminInit(args []string) {
+	fs := flag.NewFlagSet("auth admin init", flag.ExitOnError)
+	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
+	username := fs.String("username", "admin", "site-admin username")
+	envFile := fs.String("env-file", "", "file holding the admin credentials (default <project>/.env)")
+	parseInterspersed("auth admin init", fs, args, 0)
+
+	dir := resolveProjectDir(*project)
+	envPath := *envFile
+	if envPath == "" {
+		envPath = filepath.Join(dir, ".env")
+	}
+	engine, err := openEngine(dir, store.RW)
+	if err != nil {
+		fatalJSON(err)
+	}
+	defer engine.Store().Close()
+	if err := engine.Store().Migrate(); err != nil {
+		fatalJSON(err)
+	}
+
+	key := auth.NormalizeEmail(*username)
+	outcome, err := bootstrapAdmin(engine.Store(), key, envPath)
+	if err != nil {
+		fatalJSON(err)
+	}
+	switch outcome {
+	case adminCreatedGenerated:
+		fmt.Printf("Site admin %q created. Generated credentials written to %s (mode 0600); the password is not printed.\n", key, envPath)
+	case adminCreatedFromEnv:
+		fmt.Printf("Site admin %q created from the credentials in %s.\n", key, envPath)
+	case adminAlreadyInitialised:
+		fmt.Printf("Site admin %q is already initialised; the credentials in %s verify.\n", key, envPath)
+	case adminAlreadyInitialisedTightened:
+		fmt.Printf("Site admin %q is already initialised; the credentials in %s verify. Tightened the file mode to 0600 (it holds a plaintext password).\n", key, envPath)
+	}
+}
+
+// bootstrapAdmin makes sure the site-admin account for username exists and that
+// envPath holds its credentials. A missing account is created from the env
+// file's LEANKG_ADMIN_PASSWORD, or from a generated password appended to the
+// file. An existing account is left unchanged, and is reported as initialised
+// only when the env credentials verify against it. Every refusal happens before
+// any write, and the env file is written before the account so that a failed
+// account insert leaves credentials a rerun can use.
+func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcome, error) {
+	key := auth.NormalizeEmail(username)
+	env, err := envfile.Load(envPath)
+	if err != nil {
+		return 0, err
+	}
+	if name, ok := env[adminUsernameKey]; ok && auth.NormalizeEmail(name) != key {
+		return 0, fmt.Errorf("%s names admin %q, not %q; pass --username to match", envPath, auth.NormalizeEmail(name), key)
+	}
+	envPassword, hasPassword := env[adminPasswordKey]
+
+	_, exists, err := st.AccountByEmail(key)
+	if err != nil {
+		return 0, err
+	}
+	if exists {
+		if hasPassword {
+			if _, err := auth.VerifyAdminLogin(st, key, envPassword); err == nil {
+				tightened, err := tightenEnvMode(envPath)
+				if err != nil {
+					return 0, err
+				}
+				if tightened {
+					return adminAlreadyInitialisedTightened, nil
+				}
+				return adminAlreadyInitialised, nil
+			}
+		}
+		return 0, fmt.Errorf("admin %q already exists and the credentials in %s do not verify it; nothing changed", key, envPath)
+	}
+
+	anyAdmin, err := st.AdminExists()
+	if err != nil {
+		return 0, err
+	}
+	if anyAdmin {
+		return 0, fmt.Errorf("a site admin already exists; auth admin init creates only one (refusing %q)", key)
+	}
+
+	outcome := adminCreatedFromEnv
+	password := envPassword
+	if !hasPassword {
+		outcome = adminCreatedGenerated
+		if password, err = generateAdminPassword(); err != nil {
+			return 0, err
+		}
+	}
+	if err := auth.ValidatePassword(password); err != nil {
+		return 0, fmt.Errorf("%s: %w", adminPasswordKey, err)
+	}
+	if err := envfile.AppendMissing(envPath, []envfile.Pair{
+		{Key: adminUsernameKey, Value: key},
+		{Key: adminPasswordKey, Value: password},
+	}); err != nil {
+		return 0, err
+	}
+	if _, err := auth.CreateSiteAdmin(st, key, password); err != nil {
+		return 0, err
+	}
+	return outcome, nil
+}
+
+// tightenEnvMode sets the env file to 0600 and reports whether the mode changed.
+// The file holds a plaintext password, so no run may leave it group- or
+// world-readable.
+func tightenEnvMode(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	if info.Mode().Perm() == 0o600 {
+		return false, nil
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return false, fmt.Errorf("chmod %s: %w", path, err)
+	}
+	return true, nil
+}
+
+// generateAdminPassword returns 32 random bytes as unpadded base64url.
+func generateAdminPassword() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate admin password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func cmdAuthToken(args []string) {

@@ -137,11 +137,16 @@ func EffectiveRole(st store.Backend, r *http.Request) (Role, error) {
 	return ctx.Role, nil
 }
 
-// tokensConfigured reports whether any LIVE token source is configured (env
-// or the DB store). Soft-revoked and expired DB rows do not count: they can
-// never authenticate, and treating them as "configured" locked local REST
-// behind 401 forever after a smoke test left a revoked row behind. No live
-// source means the gate is disabled (local default = Admin).
+// tokensConfigured reports whether the gate is on: any LIVE token source (env
+// or the DB store) or a site-admin account. Soft-revoked and expired DB rows do
+// not count: they can never authenticate, and treating them as "configured"
+// locked local REST behind 401 forever after a smoke test left a revoked row
+// behind. With no live token and no site admin the gate is disabled (local
+// default = Admin).
+//
+// A site admin keeps the gate on because it is the account that logs in through
+// the authenticate tool, so the endpoints it protects must demand that login.
+// An error from either store probe is returned to the caller, which fails closed.
 //
 // Ceiling: a soft-revoked row no longer keeps the gate on. Operators who must
 // never run open should keep at least one env token set (LEANKG_TOKEN_*), which
@@ -167,7 +172,11 @@ func (reg *registry) tokensConfigured(st store.Backend) (bool, error) {
 		}
 		return true, nil
 	}
-	return false, nil
+	admin, err := st.AdminExists()
+	if err != nil {
+		return false, fmt.Errorf("auth: admin store: %w", err)
+	}
+	return admin, nil
 }
 
 // resolveGrant applies the owner > org role > token role ladder to a verified

@@ -35,8 +35,13 @@ func newTestServer(t *testing.T) *mcp.ClientSession {
 	}
 	engine := core.New(st, mem, nil)
 	engine.SetProjectDir(dir) // mirrors cmd/leankg serve
-	srv := New(engine)
+	return connectTo(t, New(engine))
+}
 
+// connectTo serves srv over the SDK's in-memory transport and returns a
+// connected client session (stdio-style: no HTTP, no gate).
+func connectTo(t *testing.T, srv *Server) *mcp.ClientSession {
+	t.Helper()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	ctx := context.Background()
 	if _, err := srv.srv.Connect(ctx, serverTransport, nil); err != nil {
@@ -51,10 +56,10 @@ func newTestServer(t *testing.T) *mcp.ClientSession {
 	return session
 }
 
-// TestRegistryIsExactlyThreeTools pins the CI invariant carried over from the
+// TestRegistryIsExactlyFourTools pins the CI invariant carried over from the
 // Rust line (docs/mcp-tool-contract.md): the registry is EXACTLY
-// {import, query, status}. Legacy set/get are superseded tool names.
-func TestRegistryIsExactlyThreeTools(t *testing.T) {
+// {import, query, status, authenticate}. Legacy set/get are superseded tool names.
+func TestRegistryIsExactlyFourTools(t *testing.T) {
 	session := newTestServer(t)
 	res, err := session.ListTools(context.Background(), nil)
 	if err != nil {
@@ -64,9 +69,9 @@ func TestRegistryIsExactlyThreeTools(t *testing.T) {
 	for _, tool := range res.Tools {
 		got[tool.Name] = true
 	}
-	want := map[string]bool{core.ToolImport: true, core.ToolQuery: true, core.ToolStatus: true}
-	if len(got) != 3 {
-		t.Fatalf("registry has %d tools (%v), want EXACTLY 3", len(got), got)
+	want := map[string]bool{core.ToolImport: true, core.ToolQuery: true, core.ToolStatus: true, core.ToolAuthenticate: true}
+	if len(got) != 4 {
+		t.Fatalf("registry has %d tools (%v), want EXACTLY 4", len(got), got)
 	}
 	for name := range want {
 		if !got[name] {
@@ -93,7 +98,7 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 		"does not create vectors",
 		"session_recall",
 		"session_retain",
-		"exactly 3 tools",
+		"exactly 4 tools",
 		"leankg-embed",
 		"per-project",
 	} {
@@ -117,6 +122,9 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range res.Tools {
+		if tool.Name == core.ToolAuthenticate {
+			continue // a login tool, not code discovery: it carries no discovery protocol
+		}
 		if !strings.Contains(tool.Description, toolGuidance) {
 			t.Fatalf("tool %q does not carry the fallback agent guidance", tool.Name)
 		}
@@ -167,8 +175,8 @@ func TestCallQueryRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools := out["tools"].([]any)
-	if len(tools) != 3 {
-		t.Fatalf("status.tools = %v, want 3", tools)
+	if len(tools) != 4 {
+		t.Fatalf("status.tools = %v, want 4", tools)
 	}
 }
 
@@ -257,12 +265,13 @@ func TestMCPRBACGatesWriteToolsOverWire(t *testing.T) {
 	engine.SetProjectDir(dir)
 	h := New(engine).HTTPHandler()
 
-	// no token → 401
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/mcp", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("missing token: %d, want 401", rec.Code)
+	// no header: anonymous, so the import is refused by the MCP layer with the
+	// authenticate hint (a structured error, not an HTTP 401).
+	rec := rpc(h, toolCall("import", `{"action":"repo","path":"."}`), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("anonymous import: %d, want the structured refusal (200)", rec.Code)
 	}
+	requireAuthenticateHint(t, rec.Body.String())
 
 	// viewer token → authorized; the tool-level gate is exercised by the
 	// allowTool call inside handleImport (unit-pinned in internal/auth).
@@ -425,10 +434,11 @@ func TestMCPHonorsDBMintedTokens(t *testing.T) {
 	srv.SetAuthStore(st)
 	h := srv.HTTPHandler()
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/mcp", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("no token with a DB token minted: %d, want 401", rec.Code)
+	// no header with a DB token minted: the gate is on, so the caller is
+	// anonymous and is served only the protocol methods (tools/list here).
+	rec := rpc(h, rpcToolsList, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("anonymous tools/list with a DB token minted: %d, want 200", rec.Code)
 	}
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/mcp", nil)

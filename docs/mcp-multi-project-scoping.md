@@ -341,8 +341,8 @@ go vet ./internal/... ./cmd/...
 Live, against the 286-project self-host (a side instance on port 9799, so
 the supervised server was never touched):
 
-- `tools/list` on the unscoped surface → `required: ["project"]` for all
-  three tools;
+- `tools/list` on the unscoped surface → `required: ["project"]` for
+  `import`, `query` and `status` (the three project-scoped tools);
 - `tools/list` on `?project=leankg` and on stdio → `required: []`;
 - `status` with no arguments on stdio → the project's own status;
 - `status` with no arguments on the unscoped surface → the actionable

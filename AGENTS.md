@@ -132,6 +132,43 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 
 MCP HTTP `?project=` walks to the nearest `.leankg`; `LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL` switch storage. Never paste personal host paths into commits.
 
+## Auth and the HTTP gate
+
+The MCP surface is four tools: `import`, `query`, `status`, and `authenticate` (the login tool).
+
+`authenticate` takes `{ "username": "<username>", "password": "<password>" }`. On success it returns `{ "token": "lkg_...", "role": "admin", "expires_at": "<RFC3339>" }`; `expires_at` is omitted when the token does not expire. The token is a revocable bearer token from the existing token system. Clients send it as `Authorization: Bearer <token>` on later requests. A failure is one generic `invalid credentials` error that never says whether the user exists. After 5 consecutive failures for a username, `authenticate` returns a rate-limit message and locks that username out for 60 seconds.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as leankg serve --http
+    C->>S: tools/call authenticate {username, password}
+    S-->>C: {token: "lkg_...", role: "admin", expires_at?}
+    C->>S: tools/call import / query / status<br/>Authorization: Bearer <token>
+    S-->>C: result
+```
+
+**Gate.** The gate is on when any of these holds: an env token (`LEANKG_TOKEN_ADMIN`, `LEANKG_TOKEN_CONTRIBUTOR`, `LEANKG_TOKEN_VIEWER`) is set, a database token exists (`leankg auth token create`), or a site-admin account exists. The HTTP layer only resolves the caller; the anonymous restriction is enforced in one MCP middleware. With the gate on:
+
+- a request with no `Authorization` header can reach only the protocol handshake (`initialize`, `ping`, `notifications/initialized`, and the 2026-07-28 `discover`), `tools/list`, and `tools/call` for `authenticate`; `import`, `query` and `status` need a valid token;
+- a request carrying an invalid or expired token gets HTTP 401.
+
+The same gate covers REST and ConnectRPC. Those surfaces have no login tool, so once a site admin exists they need a bearer token minted with `leankg auth token create`.
+
+stdio (`leankg serve --stdio`) is not gated. It runs as Admin because it is a local subprocess started by the user.
+
+**Admin bootstrap.**
+
+```bash
+leankg auth admin init [--username <username>] [--env-file <path>]
+```
+
+- Defaults: username `admin`, env file `.env` in the project root.
+- Creates one site-admin account in the project's store (SQLite default, PostgreSQL parity). The database keeps only the PBKDF2 password hash.
+- Appends `LEANKG_ADMIN_USERNAME` and `LEANKG_ADMIN_PASSWORD` to the env file, preserving existing lines, and sets the file mode to 0600. `.env` is git-ignored.
+- Idempotent. If the account already exists but the env file has no matching password, it fails without changing anything.
+- The server does not read `.env`. The file is the user's copy of the credentials for clients.
+
 ## The self-host: ONE server, and how to restart it without being fooled
 
 `leankg serve` is supervised by launchd (`com.freepeak.leankg-serve`, program
@@ -145,8 +182,9 @@ launchctl kickstart -k gui/$(id -u)/com.freepeak.leankg-serve
 
 **A non-loopback bind is REFUSED, not warned about.** `leankg serve
 --http/--rest/--rpc <non-loopback>` exits with an error unless a bearer token
-is configured (env `LEANKG_TOKEN_ADMIN`/`_CONTRIBUTOR`/`_VIEWER`, or a token
-minted by `leankg auth token create`). With the gate off every caller resolves
+is configured (env `LEANKG_TOKEN_ADMIN`/`_CONTRIBUTOR`/`_VIEWER`, a token
+minted by `leankg auth token create`, or a site-admin account from
+`leankg auth admin init`, which counts as configured). With the gate off every caller resolves
 to Admin, so the old behaviour (warn, then bind anyway) put the project graph,
 the file reader and the memory write path on the LAN — measured 2026-10-21, a
 LAN POST to the REST listener answered `{"written":1}`. The refusal names both

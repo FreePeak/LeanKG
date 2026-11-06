@@ -67,8 +67,8 @@ func TestStatusEndpoint(t *testing.T) {
 		t.Fatalf("status payload: %+v", out)
 	}
 	tools, _ := out["tools"].([]any)
-	if len(tools) != 3 {
-		t.Fatalf("tools = %v, want exactly 3", tools)
+	if len(tools) != 4 {
+		t.Fatalf("tools = %v, want exactly 4", tools)
 	}
 }
 

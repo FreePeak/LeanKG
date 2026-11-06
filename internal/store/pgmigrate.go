@@ -463,6 +463,12 @@ CREATE INDEX IF NOT EXISTS idx_code_elements_fts ON code_elements USING gin (fts
 -- collection was written with. Provenance, not identity; 0 = not recorded.
 ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS text_cap INTEGER NOT NULL DEFAULT 0;
 `},
+	{18, "site-admin-marker", nil, `
+-- Mirror of sqlite migration 018 (schema.go): the site-admin marker column and
+-- its partial index over the admin rows only.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS site_admin BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_accounts_site_admin ON accounts (site_admin) WHERE site_admin;
+`},
 }
 
 // Migrate applies all pending migrations (RW only). Migrations are applied in

@@ -141,7 +141,7 @@ Discover with `query` — it routes down the ladder by default (L1 exact → L2 
 | PRD traceability | `leankg prd-trace FR-3T-01` |
 | File (compressed) | `query --action read --path src/main.go` |
 
-3 tools: `import` (index/PRD/memory/session/ontology/read) · `query` (ladder + graph verbs + actions) · `status` (inventory/freshness/config).
+4 tools: `import` (index/PRD/memory/session/ontology/read) · `query` (ladder + graph verbs + actions) · `status` (inventory/freshness/config) · `authenticate` (login; returns a bearer token). Over HTTP with the auth gate on, `import`, `query` and `status` need that token. See [Auth and the HTTP gate](AGENTS.md#auth-and-the-http-gate).
 
 ## Features
 
@@ -194,7 +194,7 @@ every caller resolves to Admin — the project graph, the file reader and the
 memory write path would all be open to the LAN. Two ways out: bind a loopback
 address (the default), or configure a token first
 (`leankg auth token create`, or `LEANKG_TOKEN_ADMIN` / `LEANKG_TOKEN_CONTRIBUTOR`
-/ `LEANKG_TOKEN_VIEWER`). `--ui` is the one deliberately public listener (the
+/ `LEANKG_TOKEN_VIEWER`; see [Auth and the HTTP gate](AGENTS.md#auth-and-the-http-gate)). `--ui` is the one deliberately public listener (the
 container demo serves it `--read-only` against a disposable baked graph), so it
 keeps a warning instead of a refusal.
 

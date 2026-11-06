@@ -46,7 +46,7 @@ func seedProject(t *testing.T) string {
 // TestStdioSpawnServesMCP is the end-to-end guard for the client wiring: the
 // argv `connect`/`install` write into client configs must actually start an MCP
 // server. It builds the real binary and drives the emitted spawn
-// (`stdioArgs("")`) over stdio, asserting the handshake and the 3-tool
+// (`stdioArgs("")`) over stdio, asserting the handshake and the 4-tool
 // registry. The wiring used to emit `leankg mcp-stdio` — a subcommand this
 // binary does not have — so every wired client spawned a process that died
 // immediately, and the pinned strings in connect_test.go said nothing.

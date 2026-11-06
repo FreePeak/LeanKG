@@ -382,7 +382,9 @@ func TestMetricsMigrationIsAdditiveAndIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	// A store whose ledger claims every migration BEFORE 011.
+	// A store whose ledger claims every migration BEFORE 011, with that schema
+	// really applied (as stamp_pre017_test.go does): later steps alter tables
+	// that only the earlier ones create.
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
 		t.Fatalf("legacy ledger: %v", err)
@@ -390,6 +392,9 @@ func TestMetricsMigrationIsAdditiveAndIdempotent(t *testing.T) {
 	for _, m := range migrations {
 		if m.version >= 11 {
 			continue
+		}
+		if _, err := s.db.Exec(m.ddl); err != nil {
+			t.Fatalf("legacy migration %d: %v", m.version, err)
 		}
 		if _, err := s.db.Exec(
 			`INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, '')`,

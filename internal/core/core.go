@@ -1,4 +1,5 @@
-// Package core implements the 3-tool surface (import / query / status) and
+// Package core implements the 4-tool surface (import / query / status /
+// authenticate) and
 // the L0–L3 query ladder for the Go engine. Transports (MCP, REST) are thin
 // adapters over this package; the tool envelope resolves HERE before any
 // gate — a read-named envelope can never smuggle a write action (the
@@ -36,13 +37,14 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-// The registry is exactly three tools (product contract; CI-pinned on the
-// Rust side, pinned here by the ResolveEnvelope error below + the mcp
-// registry test).
+// The registry is exactly four tools (product contract; pinned here by the
+// ResolveEnvelope error below + the mcp registry test). authenticate is the
+// server-level login: it takes no project and is exempt from project routing.
 const (
-	ToolImport = "import"
-	ToolQuery  = "query"
-	ToolStatus = "status"
+	ToolImport       = "import"
+	ToolQuery        = "query"
+	ToolStatus       = "status"
+	ToolAuthenticate = "authenticate"
 )
 
 // supersededTools names the removed v4.4 tool names and their replacement.
@@ -207,15 +209,16 @@ func (a providerEmbedder) Describe() (string, string) {
 
 func (a providerEmbedder) Revision() string { return a.p.Revision() }
 
-// ResolveEnvelope validates a requested tool name against the three-tool
+// ResolveEnvelope validates a requested tool name against the four-tool
 // registry. Unknown names hard-fail naming the valid surface (error-catalog
 // posture carried over from FR-ZCP-12); a superseded legacy name also names
 // its replacement.
 func ResolveEnvelope(tool string) (string, error) {
-	if tool == ToolImport || tool == ToolQuery || tool == ToolStatus {
+	switch tool {
+	case ToolImport, ToolQuery, ToolStatus, ToolAuthenticate:
 		return tool, nil
 	}
-	cause := fmt.Sprintf("tool %q is not in this server's registry — valid tools: import, query, status", tool)
+	cause := fmt.Sprintf("tool %q is not in this server's registry — valid tools: import, query, status, authenticate", tool)
 	if repl, ok := supersededTools[tool]; ok {
 		cause += fmt.Sprintf(" (%q was superseded by %q)", tool, repl)
 	}
@@ -583,7 +586,7 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 		// the store was not git-indexed or HEAD could not be read — never
 		// a freshness claim that was not proven.
 		"head_sync":  store.HeadSync(ctx, e.st),
-		"tools":      []string{ToolImport, ToolQuery, ToolStatus},
+		"tools":      []string{ToolImport, ToolQuery, ToolStatus, ToolAuthenticate},
 		"embeddings": emb,
 	}
 	if embErr != nil {
@@ -1247,7 +1250,7 @@ func (e *Engine) annotateConfidence(resp map[string]any, stamp store.ModelStamp,
 	r["confidence"] = "normal"
 }
 
-// --- memory actions (ride the 3-tool surface; #369) ---
+// --- memory actions (ride the 4-tool surface; #369) ---
 
 // ctx carries the caller identity (telemetry.WithIdentity) into memory
 // events (DS-09).
@@ -1650,7 +1653,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 	return nil, fmt.Errorf("unreachable graph action %q", req.Action)
 }
 
-// sessionWrite/read wire internal/session into the 3-tool surface: bulky tool
+// sessionWrite/read wire internal/session into the 4-tool surface: bulky tool
 // payloads are offloaded to .leankg/sessions/<id>/refs/<node>.md and restored
 // bit-for-bit by session_recall (Rust session/mod.rs parity).
 func (e *Engine) sessionWrite(ctx context.Context, req ImportRequest) (map[string]any, error) {
@@ -1995,7 +1998,7 @@ func argInt(m map[string]any, key string, fb int) int {
 }
 
 // ---------------------------------------------------------------------------
-// Context compression (Rust src/compress parity, reached through the 3-tool
+// Context compression (Rust src/compress parity, reached through the 4-tool
 // envelope so the registry stays at import/query/status)
 // ---------------------------------------------------------------------------
 

@@ -29,6 +29,28 @@ func TestPGAccountRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPGAdminExists(t *testing.T) {
+	s := openPGTest(t)
+	if got, err := s.AdminExists(); err != nil || got {
+		t.Fatalf("empty store: AdminExists = %v, %v; want false", got, err)
+	}
+	if err := s.AccountUpsert(Account{ID: "acct-1", Email: "user@example.com", Name: "User", Status: "active", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+		t.Fatalf("user upsert: %v", err)
+	}
+	if got, err := s.AdminExists(); err != nil || got {
+		t.Fatalf("non-admin account: AdminExists = %v, %v; want false", got, err)
+	}
+	if err := s.AccountUpsert(Account{ID: "acct-2", Email: "admin", Name: "Admin", Status: "active", SiteAdmin: true, CreatedAt: 1, UpdatedAt: 1}); err != nil {
+		t.Fatalf("admin upsert: %v", err)
+	}
+	if got, err := s.AdminExists(); err != nil || !got {
+		t.Fatalf("with site admin: AdminExists = %v, %v; want true", got, err)
+	}
+	if got, found, err := s.AccountByEmail("admin"); err != nil || !found || !got.SiteAdmin {
+		t.Fatalf("admin round trip = %+v, %v, %v; want SiteAdmin", got, found, err)
+	}
+}
+
 func TestPGOrgMembershipRoundTrip(t *testing.T) {
 	s := openPGTest(t)
 	if err := s.OrgUpsert(Org{ID: "org-1", Name: "Org", OwnerAccountID: "acct-1", CreatedAt: 10, UpdatedAt: 10}); err != nil {

@@ -34,6 +34,9 @@ type Account struct {
 	Status       string `json:"status"`
 	CreatedAt    int64  `json:"created_at"`
 	UpdatedAt    int64  `json:"updated_at"`
+	// SiteAdmin marks the one-per-install operator account (migration 18). It
+	// is the only site-level role: org and token roles never grant it.
+	SiteAdmin bool `json:"site_admin"`
 }
 
 // Org is a tenant owned by exactly one account (Rust orgs.owner_account_id).
@@ -65,7 +68,7 @@ type TeamMember struct {
 	JoinedAt  int64  `json:"joined_at"`
 }
 
-const accountCols = `id, email, name, password_hash, status, created_at, updated_at`
+const accountCols = `id, email, name, password_hash, status, created_at, updated_at, site_admin`
 const orgCols = `id, name, owner_account_id, created_at, updated_at`
 const orgMemberCols = `org_id, account_id, role, joined_at`
 
@@ -76,16 +79,27 @@ func (s *Store) AccountUpsert(a Account) error {
 		return fmt.Errorf("store: account upsert: id and email are required")
 	}
 	_, err := s.db.Exec(`INSERT INTO accounts (`+accountCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			email = excluded.email, name = excluded.name,
 			password_hash = excluded.password_hash, status = excluded.status,
-			created_at = excluded.created_at, updated_at = excluded.updated_at`,
-		a.ID, a.Email, a.Name, a.PasswordHash, a.Status, a.CreatedAt, a.UpdatedAt)
+			created_at = excluded.created_at, updated_at = excluded.updated_at,
+			site_admin = excluded.site_admin`,
+		a.ID, a.Email, a.Name, a.PasswordHash, a.Status, a.CreatedAt, a.UpdatedAt, a.SiteAdmin)
 	if err != nil {
 		return fmt.Errorf("store: account upsert %s: %w", a.ID, err)
 	}
 	return nil
+}
+
+// AdminExists reports whether any account is a site admin. The partial index
+// idx_accounts_site_admin makes this a point probe, cheap enough per request.
+func (s *Store) AdminExists() (bool, error) {
+	var found bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM accounts WHERE site_admin = 1)`).Scan(&found); err != nil {
+		return false, fmt.Errorf("store: admin exists: %w", err)
+	}
+	return found, nil
 }
 
 // AccountByEmail resolves an account by its (exact, already-normalized) email.
@@ -283,7 +297,7 @@ func (s *Store) IsResourceOwner(resourceType, resourceID, accountID string) (boo
 
 func scanAccount(scan func(dest ...any) error) (Account, error) {
 	var a Account
-	err := scan(&a.ID, &a.Email, &a.Name, &a.PasswordHash, &a.Status, &a.CreatedAt, &a.UpdatedAt)
+	err := scan(&a.ID, &a.Email, &a.Name, &a.PasswordHash, &a.Status, &a.CreatedAt, &a.UpdatedAt, &a.SiteAdmin)
 	return a, err
 }
 

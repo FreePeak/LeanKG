@@ -41,7 +41,7 @@ func renderContract(t *testing.T) string {
 	b.WriteString("- A breaking input-schema change to a stable tool requires a **minor version bump treated as major-equivalent**, plus a release notice.\n")
 	b.WriteString("- Additive optional properties do not break the contract.\n\n")
 	b.WriteString("## Deprecation history\n\n")
-	b.WriteString("_None. The Go registry's tool count has only ever shrunk (76 Rust tools to 3), which is a rewrite, not a deprecation._\n\n")
+	b.WriteString("_None. The Go registry's tool count shrank from 76 Rust tools to 3, which is a rewrite, not a deprecation; authenticate is the one tool added since (3 to 4)._\n\n")
 	b.WriteString("## The `project` property\n\n")
 	b.WriteString("Optional on a server that serves ONE project: a single-project server, a stdio session, or a `?project=` handler.\n")
 	b.WriteString("REQUIRED on a multi-project server (`LEANKG_PROJECT_DIRS`): that server serves several repositories and refuses a call that does not name one.\n")

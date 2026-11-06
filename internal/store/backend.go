@@ -174,6 +174,8 @@ type Backend interface {
 	// a re-add re-roles instead of duplicating.
 	AccountUpsert(a Account) error
 	AccountByEmail(email string) (Account, bool, error)
+	// AdminExists reports whether any account carries the site-admin marker.
+	AdminExists() (bool, error)
 	OrgUpsert(o Org) error
 	OrgByID(id string) (Org, bool, error)
 	OrgsByOwner(ownerAccountID string) ([]Org, error)

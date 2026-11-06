@@ -93,7 +93,7 @@ var AutoAttachFailed = ErrorCode{
 var Unauthorized = ErrorCode{
 	Code:      "LEANKG_ERROR_UNAUTHORIZED",
 	Cause:     "the request carried no Authorization header or the Bearer token does not match",
-	Fix:       "start the server with `leankg serve --http <addr> --auth <token>` (or LEANKG_AUTH_TOKEN=<token>) and send header `Authorization: Bearer <token>`; omit the flag/env on the server to disable auth entirely",
+	Fix:       "call the authenticate tool with the site-admin username and password, then send header `Authorization: Bearer <token>` on later requests (the token is valid for 24 hours); a server with no token and no site admin accepts every caller",
 	DocAnchor: "README.md#troubleshooting",
 }
 
@@ -101,7 +101,7 @@ var Unauthorized = ErrorCode{
 var UnknownTool = ErrorCode{
 	Code:      "LEANKG_ERROR_UNKNOWN_TOOL",
 	Cause:     "the requested tool name is not in this server's registry",
-	Fix:       "LeanKG exposes exactly 3 tools — import, query, status. Call query (the default ladder router) or re-read tools/list and retry with the corrected name",
+	Fix:       "LeanKG exposes exactly 4 tools — import, query, status, authenticate. Call query (the default ladder router) or re-read tools/list and retry with the corrected name",
 	DocAnchor: "docs/archive/mcp-tools.md",
 }
 

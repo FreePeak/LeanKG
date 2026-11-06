@@ -13,16 +13,27 @@ func (s *PGStore) AccountUpsert(a Account) error {
 		return fmt.Errorf("store: account upsert: id and email are required")
 	}
 	_, err := s.pool.Exec(pgCtx, `INSERT INTO accounts (`+accountCols+`)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (id) DO UPDATE SET
 			email = excluded.email, name = excluded.name,
 			password_hash = excluded.password_hash, status = excluded.status,
-			created_at = excluded.created_at, updated_at = excluded.updated_at`,
-		a.ID, a.Email, a.Name, a.PasswordHash, a.Status, a.CreatedAt, a.UpdatedAt)
+			created_at = excluded.created_at, updated_at = excluded.updated_at,
+			site_admin = excluded.site_admin`,
+		a.ID, a.Email, a.Name, a.PasswordHash, a.Status, a.CreatedAt, a.UpdatedAt, a.SiteAdmin)
 	if err != nil {
 		return fmt.Errorf("store: account upsert %s: %w", a.ID, err)
 	}
 	return nil
+}
+
+// AdminExists reports whether any account is a site admin (see the SQLite
+// twin for why this is a point probe).
+func (s *PGStore) AdminExists() (bool, error) {
+	var found bool
+	if err := s.pool.QueryRow(pgCtx, `SELECT EXISTS(SELECT 1 FROM accounts WHERE site_admin)`).Scan(&found); err != nil {
+		return false, fmt.Errorf("store: admin exists: %w", err)
+	}
+	return found, nil
 }
 
 // AccountByEmail resolves an account by its exact (already normalized) email.

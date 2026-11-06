@@ -40,6 +40,34 @@ func TestAccountUpsertAndLookup(t *testing.T) {
 	}
 }
 
+func TestAdminExistsSQLite(t *testing.T) {
+	s := openTestStore(t)
+	if got, err := s.AdminExists(); err != nil || got {
+		t.Fatalf("empty store: AdminExists = %v, %v; want false", got, err)
+	}
+	user := Account{ID: "acct-1", Email: "user@example.com", Name: "User", PasswordHash: "h", Status: "active", CreatedAt: 1, UpdatedAt: 1}
+	if err := s.AccountUpsert(user); err != nil {
+		t.Fatalf("user upsert: %v", err)
+	}
+	if got, err := s.AdminExists(); err != nil || got {
+		t.Fatalf("non-admin account: AdminExists = %v, %v; want false", got, err)
+	}
+
+	admin := Account{ID: "acct-2", Email: "admin", Name: "Admin", PasswordHash: "h", Status: "active", SiteAdmin: true, CreatedAt: 1, UpdatedAt: 1}
+	if err := s.AccountUpsert(admin); err != nil {
+		t.Fatalf("admin upsert: %v", err)
+	}
+	if got, err := s.AdminExists(); err != nil || !got {
+		t.Fatalf("with site admin: AdminExists = %v, %v; want true", got, err)
+	}
+	if got, found, err := s.AccountByEmail("admin"); err != nil || !found || !got.SiteAdmin {
+		t.Fatalf("admin round trip = %+v, %v, %v; want SiteAdmin", got, found, err)
+	}
+	if got, _, _ := s.AccountByEmail("user@example.com"); got.SiteAdmin {
+		t.Fatal("plain account must not read back as a site admin")
+	}
+}
+
 func TestOrgAndMembershipRoundTrip(t *testing.T) {
 	s := openTestStore(t)
 	org := Org{ID: "org-1", Name: "Alice's org", OwnerAccountID: "acct-1", CreatedAt: 10, UpdatedAt: 10}

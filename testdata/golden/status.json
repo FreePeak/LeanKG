@@ -39,7 +39,8 @@
   "tools": [
     "import",
     "query",
-    "status"
+    "status",
+    "authenticate"
   ],
   "watermark": {
     "at": "<AT>",
