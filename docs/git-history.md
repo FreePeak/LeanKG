@@ -54,6 +54,17 @@ enumerate file rows without a full element scan.
 - Renames are not followed (`--no-renames`): a rename shows as delete + add.
 - Co-change counts of pairs that vanish from a rebuilt window are not removed
   (there is no edge delete primitive); they stop changing.
-- Commit elements and file rows are ordinary elements, so they can match
-  keyword and semantic search. Scope filtering for code-only search is not
-  changed by this feature.
+- Commit, author and `git:file:` rows are stored as ordinary elements, and
+  commits are embedded. A default search hides them (see below).
+
+## Search visibility
+
+History rows are answered by `history`, `cochange` and `churn`. The search
+rungs (`search` ladder, `exact`, `fuzzy`, `semantic`) and `element` hide them
+unless the caller sets `args.include_git: true`. The rule is one predicate
+(`searchKeep` in `internal/core/core.go`): a row is history when its qualified
+name starts with `git:`, which no code qualified name does. Keyword rungs read
+a wider window (3x the limit, at least 50) before the predicate trims it to the
+limit; the semantic rung pushes the predicate into the store's scoped vector and
+keyword arms, and composes it with `args.scope`. A window cannot guarantee a
+full answer when history rows outnumber it.

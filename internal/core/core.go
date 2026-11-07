@@ -957,12 +957,16 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 
 	els, _ := e.st.ElementCount()
 	resp["freshness"] = e.freshness(els)
+	// One population rule for every rung: git history rows are hidden unless
+	// args.include_git is set (see searchKeep). The semantic rung applies the
+	// same rule as a store-side predicate.
+	keep := searchKeep(req.Args)
 
 	switch req.Action {
 	case "exact", "element":
-		return e.rungExact(req.Query, limit, resp, true)
+		return e.rungExact(req.Query, limit, resp, true, keep)
 	case "fuzzy":
-		return e.rungFuzzy(req.Query, limit, resp, true)
+		return e.rungFuzzy(req.Query, limit, resp, true, keep)
 	case "semantic":
 		return e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args)
 	case "impact", "path", "callers", "callees", "context", "explain":
@@ -976,7 +980,7 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 		resp["guidance"] = "Index a repository first: leankg import <dir> or tool import {action:\"repo\", path:...}"
 		return resp, nil
 	}
-	if _, err := e.rungExact(req.Query, limit, resp, false); err == nil && len(hitsOf(resp)) > 0 {
+	if _, err := e.rungExact(req.Query, limit, resp, false, keep); err == nil && len(hitsOf(resp)) > 0 {
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 		return resp, nil
 	}
@@ -994,14 +998,14 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 	}
 	// pin=true: the rung knows which keyword arm served the hits, so it owns
 	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
-	if _, err := e.rungFuzzy(req.Query, limit, resp, true); err == nil && len(hitsOf(resp)) > 0 {
+	if _, err := e.rungFuzzy(req.Query, limit, resp, true, keep); err == nil && len(hitsOf(resp)) > 0 {
 		return resp, nil
 	}
 	// Noul L3 gate: ontology confidence below MinConfidence
 	// (0.3) justifies no embedding call — degrade to L2.
 	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
 	if conf > 0 && conf < ontology.MinConfidence {
-		return withEmptyHint(e.rungFuzzy(req.Query, limit, resp, true))
+		return withEmptyHint(e.rungFuzzy(req.Query, limit, resp, true, keep))
 	}
 	// The empty L2 pass above left "No keyword match…" guidance; L3 sets its
 	// own (an outage reads as an outage, not as a phrasing problem — RS-15).
@@ -1055,7 +1059,7 @@ func graphEmptyGuidance(verb, seed string) string {
 }
 
 // rungExact is L1: case-insensitive exact match on name / qualified name.
-func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool) (map[string]any, error) {
+func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool, keep func(store.Element) bool) (map[string]any, error) {
 	if pin {
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 	}
@@ -1063,6 +1067,7 @@ func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool) (
 	if err != nil {
 		return nil, err
 	}
+	els = admit(els, identityElement, keep, limit)
 	resp["hits"] = shapeElements(els, limit)
 	if pin {
 		return withEmptyHint(resp, nil)
@@ -1075,12 +1080,13 @@ func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool) (
 // through pg_trgm similarity to ILIKE substring recall (issue #273). The type
 // assertion is the only engine branch: *Store does not implement
 // store.FTSBackend, so the SQLite call is unchanged in source and behavior.
-func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (map[string]any, error) {
-	matches, err := e.st.FindFuzzy(q, limit)
+func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool, keep func(store.Element) bool) (map[string]any, error) {
+	window := fetchWindow(limit, keep)
+	matches, err := e.st.FindFuzzy(q, window)
 	reason := "FTS5 keyword match"
 	if fts, ok := e.st.(store.FTSBackend); ok {
 		var arm string
-		matches, arm, err = fts.SearchElementsFTS(q, limit)
+		matches, arm, err = fts.SearchElementsFTS(q, window)
 		switch arm {
 		case store.ArmTrigram:
 			reason = "trigram keyword match (tsvector degraded)"
@@ -1093,6 +1099,7 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (
 	if err != nil {
 		return nil, err
 	}
+	matches = admit(matches, matchElement, keep, limit)
 	if pin {
 		if len(matches) == 0 {
 			reason = "no keyword match"
@@ -1117,13 +1124,14 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool) (
 // DEGRADES to L2 — never a hard error (issue #368 AC: query-time provider
 // failure degrades the ladder with retrieval.reason).
 func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, args map[string]any) (map[string]any, error) {
+	gitKeep := searchKeep(args)
 	degrade := func(reason string) (map[string]any, error) {
 		if pin {
 			resp["retrieval"] = map[string]any{"rung": "L2", "reason": reason}
 		}
 		// pin=false so rungFuzzy does not overwrite the L3-degrade reason;
 		// withEmptyHint still attaches next-step guidance on a zero-hit result.
-		return withEmptyHint(e.rungFuzzy(q, limit, resp, false))
+		return withEmptyHint(e.rungFuzzy(q, limit, resp, false, gitKeep))
 	}
 	if e.embedder == nil {
 		return degrade("no embedding provider wired; degraded from L3")
@@ -1164,6 +1172,9 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if serr != nil {
 		return nil, serr
 	}
+	// The history rule composes with the caller's scope, so both arms of the
+	// store's scoped search see the same population.
+	keep = allOf(keep, gitKeep)
 	// Query validated this already; parsed again here because the rung is also
 	// reachable as a pinned action. An unset weight is the default.
 	fw, _ := parseFusionWeight(argStr(args, "weight"))
@@ -1870,7 +1881,7 @@ func (e *Engine) patternQuery(ctx context.Context, req QueryRequest, resp map[st
 	runner, err := astgrep.New()
 	if err != nil {
 		resp["retrieval"] = map[string]any{"rung": "L2", "reason": "ast-grep CLI not installed; degraded to keyword search"}
-		return e.rungFuzzy(pattern, req.Limit, resp, false)
+		return e.rungFuzzy(pattern, req.Limit, resp, false, searchKeep(req.Args))
 	}
 	root := e.projectDir
 	if root == "" {
@@ -1981,6 +1992,15 @@ func argStr(m map[string]any, key string) string {
 	}
 	s, _ := m[key].(string)
 	return s
+}
+
+// argBool reads a boolean arg (false when absent or not a bool).
+func argBool(m map[string]any, key string) bool {
+	if m == nil {
+		return false
+	}
+	b, _ := m[key].(bool)
+	return b
 }
 
 // argInt reads a numeric arg (fallback when absent/unparseable).
@@ -2221,6 +2241,62 @@ func isFixturePath(fp string) bool {
 }
 
 func isArchivedPath(fp string) bool { return strings.HasPrefix(fp, "docs/archive/") }
+
+// searchKeep is the default search population for every rung. Git history rows
+// (commit, author and git:file nodes, see docs/git-history.md) are answered by
+// history, cochange and churn; a search returns them only when the caller sets
+// args.include_git. A nil result admits every element. Code qualified names
+// never start with "git:", so the prefix is the whole test.
+func searchKeep(args map[string]any) func(store.Element) bool {
+	if argBool(args, "include_git") {
+		return nil
+	}
+	return func(el store.Element) bool { return !strings.HasPrefix(el.QualifiedName, "git:") }
+}
+
+// allOf admits an element only when every non-nil predicate admits it.
+func allOf(a, b func(store.Element) bool) func(store.Element) bool {
+	switch {
+	case a == nil:
+		return b
+	case b == nil:
+		return a
+	}
+	return func(el store.Element) bool { return a(el) && b(el) }
+}
+
+// admit keeps the items whose element keep admits, at most limit of them. A
+// nil keep admits all, so it only trims to limit. Every keyword rung applies
+// it to the store's rows here, once, instead of re-deriving the population.
+func admit[T any](items []T, elementOf func(T) store.Element, keep func(store.Element) bool, limit int) []T {
+	out := make([]T, 0, min(len(items), limit))
+	for _, it := range items {
+		if keep != nil && !keep(elementOf(it)) {
+			continue
+		}
+		out = append(out, it)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+// fetchWindow is how many keyword matches a rung reads before admit trims them
+// to limit. An unfiltered read is exactly limit; a filtered one reads a wider
+// window (3x, at least 50, the store's hybrid window) so a run of excluded rows
+// does not starve the answer. A window cannot guarantee a full answer when the
+// excluded rows outnumber it.
+func fetchWindow(limit int, keep func(store.Element) bool) int {
+	if keep == nil {
+		return limit
+	}
+	return max(3*limit, 50)
+}
+
+func identityElement(el store.Element) store.Element { return el }
+
+func matchElement(m store.FuzzyMatch) store.Element { return m.Element }
 
 // scopedVectors is the plain-cosine fallback of the L3 rung, over the caller's
 // population. It is reached only when no fused hybrid search answered, so a
