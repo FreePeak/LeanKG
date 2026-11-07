@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.0](https://github.com/FreePeak/LeanKG/compare/v0.35.3...v0.36.0) (2026-11-07)
+
+
+### Features
+
+* add authenticate MCP tool and admin bootstrap ([#579](https://github.com/FreePeak/LeanKG/issues/579)) ([b871753](https://github.com/FreePeak/LeanKG/commit/b87175352bc81a39ff2aed8117ca655945a92bdc))
+* index git history (commits, authors, co-change) with history/cochange/churn queries ([#581](https://github.com/FreePeak/LeanKG/issues/581)) ([70b4186](https://github.com/FreePeak/LeanKG/commit/70b4186af6e6d1133ceef1f47af97f6ca6263eeb))
+
 ## [0.35.3](https://github.com/FreePeak/LeanKG/compare/v0.35.2...v0.35.3) (2026-10-22)
 
 
