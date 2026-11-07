@@ -380,6 +380,8 @@ func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[strin
 		}
 	}
 	switch req.Action {
+	case "git":
+		return e.gitImport(ctx, req)
 	case "docs":
 		if req.Path == "" {
 			return nil, fmt.Errorf("import docs requires path")
@@ -476,9 +478,9 @@ func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[strin
 		}
 		return e.OntologyMatch(opath)
 	case "":
-		return nil, fmt.Errorf("import requires action (repo, dir, docs, prd, memory, session, ontology, read)")
+		return nil, fmt.Errorf("import requires action (repo, dir, docs, prd, git, memory, session, ontology, read)")
 	default:
-		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, memory, session, ontology, prd)", req.Action)
+		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, git, memory, session, ontology, prd)", req.Action)
 	}
 }
 
@@ -489,7 +491,7 @@ func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[strin
 // rewrite the store it reads — so the write path owns the migration.
 func writesStore(action string) bool {
 	switch action {
-	case "docs", "prd", "repo", "dir", "ontology":
+	case "docs", "prd", "repo", "dir", "ontology", "git":
 		return true
 	}
 	return false
@@ -932,6 +934,8 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 		return map[string]any{"conflicts": conflicts, "service": argStr(req.Args, "service")}, nil
 	case "service_context":
 		return orgknowledge.New(e.st).ServiceContextJSON(argStr(req.Args, "service"), argStr(req.Args, "env"))
+	case "history", "cochange", "churn":
+		return e.gitHistoryQuery(ctx, req)
 	case "portfolio":
 		// Issue #376: the fleet read. The registry, the hot-set cap, the merge
 		// and the T0 manifest live in internal/portfolioreg; portfolio.go (this
@@ -940,7 +944,7 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "", "search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain":
 	default:
 		return nil, errs.NewError(errs.UnknownAction,
-			fmt.Sprintf("query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology, prd, incidents, env_conflicts, service_context, portfolio; empty = ladder router)", req.Action), "")
+			fmt.Sprintf("query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology, prd, incidents, env_conflicts, service_context, portfolio, history, cochange, churn; empty = ladder router)", req.Action), "")
 	}
 	if req.Query == "" {
 		return nil, fmt.Errorf("query requires query text")
