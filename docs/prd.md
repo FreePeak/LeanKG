@@ -10,6 +10,10 @@
 
 ## Changelog
 
+### git-history-followup — git history stays out of default search; git imports serialize (2026-11-08)
+
+Two defects in the git-history index (`docs/git-history.md`). **Search leak:** `git:` commit, author and file rows reached the default `search` ladder (exact, fuzzy, semantic). One predicate, `searchKeep` (`internal/core/core.go:2250`), now drops them unless the caller sets `args.include_git: true`; `history`, `cochange` and `churn` are unaffected. **Import race:** two git imports over one store could interleave the cursor write. A per-store single-slot semaphore (`internal/core/githistory.go`, `gitImportSlot`) serializes them, and a caller waiting for the slot gives up when its context ends. The lock is in-process only, not cross-process. Known limit: a fuzzy window of 3x limit (min 50) can come back short when git rows fill it.
+
 ### v4.19-markdown-sections — a heading stores its own text, not its descendants' (2026-10-21)
 
 **Trigger:** a measurement of the live leankg store's own content. 4,566 of its

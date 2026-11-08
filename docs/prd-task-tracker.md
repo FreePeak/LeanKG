@@ -495,6 +495,13 @@ and keeps it, and removes nothing: a healthy registry is untouched.
 | FR-MD-02 | Repeated heading titles get distinct qualified names | **DONE** | Two headings with the same text in one file shared the qualified name `<rel>::<heading>`, and the store's UNIQUE index on `qualified_name` silently dropped one of them — the file would hold fewer elements than it has headings. `mdUniqueNames` now suffixes repeats, mirroring the doc indexer's own slug disambiguation. Test `TestMarkdownRepeatedHeadingsGetDistinctNames` — FAIL on `origin/main` ("duplicate qualified name \"doc.md::Notes\": the store would drop one of them"), PASS on this branch. |
 | FR-MD-03 | The element COUNT and the key scheme are unchanged | **DONE** | The change is a content-shape fix, not a re-keying: one element per heading, as before. The residual collision with the doc indexer (`internal/docindex` writes the same `file_path` under `<rel>#<slug>`) is reported in the PR body and left to the parent — `internal/docindex` is not this branch's file. |
 
+## git-history-followup — git rows stay out of default search; git imports serialize (2026-11-08, branch fix/git-history-followup)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-GIT-01 | Default search hides git history rows unless `args.include_git` is true | **DONE** | `internal/core/core.go:2250` (`searchKeep`) is the one predicate every search rung uses (`core.go:963`, `:1127`, `:1884`). Tests `TestSearchHidesGitHistoryRowsUnlessOptedIn`, `TestSemanticHidesGitHistoryVectors` (`internal/core/githistory_visibility_test.go`). History, cochange and churn are unaffected. Open limit: fuzzy reads 3x limit (min 50, `core.go:2294`), so git rows can make results come back short. |
+| FR-GIT-02 | Concurrent git imports on one store serialize and honour cancellation | **DONE** | `internal/core/githistory.go` (`gitImportSlot`, `gitImport`): a per-store single-slot semaphore; a waiter returns `ctx.Err()` when its context ends. Test `TestConcurrentGitImportsSerializeOnOneStore` (`internal/core/githistory_test.go`). Open limit: in-process only, not cross-process. |
+
 ## Repo hygiene (non-PRD)
 
 | Item | Detail |

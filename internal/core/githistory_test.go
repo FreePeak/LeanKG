@@ -71,3 +71,72 @@ func TestGitImportThenHistoryCochangeAndChurn(t *testing.T) {
 		t.Fatalf("churn files = %#v, want main.go first with 2 commits", churn["files"])
 	}
 }
+
+// TestConcurrentGitImportsSerializeOnOneStore pins the import guard: two git
+// imports against one store run one after the other. The first walks the full
+// window; the second waits, then finds HEAD already stored and reports an
+// incremental no-op. Without the guard both read an empty cursor, both walk the
+// full history and both report incremental:false.
+func TestConcurrentGitImportsSerializeOnOneStore(t *testing.T) {
+	e, dir := gitHistoryEngine(t)
+	other := New(e.st, nil, nil)
+	other.SetProjectDir(dir)
+	ctx := context.Background()
+
+	const callers = 4
+	type outcome struct {
+		res githistory.Result
+		err error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, callers)
+	for i := 0; i < callers; i++ {
+		eng := e
+		if i%2 == 1 {
+			eng = other
+		}
+		go func(eng *Engine) {
+			<-start
+			out, err := eng.Import(ctx, ImportRequest{Action: "git"})
+			res, _ := out["git"].(githistory.Result)
+			results <- outcome{res: res, err: err}
+		}(eng)
+	}
+	close(start)
+
+	full := 0
+	for i := 0; i < callers; i++ {
+		o := <-results
+		if o.err != nil {
+			t.Fatalf("concurrent import: %v", o.err)
+		}
+		if o.res.Incremental {
+			if o.res.Commits != 0 {
+				t.Errorf("incremental no-op walked %d commits, want 0", o.res.Commits)
+			}
+			continue
+		}
+		full++
+		if o.res.Commits != 2 {
+			t.Errorf("full import wrote %d commits, want 2", o.res.Commits)
+		}
+	}
+	if full != 1 {
+		t.Fatalf("%d of %d concurrent imports ran a full walk, want exactly 1", full, callers)
+	}
+
+	hist, err := githistory.History(e.st, "main.go", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 2 {
+		t.Fatalf("history main.go after concurrent imports = %d commits, want 2 (no duplicates)", len(hist))
+	}
+	partners, err := githistory.CoChange(e.st, "main.go", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(partners) != 1 || partners[0].Count != 1 {
+		t.Fatalf("cochange main.go after concurrent imports = %#v, want one partner with count 1", partners)
+	}
+}
