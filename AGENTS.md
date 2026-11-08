@@ -132,6 +132,20 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 
 MCP HTTP `?project=` walks to the nearest `.leankg`; `LEANKG_DB_ENGINE=postgres` + `LEANKG_PG_URL` switch storage. Never paste personal host paths into commits.
 
+## Self-ontology (`ontology/`)
+
+The repository ships its own ontology: `ontology/concepts.yaml` and `ontology/workflows.yaml` describe the MCP surface, search ladder, storage backends, auth gate and the main workflows. Every `code_refs`, `entry_points` and `docs` path in them is repo-relative, and `internal/ontology/repo_ontology_test.go` loads the files through the real loaders and fails when a named path no longer exists, so update the YAML in the same change that moves a file.
+
+Load it into a project store after indexing it (MCP):
+
+```
+import  {action: "ontology", path: "ontology"}
+query   {action: "ontology", args: {cmd: "status"}}
+query   {action: "ontology", query: "search ladder", args: {cmd: "concept_search"}}
+```
+
+The import is explicit. Nothing syncs the ontology on boot or on file change.
+
 ## Auth and the HTTP gate
 
 The MCP surface is four tools: `import`, `query`, `status`, and `authenticate` (the login tool).

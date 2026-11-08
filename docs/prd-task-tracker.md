@@ -502,6 +502,12 @@ and keeps it, and removes nothing: a healthy registry is untouched.
 | FR-GIT-01 | Default search hides git history rows unless `args.include_git` is true | **DONE** | `internal/core/core.go:2250` (`searchKeep`) is the one predicate every search rung uses (`core.go:963`, `:1127`, `:1884`). Tests `TestSearchHidesGitHistoryRowsUnlessOptedIn`, `TestSemanticHidesGitHistoryVectors` (`internal/core/githistory_visibility_test.go`). History, cochange and churn are unaffected. Open limit: fuzzy reads 3x limit (min 50, `core.go:2294`), so git rows can make results come back short. |
 | FR-GIT-02 | Concurrent git imports on one store serialize and honour cancellation | **DONE** | `internal/core/githistory.go` (`gitImportSlot`, `gitImport`): a per-store single-slot semaphore; a waiter returns `ctx.Err()` when its context ends. Test `TestConcurrentGitImportsSerializeOnOneStore` (`internal/core/githistory_test.go`). Open limit: in-process only, not cross-process. |
 
+## self-ontology — LeanKG describes itself (2026-11-08, branch feat/leankg-ontology)
+
+| ID | Title | Status | Evidence |
+|----|-------|--------|----------|
+| FR-SELF-05 | The repository ships an ontology of its own surfaces, loadable with `import {action: "ontology"}` | **DONE** (branch `feat/leankg-ontology`, unmerged) | `ontology/concepts.yaml` (19 concepts), `ontology/workflows.yaml` (5 workflows, 15 steps, 17 failure modes). Test `TestRepoOntologyLoads` (`internal/ontology/repo_ontology_test.go`) loads both through the real loaders and fails on a missing code_refs/entry_points/docs path. Scratch import on a throwaway store: `concepts 19, workflows 5`; `concept_search` "git history" matches Git history, "search ladder" matches Search ladder. Open limit: import is explicit, no boot or file-change sync (`internal/ontology/sync.go` `SyncForProject` has no caller). |
+
 ## Repo hygiene (non-PRD)
 
 | Item | Detail |

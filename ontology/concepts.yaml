@@ -1,0 +1,303 @@
+# LeanKG self-ontology: the concepts this repository is made of.
+#
+# Every code_refs and docs entry is a repo-relative path, optionally with a
+# ::symbol suffix. internal/ontology/repo_ontology_test.go checks that the
+# file part exists, so renaming a file here fails the gate.
+#
+# Import into a project store with:
+#   import {action: "ontology", path: "ontology"}
+concepts:
+  - id: mcp_surface
+    type: api_endpoint
+    name: MCP tool surface
+    env: local
+    aliases:
+      - mcp tools
+      - four tools
+      - import query status
+    description: The MCP server exposes exactly four tools (import, query, status, authenticate) and routes each call to the core engine.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/mcp/server.go
+      - internal/mcp/authenticate.go
+    docs:
+      - AGENTS.md
+
+  - id: core_engine
+    type: service
+    name: Core engine
+    env: local
+    aliases:
+      - engine
+      - three tool envelope
+    description: Transport-independent engine behind MCP, REST and ConnectRPC. It implements import, query and status over the store.Backend it is given.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/core/core.go::Import
+      - internal/core/core.go::Query
+      - internal/core/core.go::Status
+
+  - id: query_ladder
+    type: domain_entity
+    name: Search ladder
+    env: local
+    aliases:
+      - retrieval ladder
+      - L1 exact
+      - L2 fuzzy
+      - L3 semantic
+    description: A query with no action walks L0 (cold store, guidance only), L1 exact identifier match, L2 fuzzy match, then L3 semantic vector match. Every answer carries its rung and reason, and a missing embedder degrades L3 instead of failing the call.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/core/core.go::rungExact
+      - internal/core/core.go::rungFuzzy
+      - internal/core/core.go::rungSemantic
+      - internal/core/ladder_test.go
+
+  - id: store_backend
+    type: data_store
+    name: Storage backend
+    env: local
+    aliases:
+      - store
+      - backend
+      - store.Backend
+    description: The Backend interface every consumer depends on. SQLite and PostgreSQL both implement it; consumers never take a concrete store.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/store/backend.go::Backend
+
+  - id: sqlite_store
+    type: data_store
+    name: SQLite store
+    env: local
+    aliases:
+      - sqlite
+      - default store
+    description: Default storage engine (WAL mode, one database file per project). It is the store the single-project server opens unless PostgreSQL is selected.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/store/store.go::Open
+
+  - id: postgres_store
+    type: data_store
+    name: PostgreSQL store
+    env: local
+    aliases:
+      - postgres
+      - postgresql
+      - pgvector
+    description: Opt-in storage engine selected with LEANKG_DB_ENGINE=postgres. Vectors are kept in pgvector; the dual-engine gate checks that it behaves like SQLite.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/store/store_pg.go::OpenPG
+      - internal/store/pg_vectors.go
+      - internal/store/pgmigrate.go
+
+  - id: indexer
+    type: service
+    name: Indexer
+    env: local
+    aliases:
+      - index
+      - indexing
+      - incremental index
+    description: Walks a directory and records files and code elements through the language registry. Change detection uses content hashes, so unchanged files are skipped on re-index.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/index/index.go::IndexDir
+      - internal/langs/langs.go
+      - internal/gitobj/gitobj.go
+
+  - id: embeddings
+    type: service
+    name: Embedding pipeline
+    env: local
+    aliases:
+      - vectors
+      - embedding
+      - leankg-embed
+    description: Optional vector layer behind a provider port. The collection stamp records the model and text cap; a stamp drift needs a full rebuild before L3 is trusted again.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/embed/provider.go::Provider
+      - internal/embed/run.go
+      - cmd/leankg-embed/main.go
+
+  - id: git_history
+    type: domain_entity
+    name: Git history
+    env: local
+    aliases:
+      - co-change
+      - cochange
+      - churn
+      - commit history
+    description: Commit history imported into the store. The history, cochange and churn queries read it, and its rows are kept out of default search.
+    owned_by:
+      - leankg
+    docs:
+      - docs/git-history.md
+    code_refs:
+      - internal/githistory/githistory.go::History
+      - internal/githistory/githistory.go::CoChange
+      - internal/githistory/githistory.go::Churn
+      - internal/core/githistory.go::gitImport
+
+  - id: ontology
+    type: domain_entity
+    name: Ontology
+    env: local
+    aliases:
+      - concept catalog
+      - procedural layer
+    description: Concepts and workflows declared in YAML under ontology/ and loaded into the store. concept_search matches free text to concepts; trace walks a workflow's steps and code references.
+    owned_by:
+      - leankg
+    code_refs:
+      - ontology/concepts.yaml
+      - internal/ontology/sync.go::SyncFromDir
+      - internal/ontology/loader.go::LoadConceptsYAML
+      - internal/ontology/query.go::ConceptSearch
+
+  - id: pathguard
+    type: domain_entity
+    name: Path confinement
+    env: local
+    aliases:
+      - path guard
+      - project root guard
+    description: Resolves path arguments against the allowed project roots through os.Root, so a path that escapes the project is refused. Import actions read paths through it.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/pathguard/pathguard.go::Resolve
+
+  - id: auth_gate
+    type: domain_entity
+    name: HTTP auth gate
+    env: local
+    aliases:
+      - bearer token
+      - http gate
+      - auth gate
+      - anonymous gate
+    description: With the gate on, an anonymous caller reaches only the protocol handshake, tools/list and authenticate. import, query and status need a valid bearer token.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/auth/http.go
+      - internal/mcp/server.go::anonymousGate
+
+  - id: authenticate_tool
+    type: api_endpoint
+    name: Authenticate tool
+    env: local
+    aliases:
+      - login
+      - authenticate
+      - auth login
+    description: The MCP login tool. On success it returns a revocable bearer token; any failure returns one generic invalid-credentials error that does not reveal whether the user exists.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/mcp/authenticate.go::handleAuthenticate
+      - internal/auth/admin.go::VerifyAdminLogin
+
+  - id: login_throttle
+    type: domain_entity
+    name: Login lockout
+    env: local
+    aliases:
+      - rate limit
+      - lockout
+      - login throttle
+    description: After 5 consecutive failures for a username, that username is locked out for 60 seconds. A successful login clears the failure streak.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/auth/login_throttle.go::LoginThrottle
+
+  - id: admin_bootstrap
+    type: domain_entity
+    name: Admin bootstrap
+    env: local
+    aliases:
+      - admin init
+      - site admin
+      - bootstrap
+    description: leankg auth admin init creates the single site-admin account, keeps only a PBKDF2 hash in the store, and appends the credentials to the project .env file.
+    owned_by:
+      - leankg
+    code_refs:
+      - cmd/leankg/auth.go::authAdminInit
+      - internal/auth/admin.go::CreateSiteAdmin
+
+  - id: rest_api
+    type: api_endpoint
+    name: REST and ConnectRPC transports
+    env: local
+    aliases:
+      - REST
+      - rest api
+      - connectrpc
+      - rpc
+    description: HTTP REST and ConnectRPC are thin wrappers over the core engine. The same bearer gate covers both.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/rest/rest.go
+      - internal/rpc/service.go
+
+  - id: web_ui
+    type: service
+    name: Graph explorer UI
+    env: local
+    aliases:
+      - graph explorer
+      - ui-v2
+      - web ui
+    description: Graph explorer single-page app (Vite and React), built into the Go binary through internal/web/embed.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/web/web.go
+      - ui-v2
+
+  - id: tree_sitter_tier
+    type: service
+    name: Tree-sitter tier
+    env: local
+    aliases:
+      - tstree
+      - tree-sitter
+      - ast tier
+    description: Tree-sitter extraction, compiled only with the tstree build tag (CGO). Default builds use the regex extractors.
+    owned_by:
+      - leankg
+    code_refs:
+      - internal/tstree/calls.go
+      - internal/index/tstree_calls.go
+
+  - id: version_source
+    type: domain_entity
+    name: Version source
+    env: local
+    aliases:
+      - version
+      - VERSION file
+      - release version
+    description: cmd/leankg/VERSION is the release version, embedded at build time. internal/mcp/server.go keeps a second copy that a drift test pins.
+    owned_by:
+      - leankg
+    code_refs:
+      - cmd/leankg/VERSION
+      - internal/mcp/server.go
