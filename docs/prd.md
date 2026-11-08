@@ -10,6 +10,10 @@
 
 ## Changelog
 
+### self-ontology — LeanKG ships an ontology of itself (2026-11-08)
+
+The repository now carries `ontology/concepts.yaml` (19 concepts: MCP surface, core engine, search ladder, store backends, indexer, embeddings, git history, ontology, path confinement, auth gate, authenticate tool, login lockout, admin bootstrap, REST/ConnectRPC, web UI, tree-sitter tier, version source) and `ontology/workflows.yaml` (5 workflows: index then query, git history import, search ladder resolution, ontology import and match, admin bootstrap and login). Every path is grounded in a current Go file. `internal/ontology/repo_ontology_test.go` loads both files through the production loaders and fails on a duplicate id, an unknown concept type, or a named path that no longer exists. Import is explicit (`import {action: "ontology", path: "ontology"}`); nothing syncs it automatically. Documented in `AGENTS.md`.
+
 ### git-history-followup — git history stays out of default search; git imports serialize (2026-11-08)
 
 Two defects in the git-history index (`docs/git-history.md`). **Search leak:** `git:` commit, author and file rows reached the default `search` ladder (exact, fuzzy, semantic). One predicate, `searchKeep` (`internal/core/core.go:2250`), now drops them unless the caller sets `args.include_git: true`; `history`, `cochange` and `churn` are unaffected. **Import race:** two git imports over one store could interleave the cursor write. A per-store single-slot semaphore (`internal/core/githistory.go`, `gitImportSlot`) serializes them, and a caller waiting for the slot gives up when its context ends. The lock is in-process only, not cross-process. Known limit: a fuzzy window of 3x limit (min 50) can come back short when git rows fill it.

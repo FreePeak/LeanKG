@@ -1,0 +1,166 @@
+# LeanKG self-ontology: the procedures this repository runs.
+#
+# entry_points and step code_refs are repo-relative paths, optionally with a
+# ::symbol suffix; repo_ontology_test.go checks the file part.
+workflows:
+  - id: index_then_query
+    name: Index a repository then query
+    env: local
+    aliases:
+      - index and search
+      - first run
+    description: Index a repository, optionally embed it, then answer queries through the search ladder.
+    entry_points:
+      - cmd/leankg/main.go
+      - internal/core/core.go::Query
+    steps:
+      - id: index
+        name: Index files
+        code_refs:
+          - internal/index/index.go::IndexDir
+          - internal/langs/langs.go
+        failure_modes:
+          - path_outside_project
+      - id: embed
+        name: Embed vectors (optional)
+        code_refs:
+          - internal/embed/run.go
+          - cmd/leankg-embed/main.go
+        failure_modes:
+          - provider_unavailable
+      - id: query
+        name: Query through the ladder
+        code_refs:
+          - internal/core/core.go::Query
+        failure_modes:
+          - no_elements_indexed
+
+  - id: git_history_import
+    name: Git history import then history, cochange and churn
+    env: local
+    aliases:
+      - git import
+      - co-change analysis
+    description: Import commit history into the store, then read it back through the history, cochange and churn queries.
+    entry_points:
+      - internal/core/githistory.go::gitImport
+    steps:
+      - id: import
+        name: Import git history
+        code_refs:
+          - internal/core/githistory.go::gitImport
+          - internal/gitobj/gitobj.go
+        failure_modes:
+          - concurrent_import
+      - id: read
+        name: Read history, cochange and churn
+        code_refs:
+          - internal/githistory/githistory.go::History
+          - internal/githistory/githistory.go::CoChange
+          - internal/githistory/githistory.go::Churn
+          - internal/core/githistory.go::gitHistoryQuery
+
+  - id: search_ladder_resolution
+    name: Search ladder resolution
+    env: local
+    aliases:
+      - ladder resolution
+      - which rung answered
+    description: Resolve a query down the ladder. Exact identifier match is tried first, then fuzzy, then semantic. The reply names the rung that answered.
+    entry_points:
+      - internal/core/core.go::Query
+    steps:
+      - id: exact
+        name: L1 exact identifier match
+        code_refs:
+          - internal/core/core.go::rungExact
+        failure_modes:
+          - no_exact_match
+      - id: fuzzy
+        name: L2 fuzzy match
+        code_refs:
+          - internal/core/core.go::rungFuzzy
+        failure_modes:
+          - no_fuzzy_match
+      - id: semantic
+        name: L3 semantic match
+        code_refs:
+          - internal/core/core.go::rungSemantic
+          - internal/ontology/query.go::ConceptSearch
+        failure_modes:
+          - no_embeddings
+          - low_ontology_confidence
+
+  - id: ontology_import_and_match
+    name: Ontology import then match and trace
+    env: local
+    aliases:
+      - ontology import
+      - concept match
+    description: Load the ontology directory into the store, match free text to concepts, and trace a workflow.
+    entry_points:
+      - internal/core/core.go::Import
+      - internal/ontology/sync.go::SyncFromDir
+    steps:
+      - id: load
+        name: Load concepts and workflows
+        code_refs:
+          - internal/ontology/sync.go::SyncFromDir
+          - internal/ontology/loader.go::LoadConceptsYAML
+          - internal/ontology/loader.go::LoadWorkflowsYAML
+        failure_modes:
+          - missing_ontology_dir
+          - invalid_workflow_yaml
+      - id: match
+        name: Match concepts
+        code_refs:
+          - internal/ontology/query.go::ConceptSearch
+          - internal/ontology/query.go::MatchScore
+        failure_modes:
+          - no_concept_match
+      - id: trace
+        name: Trace a workflow
+        code_refs:
+          - internal/ontology/sync.go::TraceQuery
+        failure_modes:
+          - unknown_workflow
+
+  - id: auth_login_and_bootstrap
+    name: Admin bootstrap, login and gated access
+    env: local
+    aliases:
+      - login
+      - bootstrap
+    description: Create the site admin, log in with authenticate, apply the lockout, then send the bearer token on later calls.
+    entry_points:
+      - cmd/leankg/auth.go::authAdminInit
+      - internal/mcp/authenticate.go::handleAuthenticate
+    steps:
+      - id: admin_init
+        name: Bootstrap the site admin
+        code_refs:
+          - cmd/leankg/auth.go::authAdminInit
+          - internal/auth/admin.go::CreateSiteAdmin
+        failure_modes:
+          - account_exists_without_env_password
+      - id: login
+        name: Log in with authenticate
+        code_refs:
+          - internal/mcp/authenticate.go::handleAuthenticate
+          - internal/auth/admin.go::VerifyAdminLogin
+        failure_modes:
+          - invalid_credentials
+      - id: throttle
+        name: Apply the login lockout
+        code_refs:
+          - internal/auth/login_throttle.go::LoginThrottle
+        failure_modes:
+          - rate_limited
+      - id: gate
+        name: Gate later requests
+        code_refs:
+          - internal/mcp/server.go::anonymousGate
+          - internal/auth/http.go
+        failure_modes:
+          - missing_bearer_token
+          - expired_token
