@@ -684,18 +684,16 @@ func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	for i := range entries {
-		e := entries[i]
-		e.Content = Redact(e.Content)
-		if e.Metadata == nil {
-			// Share the map with the caller's entry, so the indexed row
-			// carries the same content id the file does.
+		// Redact the caller's row in place: the file and the index (built
+		// from entries below) must both hold the redacted form.
+		entries[i] = redactEntry(entries[i])
+		if entries[i].Metadata == nil {
 			entries[i].Metadata = map[string]any{}
-			e.Metadata = entries[i].Metadata
 		}
-		if _, ok := e.Metadata["content_id"]; !ok {
-			e.Metadata["content_id"] = contentDocumentID(e.Content)
+		if _, ok := entries[i].Metadata["content_id"]; !ok {
+			entries[i].Metadata["content_id"] = contentDocumentID(entries[i].Content)
 		}
-		if err := enc.Encode(e); err != nil {
+		if err := enc.Encode(entries[i]); err != nil {
 			return fmt.Errorf("memory: encode entry: %w", err)
 		}
 	}

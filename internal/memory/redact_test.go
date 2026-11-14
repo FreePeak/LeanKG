@@ -151,3 +151,42 @@ func TestSessionRetainRedactsSecrets(t *testing.T) {
 		t.Errorf("retained bank row kept the JWT: %s", data)
 	}
 }
+
+// TestSessionRetainIndexesRedactedText pins CX-01: the FTS index is built from
+// the same redacted rows the JSONL file receives. The bank write loop redacted
+// a copy and then indexed the caller's unredacted slice, so a raw secret stayed
+// searchable in memory_fts and recall returned it. Tags are covered too: they
+// reach the index as JSON in the doc column.
+//
+// The secrets are invented shapes (FK-0001), never a real credential.
+func TestSessionRetainIndexesRedactedText(t *testing.T) {
+	m := openTest(t)
+	const (
+		apiKey    = "sk-abc123def456ghi789jkl"
+		tagSecret = "hunter2plain"
+	)
+	turns := []string{"user: deploy with api_key=" + apiKey + " please"}
+	res, err := m.SessionRetainCtx(context.Background(), ScopeGlobal, t.TempDir(), "cx01probe", "sess-cx01", turns, 1, []string{"password=" + tagSecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Written == 0 {
+		t.Fatal("retain wrote nothing; the probe is measuring nothing")
+	}
+	for _, raw := range []string{apiKey, tagSecret} {
+		var n int
+		if err := m.fts.QueryRow(`SELECT COUNT(*) FROM memory_fts WHERE instr(body, ?) > 0 OR instr(doc, ?) > 0`, raw, raw).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("memory_fts holds %d row(s) containing the raw secret %q", n, raw)
+		}
+	}
+	var body string
+	if err := m.fts.QueryRow(`SELECT body FROM memory_fts WHERE kind = 'bank'`).Scan(&body); err != nil {
+		t.Fatalf("no bank row indexed: %v", err)
+	}
+	if !strings.Contains(body, "[REDACTED]") {
+		t.Errorf("indexed body is not the redacted form: %q", body)
+	}
+}
