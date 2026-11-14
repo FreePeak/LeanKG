@@ -68,7 +68,54 @@ type Router interface {
 // Option configures RegisterAutoConfig.
 type Option func(*config)
 
-type config struct{ router Router }
+type config struct {
+	router Router
+	jobs   *Jobs
+}
+
+// run starts fn on the jobs' server-lifetime context. Without a wired Jobs it
+// runs on a copy of the request context that is not cancelled when the
+// handler returns (values are kept, cancellation is not). Such a job is not
+// stopped on shutdown, so serve must wire a Jobs for that.
+func (c config) run(r *http.Request, fn func(context.Context)) {
+	if c.jobs != nil {
+		c.jobs.Go(fn)
+		return
+	}
+	go fn(context.WithoutCancel(r.Context()))
+}
+
+// Jobs runs the background auto-config jobs. Its context is derived from the
+// server's root context, so a job outlives the request that started it.
+type Jobs struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+// NewJobs derives the jobs' context from root, the server lifetime context.
+func NewJobs(root context.Context) *Jobs {
+	ctx, cancel := context.WithCancel(root)
+	return &Jobs{ctx: ctx, cancel: cancel}
+}
+
+// Go runs fn in a goroutine tracked by Wait and Stop.
+func (j *Jobs) Go(fn func(context.Context)) {
+	j.wg.Add(1)
+	go func() {
+		defer j.wg.Done()
+		fn(j.ctx)
+	}()
+}
+
+// Wait blocks until every started job has returned.
+func (j *Jobs) Wait() { j.wg.Wait() }
+
+// Stop cancels the jobs' context and waits for them to return.
+func (j *Jobs) Stop() {
+	j.cancel()
+	j.wg.Wait()
+}
 
 // WithRouter lets the endpoint honour ?project=<dir or name>, the same
 // selector the query path uses.
@@ -79,6 +126,10 @@ type config struct{ router Router }
 // #490's 409 advice ("send ?project=…") false, which is worse than no advice.
 // With it, the selector resolves before the engine is chosen.
 func WithRouter(r Router) Option { return func(c *config) { c.router = r } }
+
+// WithJobs runs the auto-config jobs on jobs. The serve command wires one
+// Jobs with the server's root context and calls Stop on shutdown.
+func WithJobs(j *Jobs) Option { return func(c *config) { c.jobs = j } }
 
 // RegisterAutoConfig mounts POST /api/v1/mcp/auto-config on the mux.
 // The endpoint triggers background auto-index and/or auto-embed for the
@@ -104,12 +155,12 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 			}
 			eng = resolved
 		}
-		handleAutoConfig(w, r, eng)
+		handleAutoConfig(w, r, eng, cfg)
 	})
 	return mux
 }
 
-func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engine) {
+func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engine, cfg config) {
 	var req AutoConfigRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -118,16 +169,8 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 		req.EmbedDebounceSecs = 120
 	}
 
-	ctx := r.Context()
 	projectDir := engine.ProjectDir()
 	st := engine.Store()
-
-	if req.IndexEnabled {
-		go startAutoIndex(ctx, st, projectDir)
-	}
-	if req.EmbedEnabled {
-		go startAutoEmbed(ctx, st, projectDir, req.EmbedDebounceSecs)
-	}
 
 	// FR-ZCP-01 clause 3: a caller asking to auto-index the project it is
 	// working in must not silently index a different one. The routing layer
@@ -144,6 +187,13 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 			"fix":     "send the same ?project=<dir or name> on the request URL that you would send on a query, or run leankg index in that directory",
 		})
 		return
+	}
+	// Jobs start only after the refusal above, so a refused request starts none.
+	if req.IndexEnabled {
+		cfg.run(r, func(ctx context.Context) { startAutoIndex(ctx, st, projectDir) })
+	}
+	if req.EmbedEnabled {
+		cfg.run(r, func(ctx context.Context) { startAutoEmbed(ctx, st, projectDir, req.EmbedDebounceSecs) })
 	}
 	writeAutoJSON(w, http.StatusOK, map[string]any{
 		"index_enabled":          req.IndexEnabled,
