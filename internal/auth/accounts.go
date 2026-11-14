@@ -200,21 +200,12 @@ func Register(st store.Backend, email, password, name string) (store.Account, er
 	return account, nil
 }
 
-// VerifyLogin checks credentials and returns the account. Email matching is
-// case-insensitive; a wrong password and an unknown account are distinct
-// errors (Rust verify_login).
+// VerifyLogin checks credentials for the REST login and returns the account.
+// Email matching is case-insensitive. A wrong password and an unknown account
+// return the same error, at comparable cost, and repeated failures are
+// throttled (see verifyLogin). Port of Rust verify_login.
 func VerifyLogin(st store.Backend, email, password string) (store.Account, error) {
-	account, found, err := st.AccountByEmail(NormalizeEmail(email))
-	if err != nil {
-		return store.Account{}, err
-	}
-	if !found {
-		return store.Account{}, fmt.Errorf("no account for %s", email)
-	}
-	if !VerifyPassword(password, account.PasswordHash) {
-		return store.Account{}, errors.New("invalid password")
-	}
-	return account, nil
+	return verifyLogin(loginThrottle, st, email, password, false)
 }
 
 // CreateOrg creates an org owned by ownerAccountID and adds that account as

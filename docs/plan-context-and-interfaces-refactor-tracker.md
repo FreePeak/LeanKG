@@ -27,7 +27,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-09 | `fix(telemetry): report writer panics; Nop.SetLevel honours its contract` | S | - | todo | - | - |
 | CX-10 | `test(index): pin markdown ownership between index and docindex`, plus a fix PR only if it fails | S-M | - | todo | - | - |
 | CX-11 | `fix(store): one rare-token bound on both engines` | S | - | todo | - | - |
-| CX-12 | `fix(auth): uniform login failure and a login throttle` | S | - | todo | - | - |
+| CX-12 | `fix(auth): uniform login failure and a login throttle` | S | - | done | - | REST login shares the MCP authenticate check: one generic error, dummy hash for unknown accounts, 5 failures lock 60 s (AGENTS.md) |
 
 ## P1: guardrails and contract shape
 
