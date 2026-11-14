@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.36.0](https://github.com/FreePeak/LeanKG/compare/v0.35.3...v0.36.0) (2026-11-14)
+
+
+### Features
+
+* add authenticate MCP tool and admin bootstrap ([#579](https://github.com/FreePeak/LeanKG/issues/579)) ([b871753](https://github.com/FreePeak/LeanKG/commit/b87175352bc81a39ff2aed8117ca655945a92bdc))
+* add LeanKG self-ontology (concepts and workflows) ([#583](https://github.com/FreePeak/LeanKG/issues/583)) ([6b4b741](https://github.com/FreePeak/LeanKG/commit/6b4b741e619be1ac194676373953424d7c27deba))
+* index git history (commits, authors, co-change) with history/cochange/churn queries ([#581](https://github.com/FreePeak/LeanKG/issues/581)) ([70b4186](https://github.com/FreePeak/LeanKG/commit/70b4186af6e6d1133ceef1f47af97f6ca6263eeb))
+
+
+### Bug Fixes
+
+* hide git history rows from default search and serialize git imports ([#582](https://github.com/FreePeak/LeanKG/issues/582)) ([bfc2f03](https://github.com/FreePeak/LeanKG/commit/bfc2f03ae609a3cbaa5dd57353dd0563ca11d37e))
+
 ## [0.35.3](https://github.com/FreePeak/LeanKG/compare/v0.35.2...v0.35.3) (2026-10-22)
 
 
