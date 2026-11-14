@@ -77,6 +77,17 @@ before scaling to small nested-repo parents. Never bulk-index the `freepeak` por
 4. Commit (one feature per commit; no AI attribution); main is protected → PRs only
 5. `scripts/test-dual-engine.sh` for storage-layer changes
 
+## Context and cancellation conventions
+
+- `ctx` is the first parameter and is never stored in a struct. Exception: a background-runner type that owns a server-lifetime ctx and is joined at shutdown.
+- `context.Background()` appears only in `package main` and tests. Detached cleanup (rollback, flush on close) uses `context.WithoutCancel(ctx)`, with `context.WithTimeout` on top when the tail must be bounded.
+- `context.TODO()` is only a tracked migration marker and must not survive a merged P3 or P4 PR.
+- Use `exec.CommandContext`, `http.NewRequestWithContext`, and set `Timeout` on every `http.Client`.
+- Long loops check `ctx.Err()` once per unit of work and return it; cancellation is never counted as a data failure.
+- Servers: validate first, return the first listener error, await `Shutdown`, then close the stores.
+- Enforced by `internal/archtest` (ratchet budgets): a budget that goes down must be lowered in the same diff.
+- Plan: `docs/plan-context-and-interfaces-refactor.md` (sections 4 and 5).
+
 ## Release
 
 One workflow: `.github/workflows/release.yml`. A merge to `main` makes
@@ -126,6 +137,7 @@ follow-up workflow (that is how v0.28.1–v0.30.0 shipped with no binaries).
 |`internal/tstree/`|vendored generated grammars (objc/dart/perl) — build-tag gated|
 |`internal/langs/`|language registry: which languages are indexed, and lazy activation per codebase|
 |`benchmark/ab/`|A/B benchmark harness (seeded `testing.B` suites, run with `make go-bench`)|
+|`internal/archtest/`|ratchet tests: store roles take ctx, context.Background/TODO and ctx-less I/O budgets (plan: docs/plan-context-and-interfaces-refactor.md)|
 |`ui-v2/`|graph explorer SPA (Vite + React); `make go-ui-assets` builds it into `internal/web/embed`|
 
 ## Multi-project setup
