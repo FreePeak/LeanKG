@@ -32,7 +32,7 @@ func TestVerifyAdminLoginAcceptsSiteAdmin(t *testing.T) {
 	seeded := seedAccount(t, st, "admin", adminTestPassword, true)
 
 	throttle, _ := newTestThrottle()
-	got, err := verifyAdminLogin(throttle, st, "ADMIN", adminTestPassword)
+	got, err := verifyLogin(throttle, st, "ADMIN", adminTestPassword, true)
 	if err != nil {
 		t.Fatalf("admin login: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestVerifyAdminLoginGenericErrorForEveryRejection(t *testing.T) {
 		"non-admin":      {"plain", adminTestPassword},
 	}
 	for name, c := range cases {
-		_, err := verifyAdminLogin(throttle, st, c.user, c.password)
+		_, err := verifyLogin(throttle, st, c.user, c.password, true)
 		if !errors.Is(err, ErrInvalidAdminLogin) {
 			t.Fatalf("%s: err = %v, want ErrInvalidAdminLogin", name, err)
 		}
@@ -79,7 +79,7 @@ func TestVerifyAdminLoginRejectsDisabledAdmin(t *testing.T) {
 	}
 
 	throttle, _ := newTestThrottle()
-	_, err := verifyAdminLogin(throttle, st, "admin", adminTestPassword)
+	_, err := verifyLogin(throttle, st, "admin", adminTestPassword, true)
 	if !errors.Is(err, ErrInvalidAdminLogin) || errors.Is(err, ErrAdminLoginRateLimited) {
 		t.Fatalf("disabled admin err = %v, want the generic ErrInvalidAdminLogin", err)
 	}
@@ -91,20 +91,20 @@ func TestVerifyAdminLoginThrottlesAfterFiveFailures(t *testing.T) {
 
 	throttle, clock := newTestThrottle()
 	for i := 0; i < loginMaxFailures; i++ {
-		if _, err := verifyAdminLogin(throttle, st, "admin", "wrong password!"); err == nil {
+		if _, err := verifyLogin(throttle, st, "admin", "wrong password!", true); err == nil {
 			t.Fatal("wrong password must fail")
 		}
 	}
 
 	// The correct password is rejected too while the username is locked, and
 	// the rejection carries both the generic error and the rate-limit marker.
-	_, err := verifyAdminLogin(throttle, st, "admin", adminTestPassword)
+	_, err := verifyLogin(throttle, st, "admin", adminTestPassword, true)
 	if !errors.Is(err, ErrInvalidAdminLogin) || !errors.Is(err, ErrAdminLoginRateLimited) {
 		t.Fatalf("locked login err = %v, want generic + rate-limited", err)
 	}
 
 	clock.Advance(loginLockout)
-	if _, err := verifyAdminLogin(throttle, st, "admin", adminTestPassword); err != nil {
+	if _, err := verifyLogin(throttle, st, "admin", adminTestPassword, true); err != nil {
 		t.Fatalf("login after the 60s lockout: %v", err)
 	}
 }
