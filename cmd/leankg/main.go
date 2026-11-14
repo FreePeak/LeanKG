@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -58,11 +59,18 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+	// The one root context: the first SIGINT or SIGTERM cancels it, and the
+	// verbs that take ctx stop at their next unit of work. Restoring the default
+	// handlers on that first cancel lets a second Ctrl-C end a run that is slow
+	// to stop.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	context.AfterFunc(ctx, stop)
 	switch os.Args[1] {
 	case "serve":
-		cmdServe(os.Args[2:])
+		cmdServe(ctx, os.Args[2:])
 	case "index":
-		cmdIndex(os.Args[2:])
+		cmdIndex(ctx, os.Args[2:])
 	case "query":
 		cmdQuery(os.Args[2:])
 	case "impact":
@@ -293,14 +301,14 @@ func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp
 // cmdServe runs serve and turns its error into a non-zero exit. serve returns
 // its error rather than calling log.Fatal, so its defers (store close,
 // telemetry flush, auto-config job join) run before the process exits.
-func cmdServe(args []string) {
-	if err := serve(args); err != nil {
+func cmdServe(ctx context.Context, args []string) {
+	if err := serve(ctx, args); err != nil {
 		fmt.Fprintln(os.Stderr, "serve:", err)
 		os.Exit(1)
 	}
 }
 
-func serve(args []string) error {
+func serve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	dbFlag := fs.String("db", "", "standalone SQLite store file path (default empty = <project>/.leankg/leankg.db); sets the project directory optional (FR-P2)")
@@ -345,8 +353,6 @@ func serve(args []string) error {
 			return err
 		}
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	// SIGHUP re-reads consent: an operator who grants or withdraws telemetry
 	// mid-session must not have to restart the server (plan v4.15 §8).
 	watchConsentReload(ctx)
@@ -930,7 +936,7 @@ func doctorDeep(projectFlag, format string) int {
 	return code
 }
 
-func cmdIndex(args []string) {
+func cmdIndex(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	source := fs.String("source", "", "remote source URI: git+<url>, gs://bucket/prefix, or a local path")
@@ -940,6 +946,7 @@ func cmdIndex(args []string) {
 	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
 	rebase := fs.Bool("rebase-root", false, "adopt this directory as the store's index root (after moving a checkout); without it a store built from another root refuses the walk")
 	hook := fs.Bool("hook", false, "SessionStart hook mode: exit 0 without indexing when HEAD exceeds LEANKG_HOOK_MAX_FILES or another index of the store is running; the embed is skipped when the backlog exceeds LEANKG_HOOK_MAX_EMBED")
+	hookBudgetFlag := fs.Duration("hook-budget", 0, "with --hook: time budget for the index and embed (default LEANKG_HOOK_BUDGET, else 10s); past it the run stops, prints one line and exits 0")
 	noEmbed := fs.Bool("no-embed", false, "index only: skip the incremental embed that follows a successful index")
 	positional := parseInterspersed("index", fs, args, 1)
 	if *auto && *manual {
@@ -971,10 +978,19 @@ func cmdIndex(args []string) {
 			log.Fatalf("index: refusing to index %s: not a directory", target)
 		}
 	}
+	// The hook's time budget covers the size gate, the index and the embed. It
+	// is a deadline on ctx, so the stages stop at their next unit of work.
+	var budget time.Duration
+	if *hook {
+		budget = hookBudget(*hookBudgetFlag)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+	}
 	// The hook's size gate runs before any side effect: no setup-mode
 	// persistence, no .leankg, no store.
 	if *hook && *source == "" {
-		if msg := hookBigRepoSkip(target); msg != "" {
+		if msg := hookBigRepoSkip(ctx, target); msg != "" {
 			fmt.Println(msg)
 			return
 		}
@@ -1036,11 +1052,19 @@ func cmdIndex(args []string) {
 	// command the user typed.
 	_ = mode
 
-	if err := runIndex(*project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
+	if err := runIndex(ctx, *project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
+		switch {
+		case *hook && errors.Is(ctx.Err(), context.DeadlineExceeded):
+			fmt.Printf("leankg index --hook: stopped %s after its %s time budget; the directories written so far are kept, and the next session start continues the index\n", storeDir, budget)
+			return
+		case errors.Is(err, context.Canceled):
+			fmt.Fprintln(os.Stderr, "index: interrupted; the directories written so far are kept, rerun to finish")
+			os.Exit(130)
+		}
 		log.Fatalf("index: %v", err)
 	}
 	if !*noEmbed {
-		indexEmbed(storeDir, *hook)
+		indexEmbed(ctx, storeDir, *hook)
 	}
 }
 

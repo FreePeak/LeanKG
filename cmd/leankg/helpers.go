@@ -174,12 +174,28 @@ func hookLimit(env string, def int) int {
 	return def
 }
 
+// hookBudgetDefault is the time budget of one index --hook run (plan D5).
+const hookBudgetDefault = 10 * time.Second
+
+// hookBudget is the time budget of one index --hook run: the --hook-budget flag
+// when set, else LEANKG_HOOK_BUDGET when it parses as a positive duration, else
+// hookBudgetDefault.
+func hookBudget(flagValue time.Duration) time.Duration {
+	if flagValue > 0 {
+		return flagValue
+	}
+	if d, err := time.ParseDuration(os.Getenv("LEANKG_HOOK_BUDGET")); err == nil && d > 0 {
+		return d
+	}
+	return hookBudgetDefault
+}
+
 // hookBigRepoSkip is the hook's size gate. A git repo root whose HEAD holds more
 // indexable files than LEANKG_HOOK_MAX_FILES is left for a manual run, and so is a repo
 // whose HEAD cannot be counted: the hook must not index what it could not size.
 // It returns the skip line to print, or "" when the run may proceed.
-func hookBigRepoSkip(dir string) string {
-	n, ok, err := index.HeadIndexableFiles(context.Background(), dir)
+func hookBigRepoSkip(ctx context.Context, dir string) string {
+	n, ok, err := index.HeadIndexableFiles(ctx, dir)
 	if err != nil {
 		return fmt.Sprintf("leankg index --hook: skipped %s: cannot count HEAD files: %v", dir, err)
 	}
@@ -231,12 +247,14 @@ func indexStoreDir(project, target string) string {
 
 // runIndex performs a one-shot index run into the project store. A non-empty
 // source is a --source URI whose tree is synced into <project>/.leankg/sources
-// and indexed instead of target (Rust main.rs index path resolution).
-func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool) error {
+// and indexed instead of target (Rust main.rs index path resolution). ctx is
+// honoured between files: a done ctx stops the run with its error, and the
+// directories already written stay committed.
+func runIndex(ctx context.Context, project, target, source, refName, auth string, rebaseRoot ...bool) error {
 	dir := indexStoreDir(project, target)
 	indexTarget := target
 	if source != "" {
-		synced, err := sources.Resolve(context.Background(), dir, source, auth, refName, sources.CLIProgress{})
+		synced, err := sources.Resolve(ctx, dir, source, auth, refName, sources.CLIProgress{})
 		if err != nil {
 			return err
 		}
@@ -274,7 +292,7 @@ func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool)
 		}
 		projectcfg.EnsureIdentityFieldsForDB(filepath.Join(dir, ".leankg"), abs)
 	}
-	st, err := openStore(context.Background(), dir, "", store.RW)
+	st, err := openStore(ctx, dir, "", store.RW)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -292,7 +310,7 @@ func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool)
 			return fmt.Errorf("rebase root: %w", err)
 		}
 	}
-	res, err := index.IndexDirWith(context.Background(), st, indexTarget, reg)
+	res, err := index.IndexDirWith(ctx, st, indexTarget, reg)
 	if err != nil {
 		return fmt.Errorf("index %s: %w", indexTarget, err)
 	}
@@ -307,7 +325,7 @@ func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool)
 	// into a failed command, and an unreachable registry (a Postgres fleet the
 	// CLI cannot see) is exactly that. dir, not indexTarget: dir is the store's
 	// project identity, which is what a portfolio child opens.
-	if rerr := portfolioreg.RegisterAfterIndex(context.Background(),
+	if rerr := portfolioreg.RegisterAfterIndex(ctx,
 		portfolioreg.Options{Engine: os.Getenv("LEANKG_DB_ENGINE"), PGURL: projectcfg.PGURL(dir)},
 		st, dir); rerr != nil {
 		fmt.Fprintf(os.Stderr, "index: portfolio registry: %v\n", rerr)
@@ -316,7 +334,7 @@ func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool)
 	// Optional LLM-meaning pass (issue #297): OFF unless opted in —
 	// summarizing spends tokens and indexing must never start calling an
 	// LLM just because one is configured for the query tier.
-	if sr, ran, serr := summarize.RunAfterIndex(context.Background(), st, dir); ran {
+	if sr, ran, serr := summarize.RunAfterIndex(ctx, st, dir); ran {
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "index: post-index summarize skipped: %v\n", serr)
 		} else {
@@ -337,8 +355,7 @@ func runIndex(project, target, source, refName, auth string, rebaseRoot ...bool)
 // attaches (embed.AttachHookProvider) and only within LEANKG_HOOK_MAX_EMBED
 // (hookEmbedStart). It never fails the command: a skip or a failed embed prints
 // one `embed skipped:` line and returns.
-func indexEmbed(storeDir string, hook bool) {
-	ctx := context.Background()
+func indexEmbed(ctx context.Context, storeDir string, hook bool) {
 	st, err := openStore(ctx, storeDir, "", store.RW)
 	if err != nil {
 		fmt.Printf("embed skipped: open store: %v\n", err)
