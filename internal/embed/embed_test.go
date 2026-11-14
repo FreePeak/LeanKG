@@ -441,6 +441,78 @@ func TestRunAllFailedProviderAbortsLoudly(t *testing.T) {
 	}
 }
 
+// cancelAfterProvider serves its first n calls, then cancels the run's context
+// and fails the in-flight call the way an aborted request does (Ctrl-C mid-run).
+type cancelAfterProvider struct {
+	inner  Provider
+	n      int
+	calls  int
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfterProvider) ModelID() string  { return c.inner.ModelID() }
+func (c *cancelAfterProvider) Revision() string { return c.inner.Revision() }
+func (c *cancelAfterProvider) Dimensions() int  { return c.inner.Dimensions() }
+func (c *cancelAfterProvider) Distance() string { return c.inner.Distance() }
+func (c *cancelAfterProvider) Provider() string { return c.inner.Provider() }
+
+func (c *cancelAfterProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
+	c.calls++
+	if c.calls > c.n {
+		c.cancel()
+		return nil, ctx.Err()
+	}
+	return c.inner.Embed(ctx, kind, texts)
+}
+
+// A cancellation is not a poison element: a run stopped mid-way must not
+// count the aborted items as Failed, must not report partial, and must
+// return the cancellation so the CLI exits non-zero.
+func TestRunCancelledIsNotPoison(t *testing.T) {
+	st := testStore(t)
+	// Two files, so the run commits one group before the cancelled one.
+	seed(t, st,
+		store.Element{QualifiedName: "a::f1", ElementType: "function", Name: "f1", FilePath: "src/a.go", LineStart: 1, LineEnd: 2, Language: "go", Content: "func f1() {}"},
+		store.Element{QualifiedName: "b::f2", ElementType: "function", Name: "f2", FilePath: "src/b.go", LineStart: 1, LineEnd: 2, Language: "go", Content: "func f2() {}"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &cancelAfterProvider{inner: Deterministic(8), n: 1, cancel: cancel}
+
+	rep, err := Run(ctx, st, p, "full")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error: got %v, want context.Canceled", err)
+	}
+	if rep.Failed != 0 {
+		t.Fatalf("cancelled items counted as poison: %+v", rep)
+	}
+	run, _ := st.LastEmbedRun(p.ModelID())
+	if run == nil || run.Status != "cancelled" {
+		t.Fatalf("run status: got %+v, want cancelled", run)
+	}
+}
+
+// A run whose context is already cancelled records status cancelled and
+// returns the cancellation, never failed or ok.
+func TestRunPreCancelledRecordsCancelled(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := Deterministic(8)
+
+	rep, err := Run(ctx, st, p, "full")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error: got %v, want context.Canceled", err)
+	}
+	if rep.Failed != 0 {
+		t.Fatalf("cancelled items counted as poison: %+v", rep)
+	}
+	run, _ := st.LastEmbedRun(p.ModelID())
+	if run == nil || run.Status != "cancelled" {
+		t.Fatalf("run status: got %+v, want cancelled", run)
+	}
+}
+
 // The character budget is a heuristic — dense content (Godot/TypeScript
 // measured 523 tokens in 1000 runes) can exceed the model context even at
 // the cap. The run must SHRINK and retry (counting truncations) instead of
