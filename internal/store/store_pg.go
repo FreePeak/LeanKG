@@ -327,10 +327,7 @@ func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
 	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	bound := total / 500
-	if bound < 2 {
-		bound = 2
-	}
+	bound := nameArmBound(total)
 	counts := map[string]int{}
 	for _, t := range toks {
 		pat := "%" + t + "%"
@@ -356,10 +353,7 @@ func (s *PGStore) rareNameTokens(query string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	bound := total / 500
-	if bound < 2 {
-		bound = 2
-	}
+	bound := nameArmBound(total)
 	out := toks[:0]
 	for _, t := range toks {
 		if counts[t] > bound {

@@ -331,8 +331,9 @@ func nameTokens(query string) []string {
 
 // nameArmBound is the rarity bound: a token may appear in at most this many
 // symbol names and still count as evidence. It is a fraction of the ELEMENT
-// count (elements/5000, floor 2), so it is scale-free — a three-element fixture
-// cannot make every English word "rare".
+// count (elements/500, floor 2), so it is scale-free — a three-element fixture
+// cannot make every English word "rare". Both engines call this one function
+// (PostgreSQL in store_pg.go), so a token is classified the same way on each.
 //
 // The divisor is MEASURED, not chosen. Swept against the 84 labelled questions
 // in docs/retrieval-label-set.md on this repository's 10,885 elements, with the
@@ -355,7 +356,7 @@ func nameTokens(query string) []string {
 // property: a different project should re-run the sweep rather than inherit
 // this number.
 func nameArmBound(total int) int {
-	bound := total / 5000
+	bound := total / 500
 	if bound < 2 {
 		bound = 2
 	}
