@@ -16,16 +16,16 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 
 | ID | PR | Size | Depends | Status | PR link | Notes |
 |---|---|---|---|---|---|---|
-| CX-01 | `fix(memory): redact before indexing and recall` | S | - | todo | - | - |
-| CX-02 | `fix(auth): classify retain, ontology match and auto-config as writes; gate auto-config` | S-M | - | todo | - | - |
-| CX-03 | `fix(auth): never return token hashes; revoking needs the owner or an admin` | S | - | todo | - | - |
-| CX-04 | `fix(cmd): open every verb's store through one resolver` | M | - | in progress | - | blocks CX-18. Production code opens stores only through openStoreWith (guard test); test fixtures open through openFixtureStore (storefactory_test.go), so `rg 'store\.Open\(' cmd` is empty. Stays in progress: the PostgreSQL subcase of TestWriterAndServeOpenTheSameStore SKIPs without LEANKG_TEST_PG_URL (no live fixture run). |
+| CX-01 | `fix(memory): redact before indexing and recall` | S | - | done | - | - |
+| CX-02 | `fix(auth): classify retain, ontology match and auto-config as writes; gate auto-config` | S-M | - | done | - | - |
+| CX-03 | `fix(auth): never return token hashes; revoking needs the owner or an admin` | S | - | done | - | - |
+| CX-04 | `fix(cmd): open every verb's store through one resolver` | M | - | done | - | blocks CX-18. Production code opens stores only through openStoreWith (guard test); test fixtures open through openFixtureStore (storefactory_test.go), so `rg 'store\.Open\(' cmd` is empty. The PostgreSQL subcase of TestWriterAndServeOpenTheSameStore SKIPs without LEANKG_TEST_PG_URL; not run against the live fixture in the wave-2 integration. |
 | CX-05 | `fix(rest/auto): refuse before side effects; run jobs on the server context` | S-M | - | done | - | serve owns the Jobs (NewJobs, WithJobs, Stop on return); embed debounce is a channel-driven test |
 | CX-06 | `fix(cmd): validate serve first, surface listener errors, await shutdown` | M | - | done | - | flags and listen syntax are checked before the store opens; `runServers` (cmd/leankg/helpers.go) serves serve and dashboard, returns the first listener error and awaits every `Shutdown`. Exposure refusal needs the store's auth state, so it still runs after the store opens (DB file created first). Maintenance fleet is not joined at shutdown (P3 maintain item). |
 | CX-07 | `fix(cmd): remove the data races on telemetry sinks and the capture recorder` | S | - | done | - | local commit, no PR. `-race` green on `./cmd/...`, `./internal/rest/...`, `./internal/telemetry/...`; live `serve --rest` under 50 loops + 4 SIGHUP reloads: base 2 DATA RACE reports, fix 0; all 3000 responses 200 each run |
-| CX-08 | `fix(leankg-embed): cancellation is a failure; keep flags after the positional; stop the sidecar on error` | S-M | - | todo | - | - |
-| CX-09 | `fix(telemetry): report writer panics; Nop.SetLevel honours its contract` | S | - | todo | - | - |
-| CX-10 | `test(index): pin markdown ownership between index and docindex`, plus a fix PR only if it fails | S-M | - | todo | - | - |
+| CX-08 | `fix(leankg-embed): cancellation is a failure; keep flags after the positional; stop the sidecar on error` | S-M | - | done | - | - |
+| CX-09 | `fix(telemetry): report writer panics; Nop.SetLevel honours its contract` | S | - | done | - | - |
+| CX-10 | `test(index): pin markdown ownership between index and docindex`, plus a fix PR only if it fails | S-M | - | done | - | - |
 | CX-11 | `fix(store): one rare-token bound on both engines` | S | - | todo | - | - |
 | CX-12 | `fix(auth): uniform login failure and a login throttle` | S | - | done | - | REST login shares the MCP authenticate check: one generic error, dummy hash for unknown accounts, 5 failures lock 60 s (AGENTS.md) |
 
@@ -33,8 +33,8 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 
 | ID | PR | Size | Depends | Status | PR link | Notes |
 |---|---|---|---|---|---|---|
-| CX-13 | `test(archtest): ratchet context roots and ctx-less I/O at today's baseline` | S | - | in PR | pending | internal/archtest ratchet at baseline; AGENTS.md ctx conventions |
-| CX-14 | `refactor(store): declare role interfaces; Backend composes them; add Mode` | S-M | - | in PR | pending | roles.go; Mode on Backend; 9 uncalled methods dropped from the interface |
+| CX-13 | `test(archtest): ratchet context roots and ctx-less I/O at today's baseline` | S | - | done | #584 | internal/archtest ratchet at baseline; AGENTS.md ctx conventions |
+| CX-14 | `refactor(store): declare role interfaces; Backend composes them; add Mode` | S-M | - | done | local, not pushed | roles.go; Mode on Backend; 9 uncalled methods dropped from the interface |
 | CX-15 | `refactor(store): the keyword arm is part of the search contract` | M | CX-14 | done | local branch `refactor/cx-15-findfuzzy` (not pushed) | FindFuzzy returns the typed Arm; FTSBackend deleted; PG SearchKnowledgeFTS folded into KnowledgeEntriesSearch; SQLite knowledge_fts index with triggers (migration 19) |
 | CX-16 | `fix(store): filter vector and hybrid search before LIMIT` | M | CX-15 | todo | - | behaviour change (PG filters before LIMIT) |
 | CX-17 | `refactor(store): engine-neutral Maintain op with one read-only refusal` | M | CX-14 | done | local, not pushed | sixth kind `Upgrade` runs first and is fatal; ErrReadOnly on every Maintainer write; SQLite live output byte-identical to CX-14; live PostgreSQL run deferred to the integration gate |
