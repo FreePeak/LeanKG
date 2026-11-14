@@ -16,6 +16,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -145,6 +146,13 @@ func IndexDocsUnder(ctx context.Context, st store.Backend, root, dir string) (Re
 			return res, err
 		}
 		rec, seen := prevByRel[rel]
+		// A record keyed to a git blob was written by internal/index from HEAD,
+		// which owns the file's rows. Re-extracting it here would replace the
+		// index's rows with docindex's on every refresh (CX-10).
+		if seen && index.IsGitKeyed(rec.ContentHash) {
+			res.Skipped++
+			continue
+		}
 		if seen && rec.Size == info.Size() && rec.MtimeNS == info.ModTime().UnixNano() {
 			res.Skipped++
 			continue
