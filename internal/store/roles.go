@@ -166,6 +166,7 @@ type KV interface {
 
 // Audit is the hash-chained audit ledger (FR parity with the Rust audit/mod.rs).
 type Audit interface {
+	AppendAudit(e *AuditEntry) error
 	AuditTail(limit int) ([]AuditEntry, error)
 	VerifyAuditChain() (ok bool, brokenAt int64, err error)
 }

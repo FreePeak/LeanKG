@@ -21,6 +21,7 @@ var ctxlessBackendMethods = []string{
 	"AccountByEmail",
 	"AccountUpsert",
 	"AdminExists",
+	"AppendAudit",
 	"AuditTail",
 	"CleanupMetrics",
 	"ClearVectors",
