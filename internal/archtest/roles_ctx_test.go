@@ -11,7 +11,7 @@ import (
 
 // ctxlessBackendMethods lists every store.Backend method whose first parameter
 // is not context.Context. The list starts as the full unmigrated surface
-// (106 methods) and must shrink with each store-role migration (plan CX-19..CX-27).
+// (98 methods after CX-14) and must shrink with each store-role migration (plan CX-19..CX-27).
 //
 // Close, Path, Engine and Mode are permanent exemptions: they are not I/O
 // roles and keep no ctx. Every other name must leave the list in the PR that
@@ -21,9 +21,7 @@ var ctxlessBackendMethods = []string{
 	"AccountByEmail",
 	"AccountUpsert",
 	"AdminExists",
-	"AppendAudit",
 	"AuditTail",
-	"BumpWatermark",
 	"Checkpoint",
 	"CleanupMetrics",
 	"ClearVectors",
@@ -46,7 +44,6 @@ var ctxlessBackendMethods = []string{
 	"EnvSnapshotsPut",
 	"FileCount",
 	"Files",
-	"FindByNameToken",
 	"FindExact",
 	"FindFuzzy",
 	"FinishEmbedRun",
@@ -66,11 +63,11 @@ var ctxlessBackendMethods = []string{
 	"KnowledgeEntryByID",
 	"KnowledgeEntryDelete",
 	"KnowledgeEntryUpsert",
-	"LastEmbedRun",
 	"LastEmbedRunAny",
 	"LoadInventory",
 	"MetricsSummary",
 	"Migrate",
+	"Mode",
 	"OrgByID",
 	"OrgMemberOf",
 	"OrgMembers",
@@ -95,18 +92,13 @@ var ctxlessBackendMethods = []string{
 	"SearchVectorsScoped",
 	"ServiceMetadataAll",
 	"ServiceMetadataGet",
-	"ServiceMetadataUpsert",
 	"SetEmbeddingStates",
 	"Space",
 	"Stamp",
 	"Stamps",
 	"StartEmbedRun",
-	"SummariesAll",
 	"SummaryGet",
 	"SummaryUpsert",
-	"TeamMemberOf",
-	"TeamMemberUpsert",
-	"TeamMembers",
 	"TokenDelete",
 	"TokenFind",
 	"TokenList",

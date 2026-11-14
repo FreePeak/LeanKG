@@ -34,7 +34,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | ID | PR | Size | Depends | Status | PR link | Notes |
 |---|---|---|---|---|---|---|
 | CX-13 | `test(archtest): ratchet context roots and ctx-less I/O at today's baseline` | S | - | in PR | pending | internal/archtest ratchet at baseline; AGENTS.md ctx conventions |
-| CX-14 | `refactor(store): declare role interfaces; Backend composes them; add Mode` | S-M | - | todo | - | - |
+| CX-14 | `refactor(store): declare role interfaces; Backend composes them; add Mode` | S-M | - | in PR | pending | roles.go; Mode on Backend; 9 uncalled methods dropped from the interface |
 | CX-15 | `refactor(store): the keyword arm is part of the search contract` | M | CX-14 | todo | - | - |
 | CX-16 | `fix(store): filter vector and hybrid search before LIMIT` | M | CX-15 | todo | - | behaviour change (PG filters before LIMIT) |
 | CX-17 | `refactor(store): engine-neutral Maintain op with one read-only refusal` | M | CX-14 | todo | - | - |
