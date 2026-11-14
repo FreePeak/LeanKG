@@ -237,7 +237,7 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 	for j := range q {
 		q[j] = qr.Float32()*2 - 1
 	}
-	sanity, err := st.SearchVectors(vecModel, q, vecTopK)
+	sanity, err := st.SearchVectors(store.VectorQuery{ModelID: vecModel, Vec: q, K: vecTopK})
 	if err != nil {
 		b.Fatalf("SearchVectors sanity: %v", err)
 	}
@@ -248,7 +248,7 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := st.SearchVectors(vecModel, q, vecTopK); err != nil {
+		if _, err := st.SearchVectors(store.VectorQuery{ModelID: vecModel, Vec: q, K: vecTopK}); err != nil {
 			b.Fatal(err)
 		}
 	}

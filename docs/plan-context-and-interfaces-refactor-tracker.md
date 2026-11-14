@@ -26,7 +26,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-08 | `fix(leankg-embed): cancellation is a failure; keep flags after the positional; stop the sidecar on error` | S-M | - | done | - | - |
 | CX-09 | `fix(telemetry): report writer panics; Nop.SetLevel honours its contract` | S | - | done | - | - |
 | CX-10 | `test(index): pin markdown ownership between index and docindex`, plus a fix PR only if it fails | S-M | - | done | - | - |
-| CX-11 | `fix(store): one rare-token bound on both engines` | S | - | todo | - | - |
+| CX-11 | `fix(store): one rare-token bound on both engines` | S | - | done | local branch `refactor/cx-16-filter-before-limit` (not pushed) | one nameArmBound (elements/500) on both engines; D2 asks for SQLite recall before and after, not measured yet (needs the labelled sweep with the real embedder) |
 | CX-12 | `fix(auth): uniform login failure and a login throttle` | S | - | done | - | REST login shares the MCP authenticate check: one generic error, dummy hash for unknown accounts, 5 failures lock 60 s (AGENTS.md) |
 
 ## P1: guardrails and contract shape
@@ -36,7 +36,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-13 | `test(archtest): ratchet context roots and ctx-less I/O at today's baseline` | S | - | done | #584 | internal/archtest ratchet at baseline; AGENTS.md ctx conventions |
 | CX-14 | `refactor(store): declare role interfaces; Backend composes them; add Mode` | S-M | - | done | local, not pushed | roles.go; Mode on Backend; 9 uncalled methods dropped from the interface |
 | CX-15 | `refactor(store): the keyword arm is part of the search contract` | M | CX-14 | done | local branch `refactor/cx-15-findfuzzy` (not pushed) | FindFuzzy returns the typed Arm; FTSBackend deleted; PG SearchKnowledgeFTS folded into KnowledgeEntriesSearch; SQLite knowledge_fts index with triggers (migration 19) |
-| CX-16 | `fix(store): filter vector and hybrid search before LIMIT` | M | CX-15 | todo | - | behaviour change (PG filters before LIMIT) |
+| CX-16 | `fix(store): filter vector and hybrid search before LIMIT` | M | CX-15 | done | local branch `refactor/cx-16-filter-before-limit` (not pushed) | ElementFilter, VectorQuery, HybridQuery; Hybrid returns the keyword arm; PG filter in WHERE with hnsw.iterative_scan; SQLite FTS5 and name arms filter in SQL; L3 reason lists arms of returned hits |
 | CX-17 | `refactor(store): engine-neutral Maintain op with one read-only refusal` | M | CX-14 | done | local, not pushed | sixth kind `Upgrade` runs first and is fatal; ErrReadOnly on every Maintainer write; SQLite live output byte-identical to CX-14; live PostgreSQL run deferred to the integration gate |
 | CX-18 | `refactor(store): OpenBackend takes OpenOptions; AppliedMigrations is a method` | S-M | CX-04 | todo | - | - |
 

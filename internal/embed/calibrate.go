@@ -59,7 +59,7 @@ func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool
 	}
 	floor, found := 0.0, false
 	for _, v := range vecs {
-		hits, err := st.SearchVectors(p.ModelID(), v, 1)
+		hits, err := st.SearchVectors(store.VectorQuery{ModelID: p.ModelID(), Vec: v, K: 1})
 		if err != nil {
 			return 0, false, fmt.Errorf("embed: calibration search: %w", err)
 		}

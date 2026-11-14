@@ -1,7 +1,6 @@
 package store
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -25,7 +24,7 @@ func TestSearchVectorsScopedFiltersThePopulation(t *testing.T) {
 	q := []float32{1, 0, 0, 0}
 	// The default (unscoped) population is byte-for-byte what it was: every
 	// row, in corpus order, no hidden filter.
-	all, err := st.SearchVectors("m", q, 10)
+	all, err := st.SearchVectors(VectorQuery{ModelID: "m", Vec: q, K: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,10 +32,10 @@ func TestSearchVectorsScopedFiltersThePopulation(t *testing.T) {
 		t.Fatalf("unscoped hits = %d, want 3 (the default must not move)", len(all))
 	}
 	// A code scope excludes fixtures and archived docs.
-	codeOnly, err := st.SearchVectorsScoped("m", q, 10, func(e Element) bool {
-		return !strings.Contains(e.FilePath, "testdata") &&
-			!strings.HasPrefix(e.FilePath, "docs/archive/")
-	})
+	codeOnly, err := st.SearchVectors(VectorQuery{ModelID: "m", Vec: q, K: 10, Filter: ElementFilter{
+		ExcludePathContains: []string{"testdata"},
+		ExcludePathPrefixes: []string{"docs/archive/"},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +44,9 @@ func TestSearchVectorsScopedFiltersThePopulation(t *testing.T) {
 	}
 }
 
-// TestScopePredicateAdmitsEverything pins that a predicate that admits nothing
-// is a caller error, not a silently emptied result — the same "looks like it
-// worked" failure an unknown scope must produce.
-func TestSearchVectorsScopedNilPredicateIsUnscoped(t *testing.T) {
+// TestSearchVectorsZeroFilterIsUnscoped pins that the zero filter admits every
+// row: an empty filter must mean unscoped, never a silently emptied result.
+func TestSearchVectorsZeroFilterIsUnscoped(t *testing.T) {
 	st := openTestStore(t)
 	if err := upsertVectorsFor(t, st, "m",
 		Element{QualifiedName: "a.go::A", Name: "A", FilePath: "a.go"},
@@ -57,12 +55,12 @@ func TestSearchVectorsScopedNilPredicateIsUnscoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := []float32{1, 0, 0, 0}
-	nilPred, err := st.SearchVectorsScoped("m", q, 10, nil)
+	unscoped, err := st.SearchVectors(VectorQuery{ModelID: "m", Vec: q, K: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nilPred) != 2 {
-		t.Fatalf("nil predicate hits = %d, want 2 (a nil predicate must mean unscoped)", len(nilPred))
+	if len(unscoped) != 2 {
+		t.Fatalf("zero filter hits = %d, want 2 (an empty filter must mean unscoped)", len(unscoped))
 	}
 }
 

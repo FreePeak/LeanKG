@@ -31,7 +31,7 @@ func TestFindByNameTokenFiresOnProse(t *testing.T) {
 		t.Fatal(err)
 	}
 	// PROSE, the way an agent asks. The rare token must reach the arm.
-	got, err := s.FindByNameToken("what does coverage report", 10)
+	got, err := s.FindByNameToken("what does coverage report", 10, ElementFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestFindByNameTokenFiresOnProse(t *testing.T) {
 	}
 	// A question of ONLY common words and function words reaches nothing —
 	// the arm must not become a noise machine.
-	none, err := s.FindByNameToken("read the one for how", 10)
+	none, err := s.FindByNameToken("read the one for how", 10, ElementFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

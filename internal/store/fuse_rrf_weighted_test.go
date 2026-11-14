@@ -2,6 +2,7 @@ package store
 
 import (
 	"math"
+	"slices"
 	"testing"
 )
 
@@ -184,12 +185,12 @@ func TestSQLiteDefaultEntryAppliesDefaultWeights(t *testing.T) {
 	if err := upsertVectorsFor(t, st, "m", Element{QualifiedName: "pkg/a.go::Alpha", Name: "Alpha", FilePath: "pkg/a.go"}); err != nil {
 		t.Fatal(err)
 	}
-	hits, method, err := st.HybridSearch("m", "zzqnomatch", []float32{1, 0, 0, 0}, 10)
+	hits, _, err := hybridSearch(st, "m", "zzqnomatch", []float32{1, 0, 0, 0}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method != "rrf("+string(ArmVector)+")" {
-		t.Fatalf("method = %q, want the vector arm alone", method)
+	if got := armsOf(hits); !slices.Equal(got, []Arm{ArmVector}) {
+		t.Fatalf("arms = %v, want the vector arm alone", got)
 	}
 	if len(hits) != 1 {
 		t.Fatalf("hits = %d, want 1", len(hits))

@@ -6,6 +6,7 @@ package store
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -245,7 +246,7 @@ func TestPGFindFuzzy(t *testing.T) {
 	}
 	// The no-stemming property, asserted on the tsvector arm itself so the
 	// substring fallbacks cannot rescue it: "configs" lexemes nothing anywhere.
-	if raw, err := s.searchElementsTS("configs", 10); err != nil || len(raw) != 0 {
+	if raw, err := s.searchElementsTS("configs", 10, ElementFilter{}); err != nil || len(raw) != 0 {
 		t.Fatalf("searchElementsTS(configs) = %+v, %v; want no rows (no stemming)", raw, err)
 	}
 	if got, _, err := s.FindFuzzy("parse int", 10); err != nil || len(got) != 1 ||
@@ -270,7 +271,7 @@ func TestPGFindFuzzy(t *testing.T) {
 	// its trigram fallback (by design) still fuzzy-matches ParseConfig to
 	// ParseRuntime at similarity ~0.8, which is the fallback working, not a
 	// stale index.
-	if raw, err := s.searchElementsTS("ParseConfig", 10); err != nil || len(raw) != 0 {
+	if raw, err := s.searchElementsTS("ParseConfig", 10, ElementFilter{}); err != nil || len(raw) != 0 {
 		t.Fatalf("stale lexeme after upsert: %+v, %v", raw, err)
 	}
 	got, _, err := s.FindFuzzy("ParseRuntime", 10)
@@ -290,7 +291,7 @@ func TestPGFindFuzzyFallbackWithoutLexemes(t *testing.T) {
 	}
 
 	// The tsvector arm alone cannot serve this: no lexemes, no rows.
-	if ts, err := s.searchElementsTS("%", 10); err != nil || len(ts) != 0 {
+	if ts, err := s.searchElementsTS("%", 10, ElementFilter{}); err != nil || len(ts) != 0 {
 		t.Fatalf("searchElementsTS(%%) = %+v, %v; want no rows", ts, err)
 	}
 	hits, method, err := s.FindFuzzy("%", 10)
@@ -323,7 +324,7 @@ func TestPGFindFuzzyDegradesWithoutColumn(t *testing.T) {
 	if _, err := s.pool.Exec(pgCtx, `ALTER TABLE code_elements DROP COLUMN fts`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.searchElementsTS("SocketHandler", 10); err == nil {
+	if _, err := s.searchElementsTS("SocketHandler", 10, ElementFilter{}); err == nil {
 		t.Fatal("searchElementsTS must fail without the tsvector column")
 	}
 	hits, method, err := s.FindFuzzy("SocketHandler", 10)
@@ -422,15 +423,18 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 	}
 
 	qvec := []float32{1, 0, 0, 0}
-	hits, method, err := s.HybridSearch(st.ModelID, "Delta", qvec, 10)
+	hits, kw, err := hybridSearch(s, st.ModelID, "Delta", qvec, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The name arm is fused in too (the ArmName ranking arm, gated on corpus
 	// rarity). It appears here because the fixture's query has a token rare
 	// enough to reach it — which is the arm working, not noise.
-	if method != "rrf("+string(ArmVector)+"+"+string(ArmTSVector)+"+"+string(ArmTrigram)+"+"+string(ArmName)+")" {
-		t.Fatalf("method = %q; want every arm that fired", method)
+	if got := armsOf(hits); !slices.Equal(got, []Arm{ArmVector, ArmTSVector, ArmTrigram, ArmName}) {
+		t.Fatalf("arms = %v; want every arm that fired", got)
+	}
+	if kw != ArmTSVector {
+		t.Fatalf("keyword arm = %q; want tsvector (it contributed)", kw)
 	}
 	if len(hits) != 4 {
 		t.Fatalf("hits = %+v; want 4", hits)
@@ -468,19 +472,19 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 
 	// A query with no lexemes leaves only the vector arm plus (empty) substring
 	// recall, so cosine order survives untouched.
-	hits, method, err = s.HybridSearch(st.ModelID, "***", qvec, 10)
+	hits, _, err = hybridSearch(s, st.ModelID, "***", qvec, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hits) != 4 || hits[0].Element.QualifiedName != "pkg.Alpha" {
 		t.Fatalf("no-lexeme hits = %+v; want cosine order", hits)
 	}
-	if method != "rrf("+string(ArmVector)+")" {
-		t.Fatalf("method = %q; want vector arm only", method)
+	if got := armsOf(hits); !slices.Equal(got, []Arm{ArmVector}) {
+		t.Fatalf("arms = %v; want vector arm only", got)
 	}
 
 	// limit truncates the fused page, not just one arm.
-	if cut, _, err := s.HybridSearch(st.ModelID, "Delta", qvec, 2); err != nil || len(cut) != 2 {
+	if cut, _, err := hybridSearch(s, st.ModelID, "Delta", qvec, 2); err != nil || len(cut) != 2 {
 		t.Fatalf("limit 2 = %+v, %v; want 2 hits", cut, err)
 	}
 }
@@ -494,7 +498,7 @@ func TestPGHybridSearchWithoutVectors(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	hits, method, err := s.HybridSearch("absent-model", "Watermark", nil, 10)
+	hits, kw, err := hybridSearch(s, "absent-model", "Watermark", nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,8 +506,11 @@ func TestPGHybridSearchWithoutVectors(t *testing.T) {
 		t.Fatalf("hits = %+v; want the keyword arms to carry the hit", hits)
 	}
 	// With no vectors, the keyword arms plus the name arm (see above).
-	if method != "rrf("+string(ArmTSVector)+"+"+string(ArmTrigram)+"+"+string(ArmName)+")" {
-		t.Fatalf("method = %q; want the keyword arms plus the name arm", method)
+	if got := armsOf(hits); !slices.Equal(got, []Arm{ArmTSVector, ArmTrigram, ArmName}) {
+		t.Fatalf("arms = %v; want the keyword arms plus the name arm", got)
+	}
+	if kw != ArmTSVector {
+		t.Fatalf("keyword arm = %q; want tsvector", kw)
 	}
 	if hits[0].Similarity != 0 {
 		t.Fatalf("similarity = %v; want 0 with no vector arm", hits[0].Similarity)

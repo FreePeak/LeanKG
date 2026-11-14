@@ -87,7 +87,6 @@ var ctxlessBackendMethods = []string{
 	"ResourceClaim",
 	"SaveInventory",
 	"SearchVectors",
-	"SearchVectorsScoped",
 	"ServiceMetadataAll",
 	"ServiceMetadataGet",
 	"SetEmbeddingStates",

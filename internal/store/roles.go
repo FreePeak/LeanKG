@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // The store contract is one interface per role (plan CX-14, section 3.1).
 // Backend embeds every role. Consumers should depend on the narrowest role they
@@ -60,18 +63,44 @@ const (
 	ArmILIKE    Arm = "ilike"
 )
 
+// VectorQuery is one vector search: the K nearest vectors of ModelID among the
+// elements Filter admits. The filter applies before K, so a filter that
+// excludes most of the collection still returns K hits when K admitted rows
+// exist.
+type VectorQuery struct {
+	ModelID string
+	Vec     []float32
+	K       int
+	Filter  ElementFilter
+}
+
+// HybridQuery is one fused search. Text feeds the keyword and name arms and
+// Vec the vector arm; an empty one skips its arm. Limit <= 0 means 50. Weights
+// scales the fusion: the zero value weighs every arm at 1, and
+// DefaultFuseWeights is the store default. Filter applies to every arm before
+// that arm's LIMIT, so no arm spends its window on excluded rows.
+type HybridQuery struct {
+	ModelID string
+	Text    string
+	Vec     []float32
+	Limit   int
+	Filter  ElementFilter
+	Weights FuseRRFWeights
+}
+
 // Searcher ranks elements by keyword and by vector similarity.
 type Searcher interface {
 	// FindFuzzy is the keyword arm. It returns the hits and the arm that served
 	// them (ArmFTS5 on SQLite; ArmTSVector, ArmTrigram or ArmILIKE on PostgreSQL).
 	FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error)
-	SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error)
-	// SearchVectorsScoped is SearchVectors restricted to the elements keep
-	// accepts; a nil keep is exactly SearchVectors. A caller that wants to rank
-	// production code without test fixtures and archived prose otherwise ranks
-	// over the same collection, and the filter costs one predicate per row on a
-	// scan both backends already do.
-	SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error)
+	// SearchVectors is the vector arm (see VectorQuery).
+	SearchVectors(q VectorQuery) ([]VectorSearchHit, error)
+	// Hybrid fuses the vector, keyword and name arms of q by reciprocal rank
+	// fusion. The returned Arm is the keyword arm that contributed: ArmFTS5 on
+	// SQLite; on PostgreSQL the first of ArmTSVector, ArmTrigram and ArmILIKE
+	// that contributed. It is empty when no keyword arm did. ctx is accepted
+	// now; the arms take it when the ctx migration reaches Searcher.
+	Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, error)
 }
 
 // Vectors stores embedding rows, their per-model stamps and their state.

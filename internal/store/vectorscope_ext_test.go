@@ -54,7 +54,7 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 		}
 	}
 
-	hits, err := st.SearchVectors(scopeModel, []float32{1, 0, 0}, 10)
+	hits, err := st.SearchVectors(store.VectorQuery{ModelID: scopeModel, Vec: []float32{1, 0, 0}, K: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,9 +63,8 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 	}
 
 	// The scoped form must drop the excluded prefix and keep the answer.
-	scoped, err := st.SearchVectorsScoped(scopeModel, []float32{1, 0, 0}, 10, func(el store.Element) bool {
-		return !strings.Contains(el.FilePath, "_test.go")
-	})
+	scoped, err := st.SearchVectors(store.VectorQuery{ModelID: scopeModel, Vec: []float32{1, 0, 0}, K: 10,
+		Filter: store.ElementFilter{ExcludePathContains: []string{"_test.go"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +74,7 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 
 	// A nil filter is the old behaviour, exactly: this is an extension, never
 	// a silent narrowing of what an unscoped caller sees.
-	again, err := st.SearchVectorsScoped(scopeModel, []float32{1, 0, 0}, 10, nil)
+	again, err := st.SearchVectors(store.VectorQuery{ModelID: scopeModel, Vec: []float32{1, 0, 0}, K: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,9 +106,9 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	filtered, err := st.SearchVectorsScoped(scopeModel, []float32{1, 0, 0}, 10, func(el store.Element) bool {
-		return el.FilePath == "internal/a.go"
-	})
+	// Admit only internal/a.go: exclude the two other files seeded above.
+	filtered, err := st.SearchVectors(store.VectorQuery{ModelID: scopeModel, Vec: []float32{1, 0, 0}, K: 10,
+		Filter: store.ElementFilter{ExcludePathContains: []string{"decoy", "real.go"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
