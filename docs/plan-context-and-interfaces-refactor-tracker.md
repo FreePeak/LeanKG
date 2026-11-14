@@ -1,6 +1,6 @@
 # Tracker: context propagation and interface redesign
 
-**Plan:** [plan-context-and-interfaces-refactor.md](plan-context-and-interfaces-refactor.md) · **Last updated:** 2026-11-13 · **Base:** 6b4b741e
+**Plan:** [plan-context-and-interfaces-refactor.md](plan-context-and-interfaces-refactor.md) · **Last updated:** 2026-11-14 · **Base:** 6b4b741e
 
 ## How to use
 
@@ -19,7 +19,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-01 | `fix(memory): redact before indexing and recall` | S | - | todo | - | - |
 | CX-02 | `fix(auth): classify retain, ontology match and auto-config as writes; gate auto-config` | S-M | - | todo | - | - |
 | CX-03 | `fix(auth): never return token hashes; revoking needs the owner or an admin` | S | - | todo | - | - |
-| CX-04 | `fix(cmd): open every verb's store through one resolver` | M | - | todo | - | blocks CX-18 |
+| CX-04 | `fix(cmd): open every verb's store through one resolver` | M | - | in progress | - | blocks CX-18. Production code opens stores only through openStoreWith (guard test); 18 `store.Open` fixture calls remain in cmd/leankg/*_test.go, so the literal `rg 'store\.Open\(' cmd` criterion is not met yet. |
 | CX-05 | `fix(rest/auto): refuse before side effects; run jobs on the server context` | S-M | - | todo | - | - |
 | CX-06 | `fix(cmd): validate serve first, surface listener errors, await shutdown` | M | - | todo | - | - |
 | CX-07 | `fix(cmd): remove the data races on telemetry sinks and the capture recorder` | S | - | todo | - | - |

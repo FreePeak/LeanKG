@@ -80,7 +80,7 @@ func verbStoreExists(ctx context.Context, dir, engine string) bool {
 		}
 		return maintenanceStoreExists(ctx, dir, engine)
 	}
-	probe, err := store.OpenBackend(ctx, dir, engine, projectcfg.PGURL(dir), "", store.RO)
+	probe, err := openStoreWith(ctx, dir, engine, "", store.RO)
 	if err != nil {
 		return !errors.Is(err, store.ErrSchemaMissing)
 	}

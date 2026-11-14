@@ -322,19 +322,10 @@ func cmdServe(args []string) {
 			log.Fatalf("resolve cwd: %v", err)
 		}
 	}
-	// Standalone mode: the DB is externally imported (FR-P2-3);
-	// the user owns the store — do not anchor to a .leankg dir
-	// that doesn't exist.
-	if dbPath := projectcfg.StandaloneDBPath(dir); dbPath != "" {
-		goto serveStart
-	}
-	// leankg.yaml project.project_path / project.root anchor,
-	// canonicalized before use (Rust MCPServer::resolve_project_root, N3).
-	if dbDir := filepath.Join(dir, ".leankg"); projectcfg.ResolveProjectDBDir(dbDir) != dbDir {
-		dir = filepath.Dir(projectcfg.ResolveProjectRoot(dbDir))
-	}
-
-serveStart:
+	// leankg.yaml project.project_path / project.root anchor, canonicalized
+	// before use (Rust MCPServer::resolve_project_root, N3); the writer applies
+	// the same rule (anchorProjectDir).
+	dir = anchorProjectDir(dir)
 
 	// Standalone mode skips the project-gated sidecars (they expect
 	// a .leankg dir in dir — FR-P2-3).
@@ -357,11 +348,7 @@ afterSidecars:
 	if eng == "" {
 		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
 	}
-	dbPath := *dbFlag
-	if dbPath == "" {
-		dbPath = projectcfg.StandaloneDBPath(dir)
-	}
-	st, err := store.OpenBackend(ctx, dir, eng, projectcfg.PGURL(dir), dbPath, mode)
+	st, err := openStoreWith(ctx, dir, eng, *dbFlag, mode)
 	if err != nil {
 		log.Fatalf("open store: %s", storeErrText(eng, err))
 	}
@@ -719,7 +706,7 @@ func maintenanceStoreExists(ctx context.Context, dir, engine string) bool {
 		_, err := os.Stat(filepath.Join(dir, ".leankg", "leankg.db"))
 		return err == nil
 	}
-	probe, err := store.OpenBackend(ctx, dir, engine, os.Getenv("LEANKG_PG_URL"), "", store.RO)
+	probe, err := openStoreWith(ctx, dir, engine, "", store.RO)
 	if err != nil {
 		return false
 	}
@@ -782,7 +769,7 @@ func fleetTargets(ctx context.Context, defaultDir string, st store.Backend, mem 
 		if !maintenanceStoreExists(ctx, d, eng) {
 			continue
 		}
-		bs, err := store.OpenBackend(ctx, d, eng, os.Getenv("LEANKG_PG_URL"), "", store.RW)
+		bs, err := openStoreWith(ctx, d, eng, "", store.RW)
 		if err != nil {
 			log.Printf("maintenance: open %s: %v", d, err)
 			continue
@@ -847,7 +834,7 @@ func cmdDoctor(args []string) int {
 		dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
 		dbPath = filepath.Join(dbDir, "leankg.db")
 	}
-	st, err := store.Open(dbPath, store.RO)
+	st, err := openStore(context.Background(), dir, dbPath, store.RO)
 	if err != nil {
 		// A missing store is not a storage-layer event to the reader: it means
 		// the project has not been indexed. Naming the syscall ("read-only open

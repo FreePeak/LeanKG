@@ -39,7 +39,7 @@ func cmdVacuum(args []string) {
 	if eng == "" {
 		eng = os.Getenv("LEANKG_DB_ENGINE")
 	}
-	st, err := openStore(context.Background(), *project, "", store.RW)
+	st, err := openStoreWith(context.Background(), *project, eng, "", store.RW)
 	if err != nil {
 		fatalText(fmt.Errorf("vacuum: open store: %w", err))
 	}

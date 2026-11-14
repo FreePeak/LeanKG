@@ -170,7 +170,7 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 				return nil, fmt.Errorf("portfolioreg: open registry: %w", err)
 			}
 		}
-		st, err := store.Open(path, mode)
+		st, err := store.OpenBackend(ctx, "", store.EngineSQLite, "", path, mode)
 		if err != nil {
 			return nil, err
 		}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/refresh"
@@ -77,11 +76,11 @@ func cmdSetup(args []string) {
 // the refresh verb's embed stage.
 type cliStages struct{}
 
-func (cliStages) IndexOne(_ context.Context, dir, _env string, _verbose bool) (int, error) {
+func (cliStages) IndexOne(ctx context.Context, dir, _env string, _verbose bool) (int, error) {
 	if err := runIndex("", dir, "", "", ""); err != nil {
 		return 0, err
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RO)
+	st, err := openStore(ctx, dir, "", store.RO)
 	if err != nil {
 		return 0, nil // indexed, but the count is unavailable
 	}
