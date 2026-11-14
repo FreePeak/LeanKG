@@ -264,6 +264,9 @@ func (s *PGStore) DeleteFileRecord(path string) error {
 // DeleteOrphanRelationships removes every edge whose endpoint is no longer a
 // live element (leankg gc).
 func (s *PGStore) DeleteOrphanRelationships() (int, error) {
+	if err := requireWritable(s.mode); err != nil {
+		return 0, err
+	}
 	tag, err := s.pool.Exec(pgCtx, `DELETE FROM relationships
 		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements)
 		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements)`)
@@ -754,6 +757,9 @@ func (s *PGStore) Stamps() ([]ModelStamp, error) {
 // tables have already vanished is skipped, not fatal: the stamp is cleaned
 // up either way. The watermark bumps only when rows actually go.
 func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
+	if err := requireWritable(s.mode); err != nil {
+		return StaleStampSweep{}, err
+	}
 	keep = cleanModelIDs(keep)
 	if len(keep) == 0 {
 		return StaleStampSweep{}, nil
@@ -928,6 +934,9 @@ func (s *PGStore) VectorCoverage(modelID string) (covered, orphans int, err erro
 // layout; a stamped model whose tables vanished is skipped, not fatal). The
 // watermark bumps only when rows actually go.
 func (s *PGStore) DeleteOrphanVectors() (int, error) {
+	if err := requireWritable(s.mode); err != nil {
+		return 0, err
+	}
 	stamps, err := s.Stamps()
 	if err != nil {
 		return 0, err
@@ -1127,6 +1136,9 @@ func (s *PGStore) LastEmbedRunAny() (*EmbedRun, error) {
 // (CurrentModelID). Mirrors the SQLite implementation (vectors.go).
 func (s *PGStore) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 	var out EmbedRunPrune
+	if err := requireWritable(s.mode); err != nil {
+		return out, err
+	}
 	cut := embedRunCutoff(cutoff)
 	tag, err := s.pool.Exec(pgCtx, `UPDATE embed_runs SET status='failed', finished_at=`+pgNow+`
 		WHERE status='running' AND started_at < $1`, cut)
@@ -1143,12 +1155,6 @@ func (s *PGStore) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 	out.Pruned = tag.RowsAffected()
 	return out, nil
 }
-
-// CompactFTS is a no-op on PostgreSQL. The keyword rung here is a GIN-indexed
-// tsvector column (pg_fts.go), not an FTS5 segment list, so there is nothing
-// to merge: PostgreSQL's own autovacuum reclaims what the index churn leaves
-// behind. The SQLite implementation (elements.go) is the one that merges.
-func (s *PGStore) CompactFTS() error { return nil }
 
 // LastEmbedRun returns the most recent run for a model; nil when none.
 func (s *PGStore) LastEmbedRun(modelID string) (*EmbedRun, error) {

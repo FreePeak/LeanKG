@@ -1,7 +1,6 @@
 package store
 
 import (
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -120,7 +119,7 @@ func TestCompactFTSKeepsEveryRow(t *testing.T) {
 	if before == 0 {
 		t.Fatal("the fixture wrote no keyword rows")
 	}
-	if err := s.CompactFTS(); err != nil {
+	if _, err := s.Maintain(MaintainOp{Kind: MaintainCompactKeywordIndex}); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
 	var after int
@@ -136,29 +135,5 @@ func TestCompactFTSKeepsEveryRow(t *testing.T) {
 	}
 	if n != 200 {
 		t.Errorf("the compaction changed the element count: %d", n)
-	}
-}
-
-// TestCompactFTSRefusesAReadOnlyHandle: compaction rewrites the index, so a
-// read-only handle must refuse it rather than fail halfway.
-func TestCompactFTSRefusesAReadOnlyHandle(t *testing.T) {
-	dir := t.TempDir()
-	rw, err := Open(filepath.Join(dir, "leankg.db"), RW)
-	if err != nil {
-		t.Fatalf("open rw: %v", err)
-	}
-	if err := rw.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if err := rw.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-	ro, err := Open(filepath.Join(dir, "leankg.db"), RO)
-	if err != nil {
-		t.Fatalf("open ro: %v", err)
-	}
-	defer ro.Close()
-	if err := ro.CompactFTS(); err == nil {
-		t.Error("a read-only handle compacted the keyword index")
 	}
 }

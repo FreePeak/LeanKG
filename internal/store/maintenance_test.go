@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -87,7 +88,7 @@ func TestEnsureIncrementalVacuumEnablesAutoVacuum(t *testing.T) {
 		t.Fatalf("fixture precondition: auto_vacuum = %d, want 0 (NONE)", mode)
 	}
 
-	if err := st.EnsureIncrementalVacuum(); err != nil {
+	if err := st.ensureIncrementalVacuum(); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
 	if err := st.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
@@ -97,7 +98,7 @@ func TestEnsureIncrementalVacuumEnablesAutoVacuum(t *testing.T) {
 		t.Fatalf("auto_vacuum = %d, want 2 (INCREMENTAL)", mode)
 	}
 	// Idempotent: a second call must not VACUUM again.
-	if err := st.EnsureIncrementalVacuum(); err != nil {
+	if err := st.ensureIncrementalVacuum(); err != nil {
 		t.Fatalf("second ensure: %v", err)
 	}
 }
@@ -128,7 +129,7 @@ func TestIncrementalVacuumReturnsPagesToDisk(t *testing.T) {
 	// A cap below the freelist size: the pass must be bounded, so the file
 	// shrinks by at most that many pages.
 	const cap = 8
-	if err := st.IncrementalVacuum(cap); err != nil {
+	if _, err := st.Maintain(MaintainOp{Kind: MaintainReclaim, MaxPages: cap}); err != nil {
 		t.Fatalf("incremental vacuum: %v", err)
 	}
 	after, err := st.Space()
@@ -143,10 +144,10 @@ func TestIncrementalVacuumReturnsPagesToDisk(t *testing.T) {
 			reclaimed, cap, after.PageSize)
 	}
 	// An unbounded pass drains the rest.
-	if err := st.IncrementalVacuum(0); err != nil {
+	if _, err := st.Maintain(MaintainOp{Kind: MaintainReclaim}); err != nil {
 		t.Fatalf("unbounded incremental vacuum: %v", err)
 	}
-	if err := st.Checkpoint(); err != nil {
+	if _, err := st.Maintain(MaintainOp{Kind: MaintainCheckpoint}); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	final, err := st.Space()
@@ -164,7 +165,7 @@ func TestVacuumShrinksFileToLiveSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("space before: %v", err)
 	}
-	if err := st.Vacuum(); err != nil {
+	if _, err := st.Maintain(MaintainOp{Kind: MaintainReclaimFull}); err != nil {
 		t.Fatalf("vacuum: %v", err)
 	}
 	after, err := st.Space()
@@ -188,7 +189,7 @@ func TestCheckpointTruncatesWAL(t *testing.T) {
 	if err := st.BumpWatermark(); err != nil {
 		t.Fatalf("bump: %v", err)
 	}
-	if err := st.Checkpoint(); err != nil {
+	if _, err := st.Maintain(MaintainOp{Kind: MaintainCheckpoint}); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 	rep, err := st.Space()
@@ -217,15 +218,11 @@ func TestVacuumRefusesReadOnly(t *testing.T) {
 		t.Fatalf("open ro: %v", err)
 	}
 	defer ro.Close()
-	if err := ro.Vacuum(); err == nil {
-		t.Fatal("read-only store accepted a full vacuum")
+	if _, err := ro.Maintain(MaintainOp{Kind: MaintainReclaimFull}); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only store full vacuum: err = %v, want ErrReadOnly", err)
 	}
-	// Space is a no-write probe and must work there, and the header upgrade
-	// is a no-op rather than an error.
+	// Space is a no-write probe and must work there.
 	if _, err := ro.Space(); err != nil {
 		t.Errorf("read-only space probe: %v", err)
-	}
-	if err := ro.EnsureIncrementalVacuum(); err != nil {
-		t.Errorf("read-only ensure: %v", err)
 	}
 }

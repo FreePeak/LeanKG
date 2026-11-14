@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
@@ -35,6 +36,123 @@ func (r SpaceReport) BloatFraction() float64 {
 	return float64(r.FreeBytes) / float64(r.SizeBytes)
 }
 
+// ErrReadOnly is the one refusal every write on a read-only handle returns:
+// the maintenance ops (Maintain) and the Maintainer role's sweeps.
+var ErrReadOnly = errors.New("store: read-only handle refuses writes")
+
+// requireWritable is the single read-only check. Every Maintainer write calls
+// it before touching the engine.
+func requireWritable(mode Mode) error {
+	if mode == RO {
+		return ErrReadOnly
+	}
+	return nil
+}
+
+// MaintainKind names one engine-neutral maintenance operation. Each engine runs
+// the kinds it supports and reports the rest through MaintainResult.Skipped.
+type MaintainKind string
+
+const (
+	// MaintainCheckpoint flushes the WAL into the main database file and
+	// truncates the -wal sidecar to zero.
+	MaintainCheckpoint MaintainKind = "checkpoint"
+	// MaintainReclaim hands free pages back to the filesystem, at most
+	// MaintainOp.MaxPages per call, so a live server holds the write lock only
+	// for a bounded pass.
+	MaintainReclaim MaintainKind = "reclaim"
+	// MaintainReclaimFull rewrites the whole database file, returning every
+	// free page in one pass.
+	MaintainReclaimFull MaintainKind = "reclaim-full"
+	// MaintainCompactKeywordIndex merges the keyword index segments.
+	MaintainCompactKeywordIndex MaintainKind = "compact-keyword-index"
+	// MaintainAnalyze refreshes planner statistics.
+	MaintainAnalyze MaintainKind = "analyze"
+)
+
+// Skip reasons. A skipped op did no work and does not count as done.
+const (
+	skipServerWAL         = "wal-server-managed"
+	skipAutovacuum        = "autovacuum-managed"
+	skipNoKeywordSegments = "no-keyword-segments"
+	skipSQLiteAnalyze     = "not-run-by-sqlite"
+)
+
+// MaintainOp is one maintenance request.
+type MaintainOp struct {
+	Kind MaintainKind
+	// MaxPages caps one MaintainReclaim call; <= 0 means every free page.
+	// The other kinds ignore it.
+	MaxPages int
+}
+
+// MaintainResult reports what an engine did with an op.
+type MaintainResult struct {
+	// Skipped names why the engine did not run the op; empty when it ran.
+	Skipped string
+}
+
+func errUnknownMaintainKind(kind MaintainKind) error {
+	return fmt.Errorf("store: unknown maintenance kind %q", kind)
+}
+
+// SQLite Maintain.
+//
+// Checkpoint uses TRUNCATE on purpose: it is the only mode that resets the
+// -wal sidecar to zero. Without a checkpoint a long-lived server's WAL grows
+// until one happens to run, and an unclean shutdown leaves it large on disk.
+//
+// Reclaim is bounded so a live serving database caps how long the write lock
+// is held; the next pass continues where this one stopped. It needs
+// auto_vacuum=INCREMENTAL, which ensureIncrementalVacuum enables once per store.
+//
+// ReclaimFull is the blunt instrument (VACUUM): the write lock is held for the
+// whole rewrite and SQLite needs disk space for a second copy. It is for
+// one-shot repair, `leankg vacuum --full`.
+//
+// CompactKeywordIndex: FTS5 keeps the index as a list of b-tree segments and
+// every write adds one. 'optimize' merges the segments and rebuilds the index
+// from the content table.
+//
+// Analyze is not a SQLite maintenance kind; it is reported as skipped.
+func (s *Store) Maintain(op MaintainOp) (MaintainResult, error) {
+	if err := requireWritable(s.mode); err != nil {
+		return MaintainResult{}, err
+	}
+	switch op.Kind {
+	case MaintainCheckpoint:
+		if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+			return MaintainResult{}, fmt.Errorf("store: wal_checkpoint(TRUNCATE): %w", err)
+		}
+	case MaintainReclaim:
+		if err := s.ensureIncrementalVacuum(); err != nil {
+			return MaintainResult{}, err
+		}
+		// The pragma takes no bind parameter, so the cap is formatted in.
+		// MaxPages is an int from the maintenance options, never user text.
+		stmt := `PRAGMA incremental_vacuum`
+		if op.MaxPages > 0 {
+			stmt = fmt.Sprintf(`PRAGMA incremental_vacuum(%d)`, op.MaxPages)
+		}
+		if _, err := s.db.Exec(stmt); err != nil {
+			return MaintainResult{}, fmt.Errorf("store: incremental_vacuum: %w", err)
+		}
+	case MaintainReclaimFull:
+		if _, err := s.db.Exec(`VACUUM`); err != nil {
+			return MaintainResult{}, fmt.Errorf("store: vacuum: %w", err)
+		}
+	case MaintainCompactKeywordIndex:
+		if _, err := s.db.Exec(`INSERT INTO elements_fts(elements_fts) VALUES('optimize')`); err != nil {
+			return MaintainResult{}, fmt.Errorf("store: fts optimize: %w", err)
+		}
+	case MaintainAnalyze:
+		return MaintainResult{Skipped: skipSQLiteAnalyze}, nil
+	default:
+		return MaintainResult{}, errUnknownMaintainKind(op.Kind)
+	}
+	return MaintainResult{}, nil
+}
+
 // Space reports the store's on-disk footprint. It is a no-write probe — it
 // stats the file and reads PRAGMA page_count / freelist_count — so it is safe
 // on a read-only handle and safe while a live writer holds the store.
@@ -43,8 +161,8 @@ func (r SpaceReport) BloatFraction() float64 {
 // until a checkpoint runs: a mass delete writes the freed pages into the
 // -wal sidecar and shrinks the main file only when that sidecar is folded
 // back, so stat()-ing the file under-reports what the database occupies by
-// up to a whole WAL. page_count is the authoritative figure; the checkpoint in
-// Checkpoint() is what makes the file on disk match it.
+// up to a whole WAL. page_count is the authoritative figure; the
+// MaintainCheckpoint op is what makes the file on disk match it.
 func (s *Store) Space() (SpaceReport, error) {
 	rep := SpaceReport{Engine: EngineSQLite, Path: s.path}
 	if fi, err := os.Stat(s.path); err == nil {
@@ -73,63 +191,6 @@ func (s *Store) Space() (SpaceReport, error) {
 	return rep, nil
 }
 
-// Checkpoint flushes the WAL into the main database and truncates the -wal
-// sidecar to zero. Without it a long-lived server's WAL grows until a
-// checkpoint happens to run, and an unclean shutdown leaves it large on disk
-// indefinitely.
-//
-// TRUNCATE is the mode on purpose: it is the only one that resets the sidecar's
-// size to zero. It takes the write lock for the duration, which the store's
-// single serialized connection already holds between statements.
-func (s *Store) Checkpoint() error {
-	if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		return fmt.Errorf("store: wal_checkpoint(TRUNCATE): %w", err)
-	}
-	return nil
-}
-
-// IncrementalVacuum hands free pages back to the filesystem in a bounded
-// pass: PRAGMA incremental_vacuum with no argument reclaims every free page,
-// which on a store whose freelist is measured in gigabytes holds the write
-// lock for the whole sweep. maxPages caps it so the caller — which runs this
-// from a maintenance loop against a live, serving database — bounds the stall;
-// the next pass continues where this one stopped. maxPages <= 0 means "all".
-//
-// Requires auto_vacuum=INCREMENTAL (see EnsureIncrementalVacuum); under the
-// default NONE the pragma is a no-op, because SQLite has no free-page map to
-// walk.
-func (s *Store) IncrementalVacuum(maxPages int) error {
-	if maxPages <= 0 {
-		if _, err := s.db.Exec(`PRAGMA incremental_vacuum`); err != nil {
-			return fmt.Errorf("store: incremental_vacuum: %w", err)
-		}
-		return nil
-	}
-	// The pragma takes no bind parameter — the cap is a literal in the
-	// statement, not a value slot — so it is formatted in. maxPages is an int
-	// from the maintenance options, never user text.
-	if _, err := s.db.Exec(fmt.Sprintf(`PRAGMA incremental_vacuum(%d)`, maxPages)); err != nil {
-		return fmt.Errorf("store: incremental_vacuum(%d): %w", maxPages, err)
-	}
-	return nil
-}
-
-// Vacuum rewrites the whole database file, returning every free page to the
-// filesystem in one pass. It is the blunt instrument: the write lock is held
-// for the entire rewrite and SQLite needs disk space for a second copy while
-// it runs. Prefer IncrementalVacuum from a live server; Vacuum is for one-shot
-// repair — `leankg vacuum --full` — where reclaiming everything at once is
-// worth the stall.
-func (s *Store) Vacuum() error {
-	if s.mode == RO {
-		return fmt.Errorf("store: vacuum requires RW mode")
-	}
-	if _, err := s.db.Exec(`VACUUM`); err != nil {
-		return fmt.Errorf("store: vacuum: %w", err)
-	}
-	return nil
-}
-
 // ensureIncrementalVacuum switches the store to PRAGMA
 // auto_vacuum=INCREMENTAL when it was created without it. Every store the Go
 // engine makes carries auto_vacuum=NONE, because the DSN in Open never set it —
@@ -140,7 +201,7 @@ func (s *Store) Vacuum() error {
 // VACUUM rewrites the file, so the upgrade is a two-step dance: request the
 // mode, then VACUUM. Either half alone is a silent no-op, so the result is
 // verified. Idempotent — the mode read is one row, and the VACUUM happens at
-// most once per store, ever.
+// most once per store, ever. Called from the Reclaim op only.
 func (s *Store) ensureIncrementalVacuum() error {
 	var mode int64
 	if err := s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
@@ -162,14 +223,4 @@ func (s *Store) ensureIncrementalVacuum() error {
 		return fmt.Errorf("store: incremental vacuum not enabled (auto_vacuum=%d after VACUUM)", mode)
 	}
 	return nil
-}
-
-// EnsureIncrementalVacuum exposes the one-shot header upgrade so a maintenance
-// loop can guarantee the store is in a mode that returns space at all, before
-// it starts handing pages back incrementally.
-func (s *Store) EnsureIncrementalVacuum() error {
-	if s.mode == RO {
-		return nil // a reader cannot rewrite the header; nothing to do
-	}
-	return s.ensureIncrementalVacuum()
 }

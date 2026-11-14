@@ -10,12 +10,11 @@
 //
 // One pass, three steps, engine-agnostic through store.Backend:
 //
-//  1. EnsureIncrementalVacuum — a one-time header upgrade so the store can
-//     return space at all (and, on the upgrade itself, the whole accumulated
-//     freelist).
-//  2. IncrementalVacuum(maxPages) — a bounded reclaim, safe on a live serving
-//     database because it caps how long the write lock is held.
-//  3. Checkpoint — flush and truncate the -wal sidecar, which otherwise
+//  1. MaintainReclaim with MaxPages — a bounded reclaim, safe on a live serving
+//     database because it caps how long the write lock is held. The first
+//     reclaim of a store also performs a one-time auto_vacuum header upgrade
+//     (a whole-file rewrite), without which the store cannot return space at all.
+//  2. MaintainCheckpoint — flush and truncate the -wal sidecar, which otherwise
 //     lingers at whatever size the last unclean shutdown left it.
 //
 // The memory layer's FTS side index gets the same treatment through
@@ -186,9 +185,9 @@ func Sweep(st store.Backend, opts Options) SweepResult {
 		}
 	}
 	if opts.CompactFTS {
-		if err := st.CompactFTS(); err != nil {
+		if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCompactKeywordIndex}); err != nil {
 			logf("maintain: fts compaction: %v", err)
-		} else {
+		} else if r.Skipped == "" {
 			out.FTSCompacted = true
 		}
 	}
@@ -278,12 +277,6 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 		WALBytes:   before.WALBytes,
 	}
 
-	// First and unconditional: one PRAGMA read on any store that already
-	// auto-vacuums, exactly one full VACUUM on any store that does not.
-	if err := st.EnsureIncrementalVacuum(); err != nil {
-		return res, fmt.Errorf("maintain: enable incremental vacuum: %w", err)
-	}
-
 	// The sweep runs BEFORE the vacuum, and that order is the whole point:
 	// the sweep returns rows to the freelist, the vacuum hands the
 	// freelist back to the filesystem. The other order reclaims the space
@@ -312,17 +305,18 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 	// store's freelist sat below it, so the hourly pass freed 0 bytes
 	// fleet-wide while the machinery looked healthy.
 	if opts.MinFreeBytes >= 0 && freelist > 0 && freelist >= opts.MinFreeBytes {
-		if err := st.IncrementalVacuum(opts.MaxPages); err != nil {
-			// Not fatal: the checkpoint below still applies, and the next
-			// pass retries the reclaim.
+		// Not fatal: the checkpoint below still applies, and the next pass
+		// retries the reclaim. A skipped op did no work, so it is not
+		// counted as a reclaim.
+		if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainReclaim, MaxPages: opts.MaxPages}); err != nil {
 			logf("maintain: incremental vacuum: %v", err)
-		} else {
+		} else if r.Skipped == "" {
 			res.Vacuumed = true
 		}
 	}
-	if err := st.Checkpoint(); err != nil {
+	if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
 		logf("maintain: checkpoint: %v", err)
-	} else {
+	} else if r.Skipped == "" {
 		res.Checkpointed = true
 	}
 

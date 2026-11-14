@@ -18,7 +18,7 @@ var ioBudget = map[string]map[string]int{
 	"internal/memory":               {"sql-no-ctx": 32},
 	"internal/sessionlink/opencode": {"sql-no-ctx": 4},
 	"internal/sources":              {"http.Client-without-Timeout": 1},
-	"internal/store":                {"sql-no-ctx": 278},
+	"internal/store":                {"sql-no-ctx": 277},
 }
 
 // ioRule is one context-less I/O pattern with its AST matcher.

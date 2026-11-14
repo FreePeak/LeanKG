@@ -95,24 +95,16 @@ type Inventories interface {
 
 // Maintainer owns space accounting, orphan sweeps and the maintenance
 // operations (the reclaim half of DeleteByFile/gc: those return rows to the
-// freelist, these return the freelist to the filesystem).
+// freelist, these return the freelist to the filesystem). Every write here
+// refuses a read-only handle with ErrReadOnly.
 type Maintainer interface {
-	// Space is a no-write probe, safe on a read-only handle; Checkpoint,
-	// IncrementalVacuum and Vacuum are writes and refuse a read-only store.
-	// Postgres implements Space with pg_database_size and the rest as
-	// autovacuum-driven no-ops — the maintenance loop is engine-agnostic.
+	// Space is a no-write probe, safe on a read-only handle. Postgres
+	// implements it with pg_database_size.
 	Space() (SpaceReport, error)
-	Checkpoint() error
-	IncrementalVacuum(maxPages int) error
-	Vacuum() error
-	EnsureIncrementalVacuum() error
-	// CompactFTS compacts the keyword index: SQLite merges the FTS5
-	// segments and rebuilds the index from the content table; PostgreSQL
-	// has no segment list to merge (its keyword rung is a GIN-indexed
-	// tsvector column) and the implementation there is a no-op. It is a
-	// write — a read-only handle refuses it — and it rewrites the whole
-	// index, so the scheduler runs it on a slow cadence, not every pass.
-	CompactFTS() error
+	// Maintain runs one engine-neutral maintenance op (see MaintainKind).
+	// Each engine runs the kinds it supports and reports the rest through
+	// MaintainResult.Skipped, so the maintenance loop is engine-agnostic.
+	Maintain(op MaintainOp) (MaintainResult, error)
 	// PruneEmbedRuns trims the embed-run ledger: it closes out the runs
 	// still marked "running" past the cutoff (a run that was killed
 	// mid-flight otherwise claims to be running forever) and deletes the

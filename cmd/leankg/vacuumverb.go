@@ -78,10 +78,15 @@ func cmdVacuum(args []string) {
 		if err != nil {
 			fatalText(fmt.Errorf("vacuum: %w", err))
 		}
-		if err := st.Vacuum(); err != nil {
+		if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainReclaimFull}); err != nil {
 			fatalText(fmt.Errorf("vacuum: %w", err))
 		}
-		if err := st.Checkpoint(); err != nil {
+		// ANALYZE is what --full has always run on PostgreSQL, where the full
+		// rewrite is skipped; SQLite reports it as skipped.
+		if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainAnalyze}); err != nil {
+			fatalText(fmt.Errorf("vacuum: %w", err))
+		}
+		if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
 			fmt.Fprintf(os.Stderr, "vacuum: checkpoint: %v\n", err)
 		}
 		after, err := st.Space()

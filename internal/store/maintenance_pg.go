@@ -11,13 +11,6 @@ import "fmt"
 // reported as 0 because Postgres tracks dead tuples per table and lets
 // autovacuum reclaim them without an explicit call — there is no single
 // "freelist" number to read.
-//
-// Checkpoint, IncrementalVacuum, Vacuum and EnsureIncrementalVacuum are
-// deliberate no-ops: WAL-log truncation is the server's own setting, dead
-// tuples are autovacuum's job, and VACUUM runs on a schedule the operator
-// owns. Running them from a client would fight the server's own maintenance
-// rather than complement it. The one thing worth doing on demand is ANALYZE,
-// which is why Vacuum issues it.
 func (s *PGStore) Space() (SpaceReport, error) {
 	rep := SpaceReport{Engine: EnginePostgres, Path: s.Path()}
 	var size int64
@@ -30,27 +23,37 @@ func (s *PGStore) Space() (SpaceReport, error) {
 	return rep, nil
 }
 
-// Checkpoint is a no-op: WAL segment recycling is a server configuration
-// (wal_keep_size / max_wal_size), not a client-callable operation.
-func (s *PGStore) Checkpoint() error { return nil }
-
-// IncrementalVacuum is a no-op: autovacuum reclaims dead tuples without one.
-func (s *PGStore) IncrementalVacuum(int) error { return nil }
-
-// Vacuum runs ANALYZE (planner statistics refresh), not VACUUM. It is the
-// maintenance-loop hook's only Postgres action: VACUUM would contend with the
-// server's autovacuum for the same locks, whereas ANALYZE is cheap,
-// non-blocking, and the thing a bulk embed or delete actually leaves stale.
-func (s *PGStore) Vacuum() error {
-	if s.mode == RO {
-		return nil
+// Maintain runs one maintenance op on PostgreSQL. Only Analyze runs: the
+// server owns WAL recycling, dead-tuple reclamation and the keyword index (a
+// GIN-indexed tsvector column, not a segment list), so those kinds are
+// reported as skipped rather than silently succeeding. A read-only handle
+// refuses every kind with ErrReadOnly.
+//
+// Analyze is ANALYZE (planner statistics refresh), not VACUUM: VACUUM would
+// contend with the server's autovacuum for the same locks, whereas ANALYZE is
+// cheap, non-blocking, and the thing a bulk embed or delete leaves stale.
+func (s *PGStore) Maintain(op MaintainOp) (MaintainResult, error) {
+	if err := requireWritable(s.mode); err != nil {
+		return MaintainResult{}, err
 	}
-	if _, err := s.pool.Exec(pgCtx, `ANALYZE`); err != nil {
-		return fmt.Errorf("store: analyze: %w", err)
+	switch op.Kind {
+	case MaintainCheckpoint:
+		// WAL segment recycling is a server configuration (wal_keep_size,
+		// max_wal_size), not a client-callable operation.
+		return MaintainResult{Skipped: skipServerWAL}, nil
+	case MaintainReclaim, MaintainReclaimFull:
+		// Autovacuum reclaims dead tuples; VACUUM runs on a schedule the
+		// operator owns.
+		return MaintainResult{Skipped: skipAutovacuum}, nil
+	case MaintainCompactKeywordIndex:
+		// Nothing to merge: PostgreSQL's own autovacuum reclaims what the
+		// index churn leaves behind.
+		return MaintainResult{Skipped: skipNoKeywordSegments}, nil
+	case MaintainAnalyze:
+		if _, err := s.pool.Exec(pgCtx, `ANALYZE`); err != nil {
+			return MaintainResult{}, fmt.Errorf("store: analyze: %w", err)
+		}
+		return MaintainResult{}, nil
 	}
-	return nil
+	return MaintainResult{}, errUnknownMaintainKind(op.Kind)
 }
-
-// EnsureIncrementalVacuum is a no-op: auto_vacuum is a Postgres-wide
-// setting, not a per-database one this client can turn on safely.
-func (s *PGStore) EnsureIncrementalVacuum() error { return nil }
