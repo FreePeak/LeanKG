@@ -11,6 +11,7 @@ package telemetry
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -339,11 +340,17 @@ type Recorder interface {
 	Close() error
 }
 
-// Nop is the Recorder used when capture is Off.
+// Nop is the Recorder used when capture is Off. It cannot capture, so it
+// accepts only Off (already the level) and refuses any other level.
 type Nop struct{}
 
-func (Nop) Level() Level             { return Off }
-func (Nop) SetLevel(Level) error     { return nil } // nothing to change
+func (Nop) Level() Level { return Off }
+func (Nop) SetLevel(level Level) error {
+	if level != Off {
+		return fmt.Errorf("telemetry: Nop recorder cannot capture at level %q", level)
+	}
+	return nil
+}
 func (Nop) RecordCall(CallEvent)     {}
 func (Nop) RecordMemory(MemoryEvent) {}
 func (Nop) Close() error             { return nil }
