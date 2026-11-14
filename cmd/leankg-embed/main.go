@@ -118,26 +118,46 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// bindPositional lets the project dir be given as a bare positional
-// (matching `leankg index <dir>`): Go's flag package STOPS parsing at the
-// first non-flag arg, so `leankg-embed full <dir>` previously left <dir>
-// unparsed and silently embedded the CWD's store instead. That footgun was
-// hit dogfooding the portfolio (run /abs/child embedded the wrong project).
-// The positional wins only when --project was not also passed; more than one
-// positional is a hard error, never a silent drop.
-func bindPositional(verb string, args []string, project *string) {
-	var positional []string
-	for _, a := range args {
-		if len(a) > 1 && a[0] == '-' {
-			break
-		}
-		positional = append(positional, a)
+// bindPositional parses args into fs and binds a bare positional as the
+// project dir (matching `leankg index <dir>`). Go's flag package stops at the
+// first non-flag arg, so flags after the positional were silently dropped
+// (`run <dir> --project X` ignored X). parseArgs re-parses the remainder, so
+// flags work before, between and after the positional. A positional that
+// conflicts with --project, or a second positional, is an error, never a
+// silent drop.
+func bindPositional(verb string, fs *flag.FlagSet, args []string, project *string) error {
+	positional, err := parseArgs(fs, args)
+	if err != nil {
+		return fmt.Errorf("%s: %w", verb, err)
 	}
 	if len(positional) > 1 {
-		log.Fatalf("%s: too many arguments (%s)", verb, strings.Join(positional, " "))
+		return fmt.Errorf("%s: too many arguments (%s)", verb, strings.Join(positional, " "))
 	}
-	if len(positional) == 1 && *project == "" {
+	if len(positional) == 1 {
+		if *project != "" && *project != positional[0] {
+			return fmt.Errorf("%s: positional %q conflicts with --project %q", verb, positional[0], *project)
+		}
 		*project = positional[0]
+	}
+	return nil
+}
+
+// parseArgs parses args into fs and returns the positionals in order. After
+// each positional it re-parses the remainder, so a flag may follow it; the
+// flag package alone would stop at the first positional.
+func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return nil, err
+		}
+		rest = fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		positional = append(positional, rest[0])
+		rest = rest[1:]
 	}
 }
 
@@ -174,38 +194,49 @@ func lock(dir string) (func(), error) {
 }
 
 func cmdRun(args []string, mode string) {
-	fs := flag.NewFlagSet(mode, flag.ExitOnError)
-	project := fs.String("project", "", "project directory (default cwd)")
-	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
-	}
-	bindPositional(mode, fs.Args(), project)
-	unlock, err := lock(projectDir(*project))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := runEmbed(ctx, args, mode)
+	stop()
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+// runEmbed performs one run. It returns every error instead of exiting, so the
+// deferred sidecar release, store close and lock release all run before the
+// process exits; a log.Fatal after the sidecar starts orphaned it. A run
+// stopped through ctx returns context.Canceled.
+func runEmbed(ctx context.Context, args []string, mode string) error {
+	fs := flag.NewFlagSet(mode, flag.ExitOnError)
+	project := fs.String("project", "", "project directory (default cwd)")
+	if err := bindPositional(mode, fs, args, project); err != nil {
+		return err
+	}
+	unlock, err := lock(projectDir(*project))
+	if err != nil {
+		return err
 	}
 	defer unlock()
 	st, err := openStore(*project)
 	if err != nil {
-		log.Fatalf("store: %v", err)
+		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	p, release, err := embed.StartProvider(ctx)
 	if err != nil {
-		log.Fatalf("provider: %v", err)
+		return fmt.Errorf("provider: %w", err)
 	}
 	defer release()
 	report, err := embed.Run(ctx, st, p, mode)
 	if err != nil {
-		log.Fatalf("run: %v (status recorded)", err)
+		return fmt.Errorf("run: %w (status recorded)", err)
 	}
 	for _, note := range report.Notes {
 		fmt.Fprintln(os.Stderr, note)
 	}
 	b, _ := json.Marshal(report)
 	fmt.Println(string(b))
+	return nil
 }
 
 func cmdExport(args []string) {
@@ -213,10 +244,9 @@ func cmdExport(args []string) {
 	project := fs.String("project", "", "project directory (default cwd)")
 	out := fs.String("out", "", "output file (default stdout)")
 	modelID := fs.String("model", "", "model to export (required)")
-	if err := fs.Parse(args); err != nil {
+	if err := bindPositional("export", fs, args, project); err != nil {
 		log.Fatal(err)
 	}
-	bindPositional("export", fs.Args(), project)
 	if *modelID == "" {
 		log.Fatal("export requires --model")
 	}
@@ -247,10 +277,9 @@ func cmdImport(args []string) {
 	revision := fs.String("revision", "", "model revision (default: the live provider's pin; must agree)")
 	dims := fs.Int("dims", 0, "stored vector width (default: the live provider's width; must agree)")
 	distance := fs.String("distance", "", "distance metric (default cosine; must agree)")
-	if err := fs.Parse(args); err != nil {
+	if err := bindPositional("import", fs, args, project); err != nil {
 		log.Fatal(err)
 	}
-	bindPositional("import", fs.Args(), project)
 	unlock, err := lock(projectDir(*project))
 	if err != nil {
 		log.Fatal(err)
@@ -281,10 +310,9 @@ func cmdImport(args []string) {
 func cmdStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
-	if err := fs.Parse(args); err != nil {
+	if err := bindPositional("status", fs, args, project); err != nil {
 		log.Fatal(err)
 	}
-	bindPositional("status", fs.Args(), project)
 	st, err := openStore(*project)
 	if err != nil {
 		log.Fatalf("store: %v", err)

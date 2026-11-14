@@ -344,7 +344,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	status := "ok"
 	if err := embedFiles(ctx, st, p, modelID, groupByFile(dirty), &rep); err != nil {
 		rep.Duration = time.Since(start)
-		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(runID, failedStatus(err), rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
 	}
 
@@ -378,6 +378,12 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 		rep.NoiseFloor = floor
 	}
 	rep.Duration = time.Since(start)
+	// A stop requested after the writes began still records the run as
+	// cancelled: it is neither ok nor partial, and the caller sees the error.
+	cancelErr := ctx.Err()
+	if cancelErr != nil {
+		status = "cancelled"
+	}
 	if err := st.FinishEmbedRun(runID, status, rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
 		return rep, err
 	}
@@ -388,7 +394,17 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	if _, err := store.RefreshInventory(st); err != nil {
 		return rep, fmt.Errorf("embed: inventory snapshot: %w", err)
 	}
-	return rep, nil
+	return rep, cancelErr
+}
+
+// failedStatus is the run status recorded when embedFiles returns err: a
+// cancellation is "cancelled" (the stop was requested, the data did not fail),
+// anything else is "failed".
+func failedStatus(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	return "failed"
 }
 
 // needsVector is the incremental selection, shared by Run and IncrementalBacklog
@@ -477,6 +493,10 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 				if errors.Is(err, ErrEndpointConfig) {
 					return err
 				}
+				// A cancelled run is not poison: stop, do not retry item by item.
+				if cerr := ctx.Err(); cerr != nil {
+					return cerr
+				}
 				// Per-item retry with shrink: a batch the provider rejected
 				// is retried item by item (healthy siblings still commit),
 				// and an item the provider rejects is HALVED and retried
@@ -499,6 +519,9 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 						if ierr != nil {
 							if errors.Is(ierr, ErrEndpointConfig) {
 								return ierr
+							}
+							if cerr := ctx.Err(); cerr != nil {
+								return cerr
 							}
 							lastErr = ierr
 						}

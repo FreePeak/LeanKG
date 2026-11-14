@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"flag"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,25 +14,63 @@ import (
 )
 
 func TestBindPositional(t *testing.T) {
-	// A bare positional selects the project (the `leankg index <dir>` convention).
-	p := ""
-	bindPositional("run", []string{"/abs/child"}, &p)
-	if p != "/abs/child" {
-		t.Fatalf("positional ignored: project=%q — the silent-cwd-store footgun", p)
+	cases := []struct {
+		name        string
+		args        []string
+		project     string // --project value before the call
+		wantProject string
+		wantModel   string
+		wantErr     bool
+	}{
+		{name: "no args", args: nil, wantProject: ""},
+		{name: "bare positional selects the project", args: []string{"/abs/child"}, wantProject: "/abs/child"},
+		{name: "flag after positional is parsed", args: []string{"/abs/child", "--model", "m"}, wantProject: "/abs/child", wantModel: "m"},
+		{name: "flag before positional", args: []string{"--model", "m", "/abs/child"}, wantProject: "/abs/child", wantModel: "m"},
+		{name: "flag-only args leave project empty", args: []string{"--model", "m"}, wantProject: "", wantModel: "m"},
+		{name: "project flag after positional, same dir", args: []string{"/abs/child", "--project", "/abs/child"}, wantProject: "/abs/child"},
+		{name: "positional conflicts with --project", args: []string{"/abs/child", "--project", "/abs/other"}, wantErr: true},
+		{name: "--project alone", args: []string{"--project", "/abs/child"}, wantProject: "/abs/child"},
+		{name: "two positionals", args: []string{"/a", "/b"}, wantErr: true},
+		{name: "positional then terminator then flag-like positional", args: []string{"/a", "--", "--model"}, wantErr: true},
+		{name: "terminator ends flags", args: []string{"--", "/abs/child"}, wantProject: "/abs/child"},
+		{name: "unknown flag", args: []string{"/abs/child", "--nope"}, wantErr: true},
 	}
-
-	// --project wins over the positional.
-	p = "--set"
-	bindPositional("run", []string{"/abs/child"}, &p)
-	if p != "--set" {
-		t.Fatalf("explicit project overwritten: %q", p)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("run", flag.ContinueOnError)
+			project := fs.String("project", tc.project, "")
+			model := fs.String("model", "", "")
+			err := bindPositional("run", fs, tc.args, project)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			if *project != tc.wantProject {
+				t.Fatalf("project = %q, want %q", *project, tc.wantProject)
+			}
+			if *model != tc.wantModel {
+				t.Fatalf("model = %q, want %q (flag after the positional dropped)", *model, tc.wantModel)
+			}
+		})
 	}
+}
 
-	// Flag-only args leave project untouched.
-	p = ""
-	bindPositional("run", []string{"--model", "m"}, &p)
-	if p != "" {
-		t.Fatalf("flag value consumed as positional: %q", p)
+// A run stopped by its context returns the cancellation (the CLI exits
+// non-zero) and records the run cancelled, after the defers that release the
+// store and the sidecar have run.
+func TestRunEmbedCancelledReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LEANKG_DB_PATH", filepath.Join(dir, "leankg.db"))
+	t.Setenv("LEANKG_DB_ENGINE", "sqlite")
+	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := runEmbed(ctx, []string{"--project", dir}, "incremental")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEmbed error = %v, want context.Canceled", err)
 	}
 }
 
