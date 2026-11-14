@@ -159,7 +159,7 @@ func BenchmarkQueryL2Fuzzy(b *testing.B) {
 	defer cleanup()
 
 	const q = "parse config handler"
-	hits, err := st.FindFuzzy(q, 50)
+	hits, _, err := st.FindFuzzy(q, 50)
 	if err != nil {
 		b.Fatalf("FindFuzzy: %v", err)
 	}
@@ -170,7 +170,7 @@ func BenchmarkQueryL2Fuzzy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := st.FindFuzzy(q, 50); err != nil {
+		if _, _, err := st.FindFuzzy(q, 50); err != nil {
 			b.Fatal(err)
 		}
 	}

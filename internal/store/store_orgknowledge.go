@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // incidentScan dest carries one row's raw columns; the two backends differ
@@ -294,9 +295,65 @@ func (s *Store) KnowledgeEntriesByEnvironment(environment string, limit int) ([]
 		` ORDER BY updated_at DESC, id ASC`+limitSQL(limit, b), b.args...)
 }
 
-// KnowledgeEntriesSearch substring-matches title or content (optionally
-// narrowed by knowledge type and environment), newest first.
+// KnowledgeEntriesSearch returns the entries matching query, keyword hits first.
+// The keyword hits come from knowledge_fts: bm25 ranked, and every query term
+// must appear, as on PostgreSQL. Substring matches the index cannot see (a
+// partial word, for one) follow newest first, so recall never falls below
+// substring search. A query with no terms, or an index error, is substring-only.
 func (s *Store) KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+	ranked, err := s.knowledgeRanked(query, knowledgeType, environment, limit)
+	if err != nil {
+		ranked = nil // degrade to substring recall, as PostgreSQL does
+	}
+	if limit > 0 && len(ranked) >= limit {
+		return ranked, nil
+	}
+	substring, err := s.knowledgeSubstringSearch(query, knowledgeType, environment, limit)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(ranked))
+	for _, e := range ranked {
+		seen[e.ID] = true
+	}
+	for _, e := range substring {
+		if limit > 0 && len(ranked) >= limit {
+			break
+		}
+		if !seen[e.ID] {
+			ranked = append(ranked, e)
+		}
+	}
+	return ranked, nil
+}
+
+// knowledgeRanked is the keyword arm over knowledge_fts: hits ordered by bm25,
+// then recency. A query with no terms has no keyword arm.
+func (s *Store) knowledgeRanked(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+	terms := ftsTerms(query)
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	b := &whereBuilder{ph: func(int) string { return "?" }}
+	conds := kindEnvConds(knowledgeType, environment, b)
+	where := "1 = 1"
+	if len(conds) > 0 {
+		where = strings.Join(conds, " AND ")
+	}
+	clause := limitSQL(limit, b)
+	// The FTS5 query binds first: it is the only placeholder in the CTE.
+	args := append([]any{strings.Join(terms, " ")}, b.args...)
+	return s.knowledgeRows(`WITH hits AS (
+		SELECT entry_id AS hid, bm25(knowledge_fts) AS score
+		FROM knowledge_fts WHERE knowledge_fts MATCH ?)
+		SELECT `+knowledgeCols+` FROM knowledge_entries
+		JOIN hits ON hits.hid = knowledge_entries.id
+		WHERE `+where+` ORDER BY hits.score, updated_at DESC, id ASC`+clause, args...)
+}
+
+// knowledgeSubstringSearch substring-matches title or content (optionally
+// narrowed by knowledge type and environment), newest first.
+func (s *Store) knowledgeSubstringSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	b := &whereBuilder{ph: func(int) string { return "?" }}
 	where := searchWhere(query, knowledgeType, environment, b)
 	clause := limitSQL(limit, b)

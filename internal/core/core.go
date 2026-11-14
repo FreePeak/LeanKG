@@ -1077,28 +1077,15 @@ func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool, k
 
 // rungFuzzy is L2, the keyword rung. sqlite ranks it with FTS5/bm25; the
 // PostgreSQL backend ranks its migration-012 tsvector with ts_rank and degrades
-// through pg_trgm similarity to ILIKE substring recall (issue #273). The type
-// assertion is the only engine branch: *Store does not implement
-// store.FTSBackend, so the SQLite call is unchanged in source and behavior.
+// through pg_trgm similarity to ILIKE substring recall (issue #273). FindFuzzy
+// reports the arm that served the hits, so the rung has no engine branch.
 func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool, keep func(store.Element) bool) (map[string]any, error) {
 	window := fetchWindow(limit, keep)
-	matches, err := e.st.FindFuzzy(q, window)
-	reason := "FTS5 keyword match"
-	if fts, ok := e.st.(store.FTSBackend); ok {
-		var arm string
-		matches, arm, err = fts.SearchElementsFTS(q, window)
-		switch arm {
-		case store.ArmTrigram:
-			reason = "trigram keyword match (tsvector degraded)"
-		case store.ArmILIKE:
-			reason = "substring keyword match (tsvector+trigram degraded)"
-		default:
-			reason = "tsvector keyword match"
-		}
-	}
+	matches, arm, err := e.st.FindFuzzy(q, window)
 	if err != nil {
 		return nil, err
 	}
+	reason := keywordReason(arm)
 	matches = admit(matches, matchElement, keep, limit)
 	if pin {
 		if len(matches) == 0 {
@@ -2280,6 +2267,21 @@ func admit[T any](items []T, elementOf func(T) store.Element, keep func(store.El
 		}
 	}
 	return out
+}
+
+// keywordReason is the L2 reason for the keyword arm that served the hits. The
+// wording is part of the query response; TestKeywordReasonPerArm pins it.
+func keywordReason(arm store.Arm) string {
+	switch arm {
+	case store.ArmFTS5:
+		return "FTS5 keyword match"
+	case store.ArmTrigram:
+		return "trigram keyword match (tsvector degraded)"
+	case store.ArmILIKE:
+		return "substring keyword match (tsvector+trigram degraded)"
+	default:
+		return "tsvector keyword match"
+	}
 }
 
 // fetchWindow is how many keyword matches a rung reads before admit trims them

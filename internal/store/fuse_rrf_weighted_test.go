@@ -188,7 +188,7 @@ func TestSQLiteDefaultEntryAppliesDefaultWeights(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method != "rrf("+ArmVector+")" {
+	if method != "rrf("+string(ArmVector)+")" {
 		t.Fatalf("method = %q, want the vector arm alone", method)
 	}
 	if len(hits) != 1 {
@@ -208,7 +208,7 @@ func TestDefaultFuseWeightsIsOneSharedValue(t *testing.T) {
 	if got := DefaultFuseWeights(); got != want {
 		t.Fatalf("DefaultFuseWeights() = %+v, want %+v", got, want)
 	}
-	for _, arm := range []string{ArmTSVector, ArmTrigram, ArmILIKE, ArmName} {
+	for _, arm := range []Arm{ArmTSVector, ArmTrigram, ArmILIKE, ArmName} {
 		if w := DefaultFuseWeights().armWeight(arm); w != 1 {
 			t.Errorf("arm %s weight = %v, want 1 (lexical arms stay at 1)", arm, w)
 		}

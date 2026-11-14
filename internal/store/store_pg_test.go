@@ -106,13 +106,19 @@ func TestPGElementOps(t *testing.T) {
 		t.Fatalf("FindExact(PKG.HELPER) = %+v, %v", hits, err)
 	}
 
-	// FindFuzzy: substring over name/qualified_name, shortest name first.
-	fz, err := s.FindFuzzy("help", 10)
+	// findElementsILIKE (the substring arm behind FindFuzzy): substring over
+	// name/qualified_name, shortest name first.
+	fz, err := s.findElementsILIKE("help", 10)
 	if err != nil || len(fz) != 1 || fz[0].Element.QualifiedName != "pkg.Helper" {
-		t.Fatalf("FindFuzzy(help) = %+v, %v", fz, err)
+		t.Fatalf("findElementsILIKE(help) = %+v, %v", fz, err)
 	}
 	if fz[0].Score >= 0 {
-		t.Fatalf("FindFuzzy Score = %v; want negative (divergent -length ranking)", fz[0].Score)
+		t.Fatalf("findElementsILIKE Score = %v; want negative (divergent -length ranking)", fz[0].Score)
+	}
+	// FindFuzzy serves the keyword arm and names the arm that answered.
+	kw, arm, err := s.FindFuzzy("help", 10)
+	if err != nil || len(kw) != 1 || kw[0].Element.QualifiedName != "pkg.Helper" || arm == "" {
+		t.Fatalf("FindFuzzy(help) = %+v, arm %q, %v", kw, arm, err)
 	}
 
 	// Relationship reads.
@@ -670,7 +676,7 @@ func TestPGNoOrphanHitsAndIdentifierTerms(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	hits, arm, err := s.SearchElementsFTS("rotate staging credentials", 5)
+	hits, arm, err := s.FindFuzzy("rotate staging credentials", 5)
 	if err != nil || len(hits) == 0 || hits[0].Element.Name != "RotateStagingCredentials" {
 		t.Fatalf("identifier terms via %s: %v %+v", arm, err, hits)
 	}

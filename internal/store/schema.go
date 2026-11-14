@@ -435,4 +435,27 @@ ALTER TABLE emb_stamp ADD COLUMN text_cap INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE accounts ADD COLUMN site_admin INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_accounts_site_admin ON accounts (site_admin) WHERE site_admin = 1;
 `})
+	// The knowledge keyword index (CX-15): knowledge_entries had substring
+	// search only. entry_id is an explicit join column, not rowid, because
+	// knowledge_entries is keyed by a TEXT id and an implicit rowid can change
+	// on VACUUM. The INSERT backfills every existing entry. Triggers keep the
+	// index in step with every write (an upsert fires the UPDATE trigger), so
+	// no write path has to remember to maintain it.
+	migrations = append(migrations, migration{19, "knowledge-fts", `
+CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+	entry_id UNINDEXED, title, content
+);
+INSERT INTO knowledge_fts (entry_id, title, content)
+	SELECT id, title, content FROM knowledge_entries;
+CREATE TRIGGER IF NOT EXISTS knowledge_fts_insert AFTER INSERT ON knowledge_entries BEGIN
+	INSERT INTO knowledge_fts (entry_id, title, content) VALUES (new.id, new.title, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS knowledge_fts_update AFTER UPDATE ON knowledge_entries BEGIN
+	DELETE FROM knowledge_fts WHERE entry_id = old.id;
+	INSERT INTO knowledge_fts (entry_id, title, content) VALUES (new.id, new.title, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS knowledge_fts_delete AFTER DELETE ON knowledge_entries BEGIN
+	DELETE FROM knowledge_fts WHERE entry_id = old.id;
+END;
+`})
 }

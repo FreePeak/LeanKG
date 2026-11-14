@@ -558,12 +558,12 @@ type FuzzyMatch struct {
 	Score   float64
 }
 
-// FindFuzzy implements the L2 rung over FTS5. The query is tokenized into
-// quoted OR terms so user input can never inject FTS syntax.
-func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
+// FindFuzzy implements the L2 rung over FTS5 and reports ArmFTS5. The query is
+// tokenized into quoted OR terms so user input can never inject FTS syntax.
+func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) {
 	q := ftsQuery(query)
 	if q == "" {
-		return nil, nil
+		return nil, ArmFTS5, nil
 	}
 	if limit <= 0 {
 		limit = 50
@@ -573,7 +573,7 @@ func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
 		WHERE elements_fts MATCH ?
 		ORDER BY score LIMIT ?`, q, limit)
 	if err != nil {
-		return nil, err
+		return nil, ArmFTS5, err
 	}
 	defer rows.Close()
 	var out []FuzzyMatch
@@ -583,20 +583,26 @@ func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
 		if err := rows.Scan(&m.Element.QualifiedName, &m.Element.ElementType, &m.Element.Name, &m.Element.FilePath,
 			&m.Element.LineStart, &m.Element.LineEnd, &m.Element.Language, &m.Element.ParentQualified,
 			&m.Element.Content, &meta, &m.Score); err != nil {
-			return nil, err
+			return nil, ArmFTS5, err
 		}
 		if meta != "" && meta != "{}" {
 			_ = json.Unmarshal([]byte(meta), &m.Element.Metadata)
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	return out, ArmFTS5, rows.Err()
 }
 
-// ftsQuery turns free text into a safe FTS5 query. Plain identifier-ish terms
+// ftsQuery turns free text into a safe FTS5 query: the terms of ftsTerms,
+// OR-joined.
+func ftsQuery(query string) string {
+	return strings.Join(ftsTerms(query), " OR ")
+}
+
+// ftsTerms turns free text into FTS5-safe terms. Plain identifier-ish terms
 // pass through (so `parse*` stays a prefix query); anything else is quoted so
 // user input can never inject FTS5 syntax.
-func ftsQuery(query string) string {
+func ftsTerms(query string) []string {
 	fields := strings.FieldsFunc(query, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' && r != '*'
 	})
@@ -615,7 +621,7 @@ func ftsQuery(query string) string {
 		}
 		parts = append(parts, `"`+f+`"`)
 	}
-	return strings.Join(parts, " OR ")
+	return parts
 }
 
 // isBareTerm reports whether f is a safe FTS5 bare token (letters, digits,

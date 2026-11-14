@@ -402,16 +402,16 @@ func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error)
 	return out, nil
 }
 
-// FindFuzzy implements the L2 rung's degraded arm: literal-substring recall
-// over name/qualified_name with no ranking signal at all.
+// findElementsILIKE is the degraded arm of the L2 rung: literal-substring
+// recall over name/qualified_name with no ranking signal at all.
 // Divergence from sqlite (documented): FTS5 provides bm25 ranking, which a
 // plain LIKE search has no equivalent for. Hits rank by ascending
 // qualified-name length and Score = -length(qualified_name) so shorter (more
 // specific) names come first; the ordering parity is kept, but absolute Score
-// values are not comparable across engines. The PG keyword rung prefers
-// tsvector ranking, then pg_trgm similarity, and only lands here (see
-// SearchElementsFTS in pg_fts.go).
-func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, error) {
+// values are not comparable across engines. The PG keyword rung (FindFuzzy in
+// pg_fts.go) prefers tsvector ranking, then pg_trgm similarity, and only lands
+// here.
+func (s *PGStore) findElementsILIKE(query string, limit int) ([]FuzzyMatch, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}

@@ -58,7 +58,7 @@ func TestFindFuzzyFTS(t *testing.T) {
 	}
 	// Free text must not be able to inject FTS5 syntax.
 	for _, q := range []string{"parse config", "parse*", "config NEAR yaml"} {
-		hits, err := s.FindFuzzy(q, 10)
+		hits, _, err := s.FindFuzzy(q, 10)
 		if err != nil {
 			t.Fatalf("fuzzy %q: %v", q, err)
 		}
@@ -68,7 +68,7 @@ func TestFindFuzzyFTS(t *testing.T) {
 	}
 	// Hostile input must never error (FTS5 syntax injection); matches optional.
 	for _, q := range []string{"\"parse", `) OR (1=1`, "parse AND NOT config"} {
-		if _, err := s.FindFuzzy(q, 10); err != nil {
+		if _, _, err := s.FindFuzzy(q, 10); err != nil {
 			t.Fatalf("fuzzy %q must not error: %v", q, err)
 		}
 	}
@@ -92,7 +92,7 @@ func TestDeleteByFile(t *testing.T) {
 		t.Fatalf("element count = %d, want 1", n)
 	}
 	// FTS must not return the deleted element.
-	hits, err := s.FindFuzzy("A", 10)
+	hits, _, err := s.FindFuzzy("A", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +546,7 @@ func TestIdentifierTermsReachFTS(t *testing.T) {
 		Name: "RotateStagingCredentials", FilePath: "a.go", Language: "go", Content: "func RotateStagingCredentials() {}"}}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := s.FindFuzzy("rotate staging credentials", 5)
+	hits, _, err := s.FindFuzzy("rotate staging credentials", 5)
 	if err != nil || len(hits) == 0 {
 		t.Fatalf("split terms not searchable: %v %v", err, hits)
 	}
@@ -560,13 +560,13 @@ func TestIdentifierTermsReachFTS(t *testing.T) {
 	if err := s.KVSet("fts", "terms_version", "0"); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.FindFuzzy("staging", 5); len(hits) != 0 {
+	if hits, _, _ := s.FindFuzzy("staging", 5); len(hits) != 0 {
 		t.Fatal("precondition: old-style row should not match the split word")
 	}
 	if err := s.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.FindFuzzy("staging", 5); len(hits) == 0 {
+	if hits, _, _ := s.FindFuzzy("staging", 5); len(hits) == 0 {
 		t.Fatal("backfill did not add split terms to existing rows")
 	}
 }
