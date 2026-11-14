@@ -138,17 +138,13 @@ func Routes(st store.Backend) http.Handler {
 			writeFail(w, err.Error())
 			return
 		}
-		if ctx.AccountID == "" {
-			writeOK(w, rows)
-			return
-		}
-		own := make([]store.Token, 0, len(rows))
+		visible := make([]tokenSummary, 0, len(rows))
 		for _, t := range rows {
-			if t.AccountID == ctx.AccountID {
-				own = append(own, t)
+			if ctx.AccountID == "" || t.AccountID == ctx.AccountID {
+				visible = append(visible, summarizeToken(t))
 			}
 		}
-		writeOK(w, own)
+		writeOK(w, visible)
 	})
 	mux.HandleFunc("POST /api/v1/auth/token/revoke", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -157,11 +153,11 @@ func Routes(st store.Backend) http.Handler {
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		// Rust checked only that an Authorization header was present before
-		// revoking any token id. The Go port requires a VALID bearer (every
-		// other protected handler does); revocation stays unscoped, matching
-		// Rust, so any valid caller may revoke any token id.
-		if _, ok := caller(st, w, r); !ok {
+		// Revoking needs a valid bearer and either admin rights or ownership of
+		// the token (CX-03). Rust checked only for an Authorization header, so
+		// any bearer could revoke any token id.
+		ctx, ok := caller(st, w, r)
+		if !ok {
 			return
 		}
 		rows, err := st.TokenList()
@@ -171,14 +167,21 @@ func Routes(st store.Backend) http.Handler {
 		}
 		revoked := false
 		for _, t := range rows {
-			if t.ID != req.TokenID || t.RevokedAt != 0 {
+			if t.ID != req.TokenID {
 				continue
 			}
-			if err := st.TokenRevoke(t.ID, time.Now().Unix()); err != nil {
-				writeFail(w, err.Error())
+			if !ctx.CanAdmin() && (ctx.AccountID == "" || t.AccountID != ctx.AccountID) {
+				msg := "insufficient permission to revoke another account's token (owner or admin required)"
+				writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: &msg})
 				return
 			}
-			revoked = true
+			if t.RevokedAt == 0 {
+				if err := st.TokenRevoke(t.ID, time.Now().Unix()); err != nil {
+					writeFail(w, err.Error())
+					return
+				}
+				revoked = true
+			}
 			break
 		}
 		writeOK(w, revoked)
@@ -299,6 +302,30 @@ func requireAccount(st store.Backend, w http.ResponseWriter, r *http.Request) (A
 		return AuthContext{}, false
 	}
 	return ctx, true
+}
+
+// tokenSummary is the token-list wire shape: store.Token without the at-rest
+// hash. The hash is never serialized to a client (CX-03), the same rule that
+// keeps password_hash off the account response.
+type tokenSummary struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Role       string   `json:"role"`
+	CreatedAt  int64    `json:"created_at"`
+	AccountID  string   `json:"account_id,omitempty"`
+	OrgID      string   `json:"org_id,omitempty"`
+	Scopes     []string `json:"scopes,omitempty"`
+	ExpiresAt  int64    `json:"expires_at,omitempty"`
+	RevokedAt  int64    `json:"revoked_at,omitempty"`
+	LastUsedAt int64    `json:"last_used_at,omitempty"`
+}
+
+func summarizeToken(t store.Token) tokenSummary {
+	return tokenSummary{
+		ID: t.ID, Name: t.Name, Role: t.Role, CreatedAt: t.CreatedAt,
+		AccountID: t.AccountID, OrgID: t.OrgID, Scopes: t.Scopes,
+		ExpiresAt: t.ExpiresAt, RevokedAt: t.RevokedAt, LastUsedAt: t.LastUsedAt,
+	}
 }
 
 // apiResponse is the Rust ApiResponse<T> wire shape: all three keys are always
