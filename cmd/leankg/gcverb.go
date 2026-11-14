@@ -31,11 +31,7 @@ func cmdGC(args []string) {
 	if len(positional) == 1 {
 		*project = positional[0]
 	}
-	eng := *engine
-	if eng == "" {
-		eng = os.Getenv("LEANKG_DB_ENGINE")
-	}
-	st, err := openStore(context.Background(), *project, "", store.RW)
+	st, err := openStoreWith(context.Background(), *project, *engine, "", store.RW)
 	if err != nil {
 		fatalText(fmt.Errorf("gc: open store: %w", err))
 	}

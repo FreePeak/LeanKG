@@ -92,7 +92,7 @@ func TestIndexSourceDoesNotSweepProject(t *testing.T) {
 
 	// Survivors, read through the store's own bookkeeping: the project's file is
 	// still there and the refused source's file never arrived.
-	st, oerr := store.Open(filepath.Join(proj, ".leankg", "leankg.db"), store.RO)
+	st, oerr := openFixtureStore(filepath.Join(proj, ".leankg", "leankg.db"), store.RO)
 	if oerr != nil {
 		t.Fatalf("open store: %v", oerr)
 	}

@@ -48,7 +48,7 @@ func TestParseTimeFilter(t *testing.T) {
 // handle, so the CLI under test owns the file afterward.
 func seedAuditLedger(t *testing.T, dir string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}

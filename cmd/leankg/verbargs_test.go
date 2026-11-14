@@ -414,7 +414,7 @@ func readSetupMode(t *testing.T, cfgPath string) setupcfg.SetupMode {
 // project store — the observable effect of `refresh --full`.
 func requireEmbedMode(t *testing.T, dir, want string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RO)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RO)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

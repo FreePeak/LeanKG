@@ -114,3 +114,52 @@ func TestJobsStopCancelsRunningJobs(t *testing.T) {
 		t.Fatal("Stop returned before the job exited")
 	}
 }
+
+// TestEmbedDebounceOutlivesRequest pins the embed half of CX-05: the debounce
+// window runs on the job context, not the request context, so the handler
+// returning does not cut the window short. The window is driven by a channel,
+// not by the clock, so the test takes no time beyond the handler call.
+func TestEmbedDebounceOutlivesRequest(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".leankg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	eng := openEngine(t, dir)
+
+	orig := embedDebounce
+	t.Cleanup(func() { embedDebounce = orig })
+	jobs := NewJobs(context.Background())
+	t.Cleanup(jobs.Stop)
+
+	armed := make(chan time.Duration, 1)
+	release := make(chan struct{})
+	ctxErr := make(chan error, 1)
+	embedDebounce = func(ctx context.Context, d time.Duration) bool {
+		armed <- d
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		ctxErr <- ctx.Err()
+		return false
+	}
+
+	reqCtx, endRequest := context.WithCancel(context.Background())
+	body := []byte(`{"embed_enabled":true,"embed_debounce_seconds":7}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader(body)).WithContext(reqCtx)
+	rec := httptest.NewRecorder()
+	RegisterAutoConfig(http.NewServeMux(), eng, WithJobs(jobs)).ServeHTTP(rec, req)
+	endRequest()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+
+	close(release)
+	if d := <-armed; d != 7*time.Second {
+		t.Fatalf("debounce window = %v, want 7s from embed_debounce_seconds", d)
+	}
+	if err := <-ctxErr; err != nil {
+		t.Fatalf("embed debounce ran on a cancelled context after the handler returned: %v", err)
+	}
+	jobs.Wait()
+}

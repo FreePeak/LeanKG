@@ -40,7 +40,7 @@ func projectWithMemory(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(banks, "bank.jsonl"), []byte(buf.String()), 0o644); err != nil {
 		t.Fatalf("write fixture bank: %v", err)
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open store %s: %v", dir, err)
 	}
@@ -91,7 +91,7 @@ func TestFleetTargetsCompactEveryProjectMemory(t *testing.T) {
 		}
 	}
 
-	st, err := store.Open(filepath.Join(defaultDir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(defaultDir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open default store: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestFleetTargetsSkipProjectsWithoutAMemoryIndex(t *testing.T) {
 	defaultDir := t.TempDir()
 	projectWithMemory(t, defaultDir)
 	plain := t.TempDir()
-	st, err := store.Open(filepath.Join(plain, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(plain, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestFleetTargetsSkipProjectsWithoutAMemoryIndex(t *testing.T) {
 		t.Fatalf("open default memory: %v", err)
 	}
 	defer mem.Close()
-	defStore, err := store.Open(filepath.Join(defaultDir, ".leankg", "leankg.db"), store.RW)
+	defStore, err := openFixtureStore(filepath.Join(defaultDir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open default store: %v", err)
 	}

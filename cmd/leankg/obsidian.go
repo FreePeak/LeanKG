@@ -98,7 +98,7 @@ func cmdObsidian(args []string) {
 	case "push", "pull", "watch":
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+		st, err := openStore(ctx, dir, "", store.RW)
 		if err != nil {
 			log.Fatalf("open store: %v", err)
 		}

@@ -6,8 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -118,11 +116,11 @@ func runDashboardWeb(ctx context.Context, f *dashboardFlags, out io.Writer, open
 	if err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp", f.addr)
+	ls, err := bindAll(endpoint{addr: f.addr, h: srv.Handler()})
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", f.addr, err)
+		return err
 	}
-	url := "http://" + ln.Addr().String() + "/"
+	url := "http://" + ls[0].ln.Addr().String() + "/"
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -131,10 +129,9 @@ func runDashboardWeb(ctx context.Context, f *dashboardFlags, out io.Writer, open
 		defer close(runDone)
 		srv.Run(ctx)
 	}()
-
-	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second}
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- httpSrv.Serve(ln) }()
+	// Serving starts before the opener runs, so the opener can reach the URL.
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- runServers(ctx, ls...) }()
 
 	fmt.Fprintf(out, "LeanKG dashboard: %s (ledger %s)\n", url, telemetry.DBPath(home))
 	if f.allowRemote {
@@ -146,20 +143,10 @@ func runDashboardWeb(ctx context.Context, f *dashboardFlags, out io.Writer, open
 		}
 	}
 
-	var serveFailed error
-	select {
-	case <-ctx.Done():
-	case serveFailed = <-serveErr:
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = httpSrv.Shutdown(shutdownCtx)
+	serveErr := <-serveDone
 	stop()
 	<-runDone
-	if serveFailed != nil && !errors.Is(serveFailed, http.ErrServerClosed) {
-		return fmt.Errorf("serve %s: %w", url, serveFailed)
-	}
-	return nil
+	return serveErr
 }
 
 func errNotImplemented(what string) error { return fmt.Errorf("%s: not implemented yet", what) }

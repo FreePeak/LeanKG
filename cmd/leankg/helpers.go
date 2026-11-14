@@ -2,13 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -46,17 +51,68 @@ func gateAutoConfig(st store.Backend, mcp, autoConfig http.Handler) http.Handler
 	return mux
 }
 
-func serveHTTP(ctx context.Context, h http.Handler, addr string) {
-	srv := &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 5 * time.Second}
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-	}()
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Fprintf(os.Stderr, "leankg: http %s: %v\n", addr, err)
+// shutdownTimeout bounds how long a listener may drain in-flight requests once
+// serve is asked to stop. Past it the listener is closed by force.
+const shutdownTimeout = 5 * time.Second
+
+// endpoint is one listen address and the handler that serves it.
+type endpoint struct {
+	addr string
+	h    http.Handler
+}
+
+// listener is a bound socket and the server that serves it.
+type listener struct {
+	ln  net.Listener
+	srv *http.Server
+}
+
+// bindAll binds every endpoint before anything serves, so a port that is
+// already in use is reported before a request is accepted. When one bind
+// fails, the listeners bound so far are closed and the error is returned.
+func bindAll(eps ...endpoint) ([]listener, error) {
+	ls := make([]listener, 0, len(eps))
+	for _, ep := range eps {
+		ln, err := net.Listen("tcp", ep.addr)
+		if err != nil {
+			for _, l := range ls {
+				_ = l.ln.Close()
+			}
+			return nil, fmt.Errorf("bind %s: %w", ep.addr, err)
+		}
+		ls = append(ls, listener{ln: ln, srv: &http.Server{Handler: ep.h, ReadHeaderTimeout: 5 * time.Second}})
 	}
+	return ls, nil
+}
+
+// runServers serves every listener until ctx is cancelled or one of them fails.
+// A Serve error other than http.ErrServerClosed cancels the rest and is
+// returned. On cancellation each server is shut down gracefully, within
+// shutdownTimeout, and runServers returns only after every Shutdown has
+// finished, so the caller may close its stores once it returns.
+func runServers(ctx context.Context, ls ...listener) error {
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		<-gctx.Done()
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		defer cancel()
+		for _, l := range ls {
+			if err := l.srv.Shutdown(sctx); err != nil {
+				log.Printf("serve: %s did not drain within %s, closing it: %v", l.ln.Addr(), shutdownTimeout, err)
+				_ = l.srv.Close()
+			}
+		}
+		return nil
+	})
+	for _, l := range ls {
+		g.Go(func() error {
+			if err := l.srv.Serve(l.ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("listener %s stopped: %w", l.ln.Addr(), err)
+			}
+			return nil
+		})
+	}
+	return g.Wait()
 }
 
 // resolveProjectDir picks the project directory for a verb: the explicit

@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -35,7 +34,7 @@ func cmdWriter(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, dir, err := openWriterStore(ctx, dir)
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}
@@ -94,6 +93,16 @@ func cmdWriter(args []string) {
 	log.Printf("writer: watching %s (Ctrl-C to stop)", dir)
 	<-ctx.Done()
 	w.Stop()
+}
+
+// openWriterStore opens the writer's read-write store for dir. It anchors dir
+// the way serve does and then goes through the same factory, so the writer
+// and serve open one store. It returns the anchored directory, which the
+// writer indexes and watches.
+func openWriterStore(ctx context.Context, dir string) (store.Backend, string, error) {
+	dir = anchorProjectDir(dir)
+	st, err := openStore(ctx, dir, "", store.RW)
+	return st, dir, err
 }
 
 func cmdConnect(args []string) {

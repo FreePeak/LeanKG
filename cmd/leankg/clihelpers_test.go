@@ -137,7 +137,7 @@ func runCLIWith(t *testing.T, dir string, env []string, args ...string) (string,
 func seedCLIProject(t *testing.T, els []store.Element, rels []store.Relationship) string {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

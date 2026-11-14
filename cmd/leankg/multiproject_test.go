@@ -25,7 +25,7 @@ import (
 // holding one element per name in `symbols`.
 func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}

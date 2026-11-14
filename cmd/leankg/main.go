@@ -290,7 +290,17 @@ func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp
 	return srv
 }
 
+// cmdServe runs serve and turns its error into a non-zero exit. serve returns
+// its error rather than calling log.Fatal, so its defers (store close,
+// telemetry flush, auto-config job join) run before the process exits.
 func cmdServe(args []string) {
+	if err := serve(args); err != nil {
+		fmt.Fprintln(os.Stderr, "serve:", err)
+		os.Exit(1)
+	}
+}
+
+func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	dbFlag := fs.String("db", "", "standalone SQLite store file path (default empty = <project>/.leankg/leankg.db); sets the project directory optional (FR-P2)")
@@ -306,7 +316,34 @@ func cmdServe(args []string) {
 	hindsightCompat := fs.Bool("hindsight-compat", false, "on the REST listener, mount the Hindsight-wire compat aliases (/v1/default/banks/...) that omp's memory.backend=hindsight speaks; requires --memory")
 	memoryGlobal := fs.Bool("memory-global", false, "keep the memory layer in ~/.leankg/memory instead of <project>/.leankg/memory (shared/portfolio memory root; requires --memory)")
 	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
+		return err
+	}
+	addr := *httpAddr
+	if addr == "" && *restAddr == "" {
+		// Loopback by default (RS-03): the MCP surface reads project files and
+		// indexes, and with no token configured every caller is Admin. Pass
+		// --http :9699 explicitly to listen on every interface.
+		addr = defaultHTTPAddr
+	}
+	// Flag facts are checked before any store is opened or migrated, so a bad
+	// combination leaves the database file untouched. The listen addresses are
+	// checked for syntax only here (GateOn is set so no exposure is refused);
+	// the exposure rule below needs the auth state the store holds.
+	binds := []struct {
+		kind servebind.Kind
+		addr string
+	}{
+		{servebind.KindMCP, addr},
+		{servebind.KindREST, *restAddr},
+		{servebind.KindRPC, *rpcAddr},
+	}
+	if *stdio && (*httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "") {
+		return errors.New("--stdio is exclusive of --http/--rest/--rpc/--ui")
+	}
+	for _, l := range binds {
+		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: true}); err != nil {
+			return err
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -319,22 +356,13 @@ func cmdServe(args []string) {
 		var err error
 		dir, err = os.Getwd()
 		if err != nil {
-			log.Fatalf("resolve cwd: %v", err)
+			return fmt.Errorf("resolve cwd: %w", err)
 		}
 	}
-	// Standalone mode: the DB is externally imported (FR-P2-3);
-	// the user owns the store — do not anchor to a .leankg dir
-	// that doesn't exist.
-	if dbPath := projectcfg.StandaloneDBPath(dir); dbPath != "" {
-		goto serveStart
-	}
-	// leankg.yaml project.project_path / project.root anchor,
-	// canonicalized before use (Rust MCPServer::resolve_project_root, N3).
-	if dbDir := filepath.Join(dir, ".leankg"); projectcfg.ResolveProjectDBDir(dbDir) != dbDir {
-		dir = filepath.Dir(projectcfg.ResolveProjectRoot(dbDir))
-	}
-
-serveStart:
+	// leankg.yaml project.project_path / project.root anchor, canonicalized
+	// before use (Rust MCPServer::resolve_project_root, N3); the writer applies
+	// the same rule (anchorProjectDir).
+	dir = anchorProjectDir(dir)
 
 	// Standalone mode skips the project-gated sidecars (they expect
 	// a .leankg dir in dir — FR-P2-3).
@@ -357,18 +385,14 @@ afterSidecars:
 	if eng == "" {
 		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
 	}
-	dbPath := *dbFlag
-	if dbPath == "" {
-		dbPath = projectcfg.StandaloneDBPath(dir)
-	}
-	st, err := store.OpenBackend(ctx, dir, eng, projectcfg.PGURL(dir), dbPath, mode)
+	st, err := openStoreWith(ctx, dir, eng, *dbFlag, mode)
 	if err != nil {
-		log.Fatalf("open store: %s", storeErrText(eng, err))
+		return fmt.Errorf("open store: %s", storeErrText(eng, err))
 	}
 	defer st.Close()
 	if !*readOnly {
 		if err := st.Migrate(); err != nil {
-			log.Fatalf("migrate: %v", err)
+			return fmt.Errorf("migrate: %w", err)
 		}
 	}
 
@@ -396,7 +420,7 @@ afterSidecars:
 		// logged because it is also the single-writer anchor: two servers on
 		// one root append to the same JSONL with no cross-process lock.
 		if mem, err = memory.Open(dir, *memoryGlobal); err != nil {
-			log.Fatalf("memory: %v", err)
+			return fmt.Errorf("memory: %w", err)
 		}
 		log.Printf("leankg memory root %s", mem.Root())
 	}
@@ -408,7 +432,7 @@ afterSidecars:
 	var embedder core.QueryEmbedder
 	if *embedProvider != "" {
 		if err := os.Setenv("LEANKG_EMBED_PROVIDER", *embedProvider); err != nil {
-			log.Fatalf("set provider env: %v", err)
+			return fmt.Errorf("set provider env: %w", err)
 		}
 	}
 	if os.Getenv("LEANKG_EMBED_PROVIDER") != "" {
@@ -527,10 +551,13 @@ afterSidecars:
 		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle)
 	}
 
+	// Auto-config jobs outlive the request that started them. serve owns them:
+	// they are cancelled and joined when serve returns, before the store closes
+	// (defers run last-in first-out).
+	jobs := restauto.NewJobs(ctx)
+	defer jobs.Stop()
+
 	if *stdio {
-		if *httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "" {
-			log.Fatal("serve: --stdio is exclusive of --http/--rest/--rpc/--ui")
-		}
 		// stdio is one process-bound MCP session; per-project selection
 		// travels as the `project` tool argument, routed through the
 		// router hook.
@@ -538,19 +565,12 @@ afterSidecars:
 		srv.SetRecorder(rec) // plan v4.15 DS-04: capture tools/call and identity
 		registerMCPSink(srv)
 		log.Printf("leankg serve (stdio) project=%s engine=%s", dir, st.Engine())
-		if err := srv.RunStdio(ctx); err != nil {
-			log.Fatalf("stdio: %v", err)
+		if err := srv.RunStdio(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("stdio: %w", err)
 		}
-		return
+		return nil
 	}
 
-	addr := *httpAddr
-	if addr == "" && *restAddr == "" {
-		// Loopback by default (RS-03): the MCP surface reads project files and
-		// indexes, and with no token configured every caller is Admin. Pass
-		// --http :9699 explicitly to listen on every interface.
-		addr = defaultHTTPAddr
-	}
 	// Exposure gate (RS-03, enforced): a listener that leaves the loopback
 	// interface is REFUSED unless a token gates its callers. With the gate
 	// off every caller resolves to Admin, so a wildcard bind hands the
@@ -569,18 +589,14 @@ afterSidecars:
 		log.Printf("warning: auth gate state unknown: %v", gateErr)
 		gateOn = false
 	}
-	for _, l := range []struct {
-		kind servebind.Kind
-		addr string
-	}{
-		{servebind.KindMCP, addr},
-		{servebind.KindREST, *restAddr},
-		{servebind.KindRPC, *rpcAddr},
-	} {
+	for _, l := range binds {
 		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
-			log.Fatalf("serve: %v", err)
+			return err
 		}
 	}
+	// Every listener is collected here and bound together below, so a port
+	// already in use is reported before any of them starts serving.
+	var eps []endpoint
 	if addr != "" {
 		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject()))
 		mcpSrv.SetProjectRouter(router)
@@ -599,9 +615,9 @@ afterSidecars:
 		// that returned handler, so serving the original one served everything
 		// except /api/v1/mcp/auto-config. Auto-config is the one write route on
 		// this listener, so it alone is gated (CX-02).
-		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
+		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs))
 		h = gateAutoConfig(st, h, autoConfig)
-		go serveHTTP(ctx, h, addr)
+		eps = append(eps, endpoint{addr: addr, h: h})
 	}
 	if *restAddr != "" {
 		var restOpts []rest.HandlerOption
@@ -613,7 +629,7 @@ afterSidecars:
 		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
-		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
+		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs))
 		// The REST capture handler is built explicitly so a consent reload can
 		// re-point its sink (a level raise that reached nobody was the bug).
 		cap := rest.NewCaptureHandler(rec, telemetry.TransportREST)
@@ -627,7 +643,7 @@ afterSidecars:
 		root.Handle("/api/v1/auth/", auth.Routes(st))
 		root.Handle("/", auth.MiddlewareWithStore(st, h))
 		log.Printf("leankg serve (REST) on %s", *restAddr)
-		go serveHTTP(ctx, root, *restAddr)
+		eps = append(eps, endpoint{addr: *restAddr, h: root})
 	}
 	if *rpcAddr != "" {
 		path, handler := rpc.Handler(engine, rec)
@@ -647,7 +663,7 @@ afterSidecars:
 		// translates the refusal to name their value and this wire's limit.
 		mux.Handle(path, rpc.ArgsRefusalRecovery(handler))
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
-		go serveHTTP(ctx, auth.MiddlewareWithStore(st, mux), *rpcAddr)
+		eps = append(eps, endpoint{addr: *rpcAddr, h: auth.MiddlewareWithStore(st, mux)})
 	}
 	if *uiAddr != "" {
 		// One address, two surfaces: /api/ wins, the SPA fallback serves
@@ -698,9 +714,13 @@ afterSidecars:
 			}
 			log.Printf("warning: dashboard bound to %s — its API (query/file/import) is unauthenticated; bind loopback or front it with a proxy", bound)
 		}
-		go serveHTTP(ctx, uiMux, *uiAddr)
+		eps = append(eps, endpoint{addr: *uiAddr, h: uiMux})
 	}
-	<-ctx.Done()
+	ls, err := bindAll(eps...)
+	if err != nil {
+		return err
+	}
+	return runServers(ctx, ls...)
 }
 
 // defaultHTTPAddr is the MCP listener when serve is given no address.
@@ -719,7 +739,7 @@ func maintenanceStoreExists(ctx context.Context, dir, engine string) bool {
 		_, err := os.Stat(filepath.Join(dir, ".leankg", "leankg.db"))
 		return err == nil
 	}
-	probe, err := store.OpenBackend(ctx, dir, engine, os.Getenv("LEANKG_PG_URL"), "", store.RO)
+	probe, err := openStoreWith(ctx, dir, engine, "", store.RO)
 	if err != nil {
 		return false
 	}
@@ -782,7 +802,7 @@ func fleetTargets(ctx context.Context, defaultDir string, st store.Backend, mem 
 		if !maintenanceStoreExists(ctx, d, eng) {
 			continue
 		}
-		bs, err := store.OpenBackend(ctx, d, eng, os.Getenv("LEANKG_PG_URL"), "", store.RW)
+		bs, err := openStoreWith(ctx, d, eng, "", store.RW)
 		if err != nil {
 			log.Printf("maintenance: open %s: %v", d, err)
 			continue
@@ -847,7 +867,7 @@ func cmdDoctor(args []string) int {
 		dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
 		dbPath = filepath.Join(dbDir, "leankg.db")
 	}
-	st, err := store.Open(dbPath, store.RO)
+	st, err := openStore(context.Background(), dir, dbPath, store.RO)
 	if err != nil {
 		// A missing store is not a storage-layer event to the reader: it means
 		// the project has not been indexed. Naming the syscall ("read-only open

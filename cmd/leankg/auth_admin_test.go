@@ -17,7 +17,7 @@ import (
 
 func adminInitStore(t *testing.T) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	s, err := openFixtureStore(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

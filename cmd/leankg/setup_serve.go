@@ -31,8 +31,7 @@ func maybeAutoIndexOnStart(ctx context.Context, dir string, readOnly bool) {
 
 	// The store may live under the config's project_path anchor, not the
 	// serve dir itself (cmdServe applies the same anchor above).
-	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
-	st, err := store.Open(filepath.Join(dbDir, "leankg.db"), store.RO)
+	st, err := openStore(ctx, dir, "", store.RO)
 	if err != nil {
 		log.Printf("auto-index: cannot read store state: %v", err)
 		return

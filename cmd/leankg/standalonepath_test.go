@@ -122,7 +122,7 @@ func TestStandaloneEmbedRunIsSelfContained(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(proj, ".leankg", "embed.lock")); err == nil {
 		t.Fatalf("the embed lock belongs next to the store, not at %s/.leankg/embed.lock", proj)
 	}
-	st, err := store.Open(storePath, store.RO)
+	st, err := openFixtureStore(storePath, store.RO)
 	if err != nil {
 		t.Fatalf("open standalone store: %v", err)
 	}
