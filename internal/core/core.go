@@ -2271,7 +2271,7 @@ func admit[T any](items []T, elementOf func(T) store.Element, keep func(store.El
 
 // keywordReason is the L2 reason for the keyword arm that served the hits. The
 // wording is part of the query response; TestKeywordReasonPerArm pins it.
-func keywordReason(arm string) string {
+func keywordReason(arm store.Arm) string {
 	switch arm {
 	case store.ArmFTS5:
 		return "FTS5 keyword match"

@@ -59,7 +59,7 @@ func TestFuseRRFCreditsMultiArmAgreement(t *testing.T) {
 	if _, ok := fused[1].Ranks[ArmTSVector]; ok {
 		t.Fatalf("solo ranks = %v; want no tsvector entry", fused[1].Ranks)
 	}
-	wantRanks := map[string]int{ArmVector: 2, ArmTSVector: 1, ArmTrigram: 1}
+	wantRanks := map[Arm]int{ArmVector: 2, ArmTSVector: 1, ArmTrigram: 1}
 	for name, rank := range wantRanks {
 		if fused[0].Ranks[name] != rank {
 			t.Fatalf("shared rank %s = %d; want %d", name, fused[0].Ranks[name], rank)
@@ -429,7 +429,7 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 	// The name arm is fused in too (the ArmName ranking arm, gated on corpus
 	// rarity). It appears here because the fixture's query has a token rare
 	// enough to reach it — which is the arm working, not noise.
-	if method != "rrf("+ArmVector+"+"+ArmTSVector+"+"+ArmTrigram+"+"+ArmName+")" {
+	if method != "rrf("+string(ArmVector)+"+"+string(ArmTSVector)+"+"+string(ArmTrigram)+"+"+string(ArmName)+")" {
 		t.Fatalf("method = %q; want every arm that fired", method)
 	}
 	if len(hits) != 4 {
@@ -475,7 +475,7 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 	if len(hits) != 4 || hits[0].Element.QualifiedName != "pkg.Alpha" {
 		t.Fatalf("no-lexeme hits = %+v; want cosine order", hits)
 	}
-	if method != "rrf("+ArmVector+")" {
+	if method != "rrf("+string(ArmVector)+")" {
 		t.Fatalf("method = %q; want vector arm only", method)
 	}
 
@@ -502,7 +502,7 @@ func TestPGHybridSearchWithoutVectors(t *testing.T) {
 		t.Fatalf("hits = %+v; want the keyword arms to carry the hit", hits)
 	}
 	// With no vectors, the keyword arms plus the name arm (see above).
-	if method != "rrf("+ArmTSVector+"+"+ArmTrigram+"+"+ArmName+")" {
+	if method != "rrf("+string(ArmTSVector)+"+"+string(ArmTrigram)+"+"+string(ArmName)+")" {
 		t.Fatalf("method = %q; want the keyword arms plus the name arm", method)
 	}
 	if hits[0].Similarity != 0 {

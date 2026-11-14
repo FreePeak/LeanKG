@@ -35,7 +35,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 |---|---|---|---|---|---|---|
 | CX-13 | `test(archtest): ratchet context roots and ctx-less I/O at today's baseline` | S | - | in PR | pending | internal/archtest ratchet at baseline; AGENTS.md ctx conventions |
 | CX-14 | `refactor(store): declare role interfaces; Backend composes them; add Mode` | S-M | - | in PR | pending | roles.go; Mode on Backend; 9 uncalled methods dropped from the interface |
-| CX-15 | `refactor(store): the keyword arm is part of the search contract` | M | CX-14 | done | local branch `refactor/cx-15-findfuzzy` (not pushed) | FindFuzzy returns the arm; FTSBackend deleted; PG SearchKnowledgeFTS folded into KnowledgeEntriesSearch; SQLite knowledge FTS not done (see evidence) |
+| CX-15 | `refactor(store): the keyword arm is part of the search contract` | M | CX-14 | done | local branch `refactor/cx-15-findfuzzy` (not pushed) | FindFuzzy returns the typed Arm; FTSBackend deleted; PG SearchKnowledgeFTS folded into KnowledgeEntriesSearch; SQLite knowledge_fts index with triggers (migration 19) |
 | CX-16 | `fix(store): filter vector and hybrid search before LIMIT` | M | CX-15 | todo | - | behaviour change (PG filters before LIMIT) |
 | CX-17 | `refactor(store): engine-neutral Maintain op with one read-only refusal` | M | CX-14 | todo | - | - |
 | CX-18 | `refactor(store): OpenBackend takes OpenOptions; AppliedMigrations is a method` | S-M | CX-04 | todo | - | - |

@@ -45,11 +45,26 @@ type GraphReader interface {
 	RelationshipsAll(limit int) ([]Relationship, error)
 }
 
+// Arm names one ranking source: a keyword or vector arm that a rung reports
+// (FindFuzzy) or that a fusion labels (RankList, HybridHit.Ranks). ArmFTS5 is
+// the SQLite keyword arm; ArmTSVector, ArmTrigram and ArmILIKE are the
+// PostgreSQL keyword arms, in the order the degrade chain tries them.
+type Arm string
+
+const (
+	ArmVector   Arm = "vector"
+	ArmName     Arm = "name"
+	ArmFTS5     Arm = "fts5"
+	ArmTSVector Arm = "tsvector"
+	ArmTrigram  Arm = "trigram"
+	ArmILIKE    Arm = "ilike"
+)
+
 // Searcher ranks elements by keyword and by vector similarity.
 type Searcher interface {
 	// FindFuzzy is the keyword arm. It returns the hits and the arm that served
 	// them (ArmFTS5 on SQLite; ArmTSVector, ArmTrigram or ArmILIKE on PostgreSQL).
-	FindFuzzy(query string, limit int) ([]FuzzyMatch, string, error)
+	FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error)
 	SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error)
 	// SearchVectorsScoped is SearchVectors restricted to the elements keep
 	// accepts; a nil keep is exactly SearchVectors. A caller that wants to rank

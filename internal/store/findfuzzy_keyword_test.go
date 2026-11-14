@@ -9,13 +9,13 @@ import (
 // check needs: seed elements, then run the L2 keyword rung.
 type keywordArmSearcher interface {
 	UpsertElements([]Element) error
-	FindFuzzy(query string, limit int) ([]FuzzyMatch, string, error)
+	FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error)
 }
 
 // checkFindFuzzyKeywordArm seeds one element set and asserts that FindFuzzy
 // returns the keyword hits together with the arm that served them. wantArms
 // lists the arm labels this engine may report.
-func checkFindFuzzyKeywordArm(t *testing.T, s keywordArmSearcher, wantArms ...string) {
+func checkFindFuzzyKeywordArm(t *testing.T, s keywordArmSearcher, wantArms ...Arm) {
 	t.Helper()
 	if err := s.UpsertElements([]Element{
 		{QualifiedName: "main.parseConfig", ElementType: "function", Name: "parseConfig", FilePath: "main.go", Language: "go", Content: "parses the yaml config file"},

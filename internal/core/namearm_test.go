@@ -88,16 +88,16 @@ func TestL3FusesANameArm(t *testing.T) {
 	}
 	// The name arm must be visible in the per-arm provenance, or an agent
 	// cannot tell why an answer surfaced.
-	// The transport keeps the ranks map as store's own type (map[string]int),
+	// The transport keeps the ranks map as store's own type (map[store.Arm]int),
 	// not map[string]any — the JSON shape is what an agent sees, and the golden
 	// pins that, so the assertion reads the type the engine actually builds.
-	ranks, _ := hits[0]["ranks"].(map[string]int)
+	ranks, _ := hits[0]["ranks"].(map[store.Arm]int)
 	if _, ok := ranks[store.ArmName]; !ok {
 		t.Errorf("the top hit must carry a %s rank, got %v", store.ArmName, hits[0]["ranks"])
 	}
 	// And in the retrieval reason, the one place an agent reads without parsing
 	// per-hit detail.
-	if !strings.Contains(retrievalString(out), store.ArmName) {
+	if !strings.Contains(retrievalString(out), string(store.ArmName)) {
 		t.Errorf("retrieval.reason must name the %s arm, got %q", store.ArmName, retrievalString(out))
 	}
 	// The ANSWER must be the symbol the question named — that is the whole
@@ -114,7 +114,7 @@ func TestL3FusesANameArm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(retrievalString(out), store.ArmName) {
+	if strings.Contains(retrievalString(out), string(store.ArmName)) {
 		t.Errorf("a prose question must not summon the name arm: %q", retrievalString(out))
 	}
 }

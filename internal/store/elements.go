@@ -560,7 +560,7 @@ type FuzzyMatch struct {
 
 // FindFuzzy implements the L2 rung over FTS5 and reports ArmFTS5. The query is
 // tokenized into quoted OR terms so user input can never inject FTS syntax.
-func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, string, error) {
+func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) {
 	q := ftsQuery(query)
 	if q == "" {
 		return nil, ArmFTS5, nil
@@ -593,10 +593,16 @@ func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, string, error)
 	return out, ArmFTS5, rows.Err()
 }
 
-// ftsQuery turns free text into a safe FTS5 query. Plain identifier-ish terms
+// ftsQuery turns free text into a safe FTS5 query: the terms of ftsTerms,
+// OR-joined.
+func ftsQuery(query string) string {
+	return strings.Join(ftsTerms(query), " OR ")
+}
+
+// ftsTerms turns free text into FTS5-safe terms. Plain identifier-ish terms
 // pass through (so `parse*` stays a prefix query); anything else is quoted so
 // user input can never inject FTS5 syntax.
-func ftsQuery(query string) string {
+func ftsTerms(query string) []string {
 	fields := strings.FieldsFunc(query, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' && r != '*'
 	})
@@ -615,7 +621,7 @@ func ftsQuery(query string) string {
 		}
 		parts = append(parts, `"`+f+`"`)
 	}
-	return strings.Join(parts, " OR ")
+	return parts
 }
 
 // isBareTerm reports whether f is a safe FTS5 bare token (letters, digits,

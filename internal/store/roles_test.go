@@ -104,3 +104,15 @@ func TestBackendModeReportsOpenMode(t *testing.T) {
 		t.Errorf("Mode() on RO store = %v, want RO", got)
 	}
 }
+
+// The keyword arm reports which ranking source served its hits, typed as Arm,
+// so callers and the L2 reason mapping cannot mix arm labels with free text.
+func TestSearcherFindFuzzyReturnsArm(t *testing.T) {
+	m, ok := reflect.TypeOf((*Searcher)(nil)).Elem().MethodByName("FindFuzzy")
+	if !ok {
+		t.Fatal("Searcher has no FindFuzzy")
+	}
+	if m.Type.NumOut() != 3 || m.Type.Out(1) != reflect.TypeOf(Arm("")) {
+		t.Fatalf("FindFuzzy returns %v; want ([]FuzzyMatch, Arm, error)", m.Type)
+	}
+}

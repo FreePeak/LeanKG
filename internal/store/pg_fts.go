@@ -26,15 +26,6 @@ import (
 // generated column of migration 012).
 const pgTSConfig = "'simple'"
 
-// Ranking-arm names, as they appear in FuseRRFWeighted's RankList labels and in the
-// provenance strings returned by FindFuzzy and HybridSearch.
-const (
-	ArmVector   = "vector"
-	ArmTSVector = "tsvector"
-	ArmTrigram  = "trigram"
-	ArmILIKE    = "ilike"
-)
-
 // maxTsqueryWords bounds how much text is handed to websearch_to_tsquery. That
 // function is designed never to raise on malformed input (it treats the whole
 // string as plain words), but PostgreSQL still recurses over the operand tree:
@@ -123,7 +114,7 @@ const RRFK = 60
 // RankList is one arm's ranked output feeding FuseRRFWeighted: document keys in
 // descending relevance (rank 1 first). Name labels the arm for provenance.
 type RankList struct {
-	Name string
+	Name Arm
 	Keys []string
 }
 
@@ -132,13 +123,13 @@ type RankList struct {
 // arm that did not return the document has no entry — the standard RRF
 // treatment of a missing rank).
 type FusedHit struct {
-	Key   string         `json:"key"`
-	Score float64        `json:"score"`
-	Ranks map[string]int `json:"ranks"`
+	Key   string      `json:"key"`
+	Score float64     `json:"score"`
+	Ranks map[Arm]int `json:"ranks"`
 }
 
 // armWeight maps an arm name to its weight for weighted fusion.
-func (w FuseRRFWeights) armWeight(name string) float64 {
+func (w FuseRRFWeights) armWeight(name Arm) float64 {
 	switch name {
 	case ArmVector:
 		if w.Explicit {
@@ -198,7 +189,7 @@ func FuseRRFWeighted(lists []RankList, w FuseRRFWeights) []FusedHit {
 			seen[key] = true
 			s := byKey[key]
 			if s == nil {
-				s = &slot{hit: FusedHit{Key: key, Ranks: map[string]int{}}}
+				s = &slot{hit: FusedHit{Key: key, Ranks: map[Arm]int{}}}
 				byKey[key] = s
 				slots = append(slots, s)
 			}
@@ -218,12 +209,12 @@ func FuseRRFWeighted(lists []RankList, w FuseRRFWeights) []FusedHit {
 // fused score and the raw score of every arm that carried it (0 where an arm
 // did not, mirroring FusedHit.Ranks).
 type HybridHit struct {
-	Element      Element        `json:"element"`
-	Score        float64        `json:"score"`
-	Ranks        map[string]int `json:"ranks"`
-	Similarity   float64        `json:"similarity,omitempty"`
-	KeywordScore float64        `json:"keyword_score,omitempty"`
-	TrigramScore float64        `json:"trigram_score,omitempty"`
+	Element      Element     `json:"element"`
+	Score        float64     `json:"score"`
+	Ranks        map[Arm]int `json:"ranks"`
+	Similarity   float64     `json:"similarity,omitempty"`
+	KeywordScore float64     `json:"keyword_score,omitempty"`
+	TrigramScore float64     `json:"trigram_score,omitempty"`
 }
 
 // FindFuzzy is the PostgreSQL keyword rung: ts_rank over the
@@ -233,7 +224,7 @@ type HybridHit struct {
 // errors — a refused tsquery, or a schema that predates migration 012 — so
 // availability never depends on the index or the extension (the same
 // degrade-not-fail policy as the Rust 007_trgm_fuzzy.sql tier).
-func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, string, error) {
+func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, "", nil
 	}
@@ -263,7 +254,7 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, string, erro
 // searchElementsSubstring is the two-arm keyword fallback behind
 // FindFuzzy: pg_trgm similarity ranking when the extension resolves,
 // ILIKE substring recall when it does not.
-func (s *PGStore) searchElementsSubstring(query string, limit int) ([]FuzzyMatch, string, error) {
+func (s *PGStore) searchElementsSubstring(query string, limit int) ([]FuzzyMatch, Arm, error) {
 	matches, err := s.searchElementsTrigram(query, limit)
 	if err == nil {
 		return matches, ArmTrigram, nil
@@ -520,7 +511,7 @@ func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float
 	}
 	names := make([]string, 0, len(lists))
 	for _, l := range lists {
-		names = append(names, l.Name)
+		names = append(names, string(l.Name))
 	}
 	return out, "rrf(" + strings.Join(names, "+") + ")", nil
 }

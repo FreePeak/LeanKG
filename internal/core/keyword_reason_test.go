@@ -11,7 +11,7 @@ import (
 // the arm itself (golden per engine: FTS5 for SQLite, tsvector/trigram/ILIKE
 // for PostgreSQL).
 func TestKeywordReasonPerArm(t *testing.T) {
-	cases := map[string]string{
+	cases := map[store.Arm]string{
 		store.ArmFTS5:     "FTS5 keyword match",
 		store.ArmTSVector: "tsvector keyword match",
 		store.ArmTrigram:  "trigram keyword match (tsvector degraded)",

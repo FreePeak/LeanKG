@@ -2,12 +2,6 @@ package store
 
 import "strings"
 
-// ArmFTS5 labels the SQLite keyword arm in hybrid provenance.
-const ArmFTS5 = "fts5"
-
-// ArmName labels the exact-symbol-name arm in hybrid provenance.
-const ArmName = "name"
-
 // HybridSearcher is the capability the L3 rung fuses through (RS-12). SQLite's
 // L3 fuses the cosine and FTS5 ranks, as PostgreSQL does.
 type HybridSearcher interface {
@@ -149,7 +143,7 @@ func (s *Store) HybridSearchScopedWeighted(modelID, query string, qvec []float32
 	}
 	names := make([]string, 0, len(lists))
 	for _, l := range lists {
-		names = append(names, l.Name)
+		names = append(names, string(l.Name))
 	}
 	return out, "rrf(" + strings.Join(names, "+") + ")", nil
 }
