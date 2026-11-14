@@ -260,7 +260,7 @@ func TestModelStampAndVectors(t *testing.T) {
 	if state["a"] != "ha" {
 		t.Fatalf("state = %+v", state)
 	}
-	hits, err := s.SearchVectors("test-model", []float32{1, 0, 0, 0}, 1)
+	hits, err := s.SearchVectors(VectorQuery{ModelID: "test-model", Vec: []float32{1, 0, 0, 0}, K: 1})
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("search: %v %+v", err, hits)
 	}
@@ -512,7 +512,7 @@ func TestReplaceFileVectorsIsOneAtomicUnit(t *testing.T) {
 	if n, _ := s.VectorCount("m"); n != 2 {
 		t.Fatalf("vector count after replace = %d, want 2 (no duplicate)", n)
 	}
-	hits, err := s.SearchVectors("m", []float32{0, 0, 1, 0}, 1)
+	hits, err := s.SearchVectors(VectorQuery{ModelID: "m", Vec: []float32{0, 0, 1, 0}, K: 1})
 	if err != nil || len(hits) != 1 || hits[0].Element.QualifiedName != "a.go::f1" {
 		t.Fatalf("replaced vector not searchable: %+v, %v", hits, err)
 	}

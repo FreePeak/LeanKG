@@ -1059,7 +1059,7 @@ func graphEmptyGuidance(verb, seed string) string {
 }
 
 // rungExact is L1: case-insensitive exact match on name / qualified name.
-func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool, keep func(store.Element) bool) (map[string]any, error) {
+func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter) (map[string]any, error) {
 	if pin {
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 	}
@@ -1079,7 +1079,7 @@ func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool, k
 // PostgreSQL backend ranks its migration-012 tsvector with ts_rank and degrades
 // through pg_trgm similarity to ILIKE substring recall (issue #273). FindFuzzy
 // reports the arm that served the hits, so the rung has no engine branch.
-func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool, keep func(store.Element) bool) (map[string]any, error) {
+func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter) (map[string]any, error) {
 	window := fetchWindow(limit, keep)
 	matches, arm, err := e.st.FindFuzzy(q, window)
 	if err != nil {
@@ -1159,59 +1159,50 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if serr != nil {
 		return nil, serr
 	}
-	// The history rule composes with the caller's scope, so both arms of the
-	// store's scoped search see the same population.
-	keep = allOf(keep, gitKeep)
+	// The history rule composes with the caller's scope, so every arm of the
+	// store's search sees the same population.
+	keep = keep.Merge(gitKeep)
 	// Query validated this already; parsed again here because the rung is also
 	// reachable as a pinned action. An unset weight is the default.
 	fw, _ := parseFusionWeight(argStr(args, "weight"))
+	weights := store.DefaultFuseWeights()
+	if fw.raw != "" {
+		weights = store.FuseRRFWeights{Vector: fw.vector, Keyword: fw.keyword, Explicit: true}
+	}
 	// Issue #273 / RS-12: L3 fuses the cosine ranking with the keyword
 	// rankings by reciprocal rank fusion, because the scores live on unrelated
 	// scales (cosine, bm25/ts_rank, trigram similarity) and only their ranks
 	// are comparable — PostgreSQL over tsvector+trigram, SQLite over FTS5. An
 	// empty fusion falls through to the plain cosine rung below.
-	if hs, ok := e.st.(store.ScopedHybridSearcher); ok {
-		// The fusion weight is the caller's when set, else the store default
-		// (store.DefaultFuseWeights, the same value both engines read). The
-		// weight was already validated in Query, so a malformed value never
-		// reaches here.
-		var fused []store.HybridHit
-		var arms string
-		var ferr error
-		if w, ok := e.st.(store.WeightedHybridSearcher); ok {
-			weights := store.DefaultFuseWeights()
-			if fw.raw != "" {
-				weights = store.FuseRRFWeights{Vector: fw.vector, Keyword: fw.keyword, Explicit: true}
-			}
-			fused, arms, ferr = w.HybridSearchScopedWeighted(modelID, q, qvec, limit, keep, weights)
-		} else {
-			fused, arms, ferr = hs.HybridSearchScoped(modelID, q, qvec, limit, keep)
-		}
-		if ferr != nil {
-			return degrade(fmt.Sprintf("hybrid fusion failed (%v); degraded from L3", ferr))
-		}
-		if len(fused) > 0 {
-			out := make([]map[string]any, 0, len(fused))
-			for _, h := range fused {
-				m := shapeElement(h.Element)
-				m["similarity"] = h.Similarity
-				m["score"] = h.Score // the fused RRF score, not a single-arm score
-				m["ranks"] = h.Ranks
-				out = append(out, m)
-			}
-			resp["hits"] = out
-			resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + arms, "scope": scopeName}
-			best, seen := 0.0, false
-			for _, h := range fused {
-				if _, ok := h.Ranks[store.ArmVector]; ok && (!seen || h.Similarity > best) {
-					best, seen = h.Similarity, true
-				}
-			}
-			e.annotateConfidence(resp, *stamp, best, seen)
-			return withEmptyHint(resp, nil)
-		}
+	// The fusion weight is the caller's when set, else the store default
+	// (store.DefaultFuseWeights, the same value both engines read). The weight
+	// was already validated in Query, so a malformed value never reaches here.
+	fused, _, ferr := e.st.Hybrid(ctx, store.HybridQuery{ModelID: modelID, Text: q, Vec: qvec,
+		Limit: limit, Filter: keep, Weights: weights})
+	if ferr != nil {
+		return degrade(fmt.Sprintf("hybrid fusion failed (%v); degraded from L3", ferr))
 	}
-	hits, err := scopedVectors(e.st, modelID, qvec, limit, keep)
+	if len(fused) > 0 {
+		out := make([]map[string]any, 0, len(fused))
+		for _, h := range fused {
+			m := shapeElement(h.Element)
+			m["similarity"] = h.Similarity
+			m["score"] = h.Score // the fused RRF score, not a single-arm score
+			m["ranks"] = h.Ranks
+			out = append(out, m)
+		}
+		resp["hits"] = out
+		resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + fusionArms(fused), "scope": scopeName}
+		best, seen := 0.0, false
+		for _, h := range fused {
+			if _, ok := h.Ranks[store.ArmVector]; ok && (!seen || h.Similarity > best) {
+				best, seen = h.Similarity, true
+			}
+		}
+		e.annotateConfidence(resp, *stamp, best, seen)
+		return withEmptyHint(resp, nil)
+	}
+	hits, err := e.st.SearchVectors(store.VectorQuery{ModelID: modelID, Vec: qvec, K: limit, Filter: keep})
 	if err != nil {
 		return degrade(fmt.Sprintf("vector search failed (%v); degraded from L3", err))
 	}
@@ -1227,6 +1218,22 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		e.annotateConfidence(resp, *stamp, hits[0].Similarity, true)
 	}
 	return withEmptyHint(resp, nil)
+}
+
+// fusionArms names the arms that contributed to the fused hits, in fusion order,
+// for the L3 reason: "rrf(vector+fts5)".
+func fusionArms(hits []store.HybridHit) string {
+	order := []store.Arm{store.ArmVector, store.ArmFTS5, store.ArmTSVector, store.ArmTrigram, store.ArmILIKE, store.ArmName}
+	var names []string
+	for _, arm := range order {
+		for _, h := range hits {
+			if _, ok := h.Ranks[arm]; ok {
+				names = append(names, string(arm))
+				break
+			}
+		}
+	}
+	return "rrf(" + strings.Join(names, "+") + ")"
 }
 
 // annotateConfidence marks an L3 answer whose best vector hit does not beat
@@ -2208,57 +2215,47 @@ func parseFusionWeight(raw string) (fusionWeight, error) {
 	return fusionWeight{vector: nums[0], keyword: nums[1], raw: raw}, nil
 }
 
-func scopePredicate(scope string) (func(store.Element) bool, string, error) {
+func scopePredicate(scope string) (store.ElementFilter, string, error) {
 	switch scope {
 	case "", ScopeAll:
-		return nil, ScopeAll, nil
+		return store.ElementFilter{}, ScopeAll, nil
 	case ScopeCode:
-		return func(e store.Element) bool {
-			return !isFixturePath(e.FilePath) && !isArchivedPath(e.FilePath)
-		}, ScopeCode, nil
+		return fixtureFilter.Merge(archivedFilter), ScopeCode, nil
 	case ScopeProd:
-		return func(e store.Element) bool { return !isFixturePath(e.FilePath) }, ScopeProd, nil
+		return fixtureFilter, ScopeProd, nil
 	}
-	return nil, "", fmt.Errorf("unknown scope %q (valid: all, code, prod)", scope)
+	return store.ElementFilter{}, "", fmt.Errorf("unknown scope %q (valid: all, code, prod)", scope)
 }
 
-func isFixturePath(fp string) bool {
-	return strings.Contains(fp, "testdata") || strings.HasSuffix(fp, "_test.go") ||
-		strings.Contains(fp, "/fixtures/") || strings.HasSuffix(fp, "fixtures.js")
-}
-
-func isArchivedPath(fp string) bool { return strings.HasPrefix(fp, "docs/archive/") }
+// fixtureFilter excludes test fixtures; archivedFilter excludes archived docs.
+// The scope names below compose them.
+var (
+	fixtureFilter = store.ElementFilter{
+		ExcludePathContains: []string{"testdata", "/fixtures/"},
+		ExcludePathSuffixes: []string{"_test.go", "fixtures.js"},
+	}
+	archivedFilter = store.ElementFilter{ExcludePathPrefixes: []string{"docs/archive/"}}
+)
 
 // searchKeep is the default search population for every rung. Git history rows
 // (commit, author and git:file nodes, see docs/git-history.md) are answered by
 // history, cochange and churn; a search returns them only when the caller sets
 // args.include_git. A nil result admits every element. Code qualified names
 // never start with "git:", so the prefix is the whole test.
-func searchKeep(args map[string]any) func(store.Element) bool {
+func searchKeep(args map[string]any) store.ElementFilter {
 	if argBool(args, "include_git") {
-		return nil
+		return store.ElementFilter{}
 	}
-	return func(el store.Element) bool { return !strings.HasPrefix(el.QualifiedName, "git:") }
+	return store.ElementFilter{ExcludeQNPrefixes: []string{"git:"}}
 }
 
-// allOf admits an element only when every non-nil predicate admits it.
-func allOf(a, b func(store.Element) bool) func(store.Element) bool {
-	switch {
-	case a == nil:
-		return b
-	case b == nil:
-		return a
-	}
-	return func(el store.Element) bool { return a(el) && b(el) }
-}
-
-// admit keeps the items whose element keep admits, at most limit of them. A
-// nil keep admits all, so it only trims to limit. Every keyword rung applies
-// it to the store's rows here, once, instead of re-deriving the population.
-func admit[T any](items []T, elementOf func(T) store.Element, keep func(store.Element) bool, limit int) []T {
+// admit keeps the items whose element f admits, at most limit of them. The zero
+// filter admits all, so it only trims to limit. Every keyword rung applies it to
+// the store's rows here, once, instead of re-deriving the population.
+func admit[T any](items []T, elementOf func(T) store.Element, f store.ElementFilter, limit int) []T {
 	out := make([]T, 0, min(len(items), limit))
 	for _, it := range items {
-		if keep != nil && !keep(elementOf(it)) {
+		if !f.Admits(elementOf(it)) {
 			continue
 		}
 		out = append(out, it)
@@ -2289,8 +2286,8 @@ func keywordReason(arm store.Arm) string {
 // window (3x, at least 50, the store's hybrid window) so a run of excluded rows
 // does not starve the answer. A window cannot guarantee a full answer when the
 // excluded rows outnumber it.
-func fetchWindow(limit int, keep func(store.Element) bool) int {
-	if keep == nil {
+func fetchWindow(limit int, f store.ElementFilter) int {
+	if f.IsZero() {
 		return limit
 	}
 	return max(3*limit, 50)
@@ -2299,16 +2296,6 @@ func fetchWindow(limit int, keep func(store.Element) bool) int {
 func identityElement(el store.Element) store.Element { return el }
 
 func matchElement(m store.FuzzyMatch) store.Element { return m.Element }
-
-// scopedVectors is the plain-cosine fallback of the L3 rung, over the caller's
-// population. It is reached only when no fused hybrid search answered, so a
-// store without the scoped vocabulary still degrades the way it always did.
-func scopedVectors(st store.Backend, modelID string, q []float32, k int, keep func(store.Element) bool) ([]store.VectorSearchHit, error) {
-	if sc, ok := st.(store.ScopedHybridSearcher); ok {
-		return sc.SearchVectorsScoped(modelID, q, k, keep)
-	}
-	return st.SearchVectors(modelID, q, k)
-}
 
 // argStrs reads a string-array arg (nil-safe). MCP turns arrive JSON-decoded
 // as []any of strings.

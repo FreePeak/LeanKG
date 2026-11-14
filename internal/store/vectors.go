@@ -541,36 +541,20 @@ const vectorSelectCols = `embedding_vectors.qualified_name,
 	COALESCE(ce.metadata,'{}')`
 
 // SearchVectors performs the single ANN-equivalent shape: in-process cosine
-// over the model's vectors, hydrated against code_elements.
-// ponytail: O(n) scan per query — fine to ~100k vectors at 384 dims (~0.15s
-// on M2 Pro); upgrade path is sqlite-vec when scale demands it.
-func (s *Store) SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error) {
-	return s.SearchVectorsScoped(modelID, q, k, nil)
-}
-
-// SearchVectorsScoped is SearchVectors over the caller's own population: keep
-// admits a row into the ranking. A nil keep means the whole corpus, so the
-// default is byte-for-byte what it was.
+// over the model's vectors, hydrated against code_elements, restricted to the
+// elements q.Filter admits.
 //
-// The primitive exists because of a measured corpus, not a hunch: on this
-// repository's own store 22% of the elements are test fixtures and 37% are
-// archived docs, so 60% of the vector population is a document a working
-// engineer is not asking about — and a bare-symbol query ranks those documents
-// above the function. Both fusion arms rank over the same set, so no weight
-// pair closes the gap; scoping the SET is the only lever, and it is the
-// caller's decision.
-//
-// ponytail: the predicate runs inside the O(n) scan this arm already does, so
-// it costs one call per row and adds no second pass. The PostgreSQL arm cannot
-// push a Go predicate into its HNSW SQL (see pg_fts.go), which is why the
-// scope is a caller-side decision rather than a WHERE clause.
-func (s *Store) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
-	if len(q) == 0 {
+// ponytail: O(n) scan per query, fine to ~100k vectors at 384 dims (~0.15s on
+// M2 Pro); upgrade path is sqlite-vec when scale demands it. The filter runs
+// inside the scan this arm already does, so every excluded row is dropped
+// before the top-K selection and K admitted rows are returned when they exist.
+func (s *Store) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
+	if len(q.Vec) == 0 {
 		return nil, nil
 	}
 	rows, err := s.db.Query(`SELECT `+vectorSelectCols+`, embedding_vectors.vec
 		FROM embedding_vectors JOIN code_elements ce ON ce.qualified_name = embedding_vectors.qualified_name
-		WHERE embedding_vectors.model_id = ?`, modelID)
+		WHERE embedding_vectors.model_id = ?`, q.ModelID)
 	if err != nil {
 		return nil, err
 	}
@@ -593,17 +577,18 @@ func (s *Store) SearchVectorsScoped(modelID string, q []float32, k int, keep fun
 			_ = json.Unmarshal([]byte(meta), &el.Metadata)
 		}
 		v := decodeVec(buf)
-		if len(v) != len(q) {
+		if len(v) != len(q.Vec) {
 			continue // stamped collection mismatch should never reach here; skip defensively
 		}
-		if keep != nil && !keep(el) {
+		if !q.Filter.Admits(el) {
 			continue // outside the caller's population: never ranked at all
 		}
-		hits = append(hits, scored{el: el, val: cosine(q, v)})
+		hits = append(hits, scored{el: el, val: cosine(q.Vec, v)})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	k := q.K
 	// partial sort top-k (k is small; n scan already done)
 	for i := 0; i < len(hits) && i < k; i++ {
 		best := i

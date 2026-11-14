@@ -510,7 +510,7 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 	if vecsAfter != vecsBefore {
 		t.Fatalf("vector rows: before %d, after %d", vecsBefore, vecsAfter)
 	}
-	hits, err := st.SearchVectors(model, []float32{1, 0, 0}, 1)
+	hits, err := st.SearchVectors(store.VectorQuery{ModelID: model, Vec: []float32{1, 0, 0}, K: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

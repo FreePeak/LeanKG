@@ -468,7 +468,8 @@ func (s *Store) nameTokenCounts(toks []string, bound int) (map[string]int, int, 
 }
 
 // FindByNameToken ranks elements whose SYMBOL NAME contains a rare token of the
-// query, shortest (most specific) name first. It is the ArmName ranking arm, and
+// query, shortest (most specific) name first; f is applied in the WHERE before
+// the LIMIT. It is the ArmName ranking arm, and
 // it reads the name alone: the FTS arm reads name + qualified_name + content but
 // only for words that MATCH, and a vector embedding reads the body — so a
 // question that paraphrases ("cut a string to n runes") reaches neither.
@@ -476,7 +477,7 @@ func (s *Store) nameTokenCounts(toks []string, bound int) (map[string]int, int, 
 // Tokens become LIKE patterns with the argument bound (never concatenated), and
 // the score is 0 for every hit: this arm ranks by SPECIFICITY, not relevance,
 // and the fusion only needs the order.
-func (s *Store) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
+func (s *Store) FindByNameToken(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
 	toks, err := s.rareNameTokens(query)
 	if err != nil {
 		return nil, err
@@ -494,10 +495,11 @@ func (s *Store) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
 		where = append(where, "(ce.name LIKE ? COLLATE NOCASE OR ce.qualified_name LIKE ? COLLATE NOCASE)")
 		args = append(args, pat, pat)
 	}
+	filter := andWhere(f.whereSQLite("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
 	rows, err := s.db.Query(`SELECT `+elementCols+`, 0.0 AS score
 		FROM code_elements ce
-		WHERE `+strings.Join(where, " OR ")+`
+		WHERE (`+strings.Join(where, " OR ")+`)`+filter+`
 		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
 		LIMIT ?`, args...)
 	if err != nil {
@@ -561,6 +563,13 @@ type FuzzyMatch struct {
 // FindFuzzy implements the L2 rung over FTS5 and reports ArmFTS5. The query is
 // tokenized into quoted OR terms so user input can never inject FTS syntax.
 func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) {
+	return s.findFuzzy(query, limit, ElementFilter{})
+}
+
+// findFuzzy is FindFuzzy restricted to the elements f admits; the filter is part
+// of the WHERE, before the LIMIT, so the hybrid arm spends its window on
+// admitted rows only.
+func (s *Store) findFuzzy(query string, limit int, f ElementFilter) ([]FuzzyMatch, Arm, error) {
 	q := ftsQuery(query)
 	if q == "" {
 		return nil, ArmFTS5, nil
@@ -568,10 +577,13 @@ func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) {
 	if limit <= 0 {
 		limit = 50
 	}
+	args := []any{q}
+	filter := andWhere(f.whereSQLite("ce.qualified_name", "ce.file_path", &args))
+	args = append(args, limit)
 	rows, err := s.db.Query(`SELECT `+elementCols+`, bm25(elements_fts) AS score
 		FROM elements_fts JOIN code_elements ce ON ce.id = elements_fts.rowid
-		WHERE elements_fts MATCH ?
-		ORDER BY score LIMIT ?`, q, limit)
+		WHERE elements_fts MATCH ?`+filter+`
+		ORDER BY score LIMIT ?`, args...)
 	if err != nil {
 		return nil, ArmFTS5, err
 	}

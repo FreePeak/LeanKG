@@ -63,6 +63,13 @@ func OpenPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, 
 		// included) becomes read-only, mirroring sqlite's query_only pragma.
 		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	}
+	// pgvector applies a WHERE to an HNSW scan only after the index has
+	// returned hnsw.ef_search candidates, so a selective filter (or a limit
+	// above ef_search) would return fewer rows than asked. iterative_scan keeps
+	// the index scan going until the LIMIT is met; it only continues when the
+	// first pass came up short, so unfiltered queries within ef_search are
+	// unchanged. Set per connection so no statement needs a transaction.
+	cfg.ConnConfig.RuntimeParams["hnsw.iterative_scan"] = "strict_order"
 	// Every acquired connection — readers included — resolves unqualified
 	// tables inside the project's schema.
 	cfg.BeforeAcquire = func(ctx context.Context, conn *pgx.Conn) bool {
@@ -365,8 +372,8 @@ func (s *PGStore) rareNameTokens(query string) ([]string, error) {
 
 // FindByNameToken is the ArmName ranking arm on PostgreSQL: elements whose
 // SYMBOL NAME contains a rare token of the query, shortest name first. Same
-// contract as the SQLite arm.
-func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error) {
+// contract as the SQLite arm; f is applied in the WHERE before the LIMIT.
+func (s *PGStore) FindByNameToken(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
 	toks, err := s.rareNameTokens(query)
 	if err != nil {
 		return nil, err
@@ -383,9 +390,10 @@ func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error)
 		where = append(where, fmt.Sprintf("(ce.name ILIKE $%d OR ce.qualified_name ILIKE $%d)", i+1, i+1))
 		args = append(args, "%"+t+"%")
 	}
+	filter := andWhere(f.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
 	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce
-		WHERE `+strings.Join(where, " OR ")+`
+		WHERE (`+strings.Join(where, " OR ")+`)`+filter+`
 		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
 		LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
@@ -411,7 +419,7 @@ func (s *PGStore) FindByNameToken(query string, limit int) ([]FuzzyMatch, error)
 // values are not comparable across engines. The PG keyword rung (FindFuzzy in
 // pg_fts.go) prefers tsvector ranking, then pg_trgm similarity, and only lands
 // here.
-func (s *PGStore) findElementsILIKE(query string, limit int) ([]FuzzyMatch, error) {
+func (s *PGStore) findElementsILIKE(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
@@ -419,10 +427,13 @@ func (s *PGStore) findElementsILIKE(query string, limit int) ([]FuzzyMatch, erro
 		limit = 50
 	}
 	pattern := "%" + escapeLike(query) + "%"
+	args := []any{pattern}
+	filter := andWhere(f.wherePG("ce.qualified_name", "ce.file_path", &args))
+	args = append(args, limit)
 	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+`, -length(ce.qualified_name) AS score
 		FROM code_elements ce
-		WHERE ce.name ILIKE $1 ESCAPE '\' OR ce.qualified_name ILIKE $1 ESCAPE '\'
-		ORDER BY length(ce.qualified_name) LIMIT $2`, pattern, limit)
+		WHERE (ce.name ILIKE $1 ESCAPE '\' OR ce.qualified_name ILIKE $1 ESCAPE '\')`+filter+`
+		ORDER BY length(ce.qualified_name) LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -966,37 +977,27 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 // SearchVectors performs the single ANN-equivalent shape: the model's vectors
 // ranked by cosine distance (HNSW index when present), hydrated against
 // code_elements. similarity = 1 - distance (the <=> operator's cosine distance).
-func (s *PGStore) SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error) {
-	return s.SearchVectorsScoped(modelID, q, k, nil)
-}
-
-// SearchVectorsScoped is SearchVectors over a caller-selected population.
-//
-// ponytail: a Go predicate cannot be pushed into the SQL the HNSW index
-// serves, so this OVER-FETCHES (4·k, floor 64) and filters during the scan.
-// The ceiling: an aggressive predicate can see fewer than k hits even when
-// more matched, because the excluded rows were never fetched. Upgrade path is
-// a SQL-expressible WHERE clause on file_path/type. A nil keep is the unscoped
-// default, byte for byte.
-func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
-	if len(q) == 0 {
+// The filter is part of the WHERE clause, before ORDER BY and LIMIT, and the
+// connections run with hnsw.iterative_scan (see OpenPG), so K admitted rows come
+// back whenever they exist.
+func (s *PGStore) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
+	if len(q.Vec) == 0 {
 		return nil, nil
 	}
-	if k < 0 {
-		k = 0
-	}
-	if keep != nil {
-		k = overfetchK(k)
-	}
+	k := max(q.K, 0)
+	args := []any{pgvector.NewVector(q.Vec)}
+	filter := andWhere(q.Filter.wherePG("ce.qualified_name", "ce.file_path", &args))
+	args = append(args, k)
 	rows, err := s.pool.Query(pgCtx, `SELECT v.qualified_name,
 		COALESCE(ce.element_type,''), COALESCE(ce.name, v.qualified_name), COALESCE(ce.file_path,''),
 		COALESCE(ce.line_start,0), COALESCE(ce.line_end,0), COALESCE(ce.language,''),
 		COALESCE(ce.parent_qualified,''), COALESCE(ce.content,''), COALESCE(ce.metadata::text,'{}'),
 		1 - (v.vec <=> $1::vector) AS similarity
-		FROM `+s.vecTable(modelID)+` v
+		FROM `+s.vecTable(q.ModelID)+` v
 		JOIN code_elements ce ON ce.qualified_name = v.qualified_name -- INNER: orphans are never hits (RS-05)
+		WHERE TRUE`+filter+`
 		ORDER BY v.vec <=> $1::vector
-		LIMIT $2`, pgvector.NewVector(q), k)
+		LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1013,25 +1014,9 @@ func (s *PGStore) SearchVectorsScoped(modelID string, q []float32, k int, keep f
 		if meta != "" && meta != "{}" {
 			_ = json.Unmarshal([]byte(meta), &h.Element.Metadata)
 		}
-		if keep != nil && !keep(h.Element) {
-			continue // outside the caller's population
-		}
 		out = append(out, h)
 	}
 	return out, rows.Err()
-}
-
-// overfetchK widens a scoped LIMIT so the predicate still sees k hits: a Go
-// predicate cannot be pushed into the HNSW SQL, so the rows it excludes must
-// have been fetched first.
-func overfetchK(k int) int {
-	if k < 0 {
-		k = 0
-	}
-	if w := 4 * k; w > 64 {
-		return w
-	}
-	return 64
 }
 
 // Watermark returns the current freshness sequence number.
