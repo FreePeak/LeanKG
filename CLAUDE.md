@@ -26,9 +26,11 @@ make dual-engine     # sqlite + live-PostgreSQL acceptance gate
   `authenticate` — with the action vocabulary resolved in `internal/core`. The
   auth model (login, HTTP bearer gate, admin bootstrap) is in
   [AGENTS.md](AGENTS.md#auth-and-the-http-gate).
-- Storage goes through the `store.Backend` interface (SQLite default,
-  PostgreSQL+pgvector opt-in). Consumers take `store.Backend`, never a concrete
-  store.
+- Storage goes through the role interfaces in `internal/store/roles.go`
+  (SQLite default, PostgreSQL+pgvector opt-in); `store.Backend` composes them.
+  Consumers depend on the narrowest role they use, only composition roots
+  (`cmd/*`, `core.New`, `store.OpenBackend`) hold a `store.Backend`, and no
+  concrete store type is used outside `internal/store`.
 - `.gitignore` gotcha: `internal/tstree/**` holds vendored generated C grammars
   and `proto/` is invisible to a global ignore pattern — check
   `git status --ignored` before concluding a file is committed.

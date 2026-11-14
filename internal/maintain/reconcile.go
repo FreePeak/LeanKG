@@ -68,7 +68,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 		return res, nil
 	}
 	// A read-only store cannot be pruned: every delete below would fail.
-	if m, ok := st.(interface{ Mode() store.Mode }); ok && m.Mode() == store.RO {
+	if st.Mode() == store.RO {
 		res.Reason = "read-only store"
 		return res, nil
 	}

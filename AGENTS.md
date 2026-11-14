@@ -17,7 +17,7 @@ make dual-engine         # sqlite + live-PostgreSQL acceptance gate (needs :5433
 make go-ui-assets        # build ui-v2 and sync dist/ into internal/web/embed
 ```
 
-Store contract: `internal/store/backend.go` (Backend interface; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).
+Store contract: `internal/store/roles.go` (one interface per role) and `internal/store/backend.go` (`Backend` composes the roles; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).
 
 Test-layer policy (owner decision, 2026-09-14): **unit tests stay in-process
 and fast** — no real provider/network calls, no sleeps; `go test ./...` is
@@ -72,7 +72,7 @@ before scaling to small nested-repo parents. Never bulk-index the `freepeak` por
 ## Development workflow
 
 1. Update `docs/prd.md` + `docs/prd-task-tracker.md` (the only two live docs)
-2. Implement in `internal/` + `cmd/` — Backend consumers take `store.Backend`, never a concrete store
+2. Implement in `internal/` + `cmd/` — store consumers depend on the narrowest role they use (plan section 3.3); only composition roots (`cmd/*`, `core.New`, `store.OpenBackend`) hold a `store.Backend`; no concrete store type outside `internal/store`
 3. `make go-build && make go-test && make go-vet`
 4. Commit (one feature per commit; no AI attribution); main is protected → PRs only
 5. `scripts/test-dual-engine.sh` for storage-layer changes

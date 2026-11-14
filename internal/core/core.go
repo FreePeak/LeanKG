@@ -505,7 +505,7 @@ func writesStore(action string) bool {
 // the refusal itself ("attempt to write a readonly database"), which names
 // the real cause, while a migration error would name the schema.
 func (e *Engine) ensureStoreSchema() error {
-	if m, ok := e.st.(interface{ Mode() store.Mode }); ok && m.Mode() == store.RO {
+	if e.st.Mode() == store.RO {
 		return nil
 	}
 	if err := e.st.Migrate(); err != nil {
