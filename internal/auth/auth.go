@@ -97,6 +97,10 @@ func (reg *registry) classify(st store.Backend, r *http.Request) (Role, error) {
 var writePrefixes = []string{
 	"/api/v1/import",
 	"/leankg.v1.LeanKG/Import",
+	"/api/v1/memory/session/retain", // session retain writes memory rows
+	"/api/v1/ontology/match",        // ontology match writes the KV catalog
+	"/api/v1/mcp/auto-config",       // auto-config starts a reindex and embed
+	"/api/v2/graph/push",            // federation push upserts elements
 }
 
 // memoryWritePrefixes are the parameterized memory-retain route prefixes.

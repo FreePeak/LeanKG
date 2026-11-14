@@ -195,3 +195,59 @@ func TestCompatRetainAllowedForContributor(t *testing.T) {
 		t.Fatalf("contributor retain: %d, want 200", rec.Code)
 	}
 }
+
+// namedWriteRoutes are POST routes that mutate the store: session retain, the
+// ontology KV write, the auto-config reindex, and the federation push (same
+// class: it upserts elements). None of them matched isWritePath before CX-02.
+var namedWriteRoutes = []string{
+	"/api/v1/memory/session/retain",
+	"/api/v1/ontology/match",
+	"/api/v1/mcp/auto-config",
+	"/api/v2/graph/push",
+}
+
+// TestNamedWriteRoutesGatedForViewer pins CX-02: a Viewer must get 403 on every
+// route in namedWriteRoutes.
+func TestNamedWriteRoutesGatedForViewer(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
+
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, p := range namedWriteRoutes {
+		t.Run(p, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", p, nil)
+			req.Header.Set("Authorization", "Bearer viewer-tok")
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("POST %s as viewer: %d, want 403", p, rec.Code)
+			}
+		})
+	}
+}
+
+// TestNamedWriteRoutesAllowedForContributor is the other half: the CX-02 gate
+// must not lock a Contributor out of the same routes.
+func TestNamedWriteRoutesAllowedForContributor(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "contrib-tok")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, p := range namedWriteRoutes {
+		t.Run(p, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", p, nil)
+			req.Header.Set("Authorization", "Bearer contrib-tok")
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("contributor POST %s: %d, want 200", p, rec.Code)
+			}
+		})
+	}
+}

@@ -597,8 +597,10 @@ afterSidecars:
 		})
 		// RegisterAutoConfig RETURNS the wrapped mux; the endpoint lives in
 		// that returned handler, so serving the original one served everything
-		// except /api/v1/mcp/auto-config.
-		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
+		// except /api/v1/mcp/auto-config. Auto-config is the one write route on
+		// this listener, so it alone is gated (CX-02).
+		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
+		h = gateAutoConfig(st, h, autoConfig)
 		go serveHTTP(ctx, h, addr)
 	}
 	if *restAddr != "" {

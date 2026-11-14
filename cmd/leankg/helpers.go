@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/index"
@@ -30,6 +31,18 @@ func httpMux(mcp http.Handler) http.Handler {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	mux.Handle("/mcp", mcp)
+	return mux
+}
+
+// gateAutoConfig puts the auto-config route behind the REST auth middleware on
+// the MCP listener and sends every other path to mcp. autoConfig is the handler
+// restauto.RegisterAutoConfig returns (it mounts the route and sends the rest
+// to mcp). The MCP handler authorises each tool itself, so the other paths
+// stay open to an anonymous handshake while the gate is on.
+func gateAutoConfig(st store.Backend, mcp, autoConfig http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/mcp/auto-config", auth.MiddlewareWithStore(st, autoConfig))
+	mux.Handle("/", mcp)
 	return mux
 }
 
