@@ -20,7 +20,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-02 | `fix(auth): classify retain, ontology match and auto-config as writes; gate auto-config` | S-M | - | todo | - | - |
 | CX-03 | `fix(auth): never return token hashes; revoking needs the owner or an admin` | S | - | todo | - | - |
 | CX-04 | `fix(cmd): open every verb's store through one resolver` | M | - | in progress | - | blocks CX-18. Production code opens stores only through openStoreWith (guard test); 18 `store.Open` fixture calls remain in cmd/leankg/*_test.go, so the literal `rg 'store\.Open\(' cmd` criterion is not met yet. |
-| CX-05 | `fix(rest/auto): refuse before side effects; run jobs on the server context` | S-M | - | todo | - | - |
+| CX-05 | `fix(rest/auto): refuse before side effects; run jobs on the server context` | S-M | - | done | - | serve owns the Jobs (NewJobs, WithJobs, Stop on return); embed debounce is a channel-driven test |
 | CX-06 | `fix(cmd): validate serve first, surface listener errors, await shutdown` | M | - | todo | - | - |
 | CX-07 | `fix(cmd): remove the data races on telemetry sinks and the capture recorder` | S | - | todo | - | - |
 | CX-08 | `fix(leankg-embed): cancellation is a failure; keep flags after the positional; stop the sidecar on error` | S-M | - | todo | - | - |

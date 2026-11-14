@@ -240,6 +240,18 @@ func startAutoIndex(ctx context.Context, st store.Backend, dir string) {
 	log.Printf("auto-config: index complete: files=%d elements=%d relationships=%d", res.Files, res.Elements, res.Relationships)
 }
 
+// embedDebounce holds the embed job for its debounce window and reports false
+// when the job's context ended first. Tests replace it to drive the window by
+// channel instead of by the clock.
+var embedDebounce = func(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
 // startAutoEmbed waits the debounce window for index to settle, then runs
 // the embedding pipeline in a background goroutine (single-flight per process).
 func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceSecs int) {
@@ -257,10 +269,8 @@ func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceS
 		autoEmbedMu.Unlock()
 	}()
 
-	select {
-	case <-ctx.Done():
+	if !embedDebounce(ctx, time.Duration(debounceSecs)*time.Second) {
 		return
-	case <-time.After(time.Duration(debounceSecs) * time.Second):
 	}
 
 	provider, release, err := embed.StartProvider(ctx)

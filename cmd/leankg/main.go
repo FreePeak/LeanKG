@@ -514,6 +514,12 @@ afterSidecars:
 		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle)
 	}
 
+	// Auto-config jobs outlive the request that started them. serve owns them:
+	// they are cancelled and joined when serve returns, before the store closes
+	// (defers run last-in first-out).
+	jobs := restauto.NewJobs(ctx)
+	defer jobs.Stop()
+
 	if *stdio {
 		if *httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "" {
 			log.Fatal("serve: --stdio is exclusive of --http/--rest/--rpc/--ui")
@@ -586,7 +592,7 @@ afterSidecars:
 		// that returned handler, so serving the original one served everything
 		// except /api/v1/mcp/auto-config. Auto-config is the one write route on
 		// this listener, so it alone is gated (CX-02).
-		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
+		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs))
 		h = gateAutoConfig(st, h, autoConfig)
 		go serveHTTP(ctx, h, addr)
 	}
@@ -600,7 +606,7 @@ afterSidecars:
 		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
-		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
+		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs))
 		// The REST capture handler is built explicitly so a consent reload can
 		// re-point its sink (a level raise that reached nobody was the bug).
 		cap := rest.NewCaptureHandler(rec, telemetry.TransportREST)
