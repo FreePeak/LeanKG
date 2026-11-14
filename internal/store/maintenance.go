@@ -57,6 +57,10 @@ const (
 	// MaintainCheckpoint flushes the WAL into the main database file and
 	// truncates the -wal sidecar to zero.
 	MaintainCheckpoint MaintainKind = "checkpoint"
+	// MaintainUpgrade is the one-time auto_vacuum header upgrade that lets the
+	// store return space at all. On SQLite it rewrites the whole file once; a
+	// failure is fatal to the caller. It is a no-op on PostgreSQL.
+	MaintainUpgrade MaintainKind = "upgrade"
 	// MaintainReclaim hands free pages back to the filesystem, at most
 	// MaintainOp.MaxPages per call, so a live server holds the write lock only
 	// for a bounded pass.
@@ -102,9 +106,11 @@ func errUnknownMaintainKind(kind MaintainKind) error {
 // -wal sidecar to zero. Without a checkpoint a long-lived server's WAL grows
 // until one happens to run, and an unclean shutdown leaves it large on disk.
 //
+// Upgrade enables auto_vacuum=INCREMENTAL once per store (ensureIncrementalVacuum).
+//
 // Reclaim is bounded so a live serving database caps how long the write lock
 // is held; the next pass continues where this one stopped. It needs
-// auto_vacuum=INCREMENTAL, which ensureIncrementalVacuum enables once per store.
+// auto_vacuum=INCREMENTAL, which the Upgrade op enables.
 //
 // ReclaimFull is the blunt instrument (VACUUM): the write lock is held for the
 // whole rewrite and SQLite needs disk space for a second copy. It is for
@@ -120,14 +126,15 @@ func (s *Store) Maintain(op MaintainOp) (MaintainResult, error) {
 		return MaintainResult{}, err
 	}
 	switch op.Kind {
+	case MaintainUpgrade:
+		if err := s.ensureIncrementalVacuum(); err != nil {
+			return MaintainResult{}, err
+		}
 	case MaintainCheckpoint:
 		if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 			return MaintainResult{}, fmt.Errorf("store: wal_checkpoint(TRUNCATE): %w", err)
 		}
 	case MaintainReclaim:
-		if err := s.ensureIncrementalVacuum(); err != nil {
-			return MaintainResult{}, err
-		}
 		// The pragma takes no bind parameter, so the cap is formatted in.
 		// MaxPages is an int from the maintenance options, never user text.
 		stmt := `PRAGMA incremental_vacuum`
@@ -201,7 +208,7 @@ func (s *Store) Space() (SpaceReport, error) {
 // VACUUM rewrites the file, so the upgrade is a two-step dance: request the
 // mode, then VACUUM. Either half alone is a silent no-op, so the result is
 // verified. Idempotent — the mode read is one row, and the VACUUM happens at
-// most once per store, ever. Called from the Reclaim op only.
+// most once per store, ever. Called from the Upgrade op only.
 func (s *Store) ensureIncrementalVacuum() error {
 	var mode int64
 	if err := s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {

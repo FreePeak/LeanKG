@@ -11,7 +11,7 @@ import (
 
 // ctxlessBackendMethods lists every store.Backend method whose first parameter
 // is not context.Context. The list starts as the full unmigrated surface
-// (98 methods after CX-14) and must shrink with each store-role migration (plan CX-19..CX-27).
+// (94 methods after CX-17) and must shrink with each store-role migration (plan CX-19..CX-27).
 //
 // Close, Path, Engine and Mode are permanent exemptions: they are not I/O
 // roles and keep no ctx. Every other name must leave the list in the PR that

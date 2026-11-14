@@ -88,8 +88,8 @@ func TestEnsureIncrementalVacuumEnablesAutoVacuum(t *testing.T) {
 		t.Fatalf("fixture precondition: auto_vacuum = %d, want 0 (NONE)", mode)
 	}
 
-	if err := st.ensureIncrementalVacuum(); err != nil {
-		t.Fatalf("ensure: %v", err)
+	if _, err := st.Maintain(MaintainOp{Kind: MaintainUpgrade}); err != nil {
+		t.Fatalf("upgrade: %v", err)
 	}
 	if err := st.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
 		t.Fatalf("re-read auto_vacuum: %v", err)
@@ -98,8 +98,8 @@ func TestEnsureIncrementalVacuumEnablesAutoVacuum(t *testing.T) {
 		t.Fatalf("auto_vacuum = %d, want 2 (INCREMENTAL)", mode)
 	}
 	// Idempotent: a second call must not VACUUM again.
-	if err := st.ensureIncrementalVacuum(); err != nil {
-		t.Fatalf("second ensure: %v", err)
+	if _, err := st.Maintain(MaintainOp{Kind: MaintainUpgrade}); err != nil {
+		t.Fatalf("second upgrade: %v", err)
 	}
 }
 

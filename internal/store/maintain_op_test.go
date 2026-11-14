@@ -10,6 +10,7 @@ import (
 // allMaintainKinds lists every MaintainKind; the conformance tests range over
 // it so a kind added later is covered without a new test.
 var allMaintainKinds = []MaintainKind{
+	MaintainUpgrade,
 	MaintainCheckpoint,
 	MaintainReclaim,
 	MaintainReclaimFull,
@@ -94,6 +95,7 @@ func TestMaintainerSweepsRefuseReadOnlyOnEveryEngine(t *testing.T) {
 func TestPGMaintainReportsSkippedOps(t *testing.T) {
 	pg := &PGStore{mode: RW}
 	want := map[MaintainKind]string{
+		MaintainUpgrade:             skipAutovacuum,
 		MaintainCheckpoint:          skipServerWAL,
 		MaintainReclaim:             skipAutovacuum,
 		MaintainReclaimFull:         skipAutovacuum,

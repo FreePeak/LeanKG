@@ -8,13 +8,15 @@
 // auto_vacuum=NONE (what every Go-engine store is created with, because Open's
 // DSN never sets it) means SQLite will only ever reuse those pages internally.
 //
-// One pass, three steps, engine-agnostic through store.Backend:
+// One pass, engine-agnostic through store.Backend:
 //
-//  1. MaintainReclaim with MaxPages — a bounded reclaim, safe on a live serving
-//     database because it caps how long the write lock is held. The first
-//     reclaim of a store also performs a one-time auto_vacuum header upgrade
-//     (a whole-file rewrite), without which the store cannot return space at all.
-//  2. MaintainCheckpoint — flush and truncate the -wal sidecar, which otherwise
+//  0. MaintainUpgrade — the one-time auto_vacuum header upgrade (a whole-file
+//     rewrite on SQLite, a no-op on PostgreSQL). It runs first and is fatal:
+//     without it the store cannot return space at all.
+//  1. Sweep — purge orphan rows, so the reclaim below hands their pages back.
+//  2. MaintainReclaim with MaxPages — a bounded reclaim, safe on a live serving
+//     database because it caps how long the write lock is held.
+//  3. MaintainCheckpoint — flush and truncate the -wal sidecar, which otherwise
 //     lingers at whatever size the last unclean shutdown left it.
 //
 // The memory layer's FTS side index gets the same treatment through
@@ -253,7 +255,8 @@ func (r Result) ReclaimSummary() string {
 //
 // A partial failure is not an error: a store that cannot be checkpointed right
 // now (a live reader holds it) still gets its space back, and the next pass
-// retries. Only a store that cannot even be measured is a real failure.
+// retries. A store that cannot be measured, or whose header upgrade is refused,
+// is a real failure.
 func Pass(st store.Backend, opts Options) (Result, error) {
 	if opts.MaxPages == 0 {
 		opts.MaxPages = DefaultMaxPages
@@ -275,6 +278,13 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 		FreeBefore: before.FreeBytes,
 		FreeAfter:  before.FreeBytes,
 		WALBytes:   before.WALBytes,
+	}
+
+	// First and fatal: one PRAGMA read on any store that already auto-vacuums,
+	// exactly one full VACUUM on any store that does not. A store that cannot
+	// enable incremental auto_vacuum cannot return space, so the pass stops.
+	if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainUpgrade}); err != nil {
+		return res, fmt.Errorf("maintain: enable incremental vacuum: %w", err)
 	}
 
 	// The sweep runs BEFORE the vacuum, and that order is the whole point:

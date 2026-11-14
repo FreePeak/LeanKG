@@ -37,6 +37,9 @@ func (s *PGStore) Maintain(op MaintainOp) (MaintainResult, error) {
 		return MaintainResult{}, err
 	}
 	switch op.Kind {
+	case MaintainUpgrade:
+		// auto_vacuum is a server-wide setting this client cannot turn on.
+		return MaintainResult{Skipped: skipAutovacuum}, nil
 	case MaintainCheckpoint:
 		// WAL segment recycling is a server configuration (wal_keep_size,
 		// max_wal_size), not a client-callable operation.

@@ -2,6 +2,7 @@ package maintain
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -233,4 +234,29 @@ func TestRunFiresOnTicker(t *testing.T) {
 func TestCompactMemoryNilIsNoOp(t *testing.T) {
 	// Memory is optional (`serve --memory`); a nil *Memory must not panic.
 	CompactMemory(nil, Options{})
+}
+
+// TestPassFailsWhenHeaderUpgradeIsRefused: the header upgrade runs first and its
+// failure is fatal, so a pass on a read-only handle returns the refusal instead
+// of logging it and carrying on.
+func TestPassFailsWhenHeaderUpgradeIsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "leankg.db")
+	rw, err := store.Open(path, store.RW)
+	if err != nil {
+		t.Fatalf("open rw: %v", err)
+	}
+	if err := rw.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := rw.Close(); err != nil {
+		t.Fatalf("close rw: %v", err)
+	}
+	ro, err := store.Open(path, store.RO)
+	if err != nil {
+		t.Fatalf("open ro: %v", err)
+	}
+	defer ro.Close()
+	if _, err := Pass(ro, Options{}); !errors.Is(err, store.ErrReadOnly) {
+		t.Fatalf("pass on a read-only handle: err = %v, want ErrReadOnly", err)
+	}
 }
