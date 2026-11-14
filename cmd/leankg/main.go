@@ -290,7 +290,17 @@ func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp
 	return srv
 }
 
+// cmdServe runs serve and turns its error into a non-zero exit. serve returns
+// its error rather than calling log.Fatal, so its defers (store close,
+// telemetry flush, auto-config job join) run before the process exits.
 func cmdServe(args []string) {
+	if err := serve(args); err != nil {
+		fmt.Fprintln(os.Stderr, "serve:", err)
+		os.Exit(1)
+	}
+}
+
+func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	dbFlag := fs.String("db", "", "standalone SQLite store file path (default empty = <project>/.leankg/leankg.db); sets the project directory optional (FR-P2)")
@@ -306,7 +316,34 @@ func cmdServe(args []string) {
 	hindsightCompat := fs.Bool("hindsight-compat", false, "on the REST listener, mount the Hindsight-wire compat aliases (/v1/default/banks/...) that omp's memory.backend=hindsight speaks; requires --memory")
 	memoryGlobal := fs.Bool("memory-global", false, "keep the memory layer in ~/.leankg/memory instead of <project>/.leankg/memory (shared/portfolio memory root; requires --memory)")
 	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
+		return err
+	}
+	addr := *httpAddr
+	if addr == "" && *restAddr == "" {
+		// Loopback by default (RS-03): the MCP surface reads project files and
+		// indexes, and with no token configured every caller is Admin. Pass
+		// --http :9699 explicitly to listen on every interface.
+		addr = defaultHTTPAddr
+	}
+	// Flag facts are checked before any store is opened or migrated, so a bad
+	// combination leaves the database file untouched. The listen addresses are
+	// checked for syntax only here (GateOn is set so no exposure is refused);
+	// the exposure rule below needs the auth state the store holds.
+	binds := []struct {
+		kind servebind.Kind
+		addr string
+	}{
+		{servebind.KindMCP, addr},
+		{servebind.KindREST, *restAddr},
+		{servebind.KindRPC, *rpcAddr},
+	}
+	if *stdio && (*httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "") {
+		return errors.New("--stdio is exclusive of --http/--rest/--rpc/--ui")
+	}
+	for _, l := range binds {
+		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: true}); err != nil {
+			return err
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -319,7 +356,7 @@ func cmdServe(args []string) {
 		var err error
 		dir, err = os.Getwd()
 		if err != nil {
-			log.Fatalf("resolve cwd: %v", err)
+			return fmt.Errorf("resolve cwd: %w", err)
 		}
 	}
 	// leankg.yaml project.project_path / project.root anchor, canonicalized
@@ -350,12 +387,12 @@ afterSidecars:
 	}
 	st, err := openStoreWith(ctx, dir, eng, *dbFlag, mode)
 	if err != nil {
-		log.Fatalf("open store: %s", storeErrText(eng, err))
+		return fmt.Errorf("open store: %s", storeErrText(eng, err))
 	}
 	defer st.Close()
 	if !*readOnly {
 		if err := st.Migrate(); err != nil {
-			log.Fatalf("migrate: %v", err)
+			return fmt.Errorf("migrate: %w", err)
 		}
 	}
 
@@ -383,7 +420,7 @@ afterSidecars:
 		// logged because it is also the single-writer anchor: two servers on
 		// one root append to the same JSONL with no cross-process lock.
 		if mem, err = memory.Open(dir, *memoryGlobal); err != nil {
-			log.Fatalf("memory: %v", err)
+			return fmt.Errorf("memory: %w", err)
 		}
 		log.Printf("leankg memory root %s", mem.Root())
 	}
@@ -395,7 +432,7 @@ afterSidecars:
 	var embedder core.QueryEmbedder
 	if *embedProvider != "" {
 		if err := os.Setenv("LEANKG_EMBED_PROVIDER", *embedProvider); err != nil {
-			log.Fatalf("set provider env: %v", err)
+			return fmt.Errorf("set provider env: %w", err)
 		}
 	}
 	if os.Getenv("LEANKG_EMBED_PROVIDER") != "" {
@@ -521,9 +558,6 @@ afterSidecars:
 	defer jobs.Stop()
 
 	if *stdio {
-		if *httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "" {
-			log.Fatal("serve: --stdio is exclusive of --http/--rest/--rpc/--ui")
-		}
 		// stdio is one process-bound MCP session; per-project selection
 		// travels as the `project` tool argument, routed through the
 		// router hook.
@@ -531,19 +565,12 @@ afterSidecars:
 		srv.SetRecorder(rec) // plan v4.15 DS-04: capture tools/call and identity
 		registerMCPSink(srv)
 		log.Printf("leankg serve (stdio) project=%s engine=%s", dir, st.Engine())
-		if err := srv.RunStdio(ctx); err != nil {
-			log.Fatalf("stdio: %v", err)
+		if err := srv.RunStdio(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("stdio: %w", err)
 		}
-		return
+		return nil
 	}
 
-	addr := *httpAddr
-	if addr == "" && *restAddr == "" {
-		// Loopback by default (RS-03): the MCP surface reads project files and
-		// indexes, and with no token configured every caller is Admin. Pass
-		// --http :9699 explicitly to listen on every interface.
-		addr = defaultHTTPAddr
-	}
 	// Exposure gate (RS-03, enforced): a listener that leaves the loopback
 	// interface is REFUSED unless a token gates its callers. With the gate
 	// off every caller resolves to Admin, so a wildcard bind hands the
@@ -562,18 +589,14 @@ afterSidecars:
 		log.Printf("warning: auth gate state unknown: %v", gateErr)
 		gateOn = false
 	}
-	for _, l := range []struct {
-		kind servebind.Kind
-		addr string
-	}{
-		{servebind.KindMCP, addr},
-		{servebind.KindREST, *restAddr},
-		{servebind.KindRPC, *rpcAddr},
-	} {
+	for _, l := range binds {
 		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
-			log.Fatalf("serve: %v", err)
+			return err
 		}
 	}
+	// Every listener is collected here and bound together below, so a port
+	// already in use is reported before any of them starts serving.
+	var eps []endpoint
 	if addr != "" {
 		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject()))
 		mcpSrv.SetProjectRouter(router)
@@ -594,7 +617,7 @@ afterSidecars:
 		// this listener, so it alone is gated (CX-02).
 		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs))
 		h = gateAutoConfig(st, h, autoConfig)
-		go serveHTTP(ctx, h, addr)
+		eps = append(eps, endpoint{addr: addr, h: h})
 	}
 	if *restAddr != "" {
 		var restOpts []rest.HandlerOption
@@ -620,7 +643,7 @@ afterSidecars:
 		root.Handle("/api/v1/auth/", auth.Routes(st))
 		root.Handle("/", auth.MiddlewareWithStore(st, h))
 		log.Printf("leankg serve (REST) on %s", *restAddr)
-		go serveHTTP(ctx, root, *restAddr)
+		eps = append(eps, endpoint{addr: *restAddr, h: root})
 	}
 	if *rpcAddr != "" {
 		path, handler := rpc.Handler(engine, rec)
@@ -640,7 +663,7 @@ afterSidecars:
 		// translates the refusal to name their value and this wire's limit.
 		mux.Handle(path, rpc.ArgsRefusalRecovery(handler))
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
-		go serveHTTP(ctx, auth.MiddlewareWithStore(st, mux), *rpcAddr)
+		eps = append(eps, endpoint{addr: *rpcAddr, h: auth.MiddlewareWithStore(st, mux)})
 	}
 	if *uiAddr != "" {
 		// One address, two surfaces: /api/ wins, the SPA fallback serves
@@ -691,9 +714,13 @@ afterSidecars:
 			}
 			log.Printf("warning: dashboard bound to %s — its API (query/file/import) is unauthenticated; bind loopback or front it with a proxy", bound)
 		}
-		go serveHTTP(ctx, uiMux, *uiAddr)
+		eps = append(eps, endpoint{addr: *uiAddr, h: uiMux})
 	}
-	<-ctx.Done()
+	ls, err := bindAll(eps...)
+	if err != nil {
+		return err
+	}
+	return runServers(ctx, ls...)
 }
 
 // defaultHTTPAddr is the MCP listener when serve is given no address.
