@@ -203,7 +203,7 @@ func TestPGFTSMigration(t *testing.T) {
 	}
 }
 
-func TestPGSearchElementsFTS(t *testing.T) {
+func TestPGFindFuzzy(t *testing.T) {
 	s := openPGTest(t)
 	seed := []Element{
 		{QualifiedName: "pkg.parse_int", ElementType: "function", Name: "parse_int", FilePath: "a.go", Language: "go", Content: "strconv.Atoi"},
@@ -216,7 +216,7 @@ func TestPGSearchElementsFTS(t *testing.T) {
 
 	// A lexeme hits its element; the 'simple' config keeps camelCase whole, so
 	// "ParseConfig" matches by identity and "Config" alone does not.
-	hits, method, err := s.SearchElementsFTS("ParseConfig", 10)
+	hits, method, err := s.FindFuzzy("ParseConfig", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,25 +236,25 @@ func TestPGSearchElementsFTS(t *testing.T) {
 	// keyword arm comparable with sqlite's fts5(name, qualified_name, content):
 	// "Config" is not an identifier lexeme ('simple' never splits camelCase) but
 	// it IS a content lexeme of b.go, so the rung answers instead of going dark.
-	hits, method, err = s.SearchElementsFTS("Config", 10)
+	hits, method, err = s.FindFuzzy("Config", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if method != ArmTSVector || len(hits) != 1 || hits[0].Element.QualifiedName != "pkg.ParseConfig" {
-		t.Fatalf("SearchElementsFTS(Config) = %+v, %q; want the content hit on pkg.ParseConfig via %s", hits, method, ArmTSVector)
+		t.Fatalf("FindFuzzy(Config) = %+v, %q; want the content hit on pkg.ParseConfig via %s", hits, method, ArmTSVector)
 	}
 	// The no-stemming property, asserted on the tsvector arm itself so the
 	// substring fallbacks cannot rescue it: "configs" lexemes nothing anywhere.
 	if raw, err := s.searchElementsTS("configs", 10); err != nil || len(raw) != 0 {
 		t.Fatalf("searchElementsTS(configs) = %+v, %v; want no rows (no stemming)", raw, err)
 	}
-	if got, _, err := s.SearchElementsFTS("parse int", 10); err != nil || len(got) != 1 ||
+	if got, _, err := s.FindFuzzy("parse int", 10); err != nil || len(got) != 1 ||
 		got[0].Element.QualifiedName != "pkg.parse_int" {
 		t.Fatalf("multi-word query = %+v, %v; want pkg.parse_int", got, err)
 	}
 
 	// Empty query is not an error and matches nothing (parity with FindFuzzy).
-	if got, method, err := s.SearchElementsFTS("   ", 10); err != nil || len(got) != 0 || method != "" {
+	if got, method, err := s.FindFuzzy("   ", 10); err != nil || len(got) != 0 || method != "" {
 		t.Fatalf("blank query = %+v, %q, %v; want empty", got, method, err)
 	}
 
@@ -266,14 +266,14 @@ func TestPGSearchElementsFTS(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Asserted on the tsvector arm: after the rename the old lexeme must be
-	// gone from the generated column. SearchElementsFTS could not show that —
+	// gone from the generated column. FindFuzzy could not show that —
 	// its trigram fallback (by design) still fuzzy-matches ParseConfig to
 	// ParseRuntime at similarity ~0.8, which is the fallback working, not a
 	// stale index.
 	if raw, err := s.searchElementsTS("ParseConfig", 10); err != nil || len(raw) != 0 {
 		t.Fatalf("stale lexeme after upsert: %+v, %v", raw, err)
 	}
-	got, _, err := s.SearchElementsFTS("ParseRuntime", 10)
+	got, _, err := s.FindFuzzy("ParseRuntime", 10)
 	if err != nil || len(got) != 1 || got[0].Element.Name != "ParseRuntime" {
 		t.Fatalf("re-lexed search = %+v, %v; want one ParseRuntime hit", got, err)
 	}
@@ -281,7 +281,7 @@ func TestPGSearchElementsFTS(t *testing.T) {
 
 // A query with no lexemes must not read as "no keyword match": it has to go
 // down the substring arms, where it can genuinely match.
-func TestPGSearchElementsFTSFallbackWithoutLexemes(t *testing.T) {
+func TestPGFindFuzzyFallbackWithoutLexemes(t *testing.T) {
 	s := openPGTest(t)
 	if err := s.UpsertElements([]Element{
 		{QualifiedName: "pkg.foo%bar", ElementType: "function", Name: "foo%bar", FilePath: "a.go", Language: "go"},
@@ -293,7 +293,7 @@ func TestPGSearchElementsFTSFallbackWithoutLexemes(t *testing.T) {
 	if ts, err := s.searchElementsTS("%", 10); err != nil || len(ts) != 0 {
 		t.Fatalf("searchElementsTS(%%) = %+v, %v; want no rows", ts, err)
 	}
-	hits, method, err := s.SearchElementsFTS("%", 10)
+	hits, method, err := s.FindFuzzy("%", 10)
 	if err != nil {
 		t.Fatalf("fallback must not error: %v", err)
 	}
@@ -306,14 +306,14 @@ func TestPGSearchElementsFTSFallbackWithoutLexemes(t *testing.T) {
 	// An over-budget query degrades the same way instead of dying on the
 	// tsquery parser.
 	big := strings.Repeat("word ", maxTsqueryWords+10)
-	if got, method, err := s.SearchElementsFTS(big, 10); err != nil || len(got) != 0 || method != ArmTrigram {
+	if got, method, err := s.FindFuzzy(big, 10); err != nil || len(got) != 0 || method != ArmTrigram {
 		t.Fatalf("over-budget query = %d hits, %q, %v; want 0 hits via trigram, no error", len(got), method, err)
 	}
 }
 
 // Migration 012 is what makes the tsvector arm possible; a schema that has it
 // applied must keep serving search when the index is gone underneath it.
-func TestPGSearchElementsFTSDegradesWithoutColumn(t *testing.T) {
+func TestPGFindFuzzyDegradesWithoutColumn(t *testing.T) {
 	s := openPGTest(t)
 	if err := s.UpsertElements([]Element{
 		{QualifiedName: "pkg.SocketHandler", ElementType: "function", Name: "SocketHandler", FilePath: "a.go", Language: "go"},
@@ -326,7 +326,7 @@ func TestPGSearchElementsFTSDegradesWithoutColumn(t *testing.T) {
 	if _, err := s.searchElementsTS("SocketHandler", 10); err == nil {
 		t.Fatal("searchElementsTS must fail without the tsvector column")
 	}
-	hits, method, err := s.SearchElementsFTS("SocketHandler", 10)
+	hits, method, err := s.FindFuzzy("SocketHandler", 10)
 	if err != nil {
 		t.Fatalf("degraded search must not error: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestPGSearchElementsFTSDegradesWithoutColumn(t *testing.T) {
 	}
 }
 
-func TestPGSearchKnowledgeFTS(t *testing.T) {
+func TestPGKnowledgeEntriesSearchRanked(t *testing.T) {
 	s := openPGTest(t)
 	entries := []KnowledgeEntry{
 		{ID: "K-1", KnowledgeType: "note", Title: "Socket close on resume",
@@ -354,7 +354,7 @@ func TestPGSearchKnowledgeFTS(t *testing.T) {
 		}
 	}
 
-	hits, err := s.SearchKnowledgeFTS("socket resume", "", "", 10)
+	hits, err := s.KnowledgeEntriesSearch("socket resume", "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestPGSearchKnowledgeFTS(t *testing.T) {
 	}
 
 	// Filters behave exactly as on KnowledgeEntriesSearch.
-	filtered, err := s.SearchKnowledgeFTS("socket resume", "note", "production", 10)
+	filtered, err := s.KnowledgeEntriesSearch("socket resume", "note", "production", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,12 +384,12 @@ func TestPGSearchKnowledgeFTS(t *testing.T) {
 			t.Fatalf("filter leaked: %+v", h)
 		}
 	}
-	if one, err := s.SearchKnowledgeFTS("socket resume", "", "", 1); err != nil || len(one) != 1 || one[0].ID != "K-3" {
+	if one, err := s.KnowledgeEntriesSearch("socket resume", "", "", 1); err != nil || len(one) != 1 || one[0].ID != "K-3" {
 		t.Fatalf("limit 1 = %+v, %v; want only the top hit K-3", one, err)
 	}
 	// A query with no lexemes goes down the substring path, where it matches
 	// nothing (and must not error).
-	if fallback, err := s.SearchKnowledgeFTS("***", "", "", 10); err != nil || len(fallback) != 0 {
+	if fallback, err := s.KnowledgeEntriesSearch("***", "", "", 10); err != nil || len(fallback) != 0 {
 		t.Fatalf("fallback = %+v, %v; want no rows, no error", fallback, err)
 	}
 }

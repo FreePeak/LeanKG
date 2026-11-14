@@ -283,9 +283,10 @@ func (s *PGStore) KnowledgeEntriesByEnvironment(environment string, limit int) (
 		` ORDER BY updated_at DESC, id ASC`+limitSQL(limit, b), b.args...)
 }
 
-// KnowledgeEntriesSearch substring-matches title or content (optionally
-// narrowed by knowledge type and environment), newest first.
-func (s *PGStore) KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+// knowledgeSubstringSearch substring-matches title or content (optionally
+// narrowed by knowledge type and environment), newest first. It is the
+// fallback behind KnowledgeEntriesSearch.
+func (s *PGStore) knowledgeSubstringSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	b := &whereBuilder{ph: func(n int) string { return fmt.Sprintf("$%d", n) }}
 	where := searchWhere(query, knowledgeType, environment, b)
 	clause := limitSQL(limit, b)

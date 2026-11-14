@@ -70,7 +70,7 @@ func assertNoElement(t *testing.T, st *store.Store, name string) {
 	if len(els) != 0 {
 		t.Fatalf("FindExact(%q): got %d elements, want 0", name, len(els))
 	}
-	hits, err := st.FindFuzzy(name, 10)
+	hits, _, err := st.FindFuzzy(name, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

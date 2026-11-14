@@ -47,7 +47,9 @@ type GraphReader interface {
 
 // Searcher ranks elements by keyword and by vector similarity.
 type Searcher interface {
-	FindFuzzy(query string, limit int) ([]FuzzyMatch, error)
+	// FindFuzzy is the keyword arm. It returns the hits and the arm that served
+	// them (ArmFTS5 on SQLite; ArmTSVector, ArmTrigram or ArmILIKE on PostgreSQL).
+	FindFuzzy(query string, limit int) ([]FuzzyMatch, string, error)
 	SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error)
 	// SearchVectorsScoped is SearchVectors restricted to the elements keep
 	// accepts; a nil keep is exactly SearchVectors. A caller that wants to rank

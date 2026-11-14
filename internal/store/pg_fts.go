@@ -5,8 +5,7 @@
 // trigram rankings behind the PostgreSQL semantic rung.
 //
 // SQLite's FTS5 path is deliberately untouched: nothing in this file is
-// reachable from *Store, and callers keep depending on store.Backend and
-// type-assert for FTSBackend.
+// reachable from *Store.
 package store
 
 import (
@@ -28,7 +27,7 @@ import (
 const pgTSConfig = "'simple'"
 
 // Ranking-arm names, as they appear in FuseRRFWeighted's RankList labels and in the
-// provenance strings returned by SearchElementsFTS and HybridSearch.
+// provenance strings returned by FindFuzzy and HybridSearch.
 const (
 	ArmVector   = "vector"
 	ArmTSVector = "tsvector"
@@ -227,33 +226,14 @@ type HybridHit struct {
 	TrigramScore float64        `json:"trigram_score,omitempty"`
 }
 
-// FTSBackend is the optional capability of a Backend that ranks keyword hits
-// from a real full-text index and fuses several rankings. Only PGStore
-// implements it. Callers (core, orgknowledge) keep store.Backend as the
-// contract and type-assert, so the SQLite FTS5/bm25 rung stays exactly as it is
-// in both source and behavior.
-type FTSBackend interface {
-	// SearchElementsFTS ranks code_elements by tsvector and reports which arm
-	// served the hits (ArmTSVector, ArmTrigram or ArmILIKE).
-	SearchElementsFTS(query string, limit int) ([]FuzzyMatch, string, error)
-	// SearchKnowledgeFTS ranks knowledge_entries by tsvector over
-	// (title, content) with the same filters as KnowledgeEntriesSearch.
-	SearchKnowledgeFTS(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error)
-	// HybridSearch fuses the vector, tsvector and trigram rankings of one
-	// query and reports the contributing arms.
-	HybridSearch(modelID, query string, qvec []float32, limit int) ([]HybridHit, string, error)
-}
-
-var _ FTSBackend = (*PGStore)(nil)
-
-// SearchElementsFTS is the PostgreSQL keyword rung: ts_rank over the
+// FindFuzzy is the PostgreSQL keyword rung: ts_rank over the
 // migration-012 tsvector (the @@ predicate is GIN-served), degrading to
 // pg_trgm similarity ranking and then to plain ILIKE substring recall. The
 // tsvector side is skipped when the query carries no lexemes and whenever it
 // errors — a refused tsquery, or a schema that predates migration 012 — so
 // availability never depends on the index or the extension (the same
 // degrade-not-fail policy as the Rust 007_trgm_fuzzy.sql tier).
-func (s *PGStore) SearchElementsFTS(query string, limit int) ([]FuzzyMatch, string, error) {
+func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, string, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, "", nil
 	}
@@ -281,14 +261,14 @@ func (s *PGStore) SearchElementsFTS(query string, limit int) ([]FuzzyMatch, stri
 }
 
 // searchElementsSubstring is the two-arm keyword fallback behind
-// SearchElementsFTS: pg_trgm similarity ranking when the extension resolves,
+// FindFuzzy: pg_trgm similarity ranking when the extension resolves,
 // ILIKE substring recall when it does not.
 func (s *PGStore) searchElementsSubstring(query string, limit int) ([]FuzzyMatch, string, error) {
 	matches, err := s.searchElementsTrigram(query, limit)
 	if err == nil {
 		return matches, ArmTrigram, nil
 	}
-	fallback, ie := s.FindFuzzy(query, limit)
+	fallback, ie := s.findElementsILIKE(query, limit)
 	if ie != nil {
 		return nil, "", fmt.Errorf("store: element substring search %q: %w (trigram: %v)", query, ie, err)
 	}
@@ -334,15 +314,14 @@ func (s *PGStore) searchElementsTrigram(query string, limit int) ([]FuzzyMatch, 
 	return scanFuzzyMatches(rows)
 }
 
-// SearchKnowledgeFTS is the knowledge_entries keyword search over the
+// KnowledgeEntriesSearch is the knowledge_entries keyword search over the
 // migration-012 tsvector of (title, content): relevance-ranked with recency
-// breaking ties, degrading to KnowledgeEntriesSearch (substring, newest first)
-// for a query with no lexemes or any tsvector-side error. The filters match
-// KnowledgeEntriesSearch exactly, so the two are interchangeable at the call
-// site.
-func (s *PGStore) SearchKnowledgeFTS(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+// breaking ties, degrading to knowledgeSubstringSearch (substring, newest
+// first) for a query with no lexemes or any tsvector-side error. The filters
+// are the same on both paths, so callers see one contract.
+func (s *PGStore) KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	if !tsqueryUsable(query) {
-		return s.KnowledgeEntriesSearch(query, knowledgeType, environment, limit)
+		return s.knowledgeSubstringSearch(query, knowledgeType, environment, limit)
 	}
 	// $1 is the query text, bound once and reused by the predicate and the
 	// rank expression; the optional filters and the limit follow it.
@@ -364,7 +343,7 @@ func (s *PGStore) SearchKnowledgeFTS(query, knowledgeType, environment string, l
 		WHERE `+strings.Join(conds, " AND ")+`
 		ORDER BY score DESC, updated_at DESC, id ASC`+clause, args...)
 	if err != nil {
-		return s.KnowledgeEntriesSearch(query, knowledgeType, environment, limit)
+		return s.knowledgeSubstringSearch(query, knowledgeType, environment, limit)
 	}
 	return s.scanKnowledgeRanked(rows)
 }
@@ -484,7 +463,7 @@ func (s *PGStore) HybridSearchScopedWeighted(modelID, query string, qvec []float
 		name := ArmTrigram
 		if err != nil {
 			kwErr = err
-			matches, err = s.FindFuzzy(query, window)
+			matches, err = s.findElementsILIKE(query, window)
 			name = ArmILIKE
 		}
 		if err != nil {

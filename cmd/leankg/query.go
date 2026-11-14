@@ -159,7 +159,7 @@ func cmdQuery(args []string) {
 			fatalJSON(err)
 		}
 		if len(els) == 0 {
-			matches, ferr := st.FindFuzzy(q, 10)
+			matches, _, ferr := st.FindFuzzy(q, 10)
 			if ferr != nil {
 				fatalJSON(ferr)
 			}

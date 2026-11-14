@@ -8,9 +8,8 @@ const ArmFTS5 = "fts5"
 // ArmName labels the exact-symbol-name arm in hybrid provenance.
 const ArmName = "name"
 
-// HybridSearcher is the capability the L3 rung fuses through (RS-12). It was
-// part of FTSBackend, which only PGStore implements, so SQLite's L3 was plain
-// cosine while PostgreSQL fused keyword and vector ranks.
+// HybridSearcher is the capability the L3 rung fuses through (RS-12). SQLite's
+// L3 fuses the cosine and FTS5 ranks, as PostgreSQL does.
 type HybridSearcher interface {
 	HybridSearch(modelID, query string, qvec []float32, limit int) ([]HybridHit, string, error)
 }
@@ -80,7 +79,7 @@ func (s *Store) HybridSearchScopedWeighted(modelID, query string, qvec []float32
 		}
 	}
 	if strings.TrimSpace(query) != "" {
-		if matches, err := s.FindFuzzy(query, window); err == nil && len(matches) > 0 {
+		if matches, _, err := s.FindFuzzy(query, window); err == nil && len(matches) > 0 {
 			keys := make([]string, 0, len(matches))
 			for _, m := range matches {
 				// The caller's population applies to EVERY arm. Scoping only
