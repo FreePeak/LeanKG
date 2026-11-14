@@ -64,7 +64,7 @@ func runDashboardCLI(t *testing.T, dir string, args ...string) (string, string, 
 func seedDashboardStore(t *testing.T, dir string) {
 	t.Helper()
 	path := filepath.Join(dir, "leankg.db")
-	st, err := store.Open(path, store.RW)
+	st, err := openFixtureStore(path, store.RW)
 	if err != nil {
 		t.Fatalf("seed store %s: %v", path, err)
 	}

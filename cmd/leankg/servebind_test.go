@@ -197,7 +197,7 @@ func TestServeBindAcceptsWildcardWithSiteAdmin(t *testing.T) {
 	t.Setenv("LEANKG_TOKEN_ADMIN", "")
 	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
 	t.Setenv("LEANKG_TOKEN_VIEWER", "")
-	st, err := store.Open(t.TempDir()+"/.leankg/leankg.db", store.RW)
+	st, err := openFixtureStore(t.TempDir()+"/.leankg/leankg.db", store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}

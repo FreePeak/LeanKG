@@ -50,7 +50,7 @@ func TestAuthTokenCLI(t *testing.T) {
 	dbPath := filepath.Join(dir, ".leankg", "leankg.db")
 	verify := func() (auth.Grant, bool, error) {
 		t.Helper()
-		st, err := store.Open(dbPath, store.RO)
+		st, err := openFixtureStore(dbPath, store.RO)
 		if err != nil {
 			t.Fatal(err)
 		}

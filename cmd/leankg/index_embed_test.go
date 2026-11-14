@@ -55,7 +55,7 @@ func embedServer(t *testing.T, dims int) (*httptest.Server, *atomic.Int32) {
 // stamp; a store that was never embedded has no stamp and no vectors.
 func vectorCount(t *testing.T, dir string) int {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

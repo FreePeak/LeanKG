@@ -21,7 +21,7 @@ func doctorProject(t *testing.T, broken bool) string {
 		t.Fatal(err)
 	}
 	if broken {
-		st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+		st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 		if err != nil {
 			t.Fatal(err)
 		}

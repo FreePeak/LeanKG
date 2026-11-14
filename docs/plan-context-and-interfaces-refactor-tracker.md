@@ -19,7 +19,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-01 | `fix(memory): redact before indexing and recall` | S | - | todo | - | - |
 | CX-02 | `fix(auth): classify retain, ontology match and auto-config as writes; gate auto-config` | S-M | - | todo | - | - |
 | CX-03 | `fix(auth): never return token hashes; revoking needs the owner or an admin` | S | - | todo | - | - |
-| CX-04 | `fix(cmd): open every verb's store through one resolver` | M | - | in progress | - | blocks CX-18. Production code opens stores only through openStoreWith (guard test); 18 `store.Open` fixture calls remain in cmd/leankg/*_test.go, so the literal `rg 'store\.Open\(' cmd` criterion is not met yet. |
+| CX-04 | `fix(cmd): open every verb's store through one resolver` | M | - | in progress | - | blocks CX-18. Production code opens stores only through openStoreWith (guard test); test fixtures open through openFixtureStore (storefactory_test.go), so `rg 'store\.Open\(' cmd` is empty. Stays in progress: the PostgreSQL subcase of TestWriterAndServeOpenTheSameStore SKIPs without LEANKG_TEST_PG_URL (no live fixture run). |
 | CX-05 | `fix(rest/auto): refuse before side effects; run jobs on the server context` | S-M | - | done | - | serve owns the Jobs (NewJobs, WithJobs, Stop on return); embed debounce is a channel-driven test |
 | CX-06 | `fix(cmd): validate serve first, surface listener errors, await shutdown` | M | - | todo | - | - |
 | CX-07 | `fix(cmd): remove the data races on telemetry sinks and the capture recorder` | S | - | todo | - | - |

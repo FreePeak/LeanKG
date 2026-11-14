@@ -21,7 +21,7 @@ import (
 func seedUnmigratedStore(t *testing.T, dir string) {
 	t.Helper()
 	path := filepath.Join(dir, ".leankg", "leankg.db")
-	st, err := store.Open(path, store.RW)
+	st, err := openFixtureStore(path, store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

@@ -41,7 +41,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // file row, so the register verb's counts are non-trivial.
 func seedIndexedProject(t *testing.T, dir string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,10 @@ import (
 // store.OpenBackend or store.OpenPG call anywhere else is how `writer` came to
 // open a file that ignored LEANKG_DB_PATH, the leankg.yaml anchor and the
 // PostgreSQL engine while `serve` honoured all three.
+//
+// Test files are held to store.Open as well: every fixture opens through
+// openFixtureStore, which calls the factory. OpenBackend and OpenPG are still
+// checked in production files only.
 func TestStoreOpensGoThroughTheFactory(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -26,7 +30,8 @@ func TestStoreOpensGoThroughTheFactory(t *testing.T) {
 	fset := token.NewFileSet()
 	var bypass []string
 	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") || name == "store.go" {
+		isTest := strings.HasSuffix(name, "_test.go")
+		if name == "store.go" {
 			continue
 		}
 		file, err := parser.ParseFile(fset, name, nil, 0)
@@ -47,16 +52,28 @@ func TestStoreOpensGoThroughTheFactory(t *testing.T) {
 				return true
 			}
 			switch sel.Sel.Name {
-			case "Open", "OpenBackend", "OpenPG":
-				bypass = append(bypass, fset.Position(call.Pos()).String()+" store."+sel.Sel.Name)
+			case "Open":
+				bypass = append(bypass, fset.Position(call.Pos()).String()+" store.Open")
+			case "OpenBackend", "OpenPG":
+				if !isTest {
+					bypass = append(bypass, fset.Position(call.Pos()).String()+" store."+sel.Sel.Name)
+				}
 			}
 			return true
 		})
 	}
 	if len(bypass) > 0 {
-		t.Fatalf("store opened outside the factory (cmd/leankg/store.go); route each through openStore or openStoreWith:\n%s",
+		t.Fatalf("store opened outside the factory (cmd/leankg/store.go); route each through openStore or openStoreWith (tests: openFixtureStore):\n%s",
 			strings.Join(bypass, "\n"))
 	}
+}
+
+// openFixtureStore is the one way a test opens a SQLite fixture store. It goes
+// through the factory (openStoreWith), so fixtures resolve like production. The
+// engine is pinned to sqlite: a developer's LEANKG_DB_ENGINE must not turn a
+// file fixture into a PostgreSQL one.
+func openFixtureStore(dbPath string, mode store.Mode) (store.Backend, error) {
+	return openStoreWith(context.Background(), filepath.Dir(dbPath), store.EngineSQLite, dbPath, mode)
 }
 
 // resolvedPath compares store locations through symlinks: t.TempDir sits under
