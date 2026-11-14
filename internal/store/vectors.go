@@ -386,6 +386,9 @@ func (s *Store) ClearVectors(modelID string) error {
 // longer exist, every model at once — the anti-join VectorCoverage reports,
 // made repairable (gc). The watermark bumps only when rows actually go.
 func (s *Store) DeleteOrphanVectors() (int, error) {
+	if err := requireWritable(s.mode); err != nil {
+		return 0, err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -436,6 +439,9 @@ func (s *Store) VectorCount(modelID string) (int, error) {
 // not know which collection is live must not be able to delete it. The
 // watermark bumps only when rows actually go, like every other purge here.
 func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
+	if err := requireWritable(s.mode); err != nil {
+		return StaleStampSweep{}, err
+	}
 	keep = cleanModelIDs(keep)
 	if len(keep) == 0 {
 		return StaleStampSweep{}, nil
@@ -785,6 +791,9 @@ func embedRunCutoff(cutoff time.Time) string {
 // history of the interrupted run survives.
 func (s *Store) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 	var out EmbedRunPrune
+	if err := requireWritable(s.mode); err != nil {
+		return out, err
+	}
 	cut := embedRunCutoff(cutoff)
 	res, err := s.db.Exec(`UPDATE embed_runs SET status='failed', finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		WHERE status='running' AND started_at < ?`, cut)

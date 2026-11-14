@@ -8,14 +8,15 @@
 // auto_vacuum=NONE (what every Go-engine store is created with, because Open's
 // DSN never sets it) means SQLite will only ever reuse those pages internally.
 //
-// One pass, three steps, engine-agnostic through store.Backend:
+// One pass, engine-agnostic through store.Backend:
 //
-//  1. EnsureIncrementalVacuum — a one-time header upgrade so the store can
-//     return space at all (and, on the upgrade itself, the whole accumulated
-//     freelist).
-//  2. IncrementalVacuum(maxPages) — a bounded reclaim, safe on a live serving
+//  0. MaintainUpgrade — the one-time auto_vacuum header upgrade (a whole-file
+//     rewrite on SQLite, a no-op on PostgreSQL). It runs first and is fatal:
+//     without it the store cannot return space at all.
+//  1. Sweep — purge orphan rows, so the reclaim below hands their pages back.
+//  2. MaintainReclaim with MaxPages — a bounded reclaim, safe on a live serving
 //     database because it caps how long the write lock is held.
-//  3. Checkpoint — flush and truncate the -wal sidecar, which otherwise
+//  3. MaintainCheckpoint — flush and truncate the -wal sidecar, which otherwise
 //     lingers at whatever size the last unclean shutdown left it.
 //
 // The memory layer's FTS side index gets the same treatment through
@@ -186,9 +187,9 @@ func Sweep(st store.Backend, opts Options) SweepResult {
 		}
 	}
 	if opts.CompactFTS {
-		if err := st.CompactFTS(); err != nil {
+		if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCompactKeywordIndex}); err != nil {
 			logf("maintain: fts compaction: %v", err)
-		} else {
+		} else if r.Skipped == "" {
 			out.FTSCompacted = true
 		}
 	}
@@ -254,7 +255,8 @@ func (r Result) ReclaimSummary() string {
 //
 // A partial failure is not an error: a store that cannot be checkpointed right
 // now (a live reader holds it) still gets its space back, and the next pass
-// retries. Only a store that cannot even be measured is a real failure.
+// retries. A store that cannot be measured, or whose header upgrade is refused,
+// is a real failure.
 func Pass(st store.Backend, opts Options) (Result, error) {
 	if opts.MaxPages == 0 {
 		opts.MaxPages = DefaultMaxPages
@@ -278,9 +280,10 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 		WALBytes:   before.WALBytes,
 	}
 
-	// First and unconditional: one PRAGMA read on any store that already
-	// auto-vacuums, exactly one full VACUUM on any store that does not.
-	if err := st.EnsureIncrementalVacuum(); err != nil {
+	// First and fatal: one PRAGMA read on any store that already auto-vacuums,
+	// exactly one full VACUUM on any store that does not. A store that cannot
+	// enable incremental auto_vacuum cannot return space, so the pass stops.
+	if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainUpgrade}); err != nil {
 		return res, fmt.Errorf("maintain: enable incremental vacuum: %w", err)
 	}
 
@@ -312,17 +315,18 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 	// store's freelist sat below it, so the hourly pass freed 0 bytes
 	// fleet-wide while the machinery looked healthy.
 	if opts.MinFreeBytes >= 0 && freelist > 0 && freelist >= opts.MinFreeBytes {
-		if err := st.IncrementalVacuum(opts.MaxPages); err != nil {
-			// Not fatal: the checkpoint below still applies, and the next
-			// pass retries the reclaim.
+		// Not fatal: the checkpoint below still applies, and the next pass
+		// retries the reclaim. A skipped op did no work, so it is not
+		// counted as a reclaim.
+		if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainReclaim, MaxPages: opts.MaxPages}); err != nil {
 			logf("maintain: incremental vacuum: %v", err)
-		} else {
+		} else if r.Skipped == "" {
 			res.Vacuumed = true
 		}
 	}
-	if err := st.Checkpoint(); err != nil {
+	if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
 		logf("maintain: checkpoint: %v", err)
-	} else {
+	} else if r.Skipped == "" {
 		res.Checkpointed = true
 	}
 

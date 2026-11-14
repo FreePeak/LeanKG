@@ -77,7 +77,7 @@ checkable rather than arguable.
 | 2 | the weighted variant of rank fusion | `internal/store/pg_fts.go::FuseRRFWeighted` | pg_fts.go |
 | 3 | the Store constructor that opens sqlite | `internal/store/store.go::Open` | store.go |
 | 4 | report how many bytes the freelist holds | `internal/store/maintenance.go::Store.Space` | maintenance.go |
-| 5 | hand free pages back one page at a time | `internal/store/maintenance.go::Store.IncrementalVacuum` | maintenance.go |
+| 5 | hand free pages back one page at a time | `internal/store/maintenance.go::Store.Maintain` | maintenance.go |
 | 6 | adopt incremental vacuum in the header | `internal/store/maintenance.go::Store.ensureIncrementalVacuum` | maintenance.go |
 | 7 | resolve the configured sqlite store path | `internal/projectcfg/projectcfg.go::StandaloneDBPath` | projectcfg.go |
 | 8 | list the files the indexer would take | `internal/index/walk.go::SupportedFiles` | walk.go |
@@ -185,7 +185,7 @@ Reproduce with `scripts/retrieval-bench.py`, which parses the tables below:
 | 80 | registers a project, or refreshes the row keyed on Dir | `internal/store/pg_projects.go::PGStore.ProjectUpsert` | internal/store/pg_projects.go |
 | 81 | returns the stdio command path: the current executable when resolvable, else bare "leankg" | `cmd/leankg/install.go::CurrentCommand` | cmd/leankg/install.go |
 | 82 | reports the token delta between two strings | `internal/compress/gitdiff.go::GitDiffCompressor.EstimateSavings` | internal/compress/gitdiff.go |
-| 83 | is a no-op: auto_vacuum is a Postgres-wide setting, not a per-database one this client can turn on safely | `internal/store/maintenance_pg.go::PGStore.EnsureIncrementalVacuum` | internal/store/maintenance_pg.go |
+| 83 | is a no-op: auto_vacuum is a Postgres-wide setting, not a per-database one this client can turn on safely | `internal/store/maintenance_pg.go::PGStore.Maintain` | internal/store/maintenance_pg.go |
 | 84 | extracts R.<type>.<name> and getString/getText resource references from Kotlin source. Results are deduped on | `internal/index/android_resrefs.go::ExtractResourceRefs` | internal/index/android_resrefs.go |
 | 85 | resolves a plaintext bearer secret against the DB token store.  An unknown secret is | `internal/auth/tokens.go::Verify` | internal/auth/tokens.go |
 | 86 | enumerates every indexed element | `internal/store/backend.go::Store.Elements` | internal/store/backend.go |
