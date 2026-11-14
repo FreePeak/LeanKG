@@ -418,3 +418,47 @@ func writeMemoryFile(full, content string) error {
 // The caller's words are preserved (only the matched value is replaced), so
 // a redacted lesson still explains what it was about.
 func Redact(content string) string { return telemetry.Redact(content) }
+
+// redactEntry returns e with its content and every string inside its metadata
+// masked by Redact. The bank write path applies it once per row, so the JSONL
+// file and the FTS index are built from the same redacted text.
+func redactEntry(e Entry) Entry {
+	e.Content = Redact(e.Content)
+	e.Metadata = redactMetadata(e.Metadata)
+	return e
+}
+
+// redactMetadata copies m with every string value redacted. Tags arrive as a
+// []string and other values may nest, so the walk covers those shapes too.
+func redactMetadata(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = redactValue(v)
+	}
+	return out
+}
+
+func redactValue(v any) any {
+	switch x := v.(type) {
+	case string:
+		return Redact(x)
+	case []string:
+		out := make([]string, len(x))
+		for i, s := range x {
+			out[i] = Redact(s)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = redactValue(item)
+		}
+		return out
+	case map[string]any:
+		return redactMetadata(x)
+	}
+	return v
+}
