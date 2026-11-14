@@ -11,9 +11,32 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
+
+// lockedBuffer collects a child's output. os/exec copies the pipe on its own
+// goroutine for as long as the child runs, while the test polls the text, so
+// a bare strings.Builder is a data race.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
 
 // buildLeanKG compiles the real CLI into a temp dir. Both guards below need
 // the actual binary: the whole point is to execute what clients and hooks
@@ -310,7 +333,7 @@ func TestServeSurvivesUnusableEmbedProvider(t *testing.T) {
 				"LEANKG_EMBED_BASE_URL=",
 				"LEANKG_EMBED_MODEL=",
 			), env...)
-			var logs strings.Builder
+			var logs lockedBuffer
 			cmd.Stdout, cmd.Stderr = &logs, &logs
 			if err := cmd.Start(); err != nil {
 				t.Fatalf("serve: %v", err)
@@ -441,4 +464,27 @@ func TestUIV2LegacyRoutesServeData(t *testing.T) {
 	if code, ctype, _ := get("/favicon.svg"); code != 200 || !strings.Contains(ctype, "svg") {
 		t.Errorf("GET /favicon.svg: %d %s", code, ctype)
 	}
+}
+
+// TestTelemetrySinksAreRaceFree pins CX-07: serve registers its sinks while the
+// SIGHUP reload goroutine is already running, and a consent reload walks the
+// list from that goroutine. Run with -race, the base code reports a DATA RACE
+// on the unlocked telemetrySinks slice.
+func TestTelemetrySinksAreRaceFree(t *testing.T) {
+	const n = 200
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			AddTelemetrySink(func(telemetry.Recorder) {})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			telemetrySinks.install(telemetry.Nop{})
+		}
+	}()
+	wg.Wait()
 }

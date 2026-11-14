@@ -531,7 +531,7 @@ func ReloadTelemetry() error {
 		return fmt.Errorf("telemetry reload: %w", err)
 	}
 	// Re-point the consumers at the (possibly new) recorder.
-	installTelemetrySinks(rec)
+	telemetrySinks.install(rec)
 	log.Printf("telemetry: consent reloaded at %s", level)
 	return nil
 }
@@ -543,11 +543,11 @@ func ReloadTelemetry() error {
 // nobody until the sinks are pointed at it. Without this the reload logs
 // success and captures nothing — the exact "it does not work" report the reload
 // exists to prevent.
-var telemetrySinks []func(telemetry.Recorder)
+var telemetrySinks sinkRegistry
 
 // AddTelemetrySink registers a consumer to be re-pointed when a reload builds
 // a recorder (serve registers its four sinks once, at startup).
-func AddTelemetrySink(fn func(telemetry.Recorder)) { telemetrySinks = append(telemetrySinks, fn) }
+func AddTelemetrySink(fn func(telemetry.Recorder)) { telemetrySinks.add(fn) }
 
 // watchConsentReload reloads consent on SIGHUP until ctx is done. SIGHUP is the
 // conventional "re-read your config" signal, so it is what an operator already
@@ -574,27 +574,33 @@ func watchConsentReload(ctx context.Context) {
 // registerMCPSink records one live MCP server so a consent reload can re-point
 // it. MCP servers are created per listener and lazily per project, so the sink
 // list cannot be known at startup; each New(engine) registers itself here as
-// it is built. The pointer is kept, not the value, because every consumer holds
-// the Recorder it was given at start.
-var (
-	mcpSinkMu sync.Mutex
-	mcpSinks  []interface{ SetRecorder(telemetry.Recorder) }
-)
-
+// it is built. The method value keeps the server, not the Recorder it was given
+// at start, so a reload reaches it.
 func registerMCPSink(srv interface{ SetRecorder(telemetry.Recorder) }) {
-	mcpSinkMu.Lock()
-	defer mcpSinkMu.Unlock()
-	mcpSinks = append(mcpSinks, srv)
+	telemetrySinks.add(srv.SetRecorder)
 }
 
-// installTelemetrySinks re-points every consumer at rec.
-func installTelemetrySinks(rec telemetry.Recorder) {
-	for _, fn := range telemetrySinks {
+// sinkRegistry is the list of consumers a consent reload re-points. Serve adds
+// to it at startup and from request goroutines (a lazily built MCP server)
+// while the SIGHUP goroutine walks it, so every access takes the lock.
+type sinkRegistry struct {
+	mu  sync.Mutex
+	fns []func(telemetry.Recorder)
+}
+
+func (r *sinkRegistry) add(fn func(telemetry.Recorder)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fns = append(r.fns, fn)
+}
+
+// install points every registered consumer at rec. It walks a copy, so a
+// consumer that registers another one does not deadlock on the lock.
+func (r *sinkRegistry) install(rec telemetry.Recorder) {
+	r.mu.Lock()
+	fns := append([]func(telemetry.Recorder){}, r.fns...)
+	r.mu.Unlock()
+	for _, fn := range fns {
 		fn(rec)
-	}
-	mcpSinkMu.Lock()
-	defer mcpSinkMu.Unlock()
-	for _, srv := range mcpSinks {
-		srv.SetRecorder(rec)
 	}
 }
