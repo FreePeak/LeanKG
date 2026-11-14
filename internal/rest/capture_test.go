@@ -278,3 +278,46 @@ func TestCaptureBodiesStoresRedactedBody(t *testing.T) {
 		t.Fatalf("Metadata row stored bodies: %+v", mcalls[0])
 	}
 }
+
+// TestCaptureRecorderSwapIsRaceFree pins CX-07: a consent reload re-points the
+// REST capture sink on the SIGHUP goroutine while requests are in flight. Every
+// request must be served and recorded exactly once; run with -race, the base
+// code reports a DATA RACE on RecorderHolder.rec.
+func TestCaptureRecorderSwapIsRaceFree(t *testing.T) {
+	a := &captureRecorder{level: telemetry.Metadata}
+	b := &captureRecorder{level: telemetry.Bodies}
+	c := NewCaptureHandler(a, telemetry.TransportREST)
+	h := c.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	const n = 200
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			if i%2 == 0 {
+				c.SetRecorder(a)
+			} else {
+				c.SetRecorder(b)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			if code, _, _ := do(h, reqSpec{method: "GET", path: "/api/v1/status"}); code != http.StatusOK {
+				t.Errorf("request %d: status %d, want 200", i, code)
+				return
+			}
+		}
+	}()
+	wg.Wait()
+
+	ca, _ := a.snapshot()
+	cb, _ := b.snapshot()
+	if got := len(ca) + len(cb); got != n {
+		t.Fatalf("recorded %d calls (a=%d b=%d), want %d: one row per request", got, len(ca), len(cb), n)
+	}
+}
