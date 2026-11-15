@@ -33,15 +33,15 @@ func auditHash(prev string, e *AuditEntry) string {
 
 // AppendAudit writes one hash-chained record. The chain head is the row with
 // the highest seq; the single write connection serializes concurrent appends.
-func (s *Store) AppendAudit(e *AuditEntry) error {
-	tx, err := s.db.Begin()
+func (s *Store) AppendAudit(ctx context.Context, e *AuditEntry) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	var seq int64
 	var prev string
-	if err := tx.QueryRow(`SELECT COALESCE(MAX(seq),0), COALESCE((SELECT hash FROM audit_ledger ORDER BY seq DESC LIMIT 1),'') FROM audit_ledger`).Scan(&seq, &prev); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0), COALESCE((SELECT hash FROM audit_ledger ORDER BY seq DESC LIMIT 1),'') FROM audit_ledger`).Scan(&seq, &prev); err != nil {
 		return err
 	}
 	e.Seq = seq + 1
@@ -50,22 +50,22 @@ func (s *Store) AppendAudit(e *AuditEntry) error {
 		e.At = time.Now().Unix()
 	}
 	e.Hash = auditHash(e.PrevHash, e)
-	if _, err := tx.Exec(`INSERT INTO audit_ledger (seq, at, actor, action, target, details, prev_hash, hash)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_ledger (seq, at, actor, action, target, details, prev_hash, hash)
 		VALUES (?,?,?,?,?,?,?,?)`, e.Seq, e.At, e.Actor, e.Action, e.Target, auditDetailsJSON(e), e.PrevHash, e.Hash); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // AuditTail returns the last `limit` entries in ascending seq order.
-func (s *Store) AuditTail(limit int) ([]AuditEntry, error) {
+func (s *Store) AuditTail(ctx context.Context, limit int) ([]AuditEntry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.Query(`SELECT seq, at, actor, action, target, details, prev_hash, hash FROM audit_ledger
+	rows, err := s.db.QueryContext(ctx, `SELECT seq, at, actor, action, target, details, prev_hash, hash FROM audit_ledger
 		ORDER BY seq DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -94,8 +94,8 @@ func (s *Store) AuditTail(limit int) ([]AuditEntry, error) {
 
 // VerifyAuditChain walks the whole ledger recomputing hashes; the first
 // mismatch (prev-link or entry hash) reports brokenAt.
-func (s *Store) VerifyAuditChain() (ok bool, brokenAt int64, err error) {
-	rows, err := s.db.Query(`SELECT seq, at, actor, action, target, details, prev_hash, hash FROM audit_ledger ORDER BY seq`)
+func (s *Store) VerifyAuditChain(ctx context.Context) (ok bool, brokenAt int64, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT seq, at, actor, action, target, details, prev_hash, hash FROM audit_ledger ORDER BY seq`)
 	if err != nil {
 		return false, 0, err
 	}

@@ -25,6 +25,7 @@ package summarize
 // notes to recover from a missing comment is a bad trade.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -195,7 +196,7 @@ func existingSlugs(dir string) (map[string]string, error) {
 // does for mined nodes: store.DeleteByFile cascades to the relationships
 // SOURCED at the cleared elements, so interleaving clears with writes would wipe
 // the edges of nodes written earlier in the same pass.
-func (p *pipeline) persist(nodes []Node) error {
+func (p *pipeline) persist(ctx context.Context, nodes []Node) error {
 	live := make(map[string]Node, len(nodes))
 	for _, n := range nodes {
 		live[n.Slug] = n
@@ -217,7 +218,7 @@ func (p *pipeline) persist(nodes []Node) error {
 		if herr != nil {
 			return herr
 		}
-		if err := p.st.DeleteByFile("summarize://" + slug); err != nil {
+		if err := p.st.DeleteByFile(ctx, "summarize://"+slug); err != nil {
 			return fmt.Errorf("summarize: prune node %s: %w", slug, err)
 		}
 		p.mu.Lock()
@@ -233,19 +234,19 @@ func (p *pipeline) persist(nodes []Node) error {
 	elements := make([]store.Element, 0, len(nodes))
 	var relationships []store.Relationship
 	for _, n := range nodes {
-		if err := p.st.DeleteByFile(n.FilePath()); err != nil {
+		if err := p.st.DeleteByFile(ctx, n.FilePath()); err != nil {
 			return fmt.Errorf("summarize: clear node %s: %w", n.Slug, err)
 		}
 		elements = append(elements, n.element(p.model()))
 		relationships = append(relationships, n.relationships()...)
 	}
 	if len(elements) > 0 {
-		if err := p.st.UpsertElements(elements); err != nil {
+		if err := p.st.UpsertElements(ctx, elements); err != nil {
 			return fmt.Errorf("summarize: write %d meaning nodes: %w", len(elements), err)
 		}
 	}
 	if len(relationships) > 0 {
-		if err := p.st.UpsertRelationships(relationships); err != nil {
+		if err := p.st.UpsertRelationships(ctx, relationships); err != nil {
 			return fmt.Errorf("summarize: write %d meaning edges: %w", len(relationships), err)
 		}
 	}

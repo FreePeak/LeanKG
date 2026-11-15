@@ -73,7 +73,7 @@ func TestFleetPassReconcilesStoreWithHEAD(t *testing.T) {
 
 // hasElement reports whether the store holds an element of the given file.
 func hasElement(st store.Backend, path string) bool {
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		return false
 	}

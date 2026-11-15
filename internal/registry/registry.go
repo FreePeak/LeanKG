@@ -180,7 +180,7 @@ func List() ([]Entry, error) {
 
 // Status reports name's registry bookkeeping plus the live store counts when
 // the repository has been indexed. ErrNotFound when name is unregistered.
-func Status(name string) (RepoStatus, error) {
+func Status(ctx context.Context, name string) (RepoStatus, error) {
 	reg, err := Load()
 	if err != nil {
 		return RepoStatus{}, err
@@ -205,10 +205,10 @@ func Status(name string) (RepoStatus, error) {
 		backend, openErr := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: entry.Path, Engine: os.Getenv("LEANKG_DB_ENGINE"), PGURL: os.Getenv("LEANKG_PG_URL"), DBPath: "", Mode: store.RO})
 		if openErr == nil {
 			defer backend.Close()
-			if n, err := backend.ElementCount(); err == nil {
+			if n, err := backend.ElementCount(ctx); err == nil {
 				st.CurrentElements = &n
 			}
-			if n, err := backend.RelationshipCount(); err == nil {
+			if n, err := backend.RelationshipCount(ctx); err == nil {
 				st.CurrentRelationships = &n
 			}
 		}

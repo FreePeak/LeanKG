@@ -12,6 +12,7 @@
 package metrics
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -56,13 +57,13 @@ type Options struct {
 //
 // The returned string is exactly what the verb prints, trailing newline
 // included, which keeps the verb's stdout byte-identical to Rust's.
-func Show(b store.Backend, opts Options) (string, error) {
+func Show(ctx context.Context, b store.Backend, opts Options) (string, error) {
 	if opts.Seed {
-		return seed(b)
+		return seed(ctx, b)
 	}
 	// Rust checked reset before cleanup, so `--reset --cleanup` resets.
 	if opts.Reset {
-		n, err := b.ResetMetrics()
+		n, err := b.ResetMetrics(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -74,7 +75,7 @@ func Show(b store.Backend, opts Options) (string, error) {
 		if days == 0 {
 			days = DefaultRetentionDays
 		}
-		n, err := b.CleanupMetrics(days)
+		n, err := b.CleanupMetrics(ctx, days)
 		if err != nil {
 			return "", err
 		}
@@ -88,7 +89,7 @@ func Show(b store.Backend, opts Options) (string, error) {
 	case opts.Retention != 0:
 		days = opts.Retention
 	}
-	sum, err := b.MetricsSummary(opts.Tool, days)
+	sum, err := b.MetricsSummary(ctx, opts.Tool, days)
 	if err != nil {
 		return "", err
 	}
@@ -155,7 +156,7 @@ func parseSinceDays(raw string) int {
 // seed writes the five fixed rows of the Rust seed (main.rs seed_test_metrics)
 // and returns its per-row output. Timestamps are relative to now so the rows
 // land inside any sane retention window.
-func seed(b store.Backend) (string, error) {
+func seed(ctx context.Context, b store.Backend) (string, error) {
 	now := time.Now().Unix()
 	rows := []struct {
 		id, tool                                    string
@@ -191,7 +192,7 @@ func seed(b store.Backend) (string, error) {
 			QueryDepth:           2,
 			Success:              true,
 		}
-		if err := b.RecordMetric(m); err != nil {
+		if err := b.RecordMetric(ctx, m); err != nil {
 			return "", err
 		}
 		fmt.Fprintf(&out, "Seeded metric: %s (%s)\n", r.id, r.tool)

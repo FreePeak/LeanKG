@@ -51,7 +51,7 @@ func index(t *testing.T, st store.Backend, dir string) Result {
 // returns it.
 func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,14 +63,14 @@ func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 
 func assertNoElement(t *testing.T, st store.Backend, name string) {
 	t.Helper()
-	els, err := st.FindExact(name)
+	els, err := st.FindExact(context.Background(), name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(els) != 0 {
 		t.Fatalf("FindExact(%q): got %d elements, want 0", name, len(els))
 	}
-	hits, _, err := st.FindFuzzy(name, 10)
+	hits, _, err := st.FindFuzzy(context.Background(), name, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestChangeDetection(t *testing.T) {
 	if first.Skipped != 0 || first.Files != 5 {
 		t.Fatalf("first run: %+v", first)
 	}
-	count, err := st.ElementCount()
+	count, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestChangeDetection(t *testing.T) {
 	if second.Files != 0 || second.Elements != 0 || second.Skipped != 5 {
 		t.Fatalf("second run: %+v, want Skipped=5", second)
 	}
-	if n, _ := st.ElementCount(); n != count {
+	if n, _ := st.ElementCount(context.Background()); n != count {
 		t.Fatalf("element count changed on skip-only run: %d -> %d", count, n)
 	}
 
@@ -276,7 +276,7 @@ func TestChangeDetection(t *testing.T) {
 	if touchRes.Files != 0 || touchRes.Elements != 0 || touchRes.Skipped != 5 {
 		t.Fatalf("touched run: %+v, want Skipped=5", touchRes)
 	}
-	if n, _ := st.ElementCount(); n != count {
+	if n, _ := st.ElementCount(context.Background()); n != count {
 		t.Fatalf("element count changed on touched run: %d -> %d", count, n)
 	}
 
@@ -299,7 +299,7 @@ func TestChangeDetection(t *testing.T) {
 	}
 	mustFind(t, st, "sample.py::runner")
 	assertNoElement(t, st, "standalone") // FTS + exact both clean
-	if n, _ := st.ElementCount(); n != count {
+	if n, _ := st.ElementCount(context.Background()); n != count {
 		t.Fatalf("element count after edit: %d, want %d (rename swaps one element)", n, count)
 	}
 }
@@ -307,8 +307,8 @@ func TestChangeDetection(t *testing.T) {
 func TestDeletion(t *testing.T) {
 	dir, st := setupProject(t)
 	index(t, st, dir)
-	count, _ := st.ElementCount()
-	files, _ := st.FileCount()
+	count, _ := st.ElementCount(context.Background())
+	files, _ := st.FileCount(context.Background())
 	if files != 5 {
 		t.Fatalf("FileCount = %d, want 5", files)
 	}
@@ -320,14 +320,14 @@ func TestDeletion(t *testing.T) {
 	if res.Skipped != 4 || res.Files != 0 {
 		t.Fatalf("deletion run: %+v, want Skipped=4 Files=0", res)
 	}
-	if n, _ := st.ElementCount(); n != count-3 {
+	if n, _ := st.ElementCount(context.Background()); n != count-3 {
 		t.Fatalf("element count after deletion: %d, want %d", n, count-3)
 	}
-	if n, _ := st.FileCount(); n != 4 {
+	if n, _ := st.FileCount(context.Background()); n != 4 {
 		t.Fatalf("FileCount after deletion: %d, want 4", n)
 	}
 	assertNoElement(t, st, "Details") // element + FTS rows gone
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,17 +384,17 @@ func TestIndexRootTripwire(t *testing.T) {
 	if _, err := IndexDir(ctx, st, a); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := st.ElementCount()
+	before, _ := st.ElementCount(context.Background())
 	if _, err := IndexDir(ctx, st, b); err == nil || !strings.Contains(err.Error(), "INDEX_ROOT_MISMATCH") {
 		t.Fatalf("foreign root walk: err=%v, want INDEX_ROOT_MISMATCH", err)
 	}
-	if after, _ := st.ElementCount(); after != before {
+	if after, _ := st.ElementCount(context.Background()); after != before {
 		t.Fatalf("refused walk mutated the store: %d -> %d", before, after)
 	}
 	if _, err := IndexDir(ctx, st, a); err != nil {
 		t.Fatalf("re-index of the recorded root: %v", err)
 	}
-	if err := RebaseRoot(st, b); err != nil {
+	if err := RebaseRoot(context.Background(), st, b); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := IndexDir(ctx, st, b); err != nil {
@@ -460,7 +460,7 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 	mustFind(t, st, "app.ts::ping")
 
 	// Simulate the pre-fix store: the phantom row and the old version stamp.
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "app.ts::ality", ElementType: "function", Name: "ality",
 		FilePath: "app.ts", Language: "typescript",
 	}}); err != nil {
@@ -469,24 +469,24 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 	if err := st.KVSet(context.Background(), rootKVNamespace, extractorKVKey, "2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetEmbeddingStates(model, map[string]string{"app.ts::ping": "hash-ping"}); err != nil {
+	if err := st.SetEmbeddingStates(context.Background(), model, map[string]string{"app.ts::ping": "hash-ping"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors(model, []store.VectorRow{{QualifiedName: "app.ts::ping", Vec: []float32{1, 0, 0}}}); err != nil {
+	if err := st.UpsertVectors(context.Background(), model, []store.VectorRow{{QualifiedName: "app.ts::ping", Vec: []float32{1, 0, 0}}}); err != nil {
 		t.Fatal(err)
 	}
-	statesBefore, err := st.EmbeddingStateMap(model)
+	statesBefore, err := st.EmbeddingStateMap(context.Background(), model)
 	if err != nil {
 		t.Fatal(err)
 	}
-	vecsBefore, err := st.VectorCount(model)
+	vecsBefore, err := st.VectorCount(context.Background(), model)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	index(t, st, dir) // unchanged file, store stamped "2"
 
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,21 +496,21 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 		}
 	}
 	mustFind(t, st, "app.ts::ping")
-	statesAfter, err := st.EmbeddingStateMap(model)
+	statesAfter, err := st.EmbeddingStateMap(context.Background(), model)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(statesAfter) != len(statesBefore) || statesAfter["app.ts::ping"] != "hash-ping" {
 		t.Errorf("embedding_state changed: before %v, after %v", statesBefore, statesAfter)
 	}
-	vecsAfter, err := st.VectorCount(model)
+	vecsAfter, err := st.VectorCount(context.Background(), model)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if vecsAfter != vecsBefore {
 		t.Fatalf("vector rows: before %d, after %d", vecsBefore, vecsAfter)
 	}
-	hits, err := st.SearchVectors(store.VectorQuery{ModelID: model, Vec: []float32{1, 0, 0}, K: 1})
+	hits, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: model, Vec: []float32{1, 0, 0}, K: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

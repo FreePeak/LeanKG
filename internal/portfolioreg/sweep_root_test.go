@@ -34,7 +34,7 @@ func newStoreWithRoot(t *testing.T, dir, root string) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := index.RebaseRoot(st, root); err != nil {
+	if err := index.RebaseRoot(context.Background(), st, root); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -259,7 +259,7 @@ func TestCheckStoreIgnoresASharedStore(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := index.RebaseRoot(st, other); err != nil {
+	if err := index.RebaseRoot(context.Background(), st, other); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {

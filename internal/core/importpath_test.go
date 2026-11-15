@@ -46,7 +46,7 @@ func engineAt(t *testing.T, dir string) *Engine {
 
 func count(t *testing.T, e *Engine) int {
 	t.Helper()
-	n, err := e.st.ElementCount()
+	n, err := e.st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := e.st.VectorCount(p.Identity().Model)
+	vecs, _ := e.st.VectorCount(context.Background(), p.Identity().Model)
 	if els := count(t, e); vecs != els {
 		t.Fatalf("after re-index: %d vectors for %d elements (orphans left behind)", vecs, els)
 	}
@@ -208,7 +208,7 @@ func TestImportDocsRelativeAnchorsAtProject(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "docs", Path: "docs"}); err != nil {
 		t.Fatalf("import docs relative: %v", err)
 	}
-	files, _ := e.st.Files()
+	files, _ := e.st.Files(context.Background())
 	got := map[string]bool{}
 	for _, f := range files {
 		got[f.Path] = true

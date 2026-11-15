@@ -171,7 +171,7 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 		t.Fatalf("Open after Close = %v, want closed error", err)
 	}
 	// Close must not have closed the seeded (externally owned) store.
-	if _, err := st.ElementCount(); err != nil {
+	if _, err := st.ElementCount(context.Background()); err != nil {
 		t.Fatalf("seeded store must survive router.Close: %v", err)
 	}
 }

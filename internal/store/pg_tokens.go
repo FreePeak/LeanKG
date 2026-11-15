@@ -7,6 +7,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 
 // TokenUpsert inserts or replaces a token keyed by ID. tok.Secret is the
 // plaintext; only HashToken(tok.Secret) is written.
-func (s *PGStore) TokenUpsert(tok Token) error {
+func (s *PGStore) TokenUpsert(ctx context.Context, tok Token) error {
 	if tok.ID == "" {
 		return fmt.Errorf("store: token upsert: empty id")
 	}
@@ -25,7 +26,7 @@ func (s *PGStore) TokenUpsert(tok Token) error {
 	if tok.Role == "" {
 		return fmt.Errorf("store: token upsert: empty role")
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO tokens (`+tokenInsertCols+`)
+	_, err := s.pool.Exec(ctx, `INSERT INTO tokens (`+tokenInsertCols+`)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name, secret = excluded.secret,
@@ -44,8 +45,8 @@ func (s *PGStore) TokenUpsert(tok Token) error {
 
 // TokenList returns every token (at-rest hash form) ordered by creation,
 // revoked rows included — revocation is state, not deletion.
-func (s *PGStore) TokenList() ([]Token, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+tokenSelectCols+` FROM tokens ORDER BY created_at, id`)
+func (s *PGStore) TokenList(ctx context.Context) ([]Token, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+tokenSelectCols+` FROM tokens ORDER BY created_at, id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: token list: %w", err)
 	}
@@ -63,8 +64,8 @@ func (s *PGStore) TokenList() ([]Token, error) {
 
 // TokenDelete removes a token (hard revocation). Deleting an unknown id is a
 // no-op, so revoke flows stay idempotent.
-func (s *PGStore) TokenDelete(id string) error {
-	_, err := s.pool.Exec(pgCtx, `DELETE FROM tokens WHERE id = $1`, id)
+func (s *PGStore) TokenDelete(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM tokens WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("store: token delete %s: %w", id, err)
 	}
@@ -74,8 +75,8 @@ func (s *PGStore) TokenDelete(id string) error {
 // TokenRevoke soft-revokes a token: it stamps revoked_at (once) and leaves the
 // row in place. Revoking an unknown id or an already-revoked token is a no-op,
 // matching TokenDelete's idempotence.
-func (s *PGStore) TokenRevoke(id string, at int64) error {
-	_, err := s.pool.Exec(pgCtx,
+func (s *PGStore) TokenRevoke(ctx context.Context, id string, at int64) error {
+	_, err := s.pool.Exec(ctx,
 		`UPDATE tokens SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL`, at, id)
 	if err != nil {
 		return fmt.Errorf("store: token revoke %s: %w", id, err)
@@ -85,8 +86,8 @@ func (s *PGStore) TokenRevoke(id string, at int64) error {
 
 // TokenTouch stamps last_used_at for a successful authentication, coalesced to
 // at most one write per TokenTouchWindowSecs. Revoked tokens are skipped.
-func (s *PGStore) TokenTouch(id string, at int64) error {
-	_, err := s.pool.Exec(pgCtx,
+func (s *PGStore) TokenTouch(ctx context.Context, id string, at int64) error {
+	_, err := s.pool.Exec(ctx,
 		`UPDATE tokens SET last_used_at = $1 WHERE id = $2 AND revoked_at IS NULL
 			AND (last_used_at IS NULL OR last_used_at <= $3)`,
 		at, id, at-TokenTouchWindowSecs)
@@ -100,8 +101,8 @@ func (s *PGStore) TokenTouch(id string, at int64) error {
 // HashToken(secret) against the at-rest column. An unknown secret is
 // (Token{}, false, nil); a revoked or expired row is (Token{}, false, err)
 // wrapping ErrTokenRevoked / ErrTokenExpired.
-func (s *PGStore) TokenFind(secret string) (Token, bool, error) {
-	row := s.pool.QueryRow(pgCtx, `SELECT `+tokenSelectCols+` FROM tokens WHERE secret = $1`,
+func (s *PGStore) TokenFind(ctx context.Context, secret string) (Token, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+tokenSelectCols+` FROM tokens WHERE secret = $1`,
 		HashToken(secret))
 	t, err := scanToken(row.Scan)
 	if err != nil {

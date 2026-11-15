@@ -1,6 +1,7 @@
 package ontology
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -158,7 +159,7 @@ func TestSyncRoundTripLoadPersistTrace(t *testing.T) {
 	st := setupStore(t)
 	dir := testdataDir(t)
 
-	stats, err := SyncFromDir(dir, st, "")
+	stats, err := SyncFromDir(context.Background(), dir, st, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestSyncRoundTripLoadPersistTrace(t *testing.T) {
 	}
 
 	// Graph rows landed with the ontology:// marker.
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,21 +184,21 @@ func TestSyncRoundTripLoadPersistTrace(t *testing.T) {
 	}
 
 	// KV persistence round-trips the loaded sets.
-	wfSet, err := LoadWorkflowsFromStore(st)
+	wfSet, err := LoadWorkflowsFromStore(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if wfSet == nil || len(wfSet.Workflows) != 2 {
 		t.Fatalf("stored workflow set = %+v", wfSet)
 	}
-	concepts, err := LoadConceptsFromStore(st)
+	concepts, err := LoadConceptsFromStore(context.Background(), st)
 	if err != nil || len(concepts) != 3 {
 		t.Fatalf("stored concepts = %v, %v", concepts, err)
 	}
 
 	// Trace by workflow name, alias and bare id: ordered steps.
 	for _, query := range []string{"Checkout", "place order", "checkout"} {
-		steps, err := Trace(st, query)
+		steps, err := Trace(context.Background(), st, query)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -210,7 +211,7 @@ func TestSyncRoundTripLoadPersistTrace(t *testing.T) {
 	}
 
 	// Trace by step name resolves the parent workflow.
-	steps, err := Trace(st, "Execute Refund")
+	steps, err := Trace(context.Background(), st, "Execute Refund")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +220,7 @@ func TestSyncRoundTripLoadPersistTrace(t *testing.T) {
 	}
 
 	// Unknown query traces nothing.
-	if steps, _ := Trace(st, "nonexistent-workflow"); len(steps) != 0 {
+	if steps, _ := Trace(context.Background(), st, "nonexistent-workflow"); len(steps) != 0 {
 		t.Errorf("unknown trace returned %d steps", len(steps))
 	}
 
@@ -234,7 +235,7 @@ func TestSyncForProjectAndMarker(t *testing.T) {
 	st := setupStore(t)
 
 	// No ontology dir: error with directive.
-	if _, err := SyncForProject(root, st); err == nil ||
+	if _, err := SyncForProject(context.Background(), root, st); err == nil ||
 		!strings.Contains(err.Error(), "LEANKG_ONTOLOGY_DIR") {
 		t.Fatalf("want no-ontology-dir error, got %v", err)
 	}
@@ -244,7 +245,7 @@ func TestSyncForProjectAndMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := SyncForProject(root, st)
+	stats, err := SyncForProject(context.Background(), root, st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,28 +271,28 @@ func TestSyncDeclarativeReplace(t *testing.T) {
 		}
 	}
 	write("workflows:\n  - id: a\n    name: A\n    steps:\n      - id: s1\n        name: S1\n")
-	if _, err := SyncFromDir(dir, st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), dir, st, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Replace: workflow a removed, b added; a's rows must be gone.
 	write("workflows:\n  - id: b\n    name: B\n    steps:\n      - id: s2\n        name: S2\n")
-	if _, err := SyncFromDir(dir, st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), dir, st, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	gids, err := WorkflowGIDs(st)
+	gids, err := WorkflowGIDs(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(gids) != 1 || gids[0] != "local:default:workflow:b:v1" {
 		t.Fatalf("workflow gids after replace = %v", gids)
 	}
-	steps, err := Trace(st, "b")
+	steps, err := Trace(context.Background(), st, "b")
 	if err != nil || len(steps) != 1 || steps[0].GID != "local:default:workflow_step:s2:v1" {
 		t.Fatalf("trace after replace = %v, %v", steps, err)
 	}
 	// No duplicate step rows across syncs.
-	els, _ := st.Elements()
+	els, _ := st.Elements(context.Background())
 	nSteps := 0
 	for _, el := range els {
 		if el.ElementType == TypeWorkflowStep {
@@ -331,7 +332,7 @@ func TestResolveOntologyDir(t *testing.T) {
 
 func TestSyncFromDirMissingDir(t *testing.T) {
 	st := setupStore(t)
-	_, err := SyncFromDir(filepath.Join(t.TempDir(), "nope"), st, "")
+	_, err := SyncFromDir(context.Background(), filepath.Join(t.TempDir(), "nope"), st, "")
 	if err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("want missing-dir error, got %v", err)
 	}
@@ -339,7 +340,7 @@ func TestSyncFromDirMissingDir(t *testing.T) {
 
 func TestConceptSearch(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Indexed code elements the concept code_refs point at.
@@ -348,11 +349,11 @@ func TestConceptSearch(t *testing.T) {
 		{QualifiedName: "src/payments/authorize.rs::authorize", ElementType: "function", Name: "authorize", FilePath: "src/payments/authorize.rs", Language: "rust"},
 		{QualifiedName: "src/order/service.rs::create", ElementType: "function", Name: "create", FilePath: "src/order/service.rs", Language: "rust"},
 	}
-	if err := st.UpsertElements(code); err != nil {
+	if err := st.UpsertElements(context.Background(), code); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := ConceptSearch(st, "how does the refund work", 20)
+	res, err := ConceptSearch(context.Background(), st, "how does the refund work", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +395,7 @@ func TestConceptSearch(t *testing.T) {
 	}
 
 	// No concept hit: fallback name search over indexed code.
-	fb, err := ConceptSearch(st, "authorize", 20)
+	fb, err := ConceptSearch(context.Background(), st, "authorize", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,10 +415,10 @@ func containsKeyword(kws []string, kw string) bool {
 
 func TestSearchOntologyNodesScoring(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	nodes, err := SearchOntologyNodes(st, "refund flow")
+	nodes, err := SearchOntologyNodes(context.Background(), st, "refund flow")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,10 +446,10 @@ func TestSearchOntologyNodesScoring(t *testing.T) {
 
 func TestGetContext(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	res, err := GetContext(st, "refund", 2)
+	res, err := GetContext(context.Background(), st, "refund", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,10 +474,10 @@ func TestGetContext(t *testing.T) {
 
 func TestOntologyStatus(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	status, err := OntologyStatus(st)
+	status, err := OntologyStatus(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,10 +505,10 @@ func TestOntologyStatusWithoutFailureModes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "workflows.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SyncFromDir(dir, st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), dir, st, ""); err != nil {
 		t.Fatal(err)
 	}
-	status, err := OntologyStatus(st)
+	status, err := OntologyStatus(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,11 +625,11 @@ func TestResolveCodeRefs(t *testing.T) {
 		{QualifiedName: "src/order/service.rs::create", ElementType: "function", Name: "create", FilePath: "src/order/service.rs", Language: "rust"},
 		{QualifiedName: "src/payments/authorize.rs::authorize", ElementType: "function", Name: "authorize", FilePath: "src/payments/authorize.rs", Language: "rust"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := ResolveCodeRefs(st, []string{
+	got, err := ResolveCodeRefs(context.Background(), st, []string{
 		"src/order/service.rs::create", // exact QN
 		"src/payments/authorize.rs",    // file
 		"missing/nothing.rs",           // no hit
@@ -647,7 +648,7 @@ func TestResolveCodeRefs(t *testing.T) {
 
 func TestTraverseToFunctionsViaEdges(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Code graph: workflow -> has_step -> step -> implemented_by -> function
@@ -661,14 +662,14 @@ func TestTraverseToFunctionsViaEdges(t *testing.T) {
 		{Source: "local:default:workflow_step:authorize_payment:v1", Target: "src/payments/authorize.rs::authorize", RelType: RelImplementedBy, Confidence: 1},
 		{Source: "local:default:workflow_step:confirm:v1", Target: "src/checkout/confirm.rs::run", RelType: RelImplementedBy, Confidence: 1},
 	}
-	if err := st.UpsertElements(fns); err != nil {
+	if err := st.UpsertElements(context.Background(), fns); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
 
-	disc, err := TraverseToFunctions(st, []UpperSeed{NewUpperSeed("local:default:workflow:checkout:v1", TypeWorkflow)}, "")
+	disc, err := TraverseToFunctions(context.Background(), st, []UpperSeed{NewUpperSeed("local:default:workflow:checkout:v1", TypeWorkflow)}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -694,14 +695,14 @@ func TestTraverseToFunctionsCodeRefsFallback(t *testing.T) {
 	// Domain entity with code_refs metadata only — no DB edges.
 	node := NewConceptNode("local", "checkout-service", TypeDomainEntity, "refund", "Refund", "Refunds")
 	node.Metadata.CodeRefs = []string{"src/refund/handler.rs::process_refund"}
-	if err := st.UpsertElements([]store.Element{node.Element(), {
+	if err := st.UpsertElements(context.Background(), []store.Element{node.Element(), {
 		QualifiedName: "src/refund/handler.rs::process_refund",
 		ElementType:   "function", Name: "process_refund", FilePath: "src/refund/handler.rs",
 	}}); err != nil {
 		t.Fatal(err)
 	}
 
-	disc, err := TraverseToFunctions(st, []UpperSeed{NewUpperSeed(node.GID, TypeDomainEntity)}, "")
+	disc, err := TraverseToFunctions(context.Background(), st, []UpperSeed{NewUpperSeed(node.GID, TypeDomainEntity)}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -733,14 +734,14 @@ func TestTraverseToFunctionsCapAndDedup(t *testing.T) {
 		)
 	}
 	els = append(els, NewWorkflowNode("local", "default", "big", "Big", "Big flow").Element())
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
 
-	disc, err := TraverseToFunctions(st, []UpperSeed{NewUpperSeed("local:default:workflow:big:v1", TypeWorkflow)}, "")
+	disc, err := TraverseToFunctions(context.Background(), st, []UpperSeed{NewUpperSeed("local:default:workflow:big:v1", TypeWorkflow)}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -811,10 +812,10 @@ func TestCompositeText(t *testing.T) {
 
 func TestSelfTest(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	report := SelfTest(st)
+	report := SelfTest(context.Background(), st)
 	if !report.AllOK {
 		t.Fatalf("self test failures: %+v", report)
 	}
@@ -822,17 +823,17 @@ func TestSelfTest(t *testing.T) {
 
 func TestFeatureFlowAndMatrix(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
 	code := []store.Element{
 		{QualifiedName: "src/order/service.rs::create", ElementType: "function", Name: "create", FilePath: "src/order/service.rs"},
 	}
-	if err := st.UpsertElements(code); err != nil {
+	if err := st.UpsertElements(context.Background(), code); err != nil {
 		t.Fatal(err)
 	}
 
-	flow, err := FeatureFlow(st, "FR-CHK-01")
+	flow, err := FeatureFlow(context.Background(), st, "FR-CHK-01")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -849,15 +850,15 @@ func TestFeatureFlowAndMatrix(t *testing.T) {
 	}
 
 	// Persisted trace round-trips through KV.
-	if err := SaveFeatureTrace(st, "FR-CHK-01", flow); err != nil {
+	if err := SaveFeatureTrace(context.Background(), st, "FR-CHK-01", flow); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadFeatureTrace(st, "FR-CHK-01")
+	loaded, err := LoadFeatureTrace(context.Background(), st, "FR-CHK-01")
 	if err != nil || loaded == nil || loaded["count"] != float64(1) { // JSON numbers decode as float64
 		t.Fatalf("loaded feature trace = %v, %v", loaded, err)
 	}
 
-	matrix, err := TraceabilityMatrix(st)
+	matrix, err := TraceabilityMatrix(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -879,10 +880,10 @@ func TestFeatureFlowAndMatrix(t *testing.T) {
 
 func TestTraceQuery(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	out, err := TraceQuery(st, "checkout")
+	out, err := TraceQuery(context.Background(), st, "checkout")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -896,14 +897,14 @@ func TestTraceQuery(t *testing.T) {
 
 func TestResolveWorkflowID(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	gid, ok, err := ResolveWorkflowID(st, "refund_flow")
+	gid, ok, err := ResolveWorkflowID(context.Background(), st, "refund_flow")
 	if err != nil || !ok || gid != "local:default:workflow:refund_flow:v1" {
 		t.Fatalf("resolve = %q %v %v", gid, ok, err)
 	}
-	if _, ok, _ := ResolveWorkflowID(st, "nope"); ok {
+	if _, ok, _ := ResolveWorkflowID(context.Background(), st, "nope"); ok {
 		t.Error("unknown id resolved")
 	}
 }
@@ -925,7 +926,7 @@ func TestWatchDebounce(t *testing.T) {
 
 func TestDiscoverOntologyFirst(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
 	code := []store.Element{
@@ -933,11 +934,11 @@ func TestDiscoverOntologyFirst(t *testing.T) {
 		{QualifiedName: "src/payments/authorize.rs::authorize", ElementType: "function", Name: "authorize", FilePath: "src/payments/authorize.rs", Language: "rust"},
 		{QualifiedName: "src/order/service.rs::create", ElementType: "function", Name: "create", FilePath: "src/order/service.rs", Language: "rust"},
 	}
-	if err := st.UpsertElements(code); err != nil {
+	if err := st.UpsertElements(context.Background(), code); err != nil {
 		t.Fatal(err)
 	}
 
-	page, err := Discover(st, "how does the refund work", "", 0, 0, true)
+	page, err := Discover(context.Background(), st, "how does the refund work", "", 0, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -965,10 +966,10 @@ func TestDiscoverNameFallbackAndPagination(t *testing.T) {
 		{QualifiedName: "src/b.rs::refundPayment", ElementType: "function", Name: "refundPayment", FilePath: "src/b.rs"},
 		{QualifiedName: "src/c.rs::unrelated", ElementType: "function", Name: "unrelated", FilePath: "src/c.rs"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	page, err := Discover(st, "refund", "", 1, 0, true)
+	page, err := Discover(context.Background(), st, "refund", "", 1, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -980,7 +981,7 @@ func TestDiscoverNameFallbackAndPagination(t *testing.T) {
 	if len(page.Results) != 1 {
 		t.Fatalf("page 0 = %+v", page)
 	}
-	page2, err := Discover(st, "refund", "", 1, 1, true)
+	page2, err := Discover(context.Background(), st, "refund", "", 1, 1, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -994,14 +995,14 @@ func TestDiscoverNameFallbackAndPagination(t *testing.T) {
 
 func TestDiscoverMegaGraphRefusal(t *testing.T) {
 	st := setupStore(t)
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a::x", ElementType: "function", Name: "x", FilePath: "a.go"},
 		{QualifiedName: "a::y", ElementType: "function", Name: "y", FilePath: "a.go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("LEANKG_MAX_CACHE_ELEMENTS", "1")
-	refusal, err := RefuseFullScanIfMega(st, "test_tool")
+	refusal, err := RefuseFullScanIfMega(context.Background(), st, "test_tool")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1011,24 +1012,24 @@ func TestDiscoverMegaGraphRefusal(t *testing.T) {
 	if !strings.Contains(refusal["error"].(string), "test_tool refused") {
 		t.Errorf("refusal = %v", refusal)
 	}
-	if _, err := Discover(st, "refund", "", 0, 0, true); err != nil {
+	if _, err := Discover(context.Background(), st, "refund", "", 0, 0, true); err != nil {
 		t.Fatal(err)
 	}
 
 	// Normal-size graph: no refusal.
 	t.Setenv("LEANKG_MAX_CACHE_ELEMENTS", "50000")
-	refusal, err = RefuseFullScanIfMega(st, "test_tool")
+	refusal, err = RefuseFullScanIfMega(context.Background(), st, "test_tool")
 	if err != nil || refusal != nil {
 		t.Errorf("unexpected refusal: %v %v", refusal, err)
 	}
 	if ClampLimit(0) != DefaultPageLimit || ClampLimit(99) != MaxPageLimit || ClampLimit(5) != 5 {
 		t.Error("clamp broken")
 	}
-	if SkipIncrementalDependents(st) {
+	if SkipIncrementalDependents(context.Background(), st) {
 		t.Error("small graph must not skip dependents")
 	}
 	t.Setenv("LEANKG_INCREMENTAL_SKIP_DEPENDENTS", "1")
-	if !SkipIncrementalDependents(st) {
+	if !SkipIncrementalDependents(context.Background(), st) {
 		t.Error("env override must skip dependents")
 	}
 }

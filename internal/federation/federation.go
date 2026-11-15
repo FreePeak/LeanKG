@@ -219,11 +219,11 @@ func (r PullResult) Report(stdout, stderr io.Writer) {
 // returned as an error (Rust's `?`, exit 1); a rejected request comes back as
 // a PushResult with Failed() set, matching the Rust command's exit 0.
 func Push(ctx context.Context, st store.Backend, opts Options) (PushResult, error) {
-	els, err := st.Elements()
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return PushResult{}, fmt.Errorf("federation: read local elements: %w", err)
 	}
-	rels, err := readRelationships(st)
+	rels, err := readRelationships(ctx, st)
 	if err != nil {
 		return PushResult{}, err
 	}
@@ -311,7 +311,7 @@ func Pull(ctx context.Context, st store.Backend, opts Options) (PullResult, erro
 	if err := json.Unmarshal(text, &payload); err != nil {
 		return PullResult{}, fmt.Errorf("federation: decode graph from %s: %w", opts.Remote, err)
 	}
-	elements, relationships, err := applyGraph(st, payload, time.Now().UTC())
+	elements, relationships, err := applyGraph(ctx, st, payload, time.Now().UTC())
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -411,13 +411,13 @@ func isGraphEnvelope(body []byte) bool {
 
 // readRelationships reads every local relationship, refusing to publish a
 // graph the paged read may have truncated.
-func readRelationships(st store.Backend) ([]store.Relationship, error) {
-	rels, err := st.RelationshipsAll(maxRelationships)
+func readRelationships(ctx context.Context, st store.Backend) ([]store.Relationship, error) {
+	rels, err := st.RelationshipsAll(ctx, maxRelationships)
 	if err != nil {
 		return nil, fmt.Errorf("federation: read local relationships: %w", err)
 	}
 	if len(rels) == maxRelationships {
-		total, err := st.RelationshipCount()
+		total, err := st.RelationshipCount(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("federation: count local relationships: %w", err)
 		}

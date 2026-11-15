@@ -47,7 +47,7 @@ func seedFixture(t *testing.T) (dir string, eng *core.Engine) {
 		{QualifiedName: "src/db.rs::query_db", ElementType: "function", Name: "query_db", FilePath: "src/db.rs", LineStart: 1, LineEnd: 5, Language: "rust"},
 		{QualifiedName: "src/ghost.rs::ghost_fn", ElementType: "function", Name: "ghost_fn", FilePath: "src/ghost.rs", LineStart: 1, LineEnd: 5, Language: "rust"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	rels := []store.Relationship{
@@ -55,7 +55,7 @@ func seedFixture(t *testing.T) (dir string, eng *core.Engine) {
 		{Source: "src/auth.rs::login", Target: "src/db.rs::query_db", RelType: "calls", Confidence: 0.95, Metadata: map[string]any{"resolution_method": "typed"}},
 		{Source: "src/auth.rs::authenticate", Target: "src/ghost.rs::ghost_fn", RelType: "imports", Confidence: 0.2, Metadata: map[string]any{"resolution_method": "unresolved"}},
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
 	eng = core.New(st, core.Options{ProjectDir: dir})
@@ -771,11 +771,11 @@ func TestAllRoutesReturnJSON(t *testing.T) {
 func TestDetectCommunities(t *testing.T) {
 	// No calls/imports edges → folder fallback, one cluster per directory.
 	_, eng := seedFixture(t)
-	snap, err := loadSnapshot(eng.Store())
+	snap, err := loadSnapshot(context.Background(), eng.Store())
 	if err != nil {
 		t.Fatal(err)
 	}
-	rels, err := allRelationships(eng.Store())
+	rels, err := allRelationships(context.Background(), eng.Store())
 	if err != nil {
 		t.Fatal(err)
 	}

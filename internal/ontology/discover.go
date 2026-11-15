@@ -1,6 +1,7 @@
 package ontology
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -50,8 +51,8 @@ func ClampLimit(limit int) int {
 // ponytail: counts elements per call via COUNT(*); the Rust engine cached a
 // limit-1 probe to avoid counting 662k rows. Upgrade path: cache the count
 // on the engine (invalidate on watermark bump) if this shows up in profiles.
-func IsMegaGraph(st store.Backend) (bool, error) {
-	n, err := st.ElementCount()
+func IsMegaGraph(ctx context.Context, st store.Backend) (bool, error) {
+	n, err := st.ElementCount(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -77,8 +78,8 @@ func MegaGraphRefusal(tool string, elementCount int) map[string]any {
 
 // RefuseFullScanIfMega returns a refusal payload when the graph is a
 // mega-graph, else nil (parity with refuse_full_scan_if_mega).
-func RefuseFullScanIfMega(st store.Backend, tool string) (map[string]any, error) {
-	mega, err := IsMegaGraph(st)
+func RefuseFullScanIfMega(ctx context.Context, st store.Backend, tool string) (map[string]any, error) {
+	mega, err := IsMegaGraph(ctx, st)
 	if err != nil {
 		return map[string]any{
 			"error": fmt.Sprintf("%s refused: failed to count elements: %v", tool, err),
@@ -88,7 +89,7 @@ func RefuseFullScanIfMega(st store.Backend, tool string) (map[string]any, error)
 	if !mega {
 		return nil, nil
 	}
-	n, err := st.ElementCount()
+	n, err := st.ElementCount(ctx)
 	if err != nil {
 		return map[string]any{
 			"error": fmt.Sprintf("%s refused: failed to count elements: %v", tool, err),
@@ -115,7 +116,7 @@ type DiscoverPage struct {
 // Discover implements ontology-first discovery with pagination (parity
 // with discover): concept search first; when it yields nothing, a scored
 // bounded name search over the query keywords (never a full-table load).
-func Discover(st store.Backend, query, env string, limit, offset int, preferOntology bool) (DiscoverPage, error) {
+func Discover(ctx context.Context, st store.Backend, query, env string, limit, offset int, preferOntology bool) (DiscoverPage, error) {
 	limit = ClampLimit(limit)
 	if env == "" {
 		env = "local"
@@ -130,7 +131,7 @@ func Discover(st store.Backend, query, env string, limit, offset int, preferOnto
 		if fetch < limit {
 			fetch = limit
 		}
-		concept, err := ConceptSearch(st, query, fetch)
+		concept, err := ConceptSearch(ctx, st, query, fetch)
 		if err != nil {
 			return DiscoverPage{}, err
 		}
@@ -176,7 +177,7 @@ func Discover(st store.Backend, query, env string, limit, offset int, preferOnto
 		if fetch < limit {
 			fetch = limit
 		}
-		matches, err := searchByName(st, probe, fetch, false)
+		matches, err := searchByName(ctx, st, probe, fetch, false)
 		if err != nil {
 			return DiscoverPage{}, err
 		}
@@ -303,10 +304,10 @@ func DiscoverPageToJSON(page DiscoverPage) map[string]any {
 // skip full-graph dependent expansion: true when
 // LEANKG_INCREMENTAL_SKIP_DEPENDENTS=1/true, or when the graph is a
 // mega-graph (parity with skip_incremental_dependents).
-func SkipIncrementalDependents(st store.Backend) bool {
+func SkipIncrementalDependents(ctx context.Context, st store.Backend) bool {
 	if v := os.Getenv("LEANKG_INCREMENTAL_SKIP_DEPENDENTS"); v == "1" || strings.EqualFold(v, "true") {
 		return true
 	}
-	mega, err := IsMegaGraph(st)
+	mega, err := IsMegaGraph(ctx, st)
 	return err == nil && mega
 }

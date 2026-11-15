@@ -10,6 +10,7 @@
 package export
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -72,7 +73,7 @@ type Meta struct {
 //
 // Deviation (documented): a bogus --community is an error here, while Rust
 // silently exported an empty graph.
-func Select(st store.Backend, opts Options) ([]store.Element, []store.Relationship, Meta, error) {
+func Select(ctx context.Context, st store.Backend, opts Options) ([]store.Element, []store.Relationship, Meta, error) {
 	budget := opts.MaxNodes
 	if budget <= 0 {
 		budget = DefaultMaxNodes
@@ -86,16 +87,16 @@ func Select(st store.Backend, opts Options) ([]store.Element, []store.Relationsh
 	)
 	switch {
 	case opts.File != "":
-		els, rels, err = selectFileScoped(st, opts.File, opts.Depth)
+		els, rels, err = selectFileScoped(ctx, st, opts.File, opts.Depth)
 		scope = fmt.Sprintf("file:%s (depth %d)", opts.File, opts.Depth)
 	case opts.Path != "":
-		els, rels, err = selectPathPrefix(st, opts.Path)
+		els, rels, err = selectPathPrefix(ctx, st, opts.Path)
 		scope = "path:" + opts.Path
 	case opts.Community != "":
-		els, rels, err = selectCommunity(st, opts)
+		els, rels, err = selectCommunity(ctx, st, opts)
 		scope = "community:" + opts.Community
 	default:
-		els, rels, err = All(st)
+		els, rels, err = All(ctx, st)
 		scope = "full graph"
 	}
 	if err != nil {
@@ -170,7 +171,7 @@ func filterEdges(rels []store.Relationship, kept map[string]bool) []store.Relati
 // from the seed path over outgoing edges, collecting the relationships seen
 // and every element whose file_path was reached. Unreadable nodes are skipped
 // (Rust swallowed the error with `if let Ok(rels)`).
-func selectFileScoped(st store.Backend, file string, depth uint32) ([]store.Element, []store.Relationship, error) {
+func selectFileScoped(ctx context.Context, st store.Backend, file string, depth uint32) ([]store.Element, []store.Relationship, error) {
 	type frame struct {
 		name string
 		d    uint32
@@ -186,14 +187,14 @@ func selectFileScoped(st store.Backend, file string, depth uint32) ([]store.Elem
 			continue
 		}
 		visited[cur.name] = true
-		rels := outgoingNormalized(st, cur.name)
+		rels := outgoingNormalized(ctx, st, cur.name)
 		for _, r := range rels {
 			queue = append(queue, frame{name: r.Target, d: cur.d + 1})
 		}
 		scoped = append(scoped, rels...)
 	}
 
-	all, err := st.Elements()
+	all, err := st.Elements(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -211,7 +212,7 @@ func selectFileScoped(st store.Backend, file string, depth uint32) ([]store.Elem
 
 // outgoingNormalized mirrors GraphEngine::get_relationships: one query matching
 // the normalized source plus its "./" variant.
-func outgoingNormalized(st store.Backend, source string) []store.Relationship {
+func outgoingNormalized(ctx context.Context, st store.Backend, source string) []store.Relationship {
 	norm := normalizePath(source)
 	variants := []string{norm}
 	if "./"+norm != norm {
@@ -219,7 +220,7 @@ func outgoingNormalized(st store.Backend, source string) []store.Relationship {
 	}
 	var out []store.Relationship
 	for _, v := range variants {
-		rels, err := st.Outgoing(v)
+		rels, err := st.Outgoing(ctx, v)
 		if err != nil {
 			continue
 		}
@@ -270,12 +271,12 @@ func ClusterResolver(assignments map[string]string, labels map[string]string) fu
 // GraphEngine::all_elements / all_relationships pair the unscoped exporters
 // read. Unlike Select it applies no dedupe, endpoint filter or budget — the
 // legacy full-graph dot/mermaid path streamed exactly what the store held.
-func All(st store.Backend) ([]store.Element, []store.Relationship, error) {
-	els, err := st.Elements()
+func All(ctx context.Context, st store.Backend) ([]store.Element, []store.Relationship, error) {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	rels, err := st.RelationshipsAll(maxRelationships)
+	rels, err := st.RelationshipsAll(ctx, maxRelationships)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -292,8 +293,8 @@ func normalizePath(path string) string {
 // prefix, plus the edges with both endpoints in that set (Rust asked the DB for
 // source-side edges and then dropped the boundary through dedupe_and_filter —
 // the net result is the same set, read in one deterministic pass).
-func selectPathPrefix(st store.Backend, prefix string) ([]store.Element, []store.Relationship, error) {
-	all, err := st.Elements()
+func selectPathPrefix(ctx context.Context, st store.Backend, prefix string) ([]store.Element, []store.Relationship, error) {
+	all, err := st.Elements(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -304,7 +305,7 @@ func selectPathPrefix(st store.Backend, prefix string) ([]store.Element, []store
 			els = append(els, e)
 		}
 	}
-	rels, err := st.RelationshipsAll(maxRelationships)
+	rels, err := st.RelationshipsAll(ctx, maxRelationships)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -313,7 +314,7 @@ func selectPathPrefix(st store.Backend, prefix string) ([]store.Element, []store
 
 // selectCommunity ports export_select::select_community over the injected
 // cluster resolver (the Go store keeps no cluster column).
-func selectCommunity(st store.Backend, opts Options) ([]store.Element, []store.Relationship, error) {
+func selectCommunity(ctx context.Context, st store.Backend, opts Options) ([]store.Element, []store.Relationship, error) {
 	if opts.Clusters == nil {
 		return nil, nil, fmt.Errorf("community scope requires a cluster resolver")
 	}
@@ -325,7 +326,7 @@ func selectCommunity(st store.Backend, opts Options) ([]store.Element, []store.R
 	for _, m := range members {
 		inCommunity[m] = true
 	}
-	all, err := st.Elements()
+	all, err := st.Elements(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -335,7 +336,7 @@ func selectCommunity(st store.Backend, opts Options) ([]store.Element, []store.R
 			els = append(els, e)
 		}
 	}
-	rels, err := st.RelationshipsAll(maxRelationships)
+	rels, err := st.RelationshipsAll(ctx, maxRelationships)
 	if err != nil {
 		return nil, nil, err
 	}

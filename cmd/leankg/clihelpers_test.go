@@ -147,12 +147,12 @@ func seedCLIProject(t *testing.T, els []store.Element, rels []store.Relationship
 		t.Fatalf("migrate: %v", err)
 	}
 	if len(els) > 0 {
-		if err := st.UpsertElements(els); err != nil {
+		if err := st.UpsertElements(context.Background(), els); err != nil {
 			t.Fatalf("seed elements: %v", err)
 		}
 	}
 	if len(rels) > 0 {
-		if err := st.UpsertRelationships(rels); err != nil {
+		if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 			t.Fatalf("seed relationships: %v", err)
 		}
 	}

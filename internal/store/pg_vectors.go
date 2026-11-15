@@ -16,35 +16,35 @@ import (
 // re-inserted together with their embedding_state rows, in ONE transaction.
 // Same per-file atomic unit as the sqlite implementation (see
 // Store.ReplaceFileVectors); here the transaction is a pooled pgx tx.
-func (s *PGStore) ReplaceFileVectors(modelID string, rows []VectorRow, states map[string]string) error {
+func (s *PGStore) ReplaceFileVectors(ctx context.Context, modelID string, rows []VectorRow, states map[string]string) error {
 	if len(rows) == 0 {
 		return fmt.Errorf("store: ReplaceFileVectors %s: no vectors", modelID)
 	}
 	vec := s.vecTable(modelID)
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, r := range rows {
-		if _, err := tx.Exec(pgCtx, `DELETE FROM `+vec+` WHERE qualified_name = $1`, r.QualifiedName); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+vec+` WHERE qualified_name = $1`, r.QualifiedName); err != nil {
 			return fmt.Errorf("store: replace vector %s: %w", r.QualifiedName, err)
 		}
-		if _, err := tx.Exec(pgCtx, `INSERT INTO `+vec+` (qualified_name, vec) VALUES ($1, $2::vector)`,
+		if _, err := tx.Exec(ctx, `INSERT INTO `+vec+` (qualified_name, vec) VALUES ($1, $2::vector)`,
 			r.QualifiedName, pgvector.NewVector(r.Vec)); err != nil {
 			return fmt.Errorf("store: replace vector %s: %w", r.QualifiedName, err)
 		}
 	}
 	for qn, h := range states {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO `+s.stateTable(modelID)+` (qualified_name, content_hash, state, embedded_at)
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.stateTable(modelID)+` (qualified_name, content_hash, state, embedded_at)
 			VALUES ($1,$2,'embedded', now())
 			ON CONFLICT (qualified_name) DO UPDATE SET content_hash=excluded.content_hash,
 				state='embedded', embedded_at=excluded.embedded_at`, qn, h); err != nil {
 			return fmt.Errorf("store: replace embedding state %s: %w", qn, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }

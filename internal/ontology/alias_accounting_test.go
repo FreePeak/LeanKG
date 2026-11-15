@@ -10,6 +10,7 @@ package ontology
 // procedural wiring.
 
 import (
+	"context"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -42,10 +43,10 @@ func totalOntologyNodes(s Status) int {
 //	total_aliases         >= nodes with at least one alias (= total - missing)
 func TestAliasAccountingInvariant(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	status, err := OntologyStatus(st)
+	status, err := OntologyStatus(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,14 +79,14 @@ func TestAliasAccountingInvariant(t *testing.T) {
 // double counting surfaces here.
 func TestAliasAccountingCountsYAMLAndSeedAliases(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	status, err := OntologyStatus(st)
+	status, err := OntologyStatus(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	els, err := ontologyElements(st)
+	els, err := ontologyElements(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,10 +118,10 @@ func TestAliasAccountingCountsYAMLAndSeedAliases(t *testing.T) {
 // accounting must stay self-consistent.
 func TestAliasAccountingDetectsManualOrphanlessGap(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	before, err := OntologyStatus(st)
+	before, err := OntologyStatus(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestAliasAccountingDetectsManualOrphanlessGap(t *testing.T) {
 			ElementType: TypeDomainEntity, Name: "NoLias2", FilePath: "ontology://nolias2",
 			Metadata: map[string]any{}},
 	)
-	after, err := OntologyStatus(st)
+	after, err := OntologyStatus(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,10 +157,10 @@ func TestAliasAccountingDetectsManualOrphanlessGap(t *testing.T) {
 // must survive into stored metadata and resolve against real indexed code.
 func TestConceptCodeRefsAccounted(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	concepts, err := LoadConceptsFromStore(st)
+	concepts, err := LoadConceptsFromStore(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func TestConceptCodeRefsAccounted(t *testing.T) {
 	// Seed the referenced code element and resolve.
 	seedElements(t, st, store.Element{QualifiedName: "src/refund/handler.rs::process_refund",
 		ElementType: "function", Name: "process_refund", FilePath: "src/refund/handler.rs"})
-	linked, err := ResolveCodeRefs(st, refundRefs, 10)
+	linked, err := ResolveCodeRefs(context.Background(), st, refundRefs, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,10 +197,10 @@ func TestConceptCodeRefsAccounted(t *testing.T) {
 // concept-only totals.
 func TestNoOrphanProceduralNodes(t *testing.T) {
 	st := setupStore(t)
-	if _, err := SyncFromDir(testdataDir(t), st, ""); err != nil {
+	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	els, err := ontologyElements(st)
+	els, err := ontologyElements(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,14 +229,14 @@ func TestNoOrphanProceduralNodes(t *testing.T) {
 	}
 	// The persisted KV set must round-trip the same counts the status
 	// reports — no silently dropped steps (the Rust loader bug class).
-	set, err := LoadWorkflowsFromStore(st)
+	set, err := LoadWorkflowsFromStore(context.Background(), st)
 	if err != nil || set == nil {
 		t.Fatalf("LoadWorkflowsFromStore: %v %v", set, err)
 	}
 	if len(set.Steps) != len(steps) {
 		t.Errorf("stored set has %d steps, graph has %d", len(set.Steps), len(steps))
 	}
-	status, err := OntologyStatus(st)
+	status, err := OntologyStatus(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}

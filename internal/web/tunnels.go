@@ -8,6 +8,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -34,12 +35,12 @@ type Tunnel struct {
 //
 // The caller applies the display limit: the Rust CLI truncated find_tunnels'
 // result to --limit (default 50), and the MCP tool did the same.
-func Tunnels(st store.Backend) ([]Tunnel, error) {
-	cl, err := ClusterAssignments(st)
+func Tunnels(ctx context.Context, st store.Backend) ([]Tunnel, error) {
+	cl, err := ClusterAssignments(ctx, st)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := allRelationships(st)
+	rels, err := allRelationships(ctx, st)
 	if err != nil {
 		return nil, err
 	}

@@ -59,21 +59,21 @@ func hasNode(ctx context.Context, st store.Backend, qn string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(ctx, qn)
 	if err != nil {
 		return false, err
 	}
 	if len(els) > 0 {
 		return true, nil
 	}
-	out, err := st.Outgoing(qn)
+	out, err := st.Outgoing(ctx, qn)
 	if err != nil {
 		return false, err
 	}
 	if len(out) > 0 {
 		return true, nil
 	}
-	in, err := st.Incoming(qn)
+	in, err := st.Incoming(ctx, qn)
 	if err != nil {
 		return false, err
 	}
@@ -103,7 +103,7 @@ func Impact(ctx context.Context, st store.Backend, qn string, depth int) ([]Hit,
 			if err := ctx.Err(); err != nil {
 				return nil, Bounds{}, err
 			}
-			rels, err := st.Incoming(node)
+			rels, err := st.Incoming(ctx, node)
 			if err != nil {
 				return nil, Bounds{}, err
 			}
@@ -192,11 +192,11 @@ func undirectedNeighbors(ctx context.Context, st store.Backend, node string) ([]
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	out, err := st.Outgoing(node)
+	out, err := st.Outgoing(ctx, node)
 	if err != nil {
 		return nil, err
 	}
-	in, err := st.Incoming(node)
+	in, err := st.Incoming(ctx, node)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func Callers(ctx context.Context, st store.Backend, qn string) ([]string, error)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rels, err := st.Incoming(qn)
+	rels, err := st.Incoming(ctx, qn)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +252,7 @@ func Callees(ctx context.Context, st store.Backend, qn string) ([]string, error)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rels, err := st.Outgoing(qn)
+	rels, err := st.Outgoing(ctx, qn)
 	if err != nil {
 		return nil, err
 	}
@@ -288,18 +288,18 @@ func Context(ctx context.Context, st store.Backend, qn string, limit int) (map[s
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(ctx, qn)
 	if err != nil {
 		return nil, err
 	}
 	if len(els) == 0 {
 		return nil, ErrUnknownNode
 	}
-	in, err := st.Incoming(qn)
+	in, err := st.Incoming(ctx, qn)
 	if err != nil {
 		return nil, err
 	}
-	out, err := st.Outgoing(qn)
+	out, err := st.Outgoing(ctx, qn)
 	if err != nil {
 		return nil, err
 	}
@@ -341,18 +341,18 @@ func Explain(ctx context.Context, st store.Backend, qn string) (map[string]any, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(ctx, qn)
 	if err != nil {
 		return nil, err
 	}
 	if len(els) == 0 {
 		return nil, ErrUnknownNode
 	}
-	in, err := st.Incoming(qn)
+	in, err := st.Incoming(ctx, qn)
 	if err != nil {
 		return nil, err
 	}
-	out, err := st.Outgoing(qn)
+	out, err := st.Outgoing(ctx, qn)
 	if err != nil {
 		return nil, err
 	}

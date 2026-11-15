@@ -85,8 +85,8 @@ func unixNow() int64 { return time.Now().Unix() }
 // LoadWorkflows loads concepts.yaml + workflows.yaml from dir and persists
 // them into the store (declarative replace, no .leankg marker): the entry
 // point the core layer calls for import{action:"ontology"}.
-func LoadWorkflows(st store.Backend, dir string) (SyncStats, error) {
-	return SyncFromDir(dir, st, "")
+func LoadWorkflows(ctx context.Context, st store.Backend, dir string) (SyncStats, error) {
+	return SyncFromDir(ctx, dir, st, "")
 }
 
 // SyncFromDir loads concepts.yaml + workflows.yaml from ontologyDir and
@@ -98,7 +98,7 @@ func LoadWorkflows(st store.Backend, dir string) (SyncStats, error) {
 //   - re-inserts has_step / next_step / has_failure_mode relationships,
 //   - persists the node sets in the "ontology" KV namespace,
 //   - touches .leankg/ontology_synced when leankgDir is non-empty.
-func SyncFromDir(ontologyDir string, st store.Backend, leankgDir string) (SyncStats, error) {
+func SyncFromDir(ctx context.Context, ontologyDir string, st store.Backend, leankgDir string) (SyncStats, error) {
 	syncMu.Lock()
 	defer syncMu.Unlock()
 
@@ -114,7 +114,7 @@ func SyncFromDir(ontologyDir string, st store.Backend, leankgDir string) (SyncSt
 
 	// Declarative replace: wipe the prior ontology layer so renames and
 	// removals apply (parity with clear_ontology_layer before re-insert).
-	if err := clearOntologyLayer(st); err != nil {
+	if err := clearOntologyLayer(ctx, st); err != nil {
 		return stats, fmt.Errorf("clear ontology layer: %w", err)
 	}
 
@@ -152,12 +152,12 @@ func SyncFromDir(ontologyDir string, st store.Backend, leankgDir string) (SyncSt
 	}
 
 	if len(elements) > 0 {
-		if err := st.UpsertElements(elements); err != nil {
+		if err := st.UpsertElements(ctx, elements); err != nil {
 			return stats, fmt.Errorf("insert ontology elements: %w", err)
 		}
 	}
 	if len(relationships) > 0 {
-		if err := st.UpsertRelationships(relationships); err != nil {
+		if err := st.UpsertRelationships(ctx, relationships); err != nil {
 			return stats, fmt.Errorf("insert ontology relationships: %w", err)
 		}
 	}
@@ -166,12 +166,12 @@ func SyncFromDir(ontologyDir string, st store.Backend, leankgDir string) (SyncSt
 	// table churn.
 	if conceptNodes != nil {
 		if b, err := json.Marshal(conceptNodes); err == nil {
-			_ = st.KVSet(context.TODO(), kvNamespace, kvConceptKey, string(b))
+			_ = st.KVSet(ctx, kvNamespace, kvConceptKey, string(b))
 		}
 	}
 	if workflowSet != nil {
 		if b, err := json.Marshal(workflowSet); err == nil {
-			_ = st.KVSet(context.TODO(), kvNamespace, kvWorkflowKey, string(b))
+			_ = st.KVSet(ctx, kvNamespace, kvWorkflowKey, string(b))
 		}
 	}
 
@@ -188,26 +188,26 @@ func SyncFromDir(ontologyDir string, st store.Backend, leankgDir string) (SyncSt
 // SyncForProject syncs ontology for a project root: resolves the ontology
 // directory (LEANKG_ONTOLOGY_DIR or <root>/ontology) and the .leankg
 // marker location (parity with sync_for_project).
-func SyncForProject(projectRoot string, st store.Backend) (SyncStats, error) {
+func SyncForProject(ctx context.Context, projectRoot string, st store.Backend) (SyncStats, error) {
 	dir := ResolveOntologyDir(projectRoot)
 	if dir == "" {
 		return SyncStats{}, fmt.Errorf(
 			"no ontology directory found under %s (set LEANKG_ONTOLOGY_DIR)", projectRoot)
 	}
-	return SyncFromDir(dir, st, filepath.Join(projectRoot, ".leankg"))
+	return SyncFromDir(ctx, dir, st, filepath.Join(projectRoot, ".leankg"))
 }
 
 // clearOntologyLayer removes every ontology element (file_path
 // ontology://...); DeleteByFile cascades to the relationships sourced at
 // them (parity with clear_ontology_layer).
-func clearOntologyLayer(st store.Backend) error {
-	els, err := st.Elements()
+func clearOntologyLayer(ctx context.Context, st store.Backend) error {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return err
 	}
 	for _, el := range els {
 		if IsOntologyFilePath(el.FilePath) {
-			if err := st.DeleteByFile(el.FilePath); err != nil {
+			if err := st.DeleteByFile(ctx, el.FilePath); err != nil {
 				return err
 			}
 		}
@@ -295,8 +295,8 @@ func fileMtime(p string) *int64 {
 // LoadWorkflowsFromStore reads the persisted workflow set back from the KV
 // namespace (round-trip partner of SyncFromDir). A missing key yields
 // (nil, nil).
-func LoadWorkflowsFromStore(st store.Backend) (*WorkflowSet, error) {
-	s, ok, err := st.KVGet(context.TODO(), kvNamespace, kvWorkflowKey)
+func LoadWorkflowsFromStore(ctx context.Context, st store.Backend) (*WorkflowSet, error) {
+	s, ok, err := st.KVGet(ctx, kvNamespace, kvWorkflowKey)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -309,8 +309,8 @@ func LoadWorkflowsFromStore(st store.Backend) (*WorkflowSet, error) {
 
 // LoadConceptsFromStore reads the persisted concept node set back from the
 // KV namespace. A missing key yields (nil, nil).
-func LoadConceptsFromStore(st store.Backend) ([]ConceptNode, error) {
-	s, ok, err := st.KVGet(context.TODO(), kvNamespace, kvConceptKey)
+func LoadConceptsFromStore(ctx context.Context, st store.Backend) ([]ConceptNode, error) {
+	s, ok, err := st.KVGet(ctx, kvNamespace, kvConceptKey)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -322,8 +322,8 @@ func LoadConceptsFromStore(st store.Backend) ([]ConceptNode, error) {
 }
 
 // WorkflowGIDs lists the stored workflow GIDs (ordered by qualified name).
-func WorkflowGIDs(st store.Backend) ([]string, error) {
-	els, err := ontologyElements(st)
+func WorkflowGIDs(ctx context.Context, st store.Backend) ([]string, error) {
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -348,8 +348,8 @@ func WorkflowIDFromGID(gid string) (string, bool) {
 
 // ResolveWorkflowID resolves a bare workflow id to its stored GID under
 // any env/scope (the get_feature_flow lookup pattern).
-func ResolveWorkflowID(st store.Backend, workflowID string) (string, bool, error) {
-	els, err := ontologyElements(st)
+func ResolveWorkflowID(ctx context.Context, st store.Backend, workflowID string) (string, bool, error) {
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return "", false, err
 	}
@@ -366,8 +366,8 @@ func ResolveWorkflowID(st store.Backend, workflowID string) (string, bool, error
 
 // TraceWorkflow is the core-layer entry: trace by workflow id, name,
 // alias or GID (parity with trace_workflow / kg_trace_workflow).
-func TraceWorkflow(st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
-	return Trace(st, workflowQuery)
+func TraceWorkflow(ctx context.Context, st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
+	return Trace(ctx, st, workflowQuery)
 }
 
 // FeatureWorkflow is one workflow implementing a feature requirement,
@@ -382,8 +382,8 @@ type FeatureWorkflow struct {
 // links its parent workflow. Returns the workflows (with ordered steps)
 // that implement the feature — the get_feature_flow chain minus the
 // Rust-era knowledge_entries lookup, which lives in the core layer.
-func TraceFeature(st store.Backend, featureID string) ([]FeatureWorkflow, error) {
-	els, err := ontologyElements(st)
+func TraceFeature(ctx context.Context, st store.Backend, featureID string) ([]FeatureWorkflow, error) {
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -449,8 +449,8 @@ func TraceFeature(st store.Backend, featureID string) ([]FeatureWorkflow, error)
 // (get_feature_flow parity) for a feature id: every workflow whose steps
 // carry the feature id, each with ordered steps including code refs and
 // failure modes.
-func FeatureFlow(st store.Backend, featureID string) (map[string]any, error) {
-	workflows, err := TraceFeature(st, featureID)
+func FeatureFlow(ctx context.Context, st store.Backend, featureID string) (map[string]any, error) {
+	workflows, err := TraceFeature(ctx, st, featureID)
 	if err != nil {
 		return nil, err
 	}
@@ -483,18 +483,18 @@ func FeatureFlow(st store.Backend, featureID string) (map[string]any, error) {
 // SaveFeatureTrace persists a feature -> workflows trace under the
 // ontology KV namespace (feature:<id>) so traceability reads survive
 // process restarts.
-func SaveFeatureTrace(st store.Backend, featureID string, flow map[string]any) error {
+func SaveFeatureTrace(ctx context.Context, st store.Backend, featureID string, flow map[string]any) error {
 	b, err := json.Marshal(flow)
 	if err != nil {
 		return err
 	}
-	return st.KVSet(context.TODO(), kvNamespace, "feature:"+featureID, string(b))
+	return st.KVSet(ctx, kvNamespace, "feature:"+featureID, string(b))
 }
 
 // LoadFeatureTrace reads a persisted feature trace back; a missing key
 // yields (nil, nil).
-func LoadFeatureTrace(st store.Backend, featureID string) (map[string]any, error) {
-	s, ok, err := st.KVGet(context.TODO(), kvNamespace, "feature:"+featureID)
+func LoadFeatureTrace(ctx context.Context, st store.Backend, featureID string) (map[string]any, error) {
+	s, ok, err := st.KVGet(ctx, kvNamespace, "feature:"+featureID)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -520,8 +520,8 @@ type TraceabilityMatrixItem struct {
 // from the stored ontology layer. Annotated elements come from the
 // code_refs of feature-linked steps; doc counts from concept docs entries
 // tagged with the feature id.
-func TraceabilityMatrix(st store.Backend) ([]TraceabilityMatrixItem, error) {
-	els, err := ontologyElements(st)
+func TraceabilityMatrix(ctx context.Context, st store.Backend) ([]TraceabilityMatrixItem, error) {
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -579,8 +579,8 @@ func TraceabilityMatrix(st store.Backend) ([]TraceabilityMatrixItem, error) {
 // TraceQuery returns the ordered trace of a workflow as a JSON-friendly
 // map (the shape kg_trace_workflow returns over MCP): workflow identity
 // plus ordered steps with their code refs and failure modes.
-func TraceQuery(st store.Backend, workflowQuery string) (map[string]any, error) {
-	steps, err := Trace(st, workflowQuery)
+func TraceQuery(ctx context.Context, st store.Backend, workflowQuery string) (map[string]any, error) {
+	steps, err := Trace(ctx, st, workflowQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -603,8 +603,8 @@ func TraceQuery(st store.Backend, workflowQuery string) (map[string]any, error) 
 
 // TraceByGID traces a workflow by its exact GID (the resolved-workflow
 // path get_feature_flow falls back to).
-func TraceByGID(st store.Backend, gid string) ([]WorkflowStepNode, error) {
-	els, err := ontologyElements(st)
+func TraceByGID(ctx context.Context, st store.Backend, gid string) ([]WorkflowStepNode, error) {
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return nil, err
 	}

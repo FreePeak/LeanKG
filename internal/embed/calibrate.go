@@ -73,7 +73,7 @@ func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool
 	}
 	floor, found := 0.0, false
 	for _, v := range vecs {
-		hits, err := st.SearchVectors(store.VectorQuery{ModelID: p.Identity().Model, Vec: v, K: 1})
+		hits, err := st.SearchVectors(ctx, store.VectorQuery{ModelID: p.Identity().Model, Vec: v, K: 1})
 		if err != nil {
 			return 0, false, fmt.Errorf("embed: calibration search: %w", err)
 		}
@@ -84,22 +84,22 @@ func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool
 	if !found {
 		return 0, false, nil
 	}
-	if err := WriteCalibration(st, StampOf(p), floor); err != nil {
+	if err := WriteCalibration(ctx, st, StampOf(p), floor); err != nil {
 		return 0, false, err
 	}
 	return floor, true, nil
 }
 
 // WriteCalibration stores a noise floor for the collection stamp.
-func WriteCalibration(st store.Backend, stamp store.ModelStamp, floor float64) error {
+func WriteCalibration(ctx context.Context, st store.Backend, stamp store.ModelStamp, floor float64) error {
 	raw, _ := json.Marshal(Calibration{Floor: floor, Identity: calibrationIdentity(stamp)})
-	return st.KVSet(context.TODO(), calibrationNS, stamp.ModelID, string(raw))
+	return st.KVSet(ctx, calibrationNS, stamp.ModelID, string(raw))
 }
 
 // ReadCalibration returns the stored noise floor for the collection stamp,
 // or false when none was measured for exactly this identity.
-func ReadCalibration(st store.Backend, stamp store.ModelStamp) (float64, bool) {
-	raw, ok, err := st.KVGet(context.TODO(), calibrationNS, stamp.ModelID)
+func ReadCalibration(ctx context.Context, st store.Backend, stamp store.ModelStamp) (float64, bool) {
+	raw, ok, err := st.KVGet(ctx, calibrationNS, stamp.ModelID)
 	if err != nil || !ok {
 		return 0, false
 	}

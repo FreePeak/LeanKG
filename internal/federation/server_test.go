@@ -34,7 +34,7 @@ func clearTokenEnv(t *testing.T) {
 // gate on: with no token anywhere the store is open (auth's local default).
 func mint(t *testing.T, st store.Backend, role string) string {
 	t.Helper()
-	secret, _, err := auth.Mint(st, auth.MintRequest{Name: "federation-" + role, Role: role})
+	secret, _, err := auth.Mint(context.Background(), st, auth.MintRequest{Name: "federation-" + role, Role: role})
 	if err != nil {
 		t.Fatalf("mint %s token: %v", role, err)
 	}
@@ -82,7 +82,7 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 func elementsByQN(t *testing.T, st store.Backend) map[string]store.Element {
 	t.Helper()
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatalf("read elements: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestReceiverAppliesPushPolicy(t *testing.T) {
 	}
 	assertProvenance(t, els["pkg.New"].Metadata, "pusher-service", "production")
 
-	rels, err := st.RelationshipsAll(maxRelationships)
+	rels, err := st.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestReceiverNeverDeletesUnmentionedRows(t *testing.T) {
 	token := mint(t, st, "contributor")
 
 	before := elementCount(t, st)
-	relsBefore, err := st.RelationshipsAll(maxRelationships)
+	relsBefore, err := st.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestReceiverNeverDeletesUnmentionedRows(t *testing.T) {
 			t.Errorf("%s was deleted by a push that never mentioned it", qn)
 		}
 	}
-	relsAfter, err := st.RelationshipsAll(maxRelationships)
+	relsAfter, err := st.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestFederationPushPullRoundTrip(t *testing.T) {
 			t.Errorf("%s did not survive the round trip", qn)
 		}
 	}
-	rels, err := third.RelationshipsAll(maxRelationships)
+	rels, err := third.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}

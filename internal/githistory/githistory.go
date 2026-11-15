@@ -96,14 +96,14 @@ func Import(ctx context.Context, st store.Backend, root string, opts Options) (R
 	for _, c := range commits {
 		b.add(c)
 	}
-	pairs, err := b.coChange(st, incremental)
+	pairs, err := b.coChange(ctx, st, incremental)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := st.UpsertElements(b.elements()); err != nil {
+	if err := st.UpsertElements(ctx, b.elements()); err != nil {
 		return Result{}, err
 	}
-	if err := st.UpsertRelationships(b.relationships(pairs)); err != nil {
+	if err := st.UpsertRelationships(ctx, b.relationships(pairs)); err != nil {
 		return Result{}, err
 	}
 	if err := st.KVSet(ctx, kvNamespace, kvHeadKey, head); err != nil {
@@ -162,7 +162,7 @@ func (b *batch) add(c gitobj.HistoryCommit) {
 // coChange returns the final count of every pair in this batch. An
 // incremental import adds the batch to the counts already stored on the
 // edges; a rebuild keeps the batch counts as they are.
-func (b *batch) coChange(st store.Backend, incremental bool) (map[pairKey]int, error) {
+func (b *batch) coChange(ctx context.Context, st store.Backend, incremental bool) (map[pairKey]int, error) {
 	out := make(map[pairKey]int, len(b.delta))
 	for k, n := range b.delta {
 		out[k] = n
@@ -177,7 +177,7 @@ func (b *batch) coChange(st store.Backend, incremental bool) (map[pairKey]int, e
 		rels, ok := outgoing[k.a]
 		if !ok {
 			var err error
-			if rels, err = st.Outgoing("git:file:" + k.a); err != nil {
+			if rels, err = st.Outgoing(ctx, "git:file:"+k.a); err != nil {
 				return nil, err
 			}
 			outgoing[k.a] = rels

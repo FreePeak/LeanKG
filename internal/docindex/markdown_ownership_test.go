@@ -41,7 +41,7 @@ func openOwnershipStore(t *testing.T) store.Backend {
 // A row under neither scheme is a third producer and fails the test.
 func ownershipRows(t *testing.T, st store.Backend, rel string) (indexRows, docRows int) {
 	t.Helper()
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

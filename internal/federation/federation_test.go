@@ -48,14 +48,14 @@ func seedGraph(t *testing.T, s store.Backend) {
 			Content: "func parse()",
 		},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	rels := []store.Relationship{
 		{Source: "pkg.Svc.Handle", Target: "pkg.parse", RelType: "calls", Confidence: 0.75},
 		{Source: "pkg.parse", Target: "pkg.Svc", RelType: "member_of", Confidence: 1},
 	}
-	if err := s.UpsertRelationships(rels); err != nil {
+	if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
 }
@@ -309,7 +309,7 @@ func TestPushTruncationGuard(t *testing.T) {
 		{Source: "pkg.Svc", Target: "pkg.parse", RelType: "references", Confidence: 1},
 		{Source: "pkg.parse", Target: "pkg.Svc.Handle", RelType: "calls", Confidence: 1},
 	}
-	if err := st.UpsertRelationships(extra); err != nil {
+	if err := st.UpsertRelationships(context.Background(), extra); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
@@ -317,7 +317,7 @@ func TestPushTruncationGuard(t *testing.T) {
 	maxRelationships = 2
 	t.Cleanup(func() { maxRelationships = restore })
 
-	if _, err := readRelationships(st); err == nil {
+	if _, err := readRelationships(context.Background(), st); err == nil {
 		t.Fatal("a truncated relationship read must fail loudly")
 	} else if !strings.Contains(err.Error(), "above the 2 publish cap") {
 		t.Fatalf("error = %v", err)
@@ -325,7 +325,7 @@ func TestPushTruncationGuard(t *testing.T) {
 
 	// Exactly at the cap with nothing behind it is still published.
 	maxRelationships = 4
-	if rels, err := readRelationships(st); err != nil || len(rels) != 4 {
+	if rels, err := readRelationships(context.Background(), st); err != nil || len(rels) != 4 {
 		t.Fatalf("read at cap = %d rels, err %v", len(rels), err)
 	}
 }
@@ -384,11 +384,11 @@ func remoteRoutes(t *testing.T, routes map[string]remoteRoute, seen *[]servedReq
 // tests speak the real wire format instead of hand-written JSON.
 func graphBody(t *testing.T, st store.Backend, env, service string) string {
 	t.Helper()
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatalf("elements: %v", err)
 	}
-	rels, err := st.RelationshipsAll(maxRelationships)
+	rels, err := st.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestPullAppliesRemoteGraph(t *testing.T) {
 	seedGraph(t, source)
 
 	local := openStore(t)
-	if err := local.UpsertElements([]store.Element{
+	if err := local.UpsertElements(context.Background(), []store.Element{
 		// Same qualified name the remote also publishes.
 		{QualifiedName: "pkg.Svc.Handle", ElementType: "method", Name: "Stale", FilePath: "stale.go", Language: "go", Content: "LOCAL CONTENT"},
 		// A row the remote never mentions: must survive untouched.
@@ -474,7 +474,7 @@ func TestPullAppliesRemoteGraph(t *testing.T) {
 		assertProvenance(t, e.Metadata, "shared-service", "production")
 	}
 
-	rels, err := local.RelationshipsAll(maxRelationships)
+	rels, err := local.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}

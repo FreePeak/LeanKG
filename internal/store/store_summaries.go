@@ -39,8 +39,8 @@ func (s *Store) SummaryGet(ctx context.Context, path string) (FileSummary, bool,
 }
 
 // SummariesAll lists every stored summary ordered by path.
-func (s *Store) SummariesAll() ([]FileSummary, error) {
-	rows, err := s.db.Query(`SELECT ` + summaryReadCols + ` FROM file_summaries ORDER BY path`)
+func (s *Store) SummariesAll(ctx context.Context) ([]FileSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+summaryReadCols+` FROM file_summaries ORDER BY path`)
 	if err != nil {
 		return nil, fmt.Errorf("store: summaries list: %w", err)
 	}

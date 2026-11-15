@@ -58,15 +58,20 @@ func TestRunIndexStopsOnDoneContext(t *testing.T) {
 			if d := time.Since(start); d > 5*time.Second {
 				t.Fatalf("runIndex took %s after its context was done", d)
 			}
+			// A run cancelled before the store opens leaves no file (the open is
+			// ctx-aware, CX-27): nothing was written, so there is nothing to open.
+			if _, statErr := os.Stat(filepath.Join(dir, ".leankg", "leankg.db")); os.IsNotExist(statErr) {
+				return
+			}
 			st, err := openStore(context.Background(), dir, "", store.RO)
 			if err != nil {
 				t.Fatalf("store does not open after a stopped run: %v", err)
 			}
 			defer st.Close()
-			// A run cancelled before its first store call stops at the
-			// migration (CX-19 ctx-aware Migrate), so the store may have no
-			// schema yet. Nothing was indexed either way.
-			n, err := st.ElementCount()
+			// A run cancelled after the open but before its first store call
+			// stops at the migration (CX-19 ctx-aware Migrate), so the store may
+			// have no schema yet. Nothing was indexed either way.
+			n, err := st.ElementCount(context.Background())
 			if err != nil && !strings.Contains(err.Error(), "no such table") {
 				t.Fatalf("element count after a stopped run: %v", err)
 			}

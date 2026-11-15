@@ -67,7 +67,7 @@ func vectorHash(t *testing.T, path string) string {
 // bytes of unused page space in the vector table, 16 % of the whole store.
 func TestNewStoreUsesTheLargerPageSize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
-	st, err := openSQLite(path, RW)
+	st, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestNewStoreUsesTheLargerPageSize(t *testing.T) {
 	if err := st.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	size, err := PageSize(path)
+	size, err := PageSize(context.Background(), path)
 	if err != nil {
 		t.Fatalf("page size: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestNewStoreUsesTheLargerPageSize(t *testing.T) {
 func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
 	createLegacyStore(t, path)
-	st, err := openSQLite(path, RW)
+	st, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -100,19 +100,19 @@ func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	// A write, and the VACUUM the auto-vacuum header upgrade performs.
-	if err := st.UpsertElements([]Element{{
+	if err := st.UpsertElements(context.Background(), []Element{{
 		QualifiedName: "pkg.Fn", ElementType: "function", Name: "Fn",
 		FilePath: "a.go", Language: "go", Content: "func Fn() {}",
 	}}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := st.ensureIncrementalVacuum(); err != nil {
+	if err := st.ensureIncrementalVacuum(context.Background()); err != nil {
 		t.Fatalf("ensure incremental vacuum: %v", err)
 	}
 	if err := st.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	size, err := PageSize(path)
+	size, err := PageSize(context.Background(), path)
 	if err != nil {
 		t.Fatalf("page size: %v", err)
 	}
@@ -127,14 +127,14 @@ func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
 	createLegacyStore(t, path)
-	st, err := openSQLite(path, RW)
+	st, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := st.WriteStamp(ModelStamp{
+	if err := st.WriteStamp(context.Background(), ModelStamp{
 		ModelID: "m", Revision: "rev", Dimensions: 512, Distance: "cosine", Provider: "local",
 	}); err != nil {
 		t.Fatalf("write stamp: %v", err)
@@ -145,21 +145,21 @@ func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 		for j := range vec {
 			vec[j] = float32(i*j%97) / 7
 		}
-		if err := st.UpsertElements([]Element{{
+		if err := st.UpsertElements(context.Background(), []Element{{
 			QualifiedName: fmt.Sprintf("pkg.Fn%d", i), ElementType: "function",
 			Name: fmt.Sprintf("Fn%d", i), FilePath: fmt.Sprintf("src/f%d.go", i),
 			Language: "go", Content: "func Fn() {}",
 		}}); err != nil {
 			t.Fatalf("upsert element: %v", err)
 		}
-		if err := st.UpsertVectors("m", []VectorRow{{
+		if err := st.UpsertVectors(context.Background(), "m", []VectorRow{{
 			QualifiedName: fmt.Sprintf("pkg.Fn%d", i), Vec: vec,
 		}}); err != nil {
 			t.Fatalf("upsert vector: %v", err)
 		}
 	}
 	before := vectorHash(t, path)
-	sizeBefore, err := PageSize(path)
+	sizeBefore, err := PageSize(context.Background(), path)
 	if err != nil {
 		t.Fatalf("page size: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	res, err := UpgradePageSize(path, DefaultPageSize)
+	res, err := UpgradePageSize(context.Background(), path, DefaultPageSize)
 	if err != nil {
 		t.Fatalf("upgrade: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestUpgradePageSizeRefusesAnImpossibleSize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
 	createLegacyStore(t, path)
 	for _, size := range []int{0, 100, 4095, 1 << 20} {
-		if _, err := UpgradePageSize(path, size); err == nil {
+		if _, err := UpgradePageSize(context.Background(), path, size); err == nil {
 			t.Errorf("page size %d was accepted", size)
 		}
 	}

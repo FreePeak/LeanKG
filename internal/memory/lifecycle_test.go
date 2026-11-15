@@ -60,7 +60,7 @@ func TestCompactPrunesStaleVectorCollection(t *testing.T) {
 	seedVector(t, m, stale, "bank", "old-1")
 	seedVector(t, m, stale, "bank", "old-2")
 	seedVector(t, m, live, "bank", "new-1")
-	m.SetProvider(stampedProvider{id: liveID}, func() (float64, bool) { return 0, true })
+	m.SetProvider(stampedProvider{id: liveID}, func(context.Context) (float64, bool) { return 0, true })
 	if err := m.Compact(); err != nil {
 		t.Fatalf("compact: %v", err)
 	}

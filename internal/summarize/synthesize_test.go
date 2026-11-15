@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/FreePeak/LeanKG/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // --- batching --------------------------------------------------------------
@@ -256,7 +257,7 @@ func TestRunWritesTraversableNodes(t *testing.T) {
 
 	// The graph projection: FindExact resolves the node by name, and both
 	// directions of the curated edge are traversable.
-	hits, err := f.st.FindExact("Store Layer")
+	hits, err := f.st.FindExact(context.Background(), "Store Layer")
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("node element not found: %d %v", len(hits), err)
 	}
@@ -266,7 +267,7 @@ func TestRunWritesTraversableNodes(t *testing.T) {
 	if hits[0].FilePath != "summarize://store-layer" {
 		t.Errorf("file path marker: %q", hits[0].FilePath)
 	}
-	edges, err := f.st.Incoming("summarize:store-layer")
+	edges, err := f.st.Incoming(context.Background(), "summarize:store-layer")
 	if err != nil || len(edges) != 1 {
 		t.Fatalf("edge not traversable: %d %v", len(edges), err)
 	}
@@ -341,11 +342,11 @@ func TestRunWritesTraversableNodes(t *testing.T) {
 	}
 	// The element updated too, and the edge count did not grow (a re-run
 	// replaces the node's edges rather than accumulating them).
-	hits, _ = f.st.FindExact("Hash Resume")
+	hits, _ = f.st.FindExact(context.Background(), "Hash Resume")
 	if len(hits) != 1 || !strings.Contains(hits[0].Content, "Rewritten") {
 		t.Errorf("node element after re-run: %+v", hits)
 	}
-	if edges, _ := f.st.Incoming("summarize:store-layer"); len(edges) != 1 {
+	if edges, _ := f.st.Incoming(context.Background(), "summarize:store-layer"); len(edges) != 1 {
 		t.Errorf("edges accumulated across runs: %+v", edges)
 	}
 }
@@ -393,7 +394,7 @@ func TestPruneRemovesDeadNodesButKeepsHumanNotes(t *testing.T) {
 		t.Errorf("pruned: got %d, want 2", res.DeadNodesRemoved)
 	}
 	for _, qn := range []string{"summarize:doomed-concept", "summarize:annotated-concept"} {
-		if got, _ := f.st.FindExact(qn); len(got) != 0 {
+		if got, _ := f.st.FindExact(context.Background(), qn); len(got) != 0 {
 			t.Errorf("dead node still in the graph: %s", qn)
 		}
 	}

@@ -33,7 +33,7 @@ func TestL3ScopeArgReachesTheVectorArm(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	// One real element, one test fixture that paraphrases the same question.
@@ -41,14 +41,14 @@ func TestL3ScopeArgReachesTheVectorArm(t *testing.T) {
 		{QualifiedName: "store/real.go::Rank", ElementType: "function", Name: "Rank", FilePath: "store/real.go", Language: "go", Content: "rank the merged lists"},
 		{QualifiedName: "store/real_test.go::TestRank", ElementType: "function", Name: "TestRank", FilePath: "store/real_test.go", Language: "go", Content: "rank the merged lists"},
 	} {
-		if err := st.UpsertElements([]store.Element{e}); err != nil {
+		if err := st.UpsertElements(context.Background(), []store.Element{e}); err != nil {
 			t.Fatal(err)
 		}
 		qvec, err := p.Embed(context.Background(), embed.Query, []string{e.Content})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
 			t.Fatal(err)
 		}
 	}

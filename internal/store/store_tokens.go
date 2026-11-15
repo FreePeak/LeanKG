@@ -21,6 +21,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -131,7 +132,7 @@ const tokenSelectCols = `id, name, secret, role, created_at, account_id, org_id,
 // column, so an upsert with zero lifecycle values clears them (Rust's
 // AccessTokenStore :put behaves the same) — TokenRevoke is the operation that
 // only ever sets a timestamp.
-func (s *Store) TokenUpsert(tok Token) error {
+func (s *Store) TokenUpsert(ctx context.Context, tok Token) error {
 	if tok.ID == "" {
 		return fmt.Errorf("store: token upsert: empty id")
 	}
@@ -141,7 +142,7 @@ func (s *Store) TokenUpsert(tok Token) error {
 	if tok.Role == "" {
 		return fmt.Errorf("store: token upsert: empty role")
 	}
-	_, err := s.db.Exec(`INSERT INTO tokens (`+tokenInsertCols+`)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tokens (`+tokenInsertCols+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name, secret = excluded.secret,
@@ -160,8 +161,8 @@ func (s *Store) TokenUpsert(tok Token) error {
 
 // TokenList returns every token (at-rest hash form) ordered by creation,
 // revoked rows included — revocation is state, not deletion.
-func (s *Store) TokenList() ([]Token, error) {
-	rows, err := s.db.Query(`SELECT ` + tokenSelectCols + ` FROM tokens ORDER BY created_at, id`)
+func (s *Store) TokenList(ctx context.Context) ([]Token, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+tokenSelectCols+` FROM tokens ORDER BY created_at, id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: token list: %w", err)
 	}
@@ -179,8 +180,8 @@ func (s *Store) TokenList() ([]Token, error) {
 
 // TokenDelete removes a token (hard revocation). Deleting an unknown id is a
 // no-op, so revoke flows stay idempotent.
-func (s *Store) TokenDelete(id string) error {
-	_, err := s.db.Exec(`DELETE FROM tokens WHERE id = ?`, id)
+func (s *Store) TokenDelete(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("store: token delete %s: %w", id, err)
 	}
@@ -191,8 +192,8 @@ func (s *Store) TokenDelete(id string) error {
 // row in place. Revoking an unknown id or an already-revoked token is a no-op,
 // matching TokenDelete's idempotence (Rust's revoke_token reports false for
 // both cases instead of erroring).
-func (s *Store) TokenRevoke(id string, at int64) error {
-	_, err := s.db.Exec(
+func (s *Store) TokenRevoke(ctx context.Context, id string, at int64) error {
+	_, err := s.db.ExecContext(ctx,
 		`UPDATE tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, at, id)
 	if err != nil {
 		return fmt.Errorf("store: token revoke %s: %w", id, err)
@@ -205,8 +206,8 @@ func (s *Store) TokenRevoke(id string, at int64) error {
 // revoked tokens, so a revoke racing an in-flight request cannot resurrect
 // "last used" state. Callers treat failures as best-effort (Rust's
 // validate_token ignores the touch result too).
-func (s *Store) TokenTouch(id string, at int64) error {
-	_, err := s.db.Exec(
+func (s *Store) TokenTouch(ctx context.Context, id string, at int64) error {
+	_, err := s.db.ExecContext(ctx,
 		`UPDATE tokens SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL
 			AND (last_used_at IS NULL OR last_used_at <= ?)`,
 		at, id, at-TokenTouchWindowSecs)
@@ -223,8 +224,8 @@ func (s *Store) TokenTouch(id string, at int64) error {
 // token sources. A revoked or expired row is (Token{}, false, err) wrapping
 // ErrTokenRevoked / ErrTokenExpired: revocation is checked first, then expiry
 // (Rust validate_token's order), and neither may authenticate.
-func (s *Store) TokenFind(secret string) (Token, bool, error) {
-	row := s.db.QueryRow(`SELECT `+tokenSelectCols+` FROM tokens WHERE secret = ?`, HashToken(secret))
+func (s *Store) TokenFind(ctx context.Context, secret string) (Token, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+tokenSelectCols+` FROM tokens WHERE secret = ?`, HashToken(secret))
 	t, err := scanToken(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

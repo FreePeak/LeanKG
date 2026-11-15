@@ -30,7 +30,7 @@ func newAdminServer(t *testing.T, username string) (*Server, store.Backend) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.CreateSiteAdmin(st, username, testAdminPassword); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, username, testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
 	engine := core.New(st, core.Options{ProjectDir: dir})
@@ -96,7 +96,7 @@ func TestAuthenticateMintsAdminToken(t *testing.T) {
 		t.Fatalf("expires_at is %v after login, want about 24h", d)
 	}
 
-	grant, ok, err := auth.Verify(st, out.Token)
+	grant, ok, err := auth.Verify(context.Background(), st, out.Token)
 	if err != nil || !ok {
 		t.Fatalf("minted token does not verify: ok=%v err=%v", ok, err)
 	}
@@ -223,7 +223,7 @@ func TestAuthenticateNeverRecordsSecrets(t *testing.T) {
 // token minted in the engine's own store.
 func TestAuthenticateWorksOverStdioWithoutAuthStore(t *testing.T) {
 	st := newGateStore(t)
-	if _, err := auth.CreateSiteAdmin(st, "stdio-login", testAdminPassword); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "stdio-login", testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
 	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
@@ -239,7 +239,7 @@ func TestAuthenticateWorksOverStdioWithoutAuthStore(t *testing.T) {
 	if err := json.Unmarshal([]byte(toolText(t, res)), &out); err != nil || !strings.HasPrefix(out.Token, "lkg_") {
 		t.Fatalf("stdio login returned no token: %v %s", err, toolText(t, res))
 	}
-	if _, ok, err := auth.Verify(st, out.Token); err != nil || !ok {
+	if _, ok, err := auth.Verify(context.Background(), st, out.Token); err != nil || !ok {
 		t.Fatalf("stdio-minted token is not in the engine store: ok=%v err=%v", ok, err)
 	}
 }

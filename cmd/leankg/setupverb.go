@@ -88,7 +88,7 @@ func (cliStages) IndexOne(ctx context.Context, dir, _env string, _verbose bool) 
 		return 0, nil // indexed, but the count is unavailable
 	}
 	defer st.Close()
-	n, err := st.ElementCount()
+	n, err := st.ElementCount(ctx)
 	if err != nil {
 		return 0, nil
 	}

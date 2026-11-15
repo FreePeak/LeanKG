@@ -192,7 +192,7 @@ type searchScope struct {
 
 // searchPrelude validates the query text and builds the shared envelope: the
 // limit, the freshness of the element count and the population rule.
-func (e *Engine) searchPrelude(req QueryRequest, env envelopeArgs) (searchScope, error) {
+func (e *Engine) searchPrelude(ctx context.Context, req QueryRequest, env envelopeArgs) (searchScope, error) {
 	if req.Query == "" {
 		return searchScope{}, fmt.Errorf("query requires query text")
 	}
@@ -201,13 +201,13 @@ func (e *Engine) searchPrelude(req QueryRequest, env envelopeArgs) (searchScope,
 		limit = 10
 	}
 	resp := map[string]any{"query": req.Query, "limit": limit}
-	els, err := e.st.ElementCount()
+	els, err := e.st.ElementCount(ctx)
 	if err != nil {
 		// A store that cannot count is an error, not an empty index: the
 		// ladder would otherwise answer "no elements indexed" (CX-45).
 		return searchScope{}, err
 	}
-	resp["freshness"] = e.freshness(els)
+	resp["freshness"] = e.freshness(ctx, els)
 	// One population rule for every rung: git history rows are hidden unless
 	// args.include_git is set (see searchKeep). The semantic rung applies the
 	// same rule as a store-side predicate.
@@ -215,7 +215,7 @@ func (e *Engine) searchPrelude(req QueryRequest, env envelopeArgs) (searchScope,
 }
 
 func (e *Engine) queryExact(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
-	s, err := e.searchPrelude(req, env)
+	s, err := e.searchPrelude(ctx, req, env)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ func (e *Engine) queryExact(ctx context.Context, req QueryRequest, env envelopeA
 }
 
 func (e *Engine) queryFuzzy(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
-	s, err := e.searchPrelude(req, env)
+	s, err := e.searchPrelude(ctx, req, env)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +231,7 @@ func (e *Engine) queryFuzzy(ctx context.Context, req QueryRequest, env envelopeA
 }
 
 func (e *Engine) querySemantic(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
-	s, err := e.searchPrelude(req, env)
+	s, err := e.searchPrelude(ctx, req, env)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func (e *Engine) querySemantic(ctx context.Context, req QueryRequest, env envelo
 // queryLadder is the ladder router: L0 cold, then L1 exact, L2 fuzzy, L3
 // semantic, with the Noul confidence gate and the prose route.
 func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
-	s, err := e.searchPrelude(req, env)
+	s, err := e.searchPrelude(ctx, req, env)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 	// Identifier-shaped queries keep L1 → L2 → L3. The Noul confidence gate
 	// still holds L3 back for queries the ontology rates as noise.
 	if e.embedder != nil && isProse(req.Query) {
-		conf, err := ontology.OntologyConfidence(e.st, req.Query)
+		conf, err := ontology.OntologyConfidence(ctx, e.st, req.Query)
 		if err != nil {
 			return nil, err
 		}
@@ -290,7 +290,7 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 	}
 	// Noul L3 gate: ontology confidence below MinConfidence
 	// (0.3) justifies no embedding call — degrade to L2.
-	conf, err := ontology.OntologyConfidence(e.st, req.Query)
+	conf, err := ontology.OntologyConfidence(ctx, e.st, req.Query)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +316,7 @@ type graphArgs struct {
 // then the seed resolution every verb needs, then the verb itself.
 func graphQuery(verb graphVerb) actionHandler[QueryRequest] {
 	return queryAction(func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs) (map[string]any, error) {
-		s, err := e.searchPrelude(req, a.envelopeArgs)
+		s, err := e.searchPrelude(ctx, req, a.envelopeArgs)
 		if err != nil {
 			return nil, err
 		}
@@ -406,7 +406,7 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 		// than fail: the end that does not resolve is a fact the caller
 		// can act on.
 		for _, end := range []struct{ label, qn string }{{"from (query)", seed}, {"to (args.to)", to}} {
-			els, ferr := e.st.FindExact(end.qn)
+			els, ferr := e.st.FindExact(ctx, end.qn)
 			if ferr != nil {
 				return nil, ferr
 			}
@@ -562,31 +562,35 @@ func subCommandKey(command, alias string) (string, bool) {
 }
 
 // ontologyCommands is the query{action:"ontology"} sub-command registry.
-var ontologyCommands = map[string]func(e *Engine, req QueryRequest) (map[string]any, error){
-	"":        func(e *Engine, _ QueryRequest) (map[string]any, error) { return e.OntologyMatches() },
-	"matches": func(e *Engine, _ QueryRequest) (map[string]any, error) { return e.OntologyMatches() },
-	"trace": func(e *Engine, req QueryRequest) (map[string]any, error) {
-		return ontology.TraceQuery(e.st, req.Query)
+var ontologyCommands = map[string]func(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error){
+	"": func(e *Engine, ctx context.Context, _ QueryRequest) (map[string]any, error) {
+		return e.OntologyMatches(ctx)
 	},
-	"status": func(e *Engine, _ QueryRequest) (map[string]any, error) {
-		st, err := ontology.OntologyStatus(e.st)
+	"matches": func(e *Engine, ctx context.Context, _ QueryRequest) (map[string]any, error) {
+		return e.OntologyMatches(ctx)
+	},
+	"trace": func(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error) {
+		return ontology.TraceQuery(ctx, e.st, req.Query)
+	},
+	"status": func(e *Engine, ctx context.Context, _ QueryRequest) (map[string]any, error) {
+		st, err := ontology.OntologyStatus(ctx, e.st)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"status": st}, nil
 	},
-	"concept_search": func(e *Engine, req QueryRequest) (map[string]any, error) {
-		res, err := ontology.ConceptSearch(e.st, req.Query, req.Limit)
+	"concept_search": func(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error) {
+		res, err := ontology.ConceptSearch(ctx, e.st, req.Query, req.Limit)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"result": res}, nil
 	},
-	"feature_flow": func(e *Engine, req QueryRequest) (map[string]any, error) {
-		return ontology.FeatureFlow(e.st, req.Query)
+	"feature_flow": func(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error) {
+		return ontology.FeatureFlow(ctx, e.st, req.Query)
 	},
-	"traceability": func(e *Engine, _ QueryRequest) (map[string]any, error) {
-		m, err := ontology.TraceabilityMatrix(e.st)
+	"traceability": func(e *Engine, ctx context.Context, _ QueryRequest) (map[string]any, error) {
+		m, err := ontology.TraceabilityMatrix(ctx, e.st)
 		if err != nil {
 			return nil, err
 		}
@@ -602,7 +606,7 @@ func (e *Engine) queryOntology(ctx context.Context, req QueryRequest, a ontology
 	// handler returned Ok(refusal). concept_search/matches stay unguarded
 	// (KV read / the paginated path itself).
 	if ontology.IsFullScanOntologyCmd(cmd) {
-		if refusal, err := ontology.RefuseFullScanIfMega(e.st, "ontology/"+cmd); err != nil {
+		if refusal, err := ontology.RefuseFullScanIfMega(ctx, e.st, "ontology/"+cmd); err != nil {
 			return nil, err
 		} else if refusal != nil {
 			return refusal, nil
@@ -612,7 +616,7 @@ func (e *Engine) queryOntology(ctx context.Context, req QueryRequest, a ontology
 	if !ok {
 		return nil, fmt.Errorf("unknown ontology cmd (valid: matches, trace, status, concept_search, feature_flow, traceability)")
 	}
-	out, err := h(e, req)
+	out, err := h(e, ctx, req)
 	if err == nil && alias && out != nil {
 		out["deprecated"] = deprecatedSubCommandNote
 	}
@@ -661,8 +665,8 @@ func (e *Engine) querySession(_ context.Context, req QueryRequest, a sessionRead
 	return e.SessionRead(a.Command, req.Query, a.NodeID)
 }
 
-func (e *Engine) queryPRD(_ context.Context, req QueryRequest) (map[string]any, error) {
-	rows, err := prdindex.Trace(e.st, req.Query)
+func (e *Engine) queryPRD(ctx context.Context, req QueryRequest) (map[string]any, error) {
+	rows, err := prdindex.Trace(ctx, e.st, req.Query)
 	if err != nil {
 		return nil, err
 	}
@@ -677,9 +681,9 @@ type incidentArgs struct {
 	Env     string `json:"env"`
 }
 
-func (e *Engine) queryIncidents(_ context.Context, req QueryRequest, a incidentArgs) (map[string]any, error) {
+func (e *Engine) queryIncidents(ctx context.Context, req QueryRequest, a incidentArgs) (map[string]any, error) {
 	k := orgknowledge.New(e.st)
-	incidents, err := k.QueryIncidents(a.Service, a.Pattern, a.Env, req.Limit)
+	incidents, err := k.QueryIncidents(ctx, a.Service, a.Pattern, a.Env, req.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -698,8 +702,8 @@ type serviceArgs struct {
 	Service string `json:"service"`
 }
 
-func (e *Engine) queryEnvConflicts(_ context.Context, _ QueryRequest, a serviceArgs) (map[string]any, error) {
-	conflicts, err := orgknowledge.New(e.st).FindEnvConflicts(a.Service)
+func (e *Engine) queryEnvConflicts(ctx context.Context, _ QueryRequest, a serviceArgs) (map[string]any, error) {
+	conflicts, err := orgknowledge.New(e.st).FindEnvConflicts(ctx, a.Service)
 	if err != nil {
 		return nil, err
 	}
@@ -713,8 +717,8 @@ type serviceContextArgs struct {
 	Env     string `json:"env"`
 }
 
-func (e *Engine) queryServiceContext(_ context.Context, _ QueryRequest, a serviceContextArgs) (map[string]any, error) {
-	return orgknowledge.New(e.st).ServiceContextJSON(a.Service, a.Env)
+func (e *Engine) queryServiceContext(ctx context.Context, _ QueryRequest, a serviceContextArgs) (map[string]any, error) {
+	return orgknowledge.New(e.st).ServiceContextJSON(ctx, a.Service, a.Env)
 }
 
 func (e *Engine) importDocs(ctx context.Context, req ImportRequest) (map[string]any, error) {
@@ -729,7 +733,7 @@ func (e *Engine) importDocs(ctx context.Context, req ImportRequest) (map[string]
 	if err != nil {
 		return nil, fmt.Errorf("docindex %s: %w", req.Path, err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -758,7 +762,7 @@ func (e *Engine) importPRD(ctx context.Context, req ImportRequest, a prdArgs) (m
 	if err != nil {
 		return nil, err
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
 	return map[string]any{"prd": res}, nil
@@ -784,7 +788,7 @@ func (e *Engine) importIndex(ctx context.Context, req ImportRequest) (map[string
 	if err != nil {
 		return nil, fmt.Errorf("index %s: %w", target, err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
 	status, _ := e.Status(ctx)
@@ -811,13 +815,13 @@ func (e *Engine) importOntology(ctx context.Context, req ImportRequest) (map[str
 		return nil, err
 	}
 	if info, err := os.Stat(opath); err == nil && info.IsDir() {
-		stats, err := ontology.LoadWorkflows(e.st, opath)
+		stats, err := ontology.LoadWorkflows(ctx, e.st, opath)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"ontology": "synced", "stats": stats}, nil
 	}
-	return e.OntologyMatch(opath)
+	return e.OntologyMatch(ctx, opath)
 }
 
 // importMissingAction is the refusal for an import with no action.

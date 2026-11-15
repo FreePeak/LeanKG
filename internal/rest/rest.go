@@ -98,7 +98,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		if !decode(w, r, &body) {
 			return
 		}
-		out, err := engine.OntologyMatch(body.Catalog)
+		out, err := engine.OntologyMatch(r.Context(), body.Catalog)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
@@ -106,7 +106,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		httpx.WriteJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("GET /api/v1/ontology/matches", func(w http.ResponseWriter, r *http.Request) {
-		out, err := engine.OntologyMatches()
+		out, err := engine.OntologyMatches(r.Context())
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
@@ -127,7 +127,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		if limit == 0 {
 			limit = 10
 		}
-		incidents, err := org.QueryIncidents(q.Get("service"), q.Get("pattern"), env, limit)
+		incidents, err := org.QueryIncidents(r.Context(), q.Get("service"), q.Get("pattern"), env, limit)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
@@ -143,7 +143,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		})
 	})
 	mux.HandleFunc("GET /api/v2/env/diff", func(w http.ResponseWriter, r *http.Request) {
-		conflicts, err := org.FindEnvConflicts(r.URL.Query().Get("service"))
+		conflicts, err := org.FindEnvConflicts(r.Context(), r.URL.Query().Get("service"))
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
@@ -155,7 +155,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		if env == "" {
 			env = "production"
 		}
-		ctx, err := org.ServiceContext(r.URL.Query().Get("service"), env)
+		ctx, err := org.ServiceContext(r.Context(), r.URL.Query().Get("service"), env)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return

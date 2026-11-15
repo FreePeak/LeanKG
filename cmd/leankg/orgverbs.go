@@ -73,7 +73,7 @@ func cmdIncident(ctx context.Context, args []string) error {
 			inc.LinkedTicket = ticket
 		}
 		return withOrgKnowledge(ctx, *project, store.RW, func(k *orgknowledge.Knowledge) error {
-			created, err := k.CreateIncident(inc)
+			created, err := k.CreateIncident(ctx, inc)
 			if err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func cmdIncident(ctx context.Context, args []string) error {
 			return err
 		}
 		return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
-			incidents, err := k.QueryIncidents(*service, *pattern, *env, *limit)
+			incidents, err := k.QueryIncidents(ctx, *service, *pattern, *env, *limit)
 			if err != nil {
 				return err
 			}
@@ -133,7 +133,7 @@ func cmdIncident(ctx context.Context, args []string) error {
 		}
 		id := positional[0]
 		return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
-			inc, found, err := k.GetIncident(id)
+			inc, found, err := k.GetIncident(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -200,7 +200,7 @@ func cmdNote(ctx context.Context, args []string) error {
 			return cliexit.Code(2)
 		}
 		return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
-			notes, err := k.NotesFor(*target)
+			notes, err := k.NotesFor(ctx, *target)
 			if err != nil {
 				return err
 			}
@@ -220,7 +220,7 @@ func cmdNote(ctx context.Context, args []string) error {
 	}
 
 	return withOrgKnowledge(ctx, *project, store.RW, func(k *orgknowledge.Knowledge) error {
-		note, err := k.AddNote(*target, *content, *env, orgknowledge.AuthorFromEnv())
+		note, err := k.AddNote(ctx, *target, *content, *env, orgknowledge.AuthorFromEnv())
 		if err != nil {
 			return err
 		}
@@ -239,7 +239,7 @@ func cmdEnvConflicts(ctx context.Context, args []string) error {
 		return err
 	}
 	return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
-		report, err := k.EnvConflictReport(*service)
+		report, err := k.EnvConflictReport(ctx, *service)
 		if err != nil {
 			return err
 		}
@@ -258,7 +258,7 @@ func cmdServiceContext(ctx context.Context, args []string) error {
 		return err
 	}
 	return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
-		ctx, err := k.ServiceContext(*service, *env)
+		ctx, err := k.ServiceContext(ctx, *service, *env)
 		if err != nil {
 			return err
 		}
@@ -275,7 +275,7 @@ func cmdTeamMap(ctx context.Context, args []string) error {
 		return err
 	}
 	return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
-		teams, err := k.TeamMap(*env)
+		teams, err := k.TeamMap(ctx, *env)
 		if err != nil {
 			return err
 		}

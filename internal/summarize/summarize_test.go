@@ -46,7 +46,7 @@ func newFixture(t *testing.T, files map[string]string) *fixture {
 		recs = append(recs, writeProjectFile(t, dir, path, content))
 	}
 	sort.Slice(recs, func(i, j int) bool { return recs[i].Path < recs[j].Path })
-	if err := st.UpsertFiles(recs); err != nil {
+	if err := st.UpsertFiles(context.Background(), recs); err != nil {
 		t.Fatalf("upsert files: %v", err)
 	}
 	return &fixture{t: t, dir: dir, st: st}
@@ -73,7 +73,7 @@ func writeProjectFile(t *testing.T, dir, path, content string) store.FileRecord 
 func (f *fixture) rewrite(path, content string) {
 	f.t.Helper()
 	rec := writeProjectFile(f.t, f.dir, path, content)
-	if err := f.st.UpsertFiles([]store.FileRecord{rec}); err != nil {
+	if err := f.st.UpsertFiles(context.Background(), []store.FileRecord{rec}); err != nil {
 		f.t.Fatal(err)
 	}
 }

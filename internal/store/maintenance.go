@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -121,17 +122,20 @@ func errUnknownMaintainKind(kind MaintainKind) error {
 // from the content table.
 //
 // Analyze is not a SQLite maintenance kind; it is reported as skipped.
-func (s *Store) Maintain(op MaintainOp) (MaintainResult, error) {
+func (s *Store) Maintain(ctx context.Context, op MaintainOp) (MaintainResult, error) {
 	if err := requireWritable(s.mode); err != nil {
+		return MaintainResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return MaintainResult{}, err
 	}
 	switch op.Kind {
 	case MaintainUpgrade:
-		if err := s.ensureIncrementalVacuum(); err != nil {
+		if err := s.ensureIncrementalVacuum(ctx); err != nil {
 			return MaintainResult{}, err
 		}
 	case MaintainCheckpoint:
-		if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 			return MaintainResult{}, fmt.Errorf("store: wal_checkpoint(TRUNCATE): %w", err)
 		}
 	case MaintainReclaim:
@@ -141,15 +145,15 @@ func (s *Store) Maintain(op MaintainOp) (MaintainResult, error) {
 		if op.MaxPages > 0 {
 			stmt = fmt.Sprintf(`PRAGMA incremental_vacuum(%d)`, op.MaxPages)
 		}
-		if _, err := s.db.Exec(stmt); err != nil {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return MaintainResult{}, fmt.Errorf("store: incremental_vacuum: %w", err)
 		}
 	case MaintainReclaimFull:
-		if _, err := s.db.Exec(`VACUUM`); err != nil {
+		if _, err := s.db.ExecContext(ctx, `VACUUM`); err != nil {
 			return MaintainResult{}, fmt.Errorf("store: vacuum: %w", err)
 		}
 	case MaintainCompactKeywordIndex:
-		if _, err := s.db.Exec(`INSERT INTO elements_fts(elements_fts) VALUES('optimize')`); err != nil {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO elements_fts(elements_fts) VALUES('optimize')`); err != nil {
 			return MaintainResult{}, fmt.Errorf("store: fts optimize: %w", err)
 		}
 	case MaintainAnalyze:
@@ -170,7 +174,7 @@ func (s *Store) Maintain(op MaintainOp) (MaintainResult, error) {
 // back, so stat()-ing the file under-reports what the database occupies by
 // up to a whole WAL. page_count is the authoritative figure; the
 // MaintainCheckpoint op is what makes the file on disk match it.
-func (s *Store) Space() (SpaceReport, error) {
+func (s *Store) Space(ctx context.Context) (SpaceReport, error) {
 	rep := SpaceReport{Engine: EngineSQLite, Path: s.path}
 	if fi, err := os.Stat(s.path); err == nil {
 		rep.SizeBytes = fi.Size()
@@ -179,13 +183,13 @@ func (s *Store) Space() (SpaceReport, error) {
 		rep.WALBytes = fi.Size()
 	}
 	var pageSize, pageCount, freelist int64
-	if err := s.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+	if err := s.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
 		return rep, fmt.Errorf("store: page_size: %w", err)
 	}
-	if err := s.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+	if err := s.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
 		return rep, fmt.Errorf("store: page_count: %w", err)
 	}
-	if err := s.db.QueryRow(`PRAGMA freelist_count`).Scan(&freelist); err != nil {
+	if err := s.db.QueryRowContext(ctx, `PRAGMA freelist_count`).Scan(&freelist); err != nil {
 		return rep, fmt.Errorf("store: freelist_count: %w", err)
 	}
 	rep.PageSize = pageSize
@@ -209,21 +213,21 @@ func (s *Store) Space() (SpaceReport, error) {
 // mode, then VACUUM. Either half alone is a silent no-op, so the result is
 // verified. Idempotent — the mode read is one row, and the VACUUM happens at
 // most once per store, ever. Called from the Upgrade op only.
-func (s *Store) ensureIncrementalVacuum() error {
+func (s *Store) ensureIncrementalVacuum(ctx context.Context) error {
 	var mode int64
-	if err := s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+	if err := s.db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&mode); err != nil {
 		return fmt.Errorf("store: auto_vacuum pragma: %w", err)
 	}
 	if mode != 0 { // 1 = FULL, 2 = INCREMENTAL: already reclaiming
 		return nil
 	}
-	if _, err := s.db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
 		return fmt.Errorf("store: request incremental vacuum: %w", err)
 	}
-	if _, err := s.db.Exec(`VACUUM`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `VACUUM`); err != nil {
 		return fmt.Errorf("store: enable incremental vacuum: %w", err)
 	}
-	if err := s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+	if err := s.db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&mode); err != nil {
 		return fmt.Errorf("store: verify auto_vacuum: %w", err)
 	}
 	if mode != 2 {

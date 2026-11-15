@@ -405,15 +405,15 @@ func TestRunDeepSqlite(t *testing.T) {
 		{QualifiedName: "a.A", ElementType: "func", Name: "A", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "a.B", ElementType: "func", Name: "B", FilePath: "a.go", Language: "go"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	// The real index pass records the file too; without it the new
 	// file-coverage check correctly reports divergence.
-	if err := st.UpsertFiles([]store.FileRecord{{Path: "a.go", Size: 33, MtimeNS: 1, ContentHash: "x"}}); err != nil {
+	if err := st.UpsertFiles(context.Background(), []store.FileRecord{{Path: "a.go", Size: 33, MtimeNS: 1, ContentHash: "x"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{Source: "a.A", Target: "a.Ghost", RelType: "calls"}}); err != nil {
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{{Source: "a.A", Target: "a.Ghost", RelType: "calls"}}); err != nil {
 		t.Fatal(err)
 	}
 	report, err := RunDeep(context.Background(), dir, "", "", nil)
@@ -530,7 +530,7 @@ func TestFileCoverageRealSqlite(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{{QualifiedName: "a.A", ElementType: "func", Name: "A", FilePath: "a.go", Language: "go"}}); err != nil {
+	if err := st.UpsertElements(context.Background(), []store.Element{{QualifiedName: "a.A", ElementType: "func", Name: "A", FilePath: "a.go", Language: "go"}}); err != nil {
 		t.Fatal(err)
 	}
 	pb, err := openProbes(context.Background(), dir, "", "")
@@ -545,7 +545,7 @@ func TestFileCoverageRealSqlite(t *testing.T) {
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "a.go") {
 		t.Fatalf("element without a file row = %s (%s), want FAIL naming a.go", f.Status, f.Detail)
 	}
-	if err := st.UpsertFiles([]store.FileRecord{{Path: "a.go", Size: 10, MtimeNS: 1, ContentHash: "h"}}); err != nil {
+	if err := st.UpsertFiles(context.Background(), []store.FileRecord{{Path: "a.go", Size: 10, MtimeNS: 1, ContentHash: "h"}}); err != nil {
 		t.Fatal(err)
 	}
 	if f := checkFileCoverage(context.Background(), pb, Env{}); f.Status != StatusPass {

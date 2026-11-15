@@ -168,7 +168,7 @@ func MineIntoProject(ctx context.Context, project, input string, format Format) 
 	if err := st.Migrate(ctx); err != nil {
 		return result, fmt.Errorf("migrate: %w", err)
 	}
-	indexed, err := IndexItems(st, project, result.Items)
+	indexed, err := IndexItems(ctx, st, project, result.Items)
 	if err != nil {
 		return result, err
 	}
@@ -190,7 +190,7 @@ func MineIntoProject(ctx context.Context, project, input string, format Format) 
 // shares a conversation file path. (The Rust original interleaved them and
 // lost all but the last decision's edges; this port fixes that, which the
 // decided_about count assertion in TestIndexItemsPersistsNodesAndEdges pins.)
-func IndexItems(st store.Backend, project string, items []MinedItem) (MiningResult, error) {
+func IndexItems(ctx context.Context, st store.Backend, project string, items []MinedItem) (MiningResult, error) {
 	var (
 		elements      []store.Element
 		relationships []store.Relationship
@@ -207,17 +207,17 @@ func IndexItems(st store.Backend, project string, items []MinedItem) (MiningResu
 			continue
 		}
 		cleared[el.FilePath] = true
-		if err := st.DeleteByFile(el.FilePath); err != nil {
+		if err := st.DeleteByFile(ctx, el.FilePath); err != nil {
 			return MiningResult{}, fmt.Errorf("clear prior mined nodes for %s: %w", el.FilePath, err)
 		}
 	}
 	if len(elements) > 0 {
-		if err := st.UpsertElements(elements); err != nil {
+		if err := st.UpsertElements(ctx, elements); err != nil {
 			return MiningResult{}, fmt.Errorf("insert mined elements: %w", err)
 		}
 	}
 	if len(relationships) > 0 {
-		if err := st.UpsertRelationships(relationships); err != nil {
+		if err := st.UpsertRelationships(ctx, relationships); err != nil {
 			return MiningResult{}, fmt.Errorf("insert mined relationships: %w", err)
 		}
 	}

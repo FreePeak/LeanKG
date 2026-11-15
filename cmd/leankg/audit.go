@@ -69,7 +69,7 @@ func cmdAuditExport(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 
-	entries, err := auditEntries(engine.Store(), window)
+	entries, err := auditEntries(ctx, engine.Store(), window)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -117,7 +117,7 @@ func cmdAuditVerify(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 
-	ok, brokenAt, err := engine.Store().VerifyAuditChain()
+	ok, brokenAt, err := engine.Store().VerifyAuditChain(ctx)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -125,7 +125,7 @@ func cmdAuditVerify(ctx context.Context, args []string) error {
 		fmt.Fprintf(os.Stderr, "FAIL: audit chain broken at seq %d\n", brokenAt)
 		return cliexit.Code(1)
 	}
-	entries, err := auditEntries(engine.Store(), window)
+	entries, err := auditEntries(ctx, engine.Store(), window)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -170,8 +170,8 @@ func (w auditWindow) contains(at int64) bool {
 }
 
 // auditEntries tails the ledger and keeps the window (Rust query_audit).
-func auditEntries(st store.Backend, w auditWindow) ([]store.AuditEntry, error) {
-	all, err := st.AuditTail(auditLedgerCap)
+func auditEntries(ctx context.Context, st store.Backend, w auditWindow) ([]store.AuditEntry, error) {
+	all, err := st.AuditTail(ctx, auditLedgerCap)
 	if err != nil {
 		return nil, err
 	}

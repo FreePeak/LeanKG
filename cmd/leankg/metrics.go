@@ -48,7 +48,7 @@ func cmdMetrics(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 
-	out, err := metrics.Show(st, metrics.Options{
+	out, err := metrics.Show(ctx, st, metrics.Options{
 		Since:       *since,
 		Tool:        *tool,
 		JSON:        *jsonOut,
@@ -97,7 +97,7 @@ func cmdDashboard(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 
-	out, err := metrics.Dashboard(st, metrics.DashboardOptions{Since: opts.since, Format: opts.format})
+	out, err := metrics.Dashboard(ctx, st, metrics.DashboardOptions{Since: opts.since, Format: opts.format})
 	if err != nil {
 		// Rust exits non-zero on an invalid --since window or --format value.
 		fmt.Fprintln(os.Stderr, "dashboard:", err)

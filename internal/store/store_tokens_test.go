@@ -35,14 +35,14 @@ func TestTokenRoundTrip(t *testing.T) {
 	plain := "lkg_0123456789abcdef0123456789abcdef_beef"
 	expires := int64(4102444800) // 2100-01-01
 
-	if err := s.TokenUpsert(Token{
+	if err := s.TokenUpsert(context.Background(), Token{
 		ID: "t1", Name: "ci", Secret: plain, Role: "admin", CreatedAt: 100,
 		AccountID: "acct-a", OrgID: "org-1", Scopes: []string{"read", "write"}, ExpiresAt: expires,
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	list, err := s.TokenList()
+	list, err := s.TokenList(context.Background())
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestTokenRoundTrip(t *testing.T) {
 		t.Fatalf("scopes mangled: %+v", list[0].Scopes)
 	}
 
-	got, found, err := s.TokenFind(plain)
+	got, found, err := s.TokenFind(context.Background(), plain)
 	if err != nil || !found {
 		t.Fatalf("find by plaintext: found=%v err=%v", found, err)
 	}
@@ -78,16 +78,16 @@ func TestTokenRoundTrip(t *testing.T) {
 		t.Fatalf("unset lifecycle timestamps must read as 0: %+v", got)
 	}
 
-	if _, found, _ := s.TokenFind("lkg_wrong"); found {
+	if _, found, _ := s.TokenFind(context.Background(), "lkg_wrong"); found {
 		t.Fatal("unknown plaintext must not match")
 	}
 
 	// Upsert with the same ID replaces in place (never duplicates). The write
 	// replaces every column, so omitted lifecycle metadata clears.
-	if err := s.TokenUpsert(Token{ID: "t1", Name: "ci", Secret: plain, Role: "viewer", CreatedAt: 100}); err != nil {
+	if err := s.TokenUpsert(context.Background(), Token{ID: "t1", Name: "ci", Secret: plain, Role: "viewer", CreatedAt: 100}); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
-	list, _ = s.TokenList()
+	list, _ = s.TokenList(context.Background())
 	if len(list) != 1 || list[0].Role != "viewer" {
 		t.Fatalf("re-upsert: want 1 row with role viewer, got %+v", list)
 	}
@@ -96,18 +96,18 @@ func TestTokenRoundTrip(t *testing.T) {
 	}
 
 	// Hard revoke = delete, then the plaintext stops resolving.
-	if err := s.TokenDelete("t1"); err != nil {
+	if err := s.TokenDelete(context.Background(), "t1"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, found, _ := s.TokenFind(plain); found {
+	if _, found, _ := s.TokenFind(context.Background(), plain); found {
 		t.Fatal("revoked token must not authenticate")
 	}
-	list, _ = s.TokenList()
+	list, _ = s.TokenList(context.Background())
 	if len(list) != 0 {
 		t.Fatalf("want empty list after delete, got %d", len(list))
 	}
 	// Idempotent: deleting an unknown/already-deleted id is not an error.
-	if err := s.TokenDelete("t1"); err != nil {
+	if err := s.TokenDelete(context.Background(), "t1"); err != nil {
 		t.Fatalf("idempotent delete: %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestTokenFindRejectsRevokedAndExpired(t *testing.T) {
 
 	upsert := func(id, plain string, expires, revoked int64) {
 		t.Helper()
-		if err := s.TokenUpsert(Token{
+		if err := s.TokenUpsert(context.Background(), Token{
 			ID: id, Name: id, Secret: plain, Role: "viewer", CreatedAt: 1,
 			ExpiresAt: expires, RevokedAt: revoked,
 		}); err != nil {
@@ -144,16 +144,16 @@ func TestTokenFindRejectsRevokedAndExpired(t *testing.T) {
 		// Revocation is checked before expiry (Rust validate_token's order).
 		{"lkg_both", ErrTokenRevoked},
 	} {
-		if _, found, err := s.TokenFind(tc.plain); found || !errors.Is(err, tc.want) {
+		if _, found, err := s.TokenFind(context.Background(), tc.plain); found || !errors.Is(err, tc.want) {
 			t.Fatalf("TokenFind(%s): found=%v err=%v; want found=false and %v", tc.plain, found, err, tc.want)
 		}
 	}
 	for _, plain := range []string{"lkg_forever", "lkg_future"} {
-		if _, found, err := s.TokenFind(plain); err != nil || !found {
+		if _, found, err := s.TokenFind(context.Background(), plain); err != nil || !found {
 			t.Fatalf("TokenFind(%s): found=%v err=%v; want usable", plain, found, err)
 		}
 	}
-	if _, found, err := s.TokenFind("lkg_nope"); found || err != nil {
+	if _, found, err := s.TokenFind(context.Background(), "lkg_nope"); found || err != nil {
 		t.Fatalf("unknown secret: found=%v err=%v; want a soft miss", found, err)
 	}
 }
@@ -165,40 +165,40 @@ func TestTokenFindRejectsRevokedAndExpired(t *testing.T) {
 func TestTokenRevokeIsSoftAndIdempotent(t *testing.T) {
 	s := openTestStore(t)
 	plain := "lkg_soft_revoke"
-	if err := s.TokenUpsert(Token{ID: "r1", Name: "r1", Secret: plain, Role: "viewer", CreatedAt: 1}); err != nil {
+	if err := s.TokenUpsert(context.Background(), Token{ID: "r1", Name: "r1", Secret: plain, Role: "viewer", CreatedAt: 1}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	if err := s.TokenRevoke("r1", 500); err != nil {
+	if err := s.TokenRevoke(context.Background(), "r1", 500); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	// Re-revoking keeps the FIRST stamp rather than moving it.
-	if err := s.TokenRevoke("r1", 900); err != nil {
+	if err := s.TokenRevoke(context.Background(), "r1", 900); err != nil {
 		t.Fatalf("re-revoke: %v", err)
 	}
-	if err := s.TokenRevoke("unknown", 900); err != nil {
+	if err := s.TokenRevoke(context.Background(), "unknown", 900); err != nil {
 		t.Fatalf("revoke unknown id: %v", err)
 	}
 
-	list, err := s.TokenList()
+	list, err := s.TokenList(context.Background())
 	if err != nil || len(list) != 1 {
 		t.Fatalf("soft revoke must keep the row: %d rows err=%v", len(list), err)
 	}
 	if list[0].RevokedAt != 500 {
 		t.Fatalf("revoked_at = %d, want the first stamp 500", list[0].RevokedAt)
 	}
-	if _, found, err := s.TokenFind(plain); found || !errors.Is(err, ErrTokenRevoked) {
+	if _, found, err := s.TokenFind(context.Background(), plain); found || !errors.Is(err, ErrTokenRevoked) {
 		t.Fatalf("revoked token: found=%v err=%v; want found=false and ErrTokenRevoked", found, err)
 	}
 
 	// Hard delete is the other path: the row disappears entirely.
-	if err := s.TokenDelete("r1"); err != nil {
+	if err := s.TokenDelete(context.Background(), "r1"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if list, _ = s.TokenList(); len(list) != 0 {
+	if list, _ = s.TokenList(context.Background()); len(list) != 0 {
 		t.Fatalf("hard delete must drop the row, got %d", len(list))
 	}
-	if _, found, err := s.TokenFind(plain); found || err != nil {
+	if _, found, err := s.TokenFind(context.Background(), plain); found || err != nil {
 		t.Fatalf("deleted token: found=%v err=%v; want a soft miss", found, err)
 	}
 }
@@ -209,26 +209,26 @@ func TestTokenRevokeIsSoftAndIdempotent(t *testing.T) {
 func TestTokenTouchCoalesces(t *testing.T) {
 	s := openTestStore(t)
 	plain := "lkg_touch"
-	if err := s.TokenUpsert(Token{ID: "touch", Name: "touch", Secret: plain, Role: "viewer", CreatedAt: 1}); err != nil {
+	if err := s.TokenUpsert(context.Background(), Token{ID: "touch", Name: "touch", Secret: plain, Role: "viewer", CreatedAt: 1}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	lastUsed := func() int64 {
 		t.Helper()
-		list, err := s.TokenList()
+		list, err := s.TokenList(context.Background())
 		if err != nil || len(list) != 1 {
 			t.Fatalf("list: %d rows err=%v", len(list), err)
 		}
 		return list[0].LastUsedAt
 	}
 
-	if err := s.TokenTouch("touch", 1000); err != nil {
+	if err := s.TokenTouch(context.Background(), "touch", 1000); err != nil {
 		t.Fatalf("touch: %v", err)
 	}
 	if got := lastUsed(); got != 1000 {
 		t.Fatalf("first touch = %d, want 1000", got)
 	}
 	// Inside the window: no write, the stored value stays put.
-	if err := s.TokenTouch("touch", 1000+TokenTouchWindowSecs-1); err != nil {
+	if err := s.TokenTouch(context.Background(), "touch", 1000+TokenTouchWindowSecs-1); err != nil {
 		t.Fatalf("in-window touch: %v", err)
 	}
 	if got := lastUsed(); got != 1000 {
@@ -236,7 +236,7 @@ func TestTokenTouchCoalesces(t *testing.T) {
 	}
 	// At the window boundary the next write lands.
 	next := int64(1000 + TokenTouchWindowSecs)
-	if err := s.TokenTouch("touch", next); err != nil {
+	if err := s.TokenTouch(context.Background(), "touch", next); err != nil {
 		t.Fatalf("boundary touch: %v", err)
 	}
 	if got := lastUsed(); got != next {
@@ -244,10 +244,10 @@ func TestTokenTouchCoalesces(t *testing.T) {
 	}
 
 	// Revoked rows are never stamped (a revoke racing an in-flight request).
-	if err := s.TokenRevoke("touch", 2000); err != nil {
+	if err := s.TokenRevoke(context.Background(), "touch", 2000); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if err := s.TokenTouch("touch", 3000); err != nil {
+	if err := s.TokenTouch(context.Background(), "touch", 3000); err != nil {
 		t.Fatalf("touch after revoke: %v", err)
 	}
 	if got := lastUsed(); got != next {
@@ -261,7 +261,7 @@ func TestTokenTouchCoalesces(t *testing.T) {
 // and re-running Migrate changes nothing (the ledger is the idempotency guard —
 // sqlite has no ADD COLUMN IF NOT EXISTS).
 func TestTokenMigrationUpgradesExistingStore(t *testing.T) {
-	s, err := openSQLite(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(context.Background(), filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestTokenMigrationUpgradesExistingStore(t *testing.T) {
 		t.Fatalf("migrate 008: %v", err)
 	}
 
-	tok, found, err := s.TokenFind(legacy)
+	tok, found, err := s.TokenFind(context.Background(), legacy)
 	if err != nil || !found {
 		t.Fatalf("pre-upgrade token after migrate: found=%v err=%v", found, err)
 	}
@@ -311,13 +311,13 @@ func TestTokenMigrationUpgradesExistingStore(t *testing.T) {
 	}
 
 	// The new columns are writable on the upgraded layout.
-	if err := s.TokenTouch("legacy", 777); err != nil {
+	if err := s.TokenTouch(context.Background(), "legacy", 777); err != nil {
 		t.Fatalf("touch after upgrade: %v", err)
 	}
-	if err := s.TokenRevoke("legacy", 778); err != nil {
+	if err := s.TokenRevoke(context.Background(), "legacy", 778); err != nil {
 		t.Fatalf("revoke after upgrade: %v", err)
 	}
-	if _, found, err := s.TokenFind(legacy); found || !errors.Is(err, ErrTokenRevoked) {
+	if _, found, err := s.TokenFind(context.Background(), legacy); found || !errors.Is(err, ErrTokenRevoked) {
 		t.Fatalf("soft-revoked upgraded row: found=%v err=%v", found, err)
 	}
 
@@ -325,7 +325,7 @@ func TestTokenMigrationUpgradesExistingStore(t *testing.T) {
 	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
-	if list, err := s.TokenList(); err != nil || len(list) != 1 {
+	if list, err := s.TokenList(context.Background()); err != nil || len(list) != 1 {
 		t.Fatalf("after second migrate: %d rows err=%v", len(list), err)
 	}
 }
@@ -338,7 +338,7 @@ func TestTokenUpsertValidation(t *testing.T) {
 		{ID: "t", Secret: "", Role: "viewer"},
 		{ID: "t", Secret: "x", Role: ""},
 	} {
-		if err := s.TokenUpsert(tok); err == nil {
+		if err := s.TokenUpsert(context.Background(), tok); err == nil {
 			t.Fatalf("upsert %+v must be rejected", tok)
 		}
 	}

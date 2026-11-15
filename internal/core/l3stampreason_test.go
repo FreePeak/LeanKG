@@ -21,7 +21,7 @@ type unreadableStampStore struct {
 	err error
 }
 
-func (s unreadableStampStore) Stamp(modelID string) (*store.ModelStamp, error) {
+func (s unreadableStampStore) Stamp(ctx context.Context, modelID string) (*store.ModelStamp, error) {
 	return nil, s.err
 }
 

@@ -86,7 +86,7 @@ func TestReadCalibrationAcceptsPreCX40Identity(t *testing.T) {
 	if err := st.KVSet(context.Background(), calibrationNS, "m", string(raw)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	floor, ok := ReadCalibration(st, stamp)
+	floor, ok := ReadCalibration(context.Background(), st, stamp)
 	if !ok || floor != 0.5 {
 		t.Fatalf("ReadCalibration = (%v, %v), want (0.5, true) for the pre-CX-40 identity", floor, ok)
 	}

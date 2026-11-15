@@ -80,8 +80,8 @@ func cmdWriter(ctx context.Context, args []string) error {
 	}
 	fleet := maintain.Run(ctx, st, nil, maintain.Options{
 		Logf: log.Printf,
-		KeepModelIDsFunc: func(b store.Backend) []string {
-			id, err := store.CurrentModelID(b)
+		KeepModelIDsFunc: func(ctx context.Context, b store.Backend) []string {
+			id, err := store.CurrentModelID(ctx, b)
 			if err != nil || id == "" {
 				return nil
 			}

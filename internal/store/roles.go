@@ -18,34 +18,35 @@ var (
 	_ Backend = (*PGStore)(nil)
 )
 
-// IndexWriter persists the code graph of one indexed file set.
+// IndexWriter persists the code graph of one indexed file set. A cancelled ctx
+// rolls back the batch in progress; the batches that already committed stay.
 type IndexWriter interface {
-	UpsertElements(els []Element) error
-	UpsertRelationships(rels []Relationship) error
-	UpsertFiles(files []FileRecord) error
-	Files() ([]FileRecord, error)
-	DeleteByFile(path string) error
-	DeleteFileRecord(path string) error
+	UpsertElements(ctx context.Context, els []Element) error
+	UpsertRelationships(ctx context.Context, rels []Relationship) error
+	UpsertFiles(ctx context.Context, files []FileRecord) error
+	Files(ctx context.Context) ([]FileRecord, error)
+	DeleteByFile(ctx context.Context, path string) error
+	DeleteFileRecord(ctx context.Context, path string) error
 }
 
 // ElementReader reads indexed elements and their counts.
 type ElementReader interface {
-	FindExact(name string) ([]Element, error)
-	ElementCount() (int, error)
-	RelationshipCount() (int, error)
-	ElementsByType() (map[string]int, error)
-	FileCount() (int, error)
+	FindExact(ctx context.Context, name string) ([]Element, error)
+	ElementCount(ctx context.Context) (int, error)
+	RelationshipCount(ctx context.Context) (int, error)
+	ElementsByType(ctx context.Context) (map[string]int, error)
+	FileCount(ctx context.Context) (int, error)
 	// Elements enumerates every indexed element ordered by qualified_name
 	// (embed pipeline scan + parity fixtures).
-	Elements() ([]Element, error)
+	Elements(ctx context.Context) ([]Element, error)
 }
 
 // GraphReader reads relationship edges (graph traversal seeds; pure-Go BFS
 // lives in internal/graph).
 type GraphReader interface {
-	Outgoing(source string) ([]Relationship, error)
-	Incoming(target string) ([]Relationship, error)
-	RelationshipsAll(limit int) ([]Relationship, error)
+	Outgoing(ctx context.Context, source string) ([]Relationship, error)
+	Incoming(ctx context.Context, target string) ([]Relationship, error)
+	RelationshipsAll(ctx context.Context, limit int) ([]Relationship, error)
 }
 
 // Arm names one ranking source: a keyword or vector arm that a rung reports
@@ -92,42 +93,42 @@ type HybridQuery struct {
 type Searcher interface {
 	// FindFuzzy is the keyword arm. It returns the hits and the arm that served
 	// them (ArmFTS5 on SQLite; ArmTSVector, ArmTrigram or ArmILIKE on PostgreSQL).
-	FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error)
+	FindFuzzy(ctx context.Context, query string, limit int) ([]FuzzyMatch, Arm, error)
 	// SearchVectors is the vector arm (see VectorQuery).
-	SearchVectors(q VectorQuery) ([]VectorSearchHit, error)
+	SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error)
 	// Hybrid fuses the vector, keyword and name arms of q by reciprocal rank
 	// fusion. The returned Arm is the keyword arm that contributed: ArmFTS5 on
 	// SQLite; on PostgreSQL the first of ArmTSVector, ArmTrigram and ArmILIKE
-	// that contributed. It is empty when no keyword arm did. ctx is accepted
-	// now; the arms take it when the ctx migration reaches Searcher.
+	// that contributed. It is empty when no keyword arm did. A cancelled ctx
+	// is an error, never a vector-only answer.
 	Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, error)
 }
 
 // Vectors stores embedding rows, their per-model stamps and their state.
 type Vectors interface {
-	WriteStamp(st ModelStamp) error
-	Stamp(modelID string) (*ModelStamp, error)
-	Stamps() ([]ModelStamp, error)
-	EmbeddingStateMap(modelID string) (map[string]string, error)
-	SetEmbeddingStates(modelID string, states map[string]string) error
-	UpsertVectors(modelID string, rows []VectorRow) error
+	WriteStamp(ctx context.Context, st ModelStamp) error
+	Stamp(ctx context.Context, modelID string) (*ModelStamp, error)
+	Stamps(ctx context.Context) ([]ModelStamp, error)
+	EmbeddingStateMap(ctx context.Context, modelID string) (map[string]string, error)
+	SetEmbeddingStates(ctx context.Context, modelID string, states map[string]string) error
+	UpsertVectors(ctx context.Context, modelID string, rows []VectorRow) error
 	// ReplaceFileVectors atomically replaces one file's embedding rows for a
 	// model: delete + insert + state in one transaction (issue #279 per-file
 	// atomic replace). rows must carry the file's complete vector set.
-	ReplaceFileVectors(modelID string, rows []VectorRow, states map[string]string) error
-	ClearVectors(modelID string) error
-	VectorCount(modelID string) (int, error)
+	ReplaceFileVectors(ctx context.Context, modelID string, rows []VectorRow, states map[string]string) error
+	ClearVectors(ctx context.Context, modelID string) error
+	VectorCount(ctx context.Context, modelID string) (int, error)
 	// VectorCoverage reports (covered, orphans): vector rows whose QN still
 	// has a live element vs. rows whose QN disappeared.
-	VectorCoverage(modelID string) (covered, orphans int, err error)
+	VectorCoverage(ctx context.Context, modelID string) (covered, orphans int, err error)
 }
 
 // EmbedRuns is the embed-pipeline run ledger (status reads it; no in-process
 // coupling).
 type EmbedRuns interface {
-	StartEmbedRun(modelID, mode string, dirty int) (int64, error)
-	FinishEmbedRun(id int64, status string, embedded, skipped, failed, truncations, orphans int) error
-	LastEmbedRunAny() (*EmbedRun, error)
+	StartEmbedRun(ctx context.Context, modelID, mode string, dirty int) (int64, error)
+	FinishEmbedRun(ctx context.Context, id int64, status string, embedded, skipped, failed, truncations, orphans int) error
+	LastEmbedRunAny(ctx context.Context) (*EmbedRun, error)
 }
 
 // Inventories is the inventory snapshot and the freshness watermark. It is
@@ -147,23 +148,23 @@ type Inventories interface {
 type Maintainer interface {
 	// Space is a no-write probe, safe on a read-only handle. Postgres
 	// implements it with pg_database_size.
-	Space() (SpaceReport, error)
+	Space(ctx context.Context) (SpaceReport, error)
 	// Maintain runs one engine-neutral maintenance op (see MaintainKind).
 	// Each engine runs the kinds it supports and reports the rest through
 	// MaintainResult.Skipped, so the maintenance loop is engine-agnostic.
-	Maintain(op MaintainOp) (MaintainResult, error)
+	Maintain(ctx context.Context, op MaintainOp) (MaintainResult, error)
 	// PruneEmbedRuns trims the embed-run ledger: it closes out the runs
 	// still marked "running" past the cutoff (a run that was killed
 	// mid-flight otherwise claims to be running forever) and deletes the
 	// finished runs older than it. The newest row is never deleted — it
 	// names the store's current collection (CurrentModelID).
-	PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error)
+	PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRunPrune, error)
 	// DeleteOrphanRelationships purges edges whose source or target element
 	// no longer exists (leankg gc; the repair `doctor --deep` names for the
 	// documented reconcile ceiling — edges into a deleted file survive until
 	// their source file is re-indexed, which incremental index never
 	// revisits). Returns the number of edges removed.
-	DeleteOrphanRelationships() (int, error)
+	DeleteOrphanRelationships(ctx context.Context) (int, error)
 	// DeleteOrphanVectors purges embedding_vectors + embedding_state rows
 	// whose qualified_name no longer belongs to any element, across every
 	// model collection (a dangling QN dangles in all of them). This is the
@@ -171,7 +172,7 @@ type Maintainer interface {
 	// and edges, so until #411 nothing owned vector rows, and every deleted
 	// file left its vectors behind forever. Returns the number of vector
 	// rows removed.
-	DeleteOrphanVectors() (int, error)
+	DeleteOrphanVectors(ctx context.Context) (int, error)
 	// DeleteStaleStamps drops every vector collection that is not in keep:
 	// its vectors, its embedding state and its stamp row. A collection is
 	// stale when nothing queries it any more — the L3 rung selects the
@@ -184,7 +185,7 @@ type Maintainer interface {
 	// An empty keep is a NO-OP: a caller that does not know which
 	// collection is live (a server with no embedder wired) must not be able
 	// to delete the live one. Returns what the sweep removed.
-	DeleteStaleStamps(keep []string) (StaleStampSweep, error)
+	DeleteStaleStamps(ctx context.Context, keep []string) (StaleStampSweep, error)
 }
 
 // KV is the generic namespaced key/value store (ontology catalogs, doctor
@@ -196,9 +197,9 @@ type KV interface {
 
 // Audit is the hash-chained audit ledger (FR parity with the Rust audit/mod.rs).
 type Audit interface {
-	AppendAudit(e *AuditEntry) error
-	AuditTail(limit int) ([]AuditEntry, error)
-	VerifyAuditChain() (ok bool, brokenAt int64, err error)
+	AppendAudit(ctx context.Context, e *AuditEntry) error
+	AuditTail(ctx context.Context, limit int) ([]AuditEntry, error)
+	VerifyAuditChain(ctx context.Context) (ok bool, brokenAt int64, err error)
 }
 
 // Tokens is the DB-backed bearer-token store (Rust auth/tokens.rs parity).
@@ -209,12 +210,12 @@ type Audit interface {
 // the hard TokenDelete; TokenTouch records a successful authentication's
 // last_used_at, coalesced to one write per TokenTouchWindowSecs.
 type Tokens interface {
-	TokenUpsert(tok Token) error
-	TokenList() ([]Token, error)
-	TokenDelete(id string) error
-	TokenRevoke(id string, at int64) error
-	TokenTouch(id string, at int64) error
-	TokenFind(secret string) (Token, bool, error)
+	TokenUpsert(ctx context.Context, tok Token) error
+	TokenList(ctx context.Context) ([]Token, error)
+	TokenDelete(ctx context.Context, id string) error
+	TokenRevoke(ctx context.Context, id string, at int64) error
+	TokenTouch(ctx context.Context, id string, at int64) error
+	TokenFind(ctx context.Context, secret string) (Token, bool, error)
 }
 
 // Identity is enterprise auth (Rust auth/accounts.rs + 004_auth.sql parity):
@@ -224,18 +225,21 @@ type Tokens interface {
 // membership writes are keyed on the pair, so a re-add re-roles instead of
 // duplicating.
 type Identity interface {
-	AccountUpsert(a Account) error
-	AccountByEmail(email string) (Account, bool, error)
+	AccountUpsert(ctx context.Context, a Account) error
+	AccountByEmail(ctx context.Context, email string) (Account, bool, error)
+	// AccountByID reports the account with the given id. A token minted for an
+	// account resolves through it, so a disabled account stops its tokens.
+	AccountByID(ctx context.Context, id string) (Account, bool, error)
 	// AdminExists reports whether any account carries the site-admin marker.
-	AdminExists() (bool, error)
-	OrgUpsert(o Org) error
-	OrgByID(id string) (Org, bool, error)
-	OrgsByOwner(ownerAccountID string) ([]Org, error)
-	OrgMembershipUpsert(m OrgMember) error
-	OrgMemberOf(orgID, accountID string) (OrgMember, bool, error)
-	OrgMembers(orgID string) ([]OrgMember, error)
-	ResourceClaim(resourceType, resourceID, ownerAccountID, orgID string) error
-	IsResourceOwner(resourceType, resourceID, accountID string) (bool, error)
+	AdminExists(ctx context.Context) (bool, error)
+	OrgUpsert(ctx context.Context, o Org) error
+	OrgByID(ctx context.Context, id string) (Org, bool, error)
+	OrgsByOwner(ctx context.Context, ownerAccountID string) ([]Org, error)
+	OrgMembershipUpsert(ctx context.Context, m OrgMember) error
+	OrgMemberOf(ctx context.Context, orgID, accountID string) (OrgMember, bool, error)
+	OrgMembers(ctx context.Context, orgID string) ([]OrgMember, error)
+	ResourceClaim(ctx context.Context, resourceType, resourceID, ownerAccountID, orgID string) error
+	IsResourceOwner(ctx context.Context, resourceType, resourceID, accountID string) (bool, error)
 }
 
 // Knowledge is the org/ops knowledge store (Rust db::mod.rs incidents /
@@ -244,34 +248,34 @@ type Identity interface {
 // aggregation policy live in internal/orgknowledge. See orgknowledge.go for the
 // entity types and the env_snapshots ceiling note.
 type Knowledge interface {
-	IncidentUpsert(inc Incident) error
-	IncidentByID(id string) (Incident, bool, error)
-	IncidentDelete(id string) error
-	IncidentsQuery(q IncidentQuery) ([]Incident, error)
-	KnowledgeEntryUpsert(e KnowledgeEntry) error
-	KnowledgeEntryByID(id string) (KnowledgeEntry, bool, error)
-	KnowledgeEntryDelete(id string) error
-	KnowledgeEntriesByElement(qualifiedName string) ([]KnowledgeEntry, error)
-	KnowledgeEntriesByFeature(featureID string) ([]KnowledgeEntry, error)
-	KnowledgeEntriesByEnvironment(environment string, limit int) ([]KnowledgeEntry, error)
-	KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error)
+	IncidentUpsert(ctx context.Context, inc Incident) error
+	IncidentByID(ctx context.Context, id string) (Incident, bool, error)
+	IncidentDelete(ctx context.Context, id string) error
+	IncidentsQuery(ctx context.Context, q IncidentQuery) ([]Incident, error)
+	KnowledgeEntryUpsert(ctx context.Context, e KnowledgeEntry) error
+	KnowledgeEntryByID(ctx context.Context, id string) (KnowledgeEntry, bool, error)
+	KnowledgeEntryDelete(ctx context.Context, id string) error
+	KnowledgeEntriesByElement(ctx context.Context, qualifiedName string) ([]KnowledgeEntry, error)
+	KnowledgeEntriesByFeature(ctx context.Context, featureID string) ([]KnowledgeEntry, error)
+	KnowledgeEntriesByEnvironment(ctx context.Context, environment string, limit int) ([]KnowledgeEntry, error)
+	KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error)
 	// ServiceMetadataUpsert writes one service profile (the write side of
 	// ServiceMetadataGet; kept in the role for the org-knowledge seeding path).
-	ServiceMetadataUpsert(m ServiceMetadata) error
-	ServiceMetadataGet(service, env string) (ServiceMetadata, bool, error)
+	ServiceMetadataUpsert(ctx context.Context, m ServiceMetadata) error
+	ServiceMetadataGet(ctx context.Context, service, env string) (ServiceMetadata, bool, error)
 	// ServiceMetadataAll lists the profiles in one environment, ordered by
 	// service name (the Rust get_all_service_metadata read behind the team
 	// map).
-	ServiceMetadataAll(env string) ([]ServiceMetadata, error)
-	EnvSnapshotsPut(snaps []EnvSnapshot) error
-	EnvSnapshotGet(env, qualifiedName string) (EnvSnapshot, bool, error)
+	ServiceMetadataAll(ctx context.Context, env string) ([]ServiceMetadata, error)
+	EnvSnapshotsPut(ctx context.Context, snaps []EnvSnapshot) error
+	EnvSnapshotGet(ctx context.Context, env, qualifiedName string) (EnvSnapshot, bool, error)
 	// EnvSnapshotConflictsWith lists conflicts_with relationships whose
 	// source or target matches `needle` case-insensitively (substring, like
 	// the Rust regex_matches(lowercase(...), ".*needle.*") report).
-	EnvSnapshotConflictsWith(needle string, limit int) ([]Relationship, error)
+	EnvSnapshotConflictsWith(ctx context.Context, needle string, limit int) ([]Relationship, error)
 	// EnvSnapshotEnvVariants lists qualified names having snapshots in more
 	// than one environment, case-insensitively containing `needle`.
-	EnvSnapshotEnvVariants(needle string, limit int) ([]EnvVariant, error)
+	EnvSnapshotEnvVariants(ctx context.Context, needle string, limit int) ([]EnvVariant, error)
 }
 
 // Metrics is the context-metrics ledger (Rust db::record_metric /
@@ -285,11 +289,11 @@ type Knowledge interface {
 // means all time; CleanupMetrics/ResetMetrics return the number of rows
 // removed.
 type Metrics interface {
-	RecordMetric(m Metric) error
-	MetricsSummary(tool string, retentionDays int) (MetricSummary, error)
-	UsageAggregates(sinceCutoff int64) (UsageAggregates, error)
-	CleanupMetrics(retentionDays int) (int64, error)
-	ResetMetrics() (int64, error)
+	RecordMetric(ctx context.Context, m Metric) error
+	MetricsSummary(ctx context.Context, tool string, retentionDays int) (MetricSummary, error)
+	UsageAggregates(ctx context.Context, sinceCutoff int64) (UsageAggregates, error)
+	CleanupMetrics(ctx context.Context, retentionDays int) (int64, error)
+	ResetMetrics(ctx context.Context) (int64, error)
 }
 
 // Projects is the portfolio registry (issue #376, migration 013): the

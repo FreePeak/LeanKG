@@ -74,8 +74,8 @@ func cmdRegisterProject(ctx context.Context, args []string) error {
 	var indexedAt *time.Time
 	if st, err := openStoreWith(ctx, target, opts.Engine, "", store.RO); err == nil {
 		// A readable store means this project HAS been indexed: stamp it.
-		elements, _ = st.ElementCount()
-		files, _ = st.FileCount()
+		elements, _ = st.ElementCount(ctx)
+		files, _ = st.FileCount(ctx)
 		now := time.Now()
 		indexedAt = &now
 		_ = st.Close()

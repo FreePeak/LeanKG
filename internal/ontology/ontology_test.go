@@ -27,7 +27,7 @@ func setupStore(t *testing.T) store.Backend {
 
 func seedElements(t *testing.T, st store.Backend, els ...store.Element) {
 	t.Helper()
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -116,7 +116,7 @@ func TestMatchElements(t *testing.T) {
 		store.Element{QualifiedName: "src/util.go#counter", Name: "Counter", FilePath: "src/util.go"},
 	)
 
-	got, err := cat.MatchElements(st)
+	got, err := cat.MatchElements(context.Background(), st)
 	if err != nil {
 		t.Fatalf("MatchElements: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestMatchElementsCaseInsensitive(t *testing.T) {
 		// Mixed-case qn vs lowercase alias -> alias.
 		store.Element{QualifiedName: "src/Lru-Evict.go#y", Name: "Evict"},
 	)
-	got, err := cat.MatchElements(st)
+	got, err := cat.MatchElements(context.Background(), st)
 	if err != nil {
 		t.Fatalf("MatchElements: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestMatchElementsEmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCatalog: %v", err)
 	}
-	got, err := cat.MatchElements(setupStore(t))
+	got, err := cat.MatchElements(context.Background(), setupStore(t))
 	if err != nil {
 		t.Fatalf("MatchElements: %v", err)
 	}
@@ -180,10 +180,10 @@ func TestMatchRoundTrip(t *testing.T) {
 		{ConceptID: "auth", QN: "docs/security.md#login", Via: "alias"},
 		{ConceptID: "db", QN: "internal/store/backend.go#Backend", Via: "alias"},
 	}
-	if err := SaveMatches(st, matches); err != nil {
+	if err := SaveMatches(context.Background(), st, matches); err != nil {
 		t.Fatalf("SaveMatches: %v", err)
 	}
-	got, err := LoadMatches(st)
+	got, err := LoadMatches(context.Background(), st)
 	if err != nil {
 		t.Fatalf("LoadMatches: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestMatchRoundTrip(t *testing.T) {
 
 	// A fresh store has no key: (nil, nil), not an error.
 	fresh := setupStore(t)
-	if got, err := LoadMatches(fresh); err != nil || got != nil {
+	if got, err := LoadMatches(context.Background(), fresh); err != nil || got != nil {
 		t.Fatalf("LoadMatches on fresh store: (%+v, %v), want (nil, nil)", got, err)
 	}
 }

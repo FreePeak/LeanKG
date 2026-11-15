@@ -158,7 +158,7 @@ func TestStatusReportsNotIndexedRepo(t *testing.T) {
 	if err := Register("cold", dir); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Status("cold")
+	s, err := Status(context.Background(), "cold")
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -193,13 +193,13 @@ func TestStatusReadsLiveCountsForIndexedRepo(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a::one", ElementType: "function", Name: "one", FilePath: "a.go"},
 		{QualifiedName: "a::two", ElementType: "function", Name: "two", FilePath: "a.go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: "a::one", Target: "a::two", RelType: "calls", Confidence: 0.9},
 	}); err != nil {
 		t.Fatal(err)
@@ -211,7 +211,7 @@ func TestStatusReadsLiveCountsForIndexedRepo(t *testing.T) {
 	if err := Register("warm", dir); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Status("warm")
+	s, err := Status(context.Background(), "warm")
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestStatusReadsLiveCountsForIndexedRepo(t *testing.T) {
 
 func TestStatusUnknownNameIsErrNotFound(t *testing.T) {
 	isolateHome(t)
-	if _, err := Status("nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := Status(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Status(nope) error = %v, want ErrNotFound", err)
 	}
 }

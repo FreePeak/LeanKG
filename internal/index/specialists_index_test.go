@@ -36,7 +36,7 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 	}
 
 	var res Result
-	handled, err := indexSpecialistFile(st, "AndroidManifest.xml", src, int64(len(src)), 1, "hash", &res)
+	handled, err := indexSpecialistFile(context.Background(), st, "AndroidManifest.xml", src, int64(len(src)), 1, "hash", &res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,21 +47,21 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 		t.Fatalf("result = %+v, want file/element/relationship counts", res)
 	}
 
-	els, err := st.FindExact("__android__activity___MainActivity")
+	els, err := st.FindExact(context.Background(), "__android__activity___MainActivity")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(els) != 1 || els[0].ElementType != "android_activity" {
 		t.Fatalf("persisted activity = %v", els)
 	}
-	rels, err := st.Outgoing("AndroidManifest.xml")
+	rels, err := st.Outgoing(context.Background(), "AndroidManifest.xml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rels) == 0 {
 		t.Fatal("manifest relationships not persisted")
 	}
-	files, err := st.Files()
+	files, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 	}
 
 	// Unclaimed files report handled=false and write nothing.
-	unclaimed, err := indexSpecialistFile(st, "main.go", src, 1, 1, "hash2", &res)
+	unclaimed, err := indexSpecialistFile(context.Background(), st, "main.go", src, 1, 1, "hash2", &res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,25 +104,25 @@ func TestIndexKotlinExtrasPersists(t *testing.T) {
 	}
 
 	var res Result
-	if err := indexKotlinExtras(st, "ui/MainActivity.kt", src, &res); err != nil {
+	if err := indexKotlinExtras(context.Background(), st, "ui/MainActivity.kt", src, &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.Elements == 0 {
 		t.Fatal("expected Kotlin extras elements")
 	}
-	els, err := st.FindExact("ui/MainActivity.kt::HiltModule:AppModule")
+	els, err := st.FindExact(context.Background(), "ui/MainActivity.kt::HiltModule:AppModule")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(els) != 1 {
 		t.Fatalf("hilt module not persisted: %v", els)
 	}
-	rels, err := st.Outgoing("ui/MainActivity.kt::WorkManager:SyncWorker")
+	rels, err := st.Outgoing(context.Background(), "ui/MainActivity.kt::WorkManager:SyncWorker")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = rels // worker element has no outgoing edges; the file does.
-	fileRels, err := st.Outgoing("ui/MainActivity.kt")
+	fileRels, err := st.Outgoing(context.Background(), "ui/MainActivity.kt")
 	if err != nil {
 		t.Fatal(err)
 	}

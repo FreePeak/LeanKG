@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,7 +128,7 @@ func TestStandaloneEmbedRunIsSelfContained(t *testing.T) {
 		t.Fatalf("open standalone store: %v", err)
 	}
 	defer st.Close()
-	covered, _, err := st.VectorCoverage("deterministic-384")
+	covered, _, err := st.VectorCoverage(context.Background(), "deterministic-384")
 	if err != nil {
 		t.Fatalf("vector coverage: %v", err)
 	}

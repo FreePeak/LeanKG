@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestSearchVectorsScopedFiltersThePopulation(t *testing.T) {
 	q := []float32{1, 0, 0, 0}
 	// The default (unscoped) population is byte-for-byte what it was: every
 	// row, in corpus order, no hidden filter.
-	all, err := st.SearchVectors(VectorQuery{ModelID: "m", Vec: q, K: 10})
+	all, err := st.SearchVectors(context.Background(), VectorQuery{ModelID: "m", Vec: q, K: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestSearchVectorsScopedFiltersThePopulation(t *testing.T) {
 		t.Fatalf("unscoped hits = %d, want 3 (the default must not move)", len(all))
 	}
 	// A code scope excludes fixtures and archived docs.
-	codeOnly, err := st.SearchVectors(VectorQuery{ModelID: "m", Vec: q, K: 10, Filter: ElementFilter{
+	codeOnly, err := st.SearchVectors(context.Background(), VectorQuery{ModelID: "m", Vec: q, K: 10, Filter: ElementFilter{
 		ExcludePathContains: []string{"testdata"},
 		ExcludePathPrefixes: []string{"docs/archive/"},
 	}})
@@ -55,7 +56,7 @@ func TestSearchVectorsZeroFilterIsUnscoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := []float32{1, 0, 0, 0}
-	unscoped, err := st.SearchVectors(VectorQuery{ModelID: "m", Vec: q, K: 10})
+	unscoped, err := st.SearchVectors(context.Background(), VectorQuery{ModelID: "m", Vec: q, K: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestSearchVectorsZeroFilterIsUnscoped(t *testing.T) {
 // scoping test is about the population, not about cosine ordering.
 func upsertVectorsFor(t *testing.T, st *Store, modelID string, els ...Element) error {
 	t.Helper()
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		return err
 	}
 	rows := make([]VectorRow, 0, len(els))
@@ -78,5 +79,5 @@ func upsertVectorsFor(t *testing.T, st *Store, modelID string, els ...Element) e
 		v := []float32{1, 0, 0, 0}
 		rows = append(rows, VectorRow{QualifiedName: els[i].QualifiedName, Vec: v})
 	}
-	return st.UpsertVectors(modelID, rows)
+	return st.UpsertVectors(context.Background(), modelID, rows)
 }

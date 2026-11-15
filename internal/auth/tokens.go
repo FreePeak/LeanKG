@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -61,7 +62,7 @@ type MintRequest struct {
 // Mint issues a new DB-backed token: it generates an opaque secret, persists
 // only the SHA-256 hash through the backend's tokens table, and returns the
 // plaintext (shown once) plus the stored row (Secret = at-rest hash).
-func Mint(st store.Backend, req MintRequest) (string, store.Token, error) {
+func Mint(ctx context.Context, st store.Backend, req MintRequest) (string, store.Token, error) {
 	if _, ok := RoleFromString(req.Role); !ok {
 		return "", store.Token{}, fmt.Errorf("auth: unknown role %q", req.Role)
 	}
@@ -87,7 +88,7 @@ func Mint(st store.Backend, req MintRequest) (string, store.Token, error) {
 	if req.TTL != 0 {
 		tok.ExpiresAt = now + int64(req.TTL/time.Second)
 	}
-	if err := st.TokenUpsert(tok); err != nil {
+	if err := st.TokenUpsert(ctx, tok); err != nil {
 		return "", store.Token{}, fmt.Errorf("auth: mint token: %w", err)
 	}
 	tok.Secret = store.HashToken(secret)
@@ -114,8 +115,8 @@ type Grant struct {
 // wrapping store.ErrTokenRevoked / store.ErrTokenExpired: those must never
 // fall through to a fallback source. A successful verification stamps
 // last_used_at (coalesced by store.TokenTouch).
-func Verify(st store.Backend, secret string) (Grant, bool, error) {
-	tok, found, err := st.TokenFind(secret)
+func Verify(ctx context.Context, st store.Backend, secret string) (Grant, bool, error) {
+	tok, found, err := st.TokenFind(ctx, secret)
 	if err != nil {
 		return Grant{}, false, fmt.Errorf("auth: token store: %w", err)
 	}
@@ -129,7 +130,7 @@ func Verify(st store.Backend, secret string) (Grant, bool, error) {
 	// Best-effort: last_used_at is observability, never authorization, so a
 	// failed touch (read-only handle, row deleted mid-flight) must not reject
 	// a valid token. Rust validate_token ignores the touch result too.
-	_ = st.TokenTouch(tok.ID, time.Now().Unix())
+	_ = st.TokenTouch(ctx, tok.ID, time.Now().Unix())
 	return Grant{
 		TokenID:   tok.ID,
 		AccountID: tok.AccountID,

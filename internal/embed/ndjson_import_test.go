@@ -119,7 +119,7 @@ func TestImportThenIncrementalRunHasNoStampDrift(t *testing.T) {
 	if err != nil {
 		t.Fatalf("live provider: %v", err)
 	}
-	cur, err := st.Stamp("embeddinggemma-2")
+	cur, err := st.Stamp(context.Background(), "embeddinggemma-2")
 	if err != nil || cur == nil {
 		t.Fatalf("stamp after import: %v %v", cur, err)
 	}
@@ -323,12 +323,12 @@ func TestImportProviderLabelAloneKeepsVectors(t *testing.T) {
 	if _, err := importGemma(t, st, gc, exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector())); err != nil {
 		t.Fatalf("first import: %v", err)
 	}
-	stored, err := st.Stamp("embeddinggemma-2")
+	stored, err := st.Stamp(context.Background(), "embeddinggemma-2")
 	if err != nil || stored == nil {
 		t.Fatalf("stamp after first import: %v %v", stored, err)
 	}
 	stored.Provider = "openai"
-	if err := st.WriteStamp(*stored); err != nil {
+	if err := st.WriteStamp(context.Background(), *stored); err != nil {
 		t.Fatal(err)
 	}
 	before := storedVector(t, st, "embeddinggemma-2", "a::f1")
@@ -351,7 +351,7 @@ func TestImportProviderLabelAloneKeepsVectors(t *testing.T) {
 			t.Fatalf("component %d of a::f1 changed: %v -> %v", i, before[i], after[i])
 		}
 	}
-	if cur, err := st.Stamp("embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
+	if cur, err := st.Stamp(context.Background(), "embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
 		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
 	}
 }
@@ -376,12 +376,12 @@ func TestImportRealStampDifferenceRewritesCollection(t *testing.T) {
 			if _, err := importGemma(t, st, gc, exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector())); err != nil {
 				t.Fatalf("first import: %v", err)
 			}
-			stored, err := st.Stamp("embeddinggemma-2")
+			stored, err := st.Stamp(context.Background(), "embeddinggemma-2")
 			if err != nil || stored == nil {
 				t.Fatalf("stamp after first import: %v %v", stored, err)
 			}
 			tc.break_(stored)
-			if err := st.WriteStamp(*stored); err != nil {
+			if err := st.WriteStamp(context.Background(), *stored); err != nil {
 				t.Fatal(err)
 			}
 
@@ -399,7 +399,7 @@ func TestImportRealStampDifferenceRewritesCollection(t *testing.T) {
 			if err != nil {
 				t.Fatalf("live provider: %v", err)
 			}
-			if cur, _ := st.Stamp("embeddinggemma-2"); cur == nil || *cur != StampOf(live) {
+			if cur, _ := st.Stamp(context.Background(), "embeddinggemma-2"); cur == nil || *cur != StampOf(live) {
 				t.Fatalf("stamp = %+v, want rewritten to the live stamp %+v", cur, StampOf(live))
 			}
 		})
@@ -423,7 +423,7 @@ func TestImportNeverOverwritesStoredTextCap(t *testing.T) {
 
 	stored := storedStamp(t, st, "embeddinggemma-2")
 	stored.TextCap = 4032
-	if err := st.WriteStamp(stored); err != nil {
+	if err := st.WriteStamp(context.Background(), stored); err != nil {
 		t.Fatal(err)
 	}
 	seed(t, st, el("a::f2", "func f2() {}"))

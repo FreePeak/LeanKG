@@ -29,7 +29,7 @@ func newProject(t *testing.T, dir, name string) {
 		t.Fatal(err)
 	}
 	qn := "pkg." + name
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: qn, ElementType: "function", Name: name,
 		FilePath: strings.ToLower(name) + ".go", Language: "go",
 	}}); err != nil {
@@ -53,7 +53,7 @@ func storeChild(o Options) Child {
 			return nil, err
 		}
 		defer st.Close()
-		els, err := st.FindExact(q.Text)
+		els, err := st.FindExact(context.Background(), q.Text)
 		if err != nil {
 			return nil, err
 		}
@@ -61,7 +61,7 @@ func storeChild(o Options) Child {
 		for _, el := range els {
 			hits = append(hits, map[string]any{"qualified_name": el.QualifiedName, "name": el.Name})
 		}
-		n, err := st.ElementCount()
+		n, err := st.ElementCount(context.Background())
 		if err != nil {
 			return nil, err
 		}
@@ -404,7 +404,7 @@ func TestPortfolioAcrossPGSiblingSchemas(t *testing.T) {
 		if err := st.Migrate(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha",
 			FilePath: "alpha.go", Language: "go",
 		}}); err != nil {

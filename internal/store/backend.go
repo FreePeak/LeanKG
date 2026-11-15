@@ -58,8 +58,8 @@ type AuditEntry struct {
 }
 
 // Elements enumerates every indexed element (ordered by qualified_name).
-func (s *Store) Elements() ([]Element, error) {
-	rows, err := s.db.Query(`SELECT ` + elementCols + ` FROM code_elements ce ORDER BY ce.qualified_name`)
+func (s *Store) Elements(ctx context.Context) ([]Element, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+elementCols+` FROM code_elements ce ORDER BY ce.qualified_name`)
 	if err != nil {
 		return nil, err
 	}
@@ -67,8 +67,8 @@ func (s *Store) Elements() ([]Element, error) {
 }
 
 // VectorCoverage reports (covered, orphans) for a model via anti-join.
-func (s *Store) VectorCoverage(modelID string) (covered, orphans int, err error) {
-	err = s.db.QueryRow(`SELECT
+func (s *Store) VectorCoverage(ctx context.Context, modelID string) (covered, orphans int, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT
 			COALESCE(SUM(CASE WHEN ce.qualified_name IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN ce.qualified_name IS NULL     THEN 1 ELSE 0 END), 0)
 		FROM embedding_vectors v
@@ -106,9 +106,9 @@ func OpenBackend(ctx context.Context, opts OpenOptions) (Backend, error) {
 			dbPath = StandaloneDBPath(opts.ProjectDir)
 		}
 		if dbPath != "" {
-			return openSQLite(dbPath, opts.Mode)
+			return openSQLite(ctx, dbPath, opts.Mode)
 		}
-		return openSQLite(opts.ProjectDir+"/.leankg/leankg.db", opts.Mode)
+		return openSQLite(ctx, opts.ProjectDir+"/.leankg/leankg.db", opts.Mode)
 	case EnginePostgres:
 		if opts.PGURL == "" {
 			return nil, fmt.Errorf("store: postgres engine requires LEANKG_PG_URL")

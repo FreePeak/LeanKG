@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,7 +98,7 @@ func TestIndexSourceDoesNotSweepProject(t *testing.T) {
 		t.Fatalf("open store: %v", oerr)
 	}
 	defer st.Close()
-	files, ferr := st.Files()
+	files, ferr := st.Files(context.Background())
 	if ferr != nil {
 		t.Fatal(ferr)
 	}

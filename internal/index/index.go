@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -211,10 +212,13 @@ func DeleteFiles(ctx context.Context, st store.Backend, paths []string) (int, er
 		if err := ctx.Err(); err != nil {
 			return n, err
 		}
-		if err := st.DeleteByFile(p); err != nil {
+		// The pair runs detached from ctx: a cancel never leaves a record
+		// whose elements are already gone.
+		wctx := context.WithoutCancel(ctx)
+		if err := st.DeleteByFile(wctx, p); err != nil {
 			return n, err
 		}
-		if err := st.DeleteFileRecord(p); err != nil {
+		if err := st.DeleteFileRecord(wctx, p); err != nil {
 			return n, err
 		}
 		n++
@@ -224,16 +228,16 @@ func DeleteFiles(ctx context.Context, st store.Backend, paths []string) (int, er
 
 // RebaseRoot records dir as the store's index root, replacing any previous
 // one (`leankg index --rebase-root` after moving a checkout).
-func RebaseRoot(st store.Backend, dir string) error {
-	return st.KVSet(context.TODO(), rootKVNamespace, rootKVKey, CanonicalRoot(dir))
+func RebaseRoot(ctx context.Context, st store.Backend, dir string) error {
+	return st.KVSet(ctx, rootKVNamespace, rootKVKey, CanonicalRoot(dir))
 }
 
 // checkRoot enforces the tripwire: a store with no recorded root (built
 // before RS-02, or empty) adopts dir; a store with files and a different
 // recorded root refuses the walk before anything is deleted.
-func checkRoot(st store.Backend, dir string, hasFiles bool) error {
+func checkRoot(ctx context.Context, st store.Backend, dir string, hasFiles bool) error {
 	want := CanonicalRoot(dir)
-	got, ok, err := st.KVGet(context.TODO(), rootKVNamespace, rootKVKey)
+	got, ok, err := st.KVGet(ctx, rootKVNamespace, rootKVKey)
 	if err != nil {
 		return err
 	}
@@ -243,7 +247,7 @@ func checkRoot(st store.Backend, dir string, hasFiles bool) error {
 			"index the recorded root, open the other directory as its own project, or run `leankg index --rebase-root <dir>` if the checkout moved")
 	}
 	if !ok || got != want {
-		return st.KVSet(context.TODO(), rootKVNamespace, rootKVKey, want)
+		return st.KVSet(ctx, rootKVNamespace, rootKVKey, want)
 	}
 	return nil
 }
@@ -262,7 +266,7 @@ const extractorVersion = "3"
 const extractorKVKey = "extractor_version"
 
 func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (res Result, err error) {
-	prev, err := st.Files()
+	prev, err := st.Files(ctx)
 	if err != nil {
 		return res, err
 	}
@@ -270,7 +274,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	for _, f := range prev {
 		prevByRel[f.Path] = f
 	}
-	if err := checkRoot(st, dir, len(prev) > 0); err != nil {
+	if err := checkRoot(ctx, st, dir, len(prev) > 0); err != nil {
 		return res, err
 	}
 	ver, _, err := st.KVGet(ctx, rootKVNamespace, extractorKVKey)
@@ -395,7 +399,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		byDir[d] = append(byDir[d], changedFile{candidate: c, hash: hash})
 	}
 	if len(rekeys) > 0 {
-		if err := st.UpsertFiles(rekeys); err != nil {
+		if err := st.UpsertFiles(ctx, rekeys); err != nil {
 			return res, err
 		}
 	}
@@ -409,6 +413,14 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	}
 	// ctx is checked per file, not per directory: one package can hold
 	// thousands of files, and a cancel must stop it within a file's work.
+	//
+	// A file's writes run detached from ctx (wctx), so a cancel takes effect
+	// between files, never inside one. Call edges are resolved against the
+	// files of the same directory written in this run, so a run that stops
+	// part-way through a directory rolls back the files it finished in that
+	// directory: the rerun then sees them as changed and resolves every call
+	// against the same name set as an uninterrupted run.
+	wctx := context.WithoutCancel(ctx)
 	for _, d := range dirOrder {
 		files := byDir[d]
 		pending := make([]pendingFile, 0, len(files))
@@ -421,7 +433,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			if err != nil {
 				return res, err
 			}
-			if handled, err := indexSpecialistFile(st, f.rel, src, f.size, f.mtimeNS, f.hash, &res); err != nil {
+			if handled, err := indexSpecialistFile(wctx, st, f.rel, src, f.size, f.mtimeNS, f.hash, &res); err != nil {
 				return res, err
 			} else if handled {
 				continue // the specialist own its extraction AND its writes
@@ -435,35 +447,46 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 				names[e.name] = append(names[e.name], e.qn)
 			}
 		}
-		for _, p := range pending {
-			if err := ctx.Err(); err != nil {
-				return res, err
-			}
-			f := p.changedFile
-			if err := st.DeleteByFile(f.rel); err != nil {
-				return res, err
-			}
-			if err := st.UpsertElements(p.fe.toStore()); err != nil {
-				return res, err
-			}
-			rels := relationships(p.fe.elements, names)
-			if err := st.UpsertRelationships(rels); err != nil {
-				return res, err
-			}
-			if err := st.UpsertFiles([]store.FileRecord{{
-				Path: f.rel, Size: f.size, MtimeNS: f.mtimeNS,
-				ContentHash: f.hash,
-			}}); err != nil {
-				return res, err
-			}
-			res.Files++
-			res.Elements += len(p.fe.elements)
-			res.Relationships += len(rels)
-			if f.lang == "kotlin" {
-				if err := indexKotlinExtras(st, f.rel, p.src, &res); err != nil {
-					return res, err
+		var touched []string // files whose writes began in this directory
+		err := func() error {
+			for _, p := range pending {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				f := p.changedFile
+				touched = append(touched, f.rel)
+				if err := st.DeleteByFile(wctx, f.rel); err != nil {
+					return err
+				}
+				if err := st.UpsertElements(wctx, p.fe.toStore()); err != nil {
+					return err
+				}
+				rels := relationships(p.fe.elements, names)
+				if err := st.UpsertRelationships(wctx, rels); err != nil {
+					return err
+				}
+				if err := st.UpsertFiles(wctx, []store.FileRecord{{
+					Path: f.rel, Size: f.size, MtimeNS: f.mtimeNS,
+					ContentHash: f.hash,
+				}}); err != nil {
+					return err
+				}
+				res.Files++
+				res.Elements += len(p.fe.elements)
+				res.Relationships += len(rels)
+				if f.lang == "kotlin" {
+					if err := indexKotlinExtras(wctx, st, f.rel, p.src, &res); err != nil {
+						return err
+					}
 				}
 			}
+			return nil
+		}()
+		if err != nil {
+			if _, uerr := DeleteFiles(wctx, st, touched); uerr != nil {
+				err = errors.Join(err, uerr)
+			}
+			return res, err
 		}
 	}
 	// Vectors are keyed by qualified name and DeleteByFile does not own them,
@@ -472,7 +495,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	// DeleteByFile, which would also discard the vectors of a changed file's
 	// UNCHANGED symbols and force them to re-embed.
 	if res.DeletedFiles > 0 || res.Files > 0 {
-		if _, err := st.DeleteOrphanVectors(); err != nil {
+		if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 			return res, fmt.Errorf("index: reclaim orphan vectors: %w", err)
 		}
 	}

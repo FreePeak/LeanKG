@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -40,12 +41,12 @@ var dummyVerifier = fmt.Sprintf("%s$%d$%s$%s", passwordScheme, passwordIteration
 // lockout, the rejection also wraps ErrAdminLoginRateLimited. Failures are
 // counted for unknown usernames too, so a lockout never reveals whether an
 // account exists. The email is matched case-insensitively.
-func verifyLogin(throttle *LoginThrottle, st store.Backend, email, password string, adminOnly bool) (store.Account, error) {
+func verifyLogin(ctx context.Context, throttle *LoginThrottle, st store.Backend, email, password string, adminOnly bool) (store.Account, error) {
 	key := NormalizeEmail(email)
 	if throttle.Blocked(key) {
 		return store.Account{}, fmt.Errorf("%w: %w", ErrInvalidAdminLogin, ErrAdminLoginRateLimited)
 	}
-	account, found, err := st.AccountByEmail(key)
+	account, found, err := st.AccountByEmail(ctx, key)
 	if err != nil {
 		return store.Account{}, fmt.Errorf("auth: login: %w", err)
 	}

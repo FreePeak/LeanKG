@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -59,7 +60,7 @@ func TestWriteJSONStreamingShape(t *testing.T) {
 	st := newFixture(t, testFixElements, testFixRels)
 
 	var sb strings.Builder
-	if err := WriteJSONStreaming(&sb, st); err != nil {
+	if err := WriteJSONStreaming(context.Background(), &sb, st); err != nil {
 		t.Fatalf("streaming: %v", err)
 	}
 	raw := sb.String()

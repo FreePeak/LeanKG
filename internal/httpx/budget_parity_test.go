@@ -48,7 +48,7 @@ func newSeededParityEngine(t *testing.T) *core.Engine {
 			Content: "func Widget() { /* widget pipeline renders the frame */ }",
 		})
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)

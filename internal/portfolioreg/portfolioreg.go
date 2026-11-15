@@ -246,13 +246,13 @@ func Register(ctx context.Context, o Options, dir, name string, elements, files 
 		return store.ProjectRecord{}, err
 	}
 	defer reg.Close()
-	return stamp(reg, canonical, name, elements, files, indexedAt)
+	return stamp(ctx, reg, canonical, name, elements, files, indexedAt)
 }
 
 // stamp upserts one row against an already-open registry handle.
-func stamp(reg store.Backend, dir, name string, elements, files int, indexedAt *time.Time) (store.ProjectRecord, error) {
+func stamp(ctx context.Context, reg store.Backend, dir, name string, elements, files int, indexedAt *time.Time) (store.ProjectRecord, error) {
 	if name == "" {
-		if prev, ok, err := reg.ProjectGet(context.TODO(), dir); err == nil && ok {
+		if prev, ok, err := reg.ProjectGet(ctx, dir); err == nil && ok {
 			name = prev.Name
 		}
 	}
@@ -267,12 +267,12 @@ func stamp(reg store.Backend, dir, name string, elements, files int, indexedAt *
 		s := Stamp(*indexedAt)
 		rec.LastIndexed = &s
 	}
-	if err := reg.ProjectUpsert(context.TODO(), rec); err != nil {
+	if err := reg.ProjectUpsert(ctx, rec); err != nil {
 		return store.ProjectRecord{}, err
 	}
 	// Read the row back: registered_at and last_indexed are COALESCEd by the
 	// upsert, so the stored record — not the argument — is the truth.
-	saved, _, err := reg.ProjectGet(context.TODO(), dir)
+	saved, _, err := reg.ProjectGet(ctx, dir)
 	if err != nil {
 		return store.ProjectRecord{}, err
 	}
@@ -284,11 +284,11 @@ func stamp(reg store.Backend, dir, name string, elements, files int, indexedAt *
 // BEST-EFFORT by contract — a fleet registration must never turn a successful
 // index into a failed command, so callers log the error and move on.
 func RegisterAfterIndex(ctx context.Context, o Options, st store.Backend, dir string) error {
-	elements, err := st.ElementCount()
+	elements, err := st.ElementCount(ctx)
 	if err != nil {
 		return fmt.Errorf("portfolioreg: read element count: %w", err)
 	}
-	files, err := st.FileCount()
+	files, err := st.FileCount(ctx)
 	if err != nil {
 		return fmt.Errorf("portfolioreg: read file count: %w", err)
 	}
@@ -337,12 +337,12 @@ func Projects(ctx context.Context, o Options) ([]store.ProjectRecord, error) {
 		return nil, err
 	}
 	defer reg.Close()
-	return ProjectsOf(reg)
+	return ProjectsOf(ctx, reg)
 }
 
 // ProjectsOf lists the registry from an already-open handle.
-func ProjectsOf(reg store.Backend) ([]store.ProjectRecord, error) {
-	rows, err := reg.ProjectList(context.TODO())
+func ProjectsOf(ctx context.Context, reg store.Backend) ([]store.ProjectRecord, error) {
+	rows, err := reg.ProjectList(ctx)
 	if err != nil {
 		return nil, err
 	}

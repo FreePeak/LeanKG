@@ -27,13 +27,13 @@ import (
 // Without a floor the arm is off.
 type denseArm struct {
 	p     embed.Provider
-	floor func() (float64, bool)
+	floor func(context.Context) (float64, bool)
 }
 
 // SetProvider enables dense recall with p, whose collection noise floor is
 // floor (nil p disables dense recall). Rows embedded under another vector
 // space key are ignored and re-embedded.
-func (m *Memory) SetProvider(p embed.Provider, floor func() (float64, bool)) {
+func (m *Memory) SetProvider(p embed.Provider, floor func(context.Context) (float64, bool)) {
 	m.vecMu.Lock()
 	defer m.vecMu.Unlock()
 	if p == nil {
@@ -218,7 +218,7 @@ func (m *Memory) denseCandidates(ctx context.Context, v *denseArm, banks []strin
 	if err := v.p.Probe(ctx); err != nil {
 		return nil
 	}
-	floor, ok := v.floor()
+	floor, ok := v.floor(ctx)
 	if !ok {
 		return nil
 	}

@@ -1,6 +1,7 @@
 package ontology
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -83,8 +84,8 @@ type Status struct {
 // name, aliases and description, returning scored hits sorted descending
 // (parity with search_ontology_nodes). depth is accepted for API parity
 // but the search itself is depth-independent.
-func SearchOntologyNodes(st store.Backend, query string) ([]NodeInfo, error) {
-	els, err := ontologyElements(st)
+func SearchOntologyNodes(ctx context.Context, st store.Backend, query string) ([]NodeInfo, error) {
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -119,8 +120,8 @@ func SearchOntologyNodes(st store.Backend, query string) ([]NodeInfo, error) {
 
 // ontologyElements returns every stored ontology element (file_path
 // ontology://) ordered by qualified name.
-func ontologyElements(st store.Backend) ([]store.Element, error) {
-	els, err := st.Elements()
+func ontologyElements(ctx context.Context, st store.Backend) ([]store.Element, error) {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +135,10 @@ func ontologyElements(st store.Backend) ([]store.Element, error) {
 }
 
 // findElementByQN finds a single element by qualified name (any layer).
-func findElementByQN(st store.Backend, qn string) (store.Element, bool, error) {
+func findElementByQN(ctx context.Context, st store.Backend, qn string) (store.Element, bool, error) {
 	// FindExact matches on name or qualified name case-insensitively; filter
 	// for the exact qualified name.
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(ctx, qn)
 	if err != nil {
 		return store.Element{}, false, err
 	}
@@ -152,17 +153,17 @@ func findElementByQN(st store.Backend, qn string) (store.Element, bool, error) {
 // ExpandContext expands an ontology node to related code context over DB
 // relationships, recursing up to depth hops (parity with
 // expand_ontology_context).
-func ExpandContext(st store.Backend, gid string, depth int) ([]store.Element, []store.Relationship, error) {
-	return expandContext(st, gid, depth, map[string]bool{gid: true})
+func ExpandContext(ctx context.Context, st store.Backend, gid string, depth int) ([]store.Element, []store.Relationship, error) {
+	return expandContext(ctx, st, gid, depth, map[string]bool{gid: true})
 }
 
-func expandContext(st store.Backend, gid string, depth int, visited map[string]bool) ([]store.Element, []store.Relationship, error) {
+func expandContext(ctx context.Context, st store.Backend, gid string, depth int, visited map[string]bool) ([]store.Element, []store.Relationship, error) {
 	var elements []store.Element
 	var rels []store.Relationship
 
 	// Outgoing edges only (parity with expand_ontology_context, whose
 	// Datalog rule binds source_qualified = $gid).
-	outgoing, err := st.Outgoing(gid)
+	outgoing, err := st.Outgoing(ctx, gid)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -174,7 +175,7 @@ func expandContext(st store.Backend, gid string, depth int, visited map[string]b
 		}
 		visited[target] = true
 
-		if el, ok, err := findElementByQN(st, target); err == nil && ok {
+		if el, ok, err := findElementByQN(ctx, st, target); err == nil && ok {
 			elements = append(elements, el)
 		}
 
@@ -186,7 +187,7 @@ func expandContext(st store.Backend, gid string, depth int, visited map[string]b
 		})
 
 		if depth > 1 {
-			subEls, subRels, err := expandContext(st, target, depth-1, visited)
+			subEls, subRels, err := expandContext(ctx, st, target, depth-1, visited)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -201,8 +202,8 @@ func expandContext(st store.Backend, gid string, depth int, visited map[string]b
 // (parity with get_ontology_context): matched nodes, their expanded
 // neighborhoods, code_refs resolution for concept-layer nodes, and
 // workflow / step / failure-mode payloads for procedural matches.
-func GetContext(st store.Backend, query string, depth int) (ContextResult, error) {
-	matched, err := SearchOntologyNodes(st, query)
+func GetContext(ctx context.Context, st store.Backend, query string, depth int) (ContextResult, error) {
+	matched, err := SearchOntologyNodes(ctx, st, query)
 	if err != nil {
 		return ContextResult{}, err
 	}
@@ -216,7 +217,7 @@ func GetContext(st store.Backend, query string, depth int) (ContextResult, error
 		res.MatchReasons = append(res.MatchReasons, node.MatchReason)
 		sum += node.MatchScore
 
-		els, rels, err := ExpandContext(st, node.GID, depth)
+		els, rels, err := ExpandContext(ctx, st, node.GID, depth)
 		if err != nil {
 			return ContextResult{}, err
 		}
@@ -226,14 +227,14 @@ func GetContext(st store.Backend, query string, depth int) (ContextResult, error
 		if !IsProceduralType(node.ElementType) {
 			// Concept-layer node: resolve code_refs metadata into actual
 			// indexed code elements (same logic as ConceptSearch).
-			el, ok, err := findElementByQN(st, node.GID)
+			el, ok, err := findElementByQN(ctx, st, node.GID)
 			if err != nil {
 				return ContextResult{}, err
 			}
 			if ok {
 				codeRefs := jsonStrArray(el.Metadata, "code_refs")
 				if len(codeRefs) > 0 {
-					resolved, err := ResolveCodeRefs(st, codeRefs, depth*20)
+					resolved, err := ResolveCodeRefs(ctx, st, codeRefs, depth*20)
 					if err != nil {
 						return ContextResult{}, err
 					}
@@ -244,19 +245,19 @@ func GetContext(st store.Backend, query string, depth int) (ContextResult, error
 
 		switch node.ElementType {
 		case TypeWorkflow:
-			if el, ok, _ := findElementByQN(st, node.GID); ok {
+			if el, ok, _ := findElementByQN(ctx, st, node.GID); ok {
 				if w, err := workflowFromElement(el); err == nil {
 					res.Workflows = append(res.Workflows, w)
 				}
 			}
 		case TypeWorkflowStep:
-			if el, ok, _ := findElementByQN(st, node.GID); ok {
+			if el, ok, _ := findElementByQN(ctx, st, node.GID); ok {
 				if s, err := workflowStepFromElement(el); err == nil {
 					res.WorkflowSteps = append(res.WorkflowSteps, s)
 				}
 			}
 		case TypeFailureMode:
-			if el, ok, _ := findElementByQN(st, node.GID); ok {
+			if el, ok, _ := findElementByQN(ctx, st, node.GID); ok {
 				if f, err := failureModeFromElement(el); err == nil {
 					res.FailureModes = append(res.FailureModes, f)
 				}
@@ -270,9 +271,9 @@ func GetContext(st store.Backend, query string, depth int) (ContextResult, error
 // Trace finds a workflow by name/alias/GID (or by a step's name, tracing
 // its parent workflow) and returns its ordered steps — the
 // kg_trace_workflow behavior (parity with trace_workflow).
-func Trace(st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
+func Trace(ctx context.Context, st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
 	workflowGID := ""
-	workflow, err := findWorkflow(st, workflowQuery)
+	workflow, err := findWorkflow(ctx, st, workflowQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +281,7 @@ func Trace(st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
 		workflowGID = workflow.GID
 	} else {
 		// Fallback: match a workflow_step by name/alias and trace its parent.
-		nodes, err := SearchOntologyNodes(st, workflowQuery)
+		nodes, err := SearchOntologyNodes(ctx, st, workflowQuery)
 		if err != nil {
 			return nil, err
 		}
@@ -288,7 +289,7 @@ func Trace(st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
 			if n.ElementType != TypeWorkflowStep {
 				continue
 			}
-			el, ok, err := findElementByQN(st, n.GID)
+			el, ok, err := findElementByQN(ctx, st, n.GID)
 			if err != nil {
 				return nil, err
 			}
@@ -309,7 +310,7 @@ func Trace(st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
 		return nil, nil
 	}
 
-	els, err := ontologyElements(st)
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -330,9 +331,9 @@ func Trace(st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
 
 // findWorkflow searches workflow nodes by name / alias / GID substring
 // (parity with search_workflows); first match wins.
-func findWorkflow(st store.Backend, query string) (*WorkflowNode, error) {
+func findWorkflow(ctx context.Context, st store.Backend, query string) (*WorkflowNode, error) {
 	q := strings.ToLower(query)
-	els, err := ontologyElements(st)
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +445,7 @@ func failureModeFromElement(el store.Element) (FailureModeNode, error) {
 // probe (full query first, then keywords), keep the best score per GID,
 // then resolve all matched concepts' code_refs against indexed elements.
 // With no concept hit, a name-based code search is returned as fallback.
-func ConceptSearch(st store.Backend, rawInput string, limit int) (ConceptSearchResult, error) {
+func ConceptSearch(ctx context.Context, st store.Backend, rawInput string, limit int) (ConceptSearchResult, error) {
 	keywords := ExtractKeywords(rawInput)
 	if limit == 0 {
 		limit = 20
@@ -463,7 +464,7 @@ func ConceptSearch(st store.Backend, rawInput string, limit int) (ConceptSearchR
 	// Scan with each probe; keep the best score per gid, concept layer only.
 	best := map[string]NodeInfo{}
 	for _, probe := range probes {
-		nodes, err := SearchOntologyNodes(st, probe)
+		nodes, err := SearchOntologyNodes(ctx, st, probe)
 		if err != nil {
 			return ConceptSearchResult{}, err
 		}
@@ -492,7 +493,7 @@ func ConceptSearch(st store.Backend, rawInput string, limit int) (ConceptSearchR
 	matchedConcepts := make([]MatchedConcept, 0, len(matched))
 	for _, node := range matched {
 		var codeRefs, docs, ownedBy []string
-		if el, ok, err := findElementByQN(st, node.GID); err == nil && ok {
+		if el, ok, err := findElementByQN(ctx, st, node.GID); err == nil && ok {
 			codeRefs = jsonStrArray(el.Metadata, "code_refs")
 			docs = jsonStrArray(el.Metadata, "docs")
 			ownedBy = jsonStrArray(el.Metadata, "owned_by")
@@ -519,7 +520,7 @@ func ConceptSearch(st store.Backend, rawInput string, limit int) (ConceptSearchR
 	var linked []store.Element
 	if len(allCodeRefs) > 0 {
 		var err error
-		linked, err = ResolveCodeRefs(st, allCodeRefs, 200)
+		linked, err = ResolveCodeRefs(ctx, st, allCodeRefs, 200)
 		if err != nil {
 			return ConceptSearchResult{}, err
 		}
@@ -529,7 +530,7 @@ func ConceptSearch(st store.Backend, rawInput string, limit int) (ConceptSearchR
 	var fallback []store.Element
 	if fallbackUsed {
 		var err error
-		fallback, err = searchCodeElementsByName(st, rawInput, 20)
+		fallback, err = searchCodeElementsByName(ctx, st, rawInput, 20)
 		if err != nil {
 			return ConceptSearchResult{}, err
 		}
@@ -551,11 +552,11 @@ func ConceptSearch(st store.Backend, rawInput string, limit int) (ConceptSearchR
 // ResolveCodeRefs resolves code references (file paths, directory paths, or
 // file::symbol references) against indexed code elements (parity with
 // resolve_code_refs). Bounded by limit; never a full-table scan.
-func ResolveCodeRefs(st store.Backend, codeRefs []string, limit int) ([]store.Element, error) {
+func ResolveCodeRefs(ctx context.Context, st store.Backend, codeRefs []string, limit int) ([]store.Element, error) {
 	if len(codeRefs) == 0 || limit == 0 {
 		return nil, nil
 	}
-	els, err := st.Elements()
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -647,11 +648,11 @@ func ResolveCodeRefs(st store.Backend, codeRefs []string, limit int) ([]store.El
 // ponytail: one full element scan per probe, capped at limit. The Rust
 // engine had the same scan complexity (:limit still walks the relation).
 // Upgrade path: a Backend method backed by an indexed LIKE/substring query.
-func searchByName(st store.Backend, name string, limit int, excludeOntology bool) ([]store.Element, error) {
+func searchByName(ctx context.Context, st store.Backend, name string, limit int, excludeOntology bool) ([]store.Element, error) {
 	if limit < 1 {
 		limit = 1
 	}
-	els, err := st.Elements()
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -677,14 +678,14 @@ func searchByName(st store.Backend, name string, limit int, excludeOntology bool
 // searchCodeElementsByName is the name-based fallback when no concept
 // matched (parity with search_code_elements_by_name). Only non-ontology
 // elements are considered.
-func searchCodeElementsByName(st store.Backend, name string, limit int) ([]store.Element, error) {
-	return searchByName(st, name, limit, true)
+func searchCodeElementsByName(ctx context.Context, st store.Backend, name string, limit int) ([]store.Element, error) {
+	return searchByName(ctx, st, name, limit, true)
 }
 
 // OntologyStatus computes counts by type over the stored ontology layer
 // (parity with get_ontology_status).
-func OntologyStatus(st store.Backend) (Status, error) {
-	els, err := ontologyElements(st)
+func OntologyStatus(ctx context.Context, st store.Backend) (Status, error) {
+	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return Status{}, err
 	}
@@ -777,8 +778,8 @@ func ScoreLevel(score float64) MatchLevel {
 // (sum of node MatchScores / count). It is the input to the Noul
 // L3 gate in internal/core/core.go: confidence < MinConfidence →
 // skip L3, degrade to L2. Returns 0 when nothing matches.
-func OntologyConfidence(st store.Backend, query string) (float64, error) {
-	nodes, err := SearchOntologyNodes(st, query)
+func OntologyConfidence(ctx context.Context, st store.Backend, query string) (float64, error) {
+	nodes, err := SearchOntologyNodes(ctx, st, query)
 	if err != nil {
 		return 0, err
 	}
@@ -952,26 +953,26 @@ type SelfTestReport struct {
 
 // SelfTest probes each kg_* query path; ok=true means the call completed
 // without error.
-func SelfTest(st store.Backend) SelfTestReport {
+func SelfTest(ctx context.Context, st store.Backend) SelfTestReport {
 	probe := "__selftest__"
 
 	var report SelfTestReport
-	if _, err := GetContext(st, probe, 1); err != nil {
+	if _, err := GetContext(ctx, st, probe, 1); err != nil {
 		report.KgContext = SelfTestEntry{Error: err.Error()}
 	} else {
 		report.KgContext = SelfTestEntry{OK: true}
 	}
-	if _, err := SearchOntologyNodes(st, probe); err != nil {
+	if _, err := SearchOntologyNodes(ctx, st, probe); err != nil {
 		report.KgConceptMap = SelfTestEntry{Error: err.Error()}
 	} else {
 		report.KgConceptMap = SelfTestEntry{OK: true}
 	}
-	if _, err := Trace(st, probe); err != nil {
+	if _, err := Trace(ctx, st, probe); err != nil {
 		report.KgTraceWorkflow = SelfTestEntry{Error: err.Error()}
 	} else {
 		report.KgTraceWorkflow = SelfTestEntry{OK: true}
 	}
-	if _, err := OntologyStatus(st); err != nil {
+	if _, err := OntologyStatus(ctx, st); err != nil {
 		report.KgOntologyStatus = SelfTestEntry{Error: err.Error()}
 	} else {
 		report.KgOntologyStatus = SelfTestEntry{OK: true}

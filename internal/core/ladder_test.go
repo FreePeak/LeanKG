@@ -24,7 +24,7 @@ func TestLadderRoutesProseToHybrid(t *testing.T) {
 			Content: fmt.Sprintf("// RenderWidget%d draws the widget frame.\nfunc RenderWidget%d() {}", i, i),
 		})
 	}
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(64)
@@ -134,7 +134,7 @@ func TestLongQueryIsTruncatedNotDegraded(t *testing.T) {
 // uncalibrated collection carries no flag.
 func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 	e, _ := newEngine(t)
-	if err := e.st.UpsertElements([]store.Element{{QualifiedName: "a.go::Widget", ElementType: "function", Name: "Widget", FilePath: "a.go", Language: "go", Content: "func Widget() {}"}}); err != nil {
+	if err := e.st.UpsertElements(context.Background(), []store.Element{{QualifiedName: "a.go::Widget", ElementType: "function", Name: "Widget", FilePath: "a.go", Language: "go", Content: "func Widget() {}"}}); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
@@ -150,21 +150,21 @@ func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 		return out
 	}
 	stamp := embed.StampOf(p)
-	if err := embed.WriteCalibration(e.st, stamp, 0.999); err != nil {
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, 0.999); err != nil {
 		t.Fatal(err)
 	}
 	out := ask()
 	if out["retrieval"].(map[string]any)["confidence"] != "low" || len(hitsOf(out)) == 0 || !strings.Contains(fmt.Sprint(out["guidance"]), "noise floor") {
 		t.Fatalf("below floor: %v", out)
 	}
-	if err := embed.WriteCalibration(e.st, stamp, -1); err != nil {
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, -1); err != nil {
 		t.Fatal(err)
 	}
 	if out := ask(); out["retrieval"].(map[string]any)["confidence"] != "normal" {
 		t.Fatalf("above floor: %v", out["retrieval"])
 	}
 	stamp.Revision = "other"
-	if err := embed.WriteCalibration(e.st, stamp, 0.999); err != nil { // calibration for another identity
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, 0.999); err != nil { // calibration for another identity
 		t.Fatal(err)
 	}
 	if _, ok := ask()["retrieval"].(map[string]any)["confidence"]; ok {

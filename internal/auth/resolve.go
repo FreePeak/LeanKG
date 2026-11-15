@@ -16,6 +16,8 @@
 package auth
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,6 +25,11 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
+
+// errUnknownToken is the one rejection for a bearer token that does not
+// authenticate: an unknown token, and a token whose existing account is not active. The
+// same error on both paths keeps the 401 from revealing the account state.
+var errUnknownToken = errors.New("auth: unknown token")
 
 // Via names the source that decided the resolved role, in precedence order.
 const (
@@ -102,12 +109,12 @@ func (reg *registry) resolveFor(st store.Backend, r *http.Request, target Target
 	if hasBearer && bearer != "" {
 		// 1. DB-backed tokens win: they can be minted and revoked at runtime.
 		if st != nil {
-			grant, found, err := Verify(st, bearer)
+			grant, found, err := Verify(r.Context(), st, bearer)
 			if err != nil {
 				return AuthContext{}, err
 			}
 			if found {
-				return resolveGrant(st, grant, target)
+				return resolveGrant(r.Context(), st, grant, target)
 			}
 		}
 		// 2. Env fallback (static tokens from the process environment).
@@ -115,7 +122,7 @@ func (reg *registry) resolveFor(st store.Backend, r *http.Request, target Target
 			return AuthContext{Role: role, Via: ViaEnv}, nil
 		}
 	}
-	configured, err := reg.tokensConfigured(st)
+	configured, err := reg.tokensConfigured(r.Context(), st)
 	if err != nil {
 		return AuthContext{}, err
 	}
@@ -125,7 +132,7 @@ func (reg *registry) resolveFor(st store.Backend, r *http.Request, target Target
 	if !hasBearer || bearer == "" {
 		return AuthContext{}, fmt.Errorf("auth: missing bearer token")
 	}
-	return AuthContext{}, fmt.Errorf("auth: unknown token")
+	return AuthContext{}, errUnknownToken
 }
 
 // EffectiveRole is Resolve reduced to the role that gates actions.
@@ -151,14 +158,14 @@ func EffectiveRole(st store.Backend, r *http.Request) (Role, error) {
 // Ceiling: a soft-revoked row no longer keeps the gate on. Operators who must
 // never run open should keep at least one env token set (LEANKG_TOKEN_*), which
 // still enables the gate regardless of DB state.
-func (reg *registry) tokensConfigured(st store.Backend) (bool, error) {
+func (reg *registry) tokensConfigured(ctx context.Context, st store.Backend) (bool, error) {
 	if reg.enabled() {
 		return true, nil
 	}
 	if st == nil {
 		return false, nil
 	}
-	toks, err := st.TokenList()
+	toks, err := st.TokenList(ctx)
 	if err != nil {
 		return false, fmt.Errorf("auth: token store: %w", err)
 	}
@@ -172,7 +179,7 @@ func (reg *registry) tokensConfigured(st store.Backend) (bool, error) {
 		}
 		return true, nil
 	}
-	admin, err := st.AdminExists()
+	admin, err := st.AdminExists(ctx)
 	if err != nil {
 		return false, fmt.Errorf("auth: admin store: %w", err)
 	}
@@ -182,8 +189,8 @@ func (reg *registry) tokensConfigured(st store.Backend) (bool, error) {
 // resolveGrant applies the owner > org role > token role ladder to a verified
 // token. A token with no account label has nothing to resolve and keeps its
 // minted role.
-func resolveGrant(st store.Backend, g Grant, target Target) (AuthContext, error) {
-	ctx := AuthContext{
+func resolveGrant(ctx context.Context, st store.Backend, g Grant, target Target) (AuthContext, error) {
+	ac := AuthContext{
 		AccountID: g.AccountID,
 		OrgID:     g.OrgID,
 		Role:      g.Role,
@@ -192,40 +199,50 @@ func resolveGrant(st store.Backend, g Grant, target Target) (AuthContext, error)
 		Via:       ViaToken,
 	}
 	if st == nil || g.AccountID == "" {
-		return ctx, nil
+		return ac, nil
+	}
+	// A token minted for an existing account works only while that account is
+	// active. An account id with no row is a legacy free-form label and keeps
+	// its minted role.
+	acct, found, err := st.AccountByID(ctx, g.AccountID)
+	if err != nil {
+		return AuthContext{}, err
+	}
+	if found && acct.Status != "active" {
+		return AuthContext{}, errUnknownToken
 	}
 	// Ownership of the targeted resource outranks every role source: an owner
 	// controls their own resource whatever the org or token says.
 	if target.Type != "" && target.ID != "" {
-		owns, err := st.IsResourceOwner(target.Type, target.ID, g.AccountID)
+		owns, err := st.IsResourceOwner(ctx, target.Type, target.ID, g.AccountID)
 		if err != nil {
 			return AuthContext{}, err
 		}
 		if owns {
-			ctx.Role, ctx.Via = Admin, ViaOwner
-			return ctx, nil
+			ac.Role, ac.Via = Admin, ViaOwner
+			return ac, nil
 		}
 	}
 	if g.OrgID == "" {
-		return ctx, nil
+		return ac, nil
 	}
 	// Org ownership (orgs.owner_account_id) outranks a membership row.
-	org, found, err := st.OrgByID(g.OrgID)
+	org, found, err := st.OrgByID(ctx, g.OrgID)
 	if err != nil {
 		return AuthContext{}, err
 	}
 	if found && org.OwnerAccountID == g.AccountID {
-		ctx.OrgRole, ctx.Role, ctx.Via = OrgRoleOwner, Admin, ViaOwner
-		return ctx, nil
+		ac.OrgRole, ac.Role, ac.Via = OrgRoleOwner, Admin, ViaOwner
+		return ac, nil
 	}
 	// A membership role outranks the token's own role.
-	member, found, err := st.OrgMemberOf(g.OrgID, g.AccountID)
+	member, found, err := st.OrgMemberOf(ctx, g.OrgID, g.AccountID)
 	if err != nil {
 		return AuthContext{}, err
 	}
 	if found && ValidOrgRole(member.Role) {
-		ctx.OrgRole, ctx.Role, ctx.Via = member.Role, OrgRoleToRole(member.Role), ViaOrg
-		return ctx, nil
+		ac.OrgRole, ac.Role, ac.Via = member.Role, OrgRoleToRole(member.Role), ViaOrg
+		return ac, nil
 	}
-	return ctx, nil
+	return ac, nil
 }

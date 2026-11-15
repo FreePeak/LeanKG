@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,27 +16,27 @@ import (
 // marked "running" with dirty=1620.
 func TestPruneEmbedRunsClosesStuckRunsAndKeepsTheNewestRow(t *testing.T) {
 	s := openTestStore(t)
-	first, err := s.StartEmbedRun("model-a", "incremental", 10)
+	first, err := s.StartEmbedRun(context.Background(), "model-a", "incremental", 10)
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if err := s.FinishEmbedRun(first, "completed", 10, 0, 0, 0, 0); err != nil {
+	if err := s.FinishEmbedRun(context.Background(), first, "completed", 10, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish run: %v", err)
 	}
-	second, err := s.StartEmbedRun("model-a", "full", 5)
+	second, err := s.StartEmbedRun(context.Background(), "model-a", "full", 5)
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if err := s.FinishEmbedRun(second, "completed", 5, 0, 0, 0, 0); err != nil {
+	if err := s.FinishEmbedRun(context.Background(), second, "completed", 5, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish run: %v", err)
 	}
-	stuck, err := s.StartEmbedRun("model-b", "incremental", 7)
+	stuck, err := s.StartEmbedRun(context.Background(), "model-b", "incremental", 7)
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 
 	// A cutoff in the future: every run is older than it.
-	pr, err := s.PruneEmbedRuns(time.Now().Add(time.Hour))
+	pr, err := s.PruneEmbedRuns(context.Background(), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
@@ -48,7 +49,7 @@ func TestPruneEmbedRunsClosesStuckRunsAndKeepsTheNewestRow(t *testing.T) {
 
 	// The newest row is never deleted: it names the store's current
 	// collection, and the stale-collection sweep derives its keep set from it.
-	run, err := s.LastEmbedRunAny()
+	run, err := s.LastEmbedRunAny(context.Background())
 	if err != nil {
 		t.Fatalf("last run: %v", err)
 	}
@@ -70,14 +71,14 @@ func TestPruneEmbedRunsClosesStuckRunsAndKeepsTheNewestRow(t *testing.T) {
 // not a purge — a run that started inside the window is still history.
 func TestPruneEmbedRunsKeepsRunsInsideTheWindow(t *testing.T) {
 	s := openTestStore(t)
-	id, err := s.StartEmbedRun("model-a", "incremental", 4)
+	id, err := s.StartEmbedRun(context.Background(), "model-a", "incremental", 4)
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if err := s.FinishEmbedRun(id, "completed", 4, 0, 0, 0, 0); err != nil {
+	if err := s.FinishEmbedRun(context.Background(), id, "completed", 4, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish run: %v", err)
 	}
-	pr, err := s.PruneEmbedRuns(time.Now().Add(-time.Hour))
+	pr, err := s.PruneEmbedRuns(context.Background(), time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestPruneEmbedRunsKeepsRunsInsideTheWindow(t *testing.T) {
 func TestCompactFTSKeepsEveryRow(t *testing.T) {
 	s := openTestStore(t)
 	for i := range 200 {
-		if err := s.UpsertElements([]Element{{
+		if err := s.UpsertElements(context.Background(), []Element{{
 			QualifiedName: "pkg.Fn" + strconv.Itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + strconv.Itoa(i),
@@ -119,7 +120,7 @@ func TestCompactFTSKeepsEveryRow(t *testing.T) {
 	if before == 0 {
 		t.Fatal("the fixture wrote no keyword rows")
 	}
-	if _, err := s.Maintain(MaintainOp{Kind: MaintainCompactKeywordIndex}); err != nil {
+	if _, err := s.Maintain(context.Background(), MaintainOp{Kind: MaintainCompactKeywordIndex}); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
 	var after int
@@ -129,7 +130,7 @@ func TestCompactFTSKeepsEveryRow(t *testing.T) {
 	if after != before {
 		t.Errorf("the compaction changed the keyword index: %d rows -> %d", before, after)
 	}
-	n, err := s.ElementCount()
+	n, err := s.ElementCount(context.Background())
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}

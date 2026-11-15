@@ -14,7 +14,6 @@ var ioBudget = map[string]map[string]int{
 	"internal/gitobj/gittest":  {"exec.Command": 1},
 	"internal/memory":          {"sql-no-ctx": 28},
 	"internal/sources":         {"http.Client-without-Timeout": 1},
-	"internal/store":           {"sql-no-ctx": 235},
 }
 
 // ioRule is one context-less I/O pattern with its AST matcher.
@@ -106,14 +105,13 @@ func isPkgType(expr ast.Expr, pkg, name string) bool {
 //
 // ctx-shaped means the identifier exactly named ctx, or a call to a selector
 // named Context (r.Context(), cmd.Context()). Anything else in the first
-// position counts, including a string literal and pgCtx. pgCtx is flagged on
-// purpose so that each store call site is renamed to ctx when its role
-// migrates.
+// position counts, including a string literal or a context held in a stored
+// variable. Each store call site is renamed to ctx when its role migrates.
 //
 // Known false positives: any non-SQL method named Exec, Query, QueryRow,
 // Prepare or Begin whose first argument is not ctx-shaped (for example a
 // one-argument Query(req) on a custom type), and a context held in a variable
-// not named ctx (such as pgCtx, flagged on purpose). Known false negatives: SQL
+// not named ctx (flagged on purpose). Known false negatives: SQL
 // calls reached through a method value or a wrapper with another name (for
 // example s.run("select")), and a ctx-shaped argument that is not a real context
 // because it is a call named Context on a non-request type.

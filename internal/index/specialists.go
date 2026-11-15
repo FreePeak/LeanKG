@@ -2,6 +2,7 @@ package index
 
 import (
 	"bytes"
+	"context"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -100,21 +101,21 @@ func KotlinExtras(rel string, src []byte) ([]store.Element, []store.Relationship
 // its content. Returns handled=false when the file is not claimed (caller falls
 // back to generic extraction). Wiring: called from indexDir's changed-file loop
 // BEFORE extractFileAs.
-func indexSpecialistFile(st store.Backend, rel string, src []byte, size, mtimeNS int64, hash string, res *Result) (bool, error) {
+func indexSpecialistFile(ctx context.Context, st store.Backend, rel string, src []byte, size, mtimeNS int64, hash string, res *Result) (bool, error) {
 	els, rels, claimed := ExtractSpecialist(rel, src)
 	if !claimed {
 		return false, nil
 	}
-	if err := st.DeleteByFile(rel); err != nil {
+	if err := st.DeleteByFile(ctx, rel); err != nil {
 		return true, err
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(ctx, els); err != nil {
 		return true, err
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(ctx, rels); err != nil {
 		return true, err
 	}
-	if err := st.UpsertFiles([]store.FileRecord{{
+	if err := st.UpsertFiles(ctx, []store.FileRecord{{
 		Path: rel, Size: size, MtimeNS: mtimeNS, ContentHash: hash,
 	}}); err != nil {
 		return true, err
@@ -128,12 +129,12 @@ func indexSpecialistFile(st store.Backend, rel string, src []byte, size, mtimeNS
 // indexKotlinExtras persists the Kotlin-side Android extractor output for one
 // already-indexed .kt/.kts file, from its content. Wiring: called from indexDir
 // after the generic upsert for files with lang == "kotlin".
-func indexKotlinExtras(st store.Backend, rel string, src []byte, res *Result) error {
+func indexKotlinExtras(ctx context.Context, st store.Backend, rel string, src []byte, res *Result) error {
 	els, rels := KotlinExtras(rel, src)
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(ctx, els); err != nil {
 		return err
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(ctx, rels); err != nil {
 		return err
 	}
 	res.Elements += len(els)

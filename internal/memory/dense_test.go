@@ -25,8 +25,8 @@ var concepts = [][]string{
 func (c *conceptVectorizer) Identity() embed.Identity {
 	return embed.Identity{Provider: "test", Model: "concept-v1", Dims: len(concepts) + 1}
 }
-func (c *conceptVectorizer) Probe(context.Context) error { return nil }
-func (c *conceptVectorizer) Floor() (float64, bool)      { return c.floor, true }
+func (c *conceptVectorizer) Probe(context.Context) error           { return nil }
+func (c *conceptVectorizer) Floor(context.Context) (float64, bool) { return c.floor, true }
 func (c *conceptVectorizer) vec(t string) []float32 {
 	v := make([]float32, len(concepts)+1)
 	v[len(concepts)] = 0.3 // shared background, like a real model's anisotropy

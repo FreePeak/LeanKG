@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"slices"
 	"testing"
 )
@@ -8,8 +9,8 @@ import (
 // keywordArmSearcher is the part of an engine the keyword-arm conformance
 // check needs: seed elements, then run the L2 keyword rung.
 type keywordArmSearcher interface {
-	UpsertElements([]Element) error
-	FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error)
+	UpsertElements(ctx context.Context, els []Element) error
+	FindFuzzy(ctx context.Context, query string, limit int) ([]FuzzyMatch, Arm, error)
 }
 
 // checkFindFuzzyKeywordArm seeds one element set and asserts that FindFuzzy
@@ -17,14 +18,14 @@ type keywordArmSearcher interface {
 // lists the arm labels this engine may report.
 func checkFindFuzzyKeywordArm(t *testing.T, s keywordArmSearcher, wantArms ...Arm) {
 	t.Helper()
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "main.parseConfig", ElementType: "function", Name: "parseConfig", FilePath: "main.go", Language: "go", Content: "parses the yaml config file"},
 		{QualifiedName: "main.unrelated", ElementType: "function", Name: "unrelated", FilePath: "main.go", Language: "go", Content: "does something else"},
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	for _, q := range []string{"config", "parseConfig"} {
-		hits, arm, err := s.FindFuzzy(q, 10)
+		hits, arm, err := s.FindFuzzy(context.Background(), q, 10)
 		if err != nil {
 			t.Fatalf("FindFuzzy(%q): %v", q, err)
 		}
@@ -35,7 +36,7 @@ func checkFindFuzzyKeywordArm(t *testing.T, s keywordArmSearcher, wantArms ...Ar
 			t.Fatalf("FindFuzzy(%q) arm = %q; want one of %v", q, arm, wantArms)
 		}
 	}
-	if hits, _, err := s.FindFuzzy("   ", 10); err != nil || len(hits) != 0 {
+	if hits, _, err := s.FindFuzzy(context.Background(), "   ", 10); err != nil || len(hits) != 0 {
 		t.Fatalf("FindFuzzy(blank) = %+v, %v; want no hits and no error", hits, err)
 	}
 }

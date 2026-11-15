@@ -30,7 +30,7 @@ func qualityFixture(t *testing.T) store.Backend {
 		{QualifiedName: "d.go::M.Method", ElementType: "method", Name: "Method", FilePath: "d.go", LineStart: 1, LineEnd: 400, Language: "go"},
 		{QualifiedName: "d.go::Big", ElementType: "class", Name: "Big", FilePath: "d.go", LineStart: 1, LineEnd: 500, Language: "go"},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	return s
@@ -100,7 +100,7 @@ func TestOversizedTieBreakByQualifiedName(t *testing.T) {
 		{QualifiedName: "z.go::zz", ElementType: "function", Name: "zz", FilePath: "z.go", LineStart: 1, LineEnd: 80, Language: "go"},
 		{QualifiedName: "a.go::aa", ElementType: "function", Name: "aa", FilePath: "a.go", LineStart: 1, LineEnd: 80, Language: "go"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	got, err := OversizedFunctions(context.Background(), st, 1, "")

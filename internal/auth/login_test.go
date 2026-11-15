@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -15,8 +16,8 @@ func TestVerifyLoginRejectionsAreIndistinguishable(t *testing.T) {
 	st := openAuthStore(t)
 	seedAccount(t, st, "uniform@example.com", adminTestPassword, false)
 
-	_, wrongErr := VerifyLogin(st, "uniform@example.com", "wrong password!")
-	_, unknownErr := VerifyLogin(st, "nobody-uniform@example.com", adminTestPassword)
+	_, wrongErr := VerifyLogin(context.Background(), st, "uniform@example.com", "wrong password!")
+	_, unknownErr := VerifyLogin(context.Background(), st, "nobody-uniform@example.com", adminTestPassword)
 	if !errors.Is(wrongErr, ErrInvalidAdminLogin) || !errors.Is(unknownErr, ErrInvalidAdminLogin) {
 		t.Fatalf("wrong = %v, unknown = %v; both must be the generic login error", wrongErr, unknownErr)
 	}
@@ -52,11 +53,11 @@ func TestVerifyLoginLocksAfterFiveFailuresEvenForUnknownUsername(t *testing.T) {
 	throttle, _ := newTestThrottle()
 	for _, user := range []string{"backoff@example.com", "ghost-backoff@example.com"} {
 		for i := 0; i < loginMaxFailures; i++ {
-			if _, err := verifyLogin(throttle, st, user, "wrong password!", false); err == nil {
+			if _, err := verifyLogin(context.Background(), throttle, st, user, "wrong password!", false); err == nil {
 				t.Fatalf("%s: wrong password must fail", user)
 			}
 		}
-		_, err := verifyLogin(throttle, st, user, adminTestPassword, false)
+		_, err := verifyLogin(context.Background(), throttle, st, user, adminTestPassword, false)
 		if !errors.Is(err, ErrAdminLoginRateLimited) {
 			t.Fatalf("%s: locked login err = %v, want the rate-limit marker", user, err)
 		}
@@ -69,23 +70,23 @@ func TestVerifyLoginSuccessResetsStreakAndLockoutExpires(t *testing.T) {
 
 	throttle, clock := newTestThrottle()
 	for i := 0; i < loginMaxFailures-1; i++ {
-		_, _ = verifyLogin(throttle, st, "streak@example.com", "wrong password!", false)
+		_, _ = verifyLogin(context.Background(), throttle, st, "streak@example.com", "wrong password!", false)
 	}
-	if _, err := verifyLogin(throttle, st, "streak@example.com", adminTestPassword, false); err != nil {
+	if _, err := verifyLogin(context.Background(), throttle, st, "streak@example.com", adminTestPassword, false); err != nil {
 		t.Fatalf("login before the threshold: %v", err)
 	}
 	for i := 0; i < loginMaxFailures-1; i++ {
-		_, _ = verifyLogin(throttle, st, "streak@example.com", "wrong password!", false)
+		_, _ = verifyLogin(context.Background(), throttle, st, "streak@example.com", "wrong password!", false)
 	}
-	if _, err := verifyLogin(throttle, st, "streak@example.com", adminTestPassword, false); err != nil {
+	if _, err := verifyLogin(context.Background(), throttle, st, "streak@example.com", adminTestPassword, false); err != nil {
 		t.Fatalf("a success must reset the streak: %v", err)
 	}
 
 	for i := 0; i < loginMaxFailures; i++ {
-		_, _ = verifyLogin(throttle, st, "streak@example.com", "wrong password!", false)
+		_, _ = verifyLogin(context.Background(), throttle, st, "streak@example.com", "wrong password!", false)
 	}
 	clock.Advance(loginLockout)
-	if _, err := verifyLogin(throttle, st, "streak@example.com", adminTestPassword, false); err != nil {
+	if _, err := verifyLogin(context.Background(), throttle, st, "streak@example.com", adminTestPassword, false); err != nil {
 		t.Fatalf("login after the lockout expires on the injected clock: %v", err)
 	}
 }
@@ -94,12 +95,12 @@ func TestVerifyLoginSuccessResetsStreakAndLockoutExpires(t *testing.T) {
 // disable (or re-enable) would.
 func setAccountStatus(t *testing.T, st store.Backend, email, status string) {
 	t.Helper()
-	a, found, err := st.AccountByEmail(email)
+	a, found, err := st.AccountByEmail(context.Background(), email)
 	if err != nil || !found {
 		t.Fatalf("account %s: found=%v err=%v", email, found, err)
 	}
 	a.Status = status
-	if err := st.AccountUpsert(a); err != nil {
+	if err := st.AccountUpsert(context.Background(), a); err != nil {
 		t.Fatalf("set status %s: %v", status, err)
 	}
 }
@@ -112,7 +113,7 @@ func TestVerifyLoginRejectsDisabledAccountWithCorrectPassword(t *testing.T) {
 	setAccountStatus(t, st, "disabled-rest@example.com", "disabled")
 
 	throttle, _ := newTestThrottle()
-	account, err := verifyLogin(throttle, st, "disabled-rest@example.com", adminTestPassword, false)
+	account, err := verifyLogin(context.Background(), throttle, st, "disabled-rest@example.com", adminTestPassword, false)
 	if !errors.Is(err, ErrInvalidAdminLogin) || errors.Is(err, ErrAdminLoginRateLimited) {
 		t.Fatalf("disabled account err = %v, want the generic ErrInvalidAdminLogin", err)
 	}
@@ -127,8 +128,8 @@ func TestVerifyLoginDisabledRejectionMatchesWrongPassword(t *testing.T) {
 	seedAccount(t, st, "active-same@example.com", adminTestPassword, false)
 	setAccountStatus(t, st, "disabled-same@example.com", "disabled")
 
-	_, disabledErr := VerifyLogin(st, "disabled-same@example.com", adminTestPassword)
-	_, wrongErr := VerifyLogin(st, "active-same@example.com", "wrong password!")
+	_, disabledErr := VerifyLogin(context.Background(), st, "disabled-same@example.com", adminTestPassword)
+	_, wrongErr := VerifyLogin(context.Background(), st, "active-same@example.com", "wrong password!")
 	if disabledErr == nil || wrongErr == nil {
 		t.Fatalf("both must fail: disabled = %v, wrong = %v", disabledErr, wrongErr)
 	}
@@ -146,11 +147,11 @@ func TestVerifyLoginDisabledAttemptsCountTowardThrottle(t *testing.T) {
 
 	throttle, _ := newTestThrottle()
 	for i := 0; i < loginMaxFailures; i++ {
-		if _, err := verifyLogin(throttle, st, "disabled-throttle@example.com", adminTestPassword, false); err == nil {
+		if _, err := verifyLogin(context.Background(), throttle, st, "disabled-throttle@example.com", adminTestPassword, false); err == nil {
 			t.Fatal("disabled account must not log in")
 		}
 	}
-	_, err := verifyLogin(throttle, st, "disabled-throttle@example.com", adminTestPassword, false)
+	_, err := verifyLogin(context.Background(), throttle, st, "disabled-throttle@example.com", adminTestPassword, false)
 	if !errors.Is(err, ErrAdminLoginRateLimited) {
 		t.Fatalf("after %d disabled attempts err = %v, want the rate-limit marker", loginMaxFailures, err)
 	}
@@ -161,11 +162,11 @@ func TestVerifyLoginReenabledAccountLogsInAgain(t *testing.T) {
 	st := openAuthStore(t)
 	seedAccount(t, st, "reenabled@example.com", adminTestPassword, false)
 	setAccountStatus(t, st, "reenabled@example.com", "disabled")
-	if _, err := VerifyLogin(st, "reenabled@example.com", adminTestPassword); err == nil {
+	if _, err := VerifyLogin(context.Background(), st, "reenabled@example.com", adminTestPassword); err == nil {
 		t.Fatal("disabled account must not log in")
 	}
 	setAccountStatus(t, st, "reenabled@example.com", "active")
-	if _, err := VerifyLogin(st, "reenabled@example.com", adminTestPassword); err != nil {
+	if _, err := VerifyLogin(context.Background(), st, "reenabled@example.com", adminTestPassword); err != nil {
 		t.Fatalf("re-enabled account login: %v", err)
 	}
 }

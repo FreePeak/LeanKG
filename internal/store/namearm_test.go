@@ -27,11 +27,11 @@ func TestFindByNameTokenFiresOnProse(t *testing.T) {
 		{QualifiedName: "pkg/r2.go::readTwo", ElementType: "function", Name: "readTwo", FilePath: "pkg/r2.go", Language: "go", Content: "x"},
 		{QualifiedName: "pkg/r3.go::readThree", ElementType: "function", Name: "readThree", FilePath: "pkg/r3.go", Language: "go", Content: "x"},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	// PROSE, the way an agent asks. The rare token must reach the arm.
-	got, err := s.FindByNameToken("what does coverage report", 10, ElementFilter{})
+	got, err := s.FindByNameToken(context.Background(), "what does coverage report", 10, ElementFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestFindByNameTokenFiresOnProse(t *testing.T) {
 	}
 	// A question of ONLY common words and function words reaches nothing —
 	// the arm must not become a noise machine.
-	none, err := s.FindByNameToken("read the one for how", 10, ElementFilter{})
+	none, err := s.FindByNameToken(context.Background(), "read the one for how", 10, ElementFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

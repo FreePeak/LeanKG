@@ -43,7 +43,7 @@ func TestL3FusesANameArm(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	// The answer: a two-line helper whose name is what the question says. The
@@ -58,14 +58,14 @@ func TestL3FusesANameArm(t *testing.T) {
 			Content: strings.Repeat("// truncate the text sent to a provider over and over again. ", 40)},
 	}
 	for _, e := range els {
-		if err := st.UpsertElements([]store.Element{e}); err != nil {
+		if err := st.UpsertElements(context.Background(), []store.Element{e}); err != nil {
 			t.Fatal(err)
 		}
 		qvec, err := p.Embed(context.Background(), embed.Document, []string{e.Content})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
 			t.Fatal(err)
 		}
 	}

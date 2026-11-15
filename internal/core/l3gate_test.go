@@ -51,7 +51,7 @@ func TestL3GateSkipsSemanticOnLowOntologyConfidence(t *testing.T) {
 		Language:      "ontology",
 		Metadata:      map[string]any{"description": "handles a refund against the card network", "aliases": []any{}, "ontology_layer": "domain"},
 	}
-	if err := e.st.UpsertElements(append(code, onto)); err != nil {
+	if err := e.st.UpsertElements(context.Background(), append(code, onto)); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
@@ -62,7 +62,7 @@ func TestL3GateSkipsSemanticOnLowOntologyConfidence(t *testing.T) {
 	e.embedder = counter
 
 	// Sanity: the confidence the gate will see is the one we designed for.
-	conf, err := ontology.OntologyConfidence(e.st, "how does refund settle overnight")
+	conf, err := ontology.OntologyConfidence(context.Background(), e.st, "how does refund settle overnight")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestL3GateAllowsSemanticWhenConfidenceIsZero(t *testing.T) {
 		{QualifiedName: "pkg/w.go::Widget", ElementType: "function", Name: "Widget", FilePath: "pkg/w.go", Language: "go",
 			Content: "// Widget draws the frame\nfunc Widget() {}"},
 	}
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
@@ -107,7 +107,7 @@ func TestL3GateAllowsSemanticWhenConfidenceIsZero(t *testing.T) {
 	counter := &countingEmbedder{Provider: p}
 	e.embedder = counter
 
-	conf, err := ontology.OntologyConfidence(e.st, "how does the widget frame get drawn")
+	conf, err := ontology.OntologyConfidence(context.Background(), e.st, "how does the widget frame get drawn")
 	if err != nil {
 		t.Fatal(err)
 	}

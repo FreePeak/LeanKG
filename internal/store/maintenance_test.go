@@ -12,7 +12,7 @@ import (
 func newVacuumFixture(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "leankg.db")
-	st, err := openSQLite(path, RW)
+	st, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -23,7 +23,7 @@ func newVacuumFixture(t *testing.T) *Store {
 	// 400 rows, then delete 300 of them: ~75% of the pages end up free.
 	for i := 0; i < 400; i++ {
 		p := filepath.Join("src", "f"+string(rune('a'+i%26))+itoa(i)+".go")
-		if err := st.UpsertElements([]Element{{
+		if err := st.UpsertElements(context.Background(), []Element{{
 			QualifiedName: "pkg.Fn" + itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + itoa(i),
@@ -36,7 +36,7 @@ func newVacuumFixture(t *testing.T) *Store {
 	}
 	for i := 0; i < 300; i++ {
 		p := filepath.Join("src", "f"+string(rune('a'+i%26))+itoa(i)+".go")
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -57,7 +57,7 @@ func itoa(i int) string {
 
 func TestSpaceReportsFreelist(t *testing.T) {
 	st := newVacuumFixture(t)
-	rep, err := st.Space()
+	rep, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestEnsureIncrementalVacuumEnablesAutoVacuum(t *testing.T) {
 		t.Fatalf("fixture precondition: auto_vacuum = %d, want 0 (NONE)", mode)
 	}
 
-	if _, err := st.Maintain(MaintainOp{Kind: MaintainUpgrade}); err != nil {
+	if _, err := st.Maintain(context.Background(), MaintainOp{Kind: MaintainUpgrade}); err != nil {
 		t.Fatalf("upgrade: %v", err)
 	}
 	if err := st.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
@@ -99,7 +99,7 @@ func TestEnsureIncrementalVacuumEnablesAutoVacuum(t *testing.T) {
 		t.Fatalf("auto_vacuum = %d, want 2 (INCREMENTAL)", mode)
 	}
 	// Idempotent: a second call must not VACUUM again.
-	if _, err := st.Maintain(MaintainOp{Kind: MaintainUpgrade}); err != nil {
+	if _, err := st.Maintain(context.Background(), MaintainOp{Kind: MaintainUpgrade}); err != nil {
 		t.Fatalf("second upgrade: %v", err)
 	}
 }
@@ -109,18 +109,18 @@ func TestIncrementalVacuumReturnsPagesToDisk(t *testing.T) {
 	// Enable the mode FIRST, then delete. Otherwise the one-time header
 	// upgrade's own VACUUM reclaims the entire freelist and there is nothing
 	// left for the incremental pass to demonstrate.
-	if err := st.ensureIncrementalVacuum(); err != nil {
+	if err := st.ensureIncrementalVacuum(context.Background()); err != nil {
 		t.Fatalf("enable incremental vacuum: %v", err)
 	}
 	// The fixture already deleted 300 of its 400 files; delete the surviving
 	// 100 too so the freelist that follows is made under INCREMENTAL mode.
 	for i := 300; i < 400; i++ {
 		p := filepath.Join("src", "f"+string(rune('a'+i%26))+itoa(i)+".go")
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
-	before, err := st.Space()
+	before, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space before: %v", err)
 	}
@@ -130,10 +130,10 @@ func TestIncrementalVacuumReturnsPagesToDisk(t *testing.T) {
 	// A cap below the freelist size: the pass must be bounded, so the file
 	// shrinks by at most that many pages.
 	const cap = 8
-	if _, err := st.Maintain(MaintainOp{Kind: MaintainReclaim, MaxPages: cap}); err != nil {
+	if _, err := st.Maintain(context.Background(), MaintainOp{Kind: MaintainReclaim, MaxPages: cap}); err != nil {
 		t.Fatalf("incremental vacuum: %v", err)
 	}
-	after, err := st.Space()
+	after, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space after: %v", err)
 	}
@@ -145,13 +145,13 @@ func TestIncrementalVacuumReturnsPagesToDisk(t *testing.T) {
 			reclaimed, cap, after.PageSize)
 	}
 	// An unbounded pass drains the rest.
-	if _, err := st.Maintain(MaintainOp{Kind: MaintainReclaim}); err != nil {
+	if _, err := st.Maintain(context.Background(), MaintainOp{Kind: MaintainReclaim}); err != nil {
 		t.Fatalf("unbounded incremental vacuum: %v", err)
 	}
-	if _, err := st.Maintain(MaintainOp{Kind: MaintainCheckpoint}); err != nil {
+	if _, err := st.Maintain(context.Background(), MaintainOp{Kind: MaintainCheckpoint}); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
-	final, err := st.Space()
+	final, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space final: %v", err)
 	}
@@ -162,14 +162,14 @@ func TestIncrementalVacuumReturnsPagesToDisk(t *testing.T) {
 
 func TestVacuumShrinksFileToLiveSize(t *testing.T) {
 	st := newVacuumFixture(t)
-	before, err := st.Space()
+	before, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space before: %v", err)
 	}
-	if _, err := st.Maintain(MaintainOp{Kind: MaintainReclaimFull}); err != nil {
+	if _, err := st.Maintain(context.Background(), MaintainOp{Kind: MaintainReclaimFull}); err != nil {
 		t.Fatalf("vacuum: %v", err)
 	}
-	after, err := st.Space()
+	after, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space after: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestVacuumShrinksFileToLiveSize(t *testing.T) {
 		t.Errorf("full vacuum did not shrink: %d -> %d", before.SizeBytes, after.SizeBytes)
 	}
 	// The data survived: 100 elements remain.
-	if n, err := st.ElementCount(); err != nil || n != 100 {
+	if n, err := st.ElementCount(context.Background()); err != nil || n != 100 {
 		t.Errorf("element count = %d (err %v), want 100", n, err)
 	}
 }
@@ -190,10 +190,10 @@ func TestCheckpointTruncatesWAL(t *testing.T) {
 	if err := st.BumpWatermark(context.Background()); err != nil {
 		t.Fatalf("bump: %v", err)
 	}
-	if _, err := st.Maintain(MaintainOp{Kind: MaintainCheckpoint}); err != nil {
+	if _, err := st.Maintain(context.Background(), MaintainOp{Kind: MaintainCheckpoint}); err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
-	rep, err := st.Space()
+	rep, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestCheckpointTruncatesWAL(t *testing.T) {
 
 func TestVacuumRefusesReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ro.db")
-	rw, err := openSQLite(path, RW)
+	rw, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
@@ -214,16 +214,16 @@ func TestVacuumRefusesReadOnly(t *testing.T) {
 	if err := rw.Close(); err != nil {
 		t.Fatalf("close rw: %v", err)
 	}
-	ro, err := openSQLite(path, RO)
+	ro, err := openSQLite(context.Background(), path, RO)
 	if err != nil {
 		t.Fatalf("open ro: %v", err)
 	}
 	defer ro.Close()
-	if _, err := ro.Maintain(MaintainOp{Kind: MaintainReclaimFull}); !errors.Is(err, ErrReadOnly) {
+	if _, err := ro.Maintain(context.Background(), MaintainOp{Kind: MaintainReclaimFull}); !errors.Is(err, ErrReadOnly) {
 		t.Fatalf("read-only store full vacuum: err = %v, want ErrReadOnly", err)
 	}
 	// Space is a no-write probe and must work there.
-	if _, err := ro.Space(); err != nil {
+	if _, err := ro.Space(context.Background()); err != nil {
 		t.Errorf("read-only space probe: %v", err)
 	}
 }

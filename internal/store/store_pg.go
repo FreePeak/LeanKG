@@ -20,9 +20,6 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
-// pgCtx backs Backend methods, which carry no context parameter.
-var pgCtx = context.Background()
-
 // pgNow mirrors sqlite's strftime('%Y-%m-%dT%H:%M:%fZ','now') format so
 // timestamps stored by either engine render identically.
 const pgNow = `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
@@ -141,18 +138,18 @@ func pgMarshalMeta(m map[string]any) string {
 // names already present are replaced. (No FTS sync needed: the keyword index
 // is the STORED generated tsvector column of migration 012, which PostgreSQL
 // recomputes per row; ILIKE + pg_trgm is its fallback, not a shadow table.)
-func (s *PGStore) UpsertElements(els []Element) error {
+func (s *PGStore) UpsertElements(ctx context.Context, els []Element) error {
 	if len(els) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, e := range els {
 		e = e.sanitize() // same write-boundary guard as sqlite: engines store identical bytes
-		if _, err := tx.Exec(pgCtx, `INSERT INTO code_elements
+		if _, err := tx.Exec(ctx, `INSERT INTO code_elements
 			(qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, content, metadata)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
 			ON CONFLICT (qualified_name) DO UPDATE SET
@@ -164,25 +161,25 @@ func (s *PGStore) UpsertElements(els []Element) error {
 			return fmt.Errorf("store: upsert element %s: %w", e.QualifiedName, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertRelationships writes a batch of relationships in one transaction.
 // Duplicate (source, target, rel_type) rows are overwritten, not duplicated.
-func (s *PGStore) UpsertRelationships(rels []Relationship) error {
+func (s *PGStore) UpsertRelationships(ctx context.Context, rels []Relationship) error {
 	if len(rels) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, r := range rels {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
+		if _, err := tx.Exec(ctx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
 			VALUES ($1,$2,$3,$4,$5::jsonb)
 			ON CONFLICT (source_qualified, target_qualified, rel_type) DO UPDATE SET
 				confidence=excluded.confidence, metadata=excluded.metadata`,
@@ -190,24 +187,24 @@ func (s *PGStore) UpsertRelationships(rels []Relationship) error {
 			return fmt.Errorf("store: upsert relationship %s->%s: %w", r.Source, r.Target, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertFiles records per-file index state.
-func (s *PGStore) UpsertFiles(files []FileRecord) error {
+func (s *PGStore) UpsertFiles(ctx context.Context, files []FileRecord) error {
 	if len(files) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, f := range files {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO code_files (path, size, mtime_ns, content_hash, indexed_at)
+		if _, err := tx.Exec(ctx, `INSERT INTO code_files (path, size, mtime_ns, content_hash, indexed_at)
 			VALUES ($1,$2,$3,$4,`+pgNow+`)
 			ON CONFLICT (path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns,
 				content_hash=excluded.content_hash, indexed_at=excluded.indexed_at`,
@@ -215,15 +212,15 @@ func (s *PGStore) UpsertFiles(files []FileRecord) error {
 			return fmt.Errorf("store: upsert file %s: %w", f.Path, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // Files returns all indexed file records.
-func (s *PGStore) Files() ([]FileRecord, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT path, size, mtime_ns, content_hash FROM code_files`)
+func (s *PGStore) Files(ctx context.Context) ([]FileRecord, error) {
+	rows, err := s.pool.Query(ctx, `SELECT path, size, mtime_ns, content_hash FROM code_files`)
 	if err != nil {
 		return nil, err
 	}
@@ -241,40 +238,40 @@ func (s *PGStore) Files() ([]FileRecord, error) {
 
 // DeleteByFile removes all elements and relationships belonging to a file.
 // Used by incremental re-index before a file is re-inserted.
-func (s *PGStore) DeleteByFile(path string) error {
-	tx, err := s.pool.Begin(pgCtx)
+func (s *PGStore) DeleteByFile(ctx context.Context, path string) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
-	if _, err := tx.Exec(pgCtx, `DELETE FROM relationships
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := tx.Exec(ctx, `DELETE FROM relationships
 		WHERE source_qualified IN (SELECT qualified_name FROM code_elements WHERE file_path = $1)`, path); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(pgCtx, `DELETE FROM code_elements WHERE file_path = $1`, path); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM code_elements WHERE file_path = $1`, path); err != nil {
 		return err
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteFileRecord removes a file's row from code_files (file deleted from disk).
-func (s *PGStore) DeleteFileRecord(path string) error {
-	if _, err := s.pool.Exec(pgCtx, `DELETE FROM code_files WHERE path = $1`, path); err != nil {
+func (s *PGStore) DeleteFileRecord(ctx context.Context, path string) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM code_files WHERE path = $1`, path); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteOrphanRelationships removes every edge whose endpoint is no longer a
 // live element (leankg gc).
-func (s *PGStore) DeleteOrphanRelationships() (int, error) {
+func (s *PGStore) DeleteOrphanRelationships(ctx context.Context) (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
-	tag, err := s.pool.Exec(pgCtx, `DELETE FROM relationships
+	tag, err := s.pool.Exec(ctx, `DELETE FROM relationships
 		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements)
 		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements)`)
 	if err != nil {
@@ -284,7 +281,7 @@ func (s *PGStore) DeleteOrphanRelationships() (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
-	return n, s.BumpWatermark(context.TODO())
+	return n, s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 const pgElementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path, ce.line_start, ce.line_end, ce.language, COALESCE(ce.parent_qualified,''), ce.content, COALESCE(ce.metadata::text,'{}')`
@@ -310,8 +307,8 @@ func pgScanElements(rows pgx.Rows) ([]Element, error) {
 // FindExact implements the L1 rung: exact (case-insensitive) match on element
 // name or qualified name. sqlite relies on COLLATE NOCASE; PostgreSQL uses
 // lower() comparisons (backed by expression indexes when available).
-func (s *PGStore) FindExact(name string) ([]Element, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce
+func (s *PGStore) FindExact(ctx context.Context, name string) ([]Element, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+` FROM code_elements ce
 		WHERE lower(ce.name) = lower($1) OR lower(ce.qualified_name) = lower($1)
 		ORDER BY length(ce.qualified_name) LIMIT 200`, name)
 	if err != nil {
@@ -325,9 +322,9 @@ func (s *PGStore) FindExact(name string) ([]Element, error) {
 // among symbol names to be worth a name search, and the bound is a fraction of
 // the ELEMENT count. The count is what the LIKE will MATCH (a SUBSTRING of the
 // name), and it stops at bound+1 because only the comparison matters.
-func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
+func (s *PGStore) nameTokenCounts(ctx context.Context, toks []string) (map[string]int, int, error) {
 	var total int
-	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	bound := nameArmBound(total)
@@ -335,7 +332,7 @@ func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
 	for _, t := range toks {
 		pat := "%" + t + "%"
 		var n int
-		if err := s.pool.QueryRow(pgCtx,
+		if err := s.pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM (SELECT 1 FROM code_elements WHERE name ILIKE $1 OR qualified_name ILIKE $1 LIMIT $2)`,
 			pat, bound+1).Scan(&n); err != nil {
 			return nil, 0, err
@@ -347,12 +344,12 @@ func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
 
 // rareNameTokens is the shared gate (see the SQLite implementation for the
 // measurement that motivated it).
-func (s *PGStore) rareNameTokens(query string) ([]string, error) {
+func (s *PGStore) rareNameTokens(ctx context.Context, query string) ([]string, error) {
 	toks := nameTokens(query)
 	if len(toks) == 0 {
 		return nil, nil
 	}
-	counts, total, err := s.nameTokenCounts(toks)
+	counts, total, err := s.nameTokenCounts(ctx, toks)
 	if err != nil {
 		return nil, err
 	}
@@ -370,8 +367,8 @@ func (s *PGStore) rareNameTokens(query string) ([]string, error) {
 // FindByNameToken is the ArmName ranking arm on PostgreSQL: elements whose
 // SYMBOL NAME contains a rare token of the query, shortest name first. Same
 // contract as the SQLite arm; f is applied in the WHERE before the LIMIT.
-func (s *PGStore) FindByNameToken(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
-	toks, err := s.rareNameTokens(query)
+func (s *PGStore) FindByNameToken(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
+	toks, err := s.rareNameTokens(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +386,7 @@ func (s *PGStore) FindByNameToken(query string, limit int, f ElementFilter) ([]F
 	}
 	filter := andWhere(f.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+` FROM code_elements ce
 		WHERE (`+strings.Join(where, " OR ")+`)`+filter+`
 		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
 		LIMIT $`+fmt.Sprint(len(args)), args...)
@@ -416,7 +413,7 @@ func (s *PGStore) FindByNameToken(query string, limit int, f ElementFilter) ([]F
 // values are not comparable across engines. The PG keyword rung (FindFuzzy in
 // pg_fts.go) prefers tsvector ranking, then pg_trgm similarity, and only lands
 // here.
-func (s *PGStore) findElementsILIKE(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
+func (s *PGStore) findElementsILIKE(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
@@ -427,7 +424,7 @@ func (s *PGStore) findElementsILIKE(query string, limit int, f ElementFilter) ([
 	args := []any{pattern}
 	filter := andWhere(f.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+`, -length(ce.qualified_name) AS score
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+`, -length(ce.qualified_name) AS score
 		FROM code_elements ce
 		WHERE (ce.name ILIKE $1 ESCAPE '\' OR ce.qualified_name ILIKE $1 ESCAPE '\')`+filter+`
 		ORDER BY length(ce.qualified_name) LIMIT $`+fmt.Sprint(len(args)), args...)
@@ -464,22 +461,22 @@ func escapeLike(q string) string {
 }
 
 // ElementCount returns the total number of indexed elements.
-func (s *PGStore) ElementCount() (int, error) {
+func (s *PGStore) ElementCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_elements`).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM code_elements`).Scan(&n)
 	return n, err
 }
 
 // RelationshipCount returns the total number of indexed relationships.
-func (s *PGStore) RelationshipCount() (int, error) {
+func (s *PGStore) RelationshipCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM relationships`).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM relationships`).Scan(&n)
 	return n, err
 }
 
 // ElementsByType returns element counts grouped by element_type.
-func (s *PGStore) ElementsByType() (map[string]int, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT element_type, COUNT(*) FROM code_elements GROUP BY element_type`)
+func (s *PGStore) ElementsByType(ctx context.Context) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT element_type, COUNT(*) FROM code_elements GROUP BY element_type`)
 	if err != nil {
 		return nil, err
 	}
@@ -497,15 +494,15 @@ func (s *PGStore) ElementsByType() (map[string]int, error) {
 }
 
 // FileCount returns the number of indexed files.
-func (s *PGStore) FileCount() (int, error) {
+func (s *PGStore) FileCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_files`).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM code_files`).Scan(&n)
 	return n, err
 }
 
 // Elements enumerates every indexed element (ordered by qualified_name).
-func (s *PGStore) Elements() ([]Element, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce ORDER BY ce.qualified_name`)
+func (s *PGStore) Elements(ctx context.Context) ([]Element, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+` FROM code_elements ce ORDER BY ce.qualified_name`)
 	if err != nil {
 		return nil, err
 	}
@@ -513,8 +510,8 @@ func (s *PGStore) Elements() ([]Element, error) {
 }
 
 // Outgoing returns relationships sourced at `source`.
-func (s *PGStore) Outgoing(source string) ([]Relationship, error) {
-	rows, err := s.pool.Query(pgCtx,
+func (s *PGStore) Outgoing(ctx context.Context, source string) ([]Relationship, error) {
+	rows, err := s.pool.Query(ctx,
 		`SELECT source_qualified, target_qualified, rel_type, confidence, metadata::text FROM relationships WHERE source_qualified = $1`, source)
 	if err != nil {
 		return nil, err
@@ -523,8 +520,8 @@ func (s *PGStore) Outgoing(source string) ([]Relationship, error) {
 }
 
 // Incoming returns relationships targeting `target`.
-func (s *PGStore) Incoming(target string) ([]Relationship, error) {
-	rows, err := s.pool.Query(pgCtx,
+func (s *PGStore) Incoming(ctx context.Context, target string) ([]Relationship, error) {
+	rows, err := s.pool.Query(ctx,
 		`SELECT source_qualified, target_qualified, rel_type, confidence, metadata::text FROM relationships WHERE target_qualified = $1`, target)
 	if err != nil {
 		return nil, err
@@ -533,11 +530,11 @@ func (s *PGStore) Incoming(target string) ([]Relationship, error) {
 }
 
 // RelationshipsAll returns up to limit relationships ordered by id.
-func (s *PGStore) RelationshipsAll(limit int) ([]Relationship, error) {
+func (s *PGStore) RelationshipsAll(ctx context.Context, limit int) ([]Relationship, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	rows, err := s.pool.Query(pgCtx,
+	rows, err := s.pool.Query(ctx,
 		`SELECT source_qualified, target_qualified, rel_type, confidence, metadata::text FROM relationships ORDER BY id LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -618,35 +615,35 @@ func (s *PGStore) vecTable(modelID string) string {
 // and ensures the per-model tables exist. The full identity — model,
 // revision, dims, distance, provider, chunker version and the
 // query/document prefix pair — is persisted.
-func (s *PGStore) WriteStamp(st ModelStamp) error {
-	if err := s.ensureModelTables(st); err != nil {
+func (s *PGStore) WriteStamp(ctx context.Context, st ModelStamp) error {
+	if err := s.ensureModelTables(ctx, st); err != nil {
 		return err
 	}
-	shape, err := s.stampShape()
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return fmt.Errorf("store: stamp shape: %w", err)
 	}
-	if _, err := s.pool.Exec(pgCtx, stampUpsertFor(shape.cols, func(i int) string { return fmt.Sprintf("$%d", i) }), stampValues(st, shape.cols)...); err != nil {
+	if _, err := s.pool.Exec(ctx, stampUpsertFor(shape.cols, func(i int) string { return fmt.Sprintf("$%d", i) }), stampValues(st, shape.cols)...); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // ensureModelTables creates the per-model state + vector tables. A PG vector
 // column is fixed-dimension (unlike sqlite BLOBs), so a re-stamp with a
 // different dimension count drops and recreates the tables — the physical
 // analogue of the stamp-guard full rebuild.
-func (s *PGStore) ensureModelTables(st ModelStamp) error {
+func (s *PGStore) ensureModelTables(ctx context.Context, st ModelStamp) error {
 	state, vec := s.stateTable(st.ModelID), s.vecTable(st.ModelID)
 	var cur int
-	err := s.pool.QueryRow(pgCtx, `SELECT dimensions FROM emb_stamp WHERE model_id = $1`, st.ModelID).Scan(&cur)
+	err := s.pool.QueryRow(ctx, `SELECT dimensions FROM emb_stamp WHERE model_id = $1`, st.ModelID).Scan(&cur)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		// fresh model
 	case err != nil:
 		return err
 	case cur != st.Dimensions:
-		if _, err := s.pool.Exec(pgCtx, `DROP TABLE IF EXISTS `+vec+`, `+state); err != nil {
+		if _, err := s.pool.Exec(ctx, `DROP TABLE IF EXISTS `+vec+`, `+state); err != nil {
 			return fmt.Errorf("store: drop resized model tables %s: %w", st.ModelID, err)
 		}
 	}
@@ -664,7 +661,7 @@ func (s *PGStore) ensureModelTables(st ModelStamp) error {
 		`CREATE INDEX IF NOT EXISTS idx_` + vec + `_hnsw ON ` + vec + ` USING hnsw (vec vector_cosine_ops)`,
 	}
 	for _, stmt := range stmts {
-		if _, err := s.pool.Exec(pgCtx, stmt); err != nil {
+		if _, err := s.pool.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("store: ensure model tables %s: %w", st.ModelID, err)
 		}
 	}
@@ -676,8 +673,8 @@ func (s *PGStore) ensureModelTables(st ModelStamp) error {
 // fail the whole read. A schema with no emb_stamp table at all yields no
 // columns; the read then fails with PostgreSQL's own "relation
 // \"emb_stamp\" does not exist", which is the truth about that store.
-func (s *PGStore) stampColumns() (stampColumnSet, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT a.attname::text FROM pg_attribute a
+func (s *PGStore) stampColumns(ctx context.Context) (stampColumnSet, error) {
+	rows, err := s.pool.Query(ctx, `SELECT a.attname::text FROM pg_attribute a
 		WHERE a.attrelid = to_regclass('emb_stamp') AND a.attnum > 0 AND NOT a.attisdropped`)
 	if err != nil {
 		return nil, err
@@ -696,8 +693,8 @@ func (s *PGStore) stampColumns() (stampColumnSet, error) {
 
 // stampShape probes this schema's emb_stamp columns and builds the read
 // shape from them.
-func (s *PGStore) stampShape() (*stampShape, error) {
-	cols, err := s.stampColumns()
+func (s *PGStore) stampShape(ctx context.Context) (*stampShape, error) {
+	cols, err := s.stampColumns(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -709,13 +706,13 @@ func (s *PGStore) stampShape() (*stampShape, error) {
 // the schema does not have AT ALL is projected as its documented default
 // (text_cap 0 = "cap never recorded") instead of failing the read with
 // "column \"text_cap\" does not exist".
-func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
-	shape, err := s.stampShape()
+func (s *PGStore) Stamp(ctx context.Context, modelID string) (*ModelStamp, error) {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var st ModelStamp
-	err = s.pool.QueryRow(pgCtx, shape.selectSQL+` WHERE model_id = $1`, modelID).
+	err = s.pool.QueryRow(ctx, shape.selectSQL+` WHERE model_id = $1`, modelID).
 		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
 			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -729,12 +726,12 @@ func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
 
 // Stamps returns all persisted model stamps. The read shape follows the
 // store's schema exactly like PGStore.Stamp's.
-func (s *PGStore) Stamps() ([]ModelStamp, error) {
-	shape, err := s.stampShape()
+func (s *PGStore) Stamps(ctx context.Context) ([]ModelStamp, error) {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(pgCtx, shape.selectSQL)
+	rows, err := s.pool.Query(ctx, shape.selectSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +758,7 @@ func (s *PGStore) Stamps() ([]ModelStamp, error) {
 // An empty keep is a NO-OP (see the Backend contract). A collection whose
 // tables have already vanished is skipped, not fatal: the stamp is cleaned
 // up either way. The watermark bumps only when rows actually go.
-func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
+func (s *PGStore) DeleteStaleStamps(ctx context.Context, keep []string) (StaleStampSweep, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -779,14 +776,14 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	have := false
 	for _, k := range keep {
 		var present bool
-		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(k)).Scan(&present); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(k)).Scan(&present); err != nil {
 			return StaleStampSweep{}, err
 		}
 		if !present {
 			continue
 		}
 		var n int
-		if err := s.pool.QueryRow(pgCtx, `SELECT 1 FROM `+s.vecTable(k)+` LIMIT 1`).Scan(&n); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT 1 FROM `+s.vecTable(k)+` LIMIT 1`).Scan(&n); err != nil {
 			if err == pgx.ErrNoRows {
 				continue
 			}
@@ -798,7 +795,7 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if !have {
 		return StaleStampSweep{}, nil
 	}
-	stamps, err := s.Stamps()
+	stamps, err := s.Stamps(ctx)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -808,23 +805,23 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 			continue
 		}
 		var present bool
-		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&present); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&present); err != nil {
 			return out, err
 		}
 		if present {
 			var n int
-			if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM `+s.vecTable(ms.ModelID)).Scan(&n); err != nil {
+			if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+s.vecTable(ms.ModelID)).Scan(&n); err != nil {
 				return out, err
 			}
 			out.Vectors += n
-			if _, err := s.pool.Exec(pgCtx, `DROP TABLE IF EXISTS `+s.vecTable(ms.ModelID)); err != nil {
+			if _, err := s.pool.Exec(ctx, `DROP TABLE IF EXISTS `+s.vecTable(ms.ModelID)); err != nil {
 				return out, err
 			}
 		}
-		if _, err := s.pool.Exec(pgCtx, `DROP TABLE IF EXISTS `+s.stateTable(ms.ModelID)); err != nil {
+		if _, err := s.pool.Exec(ctx, `DROP TABLE IF EXISTS `+s.stateTable(ms.ModelID)); err != nil {
 			return out, err
 		}
-		tag, err := s.pool.Exec(pgCtx, `DELETE FROM emb_stamp WHERE model_id = $1`, ms.ModelID)
+		tag, err := s.pool.Exec(ctx, `DELETE FROM emb_stamp WHERE model_id = $1`, ms.ModelID)
 		if err != nil {
 			return out, err
 		}
@@ -833,12 +830,12 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if out.Models == 0 && out.Vectors == 0 {
 		return out, nil
 	}
-	return out, s.BumpWatermark(context.TODO())
+	return out, s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // EmbeddingStateMap returns qualified_name -> content_hash for a model.
-func (s *PGStore) EmbeddingStateMap(modelID string) (map[string]string, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT qualified_name, content_hash FROM `+s.stateTable(modelID))
+func (s *PGStore) EmbeddingStateMap(ctx context.Context, modelID string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT qualified_name, content_hash FROM `+s.stateTable(modelID))
 	if err != nil {
 		return nil, err
 	}
@@ -855,78 +852,78 @@ func (s *PGStore) EmbeddingStateMap(modelID string) (map[string]string, error) {
 }
 
 // SetEmbeddingStates records embedding_state rows for freshly embedded QNs.
-func (s *PGStore) SetEmbeddingStates(modelID string, states map[string]string) error {
+func (s *PGStore) SetEmbeddingStates(ctx context.Context, modelID string, states map[string]string) error {
 	if len(states) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for qn, h := range states {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO `+s.stateTable(modelID)+` (qualified_name, content_hash, state, embedded_at)
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.stateTable(modelID)+` (qualified_name, content_hash, state, embedded_at)
 			VALUES ($1,$2,'embedded', now())
 			ON CONFLICT (qualified_name) DO UPDATE SET content_hash=excluded.content_hash,
 				state='embedded', embedded_at=excluded.embedded_at`, qn, h); err != nil {
 			return fmt.Errorf("store: set embedding state %s: %w", qn, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertVectors writes a batch of vectors for a model in ONE transaction:
 // a crash mid-run leaves the previous state consistent and reruns resume
 // (issue #368 AC: batch upsert semantics).
-func (s *PGStore) UpsertVectors(modelID string, rows []VectorRow) error {
+func (s *PGStore) UpsertVectors(ctx context.Context, modelID string, rows []VectorRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, r := range rows {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO `+s.vecTable(modelID)+` (qualified_name, vec) VALUES ($1, $2::vector)
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.vecTable(modelID)+` (qualified_name, vec) VALUES ($1, $2::vector)
 			ON CONFLICT (qualified_name) DO UPDATE SET vec=excluded.vec`,
 			r.QualifiedName, pgvector.NewVector(r.Vec)); err != nil {
 			return fmt.Errorf("store: upsert vector %s: %w", r.QualifiedName, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // ClearVectors drops all vectors + state for a model (stamp-guard rebuild).
-func (s *PGStore) ClearVectors(modelID string) error {
+func (s *PGStore) ClearVectors(ctx context.Context, modelID string) error {
 	for _, stmt := range []string{
 		`DELETE FROM ` + s.vecTable(modelID),
 		`DELETE FROM ` + s.stateTable(modelID),
 	} {
-		if _, err := s.pool.Exec(pgCtx, stmt); err != nil {
+		if _, err := s.pool.Exec(ctx, stmt); err != nil {
 			return err
 		}
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // VectorCount returns the vector count for a model.
-func (s *PGStore) VectorCount(modelID string) (int, error) {
+func (s *PGStore) VectorCount(ctx context.Context, modelID string) (int, error) {
 	var n int
-	err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM `+s.vecTable(modelID)).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+s.vecTable(modelID)).Scan(&n)
 	return n, err
 }
 
 // VectorCoverage reports (covered, orphans): vector rows whose QN still has a
 // live element vs. rows whose QN disappeared (anti-join via LEFT JOIN).
-func (s *PGStore) VectorCoverage(modelID string) (covered, orphans int, err error) {
-	err = s.pool.QueryRow(pgCtx, `SELECT
+func (s *PGStore) VectorCoverage(ctx context.Context, modelID string) (covered, orphans int, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT
 			COUNT(*) FILTER (WHERE ce.qualified_name IS NOT NULL),
 			COUNT(*) FILTER (WHERE ce.qualified_name IS NULL)
 		FROM `+s.vecTable(modelID)+` v
@@ -938,34 +935,34 @@ func (s *PGStore) VectorCoverage(modelID string) (covered, orphans int, err erro
 // exist, per model collection (the per-stamp tables are PG's collection
 // layout; a stamped model whose tables vanished is skipped, not fatal). The
 // watermark bumps only when rows actually go.
-func (s *PGStore) DeleteOrphanVectors() (int, error) {
+func (s *PGStore) DeleteOrphanVectors(ctx context.Context) (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
-	stamps, err := s.Stamps()
+	stamps, err := s.Stamps(ctx)
 	if err != nil {
 		return 0, err
 	}
 	total := 0
 	for _, ms := range stamps {
 		var ok bool
-		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&ok); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&ok); err != nil {
 			return total, err
 		}
 		if !ok {
 			continue
 		}
-		tag, err := s.pool.Exec(pgCtx, `DELETE FROM `+s.vecTable(ms.ModelID)+` v
+		tag, err := s.pool.Exec(ctx, `DELETE FROM `+s.vecTable(ms.ModelID)+` v
 			WHERE v.qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
 		if err != nil {
 			return total, err
 		}
 		total += int(tag.RowsAffected())
-		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.stateTable(ms.ModelID)).Scan(&ok); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, s.stateTable(ms.ModelID)).Scan(&ok); err != nil {
 			return total, err
 		}
 		if ok {
-			if _, err := s.pool.Exec(pgCtx, `DELETE FROM `+s.stateTable(ms.ModelID)+` st
+			if _, err := s.pool.Exec(ctx, `DELETE FROM `+s.stateTable(ms.ModelID)+` st
 				WHERE st.qualified_name NOT IN (SELECT qualified_name FROM code_elements)`); err != nil {
 				return total, err
 			}
@@ -974,7 +971,7 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 	if total == 0 {
 		return 0, nil
 	}
-	return total, s.BumpWatermark(context.TODO())
+	return total, s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // SearchVectors performs the single ANN-equivalent shape: the model's vectors
@@ -983,7 +980,7 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 // The filter is part of the WHERE clause, before ORDER BY and LIMIT, and the
 // connections run with hnsw.iterative_scan (see openPG), so K admitted rows come
 // back whenever they exist.
-func (s *PGStore) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
+func (s *PGStore) SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error) {
 	if len(q.Vec) == 0 {
 		return nil, nil
 	}
@@ -991,7 +988,7 @@ func (s *PGStore) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
 	args := []any{pgvector.NewVector(q.Vec)}
 	filter := andWhere(q.Filter.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, k)
-	rows, err := s.pool.Query(pgCtx, `SELECT v.qualified_name,
+	rows, err := s.pool.Query(ctx, `SELECT v.qualified_name,
 		COALESCE(ce.element_type,''), COALESCE(ce.name, v.qualified_name), COALESCE(ce.file_path,''),
 		COALESCE(ce.line_start,0), COALESCE(ce.line_end,0), COALESCE(ce.language,''),
 		COALESCE(ce.parent_qualified,''), COALESCE(ce.content,''), COALESCE(ce.metadata::text,'{}'),
@@ -1073,16 +1070,16 @@ func (s *PGStore) LoadInventory(ctx context.Context) (*Inventory, error) {
 }
 
 // StartEmbedRun records a running pipeline run and returns its id.
-func (s *PGStore) StartEmbedRun(modelID, mode string, dirty int) (int64, error) {
+func (s *PGStore) StartEmbedRun(ctx context.Context, modelID, mode string, dirty int) (int64, error) {
 	var id int64
-	err := s.pool.QueryRow(pgCtx, `INSERT INTO embed_runs (model_id, mode, started_at, dirty, status)
+	err := s.pool.QueryRow(ctx, `INSERT INTO embed_runs (model_id, mode, started_at, dirty, status)
 		VALUES ($1,$2,`+pgNow+`,$3,'running') RETURNING id`, modelID, mode, dirty).Scan(&id)
 	return id, err
 }
 
 // FinishEmbedRun closes a run record with the final counters.
-func (s *PGStore) FinishEmbedRun(id int64, status string, embedded, skipped, failed, truncations, orphans int) error {
-	_, err := s.pool.Exec(pgCtx, `UPDATE embed_runs SET finished_at=`+pgNow+`,
+func (s *PGStore) FinishEmbedRun(ctx context.Context, id int64, status string, embedded, skipped, failed, truncations, orphans int) error {
+	_, err := s.pool.Exec(ctx, `UPDATE embed_runs SET finished_at=`+pgNow+`,
 		embedded=$1, skipped=$2, failed=$3, truncations=$4, orphans=$5, status=$6 WHERE id=$7`,
 		embedded, skipped, failed, truncations, orphans, status, id)
 	return err
@@ -1104,8 +1101,8 @@ func pgScanEmbedRun(row pgx.Row) (*EmbedRun, error) {
 }
 
 // LastEmbedRunAny returns the most recent embed run across all models.
-func (s *PGStore) LastEmbedRunAny() (*EmbedRun, error) {
-	return pgScanEmbedRun(s.pool.QueryRow(pgCtx,
+func (s *PGStore) LastEmbedRunAny(ctx context.Context) (*EmbedRun, error) {
+	return pgScanEmbedRun(s.pool.QueryRow(ctx,
 		`SELECT `+pgEmbedRunCols+` FROM embed_runs ORDER BY id DESC LIMIT 1`))
 }
 
@@ -1113,19 +1110,19 @@ func (s *PGStore) LastEmbedRunAny() (*EmbedRun, error) {
 // marked "running" past the cutoff and deletes the finished runs older than
 // it. The newest row is kept — it names the store's current collection
 // (CurrentModelID). Mirrors the SQLite implementation (vectors.go).
-func (s *PGStore) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
+func (s *PGStore) PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRunPrune, error) {
 	var out EmbedRunPrune
 	if err := requireWritable(s.mode); err != nil {
 		return out, err
 	}
 	cut := embedRunCutoff(cutoff)
-	tag, err := s.pool.Exec(pgCtx, `UPDATE embed_runs SET status='failed', finished_at=`+pgNow+`
+	tag, err := s.pool.Exec(ctx, `UPDATE embed_runs SET status='failed', finished_at=`+pgNow+`
 		WHERE status='running' AND started_at < $1`, cut)
 	if err != nil {
 		return out, fmt.Errorf("store: close out stale embed runs: %w", err)
 	}
 	out.Closed = tag.RowsAffected()
-	tag, err = s.pool.Exec(pgCtx, `DELETE FROM embed_runs
+	tag, err = s.pool.Exec(ctx, `DELETE FROM embed_runs
 		WHERE started_at < $1 AND status <> 'running'
 		  AND id <> (SELECT COALESCE(MAX(id), 0) FROM embed_runs)`, cut)
 	if err != nil {
@@ -1136,8 +1133,8 @@ func (s *PGStore) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 }
 
 // LastEmbedRun returns the most recent run for a model; nil when none.
-func (s *PGStore) LastEmbedRun(modelID string) (*EmbedRun, error) {
-	return pgScanEmbedRun(s.pool.QueryRow(pgCtx,
+func (s *PGStore) LastEmbedRun(ctx context.Context, modelID string) (*EmbedRun, error) {
+	return pgScanEmbedRun(s.pool.QueryRow(ctx,
 		`SELECT `+pgEmbedRunCols+` FROM embed_runs WHERE model_id = $1 ORDER BY id DESC LIMIT 1`, modelID))
 }
 
@@ -1145,18 +1142,18 @@ func (s *PGStore) LastEmbedRun(modelID string) (*EmbedRun, error) {
 // the highest seq. sqlite serialized appends through its single write
 // connection; the pool's concurrent writers need an explicit transaction-scoped
 // advisory lock so the hash chain can never fork.
-func (s *PGStore) AppendAudit(e *AuditEntry) error {
-	tx, err := s.pool.Begin(pgCtx)
+func (s *PGStore) AppendAudit(ctx context.Context, e *AuditEntry) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
-	if _, err := tx.Exec(pgCtx, `SELECT pg_advisory_xact_lock(hashtext($1))`, s.schema); err != nil {
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, s.schema); err != nil {
 		return err
 	}
 	var seq int64
 	var prev string
-	if err := tx.QueryRow(pgCtx,
+	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE(MAX(seq),0), COALESCE((SELECT hash FROM audit_ledger ORDER BY seq DESC LIMIT 1),'') FROM audit_ledger`).
 		Scan(&seq, &prev); err != nil {
 		return err
@@ -1167,22 +1164,22 @@ func (s *PGStore) AppendAudit(e *AuditEntry) error {
 		e.At = time.Now().Unix()
 	}
 	e.Hash = auditHash(e.PrevHash, e)
-	if _, err := tx.Exec(pgCtx, `INSERT INTO audit_ledger (seq, at, actor, action, target, details, prev_hash, hash)
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_ledger (seq, at, actor, action, target, details, prev_hash, hash)
 		VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`, e.Seq, e.At, e.Actor, e.Action, e.Target, auditDetailsJSON(e), e.PrevHash, e.Hash); err != nil {
 		return err
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // AuditTail returns the last `limit` entries in ascending seq order.
-func (s *PGStore) AuditTail(limit int) ([]AuditEntry, error) {
+func (s *PGStore) AuditTail(ctx context.Context, limit int) ([]AuditEntry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(pgCtx, `SELECT seq, at, actor, action, target, details::text, prev_hash, hash FROM audit_ledger
+	rows, err := s.pool.Query(ctx, `SELECT seq, at, actor, action, target, details::text, prev_hash, hash FROM audit_ledger
 		ORDER BY seq DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -1214,8 +1211,8 @@ func (s *PGStore) AuditTail(limit int) ([]AuditEntry, error) {
 // into the entry BEFORE recompute: jsonb normalizes key order on storage, and
 // the hash is defined over the canonical Go marshal of the details map, so
 // only the map round-trip is stable — not the stored byte string.
-func (s *PGStore) VerifyAuditChain() (ok bool, brokenAt int64, err error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT seq, at, actor, action, target, details::text, prev_hash, hash FROM audit_ledger ORDER BY seq`)
+func (s *PGStore) VerifyAuditChain(ctx context.Context) (ok bool, brokenAt int64, err error) {
+	rows, err := s.pool.Query(ctx, `SELECT seq, at, actor, action, target, details::text, prev_hash, hash FROM audit_ledger ORDER BY seq`)
 	if err != nil {
 		return false, 0, err
 	}

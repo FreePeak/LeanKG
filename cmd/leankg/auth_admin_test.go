@@ -50,7 +50,7 @@ func TestAdminInitGeneratesPasswordWhenAbsent(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	adminInitWriteEnv(t, envPath, "OTHER=1\n")
 
-	outcome, err := bootstrapAdmin(st, "admin-gen", envPath)
+	outcome, err := bootstrapAdmin(context.Background(), st, "admin-gen", envPath)
 	if err != nil || outcome != adminCreatedGenerated {
 		t.Fatalf("bootstrap = %v, %v; want generated", outcome, err)
 	}
@@ -71,7 +71,7 @@ func TestAdminInitGeneratesPasswordWhenAbsent(t *testing.T) {
 	if info, _ := os.Stat(envPath); info.Mode().Perm() != 0o600 {
 		t.Fatalf("env mode = %o, want 600", info.Mode().Perm())
 	}
-	if _, err := auth.VerifyAdminLogin(st, "admin-gen", password); err != nil {
+	if _, err := auth.VerifyAdminLogin(context.Background(), st, "admin-gen", password); err != nil {
 		t.Fatalf("written credentials do not verify: %v", err)
 	}
 }
@@ -82,11 +82,11 @@ func TestAdminInitCreatesFromEnvPassword(t *testing.T) {
 	orig := "LEANKG_ADMIN_PASSWORD='env-provided-pw'\n"
 	adminInitWriteEnv(t, envPath, orig)
 
-	outcome, err := bootstrapAdmin(st, "admin-env", envPath)
+	outcome, err := bootstrapAdmin(context.Background(), st, "admin-env", envPath)
 	if err != nil || outcome != adminCreatedFromEnv {
 		t.Fatalf("bootstrap = %v, %v; want created from env", outcome, err)
 	}
-	if _, err := auth.VerifyAdminLogin(st, "admin-env", "env-provided-pw"); err != nil {
+	if _, err := auth.VerifyAdminLogin(context.Background(), st, "admin-env", "env-provided-pw"); err != nil {
 		t.Fatalf("account must use the env password: %v", err)
 	}
 	if got, want := adminInitText(t, envPath), orig+"LEANKG_ADMIN_USERNAME=admin-env\n"; got != want {
@@ -96,7 +96,7 @@ func TestAdminInitCreatesFromEnvPassword(t *testing.T) {
 
 func TestAdminInitNoopWhenCredentialsVerify(t *testing.T) {
 	st := adminInitStore(t)
-	if _, err := auth.CreateSiteAdmin(st, "admin-same", "same-password-1"); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "admin-same", "same-password-1"); err != nil {
 		t.Fatal(err)
 	}
 	envPath := filepath.Join(t.TempDir(), ".env")
@@ -105,16 +105,16 @@ func TestAdminInitNoopWhenCredentialsVerify(t *testing.T) {
 	if err := os.Chmod(envPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before, _, _ := st.AccountByEmail("admin-same")
+	before, _, _ := st.AccountByEmail(context.Background(), "admin-same")
 
-	outcome, err := bootstrapAdmin(st, "admin-same", envPath)
+	outcome, err := bootstrapAdmin(context.Background(), st, "admin-same", envPath)
 	if err != nil || outcome != adminAlreadyInitialised {
 		t.Fatalf("bootstrap = %v, %v; want already initialised", outcome, err)
 	}
 	if got := adminInitText(t, envPath); got != orig {
 		t.Fatalf("no-op changed the env file: %q", got)
 	}
-	after, _, _ := st.AccountByEmail("admin-same")
+	after, _, _ := st.AccountByEmail(context.Background(), "admin-same")
 	if after.PasswordHash != before.PasswordHash {
 		t.Fatal("no-op changed the stored credential")
 	}
@@ -126,7 +126,7 @@ func TestAdminInitNoopWhenCredentialsVerify(t *testing.T) {
 // file holds the plaintext password.
 func TestAdminInitNoopTightensEnvModeTo0600(t *testing.T) {
 	st := adminInitStore(t)
-	if _, err := auth.CreateSiteAdmin(st, "admin-mode", "mode-password-1"); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "admin-mode", "mode-password-1"); err != nil {
 		t.Fatal(err)
 	}
 	envPath := filepath.Join(t.TempDir(), ".env")
@@ -136,7 +136,7 @@ func TestAdminInitNoopTightensEnvModeTo0600(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outcome, err := bootstrapAdmin(st, "admin-mode", envPath)
+	outcome, err := bootstrapAdmin(context.Background(), st, "admin-mode", envPath)
 	if err != nil || outcome != adminAlreadyInitialisedTightened {
 		t.Fatalf("bootstrap = %v, %v; want already initialised with mode tightened", outcome, err)
 	}
@@ -161,23 +161,23 @@ func TestAdminInitFailsWhenExistingAccountCannotBeConfirmed(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			st := adminInitStore(t)
 			if c.plain {
-				if _, err := auth.Register(st, c.username, "plain-password-1", "Ops"); err != nil {
+				if _, err := auth.Register(context.Background(), st, c.username, "plain-password-1", "Ops"); err != nil {
 					t.Fatal(err)
 				}
-			} else if _, err := auth.CreateSiteAdmin(st, c.username, "real-password-1"); err != nil {
+			} else if _, err := auth.CreateSiteAdmin(context.Background(), st, c.username, "real-password-1"); err != nil {
 				t.Fatal(err)
 			}
 			envPath := filepath.Join(t.TempDir(), ".env")
 			adminInitWriteEnv(t, envPath, c.env)
-			before, _, _ := st.AccountByEmail(auth.NormalizeEmail(c.username))
+			before, _, _ := st.AccountByEmail(context.Background(), auth.NormalizeEmail(c.username))
 
-			if _, err := bootstrapAdmin(st, c.username, envPath); err == nil {
+			if _, err := bootstrapAdmin(context.Background(), st, c.username, envPath); err == nil {
 				t.Fatal("bootstrap must fail when the existing account cannot be confirmed")
 			}
 			if got := adminInitText(t, envPath); got != c.env {
 				t.Fatalf("failed bootstrap changed the env file: %q", got)
 			}
-			after, _, _ := st.AccountByEmail(auth.NormalizeEmail(c.username))
+			after, _, _ := st.AccountByEmail(context.Background(), auth.NormalizeEmail(c.username))
 			if after.PasswordHash != before.PasswordHash || after.SiteAdmin != before.SiteAdmin {
 				t.Fatal("failed bootstrap changed the account")
 			}
@@ -187,18 +187,18 @@ func TestAdminInitFailsWhenExistingAccountCannotBeConfirmed(t *testing.T) {
 
 func TestAdminInitRefusesSecondSiteAdmin(t *testing.T) {
 	st := adminInitStore(t)
-	if _, err := auth.CreateSiteAdmin(st, "root-admin", "root-password-1"); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "root-admin", "root-password-1"); err != nil {
 		t.Fatal(err)
 	}
 	envPath := filepath.Join(t.TempDir(), ".env")
 
-	if _, err := bootstrapAdmin(st, "admin-second", envPath); err == nil {
+	if _, err := bootstrapAdmin(context.Background(), st, "admin-second", envPath); err == nil {
 		t.Fatal("a second site admin must be refused")
 	}
 	if _, err := os.Stat(envPath); !os.IsNotExist(err) {
 		t.Fatalf("refused bootstrap must not write the env file (stat err %v)", err)
 	}
-	if _, found, _ := st.AccountByEmail("admin-second"); found {
+	if _, found, _ := st.AccountByEmail(context.Background(), "admin-second"); found {
 		t.Fatal("refused bootstrap must not create the account")
 	}
 }
@@ -209,7 +209,7 @@ func TestAdminInitRejectsEnvUsernameMismatch(t *testing.T) {
 	orig := "LEANKG_ADMIN_USERNAME=ops-other\n"
 	adminInitWriteEnv(t, envPath, orig)
 
-	if _, err := bootstrapAdmin(st, "admin-mismatch", envPath); err == nil {
+	if _, err := bootstrapAdmin(context.Background(), st, "admin-mismatch", envPath); err == nil {
 		t.Fatal("env username that differs from --username must be refused")
 	}
 	if got := adminInitText(t, envPath); got != orig {
@@ -223,13 +223,13 @@ func TestAdminInitRejectsShortEnvPasswordBeforeWriting(t *testing.T) {
 	orig := "LEANKG_ADMIN_PASSWORD=abc\n"
 	adminInitWriteEnv(t, envPath, orig)
 
-	if _, err := bootstrapAdmin(st, "admin-short", envPath); err == nil {
+	if _, err := bootstrapAdmin(context.Background(), st, "admin-short", envPath); err == nil {
 		t.Fatal("a password below the policy minimum must be refused")
 	}
 	if got := adminInitText(t, envPath); got != orig {
 		t.Fatalf("refused bootstrap changed the env file: %q", got)
 	}
-	if _, found, _ := st.AccountByEmail("admin-short"); found {
+	if _, found, _ := st.AccountByEmail(context.Background(), "admin-short"); found {
 		t.Fatal("refused bootstrap must not create the account")
 	}
 }

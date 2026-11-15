@@ -82,8 +82,8 @@ func LoadCatalog(path string) (*Catalog, error) {
 // anywhere wins over a label-name match, which wins over a label-substring
 // match. (concept, element) pairs are deduped keeping the strongest
 // provenance; the result is sorted by ConceptID then QN.
-func (c *Catalog) MatchElements(st store.Backend) ([]Match, error) {
-	els, err := st.Elements()
+func (c *Catalog) MatchElements(ctx context.Context, st store.Backend) ([]Match, error) {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -142,17 +142,17 @@ func (c *Catalog) MatchElements(st store.Backend) ([]Match, error) {
 }
 
 // SaveMatches persists the match set under the "ontology" KV namespace.
-func SaveMatches(st store.Backend, matches []Match) error {
+func SaveMatches(ctx context.Context, st store.Backend, matches []Match) error {
 	b, err := json.Marshal(matches)
 	if err != nil {
 		return err
 	}
-	return st.KVSet(context.TODO(), "ontology", "matches", string(b))
+	return st.KVSet(ctx, "ontology", "matches", string(b))
 }
 
 // LoadMatches reads the match set back; a missing key yields (nil, nil).
-func LoadMatches(st store.Backend) ([]Match, error) {
-	s, ok, err := st.KVGet(context.TODO(), "ontology", "matches")
+func LoadMatches(ctx context.Context, st store.Backend) ([]Match, error) {
+	s, ok, err := st.KVGet(ctx, "ontology", "matches")
 	if err != nil || !ok {
 		return nil, err
 	}

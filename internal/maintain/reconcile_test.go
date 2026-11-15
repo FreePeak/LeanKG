@@ -42,7 +42,7 @@ func openStore(t *testing.T) store.Backend {
 // elementsOf returns the elements whose file path is path.
 func elementsOf(t *testing.T, st store.Backend, path string) []store.Element {
 	t.Helper()
-	all, err := st.Elements()
+	all, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,12 +73,12 @@ func TestReconcileHeadRemovesPathDeletedFromHead(t *testing.T) {
 	// with the element, or the L3 arm answers with vectors whose content no
 	// longer exists.
 	els := elementsOf(t, st, "main.go")
-	if err := st.WriteStamp(store.ModelStamp{
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{
 		ModelID: "m-1", Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "test",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors("m-1", []store.VectorRow{
+	if err := st.UpsertVectors(context.Background(), "m-1", []store.VectorRow{
 		{QualifiedName: els[0].QualifiedName, Vec: []float32{1, 0, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestReconcileHeadRemovesPathDeletedFromHead(t *testing.T) {
 	if els := elementsOf(t, st, "main.go"); len(els) != 0 {
 		t.Fatalf("elements of the deleted path remain: %d", len(els))
 	}
-	files, err := st.Files()
+	files, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestReconcileHeadRemovesPathDeletedFromHead(t *testing.T) {
 			t.Fatal("the deleted path still has a file record")
 		}
 	}
-	if n, err := st.VectorCount("m-1"); err != nil {
+	if n, err := st.VectorCount(context.Background(), "m-1"); err != nil {
 		t.Fatal(err)
 	} else if n != 0 {
 		t.Fatalf("VectorCount = %d; want 0 (the deleted path's vectors are orphans now)", n)

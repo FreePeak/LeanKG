@@ -58,12 +58,12 @@ func newStore(t *testing.T, root string, els []store.Element, rels []store.Relat
 		t.Fatalf("migrate: %v", err)
 	}
 	if len(els) > 0 {
-		if err := s.UpsertElements(els); err != nil {
+		if err := s.UpsertElements(context.Background(), els); err != nil {
 			t.Fatalf("upsert elements: %v", err)
 		}
 	}
 	if len(rels) > 0 {
-		if err := s.UpsertRelationships(rels); err != nil {
+		if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 			t.Fatalf("upsert relationships: %v", err)
 		}
 	}
@@ -114,7 +114,7 @@ func TestManifestAndSnapshotWritten(t *testing.T) {
 	st, root := fixture(t)
 	out := filepath.Join(root, "pack")
 
-	m, err := WritePack(st, out, Options{})
+	m, err := WritePack(context.Background(), st, out, Options{})
 	if err != nil {
 		t.Fatalf("WritePack: %v", err)
 	}
@@ -216,11 +216,11 @@ func TestSameGraphSameHash(t *testing.T) {
 	out1 := filepath.Join(root, "p1")
 	out2 := filepath.Join(root, "p2")
 
-	m1, err := WritePack(st, out1, Options{})
+	m1, err := WritePack(context.Background(), st, out1, Options{})
 	if err != nil {
 		t.Fatalf("pack 1: %v", err)
 	}
-	m2, err := WritePack(st, out2, Options{})
+	m2, err := WritePack(context.Background(), st, out2, Options{})
 	if err != nil {
 		t.Fatalf("pack 2: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestManifestIsByteIdenticalAcrossRuns(t *testing.T) {
 	out2 := filepath.Join(root, "p2")
 
 	for _, out := range []string{out1, out2} {
-		if _, err := WritePack(st, out, Options{SourceRevision: "abc1234", Path: "src"}); err != nil {
+		if _, err := WritePack(context.Background(), st, out, Options{SourceRevision: "abc1234", Path: "src"}); err != nil {
 			t.Fatalf("pack %s: %v", out, err)
 		}
 	}
@@ -291,7 +291,7 @@ func TestPathScopeFiltersElements(t *testing.T) {
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			out := filepath.Join(root, fmt.Sprintf("scope-%d", i))
-			m, err := WritePack(st, out, Options{Path: tc.scope})
+			m, err := WritePack(context.Background(), st, out, Options{Path: tc.scope})
 			if err != nil {
 				t.Fatalf("WritePack(%q): %v", tc.scope, err)
 			}
@@ -342,7 +342,7 @@ func TestPathScopeRefusesToTruncateWhenOversize(t *testing.T) {
 	st, root := fixture(t)
 	out := filepath.Join(root, "oversize")
 
-	m, err := WritePack(st, out, Options{MaxNodes: 2})
+	m, err := WritePack(context.Background(), st, out, Options{MaxNodes: 2})
 	if err == nil {
 		t.Fatalf("oversize pack succeeded with %d elements, want refusal", m.Elements)
 	}
@@ -364,7 +364,7 @@ func TestNonPositiveMaxNodesUsesDefault(t *testing.T) {
 	}
 	st := newStore(t, root, els, nil)
 
-	_, err := WritePack(st, filepath.Join(root, "default-cap"), Options{MaxNodes: 0})
+	_, err := WritePack(context.Background(), st, filepath.Join(root, "default-cap"), Options{MaxNodes: 0})
 	if err == nil {
 		t.Fatalf("MaxNodes=0 must fall back to DefaultMaxNodes=%d and refuse %d elements", DefaultMaxNodes, len(els))
 	}
@@ -393,7 +393,7 @@ func TestPacksWholeEdgeSetBeyondStoreDefaultLimit(t *testing.T) {
 	st := newStore(t, root, els, rels)
 
 	out := filepath.Join(root, "wide")
-	m, err := WritePack(st, out, Options{})
+	m, err := WritePack(context.Background(), st, out, Options{})
 	if err != nil {
 		t.Fatalf("WritePack: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestSnapshotOrderIsCanonical(t *testing.T) {
 	st := newStore(t, root, els, rels)
 
 	out := filepath.Join(root, "ordered")
-	if _, err := WritePack(st, out, Options{}); err != nil {
+	if _, err := WritePack(context.Background(), st, out, Options{}); err != nil {
 		t.Fatalf("WritePack: %v", err)
 	}
 	doc, _ := readSnapshot(t, out)
@@ -480,7 +480,7 @@ func TestSnapshotBytesMatchRustShape(t *testing.T) {
 	st := newStore(t, root, els, rels)
 
 	out := filepath.Join(root, "golden")
-	if _, err := WritePack(st, out, Options{}); err != nil {
+	if _, err := WritePack(context.Background(), st, out, Options{}); err != nil {
 		t.Fatalf("WritePack: %v", err)
 	}
 

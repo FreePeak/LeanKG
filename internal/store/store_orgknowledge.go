@@ -5,6 +5,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -152,7 +153,7 @@ func nullInt64Ptr(v sql.NullInt64) *int64 {
 // IncidentUpsert inserts or replaces an incident keyed by ID (Rust
 // create_incident / update_incident share the Cozo :put semantics). Severity
 // and timestamp policy live in internal/orgknowledge (ValidateIncident).
-func (s *Store) IncidentUpsert(inc Incident) error {
+func (s *Store) IncidentUpsert(ctx context.Context, inc Incident) error {
 	if inc.ID == "" {
 		return fmt.Errorf("store: incident upsert: id is required")
 	}
@@ -160,7 +161,7 @@ func (s *Store) IncidentUpsert(inc Incident) error {
 	if env == "" {
 		env = "local"
 	}
-	_, err := s.db.Exec(`INSERT INTO incidents (`+incidentCols+`)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO incidents (`+incidentCols+`)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			env=excluded.env, title=excluded.title, severity=excluded.severity,
@@ -180,8 +181,8 @@ func (s *Store) IncidentUpsert(inc Incident) error {
 }
 
 // IncidentByID resolves one incident by id.
-func (s *Store) IncidentByID(id string) (Incident, bool, error) {
-	row := s.db.QueryRow(`SELECT `+incidentCols+` FROM incidents WHERE id = ?`, id)
+func (s *Store) IncidentByID(ctx context.Context, id string) (Incident, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+incidentCols+` FROM incidents WHERE id = ?`, id)
 	var r incidentScan
 	if err := row.Scan(r.dest()...); err != nil {
 		if isNoRows(err) {
@@ -194,8 +195,8 @@ func (s *Store) IncidentByID(id string) (Incident, bool, error) {
 
 // IncidentDelete removes an incident; an absent id is a no-op (Rust
 // delete_incident's :delete semantics).
-func (s *Store) IncidentDelete(id string) error {
-	if _, err := s.db.Exec(`DELETE FROM incidents WHERE id = ?`, id); err != nil {
+func (s *Store) IncidentDelete(ctx context.Context, id string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM incidents WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("store: incident delete %s: %w", id, err)
 	}
 	return nil
@@ -205,11 +206,11 @@ func (s *Store) IncidentDelete(id string) error {
 // deliberate divergence: the Rust db::query_incidents Datalog body carried no
 // :order, so its "first N" was arbitrary, while GraphEngine::query_incidents
 // sorted by occurred_at descending. Sorting satisfies both callers.
-func (s *Store) IncidentsQuery(q IncidentQuery) ([]Incident, error) {
+func (s *Store) IncidentsQuery(ctx context.Context, q IncidentQuery) ([]Incident, error) {
 	b := &whereBuilder{ph: func(int) string { return "?" }}
 	where := incidentWhere(q, b)
 	sqlText := `SELECT ` + incidentCols + ` FROM incidents WHERE ` + where + ` ORDER BY occurred_at DESC, id ASC` + limitSQL(q.Limit, b)
-	rows, err := s.db.Query(sqlText, b.args...)
+	rows, err := s.db.QueryContext(ctx, sqlText, b.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: incidents query: %w", err)
 	}
@@ -226,7 +227,7 @@ func (s *Store) IncidentsQuery(q IncidentQuery) ([]Incident, error) {
 }
 
 // KnowledgeEntryUpsert inserts or replaces a knowledge entry keyed by ID.
-func (s *Store) KnowledgeEntryUpsert(e KnowledgeEntry) error {
+func (s *Store) KnowledgeEntryUpsert(ctx context.Context, e KnowledgeEntry) error {
 	if e.ID == "" {
 		return fmt.Errorf("store: knowledge entry upsert: id is required")
 	}
@@ -238,7 +239,7 @@ func (s *Store) KnowledgeEntryUpsert(e KnowledgeEntry) error {
 	if kt == "" {
 		kt = "general"
 	}
-	_, err := s.db.Exec(`INSERT INTO knowledge_entries (`+knowledgeCols+`)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO knowledge_entries (`+knowledgeCols+`)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			knowledge_type=excluded.knowledge_type, title=excluded.title, content=excluded.content,
@@ -255,8 +256,8 @@ func (s *Store) KnowledgeEntryUpsert(e KnowledgeEntry) error {
 }
 
 // KnowledgeEntryByID resolves one knowledge entry by id.
-func (s *Store) KnowledgeEntryByID(id string) (KnowledgeEntry, bool, error) {
-	row := s.db.QueryRow(`SELECT `+knowledgeCols+` FROM knowledge_entries WHERE id = ?`, id)
+func (s *Store) KnowledgeEntryByID(ctx context.Context, id string) (KnowledgeEntry, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+knowledgeCols+` FROM knowledge_entries WHERE id = ?`, id)
 	var r knowledgeScan
 	if err := row.Scan(r.dest()...); err != nil {
 		if isNoRows(err) {
@@ -268,30 +269,30 @@ func (s *Store) KnowledgeEntryByID(id string) (KnowledgeEntry, bool, error) {
 }
 
 // KnowledgeEntryDelete removes a knowledge entry; an absent id is a no-op.
-func (s *Store) KnowledgeEntryDelete(id string) error {
-	if _, err := s.db.Exec(`DELETE FROM knowledge_entries WHERE id = ?`, id); err != nil {
+func (s *Store) KnowledgeEntryDelete(ctx context.Context, id string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM knowledge_entries WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("store: knowledge entry delete %s: %w", id, err)
 	}
 	return nil
 }
 
 // KnowledgeEntriesByElement lists the entries anchored to one element.
-func (s *Store) KnowledgeEntriesByElement(qualifiedName string) ([]KnowledgeEntry, error) {
-	return s.knowledgeRows(`SELECT `+knowledgeCols+` FROM knowledge_entries
+func (s *Store) KnowledgeEntriesByElement(ctx context.Context, qualifiedName string) ([]KnowledgeEntry, error) {
+	return s.knowledgeRows(ctx, `SELECT `+knowledgeCols+` FROM knowledge_entries
 		WHERE element_qualified = ? ORDER BY updated_at DESC, id ASC`, qualifiedName)
 }
 
 // KnowledgeEntriesByFeature lists the entries anchored to one feature.
-func (s *Store) KnowledgeEntriesByFeature(featureID string) ([]KnowledgeEntry, error) {
-	return s.knowledgeRows(`SELECT `+knowledgeCols+` FROM knowledge_entries
+func (s *Store) KnowledgeEntriesByFeature(ctx context.Context, featureID string) ([]KnowledgeEntry, error) {
+	return s.knowledgeRows(ctx, `SELECT `+knowledgeCols+` FROM knowledge_entries
 		WHERE feature_id = ? ORDER BY updated_at DESC, id ASC`, featureID)
 }
 
 // KnowledgeEntriesByEnvironment lists the newest entries in one environment.
-func (s *Store) KnowledgeEntriesByEnvironment(environment string, limit int) ([]KnowledgeEntry, error) {
+func (s *Store) KnowledgeEntriesByEnvironment(ctx context.Context, environment string, limit int) ([]KnowledgeEntry, error) {
 	b := &whereBuilder{ph: func(int) string { return "?" }}
 	where := "environment = " + b.bind(environment)
-	return s.knowledgeRows(`SELECT `+knowledgeCols+` FROM knowledge_entries WHERE `+where+
+	return s.knowledgeRows(ctx, `SELECT `+knowledgeCols+` FROM knowledge_entries WHERE `+where+
 		` ORDER BY updated_at DESC, id ASC`+limitSQL(limit, b), b.args...)
 }
 
@@ -300,15 +301,15 @@ func (s *Store) KnowledgeEntriesByEnvironment(environment string, limit int) ([]
 // must appear, as on PostgreSQL. Substring matches the index cannot see (a
 // partial word, for one) follow newest first, so recall never falls below
 // substring search. A query with no terms, or an index error, is substring-only.
-func (s *Store) KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
-	ranked, err := s.knowledgeRanked(query, knowledgeType, environment, limit)
+func (s *Store) KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+	ranked, err := s.knowledgeRanked(ctx, query, knowledgeType, environment, limit)
 	if err != nil {
 		ranked = nil // degrade to substring recall, as PostgreSQL does
 	}
 	if limit > 0 && len(ranked) >= limit {
 		return ranked, nil
 	}
-	substring, err := s.knowledgeSubstringSearch(query, knowledgeType, environment, limit)
+	substring, err := s.knowledgeSubstringSearch(ctx, query, knowledgeType, environment, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +330,7 @@ func (s *Store) KnowledgeEntriesSearch(query, knowledgeType, environment string,
 
 // knowledgeRanked is the keyword arm over knowledge_fts: hits ordered by bm25,
 // then recency. A query with no terms has no keyword arm.
-func (s *Store) knowledgeRanked(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+func (s *Store) knowledgeRanked(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	terms := ftsTerms(query)
 	if len(terms) == 0 {
 		return nil, nil
@@ -343,7 +344,7 @@ func (s *Store) knowledgeRanked(query, knowledgeType, environment string, limit 
 	clause := limitSQL(limit, b)
 	// The FTS5 query binds first: it is the only placeholder in the CTE.
 	args := append([]any{strings.Join(terms, " ")}, b.args...)
-	return s.knowledgeRows(`WITH hits AS (
+	return s.knowledgeRows(ctx, `WITH hits AS (
 		SELECT entry_id AS hid, bm25(knowledge_fts) AS score
 		FROM knowledge_fts WHERE knowledge_fts MATCH ?)
 		SELECT `+knowledgeCols+` FROM knowledge_entries
@@ -353,16 +354,16 @@ func (s *Store) knowledgeRanked(query, knowledgeType, environment string, limit 
 
 // knowledgeSubstringSearch substring-matches title or content (optionally
 // narrowed by knowledge type and environment), newest first.
-func (s *Store) knowledgeSubstringSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+func (s *Store) knowledgeSubstringSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	b := &whereBuilder{ph: func(int) string { return "?" }}
 	where := searchWhere(query, knowledgeType, environment, b)
 	clause := limitSQL(limit, b)
-	return s.knowledgeRows(`SELECT `+knowledgeCols+` FROM knowledge_entries WHERE `+where+
+	return s.knowledgeRows(ctx, `SELECT `+knowledgeCols+` FROM knowledge_entries WHERE `+where+
 		` ORDER BY updated_at DESC, id ASC`+clause, b.args...)
 }
 
-func (s *Store) knowledgeRows(query string, args ...any) ([]KnowledgeEntry, error) {
-	rows, err := s.db.Query(query, args...)
+func (s *Store) knowledgeRows(ctx context.Context, query string, args ...any) ([]KnowledgeEntry, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: knowledge query: %w", err)
 	}
@@ -381,7 +382,7 @@ func (s *Store) knowledgeRows(query string, args ...any) ([]KnowledgeEntry, erro
 // ServiceMetadataUpsert inserts or replaces one (service, env) profile. Unset
 // optionals stay NULL; the Rust writer replaced them with "" and the reader
 // filtered empties, which is the same observable answer.
-func (s *Store) ServiceMetadataUpsert(m ServiceMetadata) error {
+func (s *Store) ServiceMetadataUpsert(ctx context.Context, m ServiceMetadata) error {
 	if m.ServiceName == "" {
 		return fmt.Errorf("store: service metadata upsert: service_name is required")
 	}
@@ -389,7 +390,7 @@ func (s *Store) ServiceMetadataUpsert(m ServiceMetadata) error {
 	if env == "" {
 		env = "local"
 	}
-	_, err := s.db.Exec(`INSERT INTO service_metadata (`+serviceMetaCols+`)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO service_metadata (`+serviceMetaCols+`)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(service_name, env) DO UPDATE SET
 			team=excluded.team, on_call=excluded.on_call, repo_url=excluded.repo_url,
@@ -408,8 +409,8 @@ func (s *Store) ServiceMetadataUpsert(m ServiceMetadata) error {
 }
 
 // ServiceMetadataGet resolves one (service, env) profile.
-func (s *Store) ServiceMetadataGet(service, env string) (ServiceMetadata, bool, error) {
-	row := s.db.QueryRow(`SELECT `+serviceMetaCols+` FROM service_metadata
+func (s *Store) ServiceMetadataGet(ctx context.Context, service, env string) (ServiceMetadata, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+serviceMetaCols+` FROM service_metadata
 		WHERE service_name = ? AND env = ?`, service, env)
 	var r serviceMetaScan
 	if err := row.Scan(r.dest()...); err != nil {
@@ -423,11 +424,11 @@ func (s *Store) ServiceMetadataGet(service, env string) (ServiceMetadata, bool, 
 
 // EnvSnapshotsPut writes environment-scoped element snapshots in one
 // transaction, replacing each (env, qualified_name) row.
-func (s *Store) EnvSnapshotsPut(snaps []EnvSnapshot) error {
+func (s *Store) EnvSnapshotsPut(ctx context.Context, snaps []EnvSnapshot) error {
 	if len(snaps) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -444,7 +445,7 @@ func (s *Store) EnvSnapshotsPut(snaps []EnvSnapshot) error {
 			}
 			meta = string(b)
 		}
-		if _, err := tx.Exec(`INSERT INTO env_snapshots (`+envSnapshotCols+`)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO env_snapshots (`+envSnapshotCols+`)
 			VALUES (?,?,?,?,?,?,?)
 			ON CONFLICT(env, qualified_name) DO UPDATE SET
 				element_type=excluded.element_type, name=excluded.name, file_path=excluded.file_path,
@@ -458,8 +459,8 @@ func (s *Store) EnvSnapshotsPut(snaps []EnvSnapshot) error {
 }
 
 // EnvSnapshotGet resolves one environment-scoped element snapshot.
-func (s *Store) EnvSnapshotGet(env, qualifiedName string) (EnvSnapshot, bool, error) {
-	row := s.db.QueryRow(`SELECT `+envSnapshotCols+` FROM env_snapshots
+func (s *Store) EnvSnapshotGet(ctx context.Context, env, qualifiedName string) (EnvSnapshot, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+envSnapshotCols+` FROM env_snapshots
 		WHERE env = ? AND qualified_name = ?`, env, qualifiedName)
 	var snap EnvSnapshot
 	var meta string
@@ -479,11 +480,11 @@ func (s *Store) EnvSnapshotGet(env, qualifiedName string) (EnvSnapshot, bool, er
 // EnvSnapshotConflictsWith lists conflicts_with relationships with the needle
 // in either endpoint (case-insensitive substring, the Rust
 // regex_matches(lowercase(endpoint), ".*needle.*") report).
-func (s *Store) EnvSnapshotConflictsWith(needle string, limit int) ([]Relationship, error) {
+func (s *Store) EnvSnapshotConflictsWith(ctx context.Context, needle string, limit int) ([]Relationship, error) {
 	b := &whereBuilder{ph: func(int) string { return "?" }}
 	where := "rel_type = 'conflicts_with' AND (LOWER(source_qualified) LIKE " + b.bind(likeContains(needle)) +
 		" ESCAPE '\\' OR LOWER(target_qualified) LIKE " + b.bind(likeContains(needle)) + " ESCAPE '\\')"
-	rows, err := s.db.Query(`SELECT source_qualified, target_qualified, rel_type, confidence, metadata `+
+	rows, err := s.db.QueryContext(ctx, `SELECT source_qualified, target_qualified, rel_type, confidence, metadata `+
 		`FROM relationships WHERE `+where+` ORDER BY source_qualified, target_qualified`+limitSQL(limit, b), b.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: conflicts_with query: %w", err)
@@ -494,10 +495,10 @@ func (s *Store) EnvSnapshotConflictsWith(needle string, limit int) ([]Relationsh
 // EnvSnapshotEnvVariants lists the qualified names snapshotted in more than
 // one environment and containing needle (case-insensitive), ordered by
 // qualified name with the environments ascending. limit <= 0 returns all.
-func (s *Store) EnvSnapshotEnvVariants(needle string, limit int) ([]EnvVariant, error) {
+func (s *Store) EnvSnapshotEnvVariants(ctx context.Context, needle string, limit int) ([]EnvVariant, error) {
 	b := &whereBuilder{ph: func(int) string { return "?" }}
 	where := "LOWER(qualified_name) LIKE " + b.bind(likeContains(needle)) + " ESCAPE '\\'"
-	rows, err := s.db.Query(`SELECT qualified_name, env FROM env_snapshots WHERE `+where+
+	rows, err := s.db.QueryContext(ctx, `SELECT qualified_name, env FROM env_snapshots WHERE `+where+
 		` ORDER BY qualified_name ASC, env ASC`, b.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: env variants query: %w", err)
@@ -516,8 +517,8 @@ func (s *Store) EnvSnapshotEnvVariants(needle string, limit int) ([]EnvVariant, 
 // ServiceMetadataAll lists every service profile in one environment, ordered
 // by service name (Rust get_all_service_metadata, which took the Datalog
 // order; ordering here is deterministic).
-func (s *Store) ServiceMetadataAll(env string) ([]ServiceMetadata, error) {
-	rows, err := s.db.Query(`SELECT `+serviceMetaCols+` FROM service_metadata
+func (s *Store) ServiceMetadataAll(ctx context.Context, env string) ([]ServiceMetadata, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+serviceMetaCols+` FROM service_metadata
 		WHERE env = ? ORDER BY service_name ASC`, env)
 	if err != nil {
 		return nil, fmt.Errorf("store: service metadata list: %w", err)

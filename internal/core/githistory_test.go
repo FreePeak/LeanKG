@@ -123,14 +123,14 @@ func TestConcurrentGitImportsSerializeOnOneStore(t *testing.T) {
 		t.Fatalf("%d of %d concurrent imports ran a full walk, want exactly 1", full, callers)
 	}
 
-	hist, err := githistory.History(e.st, "main.go", 50)
+	hist, err := githistory.History(context.Background(), e.st, "main.go", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hist) != 2 {
 		t.Fatalf("history main.go after concurrent imports = %d commits, want 2 (no duplicates)", len(hist))
 	}
-	partners, err := githistory.CoChange(e.st, "main.go", 50)
+	partners, err := githistory.CoChange(context.Background(), e.st, "main.go", 50)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,13 +3,14 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/FreePeak/LeanKG/internal/langs"
-	"github.com/FreePeak/LeanKG/internal/ontology"
-	"github.com/FreePeak/LeanKG/internal/session"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/langs"
+	"github.com/FreePeak/LeanKG/internal/ontology"
+	"github.com/FreePeak/LeanKG/internal/session"
 
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -63,7 +64,7 @@ func TestQueryLadderOrderAndProvenance(t *testing.T) {
 	}
 
 	// Seed: exact-match element + fuzzy-only element.
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.parseConfig", ElementType: "function", Name: "parseConfig", FilePath: "a.go", Language: "go", Content: "parse config file"},
 		{QualifiedName: "a.Widget", ElementType: "type", Name: "Widget", FilePath: "a.go", Language: "go", Content: "the frobnicator widget struct"},
 	}); err != nil {
@@ -129,17 +130,17 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 		{QualifiedName: "m.alpha", ElementType: "function", Name: "alpha", FilePath: "m.go", Language: "go", Content: "alpha code"},
 		{QualifiedName: "m.beta", ElementType: "function", Name: "beta", FilePath: "m.go", Language: "go", Content: "beta code"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	qvec, err := p.Embed(context.Background(), embed.Query, []string{"alpha code"})
 	if err != nil || len(qvec) != 1 {
 		t.Fatalf("embed query: %v", err)
 	}
-	if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: "m.alpha", Vec: qvec[0]}}); err != nil {
+	if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: "m.alpha", Vec: qvec[0]}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,12 +184,12 @@ func TestL3ProviderFailureDegrades(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "x.y", ElementType: "function", Name: "y", FilePath: "x.go", Language: "go", Content: "some content here"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(store.ModelStamp{ModelID: "boom", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "test"}); err != nil {
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{ModelID: "boom", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	embedder := failingProvider{inner: embed.Deterministic(4)}
@@ -266,12 +267,12 @@ func TestStatusShape(t *testing.T) {
 func TestEmptyHitGuidance(t *testing.T) {
 	e, _ := newEngine(t)
 	ctx := context.Background()
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha", FilePath: "a.go", Language: "go", Content: "alpha helper"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -329,12 +330,12 @@ func TestEmptyHitGuidance(t *testing.T) {
 func TestFreshnessStaleAfterWrite(t *testing.T) {
 	e, _ := newEngine(t)
 	ctx := context.Background()
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "f.F", ElementType: "function", Name: "F", FilePath: "f.go", Language: "go", Content: "c"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	out, _ := e.Query(ctx, QueryRequest{Query: "F"})
@@ -343,7 +344,7 @@ func TestFreshnessStaleAfterWrite(t *testing.T) {
 	}
 	// A write after the inventory flips the answer to possibly_stale — the
 	// DB-resident watermark contract (no TTL cache to race).
-	if err := e.st.UpsertRelationships([]store.Relationship{{Source: "f.F", Target: "f.F", RelType: "calls"}}); err != nil {
+	if err := e.st.UpsertRelationships(context.Background(), []store.Relationship{{Source: "f.F", Target: "f.F", RelType: "calls"}}); err != nil {
 		t.Fatal(err)
 	}
 	out, _ = e.Query(ctx, QueryRequest{Query: "F"})
@@ -380,13 +381,13 @@ func TestL3StampDriftDegrades(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "x.y", ElementType: "function", Name: "y", FilePath: "x.go", Language: "go", Content: "some content here"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(8)
-	if err := st.WriteStamp(store.ModelStamp{ModelID: p.Identity().Model, Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Identity().Provider}); err != nil {
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{ModelID: p.Identity().Model, Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Identity().Provider}); err != nil {
 		t.Fatal(err)
 	}
 	e := New(st, Options{Embedder: p})
@@ -434,7 +435,7 @@ func TestSessionOffloadRoundTripThroughCore(t *testing.T) {
 // catalog matched against indexed elements persists and reads back.
 func TestOntologyMatchThroughCore(t *testing.T) {
 	e, _ := newEngine(t)
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
@@ -445,14 +446,14 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := e.OntologyMatch(catPath)
+	out, err := e.OntologyMatch(context.Background(), catPath)
 	if err != nil {
 		t.Fatalf("match: %v", err)
 	}
 	if matches, ok := out["matches"].([]ontology.Match); !ok || len(matches) != 1 {
 		t.Fatalf("matches: %+v", out)
 	}
-	again, err := e.OntologyMatches()
+	again, err := e.OntologyMatches(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +468,7 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 func TestOntologyImportAndQueryActions(t *testing.T) {
 	e, _ := newEngine(t)
 	ctx := context.Background()
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
@@ -622,14 +623,14 @@ func TestLanguagesStatusAction(t *testing.T) {
 // verb looks like a leaf).
 func TestGraphActionResolvesShortName(t *testing.T) {
 	e, _ := newEngine(t)
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg/a.go::Helper", ElementType: "function", Name: "Helper", FilePath: "pkg/a.go", Language: "go"},
 		{QualifiedName: "pkg/b.go::Caller", ElementType: "function", Name: "Caller", FilePath: "pkg/b.go", Language: "go"},
 		{QualifiedName: "pkg/a.go::Leaf", ElementType: "function", Name: "Leaf", FilePath: "pkg/a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.UpsertRelationships([]store.Relationship{
+	if err := e.st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: "pkg/b.go::Caller", Target: "pkg/a.go::Helper", RelType: "calls", Confidence: 1},
 		{Source: "pkg/a.go::Helper", Target: "pkg/a.go::Leaf", RelType: "calls", Confidence: 1},
 	}); err != nil {
@@ -748,7 +749,7 @@ func TestQueryScopeStates(t *testing.T) {
 	_ = mem
 	n := 400
 	for i := 0; i < n; i++ {
-		if err := e.st.UpsertElements([]store.Element{{
+		if err := e.st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: fmt.Sprintf("pkg/a%d.go::A%d", i, i), ElementType: "func",
 			Name: fmt.Sprintf("A%d", i), FilePath: fmt.Sprintf("pkg/a%d.go", i), Language: "go", LineStart: 1,
 			Content: "memorable shared content in the corpus",

@@ -40,7 +40,7 @@ func TestDenseArmReturnsByEmbedClientTimeout(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m.SetProvider(p, func() (float64, bool) { return 0, true })
+	m.SetProvider(p, func(context.Context) (float64, bool) { return 0, true })
 
 	start := time.Now()
 	_, err = m.Recall(context.Background(), "b", "which database holds the vectors", 3)

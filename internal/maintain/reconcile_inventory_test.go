@@ -46,7 +46,7 @@ func TestReconcileKeepsTheStoreFresh(t *testing.T) {
 	if _, err := store.RefreshInventory(context.Background(), st); err != nil {
 		t.Fatalf("refresh inventory: %v", err)
 	}
-	n, err := st.ElementCount()
+	n, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestReconcileKeepsTheStoreFresh(t *testing.T) {
 	if res.DeletedFiles != 1 {
 		t.Fatalf("reconcile = %+v, want 1 file removed", res)
 	}
-	n, err = st.ElementCount()
+	n, err = st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestReconcileRefreshesTheInventoryCounts(t *testing.T) {
 	if after == nil {
 		t.Fatal("the reconcile left no inventory")
 	}
-	n, err := st.ElementCount()
+	n, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestReconcileHealsAnInventoryLeftBehind(t *testing.T) {
 	if _, err := store.RefreshInventory(context.Background(), st); err != nil {
 		t.Fatalf("refresh inventory: %v", err)
 	}
-	n, err := st.ElementCount()
+	n, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}
@@ -163,10 +163,10 @@ func TestReconcileHealsAnInventoryLeftBehind(t *testing.T) {
 
 	// Simulate the earlier reconcile: a delete advances the watermark and
 	// leaves the inventory behind.
-	if err := st.DeleteByFile("gone-long-ago.go"); err != nil {
+	if err := st.DeleteByFile(context.Background(), "gone-long-ago.go"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	n, err = st.ElementCount()
+	n, err = st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}

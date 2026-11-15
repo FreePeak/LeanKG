@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +61,7 @@ func vectorCount(t *testing.T, dir string) int {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
-	stamps, err := st.Stamps()
+	stamps, err := st.Stamps(context.Background())
 	if err != nil {
 		t.Fatalf("stamps: %v", err)
 	}
@@ -70,7 +71,7 @@ func vectorCount(t *testing.T, dir string) int {
 	if len(stamps) != 1 {
 		t.Fatalf("want one embedding stamp, got %d", len(stamps))
 	}
-	n, err := st.VectorCount(stamps[0].ModelID)
+	n, err := st.VectorCount(context.Background(), stamps[0].ModelID)
 	if err != nil {
 		t.Fatalf("vector count: %v", err)
 	}

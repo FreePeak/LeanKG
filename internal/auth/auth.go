@@ -10,6 +10,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strings"
@@ -158,8 +159,8 @@ func RoleForRequestWithStore(st store.Backend, r *http.Request) (Role, error) {
 // GateEnabled reports whether HTTP callers must authenticate: a live token (env
 // or DB-backed) is configured, or a site-admin account exists. serve uses it to
 // refuse a non-loopback bind with the gate open.
-func GateEnabled(st store.Backend) (bool, error) {
-	return fromEnv().tokensConfigured(st)
+func GateEnabled(ctx context.Context, st store.Backend) (bool, error) {
+	return fromEnv().tokensConfigured(ctx, st)
 }
 
 // RoleOrAnonymous resolves an HTTP caller for the MCP gate. A request with no
@@ -173,7 +174,7 @@ func RoleOrAnonymous(st store.Backend, r *http.Request) (role Role, anonymous bo
 		role, err := RoleForRequestWithStore(st, r)
 		return role, false, err
 	}
-	gated, gateErr := GateEnabled(st)
+	gated, gateErr := GateEnabled(r.Context(), st)
 	if gateErr != nil || gated {
 		return Viewer, true, nil
 	}

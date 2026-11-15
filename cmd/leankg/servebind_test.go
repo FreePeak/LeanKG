@@ -208,7 +208,7 @@ func TestServeBindAcceptsWildcardWithSiteAdmin(t *testing.T) {
 	}
 	check := func() error {
 		t.Helper()
-		gateOn, err := auth.GateEnabled(st)
+		gateOn, err := auth.GateEnabled(context.Background(), st)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -217,7 +217,7 @@ func TestServeBindAcceptsWildcardWithSiteAdmin(t *testing.T) {
 	if err := check(); err == nil {
 		t.Fatal("a wildcard bind with no token and no site admin must be refused")
 	}
-	if _, err := auth.CreateSiteAdmin(st, "ops", "correct horse battery staple"); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "ops", "correct horse battery staple"); err != nil {
 		t.Fatal(err)
 	}
 	if err := check(); err != nil {

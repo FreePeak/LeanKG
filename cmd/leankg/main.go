@@ -292,7 +292,7 @@ func serveGateOn(ctx context.Context, dir, engine, dbPath string) bool {
 	} else {
 		defer st.Close()
 	}
-	gateOn, gateErr := auth.GateEnabled(st)
+	gateOn, gateErr := auth.GateEnabled(ctx, st)
 	if gateErr != nil {
 		log.Printf("warning: auth gate state unknown: %v", gateErr)
 		return false
@@ -877,8 +877,8 @@ func cmdDoctor(ctx context.Context, args []string) error {
 		return cliexit.Code(2)
 	}
 	defer st.Close()
-	els, err1 := st.ElementCount()
-	files, err2 := st.FileCount()
+	els, err1 := st.ElementCount(ctx)
+	files, err2 := st.FileCount(ctx)
 	seq, at, err3 := st.Watermark(ctx)
 	if err1 != nil || err2 != nil || err3 != nil {
 		fmt.Println("FAIL store queries:", err1, err2, err3)
@@ -1044,10 +1044,10 @@ func cmdIndex(ctx context.Context, args []string) error {
 	if err := runIndex(ctx, *project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
 		switch {
 		case *hook && errors.Is(ctx.Err(), context.DeadlineExceeded):
-			fmt.Printf("leankg index --hook: stopped %s after its %s time budget; the directories written so far are kept, and the next session start continues the index\n", storeDir, budget)
+			fmt.Printf("leankg index --hook: stopped %s after its %s time budget; the directories finished so far are kept, the one in progress is rolled back, and the next session start continues the index\n", storeDir, budget)
 			return nil
 		case errors.Is(err, context.Canceled):
-			return fmt.Errorf("index: interrupted; the directories written so far are kept, rerun to finish: %w", err)
+			return fmt.Errorf("index: interrupted; the directories finished so far are kept, the one in progress is rolled back; rerun to finish: %w", err)
 		}
 		return fmt.Errorf("index: %v", err)
 	}

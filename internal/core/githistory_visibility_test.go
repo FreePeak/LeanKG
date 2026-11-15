@@ -30,7 +30,7 @@ func openVisibilityEngine(t *testing.T, extra ...store.Element) *Engine {
 		{QualifiedName: "git:author:a@x.io", ElementType: "author", Name: "Parse Author", Content: "Parse Author <a@x.io>"},
 		{QualifiedName: "git:file:store/parse.go", ElementType: "file", Name: "store/parse.go"},
 	}, extra...)
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	e := New(st, Options{ProjectDir: dir})
@@ -159,18 +159,18 @@ func TestSemanticHidesGitHistoryVectors(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	for _, el := range elements {
-		if err := st.UpsertElements([]store.Element{el}); err != nil {
+		if err := st.UpsertElements(context.Background(), []store.Element{el}); err != nil {
 			t.Fatal(err)
 		}
 		qvec, err := p.Embed(ctx, embed.Query, []string{el.Content})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: el.QualifiedName, Vec: qvec[0]}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: el.QualifiedName, Vec: qvec[0]}}); err != nil {
 			t.Fatal(err)
 		}
 	}

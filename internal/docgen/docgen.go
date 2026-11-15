@@ -3,6 +3,7 @@
 package docgen
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,12 +30,12 @@ const allRelationshipsLimit = 1 << 20
 
 // AgentsMD renders the AGENTS.md body from the store (Rust
 // DocGenerator::generate_agents_md).
-func AgentsMD(st store.Backend) (string, error) {
-	elements, err := st.Elements()
+func AgentsMD(ctx context.Context, st store.Backend) (string, error) {
+	elements, err := st.Elements(ctx)
 	if err != nil {
 		return "", fmt.Errorf("docgen: list elements: %w", err)
 	}
-	relationships, err := allRelationships(st)
+	relationships, err := allRelationships(ctx, st)
 	if err != nil {
 		return "", fmt.Errorf("docgen: list relationships: %w", err)
 	}
@@ -143,8 +144,8 @@ func AgentsMD(st store.Backend) (string, error) {
 
 // Write renders the body and writes it to <docsDir>/AGENTS.md, creating
 // docsDir; it returns the written path.
-func Write(st store.Backend, docsDir string) (string, error) {
-	body, err := AgentsMD(st)
+func Write(ctx context.Context, st store.Backend, docsDir string) (string, error) {
+	body, err := AgentsMD(ctx, st)
 	if err != nil {
 		return "", err
 	}
@@ -183,6 +184,6 @@ func WriteFileTo(path, body string) (string, error) {
 	return path, nil
 }
 
-func allRelationships(st store.Backend) ([]store.Relationship, error) {
-	return st.RelationshipsAll(allRelationshipsLimit)
+func allRelationships(ctx context.Context, st store.Backend) ([]store.Relationship, error) {
+	return st.RelationshipsAll(ctx, allRelationshipsLimit)
 }

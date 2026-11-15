@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -50,12 +51,12 @@ type MarkdownDoc struct {
 // were none; the Go store persists no cluster column, so the fallback is
 // always the source — and it is exactly the deterministic path the Rust
 // docstring demanded for a byte-stable artifact.
-func CollectMarkdown(st store.Backend, project, generatedAtUTC string) (*MarkdownDoc, error) {
-	els, err := st.Elements()
+func CollectMarkdown(ctx context.Context, st store.Backend, project, generatedAtUTC string) (*MarkdownDoc, error) {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := st.RelationshipsAll(maxRelationships)
+	rels, err := st.RelationshipsAll(ctx, maxRelationships)
 	if err != nil {
 		return nil, err
 	}
@@ -81,9 +82,9 @@ type MarkdownResult struct {
 // from the open store, render, and write the artifact. An empty out uses
 // <projectRoot>/.leankg/graph-docs.md; a relative out resolves against
 // projectRoot (the Rust run_export_markdown anchoring rule).
-func ExportMarkdown(st store.Backend, projectRoot, out string) (MarkdownResult, error) {
+func ExportMarkdown(ctx context.Context, st store.Backend, projectRoot, out string) (MarkdownResult, error) {
 	project := filepath.Base(projectRoot)
-	doc, err := CollectMarkdown(st, project, nowRFC3339UTC())
+	doc, err := CollectMarkdown(ctx, st, project, nowRFC3339UTC())
 	if err != nil {
 		return MarkdownResult{}, err
 	}

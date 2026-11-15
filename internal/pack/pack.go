@@ -17,6 +17,7 @@ package pack
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -68,7 +69,7 @@ type Manifest struct {
 // manifest. It errors out (instead of truncating) if the selected slice exceeds
 // the node ceiling: the contract advertises "refuses to truncate", and silent
 // row-drop would make that a lie.
-func WritePack(st store.Backend, outDir string, opts Options) (Manifest, error) {
+func WritePack(ctx context.Context, st store.Backend, outDir string, opts Options) (Manifest, error) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return Manifest{}, fmt.Errorf("create pack dir: %w", err)
 	}
@@ -78,11 +79,11 @@ func WritePack(st store.Backend, outDir string, opts Options) (Manifest, error) 
 		maxNodes = DefaultMaxNodes
 	}
 
-	allElements, err := st.Elements()
+	allElements, err := st.Elements(ctx)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read elements: %w", err)
 	}
-	allRels, err := st.RelationshipsAll(allRelationshipsLimit)
+	allRels, err := st.RelationshipsAll(ctx, allRelationshipsLimit)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read relationships: %w", err)
 	}

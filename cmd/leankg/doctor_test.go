@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +29,7 @@ func doctorProject(t *testing.T, broken bool) string {
 		defer st.Close()
 		// A dangling edge: the target element is not indexed (the
 		// delete-then-stale production path the orphan check exists for).
-		if err := st.UpsertRelationships([]store.Relationship{
+		if err := st.UpsertRelationships(context.Background(), []store.Relationship{
 			{Source: "pkg.Hello", Target: "pkg.Ghost", RelType: "calls"},
 		}); err != nil {
 			t.Fatal(err)

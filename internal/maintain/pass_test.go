@@ -26,7 +26,7 @@ func bloatFixture(t *testing.T) store.Backend {
 	}
 	for i := 0; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: "pkg.Fn" + itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + itoa(i),
@@ -39,7 +39,7 @@ func bloatFixture(t *testing.T) store.Backend {
 	}
 	for i := 0; i < 350; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -84,7 +84,7 @@ func TestPassReclaimsFreelist(t *testing.T) {
 		t.Error("expected a reclaim log line")
 	}
 	// Data survives the pass.
-	if n, err := st.ElementCount(); err != nil || n != 50 {
+	if n, err := st.ElementCount(context.Background()); err != nil || n != 50 {
 		t.Errorf("element count = %d (err %v), want 50", n, err)
 	}
 }
@@ -98,7 +98,7 @@ func TestPassRunsTheIncrementalSweepOnceAutoVacuumIsOn(t *testing.T) {
 	}
 	for i := 350; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -142,7 +142,7 @@ func TestPassHeaderUpgradeIsOneShot(t *testing.T) {
 	if _, err := Pass(context.Background(), st, Options{}); err != nil {
 		t.Fatalf("pass: %v", err)
 	}
-	before, err := st.Space()
+	before, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestPassHeaderUpgradeIsOneShot(t *testing.T) {
 	if res.Reclaimed != 0 {
 		t.Errorf("second pass reclaimed %d bytes; the header upgrade must not repeat", res.Reclaimed)
 	}
-	after, err := st.Space()
+	after, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space after: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRunIsDisabledByNonPositiveInterval(t *testing.T) {
 	Run(ctx, st, nil, Options{}, 0, 0)
 	// Give a wrongly-started goroutine far more than enough time to fire.
 	time.Sleep(100 * time.Millisecond)
-	rep, err := st.Space()
+	rep, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestRunFiresOnTicker(t *testing.T) {
 	}
 	for i := 350; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -218,7 +218,7 @@ func TestRunFiresOnTicker(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the maintenance ticker never ran")
 	}
-	rep, err := st.Space()
+	rep, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}

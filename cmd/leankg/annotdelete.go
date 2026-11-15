@@ -41,7 +41,7 @@ func cmdDeleteAnnotation(ctx context.Context, args []string) error {
 	// Read first so a typo is reported as "no such annotation" rather than a
 	// silent success — an idempotent delete that says "removed" when nothing
 	// was there is how a caller learns they mistyped the qualified name.
-	existing, err := annot.Get(st, element)
+	existing, err := annot.Get(ctx, st, element)
 	if err != nil {
 		return verbFatal(err)
 	}
@@ -49,7 +49,7 @@ func cmdDeleteAnnotation(ctx context.Context, args []string) error {
 		fmt.Printf("No annotation found for '%s' (nothing removed)\n", element)
 		return nil
 	}
-	if err := annot.Delete(st, element); err != nil {
+	if err := annot.Delete(ctx, st, element); err != nil {
 		return verbFatal(err)
 	}
 	fmt.Printf("Removed annotation for '%s' (was: %s)\n", element, existing.Description)

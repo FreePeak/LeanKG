@@ -93,7 +93,7 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
-	elements, err := st.ElementCount()
+	elements, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	}
 	// The code stage must have produced real function elements, not just the
 	// docs stage's headings.
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	if !found["hello"] || !found["world"] {
 		t.Fatalf("indexed functions = %v, want hello and world", found)
 	}
-	vectors, err := st.VectorCount("deterministic-384")
+	vectors, err := st.VectorCount(context.Background(), "deterministic-384")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestRunSkipsEmbedOnBadProvider(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
-	if n, err := st.ElementCount(); err != nil || n == 0 {
+	if n, err := st.ElementCount(context.Background()); err != nil || n == 0 {
 		t.Fatalf("code stage did not persist before the embed failure: n=%d err=%v", n, err)
 	}
 }
@@ -283,7 +283,7 @@ func TestEmbedStageSkipsWhenEmbedLockHeld(t *testing.T) {
 	if rep.Embedded != 0 {
 		t.Fatalf("report embedded = %d, want 0", rep.Embedded)
 	}
-	if n, err := st.VectorCount(p.Identity().Model); err != nil || n != 0 {
+	if n, err := st.VectorCount(context.Background(), p.Identity().Model); err != nil || n != 0 {
 		t.Fatalf("vectors = %d (err %v), want 0", n, err)
 	}
 }

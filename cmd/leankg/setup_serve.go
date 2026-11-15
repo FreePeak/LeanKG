@@ -36,7 +36,7 @@ func maybeAutoIndexOnStart(ctx context.Context, dir string, readOnly bool) {
 		log.Printf("auto-index: cannot read store state: %v", err)
 		return
 	}
-	elements, eerr := st.ElementCount()
+	elements, eerr := st.ElementCount(ctx)
 	seq, at, werr := st.Watermark(ctx)
 	st.Close()
 	state := indexgate.StoreState{

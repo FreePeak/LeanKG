@@ -17,28 +17,34 @@ type elementCountFails struct {
 	cause error
 }
 
-func (f elementCountFails) ElementCount() (int, error) { return 0, f.cause }
+func (f elementCountFails) ElementCount(context.Context) (int, error) { return 0, f.cause }
 
 type findExactFails struct {
 	store.Backend
 	cause error
 }
 
-func (f findExactFails) FindExact(string) ([]store.Element, error) { return nil, f.cause }
+func (f findExactFails) FindExact(context.Context, string) ([]store.Element, error) {
+	return nil, f.cause
+}
 
 type lastEmbedRunFails struct {
 	store.Backend
 	cause error
 }
 
-func (f lastEmbedRunFails) LastEmbedRunAny() (*store.EmbedRun, error) { return nil, f.cause }
+func (f lastEmbedRunFails) LastEmbedRunAny(ctx context.Context) (*store.EmbedRun, error) {
+	return nil, f.cause
+}
 
 type spaceFails struct {
 	store.Backend
 	cause error
 }
 
-func (f spaceFails) Space() (store.SpaceReport, error) { return store.SpaceReport{}, f.cause }
+func (f spaceFails) Space(context.Context) (store.SpaceReport, error) {
+	return store.SpaceReport{}, f.cause
+}
 
 // A store that cannot count its elements must fail the query, not answer
 // "no elements indexed" (the L0 guidance tells the caller to index a repo).
@@ -103,16 +109,16 @@ type endLookupFailsAfterWalk struct {
 	walked bool
 }
 
-func (f *endLookupFailsAfterWalk) Incoming(qn string) ([]store.Relationship, error) {
+func (f *endLookupFailsAfterWalk) Incoming(ctx context.Context, qn string) ([]store.Relationship, error) {
 	f.walked = true
-	return f.Backend.Incoming(qn)
+	return f.Backend.Incoming(ctx, qn)
 }
 
-func (f *endLookupFailsAfterWalk) FindExact(name string) ([]store.Element, error) {
+func (f *endLookupFailsAfterWalk) FindExact(ctx context.Context, name string) ([]store.Element, error) {
 	if f.walked {
 		return nil, f.cause
 	}
-	return f.Backend.FindExact(name)
+	return f.Backend.FindExact(ctx, name)
 }
 
 // A path whose end is unknown is answered as unresolved only when the lookup

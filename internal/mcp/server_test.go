@@ -421,7 +421,7 @@ func TestMCPHonorsDBMintedTokens(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	plain, _, err := auth.Mint(st, auth.MintRequest{Name: "ci", Role: "viewer"})
+	plain, _, err := auth.Mint(context.Background(), st, auth.MintRequest{Name: "ci", Role: "viewer"})
 	if err != nil {
 		t.Fatal(err)
 	}

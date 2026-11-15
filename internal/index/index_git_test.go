@@ -39,7 +39,7 @@ func gitIndexRun(t *testing.T, st store.Backend, dir string) Result {
 // gitIndexHas reports whether the store holds exactly one element with qn.
 func gitIndexHas(t *testing.T, st store.Backend, qn string) bool {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestIndexGitRootAdoptsWalkStoreWithoutReextract(t *testing.T) {
 	if adopted.Files != 0 {
 		t.Fatalf("adopting run: Files = %d, want 0 (identical bytes)", adopted.Files)
 	}
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
