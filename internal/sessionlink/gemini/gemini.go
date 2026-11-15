@@ -83,7 +83,7 @@ func listChats(r string) []string {
 
 // Locate finds the transcript for c: exact by sessionId, else heuristic on the
 // project hash of the cwd, the time window, normalized tool and args hash.
-func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionlink.TranscriptRef{}, 0, err
 	}
@@ -91,7 +91,7 @@ func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef
 	files := listChats(r)
 	if cid := c.ClientSessionID; cid != "" {
 		for _, f := range files {
-			if sid := sessionIDOf(f); sid == cid {
+			if sid := sessionIDOf(rd, f); sid == cid {
 				return sessionlink.TranscriptRef{Client: "gemini", Path: f, SessionID: sid}, sessionlink.ConfidenceExact, nil
 			}
 		}
@@ -114,7 +114,7 @@ func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef
 		if err != nil || fi.ModTime().Before(c.TS.Add(-sessionlink.TurnHeuristic.LookBack)) {
 			continue
 		}
-		s, err := load(f)
+		s, err := load(rd, f)
 		if err != nil {
 			continue
 		}
@@ -129,13 +129,13 @@ func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef
 	if best == "" {
 		return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
 	}
-	return sessionlink.TranscriptRef{Client: "gemini", Path: best, SessionID: sessionIDOf(best)}, sessionlink.ConfidenceFor(bestN), nil
+	return sessionlink.TranscriptRef{Client: "gemini", Path: best, SessionID: sessionIDOf(rd, best)}, sessionlink.ConfidenceFor(bestN), nil
 }
 
 // sessionIDOf reads the sessionId from a JSONL metadata line or a legacy document.
-func sessionIDOf(path string) string {
+func sessionIDOf(rd *sessionlink.Reader, path string) string {
 	if strings.HasSuffix(path, ".json") {
-		s, err := load(path)
+		s, err := load(rd, path)
 		if err != nil {
 			return ""
 		}
@@ -161,11 +161,11 @@ func sessionIDOf(path string) string {
 }
 
 // Window extracts the bounded context around the matched leankg call.
-func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
+func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int, rd *sessionlink.Reader) (sessionlink.Window, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionlink.Window{}, err
 	}
-	s, err := load(t.Path)
+	s, err := load(rd, t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -181,7 +181,7 @@ func (a *adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, m
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s, err := load(t.Path)
+	s, err := load(nil, t.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -219,10 +219,15 @@ type gMsg struct {
 	Model     string          `json:"model"`
 }
 
-// load parses a chat file. JSONL: a metadata line carries sessionId, message
+// load returns a chat file's session, parsing the file at most once per Reader.
+func load(rd *sessionlink.Reader, path string) (session, error) {
+	return sessionlink.Parsed(rd, path, func() (session, error) { return parseFile(path) })
+}
+
+// parseFile parses a chat file. JSONL: a metadata line carries sessionId, message
 // lines carry type, and a repeated id replaces the earlier version in place.
 // Legacy .json is one document with a messages array. Garbage is skipped.
-func load(path string) (session, error) {
+func parseFile(path string) (session, error) {
 	fi, err := os.Lstat(path)
 	if err != nil || !fi.Mode().IsRegular() {
 		return session{}, fmt.Errorf("%w: %v", sessionlink.ErrNotFound, err)

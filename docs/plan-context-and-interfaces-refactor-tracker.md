@@ -85,7 +85,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-47 | `refactor(rest,rpc,web,mcp): one query decoder and one budget in core` | M | - | todo | - | - |
 | CX-48 | `refactor(web): status and graph views delegate to core and graph` | M | - | todo | - | - |
 | CX-49 | `refactor(auth): per-route role requirement; role in ctx` | M | - | todo | - | - |
-| CX-50 | `refactor(sessionlink): split discovery and reading; parse once per Link` | M | - | todo | - | - |
+| CX-50 | `refactor(sessionlink): split discovery and reading; parse once per Link` | M | - | done | local branch `refactor/cx-50-sessionlink-dry` (not pushed) | `sessionlink.Reader` is one per Link pass; every adapter's Locate and Window read transcripts through `Parsed`, so each file is parsed once per pass (`TestLinkParsesEachTranscriptOncePerPass`, mutation-checked). Live: 111-call ledger, base 23.5 s vs new 0.3 s, identical link and session rows. Header-only reads (codex/pifamily/gemini discovery) are not memoized. |
 
 ## P5: duplication
 

@@ -77,7 +77,7 @@ func (a *adapter) Detect(home string) bool {
 // id or filename uuid) wins; otherwise the heuristic requires the same cwd, a
 // file touched inside the time window, and a leankg tool call with the same
 // normalized name and args hash.
-func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionlink.TranscriptRef{}, 0, err
 	}
@@ -117,7 +117,7 @@ func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef
 		if !hdr.start.IsZero() && hdr.start.After(c.TS.Add(sessionlink.TurnHeuristic.Slack)) {
 			continue
 		}
-		s, err := load(f)
+		s, err := load(rd, f)
 		if err != nil {
 			continue
 		}
@@ -143,11 +143,11 @@ func (a *adapter) ref(path, id string) sessionlink.TranscriptRef {
 }
 
 // Window extracts the bounded context around the matched leankg call.
-func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
+func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int, rd *sessionlink.Reader) (sessionlink.Window, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionlink.Window{}, err
 	}
-	s, err := load(t.Path)
+	s, err := load(rd, t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -163,7 +163,7 @@ func (a *adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, m
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s, err := load(t.Path)
+	s, err := load(nil, t.Path)
 	if err != nil {
 		return nil, err
 	}

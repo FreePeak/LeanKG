@@ -101,7 +101,7 @@ func checkSchema(ctx context.Context, db *sql.DB) error {
 // to name an opencode session that holds the call. The heuristic needs a
 // session in the call's directory whose time range covers the call, and a
 // tool part with the same canonical tool and args hash near the call time.
-func (adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionlink.TranscriptRef{}, 0, err
 	}
@@ -113,7 +113,7 @@ func (adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef) (
 	defer db.Close()
 
 	if c.ClientSessionID != "" {
-		evs, err := loadEvents(ctx, db, c.ClientSessionID)
+		evs, err := sessionEvents(ctx, rd, db, path, c.ClientSessionID)
 		if err != nil {
 			return sessionlink.TranscriptRef{}, 0, err
 		}
@@ -133,7 +133,7 @@ func (adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef) (
 	var total int
 	var first string
 	for _, id := range ids {
-		evs, err := loadEvents(ctx, db, id)
+		evs, err := sessionEvents(ctx, rd, db, path, id)
 		if err != nil {
 			return sessionlink.TranscriptRef{}, 0, err
 		}
@@ -180,7 +180,7 @@ func coveringSessions(ctx context.Context, db *sql.DB, c sessionlink.CallRef) ([
 }
 
 // Window extracts up to n turns before and after the matched call.
-func (adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
+func (adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int, rd *sessionlink.Reader) (sessionlink.Window, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -189,7 +189,7 @@ func (adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessio
 		return sessionlink.Window{}, err
 	}
 	defer db.Close()
-	evs, err := loadEvents(ctx, db, t.SessionID)
+	evs, err := sessionEvents(ctx, rd, db, t.Path, t.SessionID)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -210,7 +210,7 @@ func (adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, maxT
 		return nil, err
 	}
 	defer db.Close()
-	evs, err := loadEvents(ctx, db, t.SessionID)
+	evs, err := sessionEvents(ctx, nil, db, t.Path, t.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -249,6 +249,14 @@ type partData struct {
 type partRow struct {
 	createdMS int64
 	data      partData
+}
+
+// sessionEvents returns one session's events, reading the session at most once
+// per Reader. A database holds many sessions, so the key is path and session id.
+func sessionEvents(ctx context.Context, rd *sessionlink.Reader, db *sql.DB, path, sessionID string) ([]sessionlink.Event, error) {
+	return sessionlink.Parsed(rd, path+"\x00"+sessionID, func() ([]sessionlink.Event, error) {
+		return loadEvents(ctx, db, sessionID)
+	})
 }
 
 // loadEvents reads one session into adapter-neutral events, messages in
