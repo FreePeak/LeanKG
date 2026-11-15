@@ -30,7 +30,7 @@ func TestAutoConfigIndexJobOutlivesRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeSource(t, dir)
-	eng := openEngine(t, dir)
+	eng, st := openEngineWithStore(t, dir)
 	jobs := NewJobs(context.Background())
 	t.Cleanup(jobs.Stop)
 
@@ -45,7 +45,7 @@ func TestAutoConfigIndexJobOutlivesRequest(t *testing.T) {
 	}
 
 	jobs.Wait()
-	n, err := eng.Store().ElementCount(context.Background())
+	n, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestAutoConfigConflictStartsNoJob(t *testing.T) {
 		}
 	}
 	writeSource(t, served)
-	eng := openEngine(t, served)
+	eng, st := openEngineWithStore(t, served)
 	jobs := NewJobs(context.Background())
 	t.Cleanup(jobs.Stop)
 
@@ -79,7 +79,7 @@ func TestAutoConfigConflictStartsNoJob(t *testing.T) {
 	}
 
 	jobs.Wait()
-	n, err := eng.Store().ElementCount(context.Background())
+	n, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

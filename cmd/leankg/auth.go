@@ -85,18 +85,18 @@ func authAdminInit(ctx context.Context, args []string) error {
 	if envPath == "" {
 		envPath = filepath.Join(dir, ".env")
 	}
-	engine, err := openEngine(ctx, dir, store.RW)
+	engine, st, err := openEngine(ctx, dir, store.RW)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
-	if err := engine.Store().Migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
 
 	key := auth.NormalizeEmail(*username)
-	outcome, err := bootstrapAdmin(ctx, engine.Store(), key, envPath)
+	outcome, err := bootstrapAdmin(ctx, st, key, envPath)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -247,17 +247,17 @@ func authRegister(ctx context.Context, args []string) error {
 		}
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RW)
+	engine, st, err := openEngine(ctx, dir, store.RW)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
-	if err := engine.Store().Migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
 
-	account, err := auth.Register(ctx, engine.Store(), *email, *password, *name)
+	account, err := auth.Register(ctx, st, *email, *password, *name)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -306,18 +306,18 @@ func authTokenCreate(ctx context.Context, args []string) error {
 		TTL:       lifetime,
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RW)
+	engine, st, err := openEngine(ctx, dir, store.RW)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 	// Minting needs the tokens table; a writer opens the schema first.
-	if err := engine.Store().Migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
 
-	token, row, err := auth.Mint(ctx, engine.Store(), req)
+	token, row, err := auth.Mint(ctx, st, req)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -342,14 +342,14 @@ func authTokenList(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 
-	tokens, err := engine.Store().TokenList(ctx)
+	tokens, err := st.TokenList(ctx)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -395,14 +395,14 @@ func authTokenRevoke(ctx context.Context, args []string) error {
 		return cliexit.Code(2)
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RW)
+	engine, st, err := openEngine(ctx, dir, store.RW)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 
-	tokens, err := engine.Store().TokenList(ctx)
+	tokens, err := st.TokenList(ctx)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -424,7 +424,7 @@ func authTokenRevoke(ctx context.Context, args []string) error {
 		fmt.Printf("Access token '%s' already revoked.\n", *tokenID)
 		return nil
 	}
-	if err := engine.Store().TokenRevoke(ctx, *tokenID, time.Now().Unix()); err != nil {
+	if err := st.TokenRevoke(ctx, *tokenID, time.Now().Unix()); err != nil {
 		return fatalJSON(err)
 	}
 	fmt.Printf("Access token '%s' revoked.\n", *tokenID)

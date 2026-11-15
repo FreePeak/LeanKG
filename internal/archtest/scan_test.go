@@ -30,8 +30,16 @@ type sourceFile struct {
 
 // scanLibrary parses every non-test, non-generated .go file under the
 // repository root, drops package main, and returns the rest sorted by Rel.
-// The top-level examples directory is a separate module and is skipped.
 func scanLibrary(t *testing.T) (*token.FileSet, []sourceFile) {
+	return scanSources(t, func(rel, pkg string) bool {
+		return pkg != "main" && !strings.HasSuffix(rel, "_test.go")
+	})
+}
+
+// scanSources parses every non-generated .go file under the repository root
+// that keep accepts (by repo-relative path and package clause), sorted by Rel.
+// The top-level examples directory is a separate module and is skipped.
+func scanSources(t *testing.T, keep func(rel, pkg string) bool) (*token.FileSet, []sourceFile) {
 	t.Helper()
 	root := repoRoot(t)
 	fset := token.NewFileSet()
@@ -51,7 +59,7 @@ func scanLibrary(t *testing.T) (*token.FileSet, []sourceFile) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
+		if !strings.HasSuffix(rel, ".go") {
 			return nil
 		}
 		src, err := os.ReadFile(path)
@@ -65,7 +73,7 @@ func scanLibrary(t *testing.T) (*token.FileSet, []sourceFile) {
 		if err != nil {
 			return err
 		}
-		if f.Name.Name != "main" {
+		if keep(rel, f.Name.Name) {
 			files = append(files, sourceFile{Rel: rel, Dir: filepath.ToSlash(filepath.Dir(rel)), Pkg: f.Name.Name, AST: f})
 		}
 		return nil

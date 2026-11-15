@@ -37,6 +37,14 @@ func (f *fakeRouter) MultiProject() bool { return f.multi }
 
 func openEngine(t *testing.T, dir string) *core.Engine {
 	t.Helper()
+	e, _ := openEngineWithStore(t, dir)
+	return e
+}
+
+// openEngineWithStore is openEngine that also returns the store the engine
+// wraps, for tests that read rows directly.
+func openEngineWithStore(t *testing.T, dir string) (*core.Engine, store.Backend) {
+	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +60,7 @@ func openEngine(t *testing.T, dir string) *core.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
-	return e
+	return core.New(st, core.Options{Memory: mem, ProjectDir: dir}), st
 }
 
 // TestAutoConfigHonoursProjectSelector is the follow-up to #490's finding:

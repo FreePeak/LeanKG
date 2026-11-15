@@ -578,6 +578,7 @@ afterSidecars:
 		// travels as the `project` tool argument, routed through the
 		// router hook.
 		srv := newScopedMCPServer(engine, router)
+		srv.SetAuthStore(st) // authenticate logs in against the store serve opened
 		srv.SetRecorder(rec) // plan v4.15 DS-04: capture tools/call and identity
 		registerMCPSink(srv)
 		log.Printf("leankg serve (stdio) project=%s engine=%s", dir, st.Engine())

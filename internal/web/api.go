@@ -119,7 +119,7 @@ func deriveProjectDir(engine *core.Engine, mem *memory.Memory) string {
 		}
 	}
 	if engine != nil {
-		if dir := projectDirFromSuffix(engine.Store().Path(), "/.leankg/leankg.db"); dir != "" {
+		if dir := projectDirFromSuffix(engine.DBPath(), "/.leankg/leankg.db"); dir != "" {
 			return dir
 		}
 	}

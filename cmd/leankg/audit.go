@@ -62,14 +62,14 @@ func cmdAuditExport(ctx context.Context, args []string) error {
 		return cliexit.Code(2)
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 
-	entries, err := auditEntries(ctx, engine.Store(), window)
+	entries, err := auditEntries(ctx, st, window)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -110,14 +110,14 @@ func cmdAuditVerify(ctx context.Context, args []string) error {
 		return cliexit.Code(2)
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 
-	ok, brokenAt, err := engine.Store().VerifyAuditChain(ctx)
+	ok, brokenAt, err := st.VerifyAuditChain(ctx)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -125,7 +125,7 @@ func cmdAuditVerify(ctx context.Context, args []string) error {
 		fmt.Fprintf(os.Stderr, "FAIL: audit chain broken at seq %d\n", brokenAt)
 		return cliexit.Code(1)
 	}
-	entries, err := auditEntries(ctx, engine.Store(), window)
+	entries, err := auditEntries(ctx, st, window)
 	if err != nil {
 		return fatalJSON(err)
 	}

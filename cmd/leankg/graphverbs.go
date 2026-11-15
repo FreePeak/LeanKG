@@ -25,11 +25,11 @@ func cmdDetectClusters(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := resolveProjectDir(*path)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 
 	clusters, err := web.ClusterAssignments(ctx, engine)
@@ -52,11 +52,11 @@ func cmdGods(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 
 	nodes, err := web.GodNodes(ctx, engine, *limit, *excludeHubs)
@@ -81,11 +81,11 @@ func cmdReport(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 
 	report, err := web.GraphReportFor(ctx, engine, dir, *projectName)

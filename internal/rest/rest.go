@@ -26,7 +26,6 @@ import (
 	"github.com/FreePeak/LeanKG/internal/federation"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
-	"github.com/FreePeak/LeanKG/internal/orgknowledge"
 )
 
 // Handler builds the REST mux over an engine.
@@ -117,7 +116,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 	// FR-ZCP org-knowledge reads (Rust /api/v2 routes; the Go envelope is the
 	// existing writeJSON payload shape). Param defaults follow the Rust
 	// handlers: env=production, limit=10.
-	org := orgknowledge.New(engine.Store())
+	org := engine.OrgKnowledge()
 	mux.Handle("GET /api/v2/incidents", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		env := q.Get("env")
@@ -166,7 +165,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 	// Federation receiver (#372): POST /api/v2/graph/push + GET /api/v2/graph,
 	// per-project (routeByProject wraps each project handler), caller-authenticated
 	// with Contributor+ required to write.
-	federation.Register(mux, engine.Store(), engine.ProjectDir())
+	federation.Register(mux, engine.FederationReceiver())
 	if mem != nil {
 		mux.Handle("POST /api/v1/memory/banks/{bank}/memories", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			bank := r.PathValue("bank")

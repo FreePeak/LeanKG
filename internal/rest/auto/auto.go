@@ -15,10 +15,8 @@ import (
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/httpx"
-	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/refresh"
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // AutoConfigRequest controls the MCP auto-init behaviors served over REST.
@@ -174,7 +172,6 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 	}
 
 	projectDir := engine.ProjectDir()
-	st := engine.Store()
 
 	// FR-ZCP-01 clause 3: a caller asking to auto-index the project it is
 	// working in must not silently index a different one. The routing layer
@@ -194,10 +191,10 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 	}
 	// Jobs start only after the refusal above, so a refused request starts none.
 	if req.IndexEnabled {
-		cfg.run(r, func(ctx context.Context) { startAutoIndex(ctx, st, projectDir) })
+		cfg.run(r, func(ctx context.Context) { startAutoIndex(ctx, engine, projectDir) })
 	}
 	if req.EmbedEnabled {
-		cfg.run(r, func(ctx context.Context) { startAutoEmbed(ctx, st, projectDir, req.EmbedDebounceSecs, cfg.embedStart) })
+		cfg.run(r, func(ctx context.Context) { startAutoEmbed(ctx, projectDir, req.EmbedDebounceSecs, cfg.embedStart) })
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"index_enabled":          req.IndexEnabled,
@@ -209,7 +206,7 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 
 // startAutoIndex runs the index in a background goroutine (single-flight per
 // process: a second call while one is in flight is a no-op with a logged note).
-func startAutoIndex(ctx context.Context, st store.Backend, dir string) {
+func startAutoIndex(ctx context.Context, engine *core.Engine, dir string) {
 	autoIndexMu.Lock()
 	if autoIndexRunning {
 		autoIndexMu.Unlock()
@@ -233,12 +230,12 @@ func startAutoIndex(ctx context.Context, st store.Backend, dir string) {
 		log.Printf("auto-config: index language detection: %v", aerr)
 		return
 	}
-	res, err := index.IndexDirWith(ctx, st, dir, langReg)
+	res, err := engine.IndexDir(ctx, dir, langReg)
 	if err != nil {
 		log.Printf("auto-config: index failed: %v", err)
 		return
 	}
-	if _, ierr := store.RefreshInventory(ctx, st); ierr != nil {
+	if ierr := engine.RefreshInventory(ctx); ierr != nil {
 		log.Printf("auto-config: index inventory refresh: %v", ierr)
 	}
 	log.Printf("auto-config: index complete: files=%d elements=%d relationships=%d", res.Files, res.Elements, res.Relationships)
@@ -258,7 +255,7 @@ var embedDebounce = func(ctx context.Context, d time.Duration) bool {
 
 // startAutoEmbed waits the debounce window for index to settle, then runs
 // the embedding pipeline in a background goroutine (single-flight per process).
-func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceSecs int,
+func startAutoEmbed(ctx context.Context, dir string, debounceSecs int,
 	start func(context.Context) (embed.Provider, func(), error)) {
 	autoEmbedMu.Lock()
 	if autoEmbedRunning {

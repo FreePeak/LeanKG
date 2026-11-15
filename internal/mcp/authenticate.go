@@ -49,6 +49,9 @@ func (s *Server) handleAuthenticate(ctx context.Context, req *mcp.CallToolReques
 		return nil, err
 	}
 	st := s.adminStore()
+	if st == nil {
+		return nil, errors.New("authenticate: no auth store is configured for this server")
+	}
 	account, err := auth.VerifyAdminLogin(ctx, st, in.Username, in.Password)
 	switch {
 	case errors.Is(err, auth.ErrAdminLoginRateLimited):
@@ -76,11 +79,6 @@ func (s *Server) handleAuthenticate(ctx context.Context, req *mcp.CallToolReques
 }
 
 // adminStore is the store logins are checked against and tokens are minted
-// into: the HTTP token store serve passes in, else the engine's own store, so
-// the stdio session (which never gets SetAuthStore) can log in too.
-func (s *Server) adminStore() store.Backend {
-	if s.authStore != nil {
-		return s.authStore
-	}
-	return s.engine.Store()
-}
+// into. serve hands it in with SetAuthStore for HTTP and stdio alike; nil means
+// authenticate refuses rather than reaching into the engine.
+func (s *Server) adminStore() store.Backend { return s.authStore }

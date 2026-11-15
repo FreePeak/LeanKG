@@ -58,14 +58,14 @@ func cmdCost(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 
-	elements, err := engine.Store().Elements(ctx)
+	elements, err := st.Elements(ctx)
 	if err != nil {
 		return fatalJSON(err)
 	}
