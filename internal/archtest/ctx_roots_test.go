@@ -16,7 +16,6 @@ var backgroundBudget = map[string]int{
 	"internal/session":   1,
 	"internal/setup":     1,
 	"internal/store":     1,
-	"internal/telemetry": 8,
 }
 
 // todoBudget is the measured count of context.TODO() calls per directory in

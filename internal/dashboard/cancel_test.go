@@ -17,7 +17,7 @@ type countingAdapter struct {
 	reads *int
 }
 
-func (c countingAdapter) Transcript(sessionlink.TranscriptRef, int) ([]sessionlink.Turn, error) {
+func (c countingAdapter) Transcript(_ context.Context, _ sessionlink.TranscriptRef, _ int) ([]sessionlink.Turn, error) {
 	*c.reads++
 	return nil, nil
 }
