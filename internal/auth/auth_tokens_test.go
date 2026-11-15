@@ -41,7 +41,7 @@ func TestDBTokenMintAuthenticateRevoke(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	plain, tok, err := Mint(st, MintRequest{Name: "ci", Role: "contributor"})
+	plain, tok, err := Mint(context.Background(), st, MintRequest{Name: "ci", Role: "contributor"})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestDBTokenMintAuthenticateRevoke(t *testing.T) {
 	// local default (Admin) — the same posture as unsetting all env vars
 	// (documented ceiling: revoking every DB token with no env fallback
 	// re-disables the gate).
-	if err := st.TokenDelete(tok.ID); err != nil {
+	if err := st.TokenDelete(context.Background(), tok.ID); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	role, err = RoleForRequestWithStore(st, reqWith("nope"))
@@ -85,7 +85,7 @@ func TestRolePrecedenceDBOverEnv(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	dual, _, err := Mint(st, MintRequest{Name: "dual", Role: "viewer"})
+	dual, _, err := Mint(context.Background(), st, MintRequest{Name: "dual", Role: "viewer"})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestLocalDefaultWithStoreWired(t *testing.T) {
 func TestDBTokensEnableGate(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
-	if _, _, err := Mint(st, MintRequest{Name: "ci", Role: "viewer"}); err != nil {
+	if _, _, err := Mint(context.Background(), st, MintRequest{Name: "ci", Role: "viewer"}); err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 	if _, err := RoleForRequestWithStore(st, reqWith("")); err == nil {
@@ -136,11 +136,11 @@ func TestDBTokensEnableGate(t *testing.T) {
 func TestMintHashesAtRest(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
-	plain, _, err := Mint(st, MintRequest{Name: "ci", Role: "admin"})
+	plain, _, err := Mint(context.Background(), st, MintRequest{Name: "ci", Role: "admin"})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
-	list, err := st.TokenList()
+	list, err := st.TokenList(context.Background())
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list: %d rows err=%v", len(list), err)
 	}
@@ -160,7 +160,7 @@ func TestMintPersistsLifecycleMetadata(t *testing.T) {
 	st := openAuthStore(t)
 
 	started := time.Now().Unix()
-	plain, tok, err := Mint(st, MintRequest{
+	plain, tok, err := Mint(context.Background(), st, MintRequest{
 		Name:      "ci",
 		Role:      "viewer",
 		AccountID: "acct-7",
@@ -181,7 +181,7 @@ func TestMintPersistsLifecycleMetadata(t *testing.T) {
 		t.Fatalf("expires_at = %d, created_at = %d; want created+5400 (minted at %d)",
 			tok.ExpiresAt, tok.CreatedAt, started)
 	}
-	grant, found, err := Verify(st, plain)
+	grant, found, err := Verify(context.Background(), st, plain)
 	if err != nil || !found {
 		t.Fatalf("verify: found=%v err=%v", found, err)
 	}
@@ -199,15 +199,15 @@ func TestMintPersistsLifecycleMetadata(t *testing.T) {
 	}
 
 	// Unknown role: rejected, nothing stored.
-	if _, _, err := Mint(st, MintRequest{Name: "x", Role: "root"}); err == nil {
+	if _, _, err := Mint(context.Background(), st, MintRequest{Name: "x", Role: "root"}); err == nil {
 		t.Fatal("unknown role must be rejected")
 	}
-	if list, _ := st.TokenList(); len(list) != 1 {
+	if list, _ := st.TokenList(context.Background()); len(list) != 1 {
 		t.Fatalf("rejected mint must not store; %d rows", len(list))
 	}
 
 	// Zero TTL = never expires.
-	_, forever, err := Mint(st, MintRequest{Name: "f", Role: "admin"})
+	_, forever, err := Mint(context.Background(), st, MintRequest{Name: "f", Role: "admin"})
 	if err != nil {
 		t.Fatalf("mint forever: %v", err)
 	}
@@ -224,11 +224,11 @@ func TestVerifyRejectsRevokedAndExpired(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	revoked, revokedTok, err := Mint(st, MintRequest{Name: "r", Role: "admin"})
+	revoked, revokedTok, err := Mint(context.Background(), st, MintRequest{Name: "r", Role: "admin"})
 	if err != nil {
 		t.Fatalf("mint revoked: %v", err)
 	}
-	expired, _, err := Mint(st, MintRequest{Name: "e", Role: "viewer", TTL: -time.Minute})
+	expired, _, err := Mint(context.Background(), st, MintRequest{Name: "e", Role: "viewer", TTL: -time.Minute})
 	if err != nil {
 		t.Fatalf("mint expired: %v", err)
 	}
@@ -236,15 +236,15 @@ func TestVerifyRejectsRevokedAndExpired(t *testing.T) {
 	t.Setenv("LEANKG_TOKEN_ADMIN", revoked)
 	t.Setenv("LEANKG_TOKEN_VIEWER", expired)
 
-	if err := st.TokenRevoke(revokedTok.ID, time.Now().Unix()); err != nil {
+	if err := st.TokenRevoke(context.Background(), revokedTok.ID, time.Now().Unix()); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 
-	revokedGrant, found, err := Verify(st, revoked)
+	revokedGrant, found, err := Verify(context.Background(), st, revoked)
 	if found || err == nil || !errors.Is(err, store.ErrTokenRevoked) {
 		t.Fatalf("revoked: grant=%v found=%v err=%v; want found=false, ErrTokenRevoked", revokedGrant, found, err)
 	}
-	expiredGrant, found, err := Verify(st, expired)
+	expiredGrant, found, err := Verify(context.Background(), st, expired)
 	if found || err == nil || !errors.Is(err, store.ErrTokenExpired) {
 		t.Fatalf("expired: grant=%v found=%v err=%v; want found=false, ErrTokenExpired", expiredGrant, found, err)
 	}
@@ -265,26 +265,26 @@ func TestVerifyStampsLastUsed(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	plain, tok, err := Mint(st, MintRequest{Name: "u", Role: "viewer"})
+	plain, tok, err := Mint(context.Background(), st, MintRequest{Name: "u", Role: "viewer"})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 
 	// A fresh row reports no use, and an unknown secret is a soft miss that
 	// stamps nothing.
-	if list, err := st.TokenList(); err != nil || len(list) != 1 || list[0].LastUsedAt != 0 {
+	if list, err := st.TokenList(context.Background()); err != nil || len(list) != 1 || list[0].LastUsedAt != 0 {
 		t.Fatalf("fresh mint must read last_used_at = 0: %v (err=%v)", list, err)
 	}
-	if _, found, err := Verify(st, "lkg_unknown"); err != nil || found {
+	if _, found, err := Verify(context.Background(), st, "lkg_unknown"); err != nil || found {
 		t.Fatalf("unknown secret: found=%v err=%v; want a soft miss", found, err)
 	}
 
 	for i := 0; i < 20; i++ {
-		if _, found, err := Verify(st, plain); err != nil || !found {
+		if _, found, err := Verify(context.Background(), st, plain); err != nil || !found {
 			t.Fatalf("verify %d: found=%v err=%v", i, found, err)
 		}
 	}
-	list, err := st.TokenList()
+	list, err := st.TokenList(context.Background())
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list: %d rows err=%v", len(list), err)
 	}
@@ -307,14 +307,14 @@ func TestDeadDBTokensDoNotEnableGate(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	_, revokedTok, err := Mint(st, MintRequest{Name: "revoked-smoke", Role: "viewer"})
+	_, revokedTok, err := Mint(context.Background(), st, MintRequest{Name: "revoked-smoke", Role: "viewer"})
 	if err != nil {
 		t.Fatalf("mint revoked: %v", err)
 	}
-	if err := st.TokenRevoke(revokedTok.ID, time.Now().Unix()); err != nil {
+	if err := st.TokenRevoke(context.Background(), revokedTok.ID, time.Now().Unix()); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	_, expTok, err := Mint(st, MintRequest{Name: "expired-smoke", Role: "viewer", TTL: -time.Second})
+	_, expTok, err := Mint(context.Background(), st, MintRequest{Name: "expired-smoke", Role: "viewer", TTL: -time.Second})
 	if err != nil {
 		t.Fatalf("mint expired: %v", err)
 	}

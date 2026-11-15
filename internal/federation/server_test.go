@@ -34,7 +34,7 @@ func clearTokenEnv(t *testing.T) {
 // gate on: with no token anywhere the store is open (auth's local default).
 func mint(t *testing.T, st store.Backend, role string) string {
 	t.Helper()
-	secret, _, err := auth.Mint(st, auth.MintRequest{Name: "federation-" + role, Role: role})
+	secret, _, err := auth.Mint(context.Background(), st, auth.MintRequest{Name: "federation-" + role, Role: role})
 	if err != nil {
 		t.Fatalf("mint %s token: %v", role, err)
 	}

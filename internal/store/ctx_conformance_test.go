@@ -142,6 +142,36 @@ var ctxConformanceRoles = []ctxRole{
 		},
 	},
 	{
+		name: "Identity",
+		read: func(ctx context.Context, b Backend) error {
+			_, _, err := b.AccountByID(ctx, "conformance")
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			return b.AccountUpsert(ctx, Account{ID: "conformance", Email: "conformance@example.com", Name: "conformance", Status: "active"})
+		},
+	},
+	{
+		name: "Tokens",
+		read: func(ctx context.Context, b Backend) error {
+			_, _, err := b.TokenFind(ctx, "conformance-secret")
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			return b.TokenUpsert(ctx, Token{ID: "conformance", Name: "conformance", Secret: "conformance-secret", Role: "viewer", CreatedAt: 1})
+		},
+	},
+	{
+		name: "Audit",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.AuditTail(ctx, 1)
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			return b.AppendAudit(ctx, &AuditEntry{Actor: "conformance", Action: "conformance", Target: "conformance"})
+		},
+	},
+	{
 		name: "Maintainer",
 		read: func(ctx context.Context, b Backend) error {
 			_, err := b.Space(ctx)

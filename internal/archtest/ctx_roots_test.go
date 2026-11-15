@@ -28,7 +28,6 @@ var todoBudget = map[string]int{
 	"internal/obsidian":     3,
 	"internal/ontology":     8,
 	"internal/portfolioreg": 4,
-	"internal/store":        2,
 	"internal/summarize":    2,
 }
 

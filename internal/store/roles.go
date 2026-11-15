@@ -197,9 +197,9 @@ type KV interface {
 
 // Audit is the hash-chained audit ledger (FR parity with the Rust audit/mod.rs).
 type Audit interface {
-	AppendAudit(e *AuditEntry) error
-	AuditTail(limit int) ([]AuditEntry, error)
-	VerifyAuditChain() (ok bool, brokenAt int64, err error)
+	AppendAudit(ctx context.Context, e *AuditEntry) error
+	AuditTail(ctx context.Context, limit int) ([]AuditEntry, error)
+	VerifyAuditChain(ctx context.Context) (ok bool, brokenAt int64, err error)
 }
 
 // Tokens is the DB-backed bearer-token store (Rust auth/tokens.rs parity).
@@ -210,12 +210,12 @@ type Audit interface {
 // the hard TokenDelete; TokenTouch records a successful authentication's
 // last_used_at, coalesced to one write per TokenTouchWindowSecs.
 type Tokens interface {
-	TokenUpsert(tok Token) error
-	TokenList() ([]Token, error)
-	TokenDelete(id string) error
-	TokenRevoke(id string, at int64) error
-	TokenTouch(id string, at int64) error
-	TokenFind(secret string) (Token, bool, error)
+	TokenUpsert(ctx context.Context, tok Token) error
+	TokenList(ctx context.Context) ([]Token, error)
+	TokenDelete(ctx context.Context, id string) error
+	TokenRevoke(ctx context.Context, id string, at int64) error
+	TokenTouch(ctx context.Context, id string, at int64) error
+	TokenFind(ctx context.Context, secret string) (Token, bool, error)
 }
 
 // Identity is enterprise auth (Rust auth/accounts.rs + 004_auth.sql parity):
@@ -225,18 +225,21 @@ type Tokens interface {
 // membership writes are keyed on the pair, so a re-add re-roles instead of
 // duplicating.
 type Identity interface {
-	AccountUpsert(a Account) error
-	AccountByEmail(email string) (Account, bool, error)
+	AccountUpsert(ctx context.Context, a Account) error
+	AccountByEmail(ctx context.Context, email string) (Account, bool, error)
+	// AccountByID reports the account with the given id. A token minted for an
+	// account resolves through it, so a disabled account stops its tokens.
+	AccountByID(ctx context.Context, id string) (Account, bool, error)
 	// AdminExists reports whether any account carries the site-admin marker.
-	AdminExists() (bool, error)
-	OrgUpsert(o Org) error
-	OrgByID(id string) (Org, bool, error)
-	OrgsByOwner(ownerAccountID string) ([]Org, error)
-	OrgMembershipUpsert(m OrgMember) error
-	OrgMemberOf(orgID, accountID string) (OrgMember, bool, error)
-	OrgMembers(orgID string) ([]OrgMember, error)
-	ResourceClaim(resourceType, resourceID, ownerAccountID, orgID string) error
-	IsResourceOwner(resourceType, resourceID, accountID string) (bool, error)
+	AdminExists(ctx context.Context) (bool, error)
+	OrgUpsert(ctx context.Context, o Org) error
+	OrgByID(ctx context.Context, id string) (Org, bool, error)
+	OrgsByOwner(ctx context.Context, ownerAccountID string) ([]Org, error)
+	OrgMembershipUpsert(ctx context.Context, m OrgMember) error
+	OrgMemberOf(ctx context.Context, orgID, accountID string) (OrgMember, bool, error)
+	OrgMembers(ctx context.Context, orgID string) ([]OrgMember, error)
+	ResourceClaim(ctx context.Context, resourceType, resourceID, ownerAccountID, orgID string) error
+	IsResourceOwner(ctx context.Context, resourceType, resourceID, accountID string) (bool, error)
 }
 
 // Knowledge is the org/ops knowledge store (Rust db::mod.rs incidents /

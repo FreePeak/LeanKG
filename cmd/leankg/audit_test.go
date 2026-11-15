@@ -57,7 +57,7 @@ func seedAuditLedger(t *testing.T, dir string) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendAudit(&store.AuditEntry{
+	if err := st.AppendAudit(context.Background(), &store.AuditEntry{
 		At:      1_600_000_000,
 		Actor:   "tester",
 		Action:  "tool_call",
@@ -66,7 +66,7 @@ func seedAuditLedger(t *testing.T, dir string) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendAudit(&store.AuditEntry{Actor: "tester", Action: "index", Target: "repo"}); err != nil {
+	if err := st.AppendAudit(context.Background(), &store.AuditEntry{Actor: "tester", Action: "index", Target: "repo"}); err != nil {
 		t.Fatal(err)
 	}
 }

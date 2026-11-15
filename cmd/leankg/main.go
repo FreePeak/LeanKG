@@ -292,7 +292,7 @@ func serveGateOn(ctx context.Context, dir, engine, dbPath string) bool {
 	} else {
 		defer st.Close()
 	}
-	gateOn, gateErr := auth.GateEnabled(st)
+	gateOn, gateErr := auth.GateEnabled(ctx, st)
 	if gateErr != nil {
 		log.Printf("warning: auth gate state unknown: %v", gateErr)
 		return false

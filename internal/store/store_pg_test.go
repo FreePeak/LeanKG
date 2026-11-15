@@ -395,7 +395,7 @@ func TestPGAudit(t *testing.T) {
 	prev := ""
 	for i := 1; i <= 3; i++ {
 		e := &AuditEntry{Actor: "test", Action: "index", Target: "proj", Details: map[string]any{"files": i}}
-		if err := s.AppendAudit(e); err != nil {
+		if err := s.AppendAudit(context.Background(), e); err != nil {
 			t.Fatal(err)
 		}
 		if e.Seq != int64(i) || e.Hash == "" || e.PrevHash != prev {
@@ -404,7 +404,7 @@ func TestPGAudit(t *testing.T) {
 		prev = e.Hash
 	}
 
-	tail, err := s.AuditTail(2)
+	tail, err := s.AuditTail(context.Background(), 2)
 	if err != nil || len(tail) != 2 {
 		t.Fatalf("AuditTail(2) = %+v, %v", tail, err)
 	}
@@ -415,7 +415,7 @@ func TestPGAudit(t *testing.T) {
 		t.Fatalf("details not round-tripped: %+v", tail[1].Details)
 	}
 
-	ok, brokenAt, err := s.VerifyAuditChain()
+	ok, brokenAt, err := s.VerifyAuditChain(context.Background())
 	if err != nil || !ok || brokenAt != 0 {
 		t.Fatalf("VerifyAuditChain = (%v, %d, %v); want (true, 0, nil)", ok, brokenAt, err)
 	}
@@ -424,7 +424,7 @@ func TestPGAudit(t *testing.T) {
 	if _, err := s.pool.Exec(pgCtx, `UPDATE audit_ledger SET target = 'evil' WHERE seq = 2`); err != nil {
 		t.Fatal(err)
 	}
-	ok, brokenAt, err = s.VerifyAuditChain()
+	ok, brokenAt, err = s.VerifyAuditChain(context.Background())
 	if err != nil || ok || brokenAt != 2 {
 		t.Fatalf("VerifyAuditChain after tamper = (%v, %d, %v); want (false, 2, nil)", ok, brokenAt, err)
 	}
@@ -473,7 +473,7 @@ func TestPGReadOnly(t *testing.T) {
 	}}); err == nil {
 		t.Fatal("UpsertElements in RO succeeded; want error")
 	}
-	if err := ro.AppendAudit(&AuditEntry{Actor: "ro", Action: "nope"}); err == nil {
+	if err := ro.AppendAudit(context.Background(), &AuditEntry{Actor: "ro", Action: "nope"}); err == nil {
 		t.Fatal("AppendAudit in RO succeeded; want error")
 	}
 

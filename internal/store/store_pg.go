@@ -1145,18 +1145,18 @@ func (s *PGStore) LastEmbedRun(ctx context.Context, modelID string) (*EmbedRun, 
 // the highest seq. sqlite serialized appends through its single write
 // connection; the pool's concurrent writers need an explicit transaction-scoped
 // advisory lock so the hash chain can never fork.
-func (s *PGStore) AppendAudit(e *AuditEntry) error {
-	tx, err := s.pool.Begin(pgCtx)
+func (s *PGStore) AppendAudit(ctx context.Context, e *AuditEntry) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
-	if _, err := tx.Exec(pgCtx, `SELECT pg_advisory_xact_lock(hashtext($1))`, s.schema); err != nil {
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, s.schema); err != nil {
 		return err
 	}
 	var seq int64
 	var prev string
-	if err := tx.QueryRow(pgCtx,
+	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE(MAX(seq),0), COALESCE((SELECT hash FROM audit_ledger ORDER BY seq DESC LIMIT 1),'') FROM audit_ledger`).
 		Scan(&seq, &prev); err != nil {
 		return err
@@ -1167,22 +1167,22 @@ func (s *PGStore) AppendAudit(e *AuditEntry) error {
 		e.At = time.Now().Unix()
 	}
 	e.Hash = auditHash(e.PrevHash, e)
-	if _, err := tx.Exec(pgCtx, `INSERT INTO audit_ledger (seq, at, actor, action, target, details, prev_hash, hash)
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_ledger (seq, at, actor, action, target, details, prev_hash, hash)
 		VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`, e.Seq, e.At, e.Actor, e.Action, e.Target, auditDetailsJSON(e), e.PrevHash, e.Hash); err != nil {
 		return err
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // AuditTail returns the last `limit` entries in ascending seq order.
-func (s *PGStore) AuditTail(limit int) ([]AuditEntry, error) {
+func (s *PGStore) AuditTail(ctx context.Context, limit int) ([]AuditEntry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(pgCtx, `SELECT seq, at, actor, action, target, details::text, prev_hash, hash FROM audit_ledger
+	rows, err := s.pool.Query(ctx, `SELECT seq, at, actor, action, target, details::text, prev_hash, hash FROM audit_ledger
 		ORDER BY seq DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -1214,8 +1214,8 @@ func (s *PGStore) AuditTail(limit int) ([]AuditEntry, error) {
 // into the entry BEFORE recompute: jsonb normalizes key order on storage, and
 // the hash is defined over the canonical Go marshal of the details map, so
 // only the map round-trip is stable — not the stored byte string.
-func (s *PGStore) VerifyAuditChain() (ok bool, brokenAt int64, err error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT seq, at, actor, action, target, details::text, prev_hash, hash FROM audit_ledger ORDER BY seq`)
+func (s *PGStore) VerifyAuditChain(ctx context.Context) (ok bool, brokenAt int64, err error) {
+	rows, err := s.pool.Query(ctx, `SELECT seq, at, actor, action, target, details::text, prev_hash, hash FROM audit_ledger ORDER BY seq`)
 	if err != nil {
 		return false, 0, err
 	}

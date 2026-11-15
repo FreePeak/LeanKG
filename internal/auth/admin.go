@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -12,14 +13,14 @@ import (
 // the username is inside a lockout, the rejection also wraps
 // ErrAdminLoginRateLimited. The username is matched case-insensitively, as an
 // account email.
-func VerifyAdminLogin(st store.Backend, username, password string) (store.Account, error) {
-	return verifyLogin(loginThrottle, st, username, password, true)
+func VerifyAdminLogin(ctx context.Context, st store.Backend, username, password string) (store.Account, error) {
+	return verifyLogin(ctx, loginThrottle, st, username, password, true)
 }
 
 // CreateSiteAdmin stores the site-admin account for username, keeping only a
 // PBKDF2 verifier of password. The username is normalized and used as the
 // account's email key. Callers decide whether an admin may be created at all.
-func CreateSiteAdmin(st store.Backend, username, password string) (store.Account, error) {
+func CreateSiteAdmin(ctx context.Context, st store.Backend, username, password string) (store.Account, error) {
 	key := NormalizeEmail(username)
 	if key == "" {
 		return store.Account{}, errors.New("admin username is required")
@@ -46,7 +47,7 @@ func CreateSiteAdmin(st store.Backend, username, password string) (store.Account
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := st.AccountUpsert(account); err != nil {
+	if err := st.AccountUpsert(ctx, account); err != nil {
 		return store.Account{}, err
 	}
 	return account, nil

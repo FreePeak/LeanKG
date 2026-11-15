@@ -36,7 +36,7 @@ func Routes(st store.Backend) http.Handler {
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		account, err := Register(st, req.Email, req.Password, req.Name)
+		account, err := Register(r.Context(), st, req.Email, req.Password, req.Name)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -51,7 +51,7 @@ func Routes(st store.Backend) http.Handler {
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		account, err := VerifyLogin(st, req.Email, req.Password)
+		account, err := VerifyLogin(r.Context(), st, req.Email, req.Password)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -103,7 +103,7 @@ func Routes(st store.Backend) http.Handler {
 			}
 			ttl = time.Duration(secs) * time.Second
 		}
-		secret, row, err := Mint(st, MintRequest{
+		secret, row, err := Mint(r.Context(), st, MintRequest{
 			Name:      req.Name,
 			Role:      role,
 			AccountID: req.AccountID,
@@ -134,7 +134,7 @@ func Routes(st store.Backend) http.Handler {
 		// A caller with an account sees only its own tokens (Rust
 		// list_tokens(ctx.client_id)); a process-level caller (env token or
 		// the no-token local default) has no account to filter by and sees all.
-		rows, err := st.TokenList()
+		rows, err := st.TokenList(r.Context())
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -161,7 +161,7 @@ func Routes(st store.Backend) http.Handler {
 		if !ok {
 			return
 		}
-		rows, err := st.TokenList()
+		rows, err := st.TokenList(r.Context())
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -177,7 +177,7 @@ func Routes(st store.Backend) http.Handler {
 				return
 			}
 			if t.RevokedAt == 0 {
-				if err := st.TokenRevoke(t.ID, time.Now().Unix()); err != nil {
+				if err := st.TokenRevoke(r.Context(), t.ID, time.Now().Unix()); err != nil {
 					writeFail(w, err.Error())
 					return
 				}
@@ -198,7 +198,7 @@ func Routes(st store.Backend) http.Handler {
 		if !ok {
 			return
 		}
-		org, err := CreateOrg(st, name, ctx.AccountID)
+		org, err := CreateOrg(r.Context(), st, name, ctx.AccountID)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -218,7 +218,7 @@ func Routes(st store.Backend) http.Handler {
 			return
 		}
 		orgID := r.PathValue("org_id")
-		allowed, err := OrgRoleSufficient(st, orgID, ctx.AccountID, OrgRoleAdmin)
+		allowed, err := OrgRoleSufficient(r.Context(), st, orgID, ctx.AccountID, OrgRoleAdmin)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -227,7 +227,7 @@ func Routes(st store.Backend) http.Handler {
 			writeFail(w, "insufficient permission: org admin+ required")
 			return
 		}
-		member, err := AddOrgMember(st, orgID, req.AccountID, req.Role)
+		member, err := AddOrgMember(r.Context(), st, orgID, req.AccountID, req.Role)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -240,7 +240,7 @@ func Routes(st store.Backend) http.Handler {
 			return
 		}
 		orgID := r.PathValue("org_id")
-		allowed, err := OrgRoleSufficient(st, orgID, ctx.AccountID, OrgRoleViewer)
+		allowed, err := OrgRoleSufficient(r.Context(), st, orgID, ctx.AccountID, OrgRoleViewer)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -249,7 +249,7 @@ func Routes(st store.Backend) http.Handler {
 			writeFail(w, "not an org member")
 			return
 		}
-		members, err := st.OrgMembers(orgID)
+		members, err := st.OrgMembers(r.Context(), orgID)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -269,7 +269,7 @@ func Routes(st store.Backend) http.Handler {
 		if !ok {
 			return
 		}
-		if err := ClaimResource(st, req.ResourceType, req.ResourceID, ctx.AccountID, req.OrgID); err != nil {
+		if err := ClaimResource(r.Context(), st, req.ResourceType, req.ResourceID, ctx.AccountID, req.OrgID); err != nil {
 			writeFail(w, err.Error())
 			return
 		}

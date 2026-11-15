@@ -43,13 +43,13 @@ type authenticateResult struct {
 // error, except a lockout, which names the rate limit. The password is never
 // echoed, logged or recorded: capture drops this tool's arguments and result
 // (see secretCall).
-func (s *Server) handleAuthenticate(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleAuthenticate(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	var in authenticateArgs
 	if err := unmarshalArgs(req, &in); err != nil {
 		return nil, err
 	}
 	st := s.adminStore()
-	account, err := auth.VerifyAdminLogin(st, in.Username, in.Password)
+	account, err := auth.VerifyAdminLogin(ctx, st, in.Username, in.Password)
 	switch {
 	case errors.Is(err, auth.ErrAdminLoginRateLimited):
 		return nil, errs.NewError(errs.Unauthorized,
@@ -59,7 +59,7 @@ func (s *Server) handleAuthenticate(_ context.Context, req *mcp.CallToolRequest)
 	case err != nil:
 		return nil, err
 	}
-	token, row, err := auth.Mint(st, auth.MintRequest{
+	token, row, err := auth.Mint(ctx, st, auth.MintRequest{
 		Name:      "authenticate",
 		Role:      auth.Admin.String(),
 		AccountID: account.ID,

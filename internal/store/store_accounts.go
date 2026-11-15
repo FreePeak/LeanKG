@@ -12,6 +12,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -74,11 +75,11 @@ const orgMemberCols = `org_id, account_id, role, joined_at`
 
 // AccountUpsert inserts or replaces an account keyed by ID. The write replaces
 // every column (Rust upsert_account's :put accounts semantics).
-func (s *Store) AccountUpsert(a Account) error {
+func (s *Store) AccountUpsert(ctx context.Context, a Account) error {
 	if a.ID == "" || a.Email == "" {
 		return fmt.Errorf("store: account upsert: id and email are required")
 	}
-	_, err := s.db.Exec(`INSERT INTO accounts (`+accountCols+`)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO accounts (`+accountCols+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			email = excluded.email, name = excluded.name,
@@ -94,9 +95,9 @@ func (s *Store) AccountUpsert(a Account) error {
 
 // AdminExists reports whether any account is a site admin. The partial index
 // idx_accounts_site_admin makes this a point probe, cheap enough per request.
-func (s *Store) AdminExists() (bool, error) {
+func (s *Store) AdminExists(ctx context.Context) (bool, error) {
 	var found bool
-	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM accounts WHERE site_admin = 1)`).Scan(&found); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM accounts WHERE site_admin = 1)`).Scan(&found); err != nil {
 		return false, fmt.Errorf("store: admin exists: %w", err)
 	}
 	return found, nil
@@ -105,8 +106,8 @@ func (s *Store) AdminExists() (bool, error) {
 // AccountByEmail resolves an account by its (exact, already-normalized) email.
 // Callers normalize with strings.ToLower(strings.TrimSpace(...)) first — the
 // UNIQUE index is on the stored form.
-func (s *Store) AccountByEmail(email string) (Account, bool, error) {
-	row := s.db.QueryRow(`SELECT `+accountCols+` FROM accounts WHERE email = ?`, email)
+func (s *Store) AccountByEmail(ctx context.Context, email string) (Account, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+accountCols+` FROM accounts WHERE email = ?`, email)
 	a, err := scanAccount(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -117,12 +118,26 @@ func (s *Store) AccountByEmail(email string) (Account, bool, error) {
 	return a, true, nil
 }
 
+// AccountByID resolves an account by its primary key. A token minted for an
+// account resolves through it, so the account status gates the token.
+func (s *Store) AccountByID(ctx context.Context, id string) (Account, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+accountCols+` FROM accounts WHERE id = ?`, id)
+	a, err := scanAccount(row.Scan)
+	if err != nil {
+		if isNoRows(err) {
+			return Account{}, false, nil
+		}
+		return Account{}, false, fmt.Errorf("store: account by id: %w", err)
+	}
+	return a, true, nil
+}
+
 // OrgUpsert inserts or replaces an org keyed by ID.
-func (s *Store) OrgUpsert(o Org) error {
+func (s *Store) OrgUpsert(ctx context.Context, o Org) error {
 	if o.ID == "" || o.OwnerAccountID == "" {
 		return fmt.Errorf("store: org upsert: id and owner_account_id are required")
 	}
-	_, err := s.db.Exec(`INSERT INTO orgs (`+orgCols+`)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO orgs (`+orgCols+`)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name, owner_account_id = excluded.owner_account_id,
@@ -135,8 +150,8 @@ func (s *Store) OrgUpsert(o Org) error {
 }
 
 // OrgByID resolves one org by id.
-func (s *Store) OrgByID(id string) (Org, bool, error) {
-	row := s.db.QueryRow(`SELECT `+orgCols+` FROM orgs WHERE id = ?`, id)
+func (s *Store) OrgByID(ctx context.Context, id string) (Org, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+orgCols+` FROM orgs WHERE id = ?`, id)
 	o, err := scanOrg(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -149,8 +164,8 @@ func (s *Store) OrgByID(id string) (Org, bool, error) {
 
 // OrgsByOwner lists the orgs owned by an account (the accounts.rs bootstrap-org
 // and "my orgs" lookup; Rust reached this through a raw owner_account_id query).
-func (s *Store) OrgsByOwner(ownerAccountID string) ([]Org, error) {
-	rows, err := s.db.Query(`SELECT `+orgCols+` FROM orgs WHERE owner_account_id = ? ORDER BY created_at, id`, ownerAccountID)
+func (s *Store) OrgsByOwner(ctx context.Context, ownerAccountID string) ([]Org, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+orgCols+` FROM orgs WHERE owner_account_id = ? ORDER BY created_at, id`, ownerAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("store: orgs by owner: %w", err)
 	}
@@ -168,11 +183,11 @@ func (s *Store) OrgsByOwner(ownerAccountID string) ([]Org, error) {
 
 // OrgMembershipUpsert adds or re-roles an org member (Rust upsert_member:
 // UNIQUE (org_id, account_id) makes a re-add an update, never a duplicate).
-func (s *Store) OrgMembershipUpsert(m OrgMember) error {
+func (s *Store) OrgMembershipUpsert(ctx context.Context, m OrgMember) error {
 	if m.OrgID == "" || m.AccountID == "" {
 		return fmt.Errorf("store: org membership upsert: org_id and account_id are required")
 	}
-	_, err := s.db.Exec(`INSERT INTO org_memberships (`+orgMemberCols+`)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO org_memberships (`+orgMemberCols+`)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(org_id, account_id) DO UPDATE SET
 			role = excluded.role, joined_at = excluded.joined_at`,
@@ -184,8 +199,8 @@ func (s *Store) OrgMembershipUpsert(m OrgMember) error {
 }
 
 // OrgMemberOf resolves one membership row.
-func (s *Store) OrgMemberOf(orgID, accountID string) (OrgMember, bool, error) {
-	row := s.db.QueryRow(`SELECT `+orgMemberCols+` FROM org_memberships WHERE org_id = ? AND account_id = ?`, orgID, accountID)
+func (s *Store) OrgMemberOf(ctx context.Context, orgID, accountID string) (OrgMember, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+orgMemberCols+` FROM org_memberships WHERE org_id = ? AND account_id = ?`, orgID, accountID)
 	m, err := scanOrgMember(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -197,8 +212,8 @@ func (s *Store) OrgMemberOf(orgID, accountID string) (OrgMember, bool, error) {
 }
 
 // OrgMembers lists every member of an org.
-func (s *Store) OrgMembers(orgID string) ([]OrgMember, error) {
-	rows, err := s.db.Query(`SELECT `+orgMemberCols+` FROM org_memberships WHERE org_id = ? ORDER BY joined_at, account_id`, orgID)
+func (s *Store) OrgMembers(ctx context.Context, orgID string) ([]OrgMember, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+orgMemberCols+` FROM org_memberships WHERE org_id = ? ORDER BY joined_at, account_id`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("store: org members: %w", err)
 	}
@@ -265,11 +280,11 @@ func (s *Store) TeamMembers(teamID string) ([]TeamMember, error) {
 // ResourceClaim records that ownerAccountID owns a resource. orgID "" means
 // unset (NULL): Rust wrote an empty string for its `None`, which is the same
 // "unset" observation on read.
-func (s *Store) ResourceClaim(resourceType, resourceID, ownerAccountID, orgID string) error {
+func (s *Store) ResourceClaim(ctx context.Context, resourceType, resourceID, ownerAccountID, orgID string) error {
 	if resourceType == "" || resourceID == "" || ownerAccountID == "" {
 		return fmt.Errorf("store: resource claim: resource_type, resource_id and owner_account_id are required")
 	}
-	_, err := s.db.Exec(`INSERT INTO resource_ownership
+	_, err := s.db.ExecContext(ctx, `INSERT INTO resource_ownership
 		(resource_type, resource_id, owner_account_id, org_id, created_at)
 		VALUES (?, ?, ?, NULLIF(?, ''), ?)
 		ON CONFLICT(resource_type, resource_id, owner_account_id) DO UPDATE SET
@@ -285,9 +300,9 @@ func (s *Store) ResourceClaim(resourceType, resourceID, ownerAccountID, orgID st
 // per-account: another account claiming the same resource is a separate row
 // and never makes this one true (Rust is_resource_owner filters on
 // owner_account_id too).
-func (s *Store) IsResourceOwner(resourceType, resourceID, accountID string) (bool, error) {
+func (s *Store) IsResourceOwner(ctx context.Context, resourceType, resourceID, accountID string) (bool, error) {
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM resource_ownership
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM resource_ownership
 		WHERE resource_type = ? AND resource_id = ? AND owner_account_id = ?`,
 		resourceType, resourceID, accountID).Scan(&n); err != nil {
 		return false, fmt.Errorf("store: is resource owner: %w", err)

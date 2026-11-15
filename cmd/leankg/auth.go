@@ -96,7 +96,7 @@ func authAdminInit(ctx context.Context, args []string) error {
 	}
 
 	key := auth.NormalizeEmail(*username)
-	outcome, err := bootstrapAdmin(engine.Store(), key, envPath)
+	outcome, err := bootstrapAdmin(ctx, engine.Store(), key, envPath)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -120,7 +120,7 @@ func authAdminInit(ctx context.Context, args []string) error {
 // only when the env credentials verify against it. Every refusal happens before
 // any write, and the env file is written before the account so that a failed
 // account insert leaves credentials a rerun can use.
-func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcome, error) {
+func bootstrapAdmin(ctx context.Context, st store.Backend, username, envPath string) (adminInitOutcome, error) {
 	key := auth.NormalizeEmail(username)
 	env, err := envfile.Load(envPath)
 	if err != nil {
@@ -131,13 +131,13 @@ func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcom
 	}
 	envPassword, hasPassword := env[adminPasswordKey]
 
-	_, exists, err := st.AccountByEmail(key)
+	_, exists, err := st.AccountByEmail(ctx, key)
 	if err != nil {
 		return 0, err
 	}
 	if exists {
 		if hasPassword {
-			if _, err := auth.VerifyAdminLogin(st, key, envPassword); err == nil {
+			if _, err := auth.VerifyAdminLogin(ctx, st, key, envPassword); err == nil {
 				tightened, err := tightenEnvMode(envPath)
 				if err != nil {
 					return 0, err
@@ -151,7 +151,7 @@ func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcom
 		return 0, fmt.Errorf("admin %q already exists and the credentials in %s do not verify it; nothing changed", key, envPath)
 	}
 
-	anyAdmin, err := st.AdminExists()
+	anyAdmin, err := st.AdminExists(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -176,7 +176,7 @@ func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcom
 	}); err != nil {
 		return 0, err
 	}
-	if _, err := auth.CreateSiteAdmin(st, key, password); err != nil {
+	if _, err := auth.CreateSiteAdmin(ctx, st, key, password); err != nil {
 		return 0, err
 	}
 	return outcome, nil
@@ -257,7 +257,7 @@ func authRegister(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 
-	account, err := auth.Register(engine.Store(), *email, *password, *name)
+	account, err := auth.Register(ctx, engine.Store(), *email, *password, *name)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -317,7 +317,7 @@ func authTokenCreate(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 
-	token, row, err := auth.Mint(engine.Store(), req)
+	token, row, err := auth.Mint(ctx, engine.Store(), req)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -349,7 +349,7 @@ func authTokenList(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 
-	tokens, err := engine.Store().TokenList()
+	tokens, err := engine.Store().TokenList(ctx)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -402,7 +402,7 @@ func authTokenRevoke(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 
-	tokens, err := engine.Store().TokenList()
+	tokens, err := engine.Store().TokenList(ctx)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -424,7 +424,7 @@ func authTokenRevoke(ctx context.Context, args []string) error {
 		fmt.Printf("Access token '%s' already revoked.\n", *tokenID)
 		return nil
 	}
-	if err := engine.Store().TokenRevoke(*tokenID, time.Now().Unix()); err != nil {
+	if err := engine.Store().TokenRevoke(ctx, *tokenID, time.Now().Unix()); err != nil {
 		return fatalJSON(err)
 	}
 	fmt.Printf("Access token '%s' revoked.\n", *tokenID)
