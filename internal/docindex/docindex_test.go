@@ -48,7 +48,7 @@ func writeFile(t *testing.T, dir, rel, content string) {
 // mustFind asserts exactly one element with the given qualified name.
 func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestIndexDocsSections(t *testing.T) {
 	}
 
 	// contains edges from the section hierarchy, confidence 1.0.
-	rels, err := st.Outgoing("guide.md#guide")
+	rels, err := st.Outgoing(context.Background(), "guide.md#guide")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestIndexDocsSections(t *testing.T) {
 			t.Fatalf("edge %+v, want contains@1.0", r)
 		}
 	}
-	rels, err = st.Outgoing("guide.md#install")
+	rels, err = st.Outgoing(context.Background(), "guide.md#install")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +180,10 @@ func TestIndexDocsChangeDetection(t *testing.T) {
 		t.Fatalf("changed run: %+v, want Files=1 Elements=1 Skipped=0", res)
 	}
 	mustFind(t, st, "doc.md#two")
-	if els, err := st.FindExact("doc.md#one"); err != nil || len(els) != 0 {
+	if els, err := st.FindExact(context.Background(), "doc.md#one"); err != nil || len(els) != 0 {
 		t.Fatalf("stale element after re-index: %v, %v", els, err)
 	}
-	if n, _ := st.ElementCount(); n != 1 {
+	if n, _ := st.ElementCount(context.Background()); n != 1 {
 		t.Fatalf("element count: %d, want 1", n)
 	}
 }
@@ -204,10 +204,10 @@ func TestIndexDocsDeletion(t *testing.T) {
 	if res.Skipped != 1 || res.Files != 0 {
 		t.Fatalf("deletion run: %+v, want Skipped=1 Files=0", res)
 	}
-	if n, _ := st.ElementCount(); n != 1 {
+	if n, _ := st.ElementCount(context.Background()); n != 1 {
 		t.Fatalf("element count after deletion: %d, want 1", n)
 	}
-	if n, _ := st.FileCount(); n != 1 {
+	if n, _ := st.FileCount(context.Background()); n != 1 {
 		t.Fatalf("file count after deletion: %d, want 1", n)
 	}
 	recs, err := st.Files()
@@ -219,7 +219,7 @@ func TestIndexDocsDeletion(t *testing.T) {
 			t.Fatal("stale code_files row for deleted file")
 		}
 	}
-	if els, err := st.FindExact("gone.md#gone"); err != nil || len(els) != 0 {
+	if els, err := st.FindExact(context.Background(), "gone.md#gone"); err != nil || len(els) != 0 {
 		t.Fatalf("stale element + FTS rows after deletion: %v, %v", els, err)
 	}
 }
@@ -315,7 +315,7 @@ func TestIndexDocsHeadinglessFile(t *testing.T) {
 	if res.Files != 1 || res.Elements != 0 {
 		t.Fatalf("run: %+v, want Files=1 Elements=0", res)
 	}
-	if n, _ := st.FileCount(); n != 1 {
+	if n, _ := st.FileCount(context.Background()); n != 1 {
 		t.Fatalf("file count: %d, want 1", n)
 	}
 }

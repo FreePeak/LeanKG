@@ -1,6 +1,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -71,7 +72,7 @@ func TestServiceContextAggregate(t *testing.T) {
 		}
 	}
 
-	ctx, err := k.ServiceContext(service, "production")
+	ctx, err := k.ServiceContext(context.Background(), service, "production")
 	if err != nil {
 		t.Fatalf("ServiceContext: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestServiceContextAggregate(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("SnapshotElements: %v", err)
 	}
-	ctx, err = k.ServiceContext(service, "production")
+	ctx, err = k.ServiceContext(context.Background(), service, "production")
 	if err != nil {
 		t.Fatalf("ServiceContext after snapshot: %v", err)
 	}
@@ -126,14 +127,14 @@ func TestServiceContextAggregate(t *testing.T) {
 	}
 
 	// A service the engine has never seen still answers, empty.
-	empty, err := k.ServiceContext("nowhere", "production")
+	empty, err := k.ServiceContext(context.Background(), "nowhere", "production")
 	if err != nil {
 		t.Fatalf("ServiceContext(unknown): %v", err)
 	}
 	if empty.Version != nil || len(empty.Calls) != 0 || empty.OpenIncidents != 0 || empty.LastIncident != nil {
 		t.Fatalf("unknown service should be empty: %+v", empty)
 	}
-	if _, err := k.ServiceContext("  ", "production"); err == nil {
+	if _, err := k.ServiceContext(context.Background(), "  ", "production"); err == nil {
 		t.Fatal("blank service must be rejected")
 	}
 }
@@ -161,7 +162,7 @@ func TestServiceContextRiskCap(t *testing.T) {
 		seedIncident("inc-"+string(rune('a'+i)), at, strPtr("prevention-"+string(rune('a'+i))))
 	}
 
-	ctx, err := k.ServiceContext("billing", "production")
+	ctx, err := k.ServiceContext(context.Background(), "billing", "production")
 	if err != nil {
 		t.Fatalf("ServiceContext: %v", err)
 	}
@@ -190,7 +191,7 @@ func TestServiceContextJSON(t *testing.T) {
 		t.Fatalf("seed incident: %v", err)
 	}
 
-	payload, err := k.ServiceContextJSON("api", "production")
+	payload, err := k.ServiceContextJSON(context.Background(), "api", "production")
 	if err != nil {
 		t.Fatalf("ServiceContextJSON: %v", err)
 	}

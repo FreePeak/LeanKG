@@ -180,7 +180,7 @@ func TestVacuumShrinksFileToLiveSize(t *testing.T) {
 		t.Errorf("full vacuum did not shrink: %d -> %d", before.SizeBytes, after.SizeBytes)
 	}
 	// The data survived: 100 elements remain.
-	if n, err := st.ElementCount(); err != nil || n != 100 {
+	if n, err := st.ElementCount(context.Background()); err != nil || n != 100 {
 		t.Errorf("element count = %d (err %v), want 100", n, err)
 	}
 }

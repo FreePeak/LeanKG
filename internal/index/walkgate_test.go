@@ -82,7 +82,7 @@ func TestWalkSkipsDotFilesNotJustDotDirs(t *testing.T) {
 		t.Fatal("fixture produced no elements; the walk itself is broken, not the gate")
 	}
 	// The visible source is indexed — this is a gate test, not a walk test.
-	if els, _ := st.FindExact("Visible"); len(els) != 1 {
+	if els, _ := st.FindExact(context.Background(), "Visible"); len(els) != 1 {
 		t.Fatalf("visible.go must still index (got %d elements for Visible)", len(els))
 	}
 
@@ -100,7 +100,7 @@ func TestWalkSkipsDotFilesNotJustDotDirs(t *testing.T) {
 	}
 
 	// And the content gate: no element may carry the secret-shaped body.
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

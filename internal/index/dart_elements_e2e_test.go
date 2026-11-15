@@ -53,7 +53,7 @@ func TestIndexDartConstructorAndEnumElements(t *testing.T) {
 		{"green", "factory.dart::Color.green"},
 	}
 	for _, w := range want {
-		els, err := st.FindExact(w.name)
+		els, err := st.FindExact(context.Background(), w.name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +68,7 @@ func TestIndexDartConstructorAndEnumElements(t *testing.T) {
 		}
 	}
 
-	cls, err := st.FindExact("factory.dart::Factory")
+	cls, err := st.FindExact(context.Background(), "factory.dart::Factory")
 	if err != nil {
 		t.Fatal(err)
 	}

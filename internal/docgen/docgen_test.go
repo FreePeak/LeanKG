@@ -124,7 +124,7 @@ var baseRelCounts = map[string]int{
 
 func TestAgentsMDCountsAndCaps(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 25, Files: 35, Funcs: 55, Classes: 35, RelCounts: baseRelCounts})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestAgentsMDCountsAndCaps(t *testing.T) {
 
 func TestAgentsMDRelationshipHistogram(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 1, Files: 1, Funcs: 55, RelCounts: baseRelCounts})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestAgentsMDRelationshipHistogram(t *testing.T) {
 
 func TestAgentsMDEmptyModulesFallsBackToTree(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Files: 2, Funcs: 1})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestAgentsMDEmptyModulesFallsBackToTree(t *testing.T) {
 
 func TestAgentsMDNoTruncationUnderCaps(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 2, Files: 3, Funcs: 5, Classes: 1, RelCounts: map[string]int{"calls": 3}})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -257,11 +257,11 @@ func TestAgentsMDNoTruncationUnderCaps(t *testing.T) {
 
 func TestAgentsMDDeterministic(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 25, Files: 35, Funcs: 55, Classes: 35, RelCounts: baseRelCounts})
-	a, err := AgentsMD(st)
+	a, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
-	b, err := AgentsMD(st)
+	b, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD (2nd): %v", err)
 	}
@@ -274,7 +274,7 @@ func TestWriteCreatesAgentsMD(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 25, Files: 35, Funcs: 55, Classes: 35, RelCounts: baseRelCounts})
 	docsDir := filepath.Join(t.TempDir(), "docs")
 
-	path, err := Write(st, docsDir)
+	path, err := Write(context.Background(), st, docsDir)
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestWriteCreatesAgentsMD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestWriteCreatesAgentsMD(t *testing.T) {
 
 func TestAgentsMDDescribesTheGoEngine(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Files: 1, Funcs: 1})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}

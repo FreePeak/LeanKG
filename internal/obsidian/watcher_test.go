@@ -124,7 +124,7 @@ func TestWatchPullsOnVaultEdit(t *testing.T) {
 		t.Fatal("Watch did not stop after cancellation")
 	}
 
-	els, err := st.FindExact("note/watched")
+	els, err := st.FindExact(context.Background(), "note/watched")
 	if err != nil {
 		t.Fatalf("FindExact: %v", err)
 	}

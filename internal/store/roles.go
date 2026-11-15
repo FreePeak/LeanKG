@@ -30,22 +30,22 @@ type IndexWriter interface {
 
 // ElementReader reads indexed elements and their counts.
 type ElementReader interface {
-	FindExact(name string) ([]Element, error)
-	ElementCount() (int, error)
-	RelationshipCount() (int, error)
-	ElementsByType() (map[string]int, error)
-	FileCount() (int, error)
+	FindExact(ctx context.Context, name string) ([]Element, error)
+	ElementCount(ctx context.Context) (int, error)
+	RelationshipCount(ctx context.Context) (int, error)
+	ElementsByType(ctx context.Context) (map[string]int, error)
+	FileCount(ctx context.Context) (int, error)
 	// Elements enumerates every indexed element ordered by qualified_name
 	// (embed pipeline scan + parity fixtures).
-	Elements() ([]Element, error)
+	Elements(ctx context.Context) ([]Element, error)
 }
 
 // GraphReader reads relationship edges (graph traversal seeds; pure-Go BFS
 // lives in internal/graph).
 type GraphReader interface {
-	Outgoing(source string) ([]Relationship, error)
-	Incoming(target string) ([]Relationship, error)
-	RelationshipsAll(limit int) ([]Relationship, error)
+	Outgoing(ctx context.Context, source string) ([]Relationship, error)
+	Incoming(ctx context.Context, target string) ([]Relationship, error)
+	RelationshipsAll(ctx context.Context, limit int) ([]Relationship, error)
 }
 
 // Arm names one ranking source: a keyword or vector arm that a rung reports

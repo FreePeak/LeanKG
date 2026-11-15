@@ -84,14 +84,14 @@ func (r *readCounter) read() {
 	}
 }
 
-func (r *readCounter) Incoming(qn string) ([]store.Relationship, error) {
+func (r *readCounter) Incoming(ctx context.Context, qn string) ([]store.Relationship, error) {
 	r.read()
-	return r.Backend.Incoming(qn)
+	return r.Backend.Incoming(ctx, qn)
 }
 
-func (r *readCounter) Outgoing(qn string) ([]store.Relationship, error) {
+func (r *readCounter) Outgoing(ctx context.Context, qn string) ([]store.Relationship, error) {
 	r.read()
-	return r.Backend.Outgoing(qn)
+	return r.Backend.Outgoing(ctx, qn)
 }
 
 func TestImpactTruncatesAtNodeBudget(t *testing.T) {

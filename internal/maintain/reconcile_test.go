@@ -42,7 +42,7 @@ func openStore(t *testing.T) store.Backend {
 // elementsOf returns the elements whose file path is path.
 func elementsOf(t *testing.T, st store.Backend, path string) []store.Element {
 	t.Helper()
-	all, err := st.Elements()
+	all, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

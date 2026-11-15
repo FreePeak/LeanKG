@@ -58,7 +58,7 @@ func cmdPRDTrace(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 
-	rows, err := prdindex.Trace(st, featureID)
+	rows, err := prdindex.Trace(ctx, st, featureID)
 	if err != nil {
 		return verbFatal(err)
 	}

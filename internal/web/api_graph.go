@@ -220,6 +220,7 @@ func upperFirst(s string) string {
 // --- GET /api/graph/children ---
 
 func (h *apiH) graphChildren(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	q := r.URL.Query()
 	parent := q.Get("parent")
 	// element_types is a comma-separated list; every listed type matches.
@@ -246,12 +247,12 @@ func (h *apiH) graphChildren(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	snap, err := loadSnapshot(h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	rels, err := allRelationships(h.engine.Store())
+	rels, err := allRelationships(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -370,6 +371,7 @@ func detectSingleRepo(root string) bool {
 }
 
 func (h *apiH) graphExpandService(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	q := r.URL.Query()
 	folderPath := ""
 	if p := q.Get("path"); p != "" {
@@ -419,12 +421,12 @@ func (h *apiH) graphExpandService(w http.ResponseWriter, r *http.Request) {
 		allContent = true
 	}
 
-	snap, err := loadSnapshot(h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	rels, err := allRelationships(h.engine.Store())
+	rels, err := allRelationships(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -500,13 +502,14 @@ func retainOnDisk(nodes []graphNode, projectDir string) []graphNode {
 
 // graphClusters ports the Rust api_graph_clusters: a cluster = the parent
 // directory of the element's file_path ("root" when there is none).
-func (h *apiH) graphClusters(w http.ResponseWriter, _ *http.Request) {
-	snap, err := loadSnapshot(h.engine.Store())
+func (h *apiH) graphClusters(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	snap, err := loadSnapshot(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	rels, err := allRelationships(h.engine.Store())
+	rels, err := allRelationships(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -596,6 +599,7 @@ type serviceTopology struct {
 }
 
 func (h *apiH) serviceTopology(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	q := r.URL.Query()
 	showOrphans := q.Get("show_orphans") == "true"
 	depth := 1
@@ -627,7 +631,7 @@ func (h *apiH) serviceTopology(w http.ResponseWriter, r *http.Request) {
 				ElementType: "Service",
 			},
 		})
-		snap, serr := loadSnapshot(h.engine.Store())
+		snap, serr := loadSnapshot(ctx, h.engine.Store())
 		if serr != nil {
 			respondErr(w, serr)
 			return

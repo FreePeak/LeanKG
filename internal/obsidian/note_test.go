@@ -63,7 +63,7 @@ func TestPushSurvivesSourceTreeAsVault(t *testing.T) {
 	// Vault == project root: the source file is already on disk at the path
 	// the old layout would have tried to mkdir.
 	e := New(root, st)
-	res, err := e.Push()
+	res, err := e.Push(context.Background())
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestPushWritesNotesForStoreElements(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	e := New(vault, st)
 
-	res, err := e.Push()
+	res, err := e.Push(context.Background())
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestPushIsRepeatable(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	e := New(vault, st)
 
-	if _, err := e.Push(); err != nil {
+	if _, err := e.Push(context.Background()); err != nil {
 		t.Fatalf("first Push: %v", err)
 	}
 	first := vaultFiles(t, vault)
@@ -326,7 +326,7 @@ func TestPushIsRepeatable(t *testing.T) {
 		firstContent[rel] = withoutStamps(string(b))
 	}
 
-	res, err := e.Push()
+	res, err := e.Push(context.Background())
 	if err != nil {
 		t.Fatalf("second Push: %v", err)
 	}

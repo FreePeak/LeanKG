@@ -6,6 +6,7 @@
 package web
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -269,12 +270,12 @@ type Clustering struct {
 // returns both views of the result. The Rust engine read a persisted
 // cluster_id column; the Go store has none, so this is the single recompute
 // path shared by the dashboard, the CLI, export, and tunnel analysis.
-func ClusterAssignments(st store.Backend) (*Clustering, error) {
-	snap, err := loadSnapshot(st)
+func ClusterAssignments(ctx context.Context, st store.Backend) (*Clustering, error) {
+	snap, err := loadSnapshot(ctx, st)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := allRelationships(st)
+	rels, err := allRelationships(ctx, st)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -222,8 +223,8 @@ func confidenceLabelFor(r store.Relationship) string {
 // Backend caps RelationshipsAll at 1000 rows when limit<=0; the dashboard
 // endpoints need the whole edge set, so this passes a hard 1M cap — the
 // upgrade path is a store-side streaming iterator.
-func allRelationships(st store.Backend) ([]store.Relationship, error) {
-	return st.RelationshipsAll(1 << 20)
+func allRelationships(ctx context.Context, st store.Backend) ([]store.Relationship, error) {
+	return st.RelationshipsAll(ctx, 1<<20)
 }
 
 // --- store snapshot: every endpoint works off one ordered element read ---
@@ -235,8 +236,8 @@ type snapshot struct {
 	byQN     elementSet
 }
 
-func loadSnapshot(st store.Backend) (*snapshot, error) {
-	els, err := st.Elements()
+func loadSnapshot(ctx context.Context, st store.Backend) (*snapshot, error) {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -264,14 +265,15 @@ func maxCacheElements() int {
 
 // --- handlers ---
 
-func (h *apiH) indexStatus(w http.ResponseWriter, _ *http.Request) {
+func (h *apiH) indexStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	st := h.engine.Store()
-	els, err := st.ElementCount()
+	els, err := st.ElementCount(ctx)
 	var elsPtr *int
 	if err == nil {
 		elsPtr = &els
 	}
-	rels, err := st.RelationshipCount()
+	rels, err := st.RelationshipCount(ctx)
 	var relsPtr *int
 	if err == nil {
 		relsPtr = &rels
@@ -314,11 +316,12 @@ func (h *apiH) query(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *apiH) search(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	q := strings.ToLower(r.URL.Query().Get("q"))
 	elementType := r.URL.Query().Get("element_type")
 	filePath := r.URL.Query().Get("file_path")
 
-	snap, err := loadSnapshot(h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -345,6 +348,7 @@ func (h *apiH) search(w http.ResponseWriter, r *http.Request) {
 // --- /api/project/switch ---
 
 func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var req struct {
 		Path      string `json:"path"`
 		GithubURL string `json:"github_url"`
@@ -405,7 +409,7 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 			h.projectDir)))
 		return
 	}
-	els, err := h.engine.Store().ElementCount()
+	els, err := h.engine.Store().ElementCount(ctx)
 	var count *int
 	if err == nil {
 		count = &els

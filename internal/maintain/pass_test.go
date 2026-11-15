@@ -84,7 +84,7 @@ func TestPassReclaimsFreelist(t *testing.T) {
 		t.Error("expected a reclaim log line")
 	}
 	// Data survives the pass.
-	if n, err := st.ElementCount(); err != nil || n != 50 {
+	if n, err := st.ElementCount(context.Background()); err != nil || n != 50 {
 		t.Errorf("element count = %d (err %v), want 50", n, err)
 	}
 }

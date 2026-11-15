@@ -533,8 +533,8 @@ func (s *Store) FindByNameToken(query string, limit int, f ElementFilter) ([]Fuz
 
 // FindExact implements the L1 rung: exact (case-insensitive) match on element
 // name or qualified name.
-func (s *Store) FindExact(name string) ([]Element, error) {
-	rows, err := s.db.Query(`SELECT `+elementCols+` FROM code_elements ce
+func (s *Store) FindExact(ctx context.Context, name string) ([]Element, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+elementCols+` FROM code_elements ce
 		WHERE ce.name = ? COLLATE NOCASE OR ce.qualified_name = ? COLLATE NOCASE
 		ORDER BY length(ce.qualified_name) LIMIT 200`, name, name)
 	if err != nil {
@@ -666,22 +666,22 @@ func isBareTerm(f string) bool {
 }
 
 // ElementCount returns the total number of indexed elements.
-func (s *Store) ElementCount() (int, error) {
+func (s *Store) ElementCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM code_elements`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM code_elements`).Scan(&n)
 	return n, err
 }
 
 // RelationshipCount returns the total number of indexed relationships.
-func (s *Store) RelationshipCount() (int, error) {
+func (s *Store) RelationshipCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM relationships`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM relationships`).Scan(&n)
 	return n, err
 }
 
 // ElementsByType returns element counts grouped by element_type.
-func (s *Store) ElementsByType() (map[string]int, error) {
-	rows, err := s.db.Query(`SELECT element_type, COUNT(*) FROM code_elements GROUP BY element_type`)
+func (s *Store) ElementsByType(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT element_type, COUNT(*) FROM code_elements GROUP BY element_type`)
 	if err != nil {
 		return nil, err
 	}
@@ -699,9 +699,9 @@ func (s *Store) ElementsByType() (map[string]int, error) {
 }
 
 // FileCount returns the number of indexed files.
-func (s *Store) FileCount() (int, error) {
+func (s *Store) FileCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM code_files`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM code_files`).Scan(&n)
 	return n, err
 }
 
@@ -713,8 +713,8 @@ func nullIfEmpty(s string) any {
 }
 
 // Outgoing returns relationships sourced at `source`.
-func (s *Store) Outgoing(source string) ([]Relationship, error) {
-	rows, err := s.db.Query(`SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships WHERE source_qualified = ?`, source)
+func (s *Store) Outgoing(ctx context.Context, source string) ([]Relationship, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships WHERE source_qualified = ?`, source)
 	if err != nil {
 		return nil, err
 	}
@@ -722,8 +722,8 @@ func (s *Store) Outgoing(source string) ([]Relationship, error) {
 }
 
 // Incoming returns relationships targeting `target`.
-func (s *Store) Incoming(target string) ([]Relationship, error) {
-	rows, err := s.db.Query(`SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships WHERE target_qualified = ?`, target)
+func (s *Store) Incoming(ctx context.Context, target string) ([]Relationship, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships WHERE target_qualified = ?`, target)
 	if err != nil {
 		return nil, err
 	}
@@ -731,11 +731,11 @@ func (s *Store) Incoming(target string) ([]Relationship, error) {
 }
 
 // RelationshipsAll returns up to limit relationships ordered by id.
-func (s *Store) RelationshipsAll(limit int) ([]Relationship, error) {
+func (s *Store) RelationshipsAll(ctx context.Context, limit int) ([]Relationship, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	rows, err := s.db.Query(`SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships ORDER BY id LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT source_qualified, target_qualified, rel_type, confidence, metadata FROM relationships ORDER BY id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

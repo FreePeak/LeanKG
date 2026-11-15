@@ -16,6 +16,7 @@
 package federation
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,6 +82,7 @@ type receiver struct {
 // push applies the received graph and answers with the envelope plus the
 // transfer's own counts.
 func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
 	role, err := h.callerRole(req)
 	if err != nil {
 		httpx.WriteMessage(w, http.StatusUnauthorized, err.Error())
@@ -98,7 +100,7 @@ func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	elements, relationships, err := applyGraph(h.st, payload, now)
+	elements, relationships, err := applyGraph(ctx, h.st, payload, now)
 	if err != nil {
 		var bad *badPayload
 		if errors.As(err, &bad) {
@@ -129,12 +131,12 @@ func (h *receiver) publish(w http.ResponseWriter, req *http.Request) {
 		httpx.WriteMessage(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	elements, err := h.st.Elements()
+	elements, err := h.st.Elements(req.Context())
 	if err != nil {
 		httpx.WriteMessage(w, http.StatusInternalServerError, fmt.Errorf("federation: read elements: %w", err).Error())
 		return
 	}
-	relationships, err := readRelationships(h.st)
+	relationships, err := readRelationships(req.Context(), h.st)
 	if err != nil {
 		httpx.WriteMessage(w, http.StatusInternalServerError, err.Error())
 		return
@@ -184,7 +186,7 @@ type graphDocument struct {
 // Two store transactions (elements, then relationships) rather than one: the
 // Backend interface exposes no cross-table transaction, and both writes are
 // idempotent upserts, so re-running a sync that failed between them converges.
-func applyGraph(st store.Backend, payload pushPayload, at time.Time) (int, int, error) {
+func applyGraph(ctx context.Context, st store.Backend, payload pushPayload, at time.Time) (int, int, error) {
 	if err := validateGraph(payload); err != nil {
 		return 0, 0, err
 	}
@@ -199,7 +201,7 @@ func applyGraph(st store.Backend, payload pushPayload, at time.Time) (int, int, 
 		// ponytail: reads the whole local graph per sync that carries elements.
 		// Upgrade path is a qualified-name-batched read, or a content-preserving
 		// upsert in internal/store — both outside this package's ownership.
-		content, err := localContent(st)
+		content, err := localContent(ctx, st)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -266,8 +268,8 @@ func validateGraph(payload pushPayload) error {
 }
 
 // localContent maps every qualified name in the store to its element content.
-func localContent(st store.Backend) (map[string]string, error) {
-	existing, err := st.Elements()
+func localContent(ctx context.Context, st store.Backend) (map[string]string, error) {
+	existing, err := st.Elements(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("federation: read local elements: %w", err)
 	}

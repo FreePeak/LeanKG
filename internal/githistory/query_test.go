@@ -11,7 +11,7 @@ func TestHistoryReturnsCommitsTouchingFile(t *testing.T) {
 	st := openStore(t)
 	mustImport(t, st, root)
 
-	got, err := History(st, "a.go", 10)
+	got, err := History(context.Background(), st, "a.go", 10)
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
@@ -28,10 +28,10 @@ func TestHistoryReturnsCommitsTouchingFile(t *testing.T) {
 	if !subjects["first"] || !subjects["second"] {
 		t.Fatalf("subjects = %v, want first and second", subjects)
 	}
-	if capped, _ := History(st, "a.go", 1); len(capped) != 1 {
+	if capped, _ := History(context.Background(), st, "a.go", 1); len(capped) != 1 {
 		t.Fatalf("limit 1 returned %d entries", len(capped))
 	}
-	if none, _ := History(st, "missing.go", 10); len(none) != 0 {
+	if none, _ := History(context.Background(), st, "missing.go", 10); len(none) != 0 {
 		t.Fatalf("History(missing.go) = %d entries, want 0", len(none))
 	}
 }
@@ -41,7 +41,7 @@ func TestCoChangeRanksPartnersByCount(t *testing.T) {
 	st := openStore(t)
 	mustImport(t, st, root)
 
-	got, err := CoChange(st, "a.go", 10)
+	got, err := CoChange(context.Background(), st, "a.go", 10)
 	if err != nil {
 		t.Fatalf("CoChange: %v", err)
 	}

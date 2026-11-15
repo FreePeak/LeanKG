@@ -82,8 +82,8 @@ func LoadCatalog(path string) (*Catalog, error) {
 // anywhere wins over a label-name match, which wins over a label-substring
 // match. (concept, element) pairs are deduped keeping the strongest
 // provenance; the result is sorted by ConceptID then QN.
-func (c *Catalog) MatchElements(st store.Backend) ([]Match, error) {
-	els, err := st.Elements()
+func (c *Catalog) MatchElements(ctx context.Context, st store.Backend) ([]Match, error) {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}

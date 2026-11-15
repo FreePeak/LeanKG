@@ -17,14 +17,16 @@ type elementCountFails struct {
 	cause error
 }
 
-func (f elementCountFails) ElementCount() (int, error) { return 0, f.cause }
+func (f elementCountFails) ElementCount(context.Context) (int, error) { return 0, f.cause }
 
 type findExactFails struct {
 	store.Backend
 	cause error
 }
 
-func (f findExactFails) FindExact(string) ([]store.Element, error) { return nil, f.cause }
+func (f findExactFails) FindExact(context.Context, string) ([]store.Element, error) {
+	return nil, f.cause
+}
 
 type lastEmbedRunFails struct {
 	store.Backend
@@ -103,16 +105,16 @@ type endLookupFailsAfterWalk struct {
 	walked bool
 }
 
-func (f *endLookupFailsAfterWalk) Incoming(qn string) ([]store.Relationship, error) {
+func (f *endLookupFailsAfterWalk) Incoming(ctx context.Context, qn string) ([]store.Relationship, error) {
 	f.walked = true
-	return f.Backend.Incoming(qn)
+	return f.Backend.Incoming(ctx, qn)
 }
 
-func (f *endLookupFailsAfterWalk) FindExact(name string) ([]store.Element, error) {
+func (f *endLookupFailsAfterWalk) FindExact(ctx context.Context, name string) ([]store.Element, error) {
 	if f.walked {
 		return nil, f.cause
 	}
-	return f.Backend.FindExact(name)
+	return f.Backend.FindExact(ctx, name)
 }
 
 // A path whose end is unknown is answered as unresolved only when the lookup

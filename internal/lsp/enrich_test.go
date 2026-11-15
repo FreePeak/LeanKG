@@ -135,7 +135,7 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 	}
 
 	// The CALLS edge was upgraded by the in-process tier.
-	rels, err := st.RelationshipsAll(10)
+	rels, err := st.RelationshipsAll(context.Background(), 10)
 	if err != nil || len(rels) != 1 {
 		t.Fatalf("relationships = %v (%v)", rels, err)
 	}
@@ -217,7 +217,7 @@ func TestEnrichTypedResolveOffByDefault(t *testing.T) {
 	if res.CallsUpgraded != 0 {
 		t.Errorf("CallsUpgraded = %d, want 0 with typed_resolve unset", res.CallsUpgraded)
 	}
-	rels, err := st.RelationshipsAll(10)
+	rels, err := st.RelationshipsAll(context.Background(), 10)
 	if err != nil || len(rels) != 1 {
 		t.Fatalf("relationships = %v (%v)", rels, err)
 	}
@@ -284,7 +284,7 @@ func TestEnrichConfiguredButMissingServerIsNoOp(t *testing.T) {
 
 func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatalf("FindExact(%s): %v", qn, err)
 	}

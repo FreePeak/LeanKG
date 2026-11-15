@@ -51,7 +51,7 @@ func newTunnelStore(t *testing.T) store.Backend {
 
 func TestClusterAssignments(t *testing.T) {
 	st := newTunnelStore(t)
-	cl, err := ClusterAssignments(st)
+	cl, err := ClusterAssignments(context.Background(), st)
 	if err != nil {
 		t.Fatalf("ClusterAssignments: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestClusterAssignments(t *testing.T) {
 
 func TestTunnels(t *testing.T) {
 	st := newTunnelStore(t)
-	ts, err := Tunnels(st)
+	ts, err := Tunnels(context.Background(), st)
 	if err != nil {
 		t.Fatalf("Tunnels: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestTunnelsEmptyGraph(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ts, err := Tunnels(st)
+	ts, err := Tunnels(context.Background(), st)
 	if err != nil {
 		t.Fatalf("Tunnels on empty store: %v", err)
 	}

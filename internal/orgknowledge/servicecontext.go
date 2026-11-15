@@ -5,6 +5,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -51,59 +52,59 @@ var schemaTypeTerms = []string{"schema", "protobuf", "proto", "openapi", "json_s
 //   - recent_incidents: the 3 newest incident titles.
 //   - last_incident: "<occurred_at>: <title>" of the newest incident.
 //   - known_risks: up to 5 "<prevention> (root: <root_cause>)" strings.
-func (k *Knowledge) ServiceContext(service, env string) (ServiceContext, error) {
+func (k *Knowledge) ServiceContext(ctx context.Context, service, env string) (ServiceContext, error) {
 	if strings.TrimSpace(service) == "" {
 		return ServiceContext{}, fmt.Errorf("service is required")
 	}
 	if env == "" {
 		env = "local"
 	}
-	ctx := ServiceContext{Service: service, Env: env}
+	sc := ServiceContext{Service: service, Env: env}
 
 	// Element presence and metadata.version (Rust: code_elements row for
 	// (qualified_name = service, env); Go: the live element plus, if one
 	// exists, the env snapshot's metadata).
-	if els, err := k.st.FindExact(service); err != nil {
+	if els, err := k.st.FindExact(ctx, service); err != nil {
 		return ServiceContext{}, err
 	} else if len(els) > 0 {
-		ctx.Version = versionFromMetadata(els[0].Metadata)
+		sc.Version = versionFromMetadata(els[0].Metadata)
 	}
 	if snap, ok, err := k.st.EnvSnapshotGet(env, service); err != nil {
 		return ServiceContext{}, err
 	} else if ok {
-		ctx.Version = versionFromMetadata(snap.Metadata)
+		sc.Version = versionFromMetadata(snap.Metadata)
 	}
 
 	// Operational profile (Rust: get_service_metadata_fields).
 	if m, ok, err := k.st.ServiceMetadataGet(service, env); err != nil {
 		return ServiceContext{}, err
 	} else if ok {
-		ctx.Team = m.Team
-		ctx.OnCall = m.OnCall
-		ctx.RepoURL = m.RepoURL
+		sc.Team = m.Team
+		sc.OnCall = m.OnCall
+		sc.RepoURL = m.RepoURL
 		if m.Language != nil {
-			ctx.Language = m.Language
+			sc.Language = m.Language
 		}
 	}
 
 	// Graph neighborhood: calls / service_calls edges in either direction.
-	if rels, err := k.st.Outgoing(service); err != nil {
+	if rels, err := k.st.Outgoing(ctx, service); err != nil {
 		return ServiceContext{}, err
 	} else {
-		ctx.Calls = []string{}
+		sc.Calls = []string{}
 		for _, r := range rels {
 			if r.RelType == "calls" || r.RelType == "service_calls" {
-				ctx.Calls = append(ctx.Calls, r.Target)
+				sc.Calls = append(sc.Calls, r.Target)
 			}
 		}
 	}
-	if rels, err := k.st.Incoming(service); err != nil {
+	if rels, err := k.st.Incoming(ctx, service); err != nil {
 		return ServiceContext{}, err
 	} else {
-		ctx.CalledBy = []string{}
+		sc.CalledBy = []string{}
 		for _, r := range rels {
 			if r.RelType == "calls" || r.RelType == "service_calls" {
-				ctx.CalledBy = append(ctx.CalledBy, r.Source)
+				sc.CalledBy = append(sc.CalledBy, r.Source)
 			}
 		}
 	}
@@ -111,15 +112,15 @@ func (k *Knowledge) ServiceContext(service, env string) (ServiceContext, error) 
 	// Schema-shaped elements under ./<service>/ (the Rust starts_with prefix;
 	// no trailing slash, so "./api" also matches "./api-gateway" exactly as
 	// the Rust predicate did).
-	ctx.Schemas = []string{}
-	if els, err := k.st.Elements(); err != nil {
+	sc.Schemas = []string{}
+	if els, err := k.st.Elements(ctx); err != nil {
 		return ServiceContext{}, err
 	} else {
 		prefix := "./" + service
 		for _, e := range els {
 			if strings.HasPrefix(e.FilePath, prefix) &&
 				matchesAnyTerm(e.ElementType, schemaTypeTerms) {
-				ctx.Schemas = append(ctx.Schemas, e.Name)
+				sc.Schemas = append(sc.Schemas, e.Name)
 			}
 		}
 	}
@@ -132,7 +133,7 @@ func (k *Knowledge) ServiceContext(service, env string) (ServiceContext, error) 
 	}
 	for _, inc := range incidents {
 		if inc.ResolvedAt == nil {
-			ctx.OpenIncidents++
+			sc.OpenIncidents++
 		}
 	}
 	if len(incidents) > 0 {
@@ -143,21 +144,21 @@ func (k *Knowledge) ServiceContext(service, env string) (ServiceContext, error) 
 			n = len(incidents)
 		}
 		for _, inc := range incidents[:n] {
-			ctx.RecentIncidents = append(ctx.RecentIncidents, inc.Title)
+			sc.RecentIncidents = append(sc.RecentIncidents, inc.Title)
 		}
 		last := fmt.Sprintf("%d: %s", incidents[0].OccurredAt, incidents[0].Title)
-		ctx.LastIncident = &last
+		sc.LastIncident = &last
 		for _, inc := range incidents {
 			if inc.Prevention == nil || *inc.Prevention == "" {
 				continue
 			}
-			if len(ctx.KnownRisks) == 5 {
+			if len(sc.KnownRisks) == 5 {
 				break
 			}
-			ctx.KnownRisks = append(ctx.KnownRisks, fmt.Sprintf("%s (root: %s)", *inc.Prevention, inc.RootCause))
+			sc.KnownRisks = append(sc.KnownRisks, fmt.Sprintf("%s (root: %s)", *inc.Prevention, inc.RootCause))
 		}
 	}
-	return ctx, nil
+	return sc, nil
 }
 
 func versionFromMetadata(meta map[string]any) *string {
@@ -185,20 +186,20 @@ func matchesAnyTerm(s string, terms []string) bool {
 // ServiceContextJSON renders the aggregate as the Rust MCP tool's JSON object
 // (same fields, same nulls) for callers that return map[string]any rather
 // than the typed struct.
-func (k *Knowledge) ServiceContextJSON(service, env string) (map[string]any, error) {
-	ctx, err := k.ServiceContext(service, env)
+func (k *Knowledge) ServiceContextJSON(ctx context.Context, service, env string) (map[string]any, error) {
+	sc, err := k.ServiceContext(ctx, service, env)
 	if err != nil {
 		return nil, err
 	}
 	// Lists are [] when empty, never null (RS-09); the optional scalars keep
 	// null for "unknown".
-	if ctx.RecentIncidents == nil {
-		ctx.RecentIncidents = []string{}
+	if sc.RecentIncidents == nil {
+		sc.RecentIncidents = []string{}
 	}
-	if ctx.KnownRisks == nil {
-		ctx.KnownRisks = []string{}
+	if sc.KnownRisks == nil {
+		sc.KnownRisks = []string{}
 	}
-	b, err := json.Marshal(ctx)
+	b, err := json.Marshal(sc)
 	if err != nil {
 		return nil, err
 	}

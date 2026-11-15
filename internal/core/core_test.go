@@ -3,13 +3,14 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/FreePeak/LeanKG/internal/langs"
-	"github.com/FreePeak/LeanKG/internal/ontology"
-	"github.com/FreePeak/LeanKG/internal/session"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/langs"
+	"github.com/FreePeak/LeanKG/internal/ontology"
+	"github.com/FreePeak/LeanKG/internal/session"
 
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -445,7 +446,7 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := e.OntologyMatch(catPath)
+	out, err := e.OntologyMatch(context.Background(), catPath)
 	if err != nil {
 		t.Fatalf("match: %v", err)
 	}

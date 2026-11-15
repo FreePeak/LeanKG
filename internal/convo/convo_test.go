@@ -54,7 +54,7 @@ func kindsOf(items []MinedItem) []string {
 
 func mustElements(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestIndexItemsPersistsNodesAndEdges(t *testing.T) {
 		t.Fatalf("metadata participants = %#v", decision.Metadata["participants"])
 	}
 
-	rels, err := st.Outgoing(qn)
+	rels, err := st.Outgoing(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestIndexItemsPersistsNodesAndEdges(t *testing.T) {
 	if pref.ElementType != "preference" {
 		t.Fatalf("preference element = %+v", pref)
 	}
-	prefRels, err := st.Outgoing(pref.QualifiedName)
+	prefRels, err := st.Outgoing(context.Background(), pref.QualifiedName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestIndexItemsIsIdempotent(t *testing.T) {
 		if res.ElementsIndexed != 2 || res.RelationshipsCreated != 2 {
 			t.Fatalf("run %d result = %+v, want 2 elements / 2 relationships", run, res)
 		}
-		all, err := st.RelationshipsAll(0)
+		all, err := st.RelationshipsAll(context.Background(), 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -369,14 +369,14 @@ func TestIndexItemsIsIdempotent(t *testing.T) {
 		}
 	}
 
-	n, err := st.ElementCount()
+	n, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 {
 		t.Fatalf("element count = %d, want 2 (second run must not duplicate nodes)", n)
 	}
-	rc, err := st.RelationshipCount()
+	rc, err := st.RelationshipCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestIndexItemsFromFixtureCreatesDecidedAboutEdges(t *testing.T) {
 	if res.ElementsIndexed != 2 || res.RelationshipsCreated != 5 {
 		t.Fatalf("result = %+v, want 2 elements / 5 decided_about edges", res)
 	}
-	rels, err := st.RelationshipsAll(0)
+	rels, err := st.RelationshipsAll(context.Background(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestIndexItemsDropsStaleNodes(t *testing.T) {
 	if _, err := IndexItems(st, project, second); err != nil {
 		t.Fatal(err)
 	}
-	els, err := st.FindExact("conversations/" + projectName + "/decision/redis")
+	els, err := st.FindExact(context.Background(), "conversations/"+projectName+"/decision/redis")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +495,7 @@ func TestMineIntoProjectEndToEnd(t *testing.T) {
 	if again.ElementsIndexed != 3 {
 		t.Fatalf("second run indexed %d elements, want 3", again.ElementsIndexed)
 	}
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

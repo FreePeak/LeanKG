@@ -51,7 +51,7 @@ func index(t *testing.T, st store.Backend, dir string) Result {
 // returns it.
 func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 
 func assertNoElement(t *testing.T, st store.Backend, name string) {
 	t.Helper()
-	els, err := st.FindExact(name)
+	els, err := st.FindExact(context.Background(), name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestChangeDetection(t *testing.T) {
 	if first.Skipped != 0 || first.Files != 5 {
 		t.Fatalf("first run: %+v", first)
 	}
-	count, err := st.ElementCount()
+	count, err := st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestChangeDetection(t *testing.T) {
 	if second.Files != 0 || second.Elements != 0 || second.Skipped != 5 {
 		t.Fatalf("second run: %+v, want Skipped=5", second)
 	}
-	if n, _ := st.ElementCount(); n != count {
+	if n, _ := st.ElementCount(context.Background()); n != count {
 		t.Fatalf("element count changed on skip-only run: %d -> %d", count, n)
 	}
 
@@ -276,7 +276,7 @@ func TestChangeDetection(t *testing.T) {
 	if touchRes.Files != 0 || touchRes.Elements != 0 || touchRes.Skipped != 5 {
 		t.Fatalf("touched run: %+v, want Skipped=5", touchRes)
 	}
-	if n, _ := st.ElementCount(); n != count {
+	if n, _ := st.ElementCount(context.Background()); n != count {
 		t.Fatalf("element count changed on touched run: %d -> %d", count, n)
 	}
 
@@ -299,7 +299,7 @@ func TestChangeDetection(t *testing.T) {
 	}
 	mustFind(t, st, "sample.py::runner")
 	assertNoElement(t, st, "standalone") // FTS + exact both clean
-	if n, _ := st.ElementCount(); n != count {
+	if n, _ := st.ElementCount(context.Background()); n != count {
 		t.Fatalf("element count after edit: %d, want %d (rename swaps one element)", n, count)
 	}
 }
@@ -307,8 +307,8 @@ func TestChangeDetection(t *testing.T) {
 func TestDeletion(t *testing.T) {
 	dir, st := setupProject(t)
 	index(t, st, dir)
-	count, _ := st.ElementCount()
-	files, _ := st.FileCount()
+	count, _ := st.ElementCount(context.Background())
+	files, _ := st.FileCount(context.Background())
 	if files != 5 {
 		t.Fatalf("FileCount = %d, want 5", files)
 	}
@@ -320,10 +320,10 @@ func TestDeletion(t *testing.T) {
 	if res.Skipped != 4 || res.Files != 0 {
 		t.Fatalf("deletion run: %+v, want Skipped=4 Files=0", res)
 	}
-	if n, _ := st.ElementCount(); n != count-3 {
+	if n, _ := st.ElementCount(context.Background()); n != count-3 {
 		t.Fatalf("element count after deletion: %d, want %d", n, count-3)
 	}
-	if n, _ := st.FileCount(); n != 4 {
+	if n, _ := st.FileCount(context.Background()); n != 4 {
 		t.Fatalf("FileCount after deletion: %d, want 4", n)
 	}
 	assertNoElement(t, st, "Details") // element + FTS rows gone
@@ -384,11 +384,11 @@ func TestIndexRootTripwire(t *testing.T) {
 	if _, err := IndexDir(ctx, st, a); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := st.ElementCount()
+	before, _ := st.ElementCount(context.Background())
 	if _, err := IndexDir(ctx, st, b); err == nil || !strings.Contains(err.Error(), "INDEX_ROOT_MISMATCH") {
 		t.Fatalf("foreign root walk: err=%v, want INDEX_ROOT_MISMATCH", err)
 	}
-	if after, _ := st.ElementCount(); after != before {
+	if after, _ := st.ElementCount(context.Background()); after != before {
 		t.Fatalf("refused walk mutated the store: %d -> %d", before, after)
 	}
 	if _, err := IndexDir(ctx, st, a); err != nil {
@@ -486,7 +486,7 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 
 	index(t, st, dir) // unchanged file, store stamped "2"
 
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

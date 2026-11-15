@@ -58,8 +58,8 @@ type AuditEntry struct {
 }
 
 // Elements enumerates every indexed element (ordered by qualified_name).
-func (s *Store) Elements() ([]Element, error) {
-	rows, err := s.db.Query(`SELECT ` + elementCols + ` FROM code_elements ce ORDER BY ce.qualified_name`)
+func (s *Store) Elements(ctx context.Context) ([]Element, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+elementCols+` FROM code_elements ce ORDER BY ce.qualified_name`)
 	if err != nil {
 		return nil, err
 	}

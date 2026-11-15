@@ -87,7 +87,7 @@ func Enrich(ctx context.Context, st store.Backend, dir string, want []string) (E
 // merged so far is written.
 func (b *Bridge) Enrich(ctx context.Context, st store.Backend, dir string, want []string) (EnrichResult, error) {
 	var res EnrichResult
-	els, err := st.Elements()
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return res, err
 	}
@@ -151,7 +151,7 @@ func (b *Bridge) Enrich(ctx context.Context, st store.Backend, dir string, want 
 	// symbol table, gated by the project's indexer.typed_resolve setting
 	// (Rust default "off"). Runs regardless of server availability — it
 	// spawns nothing (Rust parity: FR-LSP-A).
-	res.CallsUpgraded, err = HybridResolve(st, b.typedResolve)
+	res.CallsUpgraded, err = HybridResolve(ctx, st, b.typedResolve)
 	if err != nil {
 		return res, err
 	}

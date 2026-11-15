@@ -158,7 +158,7 @@ func TestStatusReportsNotIndexedRepo(t *testing.T) {
 	if err := Register("cold", dir); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Status("cold")
+	s, err := Status(context.Background(), "cold")
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestStatusReadsLiveCountsForIndexedRepo(t *testing.T) {
 	if err := Register("warm", dir); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Status("warm")
+	s, err := Status(context.Background(), "warm")
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestStatusReadsLiveCountsForIndexedRepo(t *testing.T) {
 
 func TestStatusUnknownNameIsErrNotFound(t *testing.T) {
 	isolateHome(t)
-	if _, err := Status("nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := Status(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Status(nope) error = %v, want ErrNotFound", err)
 	}
 }

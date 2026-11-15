@@ -407,19 +407,19 @@ func (e *Engine) refreshInventory() (store.Inventory, error) {
 //   - Reads whose failure is NAMED in their own error field (space,
 //     last_embed_run): they publish no substitute value, so they falsify nothing.
 func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
-	els, err := e.st.ElementCount()
+	els, err := e.st.ElementCount(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := e.st.RelationshipCount()
+	rels, err := e.st.RelationshipCount(ctx)
 	if err != nil {
 		return nil, err
 	}
-	files, err := e.st.FileCount()
+	files, err := e.st.FileCount(ctx)
 	if err != nil {
 		return nil, err
 	}
-	byType, err := e.st.ElementsByType()
+	byType, err := e.st.ElementsByType(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -765,7 +765,7 @@ func (e *Engine) rungExact(ctx context.Context, q string, limit int, resp map[st
 	if pin {
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 	}
-	els, err := e.st.FindExact(q)
+	els, err := e.st.FindExact(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -1104,7 +1104,7 @@ func (e *Engine) resolveGraphSeed(ctx context.Context, seed string) (string, err
 	if seed == "" {
 		return seed, nil
 	}
-	els, err := e.st.FindExact(seed)
+	els, err := e.st.FindExact(ctx, seed)
 	if err != nil {
 		return "", err
 	}
@@ -1185,7 +1185,7 @@ func (e *Engine) readSessionCommands(_ *session.Store, _, _ string) (map[string]
 
 // OntologyMatch loads a concept catalog and matches it against indexed
 // elements (internal/ontology); matches are persisted in kv for later reads.
-func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
+func (e *Engine) OntologyMatch(ctx context.Context, catalogPath string) (map[string]any, error) {
 	// The catalog is a project file like any other import input (RS-01): the
 	// REST /api/v1/ontology/match route reaches this method directly.
 	catalogPath, _, err := e.projectPath(catalogPath)
@@ -1196,7 +1196,7 @@ func (e *Engine) OntologyMatch(catalogPath string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	matches, err := cat.MatchElements(e.st)
+	matches, err := cat.MatchElements(ctx, e.st)
 	if err != nil {
 		return nil, err
 	}

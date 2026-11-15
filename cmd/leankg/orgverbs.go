@@ -258,7 +258,7 @@ func cmdServiceContext(ctx context.Context, args []string) error {
 		return err
 	}
 	return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
-		ctx, err := k.ServiceContext(*service, *env)
+		ctx, err := k.ServiceContext(ctx, *service, *env)
 		if err != nil {
 			return err
 		}

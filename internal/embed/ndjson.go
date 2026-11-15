@@ -112,7 +112,7 @@ func ExportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID str
 	if err != nil {
 		return err
 	}
-	elems, err := readElements(st)
+	elems, err := readElements(ctx, st)
 	if err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func ImportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID, re
 		}
 	}
 
-	elems, err := readElements(st)
+	elems, err := readElements(ctx, st)
 	if err != nil {
 		return rep, err
 	}

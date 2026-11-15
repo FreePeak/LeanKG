@@ -8,18 +8,32 @@ import (
 )
 
 // ctxRole is one role's probe for TestCancelledContextHonoured: read and write
-// are one representative call each. A role joins by appending an entry; the
-// probe runs against both engines (PostgreSQL only when LEANKG_TEST_PG_URL is
-// set).
+// are one representative call each. A read-only role leaves write nil. A role
+// joins by appending an entry; the probe runs against both engines (PostgreSQL
+// only when LEANKG_TEST_PG_URL is set).
 type ctxRole struct {
 	name  string
 	read  func(ctx context.Context, b Backend) error
 	write func(ctx context.Context, b Backend) error
 }
 
-// ctxConformanceRoles lists the roles whose methods take ctx first (CX-19
-// and the roles that follow it in plan section 6, P2).
+// ctxConformanceRoles lists the roles whose methods take ctx first (CX-19,
+// CX-20 and the roles that follow them in plan section 6, P2).
 var ctxConformanceRoles = []ctxRole{
+	{
+		name: "ElementReader",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.FindExact(ctx, "conformance")
+			return err
+		},
+	},
+	{
+		name: "GraphReader",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.Outgoing(ctx, "conformance")
+			return err
+		},
+	},
 	{
 		name: "Migrate",
 		read: func(ctx context.Context, b Backend) error {
@@ -102,6 +116,9 @@ func TestCancelledContextHonoured(t *testing.T) {
 					cancel()
 					if err := r.read(ctx, b); !errors.Is(err, context.Canceled) {
 						t.Errorf("read: err = %v, want context.Canceled", err)
+					}
+					if r.write == nil {
+						return
 					}
 					if err := r.write(ctx, b); !errors.Is(err, context.Canceled) {
 						t.Errorf("write: err = %v, want context.Canceled", err)

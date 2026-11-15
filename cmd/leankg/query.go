@@ -154,7 +154,7 @@ func cmdQuery(ctx context.Context, args []string) error {
 
 	switch *kind {
 	case "impact":
-		hits, truncated, err := impactFrom(st, q, *depth)
+		hits, truncated, err := impactFrom(ctx, st, q, *depth)
 		if err != nil {
 			return fatalJSON(err)
 		}
@@ -170,7 +170,7 @@ func cmdQuery(ctx context.Context, args []string) error {
 		}
 		printJSON(hits)
 	case "name", "":
-		els, err := st.FindExact(q)
+		els, err := st.FindExact(ctx, q)
 		if err != nil {
 			return fatalJSON(err)
 		}
@@ -226,12 +226,11 @@ func fatalJSON(err error) error {
 //
 // truncated reports that the node budget stopped at least one walk, so the
 // hits are a partial answer.
-func impactFrom(st store.Backend, seed string, depth int) (hits []graph.Hit, truncated bool, err error) {
-	ctx := context.Background()
+func impactFrom(ctx context.Context, st store.Backend, seed string, depth int) (hits []graph.Hit, truncated bool, err error) {
 	if direct, bounds, err := graph.Impact(ctx, st, seed, depth); err == nil {
 		return direct, bounds.Truncated, nil
 	}
-	els, err := st.Elements()
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, false, err
 	}

@@ -62,7 +62,7 @@ func TestL3GateSkipsSemanticOnLowOntologyConfidence(t *testing.T) {
 	e.embedder = counter
 
 	// Sanity: the confidence the gate will see is the one we designed for.
-	conf, err := ontology.OntologyConfidence(e.st, "how does refund settle overnight")
+	conf, err := ontology.OntologyConfidence(context.Background(), e.st, "how does refund settle overnight")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestL3GateAllowsSemanticWhenConfidenceIsZero(t *testing.T) {
 	counter := &countingEmbedder{Provider: p}
 	e.embedder = counter
 
-	conf, err := ontology.OntologyConfidence(e.st, "how does the widget frame get drawn")
+	conf, err := ontology.OntologyConfidence(context.Background(), e.st, "how does the widget frame get drawn")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -98,7 +98,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		if !decode(w, r, &body) {
 			return
 		}
-		out, err := engine.OntologyMatch(body.Catalog)
+		out, err := engine.OntologyMatch(r.Context(), body.Catalog)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
@@ -155,7 +155,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		if env == "" {
 			env = "production"
 		}
-		ctx, err := org.ServiceContext(r.URL.Query().Get("service"), env)
+		ctx, err := org.ServiceContext(r.Context(), r.URL.Query().Get("service"), env)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return

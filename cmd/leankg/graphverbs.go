@@ -32,7 +32,7 @@ func cmdDetectClusters(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 
-	clusters, err := web.ClusterAssignments(engine.Store())
+	clusters, err := web.ClusterAssignments(ctx, engine.Store())
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -59,7 +59,7 @@ func cmdGods(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 
-	nodes, err := web.GodNodes(engine, *limit, *excludeHubs)
+	nodes, err := web.GodNodes(ctx, engine, *limit, *excludeHubs)
 	if err != nil {
 		return fatalJSON(err)
 	}
@@ -88,7 +88,7 @@ func cmdReport(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 
-	report, err := web.GraphReportFor(engine, dir, *projectName)
+	report, err := web.GraphReportFor(ctx, engine, dir, *projectName)
 	if err != nil {
 		return fatalJSON(err)
 	}

@@ -90,7 +90,7 @@ func TestWatchIndexOnWriteAndRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 	await(t, 3*time.Second, func() bool {
-		els, err := st.FindExact(name)
+		els, err := st.FindExact(context.Background(), name)
 		return err == nil && len(els) > 0
 	})
 
@@ -98,7 +98,7 @@ func TestWatchIndexOnWriteAndRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 	await(t, 3*time.Second, func() bool {
-		els, err := st.FindExact(name)
+		els, err := st.FindExact(context.Background(), name)
 		return err == nil && len(els) == 0
 	})
 
@@ -165,13 +165,13 @@ func TestSkipDirsNotWatched(t *testing.T) {
 		t.Fatal(err)
 	}
 	await(t, 3*time.Second, func() bool {
-		els, err := st.FindExact("KeepMe")
+		els, err := st.FindExact(context.Background(), "KeepMe")
 		return err == nil && len(els) > 0
 	})
 	// Give any (wrong) node_modules-triggered flush a chance to land, then
 	// assert the skip actually held.
 	time.Sleep(300 * time.Millisecond)
-	if els, _ := st.FindExact("SkipMe"); len(els) > 0 {
+	if els, _ := st.FindExact(context.Background(), "SkipMe"); len(els) > 0 {
 		t.Error("node_modules file was indexed: skip list failed at watcher level")
 	}
 }
@@ -197,7 +197,7 @@ func TestEventsChannelDropOnOverflow(t *testing.T) {
 	}
 	// If the loop blocked on a full channel, this re-index would never run.
 	await(t, 3*time.Second, func() bool {
-		els, err := st.FindExact("Many")
+		els, err := st.FindExact(context.Background(), "Many")
 		return err == nil && len(els) > 0
 	})
 }
@@ -318,7 +318,7 @@ func TestReconcilePassRecoversMissedEvent(t *testing.T) {
 	}
 
 	await(t, 8*time.Second, func() bool {
-		els, err := st.FindExact("MissedFunc")
+		els, err := st.FindExact(context.Background(), "MissedFunc")
 		return err == nil && len(els) > 0
 	})
 	await(t, 8*time.Second, func() bool { return el.saw("reconcile") && reconciles >= 1 })
@@ -342,7 +342,7 @@ func TestFlushRefreshesInventorySnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	await(t, 8*time.Second, func() bool {
-		n, err := st.ElementCount()
+		n, err := st.ElementCount(context.Background())
 		if err != nil || n == 0 {
 			return false
 		}
@@ -412,7 +412,7 @@ func startGitWatch(t *testing.T, debounce time.Duration) (store.Backend, *eventL
 }
 
 func hasExact(st store.Backend, name string) bool {
-	els, err := st.FindExact(name)
+	els, err := st.FindExact(context.Background(), name)
 	return err == nil && len(els) > 0
 }
 

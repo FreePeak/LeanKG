@@ -66,7 +66,7 @@ func TestRunIndexStopsOnDoneContext(t *testing.T) {
 			// A run cancelled before its first store call stops at the
 			// migration (CX-19 ctx-aware Migrate), so the store may have no
 			// schema yet. Nothing was indexed either way.
-			n, err := st.ElementCount()
+			n, err := st.ElementCount(context.Background())
 			if err != nil && !strings.Contains(err.Error(), "no such table") {
 				t.Fatalf("element count after a stopped run: %v", err)
 			}

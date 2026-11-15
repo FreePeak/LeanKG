@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -129,7 +130,7 @@ func TestCompactFTSKeepsEveryRow(t *testing.T) {
 	if after != before {
 		t.Errorf("the compaction changed the keyword index: %d rows -> %d", before, after)
 	}
-	n, err := s.ElementCount()
+	n, err := s.ElementCount(context.Background())
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}

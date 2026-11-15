@@ -284,11 +284,11 @@ func stamp(reg store.Backend, dir, name string, elements, files int, indexedAt *
 // BEST-EFFORT by contract — a fleet registration must never turn a successful
 // index into a failed command, so callers log the error and move on.
 func RegisterAfterIndex(ctx context.Context, o Options, st store.Backend, dir string) error {
-	elements, err := st.ElementCount()
+	elements, err := st.ElementCount(ctx)
 	if err != nil {
 		return fmt.Errorf("portfolioreg: read element count: %w", err)
 	}
-	files, err := st.FileCount()
+	files, err := st.FileCount(ctx)
 	if err != nil {
 		return fmt.Errorf("portfolioreg: read file count: %w", err)
 	}

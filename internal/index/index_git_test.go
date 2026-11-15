@@ -39,7 +39,7 @@ func gitIndexRun(t *testing.T, st store.Backend, dir string) Result {
 // gitIndexHas reports whether the store holds exactly one element with qn.
 func gitIndexHas(t *testing.T, st store.Backend, qn string) bool {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}

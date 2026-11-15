@@ -29,7 +29,7 @@ func TestReadElementsIncludesGitHistoryRows(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	els, err := readElements(st)
+	els, err := readElements(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}

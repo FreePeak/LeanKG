@@ -56,10 +56,10 @@ func TestPGSchemaIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n, err := b.ElementCount(); err != nil || n != 0 {
+	if n, err := b.ElementCount(context.Background()); err != nil || n != 0 {
 		t.Fatalf("b.ElementCount() = %d, %v; want 0", n, err)
 	}
-	if hits, err := b.FindExact("Alpha"); err != nil || len(hits) != 0 {
+	if hits, err := b.FindExact(context.Background(), "Alpha"); err != nil || len(hits) != 0 {
 		t.Fatalf("b.FindExact(Alpha) = %d hits, %v; want 0", len(hits), err)
 	}
 }
@@ -92,16 +92,16 @@ func TestPGElementOps(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.ElementCount(); err != nil || n != 2 {
+	if n, err := s.ElementCount(context.Background()); err != nil || n != 2 {
 		t.Fatalf("ElementCount() = %d, %v; want 2", n, err)
 	}
 
 	// FindExact: case-insensitive on name and qualified name.
-	hits, err := s.FindExact("myfunc")
+	hits, err := s.FindExact(context.Background(), "myfunc")
 	if err != nil || len(hits) != 1 || hits[0].QualifiedName != "pkg.MyFunc" || hits[0].Content != "v2" {
 		t.Fatalf("FindExact(myfunc) = %+v, %v", hits, err)
 	}
-	hits, err = s.FindExact("PKG.HELPER")
+	hits, err = s.FindExact(context.Background(), "PKG.HELPER")
 	if err != nil || len(hits) != 1 || hits[0].Name != "Helper" {
 		t.Fatalf("FindExact(PKG.HELPER) = %+v, %v", hits, err)
 	}
@@ -122,22 +122,22 @@ func TestPGElementOps(t *testing.T) {
 	}
 
 	// Relationship reads.
-	rels, err := s.Outgoing("pkg.MyFunc")
+	rels, err := s.Outgoing(context.Background(), "pkg.MyFunc")
 	if err != nil || len(rels) != 1 || rels[0].Target != "pkg.Helper" || rels[0].Confidence != 0.9 {
 		t.Fatalf("Outgoing = %+v, %v", rels, err)
 	}
-	rels, err = s.Incoming("pkg.Helper")
+	rels, err = s.Incoming(context.Background(), "pkg.Helper")
 	if err != nil || len(rels) != 1 {
 		t.Fatalf("Incoming = %+v, %v", rels, err)
 	}
-	rels, err = s.RelationshipsAll(10)
+	rels, err = s.RelationshipsAll(context.Background(), 10)
 	if err != nil || len(rels) != 1 {
 		t.Fatalf("RelationshipsAll = %+v, %v", rels, err)
 	}
-	if n, err := s.FileCount(); err != nil || n != 1 {
+	if n, err := s.FileCount(context.Background()); err != nil || n != 1 {
 		t.Fatalf("FileCount() = %d, %v; want 1", n, err)
 	}
-	byType, err := s.ElementsByType()
+	byType, err := s.ElementsByType(context.Background())
 	if err != nil || byType["function"] != 2 {
 		t.Fatalf("ElementsByType = %+v, %v", byType, err)
 	}
@@ -146,13 +146,13 @@ func TestPGElementOps(t *testing.T) {
 	if err := s.DeleteByFile("a.go"); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.ElementCount(); n != 0 {
+	if n, _ := s.ElementCount(context.Background()); n != 0 {
 		t.Fatalf("ElementCount after DeleteByFile = %d; want 0", n)
 	}
-	if n, _ := s.RelationshipCount(); n != 0 {
+	if n, _ := s.RelationshipCount(context.Background()); n != 0 {
 		t.Fatalf("RelationshipCount after DeleteByFile = %d; want 0", n)
 	}
-	if n, _ := s.FileCount(); n != 1 {
+	if n, _ := s.FileCount(context.Background()); n != 1 {
 		t.Fatalf("FileCount after DeleteByFile = %d; want 1", n)
 	}
 
@@ -160,7 +160,7 @@ func TestPGElementOps(t *testing.T) {
 	if err := s.DeleteFileRecord("a.go"); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.FileCount(); n != 0 {
+	if n, _ := s.FileCount(context.Background()); n != 0 {
 		t.Fatalf("FileCount after DeleteFileRecord = %d; want 0", n)
 	}
 }
@@ -214,7 +214,7 @@ func TestPGOrphanPurges(t *testing.T) {
 	if n, _ := s.VectorCount(st.ModelID); n != 1 {
 		t.Fatalf("VectorCount after purge = %d, want 1 (live b.B kept)", n)
 	}
-	if rels, _ := s.Outgoing("b.B"); len(rels) != 1 || rels[0].Target != "b.B" {
+	if rels, _ := s.Outgoing(context.Background(), "b.B"); len(rels) != 1 || rels[0].Target != "b.B" {
 		t.Fatalf("live edge lost: %+v", rels)
 	}
 	// Idempotent: a second pass finds nothing.

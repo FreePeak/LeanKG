@@ -46,7 +46,7 @@ func engineAt(t *testing.T, dir string) *Engine {
 
 func count(t *testing.T, e *Engine) int {
 	t.Helper()
-	n, err := e.st.ElementCount()
+	n, err := e.st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

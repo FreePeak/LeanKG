@@ -860,19 +860,19 @@ func (s *Store) LastEmbedRun(modelID string) (*EmbedRun, error) {
 // indexes, summarizes, or applies a federation pull must not leave readers
 // reporting possibly_stale forever.
 func RefreshInventory(ctx context.Context, st Backend) (Inventory, error) {
-	els, err := st.ElementCount()
+	els, err := st.ElementCount(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}
-	rels, err := st.RelationshipCount()
+	rels, err := st.RelationshipCount(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}
-	files, err := st.FileCount()
+	files, err := st.FileCount(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}
-	byType, err := st.ElementsByType()
+	byType, err := st.ElementsByType(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}

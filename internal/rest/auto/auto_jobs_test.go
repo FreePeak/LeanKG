@@ -45,7 +45,7 @@ func TestAutoConfigIndexJobOutlivesRequest(t *testing.T) {
 	}
 
 	jobs.Wait()
-	n, err := eng.Store().ElementCount()
+	n, err := eng.Store().ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestAutoConfigConflictStartsNoJob(t *testing.T) {
 	}
 
 	jobs.Wait()
-	n, err := eng.Store().ElementCount()
+	n, err := eng.Store().ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

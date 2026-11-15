@@ -134,7 +134,7 @@ func TestImportEndpoint(t *testing.T) {
 		t.Fatalf("import payload: %s", res.body)
 	}
 	st := e.Store()
-	if n, _ := st.ElementCount(); n == 0 {
+	if n, _ := st.ElementCount(context.Background()); n == 0 {
 		t.Fatal("no elements after import")
 	}
 }

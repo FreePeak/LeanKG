@@ -31,7 +31,7 @@ func OversizedFunctions(ctx context.Context, st store.Backend, minLines int, lan
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	els, err := st.Elements()
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}

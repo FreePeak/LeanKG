@@ -268,7 +268,7 @@ func hookEmbedStart(st store.Backend, storeDir string, cfg embed.Config, cfgErr 
 		if err != nil {
 			return nil, release, err
 		}
-		n, err := embed.IncrementalBacklog(st, p)
+		n, err := embed.IncrementalBacklog(ctx, st, p)
 		if err != nil {
 			release()
 			return nil, func() {}, fmt.Errorf("cannot count embed backlog: %w", err)

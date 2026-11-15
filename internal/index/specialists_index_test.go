@@ -47,14 +47,14 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 		t.Fatalf("result = %+v, want file/element/relationship counts", res)
 	}
 
-	els, err := st.FindExact("__android__activity___MainActivity")
+	els, err := st.FindExact(context.Background(), "__android__activity___MainActivity")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(els) != 1 || els[0].ElementType != "android_activity" {
 		t.Fatalf("persisted activity = %v", els)
 	}
-	rels, err := st.Outgoing("AndroidManifest.xml")
+	rels, err := st.Outgoing(context.Background(), "AndroidManifest.xml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,19 +110,19 @@ func TestIndexKotlinExtrasPersists(t *testing.T) {
 	if res.Elements == 0 {
 		t.Fatal("expected Kotlin extras elements")
 	}
-	els, err := st.FindExact("ui/MainActivity.kt::HiltModule:AppModule")
+	els, err := st.FindExact(context.Background(), "ui/MainActivity.kt::HiltModule:AppModule")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(els) != 1 {
 		t.Fatalf("hilt module not persisted: %v", els)
 	}
-	rels, err := st.Outgoing("ui/MainActivity.kt::WorkManager:SyncWorker")
+	rels, err := st.Outgoing(context.Background(), "ui/MainActivity.kt::WorkManager:SyncWorker")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = rels // worker element has no outgoing edges; the file does.
-	fileRels, err := st.Outgoing("ui/MainActivity.kt")
+	fileRels, err := st.Outgoing(context.Background(), "ui/MainActivity.kt")
 	if err != nil {
 		t.Fatal(err)
 	}

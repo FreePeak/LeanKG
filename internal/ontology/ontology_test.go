@@ -116,7 +116,7 @@ func TestMatchElements(t *testing.T) {
 		store.Element{QualifiedName: "src/util.go#counter", Name: "Counter", FilePath: "src/util.go"},
 	)
 
-	got, err := cat.MatchElements(st)
+	got, err := cat.MatchElements(context.Background(), st)
 	if err != nil {
 		t.Fatalf("MatchElements: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestMatchElementsCaseInsensitive(t *testing.T) {
 		// Mixed-case qn vs lowercase alias -> alias.
 		store.Element{QualifiedName: "src/Lru-Evict.go#y", Name: "Evict"},
 	)
-	got, err := cat.MatchElements(st)
+	got, err := cat.MatchElements(context.Background(), st)
 	if err != nil {
 		t.Fatalf("MatchElements: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestMatchElementsEmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCatalog: %v", err)
 	}
-	got, err := cat.MatchElements(setupStore(t))
+	got, err := cat.MatchElements(context.Background(), setupStore(t))
 	if err != nil {
 		t.Fatalf("MatchElements: %v", err)
 	}

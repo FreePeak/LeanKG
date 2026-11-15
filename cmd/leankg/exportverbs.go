@@ -74,7 +74,7 @@ func cmdExport(ctx context.Context, args []string) error {
 	defer st.Close()
 
 	if *markdown {
-		res, err := export.ExportMarkdown(st, dir, *out)
+		res, err := export.ExportMarkdown(ctx, st, dir, *out)
 		if err != nil {
 			return verbFatal(err)
 		}
@@ -96,7 +96,7 @@ func cmdExport(ctx context.Context, args []string) error {
 			if err != nil {
 				return verbFatal(err)
 			}
-			if err := export.WriteJSONStreaming(f, st); err != nil {
+			if err := export.WriteJSONStreaming(ctx, f, st); err != nil {
 				_ = f.Close()
 				return verbFatal(err)
 			}
@@ -106,7 +106,7 @@ func cmdExport(ctx context.Context, args []string) error {
 			fmt.Printf("Exported streaming JSON to %s\n", *output)
 			return nil
 		case "dot", "mermaid":
-			els, rels, err := export.All(st)
+			els, rels, err := export.All(ctx, st)
 			if err != nil {
 				return verbFatal(err)
 			}
@@ -129,7 +129,7 @@ func cmdExport(ctx context.Context, args []string) error {
 	if *community != "" {
 		// The Go store persists no cluster column; the detector is the single
 		// source of community membership.
-		clustering, err := web.ClusterAssignments(st)
+		clustering, err := web.ClusterAssignments(ctx, st)
 		if err != nil {
 			return verbFatal(err)
 		}
@@ -140,7 +140,7 @@ func cmdExport(ctx context.Context, args []string) error {
 		opts.Clusters = export.ClusterResolver(clustering.Assignments, labels)
 	}
 
-	els, rels, meta, err := export.Select(st, opts)
+	els, rels, meta, err := export.Select(ctx, st, opts)
 	if err != nil {
 		return verbFatal(err)
 	}
@@ -197,7 +197,7 @@ func cmdPack(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 
-	m, err := pack.WritePack(st, *output, pack.Options{
+	m, err := pack.WritePack(ctx, st, *output, pack.Options{
 		Path:           *pathPrefix,
 		MaxNodes:       *maxNodes,
 		SourceRevision: *revision,
@@ -243,7 +243,7 @@ func cmdGenerate(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 
-	body, err := docgen.AgentsMD(st)
+	body, err := docgen.AgentsMD(ctx, st)
 	if err != nil {
 		return verbFatal(err)
 	}
@@ -288,14 +288,14 @@ func cmdGenerate(ctx context.Context, args []string) error {
 // successful write of nothing, in the same shape as a lesson written with no
 // text. description is the note the caller passed; a caller with no note to
 // write has not asked for an annotation.
-func requireIndexedElement(st store.Backend, element, description string) error {
+func requireIndexedElement(ctx context.Context, st store.Backend, element, description string) error {
 	if strings.TrimSpace(element) == "" {
 		return fmt.Errorf("element is required: pass the qualified_name an element has in the index, e.g. `leankg query <name>` to find it")
 	}
 	if strings.TrimSpace(description) == "" {
 		return fmt.Errorf("description is required: an annotation with no text is not a note about anything — say what the element does")
 	}
-	els, err := st.FindExact(element)
+	els, err := st.FindExact(ctx, element)
 	if err != nil {
 		return err
 	}
@@ -339,7 +339,7 @@ func cmdAnnotate(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 
-	if err := requireIndexedElement(st, element, *description); err != nil {
+	if err := requireIndexedElement(ctx, st, element, *description); err != nil {
 		return verbFatal(err)
 	}
 	created, err := annot.Annotate(st, element, *description, optString(*userStory), optString(*feature))
@@ -384,7 +384,7 @@ func cmdLink(ctx context.Context, args []string) error {
 
 	// A link's note is the id it points at, so the emptiness check has
 	// nothing to say here: pass the link itself, never an empty string.
-	if err := requireIndexedElement(st, element, "link "+id); err != nil {
+	if err := requireIndexedElement(ctx, st, element, "link "+id); err != nil {
 		return verbFatal(err)
 	}
 	if err := annot.Link(st, element, id, *kind); err != nil {

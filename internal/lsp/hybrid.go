@@ -8,6 +8,7 @@ package lsp
 // untouched.
 
 import (
+	"context"
 	"path"
 	"strings"
 
@@ -335,11 +336,11 @@ func BareCallee(target string) string {
 // HybridResolve runs the in-process typed resolve over the whole store:
 // elements build the registry, every `calls` edge is upgraded in place and
 // only the upgraded rows are written back. It spawns nothing.
-func HybridResolve(st store.Backend, setting string) (int, error) {
+func HybridResolve(ctx context.Context, st store.Backend, setting string) (int, error) {
 	if setting == "" {
 		setting = "off"
 	}
-	els, err := st.Elements()
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -347,7 +348,7 @@ func HybridResolve(st store.Backend, setting string) (int, error) {
 	if reg.IsEmpty() {
 		return 0, nil
 	}
-	rels, err := st.RelationshipsAll(allRelationshipsLimit)
+	rels, err := st.RelationshipsAll(ctx, allRelationshipsLimit)
 	if err != nil {
 		return 0, err
 	}

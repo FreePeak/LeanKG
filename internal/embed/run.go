@@ -295,8 +295,15 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 
 	// Plan: dirty = elements whose content hash differs from embedding_state
 	// (incremental) or all elements (full).
-	elems, err := readElements(st)
+	elems, err := readElements(ctx, st)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The read stopped on the cancelled ctx: the run still leaves its
+			// ledger row (dirty 0, no plan was made).
+			if runID, serr := st.StartEmbedRun(modelID, mode, 0); serr == nil {
+				_ = st.FinishEmbedRun(runID, failedStatus(err), 0, 0, 0, 0, 0)
+			}
+		}
 		return rep, err
 	}
 	states, err := st.EmbeddingStateMap(modelID)
@@ -401,8 +408,8 @@ func needsVector(qn, hash string, states map[string]string) bool {
 // IncrementalBacklog counts the elements an incremental Run over st with provider
 // p would embed. It reads the store and never calls the provider, so a caller can
 // size the embed before it starts one.
-func IncrementalBacklog(st store.Backend, p Provider) (int, error) {
-	elems, err := readElements(st)
+func IncrementalBacklog(ctx context.Context, st store.Backend, p Provider) (int, error) {
+	elems, err := readElements(ctx, st)
 	if err != nil {
 		return 0, err
 	}

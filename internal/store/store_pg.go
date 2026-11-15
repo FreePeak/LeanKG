@@ -310,8 +310,8 @@ func pgScanElements(rows pgx.Rows) ([]Element, error) {
 // FindExact implements the L1 rung: exact (case-insensitive) match on element
 // name or qualified name. sqlite relies on COLLATE NOCASE; PostgreSQL uses
 // lower() comparisons (backed by expression indexes when available).
-func (s *PGStore) FindExact(name string) ([]Element, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce
+func (s *PGStore) FindExact(ctx context.Context, name string) ([]Element, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+` FROM code_elements ce
 		WHERE lower(ce.name) = lower($1) OR lower(ce.qualified_name) = lower($1)
 		ORDER BY length(ce.qualified_name) LIMIT 200`, name)
 	if err != nil {
@@ -464,22 +464,22 @@ func escapeLike(q string) string {
 }
 
 // ElementCount returns the total number of indexed elements.
-func (s *PGStore) ElementCount() (int, error) {
+func (s *PGStore) ElementCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_elements`).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM code_elements`).Scan(&n)
 	return n, err
 }
 
 // RelationshipCount returns the total number of indexed relationships.
-func (s *PGStore) RelationshipCount() (int, error) {
+func (s *PGStore) RelationshipCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM relationships`).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM relationships`).Scan(&n)
 	return n, err
 }
 
 // ElementsByType returns element counts grouped by element_type.
-func (s *PGStore) ElementsByType() (map[string]int, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT element_type, COUNT(*) FROM code_elements GROUP BY element_type`)
+func (s *PGStore) ElementsByType(ctx context.Context) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT element_type, COUNT(*) FROM code_elements GROUP BY element_type`)
 	if err != nil {
 		return nil, err
 	}
@@ -497,15 +497,15 @@ func (s *PGStore) ElementsByType() (map[string]int, error) {
 }
 
 // FileCount returns the number of indexed files.
-func (s *PGStore) FileCount() (int, error) {
+func (s *PGStore) FileCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_files`).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM code_files`).Scan(&n)
 	return n, err
 }
 
 // Elements enumerates every indexed element (ordered by qualified_name).
-func (s *PGStore) Elements() ([]Element, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce ORDER BY ce.qualified_name`)
+func (s *PGStore) Elements(ctx context.Context) ([]Element, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+` FROM code_elements ce ORDER BY ce.qualified_name`)
 	if err != nil {
 		return nil, err
 	}
@@ -513,8 +513,8 @@ func (s *PGStore) Elements() ([]Element, error) {
 }
 
 // Outgoing returns relationships sourced at `source`.
-func (s *PGStore) Outgoing(source string) ([]Relationship, error) {
-	rows, err := s.pool.Query(pgCtx,
+func (s *PGStore) Outgoing(ctx context.Context, source string) ([]Relationship, error) {
+	rows, err := s.pool.Query(ctx,
 		`SELECT source_qualified, target_qualified, rel_type, confidence, metadata::text FROM relationships WHERE source_qualified = $1`, source)
 	if err != nil {
 		return nil, err
@@ -523,8 +523,8 @@ func (s *PGStore) Outgoing(source string) ([]Relationship, error) {
 }
 
 // Incoming returns relationships targeting `target`.
-func (s *PGStore) Incoming(target string) ([]Relationship, error) {
-	rows, err := s.pool.Query(pgCtx,
+func (s *PGStore) Incoming(ctx context.Context, target string) ([]Relationship, error) {
+	rows, err := s.pool.Query(ctx,
 		`SELECT source_qualified, target_qualified, rel_type, confidence, metadata::text FROM relationships WHERE target_qualified = $1`, target)
 	if err != nil {
 		return nil, err
@@ -533,11 +533,11 @@ func (s *PGStore) Incoming(target string) ([]Relationship, error) {
 }
 
 // RelationshipsAll returns up to limit relationships ordered by id.
-func (s *PGStore) RelationshipsAll(limit int) ([]Relationship, error) {
+func (s *PGStore) RelationshipsAll(ctx context.Context, limit int) ([]Relationship, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	rows, err := s.pool.Query(pgCtx,
+	rows, err := s.pool.Query(ctx,
 		`SELECT source_qualified, target_qualified, rel_type, confidence, metadata::text FROM relationships ORDER BY id LIMIT $1`, limit)
 	if err != nil {
 		return nil, err

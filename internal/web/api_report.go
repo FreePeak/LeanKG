@@ -4,6 +4,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -869,6 +870,7 @@ func dropLabel(edges []queryGraphEdge, label string) []queryGraphEdge {
 // --- POST /api/query-graph ---
 
 func (h *apiH) queryGraph(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var req struct {
 		Question    string `json:"question"`
 		TokenBudget *int   `json:"token_budget"`
@@ -884,12 +886,12 @@ func (h *apiH) queryGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snap, err := loadSnapshot(h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	rels, err := allRelationships(h.engine.Store())
+	rels, err := allRelationships(ctx, h.engine.Store())
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -981,8 +983,8 @@ func getGodNodes(snap *snapshot, rels []store.Relationship, limit, excludeHubsPe
 	return out
 }
 
-func (h *apiH) graphReport(w http.ResponseWriter, _ *http.Request) {
-	report, err := buildGraphReport(h.projectDir, h.engine, "")
+func (h *apiH) graphReport(w http.ResponseWriter, r *http.Request) {
+	report, err := buildGraphReport(r.Context(), h.projectDir, h.engine, "")
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -1003,14 +1005,14 @@ func (h *apiH) graphReport(w http.ResponseWriter, _ *http.Request) {
 // store (Rust GraphEngine::generate_graph_report). projectName overrides the
 // display name; "" falls back to the project directory's basename, then
 // "project".
-func buildGraphReport(projectDir string, engine *core.Engine, projectName string) (GraphReport, error) {
+func buildGraphReport(ctx context.Context, projectDir string, engine *core.Engine, projectName string) (GraphReport, error) {
 	project := projectNameFor(projectDir, projectName)
 
-	snap, err := loadSnapshot(engine.Store())
+	snap, err := loadSnapshot(ctx, engine.Store())
 	if err != nil {
 		return GraphReport{}, err
 	}
-	rels, err := allRelationships(engine.Store())
+	rels, err := allRelationships(ctx, engine.Store())
 	if err != nil {
 		return GraphReport{}, err
 	}

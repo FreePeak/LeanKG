@@ -342,7 +342,7 @@ func cmdStatus(ctx context.Context, args []string) error {
 	} else if run != nil {
 		out["last_run"] = run
 	}
-	if els, err := st.ElementCount(); err != nil {
+	if els, err := st.ElementCount(ctx); err != nil {
 		return fmt.Errorf("status: elements: %v", err)
 	} else {
 		out["elements"] = els

@@ -35,7 +35,7 @@ func cmdTunnels(ctx context.Context, args []string) error {
 	}
 	defer engine.Store().Close()
 	defer engine.Close()
-	ts, err := web.Tunnels(engine.Store())
+	ts, err := web.Tunnels(ctx, engine.Store())
 	if err != nil {
 		return verbFatal(err)
 	}
@@ -170,7 +170,7 @@ func cmdStatusRepo(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "usage: leankg status-repo <name>")
 		return cliexit.Code(2)
 	}
-	st, err := registry.Status(positional[0])
+	st, err := registry.Status(ctx, positional[0])
 	if errors.Is(err, registry.ErrNotFound) {
 		fmt.Printf("Repository '%s' not found in registry\n", positional[0])
 		return nil

@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestAuditLedgerChain(t *testing.T) {
 	s := openTestStore(t)
@@ -48,7 +51,7 @@ func TestBackendInterfaceSatisfied(t *testing.T) {
 	if b.Engine() != "sqlite" {
 		t.Fatalf("engine = %q", b.Engine())
 	}
-	if _, err := b.Elements(); err != nil {
+	if _, err := b.Elements(context.Background()); err != nil {
 		t.Fatalf("elements: %v", err)
 	}
 	if c, o, err := b.VectorCoverage("none"); err != nil || c != 0 || o != 0 {

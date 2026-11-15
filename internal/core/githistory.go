@@ -83,13 +83,13 @@ func (e *Engine) gitHistoryQuery(ctx context.Context, req QueryRequest, a gitHis
 	}
 	path := e.relToProject(req.Query)
 	if req.Action == "cochange" {
-		partners, err := githistory.CoChange(e.st, path, limit)
+		partners, err := githistory.CoChange(ctx, e.st, path, limit)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"path": path, "partners": partners}, nil
 	}
-	commits, err := githistory.History(e.st, path, limit)
+	commits, err := githistory.History(ctx, e.st, path, limit)
 	if err != nil {
 		return nil, err
 	}

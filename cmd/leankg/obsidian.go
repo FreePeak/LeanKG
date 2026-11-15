@@ -121,7 +121,7 @@ func cmdObsidian(ctx context.Context, args []string) error {
 		switch verb {
 		case "push":
 			fmt.Println("Pushing LeanKG data to Obsidian vault...")
-			res, err := e.Push()
+			res, err := e.Push(ctx)
 			if err != nil {
 				return err
 			}

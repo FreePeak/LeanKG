@@ -119,7 +119,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 		res.Reason = "nothing to delete"
 		return res, healInventory(st)
 	}
-	before, err := st.ElementCount()
+	before, err := st.ElementCount(ctx)
 	if err != nil {
 		return res, fmt.Errorf("maintain: count elements: %w", err)
 	}
@@ -130,7 +130,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 		return res, fmt.Errorf("maintain: delete %d stale path(s): %w", len(missing), err)
 	}
 	res.DeletedFiles = deleted
-	after, err := st.ElementCount()
+	after, err := st.ElementCount(ctx)
 	if err != nil {
 		return res, fmt.Errorf("maintain: count elements: %w", err)
 	}

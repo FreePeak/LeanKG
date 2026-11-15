@@ -106,7 +106,7 @@ func (f fleetProbe) Fleet(ctx context.Context) ([]FleetStatus, error) {
 			st.Unreadable = err.Error()
 		} else {
 			st.Applied = applied
-			els, _ := child.ElementCount()
+			els, _ := child.ElementCount(ctx)
 			st.Fresh = store.Freshness(ctx, child, els)
 		}
 		_ = child.Close()

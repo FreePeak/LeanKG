@@ -189,7 +189,7 @@ func TestIncrementalBacklogMatchesRunDirty(t *testing.T) {
 	p := Deterministic(8)
 	assertBacklog := func(want int) {
 		t.Helper()
-		got, err := IncrementalBacklog(st, p)
+		got, err := IncrementalBacklog(context.Background(), st, p)
 		if err != nil {
 			t.Fatalf("IncrementalBacklog: %v", err)
 		}

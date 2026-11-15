@@ -1,6 +1,8 @@
 package embed
 
 import (
+	"context"
+
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -39,8 +41,8 @@ func documentText(e elementText) string {
 // readElements enumerates every indexed element through the Backend —
 // engine-agnostic (was: sidecar SQLite handle duplicating schema knowledge;
 // collapsed onto store.Backend.Elements at the W4 gate).
-func readElements(st store.Backend) ([]elementText, error) {
-	els, err := st.Elements()
+func readElements(ctx context.Context, st store.Backend) ([]elementText, error) {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}

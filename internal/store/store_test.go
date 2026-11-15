@@ -29,7 +29,7 @@ func TestUpsertAndFindExact(t *testing.T) {
 	if err := s.UpsertElements(els); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	got, err := s.FindExact("handle") // case-insensitive
+	got, err := s.FindExact(context.Background(), "handle") // case-insensitive
 	if err != nil {
 		t.Fatalf("find exact: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestUpsertAndFindExact(t *testing.T) {
 	if err := s.UpsertElements(els[:1]); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
-	n, _ := s.ElementCount()
+	n, _ := s.ElementCount(context.Background())
 	if n != 2 {
 		t.Fatalf("element count after re-upsert = %d, want 2", n)
 	}
@@ -89,7 +89,7 @@ func TestDeleteByFile(t *testing.T) {
 	if err := s.DeleteByFile("a.go"); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.ElementCount(); n != 1 {
+	if n, _ := s.ElementCount(context.Background()); n != 1 {
 		t.Fatalf("element count = %d, want 1", n)
 	}
 	// FTS must not return the deleted element.
@@ -133,7 +133,7 @@ func TestDeleteOrphanRelationships(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("purged %d edges, want 1", n)
 	}
-	rels, err := s.RelationshipsAll(10)
+	rels, err := s.RelationshipsAll(context.Background(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestReadOnlyMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ro.Close()
-	if got, err := ro.FindExact("x"); err != nil || len(got) != 1 {
+	if got, err := ro.FindExact(context.Background(), "x"); err != nil || len(got) != 1 {
 		t.Fatalf("ro read: %v %+v", err, got)
 	}
 	if err := ro.Migrate(context.Background()); err == nil {
