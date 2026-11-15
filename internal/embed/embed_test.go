@@ -760,6 +760,9 @@ func TestFromEnv(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := p.Probe(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		want := "local:bge-small-en-v1.5-f16.gguf@d32f8c040ea3b516330eeb75b72bcc2d3a780ab7"
 		if got := p.Revision(); got != want {
 			t.Fatalf("revision = %q, want %q", got, want)
@@ -1552,3 +1555,17 @@ func TestRunStopsAtNextBatchOnCancel(t *testing.T) {
 		t.Fatalf("run status: got %+v, want cancelled", run)
 	}
 }
+
+func (o overrideProvider) Probe(ctx context.Context) error { return o.inner.Probe(ctx) }
+
+func (w *wrongDimsProvider) Probe(ctx context.Context) error { return w.inner.Probe(ctx) }
+
+func (r *recordProvider) Probe(ctx context.Context) error { return r.inner.Probe(ctx) }
+
+func (l *longTextProvider) Probe(ctx context.Context) error { return l.inner.Probe(ctx) }
+
+func (c *cancelAfterProvider) Probe(ctx context.Context) error { return c.inner.Probe(ctx) }
+
+func (b *budgetSeq) Probe(ctx context.Context) error { return b.inner.Probe(ctx) }
+
+func (e errProvider) Probe(ctx context.Context) error { return e.inner.Probe(ctx) }

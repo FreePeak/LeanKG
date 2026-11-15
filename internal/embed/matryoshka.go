@@ -43,7 +43,9 @@ func (m matryoshka) ModelID() string  { return m.inner.ModelID() }
 func (m matryoshka) Revision() string { return m.inner.Revision() }
 func (m matryoshka) Distance() string { return m.inner.Distance() }
 func (m matryoshka) Provider() string { return m.inner.Provider() }
-func (m matryoshka) Dimensions() int  { return m.width }
+
+func (m matryoshka) Probe(ctx context.Context) error { return m.inner.Probe(ctx) }
+func (m matryoshka) Dimensions() int                 { return m.width }
 
 // Unwrap exposes the provider underneath, for capability probes such as the
 // sidecar's TextBudget (see unwrapProvider).

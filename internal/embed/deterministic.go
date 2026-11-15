@@ -20,6 +20,8 @@ func (d deterministic) Dimensions() int  { return d.dims }
 func (d deterministic) Distance() string { return "cosine" }
 func (d deterministic) Provider() string { return "deterministic" }
 
+func (d deterministic) Probe(context.Context) error { return nil }
+
 func (d deterministic) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))
 	for i, text := range texts {

@@ -294,7 +294,7 @@ func requestTimeout() (time.Duration, error) {
 // LEANKG_EMBED_MODEL to the catalog key (or LEANKG_EMBED_REVISION outright).
 type localProvider struct {
 	*openaiCompatible
-	// fingerprint state (RS-14): when the operator pinned nothing, the
+	// probe state (RS-14, Probe): when the operator pinned nothing, the
 	// revision is derived from the model the sidecar actually serves.
 	fpMu      sync.Mutex
 	fpDone    bool
@@ -317,56 +317,71 @@ type props struct {
 // (…/snapshots/<40-hex>/<file>.gguf).
 var snapshotRe = regexp.MustCompile(`/snapshots/([0-9a-f]{40})/`)
 
-// fingerprint asks the sidecar which model it serves. Results are cached on
+// Probe asks the sidecar which model it serves. The answer is cached on
 // success; failures are retried at most every 10 s, so a sidecar that comes up
-// after the server still gets identified without a restart.
-func (l *localProvider) fingerprint() (rev string, nctx int, ok bool) {
+// after the server still gets identified without a restart. A probe ended by
+// ctx says nothing and is retried on the next call. This is the only place the
+// local provider's identity does I/O.
+func (l *localProvider) Probe(ctx context.Context) error {
 	l.fpMu.Lock()
 	defer l.fpMu.Unlock()
-	if l.fpDone {
-		return l.fpRev, l.fpCtx, true
-	}
-	if time.Now().Before(l.fpNextTry) {
-		return "", 0, false
+	if l.fpDone || time.Now().Before(l.fpNextTry) {
+		return nil
 	}
 	l.fpNextTry = time.Now().Add(10 * time.Second)
 	root := strings.TrimSuffix(strings.TrimSuffix(l.baseURL, "/"), "/v1")
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(root + "/props")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, root+"/props", nil)
 	if err != nil {
-		return "", 0, false
+		return nil
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			l.fpNextTry = time.Time{}
+			return ctxErr
+		}
+		return nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", 0, false
+		return nil
 	}
 	var p props
 	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil || p.ModelPath == "" {
-		return "", 0, false
+		return nil
 	}
-	rev = "local:" + filepath.Base(p.ModelPath)
+	rev := "local:" + filepath.Base(p.ModelPath)
 	if m := snapshotRe.FindStringSubmatch(filepath.ToSlash(p.ModelPath)); m != nil {
 		rev += "@" + m[1]
 	}
-	nctx = p.Defaults.NCtx
+	nctx := p.Defaults.NCtx
 	if nctx == 0 {
 		nctx = p.NCtx
 	}
 	l.fpDone, l.fpRev, l.fpCtx = true, rev, nctx
-	return rev, nctx, true
+	return nil
+}
+
+// probed returns what the last successful Probe read. It never does I/O.
+func (l *localProvider) probed() (rev string, nctx int, ok bool) {
+	l.fpMu.Lock()
+	defer l.fpMu.Unlock()
+	return l.fpRev, l.fpCtx, l.fpDone
 }
 
 // Revision is the stamp revision. An operator pin (LEANKG_EMBED_REVISION, or
-// a catalog model named in LEANKG_EMBED_MODEL) wins; otherwise it names the
-// GGUF the sidecar serves, so swapping the model behind the port is drift the
-// stamp guard catches instead of a silent mix of vector spaces. A sidecar that
-// cannot be asked (no /props: another OpenAI-compatible server) keeps the
-// legacy "local:<model>" identity.
+// a catalog model named in LEANKG_EMBED_MODEL) wins; otherwise, once Probe has
+// read it, it names the GGUF the sidecar serves, so swapping the model behind
+// the port is drift the stamp guard catches instead of a silent mix of vector
+// spaces. Before a successful probe, or for a sidecar that cannot be asked (no
+// /props: another OpenAI-compatible server), it keeps the legacy
+// "local:<model>" identity.
 func (l *localProvider) Revision() string {
 	if l.pinned {
 		return l.revision
 	}
-	if rev, _, ok := l.fingerprint(); ok {
+	if rev, _, ok := l.probed(); ok {
 		return rev
 	}
 	return l.revision
@@ -375,9 +390,9 @@ func (l *localProvider) Revision() string {
 // TextBudget is the per-text rune budget for this sidecar: the model's real
 // context window (≈2 runes per token for dense code, minus room for the
 // document header) instead of a fixed guess; 0 = unknown (callers keep the
-// conservative default).
+// conservative default). It is known after Probe.
 func (l *localProvider) TextBudget() int {
-	if _, nctx, ok := l.fingerprint(); ok && nctx > 0 {
+	if _, nctx, ok := l.probed(); ok && nctx > 0 {
 		return max(nctx*2-64, 256)
 	}
 	return 0

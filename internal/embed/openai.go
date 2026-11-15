@@ -71,9 +71,12 @@ type openaiCompatible struct {
 
 func (o *openaiCompatible) ModelID() string  { return o.model }
 func (o *openaiCompatible) Revision() string { return o.revision }
-func (o *openaiCompatible) Dimensions() int  { return o.dims }
-func (o *openaiCompatible) Distance() string { return Distance }
-func (o *openaiCompatible) Provider() string { return "openai" }
+
+// Probe has nothing to resolve for a remote endpoint whose identity is configured.
+func (o *openaiCompatible) Probe(context.Context) error { return nil }
+func (o *openaiCompatible) Dimensions() int             { return o.dims }
+func (o *openaiCompatible) Distance() string            { return Distance }
+func (o *openaiCompatible) Provider() string            { return "openai" }
 
 // prefixFor returns the pinned text prefix paired with kind for this model.
 func (o *openaiCompatible) prefixFor(kind TextKind) string {

@@ -22,6 +22,8 @@ import (
 
 // Vectorizer is the dense arm a Memory can be given.
 type Vectorizer interface {
+	// Probe resolves the vector space's endpoint facts before Key is read.
+	Probe(ctx context.Context) error
 	// Key identifies the vector space; rows embedded under another key are
 	// ignored and re-embedded.
 	Key() string
@@ -203,8 +205,16 @@ func (m *Memory) ensureVectors(ctx context.Context, v Vectorizer, banks []string
 // denseCandidates returns the bank rows whose similarity to the query beats
 // the noise floor, best first.
 func (m *Memory) denseCandidates(ctx context.Context, v Vectorizer, banks []string, query string) []Entry {
+	if wordCount(query) < denseMinWords {
+		return nil
+	}
+	// The vector space (a sidecar's revision) is resolved before its key and its
+	// calibrated floor are read.
+	if err := v.Probe(ctx); err != nil {
+		return nil
+	}
 	floor, ok := v.Floor()
-	if !ok || wordCount(query) < denseMinWords {
+	if !ok {
 		return nil
 	}
 	// No memory-side deadline: the caller's ctx stops it on a disconnect, and

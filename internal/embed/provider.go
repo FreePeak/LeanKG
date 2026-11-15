@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // TextKind distinguishes query-time from document-time embedding because
@@ -44,13 +46,59 @@ const maxContentChars = 8000
 const maxLocalTextChars = 1000
 
 // Provider produces embeddings for one pinned model.
+//
+// The accessors are pure: they never reach the network. Facts that need the
+// endpoint (a sidecar's model revision and text budget) are resolved by
+// Probe(ctx), which the run, export and health paths call explicitly before
+// they read the identity. Probe is cached once it has an answer.
 type Provider interface {
 	ModelID() string
 	Revision() string
 	Dimensions() int
 	Distance() string
 	Provider() string
+	Probe(ctx context.Context) error
 	Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error)
+}
+
+// Identity names the vector space a provider writes and reads. Key is the one
+// encoding of that space: the memory index keys its rows by it and the noise
+// floor calibration is bound to it.
+type Identity struct {
+	Provider       string
+	Model          string
+	Revision       string
+	Dims           int
+	ChunkerVersion int
+	QueryPrefix    string
+	DocumentPrefix string
+}
+
+// Key is model|revision|provider|dims|chunker|query-prefix|document-prefix. Its
+// shape is durable: a change re-embeds every memory row.
+func (id Identity) Key() string {
+	return fmt.Sprintf("%s|%s|%s|%d|%d|%s|%s", id.Model, id.Revision, id.Provider, id.Dims,
+		id.ChunkerVersion, id.QueryPrefix, id.DocumentPrefix)
+}
+
+// IdentityOf reads the identity p writes under. It is pure: call Probe first
+// when the revision of an unpinned sidecar matters.
+func IdentityOf(p Provider) Identity {
+	q, d := Prefixes(p.ModelID())
+	return Identity{Provider: p.Provider(), Model: p.ModelID(), Revision: p.Revision(), Dims: p.Dimensions(),
+		ChunkerVersion: ChunkerVersion, QueryPrefix: q, DocumentPrefix: d}
+}
+
+// KeyOf is the vector-space key of a stored collection stamp, the same key
+// IdentityOf(p).Key() gives for the provider that wrote it.
+func KeyOf(s store.ModelStamp) string {
+	return identityOfStamp(s).Key()
+}
+
+// identityOfStamp is the identity a stamp records.
+func identityOfStamp(s store.ModelStamp) Identity {
+	return Identity{Provider: s.Provider, Model: s.ModelID, Revision: s.Revision, Dims: s.Dimensions,
+		ChunkerVersion: s.ChunkerVersion, QueryPrefix: s.QueryPrefix, DocumentPrefix: s.DocumentPrefix}
 }
 
 // contentHashHex is the per-element content hash: SHA-256 hex of Content.

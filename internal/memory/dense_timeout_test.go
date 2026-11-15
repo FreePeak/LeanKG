@@ -15,8 +15,9 @@ import (
 // seam, the way core does in production, without a noise floor.
 type providerVectorizer struct{ p embed.Provider }
 
-func (v providerVectorizer) Key() string            { return "hung-endpoint" }
-func (v providerVectorizer) Floor() (float64, bool) { return 0, true }
+func (v providerVectorizer) Probe(ctx context.Context) error { return v.p.Probe(ctx) }
+func (v providerVectorizer) Key() string                     { return "hung-endpoint" }
+func (v providerVectorizer) Floor() (float64, bool)          { return 0, true }
 func (v providerVectorizer) EmbedQuery(ctx context.Context, t string) ([]float32, error) {
 	vecs, err := v.p.Embed(ctx, embed.Query, []string{t})
 	if err != nil {

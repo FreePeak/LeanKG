@@ -134,6 +134,9 @@ func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Wr
 		return err
 	}
 	p := target.provider
+	if err := p.Probe(ctx); err != nil {
+		return err
+	}
 	cur, err := st.Stamp(p.ModelID())
 	if err != nil {
 		return err

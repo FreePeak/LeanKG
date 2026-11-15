@@ -10,8 +10,9 @@ import (
 // embedded in).
 type stampedVectorizer struct{ key string }
 
-func (s stampedVectorizer) Key() string            { return s.key }
-func (s stampedVectorizer) Floor() (float64, bool) { return 0, true }
+func (s stampedVectorizer) Probe(context.Context) error { return nil }
+func (s stampedVectorizer) Key() string                 { return s.key }
+func (s stampedVectorizer) Floor() (float64, bool)      { return 0, true }
 func (s stampedVectorizer) EmbedQuery(context.Context, string) ([]float32, error) {
 	return []float32{1, 0, 0}, nil
 }

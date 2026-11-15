@@ -167,11 +167,13 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 
 type failingProvider struct{ inner embed.Provider }
 
-func (f failingProvider) ModelID() string  { return f.inner.ModelID() }
-func (f failingProvider) Revision() string { return f.inner.Revision() }
-func (f failingProvider) Dimensions() int  { return f.inner.Dimensions() }
-func (f failingProvider) Distance() string { return f.inner.Distance() }
-func (f failingProvider) Provider() string { return f.inner.Provider() }
+func (f failingProvider) ModelID() string                 { return f.inner.ModelID() }
+func (f failingProvider) Revision() string                { return f.inner.Revision() }
+func (f failingProvider) Dimensions() int                 { return f.inner.Dimensions() }
+func (f failingProvider) Distance() string                { return f.inner.Distance() }
+func (f failingProvider) Provider() string                { return f.inner.Provider() }
+func (f failingProvider) Probe(ctx context.Context) error { return f.inner.Probe(ctx) }
+
 func (f failingProvider) Embed(_ context.Context, _ embed.TextKind, _ []string) ([][]float32, error) {
 	return nil, context.DeadlineExceeded
 }

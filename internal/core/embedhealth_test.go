@@ -96,3 +96,9 @@ func TestEmbedProbeDoesNotHoldLock(t *testing.T) {
 	close(g.release)
 	<-done
 }
+
+func (blockingEmbedder) Probe(context.Context) error { return nil }
+
+func (okEmbedder) Probe(context.Context) error { return nil }
+
+func (gatedEmbedder) Probe(context.Context) error { return nil }

@@ -367,3 +367,5 @@ func TestExportAppliesDocumentPrefix(t *testing.T) {
 		t.Fatalf("export content_hash = %q, want the raw-content hash (resume key)", line.ContentHash)
 	}
 }
+
+func (p textFailProvider) Probe(ctx context.Context) error { return p.inner.Probe(ctx) }

@@ -267,6 +267,9 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	if mode != "incremental" && mode != "full" {
 		return rep, fmt.Errorf("embed: unknown mode %q (want incremental|full)", mode)
 	}
+	if err := p.Probe(ctx); err != nil {
+		return rep, err
+	}
 	modelID := p.ModelID()
 	want := StampOf(p)
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the

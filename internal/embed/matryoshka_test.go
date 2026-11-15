@@ -170,6 +170,9 @@ func TestMatryoshkaKeepsTextBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FromEnv: %v", err)
 	}
+	if err := p.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if got := TextCap(p); got != 4032 {
 		t.Fatalf("TextCap under truncation = %d, want 4032 from the sidecar n_ctx", got)
 	}

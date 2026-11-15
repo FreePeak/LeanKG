@@ -66,6 +66,9 @@ type QueryEmbedder interface {
 	// against the stored collection stamp on every L3 query (query-side
 	// degrade on drift — FR-ZCP-11 part 2 port).
 	Revision() string
+	// Probe resolves the facts that need the endpoint (a sidecar's revision and
+	// text budget) before Revision, Stamp or EmbedQuery are read.
+	Probe(ctx context.Context) error
 	// Stamp returns the FULL collection identity this embedder writes with:
 	// model, revision, dimensions, distance, provider, chunker version and the
 	// query/document prefix pair (issue #279). L3 compares it whole against the
@@ -135,8 +138,11 @@ type documentEmbedder interface {
 type memVectorizer struct{ e *Engine }
 
 func (v memVectorizer) Key() string {
-	s := v.e.embedder.Stamp()
-	return fmt.Sprintf("%s|%s|%s|%d|%d|%s|%s", s.ModelID, s.Revision, s.Provider, s.Dimensions, s.ChunkerVersion, s.QueryPrefix, s.DocumentPrefix)
+	return embed.KeyOf(v.e.embedder.Stamp())
+}
+
+func (v memVectorizer) Probe(ctx context.Context) error {
+	return v.e.embedder.Probe(ctx)
 }
 
 func (v memVectorizer) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
@@ -176,7 +182,12 @@ func QueryEmbedderFromProvider(p embed.Provider) QueryEmbedder {
 
 type providerEmbedder struct{ p embed.Provider }
 
+func (a providerEmbedder) Probe(ctx context.Context) error { return a.p.Probe(ctx) }
+
 func (a providerEmbedder) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	if err := a.p.Probe(ctx); err != nil {
+		return nil, err
+	}
 	// A query longer than the model window used to fail at the sidecar (HTTP
 	// 500) and degrade L3 to keywords; embed its head instead (RS-15).
 	text = embed.TruncateText(text, embed.TextCap(a.p))
@@ -193,6 +204,9 @@ func (a providerEmbedder) EmbedQuery(ctx context.Context, text string) ([]float3
 // EmbedDocuments embeds stored text (memory rows) under the provider's
 // document kind, each cut to the provider's text budget.
 func (a providerEmbedder) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
+	if err := a.p.Probe(ctx); err != nil {
+		return nil, err
+	}
 	cut := make([]string, len(texts))
 	for i, t := range texts {
 		cut[i] = embed.TruncateText(t, embed.TextCap(a.p))
@@ -1142,6 +1156,9 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	// Select the collection BY the embedder's model (Stamps() has no ORDER
 	// BY — stamps[0] was arbitrary with >1 model) and enforce the query-side
 	// stamp contract: drift DEGRADES to L2, never silently wrong answers.
+	if err := e.embedder.Probe(ctx); err != nil {
+		return nil, err
+	}
 	modelID, _ := e.embedder.Describe()
 	stamp, err := e.st.Stamp(modelID)
 	if err != nil {

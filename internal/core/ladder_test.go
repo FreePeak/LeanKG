@@ -171,3 +171,5 @@ func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 		t.Fatal("a calibration for a different collection identity was applied")
 	}
 }
+
+func (downEmbedder) Probe(context.Context) error { return nil }
