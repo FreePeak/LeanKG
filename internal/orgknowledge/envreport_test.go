@@ -24,21 +24,21 @@ func TestEnvConflictReport(t *testing.T) {
 
 	// billing-api lives in two environments; billing-only in one.
 	for _, env := range []string{"local", "production"} {
-		if err := k.SnapshotElements(env, []store.Element{{
+		if err := k.SnapshotElements(context.Background(), env, []store.Element{{
 			QualifiedName: "billing-api", ElementType: "service", Name: "billing-api",
 			FilePath: "service.yaml", Metadata: map[string]any{"version": "v1"},
 		}}); err != nil {
 			t.Fatalf("SnapshotElements(%s): %v", env, err)
 		}
 	}
-	if err := k.SnapshotElements("local", []store.Element{{
+	if err := k.SnapshotElements(context.Background(), "local", []store.Element{{
 		QualifiedName: "billing-only", ElementType: "service", Name: "billing-only",
 		FilePath: "service.yaml", Metadata: map[string]any{"version": "v1"},
 	}}); err != nil {
 		t.Fatalf("SnapshotElements: %v", err)
 	}
 
-	rep, err := k.EnvConflictReport("billing")
+	rep, err := k.EnvConflictReport(context.Background(), "billing")
 	if err != nil {
 		t.Fatalf("EnvConflictReport: %v", err)
 	}
@@ -80,18 +80,18 @@ func TestEnvConflictReportCapsVariants(t *testing.T) {
 				QualifiedName: fmt.Sprintf("svc-%02d", i), ElementType: "service",
 				Name: fmt.Sprintf("svc-%02d", i), FilePath: "service.yaml",
 			}}
-			if err := k.SnapshotElements(env, els); err != nil {
+			if err := k.SnapshotElements(context.Background(), env, els); err != nil {
 				t.Fatalf("seed %s: %v", env, err)
 			}
 		}
 	}
-	if err := k.SnapshotElements("local", []store.Element{{
+	if err := k.SnapshotElements(context.Background(), "local", []store.Element{{
 		QualifiedName: "svc-single", ElementType: "service", Name: "svc-single", FilePath: "service.yaml",
 	}}); err != nil {
 		t.Fatalf("seed single: %v", err)
 	}
 
-	rep, err := k.EnvConflictReport("svc")
+	rep, err := k.EnvConflictReport(context.Background(), "svc")
 	if err != nil {
 		t.Fatalf("EnvConflictReport: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestEnvConflictReportCapsVariants(t *testing.T) {
 	}
 
 	// Nothing matches -> the Rust "no conflicts" line.
-	empty, err := k.EnvConflictReport("nothing-here")
+	empty, err := k.EnvConflictReport(context.Background(), "nothing-here")
 	if err != nil {
 		t.Fatalf("EnvConflictReport(none): %v", err)
 	}

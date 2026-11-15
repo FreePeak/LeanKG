@@ -422,10 +422,10 @@ func TestIndexRebuildsOnRemovedRequirements(t *testing.T) {
 	}
 	// The knowledge projection is rebuilt with the entities: a row for a
 	// requirement the document dropped must not survive.
-	if _, ok, err := st.KnowledgeEntryByID("prd-req-FR-ZCP-02"); err != nil || ok {
+	if _, ok, err := st.KnowledgeEntryByID(context.Background(), "prd-req-FR-ZCP-02"); err != nil || ok {
 		t.Errorf("knowledge row prd-req-FR-ZCP-02 survived the rebuild (ok=%v err=%v)", ok, err)
 	}
-	if _, ok, err := st.KnowledgeEntryByID("prd-req-FR-KEEP-01"); err != nil || !ok {
+	if _, ok, err := st.KnowledgeEntryByID(context.Background(), "prd-req-FR-KEEP-01"); err != nil || !ok {
 		t.Errorf("knowledge row prd-req-FR-KEEP-01 missing (ok=%v err=%v)", ok, err)
 	}
 }
@@ -440,7 +440,7 @@ func TestIndexKnowledgeSurface(t *testing.T) {
 		t.Fatalf("knowledge entries = %d, want one row per entity", res.KnowledgeEntries)
 	}
 
-	row, ok, err := st.KnowledgeEntryByID("prd-req-FR-ZCP-02")
+	row, ok, err := st.KnowledgeEntryByID(context.Background(), "prd-req-FR-ZCP-02")
 	if err != nil || !ok {
 		t.Fatalf("knowledge row: ok=%v err=%v", ok, err)
 	}
@@ -454,7 +454,7 @@ func TestIndexKnowledgeSurface(t *testing.T) {
 		t.Errorf("timestamps = %d/%d", row.CreatedAt, row.UpdatedAt)
 	}
 
-	byFeature, err := st.KnowledgeEntriesByFeature("FR-SURF-01")
+	byFeature, err := st.KnowledgeEntriesByFeature(context.Background(), "FR-SURF-01")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +478,7 @@ func TestIndexKnowledgeSurface(t *testing.T) {
 // knowledgeRowsForEnv lists the knowledge rows of one environment.
 func knowledgeRowsForEnv(t *testing.T, st store.Backend, env string) []store.KnowledgeEntry {
 	t.Helper()
-	rows, err := st.KnowledgeEntriesByEnvironment(env, 0)
+	rows, err := st.KnowledgeEntriesByEnvironment(context.Background(), env, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

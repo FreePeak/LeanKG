@@ -677,9 +677,9 @@ type incidentArgs struct {
 	Env     string `json:"env"`
 }
 
-func (e *Engine) queryIncidents(_ context.Context, req QueryRequest, a incidentArgs) (map[string]any, error) {
+func (e *Engine) queryIncidents(ctx context.Context, req QueryRequest, a incidentArgs) (map[string]any, error) {
 	k := orgknowledge.New(e.st)
-	incidents, err := k.QueryIncidents(a.Service, a.Pattern, a.Env, req.Limit)
+	incidents, err := k.QueryIncidents(ctx, a.Service, a.Pattern, a.Env, req.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -698,8 +698,8 @@ type serviceArgs struct {
 	Service string `json:"service"`
 }
 
-func (e *Engine) queryEnvConflicts(_ context.Context, _ QueryRequest, a serviceArgs) (map[string]any, error) {
-	conflicts, err := orgknowledge.New(e.st).FindEnvConflicts(a.Service)
+func (e *Engine) queryEnvConflicts(ctx context.Context, _ QueryRequest, a serviceArgs) (map[string]any, error) {
+	conflicts, err := orgknowledge.New(e.st).FindEnvConflicts(ctx, a.Service)
 	if err != nil {
 		return nil, err
 	}

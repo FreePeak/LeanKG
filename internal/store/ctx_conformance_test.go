@@ -172,6 +172,47 @@ var ctxConformanceRoles = []ctxRole{
 		},
 	},
 	{
+		name: "Knowledge",
+		read: func(ctx context.Context, b Backend) error {
+			_, _, err := b.KnowledgeEntryByID(ctx, "conformance")
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			return b.KnowledgeEntryUpsert(ctx, KnowledgeEntry{ID: "conformance", KnowledgeType: "note", Title: "conformance", Content: "conformance", Tags: "", Environment: "", Author: "conformance", CreatedAt: 1, UpdatedAt: 1})
+		},
+	},
+	{
+		name: "Knowledge.Search",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.KnowledgeEntriesSearch(ctx, "conformance", "", "", 5)
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			return b.KnowledgeEntryDelete(ctx, "conformance")
+		},
+	},
+	{
+		name: "Metrics",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.MetricsSummary(ctx, "", 7)
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			return b.RecordMetric(ctx, Metric{ToolName: "conformance", Timestamp: 1})
+		},
+	},
+	{
+		name: "Metrics.Cleanup",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.UsageAggregates(ctx, 0)
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			_, err := b.CleanupMetrics(ctx, 7)
+			return err
+		},
+	},
+	{
 		name: "Maintainer",
 		read: func(ctx context.Context, b Backend) error {
 			_, err := b.Space(ctx)

@@ -317,9 +317,9 @@ func (s *PGStore) searchElementsTrigram(ctx context.Context, query string, limit
 // breaking ties, degrading to knowledgeSubstringSearch (substring, newest
 // first) for a query with no lexemes or any tsvector-side error. The filters
 // are the same on both paths, so callers see one contract.
-func (s *PGStore) KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+func (s *PGStore) KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	if !tsqueryUsable(query) {
-		return s.knowledgeSubstringSearch(query, knowledgeType, environment, limit)
+		return s.knowledgeSubstringSearch(ctx, query, knowledgeType, environment, limit)
 	}
 	// $1 is the query text, bound once and reused by the predicate and the
 	// rank expression; the optional filters and the limit follow it.
@@ -335,13 +335,13 @@ func (s *PGStore) KnowledgeEntriesSearch(query, knowledgeType, environment strin
 	clause := limitSQL(limit, b)
 	args := b.args
 
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgKnowledgeCols+`,
+	rows, err := s.pool.Query(ctx, `SELECT `+pgKnowledgeCols+`,
 		ts_rank(fts, websearch_to_tsquery(`+pgTSConfig+`, `+tsq+`)) AS score
 		FROM knowledge_entries
 		WHERE `+strings.Join(conds, " AND ")+`
 		ORDER BY score DESC, updated_at DESC, id ASC`+clause, args...)
 	if err != nil {
-		return s.knowledgeSubstringSearch(query, knowledgeType, environment, limit)
+		return s.knowledgeSubstringSearch(ctx, query, knowledgeType, environment, limit)
 	}
 	return s.scanKnowledgeRanked(rows)
 }

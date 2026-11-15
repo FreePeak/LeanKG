@@ -3,6 +3,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 // AddNote writes the Rust `leankg note` shape: a KnowledgeEntry of type
 // "general", titled "Note for <target>", tagged "note" and anchored on the
 // target element or service (target = the element's qualified name).
-func (k *Knowledge) AddNote(target, content, env, author string) (store.KnowledgeEntry, error) {
+func (k *Knowledge) AddNote(ctx context.Context, target, content, env, author string) (store.KnowledgeEntry, error) {
 	if strings.TrimSpace(target) == "" {
 		return store.KnowledgeEntry{}, errors.New("note target is required")
 	}
@@ -38,7 +39,7 @@ func (k *Knowledge) AddNote(target, content, env, author string) (store.Knowledg
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
-	if err := k.st.KnowledgeEntryUpsert(entry); err != nil {
+	if err := k.st.KnowledgeEntryUpsert(ctx, entry); err != nil {
 		return store.KnowledgeEntry{}, err
 	}
 	return entry, nil
@@ -50,7 +51,7 @@ func (k *Knowledge) AddNote(target, content, env, author string) (store.Knowledg
 // (`leankg pattern`: type "debugging", tags "pattern,risk", content
 // "## Context\n<context>\n\n## Solution\n<solution>") and the PRD indexer
 // rows are the same call with different field values.
-func (k *Knowledge) PutAnnotation(entry store.KnowledgeEntry) (store.KnowledgeEntry, error) {
+func (k *Knowledge) PutAnnotation(ctx context.Context, entry store.KnowledgeEntry) (store.KnowledgeEntry, error) {
 	if entry.ID == "" {
 		return store.KnowledgeEntry{}, errors.New("knowledge entry id is required")
 	}
@@ -73,37 +74,39 @@ func (k *Knowledge) PutAnnotation(entry store.KnowledgeEntry) (store.KnowledgeEn
 	if entry.UpdatedAt == 0 {
 		entry.UpdatedAt = now
 	}
-	if err := k.st.KnowledgeEntryUpsert(entry); err != nil {
+	if err := k.st.KnowledgeEntryUpsert(ctx, entry); err != nil {
 		return store.KnowledgeEntry{}, err
 	}
 	return entry, nil
 }
 
 // Annotation resolves one knowledge entry (Rust db::get_knowledge_entry).
-func (k *Knowledge) Annotation(id string) (store.KnowledgeEntry, bool, error) {
-	return k.st.KnowledgeEntryByID(id)
+func (k *Knowledge) Annotation(ctx context.Context, id string) (store.KnowledgeEntry, bool, error) {
+	return k.st.KnowledgeEntryByID(ctx, id)
 }
 
 // DeleteAnnotation removes one knowledge entry (Rust
 // db::delete_knowledge_entry; an absent id is a no-op there too).
-func (k *Knowledge) DeleteAnnotation(id string) error { return k.st.KnowledgeEntryDelete(id) }
+func (k *Knowledge) DeleteAnnotation(ctx context.Context, id string) error {
+	return k.st.KnowledgeEntryDelete(ctx, id)
+}
 
 // NotesFor lists the notes anchored on a target (Rust
 // db::get_knowledge_by_element / list_knowledge_by_element).
-func (k *Knowledge) NotesFor(target string) ([]store.KnowledgeEntry, error) {
-	return k.st.KnowledgeEntriesByElement(target)
+func (k *Knowledge) NotesFor(ctx context.Context, target string) ([]store.KnowledgeEntry, error) {
+	return k.st.KnowledgeEntriesByElement(ctx, target)
 }
 
 // AnnotationsForFeature lists the entries anchored on a feature (Rust
 // db::get_knowledge_by_feature).
-func (k *Knowledge) AnnotationsForFeature(featureID string) ([]store.KnowledgeEntry, error) {
-	return k.st.KnowledgeEntriesByFeature(featureID)
+func (k *Knowledge) AnnotationsForFeature(ctx context.Context, featureID string) ([]store.KnowledgeEntry, error) {
+	return k.st.KnowledgeEntriesByFeature(ctx, featureID)
 }
 
 // AnnotationsForEnvironment lists the newest entries in an environment (Rust
 // db::get_knowledge_by_environment).
-func (k *Knowledge) AnnotationsForEnvironment(environment string, limit int) ([]store.KnowledgeEntry, error) {
-	return k.st.KnowledgeEntriesByEnvironment(environment, limit)
+func (k *Knowledge) AnnotationsForEnvironment(ctx context.Context, environment string, limit int) ([]store.KnowledgeEntry, error) {
+	return k.st.KnowledgeEntriesByEnvironment(ctx, environment, limit)
 }
 
 // SearchAnnotations is the Rust db::search_knowledge lookup: keyword search
@@ -111,14 +114,14 @@ func (k *Knowledge) AnnotationsForEnvironment(environment string, limit int) ([]
 // SQLite answers it with the substring search (newest first, no relevance
 // signal); the PostgreSQL backend ranks its migration-012 tsvector with
 // ts_rank and degrades to substring search internally (issue #273).
-func (k *Knowledge) SearchAnnotations(query, knowledgeType, environment string, limit int) ([]store.KnowledgeEntry, error) {
-	return k.st.KnowledgeEntriesSearch(query, knowledgeType, environment, limit)
+func (k *Knowledge) SearchAnnotations(ctx context.Context, query, knowledgeType, environment string, limit int) ([]store.KnowledgeEntry, error) {
+	return k.st.KnowledgeEntriesSearch(ctx, query, knowledgeType, environment, limit)
 }
 
 // PromoteEnvironment moves every entry staged in the "upcoming" environment
 // for a branch into targetEnv (Rust mcp handler::promote_environment). It
 // returns how many rows moved; entries without a branch are left alone.
-func (k *Knowledge) PromoteEnvironment(branch, targetEnv string) (int, error) {
+func (k *Knowledge) PromoteEnvironment(ctx context.Context, branch, targetEnv string) (int, error) {
 	if strings.TrimSpace(branch) == "" {
 		return 0, errors.New("branch is required")
 	}
@@ -126,7 +129,7 @@ func (k *Knowledge) PromoteEnvironment(branch, targetEnv string) (int, error) {
 		return 0, errors.New("target environment is required")
 	}
 	// limit 0 = every staged entry (the Rust tool capped the read at 1000).
-	entries, err := k.st.KnowledgeEntriesByEnvironment("upcoming", 0)
+	entries, err := k.st.KnowledgeEntriesByEnvironment(ctx, "upcoming", 0)
 	if err != nil {
 		return 0, err
 	}
@@ -138,7 +141,7 @@ func (k *Knowledge) PromoteEnvironment(branch, targetEnv string) (int, error) {
 		}
 		entry.Environment = targetEnv
 		entry.UpdatedAt = now
-		if err := k.st.KnowledgeEntryUpsert(entry); err != nil {
+		if err := k.st.KnowledgeEntryUpsert(ctx, entry); err != nil {
 			return promoted, err
 		}
 		promoted++

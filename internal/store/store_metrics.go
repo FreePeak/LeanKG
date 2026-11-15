@@ -29,6 +29,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -230,11 +231,11 @@ func metricsCutoff(retentionDays int) int64 {
 // A read-only backend no-ops with a nil error: Rust skipped the write on the
 // reader-role connection rather than turning every served tool call into a bogus
 // database error.
-func (s *Store) RecordMetric(m Metric) error {
+func (s *Store) RecordMetric(ctx context.Context, m Metric) error {
 	if s.mode == RO {
 		return nil
 	}
-	if _, err := s.db.Exec(`INSERT INTO context_metrics (`+metricWriteCols+`) VALUES (`+
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO context_metrics (`+metricWriteCols+`) VALUES (`+
 		sqlPlaceholders(metricColumnCount, false)+`)`, metricValues(m)...); err != nil {
 		return fmt.Errorf("store: record metric %s: %w", m.ToolName, err)
 	}
@@ -244,7 +245,7 @@ func (s *Store) RecordMetric(m Metric) error {
 // metricRows reads one live window: rows at/after sinceCutoff, the tool filter
 // applied when non-empty, soft-deleted rows always excluded, ascending by
 // (timestamp, tool_name) so every fold below is reproducible.
-func (s *Store) metricRows(tool string, sinceCutoff int64) ([]Metric, error) {
+func (s *Store) metricRows(ctx context.Context, tool string, sinceCutoff int64) ([]Metric, error) {
 	q := `SELECT ` + metricReadCols + ` FROM context_metrics WHERE is_deleted = 0 AND timestamp >= ?`
 	args := []any{sinceCutoff}
 	if tool != "" {
@@ -252,7 +253,7 @@ func (s *Store) metricRows(tool string, sinceCutoff int64) ([]Metric, error) {
 		args = append(args, tool)
 	}
 	q += ` ORDER BY timestamp, tool_name`
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: metrics window: %w", err)
 	}
@@ -262,8 +263,8 @@ func (s *Store) metricRows(tool string, sinceCutoff int64) ([]Metric, error) {
 
 // MetricsSummary reports the last retentionDays of the ledger, optionally for
 // one tool (empty = every tool).
-func (s *Store) MetricsSummary(tool string, retentionDays int) (MetricSummary, error) {
-	rows, err := s.metricRows(tool, metricsCutoff(retentionDays))
+func (s *Store) MetricsSummary(ctx context.Context, tool string, retentionDays int) (MetricSummary, error) {
+	rows, err := s.metricRows(ctx, tool, metricsCutoff(retentionDays))
 	if err != nil {
 		return MetricSummary{}, err
 	}
@@ -273,8 +274,8 @@ func (s *Store) MetricsSummary(tool string, retentionDays int) (MetricSummary, e
 // UsageAggregates returns the H10/FR-PLG-8 buckets. sinceCutoff == 0 means
 // "all time": the filter is `timestamp >= sinceCutoff` and epoch-second stamps
 // are never negative.
-func (s *Store) UsageAggregates(sinceCutoff int64) (UsageAggregates, error) {
-	rows, err := s.metricRows("", sinceCutoff)
+func (s *Store) UsageAggregates(ctx context.Context, sinceCutoff int64) (UsageAggregates, error) {
+	rows, err := s.metricRows(ctx, "", sinceCutoff)
 	if err != nil {
 		return UsageAggregates{}, err
 	}
@@ -284,16 +285,16 @@ func (s *Store) UsageAggregates(sinceCutoff int64) (UsageAggregates, error) {
 // CleanupMetrics deletes rows older than retentionDays and reports how many
 // went (Rust db::cleanup_old_metrics). Soft-deleted rows are purged too:
 // cleanup is a retention sweep, not a view filter.
-func (s *Store) CleanupMetrics(retentionDays int) (int64, error) {
+func (s *Store) CleanupMetrics(ctx context.Context, retentionDays int) (int64, error) {
 	cutoff := metricsCutoff(retentionDays)
 	var n int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM context_metrics WHERE timestamp < ?`, cutoff).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM context_metrics WHERE timestamp < ?`, cutoff).Scan(&n); err != nil {
 		return 0, fmt.Errorf("store: count metrics before cleanup: %w", err)
 	}
 	if n == 0 {
 		return 0, nil
 	}
-	if _, err := s.db.Exec(`DELETE FROM context_metrics WHERE timestamp < ?`, cutoff); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM context_metrics WHERE timestamp < ?`, cutoff); err != nil {
 		return 0, fmt.Errorf("store: cleanup metrics: %w", err)
 	}
 	return n, nil
@@ -301,15 +302,15 @@ func (s *Store) CleanupMetrics(retentionDays int) (int64, error) {
 
 // ResetMetrics deletes the whole ledger and reports how many rows went
 // (Rust db::reset_metrics).
-func (s *Store) ResetMetrics() (int64, error) {
+func (s *Store) ResetMetrics(ctx context.Context) (int64, error) {
 	var n int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM context_metrics`).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM context_metrics`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("store: count metrics for reset: %w", err)
 	}
 	if n == 0 {
 		return 0, nil
 	}
-	if _, err := s.db.Exec(`DELETE FROM context_metrics`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM context_metrics`); err != nil {
 		return 0, fmt.Errorf("store: reset metrics: %w", err)
 	}
 	return n, nil

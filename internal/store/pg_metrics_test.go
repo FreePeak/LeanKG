@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 // migration created the ledger (gated behind LEANKG_TEST_PG_URL).
 func TestPGMetricsRoundTrip(t *testing.T) {
 	s := openPGTest(t)
-	if _, err := s.UsageAggregates(0); err != nil {
+	if _, err := s.UsageAggregates(context.Background(), 0); err != nil {
 		t.Fatalf("migration 011 must create context_metrics: %v", err)
 	}
 
@@ -23,10 +24,10 @@ func TestPGMetricsRoundTrip(t *testing.T) {
 		CorrectElements: 7, TotalExpected: 9, F1Score: 0.91,
 		QueryPattern: "handle", QueryFile: "svc.go", QueryDepth: 3, Success: true,
 	}
-	if err := s.RecordMetric(want); err != nil {
+	if err := s.RecordMetric(context.Background(), want); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	if err := s.RecordMetric(Metric{ToolName: "status", Timestamp: anchor + 40, ProjectPath: "/pg"}); err != nil {
+	if err := s.RecordMetric(context.Background(), Metric{ToolName: "status", Timestamp: anchor + 40, ProjectPath: "/pg"}); err != nil {
 		t.Fatalf("record bare row: %v", err)
 	}
 
@@ -39,7 +40,7 @@ func TestPGMetricsRoundTrip(t *testing.T) {
 		t.Fatalf("row mangled:\n got %+v\nwant %+v", got, want)
 	}
 
-	sum, err := s.MetricsSummary("", 30)
+	sum, err := s.MetricsSummary(context.Background(), "", 30)
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
@@ -47,7 +48,7 @@ func TestPGMetricsRoundTrip(t *testing.T) {
 		sum.ByTool[0].ToolName != "query" || sum.ByTool[0].AvgCorrectnessPercent != float64(7)/9*100 {
 		t.Fatalf("summary = %+v", sum)
 	}
-	filtered, err := s.MetricsSummary("status", 30)
+	filtered, err := s.MetricsSummary(context.Background(), "status", 30)
 	if err != nil {
 		t.Fatalf("filtered summary: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestPGMetricsRoundTrip(t *testing.T) {
 		t.Fatalf("tool filter = %+v", filtered)
 	}
 
-	agg, err := s.UsageAggregates(0)
+	agg, err := s.UsageAggregates(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("aggregates: %v", err)
 	}
@@ -77,23 +78,23 @@ func TestPGMetricsRetentionVerbs(t *testing.T) {
 		{ToolName: "query", Timestamp: anchor - 50*SecondsPerDay, IsDeleted: true},
 		{ToolName: "query", Timestamp: anchor - SecondsPerDay, TokensSaved: 20},
 	} {
-		if err := s.RecordMetric(m); err != nil {
+		if err := s.RecordMetric(context.Background(), m); err != nil {
 			t.Fatalf("record: %v", err)
 		}
 	}
 
-	n, err := s.CleanupMetrics(30)
+	n, err := s.CleanupMetrics(context.Background(), 30)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 	if n != 2 {
 		t.Fatalf("cleaned = %d, want 2", n)
 	}
-	if n, err = s.CleanupMetrics(30); err != nil || n != 0 {
+	if n, err = s.CleanupMetrics(context.Background(), 30); err != nil || n != 0 {
 		t.Fatalf("second cleanup = %d, %v; want 0, nil", n, err)
 	}
 
-	agg, err := s.UsageAggregates(0)
+	agg, err := s.UsageAggregates(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("aggregates: %v", err)
 	}
@@ -101,10 +102,10 @@ func TestPGMetricsRetentionVerbs(t *testing.T) {
 		t.Fatalf("ledger after cleanup = %+v, want 1 call", agg)
 	}
 
-	if n, err = s.ResetMetrics(); err != nil || n != 1 {
+	if n, err = s.ResetMetrics(context.Background()); err != nil || n != 1 {
 		t.Fatalf("reset = %d, %v; want 1, nil", n, err)
 	}
-	if n, err = s.ResetMetrics(); err != nil || n != 0 {
+	if n, err = s.ResetMetrics(context.Background()); err != nil || n != 0 {
 		t.Fatalf("second reset = %d, %v; want 0, nil", n, err)
 	}
 }

@@ -8,7 +8,10 @@
 // JSON metadata and nullable BIGINT columns on Postgres were unverified.
 package store
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestPGIncidentRoundTrip(t *testing.T) {
 	s := openPGTest(t)
@@ -20,10 +23,10 @@ func TestPGIncidentRoundTrip(t *testing.T) {
 		Resolution: "rotate daily", AffectedServices: []string{"svc-a", "svc-b"},
 		TriggerPattern: &pattern, Tags: []string{"ops", "storage"},
 	}
-	if err := s.IncidentUpsert(inc); err != nil {
+	if err := s.IncidentUpsert(context.Background(), inc); err != nil {
 		t.Fatalf("incident upsert: %v", err)
 	}
-	got, found, err := s.IncidentByID("inc-1")
+	got, found, err := s.IncidentByID(context.Background(), "inc-1")
 	if err != nil || !found {
 		t.Fatalf("incident by id = %+v, %v, %v", got, found, err)
 	}
@@ -36,14 +39,14 @@ func TestPGIncidentRoundTrip(t *testing.T) {
 	if got.TriggerPattern == nil || *got.TriggerPattern != pattern {
 		t.Fatalf("nullable text lost: %+v", got.TriggerPattern)
 	}
-	rows, err := s.IncidentsQuery(IncidentQuery{Service: "svc-b", Env: "production", Limit: 10})
+	rows, err := s.IncidentsQuery(context.Background(), IncidentQuery{Service: "svc-b", Env: "production", Limit: 10})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("incidents query by service = %d rows (%v)", len(rows), err)
 	}
-	if err := s.IncidentDelete("inc-1"); err != nil {
+	if err := s.IncidentDelete(context.Background(), "inc-1"); err != nil {
 		t.Fatalf("incident delete: %v", err)
 	}
-	if _, found, _ := s.IncidentByID("inc-1"); found {
+	if _, found, _ := s.IncidentByID(context.Background(), "inc-1"); found {
 		t.Fatal("incident still present after delete")
 	}
 }
@@ -56,24 +59,24 @@ func TestPGKnowledgeEntryRoundTrip(t *testing.T) {
 		ElementQualified: &qn, Tags: "note", Environment: "production",
 		Author: "ops", CreatedAt: 10, UpdatedAt: 10,
 	}
-	if err := s.KnowledgeEntryUpsert(e); err != nil {
+	if err := s.KnowledgeEntryUpsert(context.Background(), e); err != nil {
 		t.Fatalf("knowledge upsert: %v", err)
 	}
-	if got, found, err := s.KnowledgeEntryByID("k-1"); err != nil || !found || got.Content != "because" || got.ElementQualified == nil {
+	if got, found, err := s.KnowledgeEntryByID(context.Background(), "k-1"); err != nil || !found || got.Content != "because" || got.ElementQualified == nil {
 		t.Fatalf("knowledge by id = %+v, %v, %v", got, found, err)
 	}
-	byEl, err := s.KnowledgeEntriesByElement(qn)
+	byEl, err := s.KnowledgeEntriesByElement(context.Background(), qn)
 	if err != nil || len(byEl) != 1 {
 		t.Fatalf("by element = %d rows (%v)", len(byEl), err)
 	}
-	byEnv, err := s.KnowledgeEntriesByEnvironment("production", 10)
+	byEnv, err := s.KnowledgeEntriesByEnvironment(context.Background(), "production", 10)
 	if err != nil || len(byEnv) != 1 {
 		t.Fatalf("by environment = %d rows (%v)", len(byEnv), err)
 	}
-	if hits, err := s.KnowledgeEntriesSearch("why", "note", "production", 10); err != nil || len(hits) != 1 {
+	if hits, err := s.KnowledgeEntriesSearch(context.Background(), "why", "note", "production", 10); err != nil || len(hits) != 1 {
 		t.Fatalf("search = %d rows (%v)", len(hits), err)
 	}
-	if err := s.KnowledgeEntryDelete("k-1"); err != nil {
+	if err := s.KnowledgeEntryDelete(context.Background(), "k-1"); err != nil {
 		t.Fatalf("knowledge delete: %v", err)
 	}
 }
@@ -86,10 +89,10 @@ func TestPGServiceMetadataRoundTrip(t *testing.T) {
 		ServiceName: "svc-a", Env: "production", Team: &team, RepoURL: nil,
 		SLOP99Ms: &p99, IncidentCount: 3, Tags: "core", Version: &version,
 	}
-	if err := s.ServiceMetadataUpsert(m); err != nil {
+	if err := s.ServiceMetadataUpsert(context.Background(), m); err != nil {
 		t.Fatalf("service metadata upsert: %v", err)
 	}
-	got, found, err := s.ServiceMetadataGet("svc-a", "production")
+	got, found, err := s.ServiceMetadataGet(context.Background(), "svc-a", "production")
 	if err != nil || !found {
 		t.Fatalf("service metadata get = %+v, %v, %v", got, found, err)
 	}
@@ -108,10 +111,10 @@ func TestPGEnvSnapshotsRoundTrip(t *testing.T) {
 		Name: "Alpha", FilePath: "src/a.go",
 		Metadata: map[string]any{"schema_version": float64(2), "config": "x"}, CapturedAt: 42,
 	}}
-	if err := s.EnvSnapshotsPut(snaps); err != nil {
+	if err := s.EnvSnapshotsPut(context.Background(), snaps); err != nil {
 		t.Fatalf("env snapshots put: %v", err)
 	}
-	got, found, err := s.EnvSnapshotGet("production", "src/a.go::Alpha")
+	got, found, err := s.EnvSnapshotGet(context.Background(), "production", "src/a.go::Alpha")
 	if err != nil || !found {
 		t.Fatalf("env snapshot get = %+v, %v, %v", got, found, err)
 	}

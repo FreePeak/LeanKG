@@ -1,6 +1,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -21,12 +22,12 @@ func TestTeamMap(t *testing.T) {
 		{ServiceName: "api-staging", Env: "staging", Team: strPtr("staging-team"), CreatedAt: 1, UpdatedAt: 1},
 	}
 	for _, m := range seed {
-		if err := st.ServiceMetadataUpsert(m); err != nil {
+		if err := st.ServiceMetadataUpsert(context.Background(), m); err != nil {
 			t.Fatalf("seed %s: %v", m.ServiceName, err)
 		}
 	}
 
-	got, err := k.TeamMap("production")
+	got, err := k.TeamMap(context.Background(), "production")
 	if err != nil {
 		t.Fatalf("TeamMap: %v", err)
 	}
@@ -52,7 +53,7 @@ func TestTeamMap(t *testing.T) {
 		t.Fatalf("unassigned services = %v", got[0].Services)
 	}
 
-	if empty, err := k.TeamMap("nowhere"); err != nil || len(empty) != 0 {
+	if empty, err := k.TeamMap(context.Background(), "nowhere"); err != nil || len(empty) != 0 {
 		t.Fatalf("TeamMap(nowhere) = %+v, err %v", empty, err)
 	}
 }

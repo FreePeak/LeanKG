@@ -37,7 +37,7 @@ func utcDay(ts int64) string { return time.Unix(ts, 0).UTC().Format("2006-01-02"
 func record(t *testing.T, b store.Backend, rows ...store.Metric) {
 	t.Helper()
 	for _, r := range rows {
-		if err := b.RecordMetric(r); err != nil {
+		if err := b.RecordMetric(context.Background(), r); err != nil {
 			t.Fatalf("record %s: %v", r.ToolName, err)
 		}
 	}
@@ -56,7 +56,7 @@ func TestShowTextReport(t *testing.T) {
 			CorrectElements: 9, TotalExpected: 10, Success: true},
 	)
 
-	got, err := Show(b, Options{Session: true, SessionText: "  claude-code:abc  3 calls\n"})
+	got, err := Show(context.Background(), b, Options{Session: true, SessionText: "  claude-code:abc  3 calls\n"})
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
@@ -83,7 +83,7 @@ Session:
 
 	// --session with no telemetry session says how to get one (DS-16 replaced
 	// the Rust placeholder line).
-	none, err := Show(b, Options{Session: true})
+	none, err := Show(context.Background(), b, Options{Session: true})
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
@@ -93,7 +93,7 @@ Session:
 
 	// Without --session the placeholder line is absent (Rust printed it from the
 	// session branch, not unconditionally).
-	plain, err := Show(b, Options{})
+	plain, err := Show(context.Background(), b, Options{})
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
@@ -108,7 +108,7 @@ Session:
 // spelling; see the package report.
 func TestShowJSONReportsTheRustShape(t *testing.T) {
 	b := openTestBackend(t)
-	got, err := Show(b, Options{JSON: true})
+	got, err := Show(context.Background(), b, Options{JSON: true})
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestShowJSONReportsTheRustShape(t *testing.T) {
 	record(t, b, store.Metric{ToolName: "query", Timestamp: anchor + 10, TokensSaved: 100,
 		SavingsPercent: 90, CorrectElements: 8, TotalExpected: 10, Success: true})
 
-	got, err = Show(b, Options{JSON: true})
+	got, err = Show(context.Background(), b, Options{JSON: true})
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestShowWindowAndToolFilters(t *testing.T) {
 
 	invocations := func(opts Options) int64 {
 		t.Helper()
-		out, err := Show(b, opts)
+		out, err := Show(context.Background(), b, opts)
 		if err != nil {
 			t.Fatalf("show %+v: %v", opts, err)
 		}
@@ -191,7 +191,7 @@ func TestShowWindowAndToolFilters(t *testing.T) {
 	}
 	retention := func(opts Options) int {
 		t.Helper()
-		out, err := Show(b, Options{JSON: true, Since: opts.Since, Retention: opts.Retention})
+		out, err := Show(context.Background(), b, Options{JSON: true, Since: opts.Since, Retention: opts.Retention})
 		if err != nil {
 			t.Fatalf("show: %v", err)
 		}
@@ -233,7 +233,7 @@ func TestShowWindowAndToolFilters(t *testing.T) {
 	if got := invocations(Options{JSON: true, Tool: "query"}); got != 1 {
 		t.Fatalf("--tool query = %d invocations, want 1", got)
 	}
-	out, err := Show(b, Options{JSON: true, Tool: "query"})
+	out, err := Show(context.Background(), b, Options{JSON: true, Tool: "query"})
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestShowCleanupAndReset(t *testing.T) {
 	// --since 1d must NOT narrow the cleanup window: the sweep uses --retention
 	// (30 by default), so only the 40-day-old row goes. Honouring --since would
 	// have removed nothing.
-	out, err := Show(b, Options{Cleanup: true, Since: "1d"})
+	out, err := Show(context.Background(), b, Options{Cleanup: true, Since: "1d"})
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestShowCleanupAndReset(t *testing.T) {
 	// Re-record the expired row, then sweep with an explicit 2-day retention:
 	// both remaining rows are older than that.
 	record(t, b, store.Metric{ToolName: "query", Timestamp: now - 40*store.SecondsPerDay})
-	out, err = Show(b, Options{Cleanup: true, Retention: 2})
+	out, err = Show(context.Background(), b, Options{Cleanup: true, Retention: 2})
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestShowCleanupAndReset(t *testing.T) {
 	}
 	// --cleanup without --retention falls back to the 30-day default.
 	record(t, b, store.Metric{ToolName: "query", Timestamp: now - 40*store.SecondsPerDay})
-	out, err = Show(b, Options{Cleanup: true})
+	out, err = Show(context.Background(), b, Options{Cleanup: true})
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestShowCleanupAndReset(t *testing.T) {
 		t.Fatalf("default cleanup output = %q, want %q", out, want)
 	}
 	// Ledger is empty now, so reset reports zero.
-	out, err = Show(b, Options{Reset: true})
+	out, err = Show(context.Background(), b, Options{Reset: true})
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -294,14 +294,14 @@ func TestShowCleanupAndReset(t *testing.T) {
 
 	record(t, b, store.Metric{ToolName: "query", Timestamp: now, TokensSaved: 5})
 	// --reset outranks --cleanup (Rust checked reset first).
-	out, err = Show(b, Options{Reset: true, Cleanup: true, Retention: 1})
+	out, err = Show(context.Background(), b, Options{Reset: true, Cleanup: true, Retention: 1})
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	if want := "Reset 1 metric record(s).\n"; out != want {
 		t.Fatalf("reset output = %q, want %q", out, want)
 	}
-	if got, err := b.MetricsSummary("", DefaultRetentionDays); err != nil || got.TotalInvocations != 0 {
+	if got, err := b.MetricsSummary(context.Background(), "", DefaultRetentionDays); err != nil || got.TotalInvocations != 0 {
 		t.Fatalf("ledger after reset: %+v, %v", got, err)
 	}
 }
@@ -311,7 +311,7 @@ func TestShowCleanupAndReset(t *testing.T) {
 // outranks --reset, exactly like Rust's CLI arm.
 func TestSeedWritesTheRustFixture(t *testing.T) {
 	b := openTestBackend(t)
-	out, err := Show(b, Options{Seed: true, Reset: true})
+	out, err := Show(context.Background(), b, Options{Seed: true, Reset: true})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestSeedWritesTheRustFixture(t *testing.T) {
 		t.Fatalf("seed output = %q, want %q", out, want)
 	}
 
-	sum, err := b.MetricsSummary("", DefaultRetentionDays)
+	sum, err := b.MetricsSummary(context.Background(), "", DefaultRetentionDays)
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestSeedWritesTheRustFixture(t *testing.T) {
 		t.Fatalf("seeded by_day must cover all 5 rows: %+v", sum.ByDay)
 	}
 
-	report, err := Show(b, Options{})
+	report, err := Show(context.Background(), b, Options{})
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}

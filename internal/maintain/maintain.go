@@ -189,7 +189,7 @@ func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
 		} else {
 			out.EmbedRuns = pr
 		}
-		if n, err := st.CleanupMetrics(metrics.DefaultRetentionDays); err != nil {
+		if n, err := st.CleanupMetrics(ctx, metrics.DefaultRetentionDays); err != nil {
 			logf("maintain: cleanup metrics: %v", err)
 		} else {
 			out.MetricsPruned = n

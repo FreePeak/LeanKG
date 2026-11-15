@@ -69,14 +69,14 @@ func (k *Knowledge) ServiceContext(ctx context.Context, service, env string) (Se
 	} else if len(els) > 0 {
 		sc.Version = versionFromMetadata(els[0].Metadata)
 	}
-	if snap, ok, err := k.st.EnvSnapshotGet(env, service); err != nil {
+	if snap, ok, err := k.st.EnvSnapshotGet(ctx, env, service); err != nil {
 		return ServiceContext{}, err
 	} else if ok {
 		sc.Version = versionFromMetadata(snap.Metadata)
 	}
 
 	// Operational profile (Rust: get_service_metadata_fields).
-	if m, ok, err := k.st.ServiceMetadataGet(service, env); err != nil {
+	if m, ok, err := k.st.ServiceMetadataGet(ctx, service, env); err != nil {
 		return ServiceContext{}, err
 	} else if ok {
 		sc.Team = m.Team
@@ -127,7 +127,7 @@ func (k *Knowledge) ServiceContext(ctx context.Context, service, env string) (Se
 
 	// Incident history: every incident for the service in env, unbounded so
 	// the open count is exact.
-	incidents, err := k.st.IncidentsQuery(store.IncidentQuery{Service: service, Env: env, Limit: 0})
+	incidents, err := k.st.IncidentsQuery(ctx, store.IncidentQuery{Service: service, Env: env, Limit: 0})
 	if err != nil {
 		return ServiceContext{}, err
 	}

@@ -351,12 +351,12 @@ func TestPGKnowledgeEntriesSearchRanked(t *testing.T) {
 			Content: "same words, other type", Environment: "local", Author: "a", UpdatedAt: 300},
 	}
 	for _, e := range entries {
-		if err := s.KnowledgeEntryUpsert(e); err != nil {
+		if err := s.KnowledgeEntryUpsert(context.Background(), e); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	hits, err := s.KnowledgeEntriesSearch("socket resume", "", "", 10)
+	hits, err := s.KnowledgeEntriesSearch(context.Background(), "socket resume", "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestPGKnowledgeEntriesSearchRanked(t *testing.T) {
 	}
 
 	// Filters behave exactly as on KnowledgeEntriesSearch.
-	filtered, err := s.KnowledgeEntriesSearch("socket resume", "note", "production", 10)
+	filtered, err := s.KnowledgeEntriesSearch(context.Background(), "socket resume", "note", "production", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,12 +386,12 @@ func TestPGKnowledgeEntriesSearchRanked(t *testing.T) {
 			t.Fatalf("filter leaked: %+v", h)
 		}
 	}
-	if one, err := s.KnowledgeEntriesSearch("socket resume", "", "", 1); err != nil || len(one) != 1 || one[0].ID != "K-3" {
+	if one, err := s.KnowledgeEntriesSearch(context.Background(), "socket resume", "", "", 1); err != nil || len(one) != 1 || one[0].ID != "K-3" {
 		t.Fatalf("limit 1 = %+v, %v; want only the top hit K-3", one, err)
 	}
 	// A query with no lexemes goes down the substring path, where it matches
 	// nothing (and must not error).
-	if fallback, err := s.KnowledgeEntriesSearch("***", "", "", 10); err != nil || len(fallback) != 0 {
+	if fallback, err := s.KnowledgeEntriesSearch(context.Background(), "***", "", "", 10); err != nil || len(fallback) != 0 {
 		t.Fatalf("fallback = %+v, %v; want no rows, no error", fallback, err)
 	}
 }

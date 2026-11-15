@@ -4,7 +4,10 @@
 // environment.
 package orgknowledge
 
-import "sort"
+import (
+	"context"
+	"sort"
+)
 
 // TeamMapEntry is one aggregated team row (Rust
 // graph::query::TeamMapEntry).
@@ -26,11 +29,11 @@ const (
 // on-call label of a team becomes its rotation; service names keep the
 // store's ascending order (the Rust pushed them in scan order and the
 // underlying Datalog read had none, so this is the deterministic choice).
-func (k *Knowledge) TeamMap(env string) ([]TeamMapEntry, error) {
+func (k *Knowledge) TeamMap(ctx context.Context, env string) ([]TeamMapEntry, error) {
 	if env == "" {
 		env = "local"
 	}
-	rows, err := k.st.ServiceMetadataAll(env)
+	rows, err := k.st.ServiceMetadataAll(ctx, env)
 	if err != nil {
 		return nil, err
 	}

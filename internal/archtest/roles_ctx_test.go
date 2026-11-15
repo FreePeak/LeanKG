@@ -18,33 +18,10 @@ import (
 // migrates its role. A name that is already compliant or no longer exists
 // fails the test, so the list can only shrink.
 var ctxlessBackendMethods = []string{
-	"CleanupMetrics",
 	"Close",
 	"Engine",
-	"EnvSnapshotConflictsWith",
-	"EnvSnapshotEnvVariants",
-	"EnvSnapshotGet",
-	"EnvSnapshotsPut",
-	"IncidentByID",
-	"IncidentDelete",
-	"IncidentUpsert",
-	"IncidentsQuery",
-	"KnowledgeEntriesByElement",
-	"KnowledgeEntriesByEnvironment",
-	"KnowledgeEntriesByFeature",
-	"KnowledgeEntriesSearch",
-	"KnowledgeEntryByID",
-	"KnowledgeEntryDelete",
-	"KnowledgeEntryUpsert",
-	"MetricsSummary",
 	"Mode",
 	"Path",
-	"RecordMetric",
-	"ResetMetrics",
-	"ServiceMetadataAll",
-	"ServiceMetadataGet",
-	"ServiceMetadataUpsert",
-	"UsageAggregates",
 }
 
 // TestStoreRolesTakeContext ratchets store.Backend toward ctx-first methods.

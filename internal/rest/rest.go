@@ -127,7 +127,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		if limit == 0 {
 			limit = 10
 		}
-		incidents, err := org.QueryIncidents(q.Get("service"), q.Get("pattern"), env, limit)
+		incidents, err := org.QueryIncidents(r.Context(), q.Get("service"), q.Get("pattern"), env, limit)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
@@ -143,7 +143,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		})
 	})
 	mux.HandleFunc("GET /api/v2/env/diff", func(w http.ResponseWriter, r *http.Request) {
-		conflicts, err := org.FindEnvConflicts(r.URL.Query().Get("service"))
+		conflicts, err := org.FindEnvConflicts(r.Context(), r.URL.Query().Get("service"))
 		if err != nil {
 			httpx.WriteError(w, err)
 			return

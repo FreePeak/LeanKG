@@ -45,7 +45,7 @@ func TestServiceContextAggregate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed relationships: %v", err)
 	}
-	if err := st.ServiceMetadataUpsert(store.ServiceMetadata{
+	if err := st.ServiceMetadataUpsert(context.Background(), store.ServiceMetadata{
 		ServiceName: service, Env: "production", Team: strPtr("payments"),
 		OnCall: strPtr("payments-oncall"), RepoURL: strPtr("https://example.test/api"),
 		Language: strPtr("go"), CreatedAt: 1, UpdatedAt: 1,
@@ -67,7 +67,7 @@ func TestServiceContextAggregate(t *testing.T) {
 		i.AffectedServices = []string{"api"}
 	})
 	for _, inc := range []store.Incident{open, resolved, otherEnv} {
-		if _, err := k.CreateIncident(inc); err != nil {
+		if _, err := k.CreateIncident(context.Background(), inc); err != nil {
 			t.Fatalf("seed incident %s: %v", inc.ID, err)
 		}
 	}
@@ -112,7 +112,7 @@ func TestServiceContextAggregate(t *testing.T) {
 
 	// An env snapshot wins over the live element's metadata: it is that env's
 	// recorded view (the Rust row was env-scoped).
-	if err := k.SnapshotElements("production", []store.Element{{
+	if err := k.SnapshotElements(context.Background(), "production", []store.Element{{
 		QualifiedName: service, ElementType: "service", Name: "api", FilePath: "service.yaml",
 		Metadata: map[string]any{"version": "deployed-v9"},
 	}}); err != nil {
@@ -150,7 +150,7 @@ func TestServiceContextRiskCap(t *testing.T) {
 			i.AffectedServices = []string{"billing"}
 			i.RootCause = "cause-" + id
 		})
-		if _, err := k.CreateIncident(inc); err != nil {
+		if _, err := k.CreateIncident(context.Background(), inc); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
@@ -184,7 +184,7 @@ func TestServiceContextJSON(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("seed element: %v", err)
 	}
-	if _, err := k.CreateIncident(incident("inc-json", func(i *store.Incident) {
+	if _, err := k.CreateIncident(context.Background(), incident("inc-json", func(i *store.Incident) {
 		i.Title, i.OccurredAt = "API timeout", 2000
 		i.AffectedServices = []string{"api"}
 	})); err != nil {

@@ -493,7 +493,7 @@ func (s *Server) recordMetric(ctx context.Context, eng *core.Engine, req *mcp.Ca
 		m.OutputElements = int64(countResponseElements(post))
 	}
 	m.QueryPattern, m.QueryFile, m.QueryDepth = metricQueryArgs(args)
-	if rerr := eng.Store().RecordMetric(m); rerr != nil {
+	if rerr := eng.Store().RecordMetric(ctx, m); rerr != nil {
 		log.Printf("mcp: record metric %s: %v", req.Params.Name, rerr)
 	}
 }

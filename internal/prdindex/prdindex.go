@@ -400,7 +400,7 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 			continue
 		}
 		out.Removed++
-		if err := st.KnowledgeEntryDelete(qn); err != nil {
+		if err := st.KnowledgeEntryDelete(ctx, qn); err != nil {
 			return out, fmt.Errorf("prdindex: drop stale row %s: %w", qn, err)
 		}
 	}
@@ -419,7 +419,7 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 	entries := KnowledgeEntries(res, env)
 	for i := range entries {
 		entries[i].CreatedAt, entries[i].UpdatedAt = now, now
-		if err := st.KnowledgeEntryUpsert(entries[i]); err != nil {
+		if err := st.KnowledgeEntryUpsert(ctx, entries[i]); err != nil {
 			return out, fmt.Errorf("prdindex: knowledge upsert %s: %w", entries[i].ID, err)
 		}
 	}

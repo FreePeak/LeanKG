@@ -248,34 +248,34 @@ type Identity interface {
 // aggregation policy live in internal/orgknowledge. See orgknowledge.go for the
 // entity types and the env_snapshots ceiling note.
 type Knowledge interface {
-	IncidentUpsert(inc Incident) error
-	IncidentByID(id string) (Incident, bool, error)
-	IncidentDelete(id string) error
-	IncidentsQuery(q IncidentQuery) ([]Incident, error)
-	KnowledgeEntryUpsert(e KnowledgeEntry) error
-	KnowledgeEntryByID(id string) (KnowledgeEntry, bool, error)
-	KnowledgeEntryDelete(id string) error
-	KnowledgeEntriesByElement(qualifiedName string) ([]KnowledgeEntry, error)
-	KnowledgeEntriesByFeature(featureID string) ([]KnowledgeEntry, error)
-	KnowledgeEntriesByEnvironment(environment string, limit int) ([]KnowledgeEntry, error)
-	KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error)
+	IncidentUpsert(ctx context.Context, inc Incident) error
+	IncidentByID(ctx context.Context, id string) (Incident, bool, error)
+	IncidentDelete(ctx context.Context, id string) error
+	IncidentsQuery(ctx context.Context, q IncidentQuery) ([]Incident, error)
+	KnowledgeEntryUpsert(ctx context.Context, e KnowledgeEntry) error
+	KnowledgeEntryByID(ctx context.Context, id string) (KnowledgeEntry, bool, error)
+	KnowledgeEntryDelete(ctx context.Context, id string) error
+	KnowledgeEntriesByElement(ctx context.Context, qualifiedName string) ([]KnowledgeEntry, error)
+	KnowledgeEntriesByFeature(ctx context.Context, featureID string) ([]KnowledgeEntry, error)
+	KnowledgeEntriesByEnvironment(ctx context.Context, environment string, limit int) ([]KnowledgeEntry, error)
+	KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error)
 	// ServiceMetadataUpsert writes one service profile (the write side of
 	// ServiceMetadataGet; kept in the role for the org-knowledge seeding path).
-	ServiceMetadataUpsert(m ServiceMetadata) error
-	ServiceMetadataGet(service, env string) (ServiceMetadata, bool, error)
+	ServiceMetadataUpsert(ctx context.Context, m ServiceMetadata) error
+	ServiceMetadataGet(ctx context.Context, service, env string) (ServiceMetadata, bool, error)
 	// ServiceMetadataAll lists the profiles in one environment, ordered by
 	// service name (the Rust get_all_service_metadata read behind the team
 	// map).
-	ServiceMetadataAll(env string) ([]ServiceMetadata, error)
-	EnvSnapshotsPut(snaps []EnvSnapshot) error
-	EnvSnapshotGet(env, qualifiedName string) (EnvSnapshot, bool, error)
+	ServiceMetadataAll(ctx context.Context, env string) ([]ServiceMetadata, error)
+	EnvSnapshotsPut(ctx context.Context, snaps []EnvSnapshot) error
+	EnvSnapshotGet(ctx context.Context, env, qualifiedName string) (EnvSnapshot, bool, error)
 	// EnvSnapshotConflictsWith lists conflicts_with relationships whose
 	// source or target matches `needle` case-insensitively (substring, like
 	// the Rust regex_matches(lowercase(...), ".*needle.*") report).
-	EnvSnapshotConflictsWith(needle string, limit int) ([]Relationship, error)
+	EnvSnapshotConflictsWith(ctx context.Context, needle string, limit int) ([]Relationship, error)
 	// EnvSnapshotEnvVariants lists qualified names having snapshots in more
 	// than one environment, case-insensitively containing `needle`.
-	EnvSnapshotEnvVariants(needle string, limit int) ([]EnvVariant, error)
+	EnvSnapshotEnvVariants(ctx context.Context, needle string, limit int) ([]EnvVariant, error)
 }
 
 // Metrics is the context-metrics ledger (Rust db::record_metric /
@@ -289,11 +289,11 @@ type Knowledge interface {
 // means all time; CleanupMetrics/ResetMetrics return the number of rows
 // removed.
 type Metrics interface {
-	RecordMetric(m Metric) error
-	MetricsSummary(tool string, retentionDays int) (MetricSummary, error)
-	UsageAggregates(sinceCutoff int64) (UsageAggregates, error)
-	CleanupMetrics(retentionDays int) (int64, error)
-	ResetMetrics() (int64, error)
+	RecordMetric(ctx context.Context, m Metric) error
+	MetricsSummary(ctx context.Context, tool string, retentionDays int) (MetricSummary, error)
+	UsageAggregates(ctx context.Context, sinceCutoff int64) (UsageAggregates, error)
+	CleanupMetrics(ctx context.Context, retentionDays int) (int64, error)
+	ResetMetrics(ctx context.Context) (int64, error)
 }
 
 // Projects is the portfolio registry (issue #376, migration 013): the

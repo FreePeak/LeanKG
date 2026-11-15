@@ -33,15 +33,15 @@ func TestNoteReadRoundTrip(t *testing.T) {
 	}
 	k := orgknowledge.New(st)
 	const target = "pkg.Service.Handle"
-	if _, err := k.AddNote(target, "rotate the key before shipping", "local", "tester"); err != nil {
+	if _, err := k.AddNote(context.Background(), target, "rotate the key before shipping", "local", "tester"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := k.AddNote("pkg.Other", "unrelated note", "local", "tester"); err != nil {
+	if _, err := k.AddNote(context.Background(), "pkg.Other", "unrelated note", "local", "tester"); err != nil {
 		t.Fatal(err)
 	}
 
 	// The reader the CLI now calls.
-	notes, err := k.NotesFor(target)
+	notes, err := k.NotesFor(context.Background(), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestNoteReadRoundTrip(t *testing.T) {
 		t.Errorf("note content lost: %q", notes[0].Content)
 	}
 	// An unknown target is an honest empty, never an error.
-	none, err := k.NotesFor("pkg.Nothing")
+	none, err := k.NotesFor(context.Background(), "pkg.Nothing")
 	if err != nil {
 		t.Fatalf("unknown target errored: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestNoteVerbListsWhenContentIsEmpty(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orgknowledge.New(st).AddNote("leankg", "zz-note-verb probe", "local", "tester"); err != nil {
+	if _, err := orgknowledge.New(st).AddNote(context.Background(), "leankg", "zz-note-verb probe", "local", "tester"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {

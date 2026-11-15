@@ -89,16 +89,16 @@ func TestPassReclaimsAFreelistBelowTheOldOneMegabyteFloor(t *testing.T) {
 func TestRunFleetPrunesTheOldMetricRows(t *testing.T) {
 	st := collectionFixture(t)
 	old := time.Now().Add(-60 * 24 * time.Hour).Unix()
-	if err := st.RecordMetric(store.Metric{ToolName: "query", Timestamp: old, ProjectPath: "/p"}); err != nil {
+	if err := st.RecordMetric(context.Background(), store.Metric{ToolName: "query", Timestamp: old, ProjectPath: "/p"}); err != nil {
 		t.Fatalf("record the old metric: %v", err)
 	}
-	if err := st.RecordMetric(store.Metric{ToolName: "query", Timestamp: time.Now().Unix(), ProjectPath: "/p"}); err != nil {
+	if err := st.RecordMetric(context.Background(), store.Metric{ToolName: "query", Timestamp: time.Now().Unix(), ProjectPath: "/p"}); err != nil {
 		t.Fatalf("record the fresh metric: %v", err)
 	}
 	// A ten-year window counts every row, so the count says how many rows the
 	// ledger still holds — not how many fall inside the retention window.
 	const wideWindow = 3650
-	before, err := st.MetricsSummary("", wideWindow)
+	before, err := st.MetricsSummary(context.Background(), "", wideWindow)
 	if err != nil {
 		t.Fatalf("metrics summary before: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRunFleetPrunesTheOldMetricRows(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		after, err := st.MetricsSummary("", wideWindow)
+		after, err := st.MetricsSummary(context.Background(), "", wideWindow)
 		if err != nil {
 			t.Fatalf("metrics summary after: %v", err)
 		}
