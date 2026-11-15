@@ -4,7 +4,7 @@
 // JSON is the structured payload the web dashboard consumes.
 //
 // Difference from Rust: the Rust verb pinned PostgreSQL (its bucket queries
-// existed only on the PG backend); here the buckets come from store.Backend, so
+// existed only on the PG backend); here the buckets come from the store metrics role, so
 // sqlite — the default engine — serves the dashboard too.
 package metrics
 
@@ -84,7 +84,7 @@ func ParseWindow(raw string) (int64, bool) {
 // Dashboard renders the usage buckets for the window: text tables by default,
 // pretty JSON with Format "json". An invalid window or format is an error
 // (Rust run_dashboard exits non-zero for both).
-func Dashboard(ctx context.Context, b store.Backend, opts DashboardOptions) (string, error) {
+func Dashboard(ctx context.Context, b store.Metrics, opts DashboardOptions) (string, error) {
 	var cutoff int64
 	if opts.Since != "" {
 		window, ok := ParseWindow(opts.Since)

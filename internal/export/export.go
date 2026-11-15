@@ -1,7 +1,7 @@
 // Package export ports the Rust graph exporters behind `leankg export`
 // (src/graph/export_select.rs, src/graph/export_markdown.rs and the
 // export_json / export_dot / export_mermaid writers in main.rs), re-expressed
-// over store.Backend.
+// over the store roles it declares.
 //
 // Deliberately NOT ported: src/graph/export.rs HtmlExporter — 460 lines of
 // embedded vis/dagre JavaScript producing a standalone .leankg/graph.html.
@@ -68,12 +68,21 @@ type Meta struct {
 	ScopeDesc     string
 }
 
+// exportStore is the store surface the exporters read: every element, the
+// full edge list and one node's outgoing edges. The composed store satisfies
+// it.
+type exportStore interface {
+	Elements(ctx context.Context) ([]store.Element, error)
+	RelationshipsAll(ctx context.Context, limit int) ([]store.Relationship, error)
+	Outgoing(ctx context.Context, source string) ([]store.Relationship, error)
+}
+
 // Select returns the element/relationship slice for opts, deduped, edge
 // filtered and truncated to the node budget exactly like the Rust selector.
 //
 // Deviation (documented): a bogus --community is an error here, while Rust
 // silently exported an empty graph.
-func Select(ctx context.Context, st store.Backend, opts Options) ([]store.Element, []store.Relationship, Meta, error) {
+func Select(ctx context.Context, st exportStore, opts Options) ([]store.Element, []store.Relationship, Meta, error) {
 	budget := opts.MaxNodes
 	if budget <= 0 {
 		budget = DefaultMaxNodes
@@ -171,7 +180,7 @@ func filterEdges(rels []store.Relationship, kept map[string]bool) []store.Relati
 // from the seed path over outgoing edges, collecting the relationships seen
 // and every element whose file_path was reached. Unreadable nodes are skipped
 // (Rust swallowed the error with `if let Ok(rels)`).
-func selectFileScoped(ctx context.Context, st store.Backend, file string, depth uint32) ([]store.Element, []store.Relationship, error) {
+func selectFileScoped(ctx context.Context, st exportStore, file string, depth uint32) ([]store.Element, []store.Relationship, error) {
 	type frame struct {
 		name string
 		d    uint32
@@ -212,7 +221,7 @@ func selectFileScoped(ctx context.Context, st store.Backend, file string, depth 
 
 // outgoingNormalized mirrors GraphEngine::get_relationships: one query matching
 // the normalized source plus its "./" variant.
-func outgoingNormalized(ctx context.Context, st store.Backend, source string) []store.Relationship {
+func outgoingNormalized(ctx context.Context, st exportStore, source string) []store.Relationship {
 	norm := normalizePath(source)
 	variants := []string{norm}
 	if "./"+norm != norm {
@@ -271,7 +280,7 @@ func ClusterResolver(assignments map[string]string, labels map[string]string) fu
 // GraphEngine::all_elements / all_relationships pair the unscoped exporters
 // read. Unlike Select it applies no dedupe, endpoint filter or budget — the
 // legacy full-graph dot/mermaid path streamed exactly what the store held.
-func All(ctx context.Context, st store.Backend) ([]store.Element, []store.Relationship, error) {
+func All(ctx context.Context, st exportStore) ([]store.Element, []store.Relationship, error) {
 	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -293,7 +302,7 @@ func normalizePath(path string) string {
 // prefix, plus the edges with both endpoints in that set (Rust asked the DB for
 // source-side edges and then dropped the boundary through dedupe_and_filter —
 // the net result is the same set, read in one deterministic pass).
-func selectPathPrefix(ctx context.Context, st store.Backend, prefix string) ([]store.Element, []store.Relationship, error) {
+func selectPathPrefix(ctx context.Context, st exportStore, prefix string) ([]store.Element, []store.Relationship, error) {
 	all, err := st.Elements(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -314,7 +323,7 @@ func selectPathPrefix(ctx context.Context, st store.Backend, prefix string) ([]s
 
 // selectCommunity ports export_select::select_community over the injected
 // cluster resolver (the Go store keeps no cluster column).
-func selectCommunity(ctx context.Context, st store.Backend, opts Options) ([]store.Element, []store.Relationship, error) {
+func selectCommunity(ctx context.Context, st exportStore, opts Options) ([]store.Element, []store.Relationship, error) {
 	if opts.Clusters == nil {
 		return nil, nil, fmt.Errorf("community scope requires a cluster resolver")
 	}

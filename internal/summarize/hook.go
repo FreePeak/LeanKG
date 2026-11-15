@@ -4,8 +4,6 @@ import (
 	"context"
 	"os"
 	"strings"
-
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // AfterIndexEnv is the opt-in switch of the post-index hook:
@@ -38,7 +36,7 @@ func AfterIndexEnabled() bool {
 // result: the meaning tier is optional enrichment, and the index it follows
 // already succeeded. An incomplete-but-started run reports through
 // Result.Fatal instead (that one is not an error, and it is not green either).
-func RunAfterIndex(ctx context.Context, st store.Backend, dir string) (Result, bool, error) {
+func RunAfterIndex(ctx context.Context, st indexStore, dir string) (Result, bool, error) {
 	if !AfterIndexEnabled() {
 		return Result{}, false, nil
 	}

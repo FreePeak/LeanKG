@@ -1,4 +1,4 @@
-// Quality analysis over store.Backend: the oversized-function scan
+// Quality analysis over the graph reads: the oversized-function scan
 // (Rust GraphEngine::find_oversized_functions — the `quality` CLI verb and the
 // find_large_functions analysis). Kept beside the traversal verbs because the
 // Rust implementation lived on GraphEngine; the scan itself is a pure filter
@@ -27,7 +27,7 @@ func lineSpan(e store.Element) int { return e.LineEnd - e.LineStart + 1 }
 // language (Rust find_oversized_functions_by_lang). Ties break by qualified
 // name so the result is deterministic — the Rust sort was stable over an
 // unspecified query order.
-func OversizedFunctions(ctx context.Context, st store.Backend, minLines int, lang string) ([]store.Element, error) {
+func OversizedFunctions(ctx context.Context, st graphStore, minLines int, lang string) ([]store.Element, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
