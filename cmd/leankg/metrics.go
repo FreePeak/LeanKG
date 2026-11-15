@@ -109,7 +109,7 @@ func sessionTextIf(want bool, id string) string {
 // the ledger read-only, so it never creates one, and returns "" when there is
 // no ledger or no such session.
 func telemetrySessionText(id string) string {
-	st, err := telemetry.OpenStore(telemetry.Home(), true)
+	st, err := telemetry.OpenStore(context.Background(), telemetry.Home(), true)
 	if err != nil {
 		return ""
 	}

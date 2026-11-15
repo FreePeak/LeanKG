@@ -19,7 +19,7 @@ func TestTelemetrySessionText(t *testing.T) {
 	if got := telemetrySessionText(""); got != "" {
 		t.Fatalf("no ledger must render nothing, got %q", got)
 	}
-	st, err := telemetry.OpenSQLite(telemetry.DBPath(home), false)
+	st, err := telemetry.OpenSQLite(context.Background(), telemetry.DBPath(home), false)
 	if err != nil {
 		t.Fatal(err)
 	}

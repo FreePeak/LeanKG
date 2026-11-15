@@ -13,7 +13,7 @@ import (
 // reopenRO reads the ledger through a fresh handle, since the recorder closes st.
 func reopenRO(t *testing.T, st *SQLiteStore) *SQLiteStore {
 	t.Helper()
-	ro, err := OpenSQLite(st.Path(), true)
+	ro, err := OpenSQLite(context.Background(), st.Path(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func reopenRO(t *testing.T, st *SQLiteStore) *SQLiteStore {
 
 func TestRecorderOffIsNoopAndWritesNothing(t *testing.T) {
 	st := openTestLedger(t)
-	rec := NewRecorder(st, Off, 1024)
+	rec := NewRecorder(context.Background(), st, Off, 1024)
 	if rec.Level() != Off {
 		t.Fatalf("Level = %q", rec.Level())
 	}
@@ -41,7 +41,7 @@ func TestRecorderOffIsNoopAndWritesNothing(t *testing.T) {
 
 func TestRecorderAssignsIDAndTSAndBlanksBodiesBelowBodiesLevel(t *testing.T) {
 	st := openTestLedger(t)
-	rec := NewRecorder(st, Metadata, 1024)
+	rec := NewRecorder(context.Background(), st, Metadata, 1024)
 	rec.RecordCall(CallEvent{Tool: "query", ArgsRedacted: "args", BodyRedacted: "body", Identity: Identity{ClientName: "pi", Cwd: "/w"}})
 	rec.RecordMemory(MemoryEvent{Verb: "recall", Error: "boom"})
 	if err := rec.Close(); err != nil {
@@ -70,7 +70,7 @@ func TestRecorderAssignsIDAndTSAndBlanksBodiesBelowBodiesLevel(t *testing.T) {
 
 func TestRecorderBodiesRedactsAndCaps(t *testing.T) {
 	st := openTestLedger(t)
-	rec := NewRecorder(st, Bodies, 64)
+	rec := NewRecorder(context.Background(), st, Bodies, 64)
 	secret := "password=hunter2supersecret"
 	rec.RecordCall(CallEvent{
 		Tool:         "query",
@@ -124,7 +124,7 @@ func (b *blockingStore) Close() error { return nil }
 
 func TestRecorderDropsWhenFullAndCountsDrops(t *testing.T) {
 	st := &blockingStore{release: make(chan struct{})}
-	rec := NewRecorder(st, Metadata, 1024)
+	rec := NewRecorder(context.Background(), st, Metadata, 1024)
 	const sent = 2000
 	done := make(chan struct{})
 	go func() {
@@ -154,7 +154,7 @@ func TestRecorderDropsWhenFullAndCountsDrops(t *testing.T) {
 
 func TestRecorderNeverPanicsAfterClose(t *testing.T) {
 	st := openTestLedger(t)
-	rec := NewRecorder(st, Metadata, 16)
+	rec := NewRecorder(context.Background(), st, Metadata, 16)
 	if err := rec.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestRecorderNeverPanicsAfterClose(t *testing.T) {
 // construction, and an Off recorder had no writer goroutine to raise.
 func TestRecorderReloadRaisesLevelLive(t *testing.T) {
 	st := openTestLedger(t)
-	rec := NewRecorder(st, Off, 1024).(*recorder)
+	rec := NewRecorder(context.Background(), st, Off, 1024).(*recorder)
 	if rec.Level() != Off {
 		t.Fatalf("Level = %q, want Off before the grant", rec.Level())
 	}
@@ -203,7 +203,7 @@ func TestRecorderReloadRaisesLevelLive(t *testing.T) {
 // capture without a restart, and in-flight events are not resurrected.
 func TestRecorderReloadLoweringTurnsCaptureOff(t *testing.T) {
 	st := openTestLedger(t)
-	rec := NewRecorder(st, Metadata, 1024).(*recorder)
+	rec := NewRecorder(context.Background(), st, Metadata, 1024).(*recorder)
 	rec.RecordCall(CallEvent{Tool: "query", Transport: TransportHTTP})
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -296,7 +296,7 @@ func TestWriterSurvivesSinkPanicAndKeepsCapturing(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(prev) })
 
 	st := &panicOnceStore{}
-	rec := NewRecorder(st, Metadata, 1024)
+	rec := NewRecorder(context.Background(), st, Metadata, 1024)
 	const before, after = batchSize, 10
 	for i := 0; i < before; i++ {
 		rec.RecordCall(CallEvent{Tool: "query"})

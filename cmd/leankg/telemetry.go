@@ -233,7 +233,7 @@ func telemetryPurge(home string, before time.Time, out io.Writer) error {
 		fmt.Fprintf(out, "no telemetry ledger at %s; nothing to purge\n", telemetry.DBPath(home))
 		return nil
 	}
-	st, err := telemetry.OpenStore(home, false)
+	st, err := telemetry.OpenStore(context.Background(), home, false)
 	if err != nil {
 		return err
 	}
@@ -300,7 +300,7 @@ func telemetryStatus(home string, asJSON bool, out io.Writer) error {
 		MaxBodyBytes:    cfg.MaxBodyBytes,
 	}
 	if v.DBPresent {
-		if st, err := telemetry.OpenStore(home, true); err != nil {
+		if st, err := telemetry.OpenStore(context.Background(), home, true); err != nil {
 			v.StatsError = err.Error()
 		} else {
 			stats, err := st.Stats(context.Background())
@@ -456,9 +456,9 @@ var (
 
 // telemetryRecorder returns the process-wide capture Recorder: telemetry.Nop
 // unless the user granted consent in $LEANKG_HOME/telemetry.yaml.
-func telemetryRecorder() telemetry.Recorder {
+func telemetryRecorder(ctx context.Context) telemetry.Recorder {
 	telemetryOnce.Do(func() {
-		rec, err := telemetry.Open(telemetry.Home())
+		rec, err := telemetry.Open(ctx, telemetry.Home())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "telemetry: capture disabled: %v\n", err)
 			return
@@ -489,7 +489,7 @@ func closeTelemetry() {
 // means off" contract. Reloading on such a server therefore has to build the
 // recorder on demand, or a first-time grant after startup would still capture
 // nothing and the operator would conclude the reload is broken.
-func ReloadTelemetry() error {
+func ReloadTelemetry(ctx context.Context) error {
 	cfg, err := telemetry.LoadConfig(telemetry.Home())
 	if err != nil {
 		return fmt.Errorf("telemetry reload: %w", err)
@@ -498,7 +498,7 @@ func ReloadTelemetry() error {
 	if level == telemetry.Off {
 		// Nothing to raise. Lowering a live recorder to Off is still applied,
 		// so a mid-session withdrawal stops capture immediately.
-		if rec := telemetryRecorder(); rec != nil {
+		if rec := telemetryRecorder(ctx); rec != nil {
 			if err := rec.SetLevel(telemetry.Off); err != nil {
 				return fmt.Errorf("telemetry reload: %w", err)
 			}
@@ -507,12 +507,12 @@ func ReloadTelemetry() error {
 	}
 	// Build the recorder once for this process if startup found capture off.
 	telemetryBuildOnce.Do(func() {
-		st, oerr := telemetry.OpenStore(telemetry.Home(), false)
+		st, oerr := telemetry.OpenStore(ctx, telemetry.Home(), false)
 		if oerr != nil {
 			fmt.Fprintf(os.Stderr, "telemetry reload: open ledger: %v\n", oerr)
 			return
 		}
-		stop, serr := telemetry.StartRetention(st, cfg.RetentionDays)
+		stop, serr := telemetry.StartRetention(ctx, st, cfg.RetentionDays)
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "telemetry reload: retention: %v\n", serr)
 			return
@@ -520,10 +520,10 @@ func ReloadTelemetry() error {
 		telemetryStopMu.Lock()
 		telemetryStop = stop
 		telemetryStopMu.Unlock()
-		rec := telemetry.NewRecorder(st, level, cfg.MaxBodyBytes)
+		rec := telemetry.NewRecorder(ctx, st, level, cfg.MaxBodyBytes)
 		telemetryRec = rec
 	})
-	rec := telemetryRecorder()
+	rec := telemetryRecorder(ctx)
 	if rec == nil {
 		return fmt.Errorf("telemetry reload: no recorder available")
 	}
@@ -563,7 +563,7 @@ func watchConsentReload(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ch:
-				if err := ReloadTelemetry(); err != nil {
+				if err := ReloadTelemetry(ctx); err != nil {
 					log.Printf("telemetry reload: %v", err)
 				}
 			}

@@ -10,16 +10,15 @@ import (
 // drops must be lowered in the same diff, and a directory must reach 0 and
 // leave the map.
 var backgroundBudget = map[string]int{
-	"internal/core":      2,
-	"internal/index":     2,
-	"internal/langs":     1,
-	"internal/lsp":       4,
-	"internal/memory":    11,
-	"internal/registry":  1,
-	"internal/session":   1,
-	"internal/setup":     1,
-	"internal/store":     1,
-	"internal/telemetry": 8,
+	"internal/core":     2,
+	"internal/index":    2,
+	"internal/langs":    1,
+	"internal/lsp":      4,
+	"internal/memory":   11,
+	"internal/registry": 1,
+	"internal/session":  1,
+	"internal/setup":    1,
+	"internal/store":    1,
 }
 
 // todoBudget is the measured count of context.TODO() calls per directory in

@@ -9,16 +9,15 @@ import (
 // in non-main, non-test packages. Only non-zero entries appear. Like the other
 // budgets it only goes down, and an entry is removed when its count reaches 0.
 var ioBudget = map[string]map[string]int{
-	"internal/dashboard":            {"exec.Command": 1},
-	"internal/doctor":               {"sql-no-ctx": 6},
-	"internal/embed":                {"exec.Command": 1, "http.NewRequest": 1, "http.Client-without-Timeout": 2},
-	"internal/embed/embedtest":      {"exec.Command": 1},
-	"internal/gitobj/gittest":       {"exec.Command": 1},
-	"internal/lsp":                  {"exec.Command": 1},
-	"internal/memory":               {"sql-no-ctx": 32},
-	"internal/sessionlink/opencode": {"sql-no-ctx": 4},
-	"internal/sources":              {"http.Client-without-Timeout": 1},
-	"internal/store":                {"sql-no-ctx": 277},
+	"internal/dashboard":       {"exec.Command": 1},
+	"internal/doctor":          {"sql-no-ctx": 6},
+	"internal/embed":           {"exec.Command": 1, "http.NewRequest": 1, "http.Client-without-Timeout": 2},
+	"internal/embed/embedtest": {"exec.Command": 1},
+	"internal/gitobj/gittest":  {"exec.Command": 1},
+	"internal/lsp":             {"exec.Command": 1},
+	"internal/memory":          {"sql-no-ctx": 32},
+	"internal/sources":         {"http.Client-without-Timeout": 1},
+	"internal/store":           {"sql-no-ctx": 277},
 }
 
 // ioRule is one context-less I/O pattern with its AST matcher.

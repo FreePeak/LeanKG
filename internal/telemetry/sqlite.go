@@ -169,28 +169,32 @@ func isNewLedger(path string) bool {
 //
 // It is the one-time step for a ledger that was created before new ledgers
 // got the mode at creation time.
-func EnableIncrementalVacuum(path string) error {
+func EnableIncrementalVacuum(ctx context.Context, path string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("telemetry: no ledger at %s: %w", path, err)
 	}
-	st, err := OpenSQLite(path, false)
+	st, err := OpenSQLite(ctx, path, false)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 	// Both statements run on one connection: the mode is a property of the
 	// connection that VACUUM then applies.
-	conn, err := st.db.Conn(context.Background())
+	conn, err := st.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("telemetry: vacuum: %w", err)
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(context.Background(), `PRAGMA auto_vacuum = INCREMENTAL`); err != nil {
+	// Once the mode is set on this connection, the mode and the rewrite that
+	// applies it are one unit: the rewrite runs to completion whatever happens
+	// to ctx, so a cancel cannot leave the mode set and the file unconverted.
+	tail := context.WithoutCancel(ctx)
+	if _, err := conn.ExecContext(tail, `PRAGMA auto_vacuum = INCREMENTAL`); err != nil {
 		return fmt.Errorf("telemetry: set auto_vacuum: %w", err)
 	}
 	// VACUUM rewrites the database and applies the mode set above. It
 	// cannot run inside a transaction.
-	if _, err := conn.ExecContext(context.Background(), `VACUUM`); err != nil {
+	if _, err := conn.ExecContext(tail, `VACUUM`); err != nil {
 		return fmt.Errorf("telemetry: vacuum: %w", err)
 	}
 	return nil
@@ -204,7 +208,7 @@ func EnableIncrementalVacuum(path string) error {
 // can only be chosen while the file is still empty, so it is chosen at
 // creation; an existing ledger keeps its mode until EnableIncrementalVacuum
 // converts it, which is opt-in because it rewrites the whole file.
-func OpenSQLite(path string, readOnly bool) (*SQLiteStore, error) {
+func OpenSQLite(ctx context.Context, path string, readOnly bool) (*SQLiteStore, error) {
 	newLedger := false
 	if readOnly {
 		if _, err := os.Stat(path); err != nil {
@@ -233,7 +237,7 @@ func OpenSQLite(path string, readOnly bool) (*SQLiteStore, error) {
 	db.SetMaxOpenConns(1)
 	s := &SQLiteStore{db: db, path: path, readOnly: readOnly}
 	if !readOnly {
-		if err := s.migrate(context.Background()); err != nil {
+		if err := s.migrate(ctx); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -269,15 +273,18 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 
 // withWriteTx runs fn inside BEGIN IMMEDIATE on conn and commits or rolls back.
 func withWriteTx(ctx context.Context, conn *sql.Conn, fn func(q querier) error) error {
+	// The rollback is a detached tail: it must run even when ctx was cancelled,
+	// or the connection is returned to the pool with a transaction still open.
+	rollback := context.WithoutCancel(ctx)
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("telemetry: begin: %w", err)
 	}
 	if err := fn(conn); err != nil {
-		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		_, _ = conn.ExecContext(rollback, "ROLLBACK")
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		_, _ = conn.ExecContext(rollback, "ROLLBACK")
 		return fmt.Errorf("telemetry: commit: %w", err)
 	}
 	return nil

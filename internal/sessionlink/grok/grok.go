@@ -7,6 +7,7 @@ package grok
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -113,7 +114,10 @@ func listSessions(r string) []sessionDir {
 
 // Locate finds the transcript for c: exact by session id, else heuristic on
 // cwd, time window, normalized tool and args hash.
-func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.TranscriptRef{}, 0, err
+	}
 	sessions := listSessions(root(home))
 	if cid := c.ClientSessionID; cid != "" {
 		for _, s := range sessions {
@@ -128,6 +132,9 @@ func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transc
 	var best *sessionDir
 	var bestN int
 	for i := range sessions {
+		if err := ctx.Err(); err != nil {
+			return sessionlink.TranscriptRef{}, 0, err
+		}
 		s := &sessions[i]
 		if filepath.Clean(s.cwd) != filepath.Clean(c.Cwd) {
 			continue
@@ -165,7 +172,10 @@ func (a *adapter) ref(s sessionDir) sessionlink.TranscriptRef {
 }
 
 // Window extracts the bounded context around the matched leankg call.
-func (a *adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
+func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.Window{}, err
+	}
 	s, err := load(t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
@@ -178,7 +188,10 @@ func (a *adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n i
 }
 
 // Transcript returns the session turns, capped. maxTurns <= 0 keeps all.
-func (a *adapter) Transcript(t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
+func (a *adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s, err := load(t.Path)
 	if err != nil {
 		return nil, err

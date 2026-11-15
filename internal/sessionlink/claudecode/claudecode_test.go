@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -158,7 +159,7 @@ func TestExactLocateAndWindow(t *testing.T) {
 	c := lkCall(sid, 5*time.Second, args, true)
 	a := New()
 
-	ref, conf, err := a.Locate(home, c)
+	ref, conf, err := a.Locate(context.Background(), home, c)
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -169,7 +170,7 @@ func TestExactLocateAndWindow(t *testing.T) {
 		t.Fatalf("slug should replace / and . with -: %s", main)
 	}
 
-	w, err := a.Window(ref, c, 6)
+	w, err := a.Window(context.Background(), ref, c, 6)
 	if err != nil {
 		t.Fatalf("Window: %v", err)
 	}
@@ -222,14 +223,14 @@ func TestExactLocateFollowsSubagentWhenCallLivesThere(t *testing.T) {
 	c := lkCall(sid, 3*time.Second, args, true)
 	c.Cwd = cwd
 	a := New()
-	ref, _, err := a.Locate(home, c)
+	ref, _, err := a.Locate(context.Background(), home, c)
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
 	if ref.Path != subPath {
 		t.Fatalf("Locate = %s, want the subagent transcript %s", ref.Path, subPath)
 	}
-	w, err := a.Window(ref, c, 6)
+	w, err := a.Window(context.Background(), ref, c, 6)
 	if err != nil {
 		t.Fatalf("Window: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestExactLocateSearchesOtherProjectDirs(t *testing.T) {
 	c := lkCall(sid, time.Second, args, true)
 	c.Cwd = "/work/repo.v2"
 
-	ref, conf, err := New().Locate(home, c)
+	ref, conf, err := New().Locate(context.Background(), home, c)
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -265,13 +266,13 @@ func TestExactLocateRefusesMissingCallAndTraversal(t *testing.T) {
 
 	// The call is not in the transcript: no false link.
 	c := lkCall(sid, 5*time.Second, map[string]any{"query": "never asked"}, true)
-	if _, _, err := a.Locate(home, c); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), home, c); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Fatalf("missing call: err = %v, want ErrNotFound", err)
 	}
 
 	// A hostile session id must never be used as a path.
 	evil := lkCall("../../etc/passwd", 5*time.Second, map[string]any{"query": "x"}, true)
-	if _, _, err := a.Locate(home, evil); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), home, evil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Fatalf("traversal id: err = %v, want ErrNotFound", err)
 	}
 }
@@ -287,7 +288,7 @@ func TestSymlinkedTranscriptIsRefused(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	c := lkCall(sid, 5*time.Second, map[string]any{"query": "auth handler", "action": "search"}, true)
-	if _, _, err := New().Locate(home, c); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := New().Locate(context.Background(), home, c); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Fatalf("symlink out of the store: err = %v, want ErrNotFound", err)
 	}
 }
@@ -309,7 +310,7 @@ func TestHeuristicLocatePicksCoveringTranscript(t *testing.T) {
 	write(t, cov, mainSession("live-session")...)
 
 	c := lkCall("live", 5*time.Second, args, false)
-	ref, conf, err := New().Locate(home, c)
+	ref, conf, err := New().Locate(context.Background(), home, c)
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -319,7 +320,7 @@ func TestHeuristicLocatePicksCoveringTranscript(t *testing.T) {
 	if conf != sessionlink.ConfidenceUnique {
 		t.Fatalf("conf = %v, want unique 0.9", conf)
 	}
-	w, err := New().Window(ref, c, 6)
+	w, err := New().Window(context.Background(), ref, c, 6)
 	if err != nil {
 		t.Fatalf("Window: %v", err)
 	}
@@ -339,7 +340,7 @@ func TestHeuristicAmbiguousIsLowConfidence(t *testing.T) {
 		write(t, filepath.Join(slugDir, sid+".jsonl"), mainSession(sid)...)
 	}
 	c := lkCall("twin", 5*time.Second, args, false)
-	_, conf, err := New().Locate(home, c)
+	_, conf, err := New().Locate(context.Background(), home, c)
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -355,7 +356,7 @@ func TestHeuristicRejectsSlugCollision(t *testing.T) {
 	p := filepath.Join(projects, slug(cwd), "collide.jsonl")
 	write(t, p, toolUse("collide", "a1", "/work/repo/v2", time.Second, "m1", "mcp__leankg__query", "tu-c", args))
 	c := lkCall("x", time.Second, args, false)
-	if _, _, err := New().Locate(home, c); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := New().Locate(context.Background(), home, c); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Fatalf("slug collision: err = %v, want ErrNotFound", err)
 	}
 }
@@ -375,11 +376,11 @@ func TestGarbageLinesAreSkippedNotFatal(t *testing.T) {
 	c := lkCall(sid, 5*time.Second, map[string]any{"query": "auth handler", "action": "search"}, true)
 
 	a := New()
-	ref, _, err := a.Locate(home, c)
+	ref, _, err := a.Locate(context.Background(), home, c)
 	if err != nil {
 		t.Fatalf("Locate on a transcript with garbage lines: %v", err)
 	}
-	w, err := a.Window(ref, c, 6)
+	w, err := a.Window(context.Background(), ref, c, 6)
 	if err != nil {
 		t.Fatalf("Window: %v", err)
 	}
@@ -394,7 +395,7 @@ func TestUnsupportedFormatIsErrUnsupportedVersion(t *testing.T) {
 	write(t, filepath.Join(projects, slug(cwd), sid+".jsonl"),
 		"not json", `{"kind":"new-format","v":9}`, `[1,2,3]`)
 	c := lkCall(sid, 5*time.Second, map[string]any{"query": "x"}, true)
-	if _, _, err := New().Locate(home, c); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
+	if _, _, err := New().Locate(context.Background(), home, c); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
 		t.Fatalf("err = %v, want ErrUnsupportedVersion", err)
 	}
 }
@@ -413,7 +414,7 @@ func TestTranscriptCapsTurnsAndResults(t *testing.T) {
 	p := filepath.Join(projects, slug(cwd), sid+".jsonl")
 	write(t, p, lines...)
 	a := New()
-	turns, err := a.Transcript(sessionlink.TranscriptRef{Path: p, SessionID: sid}, 4)
+	turns, err := a.Transcript(context.Background(), sessionlink.TranscriptRef{Path: p, SessionID: sid}, 4)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -438,11 +439,11 @@ func TestRealUserPromptSkipsToolResultOnlyEntries(t *testing.T) {
 		toolUse(sid, "a2", cwd, 3*time.Second, "m2", "mcp__leankg__query", "tu-q", args),
 	)
 	c := lkCall(sid, 3*time.Second, args, true)
-	ref, _, err := New().Locate(home, c)
+	ref, _, err := New().Locate(context.Background(), home, c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := New().Window(ref, c, 6)
+	w, err := New().Window(context.Background(), ref, c, 6)
 	if err != nil {
 		t.Fatal(err)
 	}

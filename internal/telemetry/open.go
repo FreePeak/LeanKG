@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"errors"
 	"os"
 )
@@ -66,25 +67,25 @@ func (r *retentionOnly) sweptSignal() <-chan struct{} { return r.swept }
 // still gets its retention sweeper: the sweeper is what reclaims the rows
 // the window covers, and it must not depend on whether the server captures
 // anything today.
-func Open(home string) (Recorder, error) {
+func Open(ctx context.Context, home string) (Recorder, error) {
 	cfg, err := LoadConfig(home)
 	if err != nil {
 		return Nop{}, err
 	}
 	lvl := EffectiveLevel(cfg, os.Getenv("LEANKG_TELEMETRY"))
 	if lvl == Off {
-		return openRetentionOnly(home, cfg.RetentionDays)
+		return openRetentionOnly(ctx, home, cfg.RetentionDays)
 	}
 	maxBody := cfg.MaxBodyBytes
 	if maxBody <= 0 {
 		maxBody = DefaultMaxBodyBytes
 	}
-	st, err := OpenSQLite(DBPath(home), false)
+	st, err := OpenSQLite(ctx, DBPath(home), false)
 	if err != nil {
 		return Nop{}, err
 	}
-	rec := NewRecorder(st, lvl, maxBody)
-	h := startRetention(st, cfg.RetentionDays)
+	rec := NewRecorder(ctx, st, lvl, maxBody)
+	h := startRetention(ctx, st, cfg.RetentionDays)
 	return &openedRecorder{Recorder: rec, stopRetention: h.stop, swept: h.swept}, nil
 }
 
@@ -92,19 +93,19 @@ func Open(home string) (Recorder, error) {
 // With no ledger on disk there is nothing to sweep and nothing to open, so
 // it is the plain Nop. With a ledger on disk the sweeper runs: it opens the
 // ledger itself, so nothing is written while capture is off.
-func openRetentionOnly(home string, days int) (Recorder, error) {
+func openRetentionOnly(ctx context.Context, home string, days int) (Recorder, error) {
 	path := DBPath(home)
 	if _, err := os.Stat(path); err != nil {
 		return Nop{}, nil
 	}
-	h := startPathRetention(path, days)
+	h := startPathRetention(ctx, path, days)
 	return &retentionOnly{stop: h.stop, swept: h.swept}, nil
 }
 
 // OpenStore opens DBPath(home). readOnly never creates the file and returns
 // an error wrapping os.ErrNotExist when the ledger does not exist.
-func OpenStore(home string, readOnly bool) (Store, error) {
-	st, err := OpenSQLite(DBPath(home), readOnly)
+func OpenStore(ctx context.Context, home string, readOnly bool) (Store, error) {
+	st, err := OpenSQLite(ctx, DBPath(home), readOnly)
 	if err != nil {
 		return nil, err
 	}

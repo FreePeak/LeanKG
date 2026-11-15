@@ -405,7 +405,7 @@ afterSidecars:
 	// Process-wide capture sink (plan v4.15): a no-op unless the user granted
 	// consent in telemetry.yaml. Memory and lesson events and the REST and
 	// ConnectRPC call rows all go to it.
-	rec := telemetryRecorder()
+	rec := telemetryRecorder(ctx)
 	defer closeTelemetry()
 	// The sinks are registered so a SIGHUP consent reload can re-point them at
 	// a recorder built after startup (capture was off then). Every consumer

@@ -108,7 +108,7 @@ func Link(ctx context.Context, st telemetry.Store, cfg telemetry.Config, home st
 		}
 
 		c := callRef(ev)
-		t, conf, err := a.Locate(home, c)
+		t, conf, err := a.Locate(ctx, home, c)
 		switch {
 		case errors.Is(err, ErrNotFound):
 			stats.NotFound++
@@ -125,7 +125,7 @@ func Link(ctx context.Context, st telemetry.Store, cfg telemetry.Config, home st
 			continue
 		}
 
-		w, err := a.Window(t, c, windowTurns)
+		w, err := a.Window(ctx, t, c, windowTurns)
 		if err != nil {
 			stats.Errors++
 			continue

@@ -42,7 +42,7 @@ type Options struct {
 	AllowRemote bool             // require the bearer token on every request
 	Now         func() time.Time // nil = time.Now
 
-	openStore func(home string, readOnly bool) (telemetry.Store, error) // test seam
+	openStore func(ctx context.Context, home string, readOnly bool) (telemetry.Store, error) // test seam
 }
 
 // Server is the dashboard HTTP handler plus its background linker.
@@ -114,7 +114,7 @@ func (s *Server) reconcileLinker(ctx context.Context) {
 	if s.led.linking() {
 		return
 	}
-	st, err := s.led.store()
+	st, err := s.led.store(ctx)
 	if err != nil {
 		return
 	}
