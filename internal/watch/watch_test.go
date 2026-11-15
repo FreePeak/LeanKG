@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -289,13 +290,13 @@ func TestReconcilePassRecoversMissedEvent(t *testing.T) {
 	st := openStore(t)
 	proj := t.TempDir()
 
-	var reconciles int
+	var reconciles atomic.Int32
 	w, err := Start(ctx, st, proj, Options{
 		Debounce:  100 * time.Millisecond,
 		Reconcile: time.Second,
 		OnEvent: func(path, kind string) {
 			if kind == "reconcile" {
-				reconciles++
+				reconciles.Add(1)
 			}
 		},
 	})
@@ -321,7 +322,7 @@ func TestReconcilePassRecoversMissedEvent(t *testing.T) {
 		els, err := st.FindExact(context.Background(), "MissedFunc")
 		return err == nil && len(els) > 0
 	})
-	await(t, 8*time.Second, func() bool { return el.saw("reconcile") && reconciles >= 1 })
+	await(t, 8*time.Second, func() bool { return el.saw("reconcile") && reconciles.Load() >= 1 })
 }
 
 // The writer flush bumps the watermark (index.IndexDirWith) and MUST
