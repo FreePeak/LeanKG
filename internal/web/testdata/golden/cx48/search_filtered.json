@@ -1,0 +1,2 @@
+HTTP 200
+{"success":true,"data":[{"qualified_name":"src/db.rs::query_db","element_type":"function","name":"query_db","file_path":"src/db.rs","line_start":1,"line_end":5,"language":"rust"}],"error":null}

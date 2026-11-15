@@ -771,11 +771,11 @@ func TestAllRoutesReturnJSON(t *testing.T) {
 func TestDetectCommunities(t *testing.T) {
 	// No calls/imports edges → folder fallback, one cluster per directory.
 	_, eng := seedFixture(t)
-	snap, err := loadSnapshot(context.Background(), eng.Store())
+	snap, err := loadSnapshot(context.Background(), eng)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rels, err := allRelationships(context.Background(), eng.Store())
+	rels, err := eng.GraphRelationships(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

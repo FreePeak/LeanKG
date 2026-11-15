@@ -1,0 +1,2 @@
+HTTP 200
+{"success":true,"data":{"element_count":4,"has_database":true,"is_directory":true,"is_github":false,"needs_indexing":false,"project_path":"<PROJECT>"},"error":null}

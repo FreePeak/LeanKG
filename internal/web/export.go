@@ -15,11 +15,11 @@ import (
 // (US-GF-05 / Rust GraphEngine::get_god_nodes). A percentile above 0 drops
 // the super-hub tail before the limit is applied.
 func GodNodes(ctx context.Context, engine *core.Engine, limit, excludeHubsPercentile int) ([]GodNode, error) {
-	snap, err := loadSnapshot(ctx, engine.Store())
+	snap, err := loadSnapshot(ctx, engine)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := allRelationships(ctx, engine.Store())
+	rels, err := engine.GraphRelationships(ctx)
 	if err != nil {
 		return nil, err
 	}

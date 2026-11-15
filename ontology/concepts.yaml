@@ -274,6 +274,7 @@ concepts:
       - leankg
     code_refs:
       - internal/web/web.go
+      - internal/core/graphread.go
       - ui-v2
 
   - id: tree_sitter_tier

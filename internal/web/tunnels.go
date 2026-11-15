@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Tunnel is one cross-cluster edge (Rust graph::query::Tunnel).
@@ -35,12 +33,12 @@ type Tunnel struct {
 //
 // The caller applies the display limit: the Rust CLI truncated find_tunnels'
 // result to --limit (default 50), and the MCP tool did the same.
-func Tunnels(ctx context.Context, st store.Backend) ([]Tunnel, error) {
+func Tunnels(ctx context.Context, st graphSource) ([]Tunnel, error) {
 	cl, err := ClusterAssignments(ctx, st)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := allRelationships(ctx, st)
+	rels, err := st.GraphRelationships(ctx)
 	if err != nil {
 		return nil, err
 	}

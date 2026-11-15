@@ -35,7 +35,7 @@ func cmdTunnels(ctx context.Context, args []string) error {
 	}
 	defer engine.Store().Close()
 	defer engine.Close()
-	ts, err := web.Tunnels(ctx, engine.Store())
+	ts, err := web.Tunnels(ctx, engine)
 	if err != nil {
 		return verbFatal(err)
 	}
