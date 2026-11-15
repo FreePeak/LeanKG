@@ -61,7 +61,7 @@ func itoa(i int) string {
 func TestPassReclaimsFreelist(t *testing.T) {
 	st := bloatFixture(t)
 	var logs int
-	res, err := Pass(st, Options{Logf: func(string, ...any) { logs++ }})
+	res, err := Pass(context.Background(), st, Options{Logf: func(string, ...any) { logs++ }})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestPassRunsTheIncrementalSweepOnceAutoVacuumIsOn(t *testing.T) {
 	st := bloatFixture(t)
 	// First pass upgrades the header; then make a new freelist so the second
 	// pass has something the bounded sweep must reclaim.
-	if _, err := Pass(st, Options{}); err != nil {
+	if _, err := Pass(context.Background(), st, Options{}); err != nil {
 		t.Fatalf("first pass: %v", err)
 	}
 	for i := 350; i < 400; i++ {
@@ -104,7 +104,7 @@ func TestPassRunsTheIncrementalSweepOnceAutoVacuumIsOn(t *testing.T) {
 	}
 	// MinFreeBytes=1 bypasses the 1 MB floor: the point here is the sweep
 	// itself, and the floor has its own test below.
-	res, err := Pass(st, Options{MinFreeBytes: 1})
+	res, err := Pass(context.Background(), st, Options{MinFreeBytes: 1})
 	if err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestPassSkipsReclaimBelowFloor(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -139,14 +139,14 @@ func TestPassSkipsReclaimBelowFloor(t *testing.T) {
 
 func TestPassHeaderUpgradeIsOneShot(t *testing.T) {
 	st := bloatFixture(t)
-	if _, err := Pass(st, Options{}); err != nil {
+	if _, err := Pass(context.Background(), st, Options{}); err != nil {
 		t.Fatalf("pass: %v", err)
 	}
 	before, err := st.Space()
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestRunFiresOnTicker(t *testing.T) {
 	st := bloatFixture(t)
 	// Prime the header so the ticker's own bounded sweep has to do the
 	// reclaim, rather than the one-shot header-upgrade VACUUM.
-	if _, err := Pass(st, Options{MinFreeBytes: 1}); err != nil {
+	if _, err := Pass(context.Background(), st, Options{MinFreeBytes: 1}); err != nil {
 		t.Fatalf("prime: %v", err)
 	}
 	for i := 350; i < 400; i++ {
@@ -233,7 +233,7 @@ func TestRunFiresOnTicker(t *testing.T) {
 
 func TestCompactMemoryNilIsNoOp(t *testing.T) {
 	// Memory is optional (`serve --memory`); a nil *Memory must not panic.
-	CompactMemory(nil, Options{})
+	CompactMemory(context.Background(), nil, Options{})
 }
 
 // TestPassFailsWhenHeaderUpgradeIsRefused: the header upgrade runs first and its
@@ -256,7 +256,7 @@ func TestPassFailsWhenHeaderUpgradeIsRefused(t *testing.T) {
 		t.Fatalf("open ro: %v", err)
 	}
 	defer ro.Close()
-	if _, err := Pass(ro, Options{}); !errors.Is(err, store.ErrReadOnly) {
+	if _, err := Pass(context.Background(), ro, Options{}); !errors.Is(err, store.ErrReadOnly) {
 		t.Fatalf("pass on a read-only handle: err = %v, want ErrReadOnly", err)
 	}
 }

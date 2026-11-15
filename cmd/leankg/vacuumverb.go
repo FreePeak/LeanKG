@@ -113,7 +113,7 @@ func cmdVacuum(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	res, err := maintain.Pass(st, maintain.Options{
+	res, err := maintain.Pass(context.Background(), st, maintain.Options{
 		MaxPages:     *maxPages,
 		MinFreeBytes: 0,
 		Logf: func(format string, a ...any) {

@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +50,7 @@ func TestTheFreshnessWarnNamesTheFilesAndTheRoot(t *testing.T) {
 	}
 	disk := []string{"a.go", "b.go", "extra1.go", "extra2.go", "notes.md"}
 
-	f := checkIndexFreshness(probes, Env{ProjectRoot: root, DiskFiles: disk})
+	f := checkIndexFreshness(context.Background(), probes, Env{ProjectRoot: root, DiskFiles: disk})
 	if f.Status != StatusWarn {
 		t.Fatalf("fixture must WARN, got %s (%s)", f.Status, f.Detail)
 	}

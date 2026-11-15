@@ -1,6 +1,7 @@
 package maintain
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ import (
 // verb prints that.
 func TestPassReportsGrowthHonestly(t *testing.T) {
 	st := bloatFixture(t)
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestPassOnAFreshStoreGrows(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
