@@ -26,6 +26,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/FreePeak/LeanKG/internal/cliargs"
 	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -139,14 +140,12 @@ func envOr(key, fallback string) string {
 }
 
 // bindPositional parses args into fs and binds a bare positional as the
-// project dir (matching `leankg index <dir>`). Go's flag package stops at the
-// first non-flag arg, so flags after the positional were silently dropped
-// (`run <dir> --project X` ignored X). parseArgs re-parses the remainder, so
-// flags work before, between and after the positional. A positional that
-// conflicts with --project, or a second positional, is an error, never a
-// silent drop.
+// project dir (matching `leankg index <dir>`). cliargs.Interspersed lets flags
+// work before, between and after the positional (`run <dir> --project X` no
+// longer drops X). A positional that conflicts with --project, or a second
+// positional, is an error, never a silent drop.
 func bindPositional(verb string, fs *flag.FlagSet, args []string, project *string) error {
-	positional, err := parseArgs(fs, args)
+	positional, err := cliargs.Interspersed(verb, fs, args, -1)
 	if err != nil {
 		return fmt.Errorf("%s: %w", verb, err)
 	}
@@ -160,25 +159,6 @@ func bindPositional(verb string, fs *flag.FlagSet, args []string, project *strin
 		*project = positional[0]
 	}
 	return nil
-}
-
-// parseArgs parses args into fs and returns the positionals in order. After
-// each positional it re-parses the remainder, so a flag may follow it; the
-// flag package alone would stop at the first positional.
-func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
-	var positional []string
-	rest := args
-	for {
-		if err := cliexit.Parse(fs, rest); err != nil {
-			return nil, err
-		}
-		rest = fs.Args()
-		if len(rest) == 0 {
-			return positional, nil
-		}
-		positional = append(positional, rest[0])
-		rest = rest[1:]
-	}
 }
 
 // lock takes the single-flight flock for the PROJECT dir (not the process

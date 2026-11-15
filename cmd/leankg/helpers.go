@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
-	"github.com/FreePeak/LeanKG/internal/cliexit"
+	"github.com/FreePeak/LeanKG/internal/cliargs"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/index"
@@ -393,36 +393,12 @@ func indexEmbed(ctx context.Context, storeDir string, hook bool) {
 	}
 }
 
-// parseInterspersed parses flags that may appear before OR after positionals
-// (clap semantics) and returns the positionals in order. verb names the
-// command in usage errors; max is how many positionals the verb accepts.
-//
-// Go's flag package stops at the first positional, so the documented
-// `verb <positional> --flag` form left the flag — and every token after it —
-// unparsed, producing a confidently wrong answer (`refresh . --full` ran
-// incrementally; `env-conflicts w2 --env production` reported on an empty
-// service). Re-parsing the remainder after each positional fixes the drop; the
-// bound is checked as tokens are collected, so a surplus positional fails with
-// "unexpected argument" before any trailing flag is parsed, and nothing is ever
-// silently ignored. Parse errors keep the flag package's exit-2 contract (every
-// verb builds its FlagSet with flag.ContinueOnError).
+// parseInterspersed is cliargs.Interspersed for a verb that accepts at most
+// max positionals (flags may appear before or after them). Every verb's flags
+// go through this one parser, so `verb <positional> --flag` is never silently
+// dropped.
 func parseInterspersed(verb string, fs *flag.FlagSet, args []string, max int) ([]string, error) {
-	var positional []string
-	rest := args
-	for {
-		if err := cliexit.Parse(fs, rest); err != nil {
-			return nil, err
-		}
-		rest = fs.Args()
-		if len(rest) == 0 {
-			return positional, nil
-		}
-		positional = append(positional, rest[0])
-		if len(positional) > max {
-			return nil, cliexit.Usage(fmt.Errorf("%s: unexpected argument %q", verb, rest[0]))
-		}
-		rest = rest[1:]
-	}
+	return cliargs.Interspersed(verb, fs, args, max)
 }
 
 // sameIndexRoot reports whether two index roots are the same directory after
