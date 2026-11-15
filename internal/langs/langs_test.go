@@ -1,6 +1,7 @@
 package langs
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -58,7 +59,7 @@ func TestActivateNestedRepos(t *testing.T) {
 			"vendor-lib/src/lib.rs":                           "fn a() {}",
 		})
 
-	roots, err := r.Activate(dir)
+	roots, err := r.Activate(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestActivateMarkerlessCensus(t *testing.T) {
 		"app/util.py":  "def b(): pass",
 		"web/index.js": "let x = 1",
 	})
-	if _, err := r.Activate(dir); err != nil {
+	if _, err := r.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	if !r.IsActive(Python) || !r.IsActive(JavaScript) {
@@ -121,7 +122,7 @@ func TestActivateMarkerlessCensusDeep(t *testing.T) {
 		"src/b/c/d/d.py":       "def d(): pass",
 		"src/b/c/d/e/deep.zig": "pub fn f() void {}",
 	})
-	if _, err := r.Activate(dir); err != nil {
+	if _, err := r.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	if !r.IsActive(Go) {
@@ -143,7 +144,7 @@ func TestActivateMarkerlessCensusDeep(t *testing.T) {
 func TestDeactivateReturnsToIdle(t *testing.T) {
 	r := NewRegistry()
 	dir := fixture(t, map[string][]string{".": {"go.mod"}}, map[string]string{"a.go": "package a"})
-	if _, err := r.Activate(dir); err != nil {
+	if _, err := r.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	if !r.IsActive(Go) {
@@ -175,7 +176,7 @@ func TestLookupAliases(t *testing.T) {
 func TestTiersCapabilityGated(t *testing.T) {
 	r := NewRegistry()
 	dir := fixture(t, map[string][]string{".": {"go.mod", "pubspec.yaml"}}, nil)
-	if _, err := r.Activate(dir); err != nil {
+	if _, err := r.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	tiers := r.Tiers()
@@ -229,7 +230,7 @@ func TestTiersCapabilityGated(t *testing.T) {
 	// markdown has no AST tier even when active
 	r2 := NewRegistry()
 	d2 := fixture(t, nil, map[string]string{"README.md": "# x"})
-	if _, err := r2.Activate(d2); err != nil {
+	if _, err := r2.Activate(context.Background(), d2); err != nil {
 		t.Fatal(err)
 	}
 	for _, tier := range r2.Tiers()[Markdown] {
@@ -242,7 +243,7 @@ func TestTiersCapabilityGated(t *testing.T) {
 func TestExtOwnerInactiveSkips(t *testing.T) {
 	r := NewRegistry()
 	dir := fixture(t, nil, map[string]string{"x.dart": "void main(){}"})
-	if _, err := r.Activate(dir); err != nil {
+	if _, err := r.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	if !r.IsActive(Dart) {
@@ -337,7 +338,7 @@ func TestActivateExpandedMarkers(t *testing.T) {
 			"sol/contracts/C.sol": "contract C {}",
 			"zig/src/main.zig":    "pub fn main() void {}",
 		})
-	roots, err := r.Activate(dir)
+	roots, err := r.Activate(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +366,7 @@ func TestExtOwnerHeaderClaim(t *testing.T) {
 	r := NewRegistry()
 	dir := fixture(t, map[string][]string{".": {"Package.swift"}},
 		map[string]string{"Sources/App.swift": "let x = 1", "bridge.c": "int f(void) { return 0; }", "bridge.h": ""})
-	if _, err := r.Activate(dir); err != nil {
+	if _, err := r.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	if !r.IsActive(C) || !r.IsActive(Swift) {
@@ -377,7 +378,7 @@ func TestExtOwnerHeaderClaim(t *testing.T) {
 	r2 := NewRegistry()
 	d2 := fixture(t, map[string][]string{".": {"Package.swift"}},
 		map[string]string{"Sources/App.swift": "let x = 1"})
-	if _, err := r2.Activate(d2); err != nil {
+	if _, err := r2.Activate(context.Background(), d2); err != nil {
 		t.Fatal(err)
 	}
 	if l, ok := r2.ExtOwner(".h"); !ok || l != Swift {
@@ -471,7 +472,7 @@ func TestActivateWave2Census(t *testing.T) {
 			"db/schema.sql":   "CREATE TABLE t (id INT);",
 			"db/pkg.pls":      "CREATE PACKAGE pkg AS END pkg;",
 		})
-	if _, err := r.Activate(dir); err != nil {
+	if _, err := r.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	for _, l := range []Language{Cuda, GLSL, HLSL, Cypher, Nim, FSharp,
@@ -508,7 +509,7 @@ func TestActivateGitRootUsesHEADFiles(t *testing.T) {
 	gittest.WriteFile(t, root, "pyproject.toml", "[project]\n")
 
 	r := NewRegistry()
-	if _, err := r.Activate(root); err != nil {
+	if _, err := r.Activate(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
 	if !r.IsActive(Go) {
@@ -529,7 +530,7 @@ func TestActivateUnbornRepoWalks(t *testing.T) {
 	gittest.WriteFile(t, root, "app.py", "def a(): pass\n")
 
 	r := NewRegistry()
-	if _, err := r.Activate(root); err != nil {
+	if _, err := r.Activate(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
 	if !r.IsActive(Python) {
@@ -546,7 +547,7 @@ func TestActivateIgnoresBrokenMarkerSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := NewRegistry()
-	if _, err := r.Activate(dir); err != nil {
+	if _, err := r.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	if r.IsActive(Go) {

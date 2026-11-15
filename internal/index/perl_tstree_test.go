@@ -21,7 +21,7 @@ func TestExtractFileAsPerlTreeSitter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fe := extractFileAs("lib/Billing/Invoice.pm", src, "perl")
+	fe := extractAs(t, "lib/Billing/Invoice.pm", src, "perl")
 	got := map[string]string{}
 	for _, e := range fe.elements {
 		got[e.name] = e.etype + "@" + strconv.Itoa(e.start) + "-" + strconv.Itoa(e.end)

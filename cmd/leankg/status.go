@@ -57,7 +57,7 @@ func cmdStatus(ctx context.Context, args []string) error {
 	// Attach the language registry (activated for this project) so status
 	// reports the lazy activation state, not an empty list.
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(storeDir); aerr == nil {
+	if _, aerr := reg.Activate(context.Background(), storeDir); aerr == nil {
 		engine.SetLangsRegistry(reg)
 	}
 	out, err := engine.Status(ctx)

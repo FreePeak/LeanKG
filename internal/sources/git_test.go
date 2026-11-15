@@ -243,7 +243,7 @@ func TestSyncedCloneIsIndexableAndHidesGit(t *testing.T) {
 	// The synced tree is handed to the indexer as-is: the walker sees the
 	// sources and never descends into the clone's .git.
 	reg := langs.DefaultRegistry()
-	if _, err := reg.Activate(got); err != nil {
+	if _, err := reg.Activate(context.Background(), got); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
 	files, err := index.SupportedFiles(got, reg)

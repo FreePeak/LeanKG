@@ -69,7 +69,7 @@ const mdNestedStoredBefore = 1627
 // 4.27x, and docs/archive/workflow-opencode-agent.md (19,509 B on disk)
 // expanded to 290,340 B, 14.9x.
 func TestMarkdownSectionsDoNotStoreDescendantBodies(t *testing.T) {
-	els := extractFileAs("guide.md", []byte(mdNestedFixture), "md").toStore()
+	els := extractAs(t, "guide.md", []byte(mdNestedFixture), "md").toStore()
 
 	// (a) The element COUNT is unchanged: one element per heading, 11 of them.
 	if len(els) != 11 {
@@ -138,7 +138,7 @@ func TestMarkdownSectionsDoNotStoreDescendantBodies(t *testing.T) {
 // headings.
 func TestMarkdownRepeatedHeadingsGetDistinctNames(t *testing.T) {
 	const src = "# Doc\n\n## Notes\n\nfirst\n\n## Notes\n\nsecond\n"
-	els := extractFileAs("doc.md", []byte(src), "md").toStore()
+	els := extractAs(t, "doc.md", []byte(src), "md").toStore()
 	if len(els) != 3 {
 		t.Fatalf("element count = %d, want 3 (one per heading)", len(els))
 	}

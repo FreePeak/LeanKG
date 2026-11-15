@@ -101,7 +101,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 
 	// 1. Index code — lazy language activation governs what gets indexed.
 	reg := langs.DefaultRegistry()
-	if _, err := reg.Activate(indexPath); err != nil {
+	if _, err := reg.Activate(ctx, indexPath); err != nil {
 		return res, fmt.Errorf("refresh: language detection: %w", err)
 	}
 	res.Code, err = index.IndexDirWith(ctx, st, indexPath, reg)

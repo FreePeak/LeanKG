@@ -14,7 +14,6 @@ var ioBudget = map[string]map[string]int{
 	"internal/embed":                {"exec.Command": 1, "http.NewRequest": 1, "http.Client-without-Timeout": 2},
 	"internal/embed/embedtest":      {"exec.Command": 1},
 	"internal/gitobj/gittest":       {"exec.Command": 1},
-	"internal/lsp":                  {"exec.Command": 1},
 	"internal/memory":               {"sql-no-ctx": 32},
 	"internal/sessionlink/opencode": {"sql-no-ctx": 4},
 	"internal/sources":              {"http.Client-without-Timeout": 1},

@@ -57,7 +57,7 @@ func TestRetrievalLabelSetPointsAtExtractableSymbols(t *testing.T) {
 			t.Errorf("label %s (%q): file %s named by %q does not exist: %v", num, question, file, qn, err)
 			continue
 		}
-		fe := extractFileAs(file, src, "go")
+		fe := extractAs(t, file, src, "go")
 		found := false
 		for _, e := range fe.toStore() {
 			if e.QualifiedName == qn {

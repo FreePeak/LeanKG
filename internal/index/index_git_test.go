@@ -248,7 +248,7 @@ func TestSupportedFilesGitRootListsHEAD(t *testing.T) {
 	gittest.WriteFile(t, root, "u.go", "package u\n")
 
 	reg := langs.NewRegistry()
-	if _, err := reg.Activate(root); err != nil {
+	if _, err := reg.Activate(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
 	files, err := SupportedFiles(root, reg)

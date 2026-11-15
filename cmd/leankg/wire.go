@@ -41,7 +41,7 @@ func cmdWriter(ctx context.Context, args []string) error {
 		return fmt.Errorf("migrate: %v", err)
 	}
 	langReg := langs.DefaultRegistry()
-	if _, aerr := langReg.Activate(dir); aerr != nil {
+	if _, aerr := langReg.Activate(ctx, dir); aerr != nil {
 		return fmt.Errorf("language detection: %v", aerr)
 	}
 	res, err := index.IndexDirWith(ctx, st, dir, langReg)

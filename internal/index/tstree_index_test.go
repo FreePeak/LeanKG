@@ -27,7 +27,7 @@ func TestTreeSitterExtractionLanguages(t *testing.T) {
 		"dart":  {src: "import 'dart:math';\n\nclass Repo {\n  int size() { return 1; }\n}\n\nint add(int a, int b) { return a + b; }\n", want: []string{"Repo", "size", "add"}},
 	}
 	for lang, tc := range samples {
-		defs, err := tsExtract([]byte(tc.src), lang)
+		defs, err := tsExtract(context.Background(), []byte(tc.src), lang)
 		if err != nil {
 			t.Fatalf("%s: %v", lang, err)
 		}
@@ -50,7 +50,7 @@ func TestTreeSitterExtractionLanguages(t *testing.T) {
 // bundled grammar, so tsExtract returns nil and the regex tier runs.
 func TestTreeSitterNoGrammarFallsBack(t *testing.T) {
 	for _, lang := range []string{"md"} {
-		defs, err := tsExtract([]byte("class App {}\n"), lang)
+		defs, err := tsExtract(context.Background(), []byte("class App {}\n"), lang)
 		if err != nil {
 			t.Fatalf("%s: %v", lang, err)
 		}
@@ -89,7 +89,7 @@ func TestIndexDirWithRegistryLazyNested(t *testing.T) {
 		}
 	}
 	reg := langs.DefaultRegistry()
-	roots, err := reg.Activate(dir)
+	roots, err := reg.Activate(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}

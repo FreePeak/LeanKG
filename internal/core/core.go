@@ -431,7 +431,7 @@ func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[strin
 		// Index through the language registry: activation is per target, so
 		// importing another codebase re-detects its languages first.
 		if e.langsReg != nil {
-			if _, aerr := e.langsReg.Activate(target); aerr != nil {
+			if _, aerr := e.langsReg.Activate(ctx, target); aerr != nil {
 				return nil, fmt.Errorf("language detection: %w", aerr)
 			}
 		}

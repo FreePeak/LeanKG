@@ -144,7 +144,7 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 	// servers merge their symbols and typed call edges into the store.
 	if res.Files > 0 {
 		if _, _, configured := lsp.LoadProject(dir); configured {
-			er, err := lsp.Enrich(st, dir, activeLangTags(reg))
+			er, err := lsp.Enrich(ctx, st, dir, activeLangTags(reg))
 			if err != nil {
 				return res, err
 			}
@@ -407,14 +407,16 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		fe  fileElements
 		src []byte
 	}
+	// ctx is checked per file, not per directory: one package can hold
+	// thousands of files, and a cancel must stop it within a file's work.
 	for _, d := range dirOrder {
-		if err := ctx.Err(); err != nil {
-			return res, err
-		}
 		files := byDir[d]
 		pending := make([]pendingFile, 0, len(files))
 		names := map[string][]string{} // package-scoped call targets
 		for _, f := range files {
+			if err := ctx.Err(); err != nil {
+				return res, err
+			}
 			src, err := f.content(rd)
 			if err != nil {
 				return res, err
@@ -424,13 +426,19 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			} else if handled {
 				continue // the specialist own its extraction AND its writes
 			}
-			fe := extractFileAs(f.rel, src, f.lang)
+			fe, err := extractFileAs(ctx, f.rel, src, f.lang)
+			if err != nil {
+				return res, err
+			}
 			pending = append(pending, pendingFile{changedFile: f, fe: fe, src: src})
 			for _, e := range fe.elements {
 				names[e.name] = append(names[e.name], e.qn)
 			}
 		}
 		for _, p := range pending {
+			if err := ctx.Err(); err != nil {
+				return res, err
+			}
 			f := p.changedFile
 			if err := st.DeleteByFile(f.rel); err != nil {
 				return res, err

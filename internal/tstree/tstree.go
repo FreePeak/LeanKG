@@ -13,8 +13,8 @@
 package tstree
 
 import (
+	"context"
 	"strings"
-	"sync"
 
 	"github.com/FreePeak/LeanKG/internal/tstree/dart"
 	tsobjc "github.com/FreePeak/LeanKG/internal/tstree/objc"
@@ -133,37 +133,35 @@ var kindSpec = map[string]string{
 	"actor_declaration":                "type",
 }
 
-var (
-	parserMu sync.Mutex
-	parsers  = map[string]*sitter.Parser{}
-)
-
-func parserFor(lang string) *sitter.Parser {
-	parserMu.Lock()
-	defer parserMu.Unlock()
-	if p, ok := parsers[lang]; ok {
-		return p
+// parse parses src as lang with a parser of its own and returns the tree. A
+// nil tree with a nil error means no grammar is bundled for lang. ctx bounds
+// the parse: a cancelled ctx returns its error and stops the grammar.
+//
+// The parser is never shared. A tree-sitter parser carries mutable state and a
+// cancellation flag, so one parser used from two goroutines races, and a
+// cancelled parse would poison the next one. The tree is independent of the
+// parser once built, so the parser is closed as parse returns.
+func parse(ctx context.Context, src []byte, lang string) (*sitter.Tree, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	g := Grammar(lang)
-	var p *sitter.Parser
-	if g != nil {
-		p = sitter.NewParser()
-		p.SetLanguage(g)
+	if g == nil {
+		return nil, nil
 	}
-	parsers[lang] = p
-	return p
+	p := sitter.NewParser()
+	defer p.Close()
+	p.SetLanguage(g)
+	return p.ParseCtx(ctx, nil, src)
 }
 
 // Extract parses src as lang and returns definition elements. Languages with
-// no bundled grammar return nil, nil — the caller falls back to regex.
-func Extract(src []byte, lang string) ([]Def, error) {
-	p := parserFor(lang)
-	if p == nil {
-		return nil, nil
-	}
-	tree := p.Parse(nil, src)
-	if tree == nil {
-		return nil, nil
+// no bundled grammar return nil, nil, and the caller falls back to regex. A
+// parse that ctx stops returns ctx's error.
+func Extract(ctx context.Context, src []byte, lang string) ([]Def, error) {
+	tree, err := parse(ctx, src, lang)
+	if err != nil || tree == nil {
+		return nil, err
 	}
 	root := tree.RootNode()
 	var out []Def
