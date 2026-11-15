@@ -34,9 +34,9 @@ var dummyVerifier = fmt.Sprintf("%s$%d$%s$%s", passwordScheme, passwordIteration
 	strings.Repeat("00", passwordSaltLen), strings.Repeat("00", passwordKeyLen))
 
 // verifyLogin is the one credential check behind every login surface. It
-// returns the account only when email names an account and password matches
-// it; with adminOnly, the account must also be an active site admin. Every
-// rejection returns ErrInvalidAdminLogin. While the username is inside a
+// returns the account only when email names an account, password matches it
+// and the account is active; with adminOnly, it must also be a site admin.
+// Every rejection returns ErrInvalidAdminLogin. While the username is inside a
 // lockout, the rejection also wraps ErrAdminLoginRateLimited. Failures are
 // counted for unknown usernames too, so a lockout never reveals whether an
 // account exists. The email is matched case-insensitively.
@@ -54,10 +54,10 @@ func verifyLogin(throttle *LoginThrottle, st store.Backend, email, password stri
 		throttle.Failure(key)
 		return store.Account{}, ErrInvalidAdminLogin
 	}
-	// The admin check runs after the same PBKDF2 work as a password miss, so a
-	// disabled account is not distinguishable by timing.
-	adminOK := !adminOnly || (account.SiteAdmin && account.Status == "active")
-	if !VerifyPassword(password, account.PasswordHash) || !adminOK {
+	// The status and admin checks run after the same PBKDF2 work as a password
+	// miss, so a disabled account is not distinguishable by timing.
+	allowed := account.Status == "active" && (!adminOnly || account.SiteAdmin)
+	if !VerifyPassword(password, account.PasswordHash) || !allowed {
 		throttle.Failure(key)
 		return store.Account{}, ErrInvalidAdminLogin
 	}
