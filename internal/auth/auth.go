@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -215,11 +216,11 @@ func MiddlewareWithStore(st store.Backend, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, err := reg.classify(st, r)
 		if err != nil {
-			http.Error(w, errs.Unauthorized.Message(), http.StatusUnauthorized)
+			httpx.WriteError(w, errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, ""))
 			return
 		}
 		if isWritePath(r.URL.Path, r.Method) && role < Contributor {
-			http.Error(w, errs.PermissionDenied.Message(), http.StatusForbidden)
+			httpx.WriteError(w, errs.NewError(errs.PermissionDenied, errs.PermissionDenied.Cause, ""))
 			return
 		}
 		next.ServeHTTP(w, r)

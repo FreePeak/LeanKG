@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"sync"
 
@@ -46,7 +45,8 @@ func (h *projectRouting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.router.Open(r.Context(), sel)
 	if err != nil {
-		writeProjectError(w, err)
+		// FR-ZCP-02: an unknown project is refused as a 404, never routed to the default.
+		httpx.WriteMessage(w, http.StatusNotFound, err.Error())
 		return
 	}
 	h.handlerFor(p).ServeHTTP(w, r)
@@ -62,17 +62,4 @@ func (h *projectRouting) handlerFor(p *projects.Project) http.Handler {
 	built := h.build(p)
 	h.cache[p.Dir] = built
 	return built
-}
-
-// writeProjectError renders the FR-ZCP-02 unknown-project rejection as
-// JSON — an explicit route key never falls back to the default project.
-func writeProjectError(w http.ResponseWriter, err error) {
-	b, merr := json.Marshal(map[string]string{"error": err.Error()})
-	if merr != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write(b)
 }

@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 	"github.com/FreePeak/LeanKG/internal/telemetry/report"
 )
@@ -23,13 +24,13 @@ func (s *Server) consentGet(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.config()
 	if err != nil {
 		log.Printf("dashboard: telemetry config: %v", err)
-		writeErr(w, http.StatusInternalServerError, "telemetry config unreadable")
+		httpx.WriteMessage(w, http.StatusInternalServerError, "telemetry config unreadable")
 		return
 	}
 	st, err := s.led.store(r.Context())
 	if err != nil {
 		log.Printf("dashboard: telemetry ledger: %v", err)
-		writeErr(w, http.StatusInternalServerError, "telemetry ledger unavailable")
+		httpx.WriteMessage(w, http.StatusInternalServerError, "telemetry ledger unavailable")
 		return
 	}
 	out, err := s.settings(r.Context(), cfg, st)
@@ -41,40 +42,40 @@ func (s *Server) consentGet(w http.ResponseWriter, r *http.Request) {
 // grant itself capture.
 func (s *Server) consentPost(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
-		writeErr(w, http.StatusForbidden, "cross-origin request refused")
+		httpx.WriteMessage(w, http.StatusForbidden, "cross-origin request refused")
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(s.csrf)) != 1 {
-		writeErr(w, http.StatusForbidden, "missing or wrong X-CSRF-Token")
+		httpx.WriteMessage(w, http.StatusForbidden, "missing or wrong X-CSRF-Token")
 		return
 	}
 	var req report.ConsentRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxConsentBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON body")
+		httpx.WriteMessage(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	level := telemetry.Level(req.Capture)
 	switch level {
 	case telemetry.Off, telemetry.Metadata, telemetry.Bodies:
 	default:
-		writeErr(w, http.StatusBadRequest, "capture must be off, metadata or bodies")
+		httpx.WriteMessage(w, http.StatusBadRequest, "capture must be off, metadata or bodies")
 		return
 	}
 	if req.Purge && level != telemetry.Off {
-		writeErr(w, http.StatusBadRequest, "purge needs capture=off")
+		httpx.WriteMessage(w, http.StatusBadRequest, "purge needs capture=off")
 		return
 	}
 	clients, err := s.knownClients(req.Sessions)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	cfg, err := s.config()
 	if err != nil {
 		log.Printf("dashboard: telemetry config: %v", err)
-		writeErr(w, http.StatusInternalServerError, "telemetry config unreadable")
+		httpx.WriteMessage(w, http.StatusInternalServerError, "telemetry config unreadable")
 		return
 	}
 	cfg.Capture = level
@@ -86,19 +87,19 @@ func (s *Server) consentPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := telemetry.SaveConfig(s.opts.Home, cfg); err != nil {
 		log.Printf("dashboard: save telemetry config: %v", err)
-		writeErr(w, http.StatusInternalServerError, "could not save telemetry config")
+		httpx.WriteMessage(w, http.StatusInternalServerError, "could not save telemetry config")
 		return
 	}
 	if req.Purge {
 		if err := s.led.purge(); err != nil {
 			log.Printf("dashboard: purge ledger: %v", err)
-			writeErr(w, http.StatusInternalServerError, "could not purge the ledger")
+			httpx.WriteMessage(w, http.StatusInternalServerError, "could not purge the ledger")
 			return
 		}
 	}
 	st, err := s.led.store(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "telemetry ledger unavailable")
+		httpx.WriteMessage(w, http.StatusInternalServerError, "telemetry ledger unavailable")
 		return
 	}
 	out, err := s.settings(r.Context(), cfg, st)

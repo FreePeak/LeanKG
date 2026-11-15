@@ -81,7 +81,8 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-43 | `refactor(core): action handler registry` | M | - | todo | - | - |
 | CX-44 | `refactor(core): typed action args; command is the sub-command key` | M-L | - | todo | - | - |
 | CX-45 | `refactor(core): Options at New, Close, once-only LSP, surfaced store errors` | M | - | todo | - | - |
-| CX-46 | `refactor(httpx): one JSON and error writer; one error-code table` | M | - | todo | - | - |
+| CX-46 | `refactor(httpx): one JSON and error writer; one error-code table` | M | - | done | - | one `internal/httpx` table (`StatusFor`) and writers (`WriteJSON`, `WriteError`, `WriteMessage`). Eleven copies deleted in seven files: rest (writeJSON, writeErr), rest/auto (writeAutoJSON), dashboard (writeJSON, writeErr), web (writeEnvelope, writeEnvelopeStatus), federation (writeJSON, writeError), auth (writeJSON), cmd/leankg (writeProjectError). The auth gate denial is a JSON body. Not moved: the MCP `{"error":"unauthorized"}` in mcp/server.go, pinned by its gate test. Live: 8 error and 6 valid scenarios, base vs new, all transports agree on status and message for the same bad input (CX-46 evidence, session-local). |
+
 | CX-47 | `refactor(rest,rpc,web,mcp): one query decoder and one budget in core` | M | - | todo | - | - |
 | CX-48 | `refactor(web): status and graph views delegate to core and graph` | M | - | todo | - | - |
 | CX-49 | `refactor(auth): per-route role requirement; role in ctx` | M | - | todo | - | - |
@@ -104,7 +105,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | D4 | Where the token budget applies | In core, for every transport; MCP default unchanged | open |
 | D5 | `index --hook` time budget | 10 s by default, overridable by flag or environment | decided in CX-28: `--hook-budget` or `LEANKG_HOOK_BUDGET`; covers the size gate, index and embed; expiry prints one line and exits 0 (the plan named neither the flag, the variable nor the expiry status) |
 | D6 | Per-file unit of work (`ReplaceFile`) | Defer to P5; do it only if the CX-22 timing shows per-file commits dominate | open |
-| D7 | Web API answers HTTP 200 on every error | Move to the shared error table in CX-46 with the matching `ui-v2` change; otherwise keep and document | open |
+| D7 | Web API answers HTTP 200 on every error | Move to the shared error table in CX-46 with the matching `ui-v2` change; otherwise keep and document | decided: real statuses on the web API, no per-route flag (ui-v2 fetchJson throws on non-2xx and reads `error`) |
 | D8 | golangci-lint (`noctx`, `contextcheck`) | Not now; revisit after P3 | open |
 | D9 | Graph BFS caps | Node budget (default 5000) with `truncated: true` and effective depth in the response, in CX-30 | decided in CX-30: `graph.NodeBudget` = 5000 on Impact and ShortestPath; impact and path responses carry `depth`, and `truncated` only when the budget stopped the walk; path reports truncated instead of reachable:false |
 | D10 | Deterministic embedding provider is selectable in production | Keep behind explicit `LEANKG_EMBED_PROVIDER=deterministic` and flag it in `status` | open |

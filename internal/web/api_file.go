@@ -5,7 +5,6 @@
 package web
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -160,16 +159,10 @@ func resolveReadableFile(cleanPath, primary string, extras []string) (string, *f
 	}
 }
 
-func writeEnvelopeStatus(w http.ResponseWriter, status int, env apiEnvelope) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(env)
-}
-
 func (h *apiH) getFile(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("path")
 	if h.projectDir == "" {
-		writeEnvelopeStatus(w, http.StatusNotFound,
+		respondEnvelope(w, http.StatusNotFound,
 			failEnvelope("File not found '"+raw+"': the engine has no active project directory"))
 		return
 	}
@@ -178,22 +171,22 @@ func (h *apiH) getFile(w http.ResponseWriter, r *http.Request) {
 
 	resolved, ferr := resolveReadableFile(clean, h.projectDir, extras)
 	if ferr != nil {
-		writeEnvelopeStatus(w, ferr.status, failEnvelope(ferr.msg))
+		respondEnvelope(w, ferr.status, failEnvelope(ferr.msg))
 		return
 	}
 
 	f, err := os.Open(resolved)
 	if err != nil {
-		writeEnvelopeStatus(w, http.StatusInternalServerError,
+		respondEnvelope(w, http.StatusInternalServerError,
 			failEnvelope("Failed to read file '"+clean+"': "+err.Error()))
 		return
 	}
 	defer f.Close()
 	content, err := io.ReadAll(io.LimitReader(f, maxFileBytes))
 	if err != nil {
-		writeEnvelopeStatus(w, http.StatusInternalServerError,
+		respondEnvelope(w, http.StatusInternalServerError,
 			failEnvelope("Failed to read file '"+clean+"': "+err.Error()))
 		return
 	}
-	writeEnvelopeStatus(w, http.StatusOK, okEnvelope(map[string]any{"content": string(content)}))
+	respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{"content": string(content)}))
 }

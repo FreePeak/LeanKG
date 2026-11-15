@@ -347,7 +347,7 @@ func TestGraphExpandService(t *testing.T) {
 	}
 
 	// Missing path param → error envelope.
-	if code := getJSON(t, srv.URL+"/api/graph/expand-service", &env); code != 200 {
+	if code := getJSON(t, srv.URL+"/api/graph/expand-service", &env); code != 400 {
 		t.Fatalf("missing-param status %d", code)
 	}
 	if env.Success || env.Error == nil || !strings.Contains(*env.Error, "Missing 'path'") {
@@ -595,7 +595,7 @@ func TestQueryGraph(t *testing.T) {
 	}
 
 	// Blank question → error envelope.
-	if code := postJSON(t, srv.URL+"/api/query-graph", `{"question":"   "}`, &env); code != 200 {
+	if code := postJSON(t, srv.URL+"/api/query-graph", `{"question":"   "}`, &env); code != 400 {
 		t.Fatalf("blank status %d", code)
 	}
 	if env.Success || env.Error == nil || !strings.Contains(*env.Error, "empty") {
@@ -656,7 +656,7 @@ func TestProjectSwitch(t *testing.T) {
 	}
 
 	// Root is rejected with the Rust message.
-	if code := postJSON(t, srv.URL+"/api/project/switch", `{"path":"/"}`, &env); code != 200 {
+	if code := postJSON(t, srv.URL+"/api/project/switch", `{"path":"/"}`, &env); code != 400 {
 		t.Fatalf("root status %d", code)
 	}
 	if env.Error == nil || !strings.Contains(*env.Error, "filesystem root") {
@@ -668,7 +668,7 @@ func TestProjectSwitch(t *testing.T) {
 	// (LEANKG_PROJECT_DIRS); claiming switching is unsupported would be false.
 	// (TestProjectSwitchBehavior in api_switch_test.go covers the success path.)
 	other := t.TempDir()
-	if code := postJSON(t, srv.URL+"/api/project/switch", fmt.Sprintf(`{"path":%q}`, other), &env); code != 200 {
+	if code := postJSON(t, srv.URL+"/api/project/switch", fmt.Sprintf(`{"path":%q}`, other), &env); code != 400 {
 		t.Fatalf("other status %d", code)
 	}
 	if env.Success || env.Error == nil {
@@ -679,7 +679,7 @@ func TestProjectSwitch(t *testing.T) {
 	}
 
 	// github_url is refused too (Rust cloned; Go is single-project).
-	if code := postJSON(t, srv.URL+"/api/project/switch", `{"github_url":"https://example.com/x"}`, &env); code != 200 {
+	if code := postJSON(t, srv.URL+"/api/project/switch", `{"github_url":"https://example.com/x"}`, &env); code != 400 {
 		t.Fatalf("github status %d", code)
 	}
 	if env.Success {

@@ -7,8 +7,10 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 
 	connect "connectrpc.com/connect"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	leankgv1 "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1"
 
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -58,7 +60,7 @@ func (s *LeanKGService) Import(ctx context.Context, req *connect.Request[leankgv
 		Args:    args,
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, connect.NewError(connectCode(err), err)
 	}
 	js, err := jsonOf(out)
 	if err != nil {
@@ -75,7 +77,7 @@ func (s *LeanKGService) Query(ctx context.Context, req *connect.Request[leankgv1
 		Args:   protoArgs(req.Msg.Args),
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, connect.NewError(connectCode(err), err)
 	}
 	js, err := jsonOf(out)
 	if err != nil {
@@ -111,7 +113,7 @@ func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[lea
 		Args:   protoArgs(map[string]string{"command": req.Msg.Command, "path": req.Msg.Path, "cwd": ""}),
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, connect.NewError(connectCode(err), err)
 	}
 	js, err := jsonOf(out)
 	if err != nil {
@@ -131,4 +133,19 @@ func protoArgs(m map[string]string) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// connectCode maps a failed call to the ConnectRPC code of the HTTP status the
+// shared error table (internal/httpx) gives it, so the RPC wire refuses a
+// request with the same class REST does.
+func connectCode(err error) connect.Code {
+	switch httpx.StatusFor(err) {
+	case http.StatusUnauthorized:
+		return connect.CodeUnauthenticated
+	case http.StatusForbidden:
+		return connect.CodePermissionDenied
+	case httpx.StatusClientClosedRequest:
+		return connect.CodeCanceled
+	}
+	return connect.CodeInvalidArgument
 }

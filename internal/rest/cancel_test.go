@@ -49,15 +49,15 @@ func TestCancelledRequestNeverReachesStore(t *testing.T) {
 	}
 }
 
-func TestWriteErrCancelledIsNotBadRequest(t *testing.T) {
+func TestWriteErrorCancelledIsNotBadRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
-	writeErr(rec, context.Canceled)
+	httpx.WriteError(rec, context.Canceled)
 	if rec.Code != httpx.StatusClientClosedRequest {
 		t.Fatalf("cancelled: status = %d, want %d (a cancelled call is not a data failure)", rec.Code, httpx.StatusClientClosedRequest)
 	}
 
 	rec = httptest.NewRecorder()
-	writeErr(rec, errors.New("boom"))
+	httpx.WriteError(rec, errors.New("boom"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("ordinary error: status = %d, want 400", rec.Code)
 	}

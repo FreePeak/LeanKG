@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -172,7 +173,7 @@ func Routes(st store.Backend) http.Handler {
 			}
 			if !ctx.CanAdmin() && (ctx.AccountID == "" || t.AccountID != ctx.AccountID) {
 				msg := "insufficient permission to revoke another account's token (owner or admin required)"
-				writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: &msg})
+				httpx.WriteJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: &msg})
 				return
 			}
 			if t.RevokedAt == 0 {
@@ -337,17 +338,11 @@ type apiResponse struct {
 }
 
 func writeOK(w http.ResponseWriter, data any) {
-	writeJSON(w, http.StatusOK, apiResponse{Success: true, Data: data})
+	httpx.WriteJSON(w, http.StatusOK, apiResponse{Success: true, Data: data})
 }
 
 func writeFail(w http.ResponseWriter, msg string) {
-	writeJSON(w, http.StatusBadRequest, apiResponse{Success: false, Error: &msg})
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	httpx.WriteJSON(w, http.StatusBadRequest, apiResponse{Success: false, Error: &msg})
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, into any) bool {

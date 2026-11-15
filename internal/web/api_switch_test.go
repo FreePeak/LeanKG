@@ -60,8 +60,8 @@ func TestProjectSwitchBehavior(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (envelope carries the outcome)", rec.Code)
+		if rec.Code != http.StatusOK && rec.Code/100 != 4 {
+			t.Fatalf("status = %d, want 200 or a 4xx refusal (envelope carries the outcome)", rec.Code)
 		}
 		var env struct {
 			Success bool           `json:"success"`

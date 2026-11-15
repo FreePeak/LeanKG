@@ -178,6 +178,15 @@ var IndexRootMismatch = ErrorCode{
 	DocAnchor: "docs/mcp-tool-contract.md",
 }
 
+// InvalidParam: a request field has the wrong JSON or proto type, or an
+// out-of-range value, so the query cannot be read.
+var InvalidParam = ErrorCode{
+	Code:      "LEANKG_ERROR_INVALID_PARAM",
+	Cause:     "a request parameter has the wrong type or value",
+	Fix:       "send action and query as strings, limit as a whole number, and args as an object; re-read the tool's inputSchema for the exact types",
+	DocAnchor: "docs/mcp-tool-contract.md",
+}
+
 // Catalog is the registry, in presentation order (not significance).
 var Catalog = []ErrorCode{
 	PGUnreachable,
@@ -196,6 +205,7 @@ var Catalog = []ErrorCode{
 	PermissionDenied,
 	PathOutsideProject,
 	IndexRootMismatch,
+	InvalidParam,
 }
 
 // All returns every registered error code, in presentation order.

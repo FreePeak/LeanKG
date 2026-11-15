@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -65,7 +66,7 @@ func Receiver(st store.Backend, projectDir string) http.Handler {
 		case req.Method == http.MethodGet && req.URL.Path == GraphPath:
 			r.publish(w, req)
 		default:
-			writeError(w, http.StatusMethodNotAllowed, fmt.Errorf(
+			httpx.WriteMessage(w, http.StatusMethodNotAllowed, fmt.Sprintf(
 				"federation: %s %s is not a graph route (expected POST %s or GET %s)",
 				req.Method, req.URL.Path, PushPath, GraphPath))
 		}
@@ -82,18 +83,18 @@ type receiver struct {
 func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
 	role, err := h.callerRole(req)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, err)
+		httpx.WriteMessage(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	if role < auth.Contributor {
-		writeError(w, http.StatusForbidden, fmt.Errorf(
+		httpx.WriteMessage(w, http.StatusForbidden, fmt.Sprintf(
 			"federation: pushing needs a Contributor token, this caller is %s", role))
 		return
 	}
 
 	var payload pushPayload
 	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("federation: decode push body: %w", err))
+		httpx.WriteMessage(w, http.StatusBadRequest, fmt.Errorf("federation: decode push body: %w", err).Error())
 		return
 	}
 	now := time.Now().UTC()
@@ -101,13 +102,13 @@ func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		var bad *badPayload
 		if errors.As(err, &bad) {
-			writeError(w, http.StatusBadRequest, err)
+			httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 		} else {
-			writeError(w, http.StatusInternalServerError, err)
+			httpx.WriteMessage(w, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, graphDocument{
+	httpx.WriteJSON(w, http.StatusOK, graphDocument{
 		pushPayload: pushPayload{
 			Env:           payload.Env,
 			Service:       payload.Service,
@@ -125,21 +126,21 @@ func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
 // a graph it could already query through /api/v1/query.
 func (h *receiver) publish(w http.ResponseWriter, req *http.Request) {
 	if _, err := h.callerRole(req); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
+		httpx.WriteMessage(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	elements, err := h.st.Elements()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("federation: read elements: %w", err))
+		httpx.WriteMessage(w, http.StatusInternalServerError, fmt.Errorf("federation: read elements: %w", err).Error())
 		return
 	}
 	relationships, err := readRelationships(h.st)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		httpx.WriteMessage(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	now := time.Now().UTC()
-	writeJSON(w, http.StatusOK, graphDocument{
+	httpx.WriteJSON(w, http.StatusOK, graphDocument{
 		pushPayload: pushPayload{
 			// The store has no env column, so the published envelope reports the
 			// environment the caller asked about, falling back to "local".
@@ -298,16 +299,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// writeError answers in the same shape internal/rest uses, so one client
-// parses errors from the graph routes and every other endpoint alike.
-func writeError(w http.ResponseWriter, code int, err error) {
-	writeJSON(w, code, map[string]string{"error": err.Error()})
 }
