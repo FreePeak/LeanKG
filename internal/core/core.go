@@ -231,6 +231,11 @@ func splitCommaList(v string) []string {
 // An absent tag list stays absent — an empty slice would read as an explicit
 // (and wrong) tag request to the filters.
 func (r ImportRequest) normalizeTags() ImportRequest {
+	// Args is optional on the wire; a bare {action, tags} call arrives with a
+	// nil map, and the writes below must not panic on it.
+	if r.Args == nil {
+		r.Args = map[string]any{}
+	}
 	switch v := r.Args["tags"].(type) {
 	case string:
 		if split := splitCommaList(v); len(split) > 0 {

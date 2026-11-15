@@ -93,3 +93,37 @@ func TestStatusNamesSpaceReadError(t *testing.T) {
 		t.Fatalf("space_error = %q, want it to name %q", got, cause)
 	}
 }
+
+// endLookupFailsAfterWalk reads normally until the walk has concluded an end is
+// unknown (Incoming is the last read hasNode makes), then fails every lookup. The
+// path verb's end-naming lookup is the one that runs after that conclusion.
+type endLookupFailsAfterWalk struct {
+	store.Backend
+	cause  error
+	walked bool
+}
+
+func (f *endLookupFailsAfterWalk) Incoming(qn string) ([]store.Relationship, error) {
+	f.walked = true
+	return f.Backend.Incoming(qn)
+}
+
+func (f *endLookupFailsAfterWalk) FindExact(name string) ([]store.Element, error) {
+	if f.walked {
+		return nil, f.cause
+	}
+	return f.Backend.FindExact(name)
+}
+
+// A path whose end is unknown is answered as unresolved only when the lookup
+// that names the end succeeds; a failed lookup is the store error, not an answer.
+func TestPathSurfacesEndLookupError(t *testing.T) {
+	cause := errors.New("end lookup unreadable")
+	e := New(&endLookupFailsAfterWalk{Backend: seededStore(t), cause: cause}, Options{})
+	out, err := e.Query(context.Background(), QueryRequest{
+		Action: "path", Query: "ghost.node", Args: map[string]any{"to": "phantom.node"},
+	})
+	if !errors.Is(err, cause) {
+		t.Fatalf("Query err = %v (answer %v), want the store error", err, out)
+	}
+}

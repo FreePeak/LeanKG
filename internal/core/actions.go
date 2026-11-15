@@ -406,7 +406,11 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 		// than fail: the end that does not resolve is a fact the caller
 		// can act on.
 		for _, end := range []struct{ label, qn string }{{"from (query)", seed}, {"to (args.to)", to}} {
-			if els, ferr := e.st.FindExact(end.qn); ferr == nil && len(els) == 0 {
+			els, ferr := e.st.FindExact(end.qn)
+			if ferr != nil {
+				return nil, ferr
+			}
+			if len(els) == 0 {
 				return graphUnresolved(resp, req, end.label, end.qn)
 			}
 		}
