@@ -60,7 +60,7 @@ func cmdQuality(ctx context.Context, args []string) error {
 		return verbFatal(err)
 	}
 	defer engine.Store().Close()
-	els, err := graph.OversizedFunctions(engine.Store(), *minLines, *lang)
+	els, err := graph.OversizedFunctions(context.Background(), engine.Store(), *minLines, *lang)
 	if err != nil {
 		return verbFatal(err)
 	}

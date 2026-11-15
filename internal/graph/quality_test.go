@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,7 +47,7 @@ func names(els []store.Element) []string {
 func TestOversizedFunctionsThresholdsAndOrder(t *testing.T) {
 	st := qualityFixture(t)
 
-	got, err := OversizedFunctions(st, 50, "")
+	got, err := OversizedFunctions(context.Background(), st, 50, "")
 	if err != nil {
 		t.Fatalf("OversizedFunctions: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestOversizedFunctionsThresholdsAndOrder(t *testing.T) {
 func TestOversizedFunctionsLanguageFilterAndBoundary(t *testing.T) {
 	st := qualityFixture(t)
 
-	got, err := OversizedFunctions(st, 50, "python")
+	got, err := OversizedFunctions(context.Background(), st, 50, "python")
 	if err != nil {
 		t.Fatalf("OversizedFunctions: %v", err)
 	}
@@ -70,14 +71,14 @@ func TestOversizedFunctionsLanguageFilterAndBoundary(t *testing.T) {
 	}
 
 	// The threshold is inclusive: a 49-line span is out, 50 is in.
-	got, err = OversizedFunctions(st, 200, "")
+	got, err = OversizedFunctions(context.Background(), st, 200, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(names(got), ",") != "fn200" {
 		t.Fatalf("minLines=200 names = %v, want [fn200]", names(got))
 	}
-	got, err = OversizedFunctions(st, 201, "")
+	got, err = OversizedFunctions(context.Background(), st, 201, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestOversizedTieBreakByQualifiedName(t *testing.T) {
 	if err := st.UpsertElements(els); err != nil {
 		t.Fatal(err)
 	}
-	got, err := OversizedFunctions(st, 1, "")
+	got, err := OversizedFunctions(context.Background(), st, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}

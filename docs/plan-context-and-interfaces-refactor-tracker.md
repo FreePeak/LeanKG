@@ -1,6 +1,6 @@
 # Tracker: context propagation and interface redesign
 
-**Plan:** [plan-context-and-interfaces-refactor.md](plan-context-and-interfaces-refactor.md) · **Last updated:** 2026-11-14 · **Base:** 6b4b741e
+**Plan:** [plan-context-and-interfaces-refactor.md](plan-context-and-interfaces-refactor.md) · **Last updated:** 2026-11-15 · **Base:** 6b4b741e
 
 ## How to use
 
@@ -60,7 +60,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 |---|---|---|---|---|---|---|
 | CX-28 | `refactor(cmd): one root signal context; index and serve take ctx` | M | - | done | local branch `refactor/cx-28-root-ctx` (not pushed) | root ctx from signal.NotifyContext in main (a second Ctrl-C kills a stuck run); index, serve and setup take ctx; runIndex stops between files with the ctx error. `index --hook` budget: `--hook-budget` or `LEANKG_HOOK_BUDGET`, default 10 s, expiry prints one line and exits 0. Live (3000 files): SIGINT base killed at 0.001 s with status -2; new exits 130 at 0.028 s, store opens; hook 1.037 s exit 0; full index counts equal base. cmd/ is package main, outside the ratchet, so no budget number changes. |
 | CX-29 | `refactor(cmd): every verb takes ctx and returns an error` | M-L | - | done | local branch `refactor/cx-29-verbs-ctx` (not pushed) | every cmd verb is `func(ctx, args) error` in one `verbs` map; main's `runVerb` maps the error once via `internal/cliexit` (0, 1, 2 usage or bad flag, 130 cancelled, a verb-set code for doctor, update and run). Per-verb `NotifyContext` removed (6: 5 in cmd/leankg, 1 in leankg-embed; the 2 roots remain); SIGHUP in telemetry kept. `context.Background()` in cmd: 36 to 2 (the two main roots). `os.Exit` in cmd: 4 calls, all in the two main functions; `log.Fatal`: 0. Live: 14 success verbs and 4 failure paths match the CX-28 binary on stdout and exit code; SIGINT during a 3000-file index exits 130 on both. Evidence: scratchpad CX-29.txt. |
-| CX-30 | `refactor(core,graph,mcp): thread ctx through the rungs, graph and status` | M | - | todo | - | - |
+| CX-30 | `refactor(core,graph,mcp): thread ctx through the rungs, graph and status` | M | - | done | local branch `refactor/cx-30-core-graph-mcp-ctx` (not pushed) | rungs L1-L3 and ladder check ctx.Err per rung (cancelled embed is ctx.Err, not a degrade); graph verbs take ctx, BFS checks ctx per node; D9 NodeBudget 5000 with depth and truncated:true (path reports truncated, not unreachable); embed probe bounded by caller ctx, outside the mutex, a cancelled probe is not cached; core Background budget 2 to 0 (archtest entry removed). Live (5200 callers + 4 tiers, depth 5): base 26001 hits unbounded; new 5000 hits, truncated:true, depth 5. 20 queries aborted at 2 ms: base 6.0 s server CPU, new 0.06 s. callers and callees are one hop, still unbounded (see report). |
 | CX-31 | `refactor(rest,rpc,web,dashboard,auth): use the request context` | M | - | todo | - | - |
 | CX-32 | `refactor(index,lsp,langs,tstree): cancellable extraction and LSP` | M | - | todo | - | - |
 | CX-33 | `refactor(embed): ctx-aware HTTP and run loop` | M | - | todo | - | - |
@@ -106,7 +106,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | D6 | Per-file unit of work (`ReplaceFile`) | Defer to P5; do it only if the CX-22 timing shows per-file commits dominate | open |
 | D7 | Web API answers HTTP 200 on every error | Move to the shared error table in CX-46 with the matching `ui-v2` change; otherwise keep and document | open |
 | D8 | golangci-lint (`noctx`, `contextcheck`) | Not now; revisit after P3 | open |
-| D9 | Graph BFS caps | Node budget (default 5000) with `truncated: true` and effective depth in the response, in CX-30 | open |
+| D9 | Graph BFS caps | Node budget (default 5000) with `truncated: true` and effective depth in the response, in CX-30 | decided in CX-30: `graph.NodeBudget` = 5000 on Impact and ShortestPath; impact and path responses carry `depth`, and `truncated` only when the budget stopped the walk; path reports truncated instead of reachable:false |
 | D10 | Deterministic embedding provider is selectable in production | Keep behind explicit `LEANKG_EMBED_PROVIDER=deterministic` and flag it in `status` | open |
 
 ## Metrics

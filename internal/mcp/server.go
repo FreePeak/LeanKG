@@ -468,7 +468,7 @@ type metricEval struct {
 // post is the delivered (post-budget) output, so OutputTokens and the
 // elements count match what the client received (plan DS-07). Best-effort by
 // contract: a ledger write failure must never fail the call.
-func (s *Server) recordMetric(eng *core.Engine, req *mcp.CallToolRequest, started time.Time, post any, err error, ev metricEval) {
+func (s *Server) recordMetric(ctx context.Context, eng *core.Engine, req *mcp.CallToolRequest, started time.Time, post any, err error, ev metricEval) {
 	if eng == nil || req == nil {
 		return
 	}

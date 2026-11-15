@@ -211,8 +211,10 @@ func fatalJSON(err error) error {
 // through the element census (O(n) scan; documented ceiling: fine for
 // CLI-sized indexes).
 func impactFrom(st store.Backend, seed string, depth int) ([]graph.Hit, error) {
-	if _, err := graph.Impact(st, seed, depth); err == nil {
-		return graph.Impact(st, seed, depth)
+	ctx := context.Background()
+	if _, _, err := graph.Impact(ctx, st, seed, depth); err == nil {
+		hits, _, err := graph.Impact(ctx, st, seed, depth)
+		return hits, err
 	}
 	els, err := st.Elements()
 	if err != nil {
@@ -224,7 +226,7 @@ func impactFrom(st store.Backend, seed string, depth int) ([]graph.Hit, error) {
 		if !seedMatchesFile(el, seed, prefix) {
 			continue
 		}
-		hits, err := graph.Impact(st, el.QualifiedName, depth)
+		hits, _, err := graph.Impact(ctx, st, el.QualifiedName, depth)
 		if err != nil {
 			continue
 		}
