@@ -10,7 +10,6 @@ import (
 // budgets it only goes down, and an entry is removed when its count reaches 0.
 var ioBudget = map[string]map[string]int{
 	"internal/dashboard":            {"exec.Command": 1},
-	"internal/doctor":               {"sql-no-ctx": 6},
 	"internal/embed/embedtest":      {"exec.Command": 1},
 	"internal/gitobj/gittest":       {"exec.Command": 1},
 	"internal/memory":               {"sql-no-ctx": 28},
