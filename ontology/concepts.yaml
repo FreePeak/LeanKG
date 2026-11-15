@@ -258,6 +258,7 @@ concepts:
       - internal/rpc/service.go
       - internal/httpx/httpx.go
       - internal/core/decode_query.go
+      - internal/core/budget.go
 
   - id: web_ui
     type: service

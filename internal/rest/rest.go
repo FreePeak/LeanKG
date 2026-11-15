@@ -56,12 +56,12 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			httpx.WriteError(w, err)
 			return
 		}
-		out, err := engine.Query(r.Context(), req)
+		ans, err := engine.QueryAnswer(r.Context(), req)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, out)
+		httpx.WriteJSON(w, http.StatusOK, ans.Body)
 	})
 	mux.HandleFunc("POST /api/v1/import", func(w http.ResponseWriter, r *http.Request) {
 		var req core.ImportRequest

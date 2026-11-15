@@ -541,40 +541,6 @@ func metricQueryArgs(raw json.RawMessage) (pattern, file string, depth int64) {
 	return pattern, file, depth
 }
 
-// enforceBudget applies the FR-GF tool token budget to a tool response before
-// it is returned. The envelope tool names (query/import) are uncapped in the
-// budget table on purpose — the cap belongs to the caller's chosen action
-// (QueryRequest.Action, the legacy Rust tool-name space), so an envelope hit
-// must never re-truncate an already-compliant action response.
-// budget.Apply attaches the `_token_budget` marker to map[string]any payloads;
-// typed engine payloads are round-tripped through JSON to keep the marker.
-func enforceBudget(v any, action string) any {
-	res, _ := enforceBudgetStats(v, action)
-	return res
-}
-
-// enforceBudgetStats is enforceBudget that also returns the trim statistics
-// (pre-truncation size, delivered size) the capture layer records (DS-07).
-func enforceBudgetStats(v any, action string) (any, budget.Stats) {
-	key := action
-	if key == "" {
-		// The ladder router answers search hits (L1/L2/L3), so it carries the
-		// search cap; the uncapped `query` envelope row let a ladder answer
-		// grow without bound while the same hits pinned to semantic were cut.
-		key = "search"
-	}
-	if m, ok := v.(map[string]any); ok {
-		return budget.TokenBudget{}.Apply(m, key)
-	}
-	if raw, err := json.Marshal(v); err == nil {
-		var round map[string]any
-		if json.Unmarshal(raw, &round) == nil {
-			return budget.TokenBudget{}.Apply(round, key)
-		}
-	}
-	return budget.TokenBudget{}.Apply(v, key)
-}
-
 func (s *Server) handleImport(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	started := time.Now()
 	if err := allowTool(ctx, core.ToolImport); err != nil {
@@ -593,7 +559,7 @@ func (s *Server) handleImport(ctx context.Context, req *mcp.CallToolRequest) (*m
 		s.finishCall(ctx, eng, req, started, in.Action, out, nil, budget.Stats{}, err)
 		return nil, err
 	}
-	res, st := enforceBudgetStats(out, in.Action)
+	res, st := core.EnforceBudget(out, in.Action, 0)
 	s.finishCall(ctx, eng, req, started, in.Action, out, res, st, nil)
 	return textResult(res)
 }
@@ -612,14 +578,13 @@ func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mc
 	if err != nil {
 		return nil, err
 	}
-	out, err := eng.Query(ctx, in)
+	ans, err := eng.QueryAnswer(ctx, in)
 	if err != nil {
-		s.finishCall(ctx, eng, req, started, in.Action, out, nil, budget.Stats{}, err)
+		s.finishCall(ctx, eng, req, started, in.Action, ans.Raw, nil, budget.Stats{}, err)
 		return nil, err
 	}
-	res, st := enforceBudgetStats(out, in.Action)
-	s.finishCall(ctx, eng, req, started, in.Action, out, res, st, nil)
-	return textResult(res)
+	s.finishCall(ctx, eng, req, started, in.Action, ans.Raw, ans.Body, ans.Stats, nil)
+	return textResult(ans.Body)
 }
 
 func (s *Server) handleStatus(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {

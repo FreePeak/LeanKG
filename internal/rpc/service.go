@@ -79,11 +79,11 @@ func (s *LeanKGService) Query(ctx context.Context, req *connect.Request[leankgv1
 	if err != nil {
 		return nil, connect.NewError(connectCode(err), err)
 	}
-	out, err := s.engine.Query(ctx, query)
+	ans, err := s.engine.QueryAnswer(ctx, query)
 	if err != nil {
 		return nil, connect.NewError(connectCode(err), err)
 	}
-	js, err := jsonOf(out)
+	js, err := jsonOf(ans.Body)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -119,11 +119,11 @@ func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[lea
 	if err != nil {
 		return nil, connect.NewError(connectCode(err), err)
 	}
-	out, err := s.engine.Query(ctx, query)
+	ans, err := s.engine.QueryAnswer(ctx, query)
 	if err != nil {
 		return nil, connect.NewError(connectCode(err), err)
 	}
-	js, err := jsonOf(out)
+	js, err := jsonOf(ans.Body)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}

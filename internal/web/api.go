@@ -305,12 +305,12 @@ func (h *apiH) query(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, err)
 		return
 	}
-	resp, err := h.engine.Query(r.Context(), qr)
+	ans, err := h.engine.QueryAnswer(r.Context(), qr)
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{"result": resp}))
+	respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{"result": ans.Body}))
 }
 
 func (h *apiH) search(w http.ResponseWriter, r *http.Request) {

@@ -17,7 +17,7 @@ import (
 
 // TestBudgetNeverDropsPrimaryPayload is the RS-04 golden: REAL engine answers
 // for every hit-returning route, at limits that overflow every cap, go through
-// the same enforceBudget the MCP handlers use. The primary list must survive
+// the same core.EnforceBudget the MCP and REST handlers use. The primary list must survive
 // non-empty, the envelope keys must survive, and the delivered size must fit
 // the cap. The validation run found pinned semantic answers with no `hits`
 // and a full `import read` with no `content`.
@@ -64,7 +64,7 @@ func TestBudgetNeverDropsPrimaryPayload(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%q/%d: %v", r.action, limit, err)
 			}
-			shaped := enforceBudget(out, r.action)
+			shaped, _ := core.EnforceBudget(out, r.action, 0)
 			raw, _ := json.Marshal(shaped)
 			var obj map[string]any
 			if err := json.Unmarshal(raw, &obj); err != nil {
@@ -98,7 +98,8 @@ func TestBudgetNeverDropsPrimaryPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(enforceBudget(out, "read"))
+	shaped, _ := core.EnforceBudget(out, "read", 0)
+	raw, _ := json.Marshal(shaped)
 	var obj map[string]any
 	_ = json.Unmarshal(raw, &obj)
 	if c, _ := obj["content"].(string); len(c) < 1000 {

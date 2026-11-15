@@ -175,8 +175,13 @@ func (s Stats) SavedPercent() float64 {
 // engine (`results`); the Go engine answers with `hits`, `result`,
 // `memories`, …, so an over-budget semantic answer lost `hits` altogether and
 // a full `import read` lost `content`.
-func (TokenBudget) Apply(v any, tool string) (any, Stats) {
-	maxTokens := TokenBudget{}.MaxTokensForTool(tool)
+func (tb TokenBudget) Apply(v any, tool string) (any, Stats) {
+	return tb.ApplyMax(v, tool, tb.MaxTokensForTool(tool))
+}
+
+// ApplyMax is Apply with an explicit cap, for a caller that sets its own
+// budget (token_budget). A cap of 0 or less leaves the payload uncapped.
+func (TokenBudget) ApplyMax(v any, tool string, maxTokens int) (any, Stats) {
 	stats := Stats{Tool: tool, Max: maxTokens}
 	stats.PreTruncationToken = countTokens(v)
 	if maxTokens <= 0 || stats.PreTruncationToken <= maxTokens {
