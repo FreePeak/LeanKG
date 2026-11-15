@@ -67,7 +67,7 @@ func vectorHash(t *testing.T, path string) string {
 // bytes of unused page space in the vector table, 16 % of the whole store.
 func TestNewStoreUsesTheLargerPageSize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
-	st, err := openSQLite(path, RW)
+	st, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestNewStoreUsesTheLargerPageSize(t *testing.T) {
 	if err := st.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	size, err := PageSize(path)
+	size, err := PageSize(context.Background(), path)
 	if err != nil {
 		t.Fatalf("page size: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestNewStoreUsesTheLargerPageSize(t *testing.T) {
 func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
 	createLegacyStore(t, path)
-	st, err := openSQLite(path, RW)
+	st, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 	if err := st.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	size, err := PageSize(path)
+	size, err := PageSize(context.Background(), path)
 	if err != nil {
 		t.Fatalf("page size: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
 	createLegacyStore(t, path)
-	st, err := openSQLite(path, RW)
+	st, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 		}
 	}
 	before := vectorHash(t, path)
-	sizeBefore, err := PageSize(path)
+	sizeBefore, err := PageSize(context.Background(), path)
 	if err != nil {
 		t.Fatalf("page size: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	res, err := UpgradePageSize(path, DefaultPageSize)
+	res, err := UpgradePageSize(context.Background(), path, DefaultPageSize)
 	if err != nil {
 		t.Fatalf("upgrade: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestUpgradePageSizeRefusesAnImpossibleSize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
 	createLegacyStore(t, path)
 	for _, size := range []int{0, 100, 4095, 1 << 20} {
-		if _, err := UpgradePageSize(path, size); err == nil {
+		if _, err := UpgradePageSize(context.Background(), path, size); err == nil {
 			t.Errorf("page size %d was accepted", size)
 		}
 	}

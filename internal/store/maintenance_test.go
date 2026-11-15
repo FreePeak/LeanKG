@@ -12,7 +12,7 @@ import (
 func newVacuumFixture(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "leankg.db")
-	st, err := openSQLite(path, RW)
+	st, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestCheckpointTruncatesWAL(t *testing.T) {
 
 func TestVacuumRefusesReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ro.db")
-	rw, err := openSQLite(path, RW)
+	rw, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestVacuumRefusesReadOnly(t *testing.T) {
 	if err := rw.Close(); err != nil {
 		t.Fatalf("close rw: %v", err)
 	}
-	ro, err := openSQLite(path, RO)
+	ro, err := openSQLite(context.Background(), path, RO)
 	if err != nil {
 		t.Fatalf("open ro: %v", err)
 	}

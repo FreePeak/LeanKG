@@ -63,7 +63,7 @@ func cmdVacuum(ctx context.Context, args []string) error {
 		if err := st.Close(); err != nil {
 			return verbFatal(fmt.Errorf("vacuum: close store: %w", err))
 		}
-		res, err := store.UpgradePageSize(path, *pageSize)
+		res, err := store.UpgradePageSize(ctx, path, *pageSize)
 		if err != nil {
 			return verbFatal(fmt.Errorf("vacuum: page size: %w", err))
 		}

@@ -231,11 +231,11 @@ func (s *Store) OrgMembers(ctx context.Context, orgID string) ([]OrgMember, erro
 
 // TeamMemberUpsert adds or re-roles a team member (same uniqueness contract as
 // org memberships: UNIQUE (team_id, account_id)).
-func (s *Store) TeamMemberUpsert(m TeamMember) error {
+func (s *Store) TeamMemberUpsert(ctx context.Context, m TeamMember) error {
 	if m.TeamID == "" || m.AccountID == "" {
 		return fmt.Errorf("store: team member upsert: team_id and account_id are required")
 	}
-	_, err := s.db.Exec(`INSERT INTO team_members (team_id, account_id, role, joined_at)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO team_members (team_id, account_id, role, joined_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(team_id, account_id) DO UPDATE SET
 			role = excluded.role, joined_at = excluded.joined_at`,
@@ -247,8 +247,8 @@ func (s *Store) TeamMemberUpsert(m TeamMember) error {
 }
 
 // TeamMemberOf resolves one team membership row.
-func (s *Store) TeamMemberOf(teamID, accountID string) (TeamMember, bool, error) {
-	row := s.db.QueryRow(`SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = ? AND account_id = ?`, teamID, accountID)
+func (s *Store) TeamMemberOf(ctx context.Context, teamID, accountID string) (TeamMember, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = ? AND account_id = ?`, teamID, accountID)
 	m, err := scanTeamMember(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -260,8 +260,8 @@ func (s *Store) TeamMemberOf(teamID, accountID string) (TeamMember, bool, error)
 }
 
 // TeamMembers lists every member of a team.
-func (s *Store) TeamMembers(teamID string) ([]TeamMember, error) {
-	rows, err := s.db.Query(`SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = ? ORDER BY joined_at, account_id`, teamID)
+func (s *Store) TeamMembers(ctx context.Context, teamID string) ([]TeamMember, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = ? ORDER BY joined_at, account_id`, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("store: team members: %w", err)
 	}

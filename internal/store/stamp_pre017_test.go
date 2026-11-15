@@ -21,7 +21,7 @@ import (
 // pre-017 store, not a hand-edited one.
 func openPre017Store(t *testing.T) *Store {
 	t.Helper()
-	s, err := openSQLite(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(context.Background(), filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

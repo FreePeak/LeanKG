@@ -41,7 +41,7 @@ type Store struct {
 }
 
 // openSQLite opens (creating if needed in RW mode) the store at path.
-func openSQLite(path string, mode Mode) (*Store, error) {
+func openSQLite(ctx context.Context, path string, mode Mode) (*Store, error) {
 	if mode == RO {
 		if _, err := os.Stat(path); err != nil {
 			return nil, fmt.Errorf("store: read-only open of missing store %s: %w", path, err)
@@ -82,11 +82,11 @@ func openSQLite(path string, mode Mode) (*Store, error) {
 		// which is why a NEW store does not take journal_mode from the DSN
 		// (the driver's pragmas run at connect, before this code can set
 		// the page size on an empty file).
-		if _, err := db.Exec("PRAGMA page_size = " + strconv.Itoa(DefaultPageSize)); err != nil {
+		if _, err := db.ExecContext(ctx, "PRAGMA page_size = "+strconv.Itoa(DefaultPageSize)); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("store: set page size: %w", err)
 		}
-		if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("store: enable WAL: %w", err)
 		}

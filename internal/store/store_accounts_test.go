@@ -109,21 +109,21 @@ func TestOrgAndMembershipRoundTrip(t *testing.T) {
 
 func TestTeamMemberRoundTrip(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.TeamMemberUpsert(TeamMember{TeamID: "team-1", AccountID: "acct-1", Role: "admin", JoinedAt: 10}); err != nil {
+	if err := s.TeamMemberUpsert(context.Background(), TeamMember{TeamID: "team-1", AccountID: "acct-1", Role: "admin", JoinedAt: 10}); err != nil {
 		t.Fatalf("team member upsert: %v", err)
 	}
-	if err := s.TeamMemberUpsert(TeamMember{TeamID: "team-1", AccountID: "acct-1", Role: "member", JoinedAt: 20}); err != nil {
+	if err := s.TeamMemberUpsert(context.Background(), TeamMember{TeamID: "team-1", AccountID: "acct-1", Role: "member", JoinedAt: 20}); err != nil {
 		t.Fatalf("team member re-upsert: %v", err)
 	}
-	m, found, err := s.TeamMemberOf("team-1", "acct-1")
+	m, found, err := s.TeamMemberOf(context.Background(), "team-1", "acct-1")
 	if err != nil || !found || m.Role != "member" || m.JoinedAt != 20 {
 		t.Fatalf("team member = %+v, %v, %v", m, found, err)
 	}
-	members, err := s.TeamMembers("team-1")
+	members, err := s.TeamMembers(context.Background(), "team-1")
 	if err != nil || len(members) != 1 {
 		t.Fatalf("team members = %+v, %v; want exactly one", members, err)
 	}
-	if _, found, err := s.TeamMemberOf("team-1", "acct-9"); err != nil || found {
+	if _, found, err := s.TeamMemberOf(context.Background(), "team-1", "acct-9"); err != nil || found {
 		t.Fatalf("non-member found=%v err=%v; want miss", found, err)
 	}
 }

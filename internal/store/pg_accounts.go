@@ -162,11 +162,11 @@ func (s *PGStore) OrgMembers(ctx context.Context, orgID string) ([]OrgMember, er
 }
 
 // TeamMemberUpsert adds or re-roles a team member.
-func (s *PGStore) TeamMemberUpsert(m TeamMember) error {
+func (s *PGStore) TeamMemberUpsert(ctx context.Context, m TeamMember) error {
 	if m.TeamID == "" || m.AccountID == "" {
 		return fmt.Errorf("store: team member upsert: team_id and account_id are required")
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO team_members (team_id, account_id, role, joined_at)
+	_, err := s.pool.Exec(ctx, `INSERT INTO team_members (team_id, account_id, role, joined_at)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (team_id, account_id) DO UPDATE SET
 			role = excluded.role, joined_at = excluded.joined_at`,
@@ -178,8 +178,8 @@ func (s *PGStore) TeamMemberUpsert(m TeamMember) error {
 }
 
 // TeamMemberOf resolves one team membership row.
-func (s *PGStore) TeamMemberOf(teamID, accountID string) (TeamMember, bool, error) {
-	row := s.pool.QueryRow(pgCtx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = $1 AND account_id = $2`, teamID, accountID)
+func (s *PGStore) TeamMemberOf(ctx context.Context, teamID, accountID string) (TeamMember, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = $1 AND account_id = $2`, teamID, accountID)
 	m, err := scanTeamMember(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -191,8 +191,8 @@ func (s *PGStore) TeamMemberOf(teamID, accountID string) (TeamMember, bool, erro
 }
 
 // TeamMembers lists every member of a team.
-func (s *PGStore) TeamMembers(teamID string) ([]TeamMember, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = $1 ORDER BY joined_at, account_id`, teamID)
+func (s *PGStore) TeamMembers(ctx context.Context, teamID string) ([]TeamMember, error) {
+	rows, err := s.pool.Query(ctx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = $1 ORDER BY joined_at, account_id`, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("store: team members: %w", err)
 	}

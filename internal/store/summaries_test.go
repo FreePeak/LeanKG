@@ -39,7 +39,7 @@ func TestSummaryRoundTripAndResumeFields(t *testing.T) {
 	if err := s.SummaryUpsert(context.Background(), FileSummary{Path: "b.go", ContentHash: "h3", Model: "m1", Summary: "b prose"}); err != nil {
 		t.Fatalf("upsert b: %v", err)
 	}
-	all, err := s.SummariesAll()
+	all, err := s.SummariesAll(context.Background())
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestPGSummaryRoundTrip(t *testing.T) {
 	if err := s.SummaryUpsert(context.Background(), FileSummary{Path: "a.go", ContentHash: "h2", Model: "m2", Summary: "prose 2"}); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
-	all, err := s.SummariesAll()
+	all, err := s.SummariesAll(context.Background())
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestPGSummaryRoundTrip(t *testing.T) {
 		t.Fatalf("replace: %+v", all)
 	}
 	var name string
-	if err := s.pool.QueryRow(pgCtx, `SELECT name FROM schema_migrations WHERE version = 14`).Scan(&name); err != nil {
+	if err := s.pool.QueryRow(context.Background(), `SELECT name FROM schema_migrations WHERE version = 14`).Scan(&name); err != nil {
 		t.Fatalf("migration 014 not recorded: %v", err)
 	}
 	if !strings.Contains(name, "file-summaries") {

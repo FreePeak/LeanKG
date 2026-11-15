@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -82,7 +83,7 @@ func TestBackendIsUnionOfRoles(t *testing.T) {
 func TestBackendModeReportsOpenMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".leankg", "leankg.db")
 
-	rw, err := openSQLite(path, RW)
+	rw, err := openSQLite(context.Background(), path, RW)
 	if err != nil {
 		t.Fatalf("Open RW: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestBackendModeReportsOpenMode(t *testing.T) {
 		t.Fatalf("Close RW: %v", err)
 	}
 
-	ro, err := openSQLite(path, RO)
+	ro, err := openSQLite(context.Background(), path, RO)
 	if err != nil {
 		t.Fatalf("Open RO: %v", err)
 	}

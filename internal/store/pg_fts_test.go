@@ -156,7 +156,7 @@ func TestPGFTSMigration(t *testing.T) {
 	s := openPGTest(t)
 
 	var name string
-	if err := s.pool.QueryRow(pgCtx, `SELECT name FROM schema_migrations WHERE version = 12`).Scan(&name); err != nil {
+	if err := s.pool.QueryRow(context.Background(), `SELECT name FROM schema_migrations WHERE version = 12`).Scan(&name); err != nil {
 		t.Fatalf("migration 12 not recorded: %v", err)
 	}
 	if name != "fts-tsvector-l2" {
@@ -170,7 +170,7 @@ func TestPGFTSMigration(t *testing.T) {
 	} {
 		var gen string
 		var typ string
-		if err := s.pool.QueryRow(pgCtx, `SELECT att.attgenerated, typ.typname
+		if err := s.pool.QueryRow(context.Background(), `SELECT att.attgenerated, typ.typname
 			FROM pg_attribute att JOIN pg_type typ ON typ.oid = att.atttypid
 			WHERE att.attrelid = $1::regclass AND att.attname = 'fts'`, c.table).Scan(&gen, &typ); err != nil {
 			t.Fatalf("%s.fts missing: %v", c.table, err)
@@ -181,7 +181,7 @@ func TestPGFTSMigration(t *testing.T) {
 	}
 	for _, idx := range []string{"idx_code_elements_fts", "idx_knowledge_entries_fts"} {
 		var am string
-		if err := s.pool.QueryRow(pgCtx, `SELECT a.amname FROM pg_class c
+		if err := s.pool.QueryRow(context.Background(), `SELECT a.amname FROM pg_class c
 			JOIN pg_am a ON a.oid = c.relam
 			WHERE c.oid = $1::regclass`, idx).Scan(&am); err != nil {
 			t.Fatalf("index %s missing: %v", idx, err)
@@ -194,7 +194,7 @@ func TestPGFTSMigration(t *testing.T) {
 	// default_text_search_config, which is per-database and STABLE.
 	for _, table := range []string{"code_elements", "knowledge_entries"} {
 		var expr string
-		if err := s.pool.QueryRow(pgCtx, `SELECT pg_get_expr(d.adbin, d.adrelid)
+		if err := s.pool.QueryRow(context.Background(), `SELECT pg_get_expr(d.adbin, d.adrelid)
 			FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
 			WHERE a.attrelid = $1::regclass AND a.attname = 'fts'`, table).Scan(&expr); err != nil {
 			t.Fatalf("%s.fts expression: %v", table, err)
@@ -322,7 +322,7 @@ func TestPGFindFuzzyDegradesWithoutColumn(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.pool.Exec(pgCtx, `ALTER TABLE code_elements DROP COLUMN fts`); err != nil {
+	if _, err := s.pool.Exec(context.Background(), `ALTER TABLE code_elements DROP COLUMN fts`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.searchElementsTS(context.Background(), "SocketHandler", 10, ElementFilter{}); err == nil {

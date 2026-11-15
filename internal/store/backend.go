@@ -106,9 +106,9 @@ func OpenBackend(ctx context.Context, opts OpenOptions) (Backend, error) {
 			dbPath = StandaloneDBPath(opts.ProjectDir)
 		}
 		if dbPath != "" {
-			return openSQLite(dbPath, opts.Mode)
+			return openSQLite(ctx, dbPath, opts.Mode)
 		}
-		return openSQLite(opts.ProjectDir+"/.leankg/leankg.db", opts.Mode)
+		return openSQLite(ctx, opts.ProjectDir+"/.leankg/leankg.db", opts.Mode)
 	case EnginePostgres:
 		if opts.PGURL == "" {
 			return nil, fmt.Errorf("store: postgres engine requires LEANKG_PG_URL")

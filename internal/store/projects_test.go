@@ -11,7 +11,7 @@ import (
 
 func TestProjectRegistrySQLite(t *testing.T) {
 	dir := t.TempDir()
-	s, err := openSQLite(filepath.Join(dir, ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(context.Background(), filepath.Join(dir, ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestProjectRegistrySQLite(t *testing.T) {
 
 	// RW-only writes: a read-only handle refuses to mutate the registry but
 	// keeps reading it.
-	ro, err := openSQLite(filepath.Join(dir, ".leankg", "leankg.db"), RO)
+	ro, err := openSQLite(context.Background(), filepath.Join(dir, ".leankg", "leankg.db"), RO)
 	if err != nil {
 		t.Fatal(err)
 	}

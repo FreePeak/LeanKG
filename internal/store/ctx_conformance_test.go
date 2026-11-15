@@ -239,7 +239,7 @@ var ctxConformanceRoles = []ctxRole{
 // openSQLiteConformance returns a migrated RW SQLite store in a temp project.
 func openSQLiteConformance(t *testing.T) Backend {
 	t.Helper()
-	s, err := openSQLite(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(context.Background(), filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("openSQLite: %v", err)
 	}

@@ -31,7 +31,7 @@ func TestPGMetricsRoundTrip(t *testing.T) {
 		t.Fatalf("record bare row: %v", err)
 	}
 
-	got, err := scanMetric(s.pool.QueryRow(pgCtx,
+	got, err := scanMetric(s.pool.QueryRow(context.Background(),
 		`SELECT `+metricReadCols+` FROM context_metrics WHERE tool_name = $1`, "query").Scan)
 	if err != nil {
 		t.Fatalf("read back: %v", err)

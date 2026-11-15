@@ -33,7 +33,7 @@ func openPGPre017Store(t *testing.T) *PGStore {
 	// `applied_at TEXT NOT NULL`, and pgNow (to_char(...)) yields text, so a
 	// TIMESTAMPTZ column would reject the engine's own insert. This fixture
 	// must be the schema a real pre-017 store has, or it proves nothing.
-	if _, err := s.pool.Exec(pgCtx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+	if _, err := s.pool.Exec(context.Background(), `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
 		t.Fatalf("ledger: %v", err)
 	}
@@ -42,24 +42,24 @@ func openPGPre017Store(t *testing.T) *PGStore {
 			continue
 		}
 		for _, stmt := range m.bestEffort {
-			_, _ = s.pool.Exec(pgCtx, stmt)
+			_, _ = s.pool.Exec(context.Background(), stmt)
 		}
-		tx, err := s.pool.Begin(pgCtx)
+		tx, err := s.pool.Begin(context.Background())
 		if err != nil {
 			t.Fatalf("migration %03d %s: %v", m.version, m.name, err)
 		}
 		if m.ddl != "" {
-			if _, err := tx.Exec(pgCtx, m.ddl); err != nil {
-				_ = tx.Rollback(pgCtx)
+			if _, err := tx.Exec(context.Background(), m.ddl); err != nil {
+				_ = tx.Rollback(context.Background())
 				t.Fatalf("migration %03d %s: %v", m.version, m.name, err)
 			}
 		}
-		if _, err := tx.Exec(pgCtx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, `+pgNow+`)`,
+		if _, err := tx.Exec(context.Background(), `INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, `+pgNow+`)`,
 			m.version, m.name); err != nil {
-			_ = tx.Rollback(pgCtx)
+			_ = tx.Rollback(context.Background())
 			t.Fatalf("record migration %03d: %v", m.version, err)
 		}
-		if err := tx.Commit(pgCtx); err != nil {
+		if err := tx.Commit(context.Background()); err != nil {
 			t.Fatalf("commit migration %03d: %v", m.version, err)
 		}
 	}
@@ -73,7 +73,7 @@ func openPGPre017Store(t *testing.T) *PGStore {
 func TestPGStampReadsPre017Store(t *testing.T) {
 	s := openPGPre017Store(t)
 	var textCapCols int
-	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM information_schema.columns
+	if err := s.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM information_schema.columns
 		WHERE table_schema = $1 AND table_name = 'emb_stamp' AND column_name = 'text_cap'`,
 		s.schema).Scan(&textCapCols); err != nil {
 		t.Fatalf("probe text_cap: %v", err)
@@ -156,7 +156,7 @@ func TestPGStampAfterMigratingPre017Store(t *testing.T) {
 // "relation emb_stamp does not exist", not with a silently empty answer.
 func TestPGStoreOpensWithoutEmbStamp(t *testing.T) {
 	s := openPGPre017Store(t)
-	if _, err := s.pool.Exec(pgCtx, `DROP TABLE emb_stamp`); err != nil {
+	if _, err := s.pool.Exec(context.Background(), `DROP TABLE emb_stamp`); err != nil {
 		t.Fatalf("drop emb_stamp: %v", err)
 	}
 	if _, err := s.Stamp(context.Background(), "whatever"); err == nil {

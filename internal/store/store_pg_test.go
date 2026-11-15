@@ -277,7 +277,7 @@ func TestPGStampsAndVectors(t *testing.T) {
 	// Per-model tables physically exist.
 	san := sanitizeModelID(st.ModelID)
 	var reg *string
-	if err := s.pool.QueryRow(pgCtx,
+	if err := s.pool.QueryRow(context.Background(),
 		`SELECT to_regclass($1)::text`, s.schema+".embedding_vectors_"+san).Scan(&reg); err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,7 @@ func TestPGAudit(t *testing.T) {
 	}
 
 	// Tamper with the middle record → chain verification breaks exactly there.
-	if _, err := s.pool.Exec(pgCtx, `UPDATE audit_ledger SET target = 'evil' WHERE seq = 2`); err != nil {
+	if _, err := s.pool.Exec(context.Background(), `UPDATE audit_ledger SET target = 'evil' WHERE seq = 2`); err != nil {
 		t.Fatal(err)
 	}
 	ok, brokenAt, err = s.VerifyAuditChain(context.Background())
@@ -503,7 +503,7 @@ func TestPGMigrateIdempotent(t *testing.T) {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	var n int
-	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
+	if err := s.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != len(pgMigrations) {
@@ -593,7 +593,7 @@ func TestPGStampTextCapRoundTrip(t *testing.T) {
 		t.Fatalf("upsert must replace TextCap: %+v, %v; want 4000", got, err)
 	}
 
-	if _, err := s.pool.Exec(pgCtx, `INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider)
+	if _, err := s.pool.Exec(context.Background(), `INSERT INTO emb_stamp (model_id, revision, dimensions, distance, provider)
 		VALUES ('pg-cap-legacy', 'old', 8, 'cosine', 'local')`); err != nil {
 		t.Fatal(err)
 	}

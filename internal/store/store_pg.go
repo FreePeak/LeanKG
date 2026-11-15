@@ -20,9 +20,6 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
-// pgCtx backs Backend methods, which carry no context parameter.
-var pgCtx = context.Background()
-
 // pgNow mirrors sqlite's strftime('%Y-%m-%dT%H:%M:%fZ','now') format so
 // timestamps stored by either engine render identically.
 const pgNow = `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`

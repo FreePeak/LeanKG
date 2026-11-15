@@ -81,13 +81,13 @@ func TestPGOrgMembershipRoundTrip(t *testing.T) {
 
 func TestPGTeamMemberRoundTrip(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.TeamMemberUpsert(TeamMember{TeamID: "team-1", AccountID: "acct-1", Role: "member", JoinedAt: 10}); err != nil {
+	if err := s.TeamMemberUpsert(context.Background(), TeamMember{TeamID: "team-1", AccountID: "acct-1", Role: "member", JoinedAt: 10}); err != nil {
 		t.Fatalf("team member upsert: %v", err)
 	}
-	if m, found, err := s.TeamMemberOf("team-1", "acct-1"); err != nil || !found || m.Role != "member" {
+	if m, found, err := s.TeamMemberOf(context.Background(), "team-1", "acct-1"); err != nil || !found || m.Role != "member" {
 		t.Fatalf("team member = %+v, %v, %v", m, found, err)
 	}
-	if members, err := s.TeamMembers("team-1"); err != nil || len(members) != 1 {
+	if members, err := s.TeamMembers(context.Background(), "team-1"); err != nil || len(members) != 1 {
 		t.Fatalf("team members = %+v, %v", members, err)
 	}
 }
@@ -108,7 +108,7 @@ func TestPGResourceOwnershipClaim(t *testing.T) {
 		t.Fatalf("re-claim: %v", err)
 	}
 	var rows int
-	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM resource_ownership`).Scan(&rows); err != nil {
+	if err := s.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM resource_ownership`).Scan(&rows); err != nil {
 		t.Fatalf("count rows: %v", err)
 	}
 	if rows != 1 {

@@ -42,8 +42,8 @@ func (s *PGStore) SummaryGet(ctx context.Context, path string) (FileSummary, boo
 }
 
 // SummariesAll lists every stored summary ordered by path.
-func (s *PGStore) SummariesAll() ([]FileSummary, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+summaryReadCols+` FROM file_summaries ORDER BY path`)
+func (s *PGStore) SummariesAll(ctx context.Context) ([]FileSummary, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+summaryReadCols+` FROM file_summaries ORDER BY path`)
 	if err != nil {
 		return nil, fmt.Errorf("store: summaries list: %w", err)
 	}
