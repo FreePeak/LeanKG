@@ -8,7 +8,6 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -208,10 +207,8 @@ func (m *Memory) denseCandidates(ctx context.Context, v Vectorizer, banks []stri
 	if !ok || wordCount(query) < denseMinWords {
 		return nil
 	}
-	// The dense arm keeps its own time bound, derived from the caller's ctx so
-	// a disconnect still stops it at once.
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	// No memory-side deadline: the caller's ctx stops it on a disconnect, and
+	// the embed client's request timeout bounds a hung endpoint.
 	if err := m.ensureVectors(ctx, v, banks); err != nil {
 		return nil // dense arm unavailable: BM25 still answers
 	}
