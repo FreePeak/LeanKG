@@ -16,7 +16,7 @@ func TestTelemetrySessionText(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("LEANKG_HOME", home)
-	if got := telemetrySessionText(""); got != "" {
+	if got := telemetrySessionText(context.Background(), ""); got != "" {
 		t.Fatalf("no ledger must render nothing, got %q", got)
 	}
 	st, err := telemetry.OpenSQLite(telemetry.DBPath(home), false)
@@ -33,13 +33,13 @@ func TestTelemetrySessionText(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = st.Close()
-	if got := telemetrySessionText(""); !strings.Contains(got, "claude-code:new") {
+	if got := telemetrySessionText(context.Background(), ""); !strings.Contains(got, "claude-code:new") {
 		t.Fatalf("latest session expected, got:\n%s", got)
 	}
-	if got := telemetrySessionText("pi:old"); !strings.Contains(got, "pi:old") {
+	if got := telemetrySessionText(context.Background(), "pi:old"); !strings.Contains(got, "pi:old") {
 		t.Fatalf("named session expected, got:\n%s", got)
 	}
-	if got := telemetrySessionText("missing"); got != "" {
+	if got := telemetrySessionText(context.Background(), "missing"); got != "" {
 		t.Fatalf("unknown session must render nothing, got %q", got)
 	}
 }

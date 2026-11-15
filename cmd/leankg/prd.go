@@ -12,21 +12,23 @@ import (
 
 // cmdPRD ports the Rust index_prd MCP tool: parse a PRD markdown document and
 // land its requirements as entities plus the FR -> ontology workflow edges.
-func cmdPRD(args []string) {
-	fs := flag.NewFlagSet("prd", flag.ExitOnError)
+func cmdPRD(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("prd", flag.ContinueOnError)
 	source := fs.String("source", "docs/prd.md", "PRD markdown path, relative to the project root")
 	environment := fs.String("environment", "local", "knowledge-entry environment")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	parseInterspersed("prd", fs, args, 0)
-	st, dir, err := openVerbStore(*project, store.RW)
+	if _, err := parseInterspersed("prd", fs, args, 0); err != nil {
+		return err
+	}
+	st, dir, err := openVerbStore(ctx, *project, store.RW)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
-	res, err := prdindex.IndexDocument(context.Background(), st, dir, *source, *environment)
+	res, err := prdindex.IndexDocument(ctx, st, dir, *source, *environment)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	fmt.Printf("PRD %s: %d requirements, %d user stories (%d created, %d updated, %d removed)\n",
 		res.Source, res.Requirements, res.UserStories, res.Created, res.Updated, res.Removed)
@@ -35,30 +37,35 @@ func cmdPRD(args []string) {
 	for _, e := range res.Errors {
 		fmt.Printf("  warning: %s\n", e)
 	}
+	return nil
 }
 
 // cmdPRDTrace prints FR -> workflow traceability rows as JSON.
-func cmdPRDTrace(args []string) {
-	fs := flag.NewFlagSet("prd-trace", flag.ExitOnError)
+func cmdPRDTrace(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("prd-trace", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	positional := parseInterspersed("prd-trace", fs, args, 1)
+	positional, err := parseInterspersed("prd-trace", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	featureID := ""
 	if len(positional) == 1 {
 		featureID = positional[0]
 	}
-	st, _, err := openVerbStore(*project, store.RO)
+	st, _, err := openVerbStore(ctx, *project, store.RO)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
 	rows, err := prdindex.Trace(st, featureID)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	b, err := json.MarshalIndent(rows, "", "  ")
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	fmt.Println(string(b))
+	return nil
 }

@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
@@ -19,36 +17,36 @@ import (
 
 // cmdWriter is the W2 writer role: one index pass, then watch loop. Pairs
 // with `leankg serve --read-only` (WAL readers never block the writer).
-func cmdWriter(args []string) {
-	fs := flag.NewFlagSet("writer", flag.ExitOnError)
+func cmdWriter(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("writer", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
-	parseInterspersed("writer", fs, args, 0)
+	if _, err := parseInterspersed("writer", fs, args, 0); err != nil {
+		return err
+	}
 	dir := *project
 	if dir == "" {
 		var err error
 		dir, err = os.Getwd()
 		if err != nil {
-			log.Fatalf("resolve cwd: %v", err)
+			return fmt.Errorf("resolve cwd: %v", err)
 		}
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	st, dir, err := openWriterStore(ctx, dir)
 	if err != nil {
-		log.Fatalf("open store: %v", err)
+		return fmt.Errorf("open store: %v", err)
 	}
 	defer st.Close()
 	if err := st.Migrate(); err != nil {
-		log.Fatalf("migrate: %v", err)
+		return fmt.Errorf("migrate: %v", err)
 	}
 	langReg := langs.DefaultRegistry()
 	if _, aerr := langReg.Activate(dir); aerr != nil {
-		log.Fatalf("language detection: %v", aerr)
+		return fmt.Errorf("language detection: %v", aerr)
 	}
 	res, err := index.IndexDirWith(ctx, st, dir, langReg)
 	if err != nil {
-		log.Fatalf("initial index: %v", err)
+		return fmt.Errorf("initial index: %v", err)
 	}
 	log.Printf("writer: initial index %s: files=%d elements=%d relationships=%d skipped=%d",
 		dir, res.Files, res.Elements, res.Relationships, res.Skipped)
@@ -60,7 +58,7 @@ func cmdWriter(args []string) {
 		},
 	})
 	if err != nil {
-		log.Fatalf("watch: %v", err)
+		return fmt.Errorf("watch: %v", err)
 	}
 
 	// Same maintenance pass `serve` runs, over the writer's own handle: the
@@ -93,6 +91,7 @@ func cmdWriter(args []string) {
 	log.Printf("writer: watching %s (Ctrl-C to stop)", dir)
 	<-ctx.Done()
 	w.Stop()
+	return nil
 }
 
 // openWriterStore opens the writer's read-write store for dir. It anchors dir
@@ -105,18 +104,21 @@ func openWriterStore(ctx context.Context, dir string) (store.Backend, string, er
 	return st, dir, err
 }
 
-func cmdConnect(args []string) {
-	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+func cmdConnect(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	httpMode := fs.Bool("http", false, "write a remote (HTTP URL) entry instead of stdio")
 	url := fs.String("url", "", "remote MCP URL (with --http; default http://localhost:9699/mcp)")
 	project := fs.String("project", "", "explicit project path escape hatch (stdio only)")
-	positional := parseInterspersed("connect", fs, args, 1)
+	positional, err := parseInterspersed("connect", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if len(positional) != 1 {
-		log.Fatalf("connect requires exactly one client: %s", strings.Join(Clients(), ", "))
+		return fmt.Errorf("connect requires exactly one client: %s", strings.Join(Clients(), ", "))
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Fatalf("resolve home: %v", err)
+		return fmt.Errorf("resolve home: %v", err)
 	}
 	cfg := Config{Exe: exePath()}
 	if *httpMode {
@@ -130,25 +132,28 @@ func cmdConnect(args []string) {
 		cfg.Project = *project
 	}
 	if err := WriteClient(home, positional[0], cfg); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Printf("connected %s (%s)\n", positional[0], cfg.Mode)
+	return nil
 }
 
-func cmdInstall(args []string) {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
+func cmdInstall(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	target := fs.String("target", "", "client target: "+strings.Join(Clients(), "|"))
 	httpMode := fs.Bool("http", false, "remote entry instead of stdio")
 	url := fs.String("url", "", "remote MCP URL (with --http)")
 	project := fs.String("project", "", "explicit project path (stdio escape hatch)")
 	registerCWD := fs.Bool("register-cwd", false, "write a session-start hook running `leankg index --hook <project>` (claude-code)")
-	parseInterspersed("install", fs, args, 0)
+	if _, err := parseInterspersed("install", fs, args, 0); err != nil {
+		return err
+	}
 	if *target == "" {
-		log.Fatalf("install requires --target (%s)", strings.Join(Clients(), "|"))
+		return fmt.Errorf("install requires --target (%s)", strings.Join(Clients(), "|"))
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Fatalf("resolve home: %v", err)
+		return fmt.Errorf("resolve home: %v", err)
 	}
 	cfg := Config{Exe: exePath()}
 	if *httpMode {
@@ -163,9 +168,10 @@ func cmdInstall(args []string) {
 	}
 	opts := InstallOptions{HTTP: *httpMode, URL: cfg.URL, Project: *project, RegisterCWD: *registerCWD}
 	if err := Install(home, *target, opts); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Printf("installed %s (%s)%s\n", *target, cfg.Mode, registerHint(*registerCWD))
+	return nil
 }
 
 func registerHint(on bool) string {

@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/sessionlink/all"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
@@ -34,70 +35,79 @@ type telemetryEnableOpts struct {
 }
 
 // cmdTelemetry implements `leankg telemetry status|enable|disable|purge|link|import-ab`.
-func cmdTelemetry(args []string) {
+func cmdTelemetry(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		telemetryUsage()
+		return telemetryUsage()
 	}
 	home := telemetry.Home()
 	switch args[0] {
 	case "status":
-		fs := flag.NewFlagSet("telemetry status", flag.ExitOnError)
+		fs := flag.NewFlagSet("telemetry status", flag.ContinueOnError)
 		jsonOut := fs.Bool("json", false, "print the status as JSON")
-		parseInterspersed("telemetry status", fs, args[1:], 0)
-		if err := telemetryStatus(home, *jsonOut, os.Stdout); err != nil {
-			fatalJSON(err)
+		if _, err := parseInterspersed("telemetry status", fs, args[1:], 0); err != nil {
+			return err
+		}
+		if err := telemetryStatus(ctx, home, *jsonOut, os.Stdout); err != nil {
+			return fatalJSON(err)
 		}
 	case "enable":
 		var opts telemetryEnableOpts
-		fs := flag.NewFlagSet("telemetry enable", flag.ExitOnError)
+		fs := flag.NewFlagSet("telemetry enable", flag.ContinueOnError)
 		fs.BoolVar(&opts.bodies, "bodies", false, "also record redacted, capped args and response bodies")
 		fs.StringVar(&opts.sessions, "sessions", "", "comma list of agents whose transcripts may be read, or 'all'")
 		fs.BoolVar(&opts.yes, "yes", false, "grant without the interactive confirmation")
-		parseInterspersed("telemetry enable", fs, args[1:], 0)
+		if _, err := parseInterspersed("telemetry enable", fs, args[1:], 0); err != nil {
+			return err
+		}
 		if err := telemetryEnable(home, opts, os.Stdin, stdinIsTTY(), os.Stdout); err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 	case "disable":
-		parseInterspersed("telemetry disable", flag.NewFlagSet("telemetry disable", flag.ExitOnError), args[1:], 0)
+		if _, err := parseInterspersed("telemetry disable", flag.NewFlagSet("telemetry disable", flag.ContinueOnError), args[1:], 0); err != nil {
+			return err
+		}
 		if err := telemetryDisable(home, os.Stdout); err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 	case "purge":
-		fs := flag.NewFlagSet("telemetry purge", flag.ExitOnError)
+		fs := flag.NewFlagSet("telemetry purge", flag.ContinueOnError)
 		before := fs.String("before", "", "delete rows older than this: 30d, or a date like 2026-09-01")
 		all := fs.Bool("all", false, "delete every row")
-		parseInterspersed("telemetry purge", fs, args[1:], 0)
+		if _, err := parseInterspersed("telemetry purge", fs, args[1:], 0); err != nil {
+			return err
+		}
 		now := time.Now()
 		var cutoff time.Time
 		switch {
 		case *all && *before != "":
-			fatalJSON(errors.New("telemetry purge: use --before or --all, not both"))
+			return fatalJSON(errors.New("telemetry purge: use --before or --all, not both"))
 		case *all:
 			cutoff = now.Add(24 * time.Hour) // every row written so far
 		case *before != "":
 			t, err := parseBefore(*before, now)
 			if err != nil {
-				fatalJSON(err)
+				return fatalJSON(err)
 			}
 			cutoff = t
 		default:
-			fatalJSON(errors.New("telemetry purge: pass --before <30d|date> or --all"))
+			return fatalJSON(errors.New("telemetry purge: pass --before <30d|date> or --all"))
 		}
-		if err := telemetryPurge(home, cutoff, os.Stdout); err != nil {
-			fatalJSON(err)
+		if err := telemetryPurge(ctx, home, cutoff, os.Stdout); err != nil {
+			return fatalJSON(err)
 		}
 	case "link":
-		cmdTelemetryLink(args[1:])
+		return cmdTelemetryLink(ctx, args[1:])
 	case "import-ab":
-		cmdTelemetryImportAB(args[1:])
+		return cmdTelemetryImportAB(ctx, args[1:])
 	default:
-		telemetryUsage()
+		return telemetryUsage()
 	}
+	return nil
 }
 
-func telemetryUsage() {
+func telemetryUsage() error {
 	fmt.Fprintln(os.Stderr, "usage: leankg telemetry status [--json] | enable [--bodies] [--sessions <list|all>] [--yes] | disable | purge (--before <30d|date> | --all) | link | import-ab <dir>")
-	os.Exit(2)
+	return cliexit.Code(2)
 }
 
 // stdinIsTTY reports whether stdin is a character device, so a y/N prompt
@@ -228,7 +238,7 @@ func telemetryDisable(home string, out io.Writer) error {
 }
 
 // telemetryPurge deletes rows older than before. It never creates a ledger.
-func telemetryPurge(home string, before time.Time, out io.Writer) error {
+func telemetryPurge(ctx context.Context, home string, before time.Time, out io.Writer) error {
 	if _, err := os.Stat(telemetry.DBPath(home)); errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(out, "no telemetry ledger at %s; nothing to purge\n", telemetry.DBPath(home))
 		return nil
@@ -238,7 +248,7 @@ func telemetryPurge(home string, before time.Time, out io.Writer) error {
 		return err
 	}
 	defer st.Close()
-	n, err := st.Purge(context.Background(), before)
+	n, err := st.Purge(ctx, before)
 	if err != nil {
 		return err
 	}
@@ -274,7 +284,7 @@ type telemetryStatusView struct {
 
 // telemetryStatus reports the config, effective level, grants and, when the
 // ledger exists, its Stats. It opens the ledger read-only and never creates it.
-func telemetryStatus(home string, asJSON bool, out io.Writer) error {
+func telemetryStatus(ctx context.Context, home string, asJSON bool, out io.Writer) error {
 	cfg, err := telemetry.LoadConfig(home)
 	if err != nil {
 		return err
@@ -303,7 +313,7 @@ func telemetryStatus(home string, asJSON bool, out io.Writer) error {
 		if st, err := telemetry.OpenStore(home, true); err != nil {
 			v.StatsError = err.Error()
 		} else {
-			stats, err := st.Stats(context.Background())
+			stats, err := st.Stats(ctx)
 			_ = st.Close()
 			if err != nil {
 				v.StatsError = err.Error()

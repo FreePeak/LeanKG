@@ -18,6 +18,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/portfolioreg"
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -38,14 +39,17 @@ func portfolioOptions(engineFlag, dir string) portfolioreg.Options {
 // own store when it has one; a directory that was never indexed is still
 // registrable — it appears in the manifest with no stamp and no counts, which
 // is exactly what "registered, not indexed" should look like.
-func cmdRegisterProject(args []string) {
-	fs := flag.NewFlagSet("register-project", flag.ExitOnError)
+func cmdRegisterProject(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("register-project", flag.ContinueOnError)
 	name := fs.String("name", "", "display name (default: the directory base name)")
 	project := fs.String("project", "", "project whose registry is written (default cwd, or LEANKG_PROJECT)")
 	engine := fs.String("engine", "", "registry engine: sqlite|postgres (default: LEANKG_DB_ENGINE, else sqlite)")
-	positional := parseInterspersed("register-project", fs, args, 1)
+	positional, err := parseInterspersed("register-project", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if len(positional) != 1 {
-		logUsageErr("usage: leankg register-project <dir> [--name N] [--project DIR] [--engine sqlite|postgres]")
+		return logUsageErr("usage: leankg register-project <dir> [--name N] [--project DIR] [--engine sqlite|postgres]")
 	}
 	target := positional[0]
 
@@ -57,14 +61,13 @@ func cmdRegisterProject(args []string) {
 	// registry verb is the same class of command and must agree.
 	if info, serr := os.Stat(target); serr != nil {
 		if os.IsNotExist(serr) {
-			fatalJSON(fmt.Errorf("register-project: no such directory: %s", target))
+			return fatalJSON(fmt.Errorf("register-project: no such directory: %s", target))
 		}
-		fatalJSON(fmt.Errorf("register-project: %w", serr))
+		return fatalJSON(fmt.Errorf("register-project: %w", serr))
 	} else if !info.IsDir() {
-		fatalJSON(fmt.Errorf("register-project: not a directory: %s", target))
+		return fatalJSON(fmt.Errorf("register-project: not a directory: %s", target))
 	}
 
-	ctx := context.Background()
 	opts := portfolioOptions(*engine, resolveProjectDir(*project))
 
 	var elements, files int
@@ -80,7 +83,7 @@ func cmdRegisterProject(args []string) {
 
 	rec, err := portfolioreg.Register(ctx, opts, target, *name, elements, files, indexedAt)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	stamp := "never indexed"
 	if rec.LastIndexed != nil {
@@ -91,6 +94,7 @@ func cmdRegisterProject(args []string) {
 	if indexedAt == nil {
 		fmt.Fprintf(os.Stderr, "note: %s has no readable store yet — run `leankg index %s` and it will be stamped.\n", target, target)
 	}
+	return nil
 }
 
 // cmdProjects implements `leankg projects`, the T0 manifest: one row per
@@ -98,8 +102,8 @@ func cmdRegisterProject(args []string) {
 // project's store is on disk. It opens NO project store and indexes nothing —
 // that is what makes it safe on a portfolio of eighty repos. `--forget DIR`
 // removes a registration instead of listing.
-func cmdProjects(args []string) {
-	fs := flag.NewFlagSet("projects", flag.ExitOnError)
+func cmdProjects(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("projects", flag.ContinueOnError)
 	project := fs.String("project", "", "project whose registry is read (default cwd, or LEANKG_PROJECT)")
 	engine := fs.String("engine", "", "registry engine: sqlite|postgres (default: LEANKG_DB_ENGINE, else sqlite)")
 	jsonOut := fs.Bool("json", false, "print the manifest as JSON")
@@ -107,25 +111,26 @@ func cmdProjects(args []string) {
 	forget := fs.String("forget", "", "remove DIR from the registry instead of listing")
 	prune := fs.Bool("prune", false, "forget every registration whose DIRECTORY no longer exists (a CI fixture that cleaned up after itself)")
 	apply := fs.Bool("apply", false, "with --prune, actually forget the rows (default is a dry run that lists them)")
-	parseInterspersed("projects", fs, args, 0)
+	if _, err := parseInterspersed("projects", fs, args, 0); err != nil {
+		return err
+	}
 	if *apply && !*prune {
-		fatalJSON(errors.New("--apply requires --prune"))
+		return fatalJSON(errors.New("--apply requires --prune"))
 	}
 
-	ctx := context.Background()
 	opts := portfolioOptions(*engine, resolveProjectDir(*project))
 
 	if *forget != "" {
 		gone, err := portfolioreg.Forget(ctx, opts, *forget)
 		if err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 		if !gone {
 			fmt.Fprintf(os.Stderr, "not registered: %s\n", *forget)
-			os.Exit(1)
+			return cliexit.Code(1)
 		}
 		fmt.Printf("forgot %s\n", *forget)
-		return
+		return nil
 	}
 
 	if *prune {
@@ -133,12 +138,12 @@ func cmdProjects(args []string) {
 		// The postgres registry is shared by every host and its rows carry no host
 		// identity, so the destructive sweep is refused before any connection opens.
 		if *apply && opts.Engine == store.EnginePostgres {
-			fatalJSON(errors.New("--prune --apply is refused on the postgres engine: the shared registry has no host identity, " +
+			return fatalJSON(errors.New("--prune --apply is refused on the postgres engine: the shared registry has no host identity, " +
 				"so a prune from one host could remove another host's rows. The dry run (leankg projects --prune) still works."))
 		}
 		gone, err := portfolioreg.Prune(ctx, opts, !*apply)
 		if err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 		verb := "would forget"
 		if *apply {
@@ -146,11 +151,11 @@ func cmdProjects(args []string) {
 		}
 		if *jsonOut {
 			printJSON(map[string]any{"pruned": gone, "count": len(gone), "applied": *apply})
-			return
+			return nil
 		}
 		if len(gone) == 0 {
 			fmt.Println("nothing to prune: every registered directory still exists")
-			return
+			return nil
 		}
 		fmt.Printf("%s %d registration(s) whose directory is gone:\n", verb, len(gone))
 		for _, d := range gone {
@@ -159,7 +164,7 @@ func cmdProjects(args []string) {
 		if !*apply {
 			fmt.Println("(dry run — pass --apply to forget them)")
 		}
-		return
+		return nil
 	}
 
 	hot := portfolioreg.NewHotSet(0)
@@ -170,23 +175,23 @@ func cmdProjects(args []string) {
 			// an empty listing is the honest answer.
 			if *jsonOut {
 				printJSON(map[string]any{"projects": []any{}, "count": 0, "hot_limit": hot.Limit()})
-				return
+				return nil
 			}
 			fmt.Println("no projects registered (no portfolio registry at this location)")
-			return
+			return nil
 		}
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	if *jsonOut {
 		printJSON(map[string]any{
 			"projects": entries, "count": len(entries),
 			"hot_limit": hot.Limit(), "max_repos_env": portfolioreg.MaxReposEnv,
 		})
-		return
+		return nil
 	}
 	if len(entries) == 0 {
 		fmt.Println("no projects registered")
-		return
+		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "PROJECT\tDIR\tELEMENTS\tFILES\tLAST INDEXED\tSTORE\tHOT")
@@ -215,12 +220,13 @@ func cmdProjects(args []string) {
 		fmt.Printf("\n%d of %d projects are in the hot set (%s=%d); the rest stay registered and are listed as not-hot by portfolio queries.\n",
 			hot.Limit(), len(entries), portfolioreg.MaxReposEnv, hot.Limit())
 	}
+	return nil
 }
 
 // logUsageErr reports a CLI misuse without the log package's timestamp, which
 // would corrupt machine-readable output (the same contract run.go's parser
 // keeps).
-func logUsageErr(msg string) {
+func logUsageErr(msg string) error {
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(msg))
-	os.Exit(2)
+	return cliexit.Code(2)
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/annot"
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/docgen"
 	"github.com/FreePeak/LeanKG/internal/export"
 	"github.com/FreePeak/LeanKG/internal/pack"
@@ -22,19 +23,18 @@ import (
 
 // verbFatal reports a verb failure on stderr and exits nonzero (the Rust
 // binary returned the error to main, which printed it and exited 1).
-func verbFatal(err error) {
-	fmt.Fprintf(os.Stderr, "leankg: %v\n", err)
-	os.Exit(1)
+func verbFatal(err error) error {
+	return fmt.Errorf("leankg: %w", err)
 }
 
 // openVerbStore opens the project store with the same flag/env convention as
 // query/status: --project, else $LEANKG_PROJECT, else cwd.
-func openVerbStore(project string, mode store.Mode) (store.Backend, string, error) {
+func openVerbStore(ctx context.Context, project string, mode store.Mode) (store.Backend, string, error) {
 	dir := project
 	if dir == "" {
 		dir = envOr("LEANKG_PROJECT", ".")
 	}
-	st, err := openStore(context.Background(), dir, "", mode)
+	st, err := openStore(ctx, dir, "", mode)
 	if err != nil {
 		return nil, dir, err
 	}
@@ -51,8 +51,8 @@ func openVerbStore(project string, mode store.Mode) (store.Backend, string, erro
 
 // cmdExport ports `leankg export`: json (streaming when unscoped), dot,
 // mermaid, and the git-committable --markdown document.
-func cmdExport(args []string) {
-	fs := flag.NewFlagSet("export", flag.ExitOnError)
+func cmdExport(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	output := fs.String("output", "graph.json", "output file path")
 	format := fs.String("format", "json", "export format: json | dot | mermaid")
 	markdown := fs.Bool("markdown", false, "emit git-committable Markdown graph docs instead of a graph format")
@@ -63,25 +63,27 @@ func cmdExport(args []string) {
 	community := fs.String("community", "", "scope the export to a community/cluster id")
 	maxNodes := fs.Int("max-nodes", export.DefaultMaxNodes, "maximum nodes to include")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	parseInterspersed("export", fs, args, 0)
+	if _, err := parseInterspersed("export", fs, args, 0); err != nil {
+		return err
+	}
 
-	st, dir, err := openVerbStore(*project, store.RO)
+	st, dir, err := openVerbStore(ctx, *project, store.RO)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
 	if *markdown {
 		res, err := export.ExportMarkdown(st, dir, *out)
 		if err != nil {
-			verbFatal(err)
+			return verbFatal(err)
 		}
 		fmt.Printf("Exported %d elements and %d relationships to %s (format: markdown)\n",
 			res.Elements, res.Relationships, res.Path)
-		return
+		return nil
 	}
 	if *format == "html" {
-		verbFatal(fmt.Errorf(`format "html" is not built into the Go engine — the interactive graph is served by the dashboard (leankg serve --ui)`))
+		return verbFatal(fmt.Errorf(`format "html" is not built into the Go engine — the interactive graph is served by the dashboard (leankg serve --ui)`))
 	}
 
 	scoped := *file != "" || *pathPrefix != "" || *community != ""
@@ -92,28 +94,28 @@ func cmdExport(args []string) {
 		case "json":
 			f, err := os.Create(*output)
 			if err != nil {
-				verbFatal(err)
+				return verbFatal(err)
 			}
 			if err := export.WriteJSONStreaming(f, st); err != nil {
 				_ = f.Close()
-				verbFatal(err)
+				return verbFatal(err)
 			}
 			if err := f.Close(); err != nil {
-				verbFatal(err)
+				return verbFatal(err)
 			}
 			fmt.Printf("Exported streaming JSON to %s\n", *output)
-			return
+			return nil
 		case "dot", "mermaid":
 			els, rels, err := export.All(st)
 			if err != nil {
-				verbFatal(err)
+				return verbFatal(err)
 			}
 			if err := writeExport(*output, *format, els, rels, ""); err != nil {
-				verbFatal(err)
+				return verbFatal(err)
 			}
-			return
+			return nil
 		default:
-			verbFatal(fmt.Errorf("unknown format %q. Supported: json, dot, mermaid", *format))
+			return verbFatal(fmt.Errorf("unknown format %q. Supported: json, dot, mermaid", *format))
 		}
 	}
 
@@ -129,7 +131,7 @@ func cmdExport(args []string) {
 		// source of community membership.
 		clustering, err := web.ClusterAssignments(st)
 		if err != nil {
-			verbFatal(err)
+			return verbFatal(err)
 		}
 		labels := make(map[string]string, len(clustering.Clusters))
 		for _, c := range clustering.Clusters {
@@ -140,15 +142,16 @@ func cmdExport(args []string) {
 
 	els, rels, meta, err := export.Select(st, opts)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	if meta.Truncated {
 		fmt.Fprintf(os.Stderr, "  WARNING: export truncated at max_nodes=%d (scope: %s); raise --max-nodes for the whole slice\n",
 			meta.MaxNodes, meta.ScopeDesc)
 	}
 	if err := writeExport(*output, *format, els, rels, Version()); err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
+	return nil
 }
 
 // writeExport renders the requested format and writes it, printing the Rust
@@ -177,18 +180,20 @@ func writeExport(output, format string, els []store.Element, rels []store.Relati
 }
 
 // cmdPack ports `leankg pack`: a deterministic, content-hashed context pack.
-func cmdPack(args []string) {
-	fs := flag.NewFlagSet("pack", flag.ExitOnError)
+func cmdPack(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("pack", flag.ContinueOnError)
 	output := fs.String("output", "leankg-pack", "output directory")
 	pathPrefix := fs.String("path", "", "scope to a path prefix (e.g. src)")
 	maxNodes := fs.Int("max-nodes", pack.DefaultMaxNodes, "max elements (a pack refuses to truncate)")
 	revision := fs.String("revision", "", "source revision to record in the manifest (git sha / tag)")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	parseInterspersed("pack", fs, args, 0)
+	if _, err := parseInterspersed("pack", fs, args, 0); err != nil {
+		return err
+	}
 
-	st, _, err := openVerbStore(*project, store.RO)
+	st, _, err := openVerbStore(ctx, *project, store.RO)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
@@ -198,7 +203,7 @@ func cmdPack(args []string) {
 		SourceRevision: *revision,
 	})
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	scope := ""
 	if m.PathScope != nil {
@@ -210,6 +215,7 @@ func cmdPack(args []string) {
 	}
 	fmt.Printf("context pack -> %s/  (%d elements, %d rels%s, hash %s)\n",
 		*output, m.Elements, m.Relationships, scope, hash)
+	return nil
 }
 
 // cmdGenerate ports `leankg generate`: render AGENTS.md from the graph.
@@ -221,35 +227,38 @@ func cmdPack(args []string) {
 // `docs/` is tracked, the next `git status` showed a file the operator never
 // asked for and never knew to review. Nothing is lost by printing: the body
 // is still on stdout, and a caller who wants the file names where it goes.
-func cmdGenerate(args []string) {
-	fs := flag.NewFlagSet("generate", flag.ExitOnError)
+func cmdGenerate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("generate", flag.ContinueOnError)
 	template := fs.String("template", "", "template name (accepted for CLI parity; the Rust generator never read it)")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	out := fs.String("out", "", "write the body to this path instead of only printing it")
-	parseInterspersed("generate", fs, args, 0)
+	if _, err := parseInterspersed("generate", fs, args, 0); err != nil {
+		return err
+	}
 	_ = template
 
-	st, _, err := openVerbStore(*project, store.RO)
+	st, _, err := openVerbStore(ctx, *project, store.RO)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
 	body, err := docgen.AgentsMD(st)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	if *out == "" {
 		fmt.Printf("%s", body)
 		fmt.Println("\n(not written to disk — pass --out PATH to save it)")
-		return
+		return nil
 	}
 	path, err := docgen.WriteFileTo(*out, body)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	fmt.Printf("%s", body)
 	fmt.Printf("\nSaved to %s\n", path)
+	return nil
 }
 
 // requireIndexedElement refuses a qualified_name the index does not contain,
@@ -307,32 +316,35 @@ func requireIndexedElement(st store.Backend, element, description string) error 
 }
 
 // cmdAnnotate ports `leankg annotate <element> --description ...`.
-func cmdAnnotate(args []string) {
-	fs := flag.NewFlagSet("annotate", flag.ExitOnError)
+func cmdAnnotate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("annotate", flag.ContinueOnError)
 	description := fs.String("description", "", "business logic description")
 	fs.StringVar(description, "d", "", "business logic description (shorthand)")
 	userStory := fs.String("user-story", "", "user story id")
 	feature := fs.String("feature", "", "feature id")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	positional := parseInterspersed("annotate", fs, args, 1)
+	positional, err := parseInterspersed("annotate", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if len(positional) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg annotate <element> --description TEXT [--user-story ID] [--feature ID]")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	element := positional[0]
 
-	st, _, err := openVerbStore(*project, store.RW)
+	st, _, err := openVerbStore(ctx, *project, store.RW)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
 	if err := requireIndexedElement(st, element, *description); err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	created, err := annot.Annotate(st, element, *description, optString(*userStory), optString(*feature))
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	if created {
 		fmt.Printf("Created annotation for '%s'\n", element)
@@ -346,57 +358,65 @@ func cmdAnnotate(args []string) {
 	if *feature != "" {
 		fmt.Printf("  Feature: %s\n", *feature)
 	}
+	return nil
 }
 
 // cmdLink ports `leankg link <element> <id> [--kind story|feature]`.
-func cmdLink(args []string) {
-	fs := flag.NewFlagSet("link", flag.ExitOnError)
+func cmdLink(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("link", flag.ContinueOnError)
 	kind := fs.String("kind", "story", "link type: story or feature")
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	positional := parseInterspersed("link", fs, args, 2)
+	positional, err := parseInterspersed("link", fs, args, 2)
+	if err != nil {
+		return err
+	}
 	if len(positional) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: leankg link <element> <id> [--kind story|feature]")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	element, id := positional[0], positional[1]
 
-	st, _, err := openVerbStore(*project, store.RW)
+	st, _, err := openVerbStore(ctx, *project, store.RW)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
 	// A link's note is the id it points at, so the emptiness check has
 	// nothing to say here: pass the link itself, never an empty string.
 	if err := requireIndexedElement(st, element, "link "+id); err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	if err := annot.Link(st, element, id, *kind); err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	fmt.Printf("Linked '%s' to %s %s\n", element, *kind, id)
+	return nil
 }
 
 // cmdSearchAnnotations ports `leankg search-annotations <query>`.
-func cmdSearchAnnotations(args []string) {
-	fs := flag.NewFlagSet("search-annotations", flag.ExitOnError)
+func cmdSearchAnnotations(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("search-annotations", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	positional := parseInterspersed("search-annotations", fs, args, 1)
+	positional, err := parseInterspersed("search-annotations", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if len(positional) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg search-annotations <query>")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	query := positional[0]
 
-	st, _, err := openVerbStore(*project, store.RO)
+	st, _, err := openVerbStore(ctx, *project, store.RO)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
 	results, err := annot.Search(st, query)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	if len(results) == 0 {
 		// A miss must not read as "no such row": annot.Search matches the
@@ -409,10 +429,10 @@ func cmdSearchAnnotations(args []string) {
 		if all, _ := annot.All(st); len(all) > 0 {
 			fmt.Printf("No annotations found matching '%s'\n", query)
 			fmt.Printf("  (%d annotation(s) exist; search matches DESCRIPTION text only — try show-annotations <element>, or words from the description)\n", len(all))
-			return
+			return nil
 		}
 		fmt.Printf("No annotations found matching '%s'\n", query)
-		return
+		return nil
 	}
 	fmt.Printf("Found %d annotation(s):\n", len(results))
 	for _, r := range results {
@@ -425,32 +445,36 @@ func cmdSearchAnnotations(args []string) {
 			fmt.Printf("  Feature: %s\n", r.FeatureID)
 		}
 	}
+	return nil
 }
 
 // cmdShowAnnotations ports `leankg show-annotations <element>`.
-func cmdShowAnnotations(args []string) {
-	fs := flag.NewFlagSet("show-annotations", flag.ExitOnError)
+func cmdShowAnnotations(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("show-annotations", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	positional := parseInterspersed("show-annotations", fs, args, 1)
+	positional, err := parseInterspersed("show-annotations", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if len(positional) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg show-annotations <element>")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	element := positional[0]
 
-	st, _, err := openVerbStore(*project, store.RO)
+	st, _, err := openVerbStore(ctx, *project, store.RO)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
 	rec, err := annot.Get(st, element)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	if rec == nil {
 		fmt.Printf("No annotations found for '%s'\n", element)
-		return
+		return nil
 	}
 	fmt.Printf("Annotations for '%s':\n", element)
 	fmt.Printf("  Description: %s\n", rec.Description)
@@ -460,6 +484,7 @@ func cmdShowAnnotations(args []string) {
 	if rec.FeatureID != "" {
 		fmt.Printf("  Feature: %s\n", rec.FeatureID)
 	}
+	return nil
 }
 
 // optString maps an empty flag to an unset annotation link (Rust Option).

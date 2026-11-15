@@ -4,13 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/obsidian"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -46,17 +44,19 @@ func nearestLeankgRoot(dir string) string {
 }
 
 // cmdObsidian is the Rust `leankg obsidian` parity verb set.
-func cmdObsidian(args []string) {
+func cmdObsidian(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		obsidianUsage()
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	verb, rest := args[0], args[1:]
-	fs := flag.NewFlagSet("obsidian "+verb, flag.ExitOnError)
+	fs := flag.NewFlagSet("obsidian "+verb, flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	vaultFlag := fs.String("vault", "", "custom vault path (default <project>/.leankg/obsidian/vault)")
 	debounce := fs.Int("debounce-ms", 1000, "watch debounce delay in milliseconds")
-	parseInterspersed("obsidian "+verb, fs, rest, 0)
+	if _, err := parseInterspersed("obsidian "+verb, fs, rest, 0); err != nil {
+		return err
+	}
 
 	dir := *project
 	if dir == "" {
@@ -65,7 +65,7 @@ func cmdObsidian(args []string) {
 	if dir == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
-			log.Fatalf("resolve cwd: %v", err)
+			return fmt.Errorf("resolve cwd: %v", err)
 		}
 		dir = nearestLeankgRoot(cwd)
 	}
@@ -74,14 +74,14 @@ func cmdObsidian(args []string) {
 	switch verb {
 	case "init":
 		if err := obsidian.New(vault, nil).Init(); err != nil {
-			log.Fatal(err)
+			return err
 		}
 		fmt.Printf("Obsidian vault initialized at:\n  %s\n\nNext steps:\n  leankg obsidian push    # Generate notes from LeanKG\n  leankg obsidian status  # Check vault status\n", vault)
 
 	case "status":
 		s, err := obsidian.New(vault, nil).Status()
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		fmt.Println("LeanKG Obsidian Vault Status")
 		fmt.Println("============================")
@@ -96,20 +96,18 @@ func cmdObsidian(args []string) {
 		}
 
 	case "push", "pull", "watch":
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
 		st, err := openStore(ctx, dir, "", store.RW)
 		if err != nil {
-			log.Fatalf("open store: %v", err)
+			return fmt.Errorf("open store: %v", err)
 		}
 		defer st.Close()
 		if err := st.Migrate(); err != nil {
-			log.Fatalf("migrate: %v", err)
+			return fmt.Errorf("migrate: %v", err)
 		}
 		e := obsidian.New(vault, st)
 		s, err := e.Status()
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		if !s.Initialized {
 			// Exit NONZERO: the verb did nothing, and a caller driving it by
@@ -117,7 +115,7 @@ func cmdObsidian(args []string) {
 			// `return` printed the same words and exited 0, so a script
 			// believed a push had happened against no vault at all.
 			fmt.Fprintln(os.Stderr, "leankg obsidian: vault not initialized — run 'leankg obsidian init' first")
-			os.Exit(2)
+			return cliexit.Code(2)
 		}
 
 		switch verb {
@@ -125,7 +123,7 @@ func cmdObsidian(args []string) {
 			fmt.Println("Pushing LeanKG data to Obsidian vault...")
 			res, err := e.Push()
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
 			fmt.Println()
 			fmt.Println("Push complete:")
@@ -137,7 +135,7 @@ func cmdObsidian(args []string) {
 			fmt.Println("Pulling annotations from Obsidian vault...")
 			res, err := e.Pull()
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
 			fmt.Println()
 			fmt.Println("Pull complete:")
@@ -171,12 +169,13 @@ func cmdObsidian(args []string) {
 				},
 			})
 			if err != nil && ctx.Err() == nil {
-				log.Fatal(err)
+				return err
 			}
 		}
 
 	default:
 		obsidianUsage()
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
+	return nil
 }

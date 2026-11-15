@@ -4,10 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
@@ -17,18 +17,18 @@ import (
 // cmdStatus prints the status tool payload as JSON (Rust `leankg status --json`
 // parity): health, inventory, freshness, embed state, lazy language tiers, and
 // the effective leankg.yaml project config.
-func cmdStatus(args []string) {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
+func cmdStatus(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
-	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
+	if err := cliexit.Parse(fs, args); err != nil {
+		return err
 	}
 	dir := *project
 	if dir == "" {
 		var err error
 		dir, err = os.Getwd()
 		if err != nil {
-			log.Fatalf("resolve cwd: %v", err)
+			return fmt.Errorf("resolve cwd: %v", err)
 		}
 	}
 	// Rust find_project_root + MCPServer::resolve_project_root: walk up to the
@@ -38,7 +38,7 @@ func cmdStatus(args []string) {
 	dir = projectcfg.FindProjectRoot(dir)
 	dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
 	storeDir := filepath.Dir(dbDir)
-	st, err := openStore(context.Background(), storeDir, "", store.RO)
+	st, err := openStore(ctx, storeDir, "", store.RO)
 	if err != nil {
 		// An uninitialized project is legitimately "cold" (exit 0); a store
 		// that EXISTS but cannot be opened is an operational failure and
@@ -46,10 +46,10 @@ func cmdStatus(args []string) {
 		// old fake numbers).
 		if _, statErr := os.Lstat(dbDir); os.IsNotExist(statErr) {
 			fmt.Printf("{\"elements\":0,\"freshness\":\"cold\",\"note\":\"%s\"}\n", err.Error())
-			os.Exit(0)
+			return cliexit.Code(0)
 		}
 		fmt.Fprintf(os.Stderr, "status: %v\n", err)
-		os.Exit(1)
+		return cliexit.Code(1)
 	}
 	defer st.Close()
 	engine := core.New(st, nil, nil)
@@ -60,14 +60,15 @@ func cmdStatus(args []string) {
 	if _, aerr := reg.Activate(storeDir); aerr == nil {
 		engine.SetLangsRegistry(reg)
 	}
-	out, err := engine.Status(context.Background())
+	out, err := engine.Status(ctx)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	// Surface the effective project config (and its parse error) alongside the
 	// numbers: which config produced this store is part of the payload.
 	out["project_config"] = effectiveConfig(dir, storeDir)
 	printJSON(out)
+	return nil
 }
 
 // effectiveConfig reports the project config that governs a store: the config
