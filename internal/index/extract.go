@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 	"strings"
@@ -81,21 +82,21 @@ var (
 	dartEnumConstantRe = regexp.MustCompile(`^[A-Za-z_$][\w$]*$`)
 )
 
-// extractFile extracts elements from one file's content, tagging it with the
-// legacy static extension->language map.
-func extractFile(rel string, src []byte) fileElements {
-	return extractFileAs(rel, src, extLang[extOf(rel)])
-}
-
 // extractFileAs extracts elements from one file's content as the given
-// language tag (empty or unknown tags yield no elements).
-func extractFileAs(rel string, src []byte, lang string) fileElements {
+// language tag (empty or unknown tags yield no elements). The only error is
+// ctx's: a cancelled ctx stops the tree-sitter tier and is returned, while a
+// grammar that fails to parse falls back to regex.
+func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fileElements, error) {
 	lines := strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
 
 	// Tree-sitter tier first (tstree build only): richer symbol extraction
 	// for the bundled grammars, with real end lines. No grammar for the
 	// language ⇒ nil ⇒ regex fallback below.
-	if defs, err := tsExtract(src, lang); err == nil && len(defs) > 0 {
+	defs, err := tsExtract(ctx, src, lang)
+	if cerr := ctx.Err(); cerr != nil {
+		return fileElements{}, cerr
+	}
+	if err == nil && len(defs) > 0 {
 		fe := fileElements{rel: rel}
 		for _, d := range defs {
 			end := d.EndLine
@@ -130,8 +131,10 @@ func extractFileAs(rel string, src []byte, lang string) fileElements {
 		qualify(fe)
 		boundContent(fe.elements, lines)
 		// Grammar-derived call sites seed "calls" edges in relationships().
-		tsAttributeCalls(src, lang, fe.elements)
-		return fe
+		if err := tsAttributeCalls(ctx, src, lang, fe.elements); err != nil {
+			return fileElements{}, err
+		}
+		return fe, nil
 	}
 
 	var ms []match
@@ -162,7 +165,7 @@ func extractFileAs(rel string, src []byte, lang string) fileElements {
 		ms, _ = matchLangExp(lang, lines)
 	}
 	if len(ms) == 0 {
-		return fileElements{rel: rel}
+		return fileElements{rel: rel}, nil
 	}
 
 	ends := make([]int, len(ms))
@@ -201,10 +204,10 @@ func extractFileAs(rel string, src []byte, lang string) fileElements {
 	if lang == "md" {
 		mdUniqueNames(fe.elements)
 		markdownContent(fe.elements, ms, ends, lines)
-		return fe
+		return fe, nil
 	}
 	boundContent(fe.elements, lines)
-	return fe
+	return fe, nil
 }
 
 // fileElements holds the extraction output for one file.

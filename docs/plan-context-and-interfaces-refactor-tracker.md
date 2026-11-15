@@ -62,7 +62,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-29 | `refactor(cmd): every verb takes ctx and returns an error` | M-L | - | todo | - | - |
 | CX-30 | `refactor(core,graph,mcp): thread ctx through the rungs, graph and status` | M | - | todo | - | - |
 | CX-31 | `refactor(rest,rpc,web,dashboard,auth): use the request context` | M | - | todo | - | - |
-| CX-32 | `refactor(index,lsp,langs,tstree): cancellable extraction and LSP` | M | - | todo | - | - |
+| CX-32 | `refactor(index,lsp,langs,tstree): cancellable extraction and LSP` | M | - | done | - | local commit only; `SupportedFiles` (index/walk.go) keeps its two Background roots for CX-35 (doctor checkFunc ctx) |
 | CX-33 | `refactor(embed): ctx-aware HTTP and run loop` | M | - | todo | - | - |
 | CX-34 | `refactor(memory): one ctx-first API; delete the ctx-less wrappers` | M | - | todo | - | - |
 | CX-35 | `refactor(doctor,maintain): ctx-first probes, checks and passes` | M | - | todo | - | - |

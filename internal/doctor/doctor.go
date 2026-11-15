@@ -1205,7 +1205,7 @@ func RunDeep(ctx context.Context, projectRoot, engineName, pgURL string, checks 
 	}()
 
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(root); aerr != nil {
+	if _, aerr := reg.Activate(ctx, root); aerr != nil {
 		reg = nil // a language-detection failure must not kill the report
 	}
 	if checks == nil {

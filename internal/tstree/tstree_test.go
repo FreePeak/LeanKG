@@ -3,6 +3,7 @@
 package tstree
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,7 +64,7 @@ static NSString *describe(void) {
 // return type is a typedef name (the declarator must win over the
 // type_identifier child).
 func TestExtractObjC(t *testing.T) {
-	defs, err := Extract([]byte(objcFixture), "objc")
+	defs, err := Extract(context.Background(), []byte(objcFixture), "objc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ int add(int a, int b) {
 // enum constants. Every constructor node maps to element type "constructor"
 // like the Rust reference; enum constants map to "constant".
 func TestExtractDart(t *testing.T) {
-	defs, err := Extract([]byte(dartFixture), "dart")
+	defs, err := Extract(context.Background(), []byte(dartFixture), "dart")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +166,7 @@ func TestExtractPerl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defs, err := Extract(src, "perl")
+	defs, err := Extract(context.Background(), src, "perl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +195,7 @@ func TestExtractPerlModernConstructs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defs, err := Extract(src, "perl")
+	defs, err := Extract(context.Background(), src, "perl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,12 +219,8 @@ func TestExtractPerlModernConstructs(t *testing.T) {
 // firstBadNode returns the first ERROR or MISSING node of a parse, "" when
 // the tree is clean.
 func firstBadNode(src []byte, lang string) string {
-	p := parserFor(lang)
-	if p == nil {
-		return ""
-	}
-	tree := p.Parse(nil, src)
-	if tree == nil {
+	tree, err := parse(context.Background(), src, lang)
+	if err != nil || tree == nil {
 		return ""
 	}
 	var bad string
@@ -327,7 +324,7 @@ void main() {
 // TestExtractDart), but the class name, default arguments and redirecting
 // targets around them are not.
 func TestExtractIgnoresNonDefinitions(t *testing.T) {
-	objcDefs, err := Extract([]byte(objcJunkFixture), "objc")
+	objcDefs, err := Extract(context.Background(), []byte(objcJunkFixture), "objc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +333,7 @@ func TestExtractIgnoresNonDefinitions(t *testing.T) {
 		{Kind: "method", Name: "run", Parent: "Widget", StartLine: 9, EndLine: 14},
 	})
 
-	dartDefs, err := Extract([]byte(dartJunkFixture), "dart")
+	dartDefs, err := Extract(context.Background(), []byte(dartJunkFixture), "dart")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +364,7 @@ const objcCallFixture = `@implementation Greeter
 // and the enclosing method as the caller. A bare receiver ([bar]) has no
 // selector and yields no call.
 func TestExtractCallsObjC(t *testing.T) {
-	calls, err := ExtractCalls([]byte(objcCallFixture), "objc")
+	calls, err := ExtractCalls(context.Background(), []byte(objcCallFixture), "objc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +397,7 @@ func TestExtractCallsObjC(t *testing.T) {
 // non-grammar behavior.
 func TestExtractCallsOtherLanguages(t *testing.T) {
 	for _, lang := range []string{"go", "dart", "swift", "py"} {
-		calls, err := ExtractCalls([]byte("func main() { helper() }\n"), lang)
+		calls, err := ExtractCalls(context.Background(), []byte("func main() { helper() }\n"), lang)
 		if err != nil {
 			t.Fatalf("%s: %v", lang, err)
 		}
@@ -415,7 +412,7 @@ func TestExtractCallsOtherLanguages(t *testing.T) {
 // lets the indexer qualify it ("<file>::Box.named") even when the class body
 // sits on a single line and line-based parent detection finds no parent.
 func TestExtractDartConstructorParent(t *testing.T) {
-	defs, err := Extract([]byte("class Box { Box(); Box.named(); }\n"), "dart")
+	defs, err := Extract(context.Background(), []byte("class Box { Box(); Box.named(); }\n"), "dart")
 	if err != nil {
 		t.Fatal(err)
 	}

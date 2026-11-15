@@ -151,7 +151,7 @@ func TestRelationshipsPerFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fe := extractFile("sample.go", src)
+	fe := extractFile(t, "sample.go", src)
 	rels := goRels(fe)
 	// Signature-only names (a parameter type, a receiver) are references;
 	// a name used in the body is a call.
@@ -183,7 +183,7 @@ func TestRelationshipsPerFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	py := extractFile("sample.py", pySrc)
+	py := extractFile(t, "sample.py", pySrc)
 	pyRels := goRels(py)
 	byType := map[string]int{}
 	for _, r := range pyRels {
@@ -344,7 +344,7 @@ func TestQualifiedNameFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fe := extractFile("sub/dir/sample.go", src)
+	fe := extractFile(t, "sub/dir/sample.go", src)
 	got := map[string]bool{}
 	for _, e := range fe.elements {
 		got[e.qn] = true

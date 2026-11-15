@@ -225,7 +225,7 @@ func startAutoIndex(ctx context.Context, st store.Backend, dir string) {
 		return
 	}
 	langReg := langs.DefaultRegistry()
-	if _, aerr := langReg.Activate(dir); aerr != nil {
+	if _, aerr := langReg.Activate(ctx, dir); aerr != nil {
 		log.Printf("auto-config: index language detection: %v", aerr)
 		return
 	}

@@ -468,7 +468,7 @@ afterSidecars:
 	// Lazy language activation: detect the languages this codebase (incl.
 	// nested repos) actually uses; everything else stays idle.
 	langReg := langs.DefaultRegistry()
-	if roots, err := langReg.Activate(dir); err != nil {
+	if roots, err := langReg.Activate(ctx, dir); err != nil {
 		log.Printf("language detection failed: %v", err)
 	} else {
 		var summary []string

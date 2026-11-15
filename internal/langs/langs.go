@@ -339,13 +339,13 @@ func (r *Registry) Lookup(name string) (Profile, bool) {
 //     (a loose directory of sources still activates its languages);
 //  5. header ownership: .h belongs to the highest-priority activated language
 //     listing it in HeaderExts.
-func (r *Registry) Activate(codebase string) (map[string][]Language, error) {
+func (r *Registry) Activate(ctx context.Context, codebase string) (map[string][]Language, error) {
 	abs, err := filepath.Abs(codebase)
 	if err != nil {
 		return nil, err
 	}
 	act := newActivation(abs)
-	blobs, fromHEAD, err := gitobj.HeadBlobs(context.Background(), abs)
+	blobs, fromHEAD, err := gitobj.HeadBlobs(ctx, abs)
 	if err != nil {
 		return nil, err
 	}
@@ -353,8 +353,8 @@ func (r *Registry) Activate(codebase string) (map[string][]Language, error) {
 		for _, b := range blobs {
 			act.add(b.Path, func() bool { return true }) // a HEAD blob is a regular file
 		}
-	} else {
-		walkFiles(act)
+	} else if err := walkFiles(ctx, act); err != nil {
+		return nil, err
 	}
 	roots := act.rootLangs()
 	r.mu.Lock()
@@ -606,9 +606,14 @@ func (a *activation) rootLangs() map[string][]Language {
 
 // walkFiles feeds every file under a.abs to a, pruning the directories the
 // rules skip. The callback never fails, so WalkDir's error is always nil.
-func walkFiles(a *activation) {
+// walkFiles records every file under a.abs. It checks ctx once per entry and
+// returns its error; an unreadable subtree is skipped, never an abort.
+func walkFiles(ctx context.Context, a *activation) error {
 	baseDepth := strings.Count(a.abs, string(os.PathSeparator))
-	filepath.WalkDir(a.abs, func(path string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(a.abs, func(path string, d fs.DirEntry, err error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if err != nil {
 			return nil // unreadable subtrees: skip, never abort detection
 		}

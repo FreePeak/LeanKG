@@ -20,7 +20,7 @@ func TestLeadingDocCaptured(t *testing.T) {
 		{"java", "A.java", "class A {\n  /** Saves the row. */\n  @Override\n  public void save() {\n  }\n}\n", "save", "Saves the row", ""},
 	}
 	for _, c := range cases {
-		fe := extractFileAs(c.file, []byte(c.src), c.lang)
+		fe := extractAs(t, c.file, []byte(c.src), c.lang)
 		var found *indexedElem
 		for i := range fe.elements {
 			if fe.elements[i].name == c.name {
@@ -49,7 +49,7 @@ func TestLeadingDocCaptured(t *testing.T) {
 
 func TestDocCommentProseIsNotACallEdge(t *testing.T) {
 	src := "package a\n\nfunc Helper() {}\n\n// Caller explains that Helper is unrelated.\nfunc Caller() {}\n"
-	fe := extractFileAs("a.go", []byte(src), "go")
+	fe := extractAs(t, "a.go", []byte(src), "go")
 	names := map[string][]string{}
 	for _, e := range fe.elements {
 		names[e.name] = append(names[e.name], e.qn)

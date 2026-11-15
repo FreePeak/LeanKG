@@ -152,7 +152,7 @@ func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
 		}
 	}
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(dir); aerr == nil {
+	if _, aerr := reg.Activate(context.Background(), dir); aerr == nil {
 		engine.SetLangsRegistry(reg)
 	}
 	return engine, nil
@@ -301,7 +301,7 @@ func runIndex(ctx context.Context, project, target, source, refName, auth string
 		return fmt.Errorf("migrate: %w", err)
 	}
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(indexTarget); aerr != nil {
+	if _, aerr := reg.Activate(ctx, indexTarget); aerr != nil {
 		return fmt.Errorf("language detection: %w", aerr)
 	}
 	if len(rebaseRoot) > 0 && rebaseRoot[0] {

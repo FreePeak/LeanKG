@@ -577,7 +577,7 @@ func TestLSPQueryRequiresActiveLanguage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.langsReg.Activate(dir); err != nil {
+	if _, err := e.langsReg.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	// gopls likely absent in CI — the error must name the failure clearly
@@ -600,7 +600,7 @@ func TestLanguagesStatusAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.SetLangsRegistry(langs.DefaultRegistry())
-	if _, err := e.langsReg.Activate(dir); err != nil {
+	if _, err := e.langsReg.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	out, err := e.Query(context.Background(), QueryRequest{Action: "languages"})

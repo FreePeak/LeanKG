@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,7 +57,7 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 	}
 
 	// Empty want list = every language present in the index.
-	res, err = Enrich(st, dir, nil)
+	res, err = Enrich(context.Background(), st, dir, nil)
 	if err != nil {
 		t.Fatalf("Enrich(all): %v", err)
 	}
@@ -167,7 +168,7 @@ func TestEnrichWithoutServerIsNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"rust"})
+	res, err := Enrich(context.Background(), st, dir, []string{"rust"})
 	if err != nil {
 		t.Fatalf("Enrich err = %v, want nil (graceful absence)", err)
 	}
@@ -206,7 +207,7 @@ func TestEnrichTypedResolveOffByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
@@ -242,14 +243,14 @@ func TestEnrichAcceptsRegistryActiveLanguages(t *testing.T) {
 	}
 
 	reg := langs.NewRegistry()
-	if _, err := reg.Activate(dir); err != nil {
+	if _, err := reg.Activate(context.Background(), dir); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
 	var active []string
 	for _, l := range reg.Active() {
 		active = append(active, string(l))
 	}
-	res, err := Enrich(st, dir, active)
+	res, err := Enrich(context.Background(), st, dir, active)
 	if err != nil {
 		t.Fatalf("Enrich(%v): %v", active, err)
 	}
@@ -269,7 +270,7 @@ func TestEnrichConfiguredButMissingServerIsNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich err = %v, want nil", err)
 	}
@@ -308,7 +309,7 @@ func TestEnrichExpandedLanguageWithoutServerIsGraceful(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"csharp"})
+	res, err := Enrich(context.Background(), st, dir, []string{"csharp"})
 	if err != nil {
 		t.Fatalf("Enrich err = %v, want nil", err)
 	}
@@ -341,7 +342,7 @@ func TestEnrichHandshakeOutlivesRequestTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
@@ -366,7 +367,7 @@ func TestEnrichRecordsFirstFailureReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}

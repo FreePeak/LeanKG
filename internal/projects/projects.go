@@ -381,7 +381,7 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	// Lazy language activation: the routed project gets the same
 	// detection the default project got at startup.
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(dir); aerr != nil {
+	if _, aerr := reg.Activate(ctx, dir); aerr != nil {
 		cfg.Logf("language detection failed for %s: %v", dir, aerr)
 	}
 	eng.SetLangsRegistry(reg)
