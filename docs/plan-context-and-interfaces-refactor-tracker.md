@@ -103,13 +103,12 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 |---|---|---|---|
 | D1 | Web API is unauthenticated on the `--ui` listener; `/api/file` serves any file under the project root | Gate `/api/file` behind the bearer token when the gate is on; ungated only on a loopback bind | decided |
 | D2 | Rare-token bound: `/5000` (SQLite) or `/500` (PG and comments) | `/5000` on both engines, per the measured SQLite recall before and after | decided: `/5000` on both engines; PG recall and the real-embedder sweep are still open |
-| D3 | Login throttle | In-memory per-account backoff, in the same PR as the uniform error (CX-12) | open |
+| D3 | Login throttle | In-memory per-account backoff, in the same PR as the uniform error (CX-12) | decided: in-memory per-account backoff in CX-12 (5 consecutive failures, 60 s lockout, uniform error) |
 | D4 | Where the token budget applies | In core, for every transport; MCP default unchanged | decided and done for query: `core.QueryAnswer` on REST, ConnectRPC, web and MCP; the table default is unchanged for MCP; `args.token_budget` sets a caller cap on every transport; import still MCP-only |
-
 | D5 | `index --hook` time budget | 10 s by default, overridable by flag or environment | decided in CX-28: `--hook-budget` or `LEANKG_HOOK_BUDGET`; covers the size gate, index and embed; expiry prints one line and exits 0 (the plan named neither the flag, the variable nor the expiry status) |
 | D6 | Per-file unit of work (`ReplaceFile`) | Defer to P5; do it only if the CX-22 timing shows per-file commits dominate | dropped (closed): ReplaceFile does not restore convergence; the lost call edges are cross-file (CX-22/23 timing report) |
 | D7 | Web API answers HTTP 200 on every error | Move to the shared error table in CX-46 with the matching `ui-v2` change; otherwise keep and document | decided: real statuses on the web API, no per-route flag (ui-v2 fetchJson throws on non-2xx and reads `error`) |
-| D8 | golangci-lint (`noctx`, `contextcheck`) | Not now; revisit after P3 | open |
+| D8 | golangci-lint (`noctx`, `contextcheck`) | Not now; revisit after P3 | decided: `noctx` and `contextcheck` are not added to golangci-lint; the archtest ratchets are the guard |
 | D9 | Graph BFS caps | Node budget (default 5000) with `truncated: true` and effective depth in the response, in CX-30 | decided in CX-30: `graph.NodeBudget` = 5000 on Impact and ShortestPath; impact and path responses carry `depth`, and `truncated` only when the budget stopped the walk; path reports truncated instead of reachable:false |
 | D10 | Deterministic embedding provider is selectable in production | Keep behind explicit `LEANKG_EMBED_PROVIDER=deterministic` and flag it in `status` | kept |
 
