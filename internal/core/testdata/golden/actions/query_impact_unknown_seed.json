@@ -1,0 +1,9 @@
+{
+  "action": "impact",
+  "freshness": "possibly_stale",
+  "guidance": "No indexed element matches the seed \"NoSuchSymbol\"; resolve it with query (action empty) to a qualified_name, then retry impact with that exact QN.",
+  "hits": [],
+  "limit": 10,
+  "query": "NoSuchSymbol",
+  "reachable": false
+}

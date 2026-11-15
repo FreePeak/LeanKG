@@ -1,0 +1,12 @@
+{
+  "cached": false,
+  "content": "package src\n\nfunc Alpha() int {\n\treturn Beta() + 1\n}\n",
+  "lines_included": 5,
+  "mode": "full",
+  "output_lines": 5,
+  "path": "src/alpha.go",
+  "savings_percent": 0,
+  "tokens": 13,
+  "total_lines": 5,
+  "total_tokens": 13
+}

@@ -1,0 +1,3 @@
+{
+  "error": "LEANKG_ERROR_UNKNOWN_TOOL: tool \"get\" is not in this server's registry — valid tools: import, query, status, authenticate (\"get\" was superseded by \"query\"). Fix: LeanKG exposes exactly 4 tools — import, query, status, authenticate. Call query (the default ladder router) or re-read tools/list and retry with the corrected name (docs: docs/archive/mcp-tools.md)"
+}

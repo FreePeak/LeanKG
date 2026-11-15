@@ -1,0 +1,9 @@
+{
+  "incidents": [],
+  "query": {
+    "env": "prod",
+    "limit": 5,
+    "pattern": "",
+    "service": "svc-a"
+  }
+}

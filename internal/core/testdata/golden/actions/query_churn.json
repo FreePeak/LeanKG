@@ -1,0 +1,22 @@
+{
+  "files": [
+    {
+      "commits": 2,
+      "deletions": 1,
+      "insertions": 4,
+      "path": "main.go"
+    },
+    {
+      "commits": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "path": ".gitignore"
+    },
+    {
+      "commits": 1,
+      "deletions": 0,
+      "insertions": 3,
+      "path": "util.go"
+    }
+  ]
+}

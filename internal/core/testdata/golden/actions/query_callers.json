@@ -1,0 +1,9 @@
+{
+  "action": "callers",
+  "callers": [
+    "src/alpha.go::Alpha"
+  ],
+  "freshness": "possibly_stale",
+  "limit": 10,
+  "query": "src/beta.go::Beta"
+}

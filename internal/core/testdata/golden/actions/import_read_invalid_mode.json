@@ -1,0 +1,3 @@
+{
+  "error": "invalid mode \"bogus\" (valid: adaptive, full, map, signatures, diff, aggressive, entropy, lines)"
+}

@@ -1,0 +1,12 @@
+{
+  "ontology": "synced",
+  "stats": {
+    "concepts": 0,
+    "failure_modes": 0,
+    "ontology_dir": "<PROJECT>/ontology",
+    "relationships": 0,
+    "synced_at_unix": "<UNIX>",
+    "workflow_steps": 0,
+    "workflows": 1
+  }
+}

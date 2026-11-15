@@ -1,0 +1,14 @@
+{
+  "count": 1,
+  "requirements": [
+    {
+      "acceptance_criteria": [
+        "a valid password returns a session token"
+      ],
+      "description": "Priority:  | Focus: \n\nDescription: \n\nRelated FRs: \n\nRelated US: \n\nCode paths: \n\nAcceptance criteria:\n- a valid password returns a session token",
+      "id": "FR-AUTH-01",
+      "title": "FR-AUTH-01 Users can log in with a password",
+      "workflows": []
+    }
+  ]
+}

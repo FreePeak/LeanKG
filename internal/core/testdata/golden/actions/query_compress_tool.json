@@ -1,0 +1,12 @@
+{
+  "compressed_tokens": 36,
+  "original_tokens": 18,
+  "response": {
+    "_compression_note": "Use search_code with compress=true for full results",
+    "elements_summary": "0 elements",
+    "top_elements": [],
+    "total_matches": 0
+  },
+  "savings_percent": -100,
+  "tool": "search_code"
+}

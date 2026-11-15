@@ -1,0 +1,9 @@
+{
+  "action": "callees",
+  "callees": [
+    "src/beta.go::Beta"
+  ],
+  "freshness": "possibly_stale",
+  "limit": 10,
+  "query": "src/alpha.go::Alpha"
+}

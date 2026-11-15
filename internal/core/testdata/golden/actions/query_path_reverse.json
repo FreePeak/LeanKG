@@ -1,0 +1,12 @@
+{
+  "action": "path",
+  "depth": 2,
+  "freshness": "possibly_stale",
+  "limit": 10,
+  "path": [
+    "src/beta.go::Beta",
+    "src/alpha.go::Alpha"
+  ],
+  "query": "src/beta.go::Beta",
+  "reachable": true
+}

@@ -1,0 +1,21 @@
+{
+  "commits": [
+    {
+      "author": "t",
+      "date": "<TIME>",
+      "deletions": 1,
+      "insertions": 1,
+      "sha": "<SHA>",
+      "subject": "second"
+    },
+    {
+      "author": "t",
+      "date": "<TIME>",
+      "deletions": 0,
+      "insertions": 3,
+      "sha": "<SHA>",
+      "subject": "first"
+    }
+  ],
+  "path": "main.go"
+}

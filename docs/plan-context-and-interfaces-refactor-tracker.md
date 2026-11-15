@@ -77,7 +77,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-39 | `refactor(core): remove Engine.Store()` | M | - | todo | - | - |
 | CX-40 | `refactor(embed): an Identity value with one encoding, resolved once` | M | - | todo | - | - |
 | CX-41 | `refactor(embed,core,memory): Provider replaces QueryEmbedder and Vectorizer; env read only in cmd` | M-L | - | todo | - | - |
-| CX-42 | `test(core): golden responses for every query and import action` | M | - | todo | - | must merge before CX-43..45 |
+| CX-42 | `test(core): golden responses for every query and import action` | M | - | done | - | local commit, no PR. Goldens in `internal/core/actions_golden_test.go` (testdata/golden/actions, `-update`); every top-level query and import action, its sub-commands and error paths; `TestActionVocabulary` fails on an uncovered dispatch key. Gap: lsp `workspace`/`document` positive answers need a language server (env-gated). Must merge before CX-43..45 |
 | CX-43 | `refactor(core): action handler registry` | M | - | todo | - | - |
 | CX-44 | `refactor(core): typed action args; command is the sub-command key` | M-L | - | todo | - | - |
 | CX-45 | `refactor(core): Options at New, Close, once-only LSP, surfaced store errors` | M | - | todo | - | - |

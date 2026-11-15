@@ -1,0 +1,4 @@
+{
+  "command": "snapshot",
+  "content": "<!-- leankg-memory usage: MEMORY.md 2% (65/2200) USER.md 0% (0/2200) -->\n# MEMORY.md\n# Project Memory\n\n- Golden fixture corpus pins the L0-L3 ladder.\n# USER.md\n"
+}

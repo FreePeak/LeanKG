@@ -1,0 +1,3 @@
+{
+  "error": "LEANKG_ERROR_INDEX_ROOT_MISMATCH: import repo|dir: \"src\" is a subdirectory of the project; indexing it into this project's store would delete every element outside it (the store reconciles against the walk root). Fix: index the project root (path \".\"), run `leankg index <dir>` to make the other directory its own project, or select it with project= on a multi-project server (docs: docs/mcp-tool-contract.md)"
+}
