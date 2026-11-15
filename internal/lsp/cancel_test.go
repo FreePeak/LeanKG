@@ -15,25 +15,17 @@ import (
 	"github.com/FreePeak/LeanKG/internal/langs"
 )
 
-// hangingSpec puts a POSIX-sh server on PATH that records its pid in a file
+// hangingSpec runs the shared fake in hang mode: it records its pid in a file
 // and then never answers the handshake. A background child of the server is
 // recorded too, so a test can check that no process of the spawn survives.
 func hangingSpec(t *testing.T) (spec *langs.LSPSpec, pidFile, childFile string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("fake LSP server is a POSIX sh script")
-	}
 	dir := t.TempDir()
 	pidFile = filepath.Join(dir, "server.pid")
 	childFile = filepath.Join(dir, "child.pid")
-	script := "#!/bin/sh\necho $$ > \"$HANG_PID_FILE\"\nsleep 60 & echo $! > \"$HANG_CHILD_FILE\"\nwait\n"
-	if err := os.WriteFile(filepath.Join(dir, "hang-lsp"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HANG_PID_FILE", pidFile)
 	t.Setenv("HANG_CHILD_FILE", childFile)
-	return &langs.LSPSpec{Commands: []string{"hang-lsp"}}, pidFile, childFile
+	return fakeSpec(t, "hang"), pidFile, childFile
 }
 
 // readPID polls a pid file the hanging server writes, so a test knows the

@@ -6,17 +6,14 @@ import (
 	"testing"
 )
 
-// fakeServerDir drops the fake LSP server on PATH (prepended so the shell
-// script keeps finding coreutils) and sets its mode.
+// fakeServerDir puts the shared fake LSP server on PATH (prepended so the shell
+// script keeps finding coreutils) and sets its mode. Every test execs the same
+// warmed file; see TestMain in lsp_test.go for why it is not written per test.
 func fakeServerDir(t *testing.T, mode string) string {
 	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "fake-lsp"), []byte(fakeLSP), 0o755); err != nil {
-		t.Fatalf("write fake server: %v", err)
-	}
 	t.Setenv("FAKE_LSP_MODE", mode)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return dir
+	t.Setenv("PATH", sharedFakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return sharedFakeDir
 }
 
 func writeFile(t *testing.T, dir, name, content string) string {
@@ -232,5 +229,16 @@ func TestAutoConfigFiltersByPATH(t *testing.T) {
 	}
 	if cfg.Servers["go"].Command != "gopls" {
 		t.Errorf("go = %+v", cfg.Servers["go"])
+	}
+}
+
+// TestFakeServerReusesOneExecutable pins the cause of the load flake: every
+// test must exec the same warmed fake server. A fresh file per test pays the
+// OS's first-exec verification inside that test's deadline (see TestMain).
+func TestFakeServerReusesOneExecutable(t *testing.T) {
+	first := fakeServerDir(t, "hier")
+	second := fakeServerDir(t, "hier")
+	if first != second {
+		t.Errorf("fakeServerDir wrote a fresh fake server per call (%q, %q): each one cold-starts inside its own deadline", first, second)
 	}
 }
