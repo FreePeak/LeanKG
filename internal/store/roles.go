@@ -92,14 +92,14 @@ type HybridQuery struct {
 type Searcher interface {
 	// FindFuzzy is the keyword arm. It returns the hits and the arm that served
 	// them (ArmFTS5 on SQLite; ArmTSVector, ArmTrigram or ArmILIKE on PostgreSQL).
-	FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error)
+	FindFuzzy(ctx context.Context, query string, limit int) ([]FuzzyMatch, Arm, error)
 	// SearchVectors is the vector arm (see VectorQuery).
-	SearchVectors(q VectorQuery) ([]VectorSearchHit, error)
+	SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error)
 	// Hybrid fuses the vector, keyword and name arms of q by reciprocal rank
 	// fusion. The returned Arm is the keyword arm that contributed: ArmFTS5 on
 	// SQLite; on PostgreSQL the first of ArmTSVector, ArmTrigram and ArmILIKE
-	// that contributed. It is empty when no keyword arm did. ctx is accepted
-	// now; the arms take it when the ctx migration reaches Searcher.
+	// that contributed. It is empty when no keyword arm did. A cancelled ctx
+	// is an error, never a vector-only answer.
 	Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, error)
 }
 

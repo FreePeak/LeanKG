@@ -175,7 +175,7 @@ func cmdQuery(ctx context.Context, args []string) error {
 			return fatalJSON(err)
 		}
 		if len(els) == 0 {
-			matches, _, ferr := st.FindFuzzy(q, 10)
+			matches, _, ferr := st.FindFuzzy(ctx, q, 10)
 			if ferr != nil {
 				return fatalJSON(ferr)
 			}

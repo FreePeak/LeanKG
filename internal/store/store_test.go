@@ -59,7 +59,7 @@ func TestFindFuzzyFTS(t *testing.T) {
 	}
 	// Free text must not be able to inject FTS5 syntax.
 	for _, q := range []string{"parse config", "parse*", "config NEAR yaml"} {
-		hits, _, err := s.FindFuzzy(q, 10)
+		hits, _, err := s.FindFuzzy(context.Background(), q, 10)
 		if err != nil {
 			t.Fatalf("fuzzy %q: %v", q, err)
 		}
@@ -69,7 +69,7 @@ func TestFindFuzzyFTS(t *testing.T) {
 	}
 	// Hostile input must never error (FTS5 syntax injection); matches optional.
 	for _, q := range []string{"\"parse", `) OR (1=1`, "parse AND NOT config"} {
-		if _, _, err := s.FindFuzzy(q, 10); err != nil {
+		if _, _, err := s.FindFuzzy(context.Background(), q, 10); err != nil {
 			t.Fatalf("fuzzy %q must not error: %v", q, err)
 		}
 	}
@@ -93,7 +93,7 @@ func TestDeleteByFile(t *testing.T) {
 		t.Fatalf("element count = %d, want 1", n)
 	}
 	// FTS must not return the deleted element.
-	hits, _, err := s.FindFuzzy("A", 10)
+	hits, _, err := s.FindFuzzy(context.Background(), "A", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestModelStampAndVectors(t *testing.T) {
 	if state["a"] != "ha" {
 		t.Fatalf("state = %+v", state)
 	}
-	hits, err := s.SearchVectors(VectorQuery{ModelID: "test-model", Vec: []float32{1, 0, 0, 0}, K: 1})
+	hits, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: "test-model", Vec: []float32{1, 0, 0, 0}, K: 1})
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("search: %v %+v", err, hits)
 	}
@@ -513,7 +513,7 @@ func TestReplaceFileVectorsIsOneAtomicUnit(t *testing.T) {
 	if n, _ := s.VectorCount("m"); n != 2 {
 		t.Fatalf("vector count after replace = %d, want 2 (no duplicate)", n)
 	}
-	hits, err := s.SearchVectors(VectorQuery{ModelID: "m", Vec: []float32{0, 0, 1, 0}, K: 1})
+	hits, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: "m", Vec: []float32{0, 0, 1, 0}, K: 1})
 	if err != nil || len(hits) != 1 || hits[0].Element.QualifiedName != "a.go::f1" {
 		t.Fatalf("replaced vector not searchable: %+v, %v", hits, err)
 	}
@@ -547,7 +547,7 @@ func TestIdentifierTermsReachFTS(t *testing.T) {
 		Name: "RotateStagingCredentials", FilePath: "a.go", Language: "go", Content: "func RotateStagingCredentials() {}"}}); err != nil {
 		t.Fatal(err)
 	}
-	hits, _, err := s.FindFuzzy("rotate staging credentials", 5)
+	hits, _, err := s.FindFuzzy(context.Background(), "rotate staging credentials", 5)
 	if err != nil || len(hits) == 0 {
 		t.Fatalf("split terms not searchable: %v %v", err, hits)
 	}
@@ -561,13 +561,13 @@ func TestIdentifierTermsReachFTS(t *testing.T) {
 	if err := s.KVSet(context.Background(), "fts", "terms_version", "0"); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _, _ := s.FindFuzzy("staging", 5); len(hits) != 0 {
+	if hits, _, _ := s.FindFuzzy(context.Background(), "staging", 5); len(hits) != 0 {
 		t.Fatal("precondition: old-style row should not match the split word")
 	}
 	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _, _ := s.FindFuzzy("staging", 5); len(hits) == 0 {
+	if hits, _, _ := s.FindFuzzy(context.Background(), "staging", 5); len(hits) == 0 {
 		t.Fatal("backfill did not add split terms to existing rows")
 	}
 }

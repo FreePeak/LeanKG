@@ -70,7 +70,7 @@ func assertNoElement(t *testing.T, st store.Backend, name string) {
 	if len(els) != 0 {
 		t.Fatalf("FindExact(%q): got %d elements, want 0", name, len(els))
 	}
-	hits, _, err := st.FindFuzzy(name, 10)
+	hits, _, err := st.FindFuzzy(context.Background(), name, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 	if vecsAfter != vecsBefore {
 		t.Fatalf("vector rows: before %d, after %d", vecsBefore, vecsAfter)
 	}
-	hits, err := st.SearchVectors(store.VectorQuery{ModelID: model, Vec: []float32{1, 0, 0}, K: 1})
+	hits, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: model, Vec: []float32{1, 0, 0}, K: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -385,7 +385,7 @@ func nameArmBound(total int) int {
 // The bound is a fraction of the ELEMENT count (elements/5000, floor 2; see
 // nameArmBound for the measurement), so it is scale-free: on a three-element
 // fixture the floor of 2 stops every English word from counting as rare.
-func (s *Store) rareNameTokens(query string) ([]string, error) {
+func (s *Store) rareNameTokens(ctx context.Context, query string) ([]string, error) {
 	toks := nameTokens(query)
 	if len(toks) == 0 {
 		return nil, nil
@@ -397,11 +397,11 @@ func (s *Store) rareNameTokens(query string) ([]string, error) {
 	// The total is needed to DERIVE the bound before counting, so read it first
 	// (one COUNT, then the token counts are capped at bound+1).
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
 		return nil, err
 	}
 	bound := nameArmBound(total)
-	counts, _, err := s.nameTokenCounts(toks, bound)
+	counts, _, err := s.nameTokenCounts(ctx, toks, bound)
 	if err != nil {
 		return nil, err
 	}
@@ -447,9 +447,9 @@ var nameStopWords = map[string]bool{
 // rare while the LIKE matches 347 names that merely contain it — measured on
 // this corpus: `read` 347, `text` 307, `get` 292, `list` 136, `lock` 95,
 // `stamp` 33.
-func (s *Store) nameTokenCounts(toks []string, bound int) (map[string]int, int, error) {
+func (s *Store) nameTokenCounts(ctx context.Context, toks []string, bound int) (map[string]int, int, error) {
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	if bound < 1 {
@@ -465,7 +465,7 @@ func (s *Store) nameTokenCounts(toks []string, bound int) (map[string]int, int, 
 		// tokens took 402ms unbounded.
 		pat := "%" + t + "%"
 		var n int
-		if err := s.db.QueryRow(
+		if err := s.db.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM (SELECT 1 FROM code_elements WHERE name LIKE ? COLLATE NOCASE OR qualified_name LIKE ? COLLATE NOCASE LIMIT ?)`,
 			pat, pat, bound+1).Scan(&n); err != nil {
 			return nil, 0, err
@@ -485,8 +485,8 @@ func (s *Store) nameTokenCounts(toks []string, bound int) (map[string]int, int, 
 // Tokens become LIKE patterns with the argument bound (never concatenated), and
 // the score is 0 for every hit: this arm ranks by SPECIFICITY, not relevance,
 // and the fusion only needs the order.
-func (s *Store) FindByNameToken(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
-	toks, err := s.rareNameTokens(query)
+func (s *Store) FindByNameToken(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
+	toks, err := s.rareNameTokens(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -505,7 +505,7 @@ func (s *Store) FindByNameToken(query string, limit int, f ElementFilter) ([]Fuz
 	}
 	filter := andWhere(f.whereSQLite("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
-	rows, err := s.db.Query(`SELECT `+elementCols+`, 0.0 AS score
+	rows, err := s.db.QueryContext(ctx, `SELECT `+elementCols+`, 0.0 AS score
 		FROM code_elements ce
 		WHERE (`+strings.Join(where, " OR ")+`)`+filter+`
 		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
@@ -570,14 +570,14 @@ type FuzzyMatch struct {
 
 // FindFuzzy implements the L2 rung over FTS5 and reports ArmFTS5. The query is
 // tokenized into quoted OR terms so user input can never inject FTS syntax.
-func (s *Store) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) {
-	return s.findFuzzy(query, limit, ElementFilter{})
+func (s *Store) FindFuzzy(ctx context.Context, query string, limit int) ([]FuzzyMatch, Arm, error) {
+	return s.findFuzzy(ctx, query, limit, ElementFilter{})
 }
 
 // findFuzzy is FindFuzzy restricted to the elements f admits; the filter is part
 // of the WHERE, before the LIMIT, so the hybrid arm spends its window on
 // admitted rows only.
-func (s *Store) findFuzzy(query string, limit int, f ElementFilter) ([]FuzzyMatch, Arm, error) {
+func (s *Store) findFuzzy(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, Arm, error) {
 	q := ftsQuery(query)
 	if q == "" {
 		return nil, ArmFTS5, nil
@@ -588,7 +588,7 @@ func (s *Store) findFuzzy(query string, limit int, f ElementFilter) ([]FuzzyMatc
 	args := []any{q}
 	filter := andWhere(f.whereSQLite("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
-	rows, err := s.db.Query(`SELECT `+elementCols+`, bm25(elements_fts) AS score
+	rows, err := s.db.QueryContext(ctx, `SELECT `+elementCols+`, bm25(elements_fts) AS score
 		FROM elements_fts JOIN code_elements ce ON ce.id = elements_fts.rowid
 		WHERE elements_fts MATCH ?`+filter+`
 		ORDER BY score LIMIT ?`, args...)

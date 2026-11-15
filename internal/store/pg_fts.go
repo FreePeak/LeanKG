@@ -225,7 +225,7 @@ type HybridHit struct {
 // errors — a refused tsquery, or a schema that predates migration 012 — so
 // availability never depends on the index or the extension (the same
 // degrade-not-fail policy as the Rust 007_trgm_fuzzy.sql tier).
-func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) {
+func (s *PGStore) FindFuzzy(ctx context.Context, query string, limit int) ([]FuzzyMatch, Arm, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, "", nil
 	}
@@ -233,10 +233,10 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) 
 		limit = 50
 	}
 	if !tsqueryUsable(query) {
-		matches, method, err := s.searchElementsSubstring(query, limit, ElementFilter{})
+		matches, method, err := s.searchElementsSubstring(ctx, query, limit, ElementFilter{})
 		return matches, method, err
 	}
-	matches, err := s.searchElementsTS(query, limit, ElementFilter{})
+	matches, err := s.searchElementsTS(ctx, query, limit, ElementFilter{})
 	if err == nil && len(matches) > 0 {
 		return matches, ArmTSVector, nil
 	}
@@ -245,7 +245,7 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) 
 	// matches nothing for a multi-word query whose terms never co-occur, and
 	// sqlite's FTS5 rung would still return bm25 substring-ish hits. Degrade so
 	// the two engines keep comparable recall (issue #273).
-	fallback, method, ferr := s.searchElementsSubstring(query, limit, ElementFilter{})
+	fallback, method, ferr := s.searchElementsSubstring(ctx, query, limit, ElementFilter{})
 	if ferr != nil {
 		return nil, "", fmt.Errorf("store: element full-text search %q: %v (fallback: %w)", query, err, ferr)
 	}
@@ -255,12 +255,12 @@ func (s *PGStore) FindFuzzy(query string, limit int) ([]FuzzyMatch, Arm, error) 
 // searchElementsSubstring is the two-arm keyword fallback behind
 // FindFuzzy: pg_trgm similarity ranking when the extension resolves,
 // ILIKE substring recall when it does not.
-func (s *PGStore) searchElementsSubstring(query string, limit int, f ElementFilter) ([]FuzzyMatch, Arm, error) {
-	matches, err := s.searchElementsTrigram(query, limit, f)
+func (s *PGStore) searchElementsSubstring(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, Arm, error) {
+	matches, err := s.searchElementsTrigram(ctx, query, limit, f)
 	if err == nil {
 		return matches, ArmTrigram, nil
 	}
-	fallback, ie := s.findElementsILIKE(query, limit, f)
+	fallback, ie := s.findElementsILIKE(ctx, query, limit, f)
 	if ie != nil {
 		return nil, "", fmt.Errorf("store: element substring search %q: %w (trigram: %v)", query, ie, err)
 	}
@@ -271,11 +271,11 @@ func (s *PGStore) searchElementsSubstring(query string, limit int, f ElementFilt
 // shape mirrors FindFuzzy: the element columns plus a trailing score. That
 // score is ts_rank, a small positive float — NOT comparable with sqlite's
 // bm25 values, which are negative and lower-is-better.
-func (s *PGStore) searchElementsTS(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
+func (s *PGStore) searchElementsTS(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
 	args := []any{query}
 	filter := andWhere(f.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+`,
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+`,
 		ts_rank(ce.fts, websearch_to_tsquery(`+pgTSConfig+`, $1)) AS score
 		FROM code_elements ce
 		WHERE ce.fts @@ websearch_to_tsquery(`+pgTSConfig+`, $1)`+filter+`
@@ -294,12 +294,12 @@ func (s *PGStore) searchElementsTS(query string, limit int, f ElementFilter) ([]
 // column set. It needs pg_trgm (migration 001 installs it best-effort); where
 // the extension is absent both similarity() and the % operator raise and the
 // caller degrades.
-func (s *PGStore) searchElementsTrigram(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
+func (s *PGStore) searchElementsTrigram(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
 	needle := "%" + escapeLike(query) + "%"
 	args := []any{query, needle}
 	filter := andWhere(f.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+`,
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+`,
 		GREATEST(similarity(ce.name, $1), similarity(ce.qualified_name, $1)) AS score
 		FROM code_elements ce
 		WHERE (ce.name % $1 OR ce.qualified_name % $1
@@ -375,7 +375,7 @@ func (s *PGStore) scanKnowledgeRanked(rows pgx.Rows) ([]KnowledgeEntry, error) {
 // embedding the query). Every arm applies q.Filter in its WHERE clause before
 // its LIMIT. The returned Arm is the keyword arm that contributed: tsvector
 // first, then trigram or ILIKE; empty when none did.
-func (s *PGStore) Hybrid(_ context.Context, q HybridQuery) ([]HybridHit, Arm, error) {
+func (s *PGStore) Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, error) {
 	limit := q.Limit
 	if limit <= 0 {
 		limit = 50
@@ -407,7 +407,7 @@ func (s *PGStore) Hybrid(_ context.Context, q HybridQuery) ([]HybridHit, Arm, er
 	var kw Arm
 
 	if len(q.Vec) > 0 {
-		hits, err := s.SearchVectors(VectorQuery{ModelID: q.ModelID, Vec: q.Vec, K: window, Filter: q.Filter})
+		hits, err := s.SearchVectors(ctx, VectorQuery{ModelID: q.ModelID, Vec: q.Vec, K: window, Filter: q.Filter})
 		if err != nil {
 			return nil, "", fmt.Errorf("store: hybrid vector arm: %w", err)
 		}
@@ -425,7 +425,7 @@ func (s *PGStore) Hybrid(_ context.Context, q HybridQuery) ([]HybridHit, Arm, er
 	}
 
 	if tsqueryUsable(q.Text) {
-		matches, err := s.searchElementsTS(q.Text, window, q.Filter)
+		matches, err := s.searchElementsTS(ctx, q.Text, window, q.Filter)
 		if err != nil {
 			kwErr = err
 		} else if len(matches) > 0 {
@@ -444,11 +444,11 @@ func (s *PGStore) Hybrid(_ context.Context, q HybridQuery) ([]HybridHit, Arm, er
 	// The trigram arm runs last so the sharper tsvector ranking wins a fused
 	// tie between two documents the two keyword arms disagree about.
 	if strings.TrimSpace(q.Text) != "" {
-		matches, err := s.searchElementsTrigram(q.Text, window, q.Filter)
+		matches, err := s.searchElementsTrigram(ctx, q.Text, window, q.Filter)
 		name := ArmTrigram
 		if err != nil {
 			kwErr = err
-			matches, err = s.findElementsILIKE(q.Text, window, q.Filter)
+			matches, err = s.findElementsILIKE(ctx, q.Text, window, q.Filter)
 			name = ArmILIKE
 		}
 		if err != nil {
@@ -471,7 +471,7 @@ func (s *PGStore) Hybrid(_ context.Context, q HybridQuery) ([]HybridHit, Arm, er
 	// The name arm, for parity with SQLite (see hybrid_sqlite.go for the
 	// measurement that motivated it: the shape gate fired on 0 of 84 labelled
 	// questions because agents ask in prose, so the gate is corpus rarity).
-	if matches, err := s.FindByNameToken(q.Text, window, q.Filter); err == nil && len(matches) > 0 {
+	if matches, err := s.FindByNameToken(ctx, q.Text, window, q.Filter); err == nil && len(matches) > 0 {
 		keys := make([]string, 0, len(matches))
 		for _, m := range matches {
 			record(m.Element.QualifiedName, m.Element)
@@ -482,6 +482,11 @@ func (s *PGStore) Hybrid(_ context.Context, q HybridQuery) ([]HybridHit, Arm, er
 		}
 	}
 
+	// A cancelled ctx is an error, never a degraded answer: the arms above
+	// swallow their own failures, so the ctx is checked here.
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	if len(lists) == 0 {
 		return nil, "", kwErr
 	}

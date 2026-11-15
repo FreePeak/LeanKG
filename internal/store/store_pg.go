@@ -325,9 +325,9 @@ func (s *PGStore) FindExact(ctx context.Context, name string) ([]Element, error)
 // among symbol names to be worth a name search, and the bound is a fraction of
 // the ELEMENT count. The count is what the LIKE will MATCH (a SUBSTRING of the
 // name), and it stops at bound+1 because only the comparison matters.
-func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
+func (s *PGStore) nameTokenCounts(ctx context.Context, toks []string) (map[string]int, int, error) {
 	var total int
-	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM code_elements`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	bound := nameArmBound(total)
@@ -335,7 +335,7 @@ func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
 	for _, t := range toks {
 		pat := "%" + t + "%"
 		var n int
-		if err := s.pool.QueryRow(pgCtx,
+		if err := s.pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM (SELECT 1 FROM code_elements WHERE name ILIKE $1 OR qualified_name ILIKE $1 LIMIT $2)`,
 			pat, bound+1).Scan(&n); err != nil {
 			return nil, 0, err
@@ -347,12 +347,12 @@ func (s *PGStore) nameTokenCounts(toks []string) (map[string]int, int, error) {
 
 // rareNameTokens is the shared gate (see the SQLite implementation for the
 // measurement that motivated it).
-func (s *PGStore) rareNameTokens(query string) ([]string, error) {
+func (s *PGStore) rareNameTokens(ctx context.Context, query string) ([]string, error) {
 	toks := nameTokens(query)
 	if len(toks) == 0 {
 		return nil, nil
 	}
-	counts, total, err := s.nameTokenCounts(toks)
+	counts, total, err := s.nameTokenCounts(ctx, toks)
 	if err != nil {
 		return nil, err
 	}
@@ -370,8 +370,8 @@ func (s *PGStore) rareNameTokens(query string) ([]string, error) {
 // FindByNameToken is the ArmName ranking arm on PostgreSQL: elements whose
 // SYMBOL NAME contains a rare token of the query, shortest name first. Same
 // contract as the SQLite arm; f is applied in the WHERE before the LIMIT.
-func (s *PGStore) FindByNameToken(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
-	toks, err := s.rareNameTokens(query)
+func (s *PGStore) FindByNameToken(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
+	toks, err := s.rareNameTokens(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +389,7 @@ func (s *PGStore) FindByNameToken(query string, limit int, f ElementFilter) ([]F
 	}
 	filter := andWhere(f.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+` FROM code_elements ce
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+` FROM code_elements ce
 		WHERE (`+strings.Join(where, " OR ")+`)`+filter+`
 		ORDER BY length(ce.name) ASC, length(ce.qualified_name) ASC
 		LIMIT $`+fmt.Sprint(len(args)), args...)
@@ -416,7 +416,7 @@ func (s *PGStore) FindByNameToken(query string, limit int, f ElementFilter) ([]F
 // values are not comparable across engines. The PG keyword rung (FindFuzzy in
 // pg_fts.go) prefers tsvector ranking, then pg_trgm similarity, and only lands
 // here.
-func (s *PGStore) findElementsILIKE(query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
+func (s *PGStore) findElementsILIKE(ctx context.Context, query string, limit int, f ElementFilter) ([]FuzzyMatch, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
@@ -427,7 +427,7 @@ func (s *PGStore) findElementsILIKE(query string, limit int, f ElementFilter) ([
 	args := []any{pattern}
 	filter := andWhere(f.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, limit)
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgElementCols+`, -length(ce.qualified_name) AS score
+	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+`, -length(ce.qualified_name) AS score
 		FROM code_elements ce
 		WHERE (ce.name ILIKE $1 ESCAPE '\' OR ce.qualified_name ILIKE $1 ESCAPE '\')`+filter+`
 		ORDER BY length(ce.qualified_name) LIMIT $`+fmt.Sprint(len(args)), args...)
@@ -983,7 +983,7 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 // The filter is part of the WHERE clause, before ORDER BY and LIMIT, and the
 // connections run with hnsw.iterative_scan (see openPG), so K admitted rows come
 // back whenever they exist.
-func (s *PGStore) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
+func (s *PGStore) SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error) {
 	if len(q.Vec) == 0 {
 		return nil, nil
 	}
@@ -991,7 +991,7 @@ func (s *PGStore) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
 	args := []any{pgvector.NewVector(q.Vec)}
 	filter := andWhere(q.Filter.wherePG("ce.qualified_name", "ce.file_path", &args))
 	args = append(args, k)
-	rows, err := s.pool.Query(pgCtx, `SELECT v.qualified_name,
+	rows, err := s.pool.Query(ctx, `SELECT v.qualified_name,
 		COALESCE(ce.element_type,''), COALESCE(ce.name, v.qualified_name), COALESCE(ce.file_path,''),
 		COALESCE(ce.line_start,0), COALESCE(ce.line_end,0), COALESCE(ce.language,''),
 		COALESCE(ce.parent_qualified,''), COALESCE(ce.content,''), COALESCE(ce.metadata::text,'{}'),

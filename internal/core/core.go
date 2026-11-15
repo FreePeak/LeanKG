@@ -786,7 +786,7 @@ func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[st
 		return nil, err
 	}
 	window := fetchWindow(limit, keep)
-	matches, arm, err := e.st.FindFuzzy(q, window)
+	matches, arm, err := e.st.FindFuzzy(ctx, q, window)
 	if err != nil {
 		return nil, err
 	}
@@ -918,7 +918,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		e.annotateConfidence(resp, *stamp, best, seen)
 		return withEmptyHint(resp, nil)
 	}
-	hits, err := e.st.SearchVectors(store.VectorQuery{ModelID: modelID, Vec: qvec, K: limit, Filter: keep})
+	hits, err := e.st.SearchVectors(ctx, store.VectorQuery{ModelID: modelID, Vec: qvec, K: limit, Filter: keep})
 	if err != nil {
 		return degrade(fmt.Sprintf("vector search failed (%v); degraded from L3", err))
 	}

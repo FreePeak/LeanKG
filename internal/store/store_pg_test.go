@@ -108,7 +108,7 @@ func TestPGElementOps(t *testing.T) {
 
 	// findElementsILIKE (the substring arm behind FindFuzzy): substring over
 	// name/qualified_name, shortest name first.
-	fz, err := s.findElementsILIKE("help", 10, ElementFilter{})
+	fz, err := s.findElementsILIKE(context.Background(), "help", 10, ElementFilter{})
 	if err != nil || len(fz) != 1 || fz[0].Element.QualifiedName != "pkg.Helper" {
 		t.Fatalf("findElementsILIKE(help) = %+v, %v", fz, err)
 	}
@@ -116,7 +116,7 @@ func TestPGElementOps(t *testing.T) {
 		t.Fatalf("findElementsILIKE Score = %v; want negative (divergent -length ranking)", fz[0].Score)
 	}
 	// FindFuzzy serves the keyword arm and names the arm that answered.
-	kw, arm, err := s.FindFuzzy("help", 10)
+	kw, arm, err := s.FindFuzzy(context.Background(), "help", 10)
 	if err != nil || len(kw) != 1 || kw[0].Element.QualifiedName != "pkg.Helper" || arm == "" {
 		t.Fatalf("FindFuzzy(help) = %+v, arm %q, %v", kw, arm, err)
 	}
@@ -297,7 +297,7 @@ func TestPGStampsAndVectors(t *testing.T) {
 		t.Fatalf("VectorCount = %d, %v; want 3", n, err)
 	}
 
-	hits, err := s.SearchVectors(VectorQuery{ModelID: st.ModelID, Vec: []float32{1, 0, 0, 0}, K: 1})
+	hits, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: st.ModelID, Vec: []float32{1, 0, 0, 0}, K: 1})
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("SearchVectors = %+v, %v", hits, err)
 	}
@@ -653,7 +653,7 @@ func TestPGStampIdentityAndPerFileReplace(t *testing.T) {
 	if n, _ := s.VectorCount(want.ModelID); n != 2 {
 		t.Fatalf("VectorCount after replace = %d, want 2 (no duplicate)", n)
 	}
-	hits, err := s.SearchVectors(VectorQuery{ModelID: want.ModelID, Vec: []float32{0, 0, 0, 1}, K: 1})
+	hits, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: want.ModelID, Vec: []float32{0, 0, 0, 1}, K: 1})
 	if err != nil || len(hits) != 1 || hits[0].Element.QualifiedName != "unit/a.go::f1" {
 		t.Fatalf("replaced vector not searchable: %+v, %v", hits, err)
 	}
@@ -676,7 +676,7 @@ func TestPGNoOrphanHitsAndIdentifierTerms(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	hits, arm, err := s.FindFuzzy("rotate staging credentials", 5)
+	hits, arm, err := s.FindFuzzy(context.Background(), "rotate staging credentials", 5)
 	if err != nil || len(hits) == 0 || hits[0].Element.Name != "RotateStagingCredentials" {
 		t.Fatalf("identifier terms via %s: %v %+v", arm, err, hits)
 	}
@@ -693,7 +693,7 @@ func TestPGNoOrphanHitsAndIdentifierTerms(t *testing.T) {
 	if err := s.DeleteByFile("a.go"); err != nil {
 		t.Fatal(err)
 	}
-	vh, err := s.SearchVectors(VectorQuery{ModelID: st.ModelID, Vec: []float32{1, 0, 0, 0}, K: 5})
+	vh, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: st.ModelID, Vec: []float32{1, 0, 0, 0}, K: 5})
 	if err != nil {
 		t.Fatal(err)
 	}

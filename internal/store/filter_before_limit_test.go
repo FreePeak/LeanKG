@@ -15,7 +15,7 @@ type filterSearcher interface {
 	WriteStamp(ModelStamp) error
 	UpsertElements([]Element) error
 	UpsertVectors(modelID string, rows []VectorRow) error
-	SearchVectors(q VectorQuery) ([]VectorSearchHit, error)
+	SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error)
 	Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, error)
 }
 
@@ -66,7 +66,7 @@ func checkFilterBeforeLimit(t *testing.T, s filterSearcher, wantKeywordArms ...A
 		}
 	}
 
-	vec, err := s.SearchVectors(VectorQuery{ModelID: modelID, Vec: []float32{1, 0, 0, 0}, K: 3, Filter: noFixtures})
+	vec, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: modelID, Vec: []float32{1, 0, 0, 0}, K: 3, Filter: noFixtures})
 	if err != nil {
 		t.Fatalf("SearchVectors: %v", err)
 	}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"testing"
@@ -10,7 +11,7 @@ import (
 // needs: seed elements, then ask which query tokens the name arm treats as rare.
 type rareTokenClassifier interface {
 	UpsertElements([]Element) error
-	rareNameTokens(query string) ([]string, error)
+	rareNameTokens(ctx context.Context, query string) ([]string, error)
 }
 
 // TestNameArmBoundIsElementsOver5000 pins the measured divisor. The shared
@@ -67,7 +68,7 @@ func checkRareTokenBound(t *testing.T, s rareTokenClassifier) {
 	if err := s.UpsertElements(els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
-	toks, err := s.rareNameTokens("quartz widget")
+	toks, err := s.rareNameTokens(context.Background(), "quartz widget")
 	if err != nil {
 		t.Fatalf("rareNameTokens: %v", err)
 	}

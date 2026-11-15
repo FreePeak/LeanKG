@@ -5,6 +5,7 @@
 package store
 
 import (
+	"context"
 	"math"
 	"slices"
 	"strings"
@@ -217,7 +218,7 @@ func TestPGFindFuzzy(t *testing.T) {
 
 	// A lexeme hits its element; the 'simple' config keeps camelCase whole, so
 	// "ParseConfig" matches by identity and "Config" alone does not.
-	hits, method, err := s.FindFuzzy("ParseConfig", 10)
+	hits, method, err := s.FindFuzzy(context.Background(), "ParseConfig", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +238,7 @@ func TestPGFindFuzzy(t *testing.T) {
 	// keyword arm comparable with sqlite's fts5(name, qualified_name, content):
 	// "Config" is not an identifier lexeme ('simple' never splits camelCase) but
 	// it IS a content lexeme of b.go, so the rung answers instead of going dark.
-	hits, method, err = s.FindFuzzy("Config", 10)
+	hits, method, err = s.FindFuzzy(context.Background(), "Config", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,16 +247,16 @@ func TestPGFindFuzzy(t *testing.T) {
 	}
 	// The no-stemming property, asserted on the tsvector arm itself so the
 	// substring fallbacks cannot rescue it: "configs" lexemes nothing anywhere.
-	if raw, err := s.searchElementsTS("configs", 10, ElementFilter{}); err != nil || len(raw) != 0 {
+	if raw, err := s.searchElementsTS(context.Background(), "configs", 10, ElementFilter{}); err != nil || len(raw) != 0 {
 		t.Fatalf("searchElementsTS(configs) = %+v, %v; want no rows (no stemming)", raw, err)
 	}
-	if got, _, err := s.FindFuzzy("parse int", 10); err != nil || len(got) != 1 ||
+	if got, _, err := s.FindFuzzy(context.Background(), "parse int", 10); err != nil || len(got) != 1 ||
 		got[0].Element.QualifiedName != "pkg.parse_int" {
 		t.Fatalf("multi-word query = %+v, %v; want pkg.parse_int", got, err)
 	}
 
 	// Empty query is not an error and matches nothing (parity with FindFuzzy).
-	if got, method, err := s.FindFuzzy("   ", 10); err != nil || len(got) != 0 || method != "" {
+	if got, method, err := s.FindFuzzy(context.Background(), "   ", 10); err != nil || len(got) != 0 || method != "" {
 		t.Fatalf("blank query = %+v, %q, %v; want empty", got, method, err)
 	}
 
@@ -271,10 +272,10 @@ func TestPGFindFuzzy(t *testing.T) {
 	// its trigram fallback (by design) still fuzzy-matches ParseConfig to
 	// ParseRuntime at similarity ~0.8, which is the fallback working, not a
 	// stale index.
-	if raw, err := s.searchElementsTS("ParseConfig", 10, ElementFilter{}); err != nil || len(raw) != 0 {
+	if raw, err := s.searchElementsTS(context.Background(), "ParseConfig", 10, ElementFilter{}); err != nil || len(raw) != 0 {
 		t.Fatalf("stale lexeme after upsert: %+v, %v", raw, err)
 	}
-	got, _, err := s.FindFuzzy("ParseRuntime", 10)
+	got, _, err := s.FindFuzzy(context.Background(), "ParseRuntime", 10)
 	if err != nil || len(got) != 1 || got[0].Element.Name != "ParseRuntime" {
 		t.Fatalf("re-lexed search = %+v, %v; want one ParseRuntime hit", got, err)
 	}
@@ -291,10 +292,10 @@ func TestPGFindFuzzyFallbackWithoutLexemes(t *testing.T) {
 	}
 
 	// The tsvector arm alone cannot serve this: no lexemes, no rows.
-	if ts, err := s.searchElementsTS("%", 10, ElementFilter{}); err != nil || len(ts) != 0 {
+	if ts, err := s.searchElementsTS(context.Background(), "%", 10, ElementFilter{}); err != nil || len(ts) != 0 {
 		t.Fatalf("searchElementsTS(%%) = %+v, %v; want no rows", ts, err)
 	}
-	hits, method, err := s.FindFuzzy("%", 10)
+	hits, method, err := s.FindFuzzy(context.Background(), "%", 10)
 	if err != nil {
 		t.Fatalf("fallback must not error: %v", err)
 	}
@@ -307,7 +308,7 @@ func TestPGFindFuzzyFallbackWithoutLexemes(t *testing.T) {
 	// An over-budget query degrades the same way instead of dying on the
 	// tsquery parser.
 	big := strings.Repeat("word ", maxTsqueryWords+10)
-	if got, method, err := s.FindFuzzy(big, 10); err != nil || len(got) != 0 || method != ArmTrigram {
+	if got, method, err := s.FindFuzzy(context.Background(), big, 10); err != nil || len(got) != 0 || method != ArmTrigram {
 		t.Fatalf("over-budget query = %d hits, %q, %v; want 0 hits via trigram, no error", len(got), method, err)
 	}
 }
@@ -324,10 +325,10 @@ func TestPGFindFuzzyDegradesWithoutColumn(t *testing.T) {
 	if _, err := s.pool.Exec(pgCtx, `ALTER TABLE code_elements DROP COLUMN fts`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.searchElementsTS("SocketHandler", 10, ElementFilter{}); err == nil {
+	if _, err := s.searchElementsTS(context.Background(), "SocketHandler", 10, ElementFilter{}); err == nil {
 		t.Fatal("searchElementsTS must fail without the tsvector column")
 	}
-	hits, method, err := s.FindFuzzy("SocketHandler", 10)
+	hits, method, err := s.FindFuzzy(context.Background(), "SocketHandler", 10)
 	if err != nil {
 		t.Fatalf("degraded search must not error: %v", err)
 	}

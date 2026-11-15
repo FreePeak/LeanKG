@@ -28,6 +28,36 @@ var ctxConformanceRoles = []ctxRole{
 		},
 	},
 	{
+		name: "Searcher.FindFuzzy",
+		read: func(ctx context.Context, b Backend) error {
+			_, _, err := b.FindFuzzy(ctx, "conformance", 5)
+			return err
+		},
+	},
+	{
+		name: "Searcher.SearchVectors",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.SearchVectors(ctx, VectorQuery{ModelID: "conformance", Vec: []float32{1, 0}, K: 5})
+			return err
+		},
+	},
+	{
+		// The keyword-only path: a text query with no vector must still
+		// honour the ctx instead of swallowing the arm error.
+		name: "Searcher.HybridText",
+		read: func(ctx context.Context, b Backend) error {
+			_, _, err := b.Hybrid(ctx, HybridQuery{ModelID: "conformance", Text: "conformance", Limit: 5})
+			return err
+		},
+	},
+	{
+		name: "Searcher.HybridVector",
+		read: func(ctx context.Context, b Backend) error {
+			_, _, err := b.Hybrid(ctx, HybridQuery{ModelID: "conformance", Text: "conformance", Vec: []float32{1, 0}, Limit: 5})
+			return err
+		},
+	},
+	{
 		name: "GraphReader",
 		read: func(ctx context.Context, b Backend) error {
 			_, err := b.Outgoing(ctx, "conformance")

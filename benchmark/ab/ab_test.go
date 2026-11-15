@@ -159,7 +159,7 @@ func BenchmarkQueryL2Fuzzy(b *testing.B) {
 	defer cleanup()
 
 	const q = "parse config handler"
-	hits, _, err := st.FindFuzzy(q, 50)
+	hits, _, err := st.FindFuzzy(context.Background(), q, 50)
 	if err != nil {
 		b.Fatalf("FindFuzzy: %v", err)
 	}
@@ -170,7 +170,7 @@ func BenchmarkQueryL2Fuzzy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := st.FindFuzzy(q, 50); err != nil {
+		if _, _, err := st.FindFuzzy(context.Background(), q, 50); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -237,7 +237,7 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 	for j := range q {
 		q[j] = qr.Float32()*2 - 1
 	}
-	sanity, err := st.SearchVectors(store.VectorQuery{ModelID: vecModel, Vec: q, K: vecTopK})
+	sanity, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: vecModel, Vec: q, K: vecTopK})
 	if err != nil {
 		b.Fatalf("SearchVectors sanity: %v", err)
 	}
@@ -248,7 +248,7 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := st.SearchVectors(store.VectorQuery{ModelID: vecModel, Vec: q, K: vecTopK}); err != nil {
+		if _, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: vecModel, Vec: q, K: vecTopK}); err != nil {
 			b.Fatal(err)
 		}
 	}

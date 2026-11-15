@@ -555,11 +555,11 @@ const vectorSelectCols = `embedding_vectors.qualified_name,
 // M2 Pro); upgrade path is sqlite-vec when scale demands it. The filter runs
 // inside the scan this arm already does, so every excluded row is dropped
 // before the top-K selection and K admitted rows are returned when they exist.
-func (s *Store) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
+func (s *Store) SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error) {
 	if len(q.Vec) == 0 {
 		return nil, nil
 	}
-	rows, err := s.db.Query(`SELECT `+vectorSelectCols+`, embedding_vectors.vec
+	rows, err := s.db.QueryContext(ctx, `SELECT `+vectorSelectCols+`, embedding_vectors.vec
 		FROM embedding_vectors JOIN code_elements ce ON ce.qualified_name = embedding_vectors.qualified_name
 		WHERE embedding_vectors.model_id = ?`, q.ModelID)
 	if err != nil {
