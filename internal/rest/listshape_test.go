@@ -55,7 +55,7 @@ func TestTheRESTSuccessShapeNeverContradictsTheBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := Handler(eng, mem)
+	mux := gatedHandler(eng, mem)
 
 	for _, tc := range []struct{ name, method, path, listKey string }{
 		{"ontology matches", http.MethodGet, "/api/v1/ontology/matches", "matches"},

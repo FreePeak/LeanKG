@@ -240,7 +240,7 @@ func join(parts []string, sep string) string {
 // the run; a batch failing validation (count/dims/finiteness) is counted in
 // Report.Failed and the run continues to status partial. Vectors and state
 // land per file in one transaction (see embedFiles).
-func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report, error) {
+func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error) {
 	// The run ledger records the run even when ctx is cancelled (a cancelled
 	// run is stored as cancelled), so its writes do not take the caller's ctx.
 	ledger := context.WithoutCancel(ctx)
@@ -418,7 +418,7 @@ func needsVector(qn, hash string, states map[string]string) bool {
 // IncrementalBacklog counts the elements an incremental Run over st with provider
 // p would embed. It reads the store and never calls the provider, so a caller can
 // size the embed before it starts one.
-func IncrementalBacklog(ctx context.Context, st store.Backend, p Provider) (int, error) {
+func IncrementalBacklog(ctx context.Context, st Store, p Provider) (int, error) {
 	elems, err := readElements(ctx, st)
 	if err != nil {
 		return 0, err
@@ -474,7 +474,7 @@ func groupByFile(dirty []dirtyItem) [][]dirtyItem {
 // (ErrEndpointTimeout: a hung endpoint) are not poison elements: embedFiles
 // returns them at once, before any retry or shrink, so a misconfigured or hung
 // endpoint costs one request and writes nothing from the failing group.
-func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
+func embedFiles(ctx context.Context, st Store, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
 	var lastErr error
 	for _, group := range groups {
 		rows := make([]store.VectorRow, 0, len(group))

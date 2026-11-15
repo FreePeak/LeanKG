@@ -178,7 +178,7 @@ func TestSweepDropsTheStaleCollectionWithTheKeepFunc(t *testing.T) {
 	if err := st.FinishEmbedRun(context.Background(), runID, "completed", 1, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish embed run: %v", err)
 	}
-	res := Sweep(context.Background(), st, Options{KeepModelIDsFunc: func(ctx context.Context, b store.Backend) []string {
+	res := Sweep(context.Background(), st, Options{KeepModelIDsFunc: func(ctx context.Context, b Store) []string {
 		id, err := store.CurrentModelID(ctx, b)
 		if err != nil || id == "" {
 			return nil

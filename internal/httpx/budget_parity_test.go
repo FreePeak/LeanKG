@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -133,7 +134,7 @@ func mcpResultText(t *testing.T, raw []byte) []byte {
 func TestSameQueryReturnsOneBodyOnEveryTransport(t *testing.T) {
 	engine := newSeededParityEngine(t)
 
-	restSrv := httptest.NewServer(rest.Handler(engine, nil))
+	restSrv := httptest.NewServer(auth.MiddlewareWithStore(nil, rest.Handler(engine, nil)))
 	t.Cleanup(restSrv.Close)
 	webSrv := httptest.NewServer(web.APIHandler(engine, nil))
 	t.Cleanup(webSrv.Close)

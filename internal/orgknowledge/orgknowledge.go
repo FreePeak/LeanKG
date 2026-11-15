@@ -20,24 +20,18 @@ import (
 	"encoding/hex"
 	"os"
 	"time"
-
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Knowledge is the org/ops knowledge surface over one project store.
 type Knowledge struct {
-	st  store.Backend
+	st  Store
 	now func() int64
 }
 
 // New binds the surface to a store backend.
-func New(st store.Backend) *Knowledge {
+func New(st Store) *Knowledge {
 	return &Knowledge{st: st, now: func() int64 { return time.Now().Unix() }}
 }
-
-// Store exposes the backend (callers that need raw table access, e.g. the
-// status surface counting knowledge rows).
-func (k *Knowledge) Store() store.Backend { return k.st }
 
 // AuthorFromEnv is the Rust author default: $USER, else "unknown".
 func AuthorFromEnv() string {

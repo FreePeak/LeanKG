@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -30,10 +31,10 @@ func TestRouteByProjectUsesEachRequestsContext(t *testing.T) {
 	defer router.Close()
 
 	built := map[string]int{}
-	h := routeByProject(router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
+	h := auth.MiddlewareWithStore(nil, routeByProject(router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
 		built[p.Dir]++
 		return rest.Handler(p.Engine, p.Memory)
-	})
+	}))
 
 	gone, cancel := context.WithCancel(context.Background())
 	cancel()

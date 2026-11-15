@@ -30,7 +30,7 @@ func postJSON(t *testing.T, url string, body any, out any) int {
 
 func TestHindsightCompatWire(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem, WithHindsightCompat()))
+	srv := httptest.NewServer(gatedHandler(e, mem, WithHindsightCompat()))
 	defer srv.Close()
 	base := srv.URL + "/v1/default/banks/demo"
 
@@ -147,7 +147,7 @@ func TestHindsightCompatWire(t *testing.T) {
 
 func TestHindsightCompatNotMountedByDefault(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem))
+	srv := httptest.NewServer(gatedHandler(e, mem))
 	defer srv.Close()
 	resp, err := http.Post(srv.URL+"/v1/default/banks/demo/memories", "application/json", bytes.NewReader([]byte(`{"items":[]}`)))
 	if err != nil {
@@ -164,7 +164,7 @@ func TestHindsightCompatNotMountedByDefault(t *testing.T) {
 // row inside a recall, since the client prints whichever it got.
 func TestHindsightCompatReadSurface(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem, WithHindsightCompat()))
+	srv := httptest.NewServer(gatedHandler(e, mem, WithHindsightCompat()))
 	defer srv.Close()
 	base := srv.URL + "/v1/default/banks/demo"
 
@@ -282,7 +282,7 @@ func TestHindsightCompatReadSurface(t *testing.T) {
 // still surface when untagged rows fill every higher-ranked slot.
 func TestHindsightCompatTagFilterBeforeLimit(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem, WithHindsightCompat()))
+	srv := httptest.NewServer(gatedHandler(e, mem, WithHindsightCompat()))
 	defer srv.Close()
 	base := srv.URL + "/v1/default/banks/demo"
 
@@ -312,7 +312,7 @@ func TestHindsightCompatTagFilterBeforeLimit(t *testing.T) {
 // update_mode), "append" keeps them, and DELETE .../documents/{id} drops them.
 func TestHindsightCompatDocumentUpsertAndDelete(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem, WithHindsightCompat()))
+	srv := httptest.NewServer(gatedHandler(e, mem, WithHindsightCompat()))
 	defer srv.Close()
 	base := srv.URL + "/v1/default/banks/demo"
 
@@ -391,7 +391,7 @@ func TestHindsightCompatDocumentUpsertAndDelete(t *testing.T) {
 // not a silent "any" that widens the filter.
 func TestHindsightCompatRejectsUnknownTagsMatch(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem, WithHindsightCompat()))
+	srv := httptest.NewServer(gatedHandler(e, mem, WithHindsightCompat()))
 	defer srv.Close()
 	res, err := httpPost(srv.URL+"/v1/default/banks/b/memories/recall", map[string]any{"query": "x", "tags": []string{"t"}, "tags_match": "bogus"})
 	if err != nil || res.status != http.StatusBadRequest {

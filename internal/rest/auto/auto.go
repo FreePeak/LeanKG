@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/httpx"
@@ -143,8 +144,8 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 		o(&cfg)
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/", h)
-	mux.HandleFunc("POST /api/v1/mcp/auto-config", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/", auth.Public(h)) // delegates; the REST or MCP mux declares its own roles
+	mux.Handle("POST /api/v1/mcp/auto-config", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		eng := engine
 		// ?project= wins when a router is wired; without one we keep the
 		// single-engine behaviour a stdio spawn depends on.
@@ -159,7 +160,7 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 			eng = resolved
 		}
 		handleAutoConfig(w, r, eng, cfg)
-	})
+	})))
 	return mux
 }
 

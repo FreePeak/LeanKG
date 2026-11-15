@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"io"
 	"net"
 	"net/http"
@@ -72,7 +73,9 @@ func TestRESTListenerServesAutoConfig(t *testing.T) {
 // anonymous handshake. With the gate off, auto-config is open as before.
 func TestMCPListenerGatesAutoConfig(t *testing.T) {
 	mcp := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	auto := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	// The real route (restauto.RegisterAutoConfig) declares Contributor; this stub
+	// declares the same, so the listener wiring is what this test pins.
+	auto := auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	t.Run("gate on", func(t *testing.T) {
 		t.Setenv("LEANKG_TOKEN_ADMIN", "admin-tok")

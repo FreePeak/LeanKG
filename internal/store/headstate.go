@@ -78,7 +78,7 @@ func Head(ctx context.Context, st Backend) (string, bool, error) {
 
 // RecordedRoot reads the canonical root the store was indexed from. ok is
 // false when no root was ever recorded.
-func RecordedRoot(ctx context.Context, st Backend) (string, bool, error) {
+func RecordedRoot(ctx context.Context, st KV) (string, bool, error) {
 	v, ok, err := st.KVGet(ctx, IndexKVNamespace, RootKVKey)
 	if err != nil {
 		return "", false, err

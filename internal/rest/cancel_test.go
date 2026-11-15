@@ -32,7 +32,7 @@ func serveNoPanic(t *testing.T, h http.Handler, req *http.Request) *httptest.Res
 }
 
 func TestCancelledRequestNeverReachesStore(t *testing.T) {
-	h := Handler(core.New(poisonStore{}, core.Options{}), nil)
+	h := gatedHandler(core.New(poisonStore{}, core.Options{}), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 

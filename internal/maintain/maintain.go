@@ -8,7 +8,7 @@
 // auto_vacuum=NONE (what every Go-engine store is created with, because Open's
 // DSN never sets it) means SQLite will only ever reuse those pages internally.
 //
-// One pass, engine-agnostic through store.Backend:
+// One pass, engine-agnostic through Store:
 //
 //  0. MaintainUpgrade — the one-time auto_vacuum header upgrade (a whole-file
 //     rewrite on SQLite, a no-op on PostgreSQL). It runs first and is fatal:
@@ -86,7 +86,7 @@ type Options struct {
 	// model), so a keep set frozen at start-up would delete the CURRENT
 	// collection. The func is asked the same question every pass: which
 	// collection is live for this store?
-	KeepModelIDsFunc func(ctx context.Context, st store.Backend) []string
+	KeepModelIDsFunc func(ctx context.Context, st Store) []string
 	// PruneLedgers runs the retention sweeps over the append-only ledgers
 	// (context_metrics, embed_runs). The scheduled pass sets it; the
 	// one-shot `leankg vacuum` does not, so that verb stays a
@@ -154,7 +154,7 @@ func (s SweepResult) Empty() bool {
 // The retention sweeps over the append-only ledgers (context_metrics,
 // embed_runs) run only when Options.PruneLedgers is set, which the
 // scheduler does and the one-shot verb does not.
-func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
+func Sweep(ctx context.Context, st Store, opts Options) SweepResult {
 	var out SweepResult
 	logf := opts.Logf
 	if logf == nil {
@@ -272,7 +272,7 @@ func (r Result) ReclaimSummary() string {
 // now (a live reader holds it) still gets its space back, and the next pass
 // retries. A store that cannot be measured, or whose header upgrade is refused,
 // is a real failure.
-func Pass(ctx context.Context, st store.Backend, opts Options) (Result, error) {
+func Pass(ctx context.Context, st Store, opts Options) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -426,7 +426,7 @@ func CompactMemory(ctx context.Context, mem *memory.Memory, opts Options) {
 // A non-positive interval disables the loop entirely, which is how
 // LEANKG_VACUUM_INTERVAL_HOURS=0 keeps the Rust engine's documented
 // "disabled" semantics.
-func Run(ctx context.Context, st store.Backend, mem *memory.Memory, opts Options, interval, firstIdle time.Duration) <-chan struct{} {
+func Run(ctx context.Context, st Store, mem *memory.Memory, opts Options, interval, firstIdle time.Duration) <-chan struct{} {
 	return RunFleet(ctx, func() []Target {
 		return []Target{{Store: st, Mem: mem}}
 	}, opts, interval, firstIdle)
@@ -435,7 +435,7 @@ func Run(ctx context.Context, st store.Backend, mem *memory.Memory, opts Options
 // Target is one store a fleet pass sweeps.
 type Target struct {
 	// Store is the store handle; a nil Store is skipped.
-	Store store.Backend
+	Store Store
 	// Mem is the memory layer's store for the same project, if any.
 	Mem *memory.Memory
 	// Label names the target in the log lines.

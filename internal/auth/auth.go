@@ -13,11 +13,9 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/httpx"
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Role is a capability class.
@@ -84,57 +82,12 @@ func (reg *registry) enabled() bool { return len(reg.byToken) > 0 }
 // role: it resolves the same way, then keeps only the Role. The gate is
 // process-scoped, so there is no resource target to check — the org rungs
 // still refine a token that carries account/org labels.
-func (reg *registry) classify(st store.Backend, r *http.Request) (Role, error) {
+func (reg *registry) classify(st Store, r *http.Request) (Role, error) {
 	ctx, err := reg.resolveFor(st, r, Target{})
 	if err != nil {
 		return Viewer, err
 	}
 	return ctx.Role, nil
-}
-
-// writePrefixes are path PREFIXES whose routes mutate state. Prefix matching
-// (not exact equality) is required: parameterized routes such as
-// /api/v1/memory/banks/{bank}/memories can never match a literal-path map,
-// which silently left hindsight memory retain open to Viewers.
-var writePrefixes = []string{
-	"/api/v1/import",
-	"/leankg.v1.LeanKG/Import",
-	"/api/v1/memory/session/retain", // session retain writes memory rows
-	"/api/v1/ontology/match",        // ontology match writes the KV catalog
-	"/api/v1/mcp/auto-config",       // auto-config starts a reindex and embed
-	"/api/v2/graph/push",            // federation push upserts elements
-}
-
-// memoryWritePrefixes are the parameterized memory-retain route prefixes.
-// Both mounts spell retain as POST <prefix>{bank}/memories; the same path
-// answers GET with a listing (K3), and every other memory route is a read
-// (recall ends in /recall, read-by-id ends in the row id, stats ends in
-// /stats, and the bank ensure touches no store).
-var memoryWritePrefixes = []string{
-	"/api/v1/memory/banks/", // native FR-ZCP-07 mount
-	"/v1/default/banks/",    // hindsight-compat mount (#414)
-}
-
-// isWritePath reports whether a request mutates state. Path alone is not
-// enough: memory retain and memory list share one path, so the method decides
-// (GET /…/memories lists, POST /…/memories retains). Every DELETE under a
-// memory mount (document delete) is a write.
-func isWritePath(path, method string) bool {
-	for _, p := range writePrefixes {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	retain := method == http.MethodPost && strings.HasSuffix(path, "/memories")
-	if !retain && method != http.MethodDelete {
-		return false
-	}
-	for _, p := range memoryWritePrefixes {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // WriteTools are the MCP tool names that mutate state (all import actions).
@@ -152,14 +105,14 @@ func RoleForRequest(r *http.Request) (Role, error) {
 
 // RoleForRequestWithStore classifies like RoleForRequest but consults the
 // DB-backed token store FIRST (revocable at runtime), then the env vars.
-func RoleForRequestWithStore(st store.Backend, r *http.Request) (Role, error) {
+func RoleForRequestWithStore(st Store, r *http.Request) (Role, error) {
 	return fromEnv().classify(st, r)
 }
 
 // GateEnabled reports whether HTTP callers must authenticate: a live token (env
 // or DB-backed) is configured, or a site-admin account exists. serve uses it to
 // refuse a non-loopback bind with the gate open.
-func GateEnabled(ctx context.Context, st store.Backend) (bool, error) {
+func GateEnabled(ctx context.Context, st Store) (bool, error) {
 	return fromEnv().tokensConfigured(ctx, st)
 }
 
@@ -169,7 +122,7 @@ func GateEnabled(ctx context.Context, st store.Backend) (bool, error) {
 // counts as on: the caller is anonymous, never Admin. A request that carries an
 // Authorization header resolves exactly like RoleForRequestWithStore, so a bad
 // or expired token is still an error.
-func RoleOrAnonymous(st store.Backend, r *http.Request) (role Role, anonymous bool, err error) {
+func RoleOrAnonymous(st Store, r *http.Request) (role Role, anonymous bool, err error) {
 	if r.Header.Get("Authorization") != "" {
 		role, err := RoleForRequestWithStore(st, r)
 		return role, false, err
@@ -190,9 +143,9 @@ func AllowedTool(role Role, tool string) bool {
 	return true
 }
 
-// Middleware gates a handler tree by request PATH. Reads are always allowed
-// for any valid role; path-level writes require Contributor or Admin. 401 on
-// missing token, 403 on insufficient role.
+// Middleware resolves the caller once per request and stores its role in the
+// request context (see WithRole). It answers 401 on a missing or unknown token.
+// Each route enforces its own role with Require (CX-49).
 //
 // Token precedence: DB-backed tokens (st, the internal/store `tokens` table —
 // minted and revocable at runtime) are consulted first; the env vars
@@ -212,7 +165,7 @@ func Middleware(next http.Handler) http.Handler {
 
 // MiddlewareWithStore is Middleware with a DB-backed token store wired in
 // ahead of the env fallback (see Middleware for the precedence contract).
-func MiddlewareWithStore(st store.Backend, next http.Handler) http.Handler {
+func MiddlewareWithStore(st Store, next http.Handler) http.Handler {
 	reg := fromEnv()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, err := reg.classify(st, r)
@@ -220,10 +173,6 @@ func MiddlewareWithStore(st store.Backend, next http.Handler) http.Handler {
 			httpx.WriteError(w, errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, ""))
 			return
 		}
-		if isWritePath(r.URL.Path, r.Method) && role < Contributor {
-			httpx.WriteError(w, errs.NewError(errs.PermissionDenied, errs.PermissionDenied.Cause, ""))
-			return
-		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(WithRole(r.Context(), role)))
 	})
 }

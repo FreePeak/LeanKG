@@ -635,28 +635,27 @@ afterSidecars:
 		// Rust registered them outside the auth middleware for the same reason.
 		// Everything else sits behind the bearer gate.
 		root := http.NewServeMux()
-		root.Handle("/api/v1/auth/", auth.Routes(st))
-		root.Handle("/", auth.MiddlewareWithStore(st, h))
+		root.Handle("/api/v1/auth/", auth.Public(auth.Routes(st)))
+		root.Handle("/", auth.Public(auth.MiddlewareWithStore(st, h)))
 		log.Printf("leankg serve (REST) on %s", *restAddr)
 		eps = append(eps, endpoint{addr: *restAddr, h: root})
 	}
 	if *rpcAddr != "" {
-		path, handler := rpc.Handler(engine, rec)
 		mux := http.NewServeMux()
 		// Liveness for the same reason the MCP, REST and UI mounts carry one:
 		// FR-SELF-01 asks for /health on every listener, and a ConnectRPC
 		// mux answers 404 for everything but the service route, so an
 		// orchestrator probe against this address saw a dead server that was
 		// in fact serving. Same envelope as the other listeners.
-		mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		mux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
-		})
+		})))
 		// The descriptor types `args` as map<string,string>, so a typed action
 		// argument cannot be carried on this wire. The codec refuses by naming
 		// its own internal `value` field, which the caller never sent; this
 		// translates the refusal to name their value and this wire's limit.
-		mux.Handle(path, rpc.ArgsRefusalRecovery(handler))
+		rpc.Mount(mux, engine, rec)
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
 		eps = append(eps, endpoint{addr: *rpcAddr, h: auth.MiddlewareWithStore(st, mux)})
 	}
@@ -690,12 +689,16 @@ afterSidecars:
 		// SPA fallback would answer 200 for /health anyway, but with HTML,
 		// which makes a health check that cannot tell a serving dashboard from
 		// a broken one. Same envelope as rest.Handler's /health.
-		uiMux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		uiMux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
-		})
-		uiMux.Handle("/api/", dash)
-		uiMux.Handle("/", web.Handler())
+		})))
+		// D1: /api/file serves any file under the project root, so it needs the
+		// bearer token (Viewer minimum) whenever the gate is on. With the gate off
+		// the middleware resolves Admin and the file stays open, as before.
+		uiMux.Handle("GET /api/file", auth.Public(auth.MiddlewareWithStore(st, auth.Require(auth.Viewer, dash))))
+		uiMux.Handle("/api/", auth.Public(dash))
+		uiMux.Handle("/", auth.Public(web.Handler()))
 		log.Printf("leankg serve (UI) on %s", *uiAddr)
 		// The UI listener is deliberately NOT gated by the exposure rule: the
 		// dashboard is public by design (the Render demo serves

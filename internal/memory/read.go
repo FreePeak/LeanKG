@@ -12,7 +12,7 @@ import (
 // This file is the READ-side bank surface the decision doc
 // (xdev/docs/decisions/leankg-memory-backend.md, K3/K4) promised but the Go
 // tree never had: stats, read-by-id, and list. Every route here is a read, so
-// none of them belongs in auth.writePrefixes.
+// none of them is declared with auth.Require(auth.Contributor, ...) in the route table.
 //
 // Rows are read from the bank JSONL on every call — the same unindexed scan
 // RecallBanks does. ponytail: O(rows) per call with no index and no freshness

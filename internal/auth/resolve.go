@@ -22,8 +22,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // errUnknownToken is the one rejection for a bearer token that does not
@@ -90,20 +88,20 @@ func (c AuthContext) ScopeAllowed(scope string) bool {
 }
 
 // Resolve resolves the caller of r with no specific resource target.
-func Resolve(st store.Backend, r *http.Request) (AuthContext, error) {
+func Resolve(st Store, r *http.Request) (AuthContext, error) {
 	return fromEnv().resolveFor(st, r, Target{})
 }
 
 // ResolveFor resolves the caller of r, consulting resource ownership for
 // target first. Revoked or expired DB tokens are errors and never fall through
 // to the env fallback (revocation must win over a static copy).
-func ResolveFor(st store.Backend, r *http.Request, target Target) (AuthContext, error) {
+func ResolveFor(st Store, r *http.Request, target Target) (AuthContext, error) {
 	return fromEnv().resolveFor(st, r, target)
 }
 
 // resolveFor is the resolution over one registry snapshot: the middleware
 // already holds a registry, so it must not rebuild the env map per request.
-func (reg *registry) resolveFor(st store.Backend, r *http.Request, target Target) (AuthContext, error) {
+func (reg *registry) resolveFor(st Store, r *http.Request, target Target) (AuthContext, error) {
 	bearer, hasBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	bearer = strings.TrimSpace(bearer)
 	if hasBearer && bearer != "" {
@@ -136,7 +134,7 @@ func (reg *registry) resolveFor(st store.Backend, r *http.Request, target Target
 }
 
 // EffectiveRole is Resolve reduced to the role that gates actions.
-func EffectiveRole(st store.Backend, r *http.Request) (Role, error) {
+func EffectiveRole(st Store, r *http.Request) (Role, error) {
 	ctx, err := Resolve(st, r)
 	if err != nil {
 		return Viewer, err
@@ -158,7 +156,7 @@ func EffectiveRole(st store.Backend, r *http.Request) (Role, error) {
 // Ceiling: a soft-revoked row no longer keeps the gate on. Operators who must
 // never run open should keep at least one env token set (LEANKG_TOKEN_*), which
 // still enables the gate regardless of DB state.
-func (reg *registry) tokensConfigured(ctx context.Context, st store.Backend) (bool, error) {
+func (reg *registry) tokensConfigured(ctx context.Context, st Store) (bool, error) {
 	if reg.enabled() {
 		return true, nil
 	}
@@ -189,7 +187,7 @@ func (reg *registry) tokensConfigured(ctx context.Context, st store.Backend) (bo
 // resolveGrant applies the owner > org role > token role ladder to a verified
 // token. A token with no account label has nothing to resolve and keeps its
 // minted role.
-func resolveGrant(ctx context.Context, st store.Backend, g Grant, target Target) (AuthContext, error) {
+func resolveGrant(ctx context.Context, st Store, g Grant, target Target) (AuthContext, error) {
 	ac := AuthContext{
 		AccountID: g.AccountID,
 		OrgID:     g.OrgID,

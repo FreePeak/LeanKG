@@ -812,7 +812,7 @@ func (s *Store) PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRunP
 // An empty id means "the store has never been embedded" — the caller must
 // treat that as "the current collection is unknown", not as "no collection is
 // current".
-func CurrentModelID(ctx context.Context, st Backend) (string, error) {
+func CurrentModelID(ctx context.Context, st EmbedRuns) (string, error) {
 	run, err := st.LastEmbedRunAny(ctx)
 	if err != nil {
 		return "", err
@@ -859,7 +859,11 @@ func (s *Store) LastEmbedRun(ctx context.Context, modelID string) (*EmbedRun, er
 // bookkeeping and the counts are already interface methods: an engine that
 // indexes, summarizes, or applies a federation pull must not leave readers
 // reporting possibly_stale forever.
-func RefreshInventory(ctx context.Context, st Backend) (Inventory, error) {
+func RefreshInventory(ctx context.Context, st interface {
+	ElementReader
+	Vectors
+	Inventories
+}) (Inventory, error) {
 	els, err := st.ElementCount(ctx)
 	if err != nil {
 		return Inventory{}, err

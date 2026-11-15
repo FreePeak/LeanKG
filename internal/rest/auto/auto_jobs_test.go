@@ -38,7 +38,7 @@ func TestAutoConfigIndexJobOutlivesRequest(t *testing.T) {
 	body := []byte(`{"index_enabled":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader(body)).WithContext(reqCtx)
 	rec := httptest.NewRecorder()
-	RegisterAutoConfig(http.NewServeMux(), eng, WithJobs(jobs)).ServeHTTP(rec, req)
+	gatedAutoConfig(http.NewServeMux(), eng, WithJobs(jobs)).ServeHTTP(rec, req)
 	endRequest()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
@@ -73,7 +73,7 @@ func TestAutoConfigConflictStartsNoJob(t *testing.T) {
 	body, _ := json.Marshal(AutoConfigRequest{IndexEnabled: true, CWD: caller})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
-	RegisterAutoConfig(http.NewServeMux(), eng, WithJobs(jobs)).ServeHTTP(rec, req)
+	gatedAutoConfig(http.NewServeMux(), eng, WithJobs(jobs)).ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body)
 	}
@@ -148,7 +148,7 @@ func TestEmbedDebounceOutlivesRequest(t *testing.T) {
 	body := []byte(`{"embed_enabled":true,"embed_debounce_seconds":7}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader(body)).WithContext(reqCtx)
 	rec := httptest.NewRecorder()
-	RegisterAutoConfig(http.NewServeMux(), eng, WithJobs(jobs)).ServeHTTP(rec, req)
+	gatedAutoConfig(http.NewServeMux(), eng, WithJobs(jobs)).ServeHTTP(rec, req)
 	endRequest()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)

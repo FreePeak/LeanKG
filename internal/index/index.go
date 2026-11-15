@@ -206,7 +206,7 @@ func IsGitKeyed(contentHash string) bool {
 // orphan sweep (store.DeleteOrphanVectors), never by a per-file delete
 // (which would also discard the vectors of a changed file's unchanged
 // symbols).
-func DeleteFiles(ctx context.Context, st store.Backend, paths []string) (int, error) {
+func DeleteFiles(ctx context.Context, st store.IndexWriter, paths []string) (int, error) {
 	n := 0
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
