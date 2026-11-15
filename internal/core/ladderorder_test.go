@@ -74,7 +74,7 @@ func TestLadderPrefersSemanticOverWeakKeyword(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(st, nil, p)
+	e := New(st, Options{Embedder: p})
 	const question = "how are results ranked and fused"
 
 	// The question is keyword-heavy, so L2 does return something — that is

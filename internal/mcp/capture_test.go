@@ -76,8 +76,7 @@ func newCaptureEngine(t *testing.T) (*core.Engine, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	return engine, dir
 }
 
@@ -540,8 +539,7 @@ func benchCapture(b *testing.B, rec telemetry.Recorder) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(b.TempDir())
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: b.TempDir()})
 	srv := New(engine)
 	srv.SetRecorder(rec)
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: core.ToolStatus, Arguments: json.RawMessage("{}")}}

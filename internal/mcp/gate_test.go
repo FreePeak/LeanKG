@@ -43,8 +43,7 @@ func newGateStore(t *testing.T) store.Backend {
 // newGateHandler serves an HTTP MCP handler over st, the way serve does.
 func newGateHandler(t *testing.T, st store.Backend) http.Handler {
 	t.Helper()
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(t.TempDir())
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
 	srv := New(engine)
 	srv.SetAuthStore(st)
 	return srv.HTTPHandler()
@@ -195,8 +194,7 @@ func (failingAdminStore) AdminExists() (bool, error) { return false, errors.New(
 func TestGateFailsClosedOnStoreError(t *testing.T) {
 	clearEnvTokens(t)
 	st := newGateStore(t)
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(t.TempDir())
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
 	srv := New(engine)
 	srv.SetAuthStore(failingAdminStore{st})
 	h := srv.HTTPHandler()
@@ -217,8 +215,7 @@ func TestStdioIsUngatedAdmin(t *testing.T) {
 	if _, err := auth.CreateSiteAdmin(st, "stdio-admin", testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(t.TempDir())
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
 	session := connectTo(t, New(engine))
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "status", Arguments: map[string]any{}})
 	if err != nil || res.IsError {

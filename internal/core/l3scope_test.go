@@ -52,8 +52,7 @@ func TestL3ScopeArgReachesTheVectorArm(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(st, nil, p)
-	e.SetProjectDir(dir)
+	e := New(st, Options{Embedder: p, ProjectDir: dir})
 	ctx := context.Background()
 
 	t.Run("no scope sees everything", func(t *testing.T) {

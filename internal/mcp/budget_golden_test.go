@@ -47,8 +47,7 @@ func TestBudgetNeverDropsPrimaryPayload(t *testing.T) {
 	if _, err := embed.Run(context.Background(), st, p, "full"); err != nil {
 		t.Fatal(err)
 	}
-	e := core.New(st, nil, p)
-	e.SetProjectDir(dir)
+	e := core.New(st, core.Options{Embedder: p, ProjectDir: dir})
 
 	routes := []struct{ action, query, list string }{
 		{"", "Widget", "hits"},                         // ladder, L1 (300 exact matches)

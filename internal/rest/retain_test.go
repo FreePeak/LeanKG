@@ -53,8 +53,7 @@ func TestRESTRetainRejectsTheShapeItDoesNotUnderstand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, mem, nil)
-	eng.SetProjectDir(dir)
+	eng := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	mux := Handler(eng, mem)
 
 	post := func(body string) (int, string) {
@@ -113,7 +112,7 @@ func TestRESTRetainActuallyWrote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := Handler(core.New(st, mem, nil), mem)
+	mux := Handler(core.New(st, core.Options{Memory: mem}), mem)
 
 	payload, _ := json.Marshal(map[string]any{
 		"entries":           []map[string]any{{"content": "the stand must be open whenever development happens"}},

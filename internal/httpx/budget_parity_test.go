@@ -55,7 +55,7 @@ func newSeededParityEngine(t *testing.T) *core.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return core.New(st, mem, nil)
+	return core.New(st, core.Options{Memory: mem})
 }
 
 // volatileKey matches the keys whose values change between two identical

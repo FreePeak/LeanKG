@@ -52,14 +52,15 @@ func cmdStatus(ctx context.Context, args []string) error {
 		return cliexit.Code(1)
 	}
 	defer st.Close()
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(storeDir)
 	// Attach the language registry (activated for this project) so status
 	// reports the lazy activation state, not an empty list.
+	var langReg *langs.Registry
 	reg := langs.DefaultRegistry()
 	if _, aerr := reg.Activate(context.Background(), storeDir); aerr == nil {
-		engine.SetLangsRegistry(reg)
+		langReg = reg
 	}
+	engine := core.New(st, core.Options{ProjectDir: storeDir, Langs: langReg})
+	defer engine.Close()
 	out, err := engine.Status(ctx)
 	if err != nil {
 		return err

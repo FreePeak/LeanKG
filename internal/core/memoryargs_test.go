@@ -160,7 +160,7 @@ func TestMemoryViewAndSnapshotOverQuery(t *testing.T) {
 func TestErrorsAndRefsAreProjectRelative(t *testing.T) {
 	e, _ := newEngine(t)
 	proj := t.TempDir()
-	e.SetProjectDir(proj)
+	e.projectDir = proj
 	ctx := context.Background()
 	_, err := e.Import(ctx, ImportRequest{Action: "memory", Command: "delete", Path: "topics/missing.md"})
 	if err == nil {

@@ -49,7 +49,7 @@ func TestGolden(t *testing.T) {
 	defer mem.Close()
 	seedMemory(t, mem)
 
-	eng := core.New(st, mem, embed.Deterministic(8))
+	eng := core.New(st, core.Options{Memory: mem, Embedder: embed.Deterministic(8)})
 
 	status, err := eng.Status(ctx)
 	if err != nil {
@@ -110,7 +110,7 @@ func l0Response(t *testing.T, ctx context.Context, lk string) map[string]any {
 	t.Helper()
 	empty := openStore(t, filepath.Join(lk, "empty.db"))
 	defer empty.Close()
-	eng := core.New(empty, nil, nil)
+	eng := core.New(empty, core.Options{})
 	r, err := eng.Query(ctx, core.QueryRequest{Query: "anything"})
 	if err != nil {
 		t.Fatal(err)

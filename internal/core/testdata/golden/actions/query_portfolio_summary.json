@@ -2,6 +2,7 @@
   "action": "portfolio",
   "cmd": "summary",
   "count": 0,
+  "deprecated": "args.cmd is deprecated; send args.command",
   "hot_limit": 8,
   "projects": [],
   "registered": 0,

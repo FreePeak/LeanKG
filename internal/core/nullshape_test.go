@@ -47,7 +47,7 @@ func listNulls(paths []string) []string {
 // `null` — a client doing len(hits) crashed on memory search's `"hits": null`.
 func TestEmptyResultsAreNeverNull(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	ctx := context.Background()
 	calls := []QueryRequest{
 		{Action: "memory", Query: "nothing-matches-this"},

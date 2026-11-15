@@ -33,8 +33,7 @@ func newMemoryTestServer(t *testing.T) (*mcp.ClientSession, *memory.Memory) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { mem.Close() })
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	srv := New(engine)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()

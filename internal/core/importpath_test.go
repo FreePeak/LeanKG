@@ -40,8 +40,7 @@ func engineAt(t *testing.T, dir string) *Engine {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, nil)
-	e.SetProjectDir(dir)
+	e := New(st, Options{ProjectDir: dir})
 	return e
 }
 
@@ -153,7 +152,7 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 	}
 	e := engineAt(t, dir)
 	p := embed.Deterministic(64)
-	e.SetEmbedder(p)
+	e.embedder = p
 	ctx := context.Background()
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
 		t.Fatal(err)
@@ -265,7 +264,7 @@ func TestRelativeProjectDirAcceptsAbsolutePaths(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	e.SetProjectDir(".")
+	e.projectDir, _ = filepath.Abs(".")
 	ctx := context.Background()
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: dir}); err != nil {
 		t.Fatalf("import repo <abs project root> with project dir \".\": %v", err)

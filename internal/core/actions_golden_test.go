@@ -89,8 +89,7 @@ func openActionFixture(t *testing.T, root, project string) *actionFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = mem.Close() })
-	e := New(st, mem, embed.Deterministic(8))
-	e.SetProjectDir(project)
+	e := New(st, Options{Memory: mem, Embedder: embed.Deterministic(8), ProjectDir: project})
 	return &actionFixture{t: t, root: root, project: project, st: st, mem: mem, e: e}
 }
 
@@ -416,6 +415,24 @@ var actionCases = []actionCase{
 		run: qry(QueryRequest{Action: "portfolio", Query: "Alpha", Limit: 5})},
 	{name: "query_portfolio_missing_query", action: "query/portfolio", setup: chain(seedActionCorpus, seedPortfolioRegistry),
 		run: qry(QueryRequest{Action: "portfolio"})},
+
+	// --- CX-44 typed args: unknown keys and wrong types are refused ----------
+	{name: "query_unknown_arg", action: "query/exact", setup: seedActionCorpus,
+		run: qry(QueryRequest{Action: "exact", Query: "Alpha", Args: map[string]any{"bogus": "x"}})},
+	{name: "query_wrong_type_depth", action: "query/impact", setup: seedActionCorpus,
+		run: qry(QueryRequest{Action: "impact", Query: "src/beta.go::Beta", Args: map[string]any{"depth": "banana"}})},
+	{name: "query_depth_string_spelling", action: "query/impact", setup: seedActionCorpus,
+		run: qry(QueryRequest{Action: "impact", Query: "src/beta.go::Beta", Args: map[string]any{"depth": "2"}})},
+	{name: "query_ontology_command_key", action: "query/ontology", sub: "matches", setup: chain(seedActionCorpus, seedCatalog),
+		run: qry(QueryRequest{Action: "ontology", Args: map[string]any{"command": "matches"}})},
+	{name: "query_wrong_type_include_git", action: "query/exact", setup: seedActionCorpus,
+		run: qry(QueryRequest{Action: "exact", Query: "Alpha", Args: map[string]any{"include_git": map[string]any{}}})},
+	{name: "import_repo_unknown_arg", action: "import/repo", setup: seedSourceFiles,
+		run: imp(ImportRequest{Action: "repo", Path: ".", Args: map[string]any{"path": "."}})},
+	{name: "import_memory_unknown_arg", action: "import/memory", sub: "create",
+		run: imp(ImportRequest{Action: "memory", Command: "create", Path: "topics/x.md", Content: "x", Args: map[string]any{"bogus": float64(1)}})},
+	{name: "import_memory_wrong_type_tags", action: "import/memory", sub: "session_retain",
+		run: imp(ImportRequest{Action: "memory", Command: "session_retain", Args: map[string]any{"tags": []any{"a", float64(2)}, "turns": []any{"t"}}})},
 
 	{name: "query_unknown_action", action: "query", setup: seedActionCorpus,
 		run: qry(QueryRequest{Action: "bogus", Query: "x"})},

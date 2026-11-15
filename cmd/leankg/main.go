@@ -433,9 +433,6 @@ afterSidecars:
 			embedder = p
 		}
 	}
-	engine := core.New(st, mem, embedder)
-	engine.SetProjectDir(dir) // enables the session actions
-
 	// Lazy language activation: detect the languages this codebase (incl.
 	// nested repos) actually uses; everything else stays idle.
 	langReg := langs.DefaultRegistry()
@@ -453,7 +450,8 @@ afterSidecars:
 		sort.Strings(summary)
 		log.Printf("languages active: %s", strings.Join(summary, "; "))
 	}
-	engine.SetLangsRegistry(langReg)
+	engine := core.New(st, core.Options{Memory: mem, Embedder: embedder, ProjectDir: dir, Langs: langReg})
+	defer engine.Close()
 
 	// Multi-project serving (LEANKG_PROJECT_DIRS): register the extra
 	// projects and route `?project=` / tool-arg `project` to them. With

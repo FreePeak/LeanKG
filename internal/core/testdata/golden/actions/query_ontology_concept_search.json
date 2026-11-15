@@ -1,4 +1,5 @@
 {
+  "deprecated": "args.cmd is deprecated; send args.command",
   "result": {
     "code_ref_count": 0,
     "concept_match_count": 0,

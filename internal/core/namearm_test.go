@@ -69,8 +69,7 @@ func TestL3FusesANameArm(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(st, nil, p)
-	e.SetProjectDir(dir)
+	e := New(st, Options{Embedder: p, ProjectDir: dir})
 	ctx := context.Background()
 
 	// A PROSE question whose rare word is part of the symbol's name: the

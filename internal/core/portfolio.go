@@ -56,14 +56,15 @@ func (e *Engine) portfolioOptions() portfolioreg.Options {
 // anything else is the T1 fan-out, which does. args.action picks the child
 // action (default: each child's own ladder router); "portfolio" is refused — a
 // fleet query must not recurse into a fleet query.
-func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest) (map[string]any, error) {
+func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest, a portfolioArgs) (map[string]any, error) {
 	opts := e.portfolioOptions()
-	if argStr(req.Args, "cmd") == PortfolioSummaryAction {
+	cmd, alias := subCommandKey(a.Command, a.Cmd)
+	if cmd == PortfolioSummaryAction {
 		entries, err := portfolioreg.Manifest(ctx, opts, portfolioHotSet)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{
+		out := map[string]any{
 			"action":     "portfolio",
 			"cmd":        PortfolioSummaryAction,
 			"tier":       "T0 — registry rows and on-disk store presence; no project store was opened",
@@ -72,17 +73,20 @@ func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest) (map[stri
 			"projects":   entries,
 			"count":      len(entries),
 			"registered": len(entries),
-		}, nil
+		}
+		if alias {
+			out["deprecated"] = deprecatedSubCommandNote
+		}
+		return out, nil
 	}
 	if req.Query == "" {
 		return nil, fmt.Errorf("query portfolio requires query text (or args.cmd %q for the T0 manifest)", PortfolioSummaryAction)
 	}
-	childAction := argStr(req.Args, "action")
-	if childAction == PortfolioAction {
-		return nil, fmt.Errorf("query portfolio cannot fan out to another portfolio query (args.action %q)", childAction)
+	if a.Action == PortfolioAction {
+		return nil, fmt.Errorf("query portfolio cannot fan out to another portfolio query (args.action %q)", a.Action)
 	}
 	rep, err := portfolioreg.FanOut(ctx, opts, portfolioreg.Query{
-		Text: req.Query, Action: childAction, Limit: req.Limit, Args: req.Args,
+		Text: req.Query, Action: a.Action, Limit: req.Limit, Args: childArgs(req.Args),
 	}, portfolioHotSet, e.portfolioChild)
 	if err != nil {
 		return nil, err
@@ -104,10 +108,36 @@ func (e *Engine) portfolioQuery(ctx context.Context, req QueryRequest) (map[stri
 	if rep.Action != "" {
 		resp["child_action"] = rep.Action
 	}
+	if alias {
+		resp["deprecated"] = deprecatedSubCommandNote
+	}
 	if rep.Registered == 0 {
 		resp["guidance"] = "No projects in the portfolio registry: `leankg register-project <dir> --name <n>` (or `leankg index`, which registers on completion)."
 	}
 	return resp, nil
+}
+
+// portfolioArgs are the args of query{action:"portfolio"}. command (cmd is its
+// deprecated alias) picks the manifest; action picks the child action.
+type portfolioArgs struct {
+	envelopeArgs
+	Action  string `json:"action"`
+	Command string `json:"command"`
+	Cmd     string `json:"cmd"`
+}
+
+// childArgs is the args a child query receives: the parent's own keys (the
+// child action and the sub-command) are consumed here and not passed down.
+func childArgs(args map[string]any) map[string]any {
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		switch k {
+		case "action", "command", "cmd":
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // portfolioChild is the per-project executor: open the project read-only, build
@@ -120,14 +150,10 @@ func (e *Engine) portfolioChild(ctx context.Context, p store.ProjectRecord, q po
 		return nil, err
 	}
 	defer st.Close()
-	child := New(st, nil, e.embedder)
-	child.SetProjectDir(p.Dir)
-	if e.langsReg != nil {
-		// Reuse the parent's already-activated language registry: activation is
-		// per grammar pack, not per project, and a child must not re-probe
-		// grammars the serving process has already resolved.
-		child.SetLangsRegistry(e.langsReg)
-	}
+	// The parent's already-activated language registry is reused: activation is
+	// per grammar pack, not per project, and a child must not re-probe grammars
+	// the serving process has already resolved.
+	child := New(st, Options{Embedder: e.embedder, ProjectDir: p.Dir, Langs: e.langsReg})
 	return child.Query(ctx, QueryRequest{
 		Action: q.Action, Query: q.Text, Limit: q.Limit, Args: q.Args,
 	})

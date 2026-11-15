@@ -1,4 +1,5 @@
 {
+  "deprecated": "args.cmd is deprecated; send args.command",
   "matches": [
     {
       "concept_id": "alpha",

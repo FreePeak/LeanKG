@@ -57,8 +57,7 @@ func seedFixture(t *testing.T) (dir string, eng *core.Engine) {
 	if err := st.UpsertRelationships(rels); err != nil {
 		t.Fatal(err)
 	}
-	eng = core.New(st, nil, nil)
-	eng.SetProjectDir(dir)
+	eng = core.New(st, core.Options{ProjectDir: dir})
 	return dir, eng
 }
 
@@ -467,8 +466,7 @@ func TestServiceTopologyMultiRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	eng := core.New(st, nil, nil)
-	eng.SetProjectDir(dir)
+	eng := core.New(st, core.Options{ProjectDir: dir})
 	srv := httptest.NewServer(APIHandler(eng, nil))
 	t.Cleanup(srv.Close)
 

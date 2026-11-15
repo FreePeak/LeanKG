@@ -193,8 +193,7 @@ func newProjectServerForTest(t *testing.T, opts ...Option) (*Server, *mcp.Client
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	srv := New(engine, opts...)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()

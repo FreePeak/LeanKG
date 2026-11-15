@@ -32,7 +32,7 @@ func newEngine(t *testing.T) (*core.Engine, *memory.Memory) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return core.New(st, mem, nil), mem
+	return core.New(st, core.Options{Memory: mem}), mem
 }
 
 func TestHealth(t *testing.T) {
@@ -251,7 +251,7 @@ func TestRetainRejectsEmptyContent(t *testing.T) {
 func TestSessionAndOntologyEndpoints(t *testing.T) {
 	e, _ := newEngine(t)
 	dir := t.TempDir()
-	e.SetProjectDir(dir)
+	e = core.New(e.Store(), core.Options{ProjectDir: dir})
 	srv := httptest.NewServer(Handler(e, nil))
 	defer srv.Close()
 

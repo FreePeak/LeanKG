@@ -22,7 +22,7 @@ import (
 func TestSessionReadNamesItsCommands(t *testing.T) {
 	e, _ := newEngine(t)
 	dir := t.TempDir()
-	e.SetProjectDir(dir)
+	e.projectDir = dir
 	ctx := context.Background()
 
 	// No command: an answer listing what the verb supports, not a failed call.

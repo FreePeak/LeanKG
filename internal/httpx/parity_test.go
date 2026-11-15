@@ -40,7 +40,7 @@ func newParityEngine(t *testing.T) *core.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return core.New(st, mem, nil)
+	return core.New(st, core.Options{Memory: mem})
 }
 
 // envelopeOf reads the error text and code from a JSON error body. REST writes

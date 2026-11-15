@@ -34,6 +34,7 @@ func cmdCtags(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 
 	elements, err := engine.Store().Elements()
 	if err != nil {

@@ -1,3 +1,4 @@
 {
+  "deprecated": "args.cmd is deprecated; send args.command",
   "matrix": []
 }

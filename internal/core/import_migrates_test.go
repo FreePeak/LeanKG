@@ -27,8 +27,7 @@ func TestImportMigratesTheStoreItWritesTo(t *testing.T) {
 	// No Migrate() on purpose: the store has no schema at all, and the write
 	// path is the only thing that can bring it up to date.
 
-	e := New(st, nil, nil)
-	e.SetProjectDir(dir)
+	e := New(st, Options{ProjectDir: dir})
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nfunc F() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

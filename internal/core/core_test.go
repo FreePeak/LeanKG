@@ -31,7 +31,7 @@ func newEngine(t *testing.T) (*Engine, *memory.Memory) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(st, mem, nil), mem
+	return New(st, Options{Memory: mem}), mem
 }
 
 func TestResolveEnvelope(t *testing.T) {
@@ -144,7 +144,7 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 	}
 
 	embedder := p
-	e := New(st, nil, embedder)
+	e := New(st, Options{Embedder: embedder})
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "alpha code"})
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestL3ProviderFailureDegrades(t *testing.T) {
 		t.Fatal(err)
 	}
 	embedder := failingProvider{inner: embed.Deterministic(4)}
-	e := New(st, nil, embedder)
+	e := New(st, Options{Embedder: embedder})
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "content"})
 	if err != nil {
 		t.Fatalf("provider failure must degrade, not error: %v", err)
@@ -241,7 +241,7 @@ func TestMemoryWriteAndReadRouting(t *testing.T) {
 func TestStatusShape(t *testing.T) {
 	e, _ := newEngine(t)
 	dir := t.TempDir()
-	e.SetProjectDir(dir)
+	e.projectDir = dir
 	out, err := e.Status(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -389,7 +389,7 @@ func TestL3StampDriftDegrades(t *testing.T) {
 	if err := st.WriteStamp(store.ModelStamp{ModelID: p.Identity().Model, Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Identity().Provider}); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, p)
+	e := New(st, Options{Embedder: p})
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "content"})
 	if err != nil {
 		t.Fatal(err)
@@ -405,7 +405,7 @@ func TestL3StampDriftDegrades(t *testing.T) {
 // the query tool's session action recalls it bit-for-bit, and the canvas lists it.
 func TestSessionOffloadRoundTripThroughCore(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	ctx := context.Background()
 
 	if _, err := e.Import(ctx, ImportRequest{
@@ -440,7 +440,7 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	proj := t.TempDir()
-	e.SetProjectDir(proj)
+	e.projectDir = proj
 	catPath := filepath.Join(proj, "concepts.json")
 	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -473,7 +473,7 @@ func TestOntologyImportAndQueryActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	proj := t.TempDir()
-	e.SetProjectDir(proj)
+	e.projectDir = proj
 	if err := os.WriteFile(filepath.Join(proj, "concepts.json"), []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ func TestSessionQueryActionReachable(t *testing.T) {
 	if _, err := e.Query(ctx, QueryRequest{Action: "session", Query: "s1"}); err == nil {
 		t.Fatal("session query without a project dir must error (cmd must call SetProjectDir)")
 	}
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	if _, err := e.Import(ctx, ImportRequest{
 		Action: "session", Command: "offload",
 		Args: map[string]any{"session_id": "s1", "node_id": "node-1", "payload": "x"},
@@ -530,7 +530,7 @@ func TestSessionQueryActionReachable(t *testing.T) {
 // hard error.
 func TestPatternActionDegradedWithoutAstGrep(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	// Ensure the CLI is absent for the probe (PATH stripped).
 	t.Setenv("PATH", t.TempDir())
 	out, err := e.Query(context.Background(), QueryRequest{
@@ -549,7 +549,7 @@ func TestPatternActionDegradedWithoutAstGrep(t *testing.T) {
 // TestPatternActionMissingArgs pins arg validation.
 func TestPatternActionMissingArgs(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	if _, err := e.Query(context.Background(), QueryRequest{Action: "pattern", Query: "x"}); err == nil {
 		t.Fatal("pattern without args.pattern must error")
 	}
@@ -560,8 +560,8 @@ func TestPatternActionMissingArgs(t *testing.T) {
 // codebase, and the absence of a server binary is a clear error.
 func TestLSPQueryRequiresActiveLanguage(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
-	e.SetLangsRegistry(langs.DefaultRegistry())
+	e.projectDir = t.TempDir()
+	e.langsReg = langs.DefaultRegistry()
 	// registry not activated for any codebase → everything idle
 	if _, err := e.Query(context.Background(), QueryRequest{
 		Action: "lsp", Query: "Handler",
@@ -596,7 +596,7 @@ func TestLanguagesStatusAction(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e.SetLangsRegistry(langs.DefaultRegistry())
+	e.langsReg = langs.DefaultRegistry()
 	if _, err := e.langsReg.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +680,7 @@ func TestGraphActionResolvesShortName(t *testing.T) {
 func TestCompressReadAnchorsRelativePath(t *testing.T) {
 	e, _ := newEngine(t)
 	dir := t.TempDir()
-	e.SetProjectDir(dir)
+	e.projectDir = dir
 	sub := filepath.Join(dir, "pkg")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -714,7 +714,7 @@ func TestCompressReadAnchorsRelativePath(t *testing.T) {
 func TestFileArgsConfinedToProject(t *testing.T) {
 	e, _ := newEngine(t)
 	proj := t.TempDir()
-	e.SetProjectDir(proj)
+	e.projectDir = proj
 	if err := os.WriteFile(filepath.Join(proj, "in.go"), []byte("package p\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

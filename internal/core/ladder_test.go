@@ -46,7 +46,7 @@ func TestLadderRoutesProseToHybrid(t *testing.T) {
 		t.Fatalf("no embedder: prose answered by %s, want L2", r)
 	}
 
-	e.SetEmbedder(p)
+	e.embedder = p
 	if r, reason := rung("draws the widget frame"); r != "L3" || !strings.Contains(reason, "rrf(vector+fts5)") {
 		t.Fatalf("prose: %s %q, want L3 rrf(vector+fts5)", r, reason)
 	}
@@ -88,7 +88,7 @@ func (downEmbedder) Embed(context.Context, embed.TextKind, []string) ([][]float3
 // query degrades.
 func TestStatusReportsEmbedderOutage(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetEmbedder(downEmbedder{})
+	e.embedder = downEmbedder{}
 	out, err := e.Status(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 	if _, err := embed.Run(context.Background(), e.st, p, "full"); err != nil {
 		t.Fatal(err)
 	}
-	e.SetEmbedder(p)
+	e.embedder = p
 	ask := func() map[string]any {
 		out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "unrelated cooking question"})
 		if err != nil {

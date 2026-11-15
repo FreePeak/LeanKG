@@ -34,6 +34,7 @@ func cmdTunnels(ctx context.Context, args []string) error {
 		return verbFatal(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 	ts, err := web.Tunnels(engine.Store())
 	if err != nil {
 		return verbFatal(err)
@@ -60,6 +61,7 @@ func cmdQuality(ctx context.Context, args []string) error {
 		return verbFatal(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 	els, err := graph.OversizedFunctions(context.Background(), engine.Store(), *minLines, *lang)
 	if err != nil {
 		return verbFatal(err)

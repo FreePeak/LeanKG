@@ -155,28 +155,28 @@ func openEngine(ctx context.Context, dir string, mode store.Mode) (*core.Engine,
 	if err != nil {
 		return nil, err
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
 	// Query-time embedding for one-shot verbs: attach only (embed.Attach never
 	// spawns), so a CLI run can never orphan a sidecar. Without this,
 	// `leankg query --action semantic` could never reach L3 even with a
 	// provider running — found dogfooding the real repo.
+	var embedder embed.Provider
 	if cfg, cerr := embedConfigFromEnv(); cfg.Provider != "" || cfg.BaseURL != "" {
 		if cerr == nil {
 			p, _, perr := embed.Attach(cfg)
 			if cerr = perr; perr == nil {
-				engine.SetEmbedder(p)
+				embedder = p
 			}
 		}
 		if cerr != nil {
 			fmt.Fprintf(os.Stderr, "embed provider: %v (L3 degraded)\n", cerr)
 		}
 	}
+	var langReg *langs.Registry
 	reg := langs.DefaultRegistry()
 	if _, aerr := reg.Activate(context.Background(), dir); aerr == nil {
-		engine.SetLangsRegistry(reg)
+		langReg = reg
 	}
-	return engine, nil
+	return core.New(st, core.Options{Embedder: embedder, ProjectDir: dir, Langs: langReg}), nil
 }
 
 // hookMaxFilesDefault is the indexable-file count above which the SessionStart

@@ -66,8 +66,7 @@ func engineOver(t *testing.T, dir string) *core.Engine {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, nil, nil)
-	eng.SetProjectDir(dir)
+	eng := core.New(st, core.Options{ProjectDir: dir})
 	t.Cleanup(func() { _ = st.Close() })
 	return eng
 }
