@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/core"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -87,7 +88,7 @@ func APIHandler(engine *core.Engine, mem *memory.Memory, opts ...APIOption) http
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeEnvelopeStatus(w, http.StatusNotFound, failEnvelope("not found: "+r.URL.Path))
 	})
-	return mux
+	return httpx.Guard(mux)
 }
 
 // apiH carries the engine plus the single project root the dashboard serves.

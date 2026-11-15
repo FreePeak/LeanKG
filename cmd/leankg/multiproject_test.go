@@ -124,8 +124,7 @@ func TestRESTProjectRouting(t *testing.T) {
 	})
 	defer router.Close()
 
-	ctx := context.Background()
-	h := routeByProject(ctx, router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
+	h := routeByProject(router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
 		return rest.Handler(p.Engine, p.Memory)
 	})
 	srv := httptest.NewServer(h)

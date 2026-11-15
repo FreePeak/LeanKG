@@ -15,6 +15,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/federation"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/orgknowledge"
 )
@@ -341,7 +343,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 	if cfg.hindsightCompat && mem != nil {
 		registerHindsightCompat(mux, mem)
 	}
-	return mux
+	return httpx.Guard(mux)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -354,6 +356,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // (internal/errs) also exposes it as `code`, so clients branch on the stable
 // token instead of matching prose (FR-ZCP-12).
 func writeErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, context.Canceled) {
+		// The client went away mid-call: no body, and not a bad request.
+		w.WriteHeader(httpx.StatusClientClosedRequest)
+		return
+	}
 	body := map[string]any{"error": err.Error()}
 	var coded *errs.Error
 	if errors.As(err, &coded) {
