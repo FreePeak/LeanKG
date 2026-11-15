@@ -280,6 +280,26 @@ func cmdServe(ctx context.Context, args []string) error {
 	return nil
 }
 
+// serveGateOn reports whether the auth gate is on for a serve of dir. It is
+// read before serve touches the store: a read-only open never creates the
+// database, and a project with no store yet can only be gated by an env token.
+// An unknown gate state fails closed (off), so a non-loopback bind is refused
+// rather than silently exposed.
+func serveGateOn(ctx context.Context, dir, engine, dbPath string) bool {
+	st, err := openStoreWith(ctx, dir, engine, dbPath, store.RO)
+	if err != nil {
+		st = nil
+	} else {
+		defer st.Close()
+	}
+	gateOn, gateErr := auth.GateEnabled(st)
+	if gateErr != nil {
+		log.Printf("warning: auth gate state unknown: %v", gateErr)
+		return false
+	}
+	return gateOn
+}
+
 func serve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
@@ -342,6 +362,29 @@ func serve(ctx context.Context, args []string) error {
 	// the same rule (anchorProjectDir).
 	dir = anchorProjectDir(dir)
 
+	eng := *engineName
+	if eng == "" {
+		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
+	}
+	// Exposure gate (RS-03, enforced) before any side effect: a listener that
+	// leaves the loopback interface is REFUSED unless a token gates its
+	// callers. With the gate off every caller resolves to Admin, so a wildcard
+	// bind hands the project graph, the file reader and the memory write path
+	// to every host that can route to this machine (measured 2026-10-21: a LAN
+	// POST to the REST listener answered {"written":1}). The gate state is read
+	// through a read-only open, which never creates the store, so a refused
+	// serve leaves no database file, starts no sidecar and runs no migration.
+	//
+	// The UI listener is deliberately NOT gated here: the dashboard is public
+	// by design (the Render demo serves --read-only --ui :${PORT}), so it keeps
+	// its own warning.
+	gateOn := serveGateOn(ctx, dir, eng, *dbFlag)
+	for _, l := range binds {
+		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
+			return err
+		}
+	}
+
 	// Standalone mode skips the project-gated sidecars (they expect
 	// a .leankg dir in dir — FR-P2-3).
 	if dbPath := projectcfg.StandaloneDBPath(dir); dbPath != "" {
@@ -358,10 +401,6 @@ afterSidecars:
 	mode := store.RW
 	if *readOnly {
 		mode = store.RO
-	}
-	eng := *engineName
-	if eng == "" {
-		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
 	}
 	st, err := openStoreWith(ctx, dir, eng, *dbFlag, mode)
 	if err != nil {
@@ -551,29 +590,6 @@ afterSidecars:
 		return nil
 	}
 
-	// Exposure gate (RS-03, enforced): a listener that leaves the loopback
-	// interface is REFUSED unless a token gates its callers. With the gate
-	// off every caller resolves to Admin, so a wildcard bind hands the
-	// project graph, the file reader and the memory write path to every
-	// host that can route to this machine — the measured defect (2026-10-21:
-	// a LAN POST to the REST listener answered {"written":1}). The refusal
-	// names the fix instead of warning and binding anyway.
-	//
-	// The UI listener is deliberately NOT gated here: the dashboard is
-	// public by design (the Render demo serves --read-only --ui :${PORT}),
-	// so it keeps its own warning.
-	gateOn, gateErr := auth.GateEnabled(st)
-	if gateErr != nil {
-		// An unknown gate state fails closed: treat it as "no token", so a
-		// non-loopback bind is refused rather than silently exposed.
-		log.Printf("warning: auth gate state unknown: %v", gateErr)
-		gateOn = false
-	}
-	for _, l := range binds {
-		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
-			return err
-		}
-	}
 	// Every listener is collected here and bound together below, so a port
 	// already in use is reported before any of them starts serving.
 	var eps []endpoint

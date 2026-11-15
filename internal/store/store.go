@@ -39,8 +39,8 @@ type Store struct {
 	path string
 }
 
-// Open opens (creating if needed in RW mode) the store at path.
-func Open(path string, mode Mode) (*Store, error) {
+// openSQLite opens (creating if needed in RW mode) the store at path.
+func openSQLite(path string, mode Mode) (*Store, error) {
 	if mode == RO {
 		if _, err := os.Stat(path); err != nil {
 			return nil, fmt.Errorf("store: read-only open of missing store %s: %w", path, err)
@@ -245,26 +245,17 @@ func Migrations() []MigrationStep {
 // tooling that reports the applied/pending split (the `leankg migrate` verb);
 // doctor --deep reads the same table through its own probes. A store that was
 // never migrated fails with the driver's "no such table" error.
-func AppliedMigrations(b Backend) ([]int, error) {
-	const query = `SELECT version FROM schema_migrations ORDER BY version`
-	switch st := b.(type) {
-	case *Store:
-		rows, err := st.db.Query(query)
-		if err != nil {
-			return nil, fmt.Errorf("store: applied migrations: %w", err)
-		}
-		defer rows.Close()
-		return collectVersions(rows)
-	case *PGStore:
-		rows, err := st.pool.Query(pgCtx, query)
-		if err != nil {
-			return nil, fmt.Errorf("store: applied migrations: %w", err)
-		}
-		defer rows.Close()
-		return collectVersions(rows)
+func (s *Store) AppliedMigrations() ([]int, error) {
+	rows, err := s.db.Query(appliedMigrationsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("store: applied migrations: %w", err)
 	}
-	return nil, fmt.Errorf("store: applied migrations: unknown backend %T", b)
+	defer rows.Close()
+	return collectVersions(rows)
 }
+
+// appliedMigrationsQuery reads the ledger both engines share.
+const appliedMigrationsQuery = `SELECT version FROM schema_migrations ORDER BY version`
 
 // versionRows is the read side shared by database/sql and pgx rows (Close is
 // excluded: its signature differs between the two).

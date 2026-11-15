@@ -17,9 +17,9 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-func openStore(t *testing.T) *store.Store {
+func openStore(t *testing.T) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	s, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -33,7 +33,7 @@ func openStore(t *testing.T) *store.Store {
 // seedGraph writes one element with a parent + metadata, one bare element
 // (nil parent and metadata), and two relationships — the shape the Rust
 // CodeElement/Relationship readers had to render.
-func seedGraph(t *testing.T, s *store.Store) {
+func seedGraph(t *testing.T, s store.Backend) {
 	t.Helper()
 	els := []store.Element{
 		{
@@ -382,7 +382,7 @@ func remoteRoutes(t *testing.T, routes map[string]remoteRoute, seen *[]servedReq
 
 // graphBody renders the envelope a Go receiver publishes for st, so the client
 // tests speak the real wire format instead of hand-written JSON.
-func graphBody(t *testing.T, st *store.Store, env, service string) string {
+func graphBody(t *testing.T, st store.Backend, env, service string) string {
 	t.Helper()
 	els, err := st.Elements()
 	if err != nil {

@@ -51,7 +51,7 @@ func exportAsVectorFile(t *testing.T, export *bytes.Buffer, vec []float32) *byte
 }
 
 // exportGemma exports st for the embeddinggemma-2 row.
-func exportGemma(t *testing.T, st *store.Store) *bytes.Buffer {
+func exportGemma(t *testing.T, st store.Backend) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
 	if err := ExportNDJSON(context.Background(), st, "embeddinggemma-2", &buf); err != nil {
@@ -62,13 +62,13 @@ func exportGemma(t *testing.T, st *store.Store) *bytes.Buffer {
 
 // importGemma imports a vector file for embeddinggemma-2 at the configured
 // width the tests use (512).
-func importGemma(t *testing.T, st *store.Store, in *bytes.Buffer) (Report, error) {
+func importGemma(t *testing.T, st store.Backend, in *bytes.Buffer) (Report, error) {
 	t.Helper()
 	return ImportNDJSON(context.Background(), st, "embeddinggemma-2", gemmaRevision, "cosine", 512, in)
 }
 
 // liveIncrementalRun is `leankg-embed run`: the live provider from the environment.
-func liveIncrementalRun(t *testing.T, st *store.Store) Report {
+func liveIncrementalRun(t *testing.T, st store.Backend) Report {
 	t.Helper()
 	p, err := FromEnv()
 	if err != nil {
@@ -78,7 +78,7 @@ func liveIncrementalRun(t *testing.T, st *store.Store) Report {
 }
 
 // storedVector reads the vector st holds for qn under modelID.
-func storedVector(t *testing.T, st *store.Store, modelID, qn string) []float32 {
+func storedVector(t *testing.T, st store.Backend, modelID, qn string) []float32 {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+st.Path()+"?_pragma=query_only(ON)")
 	if err != nil {

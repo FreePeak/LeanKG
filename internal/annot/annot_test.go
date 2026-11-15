@@ -1,6 +1,7 @@
 package annot
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -10,7 +11,7 @@ import (
 
 func newStore(t *testing.T) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	s, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

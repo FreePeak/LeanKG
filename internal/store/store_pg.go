@@ -36,7 +36,7 @@ type PGStore struct {
 }
 
 // ErrSchemaMissing is the read-only open of a project schema that does not
-// exist, the one OpenPG failure that means "no store yet". A bad dsn, a refused
+// exist, the one openPG failure that means "no store yet". A bad dsn, a refused
 // connection or an auth failure is a different error and must not read as empty.
 var ErrSchemaMissing = errors.New("store: read-only open of missing store schema")
 
@@ -45,11 +45,11 @@ var ErrSchemaMissing = errors.New("store: read-only open of missing store schema
 // migration on a reader) can ask either backend.
 func (s *PGStore) Mode() Mode { return s.mode }
 
-// OpenPG opens the PostgreSQL+pgvector backend for one project directory.
+// openPG opens the PostgreSQL+pgvector backend for one project directory.
 // Each project lives in its own schema (leankg_<sha256(dir)[:16]>); RW mode
 // creates the schema, RO mode requires it to exist (parity with sqlite's
 // read-only open of a missing store).
-func OpenPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, error) {
+func openPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, error) {
 	cfg, err := pgxpool.ParseConfig(pgURL)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse pg dsn: %w", err)
@@ -981,7 +981,7 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 // ranked by cosine distance (HNSW index when present), hydrated against
 // code_elements. similarity = 1 - distance (the <=> operator's cosine distance).
 // The filter is part of the WHERE clause, before ORDER BY and LIMIT, and the
-// connections run with hnsw.iterative_scan (see OpenPG), so K admitted rows come
+// connections run with hnsw.iterative_scan (see openPG), so K admitted rows come
 // back whenever they exist.
 func (s *PGStore) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
 	if len(q.Vec) == 0 {

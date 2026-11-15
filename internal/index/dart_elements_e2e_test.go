@@ -31,7 +31,7 @@ func TestIndexDartConstructorAndEnumElements(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "factory.dart"), []byte(dartProjectFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

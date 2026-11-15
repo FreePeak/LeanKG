@@ -8,7 +8,7 @@ import (
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestInventoryFreshness(t *testing.T) {
 
 func TestReadOnlyMode(t *testing.T) {
 	dir := t.TempDir()
-	rw, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RW)
+	rw, err := openSQLite(filepath.Join(dir, ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestReadOnlyMode(t *testing.T) {
 	}
 	rw.Close()
 
-	ro, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RO)
+	ro, err := openSQLite(filepath.Join(dir, ".leankg", "leankg.db"), RO)
 	if err != nil {
 		t.Fatal(err)
 	}

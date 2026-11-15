@@ -3,6 +3,7 @@
 package index
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +14,9 @@ import (
 
 // newScratchStore opens a migrated store inside dir (the same shape
 // setupProject builds, minus the fixture copy).
-func newScratchStore(t *testing.T, dir string) *store.Store {
+func newScratchStore(t *testing.T, dir string) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

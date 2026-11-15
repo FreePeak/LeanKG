@@ -21,10 +21,10 @@ func fixture(t *testing.T, name string) string {
 
 // setupStore opens a migrated SQLite store under a fresh temp project dir and
 // returns both the project dir and the store.
-func setupStore(t *testing.T) (string, *store.Store) {
+func setupStore(t *testing.T) (string, store.Backend) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func kindsOf(items []MinedItem) []string {
 	return out
 }
 
-func mustElements(t *testing.T, st *store.Store, qn string) store.Element {
+func mustElements(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
 	els, err := st.FindExact(qn)
 	if err != nil {

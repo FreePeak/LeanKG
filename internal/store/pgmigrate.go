@@ -471,6 +471,16 @@ CREATE INDEX IF NOT EXISTS idx_accounts_site_admin ON accounts (site_admin) WHER
 `},
 }
 
+// AppliedMigrations is the PostgreSQL twin of (*Store).AppliedMigrations.
+func (s *PGStore) AppliedMigrations() ([]int, error) {
+	rows, err := s.pool.Query(pgCtx, appliedMigrationsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("store: applied migrations: %w", err)
+	}
+	defer rows.Close()
+	return collectVersions(rows)
+}
+
 // Migrate applies all pending migrations (RW only). Migrations are applied in
 // order and recorded in schema_migrations; each runs inside one transaction.
 func (s *PGStore) Migrate() error {

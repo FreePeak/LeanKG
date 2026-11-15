@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -123,5 +124,47 @@ func TestServeReturnsErrorWhenPortIsInUse(t *testing.T) {
 	}
 	if !errors.Is(err, syscall.EADDRINUSE) {
 		t.Fatalf("serve error %q does not wrap EADDRINUSE", err)
+	}
+}
+
+// TestServeRefusedExposureLeavesNoStore pins the CX-06 gap closed by CX-18: an
+// exposed bind with no token is refused before the store is opened, so the
+// refused serve leaves no database file behind.
+func TestServeRefusedExposureLeavesNoStore(t *testing.T) {
+	t.Setenv("LEANKG_HOME", t.TempDir())
+	for _, k := range []string{"LEANKG_TOKEN_ADMIN", "LEANKG_TOKEN_CONTRIBUTOR", "LEANKG_TOKEN_VIEWER", "LEANKG_DB_PATH"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("LEANKG_DB_ENGINE", "sqlite")
+	dir := t.TempDir()
+
+	err := serve(context.Background(), []string{"--project", dir, "--http", "0.0.0.0:0"})
+	if err == nil || !strings.Contains(err.Error(), "no auth token is configured") {
+		t.Fatalf("serve on 0.0.0.0 with no token = %v, want the exposure refusal", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".leankg", "leankg.db")); !os.IsNotExist(statErr) {
+		t.Fatalf("store file exists after a refused exposure (stat err %v)", statErr)
+	}
+}
+
+// TestServeGateStateNeverCreatesTheStore pins the no-create gate probe that
+// runs before serve touches the store: an env token configures the gate with
+// no store at all, and a missing store with no env token leaves it off.
+func TestServeGateStateNeverCreatesTheStore(t *testing.T) {
+	for _, k := range []string{"LEANKG_TOKEN_ADMIN", "LEANKG_TOKEN_CONTRIBUTOR", "LEANKG_TOKEN_VIEWER", "LEANKG_DB_PATH"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("LEANKG_DB_ENGINE", "sqlite")
+	dir := t.TempDir()
+
+	if serveGateOn(context.Background(), dir, "sqlite", "") {
+		t.Fatal("gate on with no store and no env token, want off")
+	}
+	t.Setenv("LEANKG_TOKEN_ADMIN", "lkg_test_token")
+	if !serveGateOn(context.Background(), dir, "sqlite", "") {
+		t.Fatal("gate off with LEANKG_TOKEN_ADMIN set, want on")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".leankg", "leankg.db")); !os.IsNotExist(statErr) {
+		t.Fatalf("gate probe created the store file (stat err %v)", statErr)
 	}
 }

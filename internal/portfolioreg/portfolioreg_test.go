@@ -20,7 +20,7 @@ import (
 // read-only handle finds it by exact match.
 func newProject(t *testing.T, dir, name string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestCanonicalAndStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The registry key must be the same identity store.OpenPG hashes into a
+	// The registry key must be the same identity store.OpenBackend hashes into a
 	// schema name: absolute and symlink-resolved (macOS t.TempDir lives under
 	// /var -> /private/var, exactly the divergence that broke the Rust sweep).
 	if !filepath.IsAbs(c) {
@@ -397,7 +397,7 @@ func TestPortfolioAcrossPGSiblingSchemas(t *testing.T) {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		st, err := store.OpenPG(ctx, url, d, store.RW)
+		st, err := store.OpenBackend(ctx, store.OpenOptions{Engine: store.EnginePostgres, PGURL: url, ProjectDir: d, Mode: store.RW})
 		if err != nil {
 			t.Fatal(err)
 		}

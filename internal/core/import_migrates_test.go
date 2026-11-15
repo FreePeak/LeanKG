@@ -19,7 +19,7 @@ import (
 // the import is at fault.
 func TestImportMigratesTheStoreItWritesTo(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestImportMigratesTheStoreItWritesTo(t *testing.T) {
 	if _, err := e.Import(context.Background(), ImportRequest{Action: "dir", Path: "."}); err != nil {
 		t.Fatalf("import into a store with no schema: %v", err)
 	}
-	applied, err := store.AppliedMigrations(st)
+	applied, err := st.AppliedMigrations()
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

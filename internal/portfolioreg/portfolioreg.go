@@ -139,7 +139,7 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 		if url == "" {
 			return nil, fmt.Errorf("portfolioreg: postgres engine with no dsn (%s unset)", "LEANKG_PG_URL")
 		}
-		st, err := store.OpenPG(ctx, url, pgRegistryKey, mode)
+		st, err := store.OpenBackend(ctx, store.OpenOptions{Engine: store.EnginePostgres, PGURL: url, ProjectDir: pgRegistryKey, Mode: mode})
 		if err != nil {
 			// Only a schema that does not exist is "no registry"; a dsn, connection
 			// or auth failure is a fault.
@@ -170,7 +170,7 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 				return nil, fmt.Errorf("portfolioreg: open registry: %w", err)
 			}
 		}
-		st, err := store.OpenBackend(ctx, "", store.EngineSQLite, "", path, mode)
+		st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: "", Engine: store.EngineSQLite, PGURL: "", DBPath: path, Mode: mode})
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +188,7 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 
 // OpenChild opens one registered project's store READ-ONLY: the sqlite child
 // resolves to <dir>/.leankg/leankg.db, the Postgres child to that project's own
-// schema on the shared server, search_path pinned by store.OpenPG exactly as it
+// schema on the shared server, search_path pinned by store.OpenBackend exactly as it
 // is for the project's own readers — so a fleet query reads the same rows the
 // project reads, and no cross-schema UNION is built out of concatenated names.
 //
@@ -198,7 +198,7 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 // shared pool that checks out a connection and SETs search_path per child
 // inside a transaction — which needs every Backend reader to run in that tx.
 func (o Options) OpenChild(ctx context.Context, dir string) (store.Backend, error) {
-	return store.OpenBackend(ctx, dir, o.engine(), o.pgURL(dir), "", store.RO)
+	return store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dir, Engine: o.engine(), PGURL: o.pgURL(dir), DBPath: "", Mode: store.RO})
 }
 
 // Canonical turns a project path into the registry key: absolute, with symlinks

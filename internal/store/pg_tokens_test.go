@@ -147,7 +147,7 @@ func TestPGTokenLifecycle(t *testing.T) {
 // TestPGAppliedMigrations reads the ledger through the shared helper.
 func TestPGAppliedMigrations(t *testing.T) {
 	s := openPGTest(t)
-	got, err := AppliedMigrations(s)
+	got, err := s.AppliedMigrations()
 	if err != nil {
 		t.Fatalf("applied: %v", err)
 	}

@@ -13,9 +13,9 @@ import (
 )
 
 // gitIndexStore opens a migrated store outside any repository under test.
-func gitIndexStore(t *testing.T) *store.Store {
+func gitIndexStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "s.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func gitIndexStore(t *testing.T) *store.Store {
 }
 
 // gitIndexRun runs one IndexDirWith pass over dir and fails the test on error.
-func gitIndexRun(t *testing.T, st *store.Store, dir string) Result {
+func gitIndexRun(t *testing.T, st store.Backend, dir string) Result {
 	t.Helper()
 	res, err := IndexDirWith(context.Background(), st, dir, nil)
 	if err != nil {
@@ -37,7 +37,7 @@ func gitIndexRun(t *testing.T, st *store.Store, dir string) Result {
 }
 
 // gitIndexHas reports whether the store holds exactly one element with qn.
-func gitIndexHas(t *testing.T, st *store.Store, qn string) bool {
+func gitIndexHas(t *testing.T, st store.Backend, qn string) bool {
 	t.Helper()
 	els, err := st.FindExact(qn)
 	if err != nil {

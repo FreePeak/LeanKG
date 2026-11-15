@@ -101,7 +101,7 @@ func (f fleetProbe) Fleet(ctx context.Context) ([]FleetStatus, error) {
 			out = append(out, st)
 			continue
 		}
-		applied, err := store.AppliedMigrations(child)
+		applied, err := child.AppliedMigrations()
 		if err != nil {
 			st.Unreadable = err.Error()
 		} else {

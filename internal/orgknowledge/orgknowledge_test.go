@@ -1,6 +1,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -9,9 +10,9 @@ import (
 
 // openStore gives the package a real migrated SQLite store, which is the
 // storage these surfaces ship against.
-func openStore(t *testing.T) *store.Store {
+func openStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -22,7 +23,7 @@ func openStore(t *testing.T) *store.Store {
 	return st
 }
 
-func openKnowledge(t *testing.T) (*Knowledge, *store.Store) {
+func openKnowledge(t *testing.T) (*Knowledge, store.Backend) {
 	t.Helper()
 	st := openStore(t)
 	k := New(st)

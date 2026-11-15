@@ -20,9 +20,9 @@ func openPGPre017Store(t *testing.T) *PGStore {
 	if url == "" {
 		t.Skipf("%s not set; skipping PostgreSQL backend tests", pgTestURLEnv)
 	}
-	b, err := OpenPG(context.Background(), url, t.TempDir(), RW)
+	b, err := openPG(context.Background(), url, t.TempDir(), RW)
 	if err != nil {
-		t.Fatalf("OpenPG: %v", err)
+		t.Fatalf("openPG: %v", err)
 	}
 	s := b.(*PGStore)
 	t.Cleanup(func() {

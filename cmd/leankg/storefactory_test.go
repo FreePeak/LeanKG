@@ -15,12 +15,12 @@ import (
 
 // TestStoreOpensGoThroughTheFactory pins CX-04: every production store in
 // cmd/leankg is opened by the one factory in store.go. A direct store.Open,
-// store.OpenBackend or store.OpenPG call anywhere else is how `writer` came to
+// store.OpenBackend call anywhere else is how `writer` came to
 // open a file that ignored LEANKG_DB_PATH, the leankg.yaml anchor and the
 // PostgreSQL engine while `serve` honoured all three.
 //
 // Test files are held to store.Open as well: every fixture opens through
-// openFixtureStore, which calls the factory. OpenBackend and OpenPG are still
+// openFixtureStore, which calls the factory. OpenBackend is still
 // checked in production files only.
 func TestStoreOpensGoThroughTheFactory(t *testing.T) {
 	files, err := filepath.Glob("*.go")
@@ -54,7 +54,7 @@ func TestStoreOpensGoThroughTheFactory(t *testing.T) {
 			switch sel.Sel.Name {
 			case "Open":
 				bypass = append(bypass, fset.Position(call.Pos()).String()+" store.Open")
-			case "OpenBackend", "OpenPG":
+			case "OpenBackend":
 				if !isTest {
 					bypass = append(bypass, fset.Position(call.Pos()).String()+" store."+sel.Sel.Name)
 				}

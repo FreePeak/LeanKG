@@ -37,7 +37,7 @@ func (s unreadableStampStore) Stamp(modelID string) (*store.ModelStamp, error) {
 // the store). A read error must name its cause.
 func TestL3DegradeReasonNamesUnreadableStamp(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestL3DegradeReasonNamesUnreadableStamp(t *testing.T) {
 // missing-collection one.
 func TestL3DegradeReasonStillSaysNoVectorCollection(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

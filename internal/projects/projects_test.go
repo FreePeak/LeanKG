@@ -111,7 +111,7 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	r := NewRouter(defaultDir, Config{ExtraDirs: []string{dirA}})
 	// Seed the default with an externally-opened engine: routing to it
 	// must hand back the SAME engine (one store handle per project).
-	st, err := store.OpenBackend(ctx, defaultDir, "sqlite", "", "", store.RW)
+	st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: defaultDir, Engine: "sqlite", PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	// store is refused as not indexed (see
 	// TestRoutedProjectWithoutAStoreIsRefused) — and it never migrates one
 	// either (see TestRoutedReadDoesNotMigrateTheStore).
-	alphaStore, err := store.OpenBackend(ctx, dirA, "sqlite", "", "", store.RW)
+	alphaStore, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dirA, Engine: "sqlite", PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

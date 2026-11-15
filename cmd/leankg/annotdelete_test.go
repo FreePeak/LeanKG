@@ -15,7 +15,7 @@ import (
 // until someone edited the store by hand.
 func TestDeleteAnnotationRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

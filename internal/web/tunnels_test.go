@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 // to per-folder clusters exactly as the Rust engine's persisted column did.
 func newTunnelStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(t.TempDir()+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: t.TempDir() + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestRenderTunnels(t *testing.T) {
 }
 
 func TestTunnelsEmptyGraph(t *testing.T) {
-	st, err := store.Open(t.TempDir()+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: t.TempDir() + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

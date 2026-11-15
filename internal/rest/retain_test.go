@@ -41,7 +41,7 @@ import (
 // the field I read".
 func TestRESTRetainRejectsTheShapeItDoesNotUnderstand(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestRESTRetainRejectsTheShapeItDoesNotUnderstand(t *testing.T) {
 // visible, so "ok:true, retained:0" can never mean "silently dropped".
 func TestRESTRetainActuallyWrote(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

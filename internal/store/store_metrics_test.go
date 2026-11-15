@@ -340,7 +340,7 @@ func TestMetricsResetAll(t *testing.T) {
 // records nothing and must not turn every served call into a write error.
 func TestRecordMetricReadOnlyNoOp(t *testing.T) {
 	dir := t.TempDir()
-	rw, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RW)
+	rw, err := openSQLite(filepath.Join(dir, ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestRecordMetricReadOnlyNoOp(t *testing.T) {
 		t.Fatalf("close rw: %v", err)
 	}
 
-	ro, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RO)
+	ro, err := openSQLite(filepath.Join(dir, ".leankg", "leankg.db"), RO)
 	if err != nil {
 		t.Fatalf("open ro: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestRecordMetricReadOnlyNoOp(t *testing.T) {
 // becomes usable in place, keeps its rows across a second Migrate, and the
 // migration ledger stays ascending and unique.
 func TestMetricsMigrationIsAdditiveAndIdempotent(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestMetricsMigrationIsAdditiveAndIdempotent(t *testing.T) {
 		t.Fatalf("ledger size after second migrate = %d, want 1", n)
 	}
 
-	applied, err := AppliedMigrations(s)
+	applied, err := s.AppliedMigrations()
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

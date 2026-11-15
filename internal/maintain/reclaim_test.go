@@ -97,7 +97,7 @@ func TestPassReclaimSummaryNamesTheOutcome(t *testing.T) {
 // file bigger. The pass must not report a negative reclaim.
 func TestPassOnAFreshStoreGrows(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

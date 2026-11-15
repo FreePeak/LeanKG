@@ -2,6 +2,7 @@ package pack
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -48,7 +49,7 @@ type snapshotDoc struct {
 // the pack path exercises the actual store reads.
 func newStore(t *testing.T, root string, els []store.Element, rels []store.Relationship) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(root, ".leankg", "leankg.db"), store.RW)
+	s, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(root, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

@@ -19,7 +19,7 @@ func gitHistoryEngine(t *testing.T) (*Engine, string) {
 	gittest.WriteFile(t, dir, "util.go", "package main\n\nfunc Util() {}\n")
 	gittest.Git(t, dir, "add", ".")
 	gittest.Git(t, dir, "commit", "-m", "second")
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

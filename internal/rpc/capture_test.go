@@ -47,7 +47,7 @@ func (r *callRecorder) snapshot() []telemetry.CallEvent {
 func serveRPC(t *testing.T, rec telemetry.Recorder) leankgv1connect.LeanKGClient {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

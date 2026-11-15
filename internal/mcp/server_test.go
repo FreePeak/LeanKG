@@ -21,7 +21,7 @@ import (
 func newTestServer(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestMCPRBACGatesWriteToolsOverWire(t *testing.T) {
 	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
 
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestNewActionsOverMCPWire(t *testing.T) {
 // server the real client (DSH) could not talk to.
 func TestMCPNewProtocolVersionOverHTTP(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestMCPHonorsDBMintedTokens(t *testing.T) {
 	t.Setenv("LEANKG_TOKEN_ADMIN", "")
 	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,7 +509,7 @@ func (f fakeRouter) MultiProject() bool { return f.multi }
 func newServerForTest(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

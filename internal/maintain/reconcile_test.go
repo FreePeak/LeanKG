@@ -26,9 +26,9 @@ func gitRepo(t *testing.T) string {
 
 // openStore opens a migrated store in a scratch directory (NOT inside the
 // project: a store under the project root would be walked by the index).
-func openStore(t *testing.T) *store.Store {
+func openStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

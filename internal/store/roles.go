@@ -135,6 +135,7 @@ type EmbedRuns interface {
 type Inventories interface {
 	// freshness watermark (DB-resident; readers never bump)
 	Watermark() (seq, at int64, err error)
+	BumpWatermark() error
 	SaveInventory(inv Inventory) error
 	LoadInventory() (*Inventory, error)
 }
@@ -254,6 +255,9 @@ type Knowledge interface {
 	KnowledgeEntriesByFeature(featureID string) ([]KnowledgeEntry, error)
 	KnowledgeEntriesByEnvironment(environment string, limit int) ([]KnowledgeEntry, error)
 	KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error)
+	// ServiceMetadataUpsert writes one service profile (the write side of
+	// ServiceMetadataGet; kept in the role for the org-knowledge seeding path).
+	ServiceMetadataUpsert(m ServiceMetadata) error
 	ServiceMetadataGet(service, env string) (ServiceMetadata, bool, error)
 	// ServiceMetadataAll lists the profiles in one environment, ordered by
 	// service name (the Rust get_all_service_metadata read behind the team

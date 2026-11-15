@@ -33,7 +33,7 @@ func openStoreWith(ctx context.Context, dir, engine, dbPath string, mode store.M
 	if dbPath == "" {
 		dbPath = projectcfg.StandaloneDBPath(dir)
 	}
-	return store.OpenBackend(ctx, dir, engine, projectcfg.PGURL(dir), dbPath, mode)
+	return store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dir, Engine: engine, PGURL: projectcfg.PGURL(dir), DBPath: dbPath, Mode: mode})
 }
 
 // anchorProjectDir applies the leankg.yaml project.project_path / project.root

@@ -64,7 +64,7 @@ func (f *fakeRec) byMethod(method string) []telemetry.CallEvent {
 func newCaptureEngine(t *testing.T) (*core.Engine, string) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +528,7 @@ func BenchmarkCaptureMetadata(b *testing.B) {
 }
 
 func benchCapture(b *testing.B, rec telemetry.Recorder) {
-	st, err := store.Open(filepath.Join(b.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(b.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		b.Fatal(err)
 	}

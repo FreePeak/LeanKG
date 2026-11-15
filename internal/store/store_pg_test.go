@@ -30,9 +30,9 @@ func openPGAt(t *testing.T, dir string) *PGStore {
 	if url == "" {
 		t.Skipf("%s not set; skipping PostgreSQL backend tests", pgTestURLEnv)
 	}
-	b, err := OpenPG(context.Background(), url, dir, RW)
+	b, err := openPG(context.Background(), url, dir, RW)
 	if err != nil {
-		t.Fatalf("OpenPG: %v", err)
+		t.Fatalf("openPG: %v", err)
 	}
 	s := b.(*PGStore)
 	if err := s.Migrate(); err != nil {
@@ -436,7 +436,7 @@ func TestPGReadOnly(t *testing.T) {
 		t.Skipf("%s not set; skipping PostgreSQL backend tests", pgTestURLEnv)
 	}
 	dir := t.TempDir()
-	rw, err := OpenPG(context.Background(), url, dir, RW)
+	rw, err := openPG(context.Background(), url, dir, RW)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestPGReadOnly(t *testing.T) {
 		_ = rw.Close()
 	})
 
-	roB, err := OpenPG(context.Background(), url, dir, RO)
+	roB, err := openPG(context.Background(), url, dir, RO)
 	if err != nil {
 		t.Fatalf("RO open of existing store: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestPGReadOnly(t *testing.T) {
 	}
 
 	// RO open of a missing schema errors (sqlite missing-store parity).
-	if _, err := OpenPG(context.Background(), url, t.TempDir(), RO); err == nil {
+	if _, err := openPG(context.Background(), url, t.TempDir(), RO); err == nil {
 		t.Fatal("RO open of missing schema succeeded; want error")
 	}
 }

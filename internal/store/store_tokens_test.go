@@ -260,7 +260,7 @@ func TestTokenTouchCoalesces(t *testing.T) {
 // and re-running Migrate changes nothing (the ledger is the idempotency guard —
 // sqlite has no ADD COLUMN IF NOT EXISTS).
 func TestTokenMigrationUpgradesExistingStore(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestTokenUpsertValidation(t *testing.T) {
 // (the migrate verbs' applied/pending split): every embedded version, ascending.
 func TestAppliedMigrations(t *testing.T) {
 	s := openTestStore(t)
-	got, err := AppliedMigrations(s)
+	got, err := s.AppliedMigrations()
 	if err != nil {
 		t.Fatalf("applied: %v", err)
 	}

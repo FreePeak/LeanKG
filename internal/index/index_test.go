@@ -15,7 +15,7 @@ import (
 
 // setupProject copies the testdata fixtures into a fresh temp project with a
 // migrated store and returns both.
-func setupProject(t *testing.T) (string, *store.Store) {
+func setupProject(t *testing.T) (string, store.Backend) {
 	t.Helper()
 	dir := t.TempDir()
 	for _, name := range []string{"sample.go", "sample.rs", "sample.py", "sample.ts", "sample.md"} {
@@ -27,7 +27,7 @@ func setupProject(t *testing.T) (string, *store.Store) {
 			t.Fatal(err)
 		}
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func setupProject(t *testing.T) (string, *store.Store) {
 	return dir, st
 }
 
-func index(t *testing.T, st *store.Store, dir string) Result {
+func index(t *testing.T, st store.Backend, dir string) Result {
 	t.Helper()
 	res, err := IndexDir(context.Background(), st, dir)
 	if err != nil {
@@ -49,7 +49,7 @@ func index(t *testing.T, st *store.Store, dir string) Result {
 
 // mustFind asserts exactly one element with the given qualified name and
 // returns it.
-func mustFind(t *testing.T, st *store.Store, qn string) store.Element {
+func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
 	els, err := st.FindExact(qn)
 	if err != nil {
@@ -61,7 +61,7 @@ func mustFind(t *testing.T, st *store.Store, qn string) store.Element {
 	return els[0]
 }
 
-func assertNoElement(t *testing.T, st *store.Store, name string) {
+func assertNoElement(t *testing.T, st store.Backend, name string) {
 	t.Helper()
 	els, err := st.FindExact(name)
 	if err != nil {
@@ -372,7 +372,7 @@ func TestIndexRootTripwire(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b, "b.go"), []byte("package b\n\nfunc B() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "s.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +410,7 @@ func TestExtractorVersionReextractsOnce(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\n// A does a thing.\nfunc A() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "s.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "app.ts"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "s.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

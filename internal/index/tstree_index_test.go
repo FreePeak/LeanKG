@@ -64,7 +64,7 @@ func TestTreeSitterNoGrammarFallsBack(t *testing.T) {
 // end-to-end: a tree with go.mod at the root and pubspec.yaml in mobile/
 // indexes BOTH languages through the registry-routed IndexDirWith.
 func TestIndexDirWithRegistryLazyNested(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}

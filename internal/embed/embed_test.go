@@ -24,9 +24,9 @@ import (
 
 // --- fixtures ---------------------------------------------------------------
 
-func testStore(t *testing.T) *store.Store {
+func testStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -50,14 +50,14 @@ func el(qn, content string) store.Element {
 	}
 }
 
-func seed(t *testing.T, st *store.Store, els ...store.Element) {
+func seed(t *testing.T, st store.Backend, els ...store.Element) {
 	t.Helper()
 	if err := st.UpsertElements(els); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 }
 
-func mustRun(t *testing.T, st *store.Store, p Provider, mode string) Report {
+func mustRun(t *testing.T, st store.Backend, p Provider, mode string) Report {
 	t.Helper()
 	rep, err := Run(context.Background(), st, p, mode)
 	if err != nil {
@@ -66,7 +66,7 @@ func mustRun(t *testing.T, st *store.Store, p Provider, mode string) Report {
 	return rep
 }
 
-func vectorCount(t *testing.T, st *store.Store, modelID string) int {
+func vectorCount(t *testing.T, st store.Backend, modelID string) int {
 	t.Helper()
 	n, err := st.VectorCount(modelID)
 	if err != nil {
@@ -75,7 +75,7 @@ func vectorCount(t *testing.T, st *store.Store, modelID string) int {
 	return n
 }
 
-func stampRows(t *testing.T, st *store.Store) int {
+func stampRows(t *testing.T, st store.Backend) int {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+st.Path()+"?_pragma=query_only(ON)")
 	if err != nil {
@@ -263,7 +263,7 @@ func TestRunValidationFailureCountedNotFatal(t *testing.T) {
 	if rep.Coverage != 0 {
 		t.Fatalf("coverage: got %v, want 0", rep.Coverage)
 	}
-	run, err := st.LastEmbedRun(p.ModelID())
+	run, err := st.LastEmbedRunAny()
 	if err != nil || run == nil {
 		t.Fatalf("LastEmbedRun: %v %v", run, err)
 	}
@@ -287,7 +287,7 @@ func TestRunProviderErrorSurfaces(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider down") {
 		t.Fatalf("Run error: got %v, want provider failure surfaced", err)
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny()
 	if run == nil || run.Status != "failed" {
 		t.Fatalf("run status: got %+v, want failed", run)
 	}
@@ -418,7 +418,7 @@ func TestRunPoisonItemDoesNotAbortRun(t *testing.T) {
 	if vectorCount(t, st, p.ModelID()) != 1 {
 		t.Fatal("healthy sibling lost its vector")
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny()
 	if run == nil || run.Status != "partial" {
 		t.Fatalf("run status: got %+v, want partial", run)
 	}
@@ -436,7 +436,7 @@ func TestRunAllFailedProviderAbortsLoudly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider down") || !strings.Contains(err.Error(), "all 1 item(s) failed") {
 		t.Fatalf("Run error: got %v, want loud all-failed abort naming the provider error", err)
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny()
 	if run == nil || run.Status != "failed" {
 		t.Fatalf("run status: got %+v, want failed", run)
 	}
@@ -486,7 +486,7 @@ func TestRunCancelledIsNotPoison(t *testing.T) {
 	if rep.Failed != 0 {
 		t.Fatalf("cancelled items counted as poison: %+v", rep)
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny()
 	if run == nil || run.Status != "cancelled" {
 		t.Fatalf("run status: got %+v, want cancelled", run)
 	}
@@ -508,7 +508,7 @@ func TestRunPreCancelledRecordsCancelled(t *testing.T) {
 	if rep.Failed != 0 {
 		t.Fatalf("cancelled items counted as poison: %+v", rep)
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny()
 	if run == nil || run.Status != "cancelled" {
 		t.Fatalf("run status: got %+v, want cancelled", run)
 	}
@@ -1145,7 +1145,7 @@ func (sc *localSidecar) takeInputs() []string {
 
 // localRun runs against sc with a fresh local provider, so each call sees the
 // sidecar's /props as it is now (a provider caches a successful fingerprint).
-func localRun(t *testing.T, st *store.Store, sc *localSidecar, mode string) (Report, error) {
+func localRun(t *testing.T, st store.Backend, sc *localSidecar, mode string) (Report, error) {
 	t.Helper()
 	p, err := newLocalProvider(sc.URL + "/v1")
 	if err != nil {
@@ -1154,7 +1154,7 @@ func localRun(t *testing.T, st *store.Store, sc *localSidecar, mode string) (Rep
 	return Run(context.Background(), st, p, mode)
 }
 
-func storedStamp(t *testing.T, st *store.Store, modelID string) store.ModelStamp {
+func storedStamp(t *testing.T, st store.Backend, modelID string) store.ModelStamp {
 	t.Helper()
 	cur, err := st.Stamp(modelID)
 	if err != nil || cur == nil {
@@ -1520,7 +1520,7 @@ func TestRunHungEndpointFailsAtRequestTimeout(t *testing.T) {
 	if took > 8*time.Second {
 		t.Fatalf("Run returned after %s, want about the 1s request timeout", took)
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny()
 	if run == nil || run.Status != "failed" {
 		t.Fatalf("run status: got %+v, want failed", run)
 	}
@@ -1547,7 +1547,7 @@ func TestRunStopsAtNextBatchOnCancel(t *testing.T) {
 	if p.calls != 2 {
 		t.Fatalf("Embed calls = %d, want 2 (the batch in flight at the cancel, then no more)", p.calls)
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny()
 	if run == nil || run.Status != "cancelled" {
 		t.Fatalf("run status: got %+v, want cancelled", run)
 	}

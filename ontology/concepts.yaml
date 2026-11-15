@@ -82,7 +82,7 @@ concepts:
     owned_by:
       - leankg
     code_refs:
-      - internal/store/store.go::Open
+      - internal/store/store.go::openSQLite
 
   - id: postgres_store
     type: data_store

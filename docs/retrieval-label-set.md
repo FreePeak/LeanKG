@@ -75,7 +75,7 @@ checkable rather than arguable.
 |---|---|---|---|
 | 1 | reciprocal rank fusion of ranked lists | `internal/memory/dense.go::fuseRRF` | dense.go |
 | 2 | the weighted variant of rank fusion | `internal/store/pg_fts.go::FuseRRFWeighted` | pg_fts.go |
-| 3 | the Store constructor that opens sqlite | `internal/store/store.go::Open` | store.go |
+| 3 | the Store constructor that opens sqlite | `internal/store/store.go::openSQLite` | store.go |
 | 4 | report how many bytes the freelist holds | `internal/store/maintenance.go::Store.Space` | maintenance.go |
 | 5 | hand free pages back one page at a time | `internal/store/maintenance.go::Store.Maintain` | maintenance.go |
 | 6 | adopt incremental vacuum in the header | `internal/store/maintenance.go::Store.ensureIncrementalVacuum` | maintenance.go |
