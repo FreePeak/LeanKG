@@ -1,4 +1,4 @@
-// Package graph implements pure-Go graph traversal verbs over store.Backend
+// Package graph implements pure-Go graph traversal verbs over the store reads it needs
 // (Rust graph/query.rs parity): blast radius, shortest path, callers/callees,
 // focused context, and explain. All traversal is in-process BFS — no SQL
 // recursion — deterministic by qualified name, cycle-safe via visited sets,
@@ -53,9 +53,18 @@ func clampDepth(depth int) int {
 	return depth
 }
 
+// graphStore is the store surface the traversal verbs call: element lookup and
+// one-hop edges in each direction. The composed store satisfies it.
+type graphStore interface {
+	FindExact(ctx context.Context, name string) ([]store.Element, error)
+	Elements(ctx context.Context) ([]store.Element, error)
+	Outgoing(ctx context.Context, source string) ([]store.Relationship, error)
+	Incoming(ctx context.Context, target string) ([]store.Relationship, error)
+}
+
 // hasNode reports whether qn is known to the graph: an element with that
 // qualified name exists, or at least one edge touches it.
-func hasNode(ctx context.Context, st store.Backend, qn string) (bool, error) {
+func hasNode(ctx context.Context, st graphStore, qn string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -82,7 +91,7 @@ func hasNode(ctx context.Context, st store.Backend, qn string) (bool, error) {
 
 // Impact returns the blast radius of qn: BFS over INCOMING edges (who depends
 // on it), seed included at depth 0. Deterministic: sorted by qualified name.
-func Impact(ctx context.Context, st store.Backend, qn string, depth int) ([]Hit, Bounds, error) {
+func Impact(ctx context.Context, st graphStore, qn string, depth int) ([]Hit, Bounds, error) {
 	depth = clampDepth(depth)
 	bounds := Bounds{Depth: depth}
 	ok, err := hasNode(ctx, st, qn)
@@ -136,7 +145,7 @@ func Impact(ctx context.Context, st store.Backend, qn string, depth int) ([]Hit,
 // ShortestPath finds the shortest path from from to to over the undirected
 // view of the graph, inclusive of both endpoints. Returns nil (no error) when
 // unreachable. maxDepth is clamped like every traversal depth.
-func ShortestPath(ctx context.Context, st store.Backend, from, to string, maxDepth int) ([]string, Bounds, error) {
+func ShortestPath(ctx context.Context, st graphStore, from, to string, maxDepth int) ([]string, Bounds, error) {
 	maxDepth = clampDepth(maxDepth)
 	bounds := Bounds{Depth: maxDepth}
 	for _, seed := range []string{from, to} {
@@ -188,7 +197,7 @@ func ShortestPath(ctx context.Context, st store.Backend, from, to string, maxDep
 
 // undirectedNeighbors returns both directions of edges touching node,
 // deduplicated and sorted.
-func undirectedNeighbors(ctx context.Context, st store.Backend, node string) ([]string, error) {
+func undirectedNeighbors(ctx context.Context, st graphStore, node string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -235,7 +244,7 @@ func reconstruct(parent map[string]string, to string) []string {
 
 // Callers returns the deduplicated, sorted set of elements with a "calls"
 // edge targeting qn.
-func Callers(ctx context.Context, st store.Backend, qn string) ([]string, error) {
+func Callers(ctx context.Context, st graphStore, qn string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -248,7 +257,7 @@ func Callers(ctx context.Context, st store.Backend, qn string) ([]string, error)
 
 // Callees returns the deduplicated, sorted set of elements that qn's "calls"
 // edges target.
-func Callees(ctx context.Context, st store.Backend, qn string) ([]string, error) {
+func Callees(ctx context.Context, st graphStore, qn string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -284,7 +293,7 @@ func collectEnds(rels []store.Relationship, incoming bool) []string {
 // Context returns a focused view of qn: the element itself plus its
 // "incoming" and "outgoing" edges grouped by rel_type as sorted QN lists,
 // each list capped at limit entries (limit <= 0 means uncapped).
-func Context(ctx context.Context, st store.Backend, qn string, limit int) (map[string]any, error) {
+func Context(ctx context.Context, st graphStore, qn string, limit int) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -337,7 +346,7 @@ func groupByRelType(rels []store.Relationship, limit int, pick func(store.Relati
 
 // Explain returns qn's element plus degree counts, per-rel-type counts, and up
 // to 5 sample edges per direction (source/target/rel_type/confidence each).
-func Explain(ctx context.Context, st store.Backend, qn string) (map[string]any, error) {
+func Explain(ctx context.Context, st graphStore, qn string) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

@@ -72,7 +72,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 
 | ID | PR | Size | Depends | Status | PR link | Notes |
 |---|---|---|---|---|---|---|
-| CX-37 | `refactor: narrow store dependencies in graph, annot, githistory, summarize, export and metrics` | S each | - | todo | - | - |
+| CX-37 | `refactor: narrow store dependencies in graph, annot, githistory, summarize, export and metrics` | S each | - | done | local branch `refactor/cx-37-narrow-deps` (not pushed) | no `store.Backend` in the six packages (`internal/archtest/store_deps_test.go` ratchet, allowlist empty). Roles: graph 4 methods, githistory 6, summarize 11, export 3 (unexported interfaces); annot `store.KV`; metrics `store.Metrics`. The plan's counts for githistory (1) and summarize (3) were stale. Live parity: 31 steps, exit codes and stdout identical to base, except `impact <file>` order, which also varies base-vs-base (pre-existing, `cmd/leankg/query.go` impactFrom map iteration) |
 | CX-38 | `refactor: auth, maintain, embed and orgknowledge take store roles` | M | - | todo | - | - |
 | CX-39 | `refactor(core): remove Engine.Store()` | M | - | todo | - | - |
 | CX-40 | `refactor(embed): an Identity value with one encoding, resolved once` | M | - | done | local `6a9cb7ee` (not pushed) | one `Identity.Key()` encoding (golden test); getters do no I/O (`TestIdentityGettersDoNoIO`); pre-CX-40 calibration keys still read |

@@ -57,7 +57,7 @@ type Options struct {
 //
 // The returned string is exactly what the verb prints, trailing newline
 // included, which keeps the verb's stdout byte-identical to Rust's.
-func Show(ctx context.Context, b store.Backend, opts Options) (string, error) {
+func Show(ctx context.Context, b store.Metrics, opts Options) (string, error) {
 	if opts.Seed {
 		return seed(ctx, b)
 	}
@@ -156,7 +156,7 @@ func parseSinceDays(raw string) int {
 // seed writes the five fixed rows of the Rust seed (main.rs seed_test_metrics)
 // and returns its per-row output. Timestamps are relative to now so the rows
 // land inside any sane retention window.
-func seed(ctx context.Context, b store.Backend) (string, error) {
+func seed(ctx context.Context, b store.Metrics) (string, error) {
 	now := time.Now().Unix()
 	rows := []struct {
 		id, tool                                    string
