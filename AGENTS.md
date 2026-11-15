@@ -183,6 +183,8 @@ The same gate covers REST and ConnectRPC. Those surfaces have no login tool, so 
 
 stdio (`leankg serve --stdio`) is not gated. It runs as Admin because it is a local subprocess started by the user.
 
+**Account status.** A token minted for an existing account stops authenticating (the same 401 an unknown token gets) while that account is not `active`, so disabling an account revokes its tokens at once. A token whose account id has no row (a free-form label from before accounts existed) is not affected and keeps its minted role; a token with no account id is unchanged.
+
 **Admin bootstrap.**
 
 ```bash

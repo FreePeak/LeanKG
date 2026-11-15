@@ -405,7 +405,6 @@ func TestTokenListNeverReturnsHash(t *testing.T) {
 	h := newAuthServer(t, st)
 
 	const account = "acct-list"
-	activeAccount(t, st, account)
 	bearer, bearerRow, err := Mint(context.Background(), st, MintRequest{Name: "viewer", Role: "viewer", AccountID: account})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
@@ -448,9 +447,6 @@ func TestTokenRevokeNeedsOwnerOrAdmin(t *testing.T) {
 	h := newAuthServer(t, st)
 
 	const owner, outsider, admin = "acct-owner", "acct-outsider", "acct-admin"
-	for _, id := range []string{owner, outsider, admin} {
-		activeAccount(t, st, id)
-	}
 	mint := func(name, role, account string) (string, store.Token) {
 		t.Helper()
 		secret, row, err := Mint(context.Background(), st, MintRequest{Name: name, Role: role, AccountID: account})

@@ -27,7 +27,7 @@ import (
 )
 
 // errUnknownToken is the one rejection for a bearer token that does not
-// authenticate: an unknown token, and a token whose account is not active. The
+// authenticate: an unknown token, and a token whose existing account is not active. The
 // same error on both paths keeps the 401 from revealing the account state.
 var errUnknownToken = errors.New("auth: unknown token")
 
@@ -201,12 +201,14 @@ func resolveGrant(ctx context.Context, st store.Backend, g Grant, target Target)
 	if st == nil || g.AccountID == "" {
 		return ac, nil
 	}
-	// A token minted for an account works only while that account is active.
+	// A token minted for an existing account works only while that account is
+	// active. An account id with no row is a legacy free-form label and keeps
+	// its minted role.
 	acct, found, err := st.AccountByID(ctx, g.AccountID)
 	if err != nil {
 		return AuthContext{}, err
 	}
-	if !found || acct.Status != "active" {
+	if found && acct.Status != "active" {
 		return AuthContext{}, errUnknownToken
 	}
 	// Ownership of the targeted resource outranks every role source: an owner

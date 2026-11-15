@@ -154,7 +154,6 @@ func TestResolvePrecedence(t *testing.T) {
 	t.Run("unknown org label falls back to token role", func(t *testing.T) {
 		clearTokenEnv(t)
 		st := openAuthStore(t)
-		activeAccount(t, st, "ghost")
 		secret, _, err := Mint(context.Background(), st, MintRequest{Name: "stale-org", Role: "contributor", AccountID: "ghost", OrgID: "no-such-org"})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
@@ -278,15 +277,6 @@ func orgWithMember(t *testing.T, st store.Backend) (orgID string, owner, member 
 	return orgs[0].ID, owner, member
 }
 
-// activeAccount creates an active account with id, so a token minted for it
-// authenticates. A token whose account is missing or not active is rejected.
-func activeAccount(t *testing.T, st store.Backend, id string) {
-	t.Helper()
-	if err := st.AccountUpsert(context.Background(), store.Account{ID: id, Email: id + "@example.com", Name: id, Status: "active"}); err != nil {
-		t.Fatalf("account %s: %v", id, err)
-	}
-}
-
 // TestDisabledAccountTokenRejected pins the account-status check: a token
 // minted for an account stops authenticating when the account is disabled
 // and works again once it is active. The rejection is the same error an
@@ -336,5 +326,25 @@ func TestDisabledAccountTokenRejected(t *testing.T) {
 	}
 	if _, err := Resolve(st, reqWith(secret)); err != nil {
 		t.Fatalf("re-enabled account: resolve: %v; want success", err)
+	}
+}
+
+// TestLegacyAccountLabelKeepsWorking pins the fail-closed scope of the
+// account-status check: only an existing account that is not active rejects
+// its tokens. A token whose account id has no row (a free-form label minted
+// before accounts existed) keeps authenticating with its minted role.
+func TestLegacyAccountLabelKeepsWorking(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	secret, _, err := Mint(context.Background(), st, MintRequest{Name: "legacy", Role: "contributor", AccountID: "free-form-label"})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	ctx, err := Resolve(st, reqWith(secret))
+	if err != nil {
+		t.Fatalf("token for a missing account: resolve: %v; want success", err)
+	}
+	if ctx.Role != Contributor || ctx.Via != ViaToken {
+		t.Fatalf("ctx = %+v; want Contributor/token", ctx)
 	}
 }
