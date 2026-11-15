@@ -25,12 +25,12 @@ func TestDeleteAnnotationRoundTrip(t *testing.T) {
 	}
 
 	const el = "pkg/a.go::Do"
-	if _, err := annot.Annotate(st, el, "wrong description", nil, nil); err != nil {
+	if _, err := annot.Annotate(context.Background(), st, el, "wrong description", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	// A search finds it BEFORE the delete (so the delete is what changes the
 	// answer, not a search that never matched).
-	hits, err := annot.Search(st, "wrong description")
+	hits, err := annot.Search(context.Background(), st, "wrong description")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,13 +39,13 @@ func TestDeleteAnnotationRoundTrip(t *testing.T) {
 	}
 	// Deleting an element that has no annotation is a no-op, not an error:
 	// the CLI reports it and exits 0.
-	if err := annot.Delete(st, "pkg/not_there.go::Nope"); err != nil {
+	if err := annot.Delete(context.Background(), st, "pkg/not_there.go::Nope"); err != nil {
 		t.Errorf("delete of an absent element failed: %v", err)
 	}
-	if err := annot.Delete(st, el); err != nil {
+	if err := annot.Delete(context.Background(), st, el); err != nil {
 		t.Fatal(err)
 	}
-	hits, err = annot.Search(st, "wrong description")
+	hits, err = annot.Search(context.Background(), st, "wrong description")
 	if err != nil {
 		t.Fatal(err)
 	}

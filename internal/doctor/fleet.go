@@ -70,7 +70,7 @@ func (f fleetProbe) Fleet(ctx context.Context) ([]FleetStatus, error) {
 		return nil, err
 	}
 	defer reg.Close()
-	projects, err := portfolioreg.ProjectsOf(reg)
+	projects, err := portfolioreg.ProjectsOf(ctx, reg)
 	if err != nil {
 		return nil, err
 	}

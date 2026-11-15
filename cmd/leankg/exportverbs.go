@@ -342,7 +342,7 @@ func cmdAnnotate(ctx context.Context, args []string) error {
 	if err := requireIndexedElement(ctx, st, element, *description); err != nil {
 		return verbFatal(err)
 	}
-	created, err := annot.Annotate(st, element, *description, optString(*userStory), optString(*feature))
+	created, err := annot.Annotate(ctx, st, element, *description, optString(*userStory), optString(*feature))
 	if err != nil {
 		return verbFatal(err)
 	}
@@ -387,7 +387,7 @@ func cmdLink(ctx context.Context, args []string) error {
 	if err := requireIndexedElement(ctx, st, element, "link "+id); err != nil {
 		return verbFatal(err)
 	}
-	if err := annot.Link(st, element, id, *kind); err != nil {
+	if err := annot.Link(ctx, st, element, id, *kind); err != nil {
 		return verbFatal(err)
 	}
 	fmt.Printf("Linked '%s' to %s %s\n", element, *kind, id)
@@ -414,7 +414,7 @@ func cmdSearchAnnotations(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 
-	results, err := annot.Search(st, query)
+	results, err := annot.Search(ctx, st, query)
 	if err != nil {
 		return verbFatal(err)
 	}
@@ -426,7 +426,7 @@ func cmdSearchAnnotations(ctx context.Context, args []string) error {
 		// `search-annotations FR-ZZ` while `search-annotations <its
 		// description>` finds it, and the caller concludes the row is gone.
 		// Say so, and offer the two reads that can find it.
-		if all, _ := annot.All(st); len(all) > 0 {
+		if all, _ := annot.All(ctx, st); len(all) > 0 {
 			fmt.Printf("No annotations found matching '%s'\n", query)
 			fmt.Printf("  (%d annotation(s) exist; search matches DESCRIPTION text only — try show-annotations <element>, or words from the description)\n", len(all))
 			return nil
@@ -468,7 +468,7 @@ func cmdShowAnnotations(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 
-	rec, err := annot.Get(st, element)
+	rec, err := annot.Get(ctx, st, element)
 	if err != nil {
 		return verbFatal(err)
 	}

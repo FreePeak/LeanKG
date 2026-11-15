@@ -160,7 +160,7 @@ func TestConceptCodeRefsAccounted(t *testing.T) {
 	if _, err := SyncFromDir(context.Background(), testdataDir(t), st, ""); err != nil {
 		t.Fatal(err)
 	}
-	concepts, err := LoadConceptsFromStore(st)
+	concepts, err := LoadConceptsFromStore(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestNoOrphanProceduralNodes(t *testing.T) {
 	}
 	// The persisted KV set must round-trip the same counts the status
 	// reports — no silently dropped steps (the Rust loader bug class).
-	set, err := LoadWorkflowsFromStore(st)
+	set, err := LoadWorkflowsFromStore(context.Background(), st)
 	if err != nil || set == nil {
 		t.Fatalf("LoadWorkflowsFromStore: %v %v", set, err)
 	}

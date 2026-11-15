@@ -150,21 +150,21 @@ func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 		return out
 	}
 	stamp := embed.StampOf(p)
-	if err := embed.WriteCalibration(e.st, stamp, 0.999); err != nil {
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, 0.999); err != nil {
 		t.Fatal(err)
 	}
 	out := ask()
 	if out["retrieval"].(map[string]any)["confidence"] != "low" || len(hitsOf(out)) == 0 || !strings.Contains(fmt.Sprint(out["guidance"]), "noise floor") {
 		t.Fatalf("below floor: %v", out)
 	}
-	if err := embed.WriteCalibration(e.st, stamp, -1); err != nil {
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, -1); err != nil {
 		t.Fatal(err)
 	}
 	if out := ask(); out["retrieval"].(map[string]any)["confidence"] != "normal" {
 		t.Fatalf("above floor: %v", out["retrieval"])
 	}
 	stamp.Revision = "other"
-	if err := embed.WriteCalibration(e.st, stamp, 0.999); err != nil { // calibration for another identity
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, 0.999); err != nil { // calibration for another identity
 		t.Fatal(err)
 	}
 	if _, ok := ask()["retrieval"].(map[string]any)["confidence"]; ok {

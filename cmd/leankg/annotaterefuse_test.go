@@ -64,7 +64,7 @@ func TestAnnotateRefusesAnElementTheIndexDoesNotHave(t *testing.T) {
 		t.Error("an empty element was accepted")
 	}
 	// 4. And the refusal happens BEFORE the write: the store stays clean.
-	recs, err := annot.All(st)
+	recs, err := annot.All(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}

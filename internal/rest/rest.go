@@ -106,7 +106,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		httpx.WriteJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("GET /api/v1/ontology/matches", func(w http.ResponseWriter, r *http.Request) {
-		out, err := engine.OntologyMatches()
+		out, err := engine.OntologyMatches(r.Context())
 		if err != nil {
 			httpx.WriteError(w, err)
 			return

@@ -272,7 +272,7 @@ func TestEmptyHitGuidance(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -335,7 +335,7 @@ func TestFreshnessStaleAfterWrite(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	out, _ := e.Query(ctx, QueryRequest{Query: "F"})
@@ -453,7 +453,7 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 	if matches, ok := out["matches"].([]ontology.Match); !ok || len(matches) != 1 {
 		t.Fatalf("matches: %+v", out)
 	}
-	again, err := e.OntologyMatches()
+	again, err := e.OntologyMatches(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

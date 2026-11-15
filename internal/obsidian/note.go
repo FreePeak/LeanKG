@@ -294,7 +294,7 @@ func (e *Engine) Push(ctx context.Context) (PushResult, error) {
 		if err != nil {
 			return res, fmt.Errorf("obsidian: relationships of %s: %w", el.QualifiedName, err)
 		}
-		annotation, _, err := e.st.KVGet(context.TODO(), AnnotationNamespace, el.QualifiedName)
+		annotation, _, err := e.st.KVGet(ctx, AnnotationNamespace, el.QualifiedName)
 		if err != nil {
 			return res, fmt.Errorf("obsidian: annotation of %s: %w", el.QualifiedName, err)
 		}

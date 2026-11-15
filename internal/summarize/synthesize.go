@@ -394,8 +394,8 @@ const synthCacheKey = "synth-cache"
 
 // loadSynthCache reads the batch cache. A malformed or missing cache is an
 // empty one: the cache is an optimization, never a source of truth.
-func (p *pipeline) loadSynthCache() map[string][]cleanedNode {
-	raw, ok, err := p.st.KVGet(context.TODO(), synthCacheNamespace, synthCacheKey)
+func (p *pipeline) loadSynthCache(ctx context.Context) map[string][]cleanedNode {
+	raw, ok, err := p.st.KVGet(ctx, synthCacheNamespace, synthCacheKey)
 	if err != nil || !ok || raw == "" {
 		return map[string][]cleanedNode{}
 	}
@@ -409,12 +409,12 @@ func (p *pipeline) loadSynthCache() map[string][]cleanedNode {
 // saveSynthCache rewrites the cache with the live batches only, so it cannot
 // grow forever and a batch that produced nothing is retried next run rather
 // than frozen as an empty success (graft build.ts:240-254).
-func (p *pipeline) saveSynthCache(live map[string][]cleanedNode) {
+func (p *pipeline) saveSynthCache(ctx context.Context, live map[string][]cleanedNode) {
 	blob, err := json.Marshal(live)
 	if err != nil {
 		return
 	}
-	_ = p.st.KVSet(context.TODO(), synthCacheNamespace, synthCacheKey, string(blob))
+	_ = p.st.KVSet(ctx, synthCacheNamespace, synthCacheKey, string(blob))
 }
 
 // pass2 batches the summaries and asks for a curated node set per batch.
@@ -438,7 +438,7 @@ func (p *pipeline) pass2(ctx context.Context, ws []work) []Node {
 		return nil
 	}
 
-	cache := p.loadSynthCache()
+	cache := p.loadSynthCache(ctx)
 	live := map[string][]cleanedNode{}
 	var all []cleanedNode
 	for i, batch := range batches {
@@ -488,7 +488,7 @@ func (p *pipeline) pass2(ctx context.Context, ws []work) []Node {
 		all = append(all, nodes...)
 		p.gate.succeeded()
 	}
-	p.saveSynthCache(live)
+	p.saveSynthCache(ctx, live)
 	if len(all) == 0 {
 		return nil
 	}

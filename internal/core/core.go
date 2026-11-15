@@ -95,8 +95,8 @@ func (e *Engine) wireMemoryVectors() {
 		e.mem.SetProvider(nil, nil)
 		return
 	}
-	e.mem.SetProvider(e.embedder, func() (float64, bool) {
-		return embed.ReadCalibration(e.st, embed.StampOf(e.embedder))
+	e.mem.SetProvider(e.embedder, func(ctx context.Context) (float64, bool) {
+		return embed.ReadCalibration(ctx, e.st, embed.StampOf(e.embedder))
 	})
 }
 
@@ -175,8 +175,8 @@ func ResolveEnvelope(tool string) (string, error) {
 
 // freshness derives the status/query freshness label; the derivation itself is
 // the store's, shared with `doctor --deep`'s fleet probe.
-func (e *Engine) freshness(totalElements int) string {
-	return store.Freshness(context.TODO(), e.st, totalElements)
+func (e *Engine) freshness(ctx context.Context, totalElements int) string {
+	return store.Freshness(ctx, e.st, totalElements)
 }
 
 // ImportRequest is the import tool payload. The flat curation fields mirror
@@ -379,8 +379,8 @@ func (e *Engine) ensureStoreSchema(ctx context.Context) error {
 // lives in the store package (store.RefreshInventory) so the CLI writer verbs
 // keep the same bookkeeping — an index that only the Engine refreshed left
 // readers reporting possibly_stale forever.
-func (e *Engine) refreshInventory() (store.Inventory, error) {
-	return store.RefreshInventory(context.TODO(), e.st)
+func (e *Engine) refreshInventory(ctx context.Context) (store.Inventory, error) {
+	return store.RefreshInventory(ctx, e.st)
 }
 
 // Status is the status tool: health, inventory, freshness, backend, and the
@@ -441,7 +441,7 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 		"relationships":    rels,
 		"elements_by_type": byType,
 		"watermark":        map[string]any{"seq": seq, "at": at},
-		"freshness":        e.freshness(els),
+		"freshness":        e.freshness(ctx, els),
 		// head_sync says whether the store still mirrors the tree it was
 		// indexed from. It is the signal freshness cannot give: freshness
 		// compares two counters inside the same database, so a store 5.3
@@ -915,7 +915,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 				best, seen = h.Similarity, true
 			}
 		}
-		e.annotateConfidence(resp, *stamp, best, seen)
+		e.annotateConfidence(ctx, resp, *stamp, best, seen)
 		return withEmptyHint(resp, nil)
 	}
 	hits, err := e.st.SearchVectors(ctx, store.VectorQuery{ModelID: modelID, Vec: qvec, K: limit, Filter: keep})
@@ -931,7 +931,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	resp["hits"] = out
 	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)", "scope": scopeName}
 	if len(hits) > 0 {
-		e.annotateConfidence(resp, *stamp, hits[0].Similarity, true)
+		e.annotateConfidence(ctx, resp, *stamp, hits[0].Similarity, true)
 	}
 	return withEmptyHint(resp, nil)
 }
@@ -958,8 +958,8 @@ func fusionArms(hits []store.HybridHit) string {
 // text. The hits stay — the flag and guidance tell the agent not to trust
 // them. Collections never calibrated (an embed run before this change) get
 // no flag at all rather than a guessed one.
-func (e *Engine) annotateConfidence(resp map[string]any, stamp store.ModelStamp, best float64, seen bool) {
-	floor, ok := embed.ReadCalibration(e.st, stamp)
+func (e *Engine) annotateConfidence(ctx context.Context, resp map[string]any, stamp store.ModelStamp, best float64, seen bool) {
+	floor, ok := embed.ReadCalibration(ctx, e.st, stamp)
 	if !ok {
 		return
 	}
@@ -1200,7 +1200,7 @@ func (e *Engine) OntologyMatch(ctx context.Context, catalogPath string) (map[str
 	if err != nil {
 		return nil, err
 	}
-	if err := ontology.SaveMatches(e.st, matches); err != nil {
+	if err := ontology.SaveMatches(ctx, e.st, matches); err != nil {
 		return nil, err
 	}
 	return map[string]any{"concepts": len(cat.Concepts), "matches": matches}, nil
@@ -1219,8 +1219,8 @@ func (e *Engine) OntologyMatch(ctx context.Context, catalogPath string) (map[str
 //
 // The SHAPE half of this (nil -> `[]`, never `null`) is owned by emptyLists
 // (RS-09) and applies to every answer.
-func (e *Engine) OntologyMatches() (map[string]any, error) {
-	matches, err := ontology.LoadMatches(e.st)
+func (e *Engine) OntologyMatches(ctx context.Context) (map[string]any, error) {
+	matches, err := ontology.LoadMatches(ctx, e.st)
 	if err != nil {
 		return nil, err
 	}

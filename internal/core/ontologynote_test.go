@@ -29,7 +29,7 @@ func TestEmptyMatchesSaysWhyItIsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	e := engineAt(t, dir)
 
-	out, err := e.OntologyMatches()
+	out, err := e.OntologyMatches(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestEmptyMatchesSaysWhyItIsEmpty(t *testing.T) {
 	if err := e.st.KVSet(context.Background(), "ontology", "matches", `[{"concept_id":"c","qn":"pkg::A","via":"name"}]`); err != nil {
 		t.Fatal(err)
 	}
-	populated, err := e.OntologyMatches()
+	populated, err := e.OntologyMatches(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

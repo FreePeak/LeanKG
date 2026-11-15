@@ -47,7 +47,7 @@ func (e *Engine) gitImport(ctx context.Context, _ ImportRequest, a gitImportArgs
 	if err != nil {
 		return nil, err
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
 	return map[string]any{"git": res}, nil

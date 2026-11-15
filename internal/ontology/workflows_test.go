@@ -184,14 +184,14 @@ func TestSyncRoundTripLoadPersistTrace(t *testing.T) {
 	}
 
 	// KV persistence round-trips the loaded sets.
-	wfSet, err := LoadWorkflowsFromStore(st)
+	wfSet, err := LoadWorkflowsFromStore(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if wfSet == nil || len(wfSet.Workflows) != 2 {
 		t.Fatalf("stored workflow set = %+v", wfSet)
 	}
-	concepts, err := LoadConceptsFromStore(st)
+	concepts, err := LoadConceptsFromStore(context.Background(), st)
 	if err != nil || len(concepts) != 3 {
 		t.Fatalf("stored concepts = %v, %v", concepts, err)
 	}
@@ -850,10 +850,10 @@ func TestFeatureFlowAndMatrix(t *testing.T) {
 	}
 
 	// Persisted trace round-trips through KV.
-	if err := SaveFeatureTrace(st, "FR-CHK-01", flow); err != nil {
+	if err := SaveFeatureTrace(context.Background(), st, "FR-CHK-01", flow); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadFeatureTrace(st, "FR-CHK-01")
+	loaded, err := LoadFeatureTrace(context.Background(), st, "FR-CHK-01")
 	if err != nil || loaded == nil || loaded["count"] != float64(1) { // JSON numbers decode as float64
 		t.Fatalf("loaded feature trace = %v, %v", loaded, err)
 	}

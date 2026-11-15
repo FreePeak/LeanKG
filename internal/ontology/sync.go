@@ -166,12 +166,12 @@ func SyncFromDir(ctx context.Context, ontologyDir string, st store.Backend, lean
 	// table churn.
 	if conceptNodes != nil {
 		if b, err := json.Marshal(conceptNodes); err == nil {
-			_ = st.KVSet(context.TODO(), kvNamespace, kvConceptKey, string(b))
+			_ = st.KVSet(ctx, kvNamespace, kvConceptKey, string(b))
 		}
 	}
 	if workflowSet != nil {
 		if b, err := json.Marshal(workflowSet); err == nil {
-			_ = st.KVSet(context.TODO(), kvNamespace, kvWorkflowKey, string(b))
+			_ = st.KVSet(ctx, kvNamespace, kvWorkflowKey, string(b))
 		}
 	}
 
@@ -295,8 +295,8 @@ func fileMtime(p string) *int64 {
 // LoadWorkflowsFromStore reads the persisted workflow set back from the KV
 // namespace (round-trip partner of SyncFromDir). A missing key yields
 // (nil, nil).
-func LoadWorkflowsFromStore(st store.Backend) (*WorkflowSet, error) {
-	s, ok, err := st.KVGet(context.TODO(), kvNamespace, kvWorkflowKey)
+func LoadWorkflowsFromStore(ctx context.Context, st store.Backend) (*WorkflowSet, error) {
+	s, ok, err := st.KVGet(ctx, kvNamespace, kvWorkflowKey)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -309,8 +309,8 @@ func LoadWorkflowsFromStore(st store.Backend) (*WorkflowSet, error) {
 
 // LoadConceptsFromStore reads the persisted concept node set back from the
 // KV namespace. A missing key yields (nil, nil).
-func LoadConceptsFromStore(st store.Backend) ([]ConceptNode, error) {
-	s, ok, err := st.KVGet(context.TODO(), kvNamespace, kvConceptKey)
+func LoadConceptsFromStore(ctx context.Context, st store.Backend) ([]ConceptNode, error) {
+	s, ok, err := st.KVGet(ctx, kvNamespace, kvConceptKey)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -483,18 +483,18 @@ func FeatureFlow(ctx context.Context, st store.Backend, featureID string) (map[s
 // SaveFeatureTrace persists a feature -> workflows trace under the
 // ontology KV namespace (feature:<id>) so traceability reads survive
 // process restarts.
-func SaveFeatureTrace(st store.Backend, featureID string, flow map[string]any) error {
+func SaveFeatureTrace(ctx context.Context, st store.Backend, featureID string, flow map[string]any) error {
 	b, err := json.Marshal(flow)
 	if err != nil {
 		return err
 	}
-	return st.KVSet(context.TODO(), kvNamespace, "feature:"+featureID, string(b))
+	return st.KVSet(ctx, kvNamespace, "feature:"+featureID, string(b))
 }
 
 // LoadFeatureTrace reads a persisted feature trace back; a missing key
 // yields (nil, nil).
-func LoadFeatureTrace(st store.Backend, featureID string) (map[string]any, error) {
-	s, ok, err := st.KVGet(context.TODO(), kvNamespace, "feature:"+featureID)
+func LoadFeatureTrace(ctx context.Context, st store.Backend, featureID string) (map[string]any, error) {
+	s, ok, err := st.KVGet(ctx, kvNamespace, "feature:"+featureID)
 	if err != nil || !ok {
 		return nil, err
 	}

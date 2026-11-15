@@ -1013,13 +1013,13 @@ func TestRunCalibratesNoiseFloor(t *testing.T) {
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
 	p := Deterministic(8)
 	rep := mustRun(t, st, p, "full")
-	floor, ok := ReadCalibration(st, StampOf(p))
+	floor, ok := ReadCalibration(context.Background(), st, StampOf(p))
 	if !ok || rep.NoiseFloor != floor {
 		t.Fatalf("calibration: ok=%v floor=%v report=%v", ok, floor, rep.NoiseFloor)
 	}
 	other := StampOf(p)
 	other.ChunkerVersion++
-	if _, ok := ReadCalibration(st, other); ok {
+	if _, ok := ReadCalibration(context.Background(), st, other); ok {
 		t.Fatal("calibration leaked to another collection identity")
 	}
 }

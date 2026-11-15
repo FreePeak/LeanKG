@@ -207,7 +207,7 @@ func (e *Engine) searchPrelude(ctx context.Context, req QueryRequest, env envelo
 		// ladder would otherwise answer "no elements indexed" (CX-45).
 		return searchScope{}, err
 	}
-	resp["freshness"] = e.freshness(els)
+	resp["freshness"] = e.freshness(ctx, els)
 	// One population rule for every rung: git history rows are hidden unless
 	// args.include_git is set (see searchKeep). The semantic rung applies the
 	// same rule as a store-side predicate.
@@ -563,8 +563,12 @@ func subCommandKey(command, alias string) (string, bool) {
 
 // ontologyCommands is the query{action:"ontology"} sub-command registry.
 var ontologyCommands = map[string]func(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error){
-	"":        func(e *Engine, _ context.Context, _ QueryRequest) (map[string]any, error) { return e.OntologyMatches() },
-	"matches": func(e *Engine, _ context.Context, _ QueryRequest) (map[string]any, error) { return e.OntologyMatches() },
+	"": func(e *Engine, ctx context.Context, _ QueryRequest) (map[string]any, error) {
+		return e.OntologyMatches(ctx)
+	},
+	"matches": func(e *Engine, ctx context.Context, _ QueryRequest) (map[string]any, error) {
+		return e.OntologyMatches(ctx)
+	},
 	"trace": func(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error) {
 		return ontology.TraceQuery(ctx, e.st, req.Query)
 	},
@@ -729,7 +733,7 @@ func (e *Engine) importDocs(ctx context.Context, req ImportRequest) (map[string]
 	if err != nil {
 		return nil, fmt.Errorf("docindex %s: %w", req.Path, err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -758,7 +762,7 @@ func (e *Engine) importPRD(ctx context.Context, req ImportRequest, a prdArgs) (m
 	if err != nil {
 		return nil, err
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
 	return map[string]any{"prd": res}, nil
@@ -784,7 +788,7 @@ func (e *Engine) importIndex(ctx context.Context, req ImportRequest) (map[string
 	if err != nil {
 		return nil, fmt.Errorf("index %s: %w", target, err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
 	status, _ := e.Status(ctx)

@@ -180,10 +180,10 @@ func TestMatchRoundTrip(t *testing.T) {
 		{ConceptID: "auth", QN: "docs/security.md#login", Via: "alias"},
 		{ConceptID: "db", QN: "internal/store/backend.go#Backend", Via: "alias"},
 	}
-	if err := SaveMatches(st, matches); err != nil {
+	if err := SaveMatches(context.Background(), st, matches); err != nil {
 		t.Fatalf("SaveMatches: %v", err)
 	}
-	got, err := LoadMatches(st)
+	got, err := LoadMatches(context.Background(), st)
 	if err != nil {
 		t.Fatalf("LoadMatches: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestMatchRoundTrip(t *testing.T) {
 
 	// A fresh store has no key: (nil, nil), not an error.
 	fresh := setupStore(t)
-	if got, err := LoadMatches(fresh); err != nil || got != nil {
+	if got, err := LoadMatches(context.Background(), fresh); err != nil || got != nil {
 		t.Fatalf("LoadMatches on fresh store: (%+v, %v), want (nil, nil)", got, err)
 	}
 }

@@ -369,11 +369,11 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	// Re-measure the noise floor whenever the collection changed (or was
 	// never measured for this identity). A calibration failure costs only the
 	// low-confidence flag and dense memory recall, never the run.
-	if _, ok := ReadCalibration(st, StampOf(p)); rep.Embedded > 0 || !ok {
+	if _, ok := ReadCalibration(ctx, st, StampOf(p)); rep.Embedded > 0 || !ok {
 		if floor, ok, err := Calibrate(ctx, st, p); err == nil && ok {
 			rep.NoiseFloor = floor
 		}
-	} else if floor, ok := ReadCalibration(st, StampOf(p)); ok {
+	} else if floor, ok := ReadCalibration(ctx, st, StampOf(p)); ok {
 		rep.NoiseFloor = floor
 	}
 	rep.Duration = time.Since(start)
