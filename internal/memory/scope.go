@@ -84,18 +84,6 @@ const (
 	InjectionTokenLimit = 5000
 )
 
-// FirstTurnMemories is the <memories>-equivalent cold snapshot: the
-// session_recall rows for (scope, cwd, bank) rendered as the injectable
-// memory text. With a query it is ranked recall (the reference composes one
-// from the prompt + last 3 turns); with an empty query — the true cold
-// case, nothing to search on — it is the banks' most recent rows. Either
-// way capped at RecallLimit entries and InjectionTokenLimit estimated
-// tokens (bytes/4, the package-wide estimator). Empty recall renders ""
-// (callers skip an empty block, as mnemopi does).
-func (m *Memory) FirstTurnMemories(scope Scope, cwd, bank, query string) (string, []Entry, error) {
-	return m.FirstTurnMemoriesCtx(context.Background(), scope, cwd, bank, query)
-}
-
 // FirstTurnMemoriesWithIDs is FirstTurnMemories that also reports WHICH rows the
 // rendered block carries, plus every row the recall found behind it. An
 // external caller that injects the block into a prompt needs those ids to
@@ -114,9 +102,16 @@ func (m *Memory) FirstTurnMemoriesWithIDs(ctx context.Context, scope Scope, cwd,
 	return text, injectedIDs, total, nil
 }
 
-// FirstTurnMemoriesCtx is FirstTurnMemories with the caller's context. It
-// records an inject event for the rows the block carries (see recordInject).
-func (m *Memory) FirstTurnMemoriesCtx(ctx context.Context, scope Scope, cwd, bank, query string) (string, []Entry, error) {
+// FirstTurnMemories is the <memories>-equivalent cold snapshot: the
+// session_recall rows for (scope, cwd, bank) rendered as the injectable
+// memory text. With a query it is ranked recall (the reference composes one
+// from the prompt + last 3 turns); with an empty query — the true cold
+// case, nothing to search on — it is the banks' most recent rows. Either
+// way capped at RecallLimit entries and InjectionTokenLimit estimated
+// tokens (bytes/4, the package-wide estimator). Empty recall renders ""
+// (callers skip an empty block, as mnemopi does). It records an inject
+// event for the rows the block carries (see recordInject).
+func (m *Memory) FirstTurnMemories(ctx context.Context, scope Scope, cwd, bank, query string) (string, []Entry, error) {
 	text, _, _, all, err := m.firstTurn(ctx, scope, cwd, bank, query)
 	return text, all, err
 }
@@ -127,6 +122,9 @@ func (m *Memory) FirstTurnMemoriesCtx(ctx context.Context, scope Scope, cwd, ban
 // which is why this is one function rather than two (DRY: one render, one
 // inject record, one ranking).
 func (m *Memory) firstTurn(ctx context.Context, scope Scope, cwd, bank, query string) (string, int, int, []Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return "", 0, 0, nil, err
+	}
 	start := time.Now()
 	var banks []string
 	var entries []Entry
@@ -141,7 +139,7 @@ func (m *Memory) firstTurn(ctx context.Context, scope Scope, cwd, bank, query st
 		banks = m.sessionReadBanks(scope, cwd, bank)
 		entries, total, err = m.recentBanksCounting(banks, RecallLimit)
 	} else {
-		banks, entries, err = m.SessionRecallCtx(ctx, scope, cwd, bank, query, RecallLimit)
+		banks, entries, err = m.SessionRecall(ctx, scope, cwd, bank, query, RecallLimit)
 		total = len(entries)
 	}
 	if err != nil {

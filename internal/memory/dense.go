@@ -163,7 +163,7 @@ func (m *Memory) ensureVectors(ctx context.Context, v Vectorizer, banks []string
 		marks = append(marks, "?")
 	}
 	args = append(args, key, denseEmbedPerRun) // SQL order: banks…, model, limit
-	rows, err := m.fts.Query(`SELECT f.bank, f.entry_id, f.body FROM memory_fts f
+	rows, err := m.fts.QueryContext(ctx, `SELECT f.bank, f.entry_id, f.body FROM memory_fts f
 		WHERE f.kind = 'bank' AND f.bank IN (`+strings.Join(marks, ",")+`)
 		  AND NOT EXISTS (SELECT 1 FROM memory_vectors v WHERE v.model = ? AND v.bank = f.bank AND v.entry_id = f.entry_id)
 		LIMIT ?`, args...)
@@ -192,7 +192,7 @@ func (m *Memory) ensureVectors(ctx context.Context, v Vectorizer, banks []string
 			return err
 		}
 		for j, p := range batch {
-			if _, err := m.fts.Exec(`INSERT OR REPLACE INTO memory_vectors (model, bank, entry_id, vec) VALUES (?, ?, ?, ?)`,
+			if _, err := m.fts.ExecContext(ctx, `INSERT OR REPLACE INTO memory_vectors (model, bank, entry_id, vec) VALUES (?, ?, ?, ?)`,
 				key, p.bank, p.id, encodeVec(vecs[j])); err != nil {
 				return err
 			}
@@ -203,12 +203,14 @@ func (m *Memory) ensureVectors(ctx context.Context, v Vectorizer, banks []string
 
 // denseCandidates returns the bank rows whose similarity to the query beats
 // the noise floor, best first.
-func (m *Memory) denseCandidates(v Vectorizer, banks []string, query string) []Entry {
+func (m *Memory) denseCandidates(ctx context.Context, v Vectorizer, banks []string, query string) []Entry {
 	floor, ok := v.Floor()
 	if !ok || wordCount(query) < denseMinWords {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// The dense arm keeps its own time bound, derived from the caller's ctx so
+	// a disconnect still stops it at once.
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	if err := m.ensureVectors(ctx, v, banks); err != nil {
 		return nil // dense arm unavailable: BM25 still answers
@@ -223,7 +225,7 @@ func (m *Memory) denseCandidates(v Vectorizer, banks []string, query string) []E
 		args = append(args, sanitizeBank(b))
 		marks = append(marks, "?")
 	}
-	rows, err := m.fts.Query(`SELECT f.doc, v.vec FROM memory_vectors v
+	rows, err := m.fts.QueryContext(ctx, `SELECT f.doc, v.vec FROM memory_vectors v
 		JOIN memory_fts f ON f.kind = 'bank' AND f.bank = v.bank AND f.entry_id = v.entry_id
 		WHERE v.model = ? AND v.bank IN (`+strings.Join(marks, ",")+`)`, args...)
 	if err != nil {
