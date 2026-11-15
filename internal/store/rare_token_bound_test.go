@@ -13,11 +13,42 @@ type rareTokenClassifier interface {
 	rareNameTokens(query string) ([]string, error)
 }
 
-// checkRareTokenBound seeds 2511 elements and places a token at each side of
-// the rarity boundary. The bound for 2511 elements is 5 (elements/500); under
-// the SQLite bound of elements/5000 (floor 2) "quartz" (5 names) would be
-// dropped. Both engines must keep quartz (5 is not above the bound) and drop
-// widget (6 is above it).
+// TestNameArmBoundIsElementsOver5000 pins the measured divisor. The shared
+// bound is elements/5000 with floor 2 (CX-11, evidence in elements.go). Both
+// engines call nameArmBound, so this one table covers the PostgreSQL bound too,
+// without a live database. The /500 divisor it replaces gives 21 at 10,885
+// elements and 2000 at a million, so every row with a non-floor value fails it.
+func TestNameArmBoundIsElementsOver5000(t *testing.T) {
+	t.Setenv("LEANKG_NAME_ARM_BOUND", "")
+	cases := []struct{ total, want int }{
+		{0, 2},
+		{2511, 2},
+		{10885, 2},
+		{12413, 2},
+		{50000, 10},
+		{1000000, 200},
+	}
+	for _, c := range cases {
+		if got := nameArmBound(c.total); got != c.want {
+			t.Errorf("nameArmBound(%d) = %d, want %d (elements/5000, floor 2)", c.total, got, c.want)
+		}
+	}
+}
+
+// TestNameArmBoundOverride keeps the sweep hook: LEANKG_NAME_ARM_BOUND replaces
+// the derived bound, so a corpus can be re-swept without a code change.
+func TestNameArmBoundOverride(t *testing.T) {
+	t.Setenv("LEANKG_NAME_ARM_BOUND", "7")
+	if got := nameArmBound(10885); got != 7 {
+		t.Errorf("nameArmBound(10885) with LEANKG_NAME_ARM_BOUND=7 = %d, want 7", got)
+	}
+}
+
+// checkRareTokenBound seeds 2511 elements (bound 2 under elements/5000) and
+// places a token at each side of the rarity boundary: "quartz" in 2 names is
+// at the bound and stays, "widget" in 3 names is above it and is dropped. The
+// old elements/500 bound (5 at this size) keeps both, so this fails on it. Both
+// engines must classify the two tokens identically.
 func checkRareTokenBound(t *testing.T, s rareTokenClassifier) {
 	t.Helper()
 	var els []Element
@@ -27,8 +58,8 @@ func checkRareTokenBound(t *testing.T, s rareTokenClassifier) {
 				Name: name, FilePath: "pkg/" + name + ".go", Language: "go"})
 		}
 	}
-	add("quartz", 5)
-	add("widget", 6)
+	add("quartz", 2)
+	add("widget", 3)
 	for i := 0; i < 2500; i++ {
 		els = append(els, Element{QualifiedName: fmt.Sprintf("pkg.filler%04d", i), ElementType: "function",
 			Name: fmt.Sprintf("filler%04d", i), FilePath: "pkg/filler.go", Language: "go"})

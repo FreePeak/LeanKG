@@ -26,7 +26,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-08 | `fix(leankg-embed): cancellation is a failure; keep flags after the positional; stop the sidecar on error` | S-M | - | done | - | - |
 | CX-09 | `fix(telemetry): report writer panics; Nop.SetLevel honours its contract` | S | - | done | - | - |
 | CX-10 | `test(index): pin markdown ownership between index and docindex`, plus a fix PR only if it fails | S-M | - | done | - | - |
-| CX-11 | `fix(store): one rare-token bound on both engines` | S | - | done | local branch `refactor/cx-16-filter-before-limit` (not pushed) | one nameArmBound (elements/500) on both engines; D2 asks for SQLite recall before and after, not measured yet (needs the labelled sweep with the real embedder) |
+| CX-11 | `fix(store): one rare-token bound on both engines` | S | - | done | local branch `refactor/cx-16-filter-before-limit` (not pushed) | one nameArmBound on both engines; divisor /5000 per measurement; D2 sweep with real embedder pending. The /500 interim was worse on the keyword+name recall measure (Hit@1 29 to 21, MRR 0.520 to 0.380, p=0.0003); PG recall not measured after the change from /500 |
 | CX-12 | `fix(auth): uniform login failure and a login throttle` | S | - | done | - | REST login shares the MCP authenticate check: one generic error, dummy hash for unknown accounts, 5 failures lock 60 s (AGENTS.md) |
 
 ## P1: guardrails and contract shape

@@ -313,36 +313,60 @@ func nameTokens(query string) []string {
 	return out
 }
 
-// nameArmBound is the rarity bound: a token may appear in at most this many
-// symbol names and still count as evidence. It is a fraction of the ELEMENT
-// count (elements/500, floor 2), so it is scale-free — a three-element fixture
-// cannot make every English word "rare". Both engines call this one function
-// (PostgreSQL in store_pg.go), so a token is classified the same way on each.
+// Rarity bound: a token may appear in at most nameArmBound(total) symbol names
+// and still count as evidence. Derived as elements/nameArmDivisor with a floor
+// of nameArmFloor, so it is scale-free: a three-element fixture cannot make
+// every English word "rare". Both engines call this one function (PostgreSQL in
+// store_pg.go), so a token is classified the same way on each.
+const (
+	nameArmDivisor = 5000
+	nameArmFloor   = 2
+)
+
+// nameArmBound is the rarity bound (see the constants above).
 //
-// The divisor is MEASURED, not chosen. Swept against the 84 labelled questions
-// in docs/retrieval-label-set.md on this repository's 10,885 elements, with the
-// old shape gate as the control (top-1 50/84, in-pool 73/84):
+// The divisor is MEASURED, not chosen, and /5000 is the SQLite value that
+// shipped before CX-11. CX-11 unified the two engines on /500 (decision D2 in
+// docs/plan-context-and-interfaces-refactor.md); the measurement below says /500
+// is worse, so the bound went back to /5000 on both engines. PostgreSQL recall
+// was NOT measured, so its change from /500 to /5000 is unscored.
 //
-//	bound  arm fired   top-1   in-pool
-//	  2      31/84      49      80      <- elements/5000
-//	  3      36/84      48      80
-//	  5      48/84      44      80
-//	  8      58/84      41      80
-//	 21      77/84      36      80      <- elements/500
+// Scored on the 84 labelled questions in docs/retrieval-label-set.md, with the
+// keyword and name arms only (no query vector, no embedder), at 12,413 elements
+// (elements/5000 is the floor 2 for any corpus under 10,000 elements):
 //
-// The arm's GAIN is bound-independent (in-pool 73 -> 80: it finds the answer in
-// seven questions neither the keyword nor the vector arm reaches), but its COST
-// grows with the bound: at 21 it fires on 77 of 84 questions and dilutes the
-// top of the fusion by 14. A tight bound keeps nearly all of the gain for one
-// point of top-1.
+//	bound  Hit@1  Hit@3  Hit@10  MRR@10
+//	  2      29     59     67    0.520   <- elements/5000 (floor), shipped
+//	  3      26     57     67    0.493
+//	  5      22     50     66    0.437
+//	  8      20     45     65    0.405
+//	 12      19     38     62    0.372
+//	 16      21     37     61    0.384
+//	 24      21     37     61    0.380   <- elements/500, the CX-11 interim
+//
+// Paired per question against bound 2: /500 is 38 worse and 12 better (exact
+// sign test p=0.0003); bound 3 is 7 worse and 0 better (p=0.0156). No tested
+// bound from 3 to 24 beats bound 2 on this set. The earlier claim that the
+// name arm's in-pool gain is bound-independent is NOT reproduced here: Hit@10
+// falls from 67 to 61 as the bound rises.
+//
+// The behaviour set (133 questions, scored in the same run) moves the other way
+// (Hit@1 25 at bound 2, 36 at /500), but each question is built from the
+// symbol's own name tokens, so the name arm is favoured by construction. It is
+// weighted lower and is not evidence against the labelled set.
+//
+// OPEN (decision D2): the production L3 fusion includes the vector arm, which
+// was not in this measurement. Re-sweep with a live embedding provider
+// (scripts/retrieval-bench.py --sweep) before choosing a different divisor.
+// Until then the bound stays at /5000 on both engines.
 //
 // LEANKG_NAME_ARM_BOUND overrides it, because the threshold is a corpus
 // property: a different project should re-run the sweep rather than inherit
 // this number.
 func nameArmBound(total int) int {
-	bound := total / 500
-	if bound < 2 {
-		bound = 2
+	bound := total / nameArmDivisor
+	if bound < nameArmFloor {
+		bound = nameArmFloor
 	}
 	if v := os.Getenv("LEANKG_NAME_ARM_BOUND"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
@@ -357,11 +381,9 @@ func nameArmBound(total int) int {
 // discriminates nothing, while a rare one is the name an agent typed because it
 // IS the answer.
 //
-// The bound is a fraction of the ELEMENT count (elements/500, floor 2), so it is
-// scale-free: on this repository's 10,885 elements a token may appear in at most
-// 21 names, which measured against the real corpus separates `lock` (95) and
-// `stamp` (33) from the noise, and on a three-element fixture the floor of 2
-// stops every English word from counting as rare.
+// The bound is a fraction of the ELEMENT count (elements/5000, floor 2; see
+// nameArmBound for the measurement), so it is scale-free: on a three-element
+// fixture the floor of 2 stops every English word from counting as rare.
 func (s *Store) rareNameTokens(query string) ([]string, error) {
 	toks := nameTokens(query)
 	if len(toks) == 0 {
