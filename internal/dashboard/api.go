@@ -3,11 +3,13 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"reflect"
 	"strconv"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/sessionlink"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 	"github.com/FreePeak/LeanKG/internal/telemetry/metrics"
@@ -58,6 +60,11 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) (reqCtx, bool) 
 }
 
 func (s *Server) respond(w http.ResponseWriter, v any, err error) {
+	if errors.Is(err, context.Canceled) {
+		// The client went away mid-report: nothing to log, not a failure.
+		w.WriteHeader(httpx.StatusClientClosedRequest)
+		return
+	}
 	if err != nil {
 		log.Printf("dashboard: %v", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")
@@ -192,7 +199,12 @@ func (s *Server) transcriptSource(cfg telemetry.Config) metrics.TranscriptSource
 	if !s.anyGranted(cfg) {
 		return nil
 	}
-	return func(_ context.Context, sess telemetry.Session) ([]sessionlink.Turn, error) {
+	return func(ctx context.Context, sess telemetry.Session) ([]sessionlink.Turn, error) {
+		// One transcript per session: stop before reading the next one once
+		// the request is gone.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !telemetry.SessionsGranted(cfg, sess.ClientName) || sess.TranscriptPath == "" {
 			return nil, nil
 		}

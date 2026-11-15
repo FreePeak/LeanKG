@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/sessionlink"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
@@ -174,7 +175,7 @@ func (s *Server) routes() http.Handler {
 		writeErr(w, http.StatusNotFound, "not found")
 	})
 	mux.Handle("/", spaHandler())
-	return s.secure(mux)
+	return s.secure(httpx.Guard(mux))
 }
 
 // secure sets the response headers and, in remote mode, requires the bearer

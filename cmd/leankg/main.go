@@ -610,7 +610,7 @@ afterSidecars:
 		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
 		registerMCPSink(mcpSrv)
 		h := httpMux(mcpSrv.HTTPHandler())
-		h = routeByProject(ctx, router, h, func(p *projects.Project) http.Handler {
+		h = routeByProject(router, h, func(p *projects.Project) http.Handler {
 			pSrv := newScopedMCPServer(p.Engine, router)
 			pSrv.SetAuthStore(st)
 			pSrv.SetRecorder(rec)
@@ -632,7 +632,7 @@ afterSidecars:
 		}
 		// Routing sits INSIDE the auth boundary: token gating applies
 		// before a selector is resolved or its name echoed back.
-		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
+		h := routeByProject(router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
 		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs))
@@ -691,7 +691,7 @@ afterSidecars:
 			}
 			return dir, true
 		}
-		dash := routeByProject(ctx, router,
+		dash := routeByProject(router,
 			web.APIHandler(engine, mem, web.WithProjectSwitcher(switcher)),
 			func(p *projects.Project) http.Handler {
 				return web.APIHandler(p.Engine, p.Memory, web.WithProjectDir(p.Dir), web.WithProjectSwitcher(switcher))
