@@ -6,6 +6,7 @@
 package graph
 
 import (
+	"context"
 	"errors"
 	"sort"
 
@@ -17,6 +18,9 @@ const (
 	DefaultDepth = 2
 	// MaxDepth is the hard ceiling for any traversal depth.
 	MaxDepth = 5
+	// NodeBudget caps the nodes one BFS may admit (decision D9). A walk that
+	// would go past it stops and reports Bounds.Truncated.
+	NodeBudget = 5000
 )
 
 // ErrUnknownNode is returned when a traversal seed resolves to neither an
@@ -27,6 +31,14 @@ var ErrUnknownNode = errors.New("graph: unknown node")
 type Hit struct {
 	QN    string `json:"qn"`
 	Depth int    `json:"depth"`
+}
+
+// Bounds is how a traversal ended: the depth it was allowed to walk after
+// clamping, and whether the node budget stopped it before the answer was
+// complete.
+type Bounds struct {
+	Depth     int
+	Truncated bool
 }
 
 // clampDepth normalizes a caller-supplied depth: <= 0 becomes DefaultDepth,
@@ -43,7 +55,10 @@ func clampDepth(depth int) int {
 
 // hasNode reports whether qn is known to the graph: an element with that
 // qualified name exists, or at least one edge touches it.
-func hasNode(st store.Backend, qn string) (bool, error) {
+func hasNode(ctx context.Context, st store.Backend, qn string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	els, err := st.FindExact(qn)
 	if err != nil {
 		return false, err
@@ -67,26 +82,30 @@ func hasNode(st store.Backend, qn string) (bool, error) {
 
 // Impact returns the blast radius of qn: BFS over INCOMING edges (who depends
 // on it), seed included at depth 0. Deterministic: sorted by qualified name.
-func Impact(st store.Backend, qn string, depth int) ([]Hit, error) {
+func Impact(ctx context.Context, st store.Backend, qn string, depth int) ([]Hit, Bounds, error) {
 	depth = clampDepth(depth)
-	ok, err := hasNode(st, qn)
+	bounds := Bounds{Depth: depth}
+	ok, err := hasNode(ctx, st, qn)
 	if err != nil {
-		return nil, err
+		return nil, Bounds{}, err
 	}
 	if !ok {
-		return nil, ErrUnknownNode
+		return nil, Bounds{}, ErrUnknownNode
 	}
 
 	visited := map[string]bool{qn: true}
 	frontier := []string{qn}
 	hits := []Hit{{QN: qn, Depth: 0}}
 
-	for d := 1; d <= depth && len(frontier) > 0; d++ {
+	for d := 1; d <= depth && len(frontier) > 0 && !bounds.Truncated; d++ {
 		var next []string
 		for _, node := range frontier {
+			if err := ctx.Err(); err != nil {
+				return nil, Bounds{}, err
+			}
 			rels, err := st.Incoming(node)
 			if err != nil {
-				return nil, err
+				return nil, Bounds{}, err
 			}
 			for _, r := range rels {
 				if !visited[r.Source] {
@@ -94,32 +113,43 @@ func Impact(st store.Backend, qn string, depth int) ([]Hit, error) {
 					next = append(next, r.Source)
 				}
 			}
+			// The level already holds more nodes than the budget: stop reading
+			// its frontier. Everything admitted below is still the sorted prefix.
+			if len(hits)+len(next) > NodeBudget {
+				bounds.Truncated = true
+				break
+			}
 		}
 		sort.Strings(next)
 		for _, q := range next {
+			if len(hits) == NodeBudget {
+				bounds.Truncated = true
+				break
+			}
 			hits = append(hits, Hit{QN: q, Depth: d})
 		}
 		frontier = next
 	}
-	return hits, nil
+	return hits, bounds, nil
 }
 
 // ShortestPath finds the shortest path from from to to over the undirected
 // view of the graph, inclusive of both endpoints. Returns nil (no error) when
 // unreachable. maxDepth is clamped like every traversal depth.
-func ShortestPath(st store.Backend, from, to string, maxDepth int) ([]string, error) {
+func ShortestPath(ctx context.Context, st store.Backend, from, to string, maxDepth int) ([]string, Bounds, error) {
 	maxDepth = clampDepth(maxDepth)
+	bounds := Bounds{Depth: maxDepth}
 	for _, seed := range []string{from, to} {
-		ok, err := hasNode(st, seed)
+		ok, err := hasNode(ctx, st, seed)
 		if err != nil {
-			return nil, err
+			return nil, Bounds{}, err
 		}
 		if !ok {
-			return nil, ErrUnknownNode
+			return nil, Bounds{}, ErrUnknownNode
 		}
 	}
 	if from == to {
-		return []string{from}, nil
+		return []string{from}, bounds, nil
 	}
 
 	parent := map[string]string{from: ""}
@@ -127,9 +157,12 @@ func ShortestPath(st store.Backend, from, to string, maxDepth int) ([]string, er
 	for d := 0; d < maxDepth && len(frontier) > 0; d++ {
 		var next []string
 		for _, node := range frontier {
-			neighbors, err := undirectedNeighbors(st, node)
+			if err := ctx.Err(); err != nil {
+				return nil, Bounds{}, err
+			}
+			neighbors, err := undirectedNeighbors(ctx, st, node)
 			if err != nil {
-				return nil, err
+				return nil, Bounds{}, err
 			}
 			for _, nb := range neighbors {
 				if _, seen := parent[nb]; seen {
@@ -137,20 +170,28 @@ func ShortestPath(st store.Backend, from, to string, maxDepth int) ([]string, er
 				}
 				parent[nb] = node
 				if nb == to {
-					return reconstruct(parent, to), nil
+					return reconstruct(parent, to), bounds, nil
 				}
 				next = append(next, nb)
+				// Past the budget the target may still lie beyond what was read,
+				// so the answer is unknown: report truncation, not unreachable.
+				if len(parent) > NodeBudget {
+					return nil, Bounds{Depth: maxDepth, Truncated: true}, nil
+				}
 			}
 		}
 		sort.Strings(next)
 		frontier = next
 	}
-	return nil, nil
+	return nil, bounds, nil
 }
 
 // undirectedNeighbors returns both directions of edges touching node,
 // deduplicated and sorted.
-func undirectedNeighbors(st store.Backend, node string) ([]string, error) {
+func undirectedNeighbors(ctx context.Context, st store.Backend, node string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	out, err := st.Outgoing(node)
 	if err != nil {
 		return nil, err
@@ -194,7 +235,10 @@ func reconstruct(parent map[string]string, to string) []string {
 
 // Callers returns the deduplicated, sorted set of elements with a "calls"
 // edge targeting qn.
-func Callers(st store.Backend, qn string) ([]string, error) {
+func Callers(ctx context.Context, st store.Backend, qn string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	rels, err := st.Incoming(qn)
 	if err != nil {
 		return nil, err
@@ -204,7 +248,10 @@ func Callers(st store.Backend, qn string) ([]string, error) {
 
 // Callees returns the deduplicated, sorted set of elements that qn's "calls"
 // edges target.
-func Callees(st store.Backend, qn string) ([]string, error) {
+func Callees(ctx context.Context, st store.Backend, qn string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	rels, err := st.Outgoing(qn)
 	if err != nil {
 		return nil, err
@@ -237,7 +284,10 @@ func collectEnds(rels []store.Relationship, incoming bool) []string {
 // Context returns a focused view of qn: the element itself plus its
 // "incoming" and "outgoing" edges grouped by rel_type as sorted QN lists,
 // each list capped at limit entries (limit <= 0 means uncapped).
-func Context(st store.Backend, qn string, limit int) (map[string]any, error) {
+func Context(ctx context.Context, st store.Backend, qn string, limit int) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	els, err := st.FindExact(qn)
 	if err != nil {
 		return nil, err
@@ -287,7 +337,10 @@ func groupByRelType(rels []store.Relationship, limit int, pick func(store.Relati
 
 // Explain returns qn's element plus degree counts, per-rel-type counts, and up
 // to 5 sample edges per direction (source/target/rel_type/confidence each).
-func Explain(st store.Backend, qn string) (map[string]any, error) {
+func Explain(ctx context.Context, st store.Backend, qn string) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	els, err := st.FindExact(qn)
 	if err != nil {
 		return nil, err

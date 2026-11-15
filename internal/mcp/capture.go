@@ -322,7 +322,7 @@ func (s *Server) finishCall(ctx context.Context, eng *core.Engine, req *mcp.Call
 	if st.PreTruncationToken > 0 {
 		pre = int64(st.PreTruncationToken)
 	}
-	s.recordMetric(eng, req, started, post, err, metricEval{
+	s.recordMetric(ctx, eng, req, started, post, err, metricEval{
 		baseline: base, saved: saved, postTokens: postTokens,
 	})
 	if sc := scratchFrom(ctx); sc != nil {

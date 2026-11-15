@@ -6,6 +6,7 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,7 +27,10 @@ func lineSpan(e store.Element) int { return e.LineEnd - e.LineStart + 1 }
 // language (Rust find_oversized_functions_by_lang). Ties break by qualified
 // name so the result is deterministic — the Rust sort was stable over an
 // unspecified query order.
-func OversizedFunctions(st store.Backend, minLines int, lang string) ([]store.Element, error) {
+func OversizedFunctions(ctx context.Context, st store.Backend, minLines int, lang string) ([]store.Element, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	els, err := st.Elements()
 	if err != nil {
 		return nil, err

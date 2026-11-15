@@ -375,7 +375,7 @@ func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[strin
 	// table" and the operator had no way to tell that the store, not the
 	// import, was out of date.
 	if writesStore(req.Action) {
-		if err := e.ensureStoreSchema(); err != nil {
+		if err := e.ensureStoreSchema(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -504,7 +504,7 @@ func writesStore(action string) bool {
 // does nothing for a read-only store: there the write that follows reports
 // the refusal itself ("attempt to write a readonly database"), which names
 // the real cause, while a migration error would name the schema.
-func (e *Engine) ensureStoreSchema() error {
+func (e *Engine) ensureStoreSchema(ctx context.Context) error {
 	if e.st.Mode() == store.RO {
 		return nil
 	}
@@ -569,7 +569,7 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 	// The embeddings state is read BEFORE the payload is built: it is the
 	// one read whose failure used to be swallowed, so it is the one read
 	// that decides healthy.
-	emb, embErr := e.embeddingsState(els)
+	emb, embErr := e.embeddingsState(ctx, els)
 	out := map[string]any{
 		"backend":          e.st.Engine(),
 		"healthy":          embErr == nil,
@@ -628,7 +628,7 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 	}
 	if e.embedder != nil {
 		modelID, provider := e.embedder.Describe()
-		reachable, perr := e.embedProbe.check(e.embedder)
+		reachable, perr := e.embedProbe.check(ctx, e.embedder)
 		qe := map[string]any{"model_id": modelID, "provider": provider,
 			"revision": e.embedder.Revision(), "reachable": reachable}
 		if perr != "" {
@@ -682,7 +682,7 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 //
 // els is the element count Status already read (it fails the whole call when
 // that read fails), passed in so the coverage math does not query it twice.
-func (e *Engine) embeddingsState(els int) ([]map[string]any, error) {
+func (e *Engine) embeddingsState(ctx context.Context, els int) ([]map[string]any, error) {
 	stamps, err := e.st.Stamps()
 	if err != nil {
 		return nil, fmt.Errorf("read embedding stamps: %w", err)
@@ -827,7 +827,7 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 	case "memory":
 		switch cmd := argStr(req.Args, "command"); cmd {
 		case "session_recall", "memories":
-			return e.SessionMemoryReadCtx(ctx, cmd, req.Query, req.Limit, req.Args)
+			return e.SessionMemoryRead(ctx, cmd, req.Query, req.Limit, req.Args)
 		case "view":
 			// RS-21: read one memory file by path (was ConnectRPC-only).
 			path := argStr(req.Args, "path")
@@ -964,15 +964,20 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 
 	switch req.Action {
 	case "exact", "element":
-		return e.rungExact(req.Query, limit, resp, true, keep)
+		return e.rungExact(ctx, req.Query, limit, resp, true, keep)
 	case "fuzzy":
-		return e.rungFuzzy(req.Query, limit, resp, true, keep)
+		return e.rungFuzzy(ctx, req.Query, limit, resp, true, keep)
 	case "semantic":
 		return e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args)
 	case "impact", "path", "callers", "callees", "context", "explain":
 		return e.graphAction(ctx, req, resp)
 	}
 
+	// One check per rung boundary: the ladder below ignores rung errors on
+	// purpose (a miss falls through), so cancellation is checked here instead.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Ladder router: L0 cold → L1 exact → L2 fuzzy → L3 semantic.
 	if els == 0 {
 		resp["retrieval"] = map[string]any{"rung": "L0", "reason": "no elements indexed"}
@@ -980,7 +985,7 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 		resp["guidance"] = "Index a repository first: leankg import <dir> or tool import {action:\"repo\", path:...}"
 		return resp, nil
 	}
-	if _, err := e.rungExact(req.Query, limit, resp, false, keep); err == nil && len(hitsOf(resp)) > 0 {
+	if _, err := e.rungExact(ctx, req.Query, limit, resp, false, keep); err == nil && len(hitsOf(resp)) > 0 {
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 		return resp, nil
 	}
@@ -998,14 +1003,14 @@ func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, e
 	}
 	// pin=true: the rung knows which keyword arm served the hits, so it owns
 	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
-	if _, err := e.rungFuzzy(req.Query, limit, resp, true, keep); err == nil && len(hitsOf(resp)) > 0 {
+	if _, err := e.rungFuzzy(ctx, req.Query, limit, resp, true, keep); err == nil && len(hitsOf(resp)) > 0 {
 		return resp, nil
 	}
 	// Noul L3 gate: ontology confidence below MinConfidence
 	// (0.3) justifies no embedding call — degrade to L2.
 	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
 	if conf > 0 && conf < ontology.MinConfidence {
-		return withEmptyHint(e.rungFuzzy(req.Query, limit, resp, true, keep))
+		return withEmptyHint(e.rungFuzzy(ctx, req.Query, limit, resp, true, keep))
 	}
 	// The empty L2 pass above left "No keyword match…" guidance; L3 sets its
 	// own (an outage reads as an outage, not as a phrasing problem — RS-15).
@@ -1059,7 +1064,10 @@ func graphEmptyGuidance(verb, seed string) string {
 }
 
 // rungExact is L1: case-insensitive exact match on name / qualified name.
-func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter) (map[string]any, error) {
+func (e *Engine) rungExact(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if pin {
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 	}
@@ -1079,7 +1087,10 @@ func (e *Engine) rungExact(q string, limit int, resp map[string]any, pin bool, k
 // PostgreSQL backend ranks its migration-012 tsvector with ts_rank and degrades
 // through pg_trgm similarity to ILIKE substring recall (issue #273). FindFuzzy
 // reports the arm that served the hits, so the rung has no engine branch.
-func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter) (map[string]any, error) {
+func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	window := fetchWindow(limit, keep)
 	matches, arm, err := e.st.FindFuzzy(q, window)
 	if err != nil {
@@ -1113,12 +1124,17 @@ func (e *Engine) rungFuzzy(q string, limit int, resp map[string]any, pin bool, k
 func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, args map[string]any) (map[string]any, error) {
 	gitKeep := searchKeep(args)
 	degrade := func(reason string) (map[string]any, error) {
+		// A cancelled caller is not a provider failure: it ends the rung with
+		// ctx.Err() instead of an L2 answer that would be cached as a result.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if pin {
 			resp["retrieval"] = map[string]any{"rung": "L2", "reason": reason}
 		}
 		// pin=false so rungFuzzy does not overwrite the L3-degrade reason;
 		// withEmptyHint still attaches next-step guidance on a zero-hit result.
-		return withEmptyHint(e.rungFuzzy(q, limit, resp, false, gitKeep))
+		return withEmptyHint(e.rungFuzzy(ctx, q, limit, resp, false, gitKeep))
 	}
 	if e.embedder == nil {
 		return degrade("no embedding provider wired; degraded from L3")
@@ -1149,6 +1165,9 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	qvec, err := e.embedder.EmbedQuery(ctx, q)
 	if err != nil {
 		return degrade(fmt.Sprintf("embedding provider failed (%v); degraded from L3", err))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	// The caller may name the population to rank (args.scope). Applied to BOTH
 	// arms through the store's scoped search, so the keyword arm cannot
@@ -1501,7 +1520,7 @@ func looksLikeIdentifier(s string) bool {
 // when the element and its edges were indexed. FindExact already ranks by
 // shortest qualified_name, matching L1. Unknown seeds pass through unchanged so
 // graph.ErrUnknownNode still fires for true misses.
-func (e *Engine) resolveGraphSeed(seed string) (string, error) {
+func (e *Engine) resolveGraphSeed(ctx context.Context, seed string) (string, error) {
 	seed = strings.TrimSpace(seed)
 	if seed == "" {
 		return seed, nil
@@ -1541,7 +1560,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 			what, value, req.Action)
 		return g(), nil
 	}
-	seed, err := e.resolveGraphSeed(req.Query)
+	seed, err := e.resolveGraphSeed(ctx, req.Query)
 	if err != nil {
 		return nil, err
 	}
@@ -1553,7 +1572,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// depth comes from args.depth (Rust --depth parity); limit is a
 		// result-count concept, not a traversal depth.
 		depth := argInt(req.Args, "depth", 2)
-		hits, err := graph.Impact(e.st, seed, depth)
+		hits, bounds, err := graph.Impact(ctx, e.st, seed, depth)
 		if errors.Is(err, graph.ErrUnknownNode) {
 			return unresolved("seed", req.Query)
 		}
@@ -1568,13 +1587,14 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// alias stays so an agent that learned `hits` is not broken.
 		resp["impact"] = hits
 		resp["hits"] = hits
+		markBounds(resp, bounds)
 		return g(), nil
 	case "path":
 		toRaw := argStr(req.Args, "to")
 		if toRaw == "" {
 			return nil, fmt.Errorf("query path requires args.to (target qualified name)")
 		}
-		to, err := e.resolveGraphSeed(toRaw)
+		to, err := e.resolveGraphSeed(ctx, toRaw)
 		if err != nil {
 			return nil, err
 		}
@@ -1584,7 +1604,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		// maxDepth comes from args.depth (default 2) — Limit is a result
 		// count, not a traversal bound; paths are a single answer anyway.
 		maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
-		path, err := graph.ShortestPath(e.st, seed, to, maxDepth)
+		path, bounds, err := graph.ShortestPath(ctx, e.st, seed, to, maxDepth)
 		if errors.Is(err, graph.ErrUnknownNode) {
 			// Name the end that is unknown: "graph: unknown node" left the
 			// caller guessing which of from/to to fix. And answer, rather
@@ -1599,17 +1619,24 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		if err != nil {
 			return nil, err
 		}
-		if path == nil {
+		markBounds(resp, bounds)
+		switch {
+		case path != nil:
+			resp["path"] = path
+			resp["reachable"] = true
+		case bounds.Truncated:
+			// The walk stopped at the node budget: the answer is unknown, so
+			// reachable is left out rather than reported as false.
+			resp["path"] = []string{}
+			resp["guidance"] = "Search stopped at the node budget before reaching the target; the answer is unknown, not unreachable. Narrow the question or lower args.depth."
+		default:
 			resp["path"] = []string{}
 			resp["reachable"] = false
 			resp["guidance"] = "No path found. Confirm both ends with query (action empty) and retry path with exact qualified_names (args.to required)."
-		} else {
-			resp["path"] = path
-			resp["reachable"] = true
 		}
 		return g(), nil
 	case "callers":
-		qns, err := graph.Callers(e.st, seed)
+		qns, err := graph.Callers(ctx, e.st, seed)
 		if errors.Is(err, graph.ErrUnknownNode) {
 			return unresolved("seed", req.Query)
 		}
@@ -1622,7 +1649,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		}
 		return g(), nil
 	case "callees":
-		qns, err := graph.Callees(e.st, seed)
+		qns, err := graph.Callees(ctx, e.st, seed)
 		if errors.Is(err, graph.ErrUnknownNode) {
 			return unresolved("seed", req.Query)
 		}
@@ -1635,7 +1662,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		}
 		return g(), nil
 	case "context":
-		out, err := graph.Context(e.st, seed, req.Limit)
+		out, err := graph.Context(ctx, e.st, seed, req.Limit)
 		if errors.Is(err, graph.ErrUnknownNode) {
 			return unresolved("seed", req.Query)
 		}
@@ -1647,7 +1674,7 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		}
 		return g(), nil
 	case "explain":
-		out, err := graph.Explain(e.st, seed)
+		out, err := graph.Explain(ctx, e.st, seed)
 		if errors.Is(err, graph.ErrUnknownNode) {
 			return unresolved("seed", req.Query)
 		}
@@ -1660,6 +1687,16 @@ func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[str
 		return g(), nil
 	}
 	return nil, fmt.Errorf("unreachable graph action %q", req.Action)
+}
+
+// markBounds reports the effective depth of a traversal and, only when the node
+// budget stopped it, truncated: true (decision D9). A complete walk keeps its
+// payload unchanged apart from the depth.
+func markBounds(resp map[string]any, b graph.Bounds) {
+	resp["depth"] = b.Depth
+	if b.Truncated {
+		resp["truncated"] = true
+	}
 }
 
 // sessionWrite/read wire internal/session into the 4-tool surface: bulky tool
@@ -1875,7 +1912,7 @@ func (e *Engine) patternQuery(ctx context.Context, req QueryRequest, resp map[st
 	runner, err := astgrep.New()
 	if err != nil {
 		resp["retrieval"] = map[string]any{"rung": "L2", "reason": "ast-grep CLI not installed; degraded to keyword search"}
-		return e.rungFuzzy(pattern, req.Limit, resp, false, searchKeep(req.Args))
+		return e.rungFuzzy(ctx, pattern, req.Limit, resp, false, searchKeep(req.Args))
 	}
 	root := e.projectDir
 	if root == "" {
@@ -2119,14 +2156,9 @@ func (e *Engine) compressRun(req QueryRequest) (map[string]any, error) {
 // SessionMemoryRead serves the FR-ZCP-07 harness reads on the query tool:
 // session_recall (merged ranked recall across the scope's read banks) and
 // memories (the <memories> first-turn injection text). args: scope, cwd
-// (default the project dir), bank (bank-name mode override).
-func (e *Engine) SessionMemoryRead(command, query string, limit int, args map[string]any) (map[string]any, error) {
-	return e.SessionMemoryReadCtx(context.Background(), command, query, limit, args)
-}
-
-// SessionMemoryReadCtx is SessionMemoryRead with the caller ctx, so recall
-// events carry the caller identity (DS-09).
-func (e *Engine) SessionMemoryReadCtx(ctx context.Context, command, query string, limit int, args map[string]any) (map[string]any, error) {
+// (default the project dir), bank (bank-name mode override). The caller ctx
+// travels with the recall, so recall events carry the caller identity (DS-09).
+func (e *Engine) SessionMemoryRead(ctx context.Context, command, query string, limit int, args map[string]any) (map[string]any, error) {
 	if e.mem == nil {
 		return nil, fmt.Errorf("memory not initialized")
 	}

@@ -10,7 +10,6 @@ import (
 // drops must be lowered in the same diff, and a directory must reach 0 and
 // leave the map.
 var backgroundBudget = map[string]int{
-	"internal/core":      2,
 	"internal/index":     2,
 	"internal/langs":     1,
 	"internal/lsp":       4,
