@@ -93,7 +93,7 @@ func uuidFromName(path string) string {
 
 // Locate finds the transcript for c: exact by session id (payload id or the
 // filename uuid), else heuristic on cwd, time window, normalized tool and args.
-func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionlink.TranscriptRef{}, 0, err
 	}
@@ -125,7 +125,7 @@ func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef
 		if !m.start.IsZero() && m.start.After(c.TS.Add(sessionlink.TurnHeuristic.Slack)) {
 			continue
 		}
-		s, err := load(f)
+		s, err := load(rd, f)
 		if err != nil {
 			continue
 		}
@@ -187,11 +187,11 @@ func metaOf(path string) candidate {
 }
 
 // Window extracts the bounded context around the matched leankg call.
-func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
+func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int, rd *sessionlink.Reader) (sessionlink.Window, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionlink.Window{}, err
 	}
-	s, err := load(t.Path)
+	s, err := load(rd, t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -207,7 +207,7 @@ func (a *adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, m
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s, err := load(t.Path)
+	s, err := load(nil, t.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -251,9 +251,14 @@ type rawTokenPayload struct {
 
 type callPos struct{ turn, call int }
 
-// load parses a rollout into user and assistant turns, skipping garbage lines,
-// injected environment context and reasoning items.
-func load(path string) (session, error) {
+// load returns a rollout's turns, parsing the file at most once per Reader.
+func load(rd *sessionlink.Reader, path string) (session, error) {
+	return sessionlink.Parsed(rd, path, func() (session, error) { return parseFile(path) })
+}
+
+// parseFile parses a rollout into user and assistant turns, skipping garbage
+// lines, injected environment context and reasoning items.
+func parseFile(path string) (session, error) {
 	fi, err := os.Lstat(path)
 	if err != nil || !fi.Mode().IsRegular() {
 		return session{}, fmt.Errorf("%w: %v", sessionlink.ErrNotFound, err)

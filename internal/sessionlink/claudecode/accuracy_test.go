@@ -41,12 +41,12 @@ func TestLinkingAccuracy(t *testing.T) {
 	a := New()
 	correct := 0
 	for _, tc := range cases {
-		ref, conf, err := a.Locate(context.Background(), home, tc.c)
+		ref, conf, err := a.Locate(context.Background(), home, tc.c, nil)
 		if err != nil {
 			t.Errorf("exact %s: %v", tc.sid, err)
 			continue
 		}
-		w, err := a.Window(context.Background(), ref, tc.c, 6)
+		w, err := a.Window(context.Background(), ref, tc.c, 6, nil)
 		if err != nil {
 			t.Errorf("window %s: %v", tc.sid, err)
 			continue
@@ -66,7 +66,7 @@ func TestLinkingAccuracy(t *testing.T) {
 	for _, tc := range cases {
 		c := tc.c
 		c.ClientSessionID = ""
-		ref, conf, err := a.Locate(context.Background(), home, c)
+		ref, conf, err := a.Locate(context.Background(), home, c, nil)
 		if err != nil {
 			t.Errorf("heuristic %s: %v", tc.sid, err)
 			continue
@@ -84,11 +84,11 @@ func TestLinkingAccuracy(t *testing.T) {
 	// Calls with no transcript at all must never link (no false link).
 	for i := 0; i < 10; i++ {
 		c := lkCall(fmt.Sprintf("ghost-%d", i), time.Duration(i)*time.Minute+10*time.Hour, args, true)
-		if _, _, err := a.Locate(context.Background(), home, c); !errors.Is(err, sessionlink.ErrNotFound) {
+		if _, _, err := a.Locate(context.Background(), home, c, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 			t.Fatalf("ghost call %d linked or wrong error: %v", i, err)
 		}
 		c.ClientSessionID = ""
-		if _, _, err := a.Locate(context.Background(), home, c); !errors.Is(err, sessionlink.ErrNotFound) {
+		if _, _, err := a.Locate(context.Background(), home, c, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 			t.Fatalf("ghost heuristic call %d linked or wrong error: %v", i, err)
 		}
 	}

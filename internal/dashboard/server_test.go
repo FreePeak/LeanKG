@@ -29,10 +29,10 @@ type fakeAdapter struct {
 func (f fakeAdapter) Client() string        { return f.client }
 func (f fakeAdapter) Detect(string) bool    { return f.detect }
 func (f fakeAdapter) Roots(string) []string { return f.roots }
-func (f fakeAdapter) Locate(context.Context, string, sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (f fakeAdapter) Locate(context.Context, string, sessionlink.CallRef, *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
 	return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
 }
-func (f fakeAdapter) Window(context.Context, sessionlink.TranscriptRef, sessionlink.CallRef, int) (sessionlink.Window, error) {
+func (f fakeAdapter) Window(context.Context, sessionlink.TranscriptRef, sessionlink.CallRef, int, *sessionlink.Reader) (sessionlink.Window, error) {
 	return sessionlink.Window{}, sessionlink.ErrNotFound
 }
 func (f fakeAdapter) Transcript(context.Context, sessionlink.TranscriptRef, int) ([]sessionlink.Turn, error) {

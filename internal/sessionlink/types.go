@@ -92,10 +92,12 @@ type Adapter interface {
 	// Roots are the store paths Detect looked at (shown on the consent screen).
 	Roots(home string) []string
 	// Locate finds the transcript for c: exact by session id, else heuristic.
-	// A cancelled ctx returns its error, never ErrNotFound.
-	Locate(ctx context.Context, home string, c CallRef) (TranscriptRef, Confidence, error)
-	// Window extracts up to n turns before and after the call.
-	Window(ctx context.Context, t TranscriptRef, c CallRef, n int) (Window, error)
+	// It reads transcripts only through rd, so a Link pass parses each file
+	// once. A cancelled ctx returns its error, never ErrNotFound.
+	Locate(ctx context.Context, home string, c CallRef, rd *Reader) (TranscriptRef, Confidence, error)
+	// Window extracts up to n turns before and after the call, reading the
+	// transcript through rd (nil parses it fresh).
+	Window(ctx context.Context, t TranscriptRef, c CallRef, n int, rd *Reader) (Window, error)
 	// Transcript returns the whole session (capped) for the replay view.
 	Transcript(ctx context.Context, t TranscriptRef, maxTurns int) ([]Turn, error)
 }

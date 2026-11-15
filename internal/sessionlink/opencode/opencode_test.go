@@ -148,7 +148,7 @@ func TestHeuristicLocateAndWindow(t *testing.T) {
 	c := call(5*time.Second, cwd, args)
 	a := New()
 
-	ref, conf, err := a.Locate(context.Background(), home, c)
+	ref, conf, err := a.Locate(context.Background(), home, c, nil)
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestHeuristicLocateAndWindow(t *testing.T) {
 		t.Fatalf("conf = %v, want 0.9", conf)
 	}
 
-	w, err := a.Window(context.Background(), ref, c, 6)
+	w, err := a.Window(context.Background(), ref, c, 6, nil)
 	if err != nil {
 		t.Fatalf("Window: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestExactByClientSessionID(t *testing.T) {
 	args := map[string]any{"query": "auth handler", "action": "search"}
 	c := call(5*time.Second, cwd, args)
 	c.ClientSessionID = "ses-exact"
-	ref, conf, err := New().Locate(context.Background(), home, c)
+	ref, conf, err := New().Locate(context.Background(), home, c, nil)
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestNoFalseLinks(t *testing.T) {
 		"far in time":       call(3*time.Hour, cwd, args),
 	}
 	for name, c := range cases {
-		if _, _, err := a.Locate(context.Background(), home, c); !errors.Is(err, sessionlink.ErrNotFound) {
+		if _, _, err := a.Locate(context.Background(), home, c, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 			t.Errorf("%s: err = %v, want ErrNotFound", name, err)
 		}
 	}
@@ -220,7 +220,7 @@ func TestNoFalseLinks(t *testing.T) {
 
 func TestMissingStoreIsNotFound(t *testing.T) {
 	home, _ := fixtureHome(t)
-	if _, _, err := New().Locate(context.Background(), home, call(0, cwd, nil)); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := New().Locate(context.Background(), home, call(0, cwd, nil), nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Fatalf("missing store: err = %v, want ErrNotFound", err)
 	}
 }
@@ -236,7 +236,7 @@ func TestUnknownSchemaIsUnsupportedVersion(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)`)
 	db.Close()
 	args := map[string]any{"query": "auth handler", "action": "search"}
-	if _, _, err := New().Locate(context.Background(), home, call(5*time.Second, cwd, args)); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
+	if _, _, err := New().Locate(context.Background(), home, call(5*time.Second, cwd, args), nil); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
 		t.Fatalf("err = %v, want ErrUnsupportedVersion", err)
 	}
 }
@@ -249,11 +249,11 @@ func TestStoreIsNeverWritten(t *testing.T) {
 	args := map[string]any{"query": "auth handler", "action": "search"}
 	c := call(5*time.Second, cwd, args)
 	a := New()
-	ref, _, err := a.Locate(context.Background(), home, c)
+	ref, _, err := a.Locate(context.Background(), home, c, nil)
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
-	if _, err := a.Window(context.Background(), ref, c, 6); err != nil {
+	if _, err := a.Window(context.Background(), ref, c, 6, nil); err != nil {
 		t.Fatalf("Window: %v", err)
 	}
 	if _, err := a.Transcript(context.Background(), ref, 10); err != nil {

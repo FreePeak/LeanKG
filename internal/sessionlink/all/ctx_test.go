@@ -21,10 +21,10 @@ func TestAdaptersHonourCancelledCtx(t *testing.T) {
 
 	for _, a := range Adapters() {
 		name := a.Client()
-		if _, _, err := a.Locate(ctx, home, sessionlink.CallRef{ClientSessionID: "s", Cwd: home}); !errors.Is(err, context.Canceled) {
+		if _, _, err := a.Locate(ctx, home, sessionlink.CallRef{ClientSessionID: "s", Cwd: home}, nil); !errors.Is(err, context.Canceled) {
 			t.Errorf("%s Locate: err = %v, want context.Canceled", name, err)
 		}
-		if _, err := a.Window(ctx, missing, sessionlink.CallRef{Cwd: home}, 2); !errors.Is(err, context.Canceled) {
+		if _, err := a.Window(ctx, missing, sessionlink.CallRef{Cwd: home}, 2, nil); !errors.Is(err, context.Canceled) {
 			t.Errorf("%s Window: err = %v, want context.Canceled", name, err)
 		}
 		if _, err := a.Transcript(ctx, missing, 4); !errors.Is(err, context.Canceled) {
