@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -1383,5 +1384,171 @@ func TestWriteCapOneCapPerRunWhenPropsFlips(t *testing.T) {
 	}
 	if got := storedStamp(t, st, p.ModelID()).TextCap; got != 2000 {
 		t.Fatalf("stamp TextCap = %d, want 2000", got)
+	}
+}
+
+// --- CX-33: request timeout, ctx-aware HTTP, bounded run loop ---------------
+
+// hungEndpoint holds every embeddings request until the client gives up. Any
+// other path answers 404, so the local provider's /props probe fails fast.
+func hungEndpoint(t *testing.T) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/embeddings" {
+			http.NotFound(w, r)
+			return
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	return srv
+}
+
+// within runs fn and fails the test when fn has not returned after limit, so a
+// hung call shows up as a failure instead of a stuck test binary. It returns
+// how long fn took.
+func within(t *testing.T, limit time.Duration, fn func()) time.Duration {
+	t.Helper()
+	start := time.Now()
+	done := make(chan struct{})
+	go func() { defer close(done); fn() }()
+	select {
+	case <-done:
+		return time.Since(start)
+	case <-time.After(limit):
+		t.Fatalf("did not return within %s", limit)
+		return 0
+	}
+}
+
+// The client of every provider built by OpenAICompatible has a request timeout:
+// a client without one waits forever on a hung endpoint.
+func TestOpenAICompatibleClientHasRequestTimeout(t *testing.T) {
+	p := OpenAICompatible("http://127.0.0.1:1/v1", "", "m-1", 4, "rev-1").(*openaiCompatible)
+	if p.client.Timeout <= 0 {
+		t.Fatalf("client Timeout = %s, want a positive request timeout", p.client.Timeout)
+	}
+}
+
+// LEANKG_EMBED_REQUEST_TIMEOUT_SECS sets the timeout the factories use, and an
+// unusable value is an error rather than a silent default.
+func TestRequestTimeoutFromEnv(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want time.Duration
+		err  bool
+	}{
+		{"", defaultRequestTimeout, false},
+		{"7", 7 * time.Second, false},
+		{"0", 0, true},
+		{"-3", 0, true},
+		{"soon", 0, true},
+	}
+	for _, c := range cases {
+		t.Setenv(requestTimeoutEnv, c.raw)
+		got, err := requestTimeout()
+		if (err != nil) != c.err || got != c.want {
+			t.Fatalf("requestTimeout(%q) = %s, %v; want %s, error=%v", c.raw, got, err, c.want, c.err)
+		}
+	}
+}
+
+// A hung endpoint returns by the configured request timeout with the
+// timeout error, never by waiting for the endpoint.
+func TestEmbedHungEndpointReturnsByRequestTimeout(t *testing.T) {
+	srv := hungEndpoint(t)
+	t.Setenv(requestTimeoutEnv, "1")
+	p, err := newLocalProvider(srv.URL + "/v1")
+	if err != nil {
+		t.Fatalf("newLocalProvider: %v", err)
+	}
+	var embedErr error
+	took := within(t, 15*time.Second, func() {
+		_, embedErr = p.Embed(context.Background(), Document, []string{"alpha"})
+	})
+	if !errors.Is(embedErr, ErrEndpointTimeout) {
+		t.Fatalf("Embed error = %v, want ErrEndpointTimeout", embedErr)
+	}
+	if took > 5*time.Second {
+		t.Fatalf("Embed returned after %s, want about the 1s request timeout", took)
+	}
+}
+
+// A cancelled ctx aborts an in-flight request at once; the caller sees the
+// cancellation, not a timeout.
+func TestEmbedCancelAbortsInFlightRequest(t *testing.T) {
+	srv := hungEndpoint(t)
+	p := OpenAICompatible(srv.URL+"/v1", "", "m-1", 4, "rev-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(100*time.Millisecond, cancel)
+	var embedErr error
+	took := within(t, 5*time.Second, func() {
+		_, embedErr = p.Embed(ctx, Document, []string{"alpha"})
+	})
+	if !errors.Is(embedErr, context.Canceled) {
+		t.Fatalf("Embed error = %v, want context.Canceled", embedErr)
+	}
+	if took > 2*time.Second {
+		t.Fatalf("cancelled Embed returned after %s, want within 2s", took)
+	}
+}
+
+// A request timeout is an endpoint failure: the run stops at once, records
+// failed, and does not retry item by item (which would multiply the wait).
+func TestRunHungEndpointFailsAtRequestTimeout(t *testing.T) {
+	srv := hungEndpoint(t)
+	t.Setenv(requestTimeoutEnv, "1")
+	t.Setenv("LEANKG_EMBED_TEXT_CAP", "1000")
+	p, err := newLocalProvider(srv.URL + "/v1")
+	if err != nil {
+		t.Fatalf("newLocalProvider: %v", err)
+	}
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"), el("a::f3", "func f3() {}"))
+	var runErr error
+	took := within(t, 15*time.Second, func() {
+		_, runErr = Run(context.Background(), st, p, "full")
+	})
+	if !errors.Is(runErr, ErrEndpointTimeout) {
+		t.Fatalf("Run error = %v, want ErrEndpointTimeout", runErr)
+	}
+	if took > 8*time.Second {
+		t.Fatalf("Run returned after %s, want about the 1s request timeout", took)
+	}
+	run, _ := st.LastEmbedRun(p.ModelID())
+	if run == nil || run.Status != "failed" {
+		t.Fatalf("run status: got %+v, want failed", run)
+	}
+}
+
+// Cancellation stops the run at the next batch boundary: three batches, the
+// cancel lands during the first call, so no further batch is sent and the run
+// is recorded cancelled.
+func TestRunStopsAtNextBatchOnCancel(t *testing.T) {
+	st := testStore(t)
+	els := make([]store.Element, 0, 3*batchSize)
+	for i := range 3 * batchSize {
+		els = append(els, el(fmt.Sprintf("a::f%d", i), "func f() {}"))
+	}
+	seed(t, st, els...)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &cancelAfterProvider{inner: Deterministic(8), n: 1, cancel: cancel}
+
+	_, err := Run(ctx, st, p, "full")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("Embed calls = %d, want 2 (the batch in flight at the cancel, then no more)", p.calls)
+	}
+	run, _ := st.LastEmbedRun(p.ModelID())
+	if run == nil || run.Status != "cancelled" {
+		t.Fatalf("run status: got %+v, want cancelled", run)
 	}
 }

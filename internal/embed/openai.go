@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ErrEndpointConfig marks a permanent configuration error: the endpoint at
@@ -16,6 +18,15 @@ import (
 // refuses the bearer token. Retrying or shrinking a batch cannot fix it, so the
 // embed pipeline returns it at once (embedFiles).
 var ErrEndpointConfig = errors.New("embed: endpoint configuration error")
+
+// ErrEndpointTimeout marks an endpoint that did not finish a request within the
+// request timeout. It is an endpoint failure, not a poison item: the run returns
+// it at once, because retrying item by item would wait the timeout once per item.
+var ErrEndpointTimeout = errors.New("embed: endpoint did not reply in time")
+
+// defaultRequestTimeout bounds one embeddings request, from dial to the last byte
+// of the reply. LEANKG_EMBED_REQUEST_TIMEOUT_SECS overrides it (env.go).
+const defaultRequestTimeout = 120 * time.Second
 
 // respReadCap bounds how much of an embeddings reply is read. A reply that
 // reaches it may be truncated, so it is an ordinary batch failure (the shrink
@@ -33,13 +44,19 @@ const respReadCap = 1 << 20
 // (see StampOf), so a prefix change is a stamp mismatch, never a mixed
 // collection.
 func OpenAICompatible(baseURL, apiKey, model string, dims int, revision string) Provider {
+	return newOpenAICompatible(baseURL, apiKey, model, dims, revision, defaultRequestTimeout)
+}
+
+// newOpenAICompatible is OpenAICompatible with an explicit request timeout, so
+// the env factories can apply LEANKG_EMBED_REQUEST_TIMEOUT_SECS.
+func newOpenAICompatible(baseURL, apiKey, model string, dims int, revision string, timeout time.Duration) *openaiCompatible {
 	return &openaiCompatible{
 		baseURL:  baseURL,
 		apiKey:   apiKey,
 		model:    model,
 		dims:     dims,
 		revision: revision,
-		client:   &http.Client{},
+		client:   &http.Client{Timeout: timeout},
 	}
 }
 
@@ -109,12 +126,18 @@ func (o *openaiCompatible) Embed(ctx context.Context, kind TextKind, texts []str
 
 	resp, err := o.client.Do(req)
 	if err != nil {
+		if o.timedOut(ctx, err) {
+			return nil, o.timeoutError()
+		}
 		return nil, fmt.Errorf("embed: POST %s/embeddings: %w", o.baseURL, err)
 	}
 	defer resp.Body.Close()
 	// One byte past the cap tells a reply that fits from one that was cut.
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, respReadCap+1))
 	if err != nil {
+		if o.timedOut(ctx, err) {
+			return nil, o.timeoutError()
+		}
 		return nil, fmt.Errorf("embed: read response: %w", err)
 	}
 	endpoint := strings.TrimRight(o.baseURL, "/") + "/embeddings"
@@ -143,6 +166,21 @@ func (o *openaiCompatible) Embed(ctx context.Context, kind TextKind, texts []str
 		vecs[i] = d.Embedding
 	}
 	return vecs, nil
+}
+
+// timedOut reports whether err is this client's own request timeout. A caller
+// whose ctx is already done was cancelled or hit its own deadline, so that
+// cause is kept as it is.
+func (o *openaiCompatible) timedOut(ctx context.Context, err error) bool {
+	var ne net.Error
+	return ctx.Err() == nil && errors.As(err, &ne) && ne.Timeout()
+}
+
+// timeoutError names the timeout and the knob that changes it. It carries no
+// endpoint address: the URL is operator configuration and stays out of messages.
+func (o *openaiCompatible) timeoutError() error {
+	return fmt.Errorf("%w (request timeout %s); the endpoint is hung or overloaded, raise %s to wait longer",
+		ErrEndpointTimeout, o.client.Timeout, requestTimeoutEnv)
 }
 
 // rootHint is the fix for a base URL that points at llama-server's native

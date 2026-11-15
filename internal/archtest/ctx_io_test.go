@@ -11,7 +11,6 @@ import (
 var ioBudget = map[string]map[string]int{
 	"internal/dashboard":            {"exec.Command": 1},
 	"internal/doctor":               {"sql-no-ctx": 6},
-	"internal/embed":                {"exec.Command": 1, "http.NewRequest": 1, "http.Client-without-Timeout": 2},
 	"internal/embed/embedtest":      {"exec.Command": 1},
 	"internal/gitobj/gittest":       {"exec.Command": 1},
 	"internal/memory":               {"sql-no-ctx": 32},
