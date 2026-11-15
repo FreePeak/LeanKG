@@ -144,9 +144,12 @@ func cmdQuery(ctx context.Context, args []string) error {
 
 	switch *kind {
 	case "impact":
-		hits, err := impactFrom(st, q, *depth)
+		hits, truncated, err := impactFrom(st, q, *depth)
 		if err != nil {
 			return fatalJSON(err)
+		}
+		if truncated {
+			fmt.Fprintf(os.Stderr, "query: impact truncated: the graph node budget (%d) stopped the walk, so the result is partial\n", graph.NodeBudget)
 		}
 		if *compressOut {
 			// RTK-style: one line per affected node — "qn depth"
@@ -210,15 +213,17 @@ func fatalJSON(err error) error {
 // when the seed is a path with no matching element. The file path resolves
 // through the element census (O(n) scan; documented ceiling: fine for
 // CLI-sized indexes).
-func impactFrom(st store.Backend, seed string, depth int) ([]graph.Hit, error) {
+//
+// truncated reports that the node budget stopped at least one walk, so the
+// hits are a partial answer.
+func impactFrom(st store.Backend, seed string, depth int) (hits []graph.Hit, truncated bool, err error) {
 	ctx := context.Background()
-	if _, _, err := graph.Impact(ctx, st, seed, depth); err == nil {
-		hits, _, err := graph.Impact(ctx, st, seed, depth)
-		return hits, err
+	if direct, bounds, err := graph.Impact(ctx, st, seed, depth); err == nil {
+		return direct, bounds.Truncated, nil
 	}
 	els, err := st.Elements()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	prefix := seed + "::"
 	seen := map[string]int{}
@@ -226,24 +231,25 @@ func impactFrom(st store.Backend, seed string, depth int) ([]graph.Hit, error) {
 		if !seedMatchesFile(el, seed, prefix) {
 			continue
 		}
-		hits, _, err := graph.Impact(ctx, st, el.QualifiedName, depth)
+		elHits, bounds, err := graph.Impact(ctx, st, el.QualifiedName, depth)
 		if err != nil {
 			continue
 		}
-		for _, h := range hits {
+		truncated = truncated || bounds.Truncated
+		for _, h := range elHits {
 			if d, ok := seen[h.QN]; !ok || h.Depth < d {
 				seen[h.QN] = h.Depth
 			}
 		}
 	}
 	if len(seen) == 0 {
-		return nil, fmt.Errorf("graph: unknown node %q (not an element QN or indexed file)", seed)
+		return nil, false, fmt.Errorf("graph: unknown node %q (not an element QN or indexed file)", seed)
 	}
 	var out []graph.Hit
 	for qn, d := range seen {
 		out = append(out, graph.Hit{QN: qn, Depth: d})
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // seedMatchesFile decides whether an element belongs to the seed when the seed
