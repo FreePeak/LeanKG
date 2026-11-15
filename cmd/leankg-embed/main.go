@@ -74,6 +74,7 @@ LEANKG_EMBED_SIDECAR_PORT (default 8080), LEANKG_EMBED_SIDECAR_READY_SECS (defau
 Attach instead with LEANKG_EMBED_BASE_URL.
 Remote: LEANKG_EMBED_BASE_URL, LEANKG_EMBED_API_KEY, LEANKG_EMBED_MODEL,
 LEANKG_EMBED_DIMS, LEANKG_EMBED_REVISION.
+LEANKG_EMBED_REQUEST_TIMEOUT_SECS (default 120) bounds one embeddings request; a hung endpoint fails the run.
 
 import stamps the collection exactly as the live provider would for the same
 LEANKG_EMBED_* environment (catalog pin, prefixes, width), so a later

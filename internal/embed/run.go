@@ -471,8 +471,9 @@ func groupByFile(dirty []dirtyItem) [][]dirtyItem {
 // fail-loud contract (found dogfooding `leankg-embed` on this repository).
 //
 // A permanent configuration error (ErrEndpointConfig: wrong base URL, refused
-// API key, a reply that is not an embeddings object) is not a poison element:
-// embedFiles returns it at once, before any retry or shrink, so a misconfigured
+// API key, a reply that is not an embeddings object) and a request timeout
+// (ErrEndpointTimeout: a hung endpoint) are not poison elements: embedFiles
+// returns them at once, before any retry or shrink, so a misconfigured or hung
 // endpoint costs one request and writes nothing from the failing group.
 func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
 	var lastErr error
@@ -490,7 +491,7 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 			}
 			vecs, err := p.Embed(ctx, Document, texts)
 			if err != nil {
-				if errors.Is(err, ErrEndpointConfig) {
+				if endpointDown(err) {
 					return err
 				}
 				// A cancelled run is not poison: stop, do not retry item by item.
@@ -517,7 +518,7 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 							break
 						}
 						if ierr != nil {
-							if errors.Is(ierr, ErrEndpointConfig) {
+							if endpointDown(ierr) {
 								return ierr
 							}
 							if cerr := ctx.Err(); cerr != nil {
@@ -568,6 +569,12 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 		return fmt.Errorf("embed: all %d item(s) failed: %w", rep.Failed, lastErr)
 	}
 	return nil
+}
+
+// endpointDown reports whether err means the endpoint cannot serve this run at
+// all (a configuration error or a request timeout), so no retry can help.
+func endpointDown(err error) bool {
+	return errors.Is(err, ErrEndpointConfig) || errors.Is(err, ErrEndpointTimeout)
 }
 
 func truncateRunes(s string, n int) string {

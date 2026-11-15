@@ -250,6 +250,10 @@ func openAIProvider(name, fallbackBaseURL string) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	timeout, err := requestTimeout()
+	if err != nil {
+		return nil, err
+	}
 	baseURL := os.Getenv("LEANKG_EMBED_BASE_URL")
 	if baseURL == "" {
 		baseURL = EndpointFor(model)
@@ -257,8 +261,26 @@ func openAIProvider(name, fallbackBaseURL string) (Provider, error) {
 	if baseURL == "" {
 		baseURL = fallbackBaseURL
 	}
-	inner := OpenAICompatible(baseURL, os.Getenv("LEANKG_EMBED_API_KEY"), model, native, Pin(model, name))
+	inner := newOpenAICompatible(baseURL, os.Getenv("LEANKG_EMBED_API_KEY"), model, native, Pin(model, name), timeout)
 	return withWidth(inner, native, width), nil
+}
+
+// requestTimeoutEnv overrides the embeddings request timeout, in whole seconds.
+const requestTimeoutEnv = "LEANKG_EMBED_REQUEST_TIMEOUT_SECS"
+
+// requestTimeout is the embeddings request timeout: LEANKG_EMBED_REQUEST_TIMEOUT_SECS
+// when set, else defaultRequestTimeout. A value that is not a positive number of
+// seconds is an error, so a typo cannot silently pick the timeout.
+func requestTimeout() (time.Duration, error) {
+	raw := os.Getenv(requestTimeoutEnv)
+	if raw == "" {
+		return defaultRequestTimeout, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("embed: invalid %s %q: want a positive number of seconds", requestTimeoutEnv, raw)
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 // localProvider is the sidecar-backed provider. It reuses the
@@ -400,15 +422,13 @@ func newLocalProvider(baseURL string) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	timeout, err := requestTimeout()
+	if err != nil {
+		return nil, err
+	}
 	inner := &localProvider{
-		openaiCompatible: &openaiCompatible{
-			baseURL:  baseURL,
-			apiKey:   os.Getenv("LEANKG_EMBED_API_KEY"),
-			model:    model,
-			dims:     native,
-			revision: Pin(model, "local"),
-			client:   &http.Client{},
-		},
+		openaiCompatible: newOpenAICompatible(baseURL, os.Getenv("LEANKG_EMBED_API_KEY"), model, native,
+			Pin(model, "local"), timeout),
 		pinned: localPinned(model),
 	}
 	return withWidth(inner, native, width), nil

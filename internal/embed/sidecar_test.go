@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -334,6 +335,79 @@ func TestSidecarExitsDuringStartup(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q misses %q", err, want)
 		}
+	}
+}
+
+// portOf is the TCP port an httptest server listens on.
+func portOf(srv *httptest.Server) int {
+	return srv.Listener.Addr().(*net.TCPAddr).Port
+}
+
+// The adoption probe honours ctx: a stranger that holds the endpoint open must
+// not keep StartSidecar past the cancel.
+func TestStartSidecarProbeIsBoundedByContext(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	var err error
+	took := within(t, 5*time.Second, func() {
+		_, err = StartSidecar(ctx, SidecarConfig{
+			Command: "leankg-no-such-sidecar-binary", Port: portOf(srv),
+			ReadyTimeout: 2 * time.Second, PollInterval: 50 * time.Millisecond,
+		})
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("StartSidecar error = %v, want context.Canceled", err)
+	}
+	if took > 1500*time.Millisecond {
+		t.Fatalf("StartSidecar held %s after the cancel, want it to return at once", took)
+	}
+}
+
+// The health poll honours ctx: a spawned sidecar whose /health hangs must not
+// hold StartSidecar past the cancel.
+func TestStartSidecarHealthPollIsBoundedByContext(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			http.NotFound(w, r) // not an embeddings endpoint: the probe fails and a sidecar is spawned
+			return
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	script := filepath.Join(t.TempDir(), "sleep.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(300*time.Millisecond, cancel)
+
+	var err error
+	took := within(t, 10*time.Second, func() {
+		_, err = StartSidecar(ctx, SidecarConfig{
+			Command: script, Port: portOf(srv),
+			ReadyTimeout: 20 * time.Second, PollInterval: 50 * time.Millisecond,
+		})
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("StartSidecar error = %v, want context.Canceled", err)
+	}
+	if took > 1500*time.Millisecond {
+		t.Fatalf("StartSidecar held %s after the cancel, want the health poll to honour ctx", took)
 	}
 }
 

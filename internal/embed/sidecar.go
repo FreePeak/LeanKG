@@ -187,7 +187,7 @@ func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 	// answer nothing on /health, and only an endpoint that really embeds
 	// deserves adoption. A stranger on the port must still surface as the
 	// actionable startup error below, never as a silently wrong provider.
-	if ready, err := probeEmbeddings(cfg.BaseURL()); err == nil && ready {
+	if ready, err := probeEmbeddings(ctx, cfg.BaseURL()); err == nil && ready {
 		return &Sidecar{
 			port:    cfg.Port,
 			exited:  make(chan struct{}),
@@ -195,18 +195,28 @@ func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 			adopted: true,
 		}, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("embed: sidecar startup canceled: %w", err)
+	}
 
 	args := append([]string(nil), cfg.Args...)
 	if !portFlagPresent(args) {
 		args = append(args, "--port", strconv.Itoa(cfg.Port))
 	}
 
-	cmd := exec.Command(cfg.Command, args...)
+	cmd := exec.CommandContext(ctx, cfg.Command, args...)
 	if cfg.Env != nil {
 		cmd.Env = append(os.Environ(), cfg.Env...)
 	}
-	// Own process group so Shutdown can kill the sidecar's children too.
+	// Own process group so Shutdown can kill the sidecar's children too. A
+	// cancelled ctx asks the whole group to stop; WaitDelay keeps Wait from
+	// blocking on the stderr pipe that a child still holds open.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		killGroup(cmd.Process.Pid, syscall.SIGTERM)
+		return nil
+	}
+	cmd.WaitDelay = shutdownGrace
 	stderr := &tailBuffer{limit: stderrTail}
 	cmd.Stderr = stderr
 
@@ -270,9 +280,9 @@ func (s *Sidecar) BaseURL() string { return fmt.Sprintf("http://127.0.0.1:%d/v1"
 // GGUF it loaded, so the probe never depends on configuration. A non-2xx or a
 // body without an embedding is "not a sidecar", which is the answer that
 // keeps a stranger on the port out of the provider.
-func probeEmbeddings(baseURL string) (bool, error) {
+func probeEmbeddings(ctx context.Context, baseURL string) (bool, error) {
 	body := strings.NewReader(`{"model":"leankg-adopt-probe","input":[" "]}`)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/embeddings", body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/embeddings", body)
 	if err != nil {
 		return false, err
 	}
@@ -315,7 +325,11 @@ func (s *Sidecar) Shutdown() error {
 			case <-s.exited:
 			case <-time.After(shutdownGrace):
 				killGroup(s.cmd.Process.Pid, syscall.SIGKILL)
-				<-s.exited
+				// SIGKILL cannot be caught: wait a bounded time for the reap, never forever.
+				select {
+				case <-s.exited:
+				case <-time.After(shutdownGrace):
+				}
 			}
 		}
 		close(s.done)
@@ -370,7 +384,11 @@ func awaitHealthy(ctx context.Context, url string, timeout, interval time.Durati
 			return errSidecarExited
 		case <-time.After(interval):
 		}
-		resp, err := client.Get(url)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
 		if err == nil {
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
