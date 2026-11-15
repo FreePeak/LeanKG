@@ -300,26 +300,10 @@ func (h *apiH) query(w http.ResponseWriter, r *http.Request) {
 		respondEnvelope(w, http.StatusBadRequest, failEnvelope("invalid JSON body: "+err.Error()))
 		return
 	}
-	qr := core.QueryRequest{Query: req.Query}
-	for k, v := range req.Params {
-		if k == "action" {
-			if s, ok := v.(string); ok {
-				qr.Action = s
-			}
-			continue
-		}
-		if k == "limit" {
-			// RS-24: limit is the request's result count, not an action arg —
-			// it used to land in Args, where nothing read it.
-			if n, ok := v.(float64); ok {
-				qr.Limit = int(n)
-			}
-			continue
-		}
-		if qr.Args == nil {
-			qr.Args = map[string]any{}
-		}
-		qr.Args[k] = v
+	qr, err := core.DecodeQueryParams(req.Query, req.Params)
+	if err != nil {
+		respondErr(w, err)
+		return
 	}
 	resp, err := h.engine.Query(r.Context(), qr)
 	if err != nil {

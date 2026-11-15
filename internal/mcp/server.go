@@ -600,8 +600,12 @@ func (s *Server) handleImport(ctx context.Context, req *mcp.CallToolRequest) (*m
 
 func (s *Server) handleQuery(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	started := time.Now()
-	var in core.QueryRequest
-	if err := unmarshalArgs(req, &in); err != nil {
+	var fields map[string]any
+	if err := unmarshalArgs(req, &fields); err != nil {
+		return nil, err
+	}
+	in, err := core.DecodeQuery(fields)
+	if err != nil {
 		return nil, err
 	}
 	eng, err := s.engineFor(ctx, req)

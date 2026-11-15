@@ -70,12 +70,16 @@ func (s *LeanKGService) Import(ctx context.Context, req *connect.Request[leankgv
 }
 
 func (s *LeanKGService) Query(ctx context.Context, req *connect.Request[leankgv1.QueryRequest]) (*connect.Response[leankgv1.QueryResponse], error) {
-	out, err := s.engine.Query(ctx, core.QueryRequest{
-		Action: req.Msg.Action,
-		Query:  req.Msg.Query,
-		Limit:  int(req.Msg.Limit),
-		Args:   protoArgs(req.Msg.Args),
+	query, err := core.DecodeQuery(map[string]any{
+		"action": req.Msg.Action,
+		"query":  req.Msg.Query,
+		"limit":  req.Msg.Limit,
+		"args":   req.Msg.Args,
 	})
+	if err != nil {
+		return nil, connect.NewError(connectCode(err), err)
+	}
+	out, err := s.engine.Query(ctx, query)
 	if err != nil {
 		return nil, connect.NewError(connectCode(err), err)
 	}
@@ -106,12 +110,16 @@ func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[lea
 	// memories, view, snapshot, search" — the agent protocol's own first
 	// instruction ("at session start call session_recall") was the one command
 	// a ConnectRPC client could not run.
-	out, err := s.engine.Query(ctx, core.QueryRequest{
-		Action: "memory",
-		Query:  req.Msg.Query,
-		Limit:  int(req.Msg.Limit),
-		Args:   protoArgs(map[string]string{"command": req.Msg.Command, "path": req.Msg.Path, "cwd": ""}),
+	query, err := core.DecodeQuery(map[string]any{
+		"action": "memory",
+		"query":  req.Msg.Query,
+		"limit":  req.Msg.Limit,
+		"args":   map[string]string{"command": req.Msg.Command, "path": req.Msg.Path, "cwd": ""},
 	})
+	if err != nil {
+		return nil, connect.NewError(connectCode(err), err)
+	}
+	out, err := s.engine.Query(ctx, query)
 	if err != nil {
 		return nil, connect.NewError(connectCode(err), err)
 	}
@@ -120,19 +128,6 @@ func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[lea
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&leankgv1.MemoryReadResponse{Json: js}), nil
-}
-
-// protoArgs converts the proto map<string,string> into core's wider
-// map[string]any (clients may send typed values over other transports).
-func protoArgs(m map[string]string) map[string]any {
-	if m == nil {
-		return nil
-	}
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
 }
 
 // connectCode maps a failed call to the ConnectRPC code of the HTTP status the

@@ -47,8 +47,13 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		httpx.WriteJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("POST /api/v1/query", func(w http.ResponseWriter, r *http.Request) {
-		var req core.QueryRequest
-		if !decode(w, r, &req) {
+		var fields map[string]any
+		if !decode(w, r, &fields) {
+			return
+		}
+		req, err := core.DecodeQuery(fields)
+		if err != nil {
+			httpx.WriteError(w, err)
 			return
 		}
 		out, err := engine.Query(r.Context(), req)
