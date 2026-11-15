@@ -257,6 +257,14 @@ func impactFrom(ctx context.Context, st store.Backend, seed string, depth int) (
 	for qn, d := range seen {
 		out = append(out, graph.Hit{QN: qn, Depth: d})
 	}
+	// Map iteration is random: order by (depth, qn), as graph.Impact does for
+	// an element seed, so the output is stable across runs.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Depth != out[j].Depth {
+			return out[i].Depth < out[j].Depth
+		}
+		return out[i].QN < out[j].QN
+	})
 	return out, truncated, nil
 }
 
