@@ -97,7 +97,7 @@ func TestServeRejectsStdioWithListenersBeforeOpeningStore(t *testing.T) {
 	t.Setenv("LEANKG_HOME", t.TempDir())
 	dir := t.TempDir()
 
-	err := serve([]string{"--project", dir, "--stdio", "--http", "127.0.0.1:0"})
+	err := serve(context.Background(), []string{"--project", dir, "--stdio", "--http", "127.0.0.1:0"})
 	if err == nil {
 		t.Fatal("serve --stdio --http returned nil, want a refusal")
 	}
@@ -117,7 +117,7 @@ func TestServeReturnsErrorWhenPortIsInUse(t *testing.T) {
 	t.Cleanup(func() { _ = occupied.Close() })
 	addr := occupied.Addr().String()
 
-	err = serve([]string{"--project", t.TempDir(), "--http", addr})
+	err = serve(context.Background(), []string{"--project", t.TempDir(), "--http", addr})
 	if err == nil {
 		t.Fatalf("serve on busy %s returned nil, want a bind error", addr)
 	}

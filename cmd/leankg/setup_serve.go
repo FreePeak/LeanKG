@@ -51,7 +51,7 @@ func maybeAutoIndexOnStart(ctx context.Context, dir string, readOnly bool) {
 	if !decision.Go() {
 		return
 	}
-	if err := runIndex("", dir, "", "", ""); err != nil {
+	if err := runIndex(ctx, "", dir, "", "", ""); err != nil {
 		log.Printf("auto-index failed: %v", err)
 	}
 }

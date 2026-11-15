@@ -58,7 +58,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 
 | ID | PR | Size | Depends | Status | PR link | Notes |
 |---|---|---|---|---|---|---|
-| CX-28 | `refactor(cmd): one root signal context; index and serve take ctx` | M | - | todo | - | goes first |
+| CX-28 | `refactor(cmd): one root signal context; index and serve take ctx` | M | - | done | local branch `refactor/cx-28-root-ctx` (not pushed) | root ctx from signal.NotifyContext in main (a second Ctrl-C kills a stuck run); index, serve and setup take ctx; runIndex stops between files with the ctx error. `index --hook` budget: `--hook-budget` or `LEANKG_HOOK_BUDGET`, default 10 s, expiry prints one line and exits 0. Live (3000 files): SIGINT base killed at 0.001 s with status -2; new exits 130 at 0.028 s, store opens; hook 1.037 s exit 0; full index counts equal base. cmd/ is package main, outside the ratchet, so no budget number changes. |
 | CX-29 | `refactor(cmd): every verb takes ctx and returns an error` | M-L | - | todo | - | - |
 | CX-30 | `refactor(core,graph,mcp): thread ctx through the rungs, graph and status` | M | - | todo | - | - |
 | CX-31 | `refactor(rest,rpc,web,dashboard,auth): use the request context` | M | - | todo | - | - |
@@ -102,7 +102,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | D2 | Rare-token bound: `/5000` (SQLite) or `/500` (PG and comments) | `/500` on both engines, after measuring SQLite recall before and after | open |
 | D3 | Login throttle | In-memory per-account backoff, in the same PR as the uniform error (CX-12) | open |
 | D4 | Where the token budget applies | In core, for every transport; MCP default unchanged | open |
-| D5 | `index --hook` time budget | 10 s by default, overridable by flag or environment | open |
+| D5 | `index --hook` time budget | 10 s by default, overridable by flag or environment | decided in CX-28: `--hook-budget` or `LEANKG_HOOK_BUDGET`; covers the size gate, index and embed; expiry prints one line and exits 0 (the plan named neither the flag, the variable nor the expiry status) |
 | D6 | Per-file unit of work (`ReplaceFile`) | Defer to P5; do it only if the CX-22 timing shows per-file commits dominate | open |
 | D7 | Web API answers HTTP 200 on every error | Move to the shared error table in CX-46 with the matching `ui-v2` change; otherwise keep and document | open |
 | D8 | golangci-lint (`noctx`, `contextcheck`) | Not now; revisit after P3 | open |

@@ -77,7 +77,7 @@ func cmdSetup(args []string) {
 type cliStages struct{}
 
 func (cliStages) IndexOne(ctx context.Context, dir, _env string, _verbose bool) (int, error) {
-	if err := runIndex("", dir, "", "", ""); err != nil {
+	if err := runIndex(ctx, "", dir, "", "", ""); err != nil {
 		return 0, err
 	}
 	st, err := openStore(ctx, dir, "", store.RO)
