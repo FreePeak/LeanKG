@@ -447,7 +447,6 @@ var (
 	// silent no-op, which is exactly the "first grant after startup does
 	// nothing" bug this reload exists to prevent.
 	telemetryBuildOnce sync.Once
-	telemetryRec       telemetry.Recorder = telemetry.Nop{}
 	// telemetryStop holds the retention sweep's cancel for a lazily built
 	// recorder (ReloadTelemetry), so a close stops the sweep before the store.
 	telemetryStop   func()
@@ -463,9 +462,12 @@ func telemetryRecorder(ctx context.Context) telemetry.Recorder {
 			fmt.Fprintf(os.Stderr, "telemetry: capture disabled: %v\n", err)
 			return
 		}
-		telemetryRec = rec
+		telemetrySinks.setLive(rec)
 	})
-	return telemetryRec
+	if rec := telemetrySinks.current(); rec != nil {
+		return rec
+	}
+	return telemetry.Nop{}
 }
 
 // closeTelemetry stops the retention sweep then flushes the process Recorder.
@@ -477,7 +479,9 @@ func closeTelemetry() {
 	if stop != nil {
 		stop()
 	}
-	_ = telemetryRec.Close()
+	if rec := telemetrySinks.current(); rec != nil {
+		_ = rec.Close()
+	}
 }
 
 // ReloadTelemetry re-reads the consent file and applies the level to the live
@@ -521,7 +525,7 @@ func ReloadTelemetry(ctx context.Context) error {
 		telemetryStop = stop
 		telemetryStopMu.Unlock()
 		rec := telemetry.NewRecorder(ctx, st, level, cfg.MaxBodyBytes)
-		telemetryRec = rec
+		telemetrySinks.setLive(rec)
 	})
 	rec := telemetryRecorder(ctx)
 	if rec == nil {
@@ -583,21 +587,47 @@ func registerMCPSink(srv interface{ SetRecorder(telemetry.Recorder) }) {
 // sinkRegistry is the list of consumers a consent reload re-points. Serve adds
 // to it at startup and from request goroutines (a lazily built MCP server)
 // while the SIGHUP goroutine walks it, so every access takes the lock.
+// sinkRegistry is also the holder of the live process recorder. The SIGHUP
+// reload writes it and request goroutines and shutdown read it, so every
+// access goes through mu.
 type sinkRegistry struct {
-	mu  sync.Mutex
-	fns []func(telemetry.Recorder)
+	mu   sync.Mutex
+	live telemetry.Recorder // nil until a recorder is built
+	fns  []func(telemetry.Recorder)
 }
 
+// add registers a consumer and hands it the live recorder when there is one.
+// Both happen under mu, the lock install takes to publish a new recorder, so
+// a consumer built during a reload ends up with the new recorder and never
+// keeps the startup value. fn must not register another sink.
 func (r *sinkRegistry) add(fn func(telemetry.Recorder)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.fns = append(r.fns, fn)
+	if r.live != nil {
+		fn(r.live)
+	}
 }
 
-// install points every registered consumer at rec. It walks a copy, so a
-// consumer that registers another one does not deadlock on the lock.
+// setLive makes rec the live recorder without re-pointing consumers.
+func (r *sinkRegistry) setLive(rec telemetry.Recorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.live = rec
+}
+
+// current returns the live recorder, or nil before one is set.
+func (r *sinkRegistry) current() telemetry.Recorder {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.live
+}
+
+// install makes rec the live recorder and points every consumer at it. It
+// walks a copy, so a consumer that registers another one does not deadlock.
 func (r *sinkRegistry) install(rec telemetry.Recorder) {
 	r.mu.Lock()
+	r.live = rec
 	fns := append([]func(telemetry.Recorder){}, r.fns...)
 	r.mu.Unlock()
 	for _, fn := range fns {
