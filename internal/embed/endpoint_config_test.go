@@ -56,8 +56,7 @@ func TestRunStopsOnUndecodableResponse(t *testing.T) {
 	srv, calls := newEndpointFake(t, func(w http.ResponseWriter, _ *http.Request, _ int32) {
 		_, _ = w.Write([]byte(llamaNativeArrayBody))
 	})
-	setGemmaEnv(t, srv.URL, "")
-	p, err := FromEnv()
+	p, _, err := Attach(gemmaCfg(t, srv.URL, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +84,7 @@ func TestRunStopsOn404(t *testing.T) {
 	srv, calls := newEndpointFake(t, func(w http.ResponseWriter, _ *http.Request, _ int32) {
 		http.Error(w, "404 page not found", http.StatusNotFound)
 	})
-	setGemmaEnv(t, srv.URL, "")
-	p, err := FromEnv()
+	p, _, err := Attach(gemmaCfg(t, srv.URL, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +129,7 @@ func TestRunStillShrinksOnTransientError(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	})
-	setGemmaEnv(t, srv.URL+"/v1", "")
-	p, err := FromEnv()
+	p, _, err := Attach(gemmaCfg(t, srv.URL+"/v1", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,9 +155,9 @@ func TestRunStopsOn401NamesKeyWithoutValue(t *testing.T) {
 	srv, calls := newEndpointFake(t, func(w http.ResponseWriter, _ *http.Request, _ int32) {
 		http.Error(w, "invalid key "+secret, http.StatusUnauthorized)
 	})
-	setGemmaEnv(t, srv.URL+"/v1", "")
-	t.Setenv("LEANKG_EMBED_API_KEY", secret)
-	p, err := FromEnv()
+	cfg := gemmaCfg(t, srv.URL+"/v1", "")
+	cfg.APIKey = secret
+	p, _, err := Attach(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

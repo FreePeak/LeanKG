@@ -26,6 +26,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/FreePeak/LeanKG/cmd/internal/embedenv"
 	"github.com/FreePeak/LeanKG/internal/cliargs"
 	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/embed"
@@ -217,7 +218,11 @@ func runEmbed(ctx context.Context, args []string, mode string) error {
 		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
-	p, release, err := embed.StartProvider(ctx)
+	cfg, err := embedenv.Load(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("provider: %w", err)
+	}
+	p, release, err := embed.Start(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("provider: %w", err)
 	}
@@ -259,7 +264,11 @@ func cmdExport(ctx context.Context, args []string) error {
 		defer f.Close()
 		w = f
 	}
-	if err := embed.ExportNDJSON(ctx, st, *modelID, w); err != nil {
+	cfg, err := embedenv.Load(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("provider: %w", err)
+	}
+	if err := embed.ExportNDJSON(ctx, st, cfg, *modelID, w); err != nil {
 		return fmt.Errorf("export: %v", err)
 	}
 	return nil
@@ -299,7 +308,11 @@ func cmdImport(ctx context.Context, args []string) error {
 		defer f.Close()
 		r = f
 	}
-	report, err := embed.ImportNDJSON(ctx, st, *modelID, *revision, *distance, *dims, r)
+	cfg, err := embedenv.Load(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("provider: %w", err)
+	}
+	report, err := embed.ImportNDJSON(ctx, st, cfg, *modelID, *revision, *distance, *dims, r)
 	if err != nil {
 		return fmt.Errorf("import: %v", err)
 	}

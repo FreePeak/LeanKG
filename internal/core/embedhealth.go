@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/embed"
 )
 
 // embedHealthTTL bounds how often status probes the query embedder.
@@ -26,7 +28,7 @@ type embedHealth struct {
 // runs outside the mutex, so concurrent status calls do not queue behind a
 // slow provider. A probe ended by the caller's ctx is not cached: it says
 // nothing about the provider.
-func (h *embedHealth) check(ctx context.Context, em QueryEmbedder) (bool, string) {
+func (h *embedHealth) check(ctx context.Context, em embed.Provider) (bool, string) {
 	h.mu.Lock()
 	if !h.at.IsZero() && time.Since(h.at) < embedHealthTTL {
 		ok, msg := h.ok, h.err
@@ -37,7 +39,7 @@ func (h *embedHealth) check(ctx context.Context, em QueryEmbedder) (bool, string
 
 	pctx, cancel := context.WithTimeout(ctx, embedProbeTimeout)
 	defer cancel()
-	_, err := em.EmbedQuery(pctx, "health check")
+	_, err := embed.EmbedQuery(pctx, em, "health check")
 	if ctx.Err() != nil {
 		return false, ctx.Err().Error()
 	}

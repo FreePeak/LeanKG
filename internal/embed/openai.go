@@ -25,8 +25,12 @@ var ErrEndpointConfig = errors.New("embed: endpoint configuration error")
 var ErrEndpointTimeout = errors.New("embed: endpoint did not reply in time")
 
 // defaultRequestTimeout bounds one embeddings request, from dial to the last byte
-// of the reply. LEANKG_EMBED_REQUEST_TIMEOUT_SECS overrides it (env.go).
+// of the reply. Config.RequestTimeout overrides it (cmd sets it from
+// LEANKG_EMBED_REQUEST_TIMEOUT_SECS).
 const defaultRequestTimeout = 120 * time.Second
+
+// requestTimeoutEnv names the operator knob in timeout messages.
+const requestTimeoutEnv = "LEANKG_EMBED_REQUEST_TIMEOUT_SECS"
 
 // respReadCap bounds how much of an embeddings reply is read. A reply that
 // reaches it may be truncated, so it is an ordinary batch failure (the shrink
@@ -41,39 +45,46 @@ const respReadCap = 1 << 20
 // Embed applies the catalog pair (Prefixes) for the model at the provider
 // boundary — the single place both the embed pipeline (Document) and the L3
 // query rung (Query) pass through. The collection stamp carries the same pair
-// (see StampOf), so a prefix change is a stamp mismatch, never a mixed
+// (see Identity.Stamp), so a prefix change is a stamp mismatch, never a mixed
 // collection.
 func OpenAICompatible(baseURL, apiKey, model string, dims int, revision string) Provider {
-	return newOpenAICompatible(baseURL, apiKey, model, dims, revision, defaultRequestTimeout)
+	return newOpenAICompatible(baseURL, apiKey, model, dims, revision, defaultRequestTimeout, ProviderOpenAI, 0)
 }
 
-// newOpenAICompatible is OpenAICompatible with an explicit request timeout, so
-// the env factories can apply LEANKG_EMBED_REQUEST_TIMEOUT_SECS.
-func newOpenAICompatible(baseURL, apiKey, model string, dims int, revision string, timeout time.Duration) *openaiCompatible {
+// newOpenAICompatible builds the wire client. label is the transport name the
+// identity carries; textCapPin is the operator's write-cap pin (0 = none).
+func newOpenAICompatible(baseURL, apiKey, model string, dims int, revision string,
+	timeout time.Duration, label string, textCapPin int) *openaiCompatible {
 	return &openaiCompatible{
-		baseURL:  baseURL,
-		apiKey:   apiKey,
-		model:    model,
-		dims:     dims,
-		revision: revision,
-		client:   &http.Client{Timeout: timeout},
+		baseURL:    baseURL,
+		apiKey:     apiKey,
+		model:      model,
+		dims:       dims,
+		revision:   revision,
+		label:      label,
+		textCapPin: textCapPin,
+		client:     &http.Client{Timeout: timeout},
 	}
 }
 
 type openaiCompatible struct {
-	baseURL  string
-	apiKey   string
-	model    string
-	dims     int
-	revision string
-	client   *http.Client
+	baseURL    string
+	apiKey     string
+	model      string
+	dims       int
+	revision   string
+	label      string
+	textCapPin int
+	client     *http.Client
 }
 
-func (o *openaiCompatible) ModelID() string  { return o.model }
-func (o *openaiCompatible) Revision() string { return o.revision }
-func (o *openaiCompatible) Dimensions() int  { return o.dims }
-func (o *openaiCompatible) Distance() string { return Distance }
-func (o *openaiCompatible) Provider() string { return "openai" }
+// Identity reports the configured identity. It is pure: no request is made.
+func (o *openaiCompatible) Identity() Identity {
+	return newIdentity(o.label, o.model, o.revision, o.dims, o.textCapPin)
+}
+
+// Probe has nothing to learn from a remote endpoint whose identity is configured.
+func (o *openaiCompatible) Probe(context.Context) error { return nil }
 
 // prefixFor returns the pinned text prefix paired with kind for this model.
 func (o *openaiCompatible) prefixFor(kind TextKind) string {

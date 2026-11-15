@@ -50,27 +50,27 @@ func exportAsVectorFile(t *testing.T, export *bytes.Buffer, vec []float32) *byte
 	return &out
 }
 
-// exportGemma exports st for the embeddinggemma-2 row.
-func exportGemma(t *testing.T, st *store.Store) *bytes.Buffer {
+// exportGemma exports st for the embeddinggemma-2 row under cfg.
+func exportGemma(t *testing.T, st *store.Store, cfg Config) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := ExportNDJSON(context.Background(), st, "embeddinggemma-2", &buf); err != nil {
+	if err := ExportNDJSON(context.Background(), st, cfg, "embeddinggemma-2", &buf); err != nil {
 		t.Fatalf("ExportNDJSON: %v", err)
 	}
 	return &buf
 }
 
 // importGemma imports a vector file for embeddinggemma-2 at the configured
-// width the tests use (512).
-func importGemma(t *testing.T, st *store.Store, in *bytes.Buffer) (Report, error) {
+// width the tests use (512), under cfg.
+func importGemma(t *testing.T, st *store.Store, cfg Config, in *bytes.Buffer) (Report, error) {
 	t.Helper()
-	return ImportNDJSON(context.Background(), st, "embeddinggemma-2", gemmaRevision, "cosine", 512, in)
+	return ImportNDJSON(context.Background(), st, cfg, "embeddinggemma-2", gemmaRevision, "cosine", 512, in)
 }
 
-// liveIncrementalRun is `leankg-embed run`: the live provider from the environment.
-func liveIncrementalRun(t *testing.T, st *store.Store) Report {
+// liveIncrementalRun is `leankg-embed run`: the live provider the configuration names.
+func liveIncrementalRun(t *testing.T, st *store.Store, cfg Config) Report {
 	t.Helper()
-	p, err := FromEnv()
+	p, _, err := Attach(cfg)
 	if err != nil {
 		t.Fatalf("live provider: %v", err)
 	}
@@ -101,12 +101,12 @@ func storedVector(t *testing.T, st *store.Store, modelID, qn string) []float32 {
 // (same environment) accepts without a rebuild: the stored stamp equals the
 // live provider's stamp, and the next incremental run embeds nothing.
 func TestImportThenIncrementalRunHasNoStampDrift(t *testing.T) {
-	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"), el("b::g", "def g(): pass"))
 
-	export := exportGemma(t, st)
-	rep, err := importGemma(t, st, exportAsVectorFile(t, export, rawGemmaVector()))
+	export := exportGemma(t, st, gc)
+	rep, err := importGemma(t, st, gc, exportAsVectorFile(t, export, rawGemmaVector()))
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestImportThenIncrementalRunHasNoStampDrift(t *testing.T) {
 		t.Fatalf("import: got %+v, want Embedded=3", rep)
 	}
 
-	live, err := FromEnv()
+	live, _, err := Attach(gc)
 	if err != nil {
 		t.Fatalf("live provider: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestImportThenIncrementalRunHasNoStampDrift(t *testing.T) {
 		t.Fatalf("imported stamp = %+v, want the live stamp %+v", *cur, StampOf(live))
 	}
 
-	rep = liveIncrementalRun(t, st)
+	rep = liveIncrementalRun(t, st, gc)
 	if rep.Dirty != 0 || rep.Embedded != 0 {
 		t.Fatalf("incremental after import: got %+v, want Dirty=0 Embedded=0", rep)
 	}
@@ -137,15 +137,15 @@ func TestImportThenIncrementalRunHasNoStampDrift(t *testing.T) {
 // imported collection is indistinguishable from one the live provider built.
 func TestImportMatchesLiveVectors(t *testing.T) {
 	raw := rawGemmaVector()
-	setGemmaEnv(t, newFixedVectorServer(t, raw).URL, "512")
+	gc := gemmaCfg(t, newFixedVectorServer(t, raw).URL, "512")
 
 	live := testStore(t)
 	seed(t, live, el("a::f1", "func f1() {}"))
-	liveIncrementalRun(t, live)
+	liveIncrementalRun(t, live, gc)
 
 	imported := testStore(t)
 	seed(t, imported, el("a::f1", "func f1() {}"))
-	if _, err := importGemma(t, imported, exportAsVectorFile(t, exportGemma(t, imported), raw)); err != nil {
+	if _, err := importGemma(t, imported, gc, exportAsVectorFile(t, exportGemma(t, imported, gc), raw)); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 
@@ -165,17 +165,17 @@ func TestImportMatchesLiveVectors(t *testing.T) {
 // import records. An element edited between export and import stays dirty, so
 // the next incremental run re-embeds exactly that element.
 func TestImportKeepsExportContentHash(t *testing.T) {
-	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
 
-	export := exportGemma(t, st)
+	export := exportGemma(t, st, gc)
 	seed(t, st, el("a::f1", "func f1() { return 2 }"))
 
-	if _, err := importGemma(t, st, exportAsVectorFile(t, export, rawGemmaVector())); err != nil {
+	if _, err := importGemma(t, st, gc, exportAsVectorFile(t, export, rawGemmaVector())); err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	rep := liveIncrementalRun(t, st)
+	rep := liveIncrementalRun(t, st, gc)
 	if rep.Embedded != 1 {
 		t.Fatalf("incremental after edit: got %+v, want Embedded=1 (only the edited element)", rep)
 	}
@@ -185,20 +185,20 @@ func TestImportKeepsExportContentHash(t *testing.T) {
 // replace the vector the live provider already wrote for the element's current
 // content.
 func TestImportStaleLineKeepsFresherVector(t *testing.T) {
-	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
-	export := exportGemma(t, st)
+	export := exportGemma(t, st, gc)
 
 	seed(t, st, el("a::f1", "func f1() { return 2 }"))
-	liveIncrementalRun(t, st)
+	liveIncrementalRun(t, st, gc)
 	before := storedVector(t, st, "embeddinggemma-2", "a::f1")
 
 	other := make([]float32, 768)
 	for i := range other {
 		other[i] = float32(i%5) + 1
 	}
-	rep, err := importGemma(t, st, exportAsVectorFile(t, export, other))
+	rep, err := importGemma(t, st, gc, exportAsVectorFile(t, export, other))
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -216,11 +216,11 @@ func TestImportStaleLineKeepsFresherVector(t *testing.T) {
 // TestImportRejectsWrongWidth: a line must carry the native width (768) or the
 // configured width (512). A 300-d line is rejected and nothing is written.
 func TestImportRejectsWrongWidth(t *testing.T) {
-	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 
 	ok := testStore(t)
 	seed(t, ok, el("a::f1", "func f1() {}"))
-	if _, err := importGemma(t, ok, exportAsVectorFile(t, exportGemma(t, ok), rawGemmaVector())); err != nil {
+	if _, err := importGemma(t, ok, gc, exportAsVectorFile(t, exportGemma(t, ok, gc), rawGemmaVector())); err != nil {
 		t.Fatalf("native-width line must import: %v", err)
 	}
 
@@ -229,7 +229,7 @@ func TestImportRejectsWrongWidth(t *testing.T) {
 	var in bytes.Buffer
 	fmt.Fprintf(&in, `{"qualified_name":"a::f1","content_hash":%q,"vec":[%s]}`+"\n",
 		contentHashHex("func f1() {}"), strings.TrimSuffix(strings.Repeat("0.1,", 300), ","))
-	if _, err := importGemma(t, bad, &in); err == nil {
+	if _, err := importGemma(t, bad, gc, &in); err == nil {
 		t.Fatal("want error for a 300-d line (neither 768 nor 512)")
 	}
 	if vectorCount(t, bad, "embeddinggemma-2") != 0 {
@@ -237,16 +237,16 @@ func TestImportRejectsWrongWidth(t *testing.T) {
 	}
 }
 
-// TestImportFlagsMustAgreeWithEnvironment: the import flags are overrides. Unset
-// flags take the live environment's stamp; a flag that disagrees is an error,
+// TestImportFlagsMustAgreeWithConfig: the import flags are overrides. Unset
+// flags take the live configuration's stamp; a flag that disagrees is an error,
 // and a local model with no pin is refused because its revision is only known
 // from a running sidecar.
-func TestImportFlagsMustAgreeWithEnvironment(t *testing.T) {
-	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+func TestImportFlagsMustAgreeWithConfig(t *testing.T) {
+	gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 	line := func() *bytes.Buffer {
-		return exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector())
+		return exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector())
 	}
 
 	for _, bad := range []struct {
@@ -259,7 +259,7 @@ func TestImportFlagsMustAgreeWithEnvironment(t *testing.T) {
 		{"distance", "", "", "euclidean", 0},
 		{"dims", "", "", "", 768},
 	} {
-		if _, err := ImportNDJSON(context.Background(), st, bad.model, bad.rev, bad.dist, bad.dims, line()); err == nil {
+		if _, err := ImportNDJSON(context.Background(), st, gc, bad.model, bad.rev, bad.dist, bad.dims, line()); err == nil {
 			t.Fatalf("%s conflict: want an error", bad.name)
 		}
 	}
@@ -267,14 +267,15 @@ func TestImportFlagsMustAgreeWithEnvironment(t *testing.T) {
 		t.Fatal("a rejected import must write nothing")
 	}
 
-	if _, err := ImportNDJSON(context.Background(), st, "", "", "", 0, line()); err != nil {
-		t.Fatalf("all flags unset must take the environment: %v", err)
+	if _, err := ImportNDJSON(context.Background(), st, gc, "", "", "", 0, line()); err != nil {
+		t.Fatalf("all flags unset must take the configuration: %v", err)
 	}
 
-	pending := line() // exported under the catalogued environment, before the switch
-	t.Setenv("LEANKG_EMBED_MODEL", "my-local-gguf")
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	if _, err := ImportNDJSON(context.Background(), st, "", "", "", 0, pending); err == nil || !strings.Contains(err.Error(), "LEANKG_EMBED_REVISION") {
+	pending := line() // exported under the catalogued configuration, before the switch
+	uncatalogued := gc
+	uncatalogued.Model = "my-local-gguf"
+	uncatalogued.Revision = ""
+	if _, err := ImportNDJSON(context.Background(), st, uncatalogued, "", "", "", 0, pending); err == nil || !strings.Contains(err.Error(), "LEANKG_EMBED_REVISION") {
 		t.Fatalf("uncatalogued local model without a pin: err = %v, want a refusal naming LEANKG_EMBED_REVISION", err)
 	}
 }
@@ -283,7 +284,7 @@ func TestImportFlagsMustAgreeWithEnvironment(t *testing.T) {
 // {"qualified_name","content_hash","vec"} line per export line, with no header.
 // Lines in exactly that shape must import with Embedded == number of lines.
 func TestImportAcceptsHFJobOutputFormat(t *testing.T) {
-	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
 
@@ -301,7 +302,7 @@ func TestImportAcceptsHFJobOutputFormat(t *testing.T) {
 		in.Write(line)
 		in.WriteByte('\n')
 	}
-	rep, err := importGemma(t, st, &in)
+	rep, err := importGemma(t, st, gc, &in)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -315,10 +316,10 @@ func TestImportAcceptsHFJobOutputFormat(t *testing.T) {
 // under the "local" environment provider lands in must keep its vectors: the
 // new line is added, the originals survive, and the stored label is unchanged.
 func TestImportProviderLabelAloneKeepsVectors(t *testing.T) {
-	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
-	if _, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector())); err != nil {
+	if _, err := importGemma(t, st, gc, exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector())); err != nil {
 		t.Fatalf("first import: %v", err)
 	}
 	stored, err := st.Stamp("embeddinggemma-2")
@@ -333,7 +334,7 @@ func TestImportProviderLabelAloneKeepsVectors(t *testing.T) {
 	const original = 2
 
 	seed(t, st, el("a::f3", "func f3() {}"))
-	rep, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector()))
+	rep, err := importGemma(t, st, gc, exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector()))
 	if err != nil {
 		t.Fatalf("import with provider label local over openai stamp: %v", err)
 	}
@@ -368,10 +369,10 @@ func TestImportRealStampDifferenceRewritesCollection(t *testing.T) {
 		{"distance", func(s *store.ModelStamp) { s.Distance = "dot" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+			gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 			st := testStore(t)
 			seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
-			if _, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector())); err != nil {
+			if _, err := importGemma(t, st, gc, exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector())); err != nil {
 				t.Fatalf("first import: %v", err)
 			}
 			stored, err := st.Stamp("embeddinggemma-2")
@@ -383,7 +384,7 @@ func TestImportRealStampDifferenceRewritesCollection(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			rep, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector()))
+			rep, err := importGemma(t, st, gc, exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector()))
 			if err != nil {
 				t.Fatalf("import over real %s drift: %v", tc.name, err)
 			}
@@ -393,7 +394,7 @@ func TestImportRealStampDifferenceRewritesCollection(t *testing.T) {
 			if n := vectorCount(t, st, "embeddinggemma-2"); n != 2 {
 				t.Fatalf("vectors: got %d, want 2", n)
 			}
-			live, err := FromEnv()
+			live, _, err := Attach(gc)
 			if err != nil {
 				t.Fatalf("live provider: %v", err)
 			}
@@ -409,10 +410,10 @@ func TestImportRealStampDifferenceRewritesCollection(t *testing.T) {
 // is written with text_cap 0 (the first run fills it in); a stamp that already
 // holds a cap keeps it through a re-import at the same identity.
 func TestImportNeverOverwritesStoredTextCap(t *testing.T) {
-	setGemmaEnv(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
+	gc := gemmaCfg(t, newFixedVectorServer(t, rawGemmaVector()).URL, "512")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
-	if _, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector())); err != nil {
+	if _, err := importGemma(t, st, gc, exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector())); err != nil {
 		t.Fatalf("first import: %v", err)
 	}
 	if got := storedStamp(t, st, "embeddinggemma-2").TextCap; got != 0 {
@@ -425,7 +426,7 @@ func TestImportNeverOverwritesStoredTextCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	seed(t, st, el("a::f2", "func f2() {}"))
-	rep, err := importGemma(t, st, exportAsVectorFile(t, exportGemma(t, st), rawGemmaVector()))
+	rep, err := importGemma(t, st, gc, exportAsVectorFile(t, exportGemma(t, st, gc), rawGemmaVector()))
 	if err != nil {
 		t.Fatalf("second import: %v", err)
 	}

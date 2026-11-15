@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/FreePeak/LeanKG/internal/core"
+	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
@@ -75,7 +76,7 @@ type Config struct {
 	EngineName string
 	PGURL      string
 	Memory     bool
-	Embedder   core.QueryEmbedder
+	Embedder   embed.Provider
 	// Logf receives one line per lazily-opened project (may be nil).
 	Logf func(format string, args ...any)
 }

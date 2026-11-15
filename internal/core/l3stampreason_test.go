@@ -49,7 +49,7 @@ func TestL3DegradeReasonNamesUnreadableStamp(t *testing.T) {
 	readErr := errors.New(`no such column: text_cap`)
 	broken := unreadableStampStore{Backend: st, err: readErr}
 	p := embed.Deterministic(4)
-	e := New(broken, nil, QueryEmbedderFromProvider(p))
+	e := New(broken, nil, p)
 
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "anything"})
 	if err != nil {
@@ -94,7 +94,7 @@ func TestL3DegradeReasonStillSaysNoVectorCollection(t *testing.T) {
 	// A real, migrated store with NO stamp row for the embedder's model:
 	// the collection genuinely does not exist.
 	p := embed.Deterministic(4)
-	e := New(st, nil, QueryEmbedderFromProvider(p))
+	e := New(st, nil, p)
 
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "anything"})
 	if err != nil {
@@ -105,7 +105,7 @@ func TestL3DegradeReasonStillSaysNoVectorCollection(t *testing.T) {
 		t.Fatalf("no retrieval in %v", out)
 	}
 	reason, _ := r["reason"].(string)
-	if !strings.Contains(reason, "no vector collection for model "+p.ModelID()) {
+	if !strings.Contains(reason, "no vector collection for model "+p.Identity().Model) {
 		t.Fatalf("reason must still say the collection is missing: %q", reason)
 	}
 	if !strings.Contains(reason, "degraded from L3") {

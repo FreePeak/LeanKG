@@ -64,7 +64,7 @@ func TestExportTextEqualsLiveRunInput(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	setGemmaEnv(t, srv.URL, "512")
+	gcfg := gemmaCfg(t, srv.URL, "512")
 
 	st := testStore(t)
 	seed(t,
@@ -74,10 +74,10 @@ func TestExportTextEqualsLiveRunInput(t *testing.T) {
 	)
 
 	var export bytes.Buffer
-	if err := ExportNDJSON(context.Background(), st, "embeddinggemma-2", &export); err != nil {
+	if err := ExportNDJSON(context.Background(), st, gcfg, "embeddinggemma-2", &export); err != nil {
 		t.Fatalf("ExportNDJSON: %v", err)
 	}
-	live, err := FromEnv()
+	live, _, err := Attach(gcfg)
 	if err != nil {
 		t.Fatalf("live provider: %v", err)
 	}
@@ -120,19 +120,10 @@ func TestExportTextEqualsLiveRunInput(t *testing.T) {
 	}
 }
 
-// exportLocalEnv points the export's environment at sc, the local sidecar the
-// run and the export both read.
-func exportLocalEnv(t *testing.T, sc *localSidecar) {
-	t.Helper()
-	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
-	t.Setenv("LEANKG_EMBED_BASE_URL", sc.URL+"/v1")
-}
-
 // TestExportCutsAtStoredCapWhenPropsDown: a store whose stamp records a text cap
 // exports at that cap even when the sidecar's /props is down. The export text
 // must be the string the incremental run (also /props down) sends for the element.
 func TestExportCutsAtStoredCapWhenPropsDown(t *testing.T) {
-	hermeticLocalEnv(t)
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 	sc := newLocalSidecar(t, 2048) // budget 4032 runes, recorded in the stamp
@@ -143,9 +134,8 @@ func TestExportCutsAtStoredCapWhenPropsDown(t *testing.T) {
 
 	sc.setNCtx(0) // /props now 404
 	seed(t, st, el("a::big", "marker-big\n"+strings.Repeat("x", 9000)))
-	exportLocalEnv(t, sc)
 	var export bytes.Buffer
-	if err := ExportNDJSON(context.Background(), st, localModel(), &export); err != nil {
+	if err := ExportNDJSON(context.Background(), st, localCfg(sc), localModel(), &export); err != nil {
 		t.Fatalf("export with /props down and a stored cap: %v", err)
 	}
 	exported := map[string]string{}
@@ -179,14 +169,12 @@ func TestExportCutsAtStoredCapWhenPropsDown(t *testing.T) {
 // no LEANKG_EMBED_TEXT_CAP pin leave the write cap undetermined, so the export
 // fails before writing and names the pin.
 func TestExportRefusesWhenNoCapIsDeterminable(t *testing.T) {
-	hermeticLocalEnv(t)
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 	sc := newLocalSidecar(t, 0) // /props 404, no pin, no stamp
-	exportLocalEnv(t, sc)
 
 	var buf bytes.Buffer
-	err := ExportNDJSON(context.Background(), st, localModel(), &buf)
+	err := ExportNDJSON(context.Background(), st, localCfg(sc), localModel(), &buf)
 	if err == nil || !strings.Contains(err.Error(), "LEANKG_EMBED_TEXT_CAP") {
 		t.Fatalf("export with nothing to determine the cap: err = %v, want a refusal naming LEANKG_EMBED_TEXT_CAP", err)
 	}
@@ -198,15 +186,14 @@ func TestExportRefusesWhenNoCapIsDeterminable(t *testing.T) {
 // TestExportUsesPinWhenNoBudgetOrStoredCap: with /props down and no stored cap,
 // the operator pin is the export's cut.
 func TestExportUsesPinWhenNoBudgetOrStoredCap(t *testing.T) {
-	hermeticLocalEnv(t)
-	t.Setenv("LEANKG_EMBED_TEXT_CAP", "1000")
 	st := testStore(t)
 	seed(t, st, el("a::big", strings.Repeat("x", 9000)))
 	sc := newLocalSidecar(t, 0) // /props 404
-	exportLocalEnv(t, sc)
+	cfg := localCfg(sc)
+	cfg.TextCap = 1000
 
 	var buf bytes.Buffer
-	if err := ExportNDJSON(context.Background(), st, localModel(), &buf); err != nil {
+	if err := ExportNDJSON(context.Background(), st, cfg, localModel(), &buf); err != nil {
 		t.Fatalf("export with the pin and no /props: %v", err)
 	}
 	var line exportLine

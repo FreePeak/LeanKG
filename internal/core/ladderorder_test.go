@@ -70,11 +70,11 @@ func TestLadderPrefersSemanticOverWeakKeyword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors(p.ModelID(), []store.VectorRow{{QualifiedName: impl.QualifiedName, Vec: qvec[0]}}); err != nil {
+	if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: impl.QualifiedName, Vec: qvec[0]}}); err != nil {
 		t.Fatal(err)
 	}
 
-	e := New(st, nil, QueryEmbedderFromProvider(p))
+	e := New(st, nil, p)
 	const question = "how are results ranked and fused"
 
 	// The question is keyword-heavy, so L2 does return something — that is

@@ -25,7 +25,7 @@ func seedRungs(t *testing.T, e *Engine) embed.Provider {
 	if _, err := embed.Run(context.Background(), e.st, p, "full"); err != nil {
 		t.Fatal(err)
 	}
-	e.SetEmbedder(QueryEmbedderFromProvider(p))
+	e.SetEmbedder(p)
 	return p
 }
 
@@ -56,11 +56,11 @@ func TestRungsReturnCancelledCtx(t *testing.T) {
 // interrupted by a disconnect. The failure must surface as cancellation, not
 // as a degrade to L2.
 type cancelOnEmbed struct {
-	QueryEmbedder
+	embed.Provider
 	cancel context.CancelFunc
 }
 
-func (c cancelOnEmbed) EmbedQuery(context.Context, string) ([]float32, error) {
+func (c cancelOnEmbed) Embed(context.Context, embed.TextKind, []string) ([][]float32, error) {
 	c.cancel()
 	return nil, errors.New("provider connection reset")
 }
@@ -70,7 +70,7 @@ func TestSemanticRungCancelDuringEmbedIsNotDegrade(t *testing.T) {
 	p := seedRungs(t, e)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	e.SetEmbedder(cancelOnEmbed{QueryEmbedder: QueryEmbedderFromProvider(p), cancel: cancel})
+	e.SetEmbedder(cancelOnEmbed{Provider: p, cancel: cancel})
 
 	out, err := e.rungSemantic(ctx, "alpha function", 10, map[string]any{}, true, nil)
 	if !errors.Is(err, context.Canceled) {

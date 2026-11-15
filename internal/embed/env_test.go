@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// TestAttachHookProviderPolicy pins the SessionStart hook's provider policy:
-// the in-process deterministic provider, or a local provider attached to a
-// loopback endpoint. Every other combination is refused, and no row may spawn
-// a sidecar: LEANKG_EMBED_SIDECAR_CMD points at a script that touches a marker,
-// and the marker must stay absent.
-func TestAttachHookProviderPolicy(t *testing.T) {
+// TestAttachHookPolicy pins the SessionStart hook's provider policy: the
+// in-process deterministic provider, or a local provider attached to a loopback
+// endpoint. Every other combination is refused, and no row may spawn a sidecar:
+// the sidecar command is a script that touches a marker, and the marker must
+// stay absent.
+func TestAttachHookPolicy(t *testing.T) {
 	cases := []struct {
 		name     string
 		provider string
@@ -31,17 +31,15 @@ func TestAttachHookProviderPolicy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LEANKG_EMBED_PROVIDER", tc.provider)
-			t.Setenv("LEANKG_EMBED_BASE_URL", tc.baseURL)
-			t.Setenv("LEANKG_EMBED_MODEL", tc.model)
 			marker := filepath.Join(t.TempDir(), "spawned")
 			script := filepath.Join(t.TempDir(), "sidecar.sh")
 			if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("LEANKG_EMBED_SIDECAR_CMD", script)
+			cfg := Config{Provider: tc.provider, BaseURL: tc.baseURL, Model: tc.model,
+				Sidecar: SidecarConfig{Command: script}}
 
-			p, release, err := AttachHookProvider(context.Background())
+			p, release, err := AttachHook(cfg)
 			release()
 			if _, statErr := os.Stat(marker); statErr == nil {
 				t.Fatal("hook spawned the sidecar")
@@ -60,25 +58,23 @@ func TestAttachHookProviderPolicy(t *testing.T) {
 	}
 }
 
-// TestStartProviderRejectsWidthBeforeSpawn: an unsupported LEANKG_EMBED_DIMS for
-// a catalogued model is a configuration error, so it must fail before the
-// sidecar process exists. The sidecar command touches a marker; the marker must
-// stay absent.
-func TestStartProviderRejectsWidthBeforeSpawn(t *testing.T) {
-	setGemmaEnv(t, "", "300")
+// TestStartRejectsWidthBeforeSpawn: an unsupported width for a catalogued model
+// is a configuration error, so it must fail before the sidecar process exists.
+// The sidecar command touches a marker; the marker must stay absent.
+func TestStartRejectsWidthBeforeSpawn(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "spawned")
 	script := filepath.Join(t.TempDir(), "sidecar.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", script)
+	cfg := Config{Provider: "local", Model: "embeddinggemma-2", Dims: 300, Sidecar: SidecarConfig{Command: script}}
 
-	_, release, err := StartProvider(context.Background())
+	_, release, err := Start(context.Background(), cfg)
 	release()
 	if _, statErr := os.Stat(marker); statErr == nil {
-		t.Fatal("StartProvider spawned the sidecar before rejecting the width")
+		t.Fatal("Start spawned the sidecar before rejecting the width")
 	}
-	if err == nil || !strings.Contains(err.Error(), "LEANKG_EMBED_DIMS=300") {
-		t.Fatalf("err = %v, want the width error naming LEANKG_EMBED_DIMS=300", err)
+	if err == nil || !strings.Contains(err.Error(), "dims 300") {
+		t.Fatalf("err = %v, want the width error naming dims 300", err)
 	}
 }

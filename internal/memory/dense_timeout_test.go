@@ -11,23 +11,6 @@ import (
 	"github.com/FreePeak/LeanKG/internal/embed"
 )
 
-// providerVectorizer adapts a real embed.Provider to the dense arm's Vectorizer
-// seam, the way core does in production, without a noise floor.
-type providerVectorizer struct{ p embed.Provider }
-
-func (v providerVectorizer) Key() string            { return "hung-endpoint" }
-func (v providerVectorizer) Floor() (float64, bool) { return 0, true }
-func (v providerVectorizer) EmbedQuery(ctx context.Context, t string) ([]float32, error) {
-	vecs, err := v.p.Embed(ctx, embed.Query, []string{t})
-	if err != nil {
-		return nil, err
-	}
-	return vecs[0], nil
-}
-func (v providerVectorizer) EmbedDocuments(ctx context.Context, ts []string) ([][]float32, error) {
-	return v.p.Embed(ctx, embed.Document, ts)
-}
-
 // TestDenseArmReturnsByEmbedClientTimeout pins CX-34's deferred bound: with no
 // memory-side deadline, the dense arm is still bounded by the embed client's
 // request timeout (LEANKG_EMBED_REQUEST_TIMEOUT_SECS). A fake endpoint that
@@ -46,10 +29,7 @@ func TestDenseArmReturnsByEmbedClientTimeout(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() { close(release) })
 
-	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
-	t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL)
-	t.Setenv("LEANKG_EMBED_REQUEST_TIMEOUT_SECS", "1")
-	p, err := embed.FromEnv()
+	p, _, err := embed.Attach(embed.Config{Provider: "local", BaseURL: srv.URL, RequestTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +40,7 @@ func TestDenseArmReturnsByEmbedClientTimeout(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m.SetVectorizer(providerVectorizer{p: p})
+	m.SetProvider(p, func() (float64, bool) { return 0, true })
 
 	start := time.Now()
 	_, err = m.Recall(context.Background(), "b", "which database holds the vectors", 3)

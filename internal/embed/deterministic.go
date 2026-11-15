@@ -14,11 +14,11 @@ func Deterministic(dims int) Provider { return deterministic{dims: dims} }
 
 type deterministic struct{ dims int }
 
-func (d deterministic) ModelID() string  { return fmt.Sprintf("deterministic-%d", d.dims) }
-func (d deterministic) Revision() string { return "test:deterministic-v1" }
-func (d deterministic) Dimensions() int  { return d.dims }
-func (d deterministic) Distance() string { return "cosine" }
-func (d deterministic) Provider() string { return "deterministic" }
+func (d deterministic) Identity() Identity {
+	return newIdentity(ProviderDeterministic, fmt.Sprintf("deterministic-%d", d.dims), "test:deterministic-v1", d.dims, 0)
+}
+
+func (d deterministic) Probe(context.Context) error { return nil }
 
 func (d deterministic) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))

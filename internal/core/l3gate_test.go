@@ -11,17 +11,18 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-// countingEmbedder records how many times EmbedQuery is called so a test can
-// prove the Noul L3 gate prevented a semantic call. Embeds the other
-// QueryEmbedder methods so SetEmbedder accepts it.
+// countingEmbedder records how many times the provider embeds a query, so a
+// test can prove the Noul L3 gate prevented a semantic call.
 type countingEmbedder struct {
-	QueryEmbedder
+	embed.Provider
 	n atomic.Int64
 }
 
-func (c *countingEmbedder) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
-	c.n.Add(1)
-	return c.QueryEmbedder.EmbedQuery(ctx, text)
+func (c *countingEmbedder) Embed(ctx context.Context, kind embed.TextKind, texts []string) ([][]float32, error) {
+	if kind == embed.Query {
+		c.n.Add(1)
+	}
+	return c.Provider.Embed(ctx, kind, texts)
 }
 
 // TestL3GateSkipsSemanticOnLowOntologyConfidence is the FR-TYPE-01
@@ -57,7 +58,7 @@ func TestL3GateSkipsSemanticOnLowOntologyConfidence(t *testing.T) {
 	if _, err := embed.Run(context.Background(), e.st, p, "full"); err != nil {
 		t.Fatal(err)
 	}
-	counter := &countingEmbedder{QueryEmbedder: QueryEmbedderFromProvider(p)}
+	counter := &countingEmbedder{Provider: p}
 	e.SetEmbedder(counter)
 
 	// Sanity: the confidence the gate will see is the one we designed for.
@@ -103,7 +104,7 @@ func TestL3GateAllowsSemanticWhenConfidenceIsZero(t *testing.T) {
 	if _, err := embed.Run(context.Background(), e.st, p, "full"); err != nil {
 		t.Fatal(err)
 	}
-	counter := &countingEmbedder{QueryEmbedder: QueryEmbedderFromProvider(p)}
+	counter := &countingEmbedder{Provider: p}
 	e.SetEmbedder(counter)
 
 	conf, err := ontology.OntologyConfidence(e.st, "how does the widget frame get drawn")

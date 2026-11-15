@@ -39,6 +39,7 @@ func cmdRefresh(ctx context.Context, args []string) error {
 		Source:  *source,
 		RefName: *refName,
 		Auth:    sourceAuth(*authFlag),
+		Start:   embedStartFromEnv(),
 	})
 	if err != nil {
 		return verbFatal(err)

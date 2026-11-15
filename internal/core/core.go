@@ -56,24 +56,6 @@ var supersededTools = map[string]string{
 	"get": ToolQuery,
 }
 
-// QueryEmbedder is the query-time embedding port core needs for the L3 rung.
-// The serving binary wires an HTTP provider (sidecar or API) — it performs
-// zero inference itself (issue #368: inference lives in leankg-embed).
-type QueryEmbedder interface {
-	EmbedQuery(ctx context.Context, text string) ([]float32, error)
-	Describe() (modelID, provider string)
-	// Revision pins the model revision the query embedder serves; compared
-	// against the stored collection stamp on every L3 query (query-side
-	// degrade on drift — FR-ZCP-11 part 2 port).
-	Revision() string
-	// Stamp returns the FULL collection identity this embedder writes with:
-	// model, revision, dimensions, distance, provider, chunker version and the
-	// query/document prefix pair (issue #279). L3 compares it whole against the
-	// stored stamp, so a chunker or prefix drift degrades with the rebuild hint
-	// instead of mixing vector spaces.
-	Stamp() store.ModelStamp
-}
-
 // Engine is the core service over one project's store.
 type Engine struct {
 	st         store.Backend
@@ -81,7 +63,7 @@ type Engine struct {
 	projectDir string
 	langsReg   *langs.Registry            // lazy language activation for the opened codebase
 	lspManager *lsp.Manager               // lazy per-(lang,dir) LSP server pool (query time only)
-	embedder   QueryEmbedder              // optional; nil ⇒ L3 degrades with reason
+	embedder   embed.Provider             // optional; nil ⇒ L3 degrades with reason
 	embedProbe embedHealth                // cached reachability of the embedder (status)
 	compressor *compress.LeanKGCompressor // context compression (reader/cmd/response paths, Rust parity)
 }
@@ -103,52 +85,27 @@ func (e *Engine) SetProjectDir(dir string) {
 	e.projectDir = dir
 }
 
-// SetEmbedder wires the query-time embedder after construction. The CLI's
+// SetEmbedder wires the embedding provider after construction. The CLI's
 // one-shot verbs build an engine before they know whether a provider endpoint
 // is configured; serve passes it to New directly.
-func (e *Engine) SetEmbedder(em QueryEmbedder) {
-	e.embedder = em
+func (e *Engine) SetEmbedder(p embed.Provider) {
+	e.embedder = p
 	e.wireMemoryVectors()
 }
 
-// wireMemoryVectors gives the memory layer the dense recall arm (RS-19)
-// when a query embedder that can embed documents is wired.
+// wireMemoryVectors gives the memory layer the dense recall arm (RS-19): the
+// provider, and the calibrated noise floor of its collection.
 func (e *Engine) wireMemoryVectors() {
 	if e.mem == nil {
 		return
 	}
-	if _, ok := e.embedder.(documentEmbedder); ok && e.embedder != nil {
-		e.mem.SetVectorizer(memVectorizer{e: e})
+	if e.embedder == nil {
+		e.mem.SetProvider(nil, nil)
 		return
 	}
-	e.mem.SetVectorizer(nil)
-}
-
-// documentEmbedder is the optional half of a query embedder that embeds
-// stored text (memory rows) rather than questions.
-type documentEmbedder interface {
-	EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error)
-}
-
-// memVectorizer adapts the engine's embedder and calibrated noise floor to
-// memory.Vectorizer.
-type memVectorizer struct{ e *Engine }
-
-func (v memVectorizer) Key() string {
-	s := v.e.embedder.Stamp()
-	return fmt.Sprintf("%s|%s|%s|%d|%d|%s|%s", s.ModelID, s.Revision, s.Provider, s.Dimensions, s.ChunkerVersion, s.QueryPrefix, s.DocumentPrefix)
-}
-
-func (v memVectorizer) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
-	return v.e.embedder.EmbedQuery(ctx, text)
-}
-
-func (v memVectorizer) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
-	return v.e.embedder.(documentEmbedder).EmbedDocuments(ctx, texts)
-}
-
-func (v memVectorizer) Floor() (float64, bool) {
-	return embed.ReadCalibration(v.e.st, v.e.embedder.Stamp())
+	e.mem.SetProvider(e.embedder, func() (float64, bool) {
+		return embed.ReadCalibration(e.st, embed.StampOf(e.embedder))
+	})
 }
 
 // ProjectDir reports the project directory the engine is bound to (the metric
@@ -156,7 +113,7 @@ func (v memVectorizer) Floor() (float64, bool) {
 func (e *Engine) ProjectDir() string { return e.projectDir }
 
 // New builds an Engine. mem may be nil (memory actions then error).
-func New(st store.Backend, mem *memory.Memory, embedder QueryEmbedder) *Engine {
+func New(st store.Backend, mem *memory.Memory, embedder embed.Provider) *Engine {
 	e := &Engine{st: st, mem: mem, embedder: embedder, compressor: compress.New()}
 	if embedder != nil {
 		e.wireMemoryVectors()
@@ -166,48 +123,6 @@ func New(st store.Backend, mem *memory.Memory, embedder QueryEmbedder) *Engine {
 
 // Store exposes the underlying backend (transports needing raw reads).
 func (e *Engine) Store() store.Backend { return e.st }
-
-// QueryEmbedderFromProvider adapts an embed.Provider to the L3 query
-// embedder port (query-time embedding is an HTTP client call — the serving
-// binary does zero inference, issue #368).
-func QueryEmbedderFromProvider(p embed.Provider) QueryEmbedder {
-	return providerEmbedder{p: p}
-}
-
-type providerEmbedder struct{ p embed.Provider }
-
-func (a providerEmbedder) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
-	// A query longer than the model window used to fail at the sidecar (HTTP
-	// 500) and degrade L3 to keywords; embed its head instead (RS-15).
-	text = embed.TruncateText(text, embed.TextCap(a.p))
-	vecs, err := a.p.Embed(ctx, embed.Query, []string{text})
-	if err != nil {
-		return nil, err
-	}
-	if len(vecs) != 1 {
-		return nil, fmt.Errorf("embed: query returned %d vectors, want 1", len(vecs))
-	}
-	return vecs[0], nil
-}
-
-// EmbedDocuments embeds stored text (memory rows) under the provider's
-// document kind, each cut to the provider's text budget.
-func (a providerEmbedder) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
-	cut := make([]string, len(texts))
-	for i, t := range texts {
-		cut[i] = embed.TruncateText(t, embed.TextCap(a.p))
-	}
-	return a.p.Embed(ctx, embed.Document, cut)
-}
-
-// Stamp exposes the provider's full collection identity (issue #279).
-func (a providerEmbedder) Stamp() store.ModelStamp { return embed.StampOf(a.p) }
-
-func (a providerEmbedder) Describe() (string, string) {
-	return a.p.ModelID(), a.p.Provider()
-}
-
-func (a providerEmbedder) Revision() string { return a.p.Revision() }
 
 // ResolveEnvelope validates a requested tool name against the four-tool
 // registry. Unknown names hard-fail naming the valid surface (error-catalog
@@ -627,10 +542,18 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 		out[k] = v
 	}
 	if e.embedder != nil {
-		modelID, provider := e.embedder.Describe()
+		// The health check embeds a probe text, which also resolves the
+		// provider's identity (its revision); read the identity after it.
 		reachable, perr := e.embedProbe.check(ctx, e.embedder)
-		qe := map[string]any{"model_id": modelID, "provider": provider,
-			"revision": e.embedder.Revision(), "reachable": reachable}
+		id := e.embedder.Identity()
+		qe := map[string]any{"model_id": id.Model, "provider": id.Provider,
+			"revision": id.Revision, "reachable": reachable}
+		if id.Provider == embed.ProviderDeterministic {
+			// D10: the hash-derived provider is selectable only by name, and
+			// its vectors carry no meaning. Say so where the operator looks.
+			qe["deterministic"] = true
+			qe["warning"] = "deterministic provider: hash-derived vectors, not a semantic embedder"
+		}
 		if perr != "" {
 			// status used to report healthy with the provider down while every
 			// L3 query degraded (RS-15); say so where the agent looks.
@@ -1142,7 +1065,10 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	// Select the collection BY the embedder's model (Stamps() has no ORDER
 	// BY — stamps[0] was arbitrary with >1 model) and enforce the query-side
 	// stamp contract: drift DEGRADES to L2, never silently wrong answers.
-	modelID, _ := e.embedder.Describe()
+	if err := e.embedder.Probe(ctx); err != nil {
+		return nil, err
+	}
+	modelID := e.embedder.Identity().Model
 	stamp, err := e.st.Stamp(modelID)
 	if err != nil {
 		// A READ ERROR is not a missing collection: the collection may well
@@ -1155,14 +1081,14 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if stamp == nil {
 		return degrade(fmt.Sprintf("no vector collection for model %s; degraded from L3", modelID))
 	}
-	if want := e.embedder.Stamp(); !stamp.Matches(want) {
+	if want := embed.StampOf(e.embedder); !stamp.Matches(want) {
 		// Whole-identity comparison (issue #279): a chunker or prefix change is
 		// the same class of drift as a model change — mixed vector spaces must
 		// never be served, and the hint names the fix.
 		return degrade(fmt.Sprintf("stamp mismatch: collection differs from the live provider (%s); degraded from L3; run `leankg-embed full` to rebuild",
 			stampDriftForLog(*stamp, want)))
 	}
-	qvec, err := e.embedder.EmbedQuery(ctx, q)
+	qvec, err := embed.EmbedQuery(ctx, e.embedder, q)
 	if err != nil {
 		return degrade(fmt.Sprintf("embedding provider failed (%v); degraded from L3", err))
 	}

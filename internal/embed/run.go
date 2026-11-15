@@ -67,7 +67,8 @@ type dirtyItem struct{ file, qn, text, hash string }
 // runs would move the write cap. Writers use writeCapFor, which keeps the cap
 // recorded in the stamp or refuses before any write.
 func TextCap(p Provider) int {
-	return capForLabel(p.Provider(), sidecarBudget(p))
+	id := p.Identity()
+	return capForLabel(id.Provider, id.TextBudget)
 }
 
 // capForLabel is the rune cap for provider label `label` given the sidecar's
@@ -114,11 +115,8 @@ func resolveWriteCap(label string, budget, pin, stored int) (int, error) {
 // answer that changes mid-run cannot change the cut. ExportNDJSON calls it too,
 // so an export's text is the live cut.
 func writeCapFor(cur *store.ModelStamp, p Provider, mode string) (int, string, error) {
-	pin, err := textCapPin()
-	if err != nil {
-		return 0, "", err
-	}
-	return writeCap(mode, StampOf(p), cur, sidecarBudget(p), pin)
+	id := p.Identity()
+	return writeCap(mode, id.Stamp(), cur, id.TextBudget, id.TextCapPin)
 }
 
 // writeCap is the rule behind writeCapFor, pure so each branch is testable.
@@ -157,15 +155,6 @@ func writeCap(mode string, want store.ModelStamp, cur *store.ModelStamp, budget,
 	return recorded, "", nil
 }
 
-// sidecarBudget is the text budget the local sidecar reports from /props, in
-// runes; 0 when p has none or the sidecar cannot be asked.
-func sidecarBudget(p Provider) int {
-	if tb, ok := unwrapProvider(p).(interface{ TextBudget() int }); ok {
-		return tb.TextBudget()
-	}
-	return 0
-}
-
 // planText is the text a live run sends for one element: documentText cut to
 // limit runes (the run's one write cap, writeCapFor), and whether it was cut.
 // Run embeds it and ExportNDJSON writes it, so an offsite embedder receives the
@@ -186,7 +175,7 @@ func planText(limit int, e elementText) (text string, truncated bool) {
 // it as the line's text, so the offsite embedder and the live run cannot drift.
 func documentInput(p Provider, limit int, e elementText) string {
 	text, _ := planText(limit, e)
-	_, document := Prefixes(p.ModelID())
+	_, document := Prefixes(p.Identity().Model)
 	return prefixTexts(document, []string{text})[0]
 }
 
@@ -204,17 +193,7 @@ func TruncateText(s string, n int) string {
 // model id. Every vector writer AND the L3 query guard compare this value, so
 // chunker or prefix drift is caught exactly like a revision change.
 func StampOf(p Provider) store.ModelStamp {
-	q, d := Prefixes(p.ModelID())
-	return store.ModelStamp{
-		ModelID:        p.ModelID(),
-		Revision:       p.Revision(),
-		Dimensions:     p.Dimensions(),
-		Distance:       p.Distance(),
-		Provider:       p.Provider(),
-		ChunkerVersion: ChunkerVersion,
-		QueryPrefix:    q,
-		DocumentPrefix: d,
-	}
+	return p.Identity().Stamp()
 }
 
 // stampDrift names the stamp components that differ, so the rebuild directive
@@ -267,7 +246,10 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	if mode != "incremental" && mode != "full" {
 		return rep, fmt.Errorf("embed: unknown mode %q (want incremental|full)", mode)
 	}
-	modelID := p.ModelID()
+	if err := p.Probe(ctx); err != nil {
+		return rep, err
+	}
+	modelID := p.Identity().Model
 	want := StampOf(p)
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the
 	// same hard-rebuild rule over the WHOLE identity — model, revision,
@@ -424,7 +406,7 @@ func IncrementalBacklog(st store.Backend, p Provider) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	states, err := st.EmbeddingStateMap(p.ModelID())
+	states, err := st.EmbeddingStateMap(p.Identity().Model)
 	if err != nil {
 		return 0, err
 	}
@@ -513,7 +495,7 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 					shrunk := false
 					for range 4 {
 						v, ierr := p.Embed(ctx, Document, []string{text})
-						if ierr == nil && validateBatch(v, 1, p.Dimensions()) == nil {
+						if ierr == nil && validateBatch(v, 1, p.Identity().Dims) == nil {
 							vec = v[0]
 							break
 						}
@@ -545,7 +527,7 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 				}
 				continue
 			}
-			if err := validateBatch(vecs, len(texts), p.Dimensions()); err != nil {
+			if err := validateBatch(vecs, len(texts), p.Identity().Dims); err != nil {
 				rep.Failed += len(batch)
 				continue
 			}

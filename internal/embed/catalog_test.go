@@ -66,18 +66,16 @@ func TestCatalogPinPrecedence(t *testing.T) {
 	if !ok {
 		t.Fatal("jina row missing")
 	}
-	if got := Pin("jina-embeddings-v3", "openai"); got != model.Revision {
+	if got := Pin("jina-embeddings-v3", "openai", ""); got != model.Revision {
 		t.Fatalf("catalog pin = %q, want %q", got, model.Revision)
 	}
-	t.Setenv("LEANKG_EMBED_REVISION", "operator-pin-1")
-	if got := Pin("jina-embeddings-v3", "openai"); got != "operator-pin-1" {
+	if got := Pin("jina-embeddings-v3", "openai", "operator-pin-1"); got != "operator-pin-1" {
 		t.Fatalf("explicit override = %q, want operator-pin-1", got)
 	}
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	if got := Pin("text-embedding-3-small", "openai"); got != "openai:text-embedding-3-small" {
+	if got := Pin("text-embedding-3-small", "openai", ""); got != "openai:text-embedding-3-small" {
 		t.Fatalf("uncatalogued fallback = %q", got)
 	}
-	if got := Pin("local", "local"); got != "local:local" {
+	if got := Pin("local", "local", ""); got != "local:local" {
 		t.Fatalf("local sidecar fallback = %q", got)
 	}
 }
@@ -159,21 +157,14 @@ func TestEmbeddingGemma2CatalogPrefixes(t *testing.T) {
 		wantQueryPrefix = "task: code retrieval | query: "
 		wantRevision    = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 	)
-	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
-	t.Setenv("LEANKG_EMBED_MODEL", "embeddinggemma-2")
-	t.Setenv("LEANKG_EMBED_DIMS", "")
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	t.Setenv("LEANKG_EMBED_API_KEY", "")
-
 	var sent []string
 	srv := newOpenAITestServer(t, "", 768, func(body embeddingsRequest) {
 		sent = append(sent, body.Input...)
 	})
-	t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL)
 
-	p, err := FromEnv()
+	p, _, err := Attach(Config{Provider: "local", Model: "embeddinggemma-2", BaseURL: srv.URL})
 	if err != nil {
-		t.Fatalf("FromEnv: %v", err)
+		t.Fatalf("Attach: %v", err)
 	}
 	if _, err := p.Embed(context.Background(), Document, []string{"func f()"}); err != nil {
 		t.Fatalf("document embed: %v", err)
@@ -215,7 +206,7 @@ func TestRunStampRecordsPipelineIdentity(t *testing.T) {
 	seed(t, st, el("a::f1", "func f1() {}"))
 	mustRun(t, st, p, "full")
 
-	got, err := st.Stamp(p.ModelID())
+	got, err := st.Stamp(p.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +244,7 @@ func TestRunStampRecordsPipelineIdentity(t *testing.T) {
 			}
 			// Full mode clears and re-stamps the drifted collection.
 			mustRun(t, st, p, "full")
-			after, err := st.Stamp(p.ModelID())
+			after, err := st.Stamp(p.Identity().Model)
 			if err != nil || after == nil || *after != *got {
 				t.Fatalf("stamp after rebuild = %+v, %v; want %+v", after, err, got)
 			}
@@ -270,18 +261,12 @@ type textFailProvider struct {
 	bad   string
 }
 
-func (p textFailProvider) ModelID() string  { return p.inner.ModelID() }
-func (p textFailProvider) Revision() string { return p.inner.Revision() }
-func (p textFailProvider) Dimensions() int  { return p.inner.Dimensions() }
-func (p textFailProvider) Distance() string { return p.inner.Distance() }
-func (p textFailProvider) Provider() string { return p.inner.Provider() }
-
 func (p textFailProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	for _, txt := range texts {
 		if strings.Contains(txt, p.bad) {
 			out := make([][]float32, len(texts))
 			for i := range out {
-				out[i] = make([]float32, p.inner.Dimensions()+1) // fails validateBatch
+				out[i] = make([]float32, p.inner.Identity().Dims+1) // fails validateBatch
 			}
 			return out, nil
 		}
@@ -315,7 +300,7 @@ func TestRunCommitsPerFileAtomically(t *testing.T) {
 		t.Fatalf("run report = %+v, want Failed=1 Embedded=1", rep)
 	}
 
-	states, err := st.EmbeddingStateMap(p.ModelID())
+	states, err := st.EmbeddingStateMap(p.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +310,7 @@ func TestRunCommitsPerFileAtomically(t *testing.T) {
 	if states["a.go::fine"] == "" {
 		t.Fatal("sibling file must keep its embedding state")
 	}
-	covered, orphans, err := st.VectorCoverage(p.ModelID())
+	covered, orphans, err := st.VectorCoverage(p.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,16 +329,12 @@ func TestExportAppliesDocumentPrefix(t *testing.T) {
 	if !ok {
 		t.Fatal("jina row missing")
 	}
-	t.Setenv("LEANKG_EMBED_PROVIDER", "openai")
-	t.Setenv("LEANKG_EMBED_MODEL", model.Name)
-	t.Setenv("LEANKG_EMBED_DIMS", "")
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	t.Setenv("LEANKG_EMBED_BASE_URL", "")
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 
 	var buf bytes.Buffer
-	if err := ExportNDJSON(context.Background(), st, model.Name, &buf); err != nil {
+	cfg := Config{Provider: "openai", Model: model.Name}
+	if err := ExportNDJSON(context.Background(), st, cfg, model.Name, &buf); err != nil {
 		t.Fatalf("ExportNDJSON: %v", err)
 	}
 	var line exportLine
@@ -367,3 +348,6 @@ func TestExportAppliesDocumentPrefix(t *testing.T) {
 		t.Fatalf("export content_hash = %q, want the raw-content hash (resume key)", line.ContentHash)
 	}
 }
+
+func (p textFailProvider) Identity() Identity              { return p.inner.Identity() }
+func (p textFailProvider) Probe(ctx context.Context) error { return p.inner.Probe(ctx) }

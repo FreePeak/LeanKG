@@ -44,9 +44,23 @@ type Calibration struct {
 	Identity string  `json:"identity"`
 }
 
-// identityOf binds a calibration to everything that shapes the vectors.
-func identityOf(s store.ModelStamp) string {
+// calibrationIdentity binds a calibration to everything that shapes the vectors:
+// the vector-space Key, the same encoding the memory index keys its rows by.
+func calibrationIdentity(s store.ModelStamp) string {
+	return identityOf(s).Key()
+}
+
+// legacyCalibrationIdentity is the identity string calibrations stored before
+// the Key encoding existed: no model id, and the stamp fields in another order.
+// It is read back, never written, so an upgrade keeps every stored noise floor.
+func legacyCalibrationIdentity(s store.ModelStamp) string {
 	return fmt.Sprintf("%s|%s|%d|%d|%s|%s", s.Revision, s.Provider, s.Dimensions, s.ChunkerVersion, s.QueryPrefix, s.DocumentPrefix)
+}
+
+// identityOf is the Identity a stamp describes: every field the stamp records.
+func identityOf(s store.ModelStamp) Identity {
+	return Identity{Provider: s.Provider, Model: s.ModelID, Revision: s.Revision, Dims: s.Dimensions,
+		ChunkerVersion: s.ChunkerVersion, QueryPrefix: s.QueryPrefix, DocumentPrefix: s.DocumentPrefix}
 }
 
 // Calibrate measures and stores the noise floor of p's collection: the best
@@ -59,7 +73,7 @@ func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool
 	}
 	floor, found := 0.0, false
 	for _, v := range vecs {
-		hits, err := st.SearchVectors(store.VectorQuery{ModelID: p.ModelID(), Vec: v, K: 1})
+		hits, err := st.SearchVectors(store.VectorQuery{ModelID: p.Identity().Model, Vec: v, K: 1})
 		if err != nil {
 			return 0, false, fmt.Errorf("embed: calibration search: %w", err)
 		}
@@ -78,7 +92,7 @@ func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool
 
 // WriteCalibration stores a noise floor for the collection stamp.
 func WriteCalibration(st store.Backend, stamp store.ModelStamp, floor float64) error {
-	raw, _ := json.Marshal(Calibration{Floor: floor, Identity: identityOf(stamp)})
+	raw, _ := json.Marshal(Calibration{Floor: floor, Identity: calibrationIdentity(stamp)})
 	return st.KVSet(calibrationNS, stamp.ModelID, string(raw))
 }
 
@@ -90,7 +104,10 @@ func ReadCalibration(st store.Backend, stamp store.ModelStamp) (float64, bool) {
 		return 0, false
 	}
 	var c Calibration
-	if json.Unmarshal([]byte(raw), &c) != nil || c.Identity != identityOf(stamp) {
+	if json.Unmarshal([]byte(raw), &c) != nil {
+		return 0, false
+	}
+	if c.Identity != calibrationIdentity(stamp) && c.Identity != legacyCalibrationIdentity(stamp) {
 		return 0, false
 	}
 	return c.Floor, true

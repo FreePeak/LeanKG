@@ -49,7 +49,7 @@ func TestGolden(t *testing.T) {
 	defer mem.Close()
 	seedMemory(t, mem)
 
-	eng := core.New(st, mem, core.QueryEmbedderFromProvider(embed.Deterministic(8)))
+	eng := core.New(st, mem, embed.Deterministic(8))
 
 	status, err := eng.Status(ctx)
 	if err != nil {
@@ -166,7 +166,7 @@ func seed(t *testing.T, ctx context.Context, st *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors(prov.ModelID(), []store.VectorRow{
+	if err := st.UpsertVectors(prov.Identity().Model, []store.VectorRow{
 		{QualifiedName: els[0].QualifiedName, Vec: vecs[0]},
 	}); err != nil {
 		t.Fatal(err)

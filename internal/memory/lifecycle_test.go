@@ -3,19 +3,20 @@ package memory
 import (
 	"context"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/embed"
 )
 
-// stampedVectorizer is a dense arm with a fixed vector space key — the
-// shape the serve path wires (the key names the model and the space it was
-// embedded in).
-type stampedVectorizer struct{ key string }
+// stampedProvider is a dense arm with a fixed vector space identity — the
+// shape the serve path wires (the identity names the model and the space it
+// was embedded in).
+type stampedProvider struct{ id embed.Identity }
 
-func (s stampedVectorizer) Key() string            { return s.key }
-func (s stampedVectorizer) Floor() (float64, bool) { return 0, true }
-func (s stampedVectorizer) EmbedQuery(context.Context, string) ([]float32, error) {
-	return []float32{1, 0, 0}, nil
+func (s stampedProvider) Identity() embed.Identity { return s.id }
+func (s stampedProvider) Probe(context.Context) error {
+	return nil
 }
-func (s stampedVectorizer) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
+func (s stampedProvider) Embed(_ context.Context, _ embed.TextKind, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))
 	for i := range texts {
 		out[i] = []float32{1, 0, 0}
@@ -54,11 +55,12 @@ func countVectors(t *testing.T, m *Memory, model string) int {
 func TestCompactPrunesStaleVectorCollection(t *testing.T) {
 	m := openTest(t)
 	const stale = "local|bge-small-en-v1.5-f16.gguf|local|384"
-	const live = "embeddinggemma-2|rev1|local|512"
+	liveID := embed.Identity{Provider: "local", Model: "embeddinggemma-2", Revision: "rev1", Dims: 512}
+	live := liveID.Key()
 	seedVector(t, m, stale, "bank", "old-1")
 	seedVector(t, m, stale, "bank", "old-2")
 	seedVector(t, m, live, "bank", "new-1")
-	m.SetVectorizer(stampedVectorizer{key: live})
+	m.SetProvider(stampedProvider{id: liveID}, func() (float64, bool) { return 0, true })
 	if err := m.Compact(); err != nil {
 		t.Fatalf("compact: %v", err)
 	}

@@ -48,11 +48,11 @@ func TestL3ScopeArgReachesTheVectorArm(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(p.ModelID(), []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
+		if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	e := New(st, nil, QueryEmbedderFromProvider(p))
+	e := New(st, nil, p)
 	e.SetProjectDir(dir)
 	ctx := context.Background()
 

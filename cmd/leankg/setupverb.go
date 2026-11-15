@@ -96,7 +96,7 @@ func (cliStages) IndexOne(ctx context.Context, dir, _env string, _verbose bool) 
 }
 
 func (cliStages) EmbedOne(ctx context.Context, dir string) error {
-	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir})
+	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir, Start: embedStartFromEnv()})
 	if err != nil {
 		return err
 	}
