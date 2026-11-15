@@ -94,6 +94,7 @@ func cmdQuery(ctx context.Context, args []string) error {
 			return fatalJSON(err)
 		}
 		defer engine.Store().Close()
+		defer engine.Close()
 		argMap := map[string]any{}
 		for _, kv := range []struct{ name, value string }{
 			{"to", *to}, {"lang", *lang}, {"pattern", *pattern}, {"cmd", *cmd},
@@ -115,7 +116,15 @@ func cmdQuery(ctx context.Context, args []string) error {
 			if target == "" {
 				target = q
 			}
-			out, err := engine.Import(ctx, core.ImportRequest{Action: "read", Path: target, Args: argMap})
+			// The reader takes only mode, lines and fresh; the other flags above
+			// belong to query actions and would be refused as unknown args.
+			readArgs := map[string]any{}
+			for _, k := range []string{"mode", "lines", "fresh"} {
+				if v, ok := argMap[k]; ok {
+					readArgs[k] = v
+				}
+			}
+			out, err := engine.Import(ctx, core.ImportRequest{Action: "read", Path: target, Args: readArgs})
 			if err != nil {
 				return fatalJSON(err)
 			}
@@ -140,6 +149,7 @@ func cmdQuery(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 	st := engine.Store()
 
 	switch *kind {

@@ -52,8 +52,7 @@ func openEngine(t *testing.T, dir string) *core.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := core.New(st, mem, nil)
-	e.SetProjectDir(dir)
+	e := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	return e
 }
 

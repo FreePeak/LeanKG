@@ -90,6 +90,7 @@ func authAdminInit(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 	if err := engine.Store().Migrate(); err != nil {
 		return fatalJSON(err)
 	}
@@ -251,6 +252,7 @@ func authRegister(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 	if err := engine.Store().Migrate(); err != nil {
 		return fatalJSON(err)
 	}
@@ -309,6 +311,7 @@ func authTokenCreate(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 	// Minting needs the tokens table; a writer opens the schema first.
 	if err := engine.Store().Migrate(); err != nil {
 		return fatalJSON(err)
@@ -344,6 +347,7 @@ func authTokenList(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 
 	tokens, err := engine.Store().TokenList()
 	if err != nil {
@@ -396,6 +400,7 @@ func authTokenRevoke(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 
 	tokens, err := engine.Store().TokenList()
 	if err != nil {

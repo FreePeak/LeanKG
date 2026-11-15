@@ -119,8 +119,7 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	defEngine := core.New(st, nil, nil)
-	defEngine.SetProjectDir(defaultDir)
+	defEngine := core.New(st, core.Options{ProjectDir: defaultDir})
 	r.SeedDefault(&Project{Dir: defaultDir, Name: "primary", Store: st, Engine: defEngine})
 
 	got, err := r.EngineFor(ctx, "")

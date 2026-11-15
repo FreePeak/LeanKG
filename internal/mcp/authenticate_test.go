@@ -33,8 +33,7 @@ func newAdminServer(t *testing.T, username string) (*Server, store.Backend) {
 	if _, err := auth.CreateSiteAdmin(st, username, testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{ProjectDir: dir})
 	srv := New(engine)
 	srv.SetAuthStore(st)
 	return srv, st
@@ -227,8 +226,7 @@ func TestAuthenticateWorksOverStdioWithoutAuthStore(t *testing.T) {
 	if _, err := auth.CreateSiteAdmin(st, "stdio-login", testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(t.TempDir())
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
 	session := connectTo(t, New(engine))
 
 	res, err := callAuthenticate(session, "stdio-login", testAdminPassword)

@@ -47,8 +47,7 @@ func TestTheRESTSuccessShapeNeverContradictsTheBody(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, nil, nil)
-	eng.SetProjectDir(dir)
+	eng := core.New(st, core.Options{ProjectDir: dir})
 	// A real memory handle: the memory routes are only mounted when one is
 	// present, and without it they 404 (a separate, separately-honest fact).
 	mem, err := memory.Open(dir, false)

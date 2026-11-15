@@ -27,8 +27,7 @@ func gitHistoryEngine(t *testing.T) (*Engine, string) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, nil)
-	e.SetProjectDir(dir)
+	e := New(st, Options{ProjectDir: dir})
 	return e, dir
 }
 
@@ -79,8 +78,7 @@ func TestGitImportThenHistoryCochangeAndChurn(t *testing.T) {
 // full history and both report incremental:false.
 func TestConcurrentGitImportsSerializeOnOneStore(t *testing.T) {
 	e, dir := gitHistoryEngine(t)
-	other := New(e.st, nil, nil)
-	other.SetProjectDir(dir)
+	other := New(e.st, Options{ProjectDir: dir})
 	ctx := context.Background()
 
 	const callers = 4

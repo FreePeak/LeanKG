@@ -62,7 +62,7 @@ func seededStore(t *testing.T) *store.Store {
 func TestStatusUnhealthyWhenEmbeddingsReadFails(t *testing.T) {
 	st := seededStore(t)
 	cause := errors.New("no such table: emb_stamp")
-	e := New(stampsReadFails{Backend: st, cause: cause}, nil, nil)
+	e := New(stampsReadFails{Backend: st, cause: cause}, Options{})
 
 	out, err := e.Status(context.Background())
 	if err != nil {
@@ -113,7 +113,7 @@ func TestStatusUnhealthyWhenEmbeddingsReadFails(t *testing.T) {
 // invert a constant: a store whose embeddings layer reads fine is healthy.
 func TestStatusHealthyStoreReportsHealthy(t *testing.T) {
 	st := seededStore(t)
-	e := New(st, nil, nil)
+	e := New(st, Options{})
 
 	out, err := e.Status(context.Background())
 	if err != nil {
@@ -148,7 +148,7 @@ func TestStatusHealthyStoreWithoutEmbeddings(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, nil)
+	e := New(st, Options{})
 
 	out, err := e.Status(context.Background())
 	if err != nil {
@@ -177,7 +177,7 @@ func TestStatusHealthyStoreWithoutEmbeddings(t *testing.T) {
 // make the store unreadable, so it must not flip healthy.
 func TestStatusProviderUnreachableIsNotUnhealthy(t *testing.T) {
 	st := seededStore(t)
-	e := New(st, nil, failingProvider{inner: embed.Deterministic(4)})
+	e := New(st, Options{Embedder: failingProvider{inner: embed.Deterministic(4)}})
 
 	out, err := e.Status(context.Background())
 	if err != nil {

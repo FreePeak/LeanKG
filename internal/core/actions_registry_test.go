@@ -18,11 +18,15 @@ import (
 // actionRegistries names each registry var and the vocabulary prefix its keys
 // sit under. These are the only action and memory-command tables in core.
 var actionRegistries = map[string]string{
-	"queryActions":        "query",
-	"importActions":       "import",
-	"memoryWriteCommands": "import/memory",
-	"queryMemoryCommands": "query/memory",
-	"memoryReadCommands":  "query/memory",
+	"queryActions":         "query",
+	"importActions":        "import",
+	"memoryWriteCommands":  "import/memory",
+	"queryMemoryCommands":  "query/memory",
+	"memoryReadCommands":   "query/memory",
+	"ontologyCommands":     "query/ontology",
+	"sessionReadCommands":  "query/session",
+	"sessionWriteCommands": "import/session",
+	"lspCommands":          "query/lsp",
 }
 
 // actionDispatchers are the functions that route a request to a registry. None

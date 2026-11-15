@@ -36,8 +36,7 @@ func TestProjectSwitchBehavior(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(served)
+	engine := core.New(st, core.Options{ProjectDir: served})
 
 	// A multi-project server resolves the other root; the same handler without
 	// the switcher must still refuse — and say why truthfully.

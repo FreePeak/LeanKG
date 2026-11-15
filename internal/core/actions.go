@@ -1,14 +1,16 @@
 package core
 
-// The action registries (CX-43). Each registry maps an action or memory
-// command to its handler, one entry per key, next to the handler it names.
-// The dispatchers (query, importAction, memoryWrite and MemoryRead in core.go,
-// queryMemory below) look the key up and call the handler; none of them switches on an action
-// name. A key with no entry is an unknown action and keeps the dispatcher's own
-// error text.
+// The action registries (CX-43) and the typed args (CX-44). Each registry maps
+// an action or command to its handler, one entry per key, next to the handler
+// it names. The dispatchers (query, importAction, memoryWrite and MemoryRead in
+// core.go, queryMemory below) look the key up and call the handler; none of
+// them switches on an action name. A key with no entry is an unknown action and
+// keeps the dispatcher's own error text.
 //
-// Sub-command switches (ontology cmd, lsp command, session command) are not
-// registries here; they dispatch on args.command and belong to CX-44.
+// Each handler gets its args as a typed struct, decoded once at the registry
+// seam by queryAction or importArgs (args.go). The struct names every key the
+// action reads, so an unknown key or a wrong-typed value is refused before the
+// handler runs.
 
 import (
 	"context"
@@ -24,6 +26,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/ontology"
 	"github.com/FreePeak/LeanKG/internal/orgknowledge"
 	"github.com/FreePeak/LeanKG/internal/prdindex"
+	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -35,7 +38,50 @@ type actionHandler[R any] func(e *Engine, ctx context.Context, req R) (map[strin
 type memoryReadHandler func(e *Engine, path, query string, limit int) (map[string]any, error)
 
 // graphVerb answers one connection verb once the query's seed has resolved.
-type graphVerb func(e *Engine, ctx context.Context, req QueryRequest, seed string, resp map[string]any) (map[string]any, error)
+type graphVerb func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seed string, resp map[string]any) (map[string]any, error)
+
+// deprecatedSubCommandNote is the response note for a caller that still sends
+// the old `cmd` key for a sub-command (CX-44: `command` is the canonical key).
+const deprecatedSubCommandNote = "args.cmd is deprecated; send args.command"
+
+// queryAction binds a handler that reads typed args: the args decode once,
+// here, and the handler receives them. An unknown key or a wrong type is
+// refused before the handler runs.
+func queryAction[A any](h func(*Engine, context.Context, QueryRequest, A) (map[string]any, error)) actionHandler[QueryRequest] {
+	return func(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error) {
+		a, err := decodeArgs[A](req.Args)
+		if err != nil {
+			return nil, err
+		}
+		return h(e, ctx, req, a)
+	}
+}
+
+// envelopeOnly binds an action that reads no args beyond the envelope; any
+// other key is refused.
+func envelopeOnly(h func(*Engine, context.Context, QueryRequest) (map[string]any, error)) actionHandler[QueryRequest] {
+	return queryAction(func(e *Engine, ctx context.Context, req QueryRequest, _ envelopeArgs) (map[string]any, error) {
+		return h(e, ctx, req)
+	})
+}
+
+// importArgs binds an import handler that reads typed args.
+func importArgs[A any](h func(*Engine, context.Context, ImportRequest, A) (map[string]any, error)) actionHandler[ImportRequest] {
+	return func(e *Engine, ctx context.Context, req ImportRequest) (map[string]any, error) {
+		a, err := decodeArgs[A](req.Args)
+		if err != nil {
+			return nil, err
+		}
+		return h(e, ctx, req, a)
+	}
+}
+
+// importNoArgs binds an import handler that takes no args; any key is refused.
+func importNoArgs(h func(*Engine, context.Context, ImportRequest) (map[string]any, error)) actionHandler[ImportRequest] {
+	return importArgs(func(e *Engine, ctx context.Context, req ImportRequest, _ noArgs) (map[string]any, error) {
+		return h(e, ctx, req)
+	})
+}
 
 // queryActions is the query tool's registry. "" and "search" are the L0-L3
 // ladder router; exact, fuzzy and semantic pin one rung. It is filled in init
@@ -45,76 +91,82 @@ var queryActions map[string]actionHandler[QueryRequest]
 
 func init() {
 	queryActions = map[string]actionHandler[QueryRequest]{
-		"":                (*Engine).queryLadder,
-		"search":          (*Engine).queryLadder,
-		"exact":           (*Engine).queryExact,
-		"element":         (*Engine).queryExact,
-		"fuzzy":           (*Engine).queryFuzzy,
-		"semantic":        (*Engine).querySemantic,
+		"":                queryAction((*Engine).queryLadder),
+		"search":          queryAction((*Engine).queryLadder),
+		"exact":           queryAction((*Engine).queryExact),
+		"element":         queryAction((*Engine).queryExact),
+		"fuzzy":           queryAction((*Engine).queryFuzzy),
+		"semantic":        queryAction((*Engine).querySemantic),
 		"impact":          graphQuery((*Engine).graphImpact),
 		"path":            graphQuery((*Engine).graphPath),
 		"callers":         graphQuery((*Engine).graphCallers),
 		"callees":         graphQuery((*Engine).graphCallees),
 		"context":         graphQuery((*Engine).graphContext),
 		"explain":         graphQuery((*Engine).graphExplain),
-		"memory":          (*Engine).queryMemory,
-		"ontology":        (*Engine).queryOntology,
-		"compress":        (*Engine).queryCompress,
-		"languages":       (*Engine).queryLanguages,
-		"lsp":             (*Engine).queryLSP,
-		"pattern":         (*Engine).queryPattern,
-		"session":         (*Engine).querySession,
-		"prd":             (*Engine).queryPRD,
-		"incidents":       (*Engine).queryIncidents,
-		"env_conflicts":   (*Engine).queryEnvConflicts,
-		"service_context": (*Engine).queryServiceContext,
-		"history":         (*Engine).gitHistoryQuery,
-		"cochange":        (*Engine).gitHistoryQuery,
-		"churn":           (*Engine).gitHistoryQuery,
-		"portfolio":       (*Engine).portfolioQuery,
+		"memory":          queryAction((*Engine).queryMemory),
+		"ontology":        queryAction((*Engine).queryOntology),
+		"compress":        queryAction((*Engine).queryCompress),
+		"languages":       envelopeOnly((*Engine).queryLanguages),
+		"lsp":             queryAction((*Engine).queryLSP),
+		"pattern":         queryAction((*Engine).queryPattern),
+		"session":         queryAction((*Engine).querySession),
+		"prd":             envelopeOnly((*Engine).queryPRD),
+		"incidents":       queryAction((*Engine).queryIncidents),
+		"env_conflicts":   queryAction((*Engine).queryEnvConflicts),
+		"service_context": queryAction((*Engine).queryServiceContext),
+		"history":         queryAction((*Engine).gitHistoryQuery),
+		"cochange":        queryAction((*Engine).gitHistoryQuery),
+		"churn":           queryAction((*Engine).gitHistoryQuery),
+		"portfolio":       queryAction((*Engine).portfolioQuery),
 	}
 }
 
 // importActions is the import tool's registry. "" is the missing-action refusal.
 var importActions = map[string]actionHandler[ImportRequest]{
 	"":         importMissingAction,
-	"git":      (*Engine).gitImport,
-	"docs":     (*Engine).importDocs,
-	"prd":      (*Engine).importPRD,
-	"repo":     (*Engine).importIndex,
-	"dir":      (*Engine).importIndex,
-	"memory":   (*Engine).memoryWrite,
-	"session":  (*Engine).sessionWrite,
-	"read":     importCompressRead,
-	"ontology": (*Engine).importOntology,
+	"git":      importArgs((*Engine).gitImport),
+	"docs":     importNoArgs((*Engine).importDocs),
+	"prd":      importArgs((*Engine).importPRD),
+	"repo":     importNoArgs((*Engine).importIndex),
+	"dir":      importNoArgs((*Engine).importIndex),
+	"memory":   importArgs((*Engine).memoryWrite),
+	"session":  importArgs((*Engine).sessionWrite),
+	"read":     importArgs(importCompressRead),
+	"ontology": importNoArgs((*Engine).importOntology),
 }
+
+// memoryWriteHandler serves one import{action:"memory"} command.
+type memoryWriteHandler func(e *Engine, ctx context.Context, req ImportRequest, a memoryArgs) (map[string]any, error)
 
 // memoryWriteCommands is the import{action:"memory"} sub-command registry.
-var memoryWriteCommands = map[string]actionHandler[ImportRequest]{
+var memoryWriteCommands = map[string]memoryWriteHandler{
 	"session_retain": (*Engine).memSessionRetain,
 	"create":         (*Engine).memCreate,
-	"str_replace": memFileEdit(func(e *Engine, req ImportRequest) error {
-		return e.mem.StrReplace(memArg(req, "path"), memArg(req, "old"), memArg(req, "new"))
+	"str_replace": memFileEdit(func(e *Engine, a memoryArgs) error {
+		return e.mem.StrReplace(a.Path, a.Old, a.New)
 	}),
-	"insert": memFileEdit(func(e *Engine, req ImportRequest) error {
-		return e.mem.Insert(memArg(req, "path"), memArg(req, "content"), memInt(req, "insert_line"))
+	"insert": memFileEdit(func(e *Engine, a memoryArgs) error {
+		return e.mem.Insert(a.Path, a.Content, a.InsertLine)
 	}),
-	"delete":          memFileEdit(func(e *Engine, req ImportRequest) error { return e.mem.Delete(memArg(req, "path")) }),
+	"delete":          memFileEdit(func(e *Engine, a memoryArgs) error { return e.mem.Delete(a.Path) }),
 	"delete_document": (*Engine).memDeleteDocument,
-	"rename": memFileEdit(func(e *Engine, req ImportRequest) error {
-		return e.mem.Rename(memArg(req, "path"), memArg(req, "new_path"))
+	"rename": memFileEdit(func(e *Engine, a memoryArgs) error {
+		return e.mem.Rename(a.Path, a.NewPath)
 	}),
-	"add": memFileEdit(func(e *Engine, req ImportRequest) error { return e.mem.Add(memArg(req, "file"), memArg(req, "text")) }),
-	"replace": memFileEdit(func(e *Engine, req ImportRequest) error {
-		return e.mem.Replace(memArg(req, "file"), memArg(req, "old"), memArg(req, "new"))
+	"add": memFileEdit(func(e *Engine, a memoryArgs) error { return e.mem.Add(a.File, a.Text) }),
+	"replace": memFileEdit(func(e *Engine, a memoryArgs) error {
+		return e.mem.Replace(a.File, a.Old, a.New)
 	}),
-	"remove": memFileEdit(func(e *Engine, req ImportRequest) error {
-		return e.mem.Remove(memArg(req, "file"), memArg(req, "text"))
+	"remove": memFileEdit(func(e *Engine, a memoryArgs) error {
+		return e.mem.Remove(a.File, a.Text)
 	}),
 }
 
+// queryMemoryHandler serves one query{action:"memory"} sub-command.
+type queryMemoryHandler func(e *Engine, ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error)
+
 // queryMemoryCommands is the query{action:"memory"} sub-command registry.
-var queryMemoryCommands = map[string]actionHandler[QueryRequest]{
+var queryMemoryCommands = map[string]queryMemoryHandler{
 	"session_recall": (*Engine).querySessionMemory,
 	"memories":       (*Engine).querySessionMemory,
 	"view":           (*Engine).queryMemoryView,
@@ -140,7 +192,7 @@ type searchScope struct {
 
 // searchPrelude validates the query text and builds the shared envelope: the
 // limit, the freshness of the element count and the population rule.
-func (e *Engine) searchPrelude(req QueryRequest) (searchScope, error) {
+func (e *Engine) searchPrelude(req QueryRequest, env envelopeArgs) (searchScope, error) {
 	if req.Query == "" {
 		return searchScope{}, fmt.Errorf("query requires query text")
 	}
@@ -149,48 +201,53 @@ func (e *Engine) searchPrelude(req QueryRequest) (searchScope, error) {
 		limit = 10
 	}
 	resp := map[string]any{"query": req.Query, "limit": limit}
-	els, _ := e.st.ElementCount()
+	els, err := e.st.ElementCount()
+	if err != nil {
+		// A store that cannot count is an error, not an empty index: the
+		// ladder would otherwise answer "no elements indexed" (CX-45).
+		return searchScope{}, err
+	}
 	resp["freshness"] = e.freshness(els)
 	// One population rule for every rung: git history rows are hidden unless
 	// args.include_git is set (see searchKeep). The semantic rung applies the
 	// same rule as a store-side predicate.
-	return searchScope{resp: resp, limit: limit, els: els, keep: searchKeep(req.Args)}, nil
+	return searchScope{resp: resp, limit: limit, els: els, keep: searchKeep(env.IncludeGit)}, nil
 }
 
-func (e *Engine) queryExact(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	s, err := e.searchPrelude(req)
+func (e *Engine) queryExact(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
+	s, err := e.searchPrelude(req, env)
 	if err != nil {
 		return nil, err
 	}
 	return e.rungExact(ctx, req.Query, s.limit, s.resp, true, s.keep)
 }
 
-func (e *Engine) queryFuzzy(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	s, err := e.searchPrelude(req)
+func (e *Engine) queryFuzzy(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
+	s, err := e.searchPrelude(req, env)
 	if err != nil {
 		return nil, err
 	}
 	return e.rungFuzzy(ctx, req.Query, s.limit, s.resp, true, s.keep)
 }
 
-func (e *Engine) querySemantic(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	s, err := e.searchPrelude(req)
+func (e *Engine) querySemantic(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
+	s, err := e.searchPrelude(req, env)
 	if err != nil {
 		return nil, err
 	}
-	return e.rungSemantic(ctx, req.Query, s.limit, s.resp, true, req.Args)
+	return e.rungSemantic(ctx, req.Query, s.limit, s.resp, true, env)
 }
 
 // queryLadder is the ladder router: L0 cold, then L1 exact, L2 fuzzy, L3
 // semantic, with the Noul confidence gate and the prose route.
-func (e *Engine) queryLadder(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	s, err := e.searchPrelude(req)
+func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
+	s, err := e.searchPrelude(req, env)
 	if err != nil {
 		return nil, err
 	}
 	resp, limit, els, keep := s.resp, s.limit, s.els, s.keep
-	// One check per rung boundary: the ladder below ignores rung errors on
-	// purpose (a miss falls through), so cancellation is checked here instead.
+	// One check per rung boundary: a rung that misses falls through to the
+	// next one, so cancellation is checked here instead.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -201,7 +258,10 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest) (map[string]
 		resp["guidance"] = "Index a repository first: leankg import <dir> or tool import {action:\"repo\", path:...}"
 		return resp, nil
 	}
-	if _, err := e.rungExact(ctx, req.Query, limit, resp, false, keep); err == nil && len(hitsOf(resp)) > 0 {
+	// A store error ends the ladder: it is not a miss to fall through (CX-45).
+	if _, err := e.rungExact(ctx, req.Query, limit, resp, false, keep); err != nil {
+		return nil, err
+	} else if len(hitsOf(resp)) > 0 {
 		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
 		return resp, nil
 	}
@@ -212,33 +272,51 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest) (map[string]
 	// Identifier-shaped queries keep L1 → L2 → L3. The Noul confidence gate
 	// still holds L3 back for queries the ontology rates as noise.
 	if e.embedder != nil && isProse(req.Query) {
-		if conf, _ := ontology.OntologyConfidence(e.st, req.Query); conf == 0 || conf >= ontology.MinConfidence {
+		conf, err := ontology.OntologyConfidence(e.st, req.Query)
+		if err != nil {
+			return nil, err
+		}
+		if conf == 0 || conf >= ontology.MinConfidence {
 			delete(resp, "guidance")
-			return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args))
+			return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, env))
 		}
 	}
 	// pin=true: the rung knows which keyword arm served the hits, so it owns
 	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
-	if _, err := e.rungFuzzy(ctx, req.Query, limit, resp, true, keep); err == nil && len(hitsOf(resp)) > 0 {
+	if _, err := e.rungFuzzy(ctx, req.Query, limit, resp, true, keep); err != nil {
+		return nil, err
+	} else if len(hitsOf(resp)) > 0 {
 		return resp, nil
 	}
 	// Noul L3 gate: ontology confidence below MinConfidence
 	// (0.3) justifies no embedding call — degrade to L2.
-	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
+	conf, err := ontology.OntologyConfidence(e.st, req.Query)
+	if err != nil {
+		return nil, err
+	}
 	if conf > 0 && conf < ontology.MinConfidence {
 		return withEmptyHint(e.rungFuzzy(ctx, req.Query, limit, resp, true, keep))
 	}
 	// The empty L2 pass above left "No keyword match…" guidance; L3 sets its
 	// own (an outage reads as an outage, not as a phrasing problem — RS-15).
 	delete(resp, "guidance")
-	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args))
+	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, env))
+}
+
+// graphArgs are the args of the connection verbs: depth (impact and path) and
+// to (path). Both are optional; depth stays nil when the caller did not send it,
+// because each verb has its own default.
+type graphArgs struct {
+	envelopeArgs
+	Depth *int   `json:"depth"`
+	To    string `json:"to"`
 }
 
 // graphQuery adapts a connection verb to the registry: the shared envelope,
 // then the seed resolution every verb needs, then the verb itself.
 func graphQuery(verb graphVerb) actionHandler[QueryRequest] {
-	return func(e *Engine, ctx context.Context, req QueryRequest) (map[string]any, error) {
-		s, err := e.searchPrelude(req)
+	return queryAction(func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs) (map[string]any, error) {
+		s, err := e.searchPrelude(req, a.envelopeArgs)
 		if err != nil {
 			return nil, err
 		}
@@ -249,8 +327,8 @@ func graphQuery(verb graphVerb) actionHandler[QueryRequest] {
 		if seed != req.Query {
 			s.resp["resolved_query"] = seed
 		}
-		return verb(e, ctx, req, seed, s.resp)
-	}
+		return verb(e, ctx, req, a, seed, s.resp)
+	})
 }
 
 // graphDone stamps the verb name on a finished graph answer.
@@ -277,10 +355,13 @@ func graphUnresolved(resp map[string]any, req QueryRequest, what, value string) 
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphImpact(ctx context.Context, req QueryRequest, seed string, resp map[string]any) (map[string]any, error) {
+func (e *Engine) graphImpact(ctx context.Context, req QueryRequest, a graphArgs, seed string, resp map[string]any) (map[string]any, error) {
 	// depth comes from args.depth (Rust --depth parity); limit is a
 	// result-count concept, not a traversal depth.
-	depth := argInt(req.Args, "depth", 2)
+	depth := 2
+	if a.Depth != nil {
+		depth = *a.Depth
+	}
 	hits, bounds, err := graph.Impact(ctx, e.st, seed, depth)
 	if errors.Is(err, graph.ErrUnknownNode) {
 		return graphUnresolved(resp, req, "seed", req.Query)
@@ -300,8 +381,8 @@ func (e *Engine) graphImpact(ctx context.Context, req QueryRequest, seed string,
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphPath(ctx context.Context, req QueryRequest, seed string, resp map[string]any) (map[string]any, error) {
-	toRaw := argStr(req.Args, "to")
+func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, seed string, resp map[string]any) (map[string]any, error) {
+	toRaw := a.To
 	if toRaw == "" {
 		return nil, fmt.Errorf("query path requires args.to (target qualified name)")
 	}
@@ -314,7 +395,10 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, seed string, r
 	}
 	// maxDepth comes from args.depth (default 2) — Limit is a result
 	// count, not a traversal bound; paths are a single answer anyway.
-	maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
+	maxDepth := 0 // graph default
+	if a.Depth != nil {
+		maxDepth = *a.Depth
+	}
 	path, bounds, err := graph.ShortestPath(ctx, e.st, seed, to, maxDepth)
 	if errors.Is(err, graph.ErrUnknownNode) {
 		// Name the end that is unknown: "graph: unknown node" left the
@@ -348,7 +432,7 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, seed string, r
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, seed string, resp map[string]any) (map[string]any, error) {
+func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
 	qns, err := graph.Callers(ctx, e.st, seed)
 	if errors.Is(err, graph.ErrUnknownNode) {
 		return graphUnresolved(resp, req, "seed", req.Query)
@@ -363,7 +447,7 @@ func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, seed string
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, seed string, resp map[string]any) (map[string]any, error) {
+func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
 	qns, err := graph.Callees(ctx, e.st, seed)
 	if errors.Is(err, graph.ErrUnknownNode) {
 		return graphUnresolved(resp, req, "seed", req.Query)
@@ -378,7 +462,7 @@ func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, seed string
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphContext(ctx context.Context, req QueryRequest, seed string, resp map[string]any) (map[string]any, error) {
+func (e *Engine) graphContext(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
 	out, err := graph.Context(ctx, e.st, seed, req.Limit)
 	if errors.Is(err, graph.ErrUnknownNode) {
 		return graphUnresolved(resp, req, "seed", req.Query)
@@ -392,7 +476,7 @@ func (e *Engine) graphContext(ctx context.Context, req QueryRequest, seed string
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphExplain(ctx context.Context, req QueryRequest, seed string, resp map[string]any) (map[string]any, error) {
+func (e *Engine) graphExplain(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
 	out, err := graph.Explain(ctx, e.st, seed)
 	if errors.Is(err, graph.ErrUnknownNode) {
 		return graphUnresolved(resp, req, "seed", req.Query)
@@ -406,30 +490,40 @@ func (e *Engine) graphExplain(ctx context.Context, req QueryRequest, seed string
 	return graphDone(resp, req)
 }
 
-func (e *Engine) queryMemory(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	cmd := argStr(req.Args, "command")
-	h, ok := queryMemoryCommands[cmd]
-	if !ok {
-		return nil, fmt.Errorf("unknown memory read command %q (valid: session_recall, memories, view, snapshot, search)", cmd)
-	}
-	return h(e, ctx, req)
+// queryMemoryArgs are the args of query{action:"memory"}: the sub-command key
+// and the reads that take a path, a cwd or a bank (the envelope carries scope).
+type queryMemoryArgs struct {
+	envelopeArgs
+	Command string `json:"command"`
+	Path    string `json:"path"`
+	Query   string `json:"query"`
+	Cwd     string `json:"cwd"`
+	Bank    string `json:"bank"`
 }
 
-func (e *Engine) querySessionMemory(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	return e.SessionMemoryRead(ctx, argStr(req.Args, "command"), req.Query, req.Limit, req.Args)
+func (e *Engine) queryMemory(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
+	h, ok := queryMemoryCommands[a.Command]
+	if !ok {
+		return nil, fmt.Errorf("unknown memory read command %q (valid: session_recall, memories, view, snapshot, search)", a.Command)
+	}
+	return h(e, ctx, req, a)
+}
+
+func (e *Engine) querySessionMemory(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
+	return e.SessionMemoryRead(ctx, a.Command, req.Query, req.Limit, a.Scope, a.Cwd, a.Bank)
 }
 
 // queryMemoryView reads one memory file by path (RS-21: was ConnectRPC-only).
 // The path rides args.path; the top-level query is the fallback.
-func (e *Engine) queryMemoryView(_ context.Context, req QueryRequest) (map[string]any, error) {
-	path := argStr(req.Args, "path")
+func (e *Engine) queryMemoryView(_ context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
+	path := a.Path
 	if path == "" {
 		path = req.Query
 	}
 	return e.MemoryRead("view", path, "", 0)
 }
 
-func (e *Engine) queryMemorySnapshot(_ context.Context, _ QueryRequest) (map[string]any, error) {
+func (e *Engine) queryMemorySnapshot(_ context.Context, _ QueryRequest, _ queryMemoryArgs) (map[string]any, error) {
 	return e.MemoryRead("snapshot", "", "", 0)
 }
 
@@ -437,16 +531,67 @@ func (e *Engine) queryMemorySnapshot(_ context.Context, _ QueryRequest) (map[str
 // search term rides the top-level `query`, not args.query: the tool's own
 // schema advertises `query` as the search text, and session_recall takes it
 // from the same place.
-func (e *Engine) queryMemorySearch(_ context.Context, req QueryRequest) (map[string]any, error) {
+func (e *Engine) queryMemorySearch(_ context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
 	term := req.Query
 	if term == "" {
-		term = argStr(req.Args, "query")
+		term = a.Query
 	}
 	return e.MemoryRead("search", "", term, req.Limit)
 }
 
-func (e *Engine) queryOntology(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	cmd := argStr(req.Args, "cmd")
+// ontologyArgs are the args of query{action:"ontology"}. command is the
+// sub-command key; cmd is its deprecated alias (CX-44).
+type ontologyArgs struct {
+	envelopeArgs
+	Command string `json:"command"`
+	Cmd     string `json:"cmd"`
+}
+
+// subCommandKey resolves a sub-command key. command is canonical; alias is the
+// deprecated `cmd` spelling, read in this one place. It reports whether the
+// alias supplied the key, so the caller can say so in the answer.
+func subCommandKey(command, alias string) (string, bool) {
+	if command != "" {
+		return command, false
+	}
+	return alias, alias != ""
+}
+
+// ontologyCommands is the query{action:"ontology"} sub-command registry.
+var ontologyCommands = map[string]func(e *Engine, req QueryRequest) (map[string]any, error){
+	"":        func(e *Engine, _ QueryRequest) (map[string]any, error) { return e.OntologyMatches() },
+	"matches": func(e *Engine, _ QueryRequest) (map[string]any, error) { return e.OntologyMatches() },
+	"trace": func(e *Engine, req QueryRequest) (map[string]any, error) {
+		return ontology.TraceQuery(e.st, req.Query)
+	},
+	"status": func(e *Engine, _ QueryRequest) (map[string]any, error) {
+		st, err := ontology.OntologyStatus(e.st)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"status": st}, nil
+	},
+	"concept_search": func(e *Engine, req QueryRequest) (map[string]any, error) {
+		res, err := ontology.ConceptSearch(e.st, req.Query, req.Limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"result": res}, nil
+	},
+	"feature_flow": func(e *Engine, req QueryRequest) (map[string]any, error) {
+		return ontology.FeatureFlow(e.st, req.Query)
+	},
+	"traceability": func(e *Engine, _ QueryRequest) (map[string]any, error) {
+		m, err := ontology.TraceabilityMatrix(e.st)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"matrix": m}, nil
+	},
+}
+
+func (e *Engine) queryOntology(ctx context.Context, req QueryRequest, a ontologyArgs) (map[string]any, error) {
+	cmd, alias := subCommandKey(a.Command, a.Cmd)
 	// FR-HEA-03: the four full-table cmds (trace/status/feature_flow/
 	// traceability) reach Elements() wholesale; on a mega-graph they are
 	// refused with the paginated escape hatch named, exactly as Rust's
@@ -459,54 +604,57 @@ func (e *Engine) queryOntology(ctx context.Context, req QueryRequest) (map[strin
 			return refusal, nil
 		}
 	}
-	switch cmd {
-	case "", "matches":
-		return e.OntologyMatches()
-	case "trace":
-		return ontology.TraceQuery(e.st, req.Query)
-	case "status":
-		st, err := ontology.OntologyStatus(e.st)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"status": st}, nil
-	case "concept_search":
-		res, err := ontology.ConceptSearch(e.st, req.Query, req.Limit)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"result": res}, nil
-	case "feature_flow":
-		return ontology.FeatureFlow(e.st, req.Query)
-	case "traceability":
-		m, err := ontology.TraceabilityMatrix(e.st)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"matrix": m}, nil
-	default:
+	h, ok := ontologyCommands[cmd]
+	if !ok {
 		return nil, fmt.Errorf("unknown ontology cmd (valid: matches, trace, status, concept_search, feature_flow, traceability)")
 	}
+	out, err := h(e, req)
+	if err == nil && alias && out != nil {
+		out["deprecated"] = deprecatedSubCommandNote
+	}
+	return out, err
 }
 
-func (e *Engine) queryCompress(_ context.Context, req QueryRequest) (map[string]any, error) {
-	return e.compressRun(req)
+func (e *Engine) queryCompress(ctx context.Context, req QueryRequest, a compressArgs) (map[string]any, error) {
+	return e.compressRun(req, a)
 }
 
 func (e *Engine) queryLanguages(_ context.Context, _ QueryRequest) (map[string]any, error) {
 	return e.LanguagesStatus(), nil
 }
 
-func (e *Engine) queryLSP(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	return e.lspQuery(ctx, req, map[string]any{"query": req.Query})
+// lspArgs are the args of query{action:"lsp"}.
+type lspArgs struct {
+	envelopeArgs
+	Lang    string `json:"lang"`
+	Command string `json:"command"`
+	Path    string `json:"path"`
 }
 
-func (e *Engine) queryPattern(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	return e.patternQuery(ctx, req, map[string]any{"query": req.Query})
+func (e *Engine) queryLSP(ctx context.Context, req QueryRequest, a lspArgs) (map[string]any, error) {
+	return e.lspQuery(ctx, req, a, map[string]any{"query": req.Query})
 }
 
-func (e *Engine) querySession(_ context.Context, req QueryRequest) (map[string]any, error) {
-	return e.SessionRead(argStr(req.Args, "command"), req.Query, argStr(req.Args, "node_id"))
+// patternArgs are the args of query{action:"pattern"}.
+type patternArgs struct {
+	envelopeArgs
+	Pattern string `json:"pattern"`
+	Lang    string `json:"lang"`
+}
+
+func (e *Engine) queryPattern(ctx context.Context, req QueryRequest, a patternArgs) (map[string]any, error) {
+	return e.patternQuery(ctx, req, a, map[string]any{"query": req.Query})
+}
+
+// sessionReadArgs are the args of query{action:"session"}.
+type sessionReadArgs struct {
+	envelopeArgs
+	Command string `json:"command"`
+	NodeID  string `json:"node_id"`
+}
+
+func (e *Engine) querySession(_ context.Context, req QueryRequest, a sessionReadArgs) (map[string]any, error) {
+	return e.SessionRead(a.Command, req.Query, a.NodeID)
 }
 
 func (e *Engine) queryPRD(_ context.Context, req QueryRequest) (map[string]any, error) {
@@ -517,9 +665,17 @@ func (e *Engine) queryPRD(_ context.Context, req QueryRequest) (map[string]any, 
 	return map[string]any{"requirements": rows, "count": len(rows)}, nil
 }
 
-func (e *Engine) queryIncidents(_ context.Context, req QueryRequest) (map[string]any, error) {
+// incidentArgs are the args of query{action:"incidents"}.
+type incidentArgs struct {
+	envelopeArgs
+	Service string `json:"service"`
+	Pattern string `json:"pattern"`
+	Env     string `json:"env"`
+}
+
+func (e *Engine) queryIncidents(_ context.Context, req QueryRequest, a incidentArgs) (map[string]any, error) {
 	k := orgknowledge.New(e.st)
-	incidents, err := k.QueryIncidents(argStr(req.Args, "service"), argStr(req.Args, "pattern"), argStr(req.Args, "env"), req.Limit)
+	incidents, err := k.QueryIncidents(a.Service, a.Pattern, a.Env, req.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -527,21 +683,34 @@ func (e *Engine) queryIncidents(_ context.Context, req QueryRequest) (map[string
 		incidents = []store.Incident{}
 	}
 	return map[string]any{"incidents": incidents, "query": map[string]any{
-		"service": argStr(req.Args, "service"), "pattern": argStr(req.Args, "pattern"),
-		"env": argStr(req.Args, "env"), "limit": req.Limit,
+		"service": a.Service, "pattern": a.Pattern,
+		"env": a.Env, "limit": req.Limit,
 	}}, nil
 }
 
-func (e *Engine) queryEnvConflicts(_ context.Context, req QueryRequest) (map[string]any, error) {
-	conflicts, err := orgknowledge.New(e.st).FindEnvConflicts(argStr(req.Args, "service"))
+// serviceArgs are the args of the environment and service reads.
+type serviceArgs struct {
+	envelopeArgs
+	Service string `json:"service"`
+}
+
+func (e *Engine) queryEnvConflicts(_ context.Context, _ QueryRequest, a serviceArgs) (map[string]any, error) {
+	conflicts, err := orgknowledge.New(e.st).FindEnvConflicts(a.Service)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"conflicts": conflicts, "service": argStr(req.Args, "service")}, nil
+	return map[string]any{"conflicts": conflicts, "service": a.Service}, nil
 }
 
-func (e *Engine) queryServiceContext(_ context.Context, req QueryRequest) (map[string]any, error) {
-	return orgknowledge.New(e.st).ServiceContextJSON(argStr(req.Args, "service"), argStr(req.Args, "env"))
+// serviceContextArgs are the args of query{action:"service_context"}.
+type serviceContextArgs struct {
+	envelopeArgs
+	Service string `json:"service"`
+	Env     string `json:"env"`
+}
+
+func (e *Engine) queryServiceContext(_ context.Context, _ QueryRequest, a serviceContextArgs) (map[string]any, error) {
+	return orgknowledge.New(e.st).ServiceContextJSON(a.Service, a.Env)
 }
 
 func (e *Engine) importDocs(ctx context.Context, req ImportRequest) (map[string]any, error) {
@@ -564,11 +733,16 @@ func (e *Engine) importDocs(ctx context.Context, req ImportRequest) (map[string]
 	}, nil
 }
 
-func (e *Engine) importPRD(ctx context.Context, req ImportRequest) (map[string]any, error) {
+// prdArgs are the args of import{action:"prd"}.
+type prdArgs struct {
+	Environment string `json:"environment"`
+}
+
+func (e *Engine) importPRD(ctx context.Context, req ImportRequest, a prdArgs) (map[string]any, error) {
 	if req.Path == "" {
 		return nil, fmt.Errorf("import prd requires path (a PRD markdown document)")
 	}
-	env := argStr(req.Args, "environment")
+	env := a.Environment
 	if env == "" {
 		env = "local"
 	}
@@ -647,52 +821,77 @@ func importMissingAction(_ *Engine, _ context.Context, _ ImportRequest) (map[str
 	return nil, fmt.Errorf("import requires action (repo, dir, docs, prd, git, memory, session, ontology, read)")
 }
 
-func importCompressRead(e *Engine, _ context.Context, req ImportRequest) (map[string]any, error) {
-	return e.compressRead(req)
+// importCompressRead serves import{action:"read"}: the path is required here,
+// and the reader's args are the typed compressReadArgs.
+func importCompressRead(e *Engine, _ context.Context, req ImportRequest, a compressReadArgs) (map[string]any, error) {
+	if req.Path == "" {
+		return nil, fmt.Errorf("import read requires path")
+	}
+	return e.compressRead(req.Path, a)
 }
 
-// memArg reads a memory command's string argument. MCP callers pass the memory
-// file at the top-level path field, so "path" falls back to req.Path.
-func memArg(req ImportRequest, key string) string {
-	if s, ok := req.Args[key].(string); ok && s != "" {
-		return s
-	}
-	if key == "path" {
-		return req.Path
-	}
-	return ""
+// memoryArgs are the args of import{action:"memory"}. Every memory command reads
+// its keys from here. withFlatArgs folds the flat curation fields in first, so
+// a schema-shaped call (content at the top level) and an args-shaped call read
+// the same keys; the target file rides both `path` and `file` for the same reason.
+type memoryArgs struct {
+	Path                    string   `json:"path"`
+	File                    string   `json:"file"`
+	Content                 string   `json:"content"`
+	Old                     string   `json:"old"`
+	New                     string   `json:"new"`
+	Text                    string   `json:"text"`
+	Payload                 string   `json:"payload"`
+	Summary                 string   `json:"summary"`
+	SessionID               string   `json:"session_id"`
+	NodeID                  string   `json:"node_id"`
+	NewPath                 string   `json:"new_path"`
+	InsertLine              int      `json:"insert_line"`
+	DocumentID              string   `json:"document_id"`
+	Bank                    string   `json:"bank"`
+	Scope                   string   `json:"scope"`
+	Cwd                     string   `json:"cwd"`
+	Tags                    []string `json:"tags"`
+	Turns                   []string `json:"turns"`
+	RetainedThroughUserTurn int      `json:"retained_through_user_turn"`
 }
 
-func memInt(req ImportRequest, key string) int {
-	f, _ := req.Args[key].(float64)
-	return int(f)
+// memoryWrite dispatches import{action:"memory"} on its command.
+func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest, a memoryArgs) (map[string]any, error) {
+	if e.mem == nil {
+		return nil, fmt.Errorf("memory not initialized")
+	}
+	h, ok := memoryWriteCommands[req.Command]
+	if !ok {
+		return nil, fmt.Errorf("unknown memory command %q (valid: create, str_replace, insert, delete, delete_document, rename, add, replace, remove, session_retain)", req.Command)
+	}
+	return h(e, ctx, req, a)
 }
 
 // memFileEdit serves the memory commands that edit one file and report only ok.
-func memFileEdit(op func(e *Engine, req ImportRequest) error) actionHandler[ImportRequest] {
-	return func(e *Engine, _ context.Context, req ImportRequest) (map[string]any, error) {
-		if err := op(e, req); err != nil {
+func memFileEdit(op func(e *Engine, a memoryArgs) error) memoryWriteHandler {
+	return func(e *Engine, _ context.Context, req ImportRequest, a memoryArgs) (map[string]any, error) {
+		if err := op(e, a); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true, "command": req.Command}, nil
 	}
 }
 
-func (e *Engine) memSessionRetain(ctx context.Context, req ImportRequest) (map[string]any, error) {
-	scope, serr := memory.ParseScope(memArg(req, "scope"))
+func (e *Engine) memSessionRetain(ctx context.Context, req ImportRequest, a memoryArgs) (map[string]any, error) {
+	scope, serr := memory.ParseScope(a.Scope)
 	if serr != nil {
 		return nil, serr
 	}
-	cwd := memArg(req, "cwd")
+	cwd := a.Cwd
 	if cwd == "" {
 		cwd = e.projectDir
 	}
 	// K2: tags are first-class on the retain path, so a tag-scoped recall
-	// can match what a conversation wrote. argStrs also accepts a
-	// comma-separated string ("a,b"), which is the shape an agent most
+	// can match what a conversation wrote. The typed list accepts a
+	// comma-separated string too ("a,b"), which is the shape an agent most
 	// often sends when the schema names one field.
-	tags := argStrs(req.Args, "tags")
-	res, serr := e.mem.SessionRetain(ctx, scope, cwd, memArg(req, "bank"), memArg(req, "session_id"), argStrs(req.Args, "turns"), memInt(req, "retained_through_user_turn"), tags)
+	res, serr := e.mem.SessionRetain(ctx, scope, cwd, a.Bank, a.SessionID, a.Turns, a.RetainedThroughUserTurn, a.Tags)
 	if serr != nil {
 		return nil, serr
 	}
@@ -701,9 +900,9 @@ func (e *Engine) memSessionRetain(ctx context.Context, req ImportRequest) (map[s
 
 // memCreate keeps the memory-tool contract (create or overwrite), but an
 // overwrite is reported, never silent.
-func (e *Engine) memCreate(_ context.Context, req ImportRequest) (map[string]any, error) {
-	existed := e.mem.Exists(memArg(req, "path"))
-	if err := e.mem.Create(memArg(req, "path"), memArg(req, "content")); err != nil {
+func (e *Engine) memCreate(_ context.Context, req ImportRequest, a memoryArgs) (map[string]any, error) {
+	existed := e.mem.Exists(a.Path)
+	if err := e.mem.Create(a.Path, a.Content); err != nil {
 		return nil, err
 	}
 	return map[string]any{"ok": true, "command": req.Command, "overwrote": existed}, nil
@@ -712,20 +911,20 @@ func (e *Engine) memCreate(_ context.Context, req ImportRequest) (map[string]any
 // memDeleteDocument is the bank-row delete. The REST mount had it (DELETE
 // /v1/default/banks/{bank}/documents/{id}) and the MCP surface did not, so an
 // MCP client could never remove a memory row.
-func (e *Engine) memDeleteDocument(ctx context.Context, req ImportRequest) (map[string]any, error) {
-	docID := strings.TrimSpace(memArg(req, "document_id"))
+func (e *Engine) memDeleteDocument(ctx context.Context, _ ImportRequest, a memoryArgs) (map[string]any, error) {
+	docID := strings.TrimSpace(a.DocumentID)
 	if docID == "" {
 		return nil, fmt.Errorf("memory: delete_document requires a document_id")
 	}
-	scope, serr := memory.ParseScope(memArg(req, "scope"))
+	scope, serr := memory.ParseScope(a.Scope)
 	if serr != nil {
 		return nil, serr
 	}
-	cwd := memArg(req, "cwd")
+	cwd := a.Cwd
 	if cwd == "" {
 		cwd = e.projectDir
 	}
-	bankName := e.mem.WriteBank(scope, cwd, memArg(req, "bank"))
+	bankName := e.mem.WriteBank(scope, cwd, a.Bank)
 	n, derr := e.mem.DeleteDocument(ctx, bankName, docID)
 	if derr != nil {
 		return nil, derr
@@ -761,4 +960,63 @@ func (e *Engine) readMemorySearch(_, query string, limit int) (map[string]any, e
 		return nil, err
 	}
 	return map[string]any{"command": "search", "hits": hits}, nil
+}
+
+// sessionWriteArgs are the args of import{action:"session"}.
+type sessionWriteArgs struct {
+	SessionID string `json:"session_id"`
+	NodeID    string `json:"node_id"`
+	Payload   string `json:"payload"`
+	Summary   string `json:"summary"`
+	Text      string `json:"text"`
+}
+
+// sessionWriteHandler serves one import{action:"session"} command.
+type sessionWriteHandler func(e *Engine, ctx context.Context, s *session.Store, a sessionWriteArgs) (map[string]any, error)
+
+// sessionWriteCommands is the import{action:"session"} sub-command registry.
+var sessionWriteCommands = map[string]sessionWriteHandler{
+	"offload": (*Engine).sessionOffload,
+	"lesson":  (*Engine).sessionLesson,
+}
+
+// sessionWrite wires internal/session into the 4-tool surface: bulky tool
+// payloads are offloaded to .leankg/sessions/<id>/refs/<node>.md and restored
+// bit-for-bit by session_recall (Rust session/mod.rs parity).
+func (e *Engine) sessionWrite(ctx context.Context, req ImportRequest, a sessionWriteArgs) (map[string]any, error) {
+	if e.projectDir == "" {
+		return nil, fmt.Errorf("session offload requires a project directory")
+	}
+	h, ok := sessionWriteCommands[req.Command]
+	if !ok {
+		return nil, fmt.Errorf("unknown session command %q (valid: offload, lesson)", req.Command)
+	}
+	return h(e, ctx, session.New(e.projectDir), a)
+}
+
+func (e *Engine) sessionOffload(_ context.Context, s *session.Store, a sessionWriteArgs) (map[string]any, error) {
+	ref, err := s.Offload(a.SessionID, a.NodeID, []byte(a.Payload), a.Summary)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"offloaded": e.relRef(ref)}, nil
+}
+
+// sessionLesson stores one lesson. The import schema advertises `summary` for
+// this arm and `text` for the lesson itself; text wins, and an empty lesson is
+// refused rather than stored (see the measured incident in the CX-44 evidence
+// and the earlier fix this keeps).
+func (e *Engine) sessionLesson(ctx context.Context, s *session.Store, a sessionWriteArgs) (map[string]any, error) {
+	text := a.Text
+	if strings.TrimSpace(text) == "" {
+		text = a.Summary
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("session lesson requires text (or summary) — an empty lesson is unrecallable")
+	}
+	deduped, err := s.AddLessonCtx(ctx, a.SessionID, text)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"deduped": deduped}, nil
 }

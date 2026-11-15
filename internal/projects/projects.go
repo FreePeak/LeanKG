@@ -377,15 +377,13 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 			return nil, fmt.Errorf("projects: memory for %s: %w", dir, err)
 		}
 	}
-	eng := core.New(st, mem, cfg.Embedder)
-	eng.SetProjectDir(dir)
 	// Lazy language activation: the routed project gets the same
 	// detection the default project got at startup.
 	reg := langs.DefaultRegistry()
 	if _, aerr := reg.Activate(ctx, dir); aerr != nil {
 		cfg.Logf("language detection failed for %s: %v", dir, aerr)
 	}
-	eng.SetLangsRegistry(reg)
+	eng := core.New(st, core.Options{Memory: mem, Embedder: cfg.Embedder, ProjectDir: dir, Langs: reg})
 	return &Project{Dir: dir, Name: filepath.Base(dir), Store: st, Engine: eng, Memory: mem}, nil
 }
 
@@ -412,6 +410,9 @@ func (r *Router) Close() error {
 	for dir, p := range r.entries {
 		if p.isDefault {
 			continue
+		}
+		if p.Engine != nil {
+			p.Engine.Close()
 		}
 		if err := p.Store.Close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("projects: close %s: %w", dir, err)

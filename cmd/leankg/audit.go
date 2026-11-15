@@ -67,6 +67,7 @@ func cmdAuditExport(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 
 	entries, err := auditEntries(engine.Store(), window)
 	if err != nil {
@@ -114,6 +115,7 @@ func cmdAuditVerify(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
+	defer engine.Close()
 
 	ok, brokenAt, err := engine.Store().VerifyAuditChain()
 	if err != nil {

@@ -112,7 +112,7 @@ func TestEmbedProbeDoesNotHoldLock(t *testing.T) {
 // say it is not a semantic embedder.
 func TestStatusFlagsDeterministicProvider(t *testing.T) {
 	st := seededStore(t)
-	e := New(st, nil, embed.Deterministic(8))
+	e := New(st, Options{Embedder: embed.Deterministic(8)})
 	out, err := e.Status(context.Background())
 	if err != nil {
 		t.Fatalf("Status: %v", err)

@@ -59,7 +59,7 @@ func serveRPC(t *testing.T, rec telemetry.Recorder) leankgv1connect.LeanKGClient
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
+	engine := core.New(st, core.Options{Memory: mem})
 	path, handler := leankgv1connect.NewLeanKGHandler(NewLeanKGService(engine),
 		connect.WithInterceptors(CaptureInterceptor(rec)))
 	mux := http.NewServeMux()

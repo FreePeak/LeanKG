@@ -1,4 +1,5 @@
 {
+  "deprecated": "args.cmd is deprecated; send args.command",
   "status": {
     "concept_counts": {},
     "dynamic_concepts": 0,

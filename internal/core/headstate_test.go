@@ -69,7 +69,7 @@ func TestStatusHeadSyncTellsTheTreeMoved(t *testing.T) {
 	if _, err := index.IndexDir(context.Background(), st, dir); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, nil)
+	e := New(st, Options{})
 
 	// The store was indexed from the current HEAD: the tree has not moved.
 	out, err := e.Status(context.Background())
@@ -133,7 +133,7 @@ func TestStatusHeadSyncUnknownWithoutGit(t *testing.T) {
 	if _, err := index.IndexDir(context.Background(), st, plain); err != nil {
 		t.Fatal(err)
 	}
-	out, err := New(st, nil, nil).Status(context.Background())
+	out, err := New(st, Options{}).Status(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

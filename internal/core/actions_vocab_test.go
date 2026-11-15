@@ -23,14 +23,10 @@ import (
 // "<root>/<action>[/<sub-command>]", e.g. "query/memory/view".
 var vocabRoots = map[string]string{
 	"query":             "query",
-	"queryOntology":     "query/ontology",
 	"importAction":      "import",
 	"memoryWrite":       "import/memory",
-	"sessionWrite":      "import/session",
 	"MemoryRead":        "query/memory",
 	"SessionMemoryRead": "query/memory",
-	"SessionRead":       "query/session",
-	"lspQuery":          "query/lsp",
 	"ResolveEnvelope":   "tool",
 }
 
@@ -260,7 +256,7 @@ func (e *Engine) query(req QueryRequest) {
 	switch req.Action {
 	case "exact", "element":
 	case "brand-new-action":
-		switch cmd := argStr(req.Args, "command"); cmd {
+		switch cmd, _ := req.Args["command"].(string); cmd {
 		case "sub-one":
 		}
 	}

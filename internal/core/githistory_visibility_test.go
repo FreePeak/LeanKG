@@ -33,8 +33,7 @@ func openVisibilityEngine(t *testing.T, extra ...store.Element) *Engine {
 	if err := st.UpsertElements(els); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, nil)
-	e.SetProjectDir(dir)
+	e := New(st, Options{ProjectDir: dir})
 	return e
 }
 
@@ -175,8 +174,7 @@ func TestSemanticHidesGitHistoryVectors(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := New(st, nil, p)
-	e.SetProjectDir(dir)
+	e := New(st, Options{Embedder: p, ProjectDir: dir})
 
 	out, err := e.Query(ctx, QueryRequest{Action: "semantic", Query: text, Limit: 10})
 	if err != nil {

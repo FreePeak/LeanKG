@@ -33,8 +33,7 @@ func newTestServer(t *testing.T) *mcp.ClientSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir) // mirrors cmd/leankg serve
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir}) // mirrors cmd/leankg serve
 	return connectTo(t, New(engine))
 }
 
@@ -261,8 +260,7 @@ func TestMCPRBACGatesWriteToolsOverWire(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{ProjectDir: dir})
 	h := New(engine).HTTPHandler()
 
 	// no header: anonymous, so the import is refused by the MCP layer with the
@@ -303,8 +301,8 @@ func TestNewActionsOverMCPWire(t *testing.T) {
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "query",
 		Arguments: map[string]any{
-			"action": "pattern", "query": "x",
-			"args": map[string]any{"pattern": "func $F($A)", "lang": "go", "limit": 5},
+			"action": "pattern", "query": "x", "limit": 5,
+			"args": map[string]any{"pattern": "func $F($A)", "lang": "go"},
 		},
 	})
 	if err != nil {
@@ -354,8 +352,7 @@ func TestMCPNewProtocolVersionOverHTTP(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{ProjectDir: dir})
 	h := New(engine).HTTPHandler()
 
 	// post sends one tools/list. SEP-2575 makes a compliant client state the
@@ -428,8 +425,7 @@ func TestMCPHonorsDBMintedTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{ProjectDir: dir})
 	srv := New(engine)
 	srv.SetAuthStore(st)
 	h := srv.HTTPHandler()
@@ -521,7 +517,6 @@ func newServerForTest(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	return New(engine)
 }

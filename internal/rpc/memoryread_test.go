@@ -33,7 +33,7 @@ func memoryReadService(t *testing.T) leankgv1connect.LeanKGClient {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, handler := leankgv1connect.NewLeanKGHandler(NewLeanKGService(core.New(st, mem, nil)))
+	path, handler := leankgv1connect.NewLeanKGHandler(NewLeanKGService(core.New(st, core.Options{Memory: mem})))
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	srv := httptest.NewServer(mux)

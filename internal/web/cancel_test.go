@@ -19,7 +19,7 @@ type poisonStore struct{ store.Backend }
 func (poisonStore) Path() string { return "" }
 
 func TestCancelledAPIRequestNeverReachesStore(t *testing.T) {
-	h := APIHandler(core.New(poisonStore{}, nil, nil), nil)
+	h := APIHandler(core.New(poisonStore{}, core.Options{}), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 

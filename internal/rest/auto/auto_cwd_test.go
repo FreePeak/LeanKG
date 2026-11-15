@@ -41,8 +41,7 @@ func TestAutoConfigRefusesCwdOutsideServedProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, mem, nil)
-	eng.SetProjectDir(served)
+	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
 	h := RegisterAutoConfig(http.NewServeMux(), eng)
 	body, _ := json.Marshal(AutoConfigRequest{IndexEnabled: true, CWD: caller})
@@ -83,8 +82,7 @@ func TestAutoConfigNoCWDKeepsServingDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, mem, nil)
-	eng.SetProjectDir(served)
+	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
 	h := RegisterAutoConfig(http.NewServeMux(), eng)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader([]byte(`{}`)))
@@ -126,8 +124,7 @@ func TestAutoConfigCwdInsideServedProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, mem, nil)
-	eng.SetProjectDir(served)
+	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
 	h := RegisterAutoConfig(http.NewServeMux(), eng)
 	body, _ := json.Marshal(AutoConfigRequest{CWD: sub})
