@@ -123,17 +123,6 @@ func (s *PGStore) Path() string { return redactDSN(s.dsn) }
 // Engine names the storage engine of this handle.
 func (s *PGStore) Engine() string { return EnginePostgres }
 
-// pgMarshalMeta canonicalizes a metadata map for JSONB storage.
-func pgMarshalMeta(m map[string]any) string {
-	if m == nil {
-		return "{}"
-	}
-	if b, err := json.Marshal(m); err == nil {
-		return string(b)
-	}
-	return "{}"
-}
-
 // UpsertElements writes a batch of elements in one transaction. Qualified
 // names already present are replaced. (No FTS sync needed: the keyword index
 // is the STORED generated tsvector column of migration 012, which PostgreSQL
@@ -157,7 +146,7 @@ func (s *PGStore) UpsertElements(ctx context.Context, els []Element) error {
 				line_start=excluded.line_start, line_end=excluded.line_end, language=excluded.language,
 				parent_qualified=excluded.parent_qualified, content=excluded.content, metadata=excluded.metadata`,
 			e.QualifiedName, e.ElementType, e.Name, e.FilePath, e.LineStart, e.LineEnd, e.Language,
-			nullIfEmpty(e.ParentQualified), e.Content, ValidText(pgMarshalMeta(e.Metadata))); err != nil {
+			nullIfEmpty(e.ParentQualified), e.Content, ValidText(encodeJSONObject(e.Metadata))); err != nil {
 			return fmt.Errorf("store: upsert element %s: %w", e.QualifiedName, err)
 		}
 	}
@@ -183,7 +172,7 @@ func (s *PGStore) UpsertRelationships(ctx context.Context, rels []Relationship) 
 			VALUES ($1,$2,$3,$4,$5::jsonb)
 			ON CONFLICT (source_qualified, target_qualified, rel_type) DO UPDATE SET
 				confidence=excluded.confidence, metadata=excluded.metadata`,
-			r.Source, r.Target, r.RelType, r.Confidence, pgMarshalMeta(r.Metadata)); err != nil {
+			r.Source, r.Target, r.RelType, r.Confidence, encodeJSONObject(r.Metadata)); err != nil {
 			return fmt.Errorf("store: upsert relationship %s->%s: %w", r.Source, r.Target, err)
 		}
 	}
@@ -286,24 +275,6 @@ func (s *PGStore) DeleteOrphanRelationships(ctx context.Context) (int, error) {
 
 const pgElementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path, ce.line_start, ce.line_end, ce.language, COALESCE(ce.parent_qualified,''), ce.content, COALESCE(ce.metadata::text,'{}')`
 
-func pgScanElements(rows pgx.Rows) ([]Element, error) {
-	defer rows.Close()
-	var out []Element
-	for rows.Next() {
-		var e Element
-		var meta string
-		if err := rows.Scan(&e.QualifiedName, &e.ElementType, &e.Name, &e.FilePath, &e.LineStart, &e.LineEnd,
-			&e.Language, &e.ParentQualified, &e.Content, &meta); err != nil {
-			return nil, err
-		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &e.Metadata)
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
-}
-
 // FindExact implements the L1 rung: exact (case-insensitive) match on element
 // name or qualified name. sqlite relies on COLLATE NOCASE; PostgreSQL uses
 // lower() comparisons (backed by expression indexes when available).
@@ -314,7 +285,8 @@ func (s *PGStore) FindExact(ctx context.Context, name string) ([]Element, error)
 	if err != nil {
 		return nil, err
 	}
-	return pgScanElements(rows)
+	defer rows.Close()
+	return scanElements(rows)
 }
 
 // nameTokenCounts is the rarity table the name arm gates on, on PostgreSQL.
@@ -353,15 +325,7 @@ func (s *PGStore) rareNameTokens(ctx context.Context, query string) ([]string, e
 	if err != nil {
 		return nil, err
 	}
-	bound := nameArmBound(total)
-	out := toks[:0]
-	for _, t := range toks {
-		if counts[t] > bound {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out, nil
+	return keepRareNameTokens(toks, counts, nameArmBound(total)), nil
 }
 
 // FindByNameToken is the ArmName ranking arm on PostgreSQL: elements whose
@@ -393,7 +357,8 @@ func (s *PGStore) FindByNameToken(ctx context.Context, query string, limit int, 
 	if err != nil {
 		return nil, err
 	}
-	els, err := pgScanElements(rows)
+	defer rows.Close()
+	els, err := scanElements(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -431,27 +396,8 @@ func (s *PGStore) findElementsILIKE(ctx context.Context, query string, limit int
 	if err != nil {
 		return nil, err
 	}
-	return scanFuzzyMatches(rows)
-}
-
-// scanFuzzyMatches reads the element columns plus a trailing score column.
-func scanFuzzyMatches(rows pgx.Rows) ([]FuzzyMatch, error) {
 	defer rows.Close()
-	var out []FuzzyMatch
-	for rows.Next() {
-		var m FuzzyMatch
-		var meta string
-		if err := rows.Scan(&m.Element.QualifiedName, &m.Element.ElementType, &m.Element.Name, &m.Element.FilePath,
-			&m.Element.LineStart, &m.Element.LineEnd, &m.Element.Language, &m.Element.ParentQualified,
-			&m.Element.Content, &meta, &m.Score); err != nil {
-			return nil, err
-		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &m.Element.Metadata)
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return scanFuzzyMatches(rows)
 }
 
 // escapeLike escapes LIKE wildcards so user input matches literally
@@ -506,7 +452,8 @@ func (s *PGStore) Elements(ctx context.Context) ([]Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pgScanElements(rows)
+	defer rows.Close()
+	return scanElements(rows)
 }
 
 // Outgoing returns relationships sourced at `source`.
@@ -516,7 +463,8 @@ func (s *PGStore) Outgoing(ctx context.Context, source string) ([]Relationship, 
 	if err != nil {
 		return nil, err
 	}
-	return pgScanRelationships(rows)
+	defer rows.Close()
+	return scanRelationships(rows)
 }
 
 // Incoming returns relationships targeting `target`.
@@ -526,7 +474,8 @@ func (s *PGStore) Incoming(ctx context.Context, target string) ([]Relationship, 
 	if err != nil {
 		return nil, err
 	}
-	return pgScanRelationships(rows)
+	defer rows.Close()
+	return scanRelationships(rows)
 }
 
 // RelationshipsAll returns up to limit relationships ordered by id.
@@ -539,24 +488,8 @@ func (s *PGStore) RelationshipsAll(ctx context.Context, limit int) ([]Relationsh
 	if err != nil {
 		return nil, err
 	}
-	return pgScanRelationships(rows)
-}
-
-func pgScanRelationships(rows pgx.Rows) ([]Relationship, error) {
 	defer rows.Close()
-	var out []Relationship
-	for rows.Next() {
-		var r Relationship
-		var meta string
-		if err := rows.Scan(&r.Source, &r.Target, &r.RelType, &r.Confidence, &meta); err != nil {
-			return nil, err
-		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &r.Metadata)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return scanRelationships(rows)
 }
 
 // KVSet writes a namespaced key (upsert). Namespacing is folded into the key
@@ -711,10 +644,7 @@ func (s *PGStore) Stamp(ctx context.Context, modelID string) (*ModelStamp, error
 	if err != nil {
 		return nil, err
 	}
-	var st ModelStamp
-	err = s.pool.QueryRow(ctx, shape.selectSQL+` WHERE model_id = $1`, modelID).
-		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
+	st, err := scanStamp(s.pool.QueryRow(ctx, shape.selectSQL+` WHERE model_id = $1`, modelID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -738,9 +668,8 @@ func (s *PGStore) Stamps(ctx context.Context) ([]ModelStamp, error) {
 	defer rows.Close()
 	var out []ModelStamp
 	for rows.Next() {
-		var st ModelStamp
-		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap); err != nil {
+		st, err := scanStamp(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, st)
@@ -759,10 +688,10 @@ func (s *PGStore) Stamps(ctx context.Context) ([]ModelStamp, error) {
 // tables have already vanished is skipped, not fatal: the stamp is cleaned
 // up either way. The watermark bumps only when rows actually go.
 func (s *PGStore) DeleteStaleStamps(ctx context.Context, keep []string) (StaleStampSweep, error) {
-	if err := requireWritable(s.mode); err != nil {
+	keep, err := prepareStaleSweep(s.mode, keep)
+	if err != nil {
 		return StaleStampSweep{}, err
 	}
-	keep = cleanModelIDs(keep)
 	if len(keep) == 0 {
 		return StaleStampSweep{}, nil
 	}
@@ -1011,9 +940,7 @@ func (s *PGStore) SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSea
 			&h.Element.Content, &meta, &h.Similarity); err != nil {
 			return nil, err
 		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &h.Element.Metadata)
-		}
+		h.Element.Metadata = decodeJSONObject(meta)
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -1085,25 +1012,10 @@ func (s *PGStore) FinishEmbedRun(ctx context.Context, id int64, status string, e
 	return err
 }
 
-const pgEmbedRunCols = `id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status`
-
-func pgScanEmbedRun(row pgx.Row) (*EmbedRun, error) {
-	var r EmbedRun
-	err := row.Scan(&r.ID, &r.ModelID, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Dirty, &r.Embedded,
-		&r.Skipped, &r.Failed, &r.Truncations, &r.Orphans, &r.Status)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &r, nil
-}
-
 // LastEmbedRunAny returns the most recent embed run across all models.
 func (s *PGStore) LastEmbedRunAny(ctx context.Context) (*EmbedRun, error) {
-	return pgScanEmbedRun(s.pool.QueryRow(ctx,
-		`SELECT `+pgEmbedRunCols+` FROM embed_runs ORDER BY id DESC LIMIT 1`))
+	return scanEmbedRun(s.pool.QueryRow(ctx,
+		`SELECT `+embedRunCols+` FROM embed_runs ORDER BY id DESC LIMIT 1`), pgx.ErrNoRows)
 }
 
 // PruneEmbedRuns trims the embed-run ledger: it closes out the runs still
@@ -1134,8 +1046,8 @@ func (s *PGStore) PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRu
 
 // LastEmbedRun returns the most recent run for a model; nil when none.
 func (s *PGStore) LastEmbedRun(ctx context.Context, modelID string) (*EmbedRun, error) {
-	return pgScanEmbedRun(s.pool.QueryRow(ctx,
-		`SELECT `+pgEmbedRunCols+` FROM embed_runs WHERE model_id = $1 ORDER BY id DESC LIMIT 1`, modelID))
+	return scanEmbedRun(s.pool.QueryRow(ctx,
+		`SELECT `+embedRunCols+` FROM embed_runs WHERE model_id = $1 ORDER BY id DESC LIMIT 1`, modelID), pgx.ErrNoRows)
 }
 
 // AppendAudit writes one hash-chained record. The chain head is the row with
@@ -1187,13 +1099,9 @@ func (s *PGStore) AuditTail(ctx context.Context, limit int) ([]AuditEntry, error
 	defer rows.Close()
 	var out []AuditEntry
 	for rows.Next() {
-		var e AuditEntry
-		var details string
-		if err := rows.Scan(&e.Seq, &e.At, &e.Actor, &e.Action, &e.Target, &details, &e.PrevHash, &e.Hash); err != nil {
+		e, err := scanAuditEntry(rows)
+		if err != nil {
 			return nil, err
-		}
-		if details != "" && details != "{}" {
-			_ = json.Unmarshal([]byte(details), &e.Details)
 		}
 		out = append(out, e)
 	}
@@ -1219,13 +1127,9 @@ func (s *PGStore) VerifyAuditChain(ctx context.Context) (ok bool, brokenAt int64
 	defer rows.Close()
 	prev := ""
 	for rows.Next() {
-		var e AuditEntry
-		var details string
-		if err := rows.Scan(&e.Seq, &e.At, &e.Actor, &e.Action, &e.Target, &details, &e.PrevHash, &e.Hash); err != nil {
+		e, err := scanAuditEntry(rows)
+		if err != nil {
 			return false, 0, err
-		}
-		if details != "" && details != "{}" {
-			_ = json.Unmarshal([]byte(details), &e.Details)
 		}
 		if e.PrevHash != prev {
 			return false, e.Seq, nil

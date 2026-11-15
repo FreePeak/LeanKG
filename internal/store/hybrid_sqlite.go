@@ -88,15 +88,5 @@ func (s *Store) Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, er
 	}
 	// An explicit weight of 0 drops that arm's score (the documented "1,0"
 	// drops the keyword arm); the arm still contributes its provenance.
-	fused := FuseRRFWeighted(lists, q.Weights)
-	if len(fused) > limit {
-		fused = fused[:limit]
-	}
-	out := make([]HybridHit, 0, len(fused))
-	for _, f := range fused {
-		h := *byQN[f.Key]
-		h.Score, h.Ranks = f.Score, f.Ranks
-		out = append(out, h)
-	}
-	return out, kw, nil
+	return fuseHybridHits(lists, q.Weights, limit, func(qn string) HybridHit { return *byQN[qn] }), kw, nil
 }

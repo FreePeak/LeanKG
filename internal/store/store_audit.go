@@ -73,13 +73,9 @@ func (s *Store) AuditTail(ctx context.Context, limit int) ([]AuditEntry, error) 
 	defer rows.Close()
 	var out []AuditEntry
 	for rows.Next() {
-		var e AuditEntry
-		var details string
-		if err := rows.Scan(&e.Seq, &e.At, &e.Actor, &e.Action, &e.Target, &details, &e.PrevHash, &e.Hash); err != nil {
+		e, err := scanAuditEntry(rows)
+		if err != nil {
 			return nil, err
-		}
-		if details != "" && details != "{}" {
-			_ = json.Unmarshal([]byte(details), &e.Details)
 		}
 		out = append(out, e)
 	}
@@ -102,13 +98,9 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (ok bool, brokenAt int64, 
 	defer rows.Close()
 	prev := ""
 	for rows.Next() {
-		var e AuditEntry
-		var details string
-		if err := rows.Scan(&e.Seq, &e.At, &e.Actor, &e.Action, &e.Target, &details, &e.PrevHash, &e.Hash); err != nil {
+		e, err := scanAuditEntry(rows)
+		if err != nil {
 			return false, 0, err
-		}
-		if details != "" && details != "{}" {
-			_ = json.Unmarshal([]byte(details), &e.Details)
 		}
 		if e.PrevHash != prev {
 			return false, e.Seq, nil

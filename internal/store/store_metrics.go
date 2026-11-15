@@ -206,7 +206,7 @@ func scanMetric(scan func(dest ...any) error) (Metric, error) {
 }
 
 // scanMetrics drains a metrics window; the caller owns closing rows.
-func scanMetrics(rows versionRows) ([]Metric, error) {
+func scanMetrics(rows scanRows) ([]Metric, error) {
 	var out []Metric
 	for rows.Next() {
 		m, err := scanMetric(rows.Scan)

@@ -471,9 +471,7 @@ func (s *Store) EnvSnapshotGet(ctx context.Context, env, qualifiedName string) (
 		}
 		return EnvSnapshot{}, false, fmt.Errorf("store: env snapshot get: %w", err)
 	}
-	if meta != "" && meta != "{}" {
-		_ = json.Unmarshal([]byte(meta), &snap.Metadata)
-	}
+	snap.Metadata = decodeJSONObject(meta)
 	return snap, true, nil
 }
 
@@ -489,6 +487,7 @@ func (s *Store) EnvSnapshotConflictsWith(ctx context.Context, needle string, lim
 	if err != nil {
 		return nil, fmt.Errorf("store: conflicts_with query: %w", err)
 	}
+	defer rows.Close()
 	return scanRelationships(rows)
 }
 

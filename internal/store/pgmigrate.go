@@ -487,11 +487,10 @@ func (s *PGStore) AppliedMigrations(ctx context.Context) ([]int, error) {
 // Migrate applies all pending migrations (RW only). Migrations are applied in
 // order and recorded in schema_migrations; each runs inside one transaction.
 func (s *PGStore) Migrate(ctx context.Context) error {
-	if s.mode == RO {
-		return fmt.Errorf("store: migrate requires RW mode")
+	if err := migrateModeError(s.mode); err != nil {
+		return err
 	}
-	if _, err := s.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
+	if _, err := s.pool.Exec(ctx, schemaMigrationsDDL); err != nil {
 		return fmt.Errorf("store: ensure schema_migrations: %w", err)
 	}
 	for _, m := range pgMigrations {

@@ -83,6 +83,7 @@ concepts:
       - leankg
     code_refs:
       - internal/store/store.go::openSQLite
+      - internal/store/engine_shared.go
 
   - id: postgres_store
     type: data_store
@@ -99,6 +100,7 @@ concepts:
       - internal/store/store_pg.go::OpenPG
       - internal/store/pg_vectors.go
       - internal/store/pgmigrate.go
+      - internal/store/engine_shared.go
 
   - id: indexer
     type: service

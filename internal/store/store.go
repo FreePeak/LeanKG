@@ -124,11 +124,10 @@ func (m Mode) String() string {
 // Migrate applies all pending migrations (RW only). Migrations are applied in
 // order and recorded in schema_migrations; each runs inside one transaction.
 func (s *Store) Migrate(ctx context.Context) error {
-	if s.mode == RO {
-		return fmt.Errorf("store: migrate requires RW mode")
+	if err := migrateModeError(s.mode); err != nil {
+		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
+	if _, err := s.db.ExecContext(ctx, schemaMigrationsDDL); err != nil {
 		return fmt.Errorf("store: ensure schema_migrations: %w", err)
 	}
 	for _, m := range migrations {
@@ -258,16 +257,8 @@ func (s *Store) AppliedMigrations(ctx context.Context) ([]int, error) {
 // appliedMigrationsQuery reads the ledger both engines share.
 const appliedMigrationsQuery = `SELECT version FROM schema_migrations ORDER BY version`
 
-// versionRows is the read side shared by database/sql and pgx rows (Close is
-// excluded: its signature differs between the two).
-type versionRows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}
-
 // collectVersions drains a version column; the caller owns closing rows.
-func collectVersions(rows versionRows) ([]int, error) {
+func collectVersions(rows scanRows) ([]int, error) {
 	var out []int
 	for rows.Next() {
 		var v int
