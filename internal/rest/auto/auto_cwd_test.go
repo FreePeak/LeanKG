@@ -43,7 +43,7 @@ func TestAutoConfigRefusesCwdOutsideServedProject(t *testing.T) {
 	}
 	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
-	h := RegisterAutoConfig(http.NewServeMux(), eng)
+	h := gatedAutoConfig(http.NewServeMux(), eng)
 	body, _ := json.Marshal(AutoConfigRequest{IndexEnabled: true, CWD: caller})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -84,7 +84,7 @@ func TestAutoConfigNoCWDKeepsServingDefault(t *testing.T) {
 	}
 	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
-	h := RegisterAutoConfig(http.NewServeMux(), eng)
+	h := gatedAutoConfig(http.NewServeMux(), eng)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader([]byte(`{}`)))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -126,7 +126,7 @@ func TestAutoConfigCwdInsideServedProject(t *testing.T) {
 	}
 	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
-	h := RegisterAutoConfig(http.NewServeMux(), eng)
+	h := gatedAutoConfig(http.NewServeMux(), eng)
 	body, _ := json.Marshal(AutoConfigRequest{CWD: sub})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()

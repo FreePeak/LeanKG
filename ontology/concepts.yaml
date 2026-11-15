@@ -195,6 +195,7 @@ concepts:
       - leankg
     code_refs:
       - internal/auth/http.go
+      - internal/auth/route.go::Require
       - internal/mcp/server.go::anonymousGate
 
   - id: authenticate_tool

@@ -24,10 +24,13 @@ import (
 // (~292 years). A ttl_secs beyond it would wrap to "never expires".
 const maxTTLSecs = math.MaxInt64 / int64(time.Second)
 
-// Routes returns the /api/v1/auth/* handler tree over a store.
+// Routes returns the /api/v1/auth/* handler tree over a store. Every route is
+// Public: the bootstrap is mounted outside the listener gate, and each handler
+// resolves its own caller (caller, requireAccount), so its failures keep the
+// envelope's 400 shape instead of the gate's 401.
 func Routes(st Store) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/auth/register", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /api/v1/auth/register", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -42,8 +45,8 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		writeOK(w, account)
-	})
-	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/login", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -57,8 +60,8 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		writeOK(w, account)
-	})
-	mux.HandleFunc("POST /api/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/token", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			AccountID string `json:"account_id"`
 			OrgID     string `json:"org_id"`
@@ -125,8 +128,8 @@ func Routes(st Store) http.Handler {
 			issued.ExpiresAt = &row.ExpiresAt
 		}
 		writeOK(w, issued)
-	})
-	mux.HandleFunc("GET /api/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /api/v1/auth/token", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, ok := caller(st, w, r)
 		if !ok {
 			return
@@ -146,8 +149,8 @@ func Routes(st Store) http.Handler {
 			}
 		}
 		writeOK(w, visible)
-	})
-	mux.HandleFunc("POST /api/v1/auth/token/revoke", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/token/revoke", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			TokenID string `json:"token_id"`
 		}
@@ -186,8 +189,8 @@ func Routes(st Store) http.Handler {
 			break
 		}
 		writeOK(w, revoked)
-	})
-	mux.HandleFunc("POST /api/v1/auth/org", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/org", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Rust took a bare JSON string body here (Json(name): Json<String>).
 		var name string
 		if err := json.NewDecoder(r.Body).Decode(&name); err != nil {
@@ -204,8 +207,8 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		writeOK(w, org)
-	})
-	mux.HandleFunc("POST /api/v1/auth/org/{org_id}/member", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/org/{org_id}/member", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			AccountID string `json:"account_id"`
 			Role      string `json:"role"`
@@ -233,8 +236,8 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		writeOK(w, member)
-	})
-	mux.HandleFunc("GET /api/v1/auth/org/{org_id}/members", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /api/v1/auth/org/{org_id}/members", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, ok := requireAccount(st, w, r)
 		if !ok {
 			return
@@ -255,8 +258,8 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		writeOK(w, members)
-	})
-	mux.HandleFunc("POST /api/v1/auth/resource/claim", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/resource/claim", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ResourceType string `json:"resource_type"`
 			ResourceID   string `json:"resource_id"`
@@ -274,7 +277,7 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		writeOK(w, true)
-	})
+	})))
 	return mux
 }
 

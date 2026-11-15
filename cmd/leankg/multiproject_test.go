@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"io"
 	"net"
 	"net/http"
@@ -123,9 +124,9 @@ func TestRESTProjectRouting(t *testing.T) {
 	})
 	defer router.Close()
 
-	h := routeByProject(router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
+	h := auth.MiddlewareWithStore(nil, routeByProject(router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
 		return rest.Handler(p.Engine, p.Memory)
-	})
+	}))
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 

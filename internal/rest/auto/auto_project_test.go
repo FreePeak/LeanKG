@@ -72,7 +72,7 @@ func TestAutoConfigHonoursProjectSelector(t *testing.T) {
 	otherEng := openEngine(t, otherDir)
 	r := &fakeRouter{engines: map[string]*core.Engine{otherDir: otherEng}, multi: true}
 
-	h := RegisterAutoConfig(http.NewServeMux(), defEng, WithRouter(r))
+	h := gatedAutoConfig(http.NewServeMux(), defEng, WithRouter(r))
 	body := []byte(`{"index_enabled":false,"embed_enabled":false}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config?project="+otherDir, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -97,7 +97,7 @@ func TestAutoConfigRefusesUnknownProject(t *testing.T) {
 	defEng := openEngine(t, filepath.Join(base, "default"))
 	r := &fakeRouter{engines: map[string]*core.Engine{}, multi: true, err: errors.New("unknown project \"/nope\" — queries never fall back to another project's data")}
 
-	h := RegisterAutoConfig(http.NewServeMux(), defEng, WithRouter(r))
+	h := gatedAutoConfig(http.NewServeMux(), defEng, WithRouter(r))
 	body := []byte(`{"index_enabled":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config?project=/nope", bytes.NewReader(body))
 	rec := httptest.NewRecorder()

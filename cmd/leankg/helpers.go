@@ -33,11 +33,11 @@ import (
 // httpMux wraps the MCP handler with a /health endpoint for supervision.
 func httpMux(mcp http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
-	})
-	mux.Handle("/mcp", mcp)
+	})))
+	mux.Handle("/mcp", auth.Public(mcp)) // the MCP handler authorises each tool itself
 	return mux
 }
 
@@ -48,8 +48,8 @@ func httpMux(mcp http.Handler) http.Handler {
 // stay open to an anonymous handshake while the gate is on.
 func gateAutoConfig(st store.Backend, mcp, autoConfig http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/mcp/auto-config", auth.MiddlewareWithStore(st, autoConfig))
-	mux.Handle("/", mcp)
+	mux.Handle("/api/v1/mcp/auto-config", auth.Public(auth.MiddlewareWithStore(st, autoConfig)))
+	mux.Handle("/", auth.Public(mcp))
 	return mux
 }
 

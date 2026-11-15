@@ -181,6 +181,8 @@ sequenceDiagram
 
 The same gate covers REST and ConnectRPC. Those surfaces have no login tool, so once a site admin exists they need a bearer token minted with `leankg auth token create`.
 
+**Route roles.** Every route on a gated listener declares its role at registration: `auth.Require(auth.Contributor, h)` for a write, `auth.Require(auth.Viewer, h)` for a read, and `auth.Public(h)` for a route with no role floor (the auth bootstrap, liveness, the MCP handshake). The gate stores the caller's role in the request context; `Require` reads it and denies a request that has no role. `internal/archtest` fails on a route registered without a declaration.
+
 stdio (`leankg serve --stdio`) is not gated. It runs as Admin because it is a local subprocess started by the user.
 
 **Account status.** A token minted for an existing account stops authenticating (the same 401 an unknown token gets) while that account is not `active`, so disabling an account revokes its tokens at once. A token whose account id has no row (a free-form label from before accounts existed) is not affected and keeps its minted role; a token with no account id is unchanged.

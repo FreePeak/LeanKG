@@ -3,6 +3,7 @@ package httpx_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,7 +74,7 @@ func post(t *testing.T, url, body string) (int, string) {
 // text. RPC carries the text in the connect error message.
 func TestBadInputAnswersOneEnvelopeOnEveryTransport(t *testing.T) {
 	engine := newParityEngine(t)
-	restSrv := httptest.NewServer(rest.Handler(engine, nil))
+	restSrv := httptest.NewServer(auth.MiddlewareWithStore(nil, rest.Handler(engine, nil)))
 	t.Cleanup(restSrv.Close)
 	webSrv := httptest.NewServer(web.APIHandler(engine, nil))
 	t.Cleanup(webSrv.Close)

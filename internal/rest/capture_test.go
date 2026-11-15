@@ -66,7 +66,7 @@ func do(h http.Handler, s reqSpec) (int, string, []byte) {
 func captured(t *testing.T, rec telemetry.Recorder) http.Handler {
 	t.Helper()
 	e, mem := newEngine(t)
-	return Capture(Handler(e, mem, WithHindsightCompat()), rec, telemetry.TransportREST)
+	return Capture(gatedHandler(e, mem, WithHindsightCompat()), rec, telemetry.TransportREST)
 }
 
 var routeCases = []struct {

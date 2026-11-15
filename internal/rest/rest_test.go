@@ -37,7 +37,7 @@ func newEngine(t *testing.T) (*core.Engine, *memory.Memory) {
 
 func TestHealth(t *testing.T) {
 	e, _ := newEngine(t)
-	srv := httptest.NewServer(Handler(e, nil))
+	srv := httptest.NewServer(gatedHandler(e, nil))
 	defer srv.Close()
 	res, err := httpGet(srv.URL + "/health")
 	if err != nil {
@@ -50,7 +50,7 @@ func TestHealth(t *testing.T) {
 
 func TestStatusEndpoint(t *testing.T) {
 	e, _ := newEngine(t)
-	srv := httptest.NewServer(Handler(e, nil))
+	srv := httptest.NewServer(gatedHandler(e, nil))
 	defer srv.Close()
 	res, err := httpGet(srv.URL + "/api/v1/status")
 	if err != nil {
@@ -74,7 +74,7 @@ func TestStatusEndpoint(t *testing.T) {
 
 func TestQueryLadderEndpoints(t *testing.T) {
 	e, _ := newEngine(t)
-	srv := httptest.NewServer(Handler(e, nil))
+	srv := httptest.NewServer(gatedHandler(e, nil))
 	defer srv.Close()
 
 	// L0 cold: guidance, never error.
@@ -111,7 +111,7 @@ func TestQueryLadderEndpoints(t *testing.T) {
 
 func TestImportEndpoint(t *testing.T) {
 	e, _ := newEngine(t)
-	srv := httptest.NewServer(Handler(e, nil))
+	srv := httptest.NewServer(gatedHandler(e, nil))
 	defer srv.Close()
 
 	src := filepath.Join(t.TempDir(), "demo")
@@ -141,7 +141,7 @@ func TestImportEndpoint(t *testing.T) {
 
 func TestMemoryHTTPAPI(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem))
+	srv := httptest.NewServer(gatedHandler(e, mem))
 	defer srv.Close()
 
 	bank := memory.BankName(t.TempDir())
@@ -214,7 +214,7 @@ func doReq(method, url string, body any) (httpResp, error) {
 // the API must reject it instead of silently storing dead data.
 func TestRetainRejectsEmptyContent(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem))
+	srv := httptest.NewServer(gatedHandler(e, mem))
 	defer srv.Close()
 
 	bank := memory.BankName(t.TempDir())
@@ -252,7 +252,7 @@ func TestSessionAndOntologyEndpoints(t *testing.T) {
 	e, _ := newEngine(t)
 	dir := t.TempDir()
 	e = core.New(e.Store(), core.Options{ProjectDir: dir})
-	srv := httptest.NewServer(Handler(e, nil))
+	srv := httptest.NewServer(gatedHandler(e, nil))
 	defer srv.Close()
 
 	// session offload via the import tool, then recall via REST.
@@ -335,7 +335,7 @@ func getJSON(t *testing.T, url string, out any) int {
 // cursor gate skips is reported as skipped — never as `retained: N`.
 func TestNativeRetainAcknowledgesWhatItWrote(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem))
+	srv := httptest.NewServer(gatedHandler(e, mem))
 	defer srv.Close()
 	post := func(body map[string]any) map[string]any {
 		t.Helper()
@@ -379,7 +379,7 @@ func TestNativeRetainAcknowledgesWhatItWrote(t *testing.T) {
 // bank silently, which is why the hook used to return nothing at all.
 func TestInjectWithoutBankUsesTheServerDefault(t *testing.T) {
 	e, mem := newEngine(t)
-	srv := httptest.NewServer(Handler(e, mem))
+	srv := httptest.NewServer(gatedHandler(e, mem))
 	defer srv.Close()
 
 	// A row in the bank the scope selects by default.
@@ -421,7 +421,7 @@ func TestInjectReportsInjectedIDs(t *testing.T) {
 		"ids-1", []string{"first injected row", "second injected row"}, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(Handler(e, mem))
+	srv := httptest.NewServer(gatedHandler(e, mem))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/api/v1/memory/inject")
 	if err != nil {

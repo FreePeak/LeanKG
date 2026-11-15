@@ -10,6 +10,18 @@
 
 ## Changelog
 
+### route-roles: every route declares its role; isWritePath is gone (CX-38, CX-49) (2026-11-15)
+
+The gate resolves the caller once and stores its role in the request context. Each route on a gated listener declares its access at registration: `auth.Require(role, h)` or `auth.Public(h)`. `TestRouteRegistrationsDeclareRole` fails on a route without a declaration, so a route with no role cannot ship. The path lists (`isWritePath`, `writePrefixes`, `memoryWritePrefixes`) are deleted.
+
+Live matrix, base against this change, gate on (`--http`, `--rest`, `--rpc`, `--ui`, `--memory`, `--hindsight-compat`). Every other route answers as before. The differences:
+
+- `/api/file` on the `--ui` listener needs a bearer token when the gate is on (Viewer minimum). This is decision D1; with the gate off it stays open.
+- `GET /api/v1/ontology/matches` is a read. A Viewer now gets 200; the old prefix `/api/v1/ontology/match` also matched it and answered 403.
+- A path with no registered route, under the old write prefixes (`POST /api/v1/import/extra`) or the old DELETE rule for the memory mount (`DELETE /api/v1/memory/banks/{bank}/memories/{id}`), answers 404 to a Viewer instead of 403.
+
+Store roles (rule 3.3.2): auth, maintain, embed and orgknowledge depend on the store roles they call, not on `store.Backend`. `store.RecordedRoot`, `store.RefreshInventory`, `store.CurrentModelID` and `index.DeleteFiles` take the narrow role they read.
+
 ### self-ontology — LeanKG ships an ontology of itself (2026-11-08)
 
 The repository now carries `ontology/concepts.yaml` (19 concepts: MCP surface, core engine, search ladder, store backends, indexer, embeddings, git history, ontology, path confinement, auth gate, authenticate tool, login lockout, admin bootstrap, REST/ConnectRPC, web UI, tree-sitter tier, version source) and `ontology/workflows.yaml` (5 workflows: index then query, git history import, search ladder resolution, ontology import and match, admin bootstrap and login). Every path is grounded in a current Go file. `internal/ontology/repo_ontology_test.go` loads both files through the production loaders and fails on a duplicate id, an unknown concept type, or a named path that no longer exists. Import is explicit (`import {action: "ontology", path: "ontology"}`); nothing syncs it automatically. Documented in `AGENTS.md`.

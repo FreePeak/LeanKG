@@ -53,8 +53,8 @@ func (b *badPayload) Unwrap() error { return b.err }
 // documents, and a Go mux matches a bare pattern literally.
 func Register(mux *http.ServeMux, st store.Backend, projectDir string) {
 	fed := Receiver(st, projectDir)
-	mux.Handle("POST "+PushPath, fed)
-	mux.Handle("GET "+GraphPath, fed)
+	mux.Handle("POST "+PushPath, auth.Require(auth.Contributor, fed))
+	mux.Handle("GET "+GraphPath, auth.Require(auth.Viewer, fed))
 }
 
 // Receiver serves one project's graph over the federation protocol.

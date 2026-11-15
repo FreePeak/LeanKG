@@ -415,18 +415,19 @@ func TestRegisterMountsBothRoutes(t *testing.T) {
 
 	mux := http.NewServeMux()
 	Register(mux, st, "/srv/mounted")
+	gated := auth.MiddlewareWithStore(st, mux)
 
-	if rec := serve(t, mux, http.MethodGet, GraphPath, "", nil); rec.Code != http.StatusOK {
+	if rec := serve(t, gated, http.MethodGet, GraphPath, "", nil); rec.Code != http.StatusOK {
 		t.Fatalf("GET %s = %d, want 200", GraphPath, rec.Code)
 	}
-	rec := serve(t, mux, http.MethodGet, PushPath, "", nil)
+	rec := serve(t, gated, http.MethodGet, PushPath, "", nil)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET %s = %d, want 405 (the mux rejects the method)", PushPath, rec.Code)
 	}
 	doc := pushDoc(t, "local", "svc", []wireElement{
 		{QualifiedName: "pkg.Mounted", ElementType: "function", Name: "Mounted", FilePath: "m.go", Language: "go"},
 	}, nil)
-	if rec := serve(t, mux, http.MethodPost, PushPath, doc, nil); rec.Code != http.StatusOK {
+	if rec := serve(t, gated, http.MethodPost, PushPath, doc, nil); rec.Code != http.StatusOK {
 		t.Fatalf("POST %s = %d, want 200: %s", PushPath, rec.Code, rec.Body.String())
 	}
 	if _, ok := elementsByQN(t, st)["pkg.Mounted"]; !ok {
@@ -456,8 +457,8 @@ func TestReceiverBehindAuthMiddleware(t *testing.T) {
 	if rec := serve(t, h, http.MethodPost, PushPath, body, nil); rec.Code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated push = %d, want 401 from the middleware", rec.Code)
 	}
-	// The middleware admits a viewer (these paths are not in its write prefix
-	// list); the receiver's own gate is what refuses the write.
+	// The push route declares Contributor at Register, so the route refuses a
+	// viewer; the receiver's own role check still holds behind it.
 	if rec := serve(t, h, http.MethodPost, PushPath, body, map[string]string{"Authorization": "Bearer " + viewer}); rec.Code != http.StatusForbidden {
 		t.Errorf("viewer push = %d, want 403 from the receiver", rec.Code)
 	}
@@ -482,7 +483,7 @@ func TestFederationPushPullRoundTrip(t *testing.T) {
 	token := mint(t, receiver, "contributor")
 	mux := http.NewServeMux()
 	Register(mux, receiver, "/srv/receiver")
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(auth.MiddlewareWithStore(receiver, mux))
 	t.Cleanup(srv.Close)
 
 	res, err := Push(context.Background(), source, Options{

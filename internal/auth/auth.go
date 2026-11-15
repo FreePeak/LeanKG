@@ -13,7 +13,6 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/httpx"
@@ -91,51 +90,6 @@ func (reg *registry) classify(st Store, r *http.Request) (Role, error) {
 	return ctx.Role, nil
 }
 
-// writePrefixes are path PREFIXES whose routes mutate state. Prefix matching
-// (not exact equality) is required: parameterized routes such as
-// /api/v1/memory/banks/{bank}/memories can never match a literal-path map,
-// which silently left hindsight memory retain open to Viewers.
-var writePrefixes = []string{
-	"/api/v1/import",
-	"/leankg.v1.LeanKG/Import",
-	"/api/v1/memory/session/retain", // session retain writes memory rows
-	"/api/v1/ontology/match",        // ontology match writes the KV catalog
-	"/api/v1/mcp/auto-config",       // auto-config starts a reindex and embed
-	"/api/v2/graph/push",            // federation push upserts elements
-}
-
-// memoryWritePrefixes are the parameterized memory-retain route prefixes.
-// Both mounts spell retain as POST <prefix>{bank}/memories; the same path
-// answers GET with a listing (K3), and every other memory route is a read
-// (recall ends in /recall, read-by-id ends in the row id, stats ends in
-// /stats, and the bank ensure touches no store).
-var memoryWritePrefixes = []string{
-	"/api/v1/memory/banks/", // native FR-ZCP-07 mount
-	"/v1/default/banks/",    // hindsight-compat mount (#414)
-}
-
-// isWritePath reports whether a request mutates state. Path alone is not
-// enough: memory retain and memory list share one path, so the method decides
-// (GET /…/memories lists, POST /…/memories retains). Every DELETE under a
-// memory mount (document delete) is a write.
-func isWritePath(path, method string) bool {
-	for _, p := range writePrefixes {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	retain := method == http.MethodPost && strings.HasSuffix(path, "/memories")
-	if !retain && method != http.MethodDelete {
-		return false
-	}
-	for _, p := range memoryWritePrefixes {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	return false
-}
-
 // WriteTools are the MCP tool names that mutate state (all import actions).
 // Capability MUST be classified from the tool name in the JSON-RPC body —
 // `writeActions` paths cannot see it.
@@ -189,9 +143,9 @@ func AllowedTool(role Role, tool string) bool {
 	return true
 }
 
-// Middleware gates a handler tree by request PATH. Reads are always allowed
-// for any valid role; path-level writes require Contributor or Admin. 401 on
-// missing token, 403 on insufficient role.
+// Middleware resolves the caller once per request and stores its role in the
+// request context (see WithRole). It answers 401 on a missing or unknown token.
+// Each route enforces its own role with Require (CX-49).
 //
 // Token precedence: DB-backed tokens (st, the internal/store `tokens` table —
 // minted and revocable at runtime) are consulted first; the env vars
@@ -219,10 +173,6 @@ func MiddlewareWithStore(st Store, next http.Handler) http.Handler {
 			httpx.WriteError(w, errs.NewError(errs.Unauthorized, errs.Unauthorized.Cause, ""))
 			return
 		}
-		if isWritePath(r.URL.Path, r.Method) && role < Contributor {
-			httpx.WriteError(w, errs.NewError(errs.PermissionDenied, errs.PermissionDenied.Cause, ""))
-			return
-		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(WithRole(r.Context(), role)))
 	})
 }
