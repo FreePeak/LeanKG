@@ -171,15 +171,15 @@ func TestRunFleetLogsWhatThePassDid(t *testing.T) {
 func TestSweepDropsTheStaleCollectionWithTheKeepFunc(t *testing.T) {
 	st := collectionFixture(t)
 	// The live collection is the one the newest embed run names.
-	runID, err := st.StartEmbedRun("live", "incremental", 1)
+	runID, err := st.StartEmbedRun(context.Background(), "live", "incremental", 1)
 	if err != nil {
 		t.Fatalf("start embed run: %v", err)
 	}
-	if err := st.FinishEmbedRun(runID, "completed", 1, 0, 0, 0, 0); err != nil {
+	if err := st.FinishEmbedRun(context.Background(), runID, "completed", 1, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish embed run: %v", err)
 	}
-	res := Sweep(context.Background(), st, Options{KeepModelIDsFunc: func(b store.Backend) []string {
-		id, err := store.CurrentModelID(b)
+	res := Sweep(context.Background(), st, Options{KeepModelIDsFunc: func(ctx context.Context, b store.Backend) []string {
+		id, err := store.CurrentModelID(ctx, b)
 		if err != nil || id == "" {
 			return nil
 		}
@@ -201,17 +201,17 @@ func TestSweepDropsTheStaleCollectionWithTheKeepFunc(t *testing.T) {
 // stamped and nothing in emb_stamp says which one is live.
 func TestCurrentModelIDNamesTheNewestRun(t *testing.T) {
 	st := collectionFixture(t)
-	if id, err := store.CurrentModelID(st); err != nil || id != "" {
+	if id, err := store.CurrentModelID(context.Background(), st); err != nil || id != "" {
 		t.Fatalf("CurrentModelID on a store with no runs = %q, %v; want \"\"", id, err)
 	}
-	runID, err := st.StartEmbedRun("embeddinggemma-2", "incremental", 3)
+	runID, err := st.StartEmbedRun(context.Background(), "embeddinggemma-2", "incremental", 3)
 	if err != nil {
 		t.Fatalf("start embed run: %v", err)
 	}
-	if err := st.FinishEmbedRun(runID, "completed", 3, 0, 0, 0, 0); err != nil {
+	if err := st.FinishEmbedRun(context.Background(), runID, "completed", 3, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish embed run: %v", err)
 	}
-	id, err := store.CurrentModelID(st)
+	id, err := store.CurrentModelID(context.Background(), st)
 	if err != nil {
 		t.Fatalf("CurrentModelID: %v", err)
 	}

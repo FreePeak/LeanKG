@@ -86,10 +86,10 @@ func TestPGStampReadsPre017Store(t *testing.T) {
 		ModelID: "pg-pre017", Revision: "r1", Dimensions: 8, Distance: "cosine",
 		Provider: "local", ChunkerVersion: 3, QueryPrefix: "q: ", DocumentPrefix: "d: ",
 	}
-	if err := s.WriteStamp(want); err != nil {
+	if err := s.WriteStamp(context.Background(), want); err != nil {
 		t.Fatalf("write stamp on a pre-017 store: %v", err)
 	}
-	got, err := s.Stamp(want.ModelID)
+	got, err := s.Stamp(context.Background(), want.ModelID)
 	if err != nil {
 		t.Fatalf("read stamp on a pre-017 store: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestPGStampReadsPre017Store(t *testing.T) {
 		got.DocumentPrefix != want.DocumentPrefix {
 		t.Fatalf("stamp identity = %+v, want %+v", got, want)
 	}
-	all, err := s.Stamps()
+	all, err := s.Stamps(context.Background())
 	if err != nil {
 		t.Fatalf("list stamps on a pre-017 store: %v", err)
 	}
@@ -122,13 +122,13 @@ func TestPGStampAfterMigratingPre017Store(t *testing.T) {
 		ModelID: "pg-legacy", Revision: "r1", Dimensions: 8, Distance: "cosine",
 		Provider: "local", ChunkerVersion: 3,
 	}
-	if err := s.WriteStamp(legacy); err != nil {
+	if err := s.WriteStamp(context.Background(), legacy); err != nil {
 		t.Fatalf("write stamp on a pre-017 store: %v", err)
 	}
 	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate to 017: %v", err)
 	}
-	got, err := s.Stamp(legacy.ModelID)
+	got, err := s.Stamp(context.Background(), legacy.ModelID)
 	if err != nil {
 		t.Fatalf("read stamp after migrating: %v", err)
 	}
@@ -139,10 +139,10 @@ func TestPGStampAfterMigratingPre017Store(t *testing.T) {
 		ModelID: "pg-fresh", Revision: "r1", Dimensions: 8, Distance: "cosine",
 		Provider: "local", TextCap: 8000,
 	}
-	if err := s.WriteStamp(fresh); err != nil {
+	if err := s.WriteStamp(context.Background(), fresh); err != nil {
 		t.Fatalf("write stamp after migrating: %v", err)
 	}
-	got, err = s.Stamp(fresh.ModelID)
+	got, err = s.Stamp(context.Background(), fresh.ModelID)
 	if err != nil {
 		t.Fatalf("read fresh stamp: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestPGStoreOpensWithoutEmbStamp(t *testing.T) {
 	if _, err := s.pool.Exec(pgCtx, `DROP TABLE emb_stamp`); err != nil {
 		t.Fatalf("drop emb_stamp: %v", err)
 	}
-	if _, err := s.Stamp("whatever"); err == nil {
+	if _, err := s.Stamp(context.Background(), "whatever"); err == nil {
 		t.Fatal("a missing emb_stamp table must fail the stamp read")
 	}
 }

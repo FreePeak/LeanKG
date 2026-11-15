@@ -16,21 +16,21 @@ import (
 // marked "running" with dirty=1620.
 func TestPruneEmbedRunsClosesStuckRunsAndKeepsTheNewestRow(t *testing.T) {
 	s := openTestStore(t)
-	first, err := s.StartEmbedRun("model-a", "incremental", 10)
+	first, err := s.StartEmbedRun(context.Background(), "model-a", "incremental", 10)
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if err := s.FinishEmbedRun(first, "completed", 10, 0, 0, 0, 0); err != nil {
+	if err := s.FinishEmbedRun(context.Background(), first, "completed", 10, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish run: %v", err)
 	}
-	second, err := s.StartEmbedRun("model-a", "full", 5)
+	second, err := s.StartEmbedRun(context.Background(), "model-a", "full", 5)
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if err := s.FinishEmbedRun(second, "completed", 5, 0, 0, 0, 0); err != nil {
+	if err := s.FinishEmbedRun(context.Background(), second, "completed", 5, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish run: %v", err)
 	}
-	stuck, err := s.StartEmbedRun("model-b", "incremental", 7)
+	stuck, err := s.StartEmbedRun(context.Background(), "model-b", "incremental", 7)
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestPruneEmbedRunsClosesStuckRunsAndKeepsTheNewestRow(t *testing.T) {
 
 	// The newest row is never deleted: it names the store's current
 	// collection, and the stale-collection sweep derives its keep set from it.
-	run, err := s.LastEmbedRunAny()
+	run, err := s.LastEmbedRunAny(context.Background())
 	if err != nil {
 		t.Fatalf("last run: %v", err)
 	}
@@ -71,11 +71,11 @@ func TestPruneEmbedRunsClosesStuckRunsAndKeepsTheNewestRow(t *testing.T) {
 // not a purge — a run that started inside the window is still history.
 func TestPruneEmbedRunsKeepsRunsInsideTheWindow(t *testing.T) {
 	s := openTestStore(t)
-	id, err := s.StartEmbedRun("model-a", "incremental", 4)
+	id, err := s.StartEmbedRun(context.Background(), "model-a", "incremental", 4)
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if err := s.FinishEmbedRun(id, "completed", 4, 0, 0, 0, 0); err != nil {
+	if err := s.FinishEmbedRun(context.Background(), id, "completed", 4, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish run: %v", err)
 	}
 	pr, err := s.PruneEmbedRuns(time.Now().Add(-time.Hour))

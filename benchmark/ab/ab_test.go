@@ -185,7 +185,7 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 	st := freshStore(b, dir)
 	defer st.Close()
 
-	if err := st.WriteStamp(store.ModelStamp{
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{
 		ModelID: vecModel, Revision: "bench", Dimensions: vecDims,
 		Distance: "cosine", Provider: "bench",
 	}); err != nil {
@@ -218,7 +218,7 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 		}
 		rows[i] = store.VectorRow{QualifiedName: els[i].QualifiedName, Vec: v}
 	}
-	if err := st.UpsertVectors(vecModel, rows); err != nil {
+	if err := st.UpsertVectors(context.Background(), vecModel, rows); err != nil {
 		b.Fatalf("UpsertVectors: %v", err)
 	}
 	for i := range rows {
@@ -228,7 +228,7 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 		}
 		rows[i] = store.VectorRow{QualifiedName: els[i].QualifiedName, Vec: v}
 	}
-	if err := st.UpsertVectors(vecModel, rows); err != nil {
+	if err := st.UpsertVectors(context.Background(), vecModel, rows); err != nil {
 		b.Fatalf("UpsertVectors: %v", err)
 	}
 

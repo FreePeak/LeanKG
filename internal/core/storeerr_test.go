@@ -33,7 +33,9 @@ type lastEmbedRunFails struct {
 	cause error
 }
 
-func (f lastEmbedRunFails) LastEmbedRunAny() (*store.EmbedRun, error) { return nil, f.cause }
+func (f lastEmbedRunFails) LastEmbedRunAny(ctx context.Context) (*store.EmbedRun, error) {
+	return nil, f.cause
+}
 
 type spaceFails struct {
 	store.Backend

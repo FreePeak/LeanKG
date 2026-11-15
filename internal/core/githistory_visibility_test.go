@@ -159,7 +159,7 @@ func TestSemanticHidesGitHistoryVectors(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	for _, el := range elements {
@@ -170,7 +170,7 @@ func TestSemanticHidesGitHistoryVectors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: el.QualifiedName, Vec: qvec[0]}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: el.QualifiedName, Vec: qvec[0]}}); err != nil {
 			t.Fatal(err)
 		}
 	}

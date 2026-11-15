@@ -67,8 +67,8 @@ func (s *Store) Elements(ctx context.Context) ([]Element, error) {
 }
 
 // VectorCoverage reports (covered, orphans) for a model via anti-join.
-func (s *Store) VectorCoverage(modelID string) (covered, orphans int, err error) {
-	err = s.db.QueryRow(`SELECT
+func (s *Store) VectorCoverage(ctx context.Context, modelID string) (covered, orphans int, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT
 			COALESCE(SUM(CASE WHEN ce.qualified_name IS NOT NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN ce.qualified_name IS NULL     THEN 1 ELSE 0 END), 0)
 		FROM embedding_vectors v

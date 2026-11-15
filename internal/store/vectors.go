@@ -167,23 +167,23 @@ type stampShape struct {
 // The full identity — model, revision, dims, distance, provider, chunker
 // version and the query/document prefix pair — is what a reader compares, so
 // every component is persisted.
-func (s *Store) WriteStamp(st ModelStamp) error {
-	shape, err := s.stampShape()
+func (s *Store) WriteStamp(ctx context.Context, st ModelStamp) error {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return fmt.Errorf("store: stamp shape: %w", err)
 	}
-	if _, err := s.db.Exec(stampUpsertFor(shape.cols, func(int) string { return "?" }), stampValues(st, shape.cols)...); err != nil {
+	if _, err := s.db.ExecContext(ctx, stampUpsertFor(shape.cols, func(int) string { return "?" }), stampValues(st, shape.cols)...); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // stampColumns probes the emb_stamp columns this store's schema carries.
 // A store that never had the table (or that predates the stamp migrations)
 // yields no optional columns; the read then fails with the driver's own
 // "no such table: emb_stamp", which is the truth about that store.
-func (s *Store) stampColumns() (stampColumnSet, error) {
-	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('emb_stamp')`)
+func (s *Store) stampColumns(ctx context.Context) (stampColumnSet, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('emb_stamp')`)
 	if err != nil {
 		return nil, err
 	}
@@ -201,8 +201,8 @@ func (s *Store) stampColumns() (stampColumnSet, error) {
 
 // stampShape probes this store's emb_stamp columns and builds the read
 // shape from them.
-func (s *Store) stampShape() (*stampShape, error) {
-	cols, err := s.stampColumns()
+func (s *Store) stampShape(ctx context.Context) (*stampShape, error) {
+	cols, err := s.stampColumns(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -217,13 +217,13 @@ func (s *Store) stampShape() (*stampShape, error) {
 // rebuild), and a column the schema does not have AT ALL is projected as its
 // documented default (text_cap 0 = "cap never recorded") instead of failing
 // the read with "no such column".
-func (s *Store) Stamp(modelID string) (*ModelStamp, error) {
-	shape, err := s.stampShape()
+func (s *Store) Stamp(ctx context.Context, modelID string) (*ModelStamp, error) {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var st ModelStamp
-	err = s.db.QueryRow(shape.selectSQL+` WHERE model_id = ?`, modelID).
+	err = s.db.QueryRowContext(ctx, shape.selectSQL+` WHERE model_id = ?`, modelID).
 		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
 			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
 	if err == sql.ErrNoRows {
@@ -236,8 +236,8 @@ func (s *Store) Stamp(modelID string) (*ModelStamp, error) {
 }
 
 // EmbeddingStateMap returns qualified_name -> content_hash for a model.
-func (s *Store) EmbeddingStateMap(modelID string) (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT qualified_name, content_hash FROM embedding_state WHERE model_id = ?`, modelID)
+func (s *Store) EmbeddingStateMap(ctx context.Context, modelID string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT qualified_name, content_hash FROM embedding_state WHERE model_id = ?`, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -254,14 +254,14 @@ func (s *Store) EmbeddingStateMap(modelID string) (map[string]string, error) {
 }
 
 // SetEmbeddingStates records embedding_state rows for freshly embedded QNs.
-func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) error {
-	tx, err := s.db.Begin()
+func (s *Store) SetEmbeddingStates(ctx context.Context, modelID string, states map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for qn, h := range states {
-		if _, err := tx.Exec(`INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
 			VALUES (?,?,?,'embedded',strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			ON CONFLICT(model_id, qualified_name) DO UPDATE SET content_hash=excluded.content_hash,
 				state='embedded', embedded_at=excluded.embedded_at`, modelID, qn, h); err != nil {
@@ -271,17 +271,17 @@ func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) err
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // Stamps returns all persisted model stamps. The read shape follows the
 // store's schema exactly like Store.Stamp's.
-func (s *Store) Stamps() ([]ModelStamp, error) {
-	shape, err := s.stampShape()
+func (s *Store) Stamps(ctx context.Context) ([]ModelStamp, error) {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(shape.selectSQL)
+	rows, err := s.db.QueryContext(ctx, shape.selectSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -311,26 +311,26 @@ func (s *Store) Stamps() ([]ModelStamp, error) {
 // same atomic-replace boundary the reference relies on.)
 //
 // Callers pass a file's complete vector set; an empty set is a caller bug.
-func (s *Store) ReplaceFileVectors(modelID string, rows []VectorRow, states map[string]string) error {
+func (s *Store) ReplaceFileVectors(ctx context.Context, modelID string, rows []VectorRow, states map[string]string) error {
 	if len(rows) == 0 {
 		return fmt.Errorf("store: ReplaceFileVectors %s: no vectors", modelID)
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, r := range rows {
-		if _, err := tx.Exec(`DELETE FROM embedding_vectors WHERE model_id = ? AND qualified_name = ?`, modelID, r.QualifiedName); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_vectors WHERE model_id = ? AND qualified_name = ?`, modelID, r.QualifiedName); err != nil {
 			return fmt.Errorf("store: replace vector %s: %w", r.QualifiedName, err)
 		}
-		if _, err := tx.Exec(`INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)`,
 			modelID, r.QualifiedName, encodeVec(r.Vec)); err != nil {
 			return fmt.Errorf("store: replace vector %s: %w", r.QualifiedName, err)
 		}
 	}
 	for qn, h := range states {
-		if _, err := tx.Exec(`INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
 			VALUES (?,?,?,'embedded',strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			ON CONFLICT(model_id, qualified_name) DO UPDATE SET content_hash=excluded.content_hash,
 				state='embedded', embedded_at=excluded.embedded_at`, modelID, qn, h); err != nil {
@@ -340,7 +340,7 @@ func (s *Store) ReplaceFileVectors(modelID string, rows []VectorRow, states map[
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertVectors writes a batch of vectors for a model in ONE transaction:
@@ -348,17 +348,17 @@ func (s *Store) ReplaceFileVectors(modelID string, rows []VectorRow, states map[
 // (issue #368 AC: batch upsert semantics). The embed pipeline's live path is
 // the per-file ReplaceFileVectors; UpsertVectors stays for batch-style
 // callers (NDJSON import) and direct vector injection.
-func (s *Store) UpsertVectors(modelID string, rows []VectorRow) error {
+func (s *Store) UpsertVectors(ctx context.Context, modelID string, rows []VectorRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, r := range rows {
-		if _, err := tx.Exec(`INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)
 			ON CONFLICT(model_id, qualified_name) DO UPDATE SET vec=excluded.vec`,
 			modelID, r.QualifiedName, encodeVec(r.Vec)); err != nil {
 			return fmt.Errorf("store: upsert vector %s: %w", r.QualifiedName, err)
@@ -367,20 +367,20 @@ func (s *Store) UpsertVectors(modelID string, rows []VectorRow) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // ClearVectors drops all vectors + state for a model (stamp-guard rebuild).
-func (s *Store) ClearVectors(modelID string) error {
+func (s *Store) ClearVectors(ctx context.Context, modelID string) error {
 	for _, stmt := range []string{
 		`DELETE FROM embedding_vectors WHERE model_id = ?`,
 		`DELETE FROM embedding_state WHERE model_id = ?`,
 	} {
-		if _, err := s.db.Exec(stmt, modelID); err != nil {
+		if _, err := s.db.ExecContext(ctx, stmt, modelID); err != nil {
 			return err
 		}
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteOrphanVectors removes vector + state rows for elements that no
@@ -423,9 +423,9 @@ func (s *Store) DeleteOrphanVectors() (int, error) {
 }
 
 // VectorCount returns the vector count for a model.
-func (s *Store) VectorCount(modelID string) (int, error) {
+func (s *Store) VectorCount(ctx context.Context, modelID string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM embedding_vectors WHERE model_id = ?`, modelID).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embedding_vectors WHERE model_id = ?`, modelID).Scan(&n)
 	return n, err
 }
 
@@ -728,8 +728,8 @@ type EmbedRun struct {
 }
 
 // StartEmbedRun records a running pipeline run and returns its id.
-func (s *Store) StartEmbedRun(modelID, mode string, dirty int) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO embed_runs (model_id, mode, started_at, dirty, status) VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,'running')`, modelID, mode, dirty)
+func (s *Store) StartEmbedRun(ctx context.Context, modelID, mode string, dirty int) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO embed_runs (model_id, mode, started_at, dirty, status) VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,'running')`, modelID, mode, dirty)
 	if err != nil {
 		return 0, err
 	}
@@ -737,8 +737,8 @@ func (s *Store) StartEmbedRun(modelID, mode string, dirty int) (int64, error) {
 }
 
 // FinishEmbedRun closes a run record with the final counters.
-func (s *Store) FinishEmbedRun(id int64, status string, embedded, skipped, failed, truncations, orphans int) error {
-	_, err := s.db.Exec(`UPDATE embed_runs SET finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+func (s *Store) FinishEmbedRun(ctx context.Context, id int64, status string, embedded, skipped, failed, truncations, orphans int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE embed_runs SET finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
 		embedded=?, skipped=?, failed=?, truncations=?, orphans=?, status=? WHERE id=?`,
 		embedded, skipped, failed, truncations, orphans, status, id)
 	return err
@@ -812,8 +812,8 @@ func (s *Store) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 // An empty id means "the store has never been embedded" — the caller must
 // treat that as "the current collection is unknown", not as "no collection is
 // current".
-func CurrentModelID(st Backend) (string, error) {
-	run, err := st.LastEmbedRunAny()
+func CurrentModelID(ctx context.Context, st Backend) (string, error) {
+	run, err := st.LastEmbedRunAny(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -824,8 +824,8 @@ func CurrentModelID(st Backend) (string, error) {
 }
 
 // LastEmbedRunAny returns the most recent embed run across all models.
-func (s *Store) LastEmbedRunAny() (*EmbedRun, error) {
-	row := s.db.QueryRow(`SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
+func (s *Store) LastEmbedRunAny(ctx context.Context) (*EmbedRun, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
 		FROM embed_runs ORDER BY id DESC LIMIT 1`)
 	var r EmbedRun
 	err := row.Scan(&r.ID, &r.ModelID, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Dirty, &r.Embedded, &r.Skipped, &r.Failed, &r.Truncations, &r.Orphans, &r.Status)
@@ -839,8 +839,8 @@ func (s *Store) LastEmbedRunAny() (*EmbedRun, error) {
 }
 
 // LastEmbedRun returns the most recent run for a model; nil when none.
-func (s *Store) LastEmbedRun(modelID string) (*EmbedRun, error) {
-	row := s.db.QueryRow(`SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
+func (s *Store) LastEmbedRun(ctx context.Context, modelID string) (*EmbedRun, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
 		FROM embed_runs WHERE model_id = ? ORDER BY id DESC LIMIT 1`, modelID)
 	var r EmbedRun
 	err := row.Scan(&r.ID, &r.ModelID, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Dirty, &r.Embedded, &r.Skipped, &r.Failed, &r.Truncations, &r.Orphans, &r.Status)
@@ -877,9 +877,9 @@ func RefreshInventory(ctx context.Context, st Backend) (Inventory, error) {
 		return Inventory{}, err
 	}
 	vectors := 0
-	if stamps, err := st.Stamps(); err == nil {
+	if stamps, err := st.Stamps(ctx); err == nil {
 		for _, ms := range stamps {
-			if n, err := st.VectorCount(ms.ModelID); err == nil {
+			if n, err := st.VectorCount(ctx, ms.ModelID); err == nil {
 				vectors += n
 			}
 		}

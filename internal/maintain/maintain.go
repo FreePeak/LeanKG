@@ -86,7 +86,7 @@ type Options struct {
 	// model), so a keep set frozen at start-up would delete the CURRENT
 	// collection. The func is asked the same question every pass: which
 	// collection is live for this store?
-	KeepModelIDsFunc func(st store.Backend) []string
+	KeepModelIDsFunc func(ctx context.Context, st store.Backend) []string
 	// PruneLedgers runs the retention sweeps over the append-only ledgers
 	// (context_metrics, embed_runs). The scheduled pass sets it; the
 	// one-shot `leankg vacuum` does not, so that verb stays a
@@ -207,7 +207,7 @@ func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
 	}
 	keep := opts.KeepModelIDs
 	if opts.KeepModelIDsFunc != nil {
-		keep = opts.KeepModelIDsFunc(st)
+		keep = opts.KeepModelIDsFunc(ctx, st)
 	}
 	if len(keep) == 0 {
 		return out

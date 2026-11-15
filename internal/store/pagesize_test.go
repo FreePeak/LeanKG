@@ -134,7 +134,7 @@ func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := st.WriteStamp(ModelStamp{
+	if err := st.WriteStamp(context.Background(), ModelStamp{
 		ModelID: "m", Revision: "rev", Dimensions: 512, Distance: "cosine", Provider: "local",
 	}); err != nil {
 		t.Fatalf("write stamp: %v", err)
@@ -152,7 +152,7 @@ func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 		}}); err != nil {
 			t.Fatalf("upsert element: %v", err)
 		}
-		if err := st.UpsertVectors("m", []VectorRow{{
+		if err := st.UpsertVectors(context.Background(), "m", []VectorRow{{
 			QualifiedName: fmt.Sprintf("pkg.Fn%d", i), Vec: vec,
 		}}); err != nil {
 			t.Fatalf("upsert vector: %v", err)

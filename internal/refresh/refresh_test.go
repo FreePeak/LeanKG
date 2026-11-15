@@ -118,7 +118,7 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	if !found["hello"] || !found["world"] {
 		t.Fatalf("indexed functions = %v, want hello and world", found)
 	}
-	vectors, err := st.VectorCount("deterministic-384")
+	vectors, err := st.VectorCount(context.Background(), "deterministic-384")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestEmbedStageSkipsWhenEmbedLockHeld(t *testing.T) {
 	if rep.Embedded != 0 {
 		t.Fatalf("report embedded = %d, want 0", rep.Embedded)
 	}
-	if n, err := st.VectorCount(p.Identity().Model); err != nil || n != 0 {
+	if n, err := st.VectorCount(context.Background(), p.Identity().Model); err != nil || n != 0 {
 		t.Fatalf("vectors = %d (err %v), want 0", n, err)
 	}
 }

@@ -410,11 +410,11 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := ModelStamp{ModelID: "hybrid-model", Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "unit"}
-	if err := s.WriteStamp(st); err != nil {
+	if err := s.WriteStamp(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
 	// Cosine order for the query vector: Alpha, Beta, Gamma, Delta.
-	if err := s.UpsertVectors(st.ModelID, []VectorRow{
+	if err := s.UpsertVectors(context.Background(), st.ModelID, []VectorRow{
 		{QualifiedName: "pkg.Alpha", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "pkg.Beta", Vec: []float32{0.9, 0.1, 0, 0}},
 		{QualifiedName: "pkg.Gamma", Vec: []float32{0.8, 0.2, 0, 0}},

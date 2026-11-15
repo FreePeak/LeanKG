@@ -166,7 +166,7 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := e.st.VectorCount(p.Identity().Model)
+	vecs, _ := e.st.VectorCount(context.Background(), p.Identity().Model)
 	if els := count(t, e); vecs != els {
 		t.Fatalf("after re-index: %d vectors for %d elements (orphans left behind)", vecs, els)
 	}

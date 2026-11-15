@@ -332,12 +332,12 @@ func cmdStatus(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 	out := map[string]any{}
-	if stamps, err := st.Stamps(); err != nil {
+	if stamps, err := st.Stamps(ctx); err != nil {
 		return fmt.Errorf("status: stamps: %v", err)
 	} else {
 		out["stamps"] = stamps
 	}
-	if run, err := st.LastEmbedRunAny(); err != nil {
+	if run, err := st.LastEmbedRunAny(ctx); err != nil {
 		return fmt.Errorf("status: last run: %v", err)
 	} else if run != nil {
 		out["last_run"] = run

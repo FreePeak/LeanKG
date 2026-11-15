@@ -159,14 +159,14 @@ func seed(t *testing.T, ctx context.Context, st store.Backend) {
 	prov := embed.Deterministic(8)
 	// embed.StampOf is what the writer records, so the reader's whole-identity
 	// guard (#279) sees a matching collection instead of degrading.
-	if err := st.WriteStamp(embed.StampOf(prov)); err != nil {
+	if err := st.WriteStamp(ctx, embed.StampOf(prov)); err != nil {
 		t.Fatal(err)
 	}
 	vecs, err := prov.Embed(ctx, embed.Document, []string{els[0].Content})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors(prov.Identity().Model, []store.VectorRow{
+	if err := st.UpsertVectors(ctx, prov.Identity().Model, []store.VectorRow{
 		{QualifiedName: els[0].QualifiedName, Vec: vecs[0]},
 	}); err != nil {
 		t.Fatal(err)

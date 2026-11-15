@@ -106,29 +106,29 @@ type Searcher interface {
 
 // Vectors stores embedding rows, their per-model stamps and their state.
 type Vectors interface {
-	WriteStamp(st ModelStamp) error
-	Stamp(modelID string) (*ModelStamp, error)
-	Stamps() ([]ModelStamp, error)
-	EmbeddingStateMap(modelID string) (map[string]string, error)
-	SetEmbeddingStates(modelID string, states map[string]string) error
-	UpsertVectors(modelID string, rows []VectorRow) error
+	WriteStamp(ctx context.Context, st ModelStamp) error
+	Stamp(ctx context.Context, modelID string) (*ModelStamp, error)
+	Stamps(ctx context.Context) ([]ModelStamp, error)
+	EmbeddingStateMap(ctx context.Context, modelID string) (map[string]string, error)
+	SetEmbeddingStates(ctx context.Context, modelID string, states map[string]string) error
+	UpsertVectors(ctx context.Context, modelID string, rows []VectorRow) error
 	// ReplaceFileVectors atomically replaces one file's embedding rows for a
 	// model: delete + insert + state in one transaction (issue #279 per-file
 	// atomic replace). rows must carry the file's complete vector set.
-	ReplaceFileVectors(modelID string, rows []VectorRow, states map[string]string) error
-	ClearVectors(modelID string) error
-	VectorCount(modelID string) (int, error)
+	ReplaceFileVectors(ctx context.Context, modelID string, rows []VectorRow, states map[string]string) error
+	ClearVectors(ctx context.Context, modelID string) error
+	VectorCount(ctx context.Context, modelID string) (int, error)
 	// VectorCoverage reports (covered, orphans): vector rows whose QN still
 	// has a live element vs. rows whose QN disappeared.
-	VectorCoverage(modelID string) (covered, orphans int, err error)
+	VectorCoverage(ctx context.Context, modelID string) (covered, orphans int, err error)
 }
 
 // EmbedRuns is the embed-pipeline run ledger (status reads it; no in-process
 // coupling).
 type EmbedRuns interface {
-	StartEmbedRun(modelID, mode string, dirty int) (int64, error)
-	FinishEmbedRun(id int64, status string, embedded, skipped, failed, truncations, orphans int) error
-	LastEmbedRunAny() (*EmbedRun, error)
+	StartEmbedRun(ctx context.Context, modelID, mode string, dirty int) (int64, error)
+	FinishEmbedRun(ctx context.Context, id int64, status string, embedded, skipped, failed, truncations, orphans int) error
+	LastEmbedRunAny(ctx context.Context) (*EmbedRun, error)
 }
 
 // Inventories is the inventory snapshot and the freshness watermark. It is

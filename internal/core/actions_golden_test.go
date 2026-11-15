@@ -187,10 +187,10 @@ func seedActionCorpus(f *actionFixture) {
 		RelType: "calls", Confidence: 0.5,
 	}}))
 	prov := embed.Deterministic(8)
-	f.must(f.st.WriteStamp(embed.StampOf(prov)))
+	f.must(f.st.WriteStamp(context.Background(), embed.StampOf(prov)))
 	vecs, err := prov.Embed(ctx, embed.Document, []string{els[0].Content})
 	f.must(err)
-	f.must(f.st.UpsertVectors(prov.Identity().Model, []store.VectorRow{{QualifiedName: els[0].QualifiedName, Vec: vecs[0]}}))
+	f.must(f.st.UpsertVectors(context.Background(), prov.Identity().Model, []store.VectorRow{{QualifiedName: els[0].QualifiedName, Vec: vecs[0]}}))
 	f.writeMemoryFile("MEMORY.md", "# Project Memory\n\n- Golden fixture corpus pins the L0-L3 ladder.\n")
 }
 

@@ -618,35 +618,35 @@ func (s *PGStore) vecTable(modelID string) string {
 // and ensures the per-model tables exist. The full identity — model,
 // revision, dims, distance, provider, chunker version and the
 // query/document prefix pair — is persisted.
-func (s *PGStore) WriteStamp(st ModelStamp) error {
-	if err := s.ensureModelTables(st); err != nil {
+func (s *PGStore) WriteStamp(ctx context.Context, st ModelStamp) error {
+	if err := s.ensureModelTables(ctx, st); err != nil {
 		return err
 	}
-	shape, err := s.stampShape()
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return fmt.Errorf("store: stamp shape: %w", err)
 	}
-	if _, err := s.pool.Exec(pgCtx, stampUpsertFor(shape.cols, func(i int) string { return fmt.Sprintf("$%d", i) }), stampValues(st, shape.cols)...); err != nil {
+	if _, err := s.pool.Exec(ctx, stampUpsertFor(shape.cols, func(i int) string { return fmt.Sprintf("$%d", i) }), stampValues(st, shape.cols)...); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // ensureModelTables creates the per-model state + vector tables. A PG vector
 // column is fixed-dimension (unlike sqlite BLOBs), so a re-stamp with a
 // different dimension count drops and recreates the tables — the physical
 // analogue of the stamp-guard full rebuild.
-func (s *PGStore) ensureModelTables(st ModelStamp) error {
+func (s *PGStore) ensureModelTables(ctx context.Context, st ModelStamp) error {
 	state, vec := s.stateTable(st.ModelID), s.vecTable(st.ModelID)
 	var cur int
-	err := s.pool.QueryRow(pgCtx, `SELECT dimensions FROM emb_stamp WHERE model_id = $1`, st.ModelID).Scan(&cur)
+	err := s.pool.QueryRow(ctx, `SELECT dimensions FROM emb_stamp WHERE model_id = $1`, st.ModelID).Scan(&cur)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		// fresh model
 	case err != nil:
 		return err
 	case cur != st.Dimensions:
-		if _, err := s.pool.Exec(pgCtx, `DROP TABLE IF EXISTS `+vec+`, `+state); err != nil {
+		if _, err := s.pool.Exec(ctx, `DROP TABLE IF EXISTS `+vec+`, `+state); err != nil {
 			return fmt.Errorf("store: drop resized model tables %s: %w", st.ModelID, err)
 		}
 	}
@@ -664,7 +664,7 @@ func (s *PGStore) ensureModelTables(st ModelStamp) error {
 		`CREATE INDEX IF NOT EXISTS idx_` + vec + `_hnsw ON ` + vec + ` USING hnsw (vec vector_cosine_ops)`,
 	}
 	for _, stmt := range stmts {
-		if _, err := s.pool.Exec(pgCtx, stmt); err != nil {
+		if _, err := s.pool.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("store: ensure model tables %s: %w", st.ModelID, err)
 		}
 	}
@@ -676,8 +676,8 @@ func (s *PGStore) ensureModelTables(st ModelStamp) error {
 // fail the whole read. A schema with no emb_stamp table at all yields no
 // columns; the read then fails with PostgreSQL's own "relation
 // \"emb_stamp\" does not exist", which is the truth about that store.
-func (s *PGStore) stampColumns() (stampColumnSet, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT a.attname::text FROM pg_attribute a
+func (s *PGStore) stampColumns(ctx context.Context) (stampColumnSet, error) {
+	rows, err := s.pool.Query(ctx, `SELECT a.attname::text FROM pg_attribute a
 		WHERE a.attrelid = to_regclass('emb_stamp') AND a.attnum > 0 AND NOT a.attisdropped`)
 	if err != nil {
 		return nil, err
@@ -696,8 +696,8 @@ func (s *PGStore) stampColumns() (stampColumnSet, error) {
 
 // stampShape probes this schema's emb_stamp columns and builds the read
 // shape from them.
-func (s *PGStore) stampShape() (*stampShape, error) {
-	cols, err := s.stampColumns()
+func (s *PGStore) stampShape(ctx context.Context) (*stampShape, error) {
+	cols, err := s.stampColumns(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -709,13 +709,13 @@ func (s *PGStore) stampShape() (*stampShape, error) {
 // the schema does not have AT ALL is projected as its documented default
 // (text_cap 0 = "cap never recorded") instead of failing the read with
 // "column \"text_cap\" does not exist".
-func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
-	shape, err := s.stampShape()
+func (s *PGStore) Stamp(ctx context.Context, modelID string) (*ModelStamp, error) {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var st ModelStamp
-	err = s.pool.QueryRow(pgCtx, shape.selectSQL+` WHERE model_id = $1`, modelID).
+	err = s.pool.QueryRow(ctx, shape.selectSQL+` WHERE model_id = $1`, modelID).
 		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
 			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -729,12 +729,12 @@ func (s *PGStore) Stamp(modelID string) (*ModelStamp, error) {
 
 // Stamps returns all persisted model stamps. The read shape follows the
 // store's schema exactly like PGStore.Stamp's.
-func (s *PGStore) Stamps() ([]ModelStamp, error) {
-	shape, err := s.stampShape()
+func (s *PGStore) Stamps(ctx context.Context) ([]ModelStamp, error) {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(pgCtx, shape.selectSQL)
+	rows, err := s.pool.Query(ctx, shape.selectSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -798,7 +798,7 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if !have {
 		return StaleStampSweep{}, nil
 	}
-	stamps, err := s.Stamps()
+	stamps, err := s.Stamps(pgCtx)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -837,8 +837,8 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 }
 
 // EmbeddingStateMap returns qualified_name -> content_hash for a model.
-func (s *PGStore) EmbeddingStateMap(modelID string) (map[string]string, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT qualified_name, content_hash FROM `+s.stateTable(modelID))
+func (s *PGStore) EmbeddingStateMap(ctx context.Context, modelID string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT qualified_name, content_hash FROM `+s.stateTable(modelID))
 	if err != nil {
 		return nil, err
 	}
@@ -855,78 +855,78 @@ func (s *PGStore) EmbeddingStateMap(modelID string) (map[string]string, error) {
 }
 
 // SetEmbeddingStates records embedding_state rows for freshly embedded QNs.
-func (s *PGStore) SetEmbeddingStates(modelID string, states map[string]string) error {
+func (s *PGStore) SetEmbeddingStates(ctx context.Context, modelID string, states map[string]string) error {
 	if len(states) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for qn, h := range states {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO `+s.stateTable(modelID)+` (qualified_name, content_hash, state, embedded_at)
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.stateTable(modelID)+` (qualified_name, content_hash, state, embedded_at)
 			VALUES ($1,$2,'embedded', now())
 			ON CONFLICT (qualified_name) DO UPDATE SET content_hash=excluded.content_hash,
 				state='embedded', embedded_at=excluded.embedded_at`, qn, h); err != nil {
 			return fmt.Errorf("store: set embedding state %s: %w", qn, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertVectors writes a batch of vectors for a model in ONE transaction:
 // a crash mid-run leaves the previous state consistent and reruns resume
 // (issue #368 AC: batch upsert semantics).
-func (s *PGStore) UpsertVectors(modelID string, rows []VectorRow) error {
+func (s *PGStore) UpsertVectors(ctx context.Context, modelID string, rows []VectorRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, r := range rows {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO `+s.vecTable(modelID)+` (qualified_name, vec) VALUES ($1, $2::vector)
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.vecTable(modelID)+` (qualified_name, vec) VALUES ($1, $2::vector)
 			ON CONFLICT (qualified_name) DO UPDATE SET vec=excluded.vec`,
 			r.QualifiedName, pgvector.NewVector(r.Vec)); err != nil {
 			return fmt.Errorf("store: upsert vector %s: %w", r.QualifiedName, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // ClearVectors drops all vectors + state for a model (stamp-guard rebuild).
-func (s *PGStore) ClearVectors(modelID string) error {
+func (s *PGStore) ClearVectors(ctx context.Context, modelID string) error {
 	for _, stmt := range []string{
 		`DELETE FROM ` + s.vecTable(modelID),
 		`DELETE FROM ` + s.stateTable(modelID),
 	} {
-		if _, err := s.pool.Exec(pgCtx, stmt); err != nil {
+		if _, err := s.pool.Exec(ctx, stmt); err != nil {
 			return err
 		}
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // VectorCount returns the vector count for a model.
-func (s *PGStore) VectorCount(modelID string) (int, error) {
+func (s *PGStore) VectorCount(ctx context.Context, modelID string) (int, error) {
 	var n int
-	err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM `+s.vecTable(modelID)).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+s.vecTable(modelID)).Scan(&n)
 	return n, err
 }
 
 // VectorCoverage reports (covered, orphans): vector rows whose QN still has a
 // live element vs. rows whose QN disappeared (anti-join via LEFT JOIN).
-func (s *PGStore) VectorCoverage(modelID string) (covered, orphans int, err error) {
-	err = s.pool.QueryRow(pgCtx, `SELECT
+func (s *PGStore) VectorCoverage(ctx context.Context, modelID string) (covered, orphans int, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT
 			COUNT(*) FILTER (WHERE ce.qualified_name IS NOT NULL),
 			COUNT(*) FILTER (WHERE ce.qualified_name IS NULL)
 		FROM `+s.vecTable(modelID)+` v
@@ -942,7 +942,7 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
-	stamps, err := s.Stamps()
+	stamps, err := s.Stamps(pgCtx)
 	if err != nil {
 		return 0, err
 	}
@@ -1073,16 +1073,16 @@ func (s *PGStore) LoadInventory(ctx context.Context) (*Inventory, error) {
 }
 
 // StartEmbedRun records a running pipeline run and returns its id.
-func (s *PGStore) StartEmbedRun(modelID, mode string, dirty int) (int64, error) {
+func (s *PGStore) StartEmbedRun(ctx context.Context, modelID, mode string, dirty int) (int64, error) {
 	var id int64
-	err := s.pool.QueryRow(pgCtx, `INSERT INTO embed_runs (model_id, mode, started_at, dirty, status)
+	err := s.pool.QueryRow(ctx, `INSERT INTO embed_runs (model_id, mode, started_at, dirty, status)
 		VALUES ($1,$2,`+pgNow+`,$3,'running') RETURNING id`, modelID, mode, dirty).Scan(&id)
 	return id, err
 }
 
 // FinishEmbedRun closes a run record with the final counters.
-func (s *PGStore) FinishEmbedRun(id int64, status string, embedded, skipped, failed, truncations, orphans int) error {
-	_, err := s.pool.Exec(pgCtx, `UPDATE embed_runs SET finished_at=`+pgNow+`,
+func (s *PGStore) FinishEmbedRun(ctx context.Context, id int64, status string, embedded, skipped, failed, truncations, orphans int) error {
+	_, err := s.pool.Exec(ctx, `UPDATE embed_runs SET finished_at=`+pgNow+`,
 		embedded=$1, skipped=$2, failed=$3, truncations=$4, orphans=$5, status=$6 WHERE id=$7`,
 		embedded, skipped, failed, truncations, orphans, status, id)
 	return err
@@ -1104,8 +1104,8 @@ func pgScanEmbedRun(row pgx.Row) (*EmbedRun, error) {
 }
 
 // LastEmbedRunAny returns the most recent embed run across all models.
-func (s *PGStore) LastEmbedRunAny() (*EmbedRun, error) {
-	return pgScanEmbedRun(s.pool.QueryRow(pgCtx,
+func (s *PGStore) LastEmbedRunAny(ctx context.Context) (*EmbedRun, error) {
+	return pgScanEmbedRun(s.pool.QueryRow(ctx,
 		`SELECT `+pgEmbedRunCols+` FROM embed_runs ORDER BY id DESC LIMIT 1`))
 }
 
@@ -1136,8 +1136,8 @@ func (s *PGStore) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 }
 
 // LastEmbedRun returns the most recent run for a model; nil when none.
-func (s *PGStore) LastEmbedRun(modelID string) (*EmbedRun, error) {
-	return pgScanEmbedRun(s.pool.QueryRow(pgCtx,
+func (s *PGStore) LastEmbedRun(ctx context.Context, modelID string) (*EmbedRun, error) {
+	return pgScanEmbedRun(s.pool.QueryRow(ctx,
 		`SELECT `+pgEmbedRunCols+` FROM embed_runs WHERE model_id = $1 ORDER BY id DESC LIMIT 1`, modelID))
 }
 

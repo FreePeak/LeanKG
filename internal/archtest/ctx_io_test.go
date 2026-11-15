@@ -14,7 +14,7 @@ var ioBudget = map[string]map[string]int{
 	"internal/gitobj/gittest":  {"exec.Command": 1},
 	"internal/memory":          {"sql-no-ctx": 28},
 	"internal/sources":         {"http.Client-without-Timeout": 1},
-	"internal/store":           {"sql-no-ctx": 183},
+	"internal/store":           {"sql-no-ctx": 143},
 }
 
 // ioRule is one context-less I/O pattern with its AST matcher.

@@ -528,7 +528,7 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 		}
 		out["languages"] = langsOut
 	}
-	run, rerr := e.st.LastEmbedRunAny()
+	run, rerr := e.st.LastEmbedRunAny(ctx)
 	if rerr != nil {
 		out["last_embed_run_error"] = rerr.Error()
 	} else if run != nil {
@@ -560,14 +560,14 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 // els is the element count Status already read (it fails the whole call when
 // that read fails), passed in so the coverage math does not query it twice.
 func (e *Engine) embeddingsState(ctx context.Context, els int) ([]map[string]any, error) {
-	stamps, err := e.st.Stamps()
+	stamps, err := e.st.Stamps(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read embedding stamps: %w", err)
 	}
 	states := make([]map[string]any, 0, len(stamps))
 	var errs []error
 	for _, st := range stamps {
-		vecs, err := e.st.VectorCount(st.ModelID)
+		vecs, err := e.st.VectorCount(ctx, st.ModelID)
 		if err != nil {
 			// A count that could not be read is not a count of zero: the
 			// model is left out of the list and named in the error instead.
@@ -840,7 +840,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		return nil, err
 	}
 	modelID := e.embedder.Identity().Model
-	stamp, err := e.st.Stamp(modelID)
+	stamp, err := e.st.Stamp(ctx, modelID)
 	if err != nil {
 		// A READ ERROR is not a missing collection: the collection may well
 		// exist (measured: 2314 vectors in the store) while the stamp row

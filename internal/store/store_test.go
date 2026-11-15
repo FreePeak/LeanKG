@@ -167,16 +167,16 @@ func TestDeleteOrphanVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	stamp := ModelStamp{ModelID: "m1", Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "test", ChunkerVersion: 1}
-	if err := s.WriteStamp(stamp); err != nil {
+	if err := s.WriteStamp(context.Background(), stamp); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertVectors("m1", []VectorRow{
+	if err := s.UpsertVectors(context.Background(), "m1", []VectorRow{
 		{QualifiedName: "a.A", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "b.B", Vec: []float32{0, 1, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetEmbeddingStates("m1", map[string]string{"a.A": "h1", "b.B": "h2"}); err != nil {
+	if err := s.SetEmbeddingStates(context.Background(), "m1", map[string]string{"a.A": "h1", "b.B": "h2"}); err != nil {
 		t.Fatal(err)
 	}
 	// The bug setup: delete b.B's element+edges (file removed); its vector and
@@ -184,7 +184,7 @@ func TestDeleteOrphanVectors(t *testing.T) {
 	if err := s.DeleteByFile(context.Background(), "b.go"); err != nil {
 		t.Fatal(err)
 	}
-	if _, orphans, _ := s.VectorCoverage("m1"); orphans != 1 {
+	if _, orphans, _ := s.VectorCoverage(context.Background(), "m1"); orphans != 1 {
 		t.Fatalf("pre-purge orphans = %d, want 1 (the residue #411 describes)", orphans)
 	}
 
@@ -195,10 +195,10 @@ func TestDeleteOrphanVectors(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("purged %d vectors, want 1", n)
 	}
-	if covered, orphans, _ := s.VectorCoverage("m1"); orphans != 0 || covered != 1 {
+	if covered, orphans, _ := s.VectorCoverage(context.Background(), "m1"); orphans != 0 || covered != 1 {
 		t.Fatalf("post-purge coverage = (%d,%d), want (1,0) — live row kept, orphan gone", covered, orphans)
 	}
-	if states, _ := s.EmbeddingStateMap("m1"); len(states) != 1 || states["a.A"] != "h1" {
+	if states, _ := s.EmbeddingStateMap(context.Background(), "m1"); len(states) != 1 || states["a.A"] != "h1" {
 		t.Fatalf("state rows wrong after purge: %+v", states)
 	}
 
@@ -228,14 +228,14 @@ func TestWatermarkBumpsOnWrite(t *testing.T) {
 func TestModelStampAndVectors(t *testing.T) {
 	s := openTestStore(t)
 	st := ModelStamp{ModelID: "test-model", Revision: "40-hex-revision", Dimensions: 4, Distance: "cosine", Provider: "test"}
-	if err := s.WriteStamp(st); err != nil {
+	if err := s.WriteStamp(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Stamp("test-model")
+	got, err := s.Stamp(context.Background(), "test-model")
 	if err != nil || got == nil || got.Revision != "40-hex-revision" {
 		t.Fatalf("stamp round-trip failed: %+v %v", got, err)
 	}
-	if none, _ := s.Stamp("missing"); none != nil {
+	if none, _ := s.Stamp(context.Background(), "missing"); none != nil {
 		t.Fatalf("missing model stamp = %+v, want nil", none)
 	}
 
@@ -251,13 +251,13 @@ func TestModelStampAndVectors(t *testing.T) {
 		{QualifiedName: "a", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "b", Vec: []float32{0, 1, 0, 0}},
 	}
-	if err := s.UpsertVectors("test-model", vecs); err != nil {
+	if err := s.UpsertVectors(context.Background(), "test-model", vecs); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetEmbeddingStates("test-model", map[string]string{"a": "ha", "b": "hb"}); err != nil {
+	if err := s.SetEmbeddingStates(context.Background(), "test-model", map[string]string{"a": "ha", "b": "hb"}); err != nil {
 		t.Fatal(err)
 	}
-	state, _ := s.EmbeddingStateMap("test-model")
+	state, _ := s.EmbeddingStateMap(context.Background(), "test-model")
 	if state["a"] != "ha" {
 		t.Fatalf("state = %+v", state)
 	}
@@ -269,13 +269,13 @@ func TestModelStampAndVectors(t *testing.T) {
 		t.Fatalf("top hit = %+v, want a with sim 1", hits[0])
 	}
 	// Full rebuild: ClearVectors wipes vectors + state for the model.
-	if err := s.ClearVectors("test-model"); err != nil {
+	if err := s.ClearVectors(context.Background(), "test-model"); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.VectorCount("test-model"); n != 0 {
+	if n, _ := s.VectorCount(context.Background(), "test-model"); n != 0 {
 		t.Fatalf("vector count after clear = %d", n)
 	}
-	if state, _ := s.EmbeddingStateMap("test-model"); len(state) != 0 {
+	if state, _ := s.EmbeddingStateMap(context.Background(), "test-model"); len(state) != 0 {
 		t.Fatalf("state after clear = %+v", state)
 	}
 }
@@ -297,14 +297,14 @@ func TestRelationshipUpsertDedups(t *testing.T) {
 
 func TestEmbedRuns(t *testing.T) {
 	s := openTestStore(t)
-	id, err := s.StartEmbedRun("m", "incremental", 7)
+	id, err := s.StartEmbedRun(context.Background(), "m", "incremental", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FinishEmbedRun(id, "ok", 5, 2, 0, 1, 0); err != nil {
+	if err := s.FinishEmbedRun(context.Background(), id, "ok", 5, 2, 0, 1, 0); err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.LastEmbedRun("m")
+	run, err := s.LastEmbedRun(context.Background(), "m")
 	if err != nil || run == nil {
 		t.Fatalf("last run: %v %+v", err, run)
 	}
@@ -381,10 +381,10 @@ func TestStampIdentityColumns(t *testing.T) {
 		Provider: "openai", ChunkerVersion: 3,
 		QueryPrefix: "query: ", DocumentPrefix: "doc: ",
 	}
-	if err := s.WriteStamp(want); err != nil {
+	if err := s.WriteStamp(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Stamp(want.ModelID)
+	got, err := s.Stamp(context.Background(), want.ModelID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,14 +410,14 @@ func TestStampIdentityColumns(t *testing.T) {
 		VALUES ('legacy', 'old-rev', 8, 'cosine', 'local')`); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := s.Stamp("legacy")
+	legacy, err := s.Stamp(context.Background(), "legacy")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if legacy == nil || legacy.ChunkerVersion != 0 || legacy.QueryPrefix != "" || legacy.DocumentPrefix != "" {
 		t.Fatalf("legacy stamp = %+v, want zero chunker/prefixes", legacy)
 	}
-	stamps, err := s.Stamps()
+	stamps, err := s.Stamps(context.Background())
 	if err != nil || len(stamps) != 2 {
 		t.Fatalf("Stamps() = %+v, %v; want 2 rows", stamps, err)
 	}
@@ -433,22 +433,22 @@ func TestStampTextCapRoundTrip(t *testing.T) {
 		ModelID: "cap-model", Revision: "r1", Dimensions: 4, Distance: "cosine",
 		Provider: "local", TextCap: 8000,
 	}
-	if err := s.WriteStamp(want); err != nil {
+	if err := s.WriteStamp(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Stamp(want.ModelID)
+	got, err := s.Stamp(context.Background(), want.ModelID)
 	if err != nil || got == nil || got.TextCap != 8000 {
 		t.Fatalf("Stamp() = %+v, %v; want TextCap 8000", got, err)
 	}
 
 	want.TextCap = 4000
-	if err := s.WriteStamp(want); err != nil {
+	if err := s.WriteStamp(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
-	if got, err = s.Stamp(want.ModelID); err != nil || got == nil || got.TextCap != 4000 {
+	if got, err = s.Stamp(context.Background(), want.ModelID); err != nil || got == nil || got.TextCap != 4000 {
 		t.Fatalf("upsert must replace TextCap: %+v, %v; want 4000", got, err)
 	}
-	all, err := s.Stamps()
+	all, err := s.Stamps(context.Background())
 	if err != nil || len(all) != 1 || all[0].TextCap != 4000 {
 		t.Fatalf("Stamps() = %+v, %v; want one row with TextCap 4000", all, err)
 	}
@@ -457,7 +457,7 @@ func TestStampTextCapRoundTrip(t *testing.T) {
 		VALUES ('cap-legacy', 'old', 8, 'cosine', 'local')`); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := s.Stamp("cap-legacy")
+	legacy, err := s.Stamp(context.Background(), "cap-legacy")
 	if err != nil || legacy == nil || legacy.TextCap != 0 {
 		t.Fatalf("legacy stamp = %+v, %v; want TextCap 0 (not recorded)", legacy, err)
 	}
@@ -486,7 +486,7 @@ func TestReplaceFileVectorsIsOneAtomicUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFileVectors("m", rows, states); err != nil {
+	if err := s.ReplaceFileVectors(context.Background(), "m", rows, states); err != nil {
 		t.Fatal(err)
 	}
 	after, _, err := s.Watermark(context.Background())
@@ -496,34 +496,34 @@ func TestReplaceFileVectorsIsOneAtomicUnit(t *testing.T) {
 	if after != before+1 {
 		t.Fatalf("watermark %d -> %d; one write unit must bump once", before, after)
 	}
-	if n, err := s.VectorCount("m"); err != nil || n != 2 {
+	if n, err := s.VectorCount(context.Background(), "m"); err != nil || n != 2 {
 		t.Fatalf("VectorCount = %d, %v; want 2", n, err)
 	}
-	if st, err := s.EmbeddingStateMap("m"); err != nil || st["a.go::f1"] != "h1" || st["a.go::f2"] != "h2" {
+	if st, err := s.EmbeddingStateMap(context.Background(), "m"); err != nil || st["a.go::f1"] != "h1" || st["a.go::f2"] != "h2" {
 		t.Fatalf("embedding state = %+v, %v", st, err)
 	}
 
 	// Re-run with a changed vector for one element: replaced in place, no
 	// duplicate row, state re-stamped.
-	if err := s.ReplaceFileVectors("m",
+	if err := s.ReplaceFileVectors(context.Background(), "m",
 		[]VectorRow{{QualifiedName: "a.go::f1", Vec: []float32{0, 0, 1, 0}}},
 		map[string]string{"a.go::f1": "h1b"}); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.VectorCount("m"); n != 2 {
+	if n, _ := s.VectorCount(context.Background(), "m"); n != 2 {
 		t.Fatalf("vector count after replace = %d, want 2 (no duplicate)", n)
 	}
 	hits, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: "m", Vec: []float32{0, 0, 1, 0}, K: 1})
 	if err != nil || len(hits) != 1 || hits[0].Element.QualifiedName != "a.go::f1" {
 		t.Fatalf("replaced vector not searchable: %+v, %v", hits, err)
 	}
-	if st, _ := s.EmbeddingStateMap("m"); st["a.go::f1"] != "h1b" {
+	if st, _ := s.EmbeddingStateMap(context.Background(), "m"); st["a.go::f1"] != "h1b" {
 		t.Fatalf("state after replace = %+v", st)
 	}
 
 	// An empty unit is a caller bug, not a no-op: it would carry no rows for
 	// the file it claims to replace.
-	if err := s.ReplaceFileVectors("m", nil, nil); err == nil {
+	if err := s.ReplaceFileVectors(context.Background(), "m", nil, nil); err == nil {
 		t.Fatal("empty vector set must be refused")
 	}
 }

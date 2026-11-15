@@ -1,5 +1,8 @@
 package store
 
+import (
+	"context"
+)
 import "testing"
 
 // seedCollection writes one model's stamp, vectors and embedding state, so a
@@ -8,7 +11,7 @@ import "testing"
 // and then find empty).
 func seedCollection(t *testing.T, s *Store, modelID string, qns []string) {
 	t.Helper()
-	if err := s.WriteStamp(ModelStamp{
+	if err := s.WriteStamp(context.Background(), ModelStamp{
 		ModelID: modelID, Revision: "rev-" + modelID, Dimensions: 4,
 		Distance: "cosine", Provider: "local",
 	}); err != nil {
@@ -20,10 +23,10 @@ func seedCollection(t *testing.T, s *Store, modelID string, qns []string) {
 		rows = append(rows, VectorRow{QualifiedName: qn, Vec: []float32{1, 0, 0, 0}})
 		states[qn] = "hash-" + qn
 	}
-	if err := s.UpsertVectors(modelID, rows); err != nil {
+	if err := s.UpsertVectors(context.Background(), modelID, rows); err != nil {
 		t.Fatalf("upsert vectors %s: %v", modelID, err)
 	}
-	if err := s.SetEmbeddingStates(modelID, states); err != nil {
+	if err := s.SetEmbeddingStates(context.Background(), modelID, states); err != nil {
 		t.Fatalf("set states %s: %v", modelID, err)
 	}
 }
@@ -36,7 +39,7 @@ func collectionCounts(t *testing.T, s *Store, modelID string) (vectors, states i
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM embedding_state WHERE model_id = ?`, modelID).Scan(&states); err != nil {
 		t.Fatalf("count states %s: %v", modelID, err)
 	}
-	stamp, err := s.Stamp(modelID)
+	stamp, err := s.Stamp(context.Background(), modelID)
 	if err != nil {
 		t.Fatalf("stamp %s: %v", modelID, err)
 	}

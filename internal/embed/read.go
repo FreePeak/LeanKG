@@ -54,6 +54,6 @@ func readElements(ctx context.Context, st store.Backend) ([]elementText, error) 
 }
 
 // readVectorCounts reports (covered, orphans) via the Backend.
-func readVectorCounts(st store.Backend, modelID string) (covered, orphans int, err error) {
-	return st.VectorCoverage(modelID)
+func readVectorCounts(ctx context.Context, st store.Backend, modelID string) (covered, orphans int, err error) {
+	return st.VectorCoverage(ctx, modelID)
 }

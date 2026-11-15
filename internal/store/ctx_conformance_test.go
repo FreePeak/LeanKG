@@ -120,6 +120,27 @@ var ctxConformanceRoles = []ctxRole{
 			return b.SummaryUpsert(ctx, FileSummary{Path: "a.go", ContentHash: "h", Model: "m", Summary: "s"})
 		},
 	},
+	{
+		name: "Vectors",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.VectorCount(ctx, "conformance")
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			return b.UpsertVectors(ctx, "conformance", []VectorRow{{QualifiedName: "conformance", Vec: []float32{1, 0}}})
+		},
+	},
+	{
+		name: "EmbedRuns",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.LastEmbedRunAny(ctx)
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			_, err := b.StartEmbedRun(ctx, "conformance", "full", 0)
+			return err
+		},
+	},
 }
 
 // openSQLiteConformance returns a migrated RW SQLite store in a temp project.

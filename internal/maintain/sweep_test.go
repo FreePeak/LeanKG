@@ -33,13 +33,13 @@ func collectionFixture(t *testing.T) store.Backend {
 		t.Fatalf("upsert element: %v", err)
 	}
 	for _, model := range []string{"live", "old"} {
-		if err := st.WriteStamp(store.ModelStamp{
+		if err := st.WriteStamp(context.Background(), store.ModelStamp{
 			ModelID: model, Revision: "rev-" + model, Dimensions: 4,
 			Distance: "cosine", Provider: "local",
 		}); err != nil {
 			t.Fatalf("write stamp %s: %v", model, err)
 		}
-		if err := st.UpsertVectors(model, []store.VectorRow{
+		if err := st.UpsertVectors(context.Background(), model, []store.VectorRow{
 			{QualifiedName: "pkg.Fn", Vec: []float32{1, 0, 0, 0}},
 		}); err != nil {
 			t.Fatalf("upsert vectors %s: %v", model, err)
@@ -52,14 +52,14 @@ func collectionFixture(t *testing.T) store.Backend {
 // modelID (stamp + vectors).
 func hasCollection(t *testing.T, st store.Backend, modelID string) bool {
 	t.Helper()
-	stamp, err := st.Stamp(modelID)
+	stamp, err := st.Stamp(context.Background(), modelID)
 	if err != nil {
 		t.Fatalf("stamp %s: %v", modelID, err)
 	}
 	if stamp == nil {
 		return false
 	}
-	n, err := st.VectorCount(modelID)
+	n, err := st.VectorCount(context.Background(), modelID)
 	if err != nil {
 		t.Fatalf("vector count %s: %v", modelID, err)
 	}
@@ -104,13 +104,13 @@ func TestPassKeepsACollectionWhenTheKeepOneIsAbsent(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("upsert element: %v", err)
 	}
-	if err := st.WriteStamp(store.ModelStamp{
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{
 		ModelID: "local", Revision: "rev-local", Dimensions: 4,
 		Distance: "cosine", Provider: "local",
 	}); err != nil {
 		t.Fatalf("write stamp: %v", err)
 	}
-	if err := st.UpsertVectors("local", []store.VectorRow{
+	if err := st.UpsertVectors(context.Background(), "local", []store.VectorRow{
 		{QualifiedName: "pkg.Fn", Vec: []float32{1, 0, 0, 0}},
 	}); err != nil {
 		t.Fatalf("upsert vectors: %v", err)

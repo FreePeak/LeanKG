@@ -104,7 +104,7 @@ func ExportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID str
 	if err := p.Probe(ctx); err != nil {
 		return err
 	}
-	cur, err := st.Stamp(p.Identity().Model)
+	cur, err := st.Stamp(ctx, p.Identity().Model)
 	if err != nil {
 		return err
 	}
@@ -155,6 +155,9 @@ func ExportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID str
 // the line was embedded from. A line whose QN has no live element counts as an
 // orphan and is not written.
 func ImportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID, revision, distance string, dims int, r io.Reader) (Report, error) {
+	// The run ledger records the run even when ctx is cancelled (a cancelled
+	// run is stored as cancelled), so its writes do not take the caller's ctx.
+	ledger := context.WithoutCancel(ctx)
 	start := time.Now()
 	rep := Report{Mode: "import", Backend: st.Engine()}
 
@@ -164,7 +167,7 @@ func ImportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID, re
 	}
 	want, native := target.stamp, target.native
 	width := want.Dimensions
-	cur, err := st.Stamp(want.ModelID)
+	cur, err := st.Stamp(ctx, want.ModelID)
 	if err != nil {
 		return rep, err
 	}
@@ -175,13 +178,13 @@ func ImportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID, re
 	// identity change clears the collection and rewrites the stamp, also with 0,
 	// because the old cap described vectors that are gone.
 	if cur != nil && !cur.Matches(want) {
-		if err := st.ClearVectors(want.ModelID); err != nil {
+		if err := st.ClearVectors(ctx, want.ModelID); err != nil {
 			return rep, err
 		}
 		cur = nil
 	}
 	if cur == nil {
-		if err := st.WriteStamp(want); err != nil {
+		if err := st.WriteStamp(ctx, want); err != nil {
 			return rep, err
 		}
 	}
@@ -194,17 +197,17 @@ func ImportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID, re
 	for _, e := range elems {
 		elementByQN[e.QN] = contentHashHex(e.Content)
 	}
-	resume, err := st.EmbeddingStateMap(want.ModelID)
+	resume, err := st.EmbeddingStateMap(ctx, want.ModelID)
 	if err != nil {
 		return rep, err
 	}
 
-	runID, err := st.StartEmbedRun(want.ModelID, "import", 0)
+	runID, err := st.StartEmbedRun(ledger, want.ModelID, "import", 0)
 	if err != nil {
 		return rep, err
 	}
 	fail := func(err error) (Report, error) {
-		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
 	}
 
@@ -216,10 +219,10 @@ func ImportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID, re
 		if len(rows) == 0 {
 			return nil
 		}
-		if err := st.UpsertVectors(want.ModelID, rows); err != nil {
+		if err := st.UpsertVectors(ctx, want.ModelID, rows); err != nil {
 			return err
 		}
-		if err := st.SetEmbeddingStates(want.ModelID, states); err != nil {
+		if err := st.SetEmbeddingStates(ctx, want.ModelID, states); err != nil {
 			return err
 		}
 		rows = rows[:0]
@@ -285,14 +288,14 @@ func ImportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID, re
 
 	// Add stored orphans (vectors whose element no longer exists) to any
 	// input orphans counted above — the two sets are disjoint.
-	covered, dbOrphans, err := readVectorCounts(st, want.ModelID)
+	covered, dbOrphans, err := readVectorCounts(ctx, st, want.ModelID)
 	if err != nil {
 		return fail(err)
 	}
 	rep.Orphans += dbOrphans
 	rep.Coverage = coverage(covered, len(elems))
 	rep.Duration = time.Since(start)
-	if err := st.FinishEmbedRun(runID, "ok", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
+	if err := st.FinishEmbedRun(ledger, runID, "ok", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
 		return rep, err
 	}
 	return rep, nil

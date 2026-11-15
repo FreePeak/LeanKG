@@ -50,7 +50,7 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 		}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(scopeModel, []store.VectorRow{{QualifiedName: e.qn, Vec: e.vec}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), scopeModel, []store.VectorRow{{QualifiedName: e.qn, Vec: e.vec}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -103,7 +103,7 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 		}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(scopeModel, []store.VectorRow{{QualifiedName: o.qn, Vec: one(o.x)}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), scopeModel, []store.VectorRow{{QualifiedName: o.qn, Vec: one(o.x)}}); err != nil {
 			t.Fatal(err)
 		}
 	}

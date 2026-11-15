@@ -68,7 +68,7 @@ func mustRun(t *testing.T, st store.Backend, p Provider, mode string) Report {
 
 func vectorCount(t *testing.T, st store.Backend, modelID string) int {
 	t.Helper()
-	n, err := st.VectorCount(modelID)
+	n, err := st.VectorCount(context.Background(), modelID)
 	if err != nil {
 		t.Fatalf("VectorCount: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestRunStampMismatchClearsAndRebuilds(t *testing.T) {
 	if rep.Embedded != 2 {
 		t.Fatalf("rebuild: got %+v, want Embedded=2", rep)
 	}
-	cur, err := st.Stamp(p1.Identity().Model)
+	cur, err := st.Stamp(context.Background(), p1.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestRunValidationFailureCountedNotFatal(t *testing.T) {
 	if rep.Coverage != 0 {
 		t.Fatalf("coverage: got %v, want 0", rep.Coverage)
 	}
-	run, err := st.LastEmbedRunAny()
+	run, err := st.LastEmbedRunAny(context.Background())
 	if err != nil || run == nil {
 		t.Fatalf("LastEmbedRun: %v %v", run, err)
 	}
@@ -283,7 +283,7 @@ func TestRunProviderErrorSurfaces(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider down") {
 		t.Fatalf("Run error: got %v, want provider failure surfaced", err)
 	}
-	run, _ := st.LastEmbedRunAny()
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "failed" {
 		t.Fatalf("run status: got %+v, want failed", run)
 	}
@@ -402,7 +402,7 @@ func TestRunPoisonItemDoesNotAbortRun(t *testing.T) {
 	if vectorCount(t, st, p.Identity().Model) != 1 {
 		t.Fatal("healthy sibling lost its vector")
 	}
-	run, _ := st.LastEmbedRunAny()
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "partial" {
 		t.Fatalf("run status: got %+v, want partial", run)
 	}
@@ -420,7 +420,7 @@ func TestRunAllFailedProviderAbortsLoudly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider down") || !strings.Contains(err.Error(), "all 1 item(s) failed") {
 		t.Fatalf("Run error: got %v, want loud all-failed abort naming the provider error", err)
 	}
-	run, _ := st.LastEmbedRunAny()
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "failed" {
 		t.Fatalf("run status: got %+v, want failed", run)
 	}
@@ -464,7 +464,7 @@ func TestRunCancelledIsNotPoison(t *testing.T) {
 	if rep.Failed != 0 {
 		t.Fatalf("cancelled items counted as poison: %+v", rep)
 	}
-	run, _ := st.LastEmbedRunAny()
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "cancelled" {
 		t.Fatalf("run status: got %+v, want cancelled", run)
 	}
@@ -486,7 +486,7 @@ func TestRunPreCancelledRecordsCancelled(t *testing.T) {
 	if rep.Failed != 0 {
 		t.Fatalf("cancelled items counted as poison: %+v", rep)
 	}
-	run, _ := st.LastEmbedRunAny()
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "cancelled" {
 		t.Fatalf("run status: got %+v, want cancelled", run)
 	}
@@ -803,7 +803,7 @@ func TestNDJSONRoundTrip(t *testing.T) {
 	if vectorCount(t, st2, "deterministic-8") != 3 {
 		t.Fatal("import: want 3 vectors")
 	}
-	cur, _ := st2.Stamp("deterministic-8")
+	cur, _ := st2.Stamp(context.Background(), "deterministic-8")
 	if cur == nil || cur.Revision != "test:deterministic-v1" || cur.Dimensions != 8 || cur.Distance != "cosine" || cur.Provider != "deterministic" {
 		t.Fatalf("import stamp: got %+v", cur)
 	}
@@ -862,7 +862,7 @@ func TestRunIncrementalOnFreshStampsCollection(t *testing.T) {
 	if rep.Embedded != 2 {
 		t.Fatalf("incremental fresh: got %+v, want Embedded=2", rep)
 	}
-	cur, err := st.Stamp(p.Identity().Model)
+	cur, err := st.Stamp(context.Background(), p.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -918,7 +918,7 @@ func TestRunIncrementalIgnoresProviderLabel(t *testing.T) {
 	if rep.Embedded != 1 || rep.Skipped != 2 {
 		t.Fatalf("incremental: got %+v, want Embedded=1 Skipped=2", rep)
 	}
-	cur, err := st.Stamp("embeddinggemma-2")
+	cur, err := st.Stamp(context.Background(), "embeddinggemma-2")
 	if err != nil || cur == nil || cur.Provider != "openai" {
 		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
 	}
@@ -952,7 +952,7 @@ func TestRunIncrementalRefusesLabelThatChangesTextCap(t *testing.T) {
 	if got := vectorCount(t, st, "embeddinggemma-2"); got != before {
 		t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
 	}
-	if cur, err := st.Stamp("embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
+	if cur, err := st.Stamp(context.Background(), "embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
 		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
 	}
 }
@@ -977,13 +977,13 @@ func TestRunIncrementalRefusesRealStampDrift(t *testing.T) {
 			seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
 			p := Deterministic(8)
 			mustRun(t, st, p, "full")
-			stored, err := st.Stamp(p.Identity().Model)
+			stored, err := st.Stamp(context.Background(), p.Identity().Model)
 			if err != nil || stored == nil {
 				t.Fatalf("stamp after full: %v %v", stored, err)
 			}
 			drifted := *stored
 			tc.break_(&drifted)
-			if err := st.WriteStamp(drifted); err != nil {
+			if err := st.WriteStamp(context.Background(), drifted); err != nil {
 				t.Fatal(err)
 			}
 			seed(t, st, el("a::f3", "func f3() {}"))
@@ -999,7 +999,7 @@ func TestRunIncrementalRefusesRealStampDrift(t *testing.T) {
 			if got := vectorCount(t, st, p.Identity().Model); got != before {
 				t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
 			}
-			if after, _ := st.Stamp(p.Identity().Model); after == nil || *after != drifted {
+			if after, _ := st.Stamp(context.Background(), p.Identity().Model); after == nil || *after != drifted {
 				t.Fatalf("refused run must leave the stored stamp: got %+v, want %+v", after, drifted)
 			}
 		})
@@ -1117,7 +1117,7 @@ func localRunCfg(t *testing.T, st store.Backend, cfg Config, mode string) (Repor
 
 func storedStamp(t *testing.T, st store.Backend, modelID string) store.ModelStamp {
 	t.Helper()
-	cur, err := st.Stamp(modelID)
+	cur, err := st.Stamp(context.Background(), modelID)
 	if err != nil || cur == nil {
 		t.Fatalf("stamp for %s: %v %v", modelID, cur, err)
 	}
@@ -1306,7 +1306,7 @@ func TestWriteCapFillsLegacyStampWithoutTouchingIdentity(t *testing.T) {
 	mustRun(t, st, p, "full")
 	legacy := storedStamp(t, st, p.Identity().Model)
 	legacy.TextCap = 0
-	if err := st.WriteStamp(legacy); err != nil {
+	if err := st.WriteStamp(context.Background(), legacy); err != nil {
 		t.Fatal(err)
 	}
 	seed(t, st, el("a::f2", "func f2() {}"))
@@ -1454,7 +1454,7 @@ func TestRunHungEndpointFailsAtRequestTimeout(t *testing.T) {
 	if took > 8*time.Second {
 		t.Fatalf("Run returned after %s, want about the 1s request timeout", took)
 	}
-	run, _ := st.LastEmbedRunAny()
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "failed" {
 		t.Fatalf("run status: got %+v, want failed", run)
 	}
@@ -1481,7 +1481,7 @@ func TestRunStopsAtNextBatchOnCancel(t *testing.T) {
 	if p.calls != 2 {
 		t.Fatalf("Embed calls = %d, want 2 (the batch in flight at the cancel, then no more)", p.calls)
 	}
-	run, _ := st.LastEmbedRunAny()
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "cancelled" {
 		t.Fatalf("run status: got %+v, want cancelled", run)
 	}

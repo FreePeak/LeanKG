@@ -133,14 +133,14 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	qvec, err := p.Embed(context.Background(), embed.Query, []string{"alpha code"})
 	if err != nil || len(qvec) != 1 {
 		t.Fatalf("embed query: %v", err)
 	}
-	if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: "m.alpha", Vec: qvec[0]}}); err != nil {
+	if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: "m.alpha", Vec: qvec[0]}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -189,7 +189,7 @@ func TestL3ProviderFailureDegrades(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(store.ModelStamp{ModelID: "boom", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "test"}); err != nil {
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{ModelID: "boom", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	embedder := failingProvider{inner: embed.Deterministic(4)}
@@ -387,7 +387,7 @@ func TestL3StampDriftDegrades(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(8)
-	if err := st.WriteStamp(store.ModelStamp{ModelID: p.Identity().Model, Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Identity().Provider}); err != nil {
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{ModelID: p.Identity().Model, Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Identity().Provider}); err != nil {
 		t.Fatal(err)
 	}
 	e := New(st, Options{Embedder: p})

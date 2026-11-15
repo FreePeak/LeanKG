@@ -21,7 +21,7 @@ type stampsReadFails struct {
 	cause error
 }
 
-func (s stampsReadFails) Stamps() ([]store.ModelStamp, error) { return nil, s.cause }
+func (s stampsReadFails) Stamps(ctx context.Context) ([]store.ModelStamp, error) { return nil, s.cause }
 
 // seededStore opens a migrated store holding one element, one stamped model
 // and one vector: a store that really does have embeddings, so a payload that
@@ -43,12 +43,12 @@ func seededStore(t *testing.T) store.Backend {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(store.ModelStamp{
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{
 		ModelID: "m-1", Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "test",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors("m-1", []store.VectorRow{{QualifiedName: "m.alpha", Vec: []float32{1, 0, 0, 0}}}); err != nil {
+	if err := st.UpsertVectors(context.Background(), "m-1", []store.VectorRow{{QualifiedName: "m.alpha", Vec: []float32{1, 0, 0, 0}}}); err != nil {
 		t.Fatal(err)
 	}
 	return st

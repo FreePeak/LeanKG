@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -419,7 +420,7 @@ func requireEmbedMode(t *testing.T, dir, want string) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
-	run, err := st.LastEmbedRunAny()
+	run, err := st.LastEmbedRunAny(context.Background())
 	if err != nil {
 		t.Fatalf("last embed run: %v", err)
 	}

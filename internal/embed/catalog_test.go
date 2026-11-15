@@ -206,7 +206,7 @@ func TestRunStampRecordsPipelineIdentity(t *testing.T) {
 	seed(t, st, el("a::f1", "func f1() {}"))
 	mustRun(t, st, p, "full")
 
-	got, err := st.Stamp(p.Identity().Model)
+	got, err := st.Stamp(context.Background(), p.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestRunStampRecordsPipelineIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			drifted := *got
 			tc.break_(&drifted)
-			if err := st.WriteStamp(drifted); err != nil {
+			if err := st.WriteStamp(context.Background(), drifted); err != nil {
 				t.Fatal(err)
 			}
 			_, err := Run(context.Background(), st, p, "incremental")
@@ -244,7 +244,7 @@ func TestRunStampRecordsPipelineIdentity(t *testing.T) {
 			}
 			// Full mode clears and re-stamps the drifted collection.
 			mustRun(t, st, p, "full")
-			after, err := st.Stamp(p.Identity().Model)
+			after, err := st.Stamp(context.Background(), p.Identity().Model)
 			if err != nil || after == nil || *after != *got {
 				t.Fatalf("stamp after rebuild = %+v, %v; want %+v", after, err, got)
 			}
@@ -300,7 +300,7 @@ func TestRunCommitsPerFileAtomically(t *testing.T) {
 		t.Fatalf("run report = %+v, want Failed=1 Embedded=1", rep)
 	}
 
-	states, err := st.EmbeddingStateMap(p.Identity().Model)
+	states, err := st.EmbeddingStateMap(context.Background(), p.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestRunCommitsPerFileAtomically(t *testing.T) {
 	if states["a.go::fine"] == "" {
 		t.Fatal("sibling file must keep its embedding state")
 	}
-	covered, orphans, err := st.VectorCoverage(p.Identity().Model)
+	covered, orphans, err := st.VectorCoverage(context.Background(), p.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -79,5 +79,5 @@ func upsertVectorsFor(t *testing.T, st *Store, modelID string, els ...Element) e
 		v := []float32{1, 0, 0, 0}
 		rows = append(rows, VectorRow{QualifiedName: els[i].QualifiedName, Vec: v})
 	}
-	return st.UpsertVectors(modelID, rows)
+	return st.UpsertVectors(context.Background(), modelID, rows)
 }

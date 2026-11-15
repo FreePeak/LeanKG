@@ -54,7 +54,7 @@ func TestBackendInterfaceSatisfied(t *testing.T) {
 	if _, err := b.Elements(context.Background()); err != nil {
 		t.Fatalf("elements: %v", err)
 	}
-	if c, o, err := b.VectorCoverage("none"); err != nil || c != 0 || o != 0 {
+	if c, o, err := b.VectorCoverage(context.Background(), "none"); err != nil || c != 0 || o != 0 {
 		t.Fatalf("coverage: %d %d %v", c, o, err)
 	}
 }

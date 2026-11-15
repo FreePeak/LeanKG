@@ -183,10 +183,10 @@ func TestPGOrphanPurges(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := ModelStamp{ModelID: "pg-purge-model", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "unit"}
-	if err := s.WriteStamp(st); err != nil {
+	if err := s.WriteStamp(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertVectors(st.ModelID, []VectorRow{
+	if err := s.UpsertVectors(context.Background(), st.ModelID, []VectorRow{
 		{QualifiedName: "a.A", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "b.B", Vec: []float32{0, 1, 0, 0}},
 	}); err != nil {
@@ -211,7 +211,7 @@ func TestPGOrphanPurges(t *testing.T) {
 		t.Fatalf("orphan vectors purged = %d, want 1", nv)
 	}
 	// The live survivor rows are untouched.
-	if n, _ := s.VectorCount(st.ModelID); n != 1 {
+	if n, _ := s.VectorCount(context.Background(), st.ModelID); n != 1 {
 		t.Fatalf("VectorCount after purge = %d, want 1 (live b.B kept)", n)
 	}
 	if rels, _ := s.Outgoing(context.Background(), "b.B"); len(rels) != 1 || rels[0].Target != "b.B" {
@@ -262,14 +262,14 @@ func TestPGStampsAndVectors(t *testing.T) {
 	}
 
 	st := ModelStamp{ModelID: "test-model-7B", Revision: "abc123", Dimensions: 4, Distance: "cosine", Provider: "unit"}
-	if err := s.WriteStamp(st); err != nil {
+	if err := s.WriteStamp(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Stamp("test-model-7B")
+	got, err := s.Stamp(context.Background(), "test-model-7B")
 	if err != nil || got == nil || *got != st {
 		t.Fatalf("Stamp() = %+v, %v; want %+v", got, err, st)
 	}
-	stamps, err := s.Stamps()
+	stamps, err := s.Stamps(context.Background())
 	if err != nil || len(stamps) != 1 || stamps[0] != st {
 		t.Fatalf("Stamps() = %+v, %v", stamps, err)
 	}
@@ -286,14 +286,14 @@ func TestPGStampsAndVectors(t *testing.T) {
 	}
 
 	// Alpha's vector ≡ query → similarity 1; Beta orthogonal; one orphan.
-	if err := s.UpsertVectors(st.ModelID, []VectorRow{
+	if err := s.UpsertVectors(context.Background(), st.ModelID, []VectorRow{
 		{QualifiedName: "pkg.Alpha", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "pkg.Beta", Vec: []float32{0, 1, 0, 0}},
 		{QualifiedName: "doc/blob", Vec: []float32{0.9, 0.1, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.VectorCount(st.ModelID); err != nil || n != 3 {
+	if n, err := s.VectorCount(context.Background(), st.ModelID); err != nil || n != 3 {
 		t.Fatalf("VectorCount = %d, %v; want 3", n, err)
 	}
 
@@ -308,29 +308,29 @@ func TestPGStampsAndVectors(t *testing.T) {
 		t.Fatalf("hydration failed: %+v", hits[0].Element)
 	}
 
-	covered, orphans, err := s.VectorCoverage(st.ModelID)
+	covered, orphans, err := s.VectorCoverage(context.Background(), st.ModelID)
 	if err != nil || covered != 2 || orphans != 1 {
 		t.Fatalf("VectorCoverage = (%d, %d), %v; want (2, 1)", covered, orphans, err)
 	}
 
-	if err := s.SetEmbeddingStates(st.ModelID, map[string]string{"pkg.Alpha": "h1"}); err != nil {
+	if err := s.SetEmbeddingStates(context.Background(), st.ModelID, map[string]string{"pkg.Alpha": "h1"}); err != nil {
 		t.Fatal(err)
 	}
-	states, err := s.EmbeddingStateMap(st.ModelID)
+	states, err := s.EmbeddingStateMap(context.Background(), st.ModelID)
 	if err != nil || states["pkg.Alpha"] != "h1" {
 		t.Fatalf("EmbeddingStateMap = %+v, %v", states, err)
 	}
 
-	if err := s.ClearVectors(st.ModelID); err != nil {
+	if err := s.ClearVectors(context.Background(), st.ModelID); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.VectorCount(st.ModelID); n != 0 {
+	if n, _ := s.VectorCount(context.Background(), st.ModelID); n != 0 {
 		t.Fatalf("VectorCount after ClearVectors = %d; want 0", n)
 	}
-	if states, _ := s.EmbeddingStateMap(st.ModelID); len(states) != 0 {
+	if states, _ := s.EmbeddingStateMap(context.Background(), st.ModelID); len(states) != 0 {
 		t.Fatalf("EmbeddingStateMap after ClearVectors = %+v; want empty", states)
 	}
-	covered, orphans, _ = s.VectorCoverage(st.ModelID)
+	covered, orphans, _ = s.VectorCoverage(context.Background(), st.ModelID)
 	if covered != 0 || orphans != 0 {
 		t.Fatalf("VectorCoverage after ClearVectors = (%d, %d); want (0, 0)", covered, orphans)
 	}
@@ -514,22 +514,22 @@ func TestPGMigrateIdempotent(t *testing.T) {
 func TestPGEmbedRuns(t *testing.T) {
 	s := openPGTest(t)
 
-	if r, err := s.LastEmbedRunAny(); err != nil || r != nil {
+	if r, err := s.LastEmbedRunAny(context.Background()); err != nil || r != nil {
 		t.Fatalf("LastEmbedRunAny on empty store = %+v, %v; want nil", r, err)
 	}
-	if r, err := s.LastEmbedRun("m1"); err != nil || r != nil {
+	if r, err := s.LastEmbedRun(context.Background(), "m1"); err != nil || r != nil {
 		t.Fatalf("LastEmbedRun on empty store = %+v, %v; want nil", r, err)
 	}
 
-	id, err := s.StartEmbedRun("m1", "full", 5)
+	id, err := s.StartEmbedRun(context.Background(), "m1", "full", 5)
 	if err != nil || id == 0 {
 		t.Fatalf("StartEmbedRun = %d, %v", id, err)
 	}
-	if err := s.FinishEmbedRun(id, "done", 4, 1, 0, 2, 3); err != nil {
+	if err := s.FinishEmbedRun(context.Background(), id, "done", 4, 1, 0, 2, 3); err != nil {
 		t.Fatal(err)
 	}
 
-	r, err := s.LastEmbedRunAny()
+	r, err := s.LastEmbedRunAny(context.Background())
 	if err != nil || r == nil {
 		t.Fatalf("LastEmbedRunAny = %+v, %v", r, err)
 	}
@@ -540,10 +540,10 @@ func TestPGEmbedRuns(t *testing.T) {
 	if r.StartedAt == "" || r.FinishedAt == nil || *r.FinishedAt == "" {
 		t.Fatalf("timestamps not recorded: started=%q finished=%v", r.StartedAt, r.FinishedAt)
 	}
-	if r2, err := s.LastEmbedRun("m1"); err != nil || r2 == nil || r2.ID != id {
+	if r2, err := s.LastEmbedRun(context.Background(), "m1"); err != nil || r2 == nil || r2.ID != id {
 		t.Fatalf("LastEmbedRun = %+v, %v", r2, err)
 	}
-	if r3, err := s.LastEmbedRun("other"); err != nil || r3 != nil {
+	if r3, err := s.LastEmbedRun(context.Background(), "other"); err != nil || r3 != nil {
 		t.Fatalf("LastEmbedRun(other) = %+v, %v; want nil", r3, err)
 	}
 }
@@ -556,13 +556,13 @@ func TestPGNilReadersUseSentinel(t *testing.T) {
 	if _, _, err := s.Watermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Stamp("none"); err != nil {
+	if _, err := s.Stamp(context.Background(), "none"); err != nil {
 		t.Fatal(err)
 	}
 	// Vector ops on a never-stamped model produce a missing-table error (the
 	// sqlite twin would return empty instead) — this is the documented PG
 	// divergence: per-model tables only exist after WriteStamp.
-	_, err := s.VectorCount("never-stamped")
+	_, err := s.VectorCount(context.Background(), "never-stamped")
 	if err == nil || errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("VectorCount on missing model tables = %v; want a defined-table error", err)
 	}
@@ -577,19 +577,19 @@ func TestPGStampTextCapRoundTrip(t *testing.T) {
 		ModelID: "pg-cap-model", Revision: "r1", Dimensions: 4, Distance: "cosine",
 		Provider: "local", TextCap: 8000,
 	}
-	if err := s.WriteStamp(want); err != nil {
+	if err := s.WriteStamp(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Stamp(want.ModelID)
+	got, err := s.Stamp(context.Background(), want.ModelID)
 	if err != nil || got == nil || got.TextCap != 8000 {
 		t.Fatalf("Stamp() = %+v, %v; want TextCap 8000", got, err)
 	}
 
 	want.TextCap = 4000
-	if err := s.WriteStamp(want); err != nil {
+	if err := s.WriteStamp(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
-	if got, err = s.Stamp(want.ModelID); err != nil || got == nil || got.TextCap != 4000 {
+	if got, err = s.Stamp(context.Background(), want.ModelID); err != nil || got == nil || got.TextCap != 4000 {
 		t.Fatalf("upsert must replace TextCap: %+v, %v; want 4000", got, err)
 	}
 
@@ -597,7 +597,7 @@ func TestPGStampTextCapRoundTrip(t *testing.T) {
 		VALUES ('pg-cap-legacy', 'old', 8, 'cosine', 'local')`); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := s.Stamp("pg-cap-legacy")
+	legacy, err := s.Stamp(context.Background(), "pg-cap-legacy")
 	if err != nil || legacy == nil || legacy.TextCap != 0 {
 		t.Fatalf("legacy stamp = %+v, %v; want TextCap 0 (not recorded)", legacy, err)
 	}
@@ -620,10 +620,10 @@ func TestPGStampIdentityAndPerFileReplace(t *testing.T) {
 		ModelID: "unit-model", Revision: "deadbeef", Dimensions: 4, Distance: "cosine",
 		Provider: "openai", ChunkerVersion: 2, QueryPrefix: "q: ", DocumentPrefix: "d: ",
 	}
-	if err := s.WriteStamp(want); err != nil {
+	if err := s.WriteStamp(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Stamp(want.ModelID)
+	got, err := s.Stamp(context.Background(), want.ModelID)
 	if err != nil || got == nil || *got != want {
 		t.Fatalf("Stamp() = %+v, %v; want %+v", got, err, want)
 	}
@@ -632,35 +632,35 @@ func TestPGStampIdentityAndPerFileReplace(t *testing.T) {
 		{QualifiedName: "unit/a.go::f1", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "unit/a.go::f2", Vec: []float32{0, 1, 0, 0}},
 	}
-	if err := s.ReplaceFileVectors(want.ModelID, rows, map[string]string{
+	if err := s.ReplaceFileVectors(context.Background(), want.ModelID, rows, map[string]string{
 		"unit/a.go::f1": "h1", "unit/a.go::f2": "h2",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.VectorCount(want.ModelID); err != nil || n != 2 {
+	if n, err := s.VectorCount(context.Background(), want.ModelID); err != nil || n != 2 {
 		t.Fatalf("VectorCount = %d, %v; want 2", n, err)
 	}
-	if st, err := s.EmbeddingStateMap(want.ModelID); err != nil || st["unit/a.go::f1"] != "h1" || st["unit/a.go::f2"] != "h2" {
+	if st, err := s.EmbeddingStateMap(context.Background(), want.ModelID); err != nil || st["unit/a.go::f1"] != "h1" || st["unit/a.go::f2"] != "h2" {
 		t.Fatalf("state map = %+v, %v", st, err)
 	}
 
 	// Replace one element: same count, new vector wins, state re-stamped.
-	if err := s.ReplaceFileVectors(want.ModelID,
+	if err := s.ReplaceFileVectors(context.Background(), want.ModelID,
 		[]VectorRow{{QualifiedName: "unit/a.go::f1", Vec: []float32{0, 0, 0, 1}}},
 		map[string]string{"unit/a.go::f1": "h1b"}); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.VectorCount(want.ModelID); n != 2 {
+	if n, _ := s.VectorCount(context.Background(), want.ModelID); n != 2 {
 		t.Fatalf("VectorCount after replace = %d, want 2 (no duplicate)", n)
 	}
 	hits, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: want.ModelID, Vec: []float32{0, 0, 0, 1}, K: 1})
 	if err != nil || len(hits) != 1 || hits[0].Element.QualifiedName != "unit/a.go::f1" {
 		t.Fatalf("replaced vector not searchable: %+v, %v", hits, err)
 	}
-	if st, _ := s.EmbeddingStateMap(want.ModelID); st["unit/a.go::f1"] != "h1b" {
+	if st, _ := s.EmbeddingStateMap(context.Background(), want.ModelID); st["unit/a.go::f1"] != "h1b" {
 		t.Fatalf("state after replace = %+v", st)
 	}
-	if err := s.ReplaceFileVectors(want.ModelID, nil, nil); err == nil {
+	if err := s.ReplaceFileVectors(context.Background(), want.ModelID, nil, nil); err == nil {
 		t.Fatal("empty vector set must be refused")
 	}
 }
@@ -681,10 +681,10 @@ func TestPGNoOrphanHitsAndIdentifierTerms(t *testing.T) {
 		t.Fatalf("identifier terms via %s: %v %+v", arm, err, hits)
 	}
 	st := ModelStamp{ModelID: "pg-ghost-model", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "unit"}
-	if err := s.WriteStamp(st); err != nil {
+	if err := s.WriteStamp(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertVectors(st.ModelID, []VectorRow{
+	if err := s.UpsertVectors(context.Background(), st.ModelID, []VectorRow{
 		{QualifiedName: "a.go::RotateStagingCredentials", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "b.go::Keep", Vec: []float32{0, 1, 0, 0}},
 	}); err != nil {

@@ -12,9 +12,9 @@ import (
 // seed elements and vectors, then run the vector and hybrid searches with a
 // filter that excludes more rows than the limit can absorb.
 type filterSearcher interface {
-	WriteStamp(ModelStamp) error
+	WriteStamp(ctx context.Context, st ModelStamp) error
 	UpsertElements(ctx context.Context, els []Element) error
-	UpsertVectors(modelID string, rows []VectorRow) error
+	UpsertVectors(ctx context.Context, modelID string, rows []VectorRow) error
 	SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error)
 	Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, error)
 }
@@ -29,7 +29,7 @@ type filterSearcher interface {
 func checkFilterBeforeLimit(t *testing.T, s filterSearcher, wantKeywordArms ...Arm) {
 	t.Helper()
 	const modelID = "cx16-model"
-	if err := s.WriteStamp(ModelStamp{ModelID: modelID, Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "unit"}); err != nil {
+	if err := s.WriteStamp(context.Background(), ModelStamp{ModelID: modelID, Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "unit"}); err != nil {
 		t.Fatal(err)
 	}
 	var els []Element
@@ -50,7 +50,7 @@ func checkFilterBeforeLimit(t *testing.T, s filterSearcher, wantKeywordArms ...A
 	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
-	if err := s.UpsertVectors(modelID, rows); err != nil {
+	if err := s.UpsertVectors(context.Background(), modelID, rows); err != nil {
 		t.Fatalf("upsert vectors: %v", err)
 	}
 	noFixtures := ElementFilter{ExcludePathContains: []string{"testdata"}}

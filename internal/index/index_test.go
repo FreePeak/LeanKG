@@ -469,17 +469,17 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 	if err := st.KVSet(context.Background(), rootKVNamespace, extractorKVKey, "2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetEmbeddingStates(model, map[string]string{"app.ts::ping": "hash-ping"}); err != nil {
+	if err := st.SetEmbeddingStates(context.Background(), model, map[string]string{"app.ts::ping": "hash-ping"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors(model, []store.VectorRow{{QualifiedName: "app.ts::ping", Vec: []float32{1, 0, 0}}}); err != nil {
+	if err := st.UpsertVectors(context.Background(), model, []store.VectorRow{{QualifiedName: "app.ts::ping", Vec: []float32{1, 0, 0}}}); err != nil {
 		t.Fatal(err)
 	}
-	statesBefore, err := st.EmbeddingStateMap(model)
+	statesBefore, err := st.EmbeddingStateMap(context.Background(), model)
 	if err != nil {
 		t.Fatal(err)
 	}
-	vecsBefore, err := st.VectorCount(model)
+	vecsBefore, err := st.VectorCount(context.Background(), model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,14 +496,14 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 		}
 	}
 	mustFind(t, st, "app.ts::ping")
-	statesAfter, err := st.EmbeddingStateMap(model)
+	statesAfter, err := st.EmbeddingStateMap(context.Background(), model)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(statesAfter) != len(statesBefore) || statesAfter["app.ts::ping"] != "hash-ping" {
 		t.Errorf("embedding_state changed: before %v, after %v", statesBefore, statesAfter)
 	}
-	vecsAfter, err := st.VectorCount(model)
+	vecsAfter, err := st.VectorCount(context.Background(), model)
 	if err != nil {
 		t.Fatal(err)
 	}

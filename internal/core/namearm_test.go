@@ -43,7 +43,7 @@ func TestL3FusesANameArm(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	// The answer: a two-line helper whose name is what the question says. The
@@ -65,7 +65,7 @@ func TestL3FusesANameArm(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
 			t.Fatal(err)
 		}
 	}
