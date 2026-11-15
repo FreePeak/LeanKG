@@ -256,6 +256,9 @@ concepts:
     code_refs:
       - internal/rest/rest.go
       - internal/rpc/service.go
+      - internal/httpx/httpx.go
+      - internal/core/decode_query.go
+      - internal/core/budget.go
 
   - id: web_ui
     type: service

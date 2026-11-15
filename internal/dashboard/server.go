@@ -172,7 +172,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET "+p+"consent", s.consentGet)
 	mux.HandleFunc("POST "+p+"consent", s.consentPost)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
-		writeErr(w, http.StatusNotFound, "not found")
+		httpx.WriteMessage(w, http.StatusNotFound, "not found")
 	})
 	mux.Handle("/", spaHandler())
 	return s.secure(httpx.Guard(mux))
@@ -192,7 +192,7 @@ func (s *Server) secure(next http.Handler) http.Handler {
 		}
 		if s.opts.AllowRemote && !s.bearerOK(r) {
 			h.Set("WWW-Authenticate", `Bearer realm="leankg-dashboard"`)
-			writeErr(w, http.StatusUnauthorized, "unauthorized: send Authorization: Bearer <token>")
+			httpx.WriteMessage(w, http.StatusUnauthorized, "unauthorized: send Authorization: Bearer <token>")
 			return
 		}
 		next.ServeHTTP(w, r)

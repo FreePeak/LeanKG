@@ -23,20 +23,29 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-// apiEnvelope is the exact JSON shape ui-v2 unwrapEnvelope expects.
+// apiEnvelope is the JSON shape ui-v2 unwrapEnvelope expects. Code is the
+// stable catalog token of a failed call, the same field REST carries.
 type apiEnvelope struct {
 	Success bool    `json:"success"`
 	Data    any     `json:"data"`
 	Error   *string `json:"error"`
+	Code    string  `json:"code,omitempty"`
 }
 
 func okEnvelope(data any) apiEnvelope { return apiEnvelope{Success: true, Data: data} }
 
 func failEnvelope(msg string) apiEnvelope { return apiEnvelope{Error: &msg} }
 
-func writeEnvelope(w http.ResponseWriter, env apiEnvelope) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(env)
+// respondEnvelope writes env with the given status.
+func respondEnvelope(w http.ResponseWriter, status int, env apiEnvelope) {
+	httpx.WriteJSON(w, status, env)
+}
+
+// respondErr answers a failed call with the status the shared error table
+// gives err, and the catalog code when err has one.
+func respondErr(w http.ResponseWriter, err error) {
+	msg := err.Error()
+	respondEnvelope(w, httpx.StatusFor(err), apiEnvelope{Error: &msg, Code: httpx.CodeOf(err)})
 }
 
 // APIHandler serves the dashboard API the embedded ui-v2 build calls. It is
@@ -86,7 +95,7 @@ func APIHandler(engine *core.Engine, mem *memory.Memory, opts ...APIOption) http
 	// Unknown /api/* route: a JSON 404, never the SPA shell (the dashboard's
 	// fetch handlers read body.error for non-2xx responses).
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		writeEnvelopeStatus(w, http.StatusNotFound, failEnvelope("not found: "+r.URL.Path))
+		respondEnvelope(w, http.StatusNotFound, failEnvelope("not found: "+r.URL.Path))
 	})
 	return httpx.Guard(mux)
 }
@@ -279,7 +288,7 @@ func (h *apiH) indexStatus(w http.ResponseWriter, _ *http.Request) {
 		"relationship_count": relsPtr,
 		"project_path":       &pp,
 	}
-	writeEnvelope(w, okEnvelope(data))
+	respondEnvelope(w, http.StatusOK, okEnvelope(data))
 }
 
 func (h *apiH) query(w http.ResponseWriter, r *http.Request) {
@@ -288,36 +297,20 @@ func (h *apiH) query(w http.ResponseWriter, r *http.Request) {
 		Params map[string]any `json:"params"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeEnvelope(w, failEnvelope("invalid JSON body: "+err.Error()))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("invalid JSON body: "+err.Error()))
 		return
 	}
-	qr := core.QueryRequest{Query: req.Query}
-	for k, v := range req.Params {
-		if k == "action" {
-			if s, ok := v.(string); ok {
-				qr.Action = s
-			}
-			continue
-		}
-		if k == "limit" {
-			// RS-24: limit is the request's result count, not an action arg —
-			// it used to land in Args, where nothing read it.
-			if n, ok := v.(float64); ok {
-				qr.Limit = int(n)
-			}
-			continue
-		}
-		if qr.Args == nil {
-			qr.Args = map[string]any{}
-		}
-		qr.Args[k] = v
-	}
-	resp, err := h.engine.Query(r.Context(), qr)
+	qr, err := core.DecodeQueryParams(req.Query, req.Params)
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
-	writeEnvelope(w, okEnvelope(map[string]any{"result": resp}))
+	ans, err := h.engine.QueryAnswer(r.Context(), qr)
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{"result": ans.Body}))
 }
 
 func (h *apiH) search(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +320,7 @@ func (h *apiH) search(w http.ResponseWriter, r *http.Request) {
 
 	snap, err := loadSnapshot(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	out := make([]store.Element, 0, len(snap.elements))
@@ -346,7 +339,7 @@ func (h *apiH) search(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, e)
 	}
-	writeEnvelope(w, okEnvelope(out))
+	respondEnvelope(w, http.StatusOK, okEnvelope(out))
 }
 
 // --- /api/project/switch ---
@@ -358,24 +351,24 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 		Reindex   bool   `json:"reindex"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeEnvelope(w, failEnvelope("invalid JSON body: "+err.Error()))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("invalid JSON body: "+err.Error()))
 		return
 	}
 	if req.GithubURL != "" {
 		// The Rust engine cloned the repo here; the Go engine keeps repository
 		// acquisition in internal/sources, reachable from the CLI.
-		writeEnvelope(w, failEnvelope(fmt.Sprintf(
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope(fmt.Sprintf(
 			"github_url switching is not supported by this listener; acquire the repository with `leankg index --source git+%s --ref-name <ref> <dir>` and serve that directory",
 			req.GithubURL)))
 		return
 	}
 	if req.Path == "" {
-		writeEnvelope(w, failEnvelope("Either path or github_url must be provided"))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("Either path or github_url must be provided"))
 		return
 	}
 	path := strings.TrimSpace(req.Path)
 	if path == "/" || path == "" {
-		writeEnvelope(w, failEnvelope("Invalid project path: filesystem root is not a LeanKG project"))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("Invalid project path: filesystem root is not a LeanKG project"))
 		return
 	}
 	abs := path
@@ -383,7 +376,7 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 		abs = a
 	}
 	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
-		writeEnvelope(w, failEnvelope("Directory not found. Please check the path and try again."))
+		respondEnvelope(w, http.StatusNotFound, failEnvelope("Directory not found. Please check the path and try again."))
 		return
 	}
 	// A different root is only reachable when this listener serves it: consult
@@ -393,7 +386,7 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 		if h.switcher != nil {
 			if dir, ok := h.switcher(abs); ok {
 				_, statErr := os.Stat(filepath.Join(dir, ".leankg"))
-				writeEnvelope(w, okEnvelope(map[string]any{
+				respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{
 					"is_directory":   true,
 					"has_database":   statErr == nil,
 					"needs_indexing": false,
@@ -407,7 +400,7 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		writeEnvelope(w, failEnvelope(fmt.Sprintf(
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope(fmt.Sprintf(
 			"this listener serves %s; to serve several projects start it with LEANKG_PROJECT_DIRS=<dir>[,<dir>...] and select one per request with ?project=<dir|name>",
 			h.projectDir)))
 		return
@@ -426,7 +419,7 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 		"project_path":   abs,
 		"element_count":  count,
 	}
-	writeEnvelope(w, okEnvelope(data))
+	respondEnvelope(w, http.StatusOK, okEnvelope(data))
 }
 
 func sameDir(a, b string) bool {

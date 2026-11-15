@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
 )
 
@@ -61,7 +62,7 @@ type hindsightItem struct {
 
 func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 	mux.HandleFunc("PUT /v1/default/banks/{bank}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"bank_id": r.PathValue("bank"), "object": "bank",
 		})
 	})
@@ -106,10 +107,10 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 			}
 		}
 		if _, err := mem.RetainReplacing(r.Context(), r.PathValue("bank"), entries, replaceDocs); err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"bank_id": r.PathValue("bank"), "object": "retain_result", "written": len(entries),
 		})
 	})
@@ -126,7 +127,7 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		if !validTagsMatch[body.TagsMatch] {
 			// tags_match is a closed vocabulary; a typo used to read as "any"
 			// and silently widened the filter to untagged (global) rows.
-			writeJSON(w, http.StatusBadRequest, map[string]any{
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 				"error": "tags_match must be one of any, all, any_strict, all_strict, exact (got " + strconv.Quote(body.TagsMatch) + ")",
 			})
 			return
@@ -134,10 +135,10 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		entries, err := mem.RecallFiltered(r.Context(), []string{r.PathValue("bank")}, body.Query, defaultRecallLimit,
 			func(e memory.Entry) bool { return entryHasTags(e, body.Tags, body.TagsMatch) })
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"results": hindsightRows(entries)})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": hindsightRows(entries)})
 	})
 
 	mux.HandleFunc("POST /v1/default/banks/{bank}/reflect", func(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +150,7 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		}
 		entries, err := mem.Recall(r.Context(), r.PathValue("bank"), body.Query, 5)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
 		text := "No memories in this bank yet."
@@ -160,26 +161,26 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 			}
 			text = strings.Join(lines, "\n")
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"text": text})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"text": text})
 	})
 	// K4: the client's /memory stats calls this and printed "server
 	// unreachable" for a healthy server while it 404'd.
 	mux.HandleFunc("GET /v1/default/banks/{bank}/stats", func(w http.ResponseWriter, r *http.Request) {
 		stats, err := mem.Stats(r.PathValue("bank"))
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, stats)
+		httpx.WriteJSON(w, http.StatusOK, stats)
 	})
 
 	mux.HandleFunc("DELETE /v1/default/banks/{bank}/documents/{document_id}", func(w http.ResponseWriter, r *http.Request) {
 		n, err := mem.DeleteDocument(r.Context(), r.PathValue("bank"), r.PathValue("document_id"))
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true, "document_id": r.PathValue("document_id"), "memory_units_deleted": n,
 		})
 	})
@@ -193,10 +194,10 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		entries, total, err := mem.List(r.PathValue("bank"), offset, limit)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"bank_id": r.PathValue("bank"), "object": "list", "total": total,
 			"results": hindsightRows(entries),
 		})
@@ -204,16 +205,16 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 	mux.HandleFunc("GET /v1/default/banks/{bank}/memories/{id}", func(w http.ResponseWriter, r *http.Request) {
 		e, found, err := mem.ByID(r.PathValue("bank"), r.PathValue("id"))
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
 		if !found {
-			writeJSON(w, http.StatusNotFound, map[string]any{
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
 				"error": "no memory with id " + r.PathValue("id") + " in bank " + r.PathValue("bank"),
 			})
 			return
 		}
-		writeJSON(w, http.StatusOK, hindsightRows([]memory.Entry{e})[0])
+		httpx.WriteJSON(w, http.StatusOK, hindsightRows([]memory.Entry{e})[0])
 	})
 }
 

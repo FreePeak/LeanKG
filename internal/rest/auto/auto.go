@@ -13,6 +13,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/refresh"
@@ -46,16 +47,10 @@ var (
 func decodeJSON[T any](w http.ResponseWriter, r *http.Request, into *T) bool {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		httpx.WriteMessage(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}
 	return true
-}
-
-func writeAutoJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 // Router is the per-request project selector (internal/projects). It is an
@@ -150,7 +145,7 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 			if err != nil {
 				// Fail closed: an unknown selector never falls back to the
 				// default engine, and nothing is indexed.
-				writeAutoJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+				httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			eng = resolved
@@ -180,7 +175,7 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 	// We refuse with the fix rather than acting on a project they are not in
 	// — the same fail-closed rule #480 applied to the query path.
 	if req.CWD != "" && !withinDir(projectDir, req.CWD) && !withinDir(req.CWD, projectDir) {
-		writeAutoJSON(w, http.StatusConflict, map[string]any{
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{
 			"error":   "cwd is not inside the project this endpoint serves",
 			"cwd":     req.CWD,
 			"project": projectDir,
@@ -195,7 +190,7 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 	if req.EmbedEnabled {
 		cfg.run(r, func(ctx context.Context) { startAutoEmbed(ctx, st, projectDir, req.EmbedDebounceSecs) })
 	}
-	writeAutoJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"index_enabled":          req.IndexEnabled,
 		"embed_enabled":          req.EmbedEnabled,
 		"embed_debounce_seconds": req.EmbedDebounceSecs,

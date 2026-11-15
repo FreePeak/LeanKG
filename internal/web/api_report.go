@@ -875,32 +875,32 @@ func (h *apiH) queryGraph(w http.ResponseWriter, r *http.Request) {
 		MaxDepth    *int   `json:"max_depth"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeEnvelope(w, failEnvelope("invalid JSON body: "+err.Error()))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("invalid JSON body: "+err.Error()))
 		return
 	}
 	q := strings.TrimSpace(req.Question)
 	if q == "" {
-		writeEnvelope(w, failEnvelope("question must not be empty"))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("question must not be empty"))
 		return
 	}
 
 	snap, err := loadSnapshot(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	rels, err := allRelationships(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	nl := newNLEngine(snap, rels)
 	result, err := nl.runQueryGraph(q, req.TokenBudget, req.MaxDepth)
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
-	writeEnvelope(w, okEnvelope(result))
+	respondEnvelope(w, http.StatusOK, okEnvelope(result))
 }
 
 // --- GET /api/graph/report ---
@@ -984,7 +984,7 @@ func getGodNodes(snap *snapshot, rels []store.Relationship, limit, excludeHubsPe
 func (h *apiH) graphReport(w http.ResponseWriter, _ *http.Request) {
 	report, err := buildGraphReport(h.projectDir, h.engine, "")
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	md := reportToMarkdown(report)
@@ -996,7 +996,7 @@ func (h *apiH) graphReport(w http.ResponseWriter, _ *http.Request) {
 		_ = os.WriteFile(outPath, []byte(md), 0o644)
 	}
 
-	writeEnvelope(w, okEnvelope(map[string]any{"markdown": md}))
+	respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{"markdown": md}))
 }
 
 // buildGraphReport assembles the US-GF-06 graph report over the engine's

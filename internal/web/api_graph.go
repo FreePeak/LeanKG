@@ -248,12 +248,12 @@ func (h *apiH) graphChildren(w http.ResponseWriter, r *http.Request) {
 
 	snap, err := loadSnapshot(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	rels, err := allRelationships(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 
@@ -330,7 +330,7 @@ func (h *apiH) graphChildren(w http.ResponseWriter, r *http.Request) {
 		graphRels = append(graphRels, relFromStore(rel))
 	}
 
-	writeEnvelope(w, okEnvelope(map[string]any{
+	respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{
 		"nodes":         nodes,
 		"relationships": graphRels,
 		"totalCount":    page.totalCount,
@@ -377,7 +377,7 @@ func (h *apiH) graphExpandService(w http.ResponseWriter, r *http.Request) {
 	} else if s := q.Get("service"); s != "" {
 		folderPath = strings.TrimPrefix(s, "service:")
 	} else {
-		writeEnvelope(w, failEnvelope("Missing 'path' or 'service' query parameter"))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("Missing 'path' or 'service' query parameter"))
 		return
 	}
 
@@ -421,12 +421,12 @@ func (h *apiH) graphExpandService(w http.ResponseWriter, r *http.Request) {
 
 	snap, err := loadSnapshot(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	rels, err := allRelationships(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	page := elementsInFolder(snap, rels, relativeFolder, limit, offset, allContent)
@@ -468,7 +468,7 @@ func (h *apiH) graphExpandService(w http.ResponseWriter, r *http.Request) {
 	if dropped > 0 {
 		msg += fmt.Sprintf(" (dropped %d missing-on-disk)", dropped)
 	}
-	writeEnvelope(w, okEnvelope(graphData{
+	respondEnvelope(w, http.StatusOK, okEnvelope(graphData{
 		Nodes:         nodes,
 		Relationships: graphRels,
 		Filtered:      &graphFilterInfo{TestsFiltered: 0, Message: msg},
@@ -503,12 +503,12 @@ func retainOnDisk(nodes []graphNode, projectDir string) []graphNode {
 func (h *apiH) graphClusters(w http.ResponseWriter, _ *http.Request) {
 	snap, err := loadSnapshot(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	rels, err := allRelationships(h.engine.Store())
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 
@@ -565,7 +565,7 @@ func (h *apiH) graphClusters(w http.ResponseWriter, _ *http.Request) {
 	}
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
 
-	writeEnvelope(w, okEnvelope(graphData{
+	respondEnvelope(w, http.StatusOK, okEnvelope(graphData{
 		Nodes:         nodes,
 		Relationships: edges,
 		Filtered: &graphFilterInfo{
@@ -607,7 +607,7 @@ func (h *apiH) serviceTopology(w http.ResponseWriter, r *http.Request) {
 
 	topo, err := extractServiceTopology(h.projectDir, showOrphans)
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	if len(topo.Nodes) == 0 {
@@ -629,7 +629,7 @@ func (h *apiH) serviceTopology(w http.ResponseWriter, r *http.Request) {
 		})
 		snap, serr := loadSnapshot(h.engine.Store())
 		if serr != nil {
-			writeEnvelope(w, failEnvelope(serr.Error()))
+			respondErr(w, serr)
 			return
 		}
 		for _, dir := range topLevelDirectories(snap) {
@@ -655,7 +655,7 @@ func (h *apiH) serviceTopology(w http.ResponseWriter, r *http.Request) {
 	} else {
 		topo.ProjectType = "multi_repo"
 	}
-	writeEnvelope(w, okEnvelope(topo))
+	respondEnvelope(w, http.StatusOK, okEnvelope(topo))
 }
 
 // extractServiceTopology ports the Rust extract_service_topology: discover

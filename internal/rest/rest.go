@@ -15,16 +15,13 @@
 package rest
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/core"
-	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/federation"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -39,27 +36,32 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		o(&cfg)
 	}
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		out, err := engine.Status(r.Context())
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		httpx.WriteJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("POST /api/v1/query", func(w http.ResponseWriter, r *http.Request) {
-		var req core.QueryRequest
-		if !decode(w, r, &req) {
+		var fields map[string]any
+		if !decode(w, r, &fields) {
 			return
 		}
-		out, err := engine.Query(r.Context(), req)
+		req, err := core.DecodeQuery(fields)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		ans, err := engine.QueryAnswer(r.Context(), req)
+		if err != nil {
+			httpx.WriteError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, ans.Body)
 	})
 	mux.HandleFunc("POST /api/v1/import", func(w http.ResponseWriter, r *http.Request) {
 		var req core.ImportRequest
@@ -68,10 +70,10 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		}
 		out, err := engine.Import(r.Context(), req)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		httpx.WriteJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("POST /api/v1/session/read", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -84,10 +86,10 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		}
 		out, err := engine.SessionRead(body.Command, body.SessionID, body.NodeID)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		httpx.WriteJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("POST /api/v1/ontology/match", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -98,18 +100,18 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		}
 		out, err := engine.OntologyMatch(body.Catalog)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		httpx.WriteJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("GET /api/v1/ontology/matches", func(w http.ResponseWriter, r *http.Request) {
 		out, err := engine.OntologyMatches()
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		httpx.WriteJSON(w, http.StatusOK, out)
 	})
 	// FR-ZCP org-knowledge reads (Rust /api/v2 routes; the Go envelope is the
 	// existing writeJSON payload shape). Param defaults follow the Rust
@@ -127,14 +129,14 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		}
 		incidents, err := org.QueryIncidents(q.Get("service"), q.Get("pattern"), env, limit)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
 		// A list answer says whether there IS a list to return: `null` and
 		// `[]` are different answers ("never configured" and "configured and
 		// found nothing"), and the note names the causes an empty list can
 		// have at this route without pretending to pick between them.
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"incidents": core.NonNil(incidents),
 			"note": "no incidents recorded for this filter; an empty list means either no incident store is " +
 				"configured (`leankg incident import` to add one) or nothing matched the filter",
@@ -143,10 +145,10 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 	mux.HandleFunc("GET /api/v2/env/diff", func(w http.ResponseWriter, r *http.Request) {
 		conflicts, err := org.FindEnvConflicts(r.URL.Query().Get("service"))
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"conflicts": conflicts})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"conflicts": conflicts})
 	})
 	mux.HandleFunc("GET /api/v2/service/context", func(w http.ResponseWriter, r *http.Request) {
 		env := r.URL.Query().Get("env")
@@ -155,10 +157,10 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		}
 		ctx, err := org.ServiceContext(r.URL.Query().Get("service"), env)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, ctx)
+		httpx.WriteJSON(w, http.StatusOK, ctx)
 	})
 	// Federation receiver (#372): POST /api/v2/graph/push + GET /api/v2/graph,
 	// per-project (routeByProject wraps each project handler), caller-authenticated
@@ -191,7 +193,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				return
 			}
 			if body.Entries == nil {
-				writeJSON(w, http.StatusBadRequest, map[string]any{
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 					"error": "entries is required (an explicit \"entries\": [] is a valid no-op; " +
 						"this route reads `entries`, not the hindsight-compat mount's `items`)",
 				})
@@ -202,7 +204,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			// silently swallow it.
 			for i, e := range *body.Entries {
 				if strings.TrimSpace(e.Content) == "" {
-					writeJSON(w, http.StatusBadRequest, map[string]any{
+					httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 						"error": fmt.Sprintf("entries[%d].content is empty — empty entries would be unrecallable", i),
 					})
 					return
@@ -211,18 +213,18 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			var res memory.RetainResult
 			if body.ThroughUserTurn == nil {
 				if err := mem.RetainRaw(r.Context(), bank, *body.Entries); err != nil {
-					writeErr(w, err)
+					httpx.WriteError(w, err)
 					return
 				}
 				res = memory.RetainResult{Bank: bank, Written: len(*body.Entries)}
 			} else {
 				var err error
 				if res, err = mem.Retain(r.Context(), bank, *body.Entries, *body.ThroughUserTurn); err != nil {
-					writeErr(w, err)
+					httpx.WriteError(w, err)
 					return
 				}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"ok": true, "retained": res.Written, "skipped": res.Skipped,
 				"retained_through_user_turn": res.RetainedThroughUserTurn,
 			})
@@ -238,13 +240,13 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			}
 			entries, err := mem.Recall(r.Context(), bank, body.Query, body.Limit)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
 			// The list is never null: an empty bank and a bank that was never
 			// configured are different answers, and the note says which is
 			// which at this route.
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"entries": core.NonNil(entries),
 				"note": "bank " + bank + " holds nothing matching this query; recall matches on query tokens, " +
 					"and an empty query matches nothing",
@@ -272,15 +274,15 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			}
 			scope, err := memory.ParseScope(body.Scope)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
 			res, err := mem.SessionRetain(r.Context(), scope, body.CWD, body.Bank, body.SessionID, body.Turns, body.RetainedThroughUserTurn, body.Tags)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, res)
+			httpx.WriteJSON(w, http.StatusOK, res)
 		})
 		mux.HandleFunc("POST /api/v1/memory/session/recall", func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
@@ -295,15 +297,15 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			}
 			scope, err := memory.ParseScope(body.Scope)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
 			banks, entries, err := mem.SessionRecall(r.Context(), scope, body.CWD, body.Bank, body.Query, body.Limit)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"banks": banks, "count": len(entries), "memories": memory.RankEntries(entries),
 			})
 		})
@@ -311,12 +313,12 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			q := r.URL.Query()
 			scope, err := memory.ParseScope(q.Get("scope"))
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
 			text, injectedIDs, total, err := mem.FirstTurnMemoriesWithIDs(r.Context(), scope, q.Get("cwd"), bank, q.Get("query"))
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
 			// injected_ids and total are additive: the count and the text are
@@ -325,7 +327,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			// is how many rows the recall FOUND, so "the block shows 8" no
 			// longer reads as "there are 8" (FR-SMA-06's marker half — the
 			// block also names the hidden count in text).
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"count": len(injectedIDs), "text": text, "injected_ids": injectedIDs, "total": total,
 			})
 		}
@@ -346,32 +348,9 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 	return httpx.Guard(mux)
 }
 
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// writeErr renders a failed REST call. An error carrying a catalog code
-// (internal/errs) also exposes it as `code`, so clients branch on the stable
-// token instead of matching prose (FR-ZCP-12).
-func writeErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, context.Canceled) {
-		// The client went away mid-call: no body, and not a bad request.
-		w.WriteHeader(httpx.StatusClientClosedRequest)
-		return
-	}
-	body := map[string]any{"error": err.Error()}
-	var coded *errs.Error
-	if errors.As(err, &coded) {
-		body["code"] = coded.Code()
-	}
-	writeJSON(w, http.StatusBadRequest, body)
-}
-
 func decode[T any](w http.ResponseWriter, r *http.Request, into *T) bool {
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body: " + err.Error()})
+		httpx.WriteMessage(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}
 	return true

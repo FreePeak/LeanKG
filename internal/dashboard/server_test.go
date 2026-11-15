@@ -474,7 +474,7 @@ func TestNormalizeListsEmitsEmptyArrays(t *testing.T) {
 		Kids  []inner  `json:"kids"`
 	}
 	rec := httptest.NewRecorder()
-	writeJSON(rec, http.StatusOK, outer{Child: &inner{}, Kids: []inner{{}}})
+	respondJSON(rec, http.StatusOK, outer{Child: &inner{}, Kids: []inner{{}}})
 	want := `{"kpis":[],"child":{"items":[]},"kids":[{"items":[]}]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s\nwant %s", got, want)

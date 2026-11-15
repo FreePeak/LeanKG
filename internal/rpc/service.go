@@ -7,8 +7,10 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 
 	connect "connectrpc.com/connect"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	leankgv1 "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1"
 
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -58,7 +60,7 @@ func (s *LeanKGService) Import(ctx context.Context, req *connect.Request[leankgv
 		Args:    args,
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, connect.NewError(connectCode(err), err)
 	}
 	js, err := jsonOf(out)
 	if err != nil {
@@ -68,16 +70,20 @@ func (s *LeanKGService) Import(ctx context.Context, req *connect.Request[leankgv
 }
 
 func (s *LeanKGService) Query(ctx context.Context, req *connect.Request[leankgv1.QueryRequest]) (*connect.Response[leankgv1.QueryResponse], error) {
-	out, err := s.engine.Query(ctx, core.QueryRequest{
-		Action: req.Msg.Action,
-		Query:  req.Msg.Query,
-		Limit:  int(req.Msg.Limit),
-		Args:   protoArgs(req.Msg.Args),
+	query, err := core.DecodeQuery(map[string]any{
+		"action": req.Msg.Action,
+		"query":  req.Msg.Query,
+		"limit":  req.Msg.Limit,
+		"args":   req.Msg.Args,
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, connect.NewError(connectCode(err), err)
 	}
-	js, err := jsonOf(out)
+	ans, err := s.engine.QueryAnswer(ctx, query)
+	if err != nil {
+		return nil, connect.NewError(connectCode(err), err)
+	}
+	js, err := jsonOf(ans.Body)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -104,31 +110,37 @@ func (s *LeanKGService) MemoryRead(ctx context.Context, req *connect.Request[lea
 	// memories, view, snapshot, search" — the agent protocol's own first
 	// instruction ("at session start call session_recall") was the one command
 	// a ConnectRPC client could not run.
-	out, err := s.engine.Query(ctx, core.QueryRequest{
-		Action: "memory",
-		Query:  req.Msg.Query,
-		Limit:  int(req.Msg.Limit),
-		Args:   protoArgs(map[string]string{"command": req.Msg.Command, "path": req.Msg.Path, "cwd": ""}),
+	query, err := core.DecodeQuery(map[string]any{
+		"action": "memory",
+		"query":  req.Msg.Query,
+		"limit":  req.Msg.Limit,
+		"args":   map[string]string{"command": req.Msg.Command, "path": req.Msg.Path, "cwd": ""},
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, connect.NewError(connectCode(err), err)
 	}
-	js, err := jsonOf(out)
+	ans, err := s.engine.QueryAnswer(ctx, query)
+	if err != nil {
+		return nil, connect.NewError(connectCode(err), err)
+	}
+	js, err := jsonOf(ans.Body)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&leankgv1.MemoryReadResponse{Json: js}), nil
 }
 
-// protoArgs converts the proto map<string,string> into core's wider
-// map[string]any (clients may send typed values over other transports).
-func protoArgs(m map[string]string) map[string]any {
-	if m == nil {
-		return nil
+// connectCode maps a failed call to the ConnectRPC code of the HTTP status the
+// shared error table (internal/httpx) gives it, so the RPC wire refuses a
+// request with the same class REST does.
+func connectCode(err error) connect.Code {
+	switch httpx.StatusFor(err) {
+	case http.StatusUnauthorized:
+		return connect.CodeUnauthenticated
+	case http.StatusForbidden:
+		return connect.CodePermissionDenied
+	case httpx.StatusClientClosedRequest:
+		return connect.CodeCanceled
 	}
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
+	return connect.CodeInvalidArgument
 }
