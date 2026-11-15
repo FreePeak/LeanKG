@@ -56,6 +56,21 @@ func gateAutoConfig(st store.Backend, mcp, autoConfig http.Handler) http.Handler
 // serve is asked to stop. Past it the listener is closed by force.
 const shutdownTimeout = 5 * time.Second
 
+// joinFleet waits for a maintenance loop (maintain.Run or RunFleet) to exit
+// after its context is cancelled. The loop is ctx-aware, so it returns within
+// one unit of work. A loop still running after budget is logged and abandoned,
+// so a stuck pass cannot hold shutdown forever. It reports whether the loop
+// exited within the budget.
+func joinFleet(done <-chan struct{}, budget time.Duration) bool {
+	select {
+	case <-done:
+		return true
+	case <-time.After(budget):
+		log.Printf("maintenance: fleet did not stop within %s, shutting down anyway", budget)
+		return false
+	}
+}
+
 // endpoint is one listen address and the handler that serves it.
 type endpoint struct {
 	addr string

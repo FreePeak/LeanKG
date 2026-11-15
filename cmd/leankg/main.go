@@ -519,14 +519,16 @@ afterSidecars:
 		if mem != nil {
 			mem.SetKeepModelIDs(keepModelIDs)
 		}
-		maintain.RunFleet(ctx, func() []maintain.Target {
+		// Deferred so shutdown joins the fleet after runServers drains and
+		// before the router and the default store close (defers run LIFO).
+		defer joinFleet(maintain.RunFleet(ctx, func() []maintain.Target {
 			// The REGISTRY sweep rides the same tick as the store
 			// maintenance: a row for a project that left the fleet must not
 			// outlive it, and nothing else ever pruned the registry. The
 			// callback runs once per pass, so this is once per tick.
 			sweepRegistry(ctx, eng)
 			return fleetTargets(ctx, dir, st, mem, router.List(), eng, keepModelIDs)
-		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle)
+		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle), shutdownTimeout)
 	}
 
 	// Auto-config jobs outlive the request that started them. serve owns them:
