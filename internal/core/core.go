@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,11 +25,14 @@ import (
 	"github.com/FreePeak/LeanKG/internal/compress"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/federation"
 	"github.com/FreePeak/LeanKG/internal/graph"
+	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/lsp"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/ontology"
+	"github.com/FreePeak/LeanKG/internal/orgknowledge"
 	"github.com/FreePeak/LeanKG/internal/pathguard"
 	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -154,8 +158,32 @@ func (e *Engine) lspPool() (*lsp.Manager, error) {
 
 var errEngineClosed = errors.New("engine is closed")
 
-// Store exposes the underlying backend (transports needing raw reads).
-func (e *Engine) Store() store.Backend { return e.st }
+// DBPath is the store file's path (metadata; no rows).
+func (e *Engine) DBPath() string { return e.st.Path() }
+
+// RecordMetric persists one tool-call metric row.
+func (e *Engine) RecordMetric(ctx context.Context, m store.Metric) error {
+	return e.st.RecordMetric(ctx, m)
+}
+
+// OrgKnowledge is the org-knowledge read service over this engine's store.
+func (e *Engine) OrgKnowledge() *orgknowledge.Knowledge { return orgknowledge.New(e.st) }
+
+// FederationReceiver serves this project's graph over the federation protocol.
+func (e *Engine) FederationReceiver() http.Handler {
+	return federation.Receiver(e.st, e.projectDir)
+}
+
+// IndexDir indexes dir into this engine's store with the given language registry.
+func (e *Engine) IndexDir(ctx context.Context, dir string, reg *langs.Registry) (index.Result, error) {
+	return index.IndexDirWith(ctx, e.st, dir, reg)
+}
+
+// RefreshInventory recomputes the store inventory after an index run.
+func (e *Engine) RefreshInventory(ctx context.Context) error {
+	_, err := store.RefreshInventory(ctx, e.st)
+	return err
+}
 
 // ResolveEnvelope validates a requested tool name against the four-tool
 // registry. Unknown names hard-fail naming the valid surface (error-catalog

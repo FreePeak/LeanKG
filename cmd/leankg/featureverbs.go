@@ -29,11 +29,11 @@ func cmdTunnels(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := resolveProjectDir(*path)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return verbFatal(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
 	ts, err := web.Tunnels(ctx, engine)
 	if err != nil {
@@ -56,13 +56,13 @@ func cmdQuality(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := resolveProjectDir(*path)
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return verbFatal(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
-	els, err := graph.OversizedFunctions(context.Background(), engine.Store(), *minLines, *lang)
+	els, err := graph.OversizedFunctions(context.Background(), st, *minLines, *lang)
 	if err != nil {
 		return verbFatal(err)
 	}

@@ -51,8 +51,7 @@ func (b *badPayload) Unwrap() error { return b.err }
 // instead of re-deriving the method/path pairing the receiver serves.
 // Patterns are exact: /api/v2/graph/push and /api/v2/graph are different
 // documents, and a Go mux matches a bare pattern literally.
-func Register(mux *http.ServeMux, st store.Backend, projectDir string) {
-	fed := Receiver(st, projectDir)
+func Register(mux *http.ServeMux, fed http.Handler) {
 	mux.Handle("POST "+PushPath, auth.Require(auth.Contributor, fed))
 	mux.Handle("GET "+GraphPath, auth.Require(auth.Viewer, fed))
 }

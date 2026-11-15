@@ -414,7 +414,7 @@ func TestRegisterMountsBothRoutes(t *testing.T) {
 	seedGraph(t, st)
 
 	mux := http.NewServeMux()
-	Register(mux, st, "/srv/mounted")
+	Register(mux, Receiver(st, "/srv/mounted"))
 	gated := auth.MiddlewareWithStore(st, mux)
 
 	if rec := serve(t, gated, http.MethodGet, GraphPath, "", nil); rec.Code != http.StatusOK {
@@ -450,7 +450,7 @@ func TestReceiverBehindAuthMiddleware(t *testing.T) {
 	contributor := mint(t, st, "contributor")
 
 	mux := http.NewServeMux()
-	Register(mux, st, "/srv/gated")
+	Register(mux, Receiver(st, "/srv/gated"))
 	h := auth.MiddlewareWithStore(st, mux)
 	body := pushDoc(t, "local", "svc", nil, nil)
 
@@ -482,7 +482,7 @@ func TestFederationPushPullRoundTrip(t *testing.T) {
 	receiver := openStore(t)
 	token := mint(t, receiver, "contributor")
 	mux := http.NewServeMux()
-	Register(mux, receiver, "/srv/receiver")
+	Register(mux, Receiver(receiver, "/srv/receiver"))
 	srv := httptest.NewServer(auth.MiddlewareWithStore(receiver, mux))
 	t.Cleanup(srv.Close)
 

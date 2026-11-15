@@ -11,9 +11,7 @@ import (
 
 // TestWebReadsGraphThroughCore keeps the web package on core's seam: no
 // non-test file in internal/web imports internal/store, and no code calls
-// Engine.Store(). The one exception is deriveProjectDir, which reads the
-// store's Path() (metadata, not rows); CX-39 removes Engine.Store() and this
-// exception with it.
+// Engine.Store().
 func TestWebReadsGraphThroughCore(t *testing.T) {
 	const storePkg = "github.com/FreePeak/LeanKG/internal/store"
 	files, err := filepath.Glob("*.go")
@@ -36,7 +34,7 @@ func TestWebReadsGraphThroughCore(t *testing.T) {
 		}
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || fn.Name.Name == "deriveProjectDir" {
+			if !ok || fn.Body == nil {
 				continue
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {

@@ -19,6 +19,14 @@ import (
 
 func newEngine(t *testing.T) (*core.Engine, *memory.Memory) {
 	t.Helper()
+	e, _, mem := newEngineWithStore(t)
+	return e, mem
+}
+
+// newEngineWithStore is newEngine that also returns the store the engine
+// wraps, for tests that seed rows directly.
+func newEngineWithStore(t *testing.T) (*core.Engine, store.Backend, *memory.Memory) {
+	t.Helper()
 	dir := t.TempDir()
 	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
@@ -32,7 +40,7 @@ func newEngine(t *testing.T) (*core.Engine, *memory.Memory) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return core.New(st, core.Options{Memory: mem}), mem
+	return core.New(st, core.Options{Memory: mem}), st, mem
 }
 
 func TestHealth(t *testing.T) {
@@ -73,7 +81,7 @@ func TestStatusEndpoint(t *testing.T) {
 }
 
 func TestQueryLadderEndpoints(t *testing.T) {
-	e, _ := newEngine(t)
+	e, st, _ := newEngineWithStore(t)
 	srv := httptest.NewServer(gatedHandler(e, nil))
 	defer srv.Close()
 
@@ -89,7 +97,7 @@ func TestQueryLadderEndpoints(t *testing.T) {
 	}
 
 	// Seed one element, then L1.
-	_ = e.Store().UpsertElements(context.Background(), []store.Element{{
+	_ = st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "main.parseConfig", ElementType: "function", Name: "parseConfig",
 		FilePath: "main.go", Language: "go", LineStart: 1, LineEnd: 2,
 	}})
@@ -110,7 +118,7 @@ func TestQueryLadderEndpoints(t *testing.T) {
 }
 
 func TestImportEndpoint(t *testing.T) {
-	e, _ := newEngine(t)
+	e, st, _ := newEngineWithStore(t)
 	srv := httptest.NewServer(gatedHandler(e, nil))
 	defer srv.Close()
 
@@ -133,7 +141,6 @@ func TestImportEndpoint(t *testing.T) {
 	if _, ok := out["indexed"]; !ok {
 		t.Fatalf("import payload: %s", res.body)
 	}
-	st := e.Store()
 	if n, _ := st.ElementCount(context.Background()); n == 0 {
 		t.Fatal("no elements after import")
 	}
@@ -249,9 +256,9 @@ func TestRetainRejectsEmptyContent(t *testing.T) {
 // TestSessionAndOntologyEndpoints covers the wiring for internal/session and
 // internal/ontology over REST (both parse bodies at the trust boundary).
 func TestSessionAndOntologyEndpoints(t *testing.T) {
-	e, _ := newEngine(t)
+	_, st, _ := newEngineWithStore(t)
 	dir := t.TempDir()
-	e = core.New(e.Store(), core.Options{ProjectDir: dir})
+	e := core.New(st, core.Options{ProjectDir: dir})
 	srv := httptest.NewServer(gatedHandler(e, nil))
 	defer srv.Close()
 
@@ -283,7 +290,7 @@ func TestSessionAndOntologyEndpoints(t *testing.T) {
 	}
 
 	// ontology: seed an element, match a catalog, read matches back.
-	_ = e.Store().UpsertElements(context.Background(), []store.Element{
+	_ = st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
 	})
 	catPath := filepath.Join(dir, "c.json")

@@ -149,11 +149,11 @@ func resolveProjectDir(flagValue string) string {
 
 // openEngine opens a project's store and returns a query-ready engine with the
 // project directory and the lazily-activated language registry wired, exactly
-// like the serving transports. The caller closes engine.Store().
-func openEngine(ctx context.Context, dir string, mode store.Mode) (*core.Engine, error) {
+// like the serving transports. The caller closes the returned store.
+func openEngine(ctx context.Context, dir string, mode store.Mode) (*core.Engine, store.Backend, error) {
 	st, err := openStore(ctx, dir, "", mode)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Query-time embedding for one-shot verbs: attach only (embed.Attach never
 	// spawns), so a CLI run can never orphan a sidecar. Without this,
@@ -176,7 +176,7 @@ func openEngine(ctx context.Context, dir string, mode store.Mode) (*core.Engine,
 	if _, aerr := reg.Activate(context.Background(), dir); aerr == nil {
 		langReg = reg
 	}
-	return core.New(st, core.Options{Embedder: embedder, ProjectDir: dir, Langs: langReg}), nil
+	return core.New(st, core.Options{Embedder: embedder, ProjectDir: dir, Langs: langReg}), st, nil
 }
 
 // hookMaxFilesDefault is the indexable-file count above which the SessionStart

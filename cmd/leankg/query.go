@@ -89,11 +89,11 @@ func cmdQuery(ctx context.Context, args []string) error {
 			fmt.Fprintf(os.Stderr, "query: unknown --action %q\nvalid: %s\n", *action, queryActionList())
 			return cliexit.Code(2)
 		}
-		engine, err := openEngine(ctx, dir, store.RO)
+		engine, st, err := openEngine(ctx, dir, store.RO)
 		if err != nil {
 			return fatalJSON(err)
 		}
-		defer engine.Store().Close()
+		defer st.Close()
 		defer engine.Close()
 		argMap := map[string]any{}
 		for _, kv := range []struct{ name, value string }{
@@ -144,13 +144,12 @@ func cmdQuery(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	engine, err := openEngine(ctx, dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
 		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
 	defer engine.Close()
-	st := engine.Store()
 
 	switch *kind {
 	case "impact":
