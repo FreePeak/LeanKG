@@ -41,15 +41,15 @@ Notes referencing ` + "`src/web/handlers.rs::api_graph_expand_service`" + ` and 
 `
 
 // setupStore opens a migrated SQLite store under a fresh temp dir.
-func setupStore(t *testing.T) (*store.Store, string) {
+func setupStore(t *testing.T) (store.Backend, string) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st, dir
@@ -269,7 +269,7 @@ func TestKnowledgeEntriesProjection(t *testing.T) {
 
 // upsertWorkflow pins one workflow with two steps: one carrying the
 // requirement's code path, one carrying its feature id in metadata.
-func upsertWorkflow(t *testing.T, st *store.Store) {
+func upsertWorkflow(t *testing.T, st store.Backend) {
 	t.Helper()
 	wf := store.Element{
 		QualifiedName: "local:default:workflow:pr-index:v1",
@@ -309,7 +309,7 @@ func upsertWorkflow(t *testing.T, st *store.Store) {
 	}
 }
 
-func mustIndex(t *testing.T, st *store.Store, content string) IndexResult {
+func mustIndex(t *testing.T, st store.Backend, content string) IndexResult {
 	t.Helper()
 	res, err := Index(context.Background(), st, "docs/prd.md", content, "local")
 	if err != nil {
@@ -476,7 +476,7 @@ func TestIndexKnowledgeSurface(t *testing.T) {
 }
 
 // knowledgeRowsForEnv lists the knowledge rows of one environment.
-func knowledgeRowsForEnv(t *testing.T, st *store.Store, env string) []store.KnowledgeEntry {
+func knowledgeRowsForEnv(t *testing.T, st store.Backend, env string) []store.KnowledgeEntry {
 	t.Helper()
 	rows, err := st.KnowledgeEntriesByEnvironment(env, 0)
 	if err != nil {

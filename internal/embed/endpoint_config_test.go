@@ -40,7 +40,7 @@ func newEndpointFake(t *testing.T, reply func(w http.ResponseWriter, r *http.Req
 
 // seedForty seeds 40 elements in one file: more than one provider batch
 // (batchSize is 32).
-func seedForty(t *testing.T, st *store.Store) {
+func seedForty(t *testing.T, st store.Backend) {
 	t.Helper()
 	els := make([]store.Element, 40)
 	for i := range els {

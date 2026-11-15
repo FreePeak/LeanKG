@@ -29,7 +29,7 @@ func TestOpenStoreResolvesStandalonePath(t *testing.T) {
 		t.Fatalf("openStore: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dbPath); err != nil {
@@ -49,7 +49,7 @@ func TestOpenStoreExplicitPathWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(explicit); err != nil {
@@ -72,7 +72,7 @@ func TestOpenStoreProjectScopedUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".leankg", "leankg.db")); err != nil {

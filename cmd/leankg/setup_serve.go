@@ -37,7 +37,7 @@ func maybeAutoIndexOnStart(ctx context.Context, dir string, readOnly bool) {
 		return
 	}
 	elements, eerr := st.ElementCount()
-	seq, at, werr := st.Watermark()
+	seq, at, werr := st.Watermark(ctx)
 	st.Close()
 	state := indexgate.StoreState{
 		Elements:    elements,

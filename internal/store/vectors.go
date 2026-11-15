@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
@@ -174,7 +175,7 @@ func (s *Store) WriteStamp(st ModelStamp) error {
 	if _, err := s.db.Exec(stampUpsertFor(shape.cols, func(int) string { return "?" }), stampValues(st, shape.cols)...); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // stampColumns probes the emb_stamp columns this store's schema carries.
@@ -270,7 +271,7 @@ func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) err
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // Stamps returns all persisted model stamps. The read shape follows the
@@ -339,7 +340,7 @@ func (s *Store) ReplaceFileVectors(modelID string, rows []VectorRow, states map[
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // UpsertVectors writes a batch of vectors for a model in ONE transaction:
@@ -366,7 +367,7 @@ func (s *Store) UpsertVectors(modelID string, rows []VectorRow) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // ClearVectors drops all vectors + state for a model (stamp-guard rebuild).
@@ -379,7 +380,7 @@ func (s *Store) ClearVectors(modelID string) error {
 			return err
 		}
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // DeleteOrphanVectors removes vector + state rows for elements that no
@@ -418,7 +419,7 @@ func (s *Store) DeleteOrphanVectors() (int, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	return int(nv), s.BumpWatermark()
+	return int(nv), s.BumpWatermark(context.TODO())
 }
 
 // VectorCount returns the vector count for a model.
@@ -509,7 +510,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 		return StaleStampSweep{}, err
 	}
 	out := StaleStampSweep{Models: int(nm), Vectors: int(nv), State: int(ns)}
-	return out, s.BumpWatermark()
+	return out, s.BumpWatermark(context.TODO())
 }
 
 // cleanModelIDs normalizes a keep list: empty entries dropped, duplicates
@@ -648,18 +649,18 @@ func cosine(a, b []float32) float64 {
 }
 
 // Watermark returns the current freshness sequence number.
-func (s *Store) Watermark() (int64, int64, error) {
+func (s *Store) Watermark(ctx context.Context) (int64, int64, error) {
 	var seq, at int64
-	err := s.db.QueryRow(`SELECT seq, at FROM write_watermark WHERE id = 1`).Scan(&seq, &at)
+	err := s.db.QueryRowContext(ctx, `SELECT seq, at FROM write_watermark WHERE id = 1`).Scan(&seq, &at)
 	return seq, at, err
 }
 
 // BumpWatermark advances the freshness sequence (one call per commit batch).
-func (s *Store) BumpWatermark() error {
+func (s *Store) BumpWatermark(ctx context.Context) error {
 	if s.mode == RO {
 		return nil // readers never bump
 	}
-	_, err := s.db.Exec(`UPDATE write_watermark SET seq = seq + 1, at = ? WHERE id = 1`, time.Now().Unix())
+	_, err := s.db.ExecContext(ctx, `UPDATE write_watermark SET seq = seq + 1, at = ? WHERE id = 1`, time.Now().Unix())
 	return err
 }
 
@@ -677,8 +678,8 @@ type Inventory struct {
 }
 
 // SaveInventory persists the inventory under kv with the current watermark.
-func (s *Store) SaveInventory(inv Inventory) error {
-	seq, _, err := s.Watermark()
+func (s *Store) SaveInventory(ctx context.Context, inv Inventory) error {
+	seq, _, err := s.Watermark(ctx)
 	if err != nil {
 		return err
 	}
@@ -688,15 +689,15 @@ func (s *Store) SaveInventory(inv Inventory) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO kv (key, value) VALUES ('inventory', ?)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO kv (key, value) VALUES ('inventory', ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, string(b))
 	return err
 }
 
 // LoadInventory returns the persisted inventory; nil when never computed.
-func (s *Store) LoadInventory() (*Inventory, error) {
+func (s *Store) LoadInventory(ctx context.Context) (*Inventory, error) {
 	var val string
-	err := s.db.QueryRow(`SELECT value FROM kv WHERE key = 'inventory'`).Scan(&val)
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM kv WHERE key = 'inventory'`).Scan(&val)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -858,7 +859,7 @@ func (s *Store) LastEmbedRun(modelID string) (*EmbedRun, error) {
 // bookkeeping and the counts are already interface methods: an engine that
 // indexes, summarizes, or applies a federation pull must not leave readers
 // reporting possibly_stale forever.
-func RefreshInventory(st Backend) (Inventory, error) {
+func RefreshInventory(ctx context.Context, st Backend) (Inventory, error) {
 	els, err := st.ElementCount()
 	if err != nil {
 		return Inventory{}, err
@@ -890,7 +891,7 @@ func RefreshInventory(st Backend) (Inventory, error) {
 		TotalVectors:       vectors,
 		ElementsByType:     byType,
 	}
-	if err := st.SaveInventory(inv); err != nil {
+	if err := st.SaveInventory(ctx, inv); err != nil {
 		return Inventory{}, err
 	}
 	return inv, nil

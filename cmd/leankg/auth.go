@@ -91,7 +91,7 @@ func authAdminInit(ctx context.Context, args []string) error {
 	}
 	defer engine.Store().Close()
 	defer engine.Close()
-	if err := engine.Store().Migrate(); err != nil {
+	if err := engine.Store().Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
 
@@ -253,7 +253,7 @@ func authRegister(ctx context.Context, args []string) error {
 	}
 	defer engine.Store().Close()
 	defer engine.Close()
-	if err := engine.Store().Migrate(); err != nil {
+	if err := engine.Store().Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
 
@@ -313,7 +313,7 @@ func authTokenCreate(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 	// Minting needs the tokens table; a writer opens the schema first.
-	if err := engine.Store().Migrate(); err != nil {
+	if err := engine.Store().Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
 

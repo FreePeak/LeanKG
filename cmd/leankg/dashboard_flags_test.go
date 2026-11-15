@@ -68,7 +68,7 @@ func seedDashboardStore(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("seed store %s: %v", path, err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		_ = st.Close()
 		t.Fatalf("migrate store %s: %v", path, err)
 	}

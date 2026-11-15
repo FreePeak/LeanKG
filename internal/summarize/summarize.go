@@ -314,7 +314,7 @@ func (p *pipeline) summarizeFile(ctx context.Context, rel string) (work, error) 
 	// A hit is served even after the gate closes — it costs nothing.
 	model := p.model()
 	if !p.opts.Force {
-		got, ok, serr := p.st.SummaryGet(rel)
+		got, ok, serr := p.st.SummaryGet(ctx, rel)
 		if serr != nil {
 			return w, fmt.Errorf("summarize: read summary for %s: %w", rel, serr)
 		}
@@ -356,7 +356,7 @@ func (p *pipeline) summarizeFile(ctx context.Context, rel string) (work, error) 
 	// The write IS the checkpoint: graft buffers summaries and flushes the
 	// cache every 15s (build.ts:170-180); one row per file is strictly more
 	// crash-tolerant and needs no timer.
-	if serr := p.st.SummaryUpsert(store.FileSummary{
+	if serr := p.st.SummaryUpsert(ctx, store.FileSummary{
 		Path: rel, ContentHash: w.hash, Model: model, Summary: text,
 	}); serr != nil {
 		return w, fmt.Errorf("summarize: store summary for %s: %w", rel, serr)

@@ -44,7 +44,7 @@ func cmdMetrics(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
 
@@ -93,7 +93,7 @@ func cmdDashboard(ctx context.Context, args []string) error {
 		return fatalJSON(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
 

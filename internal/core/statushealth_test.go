@@ -26,15 +26,15 @@ func (s stampsReadFails) Stamps() ([]store.ModelStamp, error) { return nil, s.ca
 // seededStore opens a migrated store holding one element, one stamped model
 // and one vector: a store that really does have embeddings, so a payload that
 // claims "no embeddings" is demonstrably wrong.
-func seededStore(t *testing.T) *store.Store {
+func seededStore(t *testing.T) store.Backend {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertElements([]store.Element{{
@@ -140,12 +140,12 @@ func TestStatusHealthyStoreReportsHealthy(t *testing.T) {
 // FAILED reports null plus embeddings_error.
 func TestStatusHealthyStoreWithoutEmbeddings(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	e := New(st, Options{})

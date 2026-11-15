@@ -134,9 +134,10 @@ type EmbedRuns interface {
 // named Inventories because Inventory is the snapshot struct in this package.
 type Inventories interface {
 	// freshness watermark (DB-resident; readers never bump)
-	Watermark() (seq, at int64, err error)
-	SaveInventory(inv Inventory) error
-	LoadInventory() (*Inventory, error)
+	Watermark(ctx context.Context) (seq, at int64, err error)
+	BumpWatermark(ctx context.Context) error
+	SaveInventory(ctx context.Context, inv Inventory) error
+	LoadInventory(ctx context.Context) (*Inventory, error)
 }
 
 // Maintainer owns space accounting, orphan sweeps and the maintenance
@@ -189,8 +190,8 @@ type Maintainer interface {
 // KV is the generic namespaced key/value store (ontology catalogs, doctor
 // state; not a document store).
 type KV interface {
-	KVSet(namespace, key, value string) error
-	KVGet(namespace, key string) (string, bool, error)
+	KVSet(ctx context.Context, namespace, key, value string) error
+	KVGet(ctx context.Context, namespace, key string) (string, bool, error)
 }
 
 // Audit is the hash-chained audit ledger (FR parity with the Rust audit/mod.rs).
@@ -254,6 +255,9 @@ type Knowledge interface {
 	KnowledgeEntriesByFeature(featureID string) ([]KnowledgeEntry, error)
 	KnowledgeEntriesByEnvironment(environment string, limit int) ([]KnowledgeEntry, error)
 	KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error)
+	// ServiceMetadataUpsert writes one service profile (the write side of
+	// ServiceMetadataGet; kept in the role for the org-knowledge seeding path).
+	ServiceMetadataUpsert(m ServiceMetadata) error
 	ServiceMetadataGet(service, env string) (ServiceMetadata, bool, error)
 	// ServiceMetadataAll lists the profiles in one environment, ordered by
 	// service name (the Rust get_all_service_metadata read behind the team
@@ -294,16 +298,16 @@ type Metrics interface {
 // list of named repos. ProjectUpsert keeps the first registered_at;
 // ProjectForget is the inverse and reports whether a row went.
 type Projects interface {
-	ProjectUpsert(p ProjectRecord) error
-	ProjectGet(dir string) (ProjectRecord, bool, error)
-	ProjectList() ([]ProjectRecord, error)
-	ProjectForget(dir string) (bool, error)
+	ProjectUpsert(ctx context.Context, p ProjectRecord) error
+	ProjectGet(ctx context.Context, dir string) (ProjectRecord, bool, error)
+	ProjectList(ctx context.Context) ([]ProjectRecord, error)
+	ProjectForget(ctx context.Context, dir string) (bool, error)
 }
 
 // Summaries is the file-summary checkpoint of the LLM-meaning pipeline (issue
 // #297, migration 014): SummaryUpsert replaces the row for a path (the row IS
 // the resume state); SummaryGet reports it.
 type Summaries interface {
-	SummaryUpsert(sum FileSummary) error
-	SummaryGet(path string) (FileSummary, bool, error)
+	SummaryUpsert(ctx context.Context, sum FileSummary) error
+	SummaryGet(ctx context.Context, path string) (FileSummary, bool, error)
 }

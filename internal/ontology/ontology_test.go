@@ -1,6 +1,7 @@
 package ontology
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,21 +11,21 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-func setupStore(t *testing.T) *store.Store {
+func setupStore(t *testing.T) store.Backend {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
 }
 
-func seedElements(t *testing.T, st *store.Store, els ...store.Element) {
+func seedElements(t *testing.T, st store.Backend, els ...store.Element) {
 	t.Helper()
 	if err := st.UpsertElements(els); err != nil {
 		t.Fatal(err)

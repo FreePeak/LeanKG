@@ -11,21 +11,21 @@ import (
 )
 
 // setupStore opens a migrated SQLite store under a fresh temp project dir.
-func setupStore(t *testing.T) (string, *store.Store) {
+func setupStore(t *testing.T) (string, store.Backend) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return dir, st
 }
 
-func indexDocs(t *testing.T, st *store.Store, dir string) Result {
+func indexDocs(t *testing.T, st store.Backend, dir string) Result {
 	t.Helper()
 	res, err := IndexDocs(context.Background(), st, dir)
 	if err != nil {
@@ -46,7 +46,7 @@ func writeFile(t *testing.T, dir, rel, content string) {
 }
 
 // mustFind asserts exactly one element with the given qualified name.
-func mustFind(t *testing.T, st *store.Store, qn string) store.Element {
+func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
 	els, err := st.FindExact(qn)
 	if err != nil {

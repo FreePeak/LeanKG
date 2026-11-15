@@ -42,7 +42,7 @@ func cmdSummarize(ctx context.Context, args []string) error {
 		return cliexit.Code(1)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "summarize: migrate: %v\n", err)
 		return cliexit.Code(1)
 	}
@@ -69,7 +69,7 @@ func cmdSummarize(ctx context.Context, args []string) error {
 	// The pass writes elements and relationships; refresh the snapshot so
 	// status/doctor don't call the project stale after a successful run.
 	if !*dryRun {
-		if _, ierr := store.RefreshInventory(st); ierr != nil {
+		if _, ierr := store.RefreshInventory(ctx, st); ierr != nil {
 			fmt.Fprintf(os.Stderr, "summarize: inventory snapshot: %v\n", ierr)
 		}
 	}

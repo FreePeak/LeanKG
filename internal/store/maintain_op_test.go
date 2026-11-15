@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -25,17 +26,17 @@ var allMaintainKinds = []MaintainKind{
 func maintainerEngines(t *testing.T) map[string]Maintainer {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "leankg.db")
-	rw, err := Open(path, RW)
+	rw, err := openSQLite(path, RW)
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := rw.Close(); err != nil {
 		t.Fatalf("close rw: %v", err)
 	}
-	ro, err := Open(path, RO)
+	ro, err := openSQLite(path, RO)
 	if err != nil {
 		t.Fatalf("open ro: %v", err)
 	}

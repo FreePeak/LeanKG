@@ -44,7 +44,7 @@ func projectWithMemory(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("open store %s: %v", dir, err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate store %s: %v", dir, err)
 	}
 	if err := st.Close(); err != nil {
@@ -142,7 +142,7 @@ func TestFleetTargetsSkipProjectsWithoutAMemoryIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	st.Close()

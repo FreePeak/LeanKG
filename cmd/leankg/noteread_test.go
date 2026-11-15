@@ -23,12 +23,12 @@ import (
 // for lessons.
 func TestNoteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	k := orgknowledge.New(st)
@@ -69,11 +69,11 @@ func TestNoteVerbListsWhenContentIsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Seed through the store the verb will open.
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := orgknowledge.New(st).AddNote("leankg", "zz-note-verb probe", "local", "tester"); err != nil {

@@ -1,5 +1,7 @@
 package store
 
+import "context"
+
 import "testing"
 
 // A store written before migration 19 has knowledge rows and no knowledge_fts
@@ -25,7 +27,7 @@ func TestKnowledgeFTSBackfillsExistingRows(t *testing.T) {
 		}
 	}
 
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("first Migrate: %v", err)
 	}
 	if n := knowledgeFTSRows(t, s); n != 2 {
@@ -36,7 +38,7 @@ func TestKnowledgeFTSBackfillsExistingRows(t *testing.T) {
 		t.Fatalf("search after backfill = %+v, %v; want K-1", hits, err)
 	}
 
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	if n := knowledgeFTSRows(t, s); n != 2 {

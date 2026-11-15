@@ -12,14 +12,14 @@ import (
 // collectionFixture opens a migrated store holding TWO vector collections:
 // "live" (the one the query path searches) and "old" (an abandoned one —
 // the state every model swap used to leave behind).
-func collectionFixture(t *testing.T) *store.Store {
+func collectionFixture(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// A real element: a vector whose qualified name has no element is an
@@ -50,7 +50,7 @@ func collectionFixture(t *testing.T) *store.Store {
 
 // hasCollection reports whether the store still holds a collection under
 // modelID (stamp + vectors).
-func hasCollection(t *testing.T, st *store.Store, modelID string) bool {
+func hasCollection(t *testing.T, st store.Backend, modelID string) bool {
 	t.Helper()
 	stamp, err := st.Stamp(modelID)
 	if err != nil {
@@ -89,12 +89,12 @@ func TestPassSweepsStaleCollections(t *testing.T) {
 // "embeddinggemma-2". A store whose keep collection is absent is BEHIND,
 // not stale — its one collection must survive the pass.
 func TestPassKeepsACollectionWhenTheKeepOneIsAbsent(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := st.UpsertElements([]store.Element{{
@@ -170,7 +170,7 @@ func TestRunFleetSweepsEveryProject(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	for _, st := range []*store.Store{first, second} {
+	for _, st := range []store.Backend{first, second} {
 		if !hasCollection(t, st, "live") {
 			t.Error("a live collection was dropped")
 		}

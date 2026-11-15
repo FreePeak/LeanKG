@@ -47,7 +47,7 @@ func Exists(ctx context.Context, projectDir, engine, pgURL string) (bool, error)
 		if pgURL == "" {
 			return false, errors.New("store: postgres engine requires LEANKG_PG_URL")
 		}
-		probe, err := OpenPG(ctx, pgURL, projectDir, RO)
+		probe, err := openPG(ctx, pgURL, projectDir, RO)
 		if err != nil {
 			if errors.Is(err, ErrSchemaMissing) {
 				return false, nil

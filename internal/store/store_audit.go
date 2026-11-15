@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -56,7 +57,7 @@ func (s *Store) AppendAudit(e *AuditEntry) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // AuditTail returns the last `limit` entries in ascending seq order.

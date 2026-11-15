@@ -30,12 +30,12 @@ func openPGAt(t *testing.T, dir string) *PGStore {
 	if url == "" {
 		t.Skipf("%s not set; skipping PostgreSQL backend tests", pgTestURLEnv)
 	}
-	b, err := OpenPG(context.Background(), url, dir, RW)
+	b, err := openPG(context.Background(), url, dir, RW)
 	if err != nil {
-		t.Fatalf("OpenPG: %v", err)
+		t.Fatalf("openPG: %v", err)
 	}
 	s := b.(*PGStore)
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	t.Cleanup(func() {
@@ -226,7 +226,7 @@ func TestPGOrphanPurges(t *testing.T) {
 func TestPGWatermarkBumps(t *testing.T) {
 	s := openPGTest(t)
 
-	seq0, at0, err := s.Watermark()
+	seq0, at0, err := s.Watermark(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,14 +238,14 @@ func TestPGWatermarkBumps(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	seq1, _, err := s.Watermark()
+	seq1, _, err := s.Watermark(context.Background())
 	if err != nil || seq1 != seq0+1 {
 		t.Fatalf("seq after UpsertElements = %d, %v; want %d", seq1, err, seq0+1)
 	}
-	if err := s.KVSet("ns", "k", "v"); err != nil {
+	if err := s.KVSet(context.Background(), "ns", "k", "v"); err != nil {
 		t.Fatal(err)
 	}
-	seq2, _, err := s.Watermark()
+	seq2, _, err := s.Watermark(context.Background())
 	if err != nil || seq2 != seq1+1 {
 		t.Fatalf("seq after KVSet = %d, %v; want %d", seq2, err, seq1+1)
 	}
@@ -339,48 +339,48 @@ func TestPGStampsAndVectors(t *testing.T) {
 func TestPGKVAndInventory(t *testing.T) {
 	s := openPGTest(t)
 
-	if err := s.KVSet("ontology", "cat", "a"); err != nil {
+	if err := s.KVSet(context.Background(), "ontology", "cat", "a"); err != nil {
 		t.Fatal(err)
 	}
-	if v, ok, err := s.KVGet("ontology", "cat"); err != nil || !ok || v != "a" {
+	if v, ok, err := s.KVGet(context.Background(), "ontology", "cat"); err != nil || !ok || v != "a" {
 		t.Fatalf("KVGet = (%q, %v, %v)", v, ok, err)
 	}
 	// Namespaces are independent.
-	if _, ok, err := s.KVGet("other", "cat"); err != nil || ok {
+	if _, ok, err := s.KVGet(context.Background(), "other", "cat"); err != nil || ok {
 		t.Fatalf("KVGet(other, cat) = (_, %v, %v); want not-found", ok, err)
 	}
-	if err := s.KVSet("ontology", "cat", "b"); err != nil {
+	if err := s.KVSet(context.Background(), "ontology", "cat", "b"); err != nil {
 		t.Fatal(err)
 	}
-	if v, _, _ := s.KVGet("ontology", "cat"); v != "b" {
+	if v, _, _ := s.KVGet(context.Background(), "ontology", "cat"); v != "b" {
 		t.Fatalf("KVGet after overwrite = %q; want b", v)
 	}
-	if _, ok, _ := s.KVGet("ontology", "missing"); ok {
+	if _, ok, _ := s.KVGet(context.Background(), "ontology", "missing"); ok {
 		t.Fatal("KVGet(missing) reported found")
 	}
 
 	// Inventory round-trip: pins the watermark seq at compute time.
-	if _, err := s.LoadInventory(); err != nil {
+	if _, err := s.LoadInventory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	seq, _, _ := s.Watermark()
+	seq, _, _ := s.Watermark(context.Background())
 	if err := s.UpsertElements([]Element{{
 		QualifiedName: "pkg.X", ElementType: "function", Name: "X", FilePath: "x.go", Language: "go",
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveInventory(Inventory{TotalElements: 1, TotalFiles: 0, TotalRelationships: 0,
+	if err := s.SaveInventory(context.Background(), Inventory{TotalElements: 1, TotalFiles: 0, TotalRelationships: 0,
 		ElementsByType: map[string]int{"function": 1}}); err != nil {
 		t.Fatal(err)
 	}
-	inv, err := s.LoadInventory()
+	inv, err := s.LoadInventory(context.Background())
 	if err != nil || inv == nil {
 		t.Fatalf("LoadInventory = %+v, %v", inv, err)
 	}
 	if inv.TotalElements != 1 || inv.ElementsByType["function"] != 1 {
 		t.Fatalf("inventory payload mismatch: %+v", inv)
 	}
-	wantSeq, _, _ := s.Watermark()
+	wantSeq, _, _ := s.Watermark(context.Background())
 	if inv.LastInventorySeq != wantSeq {
 		t.Fatalf("LastInventorySeq = %d; want current watermark %d", inv.LastInventorySeq, wantSeq)
 	}
@@ -436,15 +436,15 @@ func TestPGReadOnly(t *testing.T) {
 		t.Skipf("%s not set; skipping PostgreSQL backend tests", pgTestURLEnv)
 	}
 	dir := t.TempDir()
-	rw, err := OpenPG(context.Background(), url, dir, RW)
+	rw, err := openPG(context.Background(), url, dir, RW)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rwS := rw.(*PGStore)
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := rw.KVSet("t", "ro", "1"); err != nil {
+	if err := rw.KVSet(context.Background(), "t", "ro", "1"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -452,7 +452,7 @@ func TestPGReadOnly(t *testing.T) {
 		_ = rw.Close()
 	})
 
-	roB, err := OpenPG(context.Background(), url, dir, RO)
+	roB, err := openPG(context.Background(), url, dir, RO)
 	if err != nil {
 		t.Fatalf("RO open of existing store: %v", err)
 	}
@@ -460,12 +460,12 @@ func TestPGReadOnly(t *testing.T) {
 	defer ro.Close()
 
 	// Migrate in RO errors (sqlite parity).
-	if err := ro.Migrate(); err == nil {
+	if err := ro.Migrate(context.Background()); err == nil {
 		t.Fatal("Migrate in RO mode succeeded; want error")
 	}
 
 	// Writes are rejected by the server (default_transaction_read_only).
-	if err := ro.KVSet("t", "x", "y"); err == nil {
+	if err := ro.KVSet(context.Background(), "t", "x", "y"); err == nil {
 		t.Fatal("KVSet in RO succeeded; want error")
 	}
 	if err := ro.UpsertElements([]Element{{
@@ -478,20 +478,20 @@ func TestPGReadOnly(t *testing.T) {
 	}
 
 	// Reads work; bump is a silent no-op (sqlite parity).
-	if err := ro.BumpWatermark(); err != nil {
+	if err := ro.BumpWatermark(context.Background()); err != nil {
 		t.Fatalf("BumpWatermark in RO: %v", err)
 	}
-	seq, _, err := ro.Watermark()
+	seq, _, err := ro.Watermark(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	rwSeq, _, err := rw.Watermark()
+	rwSeq, _, err := rw.Watermark(context.Background())
 	if err != nil || rwSeq != seq {
 		t.Fatalf("RO watermark %d vs RW %d, %v", seq, rwSeq, err)
 	}
 
 	// RO open of a missing schema errors (sqlite missing-store parity).
-	if _, err := OpenPG(context.Background(), url, t.TempDir(), RO); err == nil {
+	if _, err := openPG(context.Background(), url, t.TempDir(), RO); err == nil {
 		t.Fatal("RO open of missing schema succeeded; want error")
 	}
 }
@@ -499,7 +499,7 @@ func TestPGReadOnly(t *testing.T) {
 func TestPGMigrateIdempotent(t *testing.T) {
 	s := openPGTest(t)
 
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	var n int
@@ -553,7 +553,7 @@ func TestPGEmbedRuns(t *testing.T) {
 func TestPGNilReadersUseSentinel(t *testing.T) {
 	s := openPGTest(t)
 
-	if _, _, err := s.Watermark(); err != nil {
+	if _, _, err := s.Watermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Stamp("none"); err != nil {

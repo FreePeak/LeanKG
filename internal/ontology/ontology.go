@@ -18,6 +18,7 @@
 package ontology
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -146,12 +147,12 @@ func SaveMatches(st store.Backend, matches []Match) error {
 	if err != nil {
 		return err
 	}
-	return st.KVSet("ontology", "matches", string(b))
+	return st.KVSet(context.TODO(), "ontology", "matches", string(b))
 }
 
 // LoadMatches reads the match set back; a missing key yields (nil, nil).
 func LoadMatches(st store.Backend) ([]Match, error) {
-	s, ok, err := st.KVGet("ontology", "matches")
+	s, ok, err := st.KVGet(context.TODO(), "ontology", "matches")
 	if err != nil || !ok {
 		return nil, err
 	}

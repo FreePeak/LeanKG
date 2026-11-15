@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -12,12 +13,12 @@ import (
 // helper used by internal/graph tests.
 func newFixture(t *testing.T, els []store.Element, rels []store.Relationship) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	s, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := s.UpsertElements(els); err != nil {

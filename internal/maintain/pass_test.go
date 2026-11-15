@@ -14,14 +14,14 @@ import (
 
 // bloatFixture opens a migrated store whose freelist is most of the file, so
 // a pass has something real to reclaim.
-func bloatFixture(t *testing.T) *store.Store {
+func bloatFixture(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	for i := 0; i < 400; i++ {
@@ -117,12 +117,12 @@ func TestPassRunsTheIncrementalSweepOnceAutoVacuumIsOn(t *testing.T) {
 }
 
 func TestPassSkipsReclaimBelowFloor(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	res, err := Pass(context.Background(), st, Options{})
@@ -241,17 +241,17 @@ func TestCompactMemoryNilIsNoOp(t *testing.T) {
 // of logging it and carrying on.
 func TestPassFailsWhenHeaderUpgradeIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
-	rw, err := store.Open(path, store.RW)
+	rw, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: path, Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := rw.Close(); err != nil {
 		t.Fatalf("close rw: %v", err)
 	}
-	ro, err := store.Open(path, store.RO)
+	ro, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: path, Mode: store.RO})
 	if err != nil {
 		t.Fatalf("open ro: %v", err)
 	}

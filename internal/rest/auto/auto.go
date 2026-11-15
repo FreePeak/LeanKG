@@ -237,7 +237,7 @@ func startAutoIndex(ctx context.Context, st store.Backend, dir string) {
 		log.Printf("auto-config: index failed: %v", err)
 		return
 	}
-	if _, ierr := store.RefreshInventory(st); ierr != nil {
+	if _, ierr := store.RefreshInventory(ctx, st); ierr != nil {
 		log.Printf("auto-config: index inventory refresh: %v", ierr)
 	}
 	log.Printf("auto-config: index complete: files=%d elements=%d relationships=%d", res.Files, res.Elements, res.Relationships)

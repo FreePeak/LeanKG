@@ -88,7 +88,7 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 
 	// The composed stages share one store: code + doc elements persisted and
 	// the embedding pipeline covered every one of them.
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RO)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RO})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestRunSkipsEmbedOnBadProvider(t *testing.T) {
 		t.Fatalf("Render = %q, want an explicit skip line", Render(res))
 	}
 	// Stages before the embed still landed (fail-fast is at stage 3).
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RO)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RO})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestEmbedStageSkipsWhenEmbedLockHeld(t *testing.T) {
 		t.Fatalf("seed Run: %v", err)
 	}
 
-	st, err := store.OpenBackend(context.Background(), dir, "", "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: "", PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

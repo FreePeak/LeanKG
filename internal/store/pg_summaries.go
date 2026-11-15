@@ -4,6 +4,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -12,11 +13,11 @@ import (
 
 // SummaryUpsert writes one file summary row, replacing any previous row for
 // the same path.
-func (s *PGStore) SummaryUpsert(sum FileSummary) error {
+func (s *PGStore) SummaryUpsert(ctx context.Context, sum FileSummary) error {
 	if sum.Path == "" {
 		return fmt.Errorf("store: summary upsert: path is required")
 	}
-	if _, err := s.pool.Exec(pgCtx, `INSERT INTO file_summaries (`+summaryValueCols+`, updated_at)
+	if _, err := s.pool.Exec(ctx, `INSERT INTO file_summaries (`+summaryValueCols+`, updated_at)
 		VALUES ($1,$2,$3,$4,`+pgNow+`)
 		ON CONFLICT (path) DO UPDATE SET content_hash=excluded.content_hash,
 			model=excluded.model, summary=excluded.summary,
@@ -28,8 +29,8 @@ func (s *PGStore) SummaryUpsert(sum FileSummary) error {
 }
 
 // SummaryGet returns the stored summary for one path.
-func (s *PGStore) SummaryGet(path string) (FileSummary, bool, error) {
-	row := s.pool.QueryRow(pgCtx, `SELECT `+summaryReadCols+` FROM file_summaries WHERE path = $1`, path)
+func (s *PGStore) SummaryGet(ctx context.Context, path string) (FileSummary, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+summaryReadCols+` FROM file_summaries WHERE path = $1`, path)
 	su, err := scanFileSummary(row.Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FileSummary{}, false, nil

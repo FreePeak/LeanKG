@@ -24,14 +24,14 @@ const (
 	ownGuideDoc = "# Guide\nintro\n## Setup\nsteps\n"
 )
 
-func openOwnershipStore(t *testing.T) *store.Store {
+func openOwnershipStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "s.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -39,7 +39,7 @@ func openOwnershipStore(t *testing.T) *store.Store {
 
 // ownershipRows counts the element rows a file holds under each key scheme.
 // A row under neither scheme is a third producer and fails the test.
-func ownershipRows(t *testing.T, st *store.Store, rel string) (indexRows, docRows int) {
+func ownershipRows(t *testing.T, st store.Backend, rel string) (indexRows, docRows int) {
 	t.Helper()
 	els, err := st.Elements()
 	if err != nil {
@@ -63,7 +63,7 @@ func ownershipRows(t *testing.T, st *store.Store, rel string) (indexRows, docRow
 
 // refreshOwnership runs the refresh order: code index over root, then docindex
 // over root/docs.
-func refreshOwnership(t *testing.T, st *store.Store, root string) (index.Result, docindex.Result) {
+func refreshOwnership(t *testing.T, st store.Backend, root string) (index.Result, docindex.Result) {
 	t.Helper()
 	ctx := context.Background()
 	idx, err := index.IndexDir(ctx, st, root)

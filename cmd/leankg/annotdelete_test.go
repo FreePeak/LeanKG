@@ -15,12 +15,12 @@ import (
 // until someone edited the store by hand.
 func TestDeleteAnnotationRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +53,7 @@ func TestDeleteAnnotationRoundTrip(t *testing.T) {
 		t.Fatalf("search after delete = %d hits, want 0", len(hits))
 	}
 	// The kv document must not keep a stale null row behind.
-	raw, ok, err := st.KVGet("annotation", "records")
+	raw, ok, err := st.KVGet(context.Background(), "annotation", "records")
 	if err != nil {
 		t.Fatal(err)
 	}

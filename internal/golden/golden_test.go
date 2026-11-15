@@ -118,13 +118,13 @@ func l0Response(t *testing.T, ctx context.Context, lk string) map[string]any {
 	return r
 }
 
-func openStore(t *testing.T, path string) *store.Store {
+func openStore(t *testing.T, path string) store.Backend {
 	t.Helper()
-	st, err := store.Open(path, store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: path, Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -132,7 +132,7 @@ func openStore(t *testing.T, path string) *store.Store {
 
 // seed writes the fixed corpus: two elements, one calls edge, one stamped
 // collection with a single deterministic vector.
-func seed(t *testing.T, ctx context.Context, st *store.Store) {
+func seed(t *testing.T, ctx context.Context, st store.Backend) {
 	t.Helper()
 	els := []store.Element{
 		{

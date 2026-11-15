@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 	"testing"
@@ -8,12 +9,12 @@ import (
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return s
@@ -142,12 +143,12 @@ func TestDeleteOrphanRelationships(t *testing.T) {
 
 	// Idempotent, and the watermark must not move when nothing went:
 	// a no-op gc may not mark a fresh project possibly_stale.
-	seq1, _, _ := s.Watermark()
+	seq1, _, _ := s.Watermark(context.Background())
 	n2, err := s.DeleteOrphanRelationships()
 	if err != nil {
 		t.Fatal(err)
 	}
-	seq2, _, _ := s.Watermark()
+	seq2, _, _ := s.Watermark(context.Background())
 	if n2 != 0 || seq2 != seq1 {
 		t.Fatalf("second gc: purged %d, seq %d->%d; want 0 and no bump", n2, seq1, seq2)
 	}
@@ -203,22 +204,22 @@ func TestDeleteOrphanVectors(t *testing.T) {
 
 	// No-op purge must not bump the watermark (a gc on a clean store leaves
 	// freshness exactly where it was).
-	seq1, _, _ := s.Watermark()
+	seq1, _, _ := s.Watermark(context.Background())
 	if n2, err := s.DeleteOrphanVectors(); err != nil || n2 != 0 {
 		t.Fatalf("second purge = (%d,%v), want (0,nil)", n2, err)
 	}
-	if seq2, _, _ := s.Watermark(); seq2 != seq1 {
+	if seq2, _, _ := s.Watermark(context.Background()); seq2 != seq1 {
 		t.Fatalf("no-op purge bumped the watermark %d -> %d", seq1, seq2)
 	}
 }
 
 func TestWatermarkBumpsOnWrite(t *testing.T) {
 	s := openTestStore(t)
-	seq0, _, _ := s.Watermark()
+	seq0, _, _ := s.Watermark(context.Background())
 	if err := s.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
 		t.Fatal(err)
 	}
-	seq1, _, _ := s.Watermark()
+	seq1, _, _ := s.Watermark(context.Background())
 	if seq1 <= seq0 {
 		t.Fatalf("watermark did not advance: %d -> %d", seq0, seq1)
 	}
@@ -314,20 +315,20 @@ func TestEmbedRuns(t *testing.T) {
 
 func TestInventoryFreshness(t *testing.T) {
 	s := openTestStore(t)
-	if inv, _ := s.LoadInventory(); inv != nil {
+	if inv, _ := s.LoadInventory(context.Background()); inv != nil {
 		t.Fatalf("no inventory expected, got %+v", inv)
 	}
 	if err := s.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveInventory(Inventory{TotalElements: 1, ElementsByType: map[string]int{"function": 1}}); err != nil {
+	if err := s.SaveInventory(context.Background(), Inventory{TotalElements: 1, ElementsByType: map[string]int{"function": 1}}); err != nil {
 		t.Fatal(err)
 	}
-	inv, err := s.LoadInventory()
+	inv, err := s.LoadInventory(context.Background())
 	if err != nil || inv == nil || inv.TotalElements != 1 {
 		t.Fatalf("inventory: %v %+v", err, inv)
 	}
-	seq, _, _ := s.Watermark()
+	seq, _, _ := s.Watermark(context.Background())
 	if inv.LastInventorySeq != seq {
 		t.Fatalf("inventory seq %d != watermark %d", inv.LastInventorySeq, seq)
 	}
@@ -335,7 +336,7 @@ func TestInventoryFreshness(t *testing.T) {
 	if err := s.UpsertRelationships([]Relationship{{Source: "x", Target: "x", RelType: "calls"}}); err != nil {
 		t.Fatal(err)
 	}
-	seq2, _, _ := s.Watermark()
+	seq2, _, _ := s.Watermark(context.Background())
 	if seq2 <= inv.LastInventorySeq {
 		t.Fatalf("write after inventory did not advance watermark past %d", inv.LastInventorySeq)
 	}
@@ -343,11 +344,11 @@ func TestInventoryFreshness(t *testing.T) {
 
 func TestReadOnlyMode(t *testing.T) {
 	dir := t.TempDir()
-	rw, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RW)
+	rw, err := openSQLite(filepath.Join(dir, ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := rw.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
@@ -355,7 +356,7 @@ func TestReadOnlyMode(t *testing.T) {
 	}
 	rw.Close()
 
-	ro, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RO)
+	ro, err := openSQLite(filepath.Join(dir, ".leankg", "leankg.db"), RO)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +364,7 @@ func TestReadOnlyMode(t *testing.T) {
 	if got, err := ro.FindExact("x"); err != nil || len(got) != 1 {
 		t.Fatalf("ro read: %v %+v", err, got)
 	}
-	if err := ro.Migrate(); err == nil {
+	if err := ro.Migrate(context.Background()); err == nil {
 		t.Fatal("migrate on RO must fail")
 	}
 }
@@ -481,14 +482,14 @@ func TestReplaceFileVectorsIsOneAtomicUnit(t *testing.T) {
 		{QualifiedName: "a.go::f2", Vec: []float32{0, 1, 0, 0}},
 	}
 	states := map[string]string{"a.go::f1": "h1", "a.go::f2": "h2"}
-	before, _, err := s.Watermark()
+	before, _, err := s.Watermark(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReplaceFileVectors("m", rows, states); err != nil {
 		t.Fatal(err)
 	}
-	after, _, err := s.Watermark()
+	after, _, err := s.Watermark(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,13 +558,13 @@ func TestIdentifierTermsReachFTS(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO elements_fts (rowid, name, qualified_name, content) SELECT id, name, qualified_name, content FROM code_elements`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.KVSet("fts", "terms_version", "0"); err != nil {
+	if err := s.KVSet(context.Background(), "fts", "terms_version", "0"); err != nil {
 		t.Fatal(err)
 	}
 	if hits, _, _ := s.FindFuzzy("staging", 5); len(hits) != 0 {
 		t.Fatal("precondition: old-style row should not match the split word")
 	}
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if hits, _, _ := s.FindFuzzy("staging", 5); len(hits) == 0 {

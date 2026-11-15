@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -260,7 +261,7 @@ func TestTokenTouchCoalesces(t *testing.T) {
 // and re-running Migrate changes nothing (the ledger is the idempotency guard —
 // sqlite has no ADD COLUMN IF NOT EXISTS).
 func TestTokenMigrationUpgradesExistingStore(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -293,7 +294,7 @@ func TestTokenMigrationUpgradesExistingStore(t *testing.T) {
 		t.Fatalf("legacy row: %v", err)
 	}
 
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate 008: %v", err)
 	}
 
@@ -321,7 +322,7 @@ func TestTokenMigrationUpgradesExistingStore(t *testing.T) {
 	}
 
 	// Re-running the migration is a no-op: the ledger skips applied steps.
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
 	if list, err := s.TokenList(); err != nil || len(list) != 1 {
@@ -347,7 +348,7 @@ func TestTokenUpsertValidation(t *testing.T) {
 // (the migrate verbs' applied/pending split): every embedded version, ascending.
 func TestAppliedMigrations(t *testing.T) {
 	s := openTestStore(t)
-	got, err := AppliedMigrations(s)
+	got, err := s.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied: %v", err)
 	}

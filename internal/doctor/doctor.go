@@ -258,7 +258,7 @@ func sqliteProbes(projectDir string) (*dbProbes, error) {
 
 // pgProbes connects to the Postgres from pgURL, pins search_path to the
 // project's schema-per-project schema (leankg_<sha256(dir)[:16]> — the
-// same derivation store.OpenPG uses), and sets the read-only transaction
+// same derivation store.OpenBackend uses), and sets the read-only transaction
 // default so probes can never write.
 func pgProbes(ctx context.Context, projectDir, pgURL string) (*dbProbes, error) {
 	schema, err := pgSchemaForDir(projectDir)
@@ -447,7 +447,7 @@ func tableAbsent(err error) bool {
 
 // pgSchemaForDir derives the per-project Postgres schema:
 // leankg_ + first 16 hex chars of sha256(canonical absolute dir). This is
-// the same derivation store.OpenPG applies (pgSchemaForDir there is
+// the same derivation store.OpenBackend applies (pgSchemaForDir there is
 // unexported); identical algorithm + identical input keep the two names
 // in sync.
 // ponytail: duplicated from store_pg.go rather than exporting it there —

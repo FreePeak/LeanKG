@@ -37,12 +37,12 @@ func (s unreadableStampStore) Stamp(modelID string) (*store.ModelStamp, error) {
 // the store). A read error must name its cause.
 func TestL3DegradeReasonNamesUnreadableStamp(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// The error a pre-017 store's stamp read produced.
@@ -83,12 +83,12 @@ func TestL3DegradeReasonNamesUnreadableStamp(t *testing.T) {
 // missing-collection one.
 func TestL3DegradeReasonStillSaysNoVectorCollection(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// A real, migrated store with NO stamp row for the embedder's model:

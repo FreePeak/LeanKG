@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -66,11 +67,11 @@ func vectorHash(t *testing.T, path string) string {
 // bytes of unused page space in the vector table, 16 % of the whole store.
 func TestNewStoreUsesTheLargerPageSize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
-	st, err := Open(path, RW)
+	st, err := openSQLite(path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := st.Close(); err != nil {
@@ -91,11 +92,11 @@ func TestNewStoreUsesTheLargerPageSize(t *testing.T) {
 func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
 	createLegacyStore(t, path)
-	st, err := Open(path, RW)
+	st, err := openSQLite(path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// A write, and the VACUUM the auto-vacuum header upgrade performs.
@@ -126,11 +127,11 @@ func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leankg.db")
 	createLegacyStore(t, path)
-	st, err := Open(path, RW)
+	st, err := openSQLite(path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := st.WriteStamp(ModelStamp{

@@ -20,7 +20,8 @@ type Backend interface {
 	// lifecycle
 	Close() error
 	Path() string // connection target (file path or DSN); for status display
-	Migrate() error
+	Migrate(ctx context.Context) error
+	AppliedMigrations(ctx context.Context) ([]int, error)
 	Engine() string
 	Mode() Mode // how the store was opened (RW or RO)
 
@@ -76,32 +77,45 @@ func (s *Store) VectorCoverage(modelID string) (covered, orphans int, err error)
 	return covered, orphans, err
 }
 
-// OpenBackend opens the engine's storage for a project directory.
-// engine is EngineSQLite (default) or EnginePostgres (dsn via env
-// LEANKG_PG_URL or the pgURL argument when non-empty).
+// OpenOptions selects the storage for one project directory.
 //
-// dbPath is the caller's explicit SQLite store path (serve's --db flag). When
-// it is empty the LEANKG_DB_PATH / leankg.yaml db.standalone_db_path override
-// is resolved HERE, so the configured store is what every caller gets — a
-// verb passing "" no longer silently lands on <project>/.leankg/leankg.db
-// while `serve` reads the configured file.
-func OpenBackend(ctx context.Context, projectDir, engine, pgURL, dbPath string, mode Mode) (Backend, error) {
-	switch engine {
+//   - Engine is EngineSQLite (also "") or EnginePostgres.
+//   - PGURL is the PostgreSQL DSN; the postgres engine requires it.
+//   - DBPath is the caller's explicit SQLite store file (serve's --db flag).
+//     When it is empty the LEANKG_DB_PATH / leankg.yaml db.standalone_db_path
+//     override is resolved here, so the configured store is what every caller
+//     gets, and an empty path never lands on <project>/.leankg/leankg.db while
+//     `serve` reads the configured file.
+//   - Mode RO never creates the store: a missing SQLite file or PostgreSQL
+//     schema is an error and nothing is written.
+type OpenOptions struct {
+	ProjectDir string
+	Engine     string
+	PGURL      string
+	DBPath     string
+	Mode       Mode
+}
+
+// OpenBackend opens the storage that opts selects. It is the one exported
+// constructor of both engines.
+func OpenBackend(ctx context.Context, opts OpenOptions) (Backend, error) {
+	switch opts.Engine {
 	case "", EngineSQLite:
+		dbPath := opts.DBPath
 		if dbPath == "" {
-			dbPath = StandaloneDBPath(projectDir)
+			dbPath = StandaloneDBPath(opts.ProjectDir)
 		}
 		if dbPath != "" {
-			return Open(dbPath, mode)
+			return openSQLite(dbPath, opts.Mode)
 		}
-		return Open(projectDir+"/.leankg/leankg.db", mode)
+		return openSQLite(opts.ProjectDir+"/.leankg/leankg.db", opts.Mode)
 	case EnginePostgres:
-		if pgURL == "" {
+		if opts.PGURL == "" {
 			return nil, fmt.Errorf("store: postgres engine requires LEANKG_PG_URL")
 		}
-		return OpenPG(ctx, pgURL, projectDir, mode) // implemented in store_pg.go (W4)
+		return openPG(ctx, opts.PGURL, opts.ProjectDir, opts.Mode)
 	default:
-		return nil, fmt.Errorf("store: unknown engine %q (want sqlite|postgres)", engine)
+		return nil, fmt.Errorf("store: unknown engine %q (want sqlite|postgres)", opts.Engine)
 	}
 }
 
@@ -122,15 +136,15 @@ const (
 //
 // totalElements is a parameter, not a lookup: `status` has already counted it,
 // so the shared helper must not add a second query per response.
-func Freshness(st Backend, totalElements int) string {
+func Freshness(ctx context.Context, st Backend, totalElements int) string {
 	if totalElements == 0 {
 		return FreshnessCold
 	}
-	inv, err := st.LoadInventory()
+	inv, err := st.LoadInventory(ctx)
 	if err != nil || inv == nil {
 		return FreshnessPossiblyStale
 	}
-	seq, _, err := st.Watermark()
+	seq, _, err := st.Watermark(ctx)
 	if err != nil {
 		return FreshnessPossiblyStale
 	}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -11,12 +12,12 @@ import (
 func newVacuumFixture(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "leankg.db")
-	st, err := Open(path, RW)
+	st, err := openSQLite(path, RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// 400 rows, then delete 300 of them: ~75% of the pages end up free.
@@ -186,7 +187,7 @@ func TestVacuumShrinksFileToLiveSize(t *testing.T) {
 
 func TestCheckpointTruncatesWAL(t *testing.T) {
 	st := newVacuumFixture(t)
-	if err := st.BumpWatermark(); err != nil {
+	if err := st.BumpWatermark(context.Background()); err != nil {
 		t.Fatalf("bump: %v", err)
 	}
 	if _, err := st.Maintain(MaintainOp{Kind: MaintainCheckpoint}); err != nil {
@@ -203,17 +204,17 @@ func TestCheckpointTruncatesWAL(t *testing.T) {
 
 func TestVacuumRefusesReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ro.db")
-	rw, err := Open(path, RW)
+	rw, err := openSQLite(path, RW)
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := rw.Close(); err != nil {
 		t.Fatalf("close rw: %v", err)
 	}
-	ro, err := Open(path, RO)
+	ro, err := openSQLite(path, RO)
 	if err != nil {
 		t.Fatalf("open ro: %v", err)
 	}

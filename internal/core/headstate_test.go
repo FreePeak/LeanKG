@@ -58,12 +58,12 @@ func headSyncOf(t *testing.T, out map[string]any) string {
 func TestStatusHeadSyncTellsTheTreeMoved(t *testing.T) {
 	gittest.SkipWithoutGit(t)
 	dir := gitRepoWithFile(t)
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := index.IndexDir(context.Background(), st, dir); err != nil {
@@ -122,12 +122,12 @@ func TestStatusHeadSyncUnknownWithoutGit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(plain, "a.go"), []byte("package a\n\nfunc A() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := index.IndexDir(context.Background(), st, plain); err != nil {

@@ -366,7 +366,7 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	if !exists {
 		return nil, notIndexedError(dir, engineName, projectDir)
 	}
-	st, err := store.OpenBackend(ctx, projectDir, engineName, cfg.PGURL, "", cfg.Mode)
+	st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: projectDir, Engine: engineName, PGURL: cfg.PGURL, DBPath: "", Mode: cfg.Mode})
 	if err != nil {
 		return nil, fmt.Errorf("projects: open store for %s: %w", dir, err)
 	}

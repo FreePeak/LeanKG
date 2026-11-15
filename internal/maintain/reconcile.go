@@ -72,7 +72,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 		res.Reason = "read-only store"
 		return res, nil
 	}
-	root, ok, err := store.RecordedRoot(st)
+	root, ok, err := store.RecordedRoot(ctx, st)
 	if err != nil {
 		return res, fmt.Errorf("maintain: read recorded root: %w", err)
 	}
@@ -170,18 +170,18 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 // behind, which is exactly the state the live fleet was in when this rule
 // was written.
 func healInventory(st store.Backend) error {
-	seq, _, err := st.Watermark()
+	seq, _, err := st.Watermark(context.TODO())
 	if err != nil {
 		return fmt.Errorf("maintain: read watermark after reconcile: %w", err)
 	}
-	inv, err := st.LoadInventory()
+	inv, err := st.LoadInventory(context.TODO())
 	if err != nil {
 		return fmt.Errorf("maintain: read inventory after reconcile: %w", err)
 	}
 	if inv != nil && inv.LastInventorySeq == seq {
 		return nil
 	}
-	if _, err := store.RefreshInventory(st); err != nil {
+	if _, err := store.RefreshInventory(context.TODO(), st); err != nil {
 		return fmt.Errorf("maintain: refresh inventory after reconcile: %w", err)
 	}
 	return nil

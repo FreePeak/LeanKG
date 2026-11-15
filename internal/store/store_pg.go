@@ -36,7 +36,7 @@ type PGStore struct {
 }
 
 // ErrSchemaMissing is the read-only open of a project schema that does not
-// exist, the one OpenPG failure that means "no store yet". A bad dsn, a refused
+// exist, the one openPG failure that means "no store yet". A bad dsn, a refused
 // connection or an auth failure is a different error and must not read as empty.
 var ErrSchemaMissing = errors.New("store: read-only open of missing store schema")
 
@@ -45,11 +45,11 @@ var ErrSchemaMissing = errors.New("store: read-only open of missing store schema
 // migration on a reader) can ask either backend.
 func (s *PGStore) Mode() Mode { return s.mode }
 
-// OpenPG opens the PostgreSQL+pgvector backend for one project directory.
+// openPG opens the PostgreSQL+pgvector backend for one project directory.
 // Each project lives in its own schema (leankg_<sha256(dir)[:16]>); RW mode
 // creates the schema, RO mode requires it to exist (parity with sqlite's
 // read-only open of a missing store).
-func OpenPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, error) {
+func openPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, error) {
 	cfg, err := pgxpool.ParseConfig(pgURL)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse pg dsn: %w", err)
@@ -167,7 +167,7 @@ func (s *PGStore) UpsertElements(els []Element) error {
 	if err := tx.Commit(pgCtx); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // UpsertRelationships writes a batch of relationships in one transaction.
@@ -193,7 +193,7 @@ func (s *PGStore) UpsertRelationships(rels []Relationship) error {
 	if err := tx.Commit(pgCtx); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // UpsertFiles records per-file index state.
@@ -218,7 +218,7 @@ func (s *PGStore) UpsertFiles(files []FileRecord) error {
 	if err := tx.Commit(pgCtx); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // Files returns all indexed file records.
@@ -257,7 +257,7 @@ func (s *PGStore) DeleteByFile(path string) error {
 	if err := tx.Commit(pgCtx); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // DeleteFileRecord removes a file's row from code_files (file deleted from disk).
@@ -265,7 +265,7 @@ func (s *PGStore) DeleteFileRecord(path string) error {
 	if _, err := s.pool.Exec(pgCtx, `DELETE FROM code_files WHERE path = $1`, path); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // DeleteOrphanRelationships removes every edge whose endpoint is no longer a
@@ -284,7 +284,7 @@ func (s *PGStore) DeleteOrphanRelationships() (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
-	return n, s.BumpWatermark()
+	return n, s.BumpWatermark(context.TODO())
 }
 
 const pgElementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path, ce.line_start, ce.line_end, ce.language, COALESCE(ce.parent_qualified,''), ce.content, COALESCE(ce.metadata::text,'{}')`
@@ -564,18 +564,18 @@ func pgScanRelationships(rows pgx.Rows) ([]Relationship, error) {
 
 // KVSet writes a namespaced key (upsert). Namespacing is folded into the key
 // exactly like the sqlite implementation.
-func (s *PGStore) KVSet(namespace, key, value string) error {
-	if _, err := s.pool.Exec(pgCtx, `INSERT INTO kv (key, value) VALUES ($1, $2)
+func (s *PGStore) KVSet(ctx context.Context, namespace, key, value string) error {
+	if _, err := s.pool.Exec(ctx, `INSERT INTO kv (key, value) VALUES ($1, $2)
 		ON CONFLICT (key) DO UPDATE SET value=excluded.value`, namespace+"\x1f"+key, value); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(ctx)
 }
 
 // KVGet reads a namespaced key.
-func (s *PGStore) KVGet(namespace, key string) (string, bool, error) {
+func (s *PGStore) KVGet(ctx context.Context, namespace, key string) (string, bool, error) {
 	var v string
-	err := s.pool.QueryRow(pgCtx, `SELECT value FROM kv WHERE key = $1`, namespace+"\x1f"+key).Scan(&v)
+	err := s.pool.QueryRow(ctx, `SELECT value FROM kv WHERE key = $1`, namespace+"\x1f"+key).Scan(&v)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
@@ -629,7 +629,7 @@ func (s *PGStore) WriteStamp(st ModelStamp) error {
 	if _, err := s.pool.Exec(pgCtx, stampUpsertFor(shape.cols, func(i int) string { return fmt.Sprintf("$%d", i) }), stampValues(st, shape.cols)...); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // ensureModelTables creates the per-model state + vector tables. A PG vector
@@ -833,7 +833,7 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if out.Models == 0 && out.Vectors == 0 {
 		return out, nil
 	}
-	return out, s.BumpWatermark()
+	return out, s.BumpWatermark(context.TODO())
 }
 
 // EmbeddingStateMap returns qualified_name -> content_hash for a model.
@@ -875,7 +875,7 @@ func (s *PGStore) SetEmbeddingStates(modelID string, states map[string]string) e
 	if err := tx.Commit(pgCtx); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // UpsertVectors writes a batch of vectors for a model in ONE transaction:
@@ -900,7 +900,7 @@ func (s *PGStore) UpsertVectors(modelID string, rows []VectorRow) error {
 	if err := tx.Commit(pgCtx); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // ClearVectors drops all vectors + state for a model (stamp-guard rebuild).
@@ -913,7 +913,7 @@ func (s *PGStore) ClearVectors(modelID string) error {
 			return err
 		}
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // VectorCount returns the vector count for a model.
@@ -974,14 +974,14 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 	if total == 0 {
 		return 0, nil
 	}
-	return total, s.BumpWatermark()
+	return total, s.BumpWatermark(context.TODO())
 }
 
 // SearchVectors performs the single ANN-equivalent shape: the model's vectors
 // ranked by cosine distance (HNSW index when present), hydrated against
 // code_elements. similarity = 1 - distance (the <=> operator's cosine distance).
 // The filter is part of the WHERE clause, before ORDER BY and LIMIT, and the
-// connections run with hnsw.iterative_scan (see OpenPG), so K admitted rows come
+// connections run with hnsw.iterative_scan (see openPG), so K admitted rows come
 // back whenever they exist.
 func (s *PGStore) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
 	if len(q.Vec) == 0 {
@@ -1023,24 +1023,24 @@ func (s *PGStore) SearchVectors(q VectorQuery) ([]VectorSearchHit, error) {
 }
 
 // Watermark returns the current freshness sequence number.
-func (s *PGStore) Watermark() (int64, int64, error) {
+func (s *PGStore) Watermark(ctx context.Context) (int64, int64, error) {
 	var seq, at int64
-	err := s.pool.QueryRow(pgCtx, `SELECT seq, at FROM write_watermark WHERE id = 1`).Scan(&seq, &at)
+	err := s.pool.QueryRow(ctx, `SELECT seq, at FROM write_watermark WHERE id = 1`).Scan(&seq, &at)
 	return seq, at, err
 }
 
 // BumpWatermark advances the freshness sequence (one call per commit batch).
-func (s *PGStore) BumpWatermark() error {
+func (s *PGStore) BumpWatermark(ctx context.Context) error {
 	if s.mode == RO {
 		return nil // readers never bump
 	}
-	_, err := s.pool.Exec(pgCtx, `UPDATE write_watermark SET seq = seq + 1, at = $1 WHERE id = 1`, time.Now().Unix())
+	_, err := s.pool.Exec(ctx, `UPDATE write_watermark SET seq = seq + 1, at = $1 WHERE id = 1`, time.Now().Unix())
 	return err
 }
 
 // SaveInventory persists the inventory under kv with the current watermark.
-func (s *PGStore) SaveInventory(inv Inventory) error {
-	seq, _, err := s.Watermark()
+func (s *PGStore) SaveInventory(ctx context.Context, inv Inventory) error {
+	seq, _, err := s.Watermark(ctx)
 	if err != nil {
 		return err
 	}
@@ -1050,15 +1050,15 @@ func (s *PGStore) SaveInventory(inv Inventory) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(pgCtx, `INSERT INTO kv (key, value) VALUES ('inventory', $1)
+	_, err = s.pool.Exec(ctx, `INSERT INTO kv (key, value) VALUES ('inventory', $1)
 		ON CONFLICT (key) DO UPDATE SET value=excluded.value`, string(b))
 	return err
 }
 
 // LoadInventory returns the persisted inventory; nil when never computed.
-func (s *PGStore) LoadInventory() (*Inventory, error) {
+func (s *PGStore) LoadInventory(ctx context.Context) (*Inventory, error) {
 	var val string
-	err := s.pool.QueryRow(pgCtx, `SELECT value FROM kv WHERE key = 'inventory'`).Scan(&val)
+	err := s.pool.QueryRow(ctx, `SELECT value FROM kv WHERE key = 'inventory'`).Scan(&val)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -1174,7 +1174,7 @@ func (s *PGStore) AppendAudit(e *AuditEntry) error {
 	if err := tx.Commit(pgCtx); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // AuditTail returns the last `limit` entries in ascending seq order.

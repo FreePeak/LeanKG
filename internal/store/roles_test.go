@@ -29,7 +29,7 @@ var roleTypes = []reflect.Type{
 }
 
 // lifecycleMethods are the Backend methods that belong to no role.
-var lifecycleMethods = []string{"Close", "Engine", "Migrate", "Mode", "Path"}
+var lifecycleMethods = []string{"AppliedMigrations", "Close", "Engine", "Migrate", "Mode", "Path"}
 
 func methodNameSet(t reflect.Type) map[string]bool {
 	out := map[string]bool{}
@@ -82,7 +82,7 @@ func TestBackendIsUnionOfRoles(t *testing.T) {
 func TestBackendModeReportsOpenMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".leankg", "leankg.db")
 
-	rw, err := Open(path, RW)
+	rw, err := openSQLite(path, RW)
 	if err != nil {
 		t.Fatalf("Open RW: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestBackendModeReportsOpenMode(t *testing.T) {
 		t.Fatalf("Close RW: %v", err)
 	}
 
-	ro, err := Open(path, RO)
+	ro, err := openSQLite(path, RO)
 	if err != nil {
 		t.Fatalf("Open RO: %v", err)
 	}

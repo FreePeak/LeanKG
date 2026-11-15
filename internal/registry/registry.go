@@ -202,7 +202,7 @@ func Status(name string) (RepoStatus, error) {
 		st.Indexed = true
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		backend, openErr := store.OpenBackend(ctx, entry.Path, os.Getenv("LEANKG_DB_ENGINE"), os.Getenv("LEANKG_PG_URL"), "", store.RO)
+		backend, openErr := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: entry.Path, Engine: os.Getenv("LEANKG_DB_ENGINE"), PGURL: os.Getenv("LEANKG_PG_URL"), DBPath: "", Mode: store.RO})
 		if openErr == nil {
 			defer backend.Close()
 			if n, err := backend.ElementCount(); err == nil {

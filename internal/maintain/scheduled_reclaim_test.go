@@ -21,14 +21,14 @@ import (
 // (the leankg store held 745,472 B against a 1,048,576 B floor), so the
 // hourly pass reclaimed zero bytes everywhere while the machinery looked
 // healthy.
-func smallFreelistFixture(t *testing.T) *store.Store {
+func smallFreelistFixture(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	for i := range 200 {

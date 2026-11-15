@@ -26,14 +26,14 @@ func gitRepo(t *testing.T) string {
 
 // openStore opens a migrated store in a scratch directory (NOT inside the
 // project: a store under the project root would be walked by the index).
-func openStore(t *testing.T) *store.Store {
+func openStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -175,7 +175,7 @@ func TestReconcileHeadLeavesFilesystemStoreAlone(t *testing.T) {
 
 	// Point the store at the git repo WITHOUT re-indexing: the store's own
 	// records stay filesystem-scanned (SHA-256 hashes).
-	if err := st.KVSet(store.IndexKVNamespace, store.RootKVKey, other); err != nil {
+	if err := st.KVSet(context.Background(), store.IndexKVNamespace, store.RootKVKey, other); err != nil {
 		t.Fatal(err)
 	}
 

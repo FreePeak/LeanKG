@@ -30,7 +30,7 @@ func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var els []store.Element
@@ -59,11 +59,11 @@ func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 // engineOver opens a serving-style engine over a seeded project dir.
 func engineOver(t *testing.T, dir string) *core.Engine {
 	t.Helper()
-	st, err := store.OpenBackend(context.Background(), dir, "sqlite", "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: "sqlite", PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	eng := core.New(st, core.Options{ProjectDir: dir})

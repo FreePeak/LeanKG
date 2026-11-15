@@ -67,11 +67,11 @@ func writeCorpus(b *testing.B, dir string, n int) {
 // database so each iteration pays the full cold index.
 func freshStore(b *testing.B, dir string) store.Backend {
 	b.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		b.Fatalf("open store: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		st.Close()
 		b.Fatalf("migrate: %v", err)
 	}

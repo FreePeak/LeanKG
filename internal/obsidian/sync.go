@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path"
@@ -142,13 +143,13 @@ func addRelationship(rels *[]store.Relationship, seen map[string]bool, source, t
 // every generated note (the template writes leankg_annotation: ""), which
 // records nothing; skipping loses no information and keeps the store clean.
 func (e *Engine) importAnnotation(elementID, annotation string) (bool, *Conflict, error) {
-	existing, found, err := e.st.KVGet(AnnotationNamespace, elementID)
+	existing, found, err := e.st.KVGet(context.TODO(), AnnotationNamespace, elementID)
 	if err != nil {
 		return false, nil, fmt.Errorf("obsidian: read annotation for %s: %w", elementID, err)
 	}
 	switch {
 	case !found:
-		if err := e.st.KVSet(AnnotationNamespace, elementID, annotation); err != nil {
+		if err := e.st.KVSet(context.TODO(), AnnotationNamespace, elementID, annotation); err != nil {
 			return false, nil, fmt.Errorf("obsidian: import annotation for %s: %w", elementID, err)
 		}
 		return true, nil, nil

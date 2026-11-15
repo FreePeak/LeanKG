@@ -386,12 +386,12 @@ func TestRunDeepSqlite(t *testing.T) {
 	// dangling edge must PASS" assertion fails on a perfectly healthy store.
 	// Same isolation the portfolio tests in internal/core already use.
 	t.Setenv(portfolioreg.DBPathEnv, filepath.Join(dir, "portfolio.db"))
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// Seed via the public API: two elements and one dangling edge (the
@@ -470,7 +470,7 @@ func TestRunDeepPGAbsenceDegradesGracefully(t *testing.T) {
 }
 
 func TestPGSchemaForDirMatchesStoreDerivation(t *testing.T) {
-	// The doctor's schema derivation must byte-match store.OpenPG's.
+	// The doctor's schema derivation must byte-match store.OpenBackend's.
 	// store.pgSchemaForDir is unexported; verify against its documented
 	// construction: leankg_ + hex(sha256(evalSymlinks(abs)))[:16].
 	dir := t.TempDir()
@@ -522,12 +522,12 @@ func TestFileCoverageCheck(t *testing.T) {
 // bookkeeping diverges (the #332 shape) and passes on a healthy one.
 func TestFileCoverageRealSqlite(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertElements([]store.Element{{QualifiedName: "a.A", ElementType: "func", Name: "A", FilePath: "a.go", Language: "go"}}); err != nil {

@@ -29,12 +29,12 @@ func TestAutoConfigRefusesCwdOutsideServedProject(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	st, err := store.OpenBackend(context.Background(), served, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: served, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
@@ -70,12 +70,12 @@ func TestAutoConfigNoCWDKeepsServingDefault(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(served, ".leankg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.OpenBackend(context.Background(), served, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: served, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
@@ -112,12 +112,12 @@ func TestAutoConfigCwdInsideServedProject(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.OpenBackend(context.Background(), served, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: served, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
