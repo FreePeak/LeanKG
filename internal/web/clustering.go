@@ -1,17 +1,17 @@
 // Community detection ported from the deleted Rust src/graph/clustering.rs:
 // Louvain-inspired modularity optimization with a folder-based fallback,
-// re-expressed over store.Backend. The dashboard /api/graph/report uses it
-// as the cluster source for "surprising cross-cluster edges" (the Rust
-// engine read the persisted cluster_id column; the Go store has none).
+// re-expressed over the graph source (core.Engine). The dashboard
+// /api/graph/report uses it as the cluster source for "surprising
+// cross-cluster edges" (the Rust engine read the persisted cluster_id
+// column; the Go store has none).
 package web
 
 import (
 	"context"
+	"github.com/FreePeak/LeanKG/internal/core"
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // cluster is the Rust clustering::Cluster.
@@ -30,7 +30,7 @@ type weightedEdge struct {
 // detectCommunities ports CommunityDetector::detect_communities. Element
 // iteration is in qualified_name order (the store's natural order), so the
 // result is deterministic — the Rust HashMap iteration was not.
-func detectCommunities(snap *snapshot, rels []store.Relationship) map[string]*cluster {
+func detectCommunities(snap *snapshot, rels []core.Relationship) map[string]*cluster {
 	if snap.count() == 0 {
 		return map[string]*cluster{}
 	}
@@ -188,7 +188,7 @@ func detectCommunities(snap *snapshot, rels []store.Relationship) map[string]*cl
 
 // fallbackFolderClustering groups elements by parent directory when the
 // graph has no calls/imports edges (Rust fallback_folder_clustering).
-func fallbackFolderClustering(elements []store.Element) map[string]*cluster {
+func fallbackFolderClustering(elements []core.Element) map[string]*cluster {
 	folders := map[string][]string{}
 	var order []string
 	for _, e := range elements {
@@ -270,12 +270,12 @@ type Clustering struct {
 // returns both views of the result. The Rust engine read a persisted
 // cluster_id column; the Go store has none, so this is the single recompute
 // path shared by the dashboard, the CLI, export, and tunnel analysis.
-func ClusterAssignments(ctx context.Context, st store.Backend) (*Clustering, error) {
+func ClusterAssignments(ctx context.Context, st graphSource) (*Clustering, error) {
 	snap, err := loadSnapshot(ctx, st)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := allRelationships(ctx, st)
+	rels, err := st.GraphRelationships(ctx)
 	if err != nil {
 		return nil, err
 	}

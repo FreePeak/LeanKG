@@ -7,14 +7,13 @@ package web
 
 import (
 	"fmt"
+	"github.com/FreePeak/LeanKG/internal/core"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // stripDotSlash normalizes a possibly "./"-prefixed relative path.
@@ -30,19 +29,19 @@ func normalizePath(p string) string {
 
 // folderPage is the shared result of the Rust ChildrenResult queries.
 type folderPage struct {
-	elements   []store.Element
+	elements   []core.Element
 	totalCount int
 	hasMore    bool
 }
 
 // relsSourcedBy returns relationships whose source is in the element set
 // (the Rust "source_qualified in $qns" query).
-func relsSourcedBy(rels []store.Relationship, els []store.Element) []store.Relationship {
+func relsSourcedBy(rels []core.Relationship, els []core.Element) []core.Relationship {
 	qns := make(map[string]struct{}, len(els))
 	for _, e := range els {
 		qns[e.QualifiedName] = struct{}{}
 	}
-	out := make([]store.Relationship, 0, len(rels))
+	out := make([]core.Relationship, 0, len(rels))
 	for _, r := range rels {
 		if _, ok := qns[r.Source]; ok {
 			out = append(out, r)
@@ -66,7 +65,7 @@ func window[T any](xs []T, offset, limit int) []T {
 // folder is project-relative ("" or "." = root); allContent disables the
 // direct-child filter. The Go engine stores file paths without the "./"
 // prefix, so matching normalizes both sides.
-func elementsInFolder(snap *snapshot, rels []store.Relationship, folder string, limit, offset int, allContent bool) folderPage {
+func elementsInFolder(snap *snapshot, rels []core.Relationship, folder string, limit, offset int, allContent bool) folderPage {
 	folder = normalizePath(folder)
 	if folder == "" {
 		if allContent {
@@ -79,7 +78,7 @@ func elementsInFolder(snap *snapshot, rels []store.Relationship, folder string, 
 			return folderPage{elements: page, totalCount: total, hasMore: hasMore}
 		}
 		// Root without all_content: direct children only (top-level paths).
-		var direct []store.Element
+		var direct []core.Element
 		for _, e := range snap.elements {
 			if !strings.Contains(stripDotSlash(e.FilePath), "/") {
 				direct = append(direct, e)
@@ -93,14 +92,14 @@ func elementsInFolder(snap *snapshot, rels []store.Relationship, folder string, 
 	// Non-empty folder: Rust matched the unanchored regex ".*<folder>/.*"
 	// (plus the direct-child filter unless all_content).
 	prefix := folder + "/"
-	var matched []store.Element
+	var matched []core.Element
 	for _, e := range snap.elements {
 		if strings.Contains(stripDotSlash(e.FilePath), prefix) {
 			matched = append(matched, e)
 		}
 	}
 	totalCount := len(window(matched, offset, limit))
-	var page []store.Element
+	var page []core.Element
 	for _, e := range window(matched, offset, limit) {
 		if allContent {
 			page = append(page, e)
@@ -126,13 +125,13 @@ var nestedContentTypes = map[string]struct{}{
 // (OR). Deliberate fix over the Rust original, which carried an explicit
 // "use only the first type if multiple specified / TODO: support multiple
 // types with proper OR logic" and silently dropped the rest.
-func childrenFiltered(snap *snapshot, rels []store.Relationship, parent string, elementTypes map[string]bool, limit, offset int) folderPage {
+func childrenFiltered(snap *snapshot, rels []core.Relationship, parent string, elementTypes map[string]bool, limit, offset int) folderPage {
 	normalized := normalizePath(parent)
 	if normalized == "" {
 		// Root: structural direct children only; the Rust query pulled
 		// :limit rows then filtered, so total_count is the pre-filter page.
 		rows := window(snap.elements, offset, limit)
-		var page []store.Element
+		var page []core.Element
 		for _, e := range rows {
 			if _, nested := nestedContentTypes[e.ElementType]; nested {
 				continue
@@ -148,7 +147,7 @@ func childrenFiltered(snap *snapshot, rels []store.Relationship, parent string, 
 	// Non-empty parent: unanchored "contains <parent>/" match, the type set
 	// applied when given, then the direct-child filter.
 	prefix := normalized + "/"
-	var matched []store.Element
+	var matched []core.Element
 	for _, e := range snap.elements {
 		if len(elementTypes) > 0 && !elementTypes[e.ElementType] {
 			continue
@@ -158,7 +157,7 @@ func childrenFiltered(snap *snapshot, rels []store.Relationship, parent string, 
 		}
 	}
 	rows := window(matched, offset, limit)
-	var page []store.Element
+	var page []core.Element
 	for _, e := range rows {
 		rem, ok := strings.CutPrefix(stripDotSlash(e.FilePath), prefix)
 		if !ok || strings.Contains(rem, "/") {
@@ -194,7 +193,7 @@ func topLevelDirectories(snap *snapshot) []string {
 
 // graphElementNode builds a GraphNode from a store element (label = name,
 // element type upper-cased like the Rust ui serializers).
-func graphElementNode(e store.Element) graphNode {
+func graphElementNode(e core.Element) graphNode {
 	label := e.Name
 	if label == "" {
 		label = e.QualifiedName
@@ -247,12 +246,12 @@ func (h *apiH) graphChildren(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	snap, err := loadSnapshot(ctx, h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine)
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	rels, err := allRelationships(ctx, h.engine.Store())
+	rels, err := h.engine.GraphRelationships(ctx)
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -421,12 +420,12 @@ func (h *apiH) graphExpandService(w http.ResponseWriter, r *http.Request) {
 		allContent = true
 	}
 
-	snap, err := loadSnapshot(ctx, h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine)
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	rels, err := allRelationships(ctx, h.engine.Store())
+	rels, err := h.engine.GraphRelationships(ctx)
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -504,12 +503,12 @@ func retainOnDisk(nodes []graphNode, projectDir string) []graphNode {
 // directory of the element's file_path ("root" when there is none).
 func (h *apiH) graphClusters(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	snap, err := loadSnapshot(ctx, h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine)
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	rels, err := allRelationships(ctx, h.engine.Store())
+	rels, err := h.engine.GraphRelationships(ctx)
 	if err != nil {
 		respondErr(w, err)
 		return
@@ -631,7 +630,7 @@ func (h *apiH) serviceTopology(w http.ResponseWriter, r *http.Request) {
 				ElementType: "Service",
 			},
 		})
-		snap, serr := loadSnapshot(ctx, h.engine.Store())
+		snap, serr := loadSnapshot(ctx, h.engine)
 		if serr != nil {
 			respondErr(w, serr)
 			return

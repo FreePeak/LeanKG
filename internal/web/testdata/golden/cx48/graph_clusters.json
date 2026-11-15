@@ -1,0 +1,2 @@
+HTTP 200
+{"success":true,"data":{"nodes":[{"id":"cluster:src","label":"src (4)","properties":{"name":"src","filePath":"src","elementType":"Cluster[4 files]"}}],"relationships":[],"filtered":{"tests_filtered":0,"message":"Cluster overview: 1 clusters, 0 inter-cluster edges"},"hasMore":false},"error":null}

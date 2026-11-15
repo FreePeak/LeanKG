@@ -14,6 +14,7 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/annot"
 	"github.com/FreePeak/LeanKG/internal/cliexit"
+	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/docgen"
 	"github.com/FreePeak/LeanKG/internal/export"
 	"github.com/FreePeak/LeanKG/internal/pack"
@@ -129,7 +130,7 @@ func cmdExport(ctx context.Context, args []string) error {
 	if *community != "" {
 		// The Go store persists no cluster column; the detector is the single
 		// source of community membership.
-		clustering, err := web.ClusterAssignments(ctx, st)
+		clustering, err := web.ClusterAssignments(ctx, core.New(st, core.Options{}))
 		if err != nil {
 			return verbFatal(err)
 		}

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"github.com/FreePeak/LeanKG/internal/core"
 	"strings"
 	"testing"
 
@@ -51,7 +52,7 @@ func newTunnelStore(t *testing.T) store.Backend {
 
 func TestClusterAssignments(t *testing.T) {
 	st := newTunnelStore(t)
-	cl, err := ClusterAssignments(context.Background(), st)
+	cl, err := ClusterAssignments(context.Background(), core.New(st, core.Options{}))
 	if err != nil {
 		t.Fatalf("ClusterAssignments: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestClusterAssignments(t *testing.T) {
 
 func TestTunnels(t *testing.T) {
 	st := newTunnelStore(t)
-	ts, err := Tunnels(context.Background(), st)
+	ts, err := Tunnels(context.Background(), core.New(st, core.Options{}))
 	if err != nil {
 		t.Fatalf("Tunnels: %v", err)
 	}
@@ -151,7 +152,7 @@ func TestTunnelsEmptyGraph(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ts, err := Tunnels(context.Background(), st)
+	ts, err := Tunnels(context.Background(), core.New(st, core.Options{}))
 	if err != nil {
 		t.Fatalf("Tunnels on empty store: %v", err)
 	}

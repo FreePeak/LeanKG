@@ -1,0 +1,2 @@
+HTTP 200
+{"success":true,"data":[{"qualified_name":"src/auth.rs::login","element_type":"function","name":"login","file_path":"src/auth.rs","line_start":11,"line_end":20,"language":"rust"}],"error":null}

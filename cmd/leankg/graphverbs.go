@@ -32,7 +32,7 @@ func cmdDetectClusters(ctx context.Context, args []string) error {
 	defer engine.Store().Close()
 	defer engine.Close()
 
-	clusters, err := web.ClusterAssignments(ctx, engine.Store())
+	clusters, err := web.ClusterAssignments(ctx, engine)
 	if err != nil {
 		return fatalJSON(err)
 	}

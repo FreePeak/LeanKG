@@ -21,7 +21,6 @@ import (
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // apiEnvelope is the JSON shape ui-v2 unwrapEnvelope expects. Code is the
@@ -177,7 +176,7 @@ func newGraphRelationship(sourceID, targetID, relType, confidenceLabel string) g
 	}
 }
 
-func relFromStore(r store.Relationship) graphRelationship {
+func relFromStore(r core.Relationship) graphRelationship {
 	return newGraphRelationship(r.Source, r.Target, r.RelType, confidenceLabelFor(r))
 }
 
@@ -197,7 +196,7 @@ type graphData struct {
 
 // confidenceLabelFor ports graph/provenance.rs confidence_label_for:
 // resolution_method overrides, then the confidence threshold ladder.
-func confidenceLabelFor(r store.Relationship) string {
+func confidenceLabelFor(r core.Relationship) string {
 	method, _ := r.Metadata["resolution_method"].(string)
 	switch {
 	case method == "typed":
@@ -219,25 +218,24 @@ func confidenceLabelFor(r store.Relationship) string {
 	}
 }
 
-// allRelationships loads the full relationship table. ponytail: the store
-// Backend caps RelationshipsAll at 1000 rows when limit<=0; the dashboard
-// endpoints need the whole edge set, so this passes a hard 1M cap — the
-// upgrade path is a store-side streaming iterator.
-func allRelationships(ctx context.Context, st store.Backend) ([]store.Relationship, error) {
-	return st.RelationshipsAll(ctx, 1<<20)
+// graphSource is the read the graph endpoints work from. *core.Engine serves
+// it; the web package never reaches the store directly.
+type graphSource interface {
+	GraphElements(ctx context.Context) ([]core.Element, error)
+	GraphRelationships(ctx context.Context) ([]core.Relationship, error)
 }
 
-// --- store snapshot: every endpoint works off one ordered element read ---
+// --- snapshot: every endpoint works off one ordered element read ---
 
-type elementSet map[string]store.Element
+type elementSet map[string]core.Element
 
 type snapshot struct {
-	elements []store.Element
+	elements []core.Element
 	byQN     elementSet
 }
 
-func loadSnapshot(ctx context.Context, st store.Backend) (*snapshot, error) {
-	els, err := st.Elements(ctx)
+func loadSnapshot(ctx context.Context, src graphSource) (*snapshot, error) {
+	els, err := src.GraphElements(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -265,29 +263,24 @@ func maxCacheElements() int {
 
 // --- handlers ---
 
+// indexStatus adapts core.Status to the legacy dashboard shape. The counts
+// come from core; the indexing fields are web-only and fixed, because the Go
+// serve process does not run background reindexing.
 func (h *apiH) indexStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	st := h.engine.Store()
-	els, err := st.ElementCount(ctx)
-	var elsPtr *int
-	if err == nil {
-		elsPtr = &els
-	}
-	rels, err := st.RelationshipCount(ctx)
-	var relsPtr *int
-	if err == nil {
-		relsPtr = &rels
+	st, err := h.engine.Status(r.Context())
+	if err != nil {
+		respondErr(w, err)
+		return
 	}
 	pp := h.projectDir
 	data := map[string]any{
-		// The Go serve process does not run background reindexing; the
 		"is_indexing":        false,
 		"progress_percent":   0,
 		"current_file":       "",
 		"total_files":        0,
 		"indexed_files":      0,
-		"element_count":      elsPtr,
-		"relationship_count": relsPtr,
+		"element_count":      st["elements"],
+		"relationship_count": st["relationships"],
 		"project_path":       &pp,
 	}
 	respondEnvelope(w, http.StatusOK, okEnvelope(data))
@@ -321,12 +314,12 @@ func (h *apiH) search(w http.ResponseWriter, r *http.Request) {
 	elementType := r.URL.Query().Get("element_type")
 	filePath := r.URL.Query().Get("file_path")
 
-	snap, err := loadSnapshot(ctx, h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine)
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	out := make([]store.Element, 0, len(snap.elements))
+	out := make([]core.Element, 0, len(snap.elements))
 	for _, e := range snap.elements {
 		if q != "" &&
 			!strings.Contains(strings.ToLower(e.QualifiedName), q) &&
@@ -409,7 +402,7 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 			h.projectDir)))
 		return
 	}
-	els, err := h.engine.Store().ElementCount(ctx)
+	els, err := h.engine.ElementCount(ctx)
 	var count *int
 	if err == nil {
 		count = &els
