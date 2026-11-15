@@ -14,7 +14,6 @@ var backgroundBudget = map[string]int{
 	"internal/index":     2,
 	"internal/langs":     1,
 	"internal/lsp":       4,
-	"internal/memory":    11,
 	"internal/registry":  1,
 	"internal/session":   1,
 	"internal/setup":     1,

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,14 +36,14 @@ func TestRetainSameBodyCollapsesToOneRow(t *testing.T) {
 	m := openTest(t)
 	body := "the deploy runbook lives in docs/deploy.md"
 	for i := range 3 {
-		if err := m.RetainRaw("bank", []Entry{{Content: body}}); err != nil {
+		if err := m.RetainRaw(context.Background(), "bank", []Entry{{Content: body}}); err != nil {
 			t.Fatalf("retain %d: %v", i, err)
 		}
 	}
 	if lines := bankLines(t, m, "bank"); len(lines) != 1 {
 		t.Fatalf("bank holds %d rows after 3 retains of one body, want 1", len(lines))
 	}
-	got, err := m.Recall("bank", "deploy runbook", 10)
+	got, err := m.Recall(context.Background(), "bank", "deploy runbook", 10)
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}
@@ -61,12 +62,12 @@ func TestRetainDistinctBodiesAllSurvive(t *testing.T) {
 		"the release workflow publishes four assets",
 	}
 	for _, b := range bodies {
-		if err := m.RetainRaw("bank", []Entry{{Content: b}}); err != nil {
+		if err := m.RetainRaw(context.Background(), "bank", []Entry{{Content: b}}); err != nil {
 			t.Fatalf("retain %q: %v", b, err)
 		}
 	}
 	// Write the first body again: only that row may be replaced.
-	if err := m.RetainRaw("bank", []Entry{{Content: bodies[0]}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "bank", []Entry{{Content: bodies[0]}}); err != nil {
 		t.Fatalf("retain repeat: %v", err)
 	}
 	if lines := bankLines(t, m, "bank"); len(lines) != len(bodies) {
@@ -90,7 +91,7 @@ func TestRetainExplicitDocumentIDIsNotContentDeduped(t *testing.T) {
 		{Content: "chunk one of the runbook", Metadata: map[string]any{"document_id": "doc-1"}},
 		{Content: "chunk two of the runbook", Metadata: map[string]any{"document_id": "doc-1"}},
 	}
-	if err := m.RetainRaw("bank", chunks); err != nil {
+	if err := m.RetainRaw(context.Background(), "bank", chunks); err != nil {
 		t.Fatalf("retain chunks: %v", err)
 	}
 	if lines := bankLines(t, m, "bank"); len(lines) != 2 {
@@ -104,11 +105,11 @@ func TestRetainExplicitDocumentIDIsNotContentDeduped(t *testing.T) {
 func TestExplicitReplaceStillWins(t *testing.T) {
 	m := openTest(t)
 	old := Entry{Content: "old body of the document", Metadata: map[string]any{"document_id": "doc-1"}}
-	if err := m.RetainRaw("bank", []Entry{old}); err != nil {
+	if err := m.RetainRaw(context.Background(), "bank", []Entry{old}); err != nil {
 		t.Fatalf("retain old: %v", err)
 	}
 	fresh := Entry{Content: "new body of the document", Metadata: map[string]any{"document_id": "doc-1"}}
-	if _, err := m.RetainReplacingCtx(t.Context(), "bank", []Entry{fresh}, []string{"doc-1"}); err != nil {
+	if _, err := m.RetainReplacing(t.Context(), "bank", []Entry{fresh}, []string{"doc-1"}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	lines := bankLines(t, m, "bank")
@@ -125,10 +126,10 @@ func TestExplicitReplaceStillWins(t *testing.T) {
 // ever lost by a rewrite.
 func TestBankWriteIsCrashSafe(t *testing.T) {
 	m := openTest(t)
-	if err := m.RetainRaw("bank", []Entry{{Content: "keep me"}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "bank", []Entry{{Content: "keep me"}}); err != nil {
 		t.Fatalf("retain: %v", err)
 	}
-	if _, err := m.DeleteDocumentCtx(t.Context(), "bank", "doc-nope"); err != nil {
+	if _, err := m.DeleteDocument(t.Context(), "bank", "doc-nope"); err != nil {
 		t.Fatalf("delete unknown document: %v", err)
 	}
 	if lines := bankLines(t, m, "bank"); len(lines) != 1 {

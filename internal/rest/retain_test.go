@@ -2,6 +2,7 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -138,7 +139,7 @@ func TestRESTRetainActuallyWrote(t *testing.T) {
 	// And the entry is recallable, which is the only reason a retain is worth
 	// acknowledging. Recall needs a query by design — zero-match rows never
 	// surface — so query the words the entry was written with.
-	entries, err := mem.Recall("b1", "stand", 10)
+	entries, err := mem.Recall(context.Background(), "b1", "stand", 10)
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}

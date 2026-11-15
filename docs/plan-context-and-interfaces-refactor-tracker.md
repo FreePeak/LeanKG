@@ -64,7 +64,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-31 | `refactor(rest,rpc,web,dashboard,auth): use the request context` | M | - | todo | - | - |
 | CX-32 | `refactor(index,lsp,langs,tstree): cancellable extraction and LSP` | M | - | todo | - | - |
 | CX-33 | `refactor(embed): ctx-aware HTTP and run loop` | M | - | todo | - | - |
-| CX-34 | `refactor(memory): one ctx-first API; delete the ctx-less wrappers` | M | - | todo | - | - |
+| CX-34 | `refactor(memory): one ctx-first API; delete the ctx-less wrappers` | M | - | done | local branch `refactor/cx-34-memory-ctx` (not pushed) | 10 XxxCtx renamed to Xxx, 10 ctx-less wrappers deleted; every write checks ctx before touching the file or index, RecallFiltered and firstTurn check ctx; memory context.Background() 11 -> 0 (entry leaves archtest map), sql-no-ctx 32 -> 28. Deviation: the 20 s dense-arm bound stays, derived from the caller ctx (plan said the deadline belongs to the caller; removing it now would leave the dense arm unbounded until CX-33). Live: REST responses identical base vs new (timestamps and ids normalised); aborted 2500-row and 15000-row retains: base wrote every batch in full, new wrote 14 of 15 in full and wrote nothing for the 0.04 s abort; file and index agree everywhere; raw secret rows in memory_fts 0 on both. Evidence: scratchpad/evidence/CX-34.txt |
 | CX-35 | `refactor(doctor,maintain): ctx-first probes, checks and passes` | M | - | todo | - | - |
 | CX-36 | `refactor(sessionlink,telemetry): ctx-first adapters and ledger internals` | M | - | todo | - | - |
 

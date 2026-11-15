@@ -69,14 +69,14 @@ func TestRecallEmitsMemoryEvent(t *testing.T) {
 	rec := useRecorder(t, telemetry.Metadata)
 	m := openTest(t)
 	now := time.Now().Unix()
-	if err := m.RetainRaw("b1", []Entry{
+	if err := m.RetainRaw(context.Background(), "b1", []Entry{
 		{ID: "a", Content: "postgres stores the vector index", Timestamp: now - 100},
 		{ID: "b", Content: "vector index rebuilt nightly", Timestamp: now - 7200},
 		{ID: "c", Content: "unrelated cake recipe", Timestamp: now},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := m.RecallFilteredCtx(identityCtx(), []string{"b1"}, "vector index", 5, nil)
+	rows, err := m.RecallFiltered(identityCtx(), []string{"b1"}, "vector index", 5, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRecallEmitsMemoryEvent(t *testing.T) {
 
 func TestRecallScoresAreRealAndMonotonic(t *testing.T) {
 	m := openTest(t)
-	if err := m.RetainRaw("b", []Entry{
+	if err := m.RetainRaw(context.Background(), "b", []Entry{
 		{ID: "1", Content: "alpha beta"},
 		{ID: "2", Content: "alpha alpha alpha beta"},
 		{ID: "3", Content: "alpha"},
@@ -124,7 +124,7 @@ func TestRecallScoresAreRealAndMonotonic(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := m.RecallFilteredCtx(context.Background(), []string{"b"}, "alpha beta", 10, nil)
+	rows, err := m.RecallFiltered(context.Background(), []string{"b"}, "alpha beta", 10, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,14 +149,14 @@ func TestRecallScoresAreRealAndMonotonic(t *testing.T) {
 
 func TestDenseFusedScoresMonotonic(t *testing.T) {
 	m := openTest(t)
-	if err := m.RetainRaw("b", []Entry{
+	if err := m.RetainRaw(context.Background(), "b", []Entry{
 		{ID: "pg", Content: "We store embeddings in pgvector on Postgres."},
 		{ID: "rel", Content: "CI will publish binaries when the tag lands."},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	m.SetVectorizer(&conceptVectorizer{floor: 0.5})
-	rows, err := m.RecallFilteredCtx(context.Background(), []string{"b"}, "which database holds the vectors", 3, nil)
+	rows, err := m.RecallFiltered(context.Background(), []string{"b"}, "which database holds the vectors", 3, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,13 +171,13 @@ func TestDenseFusedScoresMonotonic(t *testing.T) {
 func TestDenseHitsCountsDenseRankedRows(t *testing.T) {
 	rec := useRecorder(t, telemetry.Metadata)
 	m := openTest(t)
-	if err := m.RetainRaw("b", []Entry{
+	if err := m.RetainRaw(context.Background(), "b", []Entry{
 		{ID: "pg", Content: "We store embeddings in pgvector on Postgres."},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	m.SetVectorizer(&conceptVectorizer{floor: 0.5})
-	if _, err := m.RecallFilteredCtx(context.Background(), []string{"b"}, "which database holds the vectors", 3, nil); err != nil {
+	if _, err := m.RecallFiltered(context.Background(), []string{"b"}, "which database holds the vectors", 3, nil); err != nil {
 		t.Fatal(err)
 	}
 	evs := verbEvents(rec.memEvents(), "recall")
@@ -190,10 +190,10 @@ func TestRetainEventsCountWrittenAndSkipped(t *testing.T) {
 	rec := useRecorder(t, telemetry.Metadata)
 	m := openTest(t)
 	turns := []Entry{{Content: "first turn"}, {Content: "second turn"}}
-	if _, err := m.RetainCtx(identityCtx(), "b", turns, 3); err != nil {
+	if _, err := m.Retain(identityCtx(), "b", turns, 3); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.RetainCtx(identityCtx(), "b", []Entry{{Content: "again"}, {Content: "again2"}}, 3); err != nil {
+	if _, err := m.Retain(identityCtx(), "b", []Entry{{Content: "again"}, {Content: "again2"}}, 3); err != nil {
 		t.Fatal(err)
 	}
 	evs := verbEvents(rec.memEvents(), "retain")
@@ -217,10 +217,10 @@ func TestRetainReplacingReturnsReplacedCount(t *testing.T) {
 	doc := func(content string) Entry {
 		return Entry{Content: content, Metadata: map[string]any{"document_id": "doc1"}}
 	}
-	if err := m.RetainRaw("b", []Entry{doc("old one"), doc("old two"), {Content: "keep me"}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "b", []Entry{doc("old one"), doc("old two"), {Content: "keep me"}}); err != nil {
 		t.Fatal(err)
 	}
-	replaced, err := m.RetainReplacingCtx(identityCtx(), "b", []Entry{doc("new")}, []string{"doc1"})
+	replaced, err := m.RetainReplacing(identityCtx(), "b", []Entry{doc("new")}, []string{"doc1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,10 +243,10 @@ func TestRetainReplacingReturnsReplacedCount(t *testing.T) {
 func TestDeleteDocumentEvent(t *testing.T) {
 	rec := useRecorder(t, telemetry.Metadata)
 	m := openTest(t)
-	if err := m.RetainRaw("b", []Entry{{Content: "x", Metadata: map[string]any{"document_id": "d"}}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "b", []Entry{{Content: "x", Metadata: map[string]any{"document_id": "d"}}}); err != nil {
 		t.Fatal(err)
 	}
-	n, err := m.DeleteDocumentCtx(identityCtx(), "b", "d")
+	n, err := m.DeleteDocument(identityCtx(), "b", "d")
 	if err != nil || n != 1 {
 		t.Fatalf("delete = %d, %v", n, err)
 	}
@@ -259,14 +259,14 @@ func TestDeleteDocumentEvent(t *testing.T) {
 func TestInjectEventRowsAndTokens(t *testing.T) {
 	rec := useRecorder(t, telemetry.Metadata)
 	m := openTest(t)
-	if err := m.RetainRaw("b", []Entry{
+	if err := m.RetainRaw(context.Background(), "b", []Entry{
 		{ID: "a", Content: "vector index lives in postgres"},
 		{ID: "b", Content: "vector index rebuilt nightly"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ := ParseScope("")
-	text, entries, err := m.FirstTurnMemoriesCtx(identityCtx(), scope, "", "b", "vector index")
+	text, entries, err := m.FirstTurnMemories(identityCtx(), scope, "", "b", "vector index")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestInjectEventRowsAndTokens(t *testing.T) {
 
 func TestOffRecordsNothingAndResultsMatch(t *testing.T) {
 	seed := func(m *Memory) {
-		if err := m.RetainRaw("b", []Entry{
+		if err := m.RetainRaw(context.Background(), "b", []Entry{
 			{ID: "1", Content: "alpha beta gamma"},
 			{ID: "2", Content: "alpha delta"},
 		}); err != nil {
@@ -301,11 +301,11 @@ func TestOffRecordsNothingAndResultsMatch(t *testing.T) {
 		}
 	}
 	run := func(m *Memory) []string {
-		rows, err := m.RecallFilteredCtx(context.Background(), []string{"b"}, "alpha beta", 5, nil)
+		rows, err := m.RecallFiltered(context.Background(), []string{"b"}, "alpha beta", 5, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := m.DeleteDocumentCtx(context.Background(), "b", "nope"); err != nil {
+		if _, err := m.DeleteDocument(context.Background(), "b", "nope"); err != nil {
 			t.Fatal(err)
 		}
 		ids := make([]string, 0, len(rows))

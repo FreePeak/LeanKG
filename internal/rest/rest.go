@@ -208,14 +208,14 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			}
 			var res memory.RetainResult
 			if body.ThroughUserTurn == nil {
-				if err := mem.RetainRawCtx(r.Context(), bank, *body.Entries); err != nil {
+				if err := mem.RetainRaw(r.Context(), bank, *body.Entries); err != nil {
 					writeErr(w, err)
 					return
 				}
 				res = memory.RetainResult{Bank: bank, Written: len(*body.Entries)}
 			} else {
 				var err error
-				if res, err = mem.RetainCtx(r.Context(), bank, *body.Entries, *body.ThroughUserTurn); err != nil {
+				if res, err = mem.Retain(r.Context(), bank, *body.Entries, *body.ThroughUserTurn); err != nil {
 					writeErr(w, err)
 					return
 				}
@@ -234,7 +234,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			if !decode(w, r, &body) {
 				return
 			}
-			entries, err := mem.RecallCtx(r.Context(), bank, body.Query, body.Limit)
+			entries, err := mem.Recall(r.Context(), bank, body.Query, body.Limit)
 			if err != nil {
 				writeErr(w, err)
 				return
@@ -273,7 +273,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				writeErr(w, err)
 				return
 			}
-			res, err := mem.SessionRetainCtx(r.Context(), scope, body.CWD, body.Bank, body.SessionID, body.Turns, body.RetainedThroughUserTurn, body.Tags)
+			res, err := mem.SessionRetain(r.Context(), scope, body.CWD, body.Bank, body.SessionID, body.Turns, body.RetainedThroughUserTurn, body.Tags)
 			if err != nil {
 				writeErr(w, err)
 				return
@@ -296,7 +296,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				writeErr(w, err)
 				return
 			}
-			banks, entries, err := mem.SessionRecallCtx(r.Context(), scope, body.CWD, body.Bank, body.Query, body.Limit)
+			banks, entries, err := mem.SessionRecall(r.Context(), scope, body.CWD, body.Bank, body.Query, body.Limit)
 			if err != nil {
 				writeErr(w, err)
 				return

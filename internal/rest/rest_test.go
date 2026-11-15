@@ -383,7 +383,7 @@ func TestInjectWithoutBankUsesTheServerDefault(t *testing.T) {
 	defer srv.Close()
 
 	// A row in the bank the scope selects by default.
-	if _, err := mem.SessionRetainCtx(context.Background(), memory.ScopePerProject, "", "",
+	if _, err := mem.SessionRetain(context.Background(), memory.ScopePerProject, "", "",
 		"hook-1", []string{"a row an external hook must see"}, 1, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestInjectWithoutBankUsesTheServerDefault(t *testing.T) {
 // response carried a count only.
 func TestInjectReportsInjectedIDs(t *testing.T) {
 	e, mem := newEngine(t)
-	if _, err := mem.SessionRetainCtx(context.Background(), memory.ScopePerProject, "", "",
+	if _, err := mem.SessionRetain(context.Background(), memory.ScopePerProject, "", "",
 		"ids-1", []string{"first injected row", "second injected row"}, 1, nil); err != nil {
 		t.Fatal(err)
 	}

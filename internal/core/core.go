@@ -1297,7 +1297,7 @@ func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest) (map[string
 		// comma-separated string ("a,b"), which is the shape an agent most
 		// often sends when the schema names one field.
 		tags := argStrs(req.Args, "tags")
-		res, serr := e.mem.SessionRetainCtx(ctx, scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"), tags)
+		res, serr := e.mem.SessionRetain(ctx, scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"), tags)
 		if serr != nil {
 			return nil, serr
 		}
@@ -1334,7 +1334,7 @@ func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest) (map[string
 			cwd = e.projectDir
 		}
 		bankName := e.mem.WriteBank(scope, cwd, get("bank"))
-		n, derr := e.mem.DeleteDocumentCtx(ctx, bankName, docID)
+		n, derr := e.mem.DeleteDocument(ctx, bankName, docID)
 		if derr != nil {
 			return nil, derr
 		}
@@ -2140,13 +2140,13 @@ func (e *Engine) SessionMemoryReadCtx(ctx context.Context, command, query string
 	}
 	switch command {
 	case "session_recall":
-		banks, entries, err := e.mem.SessionRecallCtx(ctx, scope, cwd, argStr(args, "bank"), query, limit)
+		banks, entries, err := e.mem.SessionRecall(ctx, scope, cwd, argStr(args, "bank"), query, limit)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"command": "session_recall", "banks": banks, "count": len(entries), "memories": memory.RankEntries(entries)}, nil
 	case "memories":
-		text, entries, err := e.mem.FirstTurnMemoriesCtx(ctx, scope, cwd, argStr(args, "bank"), query)
+		text, entries, err := e.mem.FirstTurnMemories(ctx, scope, cwd, argStr(args, "bank"), query)
 		if err != nil {
 			return nil, err
 		}

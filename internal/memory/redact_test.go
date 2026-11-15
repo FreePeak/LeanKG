@@ -133,7 +133,7 @@ func TestSessionRetainRedactsSecrets(t *testing.T) {
 		"user: deploy with api_key=" + apiKey + " please",
 		"assistant: the old Authorization: Bearer " + jwt + " is rotated now",
 	}
-	res, err := m.SessionRetainCtx(context.Background(), ScopeGlobal, t.TempDir(), "redactprobe", "sess-1", turns, 2, nil)
+	res, err := m.SessionRetain(context.Background(), ScopeGlobal, t.TempDir(), "redactprobe", "sess-1", turns, 2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestSessionRetainIndexesRedactedText(t *testing.T) {
 		tagSecret = "hunter2plain"
 	)
 	turns := []string{"user: deploy with api_key=" + apiKey + " please"}
-	res, err := m.SessionRetainCtx(context.Background(), ScopeGlobal, t.TempDir(), "cx01probe", "sess-cx01", turns, 1, []string{"password=" + tagSecret})
+	res, err := m.SessionRetain(context.Background(), ScopeGlobal, t.TempDir(), "cx01probe", "sess-cx01", turns, 1, []string{"password=" + tagSecret})
 	if err != nil {
 		t.Fatal(err)
 	}
