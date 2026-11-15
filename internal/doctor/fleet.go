@@ -51,7 +51,7 @@ type FleetStatus struct {
 // each one's state. Tests inject a stub (the same role Probes plays for the
 // per-project checks); RunDeep wires fleetProbe.
 type FleetSource interface {
-	Fleet() ([]FleetStatus, error)
+	Fleet(ctx context.Context) ([]FleetStatus, error)
 }
 
 // fleetProbe is the production FleetSource: one read-only store handle per
@@ -60,13 +60,12 @@ type FleetSource interface {
 // still be behind on migrations, which is precisely what this check exists to
 // catch — and every handle is closed before the next opens.
 type fleetProbe struct {
-	ctx  context.Context
 	opts portfolioreg.Options
 }
 
 // Fleet reports every registered project's fleet standing.
-func (f fleetProbe) Fleet() ([]FleetStatus, error) {
-	reg, err := portfolioreg.Open(f.ctx, f.opts, store.RO)
+func (f fleetProbe) Fleet(ctx context.Context) ([]FleetStatus, error) {
+	reg, err := portfolioreg.Open(ctx, f.opts, store.RO)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +76,9 @@ func (f fleetProbe) Fleet() ([]FleetStatus, error) {
 	}
 	out := make([]FleetStatus, 0, len(projects))
 	for _, p := range projects {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
 		st := FleetStatus{Project: p.Name, Dir: p.Dir, Elements: p.ElementCount, Files: p.FileCount}
 		if p.LastIndexed != nil {
 			st.LastIndexed = *p.LastIndexed
@@ -93,7 +95,7 @@ func (f fleetProbe) Fleet() ([]FleetStatus, error) {
 			out = append(out, st)
 			continue
 		}
-		child, err := f.opts.OpenChild(f.ctx, p.Dir)
+		child, err := f.opts.OpenChild(ctx, p.Dir)
 		if err != nil {
 			st.Unreadable = err.Error()
 			out = append(out, st)
@@ -115,12 +117,12 @@ func (f fleetProbe) Fleet() ([]FleetStatus, error) {
 
 // checkFleet folds the fleet into one finding: per-project migration drift
 // against the embedded migration list, freshness, and the fleet totals.
-func checkFleet(_ Probes, env Env) Finding {
+func checkFleet(ctx context.Context, _ Probes, env Env) Finding {
 	const check = "fleet"
 	if env.Fleet == nil {
 		return Finding{check, StatusPass, "fleet check not wired (single-project deployment)", ""}
 	}
-	projects, err := env.Fleet.Fleet()
+	projects, err := env.Fleet.Fleet(ctx)
 	if err != nil {
 		if errors.Is(err, portfolioreg.ErrNoRegistry) {
 			// A deployment with no fleet registry is not sick: the

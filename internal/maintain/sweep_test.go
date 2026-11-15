@@ -68,7 +68,7 @@ func hasCollection(t *testing.T, st *store.Store, modelID string) bool {
 
 func TestPassSweepsStaleCollections(t *testing.T) {
 	st := collectionFixture(t)
-	res, err := Pass(st, Options{KeepModelIDs: []string{"live"}})
+	res, err := Pass(context.Background(), st, Options{KeepModelIDs: []string{"live"}})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestPassKeepsACollectionWhenTheKeepOneIsAbsent(t *testing.T) {
 		t.Fatalf("upsert vectors: %v", err)
 	}
 
-	res, err := Pass(st, Options{KeepModelIDs: []string{"embeddinggemma-2"}})
+	res, err := Pass(context.Background(), st, Options{KeepModelIDs: []string{"embeddinggemma-2"}})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestPassKeepsACollectionWhenTheKeepOneIsAbsent(t *testing.T) {
 
 func TestPassWithoutAKeepListLeavesEveryCollection(t *testing.T) {
 	st := collectionFixture(t)
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}

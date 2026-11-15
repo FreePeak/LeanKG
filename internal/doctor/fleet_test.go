@@ -23,7 +23,7 @@ type stubFleet struct {
 	err  error
 }
 
-func (s stubFleet) Fleet() ([]FleetStatus, error) { return s.rows, s.err }
+func (s stubFleet) Fleet(context.Context) ([]FleetStatus, error) { return s.rows, s.err }
 
 func fleetEnv(src FleetSource) Env { return Env{Fleet: src} }
 
@@ -37,7 +37,7 @@ func appliedAll() []int {
 }
 
 func TestFleetCheckPassesWhenCurrent(t *testing.T) {
-	f := checkFleet(nil, fleetEnv(stubFleet{rows: []FleetStatus{
+	f := checkFleet(context.Background(), nil, fleetEnv(stubFleet{rows: []FleetStatus{
 		{Project: "api", Applied: appliedAll(), Elements: 100, Files: 10, Fresh: "fresh"},
 		{Project: "web", Applied: appliedAll(), Elements: 50, Files: 5, Fresh: "fresh"},
 	}}))
@@ -57,7 +57,7 @@ func TestFleetCheckDetectsMigrationDrift(t *testing.T) {
 	behind := appliedAll()
 	// A project one step behind: drop the last embedded version.
 	behind = behind[:len(behind)-1]
-	f := checkFleet(nil, fleetEnv(stubFleet{rows: []FleetStatus{
+	f := checkFleet(context.Background(), nil, fleetEnv(stubFleet{rows: []FleetStatus{
 		{Project: "api", Applied: appliedAll(), Elements: 1, Files: 1, Fresh: "fresh"},
 		{Project: "legacy", Applied: behind, Elements: 1, Files: 1, Fresh: "fresh"},
 	}}))
@@ -78,7 +78,7 @@ func TestFleetCheckDetectsMigrationDrift(t *testing.T) {
 }
 
 func TestFleetCheckFlagsUnreadableProjectsAsWarn(t *testing.T) {
-	f := checkFleet(nil, fleetEnv(stubFleet{rows: []FleetStatus{
+	f := checkFleet(context.Background(), nil, fleetEnv(stubFleet{rows: []FleetStatus{
 		{Project: "api", Applied: appliedAll(), Elements: 1, Files: 1, Fresh: "fresh"},
 		{Project: "ghost", Unreadable: "read-only open of missing store", Elements: 0, Files: 0},
 	}}))
@@ -97,7 +97,7 @@ func TestFleetCheckFlagsUnreadableProjectsAsWarn(t *testing.T) {
 }
 
 func TestFleetCheckFlagsStaleFreshness(t *testing.T) {
-	f := checkFleet(nil, fleetEnv(stubFleet{rows: []FleetStatus{
+	f := checkFleet(context.Background(), nil, fleetEnv(stubFleet{rows: []FleetStatus{
 		{Project: "api", Applied: appliedAll(), Elements: 1, Files: 1, Fresh: "possibly_stale"},
 	}}))
 	if f.Status != StatusWarn || !strings.Contains(f.Detail, "possibly_stale") {
@@ -107,7 +107,7 @@ func TestFleetCheckFlagsStaleFreshness(t *testing.T) {
 
 func TestFleetCheckFlagsSchemaAhead(t *testing.T) {
 	ahead := append(appliedAll(), 99)
-	f := checkFleet(nil, fleetEnv(stubFleet{rows: []FleetStatus{
+	f := checkFleet(context.Background(), nil, fleetEnv(stubFleet{rows: []FleetStatus{
 		{Project: "future", Applied: ahead, Elements: 1, Files: 1, Fresh: "fresh"},
 	}}))
 	if f.Status != StatusWarn || !strings.Contains(f.Detail, "ahead by 1") {
@@ -118,16 +118,16 @@ func TestFleetCheckFlagsSchemaAhead(t *testing.T) {
 func TestFleetCheckWithoutRegistry(t *testing.T) {
 	// No registry at all: PASS, phrased as a single-project deployment — a
 	// fleet feature must not make every single-repo doctor run report WARN.
-	f := checkFleet(nil, fleetEnv(stubFleet{err: fmt.Errorf("%w: /missing.db", portfolioreg.ErrNoRegistry)}))
+	f := checkFleet(context.Background(), nil, fleetEnv(stubFleet{err: fmt.Errorf("%w: /missing.db", portfolioreg.ErrNoRegistry)}))
 	if f.Status != StatusPass || !strings.Contains(f.Detail, "no portfolio registry") {
 		t.Fatalf("fleet = %+v; want PASS for a missing registry", f)
 	}
 	// Not wired (Env.Fleet nil) is the same answer for a different reason.
-	if f := checkFleet(nil, Env{}); f.Status != StatusPass {
+	if f := checkFleet(context.Background(), nil, Env{}); f.Status != StatusPass {
 		t.Fatalf("fleet = %+v; want PASS when no source is wired", f)
 	}
 	// Empty registry: PASS, zero projects.
-	f = checkFleet(nil, fleetEnv(stubFleet{rows: nil}))
+	f = checkFleet(context.Background(), nil, fleetEnv(stubFleet{rows: nil}))
 	if f.Status != StatusPass || !strings.Contains(f.Detail, "0 projects") {
 		t.Fatalf("fleet = %+v; want PASS for an empty registry", f)
 	}
@@ -135,7 +135,7 @@ func TestFleetCheckWithoutRegistry(t *testing.T) {
 
 func TestFleetCheckRegistryFailureFails(t *testing.T) {
 	// A registry that EXISTS but cannot be read is a deployment fault: FAIL.
-	f := checkFleet(nil, fleetEnv(stubFleet{err: errors.New("connection refused")}))
+	f := checkFleet(context.Background(), nil, fleetEnv(stubFleet{err: errors.New("connection refused")}))
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "cannot read portfolio registry") {
 		t.Fatalf("fleet = %+v; want FAIL naming the registry read failure", f)
 	}
@@ -148,7 +148,7 @@ func TestFleetCheckRunsInDefaultRegistry(t *testing.T) {
 		if c.Name() == "fleet" {
 			// A defaults-listed check must survive a nil source: RunDeep
 			// always wires one, but RunAll(nil env) must never panic.
-			if f := c.Run(&stubProbes{}, Env{}); f.Status != StatusPass {
+			if f := c.Run(context.Background(), &stubProbes{}, Env{}); f.Status != StatusPass {
 				t.Fatalf("fleet with nil source = %+v; want PASS", f)
 			}
 		}
@@ -171,7 +171,7 @@ func TestFleetProbeClassifiesT0ParentAsManifest(t *testing.T) {
 	if _, err := portfolioreg.Register(context.Background(), opts, parent, "games", 0, 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := fleetProbe{ctx: context.Background(), opts: opts}.Fleet()
+	rows, err := fleetProbe{opts: opts}.Fleet(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,13 +182,13 @@ func TestFleetProbeClassifiesT0ParentAsManifest(t *testing.T) {
 		t.Fatalf("T0 parent = %+v, want Manifest=true, no Unreadable", rows[0])
 	}
 	// And the check itself stays green on a manifest-only fleet.
-	f := checkFleet(nil, fleetEnv(stubFleet{rows: rows}))
+	f := checkFleet(context.Background(), nil, fleetEnv(stubFleet{rows: rows}))
 	if f.Status != StatusPass || !strings.Contains(f.Detail, "MANIFEST") {
 		t.Fatalf("fleet = %+v; want PASS rendering the T0 parent as MANIFEST", f)
 	}
 	// A genuinely unreadable store (registered AFTER indexing, then broken)
 	// must still WARN — the manifest exemption is the never-indexed shape.
-	f = checkFleet(nil, fleetEnv(stubFleet{rows: []FleetStatus{
+	f = checkFleet(context.Background(), nil, fleetEnv(stubFleet{rows: []FleetStatus{
 		{Project: "games", Manifest: true},
 		{Project: "api", Unreadable: "no such file or directory", LastIndexed: "2026-09-14T00:00:00Z"},
 	}}))

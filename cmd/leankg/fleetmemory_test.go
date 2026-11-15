@@ -115,10 +115,10 @@ func TestFleetTargetsCompactEveryProjectMemory(t *testing.T) {
 	// One pass over the fleet.
 	opts := maintain.Options{Logf: t.Logf}
 	for _, tg := range targets {
-		if _, err := maintain.Pass(tg.Store, opts); err != nil {
+		if _, err := maintain.Pass(context.Background(), tg.Store, opts); err != nil {
 			t.Fatalf("pass %s: %v", tg.Label, err)
 		}
-		maintain.CompactMemory(tg.Mem, opts)
+		maintain.CompactMemory(context.Background(), tg.Mem, opts)
 		if tg.Close != nil {
 			tg.Close()
 		}

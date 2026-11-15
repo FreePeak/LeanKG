@@ -43,16 +43,18 @@ type stubProbes struct {
 	tablesAbs   bool
 }
 
-func (s *stubProbes) PingMS() (int64, error)           { return s.ping, s.pingErr }
-func (s *stubProbes) RecordedFiles() ([]string, error) { return s.recorded, s.recordedErr }
+func (s *stubProbes) PingMS(context.Context) (int64, error) { return s.ping, s.pingErr }
+func (s *stubProbes) RecordedFiles(context.Context) ([]string, error) {
+	return s.recorded, s.recordedErr
+}
 
-func (s *stubProbes) AppliedMigrations() ([]int, error) {
+func (s *stubProbes) AppliedMigrations(context.Context) ([]int, error) {
 	return s.applied, s.appliedErr
 }
-func (s *stubProbes) IndexedFiles() ([]string, error)    { return s.indexed, s.indexedErr }
-func (s *stubProbes) QualifiedNames() ([]string, error)  { return s.names, s.namesErr }
-func (s *stubProbes) RelationshipEdges() ([]Edge, error) { return s.edges, s.edgesErr }
-func (s *stubProbes) EmbeddedNames() ([]string, bool, error) {
+func (s *stubProbes) IndexedFiles(context.Context) ([]string, error)    { return s.indexed, s.indexedErr }
+func (s *stubProbes) QualifiedNames(context.Context) ([]string, error)  { return s.names, s.namesErr }
+func (s *stubProbes) RelationshipEdges(context.Context) ([]Edge, error) { return s.edges, s.edgesErr }
+func (s *stubProbes) EmbeddedNames(context.Context) ([]string, bool, error) {
 	return s.embedded, !s.tablesAbs, s.namesErr
 }
 func (s *stubProbes) EngineName() string { return "stub" }
@@ -151,7 +153,7 @@ func TestStoreLatencyThresholds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := healthyStub()
 			p.ping, p.pingErr = tc.ping, tc.perr
-			f := checkStoreLatency(p, Env{})
+			f := checkStoreLatency(context.Background(), p, Env{})
 			if f.Status != tc.want {
 				t.Fatalf("status = %s, want %s (detail %q)", f.Status, tc.want, f.Detail)
 			}
@@ -164,25 +166,25 @@ func TestStoreLatencyThresholds(t *testing.T) {
 
 func TestMigrationsDrift(t *testing.T) {
 	all := healthyStub() // every embedded migration applied
-	if f := checkMigrations(all, Env{}); f.Status != StatusPass {
+	if f := checkMigrations(context.Background(), all, Env{}); f.Status != StatusPass {
 		t.Fatalf("fully-applied = %s (%s)", f.Status, f.Detail)
 	}
 	behind := healthyStub()
 	behind.applied = []int{1, 2}
-	f := checkMigrations(behind, Env{})
+	f := checkMigrations(context.Background(), behind, Env{})
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "pending") {
 		t.Fatalf("behind = %s (%s), want FAIL pending", f.Status, f.Detail)
 	}
 	ahead := healthyStub()
 	vs := embeddedVersions()
 	ahead.applied = append(vs, vs[len(vs)-1]+1) // one past the newest embedded version
-	f = checkMigrations(ahead, Env{})
+	f = checkMigrations(context.Background(), ahead, Env{})
 	if f.Status != StatusWarn || !strings.Contains(f.Detail, "ahead of binary") {
 		t.Fatalf("ahead = %s (%s), want WARN ahead-of-binary", f.Status, f.Detail)
 	}
 	ledgerErr := healthyStub()
 	ledgerErr.appliedErr = fmt.Errorf("no such table: schema_migrations")
-	f = checkMigrations(ledgerErr, Env{})
+	f = checkMigrations(context.Background(), ledgerErr, Env{})
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "cannot read migration ledger") {
 		t.Fatalf("ledger error = %s (%s)", f.Status, f.Detail)
 	}
@@ -190,7 +192,7 @@ func TestMigrationsDrift(t *testing.T) {
 
 func TestIndexFreshness(t *testing.T) {
 	allGood := healthyStub()
-	if f := checkIndexFreshness(allGood, healthyEnv()); f.Status != StatusPass {
+	if f := checkIndexFreshness(context.Background(), allGood, healthyEnv()); f.Status != StatusPass {
 		t.Fatalf("fresh = %s (%s)", f.Status, f.Detail)
 	}
 	// #406 regression: a file that legitimately yields ZERO elements is still
@@ -198,7 +200,7 @@ func TestIndexFreshness(t *testing.T) {
 	// this side from code_elements made 24 real files a permanent WARN.
 	zeroElem := healthyStub()
 	zeroElem.indexed = []string{"src/a.go"} // b.go extracted no elements
-	if f := checkIndexFreshness(zeroElem, healthyEnv()); f.Status != StatusPass {
+	if f := checkIndexFreshness(context.Background(), zeroElem, healthyEnv()); f.Status != StatusPass {
 		t.Fatalf("zero-element recorded file = %s (%s), want PASS", f.Status, f.Detail)
 	}
 	// Synthetic URI entries never count as stale.
@@ -206,20 +208,20 @@ func TestIndexFreshness(t *testing.T) {
 	synth.recorded = []string{"src/a.go", "ontology://concept-1"}
 	env := healthyEnv()
 	env.DiskFiles = []string{"src/a.go"}
-	if f := checkIndexFreshness(synth, env); f.Status != StatusPass {
+	if f := checkIndexFreshness(context.Background(), synth, env); f.Status != StatusPass {
 		t.Fatalf("synthetic = %s (%s), want PASS", f.Status, f.Detail)
 	}
 	// Empty index over a non-empty tree FAILs.
 	empty := healthyStub()
 	empty.recorded = nil
-	f := checkIndexFreshness(empty, env)
+	f := checkIndexFreshness(context.Background(), empty, env)
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "index is empty") {
 		t.Fatalf("empty = %s (%s)", f.Status, f.Detail)
 	}
 	// >50% stale paths FAIL.
 	moved := healthyStub()
 	moved.recorded = []string{"src/a.go", "src/old1.go", "src/old2.go"}
-	f = checkIndexFreshness(moved, env)
+	f = checkIndexFreshness(context.Background(), moved, env)
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "no longer exist") {
 		t.Fatalf("moved = %s (%s)", f.Status, f.Detail)
 	}
@@ -227,7 +229,7 @@ func TestIndexFreshness(t *testing.T) {
 	newFile := healthyStub()
 	env = healthyEnv()
 	env.DiskFiles = []string{"src/a.go", "src/b.go", "src/new.go"}
-	f = checkIndexFreshness(newFile, env)
+	f = checkIndexFreshness(context.Background(), newFile, env)
 	if f.Status != StatusWarn || !strings.Contains(f.Detail, "1 missing file(s)") {
 		t.Fatalf("new-file = %s (%s)", f.Status, f.Detail)
 	}
@@ -236,60 +238,60 @@ func TestIndexFreshness(t *testing.T) {
 func TestEmbeddingCoverage(t *testing.T) {
 	full := healthyStub()
 	full.embedded = full.names
-	if f := checkEmbeddingCoverage(full, Env{}); f.Status != StatusPass ||
+	if f := checkEmbeddingCoverage(context.Background(), full, Env{}); f.Status != StatusPass ||
 		!strings.Contains(f.Detail, "2/2 elements embedded") {
 		t.Fatalf("full = %s (%s)", f.Status, f.Detail)
 	}
 	none := healthyStub()
 	none.embedded = nil
-	if f := checkEmbeddingCoverage(none, Env{}); f.Status != StatusPass ||
+	if f := checkEmbeddingCoverage(context.Background(), none, Env{}); f.Status != StatusPass ||
 		!strings.Contains(f.Detail, "never built") {
 		t.Fatalf("none = %s (%s)", f.Status, f.Detail)
 	}
 	absent := healthyStub()
 	absent.tablesAbs = true
-	if f := checkEmbeddingCoverage(absent, Env{}); f.Status != StatusPass ||
+	if f := checkEmbeddingCoverage(context.Background(), absent, Env{}); f.Status != StatusPass ||
 		!strings.Contains(f.Detail, "tables absent") {
 		t.Fatalf("absent = %s (%s)", f.Status, f.Detail)
 	}
 	partial := healthyStub()
 	partial.embedded = []string{"pkg.A"}
-	f := checkEmbeddingCoverage(partial, Env{})
+	f := checkEmbeddingCoverage(context.Background(), partial, Env{})
 	if f.Status != StatusWarn || !strings.Contains(f.Detail, "50% uncovered") {
 		t.Fatalf("partial = %s (%s)", f.Status, f.Detail)
 	}
 	noElements := healthyStub()
 	noElements.names = nil
-	if f := checkEmbeddingCoverage(noElements, Env{}); f.Status != StatusPass {
+	if f := checkEmbeddingCoverage(context.Background(), noElements, Env{}); f.Status != StatusPass {
 		t.Fatalf("no-elements = %s (%s)", f.Status, f.Detail)
 	}
 }
 
 func TestPoolEnv(t *testing.T) {
 	// Unset: pass with defaults spelled out.
-	f := checkPoolEnv(nil, Env{})
+	f := checkPoolEnv(context.Background(), nil, Env{})
 	if f.Status != StatusPass || !strings.Contains(f.Detail, "pool size: default 5") {
 		t.Fatalf("unset = %s (%s)", f.Status, f.Detail)
 	}
 	valid := Env{Pool: PoolEnv{strp("10"), strp("5000")}}
-	if f = checkPoolEnv(nil, valid); f.Status != StatusPass {
+	if f = checkPoolEnv(context.Background(), nil, valid); f.Status != StatusPass {
 		t.Fatalf("valid = %s (%s)", f.Status, f.Detail)
 	}
 	oversized := Env{Pool: PoolEnv{strp("2048"), strp("5000")}}
-	if f = checkPoolEnv(nil, oversized); f.Status != StatusWarn {
+	if f = checkPoolEnv(context.Background(), nil, oversized); f.Status != StatusWarn {
 		t.Fatalf("oversized = %s (%s)", f.Status, f.Detail)
 	}
 	tooLongWait := Env{Pool: PoolEnv{strp("10"), strp("600001")}}
-	if f = checkPoolEnv(nil, tooLongWait); f.Status != StatusWarn {
+	if f = checkPoolEnv(context.Background(), nil, tooLongWait); f.Status != StatusWarn {
 		t.Fatalf("long wait = %s (%s)", f.Status, f.Detail)
 	}
 	invalid := Env{Pool: PoolEnv{strp("zero"), strp("fast")}}
-	f = checkPoolEnv(nil, invalid)
+	f = checkPoolEnv(context.Background(), nil, invalid)
 	if f.Status != StatusFail {
 		t.Fatalf("invalid = %s (%s)", f.Status, f.Detail)
 	}
 	zero := Env{Pool: PoolEnv{strp("0"), nil}}
-	if f = checkPoolEnv(nil, zero); f.Status != StatusFail {
+	if f = checkPoolEnv(context.Background(), nil, zero); f.Status != StatusFail {
 		t.Fatalf("zero = %s (%s)", f.Status, f.Detail)
 	}
 }
@@ -298,7 +300,7 @@ func strp(s string) *string { return &s }
 
 func TestOrphanedRelationships(t *testing.T) {
 	clean := healthyStub()
-	if f := checkOrphanedRelationships(clean, Env{}); f.Status != StatusPass ||
+	if f := checkOrphanedRelationships(context.Background(), clean, Env{}); f.Status != StatusPass ||
 		!strings.Contains(f.Detail, "1 sampled edge(s) all resolve") {
 		t.Fatalf("clean = %s (%s)", f.Status, f.Detail)
 	}
@@ -307,7 +309,7 @@ func TestOrphanedRelationships(t *testing.T) {
 	// failure mode this check catches.
 	orph := healthyStub()
 	orph.edges = append(orph.edges, Edge{"pkg.Ghost", "pkg.B", "calls"})
-	f := checkOrphanedRelationships(orph, Env{})
+	f := checkOrphanedRelationships(context.Background(), orph, Env{})
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "1/2 sampled edges reference missing") {
 		t.Fatalf("orphan = %s (%s)", f.Status, f.Detail)
 	}
@@ -318,7 +320,7 @@ func TestOrphanedRelationships(t *testing.T) {
 
 func TestDuplicateNames(t *testing.T) {
 	clean := healthyStub()
-	if f := checkDuplicateNames(clean, Env{}); f.Status != StatusPass {
+	if f := checkDuplicateNames(context.Background(), clean, Env{}); f.Status != StatusPass {
 		t.Fatalf("clean = %s (%s)", f.Status, f.Detail)
 	}
 	// Duplicates cannot be produced through the sqlite store's UNIQUE
@@ -327,7 +329,7 @@ func TestDuplicateNames(t *testing.T) {
 	// The check therefore runs against the raw column, duplicates intact.
 	dup := healthyStub()
 	dup.names = []string{"pkg.A", "pkg.A", "pkg.B"}
-	f := checkDuplicateNames(dup, Env{})
+	f := checkDuplicateNames(context.Background(), dup, Env{})
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "pkg.A×2") {
 		t.Fatalf("dup = %s (%s)", f.Status, f.Detail)
 	}
@@ -336,13 +338,13 @@ func TestDuplicateNames(t *testing.T) {
 func TestLeankgDir(t *testing.T) {
 	dir := t.TempDir()
 	env := Env{LeankgDir: filepath.Join(dir, ".leankg")}
-	if f := checkLeankgDir(nil, env); f.Status != StatusFail {
+	if f := checkLeankgDir(context.Background(), nil, env); f.Status != StatusFail {
 		t.Fatalf("missing = %s (%s)", f.Status, f.Detail)
 	}
 	if err := os.Mkdir(env.LeankgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if f := checkLeankgDir(nil, env); f.Status != StatusPass {
+	if f := checkLeankgDir(context.Background(), nil, env); f.Status != StatusPass {
 		t.Fatalf("writable = %s (%s)", f.Status, f.Detail)
 	}
 	// An IDLE persistent lock token is the normal post-run state and must
@@ -353,7 +355,7 @@ func TestLeankgDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lf.Close()
-	if f := checkLeankgDir(nil, env); f.Status != StatusPass {
+	if f := checkLeankgDir(context.Background(), nil, env); f.Status != StatusPass {
 		t.Fatalf("idle lock = %s (%s), want PASS", f.Status, f.Detail)
 	}
 	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
@@ -362,7 +364,7 @@ func TestLeankgDir(t *testing.T) {
 	if _, err := fmt.Fprintf(lf, "%d\n", os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
-	f := checkLeankgDir(nil, env)
+	f := checkLeankgDir(context.Background(), nil, env)
 	if f.Status != StatusWarn || !strings.Contains(f.Detail, "embed.lock") {
 		t.Fatalf("held lock = %s (%s), want WARN naming embed.lock", f.Status, f.Detail)
 	}
@@ -370,7 +372,7 @@ func TestLeankgDir(t *testing.T) {
 		t.Fatalf("held lock detail must name the owning PID: %s", f.Detail)
 	}
 	_ = syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
-	if f := checkLeankgDir(nil, env); f.Status != StatusPass {
+	if f := checkLeankgDir(context.Background(), nil, env); f.Status != StatusPass {
 		t.Fatalf("released lock = %s (%s), want PASS", f.Status, f.Detail)
 	}
 }
@@ -502,7 +504,7 @@ func TestFileCoverageCheck(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &stubProbes{indexed: tc.indexed, recorded: tc.recorded, recordedErr: tc.recErr}
-			f := checkFileCoverage(p, Env{})
+			f := checkFileCoverage(context.Background(), p, Env{})
 			if f.Check != "file-coverage" {
 				t.Fatalf("check = %q", f.Check)
 			}
@@ -539,14 +541,14 @@ func TestFileCoverageRealSqlite(t *testing.T) {
 		defer c.Close()
 	}
 
-	f := checkFileCoverage(pb, Env{})
+	f := checkFileCoverage(context.Background(), pb, Env{})
 	if f.Status != StatusFail || !strings.Contains(f.Detail, "a.go") {
 		t.Fatalf("element without a file row = %s (%s), want FAIL naming a.go", f.Status, f.Detail)
 	}
 	if err := st.UpsertFiles([]store.FileRecord{{Path: "a.go", Size: 10, MtimeNS: 1, ContentHash: "h"}}); err != nil {
 		t.Fatal(err)
 	}
-	if f := checkFileCoverage(pb, Env{}); f.Status != StatusPass {
+	if f := checkFileCoverage(context.Background(), pb, Env{}); f.Status != StatusPass {
 		t.Fatalf("after bookkeeping caught up = %s (%s), want PASS", f.Status, f.Detail)
 	}
 }

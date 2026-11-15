@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func TestPassReclaimsAFreelistBelowTheOldOneMegabyteFloor(t *testing.T) {
 	st := smallFreelistFixture(t)
 	// The first pass performs the one-time header upgrade (auto_vacuum +
 	// VACUUM), which is what makes a freelist reclaimable at all.
-	if _, err := Pass(st, Options{}); err != nil {
+	if _, err := Pass(context.Background(), st, Options{}); err != nil {
 		t.Fatalf("first pass: %v", err)
 	}
 	// Re-create a freelist that is real but SMALLER than the old floor.
@@ -62,7 +63,7 @@ func TestPassReclaimsAFreelistBelowTheOldOneMegabyteFloor(t *testing.T) {
 			t.Fatalf("delete: %v", err)
 		}
 	}
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -131,22 +132,32 @@ func TestRunFleetPrunesTheOldMetricRows(t *testing.T) {
 // weeks without anyone noticing.
 func TestRunFleetLogsWhatThePassDid(t *testing.T) {
 	st := collectionFixture(t)
+	var mu sync.Mutex
 	var logs []string
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), logs...)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	RunFleet(ctx, func() []Target { return []Target{{Store: st, Label: "one"}} },
-		Options{Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }},
+		Options{Logf: func(f string, a ...any) {
+			mu.Lock()
+			defer mu.Unlock()
+			logs = append(logs, fmt.Sprintf(f, a...))
+		}},
 		10*time.Millisecond, 0)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		for _, l := range logs {
+		for _, l := range snapshot() {
 			if strings.Contains(l, "pass(es) over") {
 				return
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the fleet never logged what the pass did: %v", logs)
+			t.Fatalf("the fleet never logged what the pass did: %v", snapshot())
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -167,7 +178,7 @@ func TestSweepDropsTheStaleCollectionWithTheKeepFunc(t *testing.T) {
 	if err := st.FinishEmbedRun(runID, "completed", 1, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish embed run: %v", err)
 	}
-	res := Sweep(st, Options{KeepModelIDsFunc: func(b store.Backend) []string {
+	res := Sweep(context.Background(), st, Options{KeepModelIDsFunc: func(b store.Backend) []string {
 		id, err := store.CurrentModelID(b)
 		if err != nil || id == "" {
 			return nil

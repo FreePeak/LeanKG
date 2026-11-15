@@ -65,7 +65,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | CX-32 | `refactor(index,lsp,langs,tstree): cancellable extraction and LSP` | M | - | todo | - | - |
 | CX-33 | `refactor(embed): ctx-aware HTTP and run loop` | M | - | todo | - | - |
 | CX-34 | `refactor(memory): one ctx-first API; delete the ctx-less wrappers` | M | - | todo | - | - |
-| CX-35 | `refactor(doctor,maintain): ctx-first probes, checks and passes` | M | - | todo | - | - |
+| CX-35 | `refactor(doctor,maintain): ctx-first probes, checks and passes` | M | - | in progress | - | ctx-first code done and verified; `RunFleet`/`Run` return a joined done channel, but serve (`cmd/leankg/main.go:550`) and writer (`cmd/leankg/wire.go:83`) still need to wait on it at shutdown (merge worker). No embed, ports, git or LSP probe exists in doctor; only the store and fleet probes are bounded |
 | CX-36 | `refactor(sessionlink,telemetry): ctx-first adapters and ledger internals` | M | - | todo | - | - |
 
 ## P4: interface redesign beyond ctx

@@ -154,21 +154,30 @@ func (s SweepResult) Empty() bool {
 // The retention sweeps over the append-only ledgers (context_metrics,
 // embed_runs) run only when Options.PruneLedgers is set, which the
 // scheduler does and the one-shot verb does not.
-func Sweep(st store.Backend, opts Options) SweepResult {
+func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
 	var out SweepResult
 	logf := opts.Logf
 	if logf == nil {
 		logf = func(string, ...any) {}
+	}
+	if ctx.Err() != nil {
+		return out
 	}
 	if n, err := st.DeleteOrphanRelationships(); err != nil {
 		logf("maintain: orphan relationships: %v", err)
 	} else {
 		out.OrphanEdges = n
 	}
+	if ctx.Err() != nil {
+		return out
+	}
 	if n, err := st.DeleteOrphanVectors(); err != nil {
 		logf("maintain: orphan vectors: %v", err)
 	} else {
 		out.OrphanVectors = n
+	}
+	if ctx.Err() != nil {
+		return out
 	}
 	if opts.PruneLedgers {
 		// The embed-run ledger is trimmed FIRST: the keep set below is
@@ -186,6 +195,9 @@ func Sweep(st store.Backend, opts Options) SweepResult {
 			out.MetricsPruned = n
 		}
 	}
+	if ctx.Err() != nil {
+		return out
+	}
 	if opts.CompactFTS {
 		if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCompactKeywordIndex}); err != nil {
 			logf("maintain: fts compaction: %v", err)
@@ -198,6 +210,9 @@ func Sweep(st store.Backend, opts Options) SweepResult {
 		keep = opts.KeepModelIDsFunc(st)
 	}
 	if len(keep) == 0 {
+		return out
+	}
+	if ctx.Err() != nil {
 		return out
 	}
 	sw, err := st.DeleteStaleStamps(keep)
@@ -257,7 +272,10 @@ func (r Result) ReclaimSummary() string {
 // now (a live reader holds it) still gets its space back, and the next pass
 // retries. A store that cannot be measured, or whose header upgrade is refused,
 // is a real failure.
-func Pass(st store.Backend, opts Options) (Result, error) {
+func Pass(ctx context.Context, st store.Backend, opts Options) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	if opts.MaxPages == 0 {
 		opts.MaxPages = DefaultMaxPages
 	}
@@ -291,7 +309,13 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 	// the sweep returns rows to the freelist, the vacuum hands the
 	// freelist back to the filesystem. The other order reclaims the space
 	// one pass later — a day late at the default interval.
-	res.Sweep = Sweep(st, opts)
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
+	res.Sweep = Sweep(ctx, st, opts)
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
 	if !res.Sweep.Empty() {
 		logf("maintain: swept %d orphan edge(s), %d orphan vector(s), %d stale collection(s) (%d vectors) from %s",
 			res.Sweep.OrphanEdges, res.Sweep.OrphanVectors,
@@ -314,6 +338,9 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 	// built-in 1 MB floor is what stopped this from ever running — every
 	// store's freelist sat below it, so the hourly pass freed 0 bytes
 	// fleet-wide while the machinery looked healthy.
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
 	if opts.MinFreeBytes >= 0 && freelist > 0 && freelist >= opts.MinFreeBytes {
 		// Not fatal: the checkpoint below still applies, and the next pass
 		// retries the reclaim. A skipped op did no work, so it is not
@@ -323,6 +350,9 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 		} else if r.Skipped == "" {
 			res.Vacuumed = true
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return res, err
 	}
 	if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
 		logf("maintain: checkpoint: %v", err)
@@ -360,8 +390,8 @@ func Pass(st store.Backend, opts Options) (Result, error) {
 //
 // A compaction failure is logged, not returned: the graph store's reclaim is
 // the one that matters, and losing the memory compaction must not stop it.
-func CompactMemory(mem *memory.Memory, opts Options) {
-	if mem == nil {
+func CompactMemory(ctx context.Context, mem *memory.Memory, opts Options) {
+	if mem == nil || ctx.Err() != nil {
 		return
 	}
 	logf := opts.Logf
@@ -396,8 +426,8 @@ func CompactMemory(mem *memory.Memory, opts Options) {
 // A non-positive interval disables the loop entirely, which is how
 // LEANKG_VACUUM_INTERVAL_HOURS=0 keeps the Rust engine's documented
 // "disabled" semantics.
-func Run(ctx context.Context, st store.Backend, mem *memory.Memory, opts Options, interval, firstIdle time.Duration) {
-	RunFleet(ctx, func() []Target {
+func Run(ctx context.Context, st store.Backend, mem *memory.Memory, opts Options, interval, firstIdle time.Duration) <-chan struct{} {
+	return RunFleet(ctx, func() []Target {
 		return []Target{{Store: st, Mem: mem}}
 	}, opts, interval, firstIdle)
 }
@@ -427,9 +457,11 @@ type Target struct {
 // stores exist at that moment (a routed project appears the moment it is
 // indexed). A target whose Store is nil is skipped; its Close, when set,
 // runs after the pass.
-func RunFleet(ctx context.Context, targets func() []Target, opts Options, interval, firstIdle time.Duration) {
+func RunFleet(ctx context.Context, targets func() []Target, opts Options, interval, firstIdle time.Duration) <-chan struct{} {
+	done := make(chan struct{})
 	if interval <= 0 {
-		return
+		close(done)
+		return done
 	}
 	compactEvery := opts.CompactFTSEvery
 	if compactEvery == 0 {
@@ -463,7 +495,7 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 			// pass. A store that was not built from a git tree, or whose
 			// HEAD cannot be read, is left untouched.
 			if rc, err := ReconcileHead(ctx, t.Store); err != nil {
-				if opts.Logf != nil {
+				if opts.Logf != nil && ctx.Err() == nil {
 					if t.Label == "" {
 						opts.Logf("maintain: reconcile with HEAD: %v", err)
 					} else {
@@ -474,8 +506,8 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 				reconciledFiles += rc.DeletedFiles
 				reconciledElements += rc.DeletedElements
 			}
-			res, err := Pass(t.Store, passOpts)
-			if err != nil && opts.Logf != nil {
+			res, err := Pass(ctx, t.Store, passOpts)
+			if err != nil && opts.Logf != nil && ctx.Err() == nil {
 				if t.Label == "" {
 					opts.Logf("maintain: %v", err)
 				} else {
@@ -493,7 +525,7 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 					compacted++
 				}
 			}
-			CompactMemory(t.Mem, opts)
+			CompactMemory(ctx, t.Mem, opts)
 			if t.Close != nil {
 				t.Close()
 			}
@@ -507,7 +539,7 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 		// The first pass always reports: a fleet that has just started must
 		// say what it did, not wait a day for the first summary. After that
 		// the cadence keeps the log quiet.
-		if opts.Logf != nil && summaryEvery > 0 && (passNo == 1 || passNo%summaryEvery == 0) {
+		if opts.Logf != nil && summaryEvery > 0 && ctx.Err() == nil && (passNo == 1 || passNo%summaryEvery == 0) {
 			opts.Logf("maintain: %d pass(es) over %d store(s): reclaimed %d bytes, grew %d bytes, "+
 				"pruned %d metric row(s) and %d embed-run row(s), closed %d stuck run(s), "+
 				"compacted the FTS index of %d store(s), "+
@@ -517,6 +549,7 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 		}
 	}
 	go func() {
+		defer close(done)
 		if firstIdle > 0 {
 			select {
 			case <-ctx.Done():
@@ -536,6 +569,7 @@ func RunFleet(ctx context.Context, targets func() []Target, opts Options, interv
 			}
 		}
 	}()
+	return done
 }
 
 // IntervalFromEnv reads the loop's period from LEANKG_VACUUM_INTERVAL_HOURS,
