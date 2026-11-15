@@ -25,7 +25,7 @@ import (
 const maxTTLSecs = math.MaxInt64 / int64(time.Second)
 
 // Routes returns the /api/v1/auth/* handler tree over a store.
-func Routes(st store.Backend) http.Handler {
+func Routes(st Store) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/auth/register", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -280,7 +280,7 @@ func Routes(st store.Backend) http.Handler {
 
 // caller resolves the request's auth context, writing the Rust-shaped error
 // response itself when the request is not authorized.
-func caller(st store.Backend, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
+func caller(st Store, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
 	ctx, err := Resolve(st, r)
 	if err != nil {
 		writeFail(w, err.Error())
@@ -293,7 +293,7 @@ func caller(st store.Backend, w http.ResponseWriter, r *http.Request) (AuthConte
 // account: org and ownership endpoints attribute their writes to it, so a
 // process-level caller (env token, or the no-token local default) cannot use
 // them.
-func requireAccount(st store.Backend, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
+func requireAccount(st Store, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
 	ctx, ok := caller(st, w, r)
 	if !ok {
 		return AuthContext{}, false

@@ -66,7 +66,7 @@ func identityOf(s store.ModelStamp) Identity {
 // Calibrate measures and stores the noise floor of p's collection: the best
 // similarity any off-topic probe reaches. It returns 0, false when the
 // collection is empty.
-func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool, error) {
+func Calibrate(ctx context.Context, st Store, p Provider) (float64, bool, error) {
 	vecs, err := p.Embed(ctx, Query, calibrationProbes)
 	if err != nil {
 		return 0, false, fmt.Errorf("embed: calibration probes: %w", err)
@@ -91,14 +91,14 @@ func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool
 }
 
 // WriteCalibration stores a noise floor for the collection stamp.
-func WriteCalibration(ctx context.Context, st store.Backend, stamp store.ModelStamp, floor float64) error {
+func WriteCalibration(ctx context.Context, st Store, stamp store.ModelStamp, floor float64) error {
 	raw, _ := json.Marshal(Calibration{Floor: floor, Identity: calibrationIdentity(stamp)})
 	return st.KVSet(ctx, calibrationNS, stamp.ModelID, string(raw))
 }
 
 // ReadCalibration returns the stored noise floor for the collection stamp,
 // or false when none was measured for exactly this identity.
-func ReadCalibration(ctx context.Context, st store.Backend, stamp store.ModelStamp) (float64, bool) {
+func ReadCalibration(ctx context.Context, st Store, stamp store.ModelStamp) (float64, bool) {
 	raw, ok, err := st.KVGet(ctx, calibrationNS, stamp.ModelID)
 	if err != nil || !ok {
 		return 0, false

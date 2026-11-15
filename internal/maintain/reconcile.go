@@ -61,7 +61,7 @@ type ReconcileResult struct {
 //
 // It is a no-op for every store that was not built from a git tree, and for
 // every project whose HEAD cannot be read.
-func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, error) {
+func ReconcileHead(ctx context.Context, st Store) (ReconcileResult, error) {
 	var res ReconcileResult
 	if st == nil {
 		res.Reason = "no store"
@@ -169,7 +169,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 // to every store every hour. It also heals a store an EARLIER reconcile left
 // behind, which is exactly the state the live fleet was in when this rule
 // was written.
-func healInventory(ctx context.Context, st store.Backend) error {
+func healInventory(ctx context.Context, st Store) error {
 	seq, _, err := st.Watermark(ctx)
 	if err != nil {
 		return fmt.Errorf("maintain: read watermark after reconcile: %w", err)

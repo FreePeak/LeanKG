@@ -17,7 +17,6 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/httpx"
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Role is a capability class.
@@ -84,7 +83,7 @@ func (reg *registry) enabled() bool { return len(reg.byToken) > 0 }
 // role: it resolves the same way, then keeps only the Role. The gate is
 // process-scoped, so there is no resource target to check — the org rungs
 // still refine a token that carries account/org labels.
-func (reg *registry) classify(st store.Backend, r *http.Request) (Role, error) {
+func (reg *registry) classify(st Store, r *http.Request) (Role, error) {
 	ctx, err := reg.resolveFor(st, r, Target{})
 	if err != nil {
 		return Viewer, err
@@ -152,14 +151,14 @@ func RoleForRequest(r *http.Request) (Role, error) {
 
 // RoleForRequestWithStore classifies like RoleForRequest but consults the
 // DB-backed token store FIRST (revocable at runtime), then the env vars.
-func RoleForRequestWithStore(st store.Backend, r *http.Request) (Role, error) {
+func RoleForRequestWithStore(st Store, r *http.Request) (Role, error) {
 	return fromEnv().classify(st, r)
 }
 
 // GateEnabled reports whether HTTP callers must authenticate: a live token (env
 // or DB-backed) is configured, or a site-admin account exists. serve uses it to
 // refuse a non-loopback bind with the gate open.
-func GateEnabled(ctx context.Context, st store.Backend) (bool, error) {
+func GateEnabled(ctx context.Context, st Store) (bool, error) {
 	return fromEnv().tokensConfigured(ctx, st)
 }
 
@@ -169,7 +168,7 @@ func GateEnabled(ctx context.Context, st store.Backend) (bool, error) {
 // counts as on: the caller is anonymous, never Admin. A request that carries an
 // Authorization header resolves exactly like RoleForRequestWithStore, so a bad
 // or expired token is still an error.
-func RoleOrAnonymous(st store.Backend, r *http.Request) (role Role, anonymous bool, err error) {
+func RoleOrAnonymous(st Store, r *http.Request) (role Role, anonymous bool, err error) {
 	if r.Header.Get("Authorization") != "" {
 		role, err := RoleForRequestWithStore(st, r)
 		return role, false, err
@@ -212,7 +211,7 @@ func Middleware(next http.Handler) http.Handler {
 
 // MiddlewareWithStore is Middleware with a DB-backed token store wired in
 // ahead of the env fallback (see Middleware for the precedence contract).
-func MiddlewareWithStore(st store.Backend, next http.Handler) http.Handler {
+func MiddlewareWithStore(st Store, next http.Handler) http.Handler {
 	reg := fromEnv()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role, err := reg.classify(st, r)

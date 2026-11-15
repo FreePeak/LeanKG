@@ -62,7 +62,7 @@ type MintRequest struct {
 // Mint issues a new DB-backed token: it generates an opaque secret, persists
 // only the SHA-256 hash through the backend's tokens table, and returns the
 // plaintext (shown once) plus the stored row (Secret = at-rest hash).
-func Mint(ctx context.Context, st store.Backend, req MintRequest) (string, store.Token, error) {
+func Mint(ctx context.Context, st Store, req MintRequest) (string, store.Token, error) {
 	if _, ok := RoleFromString(req.Role); !ok {
 		return "", store.Token{}, fmt.Errorf("auth: unknown role %q", req.Role)
 	}
@@ -115,7 +115,7 @@ type Grant struct {
 // wrapping store.ErrTokenRevoked / store.ErrTokenExpired: those must never
 // fall through to a fallback source. A successful verification stamps
 // last_used_at (coalesced by store.TokenTouch).
-func Verify(ctx context.Context, st store.Backend, secret string) (Grant, bool, error) {
+func Verify(ctx context.Context, st Store, secret string) (Grant, bool, error) {
 	tok, found, err := st.TokenFind(ctx, secret)
 	if err != nil {
 		return Grant{}, false, fmt.Errorf("auth: token store: %w", err)

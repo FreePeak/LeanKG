@@ -95,7 +95,7 @@ func matchImportFlag[T comparable](flag string, given, resolved T) error {
 // the stored cap when the stamp has one, so an export works while /props is
 // down. With no stored cap, no /props budget and no LEANKG_EMBED_TEXT_CAP pin
 // the cap is undetermined and the export fails before writing anything.
-func ExportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID string, w io.Writer) error {
+func ExportNDJSON(ctx context.Context, st Store, cfg Config, modelID string, w io.Writer) error {
 	target, err := resolveImport(cfg, modelID, "", "", 0)
 	if err != nil {
 		return err
@@ -154,7 +154,7 @@ func ExportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID str
 // already holds a vector for the element's current content or for the content
 // the line was embedded from. A line whose QN has no live element counts as an
 // orphan and is not written.
-func ImportNDJSON(ctx context.Context, st store.Backend, cfg Config, modelID, revision, distance string, dims int, r io.Reader) (Report, error) {
+func ImportNDJSON(ctx context.Context, st Store, cfg Config, modelID, revision, distance string, dims int, r io.Reader) (Report, error) {
 	// The run ledger records the run even when ctx is cancelled (a cancelled
 	// run is stored as cancelled), so its writes do not take the caller's ctx.
 	ledger := context.WithoutCancel(ctx)
