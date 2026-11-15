@@ -142,7 +142,7 @@ func TestPassHeaderUpgradeIsOneShot(t *testing.T) {
 	if _, err := Pass(context.Background(), st, Options{}); err != nil {
 		t.Fatalf("pass: %v", err)
 	}
-	before, err := st.Space()
+	before, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestPassHeaderUpgradeIsOneShot(t *testing.T) {
 	if res.Reclaimed != 0 {
 		t.Errorf("second pass reclaimed %d bytes; the header upgrade must not repeat", res.Reclaimed)
 	}
-	after, err := st.Space()
+	after, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space after: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRunIsDisabledByNonPositiveInterval(t *testing.T) {
 	Run(ctx, st, nil, Options{}, 0, 0)
 	// Give a wrongly-started goroutine far more than enough time to fire.
 	time.Sleep(100 * time.Millisecond)
-	rep, err := st.Space()
+	rep, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestRunFiresOnTicker(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the maintenance ticker never ran")
 	}
-	rep, err := st.Space()
+	rep, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}

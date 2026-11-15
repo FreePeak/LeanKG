@@ -106,7 +106,7 @@ func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := st.ensureIncrementalVacuum(); err != nil {
+	if err := st.ensureIncrementalVacuum(context.Background()); err != nil {
 		t.Fatalf("ensure incremental vacuum: %v", err)
 	}
 	if err := st.Close(); err != nil {

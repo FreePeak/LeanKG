@@ -77,22 +77,22 @@ func cmdVacuum(ctx context.Context, args []string) error {
 	}
 
 	if *full {
-		before, err := st.Space()
+		before, err := st.Space(ctx)
 		if err != nil {
 			return verbFatal(fmt.Errorf("vacuum: %w", err))
 		}
-		if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainReclaimFull}); err != nil {
+		if _, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainReclaimFull}); err != nil {
 			return verbFatal(fmt.Errorf("vacuum: %w", err))
 		}
 		// ANALYZE is what --full has always run on PostgreSQL, where the full
 		// rewrite is skipped; SQLite reports it as skipped.
-		if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainAnalyze}); err != nil {
+		if _, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainAnalyze}); err != nil {
 			return verbFatal(fmt.Errorf("vacuum: %w", err))
 		}
-		if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
+		if _, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
 			fmt.Fprintf(os.Stderr, "vacuum: checkpoint: %v\n", err)
 		}
-		after, err := st.Space()
+		after, err := st.Space(ctx)
 		if err != nil {
 			return verbFatal(fmt.Errorf("vacuum: %w", err))
 		}
@@ -113,7 +113,7 @@ func cmdVacuum(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	res, err := maintain.Pass(context.Background(), st, maintain.Options{
+	res, err := maintain.Pass(ctx, st, maintain.Options{
 		MaxPages:     *maxPages,
 		MinFreeBytes: 0,
 		Logf: func(format string, a ...any) {

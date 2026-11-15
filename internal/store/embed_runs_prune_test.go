@@ -36,7 +36,7 @@ func TestPruneEmbedRunsClosesStuckRunsAndKeepsTheNewestRow(t *testing.T) {
 	}
 
 	// A cutoff in the future: every run is older than it.
-	pr, err := s.PruneEmbedRuns(time.Now().Add(time.Hour))
+	pr, err := s.PruneEmbedRuns(context.Background(), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestPruneEmbedRunsKeepsRunsInsideTheWindow(t *testing.T) {
 	if err := s.FinishEmbedRun(context.Background(), id, "completed", 4, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish run: %v", err)
 	}
-	pr, err := s.PruneEmbedRuns(time.Now().Add(-time.Hour))
+	pr, err := s.PruneEmbedRuns(context.Background(), time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestCompactFTSKeepsEveryRow(t *testing.T) {
 	if before == 0 {
 		t.Fatal("the fixture wrote no keyword rows")
 	}
-	if _, err := s.Maintain(MaintainOp{Kind: MaintainCompactKeywordIndex}); err != nil {
+	if _, err := s.Maintain(context.Background(), MaintainOp{Kind: MaintainCompactKeywordIndex}); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
 	var after int

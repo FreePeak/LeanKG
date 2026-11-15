@@ -42,7 +42,9 @@ type spaceFails struct {
 	cause error
 }
 
-func (f spaceFails) Space() (store.SpaceReport, error) { return store.SpaceReport{}, f.cause }
+func (f spaceFails) Space(context.Context) (store.SpaceReport, error) {
+	return store.SpaceReport{}, f.cause
+}
 
 // A store that cannot count its elements must fail the query, not answer
 // "no elements indexed" (the L0 guidance tells the caller to index a repo).

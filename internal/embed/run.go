@@ -350,7 +350,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	// Reclaim vectors whose element is gone before measuring coverage: the
 	// run used to report `Orphans: N` and leave them to `leankg gc` while L3
 	// served them as hits (RS-05).
-	if _, err := st.DeleteOrphanVectors(); err != nil {
+	if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 		rep.Duration = time.Since(start)
 		_ = st.FinishEmbedRun(ledger, runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, fmt.Errorf("embed: reclaim orphan vectors: %w", err)

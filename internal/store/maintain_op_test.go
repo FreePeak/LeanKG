@@ -52,7 +52,7 @@ func maintainerEngines(t *testing.T) map[string]Maintainer {
 func TestMaintainRefusesReadOnlyOnEveryEngine(t *testing.T) {
 	for engine, m := range maintainerEngines(t) {
 		for _, kind := range allMaintainKinds {
-			_, err := m.Maintain(MaintainOp{Kind: kind})
+			_, err := m.Maintain(context.Background(), MaintainOp{Kind: kind})
 			if !errors.Is(err, ErrReadOnly) {
 				t.Errorf("%s %s on a read-only handle: err = %v, want ErrReadOnly", engine, kind, err)
 			}
@@ -66,19 +66,19 @@ func TestMaintainerSweepsRefuseReadOnlyOnEveryEngine(t *testing.T) {
 	for engine, m := range maintainerEngines(t) {
 		checks := map[string]func() error{
 			"PruneEmbedRuns": func() error {
-				_, err := m.PruneEmbedRuns(time.Now())
+				_, err := m.PruneEmbedRuns(context.Background(), time.Now())
 				return err
 			},
 			"DeleteOrphanRelationships": func() error {
-				_, err := m.DeleteOrphanRelationships()
+				_, err := m.DeleteOrphanRelationships(context.Background())
 				return err
 			},
 			"DeleteOrphanVectors": func() error {
-				_, err := m.DeleteOrphanVectors()
+				_, err := m.DeleteOrphanVectors(context.Background())
 				return err
 			},
 			"DeleteStaleStamps": func() error {
-				_, err := m.DeleteStaleStamps([]string{"keep-model"})
+				_, err := m.DeleteStaleStamps(context.Background(), []string{"keep-model"})
 				return err
 			},
 		}
@@ -103,7 +103,7 @@ func TestPGMaintainReportsSkippedOps(t *testing.T) {
 		MaintainCompactKeywordIndex: skipNoKeywordSegments,
 	}
 	for kind, reason := range want {
-		res, err := pg.Maintain(MaintainOp{Kind: kind})
+		res, err := pg.Maintain(context.Background(), MaintainOp{Kind: kind})
 		if err != nil {
 			t.Errorf("postgres %s: err = %v, want nil", kind, err)
 		}
@@ -117,7 +117,7 @@ func TestPGMaintainReportsSkippedOps(t *testing.T) {
 // maintenance kind; the engine says so instead of returning nil.
 func TestSQLiteMaintainSkipsAnalyze(t *testing.T) {
 	st := openTestStore(t)
-	res, err := st.Maintain(MaintainOp{Kind: MaintainAnalyze})
+	res, err := st.Maintain(context.Background(), MaintainOp{Kind: MaintainAnalyze})
 	if err != nil {
 		t.Fatalf("analyze: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestMaintainRejectsUnknownKind(t *testing.T) {
 		EnginePostgres: &PGStore{mode: RW},
 	}
 	for engine, m := range engines {
-		if _, err := m.Maintain(MaintainOp{Kind: "bogus"}); err == nil {
+		if _, err := m.Maintain(context.Background(), MaintainOp{Kind: "bogus"}); err == nil {
 			t.Errorf("%s accepted an unknown kind", engine)
 		}
 	}

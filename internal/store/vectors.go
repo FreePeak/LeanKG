@@ -386,16 +386,16 @@ func (s *Store) ClearVectors(ctx context.Context, modelID string) error {
 // DeleteOrphanVectors removes vector + state rows for elements that no
 // longer exist, every model at once — the anti-join VectorCoverage reports,
 // made repairable (gc). The watermark bumps only when rows actually go.
-func (s *Store) DeleteOrphanVectors() (int, error) {
+func (s *Store) DeleteOrphanVectors(ctx context.Context) (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	vres, err := tx.Exec(`DELETE FROM embedding_vectors
+	vres, err := tx.ExecContext(ctx, `DELETE FROM embedding_vectors
 		WHERE qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
 	if err != nil {
 		return 0, err
@@ -404,7 +404,7 @@ func (s *Store) DeleteOrphanVectors() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	sres, err := tx.Exec(`DELETE FROM embedding_state
+	sres, err := tx.ExecContext(ctx, `DELETE FROM embedding_state
 		WHERE qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
 	if err != nil {
 		return 0, err
@@ -419,7 +419,7 @@ func (s *Store) DeleteOrphanVectors() (int, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	return int(nv), s.BumpWatermark(context.TODO())
+	return int(nv), s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // VectorCount returns the vector count for a model.
@@ -439,7 +439,7 @@ func (s *Store) VectorCount(ctx context.Context, modelID string) (int, error) {
 // An empty keep is a NO-OP (see the Backend contract): the caller that does
 // not know which collection is live must not be able to delete it. The
 // watermark bumps only when rows actually go, like every other purge here.
-func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
+func (s *Store) DeleteStaleStamps(ctx context.Context, keep []string) (StaleStampSweep, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -465,7 +465,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	// degrades to L2, which is a truth about the store, not a licence to
 	// delete it.
 	var have int
-	err := s.db.QueryRow(`SELECT 1 FROM embedding_vectors WHERE model_id IN (`+in+`) LIMIT 1`, args...).Scan(&have)
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM embedding_vectors WHERE model_id IN (`+in+`) LIMIT 1`, args...).Scan(&have)
 	if err != nil && err != sql.ErrNoRows {
 		return StaleStampSweep{}, err
 	}
@@ -473,13 +473,13 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 		return StaleStampSweep{}, nil
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	vres, err := tx.Exec(`DELETE FROM embedding_vectors WHERE model_id NOT IN (`+in+`)`, args...)
+	vres, err := tx.ExecContext(ctx, `DELETE FROM embedding_vectors WHERE model_id NOT IN (`+in+`)`, args...)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -487,7 +487,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
-	sres, err := tx.Exec(`DELETE FROM embedding_state WHERE model_id NOT IN (`+in+`)`, args...)
+	sres, err := tx.ExecContext(ctx, `DELETE FROM embedding_state WHERE model_id NOT IN (`+in+`)`, args...)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -495,7 +495,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
-	mres, err := tx.Exec(`DELETE FROM emb_stamp WHERE model_id NOT IN (`+in+`)`, args...)
+	mres, err := tx.ExecContext(ctx, `DELETE FROM emb_stamp WHERE model_id NOT IN (`+in+`)`, args...)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -510,7 +510,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 		return StaleStampSweep{}, err
 	}
 	out := StaleStampSweep{Models: int(nm), Vectors: int(nv), State: int(ns)}
-	return out, s.BumpWatermark(context.TODO())
+	return out, s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // cleanModelIDs normalizes a keep list: empty entries dropped, duplicates
@@ -775,13 +775,13 @@ func embedRunCutoff(cutoff time.Time) string {
 // (CurrentModelID), and the stale-collection sweep derives its keep set from
 // it. A row that is still "running" is closed out, not deleted, so the
 // history of the interrupted run survives.
-func (s *Store) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
+func (s *Store) PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRunPrune, error) {
 	var out EmbedRunPrune
 	if err := requireWritable(s.mode); err != nil {
 		return out, err
 	}
 	cut := embedRunCutoff(cutoff)
-	res, err := s.db.Exec(`UPDATE embed_runs SET status='failed', finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+	res, err := s.db.ExecContext(ctx, `UPDATE embed_runs SET status='failed', finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		WHERE status='running' AND started_at < ?`, cut)
 	if err != nil {
 		return out, fmt.Errorf("store: close out stale embed runs: %w", err)
@@ -789,7 +789,7 @@ func (s *Store) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 	if n, err := res.RowsAffected(); err == nil {
 		out.Closed = n
 	}
-	res, err = s.db.Exec(`DELETE FROM embed_runs
+	res, err = s.db.ExecContext(ctx, `DELETE FROM embed_runs
 		WHERE started_at < ? AND status <> 'running'
 		  AND id <> (SELECT COALESCE(MAX(id), 0) FROM embed_runs)`, cut)
 	if err != nil {

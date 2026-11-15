@@ -141,6 +141,28 @@ var ctxConformanceRoles = []ctxRole{
 			return err
 		},
 	},
+	{
+		name: "Maintainer",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.Space(ctx)
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			_, err := b.Maintain(ctx, MaintainOp{Kind: MaintainCheckpoint})
+			return err
+		},
+	},
+	{
+		name: "Maintainer.Sweeps",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.DeleteStaleStamps(ctx, []string{"conformance"})
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			_, err := b.DeleteOrphanRelationships(ctx)
+			return err
+		},
+	},
 }
 
 // openSQLiteConformance returns a migrated RW SQLite store in a temp project.

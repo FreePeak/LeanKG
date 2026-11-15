@@ -495,7 +495,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	// DeleteByFile, which would also discard the vectors of a changed file's
 	// UNCHANGED symbols and force them to re-embed.
 	if res.DeletedFiles > 0 || res.Files > 0 {
-		if _, err := st.DeleteOrphanVectors(); err != nil {
+		if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 			return res, fmt.Errorf("index: reclaim orphan vectors: %w", err)
 		}
 	}

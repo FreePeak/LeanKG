@@ -51,7 +51,7 @@ func TestDeleteStaleStampsDropsOnlyUnkeptCollections(t *testing.T) {
 	seedCollection(t, s, "live", []string{"a.Foo", "a.Bar"})
 	seedCollection(t, s, "old", []string{"a.Baz"})
 
-	sw, err := s.DeleteStaleStamps([]string{"live"})
+	sw, err := s.DeleteStaleStamps(context.Background(), []string{"live"})
 	if err != nil {
 		t.Fatalf("DeleteStaleStamps: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestDeleteStaleStampsWithNoKeepIsANoOp(t *testing.T) {
 		seedCollection(t, s, "live", []string{"a.Foo"})
 		seedCollection(t, s, "old", []string{"a.Baz"})
 
-		sw, err := s.DeleteStaleStamps(keep)
+		sw, err := s.DeleteStaleStamps(context.Background(), keep)
 		if err != nil {
 			t.Fatalf("DeleteStaleStamps(%v): %v", keep, err)
 		}
@@ -96,7 +96,7 @@ func TestDeleteStaleStampsKeepsEveryListedCollection(t *testing.T) {
 	seedCollection(t, s, "b", []string{"a.Baz"})
 	seedCollection(t, s, "c", []string{"a.Qux"})
 
-	sw, err := s.DeleteStaleStamps([]string{"a", "b", "c"})
+	sw, err := s.DeleteStaleStamps(context.Background(), []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("DeleteStaleStamps: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestDeleteStaleStampsKeepsACollectionTheStoreDoesNotHaveTheKeepFor(t *testi
 	s := openTestStore(t)
 	seedCollection(t, s, "local", []string{"a.Foo"})
 
-	sw, err := s.DeleteStaleStamps([]string{"embeddinggemma-2"})
+	sw, err := s.DeleteStaleStamps(context.Background(), []string{"embeddinggemma-2"})
 	if err != nil {
 		t.Fatalf("DeleteStaleStamps: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestDeleteStaleStampsDropsTheOldCollectionWhenTheKeepOneExists(t *testing.T
 	seedCollection(t, s, "local", []string{"a.Foo"})
 	seedCollection(t, s, "embeddinggemma-2", []string{"a.Bar"})
 
-	sw, err := s.DeleteStaleStamps([]string{"embeddinggemma-2"})
+	sw, err := s.DeleteStaleStamps(context.Background(), []string{"embeddinggemma-2"})
 	if err != nil {
 		t.Fatalf("DeleteStaleStamps: %v", err)
 	}

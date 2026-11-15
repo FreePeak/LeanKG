@@ -467,7 +467,7 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 	// costs three rows. Reporting it is what makes disk bloat visible to an
 	// agent: docs/mcp-tool-contract.md advertises "watch/vacuum status" on
 	// this tool, and without a payload field there is nothing to see.
-	space, serr := e.st.Space()
+	space, serr := e.st.Space(ctx)
 	if serr != nil {
 		// Named, not dropped: a null payload field says "the read failed", an
 		// absent one would read as "nothing to report" (CX-45).

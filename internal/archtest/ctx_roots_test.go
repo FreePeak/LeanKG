@@ -25,11 +25,10 @@ var todoBudget = map[string]int{
 	"internal/annot":        2,
 	"internal/core":         2,
 	"internal/embed":        2,
-	"internal/maintain":     3,
 	"internal/obsidian":     3,
 	"internal/ontology":     8,
 	"internal/portfolioreg": 4,
-	"internal/store":        8,
+	"internal/store":        2,
 	"internal/summarize":    2,
 }
 

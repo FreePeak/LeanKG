@@ -42,17 +42,17 @@ func cmdGC(ctx context.Context, args []string) error {
 	if err := st.Migrate(ctx); err != nil {
 		return verbFatal(fmt.Errorf("gc: migrate: %w", err))
 	}
-	n, err := st.DeleteOrphanRelationships()
+	n, err := st.DeleteOrphanRelationships(ctx)
 	if err != nil {
 		return verbFatal(fmt.Errorf("gc: %w", err))
 	}
-	v, err := st.DeleteOrphanVectors()
+	v, err := st.DeleteOrphanVectors(ctx)
 	if err != nil {
 		return verbFatal(fmt.Errorf("gc: vectors: %w", err))
 	}
 	var stale store.StaleStampSweep
 	if len(keepModels) > 0 {
-		stale, err = st.DeleteStaleStamps(keepModels)
+		stale, err = st.DeleteStaleStamps(ctx, keepModels)
 		if err != nil {
 			return verbFatal(fmt.Errorf("gc: stale stamps: %w", err))
 		}

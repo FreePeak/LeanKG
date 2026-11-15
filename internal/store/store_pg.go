@@ -270,11 +270,11 @@ func (s *PGStore) DeleteFileRecord(ctx context.Context, path string) error {
 
 // DeleteOrphanRelationships removes every edge whose endpoint is no longer a
 // live element (leankg gc).
-func (s *PGStore) DeleteOrphanRelationships() (int, error) {
+func (s *PGStore) DeleteOrphanRelationships(ctx context.Context) (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
-	tag, err := s.pool.Exec(pgCtx, `DELETE FROM relationships
+	tag, err := s.pool.Exec(ctx, `DELETE FROM relationships
 		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements)
 		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements)`)
 	if err != nil {
@@ -284,7 +284,7 @@ func (s *PGStore) DeleteOrphanRelationships() (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
-	return n, s.BumpWatermark(context.TODO())
+	return n, s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 const pgElementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path, ce.line_start, ce.line_end, ce.language, COALESCE(ce.parent_qualified,''), ce.content, COALESCE(ce.metadata::text,'{}')`
@@ -761,7 +761,7 @@ func (s *PGStore) Stamps(ctx context.Context) ([]ModelStamp, error) {
 // An empty keep is a NO-OP (see the Backend contract). A collection whose
 // tables have already vanished is skipped, not fatal: the stamp is cleaned
 // up either way. The watermark bumps only when rows actually go.
-func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
+func (s *PGStore) DeleteStaleStamps(ctx context.Context, keep []string) (StaleStampSweep, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -779,14 +779,14 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	have := false
 	for _, k := range keep {
 		var present bool
-		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(k)).Scan(&present); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(k)).Scan(&present); err != nil {
 			return StaleStampSweep{}, err
 		}
 		if !present {
 			continue
 		}
 		var n int
-		if err := s.pool.QueryRow(pgCtx, `SELECT 1 FROM `+s.vecTable(k)+` LIMIT 1`).Scan(&n); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT 1 FROM `+s.vecTable(k)+` LIMIT 1`).Scan(&n); err != nil {
 			if err == pgx.ErrNoRows {
 				continue
 			}
@@ -798,7 +798,7 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if !have {
 		return StaleStampSweep{}, nil
 	}
-	stamps, err := s.Stamps(pgCtx)
+	stamps, err := s.Stamps(ctx)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -808,23 +808,23 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 			continue
 		}
 		var present bool
-		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&present); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&present); err != nil {
 			return out, err
 		}
 		if present {
 			var n int
-			if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM `+s.vecTable(ms.ModelID)).Scan(&n); err != nil {
+			if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+s.vecTable(ms.ModelID)).Scan(&n); err != nil {
 				return out, err
 			}
 			out.Vectors += n
-			if _, err := s.pool.Exec(pgCtx, `DROP TABLE IF EXISTS `+s.vecTable(ms.ModelID)); err != nil {
+			if _, err := s.pool.Exec(ctx, `DROP TABLE IF EXISTS `+s.vecTable(ms.ModelID)); err != nil {
 				return out, err
 			}
 		}
-		if _, err := s.pool.Exec(pgCtx, `DROP TABLE IF EXISTS `+s.stateTable(ms.ModelID)); err != nil {
+		if _, err := s.pool.Exec(ctx, `DROP TABLE IF EXISTS `+s.stateTable(ms.ModelID)); err != nil {
 			return out, err
 		}
-		tag, err := s.pool.Exec(pgCtx, `DELETE FROM emb_stamp WHERE model_id = $1`, ms.ModelID)
+		tag, err := s.pool.Exec(ctx, `DELETE FROM emb_stamp WHERE model_id = $1`, ms.ModelID)
 		if err != nil {
 			return out, err
 		}
@@ -833,7 +833,7 @@ func (s *PGStore) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if out.Models == 0 && out.Vectors == 0 {
 		return out, nil
 	}
-	return out, s.BumpWatermark(context.TODO())
+	return out, s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // EmbeddingStateMap returns qualified_name -> content_hash for a model.
@@ -938,34 +938,34 @@ func (s *PGStore) VectorCoverage(ctx context.Context, modelID string) (covered, 
 // exist, per model collection (the per-stamp tables are PG's collection
 // layout; a stamped model whose tables vanished is skipped, not fatal). The
 // watermark bumps only when rows actually go.
-func (s *PGStore) DeleteOrphanVectors() (int, error) {
+func (s *PGStore) DeleteOrphanVectors(ctx context.Context) (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
-	stamps, err := s.Stamps(pgCtx)
+	stamps, err := s.Stamps(ctx)
 	if err != nil {
 		return 0, err
 	}
 	total := 0
 	for _, ms := range stamps {
 		var ok bool
-		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&ok); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, s.vecTable(ms.ModelID)).Scan(&ok); err != nil {
 			return total, err
 		}
 		if !ok {
 			continue
 		}
-		tag, err := s.pool.Exec(pgCtx, `DELETE FROM `+s.vecTable(ms.ModelID)+` v
+		tag, err := s.pool.Exec(ctx, `DELETE FROM `+s.vecTable(ms.ModelID)+` v
 			WHERE v.qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
 		if err != nil {
 			return total, err
 		}
 		total += int(tag.RowsAffected())
-		if err := s.pool.QueryRow(pgCtx, `SELECT to_regclass($1) IS NOT NULL`, s.stateTable(ms.ModelID)).Scan(&ok); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, s.stateTable(ms.ModelID)).Scan(&ok); err != nil {
 			return total, err
 		}
 		if ok {
-			if _, err := s.pool.Exec(pgCtx, `DELETE FROM `+s.stateTable(ms.ModelID)+` st
+			if _, err := s.pool.Exec(ctx, `DELETE FROM `+s.stateTable(ms.ModelID)+` st
 				WHERE st.qualified_name NOT IN (SELECT qualified_name FROM code_elements)`); err != nil {
 				return total, err
 			}
@@ -974,7 +974,7 @@ func (s *PGStore) DeleteOrphanVectors() (int, error) {
 	if total == 0 {
 		return 0, nil
 	}
-	return total, s.BumpWatermark(context.TODO())
+	return total, s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // SearchVectors performs the single ANN-equivalent shape: the model's vectors
@@ -1113,19 +1113,19 @@ func (s *PGStore) LastEmbedRunAny(ctx context.Context) (*EmbedRun, error) {
 // marked "running" past the cutoff and deletes the finished runs older than
 // it. The newest row is kept — it names the store's current collection
 // (CurrentModelID). Mirrors the SQLite implementation (vectors.go).
-func (s *PGStore) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
+func (s *PGStore) PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRunPrune, error) {
 	var out EmbedRunPrune
 	if err := requireWritable(s.mode); err != nil {
 		return out, err
 	}
 	cut := embedRunCutoff(cutoff)
-	tag, err := s.pool.Exec(pgCtx, `UPDATE embed_runs SET status='failed', finished_at=`+pgNow+`
+	tag, err := s.pool.Exec(ctx, `UPDATE embed_runs SET status='failed', finished_at=`+pgNow+`
 		WHERE status='running' AND started_at < $1`, cut)
 	if err != nil {
 		return out, fmt.Errorf("store: close out stale embed runs: %w", err)
 	}
 	out.Closed = tag.RowsAffected()
-	tag, err = s.pool.Exec(pgCtx, `DELETE FROM embed_runs
+	tag, err = s.pool.Exec(ctx, `DELETE FROM embed_runs
 		WHERE started_at < $1 AND status <> 'running'
 		  AND id <> (SELECT COALESCE(MAX(id), 0) FROM embed_runs)`, cut)
 	if err != nil {

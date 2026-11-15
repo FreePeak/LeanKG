@@ -1,6 +1,9 @@
 package store
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // Postgres delegates the SQLite maintenance primitives to the server it is
 // running on, so one maintenance loop serves both engines (the
@@ -11,10 +14,10 @@ import "fmt"
 // reported as 0 because Postgres tracks dead tuples per table and lets
 // autovacuum reclaim them without an explicit call — there is no single
 // "freelist" number to read.
-func (s *PGStore) Space() (SpaceReport, error) {
+func (s *PGStore) Space(ctx context.Context) (SpaceReport, error) {
 	rep := SpaceReport{Engine: EnginePostgres, Path: s.Path()}
 	var size int64
-	if err := s.pool.QueryRow(pgCtx,
+	if err := s.pool.QueryRow(ctx,
 		`SELECT pg_database_size(current_database())`).Scan(&size); err != nil {
 		return rep, fmt.Errorf("store: pg_database_size: %w", err)
 	}
@@ -32,8 +35,12 @@ func (s *PGStore) Space() (SpaceReport, error) {
 // Analyze is ANALYZE (planner statistics refresh), not VACUUM: VACUUM would
 // contend with the server's autovacuum for the same locks, whereas ANALYZE is
 // cheap, non-blocking, and the thing a bulk embed or delete leaves stale.
-func (s *PGStore) Maintain(op MaintainOp) (MaintainResult, error) {
+func (s *PGStore) Maintain(ctx context.Context, op MaintainOp) (MaintainResult, error) {
 	if err := requireWritable(s.mode); err != nil {
+		return MaintainResult{}, err
+	}
+	// A cancelled op never reports success, even for the kinds PostgreSQL skips.
+	if err := ctx.Err(); err != nil {
 		return MaintainResult{}, err
 	}
 	switch op.Kind {
@@ -53,7 +60,7 @@ func (s *PGStore) Maintain(op MaintainOp) (MaintainResult, error) {
 		// index churn leaves behind.
 		return MaintainResult{Skipped: skipNoKeywordSegments}, nil
 	case MaintainAnalyze:
-		if _, err := s.pool.Exec(pgCtx, `ANALYZE`); err != nil {
+		if _, err := s.pool.Exec(ctx, `ANALYZE`); err != nil {
 			return MaintainResult{}, fmt.Errorf("store: analyze: %w", err)
 		}
 		return MaintainResult{}, nil

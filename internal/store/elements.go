@@ -253,11 +253,11 @@ func (s *Store) DeleteFileRecord(ctx context.Context, path string) error {
 
 // DeleteOrphanRelationships removes every edge whose endpoint is no longer a
 // live element. The watermark bumps only when something actually went.
-func (s *Store) DeleteOrphanRelationships() (int, error) {
+func (s *Store) DeleteOrphanRelationships(ctx context.Context) (int, error) {
 	if err := requireWritable(s.mode); err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec(`DELETE FROM relationships
+	res, err := s.db.ExecContext(ctx, `DELETE FROM relationships
 		WHERE source_qualified NOT IN (SELECT qualified_name FROM code_elements)
 		   OR target_qualified NOT IN (SELECT qualified_name FROM code_elements)`)
 	if err != nil {
@@ -270,7 +270,7 @@ func (s *Store) DeleteOrphanRelationships() (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
-	return int(n), s.BumpWatermark(context.TODO())
+	return int(n), s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // nameTokens extracts the tokens of a query worth searching for in a SYMBOL

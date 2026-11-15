@@ -148,23 +148,23 @@ type Inventories interface {
 type Maintainer interface {
 	// Space is a no-write probe, safe on a read-only handle. Postgres
 	// implements it with pg_database_size.
-	Space() (SpaceReport, error)
+	Space(ctx context.Context) (SpaceReport, error)
 	// Maintain runs one engine-neutral maintenance op (see MaintainKind).
 	// Each engine runs the kinds it supports and reports the rest through
 	// MaintainResult.Skipped, so the maintenance loop is engine-agnostic.
-	Maintain(op MaintainOp) (MaintainResult, error)
+	Maintain(ctx context.Context, op MaintainOp) (MaintainResult, error)
 	// PruneEmbedRuns trims the embed-run ledger: it closes out the runs
 	// still marked "running" past the cutoff (a run that was killed
 	// mid-flight otherwise claims to be running forever) and deletes the
 	// finished runs older than it. The newest row is never deleted — it
 	// names the store's current collection (CurrentModelID).
-	PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error)
+	PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRunPrune, error)
 	// DeleteOrphanRelationships purges edges whose source or target element
 	// no longer exists (leankg gc; the repair `doctor --deep` names for the
 	// documented reconcile ceiling — edges into a deleted file survive until
 	// their source file is re-indexed, which incremental index never
 	// revisits). Returns the number of edges removed.
-	DeleteOrphanRelationships() (int, error)
+	DeleteOrphanRelationships(ctx context.Context) (int, error)
 	// DeleteOrphanVectors purges embedding_vectors + embedding_state rows
 	// whose qualified_name no longer belongs to any element, across every
 	// model collection (a dangling QN dangles in all of them). This is the
@@ -172,7 +172,7 @@ type Maintainer interface {
 	// and edges, so until #411 nothing owned vector rows, and every deleted
 	// file left its vectors behind forever. Returns the number of vector
 	// rows removed.
-	DeleteOrphanVectors() (int, error)
+	DeleteOrphanVectors(ctx context.Context) (int, error)
 	// DeleteStaleStamps drops every vector collection that is not in keep:
 	// its vectors, its embedding state and its stamp row. A collection is
 	// stale when nothing queries it any more — the L3 rung selects the
@@ -185,7 +185,7 @@ type Maintainer interface {
 	// An empty keep is a NO-OP: a caller that does not know which
 	// collection is live (a server with no embedder wired) must not be able
 	// to delete the live one. Returns what the sweep removed.
-	DeleteStaleStamps(keep []string) (StaleStampSweep, error)
+	DeleteStaleStamps(ctx context.Context, keep []string) (StaleStampSweep, error)
 }
 
 // KV is the generic namespaced key/value store (ontology catalogs, doctor

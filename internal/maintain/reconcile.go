@@ -117,7 +117,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 	}
 	if len(missing) == 0 {
 		res.Reason = "nothing to delete"
-		return res, healInventory(st)
+		return res, healInventory(ctx, st)
 	}
 	before, err := st.ElementCount(ctx)
 	if err != nil {
@@ -140,10 +140,10 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 	// once its elements are gone — and an edge from ANOTHER file into a
 	// deleted element dangles. Leaving them would let the L3 arm answer with
 	// vectors whose content no longer exists in the store.
-	if _, err := st.DeleteOrphanVectors(); err != nil {
+	if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 		return res, fmt.Errorf("maintain: reclaim orphan vectors: %w", err)
 	}
-	if _, err := st.DeleteOrphanRelationships(); err != nil {
+	if _, err := st.DeleteOrphanRelationships(ctx); err != nil {
 		return res, fmt.Errorf("maintain: reclaim orphan relationships: %w", err)
 	}
 	// The inventory is the store's own summary of what it holds, and
@@ -153,7 +153,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 	// it), so without this the store would report "possibly_stale" the
 	// moment it was reconciled — the signal would say "the tree may have
 	// moved" about a store that was just made to MATCH the tree.
-	return res, healInventory(st)
+	return res, healInventory(ctx, st)
 }
 
 // healInventory makes the store's summary match the store.
@@ -169,19 +169,19 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 // to every store every hour. It also heals a store an EARLIER reconcile left
 // behind, which is exactly the state the live fleet was in when this rule
 // was written.
-func healInventory(st store.Backend) error {
-	seq, _, err := st.Watermark(context.TODO())
+func healInventory(ctx context.Context, st store.Backend) error {
+	seq, _, err := st.Watermark(ctx)
 	if err != nil {
 		return fmt.Errorf("maintain: read watermark after reconcile: %w", err)
 	}
-	inv, err := st.LoadInventory(context.TODO())
+	inv, err := st.LoadInventory(ctx)
 	if err != nil {
 		return fmt.Errorf("maintain: read inventory after reconcile: %w", err)
 	}
 	if inv != nil && inv.LastInventorySeq == seq {
 		return nil
 	}
-	if _, err := store.RefreshInventory(context.TODO(), st); err != nil {
+	if _, err := store.RefreshInventory(ctx, st); err != nil {
 		return fmt.Errorf("maintain: refresh inventory after reconcile: %w", err)
 	}
 	return nil

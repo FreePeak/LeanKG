@@ -196,14 +196,14 @@ func TestPGOrphanPurges(t *testing.T) {
 		t.Fatal(err) // drops a.A + its edges; b.B->a.A and a.A's vector dangle
 	}
 
-	ne, err := s.DeleteOrphanRelationships()
+	ne, err := s.DeleteOrphanRelationships(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ne != 1 {
 		t.Fatalf("orphan edges purged = %d, want 1", ne)
 	}
-	nv, err := s.DeleteOrphanVectors()
+	nv, err := s.DeleteOrphanVectors(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestPGOrphanPurges(t *testing.T) {
 		t.Fatalf("live edge lost: %+v", rels)
 	}
 	// Idempotent: a second pass finds nothing.
-	if n, _ := s.DeleteOrphanVectors(); n != 0 {
+	if n, _ := s.DeleteOrphanVectors(context.Background()); n != 0 {
 		t.Fatalf("second vector purge = %d, want 0", n)
 	}
 }

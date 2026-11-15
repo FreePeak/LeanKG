@@ -126,7 +126,7 @@ func TestDeleteOrphanRelationships(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := s.DeleteOrphanRelationships()
+	n, err := s.DeleteOrphanRelationships(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestDeleteOrphanRelationships(t *testing.T) {
 	// Idempotent, and the watermark must not move when nothing went:
 	// a no-op gc may not mark a fresh project possibly_stale.
 	seq1, _, _ := s.Watermark(context.Background())
-	n2, err := s.DeleteOrphanRelationships()
+	n2, err := s.DeleteOrphanRelationships(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestDeleteOrphanVectors(t *testing.T) {
 		t.Fatalf("pre-purge orphans = %d, want 1 (the residue #411 describes)", orphans)
 	}
 
-	n, err := s.DeleteOrphanVectors()
+	n, err := s.DeleteOrphanVectors(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestDeleteOrphanVectors(t *testing.T) {
 	// No-op purge must not bump the watermark (a gc on a clean store leaves
 	// freshness exactly where it was).
 	seq1, _, _ := s.Watermark(context.Background())
-	if n2, err := s.DeleteOrphanVectors(); err != nil || n2 != 0 {
+	if n2, err := s.DeleteOrphanVectors(context.Background()); err != nil || n2 != 0 {
 		t.Fatalf("second purge = (%d,%v), want (0,nil)", n2, err)
 	}
 	if seq2, _, _ := s.Watermark(context.Background()); seq2 != seq1 {

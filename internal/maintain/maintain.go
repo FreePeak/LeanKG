@@ -163,7 +163,7 @@ func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
 	if ctx.Err() != nil {
 		return out
 	}
-	if n, err := st.DeleteOrphanRelationships(); err != nil {
+	if n, err := st.DeleteOrphanRelationships(ctx); err != nil {
 		logf("maintain: orphan relationships: %v", err)
 	} else {
 		out.OrphanEdges = n
@@ -171,7 +171,7 @@ func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
 	if ctx.Err() != nil {
 		return out
 	}
-	if n, err := st.DeleteOrphanVectors(); err != nil {
+	if n, err := st.DeleteOrphanVectors(ctx); err != nil {
 		logf("maintain: orphan vectors: %v", err)
 	} else {
 		out.OrphanVectors = n
@@ -183,7 +183,7 @@ func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
 		// The embed-run ledger is trimmed FIRST: the keep set below is
 		// derived from it (the newest run names the live collection), and
 		// the prune keeps that newest row.
-		pr, err := st.PruneEmbedRuns(time.Now().AddDate(0, 0, -metrics.DefaultRetentionDays))
+		pr, err := st.PruneEmbedRuns(ctx, time.Now().AddDate(0, 0, -metrics.DefaultRetentionDays))
 		if err != nil {
 			logf("maintain: prune embed runs: %v", err)
 		} else {
@@ -199,7 +199,7 @@ func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
 		return out
 	}
 	if opts.CompactFTS {
-		if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCompactKeywordIndex}); err != nil {
+		if r, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainCompactKeywordIndex}); err != nil {
 			logf("maintain: fts compaction: %v", err)
 		} else if r.Skipped == "" {
 			out.FTSCompacted = true
@@ -215,7 +215,7 @@ func Sweep(ctx context.Context, st store.Backend, opts Options) SweepResult {
 	if ctx.Err() != nil {
 		return out
 	}
-	sw, err := st.DeleteStaleStamps(keep)
+	sw, err := st.DeleteStaleStamps(ctx, keep)
 	if err != nil {
 		logf("maintain: stale stamps: %v", err)
 		return out
@@ -284,7 +284,7 @@ func Pass(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 		logf = func(string, ...any) {}
 	}
 
-	before, err := st.Space()
+	before, err := st.Space(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("maintain: space probe: %w", err)
 	}
@@ -301,7 +301,7 @@ func Pass(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 	// First and fatal: one PRAGMA read on any store that already auto-vacuums,
 	// exactly one full VACUUM on any store that does not. A store that cannot
 	// enable incremental auto_vacuum cannot return space, so the pass stops.
-	if _, err := st.Maintain(store.MaintainOp{Kind: store.MaintainUpgrade}); err != nil {
+	if _, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainUpgrade}); err != nil {
 		return res, fmt.Errorf("maintain: enable incremental vacuum: %w", err)
 	}
 
@@ -328,7 +328,7 @@ func Pass(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 	// would skip the reclaim and leave the space on the freelist for a
 	// whole interval.
 	freelist := before.FreeBytes
-	if after, err := st.Space(); err == nil {
+	if after, err := st.Space(ctx); err == nil {
 		freelist = after.FreeBytes
 	} else {
 		logf("maintain: re-probe space before vacuum: %v", err)
@@ -345,7 +345,7 @@ func Pass(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 		// Not fatal: the checkpoint below still applies, and the next pass
 		// retries the reclaim. A skipped op did no work, so it is not
 		// counted as a reclaim.
-		if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainReclaim, MaxPages: opts.MaxPages}); err != nil {
+		if r, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainReclaim, MaxPages: opts.MaxPages}); err != nil {
 			logf("maintain: incremental vacuum: %v", err)
 		} else if r.Skipped == "" {
 			res.Vacuumed = true
@@ -354,13 +354,13 @@ func Pass(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return res, err
 	}
-	if r, err := st.Maintain(store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
+	if r, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
 		logf("maintain: checkpoint: %v", err)
 	} else if r.Skipped == "" {
 		res.Checkpointed = true
 	}
 
-	if after, err := st.Space(); err == nil {
+	if after, err := st.Space(ctx); err == nil {
 		res.After = after.SizeBytes
 		res.FreeAfter = after.FreeBytes
 	} else {
