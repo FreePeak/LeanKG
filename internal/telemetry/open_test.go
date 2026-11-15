@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -39,7 +40,7 @@ func TestOpenOffCreatesNoTelemetryFiles(t *testing.T) {
 	home := homeDir(t)
 	for _, env := range []string{"", "bodies"} {
 		t.Setenv("LEANKG_TELEMETRY", env)
-		rec, err := Open(home)
+		rec, err := Open(context.Background(), home)
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
@@ -63,7 +64,7 @@ func TestOpenWithConsentCreatesLedgerAndRecords(t *testing.T) {
 	if err := SaveConfig(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := Open(home)
+	rec, err := Open(context.Background(), home)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestOpenWithConsentCreatesLedgerAndRecords(t *testing.T) {
 	if err := rec.Close(); err != nil {
 		t.Fatal(err)
 	}
-	st, err := OpenStore(home, true)
+	st, err := OpenStore(context.Background(), home, true)
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestOpenWithConsentCreatesLedgerAndRecords(t *testing.T) {
 
 func TestOpenStoreReadOnlyNeverCreates(t *testing.T) {
 	home := homeDir(t)
-	_, err := OpenStore(home, true)
+	_, err := OpenStore(context.Background(), home, true)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("OpenStore read-only err = %v, want ErrNotExist", err)
 	}

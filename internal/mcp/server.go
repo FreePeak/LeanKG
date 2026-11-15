@@ -58,9 +58,11 @@ type Server struct {
 	srv             *mcp.Server
 	authStore       store.Backend // token store for HTTP callers; nil = env tokens only
 
-	// Capture (plan v4.15 DS-04/DS-05). rec defaults to telemetry.Nop; stdio
+	// Capture (plan v4.15 DS-04/DS-05). rec defaults to telemetry.Nop and is
+	// swapped by a consent reload while calls run, so recMu guards it. stdio
 	// is the identity of the one stdio session, guarded by stdioMu.
 	rec             telemetry.Recorder
+	recMu           sync.RWMutex
 	stdioMu         sync.Mutex
 	stdio           telemetry.Identity
 	sessionByClient map[string]string

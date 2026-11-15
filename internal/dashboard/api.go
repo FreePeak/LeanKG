@@ -31,7 +31,7 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) (reqCtx, bool) 
 		writeErr(w, http.StatusInternalServerError, "telemetry config unreadable")
 		return reqCtx{}, false
 	}
-	st, err := s.led.store()
+	st, err := s.led.store(r.Context())
 	if err != nil {
 		log.Printf("dashboard: telemetry ledger: %v", err)
 		writeErr(w, http.StatusInternalServerError, "telemetry ledger unavailable")
@@ -212,7 +212,7 @@ func (s *Server) transcriptSource(cfg telemetry.Config) metrics.TranscriptSource
 		if a == nil {
 			return nil, nil
 		}
-		return a.Transcript(sessionlink.TranscriptRef{
+		return a.Transcript(ctx, sessionlink.TranscriptRef{
 			Client:    sess.ClientName,
 			Path:      telemetry.ExpandHome(sess.TranscriptPath), // stored redacted (~)
 			SessionID: sess.ClientSessionID,

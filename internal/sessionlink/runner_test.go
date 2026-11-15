@@ -112,7 +112,7 @@ func (s *spyAdapter) Detect(string) bool { s.hit("Detect"); return true }
 
 func (s *spyAdapter) Roots(string) []string { s.hit("Roots"); return []string{"/spy"} }
 
-func (s *spyAdapter) Locate(_ string, c CallRef) (TranscriptRef, Confidence, error) {
+func (s *spyAdapter) Locate(_ context.Context, _ string, c CallRef) (TranscriptRef, Confidence, error) {
 	s.hit("Locate")
 	if s.locate == nil {
 		return TranscriptRef{}, 0, ErrNotFound
@@ -121,7 +121,7 @@ func (s *spyAdapter) Locate(_ string, c CallRef) (TranscriptRef, Confidence, err
 	return t, Confidence(conf), err
 }
 
-func (s *spyAdapter) Window(t TranscriptRef, c CallRef, n int) (Window, error) {
+func (s *spyAdapter) Window(_ context.Context, t TranscriptRef, c CallRef, n int) (Window, error) {
 	s.hit("Window")
 	if s.window == nil {
 		return Window{}, errors.New("no window")
@@ -129,7 +129,7 @@ func (s *spyAdapter) Window(t TranscriptRef, c CallRef, n int) (Window, error) {
 	return s.window(t, c, n)
 }
 
-func (s *spyAdapter) Transcript(TranscriptRef, int) ([]Turn, error) {
+func (s *spyAdapter) Transcript(context.Context, TranscriptRef, int) ([]Turn, error) {
 	s.hit("Transcript")
 	return nil, nil
 }

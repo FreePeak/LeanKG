@@ -41,7 +41,7 @@ func cmdTelemetryLink(ctx context.Context, args []string) error {
 	if err != nil {
 		return fatalJSON(err)
 	}
-	st, err := telemetry.OpenStore(home, false)
+	st, err := telemetry.OpenStore(context.Background(), home, false)
 	if err != nil {
 		return fatalJSON(err)
 	}

@@ -15,7 +15,7 @@ import (
 // missing file yields emptyStore and every report is empty.
 type ledger struct {
 	home string
-	open func(home string, readOnly bool) (telemetry.Store, error)
+	open func(ctx context.Context, home string, readOnly bool) (telemetry.Store, error)
 
 	mu sync.Mutex
 	st telemetry.Store
@@ -29,7 +29,7 @@ type linker struct {
 	done   chan struct{}
 }
 
-func (l *ledger) store() (telemetry.Store, error) {
+func (l *ledger) store(ctx context.Context) (telemetry.Store, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.st != nil {
@@ -42,7 +42,7 @@ func (l *ledger) store() (telemetry.Store, error) {
 		}
 		return nil, err
 	}
-	st, err := l.open(l.home, false)
+	st, err := l.open(ctx, l.home, false)
 	if err != nil {
 		return nil, err
 	}

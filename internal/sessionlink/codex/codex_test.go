@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -128,11 +129,11 @@ func TestLocateExactByPayloadIDAndFilenameUUID(t *testing.T) {
 	const uuid = "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001"
 	p := writeRollout(t, root, uuid, meta(sid, fixtureCwd), msg(t0, "user", "hi"))
 	a := withRoot(t, root)
-	ref, conf, err := a.Locate("", sessionlink.CallRef{ClientSessionID: sid, Cwd: fixtureCwd})
+	ref, conf, err := a.Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: sid, Cwd: fixtureCwd})
 	if err != nil || ref.Path != p || float64(conf) != 1 {
 		t.Fatalf("exact by payload id: ref=%+v conf=%v err=%v", ref, conf, err)
 	}
-	ref, conf, err = a.Locate("", sessionlink.CallRef{ClientSessionID: uuid, Cwd: fixtureCwd})
+	ref, conf, err = a.Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: uuid, Cwd: fixtureCwd})
 	if err != nil || ref.Path != p || float64(conf) != 1 {
 		t.Fatalf("exact by filename uuid: ref=%+v conf=%v err=%v", ref, conf, err)
 	}
@@ -152,14 +153,14 @@ func TestLocateHeuristicByCwdTimeToolArgs(t *testing.T) {
 		fnCall(callAt, "mcp__leankg__query", args, "call-2"),
 	)
 	a := withRoot(t, root)
-	ref, conf, err := a.Locate("", sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt.Add(time.Second)})
+	ref, conf, err := a.Locate(context.Background(), "", sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt.Add(time.Second)})
 	if err != nil {
 		t.Fatalf("heuristic: %v", err)
 	}
 	if ref.Path != p || float64(conf) >= 1 {
 		t.Errorf("heuristic = %+v conf=%v", ref, conf)
 	}
-	if _, _, err := a.Locate("", sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(map[string]any{"q": "x"}), Cwd: fixtureCwd, TS: callAt}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), "", sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(map[string]any{"q": "x"}), Cwd: fixtureCwd, TS: callAt}); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("wrong args: err = %v", err)
 	}
 }
@@ -182,7 +183,7 @@ func TestWindowSkipsInjectedContextAndAttachesTokens(t *testing.T) {
 		msg(callAt.Add(4*time.Second), "user", "next question"),
 		fnCall(callAt.Add(5*time.Second), "bash", map[string]any{"command": "ls"}, "call-b"),
 	)
-	w, err := withRoot(t, root).Window(sessionlink.TranscriptRef{Client: "codex", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt}, 2)
+	w, err := withRoot(t, root).Window(context.Background(), sessionlink.TranscriptRef{Client: "codex", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt}, 2)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestWindowSkipsInjectedContextAndAttachesTokens(t *testing.T) {
 	if len(w.FollowUps) != 1 || w.FollowUps[0].Norm != "grep" || w.FollowUps[0].Result != "none" {
 		t.Errorf("follow-ups = %+v, want the grep only", w.FollowUps)
 	}
-	all, err := withRoot(t, root).(*adapter).Transcript(sessionlink.TranscriptRef{Client: "codex", Path: p}, 0)
+	all, err := withRoot(t, root).(*adapter).Transcript(context.Background(), sessionlink.TranscriptRef{Client: "codex", Path: p}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +213,7 @@ func TestWindowSkipsInjectedContextAndAttachesTokens(t *testing.T) {
 
 func TestMissingStoreIsNotFound(t *testing.T) {
 	a := withRoot(t, filepath.Join(t.TempDir(), "sessions"))
-	if _, _, err := a.Locate("", sessionlink.CallRef{ClientSessionID: "x", Cwd: fixtureCwd}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: "x", Cwd: fixtureCwd}); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("err = %v", err)
 	}
 }

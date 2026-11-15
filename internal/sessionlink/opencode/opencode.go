@@ -5,6 +5,7 @@
 package opencode
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -51,7 +52,7 @@ func (adapter) Detect(home string) bool {
 func (adapter) Roots(home string) []string { return []string{dbPath(home)} }
 
 // openRO opens the store read-only and checks its schema.
-func openRO(path string) (*sql.DB, error) {
+func openRO(ctx context.Context, path string) (*sql.DB, error) {
 	fi, err := os.Lstat(path)
 	if err != nil || !fi.Mode().IsRegular() {
 		return nil, sessionlink.ErrNotFound
@@ -62,16 +63,16 @@ func openRO(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkSchema(db); err != nil {
+	if err := checkSchema(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return db, nil
 }
 
-func checkSchema(db *sql.DB) error {
+func checkSchema(ctx context.Context, db *sql.DB) error {
 	for table, cols := range requiredColumns {
-		rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+		rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
 		if err != nil {
 			return sessionlink.ErrUnsupportedVersion
 		}
@@ -100,16 +101,19 @@ func checkSchema(db *sql.DB) error {
 // to name an opencode session that holds the call. The heuristic needs a
 // session in the call's directory whose time range covers the call, and a
 // tool part with the same canonical tool and args hash near the call time.
-func (adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.TranscriptRef{}, 0, err
+	}
 	path := dbPath(home)
-	db, err := openRO(path)
+	db, err := openRO(ctx, path)
 	if err != nil {
 		return sessionlink.TranscriptRef{}, 0, err
 	}
 	defer db.Close()
 
 	if c.ClientSessionID != "" {
-		evs, err := loadEvents(db, c.ClientSessionID)
+		evs, err := loadEvents(ctx, db, c.ClientSessionID)
 		if err != nil {
 			return sessionlink.TranscriptRef{}, 0, err
 		}
@@ -122,14 +126,14 @@ func (adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transcrip
 	if c.Cwd == "" || c.Tool == "" {
 		return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
 	}
-	ids, err := coveringSessions(db, c)
+	ids, err := coveringSessions(ctx, db, c)
 	if err != nil {
 		return sessionlink.TranscriptRef{}, 0, err
 	}
 	var total int
 	var first string
 	for _, id := range ids {
-		evs, err := loadEvents(db, id)
+		evs, err := loadEvents(ctx, db, id)
 		if err != nil {
 			return sessionlink.TranscriptRef{}, 0, err
 		}
@@ -151,7 +155,7 @@ func (adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transcrip
 
 // coveringSessions lists sessions in the call's directory whose time range
 // covers the call, newest first.
-func coveringSessions(db *sql.DB, c sessionlink.CallRef) ([]string, error) {
+func coveringSessions(ctx context.Context, db *sql.DB, c sessionlink.CallRef) ([]string, error) {
 	q := `SELECT id FROM session WHERE directory = ?`
 	args := []any{c.Cwd}
 	if !c.TS.IsZero() {
@@ -159,7 +163,7 @@ func coveringSessions(db *sql.DB, c sessionlink.CallRef) ([]string, error) {
 		args = append(args, c.TS.UnixMilli(), c.TS.UnixMilli())
 	}
 	q += ` ORDER BY time_updated DESC`
-	rows, err := db.Query(q, args...)
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -176,13 +180,16 @@ func coveringSessions(db *sql.DB, c sessionlink.CallRef) ([]string, error) {
 }
 
 // Window extracts up to n turns before and after the matched call.
-func (adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
-	db, err := openRO(t.Path)
+func (adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.Window{}, err
+	}
+	db, err := openRO(ctx, t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
 	defer db.Close()
-	evs, err := loadEvents(db, t.SessionID)
+	evs, err := loadEvents(ctx, db, t.SessionID)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -194,13 +201,16 @@ func (adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n int)
 }
 
 // Transcript returns the session's turns, capped at maxTurns.
-func (adapter) Transcript(t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
-	db, err := openRO(t.Path)
+func (adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	db, err := openRO(ctx, t.Path)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	evs, err := loadEvents(db, t.SessionID)
+	evs, err := loadEvents(ctx, db, t.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -243,9 +253,9 @@ type partRow struct {
 
 // loadEvents reads one session into adapter-neutral events, messages in
 // order and parts in order within each message.
-func loadEvents(db *sql.DB, sessionID string) ([]sessionlink.Event, error) {
+func loadEvents(ctx context.Context, db *sql.DB, sessionID string) ([]sessionlink.Event, error) {
 	parts := map[string][]partRow{}
-	prows, err := db.Query(`SELECT id, message_id, time_created, data FROM part WHERE session_id = ? ORDER BY time_created, id`, sessionID)
+	prows, err := db.QueryContext(ctx, `SELECT id, message_id, time_created, data FROM part WHERE session_id = ? ORDER BY time_created, id`, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +278,7 @@ func loadEvents(db *sql.DB, sessionID string) ([]sessionlink.Event, error) {
 		return nil, err
 	}
 
-	mrows, err := db.Query(`SELECT id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created, id`, sessionID)
+	mrows, err := db.QueryContext(ctx, `SELECT id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created, id`, sessionID)
 	if err != nil {
 		return nil, err
 	}

@@ -26,7 +26,7 @@ func (s *Server) consentGet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "telemetry config unreadable")
 		return
 	}
-	st, err := s.led.store()
+	st, err := s.led.store(r.Context())
 	if err != nil {
 		log.Printf("dashboard: telemetry ledger: %v", err)
 		writeErr(w, http.StatusInternalServerError, "telemetry ledger unavailable")
@@ -96,7 +96,7 @@ func (s *Server) consentPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	st, err := s.led.store()
+	st, err := s.led.store(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "telemetry ledger unavailable")
 		return

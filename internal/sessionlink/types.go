@@ -8,6 +8,7 @@
 package sessionlink
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -91,9 +92,10 @@ type Adapter interface {
 	// Roots are the store paths Detect looked at (shown on the consent screen).
 	Roots(home string) []string
 	// Locate finds the transcript for c: exact by session id, else heuristic.
-	Locate(home string, c CallRef) (TranscriptRef, Confidence, error)
+	// A cancelled ctx returns its error, never ErrNotFound.
+	Locate(ctx context.Context, home string, c CallRef) (TranscriptRef, Confidence, error)
 	// Window extracts up to n turns before and after the call.
-	Window(t TranscriptRef, c CallRef, n int) (Window, error)
+	Window(ctx context.Context, t TranscriptRef, c CallRef, n int) (Window, error)
 	// Transcript returns the whole session (capped) for the replay view.
-	Transcript(t TranscriptRef, maxTurns int) ([]Turn, error)
+	Transcript(ctx context.Context, t TranscriptRef, maxTurns int) ([]Turn, error)
 }

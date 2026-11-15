@@ -19,7 +19,7 @@ func cmdTelemetryImportAB(ctx context.Context, args []string) error {
 	if len(args) != 1 || args[0] == "" {
 		return fatalJSON(errors.New("usage: leankg telemetry import-ab <dir>"))
 	}
-	st, err := telemetry.OpenStore(telemetry.Home(), false)
+	st, err := telemetry.OpenStore(context.Background(), telemetry.Home(), false)
 	if err != nil {
 		return fatalJSON(err)
 	}

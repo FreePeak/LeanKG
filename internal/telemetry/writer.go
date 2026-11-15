@@ -34,6 +34,11 @@ type recorder struct {
 	st      Store
 	level   Level
 	maxBody int
+	// ctx is the server-lifetime ctx the caller passed to NewRecorder. The
+	// recorder owns its writer goroutine and Close joins it, which is the one
+	// runner type the context plan allows to hold a ctx. Flushes never use it
+	// directly: they run detached from its cancellation.
+	ctx context.Context
 
 	ch      chan queued
 	dropped atomic.Int64
@@ -54,12 +59,14 @@ type recorder struct {
 
 // NewRecorder returns a Recorder that writes to st at level. Off returns a
 // recorder that drops everything and starts no goroutine. Close flushes,
-// stops the writer and closes st.
-func NewRecorder(st Store, level Level, maxBodyBytes int) Recorder {
+// stops the writer and closes st. ctx is the server-lifetime context; a
+// cancelled ctx does not drop queued events, because the flushes that carry
+// them run detached from it.
+func NewRecorder(ctx context.Context, st Store, level Level, maxBodyBytes int) Recorder {
 	if level != Metadata && level != Bodies {
 		level = Off
 	}
-	r := &recorder{st: st, level: level, maxBody: maxBodyBytes, done: make(chan struct{})}
+	r := &recorder{ctx: ctx, st: st, level: level, maxBody: maxBodyBytes, done: make(chan struct{})}
 	if level == Off {
 		// No writer and no queue. `closed` stays false because it marks
 		// "Close was called", not "not capturing": the level alone is Off, so
@@ -170,7 +177,7 @@ func (r *recorder) run() {
 	var mems []MemoryEvent
 	pending := func() int { return len(calls) + len(mems) }
 	flush := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), flushTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), flushTimeout)
 		defer cancel()
 		if len(calls) > 0 {
 			if err := guard("InsertCalls", func() error { return r.st.InsertCalls(ctx, calls) }); err != nil {

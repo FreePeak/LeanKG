@@ -243,7 +243,7 @@ func telemetryPurge(ctx context.Context, home string, before time.Time, out io.W
 		fmt.Fprintf(out, "no telemetry ledger at %s; nothing to purge\n", telemetry.DBPath(home))
 		return nil
 	}
-	st, err := telemetry.OpenStore(home, false)
+	st, err := telemetry.OpenStore(context.Background(), home, false)
 	if err != nil {
 		return err
 	}
@@ -310,7 +310,7 @@ func telemetryStatus(ctx context.Context, home string, asJSON bool, out io.Write
 		MaxBodyBytes:    cfg.MaxBodyBytes,
 	}
 	if v.DBPresent {
-		if st, err := telemetry.OpenStore(home, true); err != nil {
+		if st, err := telemetry.OpenStore(context.Background(), home, true); err != nil {
 			v.StatsError = err.Error()
 		} else {
 			stats, err := st.Stats(ctx)
@@ -457,7 +457,6 @@ var (
 	// silent no-op, which is exactly the "first grant after startup does
 	// nothing" bug this reload exists to prevent.
 	telemetryBuildOnce sync.Once
-	telemetryRec       telemetry.Recorder = telemetry.Nop{}
 	// telemetryStop holds the retention sweep's cancel for a lazily built
 	// recorder (ReloadTelemetry), so a close stops the sweep before the store.
 	telemetryStop   func()
@@ -466,16 +465,19 @@ var (
 
 // telemetryRecorder returns the process-wide capture Recorder: telemetry.Nop
 // unless the user granted consent in $LEANKG_HOME/telemetry.yaml.
-func telemetryRecorder() telemetry.Recorder {
+func telemetryRecorder(ctx context.Context) telemetry.Recorder {
 	telemetryOnce.Do(func() {
-		rec, err := telemetry.Open(telemetry.Home())
+		rec, err := telemetry.Open(ctx, telemetry.Home())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "telemetry: capture disabled: %v\n", err)
 			return
 		}
-		telemetryRec = rec
+		telemetrySinks.setLive(rec)
 	})
-	return telemetryRec
+	if rec := telemetrySinks.current(); rec != nil {
+		return rec
+	}
+	return telemetry.Nop{}
 }
 
 // closeTelemetry stops the retention sweep then flushes the process Recorder.
@@ -487,7 +489,9 @@ func closeTelemetry() {
 	if stop != nil {
 		stop()
 	}
-	_ = telemetryRec.Close()
+	if rec := telemetrySinks.current(); rec != nil {
+		_ = rec.Close()
+	}
 }
 
 // ReloadTelemetry re-reads the consent file and applies the level to the live
@@ -499,7 +503,7 @@ func closeTelemetry() {
 // means off" contract. Reloading on such a server therefore has to build the
 // recorder on demand, or a first-time grant after startup would still capture
 // nothing and the operator would conclude the reload is broken.
-func ReloadTelemetry() error {
+func ReloadTelemetry(ctx context.Context) error {
 	cfg, err := telemetry.LoadConfig(telemetry.Home())
 	if err != nil {
 		return fmt.Errorf("telemetry reload: %w", err)
@@ -508,7 +512,7 @@ func ReloadTelemetry() error {
 	if level == telemetry.Off {
 		// Nothing to raise. Lowering a live recorder to Off is still applied,
 		// so a mid-session withdrawal stops capture immediately.
-		if rec := telemetryRecorder(); rec != nil {
+		if rec := telemetryRecorder(ctx); rec != nil {
 			if err := rec.SetLevel(telemetry.Off); err != nil {
 				return fmt.Errorf("telemetry reload: %w", err)
 			}
@@ -517,12 +521,12 @@ func ReloadTelemetry() error {
 	}
 	// Build the recorder once for this process if startup found capture off.
 	telemetryBuildOnce.Do(func() {
-		st, oerr := telemetry.OpenStore(telemetry.Home(), false)
+		st, oerr := telemetry.OpenStore(ctx, telemetry.Home(), false)
 		if oerr != nil {
 			fmt.Fprintf(os.Stderr, "telemetry reload: open ledger: %v\n", oerr)
 			return
 		}
-		stop, serr := telemetry.StartRetention(st, cfg.RetentionDays)
+		stop, serr := telemetry.StartRetention(ctx, st, cfg.RetentionDays)
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "telemetry reload: retention: %v\n", serr)
 			return
@@ -530,10 +534,10 @@ func ReloadTelemetry() error {
 		telemetryStopMu.Lock()
 		telemetryStop = stop
 		telemetryStopMu.Unlock()
-		rec := telemetry.NewRecorder(st, level, cfg.MaxBodyBytes)
-		telemetryRec = rec
+		rec := telemetry.NewRecorder(ctx, st, level, cfg.MaxBodyBytes)
+		telemetrySinks.setLive(rec)
 	})
-	rec := telemetryRecorder()
+	rec := telemetryRecorder(ctx)
 	if rec == nil {
 		return fmt.Errorf("telemetry reload: no recorder available")
 	}
@@ -573,7 +577,7 @@ func watchConsentReload(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ch:
-				if err := ReloadTelemetry(); err != nil {
+				if err := ReloadTelemetry(ctx); err != nil {
 					log.Printf("telemetry reload: %v", err)
 				}
 			}
@@ -593,21 +597,47 @@ func registerMCPSink(srv interface{ SetRecorder(telemetry.Recorder) }) {
 // sinkRegistry is the list of consumers a consent reload re-points. Serve adds
 // to it at startup and from request goroutines (a lazily built MCP server)
 // while the SIGHUP goroutine walks it, so every access takes the lock.
+// sinkRegistry is also the holder of the live process recorder. The SIGHUP
+// reload writes it and request goroutines and shutdown read it, so every
+// access goes through mu.
 type sinkRegistry struct {
-	mu  sync.Mutex
-	fns []func(telemetry.Recorder)
+	mu   sync.Mutex
+	live telemetry.Recorder // nil until a recorder is built
+	fns  []func(telemetry.Recorder)
 }
 
+// add registers a consumer and hands it the live recorder when there is one.
+// Both happen under mu, the lock install takes to publish a new recorder, so
+// a consumer built during a reload ends up with the new recorder and never
+// keeps the startup value. fn must not register another sink.
 func (r *sinkRegistry) add(fn func(telemetry.Recorder)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.fns = append(r.fns, fn)
+	if r.live != nil {
+		fn(r.live)
+	}
 }
 
-// install points every registered consumer at rec. It walks a copy, so a
-// consumer that registers another one does not deadlock on the lock.
+// setLive makes rec the live recorder without re-pointing consumers.
+func (r *sinkRegistry) setLive(rec telemetry.Recorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.live = rec
+}
+
+// current returns the live recorder, or nil before one is set.
+func (r *sinkRegistry) current() telemetry.Recorder {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.live
+}
+
+// install makes rec the live recorder and points every consumer at it. It
+// walks a copy, so a consumer that registers another one does not deadlock.
 func (r *sinkRegistry) install(rec telemetry.Recorder) {
 	r.mu.Lock()
+	r.live = rec
 	fns := append([]func(telemetry.Recorder){}, r.fns...)
 	r.mu.Unlock()
 	for _, fn := range fns {
