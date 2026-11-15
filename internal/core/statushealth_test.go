@@ -177,7 +177,7 @@ func TestStatusHealthyStoreWithoutEmbeddings(t *testing.T) {
 // make the store unreadable, so it must not flip healthy.
 func TestStatusProviderUnreachableIsNotUnhealthy(t *testing.T) {
 	st := seededStore(t)
-	e := New(st, nil, QueryEmbedderFromProvider(failingProvider{inner: embed.Deterministic(4)}))
+	e := New(st, nil, failingProvider{inner: embed.Deterministic(4)})
 
 	out, err := e.Status(context.Background())
 	if err != nil {

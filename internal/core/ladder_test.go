@@ -46,7 +46,7 @@ func TestLadderRoutesProseToHybrid(t *testing.T) {
 		t.Fatalf("no embedder: prose answered by %s, want L2", r)
 	}
 
-	e.SetEmbedder(QueryEmbedderFromProvider(p))
+	e.SetEmbedder(p)
 	if r, reason := rung("draws the widget frame"); r != "L3" || !strings.Contains(reason, "rrf(vector+fts5)") {
 		t.Fatalf("prose: %s %q, want L3 rrf(vector+fts5)", r, reason)
 	}
@@ -77,9 +77,9 @@ func TestIsProse(t *testing.T) {
 }
 
 // downEmbedder always fails, like a stopped sidecar.
-type downEmbedder struct{ QueryEmbedder }
+type downEmbedder struct{ stubIdentity }
 
-func (downEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
+func (downEmbedder) Embed(context.Context, embed.TextKind, []string) ([][]float32, error) {
 	return nil, fmt.Errorf("dial tcp 127.0.0.1:1: connection refused")
 }
 
@@ -88,7 +88,7 @@ func (downEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
 // query degrades.
 func TestStatusReportsEmbedderOutage(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetEmbedder(downEmbedder{QueryEmbedderFromProvider(embed.Deterministic(8))})
+	e.SetEmbedder(downEmbedder{})
 	out, err := e.Status(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -119,8 +119,8 @@ func (r *lenRecorder) Embed(ctx context.Context, kind embed.TextKind, texts []st
 // sidecar (a 962-token query used to degrade L3 to keywords).
 func TestLongQueryIsTruncatedNotDegraded(t *testing.T) {
 	rec := &lenRecorder{innerProvider: embed.Deterministic(8)}
-	q := QueryEmbedderFromProvider(rec)
-	if _, err := q.EmbedQuery(context.Background(), strings.Repeat("vector ", 5000)); err != nil {
+	q := rec
+	if _, err := embed.EmbedQuery(context.Background(), q, strings.Repeat("vector ", 5000)); err != nil {
 		t.Fatal(err)
 	}
 	if limit := embed.TextCap(rec); rec.got > limit {
@@ -141,7 +141,7 @@ func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 	if _, err := embed.Run(context.Background(), e.st, p, "full"); err != nil {
 		t.Fatal(err)
 	}
-	e.SetEmbedder(QueryEmbedderFromProvider(p))
+	e.SetEmbedder(p)
 	ask := func() map[string]any {
 		out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "unrelated cooking question"})
 		if err != nil {
@@ -171,5 +171,3 @@ func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 		t.Fatal("a calibration for a different collection identity was applied")
 	}
 }
-
-func (downEmbedder) Probe(context.Context) error { return nil }

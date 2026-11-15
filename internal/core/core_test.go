@@ -139,11 +139,11 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 	if err != nil || len(qvec) != 1 {
 		t.Fatalf("embed query: %v", err)
 	}
-	if err := st.UpsertVectors(p.ModelID(), []store.VectorRow{{QualifiedName: "m.alpha", Vec: qvec[0]}}); err != nil {
+	if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: "m.alpha", Vec: qvec[0]}}); err != nil {
 		t.Fatal(err)
 	}
 
-	embedder := QueryEmbedderFromProvider(p)
+	embedder := p
 	e := New(st, nil, embedder)
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "alpha code"})
 	if err != nil {
@@ -167,13 +167,8 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 
 type failingProvider struct{ inner embed.Provider }
 
-func (f failingProvider) ModelID() string                 { return f.inner.ModelID() }
-func (f failingProvider) Revision() string                { return f.inner.Revision() }
-func (f failingProvider) Dimensions() int                 { return f.inner.Dimensions() }
-func (f failingProvider) Distance() string                { return f.inner.Distance() }
-func (f failingProvider) Provider() string                { return f.inner.Provider() }
+func (f failingProvider) Identity() embed.Identity        { return f.inner.Identity() }
 func (f failingProvider) Probe(ctx context.Context) error { return f.inner.Probe(ctx) }
-
 func (f failingProvider) Embed(_ context.Context, _ embed.TextKind, _ []string) ([][]float32, error) {
 	return nil, context.DeadlineExceeded
 }
@@ -196,7 +191,7 @@ func TestL3ProviderFailureDegrades(t *testing.T) {
 	if err := st.WriteStamp(store.ModelStamp{ModelID: "boom", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	embedder := QueryEmbedderFromProvider(failingProvider{inner: embed.Deterministic(4)})
+	embedder := failingProvider{inner: embed.Deterministic(4)}
 	e := New(st, nil, embedder)
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "content"})
 	if err != nil {
@@ -391,10 +386,10 @@ func TestL3StampDriftDegrades(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(8)
-	if err := st.WriteStamp(store.ModelStamp{ModelID: p.ModelID(), Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Provider()}); err != nil {
+	if err := st.WriteStamp(store.ModelStamp{ModelID: p.Identity().Model, Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Identity().Provider}); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, QueryEmbedderFromProvider(p))
+	e := New(st, nil, p)
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "content"})
 	if err != nil {
 		t.Fatal(err)

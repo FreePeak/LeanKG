@@ -23,25 +23,24 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 }
 
-// isolateEnv pins the embedding provider to the offline deterministic
-// implementation and the engine to sqlite, so no sidecar spawn and no ambient
-// Postgres config leaks into the run.
-//
-// It states the WHOLE embed baseline, not half of it: the provider name is
-// only one of the knobs, and the model, the width, the revision and the API
-// key decide what the stamped collection IS. An operator's exported
-// LEANKG_EMBED_MODEL would otherwise rename the collection this test writes,
-// and the vector count it asserts would match nothing.
+// isolateEnv pins the engine to sqlite and clears the ambient Postgres config,
+// so no ambient store configuration leaks into the run. The embedding provider
+// is not read from the environment at all: each test passes its Start.
 func isolateEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
-	t.Setenv("LEANKG_EMBED_BASE_URL", "")
-	t.Setenv("LEANKG_EMBED_MODEL", "")
-	t.Setenv("LEANKG_EMBED_DIMS", "")
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	t.Setenv("LEANKG_EMBED_API_KEY", "")
 	t.Setenv("LEANKG_DB_ENGINE", "")
 	t.Setenv("LEANKG_PG_URL", "")
+}
+
+// detStart is the embed start the refresh tests use: the in-process
+// deterministic provider, named explicitly rather than read from the environment.
+func detStart(ctx context.Context) (embed.Provider, func(), error) {
+	return embed.Start(ctx, embed.Config{Provider: "deterministic"})
+}
+
+// badStart is the embed start of a configuration naming an unknown provider.
+func badStart(ctx context.Context) (embed.Provider, func(), error) {
+	return embed.Start(ctx, embed.Config{Provider: "bogus"})
 }
 
 func newProject(t *testing.T) string {
@@ -61,7 +60,7 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 	isolateEnv(t)
 	dir := newProject(t)
 
-	res, err := Run(context.Background(), Options{Project: dir, Path: dir})
+	res, err := Run(context.Background(), Options{Start: detStart, Project: dir, Path: dir})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -146,10 +145,10 @@ func TestRunIndexesCodeDocsAndEmbeds(t *testing.T) {
 func TestRunIncrementalSkipsAlreadyEmbedded(t *testing.T) {
 	isolateEnv(t)
 	dir := newProject(t)
-	if _, err := Run(context.Background(), Options{Project: dir, Path: dir}); err != nil {
+	if _, err := Run(context.Background(), Options{Start: detStart, Project: dir, Path: dir}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	res, err := Run(context.Background(), Options{Project: dir, Path: dir})
+	res, err := Run(context.Background(), Options{Start: detStart, Project: dir, Path: dir})
 	if err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
@@ -162,7 +161,7 @@ func TestRunWithoutDocsDirectory(t *testing.T) {
 	isolateEnv(t)
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "main.go"), "package main\n\nfunc only() {}\n")
-	res, err := Run(context.Background(), Options{Project: dir, Path: dir})
+	res, err := Run(context.Background(), Options{Start: detStart, Project: dir, Path: dir})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -179,7 +178,7 @@ func TestRunDefaultPathIsDot(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "main.go"), "package main\n\nfunc only() {}\n")
 	t.Chdir(dir)
-	res, err := Run(context.Background(), Options{Project: dir})
+	res, err := Run(context.Background(), Options{Start: detStart, Project: dir})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -201,7 +200,7 @@ func TestRunLocalSourceOverridesPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tree, "main.go"), []byte("package code\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Run(context.Background(), Options{Project: dir, Source: tree})
+	res, err := Run(context.Background(), Options{Start: detStart, Project: dir, Source: tree})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -224,13 +223,12 @@ func TestRunLocalSourceOverridesPath(t *testing.T) {
 // what the Rust verb did.)
 func TestRunSkipsEmbedOnBadProvider(t *testing.T) {
 	isolateEnv(t)
-	t.Setenv("LEANKG_EMBED_PROVIDER", "bogus")
 	dir := newProject(t)
-	res, err := Run(context.Background(), Options{Project: dir, Path: dir})
+	res, err := Run(context.Background(), Options{Start: badStart, Project: dir, Path: dir})
 	if err != nil {
 		t.Fatalf("Run = %v, want success with a recorded embed skip", err)
 	}
-	if res.EmbedSkipped == "" || !strings.Contains(res.EmbedSkipped, "unknown LEANKG_EMBED_PROVIDER") {
+	if res.EmbedSkipped == "" || !strings.Contains(res.EmbedSkipped, "unknown provider") {
 		t.Fatalf("EmbedSkipped = %q, want the provider error text", res.EmbedSkipped)
 	}
 	if !strings.Contains(Render(res), "Embedding skipped:") {
@@ -254,18 +252,16 @@ func TestRunSkipsEmbedOnBadProvider(t *testing.T) {
 func TestEmbedStageSkipsWhenEmbedLockHeld(t *testing.T) {
 	isolateEnv(t)
 	dir := newProject(t)
-	t.Setenv("LEANKG_EMBED_PROVIDER", "bogus")
-	if _, err := Run(context.Background(), Options{Project: dir, Path: dir}); err != nil {
+	if _, err := Run(context.Background(), Options{Start: badStart, Project: dir, Path: dir}); err != nil {
 		t.Fatalf("seed Run: %v", err)
 	}
-	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
 
 	st, err := store.OpenBackend(context.Background(), dir, "", "", "", store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
-	p, release, err := embed.StartProvider(context.Background())
+	p, release, err := detStart(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +273,7 @@ func TestEmbedStageSkipsWhenEmbedLockHeld(t *testing.T) {
 	}
 	defer unlock()
 
-	rep, skip, err := EmbedStage(context.Background(), st, dir, embed.StartProvider, "incremental")
+	rep, skip, err := EmbedStage(context.Background(), st, dir, detStart, "incremental")
 	if err != nil {
 		t.Fatalf("EmbedStage = %v, want a skip", err)
 	}
@@ -287,7 +283,7 @@ func TestEmbedStageSkipsWhenEmbedLockHeld(t *testing.T) {
 	if rep.Embedded != 0 {
 		t.Fatalf("report embedded = %d, want 0", rep.Embedded)
 	}
-	if n, err := st.VectorCount(p.ModelID()); err != nil || n != 0 {
+	if n, err := st.VectorCount(p.Identity().Model); err != nil || n != 0 {
 		t.Fatalf("vectors = %d (err %v), want 0", n, err)
 	}
 }

@@ -47,7 +47,7 @@ func TestBudgetNeverDropsPrimaryPayload(t *testing.T) {
 	if _, err := embed.Run(context.Background(), st, p, "full"); err != nil {
 		t.Fatal(err)
 	}
-	e := core.New(st, nil, core.QueryEmbedderFromProvider(p))
+	e := core.New(st, nil, p)
 	e.SetProjectDir(dir)
 
 	routes := []struct{ action, query, list string }{

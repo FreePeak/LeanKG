@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/FreePeak/LeanKG/cmd/internal/embedenv"
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -156,15 +157,19 @@ func openEngine(ctx context.Context, dir string, mode store.Mode) (*core.Engine,
 	}
 	engine := core.New(st, nil, nil)
 	engine.SetProjectDir(dir)
-	// Query-time embedding for one-shot verbs: attach only (embed.FromEnv never
+	// Query-time embedding for one-shot verbs: attach only (embed.Attach never
 	// spawns), so a CLI run can never orphan a sidecar. Without this,
 	// `leankg query --action semantic` could never reach L3 even with a
 	// provider running — found dogfooding the real repo.
-	if os.Getenv("LEANKG_EMBED_PROVIDER") != "" || os.Getenv("LEANKG_EMBED_BASE_URL") != "" {
-		if p, perr := embed.FromEnv(); perr == nil {
-			engine.SetEmbedder(core.QueryEmbedderFromProvider(p))
-		} else {
-			fmt.Fprintf(os.Stderr, "embed provider: %v (L3 degraded)\n", perr)
+	if cfg, cerr := embedConfigFromEnv(); cfg.Provider != "" || cfg.BaseURL != "" {
+		if cerr == nil {
+			p, _, perr := embed.Attach(cfg)
+			if cerr = perr; perr == nil {
+				engine.SetEmbedder(p)
+			}
+		}
+		if cerr != nil {
+			fmt.Fprintf(os.Stderr, "embed provider: %v (L3 degraded)\n", cerr)
 		}
 	}
 	reg := langs.DefaultRegistry()
@@ -223,14 +228,43 @@ func hookBigRepoSkip(ctx context.Context, dir string) string {
 		dir, n, limit, dir)
 }
 
+// embedConfigFromEnv reads the LEANKG_EMBED_* environment: the one place the
+// command reads it for the embed provider. The configuration is returned even
+// when a variable is malformed, so the caller can name the provider it meant.
+func embedConfigFromEnv() (embed.Config, error) {
+	return embedenv.Load(os.Getenv)
+}
+
+// embedStart is the start function for the configuration cfg names (a spawning
+// start for a manual run). A malformed configuration is returned by the function
+// rather than by the caller, so it degrades the embed stage with its reason.
+func embedStart(cfg embed.Config, cfgErr error) func(context.Context) (embed.Provider, func(), error) {
+	return func(ctx context.Context) (embed.Provider, func(), error) {
+		if cfgErr != nil {
+			return nil, func() {}, cfgErr
+		}
+		return embed.Start(ctx, cfg)
+	}
+}
+
+// embedStartFromEnv is embedStart over the environment, for verbs that refresh
+// the index and embed in one pass.
+func embedStartFromEnv() func(context.Context) (embed.Provider, func(), error) {
+	cfg, err := embedConfigFromEnv()
+	return embedStart(cfg, err)
+}
+
 // hookEmbedStart is the hook's provider policy for the embed stage. It attaches
 // the provider (never spawns one), counts the backlog that run would embed, and
 // refuses when that exceeds LEANKG_HOOK_MAX_EMBED. The refusal and a failed count
 // come back as the stage's skip reason, so the hook prints one `embed skipped:`
 // line and exits 0. Nothing is embedded before the gate passes.
-func hookEmbedStart(st store.Backend, storeDir string) func(context.Context) (embed.Provider, func(), error) {
+func hookEmbedStart(st store.Backend, storeDir string, cfg embed.Config, cfgErr error) func(context.Context) (embed.Provider, func(), error) {
 	return func(ctx context.Context) (embed.Provider, func(), error) {
-		p, release, err := embed.AttachHookProvider(ctx)
+		if cfgErr != nil {
+			return nil, func() {}, cfgErr
+		}
+		p, release, err := embed.AttachHook(cfg)
 		if err != nil {
 			return nil, release, err
 		}
@@ -378,9 +412,10 @@ func indexEmbed(ctx context.Context, storeDir string, hook bool) {
 		return
 	}
 	defer st.Close()
-	start := embed.StartProvider
+	cfg, cfgErr := embedConfigFromEnv()
+	start := embedStart(cfg, cfgErr)
 	if hook {
-		start = hookEmbedStart(st, storeDir)
+		start = hookEmbedStart(st, storeDir, cfg, cfgErr)
 	}
 	rep, skipped, err := refresh.EmbedStage(ctx, st, storeDir, start, "incremental")
 	switch {

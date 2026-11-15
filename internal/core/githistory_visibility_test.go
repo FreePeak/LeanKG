@@ -171,11 +171,11 @@ func TestSemanticHidesGitHistoryVectors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(p.ModelID(), []store.VectorRow{{QualifiedName: el.QualifiedName, Vec: qvec[0]}}); err != nil {
+		if err := st.UpsertVectors(p.Identity().Model, []store.VectorRow{{QualifiedName: el.QualifiedName, Vec: qvec[0]}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	e := New(st, nil, QueryEmbedderFromProvider(p))
+	e := New(st, nil, p)
 	e.SetProjectDir(dir)
 
 	out, err := e.Query(ctx, QueryRequest{Action: "semantic", Query: text, Limit: 10})

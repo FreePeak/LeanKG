@@ -155,7 +155,8 @@ func TestDenseFusedScoresMonotonic(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m.SetVectorizer(&conceptVectorizer{floor: 0.5})
+	cv := &conceptVectorizer{floor: 0.5}
+	m.SetProvider(cv, cv.Floor)
 	rows, err := m.RecallFiltered(context.Background(), []string{"b"}, "which database holds the vectors", 3, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +177,8 @@ func TestDenseHitsCountsDenseRankedRows(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m.SetVectorizer(&conceptVectorizer{floor: 0.5})
+	cv := &conceptVectorizer{floor: 0.5}
+	m.SetProvider(cv, cv.Floor)
 	if _, err := m.RecallFiltered(context.Background(), []string{"b"}, "which database holds the vectors", 3, nil); err != nil {
 		t.Fatal(err)
 	}

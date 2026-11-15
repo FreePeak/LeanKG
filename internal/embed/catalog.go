@@ -32,7 +32,6 @@ package embed
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -215,9 +214,10 @@ func Lookup(model string) (Model, bool) {
 }
 
 // Pin returns the revision to stamp for a model, following the precedence
-// documented at the top of this file.
-func Pin(model, provider string) string {
-	if r := strings.TrimSpace(os.Getenv("LEANKG_EMBED_REVISION")); r != "" {
+// documented at the top of this file. override is the operator's explicit pin
+// (Config.Revision); "" means none.
+func Pin(model, provider, override string) string {
+	if r := strings.TrimSpace(override); r != "" {
 		return r
 	}
 	if m, ok := Lookup(model); ok {

@@ -407,13 +407,12 @@ afterSidecars:
 	// process fronts many project stores, and the default one is not the
 	// only one that fills up. See the fleet block below.
 
-	var embedder core.QueryEmbedder
+	embedCfg, embedCfgErr := embedConfigFromEnv()
 	if *embedProvider != "" {
-		if err := os.Setenv("LEANKG_EMBED_PROVIDER", *embedProvider); err != nil {
-			return fmt.Errorf("set provider env: %w", err)
-		}
+		embedCfg.Provider = *embedProvider
 	}
-	if os.Getenv("LEANKG_EMBED_PROVIDER") != "" {
+	var embedder embed.Provider
+	if embedCfg.Provider != "" {
 		// A query-time embedder is an OPTION on the serve path, not a
 		// precondition: the engine serves exact (L1), fuzzy (L2), graph,
 		// memory, REST and UI without it, and the L3 rung already degrades
@@ -426,12 +425,12 @@ afterSidecars:
 		// "unreachable" with no clue why (found 2026-10-03 driving
 		// xdev's autostart, where LEANKG_EMBED_SIDECAR_PORT pointed at a
 		// port a previous sidecar still held).
-		p, release, perr := embed.StartProvider(ctx)
+		p, release, perr := embedStart(embedCfg, embedCfgErr)(ctx)
 		if perr != nil {
 			log.Printf("embed provider unavailable — serving without L3 semantic: %v", perr)
 		} else {
 			defer release()
-			embedder = core.QueryEmbedderFromProvider(p)
+			embedder = p
 		}
 	}
 	engine := core.New(st, mem, embedder)
@@ -506,7 +505,7 @@ afterSidecars:
 		interval := maintain.IntervalFromEnv(os.Getenv)
 		var keepModelIDs []string
 		if embedder != nil {
-			if id, _ := embedder.Describe(); id != "" {
+			if id := embedder.Identity().Model; id != "" {
 				keepModelIDs = []string{id}
 			}
 		}
@@ -595,7 +594,8 @@ afterSidecars:
 		// that returned handler, so serving the original one served everything
 		// except /api/v1/mcp/auto-config. Auto-config is the one write route on
 		// this listener, so it alone is gated (CX-02).
-		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs))
+		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs),
+			restauto.WithEmbedStart(embedStart(embedCfg, embedCfgErr)))
 		h = gateAutoConfig(st, h, autoConfig)
 		eps = append(eps, endpoint{addr: addr, h: h})
 	}
@@ -609,7 +609,8 @@ afterSidecars:
 		h := routeByProject(router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
-		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs))
+		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs),
+			restauto.WithEmbedStart(embedStart(embedCfg, embedCfgErr)))
 		// The REST capture handler is built explicitly so a consent reload can
 		// re-point its sink (a level raise that reached nobody was the bug).
 		cap := rest.NewCaptureHandler(rec, telemetry.TransportREST)

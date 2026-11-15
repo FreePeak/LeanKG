@@ -69,8 +69,9 @@ type Router interface {
 type Option func(*config)
 
 type config struct {
-	router Router
-	jobs   *Jobs
+	router     Router
+	jobs       *Jobs
+	embedStart func(context.Context) (embed.Provider, func(), error)
 }
 
 // run starts fn on the jobs' server-lifetime context. Without a wired Jobs it
@@ -130,6 +131,13 @@ func WithRouter(r Router) Option { return func(c *config) { c.router = r } }
 // WithJobs runs the auto-config jobs on jobs. The serve command wires one
 // Jobs with the server's root context and calls Stop on shutdown.
 func WithJobs(j *Jobs) Option { return func(c *config) { c.jobs = j } }
+
+// WithEmbedStart names how the auto-embed job resolves its provider (the serve
+// command passes embed.Start over the configuration it read). Without it an
+// auto-embed request is skipped with a reason.
+func WithEmbedStart(start func(context.Context) (embed.Provider, func(), error)) Option {
+	return func(c *config) { c.embedStart = start }
+}
 
 // RegisterAutoConfig mounts POST /api/v1/mcp/auto-config on the mux.
 // The endpoint triggers background auto-index and/or auto-embed for the
@@ -193,7 +201,7 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 		cfg.run(r, func(ctx context.Context) { startAutoIndex(ctx, st, projectDir) })
 	}
 	if req.EmbedEnabled {
-		cfg.run(r, func(ctx context.Context) { startAutoEmbed(ctx, st, projectDir, req.EmbedDebounceSecs) })
+		cfg.run(r, func(ctx context.Context) { startAutoEmbed(ctx, st, projectDir, req.EmbedDebounceSecs, cfg.embedStart) })
 	}
 	writeAutoJSON(w, http.StatusOK, map[string]any{
 		"index_enabled":          req.IndexEnabled,
@@ -254,7 +262,8 @@ var embedDebounce = func(ctx context.Context, d time.Duration) bool {
 
 // startAutoEmbed waits the debounce window for index to settle, then runs
 // the embedding pipeline in a background goroutine (single-flight per process).
-func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceSecs int) {
+func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceSecs int,
+	start func(context.Context) (embed.Provider, func(), error)) {
 	autoEmbedMu.Lock()
 	if autoEmbedRunning {
 		autoEmbedMu.Unlock()
@@ -273,7 +282,11 @@ func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceS
 		return
 	}
 
-	provider, release, err := embed.StartProvider(ctx)
+	if start == nil {
+		log.Printf("auto-config: embed skipped: no embedding provider configured")
+		return
+	}
+	provider, release, err := start(ctx)
 	if err != nil {
 		log.Printf("auto-config: embed skipped: %v", err)
 		return
@@ -281,7 +294,7 @@ func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceS
 	defer release()
 	_ = provider
 
-	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir})
+	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir, Start: start})
 	if err != nil {
 		log.Printf("auto-config: embed failed: %v", err)
 		return

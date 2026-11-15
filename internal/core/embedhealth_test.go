@@ -5,38 +5,48 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FreePeak/LeanKG/internal/embed"
 )
 
-// blockingEmbedder never answers until the probe ctx ends.
-type blockingEmbedder struct{ QueryEmbedder }
+// stubIdentity gives a test embedder an identity without an endpoint.
+type stubIdentity struct{}
 
-func (blockingEmbedder) EmbedQuery(ctx context.Context, _ string) ([]float32, error) {
+func (stubIdentity) Identity() embed.Identity {
+	return embed.Identity{Provider: "test", Model: "test-embed", Dims: 1}
+}
+func (stubIdentity) Probe(context.Context) error { return nil }
+
+// blockingEmbedder never answers until the probe ctx ends.
+type blockingEmbedder struct{ stubIdentity }
+
+func (blockingEmbedder) Embed(ctx context.Context, _ embed.TextKind, _ []string) ([][]float32, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
 // gatedEmbedder signals when a probe starts and answers once released.
 type gatedEmbedder struct {
-	QueryEmbedder
+	stubIdentity
 	started chan struct{}
 	release chan struct{}
 }
 
-func (g gatedEmbedder) EmbedQuery(ctx context.Context, _ string) ([]float32, error) {
+func (g gatedEmbedder) Embed(ctx context.Context, _ embed.TextKind, _ []string) ([][]float32, error) {
 	g.started <- struct{}{}
 	select {
 	case <-g.release:
-		return []float32{1}, nil
+		return [][]float32{{1}}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
 // okEmbedder answers at once.
-type okEmbedder struct{ QueryEmbedder }
+type okEmbedder struct{ stubIdentity }
 
-func (okEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
-	return []float32{1}, nil
+func (okEmbedder) Embed(context.Context, embed.TextKind, []string) ([][]float32, error) {
+	return [][]float32{{1}}, nil
 }
 
 // TestEmbedProbeBoundedByCallerCtx: the probe ends when the caller's deadline
@@ -97,8 +107,21 @@ func TestEmbedProbeDoesNotHoldLock(t *testing.T) {
 	<-done
 }
 
-func (blockingEmbedder) Probe(context.Context) error { return nil }
-
-func (okEmbedder) Probe(context.Context) error { return nil }
-
-func (gatedEmbedder) Probe(context.Context) error { return nil }
+// TestStatusFlagsDeterministicProvider keeps the hash-derived provider visible
+// in status: it is selectable only by name (D10), so the status payload must
+// say it is not a semantic embedder.
+func TestStatusFlagsDeterministicProvider(t *testing.T) {
+	st := seededStore(t)
+	e := New(st, nil, embed.Deterministic(8))
+	out, err := e.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	qe, ok := out["query_embedder"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_embedder missing from status: %v", out)
+	}
+	if qe["provider"] != "deterministic" || qe["deterministic"] != true {
+		t.Fatalf("query_embedder = %v, want provider deterministic and deterministic=true", qe)
+	}
+}

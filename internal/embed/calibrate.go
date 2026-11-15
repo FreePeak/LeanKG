@@ -47,7 +47,7 @@ type Calibration struct {
 // calibrationIdentity binds a calibration to everything that shapes the vectors:
 // the vector-space Key, the same encoding the memory index keys its rows by.
 func calibrationIdentity(s store.ModelStamp) string {
-	return KeyOf(s)
+	return identityOf(s).Key()
 }
 
 // legacyCalibrationIdentity is the identity string calibrations stored before
@@ -55,6 +55,12 @@ func calibrationIdentity(s store.ModelStamp) string {
 // It is read back, never written, so an upgrade keeps every stored noise floor.
 func legacyCalibrationIdentity(s store.ModelStamp) string {
 	return fmt.Sprintf("%s|%s|%d|%d|%s|%s", s.Revision, s.Provider, s.Dimensions, s.ChunkerVersion, s.QueryPrefix, s.DocumentPrefix)
+}
+
+// identityOf is the Identity a stamp describes: every field the stamp records.
+func identityOf(s store.ModelStamp) Identity {
+	return Identity{Provider: s.Provider, Model: s.ModelID, Revision: s.Revision, Dims: s.Dimensions,
+		ChunkerVersion: s.ChunkerVersion, QueryPrefix: s.QueryPrefix, DocumentPrefix: s.DocumentPrefix}
 }
 
 // Calibrate measures and stores the noise floor of p's collection: the best
@@ -67,7 +73,7 @@ func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool
 	}
 	floor, found := 0.0, false
 	for _, v := range vecs {
-		hits, err := st.SearchVectors(store.VectorQuery{ModelID: p.ModelID(), Vec: v, K: 1})
+		hits, err := st.SearchVectors(store.VectorQuery{ModelID: p.Identity().Model, Vec: v, K: 1})
 		if err != nil {
 			return 0, false, fmt.Errorf("embed: calibration search: %w", err)
 		}

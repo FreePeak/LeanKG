@@ -7,7 +7,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -36,16 +35,10 @@ func wideReply(n int) []byte {
 	return b
 }
 
-// setWideEnv points the openai provider at baseURL with an uncatalogued model
+// wideCfg points the openai provider at baseURL with an uncatalogued model
 // whose width is wideDims.
-func setWideEnv(t *testing.T, baseURL string) {
-	t.Helper()
-	t.Setenv("LEANKG_EMBED_PROVIDER", "openai")
-	t.Setenv("LEANKG_EMBED_BASE_URL", baseURL)
-	t.Setenv("LEANKG_EMBED_MODEL", "wide-test-embed")
-	t.Setenv("LEANKG_EMBED_DIMS", strconv.Itoa(wideDims))
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	t.Setenv("LEANKG_EMBED_API_KEY", "")
+func wideCfg(baseURL string) Config {
+	return Config{Provider: "openai", BaseURL: baseURL, Model: "wide-test-embed", Dims: wideDims}
 }
 
 // TestOversizedValidResponseIsNotConfigError: a valid reply larger than the
@@ -66,8 +59,7 @@ func TestOversizedValidResponseIsNotConfigError(t *testing.T) {
 		}
 		_, _ = w.Write(wideReply(len(body.Input)))
 	})
-	setWideEnv(t, srv.URL+"/v1")
-	p, err := FromEnv()
+	p, _, err := Attach(wideCfg(srv.URL + "/v1"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -153,7 +153,7 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 	}
 	e := engineAt(t, dir)
 	p := embed.Deterministic(64)
-	e.SetEmbedder(QueryEmbedderFromProvider(p))
+	e.SetEmbedder(p)
 	ctx := context.Background()
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := e.st.VectorCount(p.ModelID())
+	vecs, _ := e.st.VectorCount(p.Identity().Model)
 	if els := count(t, e); vecs != els {
 		t.Fatalf("after re-index: %d vectors for %d elements (orphans left behind)", vecs, els)
 	}

@@ -47,58 +47,98 @@ const maxLocalTextChars = 1000
 
 // Provider produces embeddings for one pinned model.
 //
-// The accessors are pure: they never reach the network. Facts that need the
-// endpoint (a sidecar's model revision and text budget) are resolved by
-// Probe(ctx), which the run, export and health paths call explicitly before
-// they read the identity. Probe is cached once it has an answer.
+// Identity is pure: it reads what the provider already knows and never does
+// I/O. Facts that need the endpoint (a sidecar's model revision and text
+// budget) are resolved by Probe(ctx), which the run, export and health paths
+// call explicitly, and which is cached once it has an answer.
 type Provider interface {
-	ModelID() string
-	Revision() string
-	Dimensions() int
-	Distance() string
-	Provider() string
+	Identity() Identity
 	Probe(ctx context.Context) error
 	Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error)
 }
 
-// Identity names the vector space a provider writes and reads. Key is the one
-// encoding of that space: the memory index keys its rows by it and the noise
-// floor calibration is bound to it.
+// Identity names the vector space a provider writes and reads.
 type Identity struct {
-	Provider       string
-	Model          string
-	Revision       string
-	Dims           int
+	// Provider is the transport label the stamp records: local, openai or
+	// deterministic. It is not part of Key (see store.ModelStamp.Matches).
+	Provider string
+	// Model is the collection id (the stamp's model_id).
+	Model string
+	// Revision is the pinned or probed model revision.
+	Revision string
+	// Dims is the configured vector width.
+	Dims int
+	// ChunkerVersion and the query/document prefix pair complete the space:
+	// they change what the vectors are, so they are part of Key.
 	ChunkerVersion int
 	QueryPrefix    string
 	DocumentPrefix string
+	// TextBudget is the per-text rune budget the endpoint reports; 0 = unknown
+	// until Probe. Not part of Key: it shapes the write cap, not the space.
+	TextBudget int
+	// TextCapPin is the operator's LEANKG_EMBED_TEXT_CAP pin; 0 = none. Not
+	// part of Key.
+	TextCapPin int
 }
 
-// Key is model|revision|provider|dims|chunker|query-prefix|document-prefix. Its
-// shape is durable: a change re-embeds every memory row.
+// Key is the one encoding of a vector space:
+// model|revision|provider|dims|chunker|query-prefix|document-prefix. The memory
+// index stores each row under this key, so its shape is durable: a change here
+// re-embeds every memory row.
 func (id Identity) Key() string {
 	return fmt.Sprintf("%s|%s|%s|%d|%d|%s|%s", id.Model, id.Revision, id.Provider, id.Dims,
 		id.ChunkerVersion, id.QueryPrefix, id.DocumentPrefix)
 }
 
-// IdentityOf reads the identity p writes under. It is pure: call Probe first
-// when the revision of an unpinned sidecar matters.
-func IdentityOf(p Provider) Identity {
-	q, d := Prefixes(p.ModelID())
-	return Identity{Provider: p.Provider(), Model: p.ModelID(), Revision: p.Revision(), Dims: p.Dimensions(),
-		ChunkerVersion: ChunkerVersion, QueryPrefix: q, DocumentPrefix: d}
+// Stamp is the collection stamp this identity writes under.
+func (id Identity) Stamp() store.ModelStamp {
+	return store.ModelStamp{
+		ModelID:        id.Model,
+		Revision:       id.Revision,
+		Dimensions:     id.Dims,
+		Distance:       Distance,
+		Provider:       id.Provider,
+		ChunkerVersion: id.ChunkerVersion,
+		QueryPrefix:    id.QueryPrefix,
+		DocumentPrefix: id.DocumentPrefix,
+	}
 }
 
-// KeyOf is the vector-space key of a stored collection stamp, the same key
-// IdentityOf(p).Key() gives for the provider that wrote it.
-func KeyOf(s store.ModelStamp) string {
-	return identityOfStamp(s).Key()
+// newIdentity is the identity of a provider serving model: the pipeline
+// components (chunker version, catalog prefix pair) are filled in here, once.
+func newIdentity(provider, model, revision string, dims, textCapPin int) Identity {
+	q, d := Prefixes(model)
+	return Identity{Provider: provider, Model: model, Revision: revision, Dims: dims,
+		ChunkerVersion: ChunkerVersion, QueryPrefix: q, DocumentPrefix: d, TextCapPin: textCapPin}
 }
 
-// identityOfStamp is the identity a stamp records.
-func identityOfStamp(s store.ModelStamp) Identity {
-	return Identity{Provider: s.Provider, Model: s.ModelID, Revision: s.Revision, Dims: s.Dimensions,
-		ChunkerVersion: s.ChunkerVersion, QueryPrefix: s.QueryPrefix, DocumentPrefix: s.DocumentPrefix}
+// EmbedQuery embeds one question under p's query kind. It probes first, so the
+// text is cut to the endpoint's budget and the caller sees the probed identity.
+func EmbedQuery(ctx context.Context, p Provider, text string) ([]float32, error) {
+	if err := p.Probe(ctx); err != nil {
+		return nil, err
+	}
+	vecs, err := p.Embed(ctx, Query, []string{TruncateText(text, TextCap(p))})
+	if err != nil {
+		return nil, err
+	}
+	if len(vecs) != 1 {
+		return nil, fmt.Errorf("embed: query returned %d vectors, want 1", len(vecs))
+	}
+	return vecs[0], nil
+}
+
+// EmbedDocuments embeds stored texts (memory rows) under p's document kind,
+// each cut to the provider's text budget.
+func EmbedDocuments(ctx context.Context, p Provider, texts []string) ([][]float32, error) {
+	if err := p.Probe(ctx); err != nil {
+		return nil, err
+	}
+	cut := make([]string, len(texts))
+	for i, t := range texts {
+		cut[i] = TruncateText(t, TextCap(p))
+	}
+	return p.Embed(ctx, Document, cut)
 }
 
 // contentHashHex is the per-element content hash: SHA-256 hex of Content.

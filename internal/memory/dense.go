@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/FreePeak/LeanKG/internal/embed"
 )
 
 // Dense recall (RS-19). BM25 finds memories that share words with the
@@ -20,24 +22,25 @@ import (
 // off-topic text reaches), so an unrelated question still recalls nothing —
 // recalled rows are injected into agent prompts, where noise is a cost.
 
-// Vectorizer is the dense arm a Memory can be given.
-type Vectorizer interface {
-	// Probe resolves the vector space's endpoint facts before Key is read.
-	Probe(ctx context.Context) error
-	// Key identifies the vector space; rows embedded under another key are
-	// ignored and re-embedded.
-	Key() string
-	EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error)
-	EmbedQuery(ctx context.Context, text string) ([]float32, error)
-	// Floor is the calibrated noise floor; without one the dense arm is off.
-	Floor() (float64, bool)
+// denseArm is the dense recall arm: the embedding provider whose vector space
+// the rows are stored in, and the calibrated noise floor of that collection.
+// Without a floor the arm is off.
+type denseArm struct {
+	p     embed.Provider
+	floor func() (float64, bool)
 }
 
-// SetVectorizer enables dense recall (nil disables it).
-func (m *Memory) SetVectorizer(v Vectorizer) {
+// SetProvider enables dense recall with p, whose collection noise floor is
+// floor (nil p disables dense recall). Rows embedded under another vector
+// space key are ignored and re-embedded.
+func (m *Memory) SetProvider(p embed.Provider, floor func() (float64, bool)) {
 	m.vecMu.Lock()
-	m.vec = v
-	m.vecMu.Unlock()
+	defer m.vecMu.Unlock()
+	if p == nil {
+		m.vec = nil
+		return
+	}
+	m.vec = &denseArm{p: p, floor: floor}
 }
 
 // SetKeepModelIDs names the vector collections that survive the stale
@@ -83,7 +86,7 @@ func (m *Memory) PruneStaleVectors() (models int, vectors int, err error) {
 	defer m.vecMu.Unlock()
 	keep := m.keepModelIDs
 	if len(keep) == 0 && m.vec != nil {
-		if id := modelIDOf(m.vec.Key()); id != "" {
+		if id := m.vec.p.Identity().Model; id != "" {
 			keep = []string{id}
 		}
 	}
@@ -131,7 +134,7 @@ func (m *Memory) PruneStaleVectors() (models int, vectors int, err error) {
 	return models, vectors, nil
 }
 
-func (m *Memory) vectorizer() Vectorizer {
+func (m *Memory) vectorizer() *denseArm {
 	m.vecMu.Lock()
 	defer m.vecMu.Unlock()
 	return m.vec
@@ -155,8 +158,8 @@ const (
 
 // ensureVectors embeds bank rows of the given banks that have no vector in
 // v's space yet, at most denseEmbedPerRun per call.
-func (m *Memory) ensureVectors(ctx context.Context, v Vectorizer, banks []string) error {
-	key := v.Key()
+func (m *Memory) ensureVectors(ctx context.Context, v *denseArm, banks []string) error {
+	key := v.p.Identity().Key()
 	args := make([]any, 0, len(banks)+2)
 	marks := make([]string, 0, len(banks))
 	for _, b := range banks {
@@ -188,7 +191,7 @@ func (m *Memory) ensureVectors(ctx context.Context, v Vectorizer, banks []string
 		for j, p := range batch {
 			texts[j] = p.body
 		}
-		vecs, err := v.EmbedDocuments(ctx, texts)
+		vecs, err := embed.EmbedDocuments(ctx, v.p, texts)
 		if err != nil || len(vecs) != len(batch) {
 			return err
 		}
@@ -204,29 +207,29 @@ func (m *Memory) ensureVectors(ctx context.Context, v Vectorizer, banks []string
 
 // denseCandidates returns the bank rows whose similarity to the query beats
 // the noise floor, best first.
-func (m *Memory) denseCandidates(ctx context.Context, v Vectorizer, banks []string, query string) []Entry {
+func (m *Memory) denseCandidates(ctx context.Context, v *denseArm, banks []string, query string) []Entry {
 	if wordCount(query) < denseMinWords {
 		return nil
 	}
-	// The vector space (a sidecar's revision) is resolved before its key and its
-	// calibrated floor are read.
-	if err := v.Probe(ctx); err != nil {
+	// Resolve the vector space (a sidecar's revision) before its key and its
+	// calibrated floor are read. No memory-side deadline: the caller's ctx stops
+	// it on a disconnect, and the embed client's request timeout bounds a hung
+	// endpoint.
+	if err := v.p.Probe(ctx); err != nil {
 		return nil
 	}
-	floor, ok := v.Floor()
+	floor, ok := v.floor()
 	if !ok {
 		return nil
 	}
-	// No memory-side deadline: the caller's ctx stops it on a disconnect, and
-	// the embed client's request timeout bounds a hung endpoint.
 	if err := m.ensureVectors(ctx, v, banks); err != nil {
 		return nil // dense arm unavailable: BM25 still answers
 	}
-	qv, err := v.EmbedQuery(ctx, query)
+	qv, err := embed.EmbedQuery(ctx, v.p, query)
 	if err != nil || len(qv) == 0 {
 		return nil
 	}
-	args := []any{v.Key()}
+	args := []any{v.p.Identity().Key()}
 	marks := make([]string, 0, len(banks))
 	for _, b := range banks {
 		args = append(args, sanitizeBank(b))

@@ -17,14 +17,6 @@ import (
 	"time"
 )
 
-// envOrSidecar reads an environment variable with a fallback.
-func envOrSidecar(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 // Sidecar lifecycle for the local embedding provider (LEANKG_EMBED_PROVIDER=local).
 
 // The Rust engine ran ONNX in-process; the Go engine instead drives an
@@ -34,7 +26,7 @@ func envOrSidecar(key, fallback string) string {
 // provider that cannot be constructed fails hard with an actionable
 // error — never a silent degrade to fake vectors.
 
-// Defaults for the sidecar environment (see SidecarConfigFromEnv).
+// Defaults for the sidecar (cmd/internal/embedenv fills Config.Sidecar from the environment).
 const (
 	defaultSidecarCommand = "llama-server"
 	// DefaultLocalRepo / DefaultLocalFile are the pinned local GGUF the
@@ -71,55 +63,12 @@ func (c SidecarConfig) BaseURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d/v1", c.Port)
 }
 
-// SidecarConfigFromEnv reads the sidecar environment:
-//
-//	LEANKG_EMBED_SIDECAR_CMD       executable (default llama-server)
-//	LEANKG_EMBED_SIDECAR_ARGS      shell-quoted extra argv (default: serve
-//	                               the pinned bge-small-en-v1.5 GGUF with --embeddings)
-//	LEANKG_EMBED_SIDECAR_PORT      port (default 8080)
-//	LEANKG_EMBED_SIDECAR_READY_SECS  startup health-poll bound (default 120)
-func SidecarConfigFromEnv() (SidecarConfig, error) {
-	cfg := SidecarConfig{
-		Command:      envOrSidecar("LEANKG_EMBED_SIDECAR_CMD", defaultSidecarCommand),
-		Port:         defaultSidecarPort,
-		ReadyTimeout: defaultReadyTimeout,
-		PollInterval: defaultPollInterval,
-	}
-	raw := os.Getenv("LEANKG_EMBED_SIDECAR_ARGS")
-	if raw == "" {
-		cfg.Args = defaultSidecarArgs()
-	} else {
-		args, err := splitArgs(raw)
-		if err != nil {
-			return cfg, fmt.Errorf("embed: invalid LEANKG_EMBED_SIDECAR_ARGS: %w", err)
-		}
-		cfg.Args = args
-	}
-	if v := os.Getenv("LEANKG_EMBED_SIDECAR_PORT"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > 65535 {
-			return cfg, fmt.Errorf("embed: invalid LEANKG_EMBED_SIDECAR_PORT %q", v)
-		}
-		cfg.Port = n
-	}
-	if v := os.Getenv("LEANKG_EMBED_SIDECAR_READY_SECS"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return cfg, fmt.Errorf("embed: invalid LEANKG_EMBED_SIDECAR_READY_SECS %q", v)
-		}
-		cfg.ReadyTimeout = time.Duration(n) * time.Second
-	}
-	return cfg, nil
-}
-
-// defaultSidecarArgs serves the pinned local GGUF with embedding support.
-// An explicit LEANKG_EMBED_SIDECAR_ARGS always wins; when the pinned file
-// already sits in ~/.leankg/models it is served directly, otherwise
-// llama-server fetches it from HuggingFace on first use (-hf) into the hub
-// cache (~/.cache/huggingface) — operator action is the binary only, never
-// a manual download (e2e-verified 2026-09-18: fresh HOME, 21 s incl. fetch).
-func defaultSidecarArgs() []string {
-	if home, err := os.UserHomeDir(); err == nil {
+// DefaultSidecarArgs serves the pinned local GGUF with embedding support: the
+// copy in <home>/.leankg/models when it is there, else llama-server's -hf fetch
+// from HuggingFace on first use into the hub cache. Config.Sidecar.Args
+// replaces it whenever the operator names argv.
+func DefaultSidecarArgs(home string) []string {
+	if home != "" {
 		if p := filepath.Join(home, ".leankg", "models", DefaultLocalFile); fileExists(p) {
 			return []string{"-m", p, "--embeddings", "-c", "8192"}
 		}
@@ -436,12 +385,12 @@ func (t *tailBuffer) String() string {
 	return strings.TrimRight(string(t.buf), "\n")
 }
 
-// splitArgs splits a shell-quoted argument string the way /bin/sh would:
+// SplitArgs splits a shell-quoted argument string the way /bin/sh would:
 // whitespace separates words, single and double quotes group them, and a
 // backslash escapes the next byte outside quotes (and inside double
 // quotes). ponytail: hand-rolled because go.mod is frozen; upgrade to
 // shellwords if escaping corner cases ever matter.
-func splitArgs(s string) ([]string, error) {
+func SplitArgs(s string) ([]string, error) {
 	var args []string
 	var cur strings.Builder
 	inWord, quote := false, byte(0)

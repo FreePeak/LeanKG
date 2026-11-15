@@ -59,38 +59,3 @@ func TestResolveWriteCapErrorNamesBothFixes(t *testing.T) {
 		}
 	}
 }
-
-// TestTextCapPin pins the LEANKG_EMBED_TEXT_CAP parse: unset (or empty) is 0,
-// a number inside [256, 8000] is used as is, and anything else is refused so a
-// typo can never silently pick the write cap.
-func TestTextCapPin(t *testing.T) {
-	tests := []struct {
-		name    string
-		value   string
-		want    int
-		wantErr bool
-	}{
-		{"unset", "", 0, false},
-		{"lower bound", "256", 256, false},
-		{"upper bound", "8000", 8000, false},
-		{"mid range", "2048", 2048, false},
-		{"below the range", "255", 0, true},
-		{"above the range", "8001", 0, true},
-		{"zero", "0", 0, true},
-		{"negative", "-5", 0, true},
-		{"not a number", "abc", 0, true},
-		{"decimal", "2048.5", 0, true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LEANKG_EMBED_TEXT_CAP", tc.value)
-			got, err := textCapPin()
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
-			}
-			if got != tc.want {
-				t.Fatalf("pin = %d, want %d", got, tc.want)
-			}
-		})
-	}
-}

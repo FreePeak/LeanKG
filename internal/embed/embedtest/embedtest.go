@@ -1,13 +1,14 @@
 // Package embedtest makes the embed environment of a test hermetic.
 //
-// The embed provider is configured entirely by the environment: the provider
-// name, the model, the endpoint, the vector width. A test that inherits the
-// values an operator exported asserts about that machine rather than about
-// the code under test, so whether the suite is green depends on who runs it.
+// cmd/ builds the embed provider from the environment (cmd/internal/embedenv
+// reads the provider name, the model, the endpoint, the vector width). A test
+// that goes through that loader and inherits the values an operator exported
+// asserts about that machine rather than about the code under test, so whether
+// the suite is green depends on who runs it.
 //
-// Every embed reader treats an empty value as "not configured" (they all read
-// the variable with os.Getenv and compare it against ""), so an empty value
-// IS the neutral baseline. Clear applies it to one test and restores the
+// Every reader treats an empty value as "not configured" (embedenv reads each
+// variable with os.Getenv and compares it against ""), so an empty value IS
+// the neutral baseline. Clear applies it to one test and restores the
 // previous values when the test ends; UnsetProcess applies it to a whole test
 // binary.
 //
