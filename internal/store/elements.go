@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -54,13 +53,8 @@ func (s *Store) UpsertElements(ctx context.Context, els []Element) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, e := range els {
-		meta := "{}"
 		e = e.sanitize()
-		if e.Metadata != nil {
-			if bb, err := json.Marshal(e.Metadata); err == nil {
-				meta = ValidText(string(bb))
-			}
-		}
+		meta := ValidText(encodeJSONObject(e.Metadata))
 		if _, err := tx.ExecContext(ctx, `INSERT INTO code_elements
 			(qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, content, metadata)
 			VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -157,12 +151,7 @@ func (s *Store) UpsertRelationships(ctx context.Context, rels []Relationship) er
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, r := range rels {
-		meta := "{}"
-		if r.Metadata != nil {
-			if b, err := json.Marshal(r.Metadata); err == nil {
-				meta = string(b)
-			}
-		}
+		meta := encodeJSONObject(r.Metadata)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
 			VALUES (?,?,?,?,?)
 			ON CONFLICT(source_qualified, target_qualified, rel_type) DO UPDATE SET
@@ -407,14 +396,7 @@ func (s *Store) rareNameTokens(ctx context.Context, query string) ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	out := toks[:0]
-	for _, t := range toks {
-		if counts[t] > bound {
-			continue // too common to discriminate
-		}
-		out = append(out, t)
-	}
-	return out, nil
+	return keepRareNameTokens(toks, counts, bound), nil
 }
 
 // nameStopWords is the SMALL set of function words that must never reach a name
@@ -516,21 +498,7 @@ func (s *Store) FindByNameToken(ctx context.Context, query string, limit int, f 
 		return nil, err
 	}
 	defer rows.Close()
-	var out []FuzzyMatch
-	for rows.Next() {
-		var m FuzzyMatch
-		var meta string
-		if err := rows.Scan(&m.Element.QualifiedName, &m.Element.ElementType, &m.Element.Name, &m.Element.FilePath,
-			&m.Element.LineStart, &m.Element.LineEnd, &m.Element.Language, &m.Element.ParentQualified,
-			&m.Element.Content, &meta, &m.Score); err != nil {
-			return nil, err
-		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &m.Element.Metadata)
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return scanFuzzyMatches(rows)
 }
 
 // FindExact implements the L1 rung: exact (case-insensitive) match on element
@@ -542,27 +510,11 @@ func (s *Store) FindExact(ctx context.Context, name string) ([]Element, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return scanElements(rows)
 }
 
 const elementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path, ce.line_start, ce.line_end, ce.language, COALESCE(ce.parent_qualified,''), ce.content, COALESCE(ce.metadata,'{}')`
-
-func scanElements(rows *sql.Rows) ([]Element, error) {
-	defer rows.Close()
-	var out []Element
-	for rows.Next() {
-		var e Element
-		var meta string
-		if err := rows.Scan(&e.QualifiedName, &e.ElementType, &e.Name, &e.FilePath, &e.LineStart, &e.LineEnd, &e.Language, &e.ParentQualified, &e.Content, &meta); err != nil {
-			return nil, err
-		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &e.Metadata)
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
-}
 
 // FuzzyMatch is one L2 hit with its bm25 relevance score (lower is better).
 type FuzzyMatch struct {
@@ -598,21 +550,8 @@ func (s *Store) findFuzzy(ctx context.Context, query string, limit int, f Elemen
 		return nil, ArmFTS5, err
 	}
 	defer rows.Close()
-	var out []FuzzyMatch
-	for rows.Next() {
-		var m FuzzyMatch
-		var meta string
-		if err := rows.Scan(&m.Element.QualifiedName, &m.Element.ElementType, &m.Element.Name, &m.Element.FilePath,
-			&m.Element.LineStart, &m.Element.LineEnd, &m.Element.Language, &m.Element.ParentQualified,
-			&m.Element.Content, &meta, &m.Score); err != nil {
-			return nil, ArmFTS5, err
-		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &m.Element.Metadata)
-		}
-		out = append(out, m)
-	}
-	return out, ArmFTS5, rows.Err()
+	out, err := scanFuzzyMatches(rows)
+	return out, ArmFTS5, err
 }
 
 // ftsQuery turns free text into a safe FTS5 query: the terms of ftsTerms,
@@ -720,6 +659,7 @@ func (s *Store) Outgoing(ctx context.Context, source string) ([]Relationship, er
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return scanRelationships(rows)
 }
 
@@ -729,6 +669,7 @@ func (s *Store) Incoming(ctx context.Context, target string) ([]Relationship, er
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return scanRelationships(rows)
 }
 
@@ -741,24 +682,8 @@ func (s *Store) RelationshipsAll(ctx context.Context, limit int) ([]Relationship
 	if err != nil {
 		return nil, err
 	}
-	return scanRelationships(rows)
-}
-
-func scanRelationships(rows *sql.Rows) ([]Relationship, error) {
 	defer rows.Close()
-	var out []Relationship
-	for rows.Next() {
-		var r Relationship
-		var meta string
-		if err := rows.Scan(&r.Source, &r.Target, &r.RelType, &r.Confidence, &meta); err != nil {
-			return nil, err
-		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &r.Metadata)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return scanRelationships(rows)
 }
 
 // KVSet writes a namespaced key (upsert).

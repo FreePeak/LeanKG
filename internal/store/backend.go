@@ -63,6 +63,7 @@ func (s *Store) Elements(ctx context.Context) ([]Element, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	return scanElements(rows)
 }
 

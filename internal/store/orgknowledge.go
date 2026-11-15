@@ -236,7 +236,7 @@ func decodeStringList(raw string) []string {
 // scanEnvVariants folds (qualified_name, env) rows — ordered by qualified
 // name — into the variants that appear in more than one environment. It
 // takes the shared row interface so SQLite and pgx rows use one path.
-func scanEnvVariants(rows versionRows) ([]EnvVariant, error) {
+func scanEnvVariants(rows scanRows) ([]EnvVariant, error) {
 	var grouped []EnvVariant
 	cur := -1
 	for rows.Next() {

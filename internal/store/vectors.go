@@ -222,10 +222,7 @@ func (s *Store) Stamp(ctx context.Context, modelID string) (*ModelStamp, error) 
 	if err != nil {
 		return nil, err
 	}
-	var st ModelStamp
-	err = s.db.QueryRowContext(ctx, shape.selectSQL+` WHERE model_id = ?`, modelID).
-		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
+	st, err := scanStamp(s.db.QueryRowContext(ctx, shape.selectSQL+` WHERE model_id = ?`, modelID))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -288,9 +285,8 @@ func (s *Store) Stamps(ctx context.Context) ([]ModelStamp, error) {
 	defer rows.Close()
 	var out []ModelStamp
 	for rows.Next() {
-		var st ModelStamp
-		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap); err != nil {
+		st, err := scanStamp(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, st)
@@ -440,10 +436,10 @@ func (s *Store) VectorCount(ctx context.Context, modelID string) (int, error) {
 // not know which collection is live must not be able to delete it. The
 // watermark bumps only when rows actually go, like every other purge here.
 func (s *Store) DeleteStaleStamps(ctx context.Context, keep []string) (StaleStampSweep, error) {
-	if err := requireWritable(s.mode); err != nil {
+	keep, err := prepareStaleSweep(s.mode, keep)
+	if err != nil {
 		return StaleStampSweep{}, err
 	}
-	keep = cleanModelIDs(keep)
 	if len(keep) == 0 {
 		return StaleStampSweep{}, nil
 	}
@@ -465,7 +461,7 @@ func (s *Store) DeleteStaleStamps(ctx context.Context, keep []string) (StaleStam
 	// degrades to L2, which is a truth about the store, not a licence to
 	// delete it.
 	var have int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM embedding_vectors WHERE model_id IN (`+in+`) LIMIT 1`, args...).Scan(&have)
+	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM embedding_vectors WHERE model_id IN (`+in+`) LIMIT 1`, args...).Scan(&have)
 	if err != nil && err != sql.ErrNoRows {
 		return StaleStampSweep{}, err
 	}
@@ -580,9 +576,7 @@ func (s *Store) SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearc
 			&el.Language, &el.ParentQualified, &el.Content, &meta, &buf); err != nil {
 			return nil, err
 		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &el.Metadata)
-		}
+		el.Metadata = decodeJSONObject(meta)
 		v := decodeVec(buf)
 		if len(v) != len(q.Vec) {
 			continue // stamped collection mismatch should never reach here; skip defensively
@@ -825,32 +819,12 @@ func CurrentModelID(ctx context.Context, st Backend) (string, error) {
 
 // LastEmbedRunAny returns the most recent embed run across all models.
 func (s *Store) LastEmbedRunAny(ctx context.Context) (*EmbedRun, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
-		FROM embed_runs ORDER BY id DESC LIMIT 1`)
-	var r EmbedRun
-	err := row.Scan(&r.ID, &r.ModelID, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Dirty, &r.Embedded, &r.Skipped, &r.Failed, &r.Truncations, &r.Orphans, &r.Status)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &r, nil
+	return scanEmbedRun(s.db.QueryRowContext(ctx, `SELECT `+embedRunCols+` FROM embed_runs ORDER BY id DESC LIMIT 1`), sql.ErrNoRows)
 }
 
 // LastEmbedRun returns the most recent run for a model; nil when none.
 func (s *Store) LastEmbedRun(ctx context.Context, modelID string) (*EmbedRun, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
-		FROM embed_runs WHERE model_id = ? ORDER BY id DESC LIMIT 1`, modelID)
-	var r EmbedRun
-	err := row.Scan(&r.ID, &r.ModelID, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Dirty, &r.Embedded, &r.Skipped, &r.Failed, &r.Truncations, &r.Orphans, &r.Status)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &r, nil
+	return scanEmbedRun(s.db.QueryRowContext(ctx, `SELECT `+embedRunCols+` FROM embed_runs WHERE model_id = ? ORDER BY id DESC LIMIT 1`, modelID), sql.ErrNoRows)
 }
 
 // RefreshInventory recomputes the inventory snapshot from the live counts and

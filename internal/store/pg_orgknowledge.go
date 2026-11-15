@@ -402,9 +402,7 @@ func (s *PGStore) EnvSnapshotGet(ctx context.Context, env, qualifiedName string)
 		}
 		return EnvSnapshot{}, false, fmt.Errorf("store: env snapshot get: %w", err)
 	}
-	if meta != "" && meta != "{}" {
-		_ = json.Unmarshal([]byte(meta), &snap.Metadata)
-	}
+	snap.Metadata = decodeJSONObject(meta)
 	return snap, true, nil
 }
 
@@ -427,9 +425,7 @@ func (s *PGStore) EnvSnapshotConflictsWith(ctx context.Context, needle string, l
 		if err := rows.Scan(&r.Source, &r.Target, &r.RelType, &r.Confidence, &meta); err != nil {
 			return nil, fmt.Errorf("store: conflicts_with scan: %w", err)
 		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &r.Metadata)
-		}
+		r.Metadata = decodeJSONObject(meta)
 		out = append(out, r)
 	}
 	return out, rows.Err()

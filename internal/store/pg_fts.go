@@ -284,6 +284,7 @@ func (s *PGStore) searchElementsTS(ctx context.Context, query string, limit int,
 	if err != nil {
 		return nil, fmt.Errorf("store: element tsvector search: %w", err)
 	}
+	defer rows.Close()
 	return scanFuzzyMatches(rows)
 }
 
@@ -309,6 +310,7 @@ func (s *PGStore) searchElementsTrigram(ctx context.Context, query string, limit
 	if err != nil {
 		return nil, fmt.Errorf("store: element trigram search: %w", err)
 	}
+	defer rows.Close()
 	return scanFuzzyMatches(rows)
 }
 
@@ -491,17 +493,8 @@ func (s *PGStore) Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, 
 		return nil, "", kwErr
 	}
 
-	fused := FuseRRFWeighted(lists, q.Weights)
-	if len(fused) > limit {
-		fused = fused[:limit]
-	}
-	out := make([]HybridHit, 0, len(fused))
-	for _, f := range fused {
-		a := byQN[f.Key]
-		out = append(out, HybridHit{
-			Element: a.el, Score: f.Score, Ranks: f.Ranks,
-			Similarity: a.sim, KeywordScore: a.kw, TrigramScore: a.trigram,
-		})
-	}
-	return out, kw, nil
+	return fuseHybridHits(lists, q.Weights, limit, func(qn string) HybridHit {
+		a := byQN[qn]
+		return HybridHit{Element: a.el, Similarity: a.sim, KeywordScore: a.kw, TrigramScore: a.trigram}
+	}), kw, nil
 }
