@@ -23,10 +23,12 @@
   "mode": "sqlite",
   "project_dir": "<PROJECT>",
   "query_embedder": {
+    "deterministic": true,
     "model_id": "deterministic-8",
     "provider": "deterministic",
     "reachable": true,
-    "revision": "test:deterministic-v1"
+    "revision": "test:deterministic-v1",
+    "warning": "deterministic provider: hash-derived vectors, not a semantic embedder"
   },
   "relationships": 1,
   "space": {
