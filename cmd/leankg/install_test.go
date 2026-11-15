@@ -2,12 +2,13 @@ package main
 
 import (
 	"encoding/json"
-	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestInstallStdioAllClients: install --target X writes the same projectless

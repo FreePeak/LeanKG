@@ -21,20 +21,22 @@ import (
 // registration re-asks. (The Rust `leankg add` verb is superseded by
 // `leankg index` in the Go engine — the Rust `add`-side mode resolution and
 // summary belongs on the registration verb, hunk 6.)
-func cmdSetup(args []string) {
-	fs := flag.NewFlagSet("setup", flag.ExitOnError)
+func cmdSetup(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	reset := fs.Bool("reset", false, "clear the stored setup choice so the next registration re-asks")
 	clone := fs.Bool("clone", false, "clone the LEANKG_REPOS list into LEANKG_CLONE_ROOT")
 	index := fs.Bool("index", false, "run a full index per repo dir")
 	embed := fs.Bool("embed", false, "run the embedding build per repo dir")
 	status := fs.Bool("status", false, "report the resolved repo list without running")
-	parseInterspersed("setup", fs, args, 0)
+	if _, err := parseInterspersed("setup", fs, args, 0); err != nil {
+		return err
+	}
 
 	if *reset {
 		root := projectcfg.FindProjectRoot(".")
 		cleared, err := setupcfg.ResetSetupChoice(root)
 		if err != nil {
-			log.Fatalf("setup --reset: %v", err)
+			return fmt.Errorf("setup --reset: %v", err)
 		}
 		if cleared {
 			fmt.Printf("Cleared stored setup choice in %s; the next `leankg index` re-asks.\n", setupcfg.PathFor(root))
@@ -42,18 +44,18 @@ func cmdSetup(args []string) {
 			fmt.Printf("No setup choice stored at %s — nothing to reset.\n", setupcfg.PathFor(root))
 		}
 		if !*clone && !*index && !*embed && !*status {
-			return
+			return nil
 		}
 	}
 
-	res, err := setup.RunSetup(context.Background(), setup.Options{
+	res, err := setup.RunSetup(ctx, setup.Options{
 		Clone: *clone, Index: *index, Embed: *embed, Status: *status,
 		Env:    os.Getenv("LEANKG_ENV"),
 		Stages: cliStages{},
 		Logf:   log.Printf,
 	})
 	if err != nil {
-		log.Fatalf("setup: %v", err)
+		return fmt.Errorf("setup: %v", err)
 	}
 
 	// An empty resolution used to print an empty table — indistinguishable from
@@ -69,6 +71,7 @@ func cmdSetup(args []string) {
 			log.Printf("setup: register %s: %v", repo.Name, err)
 		}
 	}
+	return nil
 }
 
 // cliStages adapts the existing CLI flows to setup.Stages. IndexOne reuses

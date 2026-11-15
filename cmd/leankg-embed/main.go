@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -35,23 +37,37 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-	switch os.Args[1] {
+	// One root context: the first SIGINT or SIGTERM cancels the run, and the
+	// second one ends a run that is slow to stop (CX-28).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	context.AfterFunc(ctx, stop)
+	status := runVerb(ctx, os.Args[1:])
+	stop()
+	os.Exit(status)
+}
+
+// runVerb runs the subcommand named by argv[0] and returns the exit status
+// (cliexit.Finish), the one place a verb's error becomes a status.
+func runVerb(ctx context.Context, argv []string) int {
+	var err error
+	switch argv[0] {
 	case "run":
-		cmdRun(os.Args[2:], "incremental")
+		err = runEmbed(ctx, argv[1:], "incremental")
 	case "full":
-		cmdRun(os.Args[2:], "full")
+		err = runEmbed(ctx, argv[1:], "full")
 	case "export":
-		cmdExport(os.Args[2:])
+		err = cmdExport(ctx, argv[1:])
 	case "import":
-		cmdImport(os.Args[2:])
+		err = cmdImport(ctx, argv[1:])
 	case "status":
-		cmdStatus(os.Args[2:])
+		err = cmdStatus(ctx, argv[1:])
 	case "version":
 		fmt.Println("leankg-embed " + Version())
 	default:
 		usage()
-		os.Exit(2)
+		return 2
 	}
+	return cliexit.Finish(err, os.Stderr)
 }
 
 func usage() {
@@ -86,20 +102,23 @@ width. A line's content_hash, when present, is the state recorded for it.
 }
 
 // projectDir resolves the --project flag (empty = cwd).
-func projectDir(project string) string {
+func projectDir(project string) (string, error) {
 	if project != "" {
-		return project
+		return project, nil
 	}
 	dir, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("resolve cwd: %v", err)
+		return "", fmt.Errorf("resolve cwd: %w", err)
 	}
-	return dir
+	return dir, nil
 }
 
-func openStore(project string) (store.Backend, error) {
-	dir := projectDir(project)
-	st, err := store.OpenBackend(context.Background(), dir,
+func openStore(ctx context.Context, project string) (store.Backend, error) {
+	dir, err := projectDir(project)
+	if err != nil {
+		return nil, err
+	}
+	st, err := store.OpenBackend(ctx, dir,
 		envOr("LEANKG_DB_ENGINE", "sqlite"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
 	if err != nil {
 		return nil, err
@@ -149,7 +168,7 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 	rest := args
 	for {
-		if err := fs.Parse(rest); err != nil {
+		if err := cliexit.Parse(fs, rest); err != nil {
 			return nil, err
 		}
 		rest = fs.Args()
@@ -193,31 +212,26 @@ func lock(dir string) (func(), error) {
 	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
 }
 
-func cmdRun(args []string, mode string) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := runEmbed(ctx, args, mode)
-	stop()
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
 // runEmbed performs one run. It returns every error instead of exiting, so the
 // deferred sidecar release, store close and lock release all run before the
 // process exits; a log.Fatal after the sidecar starts orphaned it. A run
 // stopped through ctx returns context.Canceled.
 func runEmbed(ctx context.Context, args []string, mode string) error {
-	fs := flag.NewFlagSet(mode, flag.ExitOnError)
+	fs := flag.NewFlagSet(mode, flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	if err := bindPositional(mode, fs, args, project); err != nil {
 		return err
 	}
-	unlock, err := lock(projectDir(*project))
+	dir, err := projectDir(*project)
+	if err != nil {
+		return err
+	}
+	unlock, err := lock(dir)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	st, err := openStore(*project)
+	st, err := openStore(ctx, *project)
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
 	}
@@ -239,38 +253,39 @@ func runEmbed(ctx context.Context, args []string, mode string) error {
 	return nil
 }
 
-func cmdExport(args []string) {
-	fs := flag.NewFlagSet("export", flag.ExitOnError)
+func cmdExport(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	out := fs.String("out", "", "output file (default stdout)")
 	modelID := fs.String("model", "", "model to export (required)")
 	if err := bindPositional("export", fs, args, project); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if *modelID == "" {
-		log.Fatal("export requires --model")
+		return errors.New("export requires --model")
 	}
-	st, err := openStore(*project)
+	st, err := openStore(ctx, *project)
 	if err != nil {
-		log.Fatalf("store: %v", err)
+		return fmt.Errorf("store: %v", err)
 	}
 	defer st.Close()
 	w := os.Stdout
 	if *out != "" {
 		f, err := os.Create(*out)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		defer f.Close()
 		w = f
 	}
-	if err := embed.ExportNDJSON(context.Background(), st, *modelID, w); err != nil {
-		log.Fatalf("export: %v", err)
+	if err := embed.ExportNDJSON(ctx, st, *modelID, w); err != nil {
+		return fmt.Errorf("export: %v", err)
 	}
+	return nil
 }
 
-func cmdImport(args []string) {
-	fs := flag.NewFlagSet("import", flag.ExitOnError)
+func cmdImport(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	in := fs.String("in", "", "input file (default stdin)")
 	modelID := fs.String("model", "", "model id (default LEANKG_EMBED_MODEL; must agree with it)")
@@ -278,62 +293,68 @@ func cmdImport(args []string) {
 	dims := fs.Int("dims", 0, "stored vector width (default: the live provider's width; must agree)")
 	distance := fs.String("distance", "", "distance metric (default cosine; must agree)")
 	if err := bindPositional("import", fs, args, project); err != nil {
-		log.Fatal(err)
+		return err
 	}
-	unlock, err := lock(projectDir(*project))
+	dir, err := projectDir(*project)
 	if err != nil {
-		log.Fatal(err)
+		return err
+	}
+	unlock, err := lock(dir)
+	if err != nil {
+		return err
 	}
 	defer unlock()
-	st, err := openStore(*project)
+	st, err := openStore(ctx, *project)
 	if err != nil {
-		log.Fatalf("store: %v", err)
+		return fmt.Errorf("store: %v", err)
 	}
 	defer st.Close()
 	r := os.Stdin
 	if *in != "" {
 		f, err := os.Open(*in)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		defer f.Close()
 		r = f
 	}
-	report, err := embed.ImportNDJSON(context.Background(), st, *modelID, *revision, *distance, *dims, r)
+	report, err := embed.ImportNDJSON(ctx, st, *modelID, *revision, *distance, *dims, r)
 	if err != nil {
-		log.Fatalf("import: %v", err)
+		return fmt.Errorf("import: %v", err)
 	}
 	b, _ := json.Marshal(report)
 	fmt.Println(string(b))
+	return nil
 }
 
-func cmdStatus(args []string) {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
+func cmdStatus(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	if err := bindPositional("status", fs, args, project); err != nil {
-		log.Fatal(err)
+		return err
 	}
-	st, err := openStore(*project)
+	st, err := openStore(ctx, *project)
 	if err != nil {
-		log.Fatalf("store: %v", err)
+		return fmt.Errorf("store: %v", err)
 	}
 	defer st.Close()
 	out := map[string]any{}
 	if stamps, err := st.Stamps(); err != nil {
-		log.Fatalf("status: stamps: %v", err)
+		return fmt.Errorf("status: stamps: %v", err)
 	} else {
 		out["stamps"] = stamps
 	}
 	if run, err := st.LastEmbedRunAny(); err != nil {
-		log.Fatalf("status: last run: %v", err)
+		return fmt.Errorf("status: last run: %v", err)
 	} else if run != nil {
 		out["last_run"] = run
 	}
 	if els, err := st.ElementCount(); err != nil {
-		log.Fatalf("status: elements: %v", err)
+		return fmt.Errorf("status: elements: %v", err)
 	} else {
 		out["elements"] = els
 	}
 	b, _ := json.Marshal(out)
 	fmt.Println(string(b))
+	return nil
 }

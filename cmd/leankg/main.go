@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/doctor"
 	"github.com/FreePeak/LeanKG/internal/embed"
@@ -53,6 +54,95 @@ import (
 	"github.com/FreePeak/LeanKG/internal/web"
 )
 
+// verbFunc is the handler shape of every verb: the root context from main, the
+// arguments after the verb name, and the error main maps to an exit status.
+type verbFunc func(ctx context.Context, args []string) error
+
+// verbs routes every command name to its handler.
+var verbs = map[string]verbFunc{
+	"serve": cmdServe,
+	"index": cmdIndex,
+	"query": cmdQuery,
+	"impact": func(ctx context.Context, args []string) error {
+		return cmdQuery(ctx, append([]string{args[0], "--kind", "impact"}, args[1:]...))
+	},
+	"writer":  cmdWriter,
+	"connect": cmdConnect,
+	"install": cmdInstall,
+	"version": func(context.Context, []string) error {
+		fmt.Println("leankg " + Version())
+		return nil
+	},
+	"obsidian":           cmdObsidian,
+	"setup":              cmdSetup,
+	"status":             cmdStatus,
+	"doctor":             cmdDoctor,
+	"run":                cmdRun,
+	"detect-clusters":    cmdDetectClusters,
+	"report":             cmdReport,
+	"gods":               cmdGods,
+	"ctags":              cmdCtags,
+	"cost":               cmdCost,
+	"migrate":            cmdMigrate,
+	"audit":              cmdAudit,
+	"metrics":            cmdMetrics,
+	"dashboard":          cmdDashboard,
+	"telemetry":          cmdTelemetry,
+	"auth":               cmdAuth,
+	"tunnels":            cmdTunnels,
+	"quality":            cmdQuality,
+	"reflect":            cmdReflect,
+	"refresh":            cmdRefresh,
+	"gc":                 cmdGC,
+	"vacuum":             cmdVacuum,
+	"register":           cmdRegister,
+	"unregister":         cmdUnregister,
+	"list":               cmdListRepos,
+	"status-repo":        cmdStatusRepo,
+	"export":             cmdExport,
+	"pack":               cmdPack,
+	"generate":           cmdGenerate,
+	"annotate":           cmdAnnotate,
+	"prd":                cmdPRD,
+	"prd-trace":          cmdPRDTrace,
+	"link":               cmdLink,
+	"delete-annotation":  cmdDeleteAnnotation,
+	"search-annotations": cmdSearchAnnotations,
+	"show-annotations":   cmdShowAnnotations,
+	"mine-conversations": cmdMineConversations,
+	"incident":           cmdIncident,
+	"note":               cmdNote,
+	"env-conflicts":      cmdEnvConflicts,
+	"service-context":    cmdServiceContext,
+	"team-map":           cmdTeamMap,
+	"push":               cmdPush,
+	"pull":               cmdPull,
+	"update":             cmdUpdate,
+	"summarize":          cmdSummarize,
+	"register-project":   cmdRegisterProject,
+	"projects":           cmdProjects,
+	"help":               showUsage,
+	"-h":                 showUsage,
+	"--help":             showUsage,
+}
+
+// runVerb runs the verb named by argv[0] and returns the process exit status.
+// It is the one place a verb's error becomes a status (cliexit.Finish).
+func runVerb(ctx context.Context, argv []string) int {
+	fn, ok := verbs[argv[0]]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "leankg: unknown command %q\n\n", argv[0])
+		usage()
+		return 2
+	}
+	return cliexit.Finish(fn(ctx, argv[1:]), os.Stderr)
+}
+
+func showUsage(context.Context, []string) error {
+	usage()
+	return nil
+}
+
 func main() {
 	log.SetFlags(0)
 	if len(os.Args) < 2 {
@@ -64,128 +154,10 @@ func main() {
 	// handlers on that first cancel lets a second Ctrl-C end a run that is slow
 	// to stop.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	context.AfterFunc(ctx, stop)
-	switch os.Args[1] {
-	case "serve":
-		cmdServe(ctx, os.Args[2:])
-	case "index":
-		cmdIndex(ctx, os.Args[2:])
-	case "query":
-		cmdQuery(os.Args[2:])
-	case "impact":
-		cmdQuery(append([]string{os.Args[2], "--kind", "impact"}, os.Args[3:]...))
-	case "writer":
-		cmdWriter(os.Args[2:])
-	case "connect":
-		cmdConnect(os.Args[2:])
-	case "install":
-		cmdInstall(os.Args[2:])
-	case "version":
-		fmt.Println("leankg " + Version())
-	case "obsidian":
-		cmdObsidian(os.Args[2:])
-	case "setup":
-		cmdSetup(os.Args[2:])
-	case "status":
-		cmdStatus(os.Args[2:])
-	case "doctor":
-		os.Exit(cmdDoctor(os.Args[2:]))
-	case "run":
-		cmdRun(os.Args[2:])
-	case "detect-clusters":
-		cmdDetectClusters(os.Args[2:])
-	case "report":
-		cmdReport(os.Args[2:])
-	case "gods":
-		cmdGods(os.Args[2:])
-	case "ctags":
-		cmdCtags(os.Args[2:])
-	case "cost":
-		cmdCost(os.Args[2:])
-	case "migrate":
-		cmdMigrate(os.Args[2:])
-	case "audit":
-		cmdAudit(os.Args[2:])
-	case "metrics":
-		cmdMetrics(os.Args[2:])
-	case "dashboard":
-		cmdDashboard(os.Args[2:])
-	case "telemetry":
-		cmdTelemetry(os.Args[2:])
-	case "auth":
-		cmdAuth(os.Args[2:])
-	case "tunnels":
-		cmdTunnels(os.Args[2:])
-	case "quality":
-		cmdQuality(os.Args[2:])
-	case "reflect":
-		cmdReflect(os.Args[2:])
-	case "refresh":
-		cmdRefresh(os.Args[2:])
-	case "gc":
-		cmdGC(os.Args[2:])
-	case "vacuum":
-		cmdVacuum(os.Args[2:])
-	case "register":
-		cmdRegister(os.Args[2:])
-	case "unregister":
-		cmdUnregister(os.Args[2:])
-	case "list":
-		cmdListRepos(os.Args[2:])
-	case "status-repo":
-		cmdStatusRepo(os.Args[2:])
-	case "export":
-		cmdExport(os.Args[2:])
-	case "pack":
-		cmdPack(os.Args[2:])
-	case "generate":
-		cmdGenerate(os.Args[2:])
-	case "annotate":
-		cmdAnnotate(os.Args[2:])
-	case "prd":
-		cmdPRD(os.Args[2:])
-	case "prd-trace":
-		cmdPRDTrace(os.Args[2:])
-	case "link":
-		cmdLink(os.Args[2:])
-	case "delete-annotation":
-		cmdDeleteAnnotation(os.Args[2:])
-	case "search-annotations":
-		cmdSearchAnnotations(os.Args[2:])
-	case "show-annotations":
-		cmdShowAnnotations(os.Args[2:])
-	case "mine-conversations":
-		cmdMineConversations(os.Args[2:])
-	case "incident":
-		cmdIncident(os.Args[2:])
-	case "note":
-		cmdNote(os.Args[2:])
-	case "env-conflicts":
-		cmdEnvConflicts(os.Args[2:])
-	case "service-context":
-		cmdServiceContext(os.Args[2:])
-	case "team-map":
-		cmdTeamMap(os.Args[2:])
-	case "push":
-		cmdPush(os.Args[2:])
-	case "pull":
-		cmdPull(os.Args[2:])
-	case "update":
-		os.Exit(cmdUpdate(os.Args[2:]))
-	case "summarize":
-		cmdSummarize(os.Args[2:])
-	case "register-project":
-		cmdRegisterProject(os.Args[2:])
-	case "projects":
-		cmdProjects(os.Args[2:])
-	case "-h", "--help", "help":
-		usage()
-	default:
-		fmt.Fprintf(os.Stderr, "leankg: unknown command %q\n\n", os.Args[1])
-		usage()
-		os.Exit(2)
-	}
+	status := runVerb(ctx, os.Args[1:])
+	stop()
+	os.Exit(status)
 }
 
 func usage() {
@@ -298,18 +270,18 @@ func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp
 	return srv
 }
 
-// cmdServe runs serve and turns its error into a non-zero exit. serve returns
-// its error rather than calling log.Fatal, so its defers (store close,
-// telemetry flush, auto-config job join) run before the process exits.
-func cmdServe(ctx context.Context, args []string) {
+// cmdServe labels serve's error for main. serve returns its error rather than
+// calling log.Fatal, so its defers (store close, telemetry flush, auto-config
+// job join) run before the process exits.
+func cmdServe(ctx context.Context, args []string) error {
 	if err := serve(ctx, args); err != nil {
-		fmt.Fprintln(os.Stderr, "serve:", err)
-		os.Exit(1)
+		return fmt.Errorf("serve: %w", err)
 	}
+	return nil
 }
 
 func serve(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	dbFlag := fs.String("db", "", "standalone SQLite store file path (default empty = <project>/.leankg/leankg.db); sets the project directory optional (FR-P2)")
 	stdio := fs.Bool("stdio", false, "serve MCP over stdio")
@@ -323,7 +295,7 @@ func serve(ctx context.Context, args []string) error {
 	uiAddr := fs.String("ui", "", "dashboard address serving the embedded ui-v2 build (e.g. 127.0.0.1:8081; deliberately public — its API is unauthenticated)")
 	hindsightCompat := fs.Bool("hindsight-compat", false, "on the REST listener, mount the Hindsight-wire compat aliases (/v1/default/banks/...) that omp's memory.backend=hindsight speaks; requires --memory")
 	memoryGlobal := fs.Bool("memory-global", false, "keep the memory layer in ~/.leankg/memory instead of <project>/.leankg/memory (shared/portfolio memory root; requires --memory)")
-	if err := fs.Parse(args); err != nil {
+	if err := cliexit.Parse(fs, args); err != nil {
 		return err
 	}
 	addr := *httpAddr
@@ -844,16 +816,16 @@ func openProjectMemory(dir string, keepModelIDs []string) *memory.Memory {
 	return m
 }
 
-func cmdDoctor(args []string) int {
-	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+func cmdDoctor(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default: cwd, discovered upward for --deep)")
 	deep := fs.Bool("deep", false, "run the deep self-diagnosis suite (latency, migrations, freshness, embeddings, pool env, orphans, duplicates, .leankg dir)")
 	format := fs.String("format", "text", "output format for --deep: text (default) or json")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if err := cliexit.Parse(fs, args); err != nil {
+		return err
 	}
 	if *deep {
-		return doctorDeep(*project, *format)
+		return cliexit.Code(doctorDeep(ctx, *project, *format))
 	}
 	dir := *project
 	if dir == "" {
@@ -873,7 +845,7 @@ func cmdDoctor(args []string) int {
 		dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
 		dbPath = filepath.Join(dbDir, "leankg.db")
 	}
-	st, err := openStore(context.Background(), dir, dbPath, store.RO)
+	st, err := openStore(ctx, dir, dbPath, store.RO)
 	if err != nil {
 		// A missing store is not a storage-layer event to the reader: it means
 		// the project has not been indexed. Naming the syscall ("read-only open
@@ -882,10 +854,10 @@ func cmdDoctor(args []string) int {
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") {
 			fmt.Printf("FAIL not indexed: no store at %s\n", dbPath)
 			fmt.Println("     run `leankg index .` in this project, then `leankg doctor` again")
-			return 2
+			return cliexit.Code(2)
 		}
 		fmt.Printf("FAIL store: %v\n", err)
-		return 2
+		return cliexit.Code(2)
 	}
 	defer st.Close()
 	els, err1 := st.ElementCount()
@@ -893,15 +865,15 @@ func cmdDoctor(args []string) int {
 	seq, at, err3 := st.Watermark()
 	if err1 != nil || err2 != nil || err3 != nil {
 		fmt.Println("FAIL store queries:", err1, err2, err3)
-		return 2
+		return cliexit.Code(2)
 	}
 	fmt.Printf("ok store=%s elements=%d files=%d watermark(seq=%d at=%d)\n", st.Path(), els, files, seq, at)
-	return 0
+	return nil
 }
 
 // doctorDeep runs the H9 self-diagnosis suite (internal/doctor) and
 // returns the CI exit code: 0 all-pass, 1 any warn, 2 any fail.
-func doctorDeep(projectFlag, format string) int {
+func doctorDeep(ctx context.Context, projectFlag, format string) int {
 	dir := projectFlag
 	if dir == "" {
 		dir, _ = os.Getwd()
@@ -910,8 +882,6 @@ func doctorDeep(projectFlag, format string) int {
 	// entry or a leankg.yaml — the hand-rolled walk missed the config-only
 	// case, and the config's project_path anchor is applied inside RunDeep.
 	dir = projectcfg.FindProjectRoot(dir)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	report, err := doctor.RunDeep(ctx, dir, envOr("LEANKG_DB_ENGINE", ""), projectcfg.PGURL(dir), nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "leankg doctor --deep: %v\n", err)
@@ -936,8 +906,8 @@ func doctorDeep(projectFlag, format string) int {
 	return code
 }
 
-func cmdIndex(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("index", flag.ExitOnError)
+func cmdIndex(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("index", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	source := fs.String("source", "", "remote source URI: git+<url>, gs://bucket/prefix, or a local path")
 	refName := fs.String("ref-name", "", "git ref for --source git+... (default: main)")
@@ -948,12 +918,15 @@ func cmdIndex(ctx context.Context, args []string) {
 	hook := fs.Bool("hook", false, "SessionStart hook mode: exit 0 without indexing when HEAD exceeds LEANKG_HOOK_MAX_FILES or another index of the store is running; the embed is skipped when the backlog exceeds LEANKG_HOOK_MAX_EMBED")
 	hookBudgetFlag := fs.Duration("hook-budget", 0, "with --hook: time budget for the index and embed (default LEANKG_HOOK_BUDGET, else 10s); past it the run stops, prints one line and exits 0")
 	noEmbed := fs.Bool("no-embed", false, "index only: skip the incremental embed that follows a successful index")
-	positional := parseInterspersed("index", fs, args, 1)
+	positional, err := parseInterspersed("index", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if *auto && *manual {
-		log.Fatal("index: --auto and --manual are mutually exclusive")
+		return errors.New("index: --auto and --manual are mutually exclusive")
 	}
 	if len(positional) == 0 && *source == "" {
-		log.Fatal("index requires a directory argument (or --source)")
+		return errors.New("index requires a directory argument (or --source)")
 	}
 	target := ""
 	if len(positional) == 1 {
@@ -970,12 +943,12 @@ func cmdIndex(ctx context.Context, args []string) {
 		info, serr := os.Stat(target)
 		if serr != nil {
 			if os.IsNotExist(serr) {
-				log.Fatalf("index: refusing to index %s: no such file or directory (an empty existing directory indexes fine — this is a path that does not exist)", target)
+				return fmt.Errorf("index: refusing to index %s: no such file or directory (an empty existing directory indexes fine — this is a path that does not exist)", target)
 			}
-			log.Fatalf("index: refusing to index %s: %v", target, serr)
+			return fmt.Errorf("index: refusing to index %s: %v", target, serr)
 		}
 		if !info.IsDir() {
-			log.Fatalf("index: refusing to index %s: not a directory", target)
+			return fmt.Errorf("index: refusing to index %s: not a directory", target)
 		}
 	}
 	// The hook's time budget covers the size gate, the index and the embed. It
@@ -992,7 +965,7 @@ func cmdIndex(ctx context.Context, args []string) {
 	if *hook && *source == "" {
 		if msg := hookBigRepoSkip(ctx, target); msg != "" {
 			fmt.Println(msg)
-			return
+			return nil
 		}
 	}
 	// One index per store at a time. Hook mode gives up on a held lock so a
@@ -1000,21 +973,20 @@ func cmdIndex(ctx context.Context, args []string) {
 	storeDir := indexStoreDir(*project, target)
 	lockPath := filepath.Join(storeDir, ".leankg", "index.lock")
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
-		log.Fatalf("index: create .leankg: %v", err)
+		return fmt.Errorf("index: create .leankg: %v", err)
 	}
 	var unlock func()
-	var err error
 	if *hook {
 		unlock, err = flock.TryLock(lockPath)
 		if errors.Is(err, flock.ErrHeld) {
 			fmt.Printf("leankg index --hook: skipped %s: another index of this store is running\n", storeDir)
-			return
+			return nil
 		}
 	} else {
 		unlock, err = flock.Lock(lockPath)
 	}
 	if err != nil {
-		log.Fatalf("index: lock %s: %v", lockPath, err)
+		return fmt.Errorf("index: lock %s: %v", lockPath, err)
 	}
 	defer unlock()
 
@@ -1056,16 +1028,16 @@ func cmdIndex(ctx context.Context, args []string) {
 		switch {
 		case *hook && errors.Is(ctx.Err(), context.DeadlineExceeded):
 			fmt.Printf("leankg index --hook: stopped %s after its %s time budget; the directories written so far are kept, and the next session start continues the index\n", storeDir, budget)
-			return
+			return nil
 		case errors.Is(err, context.Canceled):
-			fmt.Fprintln(os.Stderr, "index: interrupted; the directories written so far are kept, rerun to finish")
-			os.Exit(130)
+			return fmt.Errorf("index: interrupted; the directories written so far are kept, rerun to finish: %w", err)
 		}
-		log.Fatalf("index: %v", err)
+		return fmt.Errorf("index: %v", err)
 	}
 	if !*noEmbed {
 		indexEmbed(ctx, storeDir, *hook)
 	}
+	return nil
 }
 
 // promptSetupMode asks the one first-run question (Rust setup_config prompt):

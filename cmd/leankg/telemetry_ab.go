@@ -15,18 +15,19 @@ import (
 // cmdTelemetryImportAB implements `leankg telemetry import-ab <dir>`: it loads
 // cross_tool run rows, judge scores and benchmark/ab trials under <dir> into
 // the telemetry ledger as controlled A/B runs (plan v4.15 DS-18).
-func cmdTelemetryImportAB(args []string) {
+func cmdTelemetryImportAB(ctx context.Context, args []string) error {
 	if len(args) != 1 || args[0] == "" {
-		fatalJSON(errors.New("usage: leankg telemetry import-ab <dir>"))
+		return fatalJSON(errors.New("usage: leankg telemetry import-ab <dir>"))
 	}
 	st, err := telemetry.OpenStore(telemetry.Home(), false)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	defer st.Close()
-	if err := importABDir(context.Background(), args[0], st, time.Now(), os.Stdout); err != nil {
-		fatalJSON(err)
+	if err := importABDir(ctx, args[0], st, time.Now(), os.Stdout); err != nil {
+		return fatalJSON(err)
 	}
+	return nil
 }
 
 // importABDir parses dir and inserts the runs into st, then writes a summary

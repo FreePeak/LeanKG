@@ -30,7 +30,7 @@ func TestParseDashboardFlagsDecidesTheModeFromTheParsedValues(t *testing.T) {
 		if in != "" {
 			args = strings.Fields(in)
 		}
-		if got := parseDashboardFlags(args).mode; got != want {
+		if got := mustParseDashboardFlags(t, args).mode; got != want {
 			t.Errorf("parseDashboardFlags(%q).mode = %v, want %v", in, got, want)
 		}
 	}
@@ -42,7 +42,7 @@ func TestParseDashboardFlagsDecidesTheModeFromTheParsedValues(t *testing.T) {
 // until a signal, so a bare run in a test would hang and leave a listener
 // behind.
 func TestBareDashboardTakesTheWebPath(t *testing.T) {
-	f := parseDashboardFlags(nil)
+	f := mustParseDashboardFlags(t, nil)
 	if f.mode != dashboardModeWeb {
 		t.Errorf("bare `leankg dashboard` mode = %v, want the web mode", f.mode)
 	}
@@ -55,7 +55,7 @@ func TestBareDashboardTakesTheWebPath(t *testing.T) {
 // documented `leankg dashboard --addr 127.0.0.1:9701 --no-open --format text`
 // must parse in ONE pass — the web flags and the table flags are one set.
 func TestParseDashboardFlagsReadsTheWebFlagsTheTablesModeAlsoDeclares(t *testing.T) {
-	f := parseDashboardFlags([]string{"--addr", "127.0.0.1:9701", "--no-open", "--format", "text"})
+	f := mustParseDashboardFlags(t, []string{"--addr", "127.0.0.1:9701", "--no-open", "--format", "text"})
 	if f.mode != dashboardModeTables {
 		t.Errorf("mode = %v, want the tables mode", f.mode)
 	}
@@ -72,7 +72,7 @@ func TestParseDashboardFlagsReadsTheWebFlagsTheTablesModeAlsoDeclares(t *testing
 
 func TestRunDashboardWebRefusesNonLoopbackWithoutAllowRemote(t *testing.T) {
 	t.Setenv("LEANKG_HOME", t.TempDir())
-	err := runDashboardWeb(context.Background(), parseDashboardFlags([]string{"--addr", "0.0.0.0:0", "--no-open"}), io.Discard, nil)
+	err := runDashboardWeb(context.Background(), mustParseDashboardFlags(t, []string{"--addr", "0.0.0.0:0", "--no-open"}), io.Discard, nil)
 	if err == nil || !strings.Contains(err.Error(), "allow-remote") {
 		t.Fatalf("err = %v, want an allow-remote refusal", err)
 	}
@@ -80,7 +80,7 @@ func TestRunDashboardWebRefusesNonLoopbackWithoutAllowRemote(t *testing.T) {
 
 func TestRunDashboardWebRemoteNeedsToken(t *testing.T) {
 	t.Setenv("LEANKG_HOME", t.TempDir())
-	err := runDashboardWeb(context.Background(), parseDashboardFlags([]string{"--addr", "0.0.0.0:0", "--allow-remote", "--no-open"}), io.Discard, nil)
+	err := runDashboardWeb(context.Background(), mustParseDashboardFlags(t, []string{"--addr", "0.0.0.0:0", "--allow-remote", "--no-open"}), io.Discard, nil)
 	if err == nil || !strings.Contains(err.Error(), "token") {
 		t.Fatalf("err = %v, want a token refusal", err)
 	}
@@ -108,7 +108,7 @@ func TestRunDashboardWebServesAndOpensStubbedBrowser(t *testing.T) {
 		return nil
 	}
 	var out strings.Builder
-	err := runDashboardWeb(ctx, parseDashboardFlags([]string{"--addr", "127.0.0.1:0", "--since", "7d"}), &out, opener)
+	err := runDashboardWeb(ctx, mustParseDashboardFlags(t, []string{"--addr", "127.0.0.1:0", "--since", "7d"}), &out, opener)
 	if err != nil {
 		t.Fatalf("runDashboardWeb: %v", err)
 	}
@@ -134,10 +134,20 @@ func TestRunDashboardWebNoOpenSkipsBrowser(t *testing.T) {
 	}()
 	called := false
 	opener := func(string) error { called = true; return nil }
-	if err := runDashboardWeb(ctx, parseDashboardFlags([]string{"--addr", "127.0.0.1:0", "--no-open"}), io.Discard, opener); err != nil {
+	if err := runDashboardWeb(ctx, mustParseDashboardFlags(t, []string{"--addr", "127.0.0.1:0", "--no-open"}), io.Discard, opener); err != nil {
 		t.Fatalf("runDashboardWeb: %v", err)
 	}
 	if called {
 		t.Errorf("--no-open still opened the browser")
 	}
+}
+
+// mustParseDashboardFlags parses args and fails the test on a parse error.
+func mustParseDashboardFlags(t *testing.T, args []string) *dashboardFlags {
+	t.Helper()
+	f, err := parseDashboardFlags(args)
+	if err != nil {
+		t.Fatalf("parseDashboardFlags(%q): %v", args, err)
+	}
+	return f
 }

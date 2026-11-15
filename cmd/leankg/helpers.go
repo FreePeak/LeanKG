@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/index"
@@ -133,8 +134,8 @@ func resolveProjectDir(flagValue string) string {
 // openEngine opens a project's store and returns a query-ready engine with the
 // project directory and the lazily-activated language registry wired, exactly
 // like the serving transports. The caller closes engine.Store().
-func openEngine(dir string, mode store.Mode) (*core.Engine, error) {
-	st, err := openStore(context.Background(), dir, "", mode)
+func openEngine(ctx context.Context, dir string, mode store.Mode) (*core.Engine, error) {
+	st, err := openStore(ctx, dir, "", mode)
 	if err != nil {
 		return nil, err
 	}
@@ -389,22 +390,21 @@ func indexEmbed(ctx context.Context, storeDir string, hook bool) {
 // bound is checked as tokens are collected, so a surplus positional fails with
 // "unexpected argument" before any trailing flag is parsed, and nothing is ever
 // silently ignored. Parse errors keep the flag package's exit-2 contract (every
-// verb builds its FlagSet with flag.ExitOnError).
-func parseInterspersed(verb string, fs *flag.FlagSet, args []string, max int) []string {
+// verb builds its FlagSet with flag.ContinueOnError).
+func parseInterspersed(verb string, fs *flag.FlagSet, args []string, max int) ([]string, error) {
 	var positional []string
 	rest := args
 	for {
-		if err := fs.Parse(rest); err != nil {
-			os.Exit(2)
+		if err := cliexit.Parse(fs, rest); err != nil {
+			return nil, err
 		}
 		rest = fs.Args()
 		if len(rest) == 0 {
-			return positional
+			return positional, nil
 		}
 		positional = append(positional, rest[0])
 		if len(positional) > max {
-			fmt.Fprintf(os.Stderr, "%s: unexpected argument %q\n", verb, rest[0])
-			os.Exit(2)
+			return nil, cliexit.Usage(fmt.Errorf("%s: unexpected argument %q", verb, rest[0]))
 		}
 		rest = rest[1:]
 	}

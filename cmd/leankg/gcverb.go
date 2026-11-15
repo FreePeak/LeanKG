@@ -17,8 +17,8 @@ import (
 // incremental index never revisits (internal/index package doc). A mass
 // deletion (the v4.10.1 hygiene sweep) therefore leaves dangling edges that
 // break graph traversals until gc runs.
-func cmdGC(args []string) {
-	fs := flag.NewFlagSet("gc", flag.ExitOnError)
+func cmdGC(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
 	project := fs.String("project", ".", "project directory whose store is purged (default cwd)")
 	engine := fs.String("engine", "", "storage engine: sqlite|postgres (default: LEANKG_DB_ENGINE, else sqlite)")
 	// --keep-model names the collection to KEEP; every other collection is
@@ -27,31 +27,34 @@ func cmdGC(args []string) {
 	// the embedder's model id.
 	var keepModels stringList
 	fs.Var(&keepModels, "keep-model", "model id to keep (repeatable); without it every collection is kept")
-	positional := parseInterspersed("gc", fs, args, 1)
+	positional, err := parseInterspersed("gc", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if len(positional) == 1 {
 		*project = positional[0]
 	}
-	st, err := openStoreWith(context.Background(), *project, *engine, "", store.RW)
+	st, err := openStoreWith(ctx, *project, *engine, "", store.RW)
 	if err != nil {
-		fatalText(fmt.Errorf("gc: open store: %w", err))
+		return verbFatal(fmt.Errorf("gc: open store: %w", err))
 	}
 	defer st.Close()
 	if err := st.Migrate(); err != nil {
-		fatalText(fmt.Errorf("gc: migrate: %w", err))
+		return verbFatal(fmt.Errorf("gc: migrate: %w", err))
 	}
 	n, err := st.DeleteOrphanRelationships()
 	if err != nil {
-		fatalText(fmt.Errorf("gc: %w", err))
+		return verbFatal(fmt.Errorf("gc: %w", err))
 	}
 	v, err := st.DeleteOrphanVectors()
 	if err != nil {
-		fatalText(fmt.Errorf("gc: vectors: %w", err))
+		return verbFatal(fmt.Errorf("gc: vectors: %w", err))
 	}
 	var stale store.StaleStampSweep
 	if len(keepModels) > 0 {
 		stale, err = st.DeleteStaleStamps(keepModels)
 		if err != nil {
-			fatalText(fmt.Errorf("gc: stale stamps: %w", err))
+			return verbFatal(fmt.Errorf("gc: stale stamps: %w", err))
 		}
 	}
 	if n > 0 || v > 0 || !stale.Empty() {
@@ -69,6 +72,7 @@ func cmdGC(args []string) {
 		fmt.Printf("gc: dropped %d stale collection(s) (%d vectors, %d state rows)\n",
 			stale.Models, stale.Vectors, stale.State)
 	}
+	return nil
 }
 
 // stringList is a repeatable string flag value.

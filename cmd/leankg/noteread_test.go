@@ -83,12 +83,12 @@ func TestNoteVerbListsWhenContentIsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := captureStdout(t, func() { cmdNote([]string{"--project", dir, "--target", "leankg"}) })
+	out := captureStdout(t, func() { cmdNote(context.Background(), []string{"--project", dir, "--target", "leankg"}) })
 	if !strings.Contains(out, "zz-note-verb probe") {
 		t.Errorf("note list did not print the note it stored: %q", out)
 	}
 	// A target with no notes says so rather than printing nothing at all.
-	out = captureStdout(t, func() { cmdNote([]string{"--project", dir, "--target", "no-such-target"}) })
+	out = captureStdout(t, func() { cmdNote(context.Background(), []string{"--project", dir, "--target", "no-such-target"}) })
 	if !strings.Contains(out, "no-such-target") {
 		t.Errorf("empty list is silent: %q", out)
 	}

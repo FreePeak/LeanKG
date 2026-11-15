@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -133,7 +134,7 @@ func TestTelemetryDisableTurnsCaptureAndSessionsOff(t *testing.T) {
 func TestTelemetryStatusNeverCreatesLedger(t *testing.T) {
 	home := telemetryHome(t)
 	var out bytes.Buffer
-	if err := telemetryStatus(home, false, &out); err != nil {
+	if err := telemetryStatus(context.Background(), home, false, &out); err != nil {
 		t.Fatalf("status: %v", err)
 	}
 	if _, err := os.Stat(telemetry.DBPath(home)); !errors.Is(err, os.ErrNotExist) {
@@ -147,7 +148,7 @@ func TestTelemetryStatusNeverCreatesLedger(t *testing.T) {
 func TestTelemetryPurgeWithoutLedgerCreatesNothing(t *testing.T) {
 	home := telemetryHome(t)
 	var out bytes.Buffer
-	if err := telemetryPurge(home, time.Now().Add(time.Hour), &out); err != nil {
+	if err := telemetryPurge(context.Background(), home, time.Now().Add(time.Hour), &out); err != nil {
 		t.Fatalf("purge: %v", err)
 	}
 	if _, err := os.Stat(telemetry.DBPath(home)); !errors.Is(err, os.ErrNotExist) {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -41,24 +42,28 @@ type migrateResult struct {
 // until the project is indexed, and indexing is what creates the store (with
 // every migration already applied). So the verb refuses and names the
 // command that does create one.
-func cmdMigrate(args []string) {
-	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+func cmdMigrate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	engineName := fs.String("engine", "", "storage engine: sqlite (default) | postgres")
-	parseInterspersed("migrate", fs, args, 0)
+	if _, err := parseInterspersed("migrate", fs, args, 0); err != nil {
+		return err
+	}
 	eng := *engineName
 	if eng == "" {
 		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
 	}
 	if eng != store.EngineSQLite && eng != store.EnginePostgres {
 		fmt.Fprintf(os.Stderr, "migrate: unknown engine %q (valid: sqlite | postgres)\n", eng)
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	dir := resolveProjectDir(*project)
-	requireStore("migrate", dir)
-	st, err := openStore(context.Background(), dir, "", store.RW)
+	if err := requireStore(ctx, "migrate", dir); err != nil {
+		return err
+	}
+	st, err := openStore(ctx, dir, "", store.RW)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	defer st.Close()
 
@@ -74,11 +79,11 @@ func cmdMigrate(args []string) {
 	}
 
 	if err := st.Migrate(); err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	after, err := store.AppliedMigrations(st)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	afterSet := map[int]bool{}
 	for _, v := range after {
@@ -115,4 +120,5 @@ func cmdMigrate(args []string) {
 	sort.Ints(res.Unknown)
 
 	printJSON(res)
+	return nil
 }

@@ -12,6 +12,7 @@ workflows:
     description: Index a repository, optionally embed it, then answer queries through the search ladder.
     entry_points:
       - cmd/leankg/main.go
+      - internal/cliexit/cliexit.go::Finish
       - internal/core/core.go::Query
     steps:
       - id: index

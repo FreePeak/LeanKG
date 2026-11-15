@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/graph"
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -41,8 +42,8 @@ var cliQueryActions = map[string]bool{
 // --action routes through core.Query/core.Import exactly like the MCP tool
 // arguments do, so the CLI can reach path/callers/callees/context/explain/
 // pattern/lsp/compress/read without a server. --kind is untouched.
-func cmdQuery(args []string) {
-	fs := flag.NewFlagSet("query", flag.ExitOnError)
+func cmdQuery(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	kind := fs.String("kind", "name", "query type: name (exact+fuzzy fallback) | impact")
 	action := fs.String("action", "", "envelope action: "+queryActionList())
 	depth := fs.Int("depth", 2, "traversal depth (--kind impact, or args.depth for --action)")
@@ -63,7 +64,10 @@ func cmdQuery(args []string) {
 	// clap semantics: flags may appear before or after the query text, and a
 	// second positional is rejected rather than silently dropped (previously
 	// `query --kind impact foo` looked up the literal "--kind").
-	positional := parseInterspersed("query", fs, args, 1)
+	positional, err := parseInterspersed("query", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	q := ""
 	if len(positional) == 1 {
 		q = positional[0]
@@ -75,7 +79,7 @@ func cmdQuery(args []string) {
 	// take everything from flags (e.g. `query --action languages`).
 	if q == "" && *action == "" && *path == "" {
 		fmt.Fprintln(os.Stderr, "query requires a query string")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 
 	dir := resolveProjectDir(*project)
@@ -83,11 +87,11 @@ func cmdQuery(args []string) {
 	if *action != "" {
 		if !cliQueryActions[*action] {
 			fmt.Fprintf(os.Stderr, "query: unknown --action %q\nvalid: %s\n", *action, queryActionList())
-			os.Exit(2)
+			return cliexit.Code(2)
 		}
-		engine, err := openEngine(dir, store.RO)
+		engine, err := openEngine(ctx, dir, store.RO)
 		if err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 		defer engine.Store().Close()
 		argMap := map[string]any{}
@@ -106,7 +110,6 @@ func cmdQuery(args []string) {
 		if *fresh {
 			argMap["fresh"] = "true"
 		}
-		ctx := context.Background()
 		if *action == "read" {
 			target := *path
 			if target == "" {
@@ -114,10 +117,10 @@ func cmdQuery(args []string) {
 			}
 			out, err := engine.Import(ctx, core.ImportRequest{Action: "read", Path: target, Args: argMap})
 			if err != nil {
-				fatalJSON(err)
+				return fatalJSON(err)
 			}
 			printJSON(out)
-			return
+			return nil
 		}
 		out, err := engine.Query(ctx, core.QueryRequest{
 			Action: *action,
@@ -126,15 +129,15 @@ func cmdQuery(args []string) {
 			Args:   argMap,
 		})
 		if err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 		printJSON(out)
-		return
+		return nil
 	}
 
-	engine, err := openEngine(dir, store.RO)
+	engine, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	defer engine.Store().Close()
 	st := engine.Store()
@@ -143,25 +146,25 @@ func cmdQuery(args []string) {
 	case "impact":
 		hits, err := impactFrom(st, q, *depth)
 		if err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 		if *compressOut {
 			// RTK-style: one line per affected node — "qn depth"
 			for _, h := range hits {
 				fmt.Printf("%s %d\n", h.QN, h.Depth)
 			}
-			return
+			return nil
 		}
 		printJSON(hits)
 	case "name", "":
 		els, err := st.FindExact(q)
 		if err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 		if len(els) == 0 {
 			matches, _, ferr := st.FindFuzzy(q, 10)
 			if ferr != nil {
-				fatalJSON(ferr)
+				return fatalJSON(ferr)
 			}
 			for _, m := range matches {
 				els = append(els, m.Element)
@@ -171,13 +174,14 @@ func cmdQuery(args []string) {
 			for _, el := range els {
 				fmt.Printf("%s (%s)\n", el.QualifiedName, el.ElementType)
 			}
-			return
+			return nil
 		}
 		printJSON(els)
 	default:
 		fmt.Fprintf(os.Stderr, "query: unknown kind %q (want name|impact)\n", *kind)
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
+	return nil
 }
 
 // queryActionList renders the sorted --action vocabulary for usage strings.
@@ -195,10 +199,10 @@ func printJSON(v any) {
 	fmt.Println(string(b))
 }
 
-func fatalJSON(err error) {
+func fatalJSON(err error) error {
 	b, _ := json.Marshal(map[string]string{"error": err.Error()})
 	fmt.Fprintln(os.Stderr, string(b))
-	os.Exit(1)
+	return cliexit.Code(1)
 }
 
 // impactFrom runs graph.Impact from an element QN seed, or — Rust

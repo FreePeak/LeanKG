@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -67,7 +68,7 @@ func TestRegisterProjectAndProjectsVerbs(t *testing.T) {
 	dir := t.TempDir()
 	seedIndexedProject(t, dir)
 
-	out := captureStdout(t, func() { cmdRegisterProject([]string{dir, "--name", "api"}) })
+	out := captureStdout(t, func() { cmdRegisterProject(context.Background(), []string{dir, "--name", "api"}) })
 	if !strings.Contains(out, "registered api") || !strings.Contains(out, "elements=2 files=1") {
 		t.Fatalf("register-project output = %q", out)
 	}
@@ -95,7 +96,7 @@ func TestRegisterProjectAndProjectsVerbs(t *testing.T) {
 			Hot         bool   `json:"hot"`
 		} `json:"projects"`
 	}
-	out = captureStdout(t, func() { cmdProjects([]string{"--json"}) })
+	out = captureStdout(t, func() { cmdProjects(context.Background(), []string{"--json"}) })
 	if err := json.Unmarshal([]byte(out), &manifest); err != nil {
 		t.Fatalf("projects --json output %q: %v", out, err)
 	}
@@ -108,7 +109,7 @@ func TestRegisterProjectAndProjectsVerbs(t *testing.T) {
 	}
 
 	// Text mode renders the same row for a human.
-	out = captureStdout(t, func() { cmdProjects(nil) })
+	out = captureStdout(t, func() { cmdProjects(context.Background(), nil) })
 	for _, want := range []string{"PROJECT", "api", "on-disk"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("projects table %q missing %q", out, want)
@@ -116,7 +117,7 @@ func TestRegisterProjectAndProjectsVerbs(t *testing.T) {
 	}
 
 	// --forget removes the registration and says so.
-	out = captureStdout(t, func() { cmdProjects([]string{"--forget", dir}) })
+	out = captureStdout(t, func() { cmdProjects(context.Background(), []string{"--forget", dir}) })
 	if !strings.Contains(out, "forgot") {
 		t.Fatalf("projects --forget output = %q", out)
 	}
@@ -127,7 +128,7 @@ func TestRegisterProjectAndProjectsVerbs(t *testing.T) {
 
 func TestProjectsVerbWithoutRegistry(t *testing.T) {
 	t.Setenv(portfolioreg.DBPathEnv, filepath.Join(t.TempDir(), "missing.db"))
-	out := captureStdout(t, func() { cmdProjects(nil) })
+	out := captureStdout(t, func() { cmdProjects(context.Background(), nil) })
 	if !strings.Contains(out, "no projects registered") {
 		t.Fatalf("projects without a registry = %q; want a plain empty listing, not an error", out)
 	}
@@ -140,7 +141,7 @@ func TestRegisterProjectWithoutStoreStampsNothing(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	out := captureStdout(t, func() { cmdRegisterProject([]string{dir}) })
+	out := captureStdout(t, func() { cmdRegisterProject(context.Background(), []string{dir}) })
 	if !strings.Contains(out, "never indexed") {
 		t.Fatalf("register-project of an unindexed dir = %q", out)
 	}
@@ -173,7 +174,7 @@ func TestProjectsPruneVerb(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, dir := range map[string]string{"live": live, "never": never, "vanished": vanished} {
-		if out := captureStdout(t, func() { cmdRegisterProject([]string{dir, "--name", name}) }); !strings.Contains(out, "registered") {
+		if out := captureStdout(t, func() { cmdRegisterProject(context.Background(), []string{dir, "--name", name}) }); !strings.Contains(out, "registered") {
 			t.Fatalf("register %s: %s", name, out)
 		}
 	}
@@ -187,24 +188,24 @@ func TestProjectsPruneVerb(t *testing.T) {
 	}
 
 	// Dry run: names the casualty, changes nothing.
-	out := captureStdout(t, func() { cmdProjects([]string{"--prune"}) })
+	out := captureStdout(t, func() { cmdProjects(context.Background(), []string{"--prune"}) })
 	if !strings.Contains(out, vanishedCanon) {
 		t.Errorf("dry run did not name %s:\n%s", vanishedCanon, out)
 	}
 	if !strings.Contains(out, "dry run") {
 		t.Errorf("dry run does not say it is one:\n%s", out)
 	}
-	dryJSON := captureStdout(t, func() { cmdProjects([]string{"--json"}) })
+	dryJSON := captureStdout(t, func() { cmdProjects(context.Background(), []string{"--json"}) })
 	if !strings.Contains(dryJSON, `"count": 3`) && !strings.Contains(dryJSON, `"count":3`) {
 		t.Fatalf("dry run changed the registry:\n%s", dryJSON)
 	}
 
 	// Apply: forgets exactly the vanished row.
-	out = captureStdout(t, func() { cmdProjects([]string{"--prune", "--apply"}) })
+	out = captureStdout(t, func() { cmdProjects(context.Background(), []string{"--prune", "--apply"}) })
 	if !strings.Contains(out, "forgot 1 registration") {
 		t.Errorf("apply output:\n%s", out)
 	}
-	after := captureStdout(t, func() { cmdProjects([]string{"--json"}) })
+	after := captureStdout(t, func() { cmdProjects(context.Background(), []string{"--json"}) })
 	if !strings.Contains(after, `"count": 2`) && !strings.Contains(after, `"count":2`) {
 		t.Fatalf("after apply:\n%s", after)
 	}
@@ -214,7 +215,7 @@ func TestProjectsPruneVerb(t *testing.T) {
 	}
 
 	// A second apply is a no-op, not an error.
-	out = captureStdout(t, func() { cmdProjects([]string{"--prune", "--apply"}) })
+	out = captureStdout(t, func() { cmdProjects(context.Background(), []string{"--prune", "--apply"}) })
 	if !strings.Contains(out, "nothing to prune") {
 		t.Errorf("second apply:\n%s", out)
 	}
@@ -230,11 +231,11 @@ func TestProjectsTableMarksGoneDirs(t *testing.T) {
 	if err := os.MkdirAll(gone, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	captureStdout(t, func() { cmdRegisterProject([]string{gone, "--name", "gone"}) })
+	captureStdout(t, func() { cmdRegisterProject(context.Background(), []string{gone, "--name", "gone"}) })
 	if err := os.RemoveAll(gone); err != nil {
 		t.Fatal(err)
 	}
-	out := captureStdout(t, func() { cmdProjects(nil) })
+	out := captureStdout(t, func() { cmdProjects(context.Background(), nil) })
 	if !strings.Contains(out, "dir-gone") {
 		t.Errorf("table does not distinguish a vanished directory from a missing store:\n%s", out)
 	}
@@ -294,7 +295,7 @@ func TestProjectsPruneJSONContract(t *testing.T) {
 	if err := os.MkdirAll(vanished, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	captureStdout(t, func() { cmdRegisterProject([]string{vanished, "--name", "vanished"}) })
+	captureStdout(t, func() { cmdRegisterProject(context.Background(), []string{vanished, "--name", "vanished"}) })
 	vanishedCanon, err := portfolioreg.Canonical(vanished)
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +315,7 @@ func TestProjectsPruneJSONContract(t *testing.T) {
 		{"apply", []string{"--prune", "--apply", "--json"}, []string{vanishedCanon}, 1, true},
 		{"apply with nothing left", []string{"--prune", "--apply", "--json"}, []string{}, 0, true},
 	} {
-		out := captureStdout(t, func() { cmdProjects(tc.args) })
+		out := captureStdout(t, func() { cmdProjects(context.Background(), tc.args) })
 		var got struct {
 			Pruned  *[]string `json:"pruned"`
 			Count   int       `json:"count"`

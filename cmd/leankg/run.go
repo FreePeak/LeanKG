@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/compress"
 )
 
@@ -19,27 +21,28 @@ import (
 //
 // The command runs as an argv vector — never through a shell — so quoting,
 // globbing, and redirection belong to the caller.
-func cmdRun(args []string) {
-	fs := flag.NewFlagSet("run", flag.ExitOnError)
+func cmdRun(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	compressOut := fs.Bool("compress", false, "RTK-style compression of the command's stdout")
 	// `run` is a trailing-var-arg verb (clap: flags, then `--`, then the child
 	// argv verbatim). Go's flag package already stops at the first positional and
 	// strips a `--` terminator, so its parse IS the clap semantics here — the
 	// interspersed walk must NOT be used: re-parsing after the first positional
 	// would strip the child's own flags (`run -- echo -n hi`) as leankg flags.
-	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
+	if err := cliexit.Parse(fs, args); err != nil {
+		return err
 	}
 	if fs.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "run: no command provided. Usage: leankg run [--compress] -- <command> [args...]")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	stdout, code, err := runCommand(fs.Args(), *compressOut)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(code)
+		return cliexit.Code(code)
 	}
 	_, _ = os.Stdout.WriteString(stdout)
+	return nil
 }
 
 // runCommand runs argv[0] with argv[1:] and returns the captured stdout plus
