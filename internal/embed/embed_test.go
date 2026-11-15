@@ -1106,7 +1106,7 @@ func localRun(t *testing.T, st store.Backend, sc *localSidecar, mode string) (Re
 }
 
 // localRunCfg runs the pipeline under cfg against the store.
-func localRunCfg(t *testing.T, st *store.Store, cfg Config, mode string) (Report, error) {
+func localRunCfg(t *testing.T, st store.Backend, cfg Config, mode string) (Report, error) {
 	t.Helper()
 	p, _, err := Attach(cfg)
 	if err != nil {

@@ -83,7 +83,7 @@ func TestReadCalibrationAcceptsPreCX40Identity(t *testing.T) {
 		Provider: "local", ChunkerVersion: ChunkerVersion}
 	legacy := fmt.Sprintf("%s|%s|%d|%d|%s|%s", "r", "local", 384, ChunkerVersion, "", "")
 	raw, _ := json.Marshal(map[string]any{"floor": 0.5, "identity": legacy})
-	if err := st.KVSet(calibrationNS, "m", string(raw)); err != nil {
+	if err := st.KVSet(context.Background(), calibrationNS, "m", string(raw)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	floor, ok := ReadCalibration(st, stamp)

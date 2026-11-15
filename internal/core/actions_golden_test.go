@@ -53,7 +53,7 @@ type actionFixture struct {
 	t       *testing.T
 	root    string // t.TempDir: holds the project and the portfolio registry
 	project string // the serving project directory
-	st      *store.Store
+	st      store.Backend
 	mem     *memory.Memory
 	e       *Engine
 }
@@ -76,12 +76,12 @@ func openActionFixture(t *testing.T, root, project string) *actionFixture {
 	if err := os.WriteFile(filepath.Join(project, ".gitignore"), []byte(".leankg/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(lk, "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(lk, "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(project, false)
