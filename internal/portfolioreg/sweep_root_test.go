@@ -31,7 +31,7 @@ func newStoreWithRoot(t *testing.T, dir, root string) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := index.RebaseRoot(st, root); err != nil {
@@ -133,7 +133,7 @@ func TestSweepRootCheckIgnoresHealthyStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {
@@ -256,7 +256,7 @@ func TestCheckStoreIgnoresASharedStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := index.RebaseRoot(st, other); err != nil {

@@ -70,7 +70,7 @@ func cmdMigrate(ctx context.Context, args []string) error {
 	// Pre-state: a never-migrated store has no ledger yet, so any read error
 	// here means "nothing applied" — Migrate below still fails loudly if the
 	// store is truly unreachable.
-	before, beforeErr := st.AppliedMigrations()
+	before, beforeErr := st.AppliedMigrations(ctx)
 	beforeSet := map[int]bool{}
 	if beforeErr == nil {
 		for _, v := range before {
@@ -78,10 +78,10 @@ func cmdMigrate(ctx context.Context, args []string) error {
 		}
 	}
 
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return fatalJSON(err)
 	}
-	after, err := st.AppliedMigrations()
+	after, err := st.AppliedMigrations(ctx)
 	if err != nil {
 		return fatalJSON(err)
 	}

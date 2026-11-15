@@ -43,14 +43,14 @@ func TestReconcileKeepsTheStoreFresh(t *testing.T) {
 	// which the serving process runs after an index; the index itself does
 	// not write it. The baseline is that state: a store whose inventory
 	// matches its watermark.
-	if _, err := store.RefreshInventory(st); err != nil {
+	if _, err := store.RefreshInventory(context.Background(), st); err != nil {
 		t.Fatalf("refresh inventory: %v", err)
 	}
 	n, err := st.ElementCount()
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}
-	if got := store.Freshness(st, n); got != store.FreshnessFresh {
+	if got := store.Freshness(context.Background(), st, n); got != store.FreshnessFresh {
 		t.Fatalf("the fixture store is %q before the reconcile, want %q", got, store.FreshnessFresh)
 	}
 
@@ -73,7 +73,7 @@ func TestReconcileKeepsTheStoreFresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}
-	if got := store.Freshness(st, n); got != store.FreshnessFresh {
+	if got := store.Freshness(context.Background(), st, n); got != store.FreshnessFresh {
 		t.Fatalf("the store reports %q after the reconcile, want %q — a reconciled store is not a stale one", got, store.FreshnessFresh)
 	}
 }
@@ -96,10 +96,10 @@ func TestReconcileRefreshesTheInventoryCounts(t *testing.T) {
 	if _, err := index.IndexDir(ctx, st, dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RefreshInventory(st); err != nil {
+	if _, err := store.RefreshInventory(context.Background(), st); err != nil {
 		t.Fatalf("refresh inventory: %v", err)
 	}
-	before, err := st.LoadInventory()
+	before, err := st.LoadInventory(context.Background())
 	if err != nil {
 		t.Fatalf("load inventory: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestReconcileRefreshesTheInventoryCounts(t *testing.T) {
 	if _, err := ReconcileHead(ctx, st); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	after, err := st.LoadInventory()
+	after, err := st.LoadInventory(context.Background())
 	if err != nil {
 		t.Fatalf("load inventory: %v", err)
 	}
@@ -150,14 +150,14 @@ func TestReconcileHealsAnInventoryLeftBehind(t *testing.T) {
 	if _, err := index.IndexDir(ctx, st, dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RefreshInventory(st); err != nil {
+	if _, err := store.RefreshInventory(context.Background(), st); err != nil {
 		t.Fatalf("refresh inventory: %v", err)
 	}
 	n, err := st.ElementCount()
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}
-	if got := store.Freshness(st, n); got != store.FreshnessFresh {
+	if got := store.Freshness(context.Background(), st, n); got != store.FreshnessFresh {
 		t.Fatalf("the fixture store is %q, want %q", got, store.FreshnessFresh)
 	}
 
@@ -170,7 +170,7 @@ func TestReconcileHealsAnInventoryLeftBehind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("element count: %v", err)
 	}
-	if got := store.Freshness(st, n); got != store.FreshnessPossiblyStale {
+	if got := store.Freshness(context.Background(), st, n); got != store.FreshnessPossiblyStale {
 		t.Fatalf("the fixture store is %q after the delete, want %q", got, store.FreshnessPossiblyStale)
 	}
 
@@ -183,7 +183,7 @@ func TestReconcileHealsAnInventoryLeftBehind(t *testing.T) {
 	if res.DeletedFiles != 0 {
 		t.Fatalf("reconcile = %+v, want nothing deleted", res)
 	}
-	if got := store.Freshness(st, n); got != store.FreshnessFresh {
+	if got := store.Freshness(context.Background(), st, n); got != store.FreshnessFresh {
 		t.Fatalf("the store reports %q after the reconcile, want %q — the pass must heal the inventory it left behind", got, store.FreshnessFresh)
 	}
 }

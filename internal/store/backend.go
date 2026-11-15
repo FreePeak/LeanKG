@@ -20,8 +20,8 @@ type Backend interface {
 	// lifecycle
 	Close() error
 	Path() string // connection target (file path or DSN); for status display
-	Migrate() error
-	AppliedMigrations() ([]int, error)
+	Migrate(ctx context.Context) error
+	AppliedMigrations(ctx context.Context) ([]int, error)
 	Engine() string
 	Mode() Mode // how the store was opened (RW or RO)
 
@@ -136,15 +136,15 @@ const (
 //
 // totalElements is a parameter, not a lookup: `status` has already counted it,
 // so the shared helper must not add a second query per response.
-func Freshness(st Backend, totalElements int) string {
+func Freshness(ctx context.Context, st Backend, totalElements int) string {
 	if totalElements == 0 {
 		return FreshnessCold
 	}
-	inv, err := st.LoadInventory()
+	inv, err := st.LoadInventory(ctx)
 	if err != nil || inv == nil {
 		return FreshnessPossiblyStale
 	}
-	seq, _, err := st.Watermark()
+	seq, _, err := st.Watermark(ctx)
 	if err != nil {
 		return FreshnessPossiblyStale
 	}

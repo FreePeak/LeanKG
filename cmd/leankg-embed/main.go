@@ -123,7 +123,7 @@ func openStore(ctx context.Context, project string) (store.Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		st.Close()
 		return nil, err
 	}

@@ -16,7 +16,7 @@ func openStore(t *testing.T) store.Backend {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -111,7 +111,7 @@ func TestImportWritesCommitAuthorFileElementsAndEdges(t *testing.T) {
 	if got := coChangeCount(t, st, "a.go", "b.go"); got != 1 {
 		t.Fatalf("a.go->b.go co_change count = %d, want 1", got)
 	}
-	if v, ok, _ := st.KVGet(kvNamespace, kvHeadKey); !ok || v != head {
+	if v, ok, _ := st.KVGet(context.Background(), kvNamespace, kvHeadKey); !ok || v != head {
 		t.Fatalf("recorded history head = %q ok=%v, want %s", v, ok, head)
 	}
 }
@@ -147,7 +147,7 @@ func TestImportRebuildsWhenRecordedHeadIsNotAncestor(t *testing.T) {
 	root := repoWithCommits(t)
 	st := openStore(t)
 	mustImport(t, st, root)
-	if err := st.KVSet(kvNamespace, kvHeadKey, "0000000000000000000000000000000000000000"); err != nil {
+	if err := st.KVSet(context.Background(), kvNamespace, kvHeadKey, "0000000000000000000000000000000000000000"); err != nil {
 		t.Fatal(err)
 	}
 	res := mustImport(t, st, root)

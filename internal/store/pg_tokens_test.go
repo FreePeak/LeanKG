@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -139,7 +140,7 @@ func TestPGTokenLifecycle(t *testing.T) {
 	}
 
 	// Re-running the migration ledger is a no-op on an already-migrated schema.
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
 }
@@ -147,7 +148,7 @@ func TestPGTokenLifecycle(t *testing.T) {
 // TestPGAppliedMigrations reads the ledger through the shared helper.
 func TestPGAppliedMigrations(t *testing.T) {
 	s := openPGTest(t)
-	got, err := s.AppliedMigrations()
+	got, err := s.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied: %v", err)
 	}

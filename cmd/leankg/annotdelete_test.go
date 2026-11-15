@@ -20,7 +20,7 @@ func TestDeleteAnnotationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +53,7 @@ func TestDeleteAnnotationRoundTrip(t *testing.T) {
 		t.Fatalf("search after delete = %d hits, want 0", len(hits))
 	}
 	// The kv document must not keep a stale null row behind.
-	raw, ok, err := st.KVGet("annotation", "records")
+	raw, ok, err := st.KVGet(context.Background(), "annotation", "records")
 	if err != nil {
 		t.Fatal(err)
 	}

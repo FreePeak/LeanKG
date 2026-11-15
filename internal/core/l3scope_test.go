@@ -29,7 +29,7 @@ func TestL3ScopeArgReachesTheVectorArm(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)

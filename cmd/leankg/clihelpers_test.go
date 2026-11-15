@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -142,7 +143,7 @@ func seedCLIProject(t *testing.T, els []store.Element, rels []store.Relationship
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if len(els) > 0 {

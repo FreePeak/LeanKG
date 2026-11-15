@@ -5,6 +5,7 @@ package store
 // per-file atomic replace that the embed pipeline's live path calls.
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pgvector/pgvector-go"
@@ -45,5 +46,5 @@ func (s *PGStore) ReplaceFileVectors(modelID string, rows []VectorRow, states ma
 	if err := tx.Commit(pgCtx); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }

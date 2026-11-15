@@ -20,6 +20,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -50,14 +51,14 @@ const projectCols = `dir, name, registered_at, last_indexed, element_count, file
 // Names are NOT unique (two checkouts may legitimately be called "api"), so
 // name resolution is the reader's job and reports ambiguity rather than picking
 // one — internal/projects.Router.byName is the precedent.
-func (s *Store) ProjectUpsert(p ProjectRecord) error {
+func (s *Store) ProjectUpsert(ctx context.Context, p ProjectRecord) error {
 	if p.Dir == "" || p.Name == "" || p.RegisteredAt == "" {
 		return fmt.Errorf("store: project upsert: dir, name and registered_at are required")
 	}
 	if s.mode == RO {
 		return fmt.Errorf("store: project upsert requires RW mode")
 	}
-	_, err := s.db.Exec(`INSERT INTO projects (`+projectCols+`)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO projects (`+projectCols+`)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(dir) DO UPDATE SET
 			name = excluded.name,
@@ -72,8 +73,8 @@ func (s *Store) ProjectUpsert(p ProjectRecord) error {
 }
 
 // ProjectGet reads the row for one canonical project directory.
-func (s *Store) ProjectGet(dir string) (ProjectRecord, bool, error) {
-	row := s.db.QueryRow(`SELECT `+projectCols+` FROM projects WHERE dir = ?`, dir)
+func (s *Store) ProjectGet(ctx context.Context, dir string) (ProjectRecord, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+projectCols+` FROM projects WHERE dir = ?`, dir)
 	p, err := scanProject(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -87,8 +88,8 @@ func (s *Store) ProjectGet(dir string) (ProjectRecord, bool, error) {
 // ProjectList enumerates the registry, name-ordered case-insensitively with
 // Dir as the tie-break, so identically named projects still list
 // deterministically.
-func (s *Store) ProjectList() ([]ProjectRecord, error) {
-	rows, err := s.db.Query(`SELECT ` + projectCols + ` FROM projects
+func (s *Store) ProjectList(ctx context.Context) ([]ProjectRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+projectCols+` FROM projects
 		ORDER BY name COLLATE NOCASE, dir`)
 	if err != nil {
 		return nil, fmt.Errorf("store: project list: %w", err)
@@ -107,11 +108,11 @@ func (s *Store) ProjectList() ([]ProjectRecord, error) {
 
 // ProjectForget removes the row for one canonical directory and reports
 // whether anything went (an unknown dir is a no-op, not an error).
-func (s *Store) ProjectForget(dir string) (bool, error) {
+func (s *Store) ProjectForget(ctx context.Context, dir string) (bool, error) {
 	if s.mode == RO {
 		return false, fmt.Errorf("store: project forget requires RW mode")
 	}
-	res, err := s.db.Exec(`DELETE FROM projects WHERE dir = ?`, dir)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE dir = ?`, dir)
 	if err != nil {
 		return false, fmt.Errorf("store: project forget %s: %w", dir, err)
 	}

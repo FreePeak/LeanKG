@@ -38,7 +38,7 @@ func newFixture(t *testing.T, files map[string]string) *fixture {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	var recs []store.FileRecord
@@ -243,7 +243,7 @@ func TestSummarizeSendsDeterministicPromptAndClips(t *testing.T) {
 	}
 
 	// The checkpoint is written, keyed by the hash of the bytes that were sent.
-	got, ok, err := f.st.SummaryGet("a/small.go")
+	got, ok, err := f.st.SummaryGet(context.Background(), "a/small.go")
 	if err != nil || !ok {
 		t.Fatalf("summary not persisted: ok=%v err=%v", ok, err)
 	}
@@ -357,10 +357,10 @@ func TestFailureGateContinuesPastIndividualFailures(t *testing.T) {
 	if len(res.Errors) != 2 {
 		t.Errorf("errors: %v", res.Errors)
 	}
-	if _, ok, _ := f.st.SummaryGet("f02.go"); ok {
+	if _, ok, _ := f.st.SummaryGet(context.Background(), "f02.go"); ok {
 		t.Error("a failed file must not be checkpointed, or the next run resumes a hole")
 	}
-	if _, ok, _ := f.st.SummaryGet("f03.go"); !ok {
+	if _, ok, _ := f.st.SummaryGet(context.Background(), "f03.go"); !ok {
 		t.Error("the pass stopped early: f03.go has no summary")
 	}
 }
@@ -446,7 +446,7 @@ func TestEmptySummaryIsAQualityMissNotACheckpoint(t *testing.T) {
 	if res.Failed != 1 || res.Summarized != 2 {
 		t.Errorf("report: %+v", res)
 	}
-	if _, ok, _ := f.st.SummaryGet("b.go"); ok {
+	if _, ok, _ := f.st.SummaryGet(context.Background(), "b.go"); ok {
 		t.Error("an empty summary must never be checkpointed")
 	}
 }
@@ -470,7 +470,7 @@ func TestDryRunSpendsNothingAndNeedsNoProvider(t *testing.T) {
 	if got := len(srv.calls()); got != 0 {
 		t.Errorf("calls: got %d, want 0", got)
 	}
-	if _, ok, _ := f.st.SummaryGet("a.go"); ok {
+	if _, ok, _ := f.st.SummaryGet(context.Background(), "a.go"); ok {
 		t.Error("dry run wrote a checkpoint")
 	}
 	if _, err := os.Stat(filepath.Join(f.dir, ".leankg", "summarize")); !os.IsNotExist(err) {

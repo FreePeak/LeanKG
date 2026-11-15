@@ -19,7 +19,7 @@ func collectionFixture(t *testing.T) store.Backend {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// A real element: a vector whose qualified name has no element is an
@@ -94,7 +94,7 @@ func TestPassKeepsACollectionWhenTheKeepOneIsAbsent(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := st.UpsertElements([]store.Element{{

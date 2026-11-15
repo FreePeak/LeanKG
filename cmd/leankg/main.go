@@ -408,7 +408,7 @@ afterSidecars:
 	}
 	defer st.Close()
 	if !*readOnly {
-		if err := st.Migrate(); err != nil {
+		if err := st.Migrate(ctx); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
@@ -880,7 +880,7 @@ func cmdDoctor(ctx context.Context, args []string) error {
 	defer st.Close()
 	els, err1 := st.ElementCount()
 	files, err2 := st.FileCount()
-	seq, at, err3 := st.Watermark()
+	seq, at, err3 := st.Watermark(ctx)
 	if err1 != nil || err2 != nil || err3 != nil {
 		fmt.Println("FAIL store queries:", err1, err2, err3)
 		return cliexit.Code(2)

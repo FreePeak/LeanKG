@@ -41,7 +41,7 @@ func openVerbStore(ctx context.Context, project string, mode store.Mode) (store.
 	if mode == store.RW {
 		// Writer verbs bring the store up to date first (the index verb does
 		// the same); readers assume an already-indexed store, like query.
-		if err := st.Migrate(); err != nil {
+		if err := st.Migrate(ctx); err != nil {
 			_ = st.Close()
 			return nil, dir, fmt.Errorf("migrate: %w", err)
 		}

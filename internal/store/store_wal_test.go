@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	_ "modernc.org/sqlite"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func TestReadOnlyRejectsWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	rw.Close()
@@ -52,7 +53,7 @@ func TestSpaceInPath(t *testing.T) {
 		t.Fatalf("open with space in path: %v", err)
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := s.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {

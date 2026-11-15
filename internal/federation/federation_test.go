@@ -24,7 +24,7 @@ func openStore(t *testing.T) store.Backend {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return s

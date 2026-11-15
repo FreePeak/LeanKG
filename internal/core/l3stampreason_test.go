@@ -42,7 +42,7 @@ func TestL3DegradeReasonNamesUnreadableStamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// The error a pre-017 store's stamp read produced.
@@ -88,7 +88,7 @@ func TestL3DegradeReasonStillSaysNoVectorCollection(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// A real, migrated store with NO stamp row for the embedder's model:

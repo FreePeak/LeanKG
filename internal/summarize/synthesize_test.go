@@ -495,7 +495,7 @@ func TestKVBatchCacheIsPruned(t *testing.T) {
 	if _, err := Run(ctx, f.st, runOpts(f.dir, srv.chat())); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	raw, ok, err := f.st.KVGet(synthCacheNamespace, synthCacheKey)
+	raw, ok, err := f.st.KVGet(context.Background(), synthCacheNamespace, synthCacheKey)
 	if err != nil || !ok {
 		t.Fatalf("batch cache not persisted: ok=%v err=%v", ok, err)
 	}
@@ -516,7 +516,7 @@ func TestKVBatchCacheIsPruned(t *testing.T) {
 	if _, err := Run(ctx, f.st, runOpts(f.dir, srv.chat())); err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
-	raw, _, _ = f.st.KVGet(synthCacheNamespace, synthCacheKey)
+	raw, _, _ = f.st.KVGet(context.Background(), synthCacheNamespace, synthCacheKey)
 	cache = map[string][]cleanedNode{}
 	if err := json.Unmarshal([]byte(raw), &cache); err != nil {
 		t.Fatalf("cache must be JSON: %v", err)

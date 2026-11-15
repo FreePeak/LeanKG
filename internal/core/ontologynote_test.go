@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -64,7 +65,7 @@ func TestEmptyMatchesSaysWhyItIsEmpty(t *testing.T) {
 	}
 	// And a NON-empty answer must NOT carry the note — otherwise the note
 	// stops distinguishing anything.
-	if err := e.st.KVSet("ontology", "matches", `[{"concept_id":"c","qn":"pkg::A","via":"name"}]`); err != nil {
+	if err := e.st.KVSet(context.Background(), "ontology", "matches", `[{"concept_id":"c","qn":"pkg::A","via":"name"}]`); err != nil {
 		t.Fatal(err)
 	}
 	populated, err := e.OntologyMatches()

@@ -391,7 +391,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	// the watermark past it: without the refresh a fully embedded project is
 	// reported possibly_stale until the next index. (Found by dogfooding the
 	// embedding pipeline on this repo itself.)
-	if _, err := store.RefreshInventory(st); err != nil {
+	if _, err := store.RefreshInventory(ctx, st); err != nil {
 		return rep, fmt.Errorf("embed: inventory snapshot: %w", err)
 	}
 	return rep, cancelErr

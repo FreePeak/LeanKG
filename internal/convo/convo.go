@@ -165,7 +165,7 @@ func MineIntoProject(ctx context.Context, project, input string, format Format) 
 		return result, fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return result, fmt.Errorf("migrate: %w", err)
 	}
 	indexed, err := IndexItems(st, project, result.Items)

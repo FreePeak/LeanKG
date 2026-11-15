@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -16,7 +17,7 @@ func newVacuumFixture(t *testing.T) *Store {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// 400 rows, then delete 300 of them: ~75% of the pages end up free.
@@ -186,7 +187,7 @@ func TestVacuumShrinksFileToLiveSize(t *testing.T) {
 
 func TestCheckpointTruncatesWAL(t *testing.T) {
 	st := newVacuumFixture(t)
-	if err := st.BumpWatermark(); err != nil {
+	if err := st.BumpWatermark(context.Background()); err != nil {
 		t.Fatalf("bump: %v", err)
 	}
 	if _, err := st.Maintain(MaintainOp{Kind: MaintainCheckpoint}); err != nil {
@@ -207,7 +208,7 @@ func TestVacuumRefusesReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := rw.Close(); err != nil {

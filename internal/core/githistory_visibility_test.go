@@ -21,7 +21,7 @@ func openVisibilityEngine(t *testing.T, extra ...store.Element) *Engine {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	els := append([]store.Element{
@@ -157,7 +157,7 @@ func TestSemanticHidesGitHistoryVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.WriteStamp(embed.StampOf(p)); err != nil {

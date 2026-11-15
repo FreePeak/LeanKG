@@ -225,7 +225,7 @@ func DeleteFiles(ctx context.Context, st store.Backend, paths []string) (int, er
 // RebaseRoot records dir as the store's index root, replacing any previous
 // one (`leankg index --rebase-root` after moving a checkout).
 func RebaseRoot(st store.Backend, dir string) error {
-	return st.KVSet(rootKVNamespace, rootKVKey, CanonicalRoot(dir))
+	return st.KVSet(context.TODO(), rootKVNamespace, rootKVKey, CanonicalRoot(dir))
 }
 
 // checkRoot enforces the tripwire: a store with no recorded root (built
@@ -233,7 +233,7 @@ func RebaseRoot(st store.Backend, dir string) error {
 // recorded root refuses the walk before anything is deleted.
 func checkRoot(st store.Backend, dir string, hasFiles bool) error {
 	want := CanonicalRoot(dir)
-	got, ok, err := st.KVGet(rootKVNamespace, rootKVKey)
+	got, ok, err := st.KVGet(context.TODO(), rootKVNamespace, rootKVKey)
 	if err != nil {
 		return err
 	}
@@ -243,7 +243,7 @@ func checkRoot(st store.Backend, dir string, hasFiles bool) error {
 			"index the recorded root, open the other directory as its own project, or run `leankg index --rebase-root <dir>` if the checkout moved")
 	}
 	if !ok || got != want {
-		return st.KVSet(rootKVNamespace, rootKVKey, want)
+		return st.KVSet(context.TODO(), rootKVNamespace, rootKVKey, want)
 	}
 	return nil
 }
@@ -273,7 +273,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	if err := checkRoot(st, dir, len(prev) > 0); err != nil {
 		return res, err
 	}
-	ver, _, err := st.KVGet(rootKVNamespace, extractorKVKey)
+	ver, _, err := st.KVGet(ctx, rootKVNamespace, extractorKVKey)
 	if err != nil {
 		return res, err
 	}
@@ -477,7 +477,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		}
 	}
 	if ver != extractorVersion {
-		if err := st.KVSet(rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
+		if err := st.KVSet(ctx, rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
 			return res, err
 		}
 	}
@@ -489,7 +489,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	// again afterwards — so the record and the content describe one tree. A
 	// filesystem-scanned store records the empty id: it was not built from a
 	// git tree, and claiming one would be a lie the reconcile would act on.
-	if err := store.SetHead(st, headCommit); err != nil {
+	if err := store.SetHead(ctx, st, headCommit); err != nil {
 		return res, err
 	}
 	return res, nil

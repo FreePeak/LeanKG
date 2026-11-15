@@ -228,7 +228,7 @@ func ResolveEnvelope(tool string) (string, error) {
 // freshness derives the status/query freshness label; the derivation itself is
 // the store's, shared with `doctor --deep`'s fleet probe.
 func (e *Engine) freshness(totalElements int) string {
-	return store.Freshness(e.st, totalElements)
+	return store.Freshness(context.TODO(), e.st, totalElements)
 }
 
 // ImportRequest is the import tool payload. The flat curation fields mirror
@@ -508,7 +508,7 @@ func (e *Engine) ensureStoreSchema(ctx context.Context) error {
 	if e.st.Mode() == store.RO {
 		return nil
 	}
-	if err := e.st.Migrate(); err != nil {
+	if err := e.st.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrate store before write: %w", err)
 	}
 	return nil
@@ -519,7 +519,7 @@ func (e *Engine) ensureStoreSchema(ctx context.Context) error {
 // keep the same bookkeeping — an index that only the Engine refreshed left
 // readers reporting possibly_stale forever.
 func (e *Engine) refreshInventory() (store.Inventory, error) {
-	return store.RefreshInventory(e.st)
+	return store.RefreshInventory(context.TODO(), e.st)
 }
 
 // Status is the status tool: health, inventory, freshness, backend, and the
@@ -562,7 +562,7 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	seq, at, err := e.st.Watermark()
+	seq, at, err := e.st.Watermark(ctx)
 	if err != nil {
 		return nil, err
 	}

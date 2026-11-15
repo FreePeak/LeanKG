@@ -37,7 +37,7 @@ func cmdWriter(ctx context.Context, args []string) error {
 		return fmt.Errorf("open store: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrate: %v", err)
 	}
 	langReg := langs.DefaultRegistry()

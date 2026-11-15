@@ -95,7 +95,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return res, fmt.Errorf("refresh: open store: %w", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return res, fmt.Errorf("refresh: migrate: %w", err)
 	}
 

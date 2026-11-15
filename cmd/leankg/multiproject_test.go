@@ -30,7 +30,7 @@ func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var els []store.Element
@@ -63,7 +63,7 @@ func engineOver(t *testing.T, dir string) *core.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	eng := core.New(st, nil, nil)

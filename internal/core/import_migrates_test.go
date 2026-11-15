@@ -36,7 +36,7 @@ func TestImportMigratesTheStoreItWritesTo(t *testing.T) {
 	if _, err := e.Import(context.Background(), ImportRequest{Action: "dir", Path: "."}); err != nil {
 		t.Fatalf("import into a store with no schema: %v", err)
 	}
-	applied, err := st.AppliedMigrations()
+	applied, err := st.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

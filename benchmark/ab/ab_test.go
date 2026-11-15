@@ -71,7 +71,7 @@ func freshStore(b *testing.B, dir string) store.Backend {
 	if err != nil {
 		b.Fatalf("open store: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		st.Close()
 		b.Fatalf("migrate: %v", err)
 	}

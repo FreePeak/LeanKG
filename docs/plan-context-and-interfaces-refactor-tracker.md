@@ -44,7 +44,7 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 
 | ID | PR | Size | Depends | Status | PR link | Notes |
 |---|---|---|---|---|---|---|
-| CX-19 | `refactor(store): ctx for Migrate, KV, Inventory, Projects and Summaries` | M | CX-13, CX-14 | todo | - | - |
+| CX-19 | `refactor(store): ctx for Migrate, KV, Inventory, Projects and Summaries` | M | CX-13, CX-14 | done | local commit, not pushed | 14 Backend methods take ctx on both engines (Migrate, AppliedMigrations, KVGet, KVSet, Watermark, BumpWatermark, SaveInventory, LoadInventory, ProjectUpsert/Get/List/Forget, SummaryUpsert/Get); Freshness, SetHead, Head, RecordedRoot and RefreshInventory take ctx; PG pgCtx gone from these roles (pgCtx stays for the other roles, CX-27). TestCancelledContextHonoured passes on both engines (SQLite and PostgreSQL, 5 roles). Live PostgreSQL: a 300 ms deadline aborts KVGet and KVSet blocked on LOCK TABLE kv at about 301 ms. Budgets: sql-no-ctx internal/store 277 to 235; todoBudget 0 to 57 (P2 markers in annot 2, core 2, embed 2, index 3, maintain 3, obsidian 3, ontology 8, portfolioreg 4, store 28, summarize 2; to be threaded by the owning roles and P3 follow-up). Behaviour: a run cancelled before its first store call now stops at the migration, so the store may have no schema; TestRunIndexStopsOnDoneContext accepts that state only. |
 | CX-20 | `refactor(store): ctx for ElementReader and GraphReader` | M | CX-19 | todo | - | - |
 | CX-21 | `refactor(store): ctx for Searcher` | M | CX-16, CX-20 | todo | - | - |
 | CX-22 | `refactor(store): ctx for IndexWriter` | M | CX-20 | todo | - | - |

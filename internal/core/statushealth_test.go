@@ -34,7 +34,7 @@ func seededStore(t *testing.T) store.Backend {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertElements([]store.Element{{
@@ -145,7 +145,7 @@ func TestStatusHealthyStoreWithoutEmbeddings(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	e := New(st, nil, nil)

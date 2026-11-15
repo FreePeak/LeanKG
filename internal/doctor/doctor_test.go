@@ -391,7 +391,7 @@ func TestRunDeepSqlite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// Seed via the public API: two elements and one dangling edge (the
@@ -527,7 +527,7 @@ func TestFileCoverageRealSqlite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertElements([]store.Element{{QualifiedName: "a.A", ElementType: "func", Name: "A", FilePath: "a.go", Language: "go"}}); err != nil {

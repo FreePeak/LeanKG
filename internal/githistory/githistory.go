@@ -67,7 +67,7 @@ func Import(ctx context.Context, st store.Backend, root string, opts Options) (R
 	if !ok {
 		return Result{}, nil
 	}
-	stored, _, err := st.KVGet(kvNamespace, kvHeadKey)
+	stored, _, err := st.KVGet(ctx, kvNamespace, kvHeadKey)
 	if err != nil {
 		return Result{}, err
 	}
@@ -106,7 +106,7 @@ func Import(ctx context.Context, st store.Backend, root string, opts Options) (R
 	if err := st.UpsertRelationships(b.relationships(pairs)); err != nil {
 		return Result{}, err
 	}
-	if err := st.KVSet(kvNamespace, kvHeadKey, head); err != nil {
+	if err := st.KVSet(ctx, kvNamespace, kvHeadKey, head); err != nil {
 		return Result{}, err
 	}
 	return Result{

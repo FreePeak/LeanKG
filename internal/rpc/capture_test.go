@@ -52,7 +52,7 @@ func serveRPC(t *testing.T, rec telemetry.Recorder) leankgv1connect.LeanKGClient
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)

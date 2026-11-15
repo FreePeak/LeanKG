@@ -34,7 +34,7 @@ func TestProjectSwitchBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	engine := core.New(st, nil, nil)

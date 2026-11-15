@@ -102,7 +102,7 @@ func TestPassOnAFreshStoreGrows(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	res, err := Pass(context.Background(), st, Options{})

@@ -102,7 +102,7 @@ func cmdPull(ctx context.Context, args []string) error {
 	// in step with what this writer changed (the connectivity-probe fallback
 	// applies nothing, so it needs no refresh).
 	if res.Applied {
-		if _, ierr := store.RefreshInventory(st); ierr != nil {
+		if _, ierr := store.RefreshInventory(ctx, st); ierr != nil {
 			fmt.Fprintf(os.Stderr, "pull: inventory snapshot: %v\n", ierr)
 		}
 	}

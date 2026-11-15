@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -293,7 +294,7 @@ func (e *Engine) Push() (PushResult, error) {
 		if err != nil {
 			return res, fmt.Errorf("obsidian: relationships of %s: %w", el.QualifiedName, err)
 		}
-		annotation, _, err := e.st.KVGet(AnnotationNamespace, el.QualifiedName)
+		annotation, _, err := e.st.KVGet(context.TODO(), AnnotationNamespace, el.QualifiedName)
 		if err != nil {
 			return res, fmt.Errorf("obsidian: annotation of %s: %w", el.QualifiedName, err)
 		}

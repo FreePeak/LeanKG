@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -109,7 +110,7 @@ func seedPushStore(t *testing.T, st store.Backend) {
 	}); err != nil {
 		t.Fatalf("seed relationships: %v", err)
 	}
-	if err := st.KVSet(AnnotationNamespace, "./src/api.rs::Handler", "Handles requests"); err != nil {
+	if err := st.KVSet(context.Background(), AnnotationNamespace, "./src/api.rs::Handler", "Handles requests"); err != nil {
 		t.Fatalf("seed annotation: %v", err)
 	}
 }

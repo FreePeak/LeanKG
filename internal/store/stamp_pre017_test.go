@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 )
@@ -131,7 +132,7 @@ func TestStampAfterMigratingPre017Store(t *testing.T) {
 		VALUES ('legacy', 'r1', 8, 'cosine', 'local', 3, '', '')`); err != nil {
 		t.Fatalf("seed pre-017 stamp row: %v", err)
 	}
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate to 017: %v", err)
 	}
 	if _, err := s.db.Exec(`SELECT text_cap FROM emb_stamp`); err != nil {

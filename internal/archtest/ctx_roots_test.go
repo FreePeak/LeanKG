@@ -21,7 +21,18 @@ var backgroundBudget = map[string]int{
 // todoBudget is the measured count of context.TODO() calls per directory in
 // non-main packages. It may rise only in store role-migration PRs (plan P2),
 // and it must reach 0 by the end of P3.
-var todoBudget = map[string]int{}
+var todoBudget = map[string]int{
+	"internal/annot":        2,
+	"internal/core":         2,
+	"internal/embed":        2,
+	"internal/index":        3,
+	"internal/maintain":     3,
+	"internal/obsidian":     3,
+	"internal/ontology":     8,
+	"internal/portfolioreg": 4,
+	"internal/store":        28,
+	"internal/summarize":    2,
+}
 
 // TestContextRootsRatchet counts context root calls (Background and TODO) in
 // non-main packages and compares each directory with its budget.

@@ -149,7 +149,7 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 			return nil, err
 		}
 		if mode == store.RW {
-			if err := st.Migrate(); err != nil {
+			if err := st.Migrate(ctx); err != nil {
 				_ = st.Close()
 				return nil, fmt.Errorf("portfolioreg: migrate registry: %w", err)
 			}
@@ -175,7 +175,7 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 			return nil, err
 		}
 		if mode == store.RW {
-			if err := st.Migrate(); err != nil {
+			if err := st.Migrate(ctx); err != nil {
 				_ = st.Close()
 				return nil, fmt.Errorf("portfolioreg: migrate registry: %w", err)
 			}
@@ -252,7 +252,7 @@ func Register(ctx context.Context, o Options, dir, name string, elements, files 
 // stamp upserts one row against an already-open registry handle.
 func stamp(reg store.Backend, dir, name string, elements, files int, indexedAt *time.Time) (store.ProjectRecord, error) {
 	if name == "" {
-		if prev, ok, err := reg.ProjectGet(dir); err == nil && ok {
+		if prev, ok, err := reg.ProjectGet(context.TODO(), dir); err == nil && ok {
 			name = prev.Name
 		}
 	}
@@ -267,12 +267,12 @@ func stamp(reg store.Backend, dir, name string, elements, files int, indexedAt *
 		s := Stamp(*indexedAt)
 		rec.LastIndexed = &s
 	}
-	if err := reg.ProjectUpsert(rec); err != nil {
+	if err := reg.ProjectUpsert(context.TODO(), rec); err != nil {
 		return store.ProjectRecord{}, err
 	}
 	// Read the row back: registered_at and last_indexed are COALESCEd by the
 	// upsert, so the stored record — not the argument — is the truth.
-	saved, _, err := reg.ProjectGet(dir)
+	saved, _, err := reg.ProjectGet(context.TODO(), dir)
 	if err != nil {
 		return store.ProjectRecord{}, err
 	}
@@ -319,7 +319,7 @@ func forgetDirs(ctx context.Context, o Options, dirs []string) ([]string, error)
 	defer reg.Close()
 	forgot := []string{}
 	for _, dir := range dirs {
-		ok, ferr := reg.ProjectForget(dir)
+		ok, ferr := reg.ProjectForget(ctx, dir)
 		if ferr != nil {
 			return forgot, ferr
 		}
@@ -342,7 +342,7 @@ func Projects(ctx context.Context, o Options) ([]store.ProjectRecord, error) {
 
 // ProjectsOf lists the registry from an already-open handle.
 func ProjectsOf(reg store.Backend) ([]store.ProjectRecord, error) {
-	rows, err := reg.ProjectList()
+	rows, err := reg.ProjectList(context.TODO())
 	if err != nil {
 		return nil, err
 	}

@@ -30,7 +30,7 @@ func newFixture(t *testing.T, spec fixtureSpec) store.Backend {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 

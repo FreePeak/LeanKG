@@ -25,7 +25,7 @@ func newProject(t *testing.T, dir, name string) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	qn := "pkg." + name
@@ -35,7 +35,7 @@ func newProject(t *testing.T, dir, name string) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.BumpWatermark(); err != nil {
+	if err := st.BumpWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -401,7 +401,7 @@ func TestPortfolioAcrossPGSiblingSchemas(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.Migrate(); err != nil {
+		if err := st.Migrate(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.UpsertElements([]store.Element{{
@@ -446,12 +446,12 @@ func clearPGRegistry(t *testing.T, o Options) {
 		t.Fatalf("open PG registry: %v", err)
 	}
 	defer reg.Close()
-	rows, err := reg.ProjectList()
+	rows, err := reg.ProjectList(context.Background())
 	if err != nil {
 		t.Fatalf("list PG registry: %v", err)
 	}
 	for _, r := range rows {
-		if _, err := reg.ProjectForget(r.Dir); err != nil {
+		if _, err := reg.ProjectForget(context.Background(), r.Dir); err != nil {
 			t.Fatalf("clear PG registry row %s: %v", r.Dir, err)
 		}
 	}

@@ -39,7 +39,7 @@ func cmdGC(ctx context.Context, args []string) error {
 		return verbFatal(fmt.Errorf("gc: open store: %w", err))
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return verbFatal(fmt.Errorf("gc: migrate: %w", err))
 	}
 	n, err := st.DeleteOrphanRelationships()
@@ -63,7 +63,7 @@ func cmdGC(ctx context.Context, args []string) error {
 		// the inventory snapshot — without this refresh a just-gc'd project
 		// sits at possibly_stale until some later write (the bug #401's own
 		// live run exposed: fleet leg read "leankg: current, possibly_stale").
-		if _, ierr := store.RefreshInventory(st); ierr != nil {
+		if _, ierr := store.RefreshInventory(ctx, st); ierr != nil {
 			fmt.Fprintf(os.Stderr, "gc: inventory snapshot: %v\n", ierr)
 		}
 	}

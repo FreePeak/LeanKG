@@ -27,7 +27,7 @@ func pre017Project(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := st.Close(); err != nil {
@@ -73,7 +73,7 @@ func TestRoutedReadDoesNotMigrateTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open the routed project: %v", err)
 	}
-	applied, err := p.Store.AppliedMigrations()
+	applied, err := p.Store.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

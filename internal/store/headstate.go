@@ -54,22 +54,22 @@ const (
 // inventory snapshot. A no-op index run that recorded the same commit again
 // would therefore make a perfectly fresh store report "possibly_stale" —
 // the freshness label must keep meaning what it means.
-func SetHead(st Backend, head string) error {
-	cur, ok, err := Head(st)
+func SetHead(ctx context.Context, st Backend, head string) error {
+	cur, ok, err := Head(ctx, st)
 	if err != nil {
 		return err
 	}
 	if ok && cur == head {
 		return nil
 	}
-	return st.KVSet(IndexKVNamespace, HeadKVKey, head)
+	return st.KVSet(ctx, IndexKVNamespace, HeadKVKey, head)
 }
 
 // Head reads the recorded git commit id. ok is false when the key was never
 // written (a store indexed before this fact existed); an empty value with ok
 // true means the store was recorded as NOT git-indexed.
-func Head(st Backend) (string, bool, error) {
-	v, ok, err := st.KVGet(IndexKVNamespace, HeadKVKey)
+func Head(ctx context.Context, st Backend) (string, bool, error) {
+	v, ok, err := st.KVGet(ctx, IndexKVNamespace, HeadKVKey)
 	if err != nil {
 		return "", false, err
 	}
@@ -78,8 +78,8 @@ func Head(st Backend) (string, bool, error) {
 
 // RecordedRoot reads the canonical root the store was indexed from. ok is
 // false when no root was ever recorded.
-func RecordedRoot(st Backend) (string, bool, error) {
-	v, ok, err := st.KVGet(IndexKVNamespace, RootKVKey)
+func RecordedRoot(ctx context.Context, st Backend) (string, bool, error) {
+	v, ok, err := st.KVGet(ctx, IndexKVNamespace, RootKVKey)
 	if err != nil {
 		return "", false, err
 	}
@@ -118,14 +118,14 @@ func CompareHead(stored, current string) string {
 // so a store keeps reporting its own tree's state even when it is served
 // from somewhere else.
 func HeadSync(ctx context.Context, st Backend) string {
-	head, ok, err := Head(st)
+	head, ok, err := Head(ctx, st)
 	if err != nil || !ok || head == "" {
 		// No head id: the store was not built from a git tree (or predates
 		// the fact). No git call is made — most stores are in this state,
 		// and the status path runs it on every request.
 		return HeadSyncUnknown
 	}
-	root, ok, err := RecordedRoot(st)
+	root, ok, err := RecordedRoot(ctx, st)
 	if err != nil || !ok || root == "" {
 		return HeadSyncUnknown
 	}

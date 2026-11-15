@@ -23,7 +23,7 @@ func openStore(t *testing.T) store.Backend {
 	if err != nil {
 		t.Fatalf("OpenBackend: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
@@ -346,7 +346,7 @@ func TestFlushRefreshesInventorySnapshot(t *testing.T) {
 		if err != nil || n == 0 {
 			return false
 		}
-		return store.Freshness(st, n) == store.FreshnessFresh
+		return store.Freshness(context.Background(), st, n) == store.FreshnessFresh
 	})
 }
 

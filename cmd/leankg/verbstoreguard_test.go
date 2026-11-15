@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ func seedUnmigratedStore(t *testing.T, dir string) {
 	}
 	// The query fails (no schema_migrations table yet) and that is what
 	// forces the connection — and so the file — to exist.
-	_, _ = st.AppliedMigrations()
+	_, _ = st.AppliedMigrations(context.Background())
 	if err := st.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}

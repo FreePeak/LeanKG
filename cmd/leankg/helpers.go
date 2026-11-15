@@ -313,7 +313,7 @@ func runIndex(ctx context.Context, project, target, source, refName, auth string
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	reg := langs.DefaultRegistry()
@@ -360,7 +360,7 @@ func runIndex(ctx context.Context, project, target, source, refName, auth string
 	// Freshness bookkeeping: status/doctor compare the watermark against this
 	// snapshot, and the CLI writer path bypasses the Engine — without it a
 	// freshly indexed project reads as possibly_stale forever.
-	if _, ierr := store.RefreshInventory(st); ierr != nil {
+	if _, ierr := store.RefreshInventory(ctx, st); ierr != nil {
 		fmt.Fprintf(os.Stderr, "%s: inventory snapshot: %v\n", "index", ierr)
 	}
 	return nil

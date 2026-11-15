@@ -33,7 +33,7 @@ func openStore(t *testing.T) store.Backend {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -175,7 +175,7 @@ func TestReconcileHeadLeavesFilesystemStoreAlone(t *testing.T) {
 
 	// Point the store at the git repo WITHOUT re-indexing: the store's own
 	// records stay filesystem-scanned (SHA-256 hashes).
-	if err := st.KVSet(store.IndexKVNamespace, store.RootKVKey, other); err != nil {
+	if err := st.KVSet(context.Background(), store.IndexKVNamespace, store.RootKVKey, other); err != nil {
 		t.Fatal(err)
 	}
 

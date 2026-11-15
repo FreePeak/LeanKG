@@ -190,7 +190,7 @@ func TestStatusReadsLiveCountsForIndexedRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertElements([]store.Element{

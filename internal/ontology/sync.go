@@ -1,6 +1,7 @@
 package ontology
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -165,12 +166,12 @@ func SyncFromDir(ontologyDir string, st store.Backend, leankgDir string) (SyncSt
 	// table churn.
 	if conceptNodes != nil {
 		if b, err := json.Marshal(conceptNodes); err == nil {
-			_ = st.KVSet(kvNamespace, kvConceptKey, string(b))
+			_ = st.KVSet(context.TODO(), kvNamespace, kvConceptKey, string(b))
 		}
 	}
 	if workflowSet != nil {
 		if b, err := json.Marshal(workflowSet); err == nil {
-			_ = st.KVSet(kvNamespace, kvWorkflowKey, string(b))
+			_ = st.KVSet(context.TODO(), kvNamespace, kvWorkflowKey, string(b))
 		}
 	}
 
@@ -295,7 +296,7 @@ func fileMtime(p string) *int64 {
 // namespace (round-trip partner of SyncFromDir). A missing key yields
 // (nil, nil).
 func LoadWorkflowsFromStore(st store.Backend) (*WorkflowSet, error) {
-	s, ok, err := st.KVGet(kvNamespace, kvWorkflowKey)
+	s, ok, err := st.KVGet(context.TODO(), kvNamespace, kvWorkflowKey)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -309,7 +310,7 @@ func LoadWorkflowsFromStore(st store.Backend) (*WorkflowSet, error) {
 // LoadConceptsFromStore reads the persisted concept node set back from the
 // KV namespace. A missing key yields (nil, nil).
 func LoadConceptsFromStore(st store.Backend) ([]ConceptNode, error) {
-	s, ok, err := st.KVGet(kvNamespace, kvConceptKey)
+	s, ok, err := st.KVGet(context.TODO(), kvNamespace, kvConceptKey)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -487,13 +488,13 @@ func SaveFeatureTrace(st store.Backend, featureID string, flow map[string]any) e
 	if err != nil {
 		return err
 	}
-	return st.KVSet(kvNamespace, "feature:"+featureID, string(b))
+	return st.KVSet(context.TODO(), kvNamespace, "feature:"+featureID, string(b))
 }
 
 // LoadFeatureTrace reads a persisted feature trace back; a missing key
 // yields (nil, nil).
 func LoadFeatureTrace(st store.Backend, featureID string) (map[string]any, error) {
-	s, ok, err := st.KVGet(kvNamespace, "feature:"+featureID)
+	s, ok, err := st.KVGet(context.TODO(), kvNamespace, "feature:"+featureID)
 	if err != nil || !ok {
 		return nil, err
 	}

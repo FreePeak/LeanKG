@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -344,7 +345,7 @@ func TestRecordMetricReadOnlyNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := rw.Close(); err != nil {
@@ -406,7 +407,7 @@ func TestMetricsMigrationIsAdditiveAndIdempotent(t *testing.T) {
 		t.Fatal("context_metrics must not exist before migration 011")
 	}
 
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate 011: %v", err)
 	}
 	if err := s.RecordMetric(Metric{ToolName: "query", Timestamp: time.Now().Unix(), TokensSaved: 5}); err != nil {
@@ -414,14 +415,14 @@ func TestMetricsMigrationIsAdditiveAndIdempotent(t *testing.T) {
 	}
 
 	// Re-running the migration is a no-op and keeps the rows.
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
 	if n := countMetrics(t, s); n != 1 {
 		t.Fatalf("ledger size after second migrate = %d, want 1", n)
 	}
 
-	applied, err := s.AppliedMigrations()
+	applied, err := s.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

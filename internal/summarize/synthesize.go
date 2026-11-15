@@ -395,7 +395,7 @@ const synthCacheKey = "synth-cache"
 // loadSynthCache reads the batch cache. A malformed or missing cache is an
 // empty one: the cache is an optimization, never a source of truth.
 func (p *pipeline) loadSynthCache() map[string][]cleanedNode {
-	raw, ok, err := p.st.KVGet(synthCacheNamespace, synthCacheKey)
+	raw, ok, err := p.st.KVGet(context.TODO(), synthCacheNamespace, synthCacheKey)
 	if err != nil || !ok || raw == "" {
 		return map[string][]cleanedNode{}
 	}
@@ -414,7 +414,7 @@ func (p *pipeline) saveSynthCache(live map[string][]cleanedNode) {
 	if err != nil {
 		return
 	}
-	_ = p.st.KVSet(synthCacheNamespace, synthCacheKey, string(blob))
+	_ = p.st.KVSet(context.TODO(), synthCacheNamespace, synthCacheKey, string(blob))
 }
 
 // pass2 batches the summaries and asks for a curated node set per batch.

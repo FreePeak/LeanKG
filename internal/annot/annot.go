@@ -8,6 +8,7 @@
 package annot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -36,7 +37,7 @@ type Record struct {
 
 // load reads the whole annotation set. A missing KV document is an empty set.
 func load(st store.Backend) ([]Record, error) {
-	raw, ok, err := st.KVGet(kvNamespace, kvKey)
+	raw, ok, err := st.KVGet(context.TODO(), kvNamespace, kvKey)
 	if err != nil {
 		return nil, fmt.Errorf("annot: read records: %w", err)
 	}
@@ -71,7 +72,7 @@ func save(st store.Backend, recs []Record) error {
 	if err != nil {
 		return fmt.Errorf("annot: encode records: %w", err)
 	}
-	if err := st.KVSet(kvNamespace, kvKey, string(b)); err != nil {
+	if err := st.KVSet(context.TODO(), kvNamespace, kvKey, string(b)); err != nil {
 		return fmt.Errorf("annot: write records: %w", err)
 	}
 	return nil

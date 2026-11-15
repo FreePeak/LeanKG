@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"context"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -110,7 +111,7 @@ func TestPullSyncsNotesLinksAndAnnotations(t *testing.T) {
 		t.Fatalf("alpha outgoing = %v, want %v", actual, want)
 	}
 
-	ann, ok, err := st.KVGet(AnnotationNamespace, "./src/api.rs::Handler")
+	ann, ok, err := st.KVGet(context.Background(), AnnotationNamespace, "./src/api.rs::Handler")
 	if err != nil || !ok || ann != "First pass" {
 		t.Fatalf("KV annotation = (%q, %v, err %v), want \"First pass\"", ann, ok, err)
 	}
@@ -151,7 +152,7 @@ func TestPullAnnotationConflictAndEmpty(t *testing.T) {
 	}
 	// The empty annotation records nothing (Rust created an empty row; it
 	// held no information).
-	if _, ok, err := st.KVGet(AnnotationNamespace, "Other"); err != nil || ok {
+	if _, ok, err := st.KVGet(context.Background(), AnnotationNamespace, "Other"); err != nil || ok {
 		t.Fatalf("KV for Other = (_, %v, %v), want absent", ok, err)
 	}
 
@@ -169,7 +170,7 @@ func TestPullAnnotationConflictAndEmpty(t *testing.T) {
 	if c.ElementID != "Element" || c.LocalAnnotation != "local" || c.RemoteAnnotation != "remote edit" {
 		t.Fatalf("conflict = %+v, want Element local/remote edit", c)
 	}
-	ann, ok, err := st.KVGet(AnnotationNamespace, "Element")
+	ann, ok, err := st.KVGet(context.Background(), AnnotationNamespace, "Element")
 	if err != nil || !ok || ann != "local" {
 		t.Fatalf("KV after conflict = (%q, %v, %v), want \"local\"", ann, ok, err)
 	}

@@ -18,7 +18,7 @@ func qualityFixture(t *testing.T) store.Backend {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	els := []store.Element{
@@ -93,7 +93,7 @@ func TestOversizedTieBreakByQualifiedName(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	els := []store.Element{

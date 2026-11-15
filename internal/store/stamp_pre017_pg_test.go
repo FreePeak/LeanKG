@@ -125,7 +125,7 @@ func TestPGStampAfterMigratingPre017Store(t *testing.T) {
 	if err := s.WriteStamp(legacy); err != nil {
 		t.Fatalf("write stamp on a pre-017 store: %v", err)
 	}
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate to 017: %v", err)
 	}
 	got, err := s.Stamp(legacy.ModelID)

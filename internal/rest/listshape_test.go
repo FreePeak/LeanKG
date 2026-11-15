@@ -45,7 +45,7 @@ func TestTheRESTSuccessShapeNeverContradictsTheBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	eng := core.New(st, nil, nil)

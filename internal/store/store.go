@@ -13,6 +13,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -122,31 +123,31 @@ func (m Mode) String() string {
 
 // Migrate applies all pending migrations (RW only). Migrations are applied in
 // order and recorded in schema_migrations; each runs inside one transaction.
-func (s *Store) Migrate() error {
+func (s *Store) Migrate(ctx context.Context) error {
 	if s.mode == RO {
 		return fmt.Errorf("store: migrate requires RW mode")
 	}
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("store: ensure schema_migrations: %w", err)
 	}
 	for _, m := range migrations {
 		var done int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, m.version).Scan(&done); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, m.version).Scan(&done); err != nil {
 			return err
 		}
 		if done == 1 {
 			continue
 		}
-		tx, err := s.db.Begin()
+		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(m.ddl); err != nil {
+		if _, err := tx.ExecContext(ctx, m.ddl); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("store: migration %03d %s: %w", m.version, m.name, err)
 		}
-		_, err = tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, m.version, m.name)
+		_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, m.version, m.name)
 		if err == nil {
 			err = tx.Commit()
 		}
@@ -154,7 +155,7 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("store: record migration %03d: %w", m.version, err)
 		}
 	}
-	return s.backfillFTSTerms()
+	return s.backfillFTSTerms(ctx)
 }
 
 // ftsTermsVersion versions what ftsContent writes; bump it when that changes
@@ -167,25 +168,25 @@ const ftsTermsVersion = "1"
 // written after this point already carry the terms; an unchanged file is
 // never re-extracted, so without this pass an existing store would keep the
 // old rows until each file changed.
-func (s *Store) backfillFTSTerms() error {
+func (s *Store) backfillFTSTerms(ctx context.Context) error {
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('kv','elements_fts','code_elements')`).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('kv','elements_fts','code_elements')`).Scan(&n); err != nil {
 		return err
 	}
 	if n < 3 {
 		return nil // a partial (synthetic upgrade-test) schema: nothing to rebuild
 	}
-	if v, ok, err := s.KVGet("fts", "terms_version"); err != nil {
+	if v, ok, err := s.KVGet(ctx, "fts", "terms_version"); err != nil {
 		return err
 	} else if ok && v == ftsTermsVersion {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.Query(`SELECT id, name, qualified_name, COALESCE(content,'') FROM code_elements`)
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, qualified_name, COALESCE(content,'') FROM code_elements`)
 	if err != nil {
 		return fmt.Errorf("store: fts backfill read: %w", err)
 	}
@@ -207,10 +208,10 @@ func (s *Store) backfillFTSTerms() error {
 		return err
 	}
 	for _, r := range all {
-		if _, err := tx.Exec(`DELETE FROM elements_fts WHERE rowid = ?`, r.id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM elements_fts WHERE rowid = ?`, r.id); err != nil {
 			return fmt.Errorf("store: fts backfill delete: %w", err)
 		}
-		if _, err := tx.Exec(`INSERT INTO elements_fts (rowid, name, qualified_name, content) VALUES (?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO elements_fts (rowid, name, qualified_name, content) VALUES (?, ?, ?, ?)`,
 			r.id, r.e.Name, r.e.QualifiedName, ftsContent(r.e)); err != nil {
 			return fmt.Errorf("store: fts backfill insert: %w", err)
 		}
@@ -218,7 +219,7 @@ func (s *Store) backfillFTSTerms() error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.KVSet("fts", "terms_version", ftsTermsVersion)
+	return s.KVSet(ctx, "fts", "terms_version", ftsTermsVersion)
 }
 
 // MigrationStep is one embedded schema migration, identified by its
@@ -245,8 +246,8 @@ func Migrations() []MigrationStep {
 // tooling that reports the applied/pending split (the `leankg migrate` verb);
 // doctor --deep reads the same table through its own probes. A store that was
 // never migrated fails with the driver's "no such table" error.
-func (s *Store) AppliedMigrations() ([]int, error) {
-	rows, err := s.db.Query(appliedMigrationsQuery)
+func (s *Store) AppliedMigrations(ctx context.Context) ([]int, error) {
+	rows, err := s.db.QueryContext(ctx, appliedMigrationsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("store: applied migrations: %w", err)
 	}

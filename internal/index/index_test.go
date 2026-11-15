@@ -32,7 +32,7 @@ func setupProject(t *testing.T) (string, store.Backend) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return dir, st
@@ -377,7 +377,7 @@ func TestIndexRootTripwire(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -415,7 +415,7 @@ func TestExtractorVersionReextractsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -425,7 +425,7 @@ func TestExtractorVersionReextractsOnce(t *testing.T) {
 	if res, _ := IndexDir(ctx, st, dir); res.Files != 0 {
 		t.Fatalf("unchanged tree re-extracted %d files", res.Files)
 	}
-	if err := st.KVSet(rootKVNamespace, extractorKVKey, "1"); err != nil { // simulate an older store
+	if err := st.KVSet(context.Background(), rootKVNamespace, extractorKVKey, "1"); err != nil { // simulate an older store
 		t.Fatal(err)
 	}
 	if res, _ := IndexDir(ctx, st, dir); res.Files != 1 {
@@ -453,7 +453,7 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	index(t, st, dir)
@@ -466,7 +466,7 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.KVSet(rootKVNamespace, extractorKVKey, "2"); err != nil {
+	if err := st.KVSet(context.Background(), rootKVNamespace, extractorKVKey, "2"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetEmbeddingStates(model, map[string]string{"app.ts::ping": "hash-ping"}); err != nil {

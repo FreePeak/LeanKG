@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -29,7 +30,7 @@ func maintainerEngines(t *testing.T) map[string]Maintainer {
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := rw.Close(); err != nil {

@@ -18,7 +18,7 @@ func newFixture(t *testing.T, els []store.Element, rels []store.Relationship) st
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := s.UpsertElements(els); err != nil {

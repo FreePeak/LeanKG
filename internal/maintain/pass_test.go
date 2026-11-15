@@ -21,7 +21,7 @@ func bloatFixture(t *testing.T) store.Backend {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	for i := 0; i < 400; i++ {
@@ -122,7 +122,7 @@ func TestPassSkipsReclaimBelowFloor(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	res, err := Pass(context.Background(), st, Options{})
@@ -245,7 +245,7 @@ func TestPassFailsWhenHeaderUpgradeIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := rw.Close(); err != nil {

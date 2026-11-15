@@ -54,7 +54,7 @@ func newStore(t *testing.T, root string, els []store.Element, rels []store.Relat
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if len(els) > 0 {

@@ -26,7 +26,7 @@ func newTestServer(t *testing.T) *mcp.ClientSession {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
@@ -258,7 +258,7 @@ func TestMCPRBACGatesWriteToolsOverWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	engine := core.New(st, nil, nil)
@@ -351,7 +351,7 @@ func TestMCPNewProtocolVersionOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	engine := core.New(st, nil, nil)
@@ -421,7 +421,7 @@ func TestMCPHonorsDBMintedTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	plain, _, err := auth.Mint(st, auth.MintRequest{Name: "ci", Role: "viewer"})
@@ -514,7 +514,7 @@ func newServerForTest(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)

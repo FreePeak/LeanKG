@@ -339,7 +339,7 @@ func flushIndex(ctx context.Context, st store.Backend, abs string, opts Options)
 	if _, err := index.IndexDirWith(ctx, st, abs, opts.Registry); err != nil {
 		return err
 	}
-	_, _ = store.RefreshInventory(st)
+	_, _ = store.RefreshInventory(ctx, st)
 	return nil
 }
 

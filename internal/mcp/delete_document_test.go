@@ -25,7 +25,7 @@ func newMemoryTestServer(t *testing.T) (*mcp.ClientSession, *memory.Memory) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)

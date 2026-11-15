@@ -79,13 +79,13 @@ func Calibrate(ctx context.Context, st store.Backend, p Provider) (float64, bool
 // WriteCalibration stores a noise floor for the collection stamp.
 func WriteCalibration(st store.Backend, stamp store.ModelStamp, floor float64) error {
 	raw, _ := json.Marshal(Calibration{Floor: floor, Identity: identityOf(stamp)})
-	return st.KVSet(calibrationNS, stamp.ModelID, string(raw))
+	return st.KVSet(context.TODO(), calibrationNS, stamp.ModelID, string(raw))
 }
 
 // ReadCalibration returns the stored noise floor for the collection stamp,
 // or false when none was measured for exactly this identity.
 func ReadCalibration(st store.Backend, stamp store.ModelStamp) (float64, bool) {
-	raw, ok, err := st.KVGet(calibrationNS, stamp.ModelID)
+	raw, ok, err := st.KVGet(context.TODO(), calibrationNS, stamp.ModelID)
 	if err != nil || !ok {
 		return 0, false
 	}

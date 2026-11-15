@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,8 +63,15 @@ func TestRunIndexStopsOnDoneContext(t *testing.T) {
 				t.Fatalf("store does not open after a stopped run: %v", err)
 			}
 			defer st.Close()
-			if n, err := st.ElementCount(); err != nil || n != 0 {
-				t.Fatalf("elements after a run stopped before its first file = %d (err %v), want 0", n, err)
+			// A run cancelled before its first store call stops at the
+			// migration (CX-19 ctx-aware Migrate), so the store may have no
+			// schema yet. Nothing was indexed either way.
+			n, err := st.ElementCount()
+			if err != nil && !strings.Contains(err.Error(), "no such table") {
+				t.Fatalf("element count after a stopped run: %v", err)
+			}
+			if err == nil && n != 0 {
+				t.Fatalf("elements after a run stopped before its first file = %d, want 0", n)
 			}
 		})
 	}

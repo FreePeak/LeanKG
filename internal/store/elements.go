@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -77,7 +78,7 @@ func (s *Store) UpsertElements(els []Element) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // ftsSync replaces the FTS row for one element. rowid must match the element
@@ -171,7 +172,7 @@ func (s *Store) UpsertRelationships(rels []Relationship) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // UpsertFiles records per-file index state.
@@ -196,7 +197,7 @@ func (s *Store) UpsertFiles(files []FileRecord) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // Files returns all indexed file records.
@@ -237,7 +238,7 @@ func (s *Store) DeleteByFile(path string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // DeleteFileRecord removes a file's row from code_files (file deleted from disk).
@@ -245,7 +246,7 @@ func (s *Store) DeleteFileRecord(path string) error {
 	if _, err := s.db.Exec(`DELETE FROM code_files WHERE path = ?`, path); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.TODO())
 }
 
 // DeleteOrphanRelationships removes every edge whose endpoint is no longer a
@@ -267,7 +268,7 @@ func (s *Store) DeleteOrphanRelationships() (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
-	return int(n), s.BumpWatermark()
+	return int(n), s.BumpWatermark(context.TODO())
 }
 
 // nameTokens extracts the tokens of a query worth searching for in a SYMBOL
@@ -737,19 +738,19 @@ func scanRelationships(rows *sql.Rows) ([]Relationship, error) {
 }
 
 // KVSet writes a namespaced key (upsert).
-func (s *Store) KVSet(namespace, key, value string) error {
-	_, err := s.db.Exec(`INSERT INTO kv (key, value) VALUES (?, ?)
+func (s *Store) KVSet(ctx context.Context, namespace, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO kv (key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, namespace+"\x1f"+key, value)
 	if err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(ctx)
 }
 
 // KVGet reads a namespaced key.
-func (s *Store) KVGet(namespace, key string) (string, bool, error) {
+func (s *Store) KVGet(ctx context.Context, namespace, key string) (string, bool, error) {
 	var v string
-	err := s.db.QueryRow(`SELECT value FROM kv WHERE key = ?`, namespace+"\x1f"+key).Scan(&v)
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM kv WHERE key = ?`, namespace+"\x1f"+key).Scan(&v)
 	if err == sql.ErrNoRows {
 		return "", false, nil
 	}

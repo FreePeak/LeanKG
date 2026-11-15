@@ -47,7 +47,7 @@ func cmdVacuum(ctx context.Context, args []string) error {
 		return verbFatal(fmt.Errorf("vacuum: open store: %w", err))
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return verbFatal(fmt.Errorf("vacuum: migrate: %w", err))
 	}
 

@@ -24,7 +24,7 @@ func newEngine(t *testing.T) (*Engine, *memory.Memory) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
@@ -117,7 +117,7 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
@@ -183,7 +183,7 @@ func TestL3ProviderFailureDegrades(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertElements([]store.Element{
@@ -380,7 +380,7 @@ func TestL3StampDriftDegrades(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertElements([]store.Element{
