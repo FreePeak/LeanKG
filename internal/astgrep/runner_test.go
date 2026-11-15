@@ -3,7 +3,9 @@ package astgrep
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -11,26 +13,72 @@ import (
 	"time"
 )
 
-// fakeBin writes a shell script that stands in for the ast-grep CLI: it
-// answers --version and runs runBody for `run ...`.
-func fakeBin(t *testing.T, name, runBody string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
-	script := "#!/bin/sh\ncase \"$1\" in\n" +
-		"  --version) echo 'astgrep 0.0.0-fake' ;;\n" +
-		"  run) " + runBody + " ;;\n" +
-		"  *) exit 2 ;;\nesac\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake bin: %v", err)
+// fakeScript stands in for the ast-grep CLI. Each test picks its behaviour
+// through FAKE_RUN (for `run`) or FAKE_VERSION (for `--version`), so every test
+// execs this one file.
+const fakeScript = "#!/bin/sh\ncase \"$1\" in\n" +
+	"  --version) eval \"${FAKE_VERSION:-echo 'astgrep 0.0.0-fake'}\" ;;\n" +
+	"  run) eval \"$FAKE_RUN\" ;;\n" +
+	"  *) exit 2 ;;\nesac\n"
+
+// sharedFake is the one executable every test in this package runs.
+var sharedFake string
+
+// TestMain writes sharedFake and execs it once before any test starts.
+//
+// Why: macOS verifies a newly written executable on its first exec, and under
+// contention that verification queues behind other processes spawning binaries.
+// Measured on this machine: a cold first exec took 0.2s idle and 5s to 8s with
+// 16 to 24 concurrent fresh-binary spawners, while a re-exec of the same file
+// stayed near 5ms. The old per-test fake paid that cold cost inside each test's
+// 10s deadline, which is what flaked in the full-suite run (internal/astgrep
+// tests reported "context deadline exceeded" at 10s). The warm-up below runs
+// with no deadline, so the cost is paid once, outside every test budget.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "astgrep-fake-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "astgrep test setup:", err)
+		os.Exit(1)
 	}
-	return path
+	sharedFake = filepath.Join(dir, "ast-grep")
+	if err := os.WriteFile(sharedFake, []byte(fakeScript), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "astgrep test setup:", err)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	if err := exec.Command(sharedFake, "--version").Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "astgrep test setup: warm-up exec failed:", err)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// fakeBin points the shared fake's `run` at runBody and returns its path.
+func fakeBin(t *testing.T, runBody string) string {
+	t.Helper()
+	t.Setenv("FAKE_RUN", runBody)
+	return sharedFake
+}
+
+// TestFakeBinReusesOneExecutable pins the cause of the load flake: each test
+// must exec the same warmed file. A fresh file per test pays the OS's first-exec
+// verification inside that test's 10s deadline (see TestMain).
+func TestFakeBinReusesOneExecutable(t *testing.T) {
+	first := fakeBin(t, "exit 0")
+	second := fakeBin(t, "exit 1")
+	if first != second {
+		t.Errorf("fakeBin wrote a fresh executable per call (%q, %q): each one cold-starts inside its own deadline", first, second)
+	}
 }
 
 // canned writes CANNED_JSON as the `run --json` payload.
-func canned(t *testing.T, name, json string) string {
+func canned(t *testing.T, json string) string {
 	t.Helper()
 	t.Setenv("CANNED_JSON", json)
-	return fakeBin(t, name, `printf '%s\n' "$CANNED_JSON"`)
+	return fakeBin(t, `printf '%s\n' "$CANNED_JSON"`)
 }
 
 // realShape is ast-grep 0.45.2's actual --json payload (0-based line AND
@@ -83,7 +131,7 @@ func TestNewIgnoresSgAlias(t *testing.T) {
 }
 
 func TestRunPatternMapsRealShape(t *testing.T) {
-	r := &Runner{Bin: canned(t, "ast-grep", realShape)}
+	r := &Runner{Bin: canned(t, realShape)}
 
 	matches, err := r.RunPattern(context.Background(), "go", "$A(...)", t.TempDir(), 0)
 	if err != nil {
@@ -102,7 +150,7 @@ func TestRunPatternMapsRealShape(t *testing.T) {
 // prints [] and exits 1, which must not surface as an error.
 func TestRunPatternNoMatches(t *testing.T) {
 	t.Setenv("CANNED_JSON", "[]")
-	r := &Runner{Bin: fakeBin(t, "ast-grep", `printf '%s\n' "$CANNED_JSON"; exit 1`)}
+	r := &Runner{Bin: fakeBin(t, `printf '%s\n' "$CANNED_JSON"; exit 1`)}
 
 	matches, err := r.RunPattern(context.Background(), "go", "$A", t.TempDir(), 0)
 	if err != nil {
@@ -115,7 +163,7 @@ func TestRunPatternNoMatches(t *testing.T) {
 
 // A genuine CLI failure (bad pattern, exit != 1) still reports an error.
 func TestRunPatternBinaryError(t *testing.T) {
-	r := &Runner{Bin: fakeBin(t, "ast-grep", `echo 'Error: cannot parse pattern' >&2; exit 2`)}
+	r := &Runner{Bin: fakeBin(t, `echo 'Error: cannot parse pattern' >&2; exit 2`)}
 	if _, err := r.RunPattern(context.Background(), "go", "$A(", t.TempDir(), 0); err == nil {
 		t.Fatal("RunPattern with failing binary = nil error, want failure")
 	} else if !strings.Contains(err.Error(), "cannot parse pattern") {
@@ -127,7 +175,7 @@ func TestRunPatternBinaryError(t *testing.T) {
 // JSON payload read from stdout.
 func TestRunPatternIgnoresStderrNoise(t *testing.T) {
 	t.Setenv("CANNED_JSON", realShape)
-	r := &Runner{Bin: fakeBin(t, "ast-grep",
+	r := &Runner{Bin: fakeBin(t,
 		`echo 'Warning: skipped 3 ignored dirs' >&2; printf '%s\n' "$CANNED_JSON"`)}
 
 	matches, err := r.RunPattern(context.Background(), "go", "$A", t.TempDir(), 0)
@@ -163,7 +211,7 @@ func TestRunPatternToleratesShapeDrift(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &Runner{Bin: canned(t, "ast-grep", tc.json)}
+			r := &Runner{Bin: canned(t, tc.json)}
 			matches, err := r.RunPattern(context.Background(), "rs", "$X", t.TempDir(), 0)
 			if err != nil {
 				t.Fatalf("RunPattern: %v", err)
@@ -181,7 +229,7 @@ func TestRunPatternToleratesShapeDrift(t *testing.T) {
 func TestRunPatternMaxTruncates(t *testing.T) {
 	const two = `[{"file":"a.go","range":{"start":{"line":4,"column":2},"end":{"line":4,"column":12}},"text":"one"},` +
 		`{"file":"b.go","range":{"start":{"line":9,"column":1},"end":{"line":9,"column":5}},"text":"two"}]`
-	r := &Runner{Bin: canned(t, "ast-grep", two)}
+	r := &Runner{Bin: canned(t, two)}
 
 	matches, err := r.RunPattern(context.Background(), "go", "$A", t.TempDir(), 1)
 	if err != nil {
@@ -197,7 +245,7 @@ func TestRunPatternPassesArgvVerbatim(t *testing.T) {
 	// the pattern went through a shell instead of exec.
 	argsFile := filepath.Join(t.TempDir(), "argv")
 	t.Setenv("ARGS_OUT", argsFile)
-	bin := fakeBin(t, "ast-grep",
+	bin := fakeBin(t,
 		`printf '%s\n' "$@" > "$ARGS_OUT"; `+
 			`printf '[{"file":"f.go","range":{"start":{"line":0,"column":1},"end":{"line":0,"column":2}},"text":"hit"}]'`)
 	r := &Runner{Bin: bin}
@@ -226,7 +274,7 @@ func TestRunPatternPassesArgvVerbatim(t *testing.T) {
 func TestRunPatternTimeout(t *testing.T) {
 	// `sleep 5 &` leaves a grandchild holding the stdout pipe: only WaitDelay
 	// keeps the call inside its bound.
-	r := &Runner{Bin: fakeBin(t, "ast-grep", "sleep 5 & sleep 5")}
+	r := &Runner{Bin: fakeBin(t, "sleep 5 & sleep 5")}
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -240,12 +288,9 @@ func TestRunPatternTimeout(t *testing.T) {
 }
 
 func TestVersionTimeout(t *testing.T) {
-	// A binary that stalls on every invocation, --version included.
-	path := filepath.Join(t.TempDir(), "ast-grep")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	r := &Runner{Bin: path}
+	// The shared fake stalls on --version.
+	t.Setenv("FAKE_VERSION", "sleep 5")
+	r := &Runner{Bin: sharedFake}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -255,7 +300,7 @@ func TestVersionTimeout(t *testing.T) {
 }
 
 func TestRunPatternBadOutput(t *testing.T) {
-	r := &Runner{Bin: canned(t, "ast-grep", "not json at all")}
+	r := &Runner{Bin: canned(t, "not json at all")}
 	if _, err := r.RunPattern(context.Background(), "go", "$A", t.TempDir(), 0); err == nil {
 		t.Fatal("RunPattern with garbage output = nil error, want parse failure")
 	}
@@ -272,7 +317,7 @@ func TestRunPatternEmptyBin(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	r := &Runner{Bin: fakeBin(t, "ast-grep", "exit 0")}
+	r := &Runner{Bin: fakeBin(t, "exit 0")}
 	got, err := r.Version(context.Background())
 	if err != nil {
 		t.Fatalf("Version: %v", err)
