@@ -27,7 +27,7 @@ func newFixture(t *testing.T) store.Backend {
 	for _, qn := range []string{"a", "b", "c", "d", "e", "x"} {
 		els = append(els, store.Element{QualifiedName: qn, Name: qn, ElementType: "func", FilePath: qn + ".go"})
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	rels := []store.Relationship{
@@ -39,7 +39,7 @@ func newFixture(t *testing.T) store.Backend {
 		// non-calls edge: caller/callee filters must drop it; degree counts keep it
 		{Source: "a", Target: "b", RelType: "imports", Confidence: 0.5},
 	}
-	if err := s.UpsertRelationships(rels); err != nil {
+	if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
 	return s

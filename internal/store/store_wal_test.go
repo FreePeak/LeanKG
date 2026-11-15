@@ -56,7 +56,7 @@ func TestSpaceInPath(t *testing.T) {
 	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := s.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
+	if err := s.UpsertElements(context.Background(), []Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	var n int

@@ -21,6 +21,16 @@ type ctxRole struct {
 // CX-20 and the roles that follow them in plan section 6, P2).
 var ctxConformanceRoles = []ctxRole{
 	{
+		name: "IndexWriter",
+		read: func(ctx context.Context, b Backend) error {
+			_, err := b.Files(ctx)
+			return err
+		},
+		write: func(ctx context.Context, b Backend) error {
+			return b.UpsertElements(ctx, []Element{{QualifiedName: "conformance", ElementType: "function", Name: "conformance", FilePath: "a.go"}})
+		},
+	},
+	{
 		name: "ElementReader",
 		read: func(ctx context.Context, b Backend) error {
 			_, err := b.FindExact(ctx, "conformance")

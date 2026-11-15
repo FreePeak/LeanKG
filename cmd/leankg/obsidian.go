@@ -133,7 +133,7 @@ func cmdObsidian(ctx context.Context, args []string) error {
 			}
 		case "pull":
 			fmt.Println("Pulling annotations from Obsidian vault...")
-			res, err := e.Pull()
+			res, err := e.Pull(ctx)
 			if err != nil {
 				return err
 			}

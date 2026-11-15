@@ -9,7 +9,7 @@ import (
 // keywordArmSearcher is the part of an engine the keyword-arm conformance
 // check needs: seed elements, then run the L2 keyword rung.
 type keywordArmSearcher interface {
-	UpsertElements([]Element) error
+	UpsertElements(ctx context.Context, els []Element) error
 	FindFuzzy(ctx context.Context, query string, limit int) ([]FuzzyMatch, Arm, error)
 }
 
@@ -18,7 +18,7 @@ type keywordArmSearcher interface {
 // lists the arm labels this engine may report.
 func checkFindFuzzyKeywordArm(t *testing.T, s keywordArmSearcher, wantArms ...Arm) {
 	t.Helper()
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "main.parseConfig", ElementType: "function", Name: "parseConfig", FilePath: "main.go", Language: "go", Content: "parses the yaml config file"},
 		{QualifiedName: "main.unrelated", ElementType: "function", Name: "unrelated", FilePath: "main.go", Language: "go", Content: "does something else"},
 	}); err != nil {

@@ -40,7 +40,7 @@ func TestBudgetNeverDropsPrimaryPayload(t *testing.T) {
 			Content: fmt.Sprintf("func Widget%d() {\n// %s\n}", i, body),
 		})
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(384)

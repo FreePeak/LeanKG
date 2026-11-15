@@ -21,7 +21,7 @@ func seedBudgetHits(t *testing.T, e *Engine) {
 			Content: "func Widget() { /* widget pipeline renders the frame */ }",
 		})
 	}
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 }

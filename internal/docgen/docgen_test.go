@@ -62,7 +62,7 @@ func newFixture(t *testing.T, spec fixtureSpec) store.Backend {
 		})
 	}
 	if len(els) > 0 {
-		if err := st.UpsertElements(els); err != nil {
+		if err := st.UpsertElements(context.Background(), els); err != nil {
 			t.Fatalf("upsert elements: %v", err)
 		}
 	}
@@ -81,7 +81,7 @@ func newFixture(t *testing.T, spec fixtureSpec) store.Backend {
 		}
 	}
 	if len(rels) > 0 {
-		if err := st.UpsertRelationships(rels); err != nil {
+		if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 			t.Fatalf("upsert relationships: %v", err)
 		}
 	}

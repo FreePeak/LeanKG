@@ -58,12 +58,12 @@ func newStore(t *testing.T, root string, els []store.Element, rels []store.Relat
 		t.Fatalf("migrate: %v", err)
 	}
 	if len(els) > 0 {
-		if err := s.UpsertElements(els); err != nil {
+		if err := s.UpsertElements(context.Background(), els); err != nil {
 			t.Fatalf("upsert elements: %v", err)
 		}
 	}
 	if len(rels) > 0 {
-		if err := s.UpsertRelationships(rels); err != nil {
+		if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 			t.Fatalf("upsert relationships: %v", err)
 		}
 	}

@@ -27,7 +27,7 @@ func TestFindByNameTokenFiresOnProse(t *testing.T) {
 		{QualifiedName: "pkg/r2.go::readTwo", ElementType: "function", Name: "readTwo", FilePath: "pkg/r2.go", Language: "go", Content: "x"},
 		{QualifiedName: "pkg/r3.go::readThree", ElementType: "function", Name: "readThree", FilePath: "pkg/r3.go", Language: "go", Content: "x"},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	// PROSE, the way an agent asks. The rare token must reach the arm.

@@ -193,13 +193,13 @@ func TestStatusReadsLiveCountsForIndexedRepo(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a::one", ElementType: "function", Name: "one", FilePath: "a.go"},
 		{QualifiedName: "a::two", ElementType: "function", Name: "two", FilePath: "a.go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: "a::one", Target: "a::two", RelType: "calls", Confidence: 0.9},
 	}); err != nil {
 		t.Fatal(err)

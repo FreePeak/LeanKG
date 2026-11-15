@@ -304,7 +304,7 @@ func upsertWorkflow(t *testing.T, st store.Backend) {
 		FilePath:      "ontology://local:default:workflow:unrelated:v1",
 		Language:      "ontology",
 	}
-	if err := st.UpsertElements([]store.Element{wf, stepA, stepB, other}); err != nil {
+	if err := st.UpsertElements(context.Background(), []store.Element{wf, stepA, stepB, other}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -639,7 +639,7 @@ func TestIndexCoexistsWithDocindex(t *testing.T) {
 		FilePath:      "docs/prd.md",
 		Language:      "markdown",
 	}
-	if err := st.UpsertElements([]store.Element{doc}); err != nil {
+	if err := st.UpsertElements(context.Background(), []store.Element{doc}); err != nil {
 		t.Fatal(err)
 	}
 

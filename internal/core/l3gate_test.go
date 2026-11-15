@@ -51,7 +51,7 @@ func TestL3GateSkipsSemanticOnLowOntologyConfidence(t *testing.T) {
 		Language:      "ontology",
 		Metadata:      map[string]any{"description": "handles a refund against the card network", "aliases": []any{}, "ontology_layer": "domain"},
 	}
-	if err := e.st.UpsertElements(append(code, onto)); err != nil {
+	if err := e.st.UpsertElements(context.Background(), append(code, onto)); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
@@ -97,7 +97,7 @@ func TestL3GateAllowsSemanticWhenConfidenceIsZero(t *testing.T) {
 		{QualifiedName: "pkg/w.go::Widget", ElementType: "function", Name: "Widget", FilePath: "pkg/w.go", Language: "go",
 			Content: "// Widget draws the frame\nfunc Widget() {}"},
 	}
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)

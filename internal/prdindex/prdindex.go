@@ -408,7 +408,7 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 	// Rebuild: "prd://<doc>" is unique to this document, so the delete can
 	// only touch these entities — never the doc elements internal/docindex
 	// writes for the same markdown file.
-	if err := st.DeleteByFile(filePrefix + docPath); err != nil {
+	if err := st.DeleteByFile(ctx, filePrefix+docPath); err != nil {
 		return out, fmt.Errorf("prdindex: clear %s: %w", docPath, err)
 	}
 
@@ -428,11 +428,11 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 	if len(els) == 0 {
 		return out, nil
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(ctx, els); err != nil {
 		return out, fmt.Errorf("prdindex: upsert elements: %w", err)
 	}
 	rels := linksFrom(workflowSteps(all), res, docPath)
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(ctx, rels); err != nil {
 		return out, fmt.Errorf("prdindex: upsert links: %w", err)
 	}
 	out.WorkflowLinks = len(rels)

@@ -29,7 +29,7 @@ func newProject(t *testing.T, dir, name string) {
 		t.Fatal(err)
 	}
 	qn := "pkg." + name
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: qn, ElementType: "function", Name: name,
 		FilePath: strings.ToLower(name) + ".go", Language: "go",
 	}}); err != nil {
@@ -404,7 +404,7 @@ func TestPortfolioAcrossPGSiblingSchemas(t *testing.T) {
 		if err := st.Migrate(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha",
 			FilePath: "alpha.go", Language: "go",
 		}}); err != nil {

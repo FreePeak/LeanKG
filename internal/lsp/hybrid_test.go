@@ -245,10 +245,10 @@ func TestHybridResolveStoreRoundTrip(t *testing.T) {
 		elem("pkg/a.go::Helper", "function", "Helper", "pkg/a.go", "go", ""),
 		elem("pkg/b.go::Main", "function", "Main", "pkg/b.go", "go", ""),
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{{
 		Source: "pkg/b.go::Main", Target: "pkg/a.go::Helper", RelType: "calls", Confidence: 0.5,
 	}}); err != nil {
 		t.Fatal(err)

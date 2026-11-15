@@ -58,7 +58,7 @@ func TestL3FusesANameArm(t *testing.T) {
 			Content: strings.Repeat("// truncate the text sent to a provider over and over again. ", 40)},
 	}
 	for _, e := range els {
-		if err := st.UpsertElements([]store.Element{e}); err != nil {
+		if err := st.UpsertElements(context.Background(), []store.Element{e}); err != nil {
 			t.Fatal(err)
 		}
 		qvec, err := p.Embed(context.Background(), embed.Document, []string{e.Content})

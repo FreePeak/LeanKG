@@ -1,6 +1,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 func TestEnvConflictReport(t *testing.T) {
 	k, st := openKnowledge(t)
 
-	if err := st.UpsertRelationships([]store.Relationship{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: "payments", Target: "billing-api", RelType: "conflicts_with", Confidence: 0.8},
 		{Source: "BILLING-worker", Target: "ledger", RelType: "conflicts_with", Confidence: 0.5},
 		// Not the report's relation type, and not a matching endpoint.

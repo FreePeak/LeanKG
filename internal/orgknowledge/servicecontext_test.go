@@ -15,7 +15,7 @@ func TestServiceContextAggregate(t *testing.T) {
 	k, st := openKnowledge(t)
 	service := "api"
 
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{
 			QualifiedName: service, ElementType: "service", Name: "api",
 			FilePath: "service.yaml", Language: "go", Metadata: map[string]any{"version": "abc123"},
@@ -37,7 +37,7 @@ func TestServiceContextAggregate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed elements: %v", err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: service, Target: "database", RelType: "calls", Confidence: 1},
 		{Source: "gateway", Target: service, RelType: "service_calls", Confidence: 1},
 		// Wrong rel_type: must not appear in either direction.
@@ -178,7 +178,7 @@ func TestServiceContextRiskCap(t *testing.T) {
 // typed struct, with absent optionals rendered as JSON null (Rust serde).
 func TestServiceContextJSON(t *testing.T) {
 	k, st := openKnowledge(t)
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "api", ElementType: "service", Name: "api", FilePath: "service.yaml",
 		Metadata: map[string]any{"version": "abc123"},
 	}}); err != nil {

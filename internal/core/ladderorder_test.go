@@ -58,7 +58,7 @@ func TestLadderPrefersSemanticOverWeakKeyword(t *testing.T) {
 		FilePath: "docs/report.md", Language: "md",
 		Content: "search results ranked and fused during the reporting run",
 	}
-	if err := st.UpsertElements([]store.Element{impl, noise}); err != nil {
+	if err := st.UpsertElements(context.Background(), []store.Element{impl, noise}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.WriteStamp(embed.StampOf(p)); err != nil {

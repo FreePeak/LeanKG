@@ -13,7 +13,7 @@ import (
 // filter that excludes more rows than the limit can absorb.
 type filterSearcher interface {
 	WriteStamp(ModelStamp) error
-	UpsertElements([]Element) error
+	UpsertElements(ctx context.Context, els []Element) error
 	UpsertVectors(modelID string, rows []VectorRow) error
 	SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error)
 	Hybrid(ctx context.Context, q HybridQuery) ([]HybridHit, Arm, error)
@@ -47,7 +47,7 @@ func checkFilterBeforeLimit(t *testing.T, s filterSearcher, wantKeywordArms ...A
 			FilePath: fmt.Sprintf("pkg/widget%d.go", i), Language: "go", Content: "widget"})
 		rows = append(rows, VectorRow{QualifiedName: qn, Vec: []float32{0.2, 1, 0, 0}})
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	if err := s.UpsertVectors(modelID, rows); err != nil {

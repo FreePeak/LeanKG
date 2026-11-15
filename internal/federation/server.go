@@ -223,7 +223,7 @@ func applyGraph(ctx context.Context, st store.Backend, payload pushPayload, at t
 			}
 			elements = append(elements, element)
 		}
-		if err := st.UpsertElements(elements); err != nil {
+		if err := st.UpsertElements(ctx, elements); err != nil {
 			return 0, 0, fmt.Errorf("federation: apply elements: %w", err)
 		}
 	}
@@ -239,7 +239,7 @@ func applyGraph(ctx context.Context, st store.Backend, payload pushPayload, at t
 				Metadata:   provenance(in.Metadata, payload, at),
 			})
 		}
-		if err := st.UpsertRelationships(relationships); err != nil {
+		if err := st.UpsertRelationships(ctx, relationships); err != nil {
 			return 0, 0, fmt.Errorf("federation: apply relationships: %w", err)
 		}
 	}

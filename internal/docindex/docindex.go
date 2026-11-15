@@ -70,7 +70,7 @@ func IndexDocsUnder(ctx context.Context, st store.Backend, root, dir string) (Re
 		return relDir == "." || rel == relDir || strings.HasPrefix(rel, relDir+"/")
 	}
 
-	prev, err := st.Files()
+	prev, err := st.Files(ctx)
 	if err != nil {
 		return res, err
 	}
@@ -128,10 +128,10 @@ func IndexDocsUnder(ctx context.Context, st store.Backend, root, dir string) (Re
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		if err := st.DeleteByFile(rel); err != nil {
+		if err := st.DeleteByFile(ctx, rel); err != nil {
 			return res, err
 		}
-		if err := st.DeleteFileRecord(rel); err != nil {
+		if err := st.DeleteFileRecord(ctx, rel); err != nil {
 			return res, err
 		}
 	}
@@ -171,16 +171,16 @@ func IndexDocsUnder(ctx context.Context, st store.Backend, root, dir string) (Re
 			return res, err
 		}
 		els, rels := parseSections(rel, string(src))
-		if err := st.DeleteByFile(rel); err != nil {
+		if err := st.DeleteByFile(ctx, rel); err != nil {
 			return res, err
 		}
-		if err := st.UpsertElements(els); err != nil {
+		if err := st.UpsertElements(ctx, els); err != nil {
 			return res, err
 		}
-		if err := st.UpsertRelationships(rels); err != nil {
+		if err := st.UpsertRelationships(ctx, rels); err != nil {
 			return res, err
 		}
-		if err := st.UpsertFiles([]store.FileRecord{{
+		if err := st.UpsertFiles(ctx, []store.FileRecord{{
 			Path: rel, Size: info.Size(), MtimeNS: info.ModTime().UnixNano(),
 			ContentHash: sum,
 		}}); err != nil {

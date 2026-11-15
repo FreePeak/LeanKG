@@ -44,11 +44,11 @@ type FileRecord struct {
 
 // UpsertElements writes a batch of elements in one transaction and keeps the
 // FTS5 L2 index in sync. Qualified names already present are replaced.
-func (s *Store) UpsertElements(els []Element) error {
+func (s *Store) UpsertElements(ctx context.Context, els []Element) error {
 	if len(els) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func (s *Store) UpsertElements(els []Element) error {
 				meta = ValidText(string(bb))
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO code_elements
+		if _, err := tx.ExecContext(ctx, `INSERT INTO code_elements
 			(qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, content, metadata)
 			VALUES (?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(qualified_name) DO UPDATE SET
@@ -71,23 +71,25 @@ func (s *Store) UpsertElements(els []Element) error {
 			e.QualifiedName, e.ElementType, e.Name, e.FilePath, e.LineStart, e.LineEnd, e.Language, nullIfEmpty(e.ParentQualified), e.Content, meta); err != nil {
 			return fmt.Errorf("store: upsert element %s: %w", e.QualifiedName, err)
 		}
-		if err := ftsSync(tx, e); err != nil {
+		if err := ftsSync(ctx, tx, e); err != nil {
 			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	// The rows are committed: the watermark bump runs detached so a cancel
+	// cannot report a write that landed as failed.
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // ftsSync replaces the FTS row for one element. rowid must match the element
 // id so L2 joins stay cheap.
-func ftsSync(tx *sql.Tx, e Element) error {
-	if _, err := tx.Exec(`DELETE FROM elements_fts WHERE rowid = (SELECT id FROM code_elements WHERE qualified_name = ?)`, e.QualifiedName); err != nil {
+func ftsSync(ctx context.Context, tx *sql.Tx, e Element) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM elements_fts WHERE rowid = (SELECT id FROM code_elements WHERE qualified_name = ?)`, e.QualifiedName); err != nil {
 		return fmt.Errorf("store: fts delete %s: %w", e.QualifiedName, err)
 	}
-	if _, err := tx.Exec(`INSERT INTO elements_fts (rowid, name, qualified_name, content)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO elements_fts (rowid, name, qualified_name, content)
 		VALUES ((SELECT id FROM code_elements WHERE qualified_name = ?), ?, ?, ?)`,
 		e.QualifiedName, e.Name, e.QualifiedName, ftsContent(e)); err != nil {
 		return fmt.Errorf("store: fts insert %s: %w", e.QualifiedName, err)
@@ -145,11 +147,11 @@ func ftsContent(e Element) string {
 
 // UpsertRelationships writes a batch of relationships in one transaction.
 // Duplicate (source, target, rel_type) rows are overwritten, not duplicated.
-func (s *Store) UpsertRelationships(rels []Relationship) error {
+func (s *Store) UpsertRelationships(ctx context.Context, rels []Relationship) error {
 	if len(rels) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -161,7 +163,7 @@ func (s *Store) UpsertRelationships(rels []Relationship) error {
 				meta = string(b)
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
 			VALUES (?,?,?,?,?)
 			ON CONFLICT(source_qualified, target_qualified, rel_type) DO UPDATE SET
 				confidence=excluded.confidence, metadata=excluded.metadata`,
@@ -172,21 +174,21 @@ func (s *Store) UpsertRelationships(rels []Relationship) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertFiles records per-file index state.
-func (s *Store) UpsertFiles(files []FileRecord) error {
+func (s *Store) UpsertFiles(ctx context.Context, files []FileRecord) error {
 	if len(files) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, f := range files {
-		if _, err := tx.Exec(`INSERT INTO code_files (path, size, mtime_ns, content_hash, indexed_at)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO code_files (path, size, mtime_ns, content_hash, indexed_at)
 			VALUES (?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns,
 				content_hash=excluded.content_hash, indexed_at=excluded.indexed_at`,
@@ -197,12 +199,12 @@ func (s *Store) UpsertFiles(files []FileRecord) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // Files returns all indexed file records.
-func (s *Store) Files() ([]FileRecord, error) {
-	rows, err := s.db.Query(`SELECT path, size, mtime_ns, content_hash FROM code_files`)
+func (s *Store) Files(ctx context.Context) ([]FileRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT path, size, mtime_ns, content_hash FROM code_files`)
 	if err != nil {
 		return nil, err
 	}
@@ -220,33 +222,33 @@ func (s *Store) Files() ([]FileRecord, error) {
 
 // DeleteByFile removes all elements and relationships belonging to a file and
 // their FTS rows. Used by incremental re-index before a file is re-inserted.
-func (s *Store) DeleteByFile(path string) error {
-	tx, err := s.db.Begin()
+func (s *Store) DeleteByFile(ctx context.Context, path string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM elements_fts WHERE rowid IN (SELECT id FROM code_elements WHERE file_path = ?)`, path); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM elements_fts WHERE rowid IN (SELECT id FROM code_elements WHERE file_path = ?)`, path); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM relationships WHERE source_qualified IN (SELECT qualified_name FROM code_elements WHERE file_path = ?)`, path); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM relationships WHERE source_qualified IN (SELECT qualified_name FROM code_elements WHERE file_path = ?)`, path); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM code_elements WHERE file_path = ?`, path); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM code_elements WHERE file_path = ?`, path); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteFileRecord removes a file's row from code_files (file deleted from disk).
-func (s *Store) DeleteFileRecord(path string) error {
-	if _, err := s.db.Exec(`DELETE FROM code_files WHERE path = ?`, path); err != nil {
+func (s *Store) DeleteFileRecord(ctx context.Context, path string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM code_files WHERE path = ?`, path); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteOrphanRelationships removes every edge whose endpoint is no longer a

@@ -52,7 +52,7 @@ func el(qn, content string) store.Element {
 
 func seed(t *testing.T, st store.Backend, els ...store.Element) {
 	t.Helper()
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 }

@@ -43,7 +43,7 @@ var wikiLinkRE = regexp.MustCompile(`\[\[([^\[\]]+)\]\]`)
 // Idempotent by construction: elements upsert on qualified name, relationships
 // on (source, target, rel_type), so a second Pull over an unchanged vault
 // writes the same rows and adds nothing new.
-func (e *Engine) Pull() (PullResult, error) {
+func (e *Engine) Pull(ctx context.Context) (PullResult, error) {
 	if e.st == nil {
 		return PullResult{}, errors.New("obsidian: pull requires a store")
 	}
@@ -108,10 +108,10 @@ func (e *Engine) Pull() (PullResult, error) {
 		}
 	}
 
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(ctx, els); err != nil {
 		return res, err
 	}
-	if err := e.st.UpsertRelationships(rels); err != nil {
+	if err := e.st.UpsertRelationships(ctx, rels); err != nil {
 		return res, err
 	}
 	res.Notes = len(els)

@@ -349,7 +349,7 @@ func TestConceptSearch(t *testing.T) {
 		{QualifiedName: "src/payments/authorize.rs::authorize", ElementType: "function", Name: "authorize", FilePath: "src/payments/authorize.rs", Language: "rust"},
 		{QualifiedName: "src/order/service.rs::create", ElementType: "function", Name: "create", FilePath: "src/order/service.rs", Language: "rust"},
 	}
-	if err := st.UpsertElements(code); err != nil {
+	if err := st.UpsertElements(context.Background(), code); err != nil {
 		t.Fatal(err)
 	}
 
@@ -625,7 +625,7 @@ func TestResolveCodeRefs(t *testing.T) {
 		{QualifiedName: "src/order/service.rs::create", ElementType: "function", Name: "create", FilePath: "src/order/service.rs", Language: "rust"},
 		{QualifiedName: "src/payments/authorize.rs::authorize", ElementType: "function", Name: "authorize", FilePath: "src/payments/authorize.rs", Language: "rust"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 
@@ -662,10 +662,10 @@ func TestTraverseToFunctionsViaEdges(t *testing.T) {
 		{Source: "local:default:workflow_step:authorize_payment:v1", Target: "src/payments/authorize.rs::authorize", RelType: RelImplementedBy, Confidence: 1},
 		{Source: "local:default:workflow_step:confirm:v1", Target: "src/checkout/confirm.rs::run", RelType: RelImplementedBy, Confidence: 1},
 	}
-	if err := st.UpsertElements(fns); err != nil {
+	if err := st.UpsertElements(context.Background(), fns); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
 
@@ -695,7 +695,7 @@ func TestTraverseToFunctionsCodeRefsFallback(t *testing.T) {
 	// Domain entity with code_refs metadata only — no DB edges.
 	node := NewConceptNode("local", "checkout-service", TypeDomainEntity, "refund", "Refund", "Refunds")
 	node.Metadata.CodeRefs = []string{"src/refund/handler.rs::process_refund"}
-	if err := st.UpsertElements([]store.Element{node.Element(), {
+	if err := st.UpsertElements(context.Background(), []store.Element{node.Element(), {
 		QualifiedName: "src/refund/handler.rs::process_refund",
 		ElementType:   "function", Name: "process_refund", FilePath: "src/refund/handler.rs",
 	}}); err != nil {
@@ -734,10 +734,10 @@ func TestTraverseToFunctionsCapAndDedup(t *testing.T) {
 		)
 	}
 	els = append(els, NewWorkflowNode("local", "default", "big", "Big", "Big flow").Element())
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
 
@@ -829,7 +829,7 @@ func TestFeatureFlowAndMatrix(t *testing.T) {
 	code := []store.Element{
 		{QualifiedName: "src/order/service.rs::create", ElementType: "function", Name: "create", FilePath: "src/order/service.rs"},
 	}
-	if err := st.UpsertElements(code); err != nil {
+	if err := st.UpsertElements(context.Background(), code); err != nil {
 		t.Fatal(err)
 	}
 
@@ -934,7 +934,7 @@ func TestDiscoverOntologyFirst(t *testing.T) {
 		{QualifiedName: "src/payments/authorize.rs::authorize", ElementType: "function", Name: "authorize", FilePath: "src/payments/authorize.rs", Language: "rust"},
 		{QualifiedName: "src/order/service.rs::create", ElementType: "function", Name: "create", FilePath: "src/order/service.rs", Language: "rust"},
 	}
-	if err := st.UpsertElements(code); err != nil {
+	if err := st.UpsertElements(context.Background(), code); err != nil {
 		t.Fatal(err)
 	}
 
@@ -966,7 +966,7 @@ func TestDiscoverNameFallbackAndPagination(t *testing.T) {
 		{QualifiedName: "src/b.rs::refundPayment", ElementType: "function", Name: "refundPayment", FilePath: "src/b.rs"},
 		{QualifiedName: "src/c.rs::unrelated", ElementType: "function", Name: "unrelated", FilePath: "src/c.rs"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	page, err := Discover(context.Background(), st, "refund", "", 1, 0, true)
@@ -995,7 +995,7 @@ func TestDiscoverNameFallbackAndPagination(t *testing.T) {
 
 func TestDiscoverMegaGraphRefusal(t *testing.T) {
 	st := setupStore(t)
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a::x", ElementType: "function", Name: "x", FilePath: "a.go"},
 		{QualifiedName: "a::y", ElementType: "function", Name: "y", FilePath: "a.go"},
 	}); err != nil {

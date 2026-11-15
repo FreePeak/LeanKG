@@ -101,7 +101,7 @@ func TestReconcileHeadRemovesPathDeletedFromHead(t *testing.T) {
 	if els := elementsOf(t, st, "main.go"); len(els) != 0 {
 		t.Fatalf("elements of the deleted path remain: %d", len(els))
 	}
-	files, err := st.Files()
+	files, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

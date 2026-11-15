@@ -146,10 +146,10 @@ func seed(t *testing.T, ctx context.Context, st store.Backend) {
 			Content: "func Beta() int {\n\treturn 41\n}",
 		},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(ctx, els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{
+	if err := st.UpsertRelationships(ctx, []store.Relationship{{
 		Source: "src/alpha.go::Alpha", Target: "src/beta.go::Beta",
 		RelType: "calls", Confidence: 0.5,
 	}}); err != nil {

@@ -360,7 +360,7 @@ func HybridResolve(ctx context.Context, st store.Backend, setting string) (int, 
 	for _, i := range idx {
 		changed = append(changed, rels[i])
 	}
-	if err := st.UpsertRelationships(changed); err != nil {
+	if err := st.UpsertRelationships(ctx, changed); err != nil {
 		return 0, err
 	}
 	return n, nil

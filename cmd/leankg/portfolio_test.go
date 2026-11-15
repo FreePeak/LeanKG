@@ -50,13 +50,13 @@ func seedIndexedProject(t *testing.T, dir string) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "pkg.Beta", ElementType: "function", Name: "Beta", FilePath: "a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertFiles([]store.FileRecord{{Path: "a.go", Size: 10, MtimeNS: 1, ContentHash: "h"}}); err != nil {
+	if err := st.UpsertFiles(context.Background(), []store.FileRecord{{Path: "a.go", Size: 10, MtimeNS: 1, ContentHash: "h"}}); err != nil {
 		t.Fatal(err)
 	}
 }

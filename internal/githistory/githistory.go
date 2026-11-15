@@ -100,10 +100,10 @@ func Import(ctx context.Context, st store.Backend, root string, opts Options) (R
 	if err != nil {
 		return Result{}, err
 	}
-	if err := st.UpsertElements(b.elements()); err != nil {
+	if err := st.UpsertElements(ctx, b.elements()); err != nil {
 		return Result{}, err
 	}
-	if err := st.UpsertRelationships(b.relationships(pairs)); err != nil {
+	if err := st.UpsertRelationships(ctx, b.relationships(pairs)); err != nil {
 		return Result{}, err
 	}
 	if err := st.KVSet(ctx, kvNamespace, kvHeadKey, head); err != nil {

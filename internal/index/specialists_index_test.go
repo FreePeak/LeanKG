@@ -36,7 +36,7 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 	}
 
 	var res Result
-	handled, err := indexSpecialistFile(st, "AndroidManifest.xml", src, int64(len(src)), 1, "hash", &res)
+	handled, err := indexSpecialistFile(context.Background(), st, "AndroidManifest.xml", src, int64(len(src)), 1, "hash", &res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 	if len(rels) == 0 {
 		t.Fatal("manifest relationships not persisted")
 	}
-	files, err := st.Files()
+	files, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestIndexSpecialistFilePersists(t *testing.T) {
 	}
 
 	// Unclaimed files report handled=false and write nothing.
-	unclaimed, err := indexSpecialistFile(st, "main.go", src, 1, 1, "hash2", &res)
+	unclaimed, err := indexSpecialistFile(context.Background(), st, "main.go", src, 1, 1, "hash2", &res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestIndexKotlinExtrasPersists(t *testing.T) {
 	}
 
 	var res Result
-	if err := indexKotlinExtras(st, "ui/MainActivity.kt", src, &res); err != nil {
+	if err := indexKotlinExtras(context.Background(), st, "ui/MainActivity.kt", src, &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.Elements == 0 {

@@ -23,7 +23,7 @@ func newVacuumFixture(t *testing.T) *Store {
 	// 400 rows, then delete 300 of them: ~75% of the pages end up free.
 	for i := 0; i < 400; i++ {
 		p := filepath.Join("src", "f"+string(rune('a'+i%26))+itoa(i)+".go")
-		if err := st.UpsertElements([]Element{{
+		if err := st.UpsertElements(context.Background(), []Element{{
 			QualifiedName: "pkg.Fn" + itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + itoa(i),
@@ -36,7 +36,7 @@ func newVacuumFixture(t *testing.T) *Store {
 	}
 	for i := 0; i < 300; i++ {
 		p := filepath.Join("src", "f"+string(rune('a'+i%26))+itoa(i)+".go")
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -116,7 +116,7 @@ func TestIncrementalVacuumReturnsPagesToDisk(t *testing.T) {
 	// 100 too so the freelist that follows is made under INCREMENTAL mode.
 	for i := 300; i < 400; i++ {
 		p := filepath.Join("src", "f"+string(rune('a'+i%26))+itoa(i)+".go")
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}

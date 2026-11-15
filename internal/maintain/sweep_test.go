@@ -25,7 +25,7 @@ func collectionFixture(t *testing.T) store.Backend {
 	// A real element: a vector whose qualified name has no element is an
 	// ORPHAN by the store's own definition, and the orphan sweep would
 	// remove it before the stale-collection sweep ever saw it.
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "pkg.Fn", ElementType: "function", Name: "Fn",
 		FilePath: "pkg.go", Language: "go", LineStart: 1, LineEnd: 3,
 		Content: "func Fn() {}",
@@ -97,7 +97,7 @@ func TestPassKeepsACollectionWhenTheKeepOneIsAbsent(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "pkg.Fn", ElementType: "function", Name: "Fn",
 		FilePath: "pkg.go", Language: "go", LineStart: 1, LineEnd: 3,
 		Content: "func Fn() {}",

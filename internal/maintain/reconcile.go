@@ -94,7 +94,7 @@ func ReconcileHead(ctx context.Context, st store.Backend) (ReconcileResult, erro
 	for _, p := range headPaths {
 		inHead[p] = true
 	}
-	files, err := st.Files()
+	files, err := st.Files(ctx)
 	if err != nil {
 		return res, fmt.Errorf("maintain: read stored files: %w", err)
 	}

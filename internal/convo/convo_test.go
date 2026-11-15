@@ -275,7 +275,7 @@ func TestIndexItemsPersistsNodesAndEdges(t *testing.T) {
 		},
 	}
 
-	result, err := IndexItems(st, project, items)
+	result, err := IndexItems(context.Background(), st, project, items)
 	if err != nil {
 		t.Fatalf("IndexItems: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestIndexItemsIsIdempotent(t *testing.T) {
 	}
 
 	for run := 1; run <= 2; run++ {
-		res, err := IndexItems(st, project, items)
+		res, err := IndexItems(context.Background(), st, project, items)
 		if err != nil {
 			t.Fatalf("run %d: %v", run, err)
 		}
@@ -401,7 +401,7 @@ func TestIndexItemsFromFixtureCreatesDecidedAboutEdges(t *testing.T) {
 		t.Fatalf("second targets = %v, want %v", got, want)
 	}
 
-	res, err := IndexItems(st, project, items)
+	res, err := IndexItems(context.Background(), st, project, items)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func TestIndexItemsFromFixtureCreatesDecidedAboutEdges(t *testing.T) {
 func TestIndexItemsDropsStaleNodes(t *testing.T) {
 	project, st := setupStore(t)
 	first := []MinedItem{{Kind: KindDecision, Verbatim: "Decision: use Redis", Source: "slack", Topic: "Redis"}}
-	if _, err := IndexItems(st, project, first); err != nil {
+	if _, err := IndexItems(context.Background(), st, project, first); err != nil {
 		t.Fatal(err)
 	}
 	projectName := filepath.Base(project)
@@ -438,7 +438,7 @@ func TestIndexItemsDropsStaleNodes(t *testing.T) {
 	// A later re-mine of the same source that only yields a different topic
 	// must not leave the dropped node behind.
 	second := []MinedItem{{Kind: KindDecision, Verbatim: "Decision: use Kafka", Source: "slack", Topic: "Kafka"}}
-	if _, err := IndexItems(st, project, second); err != nil {
+	if _, err := IndexItems(context.Background(), st, project, second); err != nil {
 		t.Fatal(err)
 	}
 	els, err := st.FindExact(context.Background(), "conversations/"+projectName+"/decision/redis")
@@ -467,7 +467,7 @@ func TestMineIntoProjectEndToEnd(t *testing.T) {
 	project, st := setupStore(t)
 
 	// Seed the code element the decision edges point at.
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "src/gateway.rs::handle_auth",
 		ElementType:   "function",
 		Name:          "handle_auth",

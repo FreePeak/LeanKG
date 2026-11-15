@@ -43,7 +43,7 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 		{"internal/decoy_test.go::TestRankAgain", one(0.99)},
 		{"internal/real.go::Rank", one(0.98)},
 	} {
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: e.qn, ElementType: "function",
 			Name: e.qn[strings.LastIndex(e.qn, "::")+2:], FilePath: e.qn[:strings.Index(e.qn, "::")],
 			Language: "go", Content: "func rank() {}",
@@ -97,7 +97,7 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 		{"internal/a.go::First", 1.0}, {"internal/a.go::Second", 0.9}, {"internal/a.go::Third", 0.8},
 	}
 	for _, o := range ordered {
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: o.qn, ElementType: "function", Name: o.qn[strings.LastIndex(o.qn, "::")+2:],
 			FilePath: "internal/a.go", Language: "go", Content: "func f() {}",
 		}}); err != nil {

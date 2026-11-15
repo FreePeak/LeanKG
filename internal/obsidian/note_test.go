@@ -52,7 +52,7 @@ func TestPushSurvivesSourceTreeAsVault(t *testing.T) {
 
 	st := openStore(t)
 	qnFile := "apps/backend/src/auctions/services/bidding.service.ts"
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: qnFile, ElementType: "File", Name: "bidding.service.ts", FilePath: qnFile, Language: "ts"},
 		{QualifiedName: qnFile + "::BiddingService", ElementType: "class", Name: "BiddingService", FilePath: qnFile, Language: "ts"},
 		{QualifiedName: qnFile + "::placeBid", ElementType: "function", Name: "placeBid", FilePath: qnFile, Language: "ts"},
@@ -90,7 +90,7 @@ func TestPushSurvivesSourceTreeAsVault(t *testing.T) {
 // with relationships, an annotation, and paths the export filter must skip.
 func seedPushStore(t *testing.T, st store.Backend) {
 	t.Helper()
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "./src/api.rs::Handler", ElementType: "function", Name: "Handler", FilePath: "./src/api.rs", LineStart: 10, LineEnd: 20, Language: "rust"},
 		{QualifiedName: "./src/util.rs", ElementType: "File", Name: "util.rs", FilePath: "./src/util.rs", LineStart: 1, LineEnd: 40, Language: "rust"},
 		{QualifiedName: "pkg/thing.go::Thing", ElementType: "function", Name: "Thing", FilePath: "pkg/thing.go", LineStart: 1, LineEnd: 3, Language: "go"},
@@ -100,7 +100,7 @@ func seedPushStore(t *testing.T, st store.Backend) {
 	}); err != nil {
 		t.Fatalf("seed elements: %v", err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: "./src/api.rs::Handler", Target: "./src/main.rs::main", RelType: "calls", Confidence: 1},
 		{Source: "pkg/thing.go::Thing", Target: "std::fmt::Display", RelType: "imports", Confidence: 1},
 		{Source: "pkg/thing.go::Thing", Target: "__unresolved__Helper", RelType: "calls", Confidence: 1},

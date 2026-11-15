@@ -26,7 +26,7 @@ func TestUpsertAndFindExact(t *testing.T) {
 		{QualifiedName: "pkg.Service.Handle", ElementType: "method", Name: "Handle", FilePath: "svc.go", Language: "go", LineStart: 10, LineEnd: 20, Content: "func (s *Service) Handle()"},
 		{QualifiedName: "pkg.Handle", ElementType: "function", Name: "Handle", FilePath: "util.go", Language: "go", LineStart: 1, LineEnd: 5},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	got, err := s.FindExact(context.Background(), "handle") // case-insensitive
@@ -39,7 +39,7 @@ func TestUpsertAndFindExact(t *testing.T) {
 
 	// Re-upsert same QN replaces, never duplicates (real PK semantics).
 	els[0].Content = "updated"
-	if err := s.UpsertElements(els[:1]); err != nil {
+	if err := s.UpsertElements(context.Background(), els[:1]); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
 	n, _ := s.ElementCount(context.Background())
@@ -54,7 +54,7 @@ func TestFindFuzzyFTS(t *testing.T) {
 		{QualifiedName: "main.parseConfig", ElementType: "function", Name: "parseConfig", FilePath: "main.go", Language: "go", Content: "parses the yaml config file"},
 		{QualifiedName: "main.unrelated", ElementType: "function", Name: "unrelated", FilePath: "main.go", Language: "go", Content: "does something else"},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	// Free text must not be able to inject FTS5 syntax.
@@ -77,16 +77,16 @@ func TestFindFuzzyFTS(t *testing.T) {
 
 func TestDeleteByFile(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "a.A", ElementType: "function", Name: "A", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "b.B", ElementType: "function", Name: "B", FilePath: "b.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertRelationships([]Relationship{{Source: "a.A", Target: "b.B", RelType: "calls"}}); err != nil {
+	if err := s.UpsertRelationships(context.Background(), []Relationship{{Source: "a.A", Target: "b.B", RelType: "calls"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteByFile("a.go"); err != nil {
+	if err := s.DeleteByFile(context.Background(), "a.go"); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := s.ElementCount(context.Background()); n != 1 {
@@ -110,19 +110,19 @@ func TestDeleteByFile(t *testing.T) {
 // gc purges exactly the dangling edges and leaves fully live ones alone.
 func TestDeleteOrphanRelationships(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "a.A", ElementType: "function", Name: "A", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "b.B", ElementType: "function", Name: "B", FilePath: "b.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertRelationships([]Relationship{
+	if err := s.UpsertRelationships(context.Background(), []Relationship{
 		{Source: "b.B", Target: "a.A", RelType: "calls"}, // into a.go: survives DeleteByFile as a dangling edge
 		{Source: "b.B", Target: "b.B", RelType: "uses"},  // fully live: must survive gc
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteByFile("a.go"); err != nil {
+	if err := s.DeleteByFile(context.Background(), "a.go"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,7 +160,7 @@ func TestDeleteOrphanRelationships(t *testing.T) {
 // live rows untouched, and never bumps the watermark on a no-op.
 func TestDeleteOrphanVectors(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "a.A", ElementType: "function", Name: "A", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "b.B", ElementType: "function", Name: "B", FilePath: "b.go", Language: "go"},
 	}); err != nil {
@@ -181,7 +181,7 @@ func TestDeleteOrphanVectors(t *testing.T) {
 	}
 	// The bug setup: delete b.B's element+edges (file removed); its vector and
 	// state row survive — that is the permanent residue.
-	if err := s.DeleteByFile("b.go"); err != nil {
+	if err := s.DeleteByFile(context.Background(), "b.go"); err != nil {
 		t.Fatal(err)
 	}
 	if _, orphans, _ := s.VectorCoverage("m1"); orphans != 1 {
@@ -216,7 +216,7 @@ func TestDeleteOrphanVectors(t *testing.T) {
 func TestWatermarkBumpsOnWrite(t *testing.T) {
 	s := openTestStore(t)
 	seq0, _, _ := s.Watermark(context.Background())
-	if err := s.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
+	if err := s.UpsertElements(context.Background(), []Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
 		t.Fatal(err)
 	}
 	seq1, _, _ := s.Watermark(context.Background())
@@ -241,7 +241,7 @@ func TestModelStampAndVectors(t *testing.T) {
 
 	// Vector hits join their element (RS-05: a vector without one is an
 	// orphan and never a hit), so the QNs must exist as elements.
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "a", ElementType: "function", Name: "a", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "b", ElementType: "function", Name: "b", FilePath: "b.go", Language: "go"},
 	}); err != nil {
@@ -283,10 +283,10 @@ func TestModelStampAndVectors(t *testing.T) {
 func TestRelationshipUpsertDedups(t *testing.T) {
 	s := openTestStore(t)
 	rels := []Relationship{{Source: "a", Target: "b", RelType: "calls", Confidence: 0.5}}
-	if err := s.UpsertRelationships(rels); err != nil {
+	if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertRelationships(rels); err != nil { // duplicate must overwrite, not duplicate
+	if err := s.UpsertRelationships(context.Background(), rels); err != nil { // duplicate must overwrite, not duplicate
 		t.Fatal(err)
 	}
 	var n int
@@ -318,7 +318,7 @@ func TestInventoryFreshness(t *testing.T) {
 	if inv, _ := s.LoadInventory(context.Background()); inv != nil {
 		t.Fatalf("no inventory expected, got %+v", inv)
 	}
-	if err := s.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
+	if err := s.UpsertElements(context.Background(), []Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SaveInventory(context.Background(), Inventory{TotalElements: 1, ElementsByType: map[string]int{"function": 1}}); err != nil {
@@ -333,7 +333,7 @@ func TestInventoryFreshness(t *testing.T) {
 		t.Fatalf("inventory seq %d != watermark %d", inv.LastInventorySeq, seq)
 	}
 	// Any write after inventory => possibly_stale (seq moves past inv seq).
-	if err := s.UpsertRelationships([]Relationship{{Source: "x", Target: "x", RelType: "calls"}}); err != nil {
+	if err := s.UpsertRelationships(context.Background(), []Relationship{{Source: "x", Target: "x", RelType: "calls"}}); err != nil {
 		t.Fatal(err)
 	}
 	seq2, _, _ := s.Watermark(context.Background())
@@ -351,7 +351,7 @@ func TestReadOnlyMode(t *testing.T) {
 	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := rw.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
+	if err := rw.UpsertElements(context.Background(), []Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
 		t.Fatal(err)
 	}
 	rw.Close()
@@ -471,7 +471,7 @@ func TestStampTextCapRoundTrip(t *testing.T) {
 // vectors-then-state pair.
 func TestReplaceFileVectorsIsOneAtomicUnit(t *testing.T) {
 	s := openTestStore(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "a.go::f1", ElementType: "function", Name: "f1", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "a.go::f2", ElementType: "function", Name: "f2", FilePath: "a.go", Language: "go"},
 	}); err != nil {
@@ -543,7 +543,7 @@ func TestIdentifierTermsReachFTS(t *testing.T) {
 		}
 	}
 	s := openTestStore(t)
-	if err := s.UpsertElements([]Element{{QualifiedName: "a.go::RotateStagingCredentials", ElementType: "function",
+	if err := s.UpsertElements(context.Background(), []Element{{QualifiedName: "a.go::RotateStagingCredentials", ElementType: "function",
 		Name: "RotateStagingCredentials", FilePath: "a.go", Language: "go", Content: "func RotateStagingCredentials() {}"}}); err != nil {
 		t.Fatal(err)
 	}

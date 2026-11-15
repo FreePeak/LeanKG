@@ -100,7 +100,7 @@ func TestExistingStoreKeepsItsPageSize(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	// A write, and the VACUUM the auto-vacuum header upgrade performs.
-	if err := st.UpsertElements([]Element{{
+	if err := st.UpsertElements(context.Background(), []Element{{
 		QualifiedName: "pkg.Fn", ElementType: "function", Name: "Fn",
 		FilePath: "a.go", Language: "go", Content: "func Fn() {}",
 	}}); err != nil {
@@ -145,7 +145,7 @@ func TestUpgradePageSizePreservesEveryVector(t *testing.T) {
 		for j := range vec {
 			vec[j] = float32(i*j%97) / 7
 		}
-		if err := st.UpsertElements([]Element{{
+		if err := st.UpsertElements(context.Background(), []Element{{
 			QualifiedName: fmt.Sprintf("pkg.Fn%d", i), ElementType: "function",
 			Name: fmt.Sprintf("Fn%d", i), FilePath: fmt.Sprintf("src/f%d.go", i),
 			Language: "go", Content: "func Fn() {}",

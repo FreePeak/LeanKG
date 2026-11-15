@@ -48,14 +48,14 @@ func seedGraph(t *testing.T, s store.Backend) {
 			Content: "func parse()",
 		},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	rels := []store.Relationship{
 		{Source: "pkg.Svc.Handle", Target: "pkg.parse", RelType: "calls", Confidence: 0.75},
 		{Source: "pkg.parse", Target: "pkg.Svc", RelType: "member_of", Confidence: 1},
 	}
-	if err := s.UpsertRelationships(rels); err != nil {
+	if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
 }
@@ -309,7 +309,7 @@ func TestPushTruncationGuard(t *testing.T) {
 		{Source: "pkg.Svc", Target: "pkg.parse", RelType: "references", Confidence: 1},
 		{Source: "pkg.parse", Target: "pkg.Svc.Handle", RelType: "calls", Confidence: 1},
 	}
-	if err := st.UpsertRelationships(extra); err != nil {
+	if err := st.UpsertRelationships(context.Background(), extra); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
@@ -411,7 +411,7 @@ func TestPullAppliesRemoteGraph(t *testing.T) {
 	seedGraph(t, source)
 
 	local := openStore(t)
-	if err := local.UpsertElements([]store.Element{
+	if err := local.UpsertElements(context.Background(), []store.Element{
 		// Same qualified name the remote also publishes.
 		{QualifiedName: "pkg.Svc.Handle", ElementType: "method", Name: "Stale", FilePath: "stale.go", Language: "go", Content: "LOCAL CONTENT"},
 		// A row the remote never mentions: must survive untouched.

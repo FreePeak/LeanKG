@@ -181,8 +181,8 @@ func seedActionCorpus(f *actionFixture) {
 			Content: "func Beta() int {\n\treturn 41\n}",
 		},
 	}
-	f.must(f.st.UpsertElements(els))
-	f.must(f.st.UpsertRelationships([]store.Relationship{{
+	f.must(f.st.UpsertElements(context.Background(), els))
+	f.must(f.st.UpsertRelationships(context.Background(), []store.Relationship{{
 		Source: "src/alpha.go::Alpha", Target: "src/beta.go::Beta",
 		RelType: "calls", Confidence: 0.5,
 	}}))

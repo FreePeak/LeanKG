@@ -27,7 +27,7 @@ func setupStore(t *testing.T) store.Backend {
 
 func seedElements(t *testing.T, st store.Backend, els ...store.Element) {
 	t.Helper()
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 }

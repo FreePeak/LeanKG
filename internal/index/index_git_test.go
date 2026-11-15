@@ -183,7 +183,7 @@ func TestIndexGitRootAdoptsWalkStoreWithoutReextract(t *testing.T) {
 	if adopted.Files != 0 {
 		t.Fatalf("adopting run: Files = %d, want 0 (identical bytes)", adopted.Files)
 	}
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

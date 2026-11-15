@@ -48,10 +48,10 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 		{QualifiedName: "b.go::Main", ElementType: "function", Name: "Main", FilePath: "b.go",
 			LineStart: 1, LineEnd: 3, Language: "go", Content: "func Main() {}"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{{
 		Source: "b.go::Main", Target: "a.go::Handle", RelType: "calls", Confidence: 0.5,
 	}}); err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 func TestEnrichWithoutServerIsNoOp(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // nothing on PATH: no catalog server resolves
 	dir, st := newTestStore(t)
-	if err := st.UpsertElements([]store.Element{elem(
+	if err := st.UpsertElements(context.Background(), []store.Element{elem(
 		"main.rs::boot", "function", "boot", "main.rs", "rust", "",
 	)}); err != nil {
 		t.Fatal(err)
@@ -195,13 +195,13 @@ func TestEnrichTypedResolveOffByDefault(t *testing.T) {
 	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  servers:\n    go:\n      command: fake-lsp\n")
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
 			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{{
 		Source: "a.go::Handle", Target: "a.go::Handle", RelType: "calls", Confidence: 0.5,
 	}}); err != nil {
 		t.Fatal(err)
@@ -235,7 +235,7 @@ func TestEnrichAcceptsRegistryActiveLanguages(t *testing.T) {
 	writeFile(t, dir, "a.go", "package scratch\n\nfunc Handle(x int) error { return nil }\n")
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  servers:\n    go:\n      command: fake-lsp\n")
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
 			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
 	}); err != nil {
@@ -264,7 +264,7 @@ func TestEnrichConfiguredButMissingServerIsNoOp(t *testing.T) {
 	dir, st := newTestStore(t)
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  servers:\n    go:\n      command: not-a-real-lsp-binary\n")
-	if err := st.UpsertElements([]store.Element{elem(
+	if err := st.UpsertElements(context.Background(), []store.Element{elem(
 		"main.go::main", "function", "main", "main.go", "go", "",
 	)}); err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 func TestEnrichExpandedLanguageWithoutServerIsGraceful(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	dir, st := newTestStore(t)
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		elem("Program.cs::Main", "function", "Main", "Program.cs", "csharp", ""),
 	}); err != nil {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestEnrichHandshakeOutlivesRequestTimeout(t *testing.T) {
 	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  timeout_ms: 500\n  servers:\n    go:\n      command: fake-lsp\n")
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
 			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
 	}); err != nil {
@@ -360,7 +360,7 @@ func TestEnrichRecordsFirstFailureReason(t *testing.T) {
 	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  servers:\n    go:\n      command: fake-lsp\n")
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
 			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
 	}); err != nil {

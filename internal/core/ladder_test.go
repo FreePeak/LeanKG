@@ -24,7 +24,7 @@ func TestLadderRoutesProseToHybrid(t *testing.T) {
 			Content: fmt.Sprintf("// RenderWidget%d draws the widget frame.\nfunc RenderWidget%d() {}", i, i),
 		})
 	}
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(64)
@@ -134,7 +134,7 @@ func TestLongQueryIsTruncatedNotDegraded(t *testing.T) {
 // uncalibrated collection carries no flag.
 func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 	e, _ := newEngine(t)
-	if err := e.st.UpsertElements([]store.Element{{QualifiedName: "a.go::Widget", ElementType: "function", Name: "Widget", FilePath: "a.go", Language: "go", Content: "func Widget() {}"}}); err != nil {
+	if err := e.st.UpsertElements(context.Background(), []store.Element{{QualifiedName: "a.go::Widget", ElementType: "function", Name: "Widget", FilePath: "a.go", Language: "go", Content: "func Widget() {}"}}); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)

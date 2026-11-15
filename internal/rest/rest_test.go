@@ -89,7 +89,7 @@ func TestQueryLadderEndpoints(t *testing.T) {
 	}
 
 	// Seed one element, then L1.
-	_ = e.Store().UpsertElements([]store.Element{{
+	_ = e.Store().UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "main.parseConfig", ElementType: "function", Name: "parseConfig",
 		FilePath: "main.go", Language: "go", LineStart: 1, LineEnd: 2,
 	}})
@@ -283,7 +283,7 @@ func TestSessionAndOntologyEndpoints(t *testing.T) {
 	}
 
 	// ontology: seed an element, match a catalog, read matches back.
-	_ = e.Store().UpsertElements([]store.Element{
+	_ = e.Store().UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
 	})
 	catPath := filepath.Join(dir, "c.json")

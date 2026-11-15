@@ -208,7 +208,7 @@ func TestImportDocsRelativeAnchorsAtProject(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "docs", Path: "docs"}); err != nil {
 		t.Fatalf("import docs relative: %v", err)
 	}
-	files, _ := e.st.Files()
+	files, _ := e.st.Files(context.Background())
 	got := map[string]bool{}
 	for _, f := range files {
 		got[f.Path] = true

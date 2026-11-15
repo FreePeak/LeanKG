@@ -43,7 +43,7 @@ func TestPullSyncsNotesLinksAndAnnotations(t *testing.T) {
 	fixtureVault(t, vault)
 	e := New(vault, st)
 
-	res, err := e.Pull()
+	res, err := e.Pull(context.Background())
 	if err != nil {
 		t.Fatalf("Pull: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestPullSyncsNotesLinksAndAnnotations(t *testing.T) {
 
 	// Idempotency: the second pull over the unchanged vault converges — same
 	// rows, nothing new, no duplicate elements or relationships.
-	res2, err := e.Pull()
+	res2, err := e.Pull(context.Background())
 	if err != nil {
 		t.Fatalf("second Pull: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestPullAnnotationConflictAndEmpty(t *testing.T) {
 	writeNote(t, vault, "cleared.md", "---\nleankg_id: Other\nleankg_annotation: \"\"\n---\n")
 
 	e := New(vault, st)
-	res, err := e.Pull()
+	res, err := e.Pull(context.Background())
 	if err != nil {
 		t.Fatalf("Pull: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestPullAnnotationConflictAndEmpty(t *testing.T) {
 	// An edited annotation against a stored one is a conflict, and the store
 	// keeps its value.
 	writeNote(t, vault, "local.md", "---\nleankg_id: Element\nleankg_annotation: \"remote edit\"\n---\n")
-	res, err = e.Pull()
+	res, err = e.Pull(context.Background())
 	if err != nil {
 		t.Fatalf("second Pull: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestPullAnnotationConflictAndEmpty(t *testing.T) {
 
 	// Re-pulling an unchanged divergent note reports the same conflict —
 	// resolution is manual, like the Rust pull.
-	res, err = e.Pull()
+	res, err = e.Pull(context.Background())
 	if err != nil {
 		t.Fatalf("third Pull: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestPullAnnotationConflictAndEmpty(t *testing.T) {
 func TestPullMissingVaultIsEmpty(t *testing.T) {
 	st := openStore(t)
 	e := New(filepath.Join(t.TempDir(), "absent"), st)
-	res, err := e.Pull()
+	res, err := e.Pull(context.Background())
 	if err != nil {
 		t.Fatalf("Pull on missing vault: %v", err)
 	}

@@ -142,7 +142,7 @@ func (b *Bridge) Enrich(ctx context.Context, st store.Backend, dir string, want 
 	}
 
 	if len(changed) > 0 {
-		if err := st.UpsertElements(changed); err != nil {
+		if err := st.UpsertElements(ctx, changed); err != nil {
 			return res, err
 		}
 	}

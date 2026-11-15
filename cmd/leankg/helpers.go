@@ -356,7 +356,7 @@ func runIndex(ctx context.Context, project, target, source, refName, auth string
 	}
 	if len(rebaseRoot) > 0 && rebaseRoot[0] {
 		// The checkout moved: adopt the new root deliberately (RS-02 tripwire).
-		if err := index.RebaseRoot(st, indexTarget); err != nil {
+		if err := index.RebaseRoot(ctx, st, indexTarget); err != nil {
 			return fmt.Errorf("rebase root: %w", err)
 		}
 	}

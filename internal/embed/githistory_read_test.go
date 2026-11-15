@@ -21,7 +21,7 @@ func TestReadElementsIncludesGitHistoryRows(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "git:commit:abc1234def",
 		ElementType:   "commit",
 		Name:          "abc1234 rotate the signing key",

@@ -15,7 +15,7 @@ import (
 // collection that matches the live provider.
 func seedRungs(t *testing.T, e *Engine) embed.Provider {
 	t.Helper()
-	if err := e.st.UpsertElements([]store.Element{{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "pkg/a.go::Alpha", ElementType: "function", Name: "Alpha",
 		FilePath: "pkg/a.go", Language: "go", Content: "func Alpha() {}",
 	}}); err != nil {
@@ -89,10 +89,10 @@ func TestGraphVerbReportsBudgetAndDepth(t *testing.T) {
 		els = append(els, store.Element{QualifiedName: qn, ElementType: "function", Name: qn, FilePath: "c.go", Language: "go"})
 		rels = append(rels, store.Relationship{Source: qn, Target: "hub", RelType: "calls", Confidence: 0.9})
 	}
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.UpsertRelationships(rels); err != nil {
+	if err := e.st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,10 +125,10 @@ func TestPathReportsTruncatedNotUnreachable(t *testing.T) {
 		rels = append(rels, store.Relationship{Source: "src", Target: qn, RelType: "calls", Confidence: 0.9})
 	}
 	rels = append(rels, store.Relationship{Source: fmt.Sprintf("f%05d", graph.NodeBudget), Target: "t", RelType: "calls", Confidence: 0.9})
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.UpsertRelationships(rels); err != nil {
+	if err := e.st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
 

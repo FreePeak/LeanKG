@@ -28,7 +28,7 @@ func newTunnelStore(t *testing.T) store.Backend {
 		{QualifiedName: "src/b/y.go::y", ElementType: "function", Name: "y", FilePath: "src/b/y.go"},
 		{QualifiedName: "src/b/y.go::y2", ElementType: "function", Name: "y2", FilePath: "src/b/y.go"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	rels := []store.Relationship{
@@ -43,7 +43,7 @@ func newTunnelStore(t *testing.T) store.Backend {
 		// One endpoint outside every cluster: skipped, not a tunnel.
 		{Source: "src/b/y.go::y2", Target: "missing::fn", RelType: "references", Confidence: 0.99},
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
 	return st

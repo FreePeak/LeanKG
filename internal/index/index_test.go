@@ -327,7 +327,7 @@ func TestDeletion(t *testing.T) {
 		t.Fatalf("FileCount after deletion: %d, want 4", n)
 	}
 	assertNoElement(t, st, "Details") // element + FTS rows gone
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestIndexRootTripwire(t *testing.T) {
 	if _, err := IndexDir(ctx, st, a); err != nil {
 		t.Fatalf("re-index of the recorded root: %v", err)
 	}
-	if err := RebaseRoot(st, b); err != nil {
+	if err := RebaseRoot(context.Background(), st, b); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := IndexDir(ctx, st, b); err != nil {
@@ -460,7 +460,7 @@ func TestExtractorBumpPurgesPhantomKeepsVectors(t *testing.T) {
 	mustFind(t, st, "app.ts::ping")
 
 	// Simulate the pre-fix store: the phantom row and the old version stamp.
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "app.ts::ality", ElementType: "function", Name: "ality",
 		FilePath: "app.ts", Language: "typescript",
 	}}); err != nil {

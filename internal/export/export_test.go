@@ -21,10 +21,10 @@ func newFixture(t *testing.T, els []store.Element, rels []store.Relationship) st
 	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
-	if err := s.UpsertRelationships(rels); err != nil {
+	if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
 	return s

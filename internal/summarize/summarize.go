@@ -190,7 +190,7 @@ func Run(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 	}
 
 	p := &pipeline{st: st, opts: opts, dir: dir, nodesDir: nodesDir}
-	recs, err := st.Files()
+	recs, err := st.Files(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("summarize: list indexed files: %w", err)
 	}
@@ -199,7 +199,7 @@ func Run(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 	ws := p.pass1(ctx, recs)
 	nodes := p.pass2(ctx, ws)
 	if !opts.DryRun && len(nodes) > 0 {
-		if err := p.persist(nodes); err != nil {
+		if err := p.persist(ctx, nodes); err != nil {
 			return p.report(), err
 		}
 	}

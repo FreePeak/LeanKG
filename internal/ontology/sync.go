@@ -152,12 +152,12 @@ func SyncFromDir(ctx context.Context, ontologyDir string, st store.Backend, lean
 	}
 
 	if len(elements) > 0 {
-		if err := st.UpsertElements(elements); err != nil {
+		if err := st.UpsertElements(ctx, elements); err != nil {
 			return stats, fmt.Errorf("insert ontology elements: %w", err)
 		}
 	}
 	if len(relationships) > 0 {
-		if err := st.UpsertRelationships(relationships); err != nil {
+		if err := st.UpsertRelationships(ctx, relationships); err != nil {
 			return stats, fmt.Errorf("insert ontology relationships: %w", err)
 		}
 	}
@@ -207,7 +207,7 @@ func clearOntologyLayer(ctx context.Context, st store.Backend) error {
 	}
 	for _, el := range els {
 		if IsOntologyFilePath(el.FilePath) {
-			if err := st.DeleteByFile(el.FilePath); err != nil {
+			if err := st.DeleteByFile(ctx, el.FilePath); err != nil {
 				return err
 			}
 		}

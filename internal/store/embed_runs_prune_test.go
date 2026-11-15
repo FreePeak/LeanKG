@@ -102,7 +102,7 @@ func TestPruneEmbedRunsKeepsRunsInsideTheWindow(t *testing.T) {
 func TestCompactFTSKeepsEveryRow(t *testing.T) {
 	s := openTestStore(t)
 	for i := range 200 {
-		if err := s.UpsertElements([]Element{{
+		if err := s.UpsertElements(context.Background(), []Element{{
 			QualifiedName: "pkg.Fn" + strconv.Itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + strconv.Itoa(i),

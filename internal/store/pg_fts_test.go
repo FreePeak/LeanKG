@@ -212,7 +212,7 @@ func TestPGFindFuzzy(t *testing.T) {
 		{QualifiedName: "pkg.ParseConfig", ElementType: "function", Name: "ParseConfig", FilePath: "b.go", Language: "go", Content: "reads the config"},
 		{QualifiedName: "pkg.Helper", ElementType: "function", Name: "Helper", FilePath: "c.go", Language: "go"},
 	}
-	if err := s.UpsertElements(seed); err != nil {
+	if err := s.UpsertElements(context.Background(), seed); err != nil {
 		t.Fatal(err)
 	}
 
@@ -262,7 +262,7 @@ func TestPGFindFuzzy(t *testing.T) {
 
 	// The generated column follows UPDATE: re-upserting a qualified name under a
 	// new name re-lexes with no sync code anywhere.
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.ParseConfig", ElementType: "function", Name: "ParseRuntime", FilePath: "b.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestPGFindFuzzy(t *testing.T) {
 // down the substring arms, where it can genuinely match.
 func TestPGFindFuzzyFallbackWithoutLexemes(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.foo%bar", ElementType: "function", Name: "foo%bar", FilePath: "a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
@@ -317,7 +317,7 @@ func TestPGFindFuzzyFallbackWithoutLexemes(t *testing.T) {
 // applied must keep serving search when the index is gone underneath it.
 func TestPGFindFuzzyDegradesWithoutColumn(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.SocketHandler", ElementType: "function", Name: "SocketHandler", FilePath: "a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
@@ -406,7 +406,7 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 		{QualifiedName: "pkg.Gamma", ElementType: "function", Name: "Gamma", FilePath: "c.go", Language: "go"},
 		{QualifiedName: "pkg.Delta", ElementType: "function", Name: "Delta", FilePath: "d.go", Language: "go"},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	st := ModelStamp{ModelID: "hybrid-model", Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "unit"}
@@ -494,7 +494,7 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 // arms — the degrade that keeps L3 useful on an un-embedded project.
 func TestPGHybridSearchWithoutVectors(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.Watermark", ElementType: "function", Name: "Watermark", FilePath: "a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)

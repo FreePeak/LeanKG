@@ -71,7 +71,7 @@ func TestSearchVectorsZeroFilterIsUnscoped(t *testing.T) {
 // scoping test is about the population, not about cosine ordering.
 func upsertVectorsFor(t *testing.T, st *Store, modelID string, els ...Element) error {
 	t.Helper()
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		return err
 	}
 	rows := make([]VectorRow, 0, len(els))

@@ -33,7 +33,7 @@ func smallFreelistFixture(t *testing.T) store.Backend {
 	}
 	for i := range 200 {
 		p := "src/f" + itoa(i) + ".go"
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: "pkg.Fn" + itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + itoa(i),
@@ -59,7 +59,7 @@ func TestPassReclaimsAFreelistBelowTheOldOneMegabyteFloor(t *testing.T) {
 	}
 	// Re-create a freelist that is real but SMALLER than the old floor.
 	for i := range 40 {
-		if err := st.DeleteByFile("src/f" + itoa(i) + ".go"); err != nil {
+		if err := st.DeleteByFile(context.Background(), "src/f"+itoa(i)+".go"); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}

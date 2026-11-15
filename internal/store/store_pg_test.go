@@ -49,7 +49,7 @@ func TestPGSchemaIsolation(t *testing.T) {
 	a := openPGAt(t, t.TempDir())
 	b := openPGAt(t, t.TempDir())
 
-	if err := a.UpsertElements([]Element{{
+	if err := a.UpsertElements(context.Background(), []Element{{
 		QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha",
 		FilePath: "a.go", Language: "go",
 	}}); err != nil {
@@ -73,20 +73,20 @@ func TestPGElementOps(t *testing.T) {
 		{QualifiedName: "pkg.Helper", ElementType: "function", Name: "Helper", FilePath: "a.go",
 			LineStart: 12, LineEnd: 20, Language: "go"},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertRelationships([]Relationship{
+	if err := s.UpsertRelationships(context.Background(), []Relationship{
 		{Source: "pkg.MyFunc", Target: "pkg.Helper", RelType: "calls", Confidence: 0.9, Metadata: map[string]any{"line": 5}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertFiles([]FileRecord{{Path: "a.go", Size: 100, MtimeNS: 5, ContentHash: "h1"}}); err != nil {
+	if err := s.UpsertFiles(context.Background(), []FileRecord{{Path: "a.go", Size: 100, MtimeNS: 5, ContentHash: "h1"}}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Upsert overwrite: same qualified name is replaced, not duplicated.
-	if err := s.UpsertElements([]Element{{
+	if err := s.UpsertElements(context.Background(), []Element{{
 		QualifiedName: "pkg.MyFunc", ElementType: "function", Name: "MyFunc", FilePath: "a.go",
 		LineStart: 1, LineEnd: 10, Language: "go", Content: "v2",
 	}}); err != nil {
@@ -143,7 +143,7 @@ func TestPGElementOps(t *testing.T) {
 	}
 
 	// DeleteByFile removes elements + relationships; the file record stays.
-	if err := s.DeleteByFile("a.go"); err != nil {
+	if err := s.DeleteByFile(context.Background(), "a.go"); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := s.ElementCount(context.Background()); n != 0 {
@@ -157,7 +157,7 @@ func TestPGElementOps(t *testing.T) {
 	}
 
 	// DeleteFileRecord removes the code_files row.
-	if err := s.DeleteFileRecord("a.go"); err != nil {
+	if err := s.DeleteFileRecord(context.Background(), "a.go"); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := s.FileCount(context.Background()); n != 0 {
@@ -170,13 +170,13 @@ func TestPGElementOps(t *testing.T) {
 // #409 merged without a PG mirror, and the new per-model DeleteOrphanVectors.
 func TestPGOrphanPurges(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "a.A", ElementType: "function", Name: "A", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "b.B", ElementType: "function", Name: "B", FilePath: "b.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertRelationships([]Relationship{
+	if err := s.UpsertRelationships(context.Background(), []Relationship{
 		{Source: "b.B", Target: "a.A", RelType: "calls"}, // into a.go: dangles after delete
 		{Source: "b.B", Target: "b.B", RelType: "uses"},  // fully live: survives
 	}); err != nil {
@@ -192,7 +192,7 @@ func TestPGOrphanPurges(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteByFile("a.go"); err != nil {
+	if err := s.DeleteByFile(context.Background(), "a.go"); err != nil {
 		t.Fatal(err) // drops a.A + its edges; b.B->a.A and a.A's vector dangle
 	}
 
@@ -233,7 +233,7 @@ func TestPGWatermarkBumps(t *testing.T) {
 	if seq0 != 0 || at0 != 0 {
 		t.Fatalf("fresh watermark = (%d, %d); want (0, 0)", seq0, at0)
 	}
-	if err := s.UpsertElements([]Element{{
+	if err := s.UpsertElements(context.Background(), []Element{{
 		QualifiedName: "pkg.X", ElementType: "function", Name: "X", FilePath: "x.go", Language: "go",
 	}}); err != nil {
 		t.Fatal(err)
@@ -254,7 +254,7 @@ func TestPGWatermarkBumps(t *testing.T) {
 func TestPGStampsAndVectors(t *testing.T) {
 	s := openPGTest(t)
 
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha", FilePath: "a.go", Language: "go"},
 		{QualifiedName: "pkg.Beta", ElementType: "function", Name: "Beta", FilePath: "b.go", Language: "go"},
 	}); err != nil {
@@ -364,7 +364,7 @@ func TestPGKVAndInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	seq, _, _ := s.Watermark(context.Background())
-	if err := s.UpsertElements([]Element{{
+	if err := s.UpsertElements(context.Background(), []Element{{
 		QualifiedName: "pkg.X", ElementType: "function", Name: "X", FilePath: "x.go", Language: "go",
 	}}); err != nil {
 		t.Fatal(err)
@@ -468,7 +468,7 @@ func TestPGReadOnly(t *testing.T) {
 	if err := ro.KVSet(context.Background(), "t", "x", "y"); err == nil {
 		t.Fatal("KVSet in RO succeeded; want error")
 	}
-	if err := ro.UpsertElements([]Element{{
+	if err := ro.UpsertElements(context.Background(), []Element{{
 		QualifiedName: "pkg.R", ElementType: "function", Name: "R", FilePath: "r.go", Language: "go",
 	}}); err == nil {
 		t.Fatal("UpsertElements in RO succeeded; want error")
@@ -610,7 +610,7 @@ func TestPGStampTextCapRoundTrip(t *testing.T) {
 // must leave NEITHER half behind.
 func TestPGStampIdentityAndPerFileReplace(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "unit/a.go::f1", ElementType: "function", Name: "f1", FilePath: "unit/a.go", Language: "go"},
 		{QualifiedName: "unit/a.go::f2", ElementType: "function", Name: "f2", FilePath: "unit/a.go", Language: "go"},
 	}); err != nil {
@@ -670,7 +670,7 @@ func TestPGStampIdentityAndPerFileReplace(t *testing.T) {
 // camelCase name is found by its words through the tsvector arm.
 func TestPGNoOrphanHitsAndIdentifierTerms(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "a.go::RotateStagingCredentials", ElementType: "function", Name: "RotateStagingCredentials", FilePath: "a.go", Language: "go", Content: "func RotateStagingCredentials() {}"},
 		{QualifiedName: "b.go::Keep", ElementType: "function", Name: "Keep", FilePath: "b.go", Language: "go", Content: "func Keep() {}"},
 	}); err != nil {
@@ -690,7 +690,7 @@ func TestPGNoOrphanHitsAndIdentifierTerms(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteByFile("a.go"); err != nil {
+	if err := s.DeleteByFile(context.Background(), "a.go"); err != nil {
 		t.Fatal(err)
 	}
 	vh, err := s.SearchVectors(context.Background(), VectorQuery{ModelID: st.ModelID, Vec: []float32{1, 0, 0, 0}, K: 5})

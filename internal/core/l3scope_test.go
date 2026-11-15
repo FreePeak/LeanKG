@@ -41,7 +41,7 @@ func TestL3ScopeArgReachesTheVectorArm(t *testing.T) {
 		{QualifiedName: "store/real.go::Rank", ElementType: "function", Name: "Rank", FilePath: "store/real.go", Language: "go", Content: "rank the merged lists"},
 		{QualifiedName: "store/real_test.go::TestRank", ElementType: "function", Name: "TestRank", FilePath: "store/real_test.go", Language: "go", Content: "rank the merged lists"},
 	} {
-		if err := st.UpsertElements([]store.Element{e}); err != nil {
+		if err := st.UpsertElements(context.Background(), []store.Element{e}); err != nil {
 			t.Fatal(err)
 		}
 		qvec, err := p.Embed(context.Background(), embed.Query, []string{e.Content})

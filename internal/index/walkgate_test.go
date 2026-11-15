@@ -86,7 +86,7 @@ func TestWalkSkipsDotFilesNotJustDotDirs(t *testing.T) {
 		t.Fatalf("visible.go must still index (got %d elements for Visible)", len(els))
 	}
 
-	files, err := st.Files()
+	files, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,14 +18,15 @@ var (
 	_ Backend = (*PGStore)(nil)
 )
 
-// IndexWriter persists the code graph of one indexed file set.
+// IndexWriter persists the code graph of one indexed file set. A cancelled ctx
+// rolls back the batch in progress; the batches that already committed stay.
 type IndexWriter interface {
-	UpsertElements(els []Element) error
-	UpsertRelationships(rels []Relationship) error
-	UpsertFiles(files []FileRecord) error
-	Files() ([]FileRecord, error)
-	DeleteByFile(path string) error
-	DeleteFileRecord(path string) error
+	UpsertElements(ctx context.Context, els []Element) error
+	UpsertRelationships(ctx context.Context, rels []Relationship) error
+	UpsertFiles(ctx context.Context, files []FileRecord) error
+	Files(ctx context.Context) ([]FileRecord, error)
+	DeleteByFile(ctx context.Context, path string) error
+	DeleteFileRecord(ctx context.Context, path string) error
 }
 
 // ElementReader reads indexed elements and their counts.

@@ -141,18 +141,18 @@ func pgMarshalMeta(m map[string]any) string {
 // names already present are replaced. (No FTS sync needed: the keyword index
 // is the STORED generated tsvector column of migration 012, which PostgreSQL
 // recomputes per row; ILIKE + pg_trgm is its fallback, not a shadow table.)
-func (s *PGStore) UpsertElements(els []Element) error {
+func (s *PGStore) UpsertElements(ctx context.Context, els []Element) error {
 	if len(els) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, e := range els {
 		e = e.sanitize() // same write-boundary guard as sqlite: engines store identical bytes
-		if _, err := tx.Exec(pgCtx, `INSERT INTO code_elements
+		if _, err := tx.Exec(ctx, `INSERT INTO code_elements
 			(qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, content, metadata)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
 			ON CONFLICT (qualified_name) DO UPDATE SET
@@ -164,25 +164,25 @@ func (s *PGStore) UpsertElements(els []Element) error {
 			return fmt.Errorf("store: upsert element %s: %w", e.QualifiedName, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertRelationships writes a batch of relationships in one transaction.
 // Duplicate (source, target, rel_type) rows are overwritten, not duplicated.
-func (s *PGStore) UpsertRelationships(rels []Relationship) error {
+func (s *PGStore) UpsertRelationships(ctx context.Context, rels []Relationship) error {
 	if len(rels) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, r := range rels {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
+		if _, err := tx.Exec(ctx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
 			VALUES ($1,$2,$3,$4,$5::jsonb)
 			ON CONFLICT (source_qualified, target_qualified, rel_type) DO UPDATE SET
 				confidence=excluded.confidence, metadata=excluded.metadata`,
@@ -190,24 +190,24 @@ func (s *PGStore) UpsertRelationships(rels []Relationship) error {
 			return fmt.Errorf("store: upsert relationship %s->%s: %w", r.Source, r.Target, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertFiles records per-file index state.
-func (s *PGStore) UpsertFiles(files []FileRecord) error {
+func (s *PGStore) UpsertFiles(ctx context.Context, files []FileRecord) error {
 	if len(files) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, f := range files {
-		if _, err := tx.Exec(pgCtx, `INSERT INTO code_files (path, size, mtime_ns, content_hash, indexed_at)
+		if _, err := tx.Exec(ctx, `INSERT INTO code_files (path, size, mtime_ns, content_hash, indexed_at)
 			VALUES ($1,$2,$3,$4,`+pgNow+`)
 			ON CONFLICT (path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns,
 				content_hash=excluded.content_hash, indexed_at=excluded.indexed_at`,
@@ -215,15 +215,15 @@ func (s *PGStore) UpsertFiles(files []FileRecord) error {
 			return fmt.Errorf("store: upsert file %s: %w", f.Path, err)
 		}
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // Files returns all indexed file records.
-func (s *PGStore) Files() ([]FileRecord, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT path, size, mtime_ns, content_hash FROM code_files`)
+func (s *PGStore) Files(ctx context.Context) ([]FileRecord, error) {
+	rows, err := s.pool.Query(ctx, `SELECT path, size, mtime_ns, content_hash FROM code_files`)
 	if err != nil {
 		return nil, err
 	}
@@ -241,31 +241,31 @@ func (s *PGStore) Files() ([]FileRecord, error) {
 
 // DeleteByFile removes all elements and relationships belonging to a file.
 // Used by incremental re-index before a file is re-inserted.
-func (s *PGStore) DeleteByFile(path string) error {
-	tx, err := s.pool.Begin(pgCtx)
+func (s *PGStore) DeleteByFile(ctx context.Context, path string) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
-	if _, err := tx.Exec(pgCtx, `DELETE FROM relationships
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := tx.Exec(ctx, `DELETE FROM relationships
 		WHERE source_qualified IN (SELECT qualified_name FROM code_elements WHERE file_path = $1)`, path); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(pgCtx, `DELETE FROM code_elements WHERE file_path = $1`, path); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM code_elements WHERE file_path = $1`, path); err != nil {
 		return err
 	}
-	if err := tx.Commit(pgCtx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteFileRecord removes a file's row from code_files (file deleted from disk).
-func (s *PGStore) DeleteFileRecord(path string) error {
-	if _, err := s.pool.Exec(pgCtx, `DELETE FROM code_files WHERE path = $1`, path); err != nil {
+func (s *PGStore) DeleteFileRecord(ctx context.Context, path string) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM code_files WHERE path = $1`, path); err != nil {
 		return err
 	}
-	return s.BumpWatermark(context.TODO())
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteOrphanRelationships removes every edge whose endpoint is no longer a

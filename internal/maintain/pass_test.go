@@ -26,7 +26,7 @@ func bloatFixture(t *testing.T) store.Backend {
 	}
 	for i := 0; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: "pkg.Fn" + itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + itoa(i),
@@ -39,7 +39,7 @@ func bloatFixture(t *testing.T) store.Backend {
 	}
 	for i := 0; i < 350; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -98,7 +98,7 @@ func TestPassRunsTheIncrementalSweepOnceAutoVacuumIsOn(t *testing.T) {
 	}
 	for i := 350; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -195,7 +195,7 @@ func TestRunFiresOnTicker(t *testing.T) {
 	}
 	for i := 350; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}

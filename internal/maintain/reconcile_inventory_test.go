@@ -163,7 +163,7 @@ func TestReconcileHealsAnInventoryLeftBehind(t *testing.T) {
 
 	// Simulate the earlier reconcile: a delete advances the watermark and
 	// leaves the inventory behind.
-	if err := st.DeleteByFile("gone-long-ago.go"); err != nil {
+	if err := st.DeleteByFile(context.Background(), "gone-long-ago.go"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	n, err = st.ElementCount(context.Background())

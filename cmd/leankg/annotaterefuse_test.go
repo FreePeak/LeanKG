@@ -36,7 +36,7 @@ func TestAnnotateRefusesAnElementTheIndexDoesNotHave(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A real element in the index.
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "pkg/a.go::Do", ElementType: "function", Name: "Do",
 		FilePath: "pkg/a.go", Language: "go", Content: "func Do() {}",
 	}}); err != nil {

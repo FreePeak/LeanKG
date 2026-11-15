@@ -26,7 +26,7 @@ func seedFleetProject(t *testing.T, dir string) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "pkg.Shared", ElementType: "function", Name: "Shared",
 		FilePath: "shared.go", Language: "go",
 	}}); err != nil {

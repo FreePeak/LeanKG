@@ -210,7 +210,7 @@ func TestIndexDocsDeletion(t *testing.T) {
 	if n, _ := st.FileCount(context.Background()); n != 1 {
 		t.Fatalf("file count after deletion: %d, want 1", n)
 	}
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,10 +246,10 @@ func TestIndexDocsSkipList(t *testing.T) {
 func TestIndexDocsScopedToMarkdown(t *testing.T) {
 	dir, st := setupStore(t)
 	writeFile(t, dir, "doc.md", "# Doc\nx\n")
-	if err := st.UpsertFiles([]store.FileRecord{{Path: "src.go", Size: 10, MtimeNS: 1, ContentHash: "deadbeef"}}); err != nil {
+	if err := st.UpsertFiles(context.Background(), []store.FileRecord{{Path: "src.go", Size: 10, MtimeNS: 1, ContentHash: "deadbeef"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "src.go::Widget", Name: "Widget", ElementType: "function",
 		FilePath: "src.go", Language: "go", LineStart: 1, LineEnd: 2,
 	}}); err != nil {
@@ -261,7 +261,7 @@ func TestIndexDocsScopedToMarkdown(t *testing.T) {
 	}
 
 	kept := false
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestIndexDocsUnderKeepsRootKeysAndScope(t *testing.T) {
 	if _, err := IndexDocsUnder(context.Background(), st, dir, filepath.Join(dir, "docs")); err != nil {
 		t.Fatal(err)
 	}
-	files, err := st.Files()
+	files, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

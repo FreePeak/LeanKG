@@ -26,7 +26,7 @@ func openGraph(t *testing.T, qns []string, calls [][2]string) store.Backend {
 	for _, qn := range qns {
 		els = append(els, store.Element{QualifiedName: qn, Name: qn, ElementType: "func", FilePath: qn + ".go"})
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	rels := make([]store.Relationship, 0, len(calls))
@@ -34,7 +34,7 @@ func openGraph(t *testing.T, qns []string, calls [][2]string) store.Backend {
 		rels = append(rels, store.Relationship{Source: c[0], Target: c[1], RelType: "calls", Confidence: 0.9})
 	}
 	if len(rels) > 0 {
-		if err := s.UpsertRelationships(rels); err != nil {
+		if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 			t.Fatalf("upsert relationships: %v", err)
 		}
 	}

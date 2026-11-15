@@ -10,7 +10,7 @@ import (
 // rareTokenClassifier is the part of an engine the CX-11 conformance check
 // needs: seed elements, then ask which query tokens the name arm treats as rare.
 type rareTokenClassifier interface {
-	UpsertElements([]Element) error
+	UpsertElements(ctx context.Context, els []Element) error
 	rareNameTokens(ctx context.Context, query string) ([]string, error)
 }
 
@@ -65,7 +65,7 @@ func checkRareTokenBound(t *testing.T, s rareTokenClassifier) {
 		els = append(els, Element{QualifiedName: fmt.Sprintf("pkg.filler%04d", i), ElementType: "function",
 			Name: fmt.Sprintf("filler%04d", i), FilePath: "pkg/filler.go", Language: "go"})
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	toks, err := s.rareNameTokens(context.Background(), "quartz widget")
