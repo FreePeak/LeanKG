@@ -1,12 +1,10 @@
 package core
 
-// Coverage guard for the action goldens (CX-42). core dispatches on string
-// switches (query, importAction, memoryWrite, ...), not on a registry, so the
-// vocabulary is read from the source: every case literal in a dispatch switch
-// is a key, and each key must be covered by an actionCases entry. A new action
-// or sub-command added to core without a golden fails TestActionVocabulary.
-// CX-43 replaces the switches with a registry; this guard then reads the
-// registry instead and its root table is the only thing to change.
+// Coverage guard for the action goldens (CX-42, read from the registries since
+// CX-43). The vocabulary is every key in an action registry (actionRegistries)
+// plus every case literal in the remaining sub-command switches (vocabRoots).
+// A new action or sub-command added to core without a golden fails
+// TestActionVocabulary.
 
 import (
 	"go/ast"
@@ -25,7 +23,7 @@ import (
 // "<root>/<action>[/<sub-command>]", e.g. "query/memory/view".
 var vocabRoots = map[string]string{
 	"query":             "query",
-	"graphAction":       "query",
+	"queryOntology":     "query/ontology",
 	"importAction":      "import",
 	"memoryWrite":       "import/memory",
 	"sessionWrite":      "import/session",
@@ -105,6 +103,21 @@ func extractVocabulary(t *testing.T, dir string) map[string]bool {
 		}
 	}
 	keys := map[string]bool{}
+	// The action registries are the vocabulary (CX-43). A directory without
+	// them (the synthetic fixture) contributes no registry keys.
+	for name, prefix := range actionRegistries {
+		lit := findRegistry(parsed, name)
+		if lit == nil {
+			continue
+		}
+		for _, elt := range lit.Elts {
+			if kv, ok := elt.(*ast.KeyValueExpr); ok {
+				if key, ok := stringLit(kv.Key, consts); ok {
+					keys[prefix+"/"+displayLit(key)] = true
+				}
+			}
+		}
+	}
 	for _, f := range parsed {
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)

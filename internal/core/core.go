@@ -21,18 +21,14 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/astgrep"
 	"github.com/FreePeak/LeanKG/internal/compress"
-	"github.com/FreePeak/LeanKG/internal/docindex"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/graph"
-	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/lsp"
 	"github.com/FreePeak/LeanKG/internal/memory"
 	"github.com/FreePeak/LeanKG/internal/ontology"
-	"github.com/FreePeak/LeanKG/internal/orgknowledge"
 	"github.com/FreePeak/LeanKG/internal/pathguard"
-	"github.com/FreePeak/LeanKG/internal/prdindex"
 	"github.com/FreePeak/LeanKG/internal/session"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -294,109 +290,11 @@ func (e *Engine) importAction(ctx context.Context, req ImportRequest) (map[strin
 			return nil, err
 		}
 	}
-	switch req.Action {
-	case "git":
-		return e.gitImport(ctx, req)
-	case "docs":
-		if req.Path == "" {
-			return nil, fmt.Errorf("import docs requires path")
-		}
-		dir, _, err := e.projectPath(req.Path)
-		if err != nil {
-			return nil, err
-		}
-		res, err := docindex.IndexDocsUnder(ctx, e.st, e.projectRoot(), dir)
-		if err != nil {
-			return nil, fmt.Errorf("docindex %s: %w", req.Path, err)
-		}
-		if _, err := e.refreshInventory(); err != nil {
-			return nil, err
-		}
-		return map[string]any{
-			"indexed": map[string]any{"files": res.Files, "elements": res.Elements, "skipped": res.Skipped},
-		}, nil
-	case "prd":
-		if req.Path == "" {
-			return nil, fmt.Errorf("import prd requires path (a PRD markdown document)")
-		}
-		env := argStr(req.Args, "environment")
-		if env == "" {
-			env = "local"
-		}
-		_, relDoc, err := e.projectPath(req.Path)
-		if err != nil {
-			return nil, err
-		}
-		res, err := prdindex.IndexDocument(ctx, e.st, e.projectRoot(), relDoc, env)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := e.refreshInventory(); err != nil {
-			return nil, err
-		}
-		return map[string]any{"prd": res}, nil
-	case "repo", "dir":
-		if req.Path == "" {
-			return nil, fmt.Errorf("import %s requires path", req.Action)
-		}
-		target, terr := e.resolveIndexTarget(req.Path)
-		if terr != nil {
-			return nil, terr
-		}
-		// Index through the language registry: activation is per target, so
-		// importing another codebase re-detects its languages first.
-		if e.langsReg != nil {
-			if _, aerr := e.langsReg.Activate(ctx, target); aerr != nil {
-				return nil, fmt.Errorf("language detection: %w", aerr)
-			}
-		}
-		res, err := index.IndexDirWith(ctx, e.st, target, e.langsReg)
-		if err != nil {
-			return nil, fmt.Errorf("index %s: %w", target, err)
-		}
-		if _, err := e.refreshInventory(); err != nil {
-			return nil, err
-		}
-		status, _ := e.Status(ctx)
-		indexed := map[string]any{
-			"files":         res.Files,
-			"elements":      res.Elements,
-			"relationships": res.Relationships,
-			"skipped":       res.Skipped,
-		}
-		// Name the reconcile's deletions: on an unchanged tree any nonzero count
-		// means the walk root did not cover the store's paths (see DeletedFiles).
-		if res.DeletedFiles > 0 {
-			indexed["deleted_files"] = res.DeletedFiles
-		}
-		return map[string]any{"indexed": indexed, "status": status}, nil
-	case "memory":
-		return e.memoryWrite(ctx, req)
-	case "session":
-		return e.sessionWrite(ctx, req)
-	case "read":
-		return e.compressRead(req)
-	case "ontology":
-		if req.Path == "" {
-			return nil, fmt.Errorf("import ontology requires path (ontology dir or concept catalog JSON)")
-		}
-		opath, _, err := e.projectPath(req.Path)
-		if err != nil {
-			return nil, err
-		}
-		if info, err := os.Stat(opath); err == nil && info.IsDir() {
-			stats, err := ontology.LoadWorkflows(e.st, opath)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{"ontology": "synced", "stats": stats}, nil
-		}
-		return e.OntologyMatch(opath)
-	case "":
-		return nil, fmt.Errorf("import requires action (repo, dir, docs, prd, git, memory, session, ontology, read)")
-	default:
+	h, ok := importActions[req.Action]
+	if !ok {
 		return nil, fmt.Errorf("unknown import action %q (valid: repo, dir, docs, git, memory, session, ontology, prd)", req.Action)
 	}
+	return h(e, ctx, req)
 }
 
 // writesStore reports whether an import action writes to the STORE (as
@@ -746,199 +644,12 @@ func (e *Engine) relRef(r session.Ref) session.Ref {
 }
 
 func (e *Engine) query(ctx context.Context, req QueryRequest) (map[string]any, error) {
-	switch req.Action {
-	case "memory":
-		switch cmd := argStr(req.Args, "command"); cmd {
-		case "session_recall", "memories":
-			return e.SessionMemoryRead(ctx, cmd, req.Query, req.Limit, req.Args)
-		case "view":
-			// RS-21: read one memory file by path (was ConnectRPC-only).
-			path := argStr(req.Args, "path")
-			if path == "" {
-				path = req.Query
-			}
-			return e.MemoryRead("view", path, "", 0)
-		case "snapshot":
-			return e.MemoryRead("snapshot", "", "", 0)
-		case "search", "":
-			// The search term rides the top-level `query`, not args.query: the
-			// tool's own schema advertises `query` as the search text, and
-			// session_recall takes it from the same place. A command nobody
-			// spelled correctly used to fall through to here and search, which
-			// reported an empty result instead of the typo.
-			//
-			// An ABSENT command is not a typo: a bare memory read carries no
-			// command at all, and the search is the documented shape for it.
-			// Only a command that is present and wrong is an error.
-			term := req.Query
-			if term == "" {
-				term = argStr(req.Args, "query")
-			}
-			return e.MemoryRead("search", "", term, req.Limit)
-		default:
-			return nil, fmt.Errorf("unknown memory read command %q (valid: session_recall, memories, view, snapshot, search)", cmd)
-		}
-	case "ontology":
-		cmd := argStr(req.Args, "cmd")
-		// FR-HEA-03: the four full-table cmds (trace/status/feature_flow/
-		// traceability) reach Elements() wholesale; on a mega-graph they are
-		// refused with the paginated escape hatch named, exactly as Rust's
-		// handler returned Ok(refusal). concept_search/matches stay unguarded
-		// (KV read / the paginated path itself).
-		if ontology.IsFullScanOntologyCmd(cmd) {
-			if refusal, err := ontology.RefuseFullScanIfMega(e.st, "ontology/"+cmd); err != nil {
-				return nil, err
-			} else if refusal != nil {
-				return refusal, nil
-			}
-		}
-		switch cmd {
-		case "", "matches":
-			return e.OntologyMatches()
-		case "trace":
-			return ontology.TraceQuery(e.st, req.Query)
-		case "status":
-			st, err := ontology.OntologyStatus(e.st)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{"status": st}, nil
-		case "concept_search":
-			res, err := ontology.ConceptSearch(e.st, req.Query, req.Limit)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{"result": res}, nil
-		case "feature_flow":
-			return ontology.FeatureFlow(e.st, req.Query)
-		case "traceability":
-			m, err := ontology.TraceabilityMatrix(e.st)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{"matrix": m}, nil
-		default:
-			return nil, fmt.Errorf("unknown ontology cmd (valid: matches, trace, status, concept_search, feature_flow, traceability)")
-		}
-	case "compress":
-		return e.compressRun(req)
-	case "languages":
-		return e.LanguagesStatus(), nil
-	case "lsp":
-		return e.lspQuery(ctx, req, map[string]any{"query": req.Query})
-	case "pattern":
-		return e.patternQuery(ctx, req, map[string]any{"query": req.Query})
-	case "session":
-		return e.SessionRead(argStr(req.Args, "command"), req.Query, argStr(req.Args, "node_id"))
-	case "prd":
-		rows, err := prdindex.Trace(e.st, req.Query)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"requirements": rows, "count": len(rows)}, nil
-	case "incidents":
-		k := orgknowledge.New(e.st)
-		incidents, err := k.QueryIncidents(argStr(req.Args, "service"), argStr(req.Args, "pattern"), argStr(req.Args, "env"), req.Limit)
-		if err != nil {
-			return nil, err
-		}
-		if incidents == nil {
-			incidents = []store.Incident{}
-		}
-		return map[string]any{"incidents": incidents, "query": map[string]any{
-			"service": argStr(req.Args, "service"), "pattern": argStr(req.Args, "pattern"),
-			"env": argStr(req.Args, "env"), "limit": req.Limit,
-		}}, nil
-	case "env_conflicts":
-		conflicts, err := orgknowledge.New(e.st).FindEnvConflicts(argStr(req.Args, "service"))
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"conflicts": conflicts, "service": argStr(req.Args, "service")}, nil
-	case "service_context":
-		return orgknowledge.New(e.st).ServiceContextJSON(argStr(req.Args, "service"), argStr(req.Args, "env"))
-	case "history", "cochange", "churn":
-		return e.gitHistoryQuery(ctx, req)
-	case "portfolio":
-		// Issue #376: the fleet read. The registry, the hot-set cap, the merge
-		// and the T0 manifest live in internal/portfolioreg; portfolio.go (this
-		// package) runs the REAL ladder inside each hot project.
-		return e.portfolioQuery(ctx, req)
-	case "", "search", "exact", "fuzzy", "semantic", "element", "impact", "path", "callers", "callees", "context", "explain":
-	default:
+	h, ok := queryActions[req.Action]
+	if !ok {
 		return nil, errs.NewError(errs.UnknownAction,
 			fmt.Sprintf("query action %q (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology, prd, incidents, env_conflicts, service_context, portfolio, history, cochange, churn; empty = ladder router)", req.Action), "")
 	}
-	if req.Query == "" {
-		return nil, fmt.Errorf("query requires query text")
-	}
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	resp := map[string]any{"query": req.Query, "limit": limit}
-
-	els, _ := e.st.ElementCount()
-	resp["freshness"] = e.freshness(els)
-	// One population rule for every rung: git history rows are hidden unless
-	// args.include_git is set (see searchKeep). The semantic rung applies the
-	// same rule as a store-side predicate.
-	keep := searchKeep(req.Args)
-
-	switch req.Action {
-	case "exact", "element":
-		return e.rungExact(ctx, req.Query, limit, resp, true, keep)
-	case "fuzzy":
-		return e.rungFuzzy(ctx, req.Query, limit, resp, true, keep)
-	case "semantic":
-		return e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args)
-	case "impact", "path", "callers", "callees", "context", "explain":
-		return e.graphAction(ctx, req, resp)
-	}
-
-	// One check per rung boundary: the ladder below ignores rung errors on
-	// purpose (a miss falls through), so cancellation is checked here instead.
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	// Ladder router: L0 cold → L1 exact → L2 fuzzy → L3 semantic.
-	if els == 0 {
-		resp["retrieval"] = map[string]any{"rung": "L0", "reason": "no elements indexed"}
-		resp["hits"] = []any{}
-		resp["guidance"] = "Index a repository first: leankg import <dir> or tool import {action:\"repo\", path:...}"
-		return resp, nil
-	}
-	if _, err := e.rungExact(ctx, req.Query, limit, resp, false, keep); err == nil && len(hitsOf(resp)) > 0 {
-		resp["retrieval"] = map[string]any{"rung": "L1", "reason": "exact identifier match"}
-		return resp, nil
-	}
-	// RS-12: a prose question goes to the hybrid L3 rung (keyword + vector
-	// fused) whenever a query embedder is wired. The keyword rung ORs every
-	// term, so it is never empty for prose and the ladder used to stop there:
-	// 16 of 16 natural-language questions were answered by keyword alone.
-	// Identifier-shaped queries keep L1 → L2 → L3. The Noul confidence gate
-	// still holds L3 back for queries the ontology rates as noise.
-	if e.embedder != nil && isProse(req.Query) {
-		if conf, _ := ontology.OntologyConfidence(e.st, req.Query); conf == 0 || conf >= ontology.MinConfidence {
-			delete(resp, "guidance")
-			return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args))
-		}
-	}
-	// pin=true: the rung knows which keyword arm served the hits, so it owns
-	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
-	if _, err := e.rungFuzzy(ctx, req.Query, limit, resp, true, keep); err == nil && len(hitsOf(resp)) > 0 {
-		return resp, nil
-	}
-	// Noul L3 gate: ontology confidence below MinConfidence
-	// (0.3) justifies no embedding call — degrade to L2.
-	conf, _ := ontology.OntologyConfidence(e.st, req.Query)
-	if conf > 0 && conf < ontology.MinConfidence {
-		return withEmptyHint(e.rungFuzzy(ctx, req.Query, limit, resp, true, keep))
-	}
-	// The empty L2 pass above left "No keyword match…" guidance; L3 sets its
-	// own (an outage reads as an outage, not as a phrasing problem — RS-15).
-	delete(resp, "guidance")
-	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, req.Args))
+	return h(e, ctx, req)
 }
 
 func hitsOf(resp map[string]any) []map[string]any {
@@ -1212,96 +923,11 @@ func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest) (map[string
 	if e.mem == nil {
 		return nil, fmt.Errorf("memory not initialized")
 	}
-	get := func(key string) string {
-		if s, ok := req.Args[key].(string); ok && s != "" {
-			return s
-		}
-		// MCP callers pass the memory file at the top-level path field.
-		if key == "path" {
-			return req.Path
-		}
-		return ""
-	}
-	getInt := func(key string) int {
-		f, _ := req.Args[key].(float64)
-		return int(f)
-	}
-	var err error
-	switch req.Command {
-	case "session_retain":
-		scope, serr := memory.ParseScope(get("scope"))
-		if serr != nil {
-			return nil, serr
-		}
-		cwd := get("cwd")
-		if cwd == "" {
-			cwd = e.projectDir
-		}
-		// K2: tags are first-class on the retain path, so a tag-scoped recall
-		// can match what a conversation wrote. argStrs also accepts a
-		// comma-separated string ("a,b"), which is the shape an agent most
-		// often sends when the schema names one field.
-		tags := argStrs(req.Args, "tags")
-		res, serr := e.mem.SessionRetain(ctx, scope, cwd, get("bank"), get("session_id"), argStrs(req.Args, "turns"), getInt("retained_through_user_turn"), tags)
-		if serr != nil {
-			return nil, serr
-		}
-		return map[string]any{"ok": true, "command": "session_retain", "bank": res.Bank, "written": res.Written, "skipped": res.Skipped, "retained_through_user_turn": res.RetainedThroughUserTurn}, nil
-	case "create":
-		// create keeps the memory-tool contract (create or overwrite), but an
-		// overwrite is reported, never silent.
-		existed := e.mem.Exists(get("path"))
-		if err = e.mem.Create(get("path"), get("content")); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true, "command": req.Command, "overwrote": existed}, nil
-	case "str_replace":
-		err = e.mem.StrReplace(get("path"), get("old"), get("new"))
-	case "insert":
-		err = e.mem.Insert(get("path"), get("content"), getInt("insert_line"))
-	case "delete":
-		err = e.mem.Delete(get("path"))
-	case "delete_document":
-		// The bank-row delete. The REST mount had it (DELETE
-		// /v1/default/banks/{bank}/documents/{id}) and the MCP surface did
-		// not, so an MCP client — the primary surface for the omp memory
-		// backend — could never remove a memory row.
-		docID := strings.TrimSpace(get("document_id"))
-		if docID == "" {
-			return nil, fmt.Errorf("memory: delete_document requires a document_id")
-		}
-		scope, serr := memory.ParseScope(get("scope"))
-		if serr != nil {
-			return nil, serr
-		}
-		cwd := get("cwd")
-		if cwd == "" {
-			cwd = e.projectDir
-		}
-		bankName := e.mem.WriteBank(scope, cwd, get("bank"))
-		n, derr := e.mem.DeleteDocument(ctx, bankName, docID)
-		if derr != nil {
-			return nil, derr
-		}
-		return map[string]any{
-			"ok": true, "command": "delete_document", "bank": bankName,
-			"document_id": docID, "memory_units_deleted": n,
-		}, nil
-	case "rename":
-		err = e.mem.Rename(get("path"), get("new_path"))
-	case "add":
-		err = e.mem.Add(get("file"), get("text"))
-	case "replace":
-		err = e.mem.Replace(get("file"), get("old"), get("new"))
-	case "remove":
-		err = e.mem.Remove(get("file"), get("text"))
-	default:
+	h, ok := memoryWriteCommands[req.Command]
+	if !ok {
 		return nil, fmt.Errorf("unknown memory command %q (valid: create, str_replace, insert, delete, delete_document, rename, add, replace, remove, session_retain)", req.Command)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"ok": true, "command": req.Command}, nil
+	return h(e, ctx, req)
 }
 
 // MemoryRead handles read-only memory commands: view, snapshot, search.
@@ -1309,31 +935,11 @@ func (e *Engine) MemoryRead(command, path, query string, limit int) (map[string]
 	if e.mem == nil {
 		return nil, fmt.Errorf("memory not initialized")
 	}
-	switch command {
-	case "view":
-		text, err := e.mem.View(path, 0)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"command": "view", "path": path, "content": text}, nil
-	case "snapshot":
-		text, err := e.mem.Snapshot()
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"command": "snapshot", "content": text}, nil
-	case "search":
-		if limit <= 0 {
-			limit = 10
-		}
-		hits, err := e.mem.Search(query, limit)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"command": "search", "hits": hits}, nil
-	default:
+	h, ok := memoryReadCommands[command]
+	if !ok {
 		return nil, fmt.Errorf("unknown memory read command %q (valid: view, snapshot, search)", command)
 	}
+	return h(e, path, query, limit)
 }
 
 // --- shaping ---
@@ -1459,160 +1065,6 @@ func (e *Engine) resolveGraphSeed(ctx context.Context, seed string) (string, err
 		return seed, nil
 	}
 	return els[0].QualifiedName, nil
-}
-
-// graphAction routes the connection verbs (Rust graph/query.rs parity) to
-// internal/graph. The query string may be a bare name or a qualified name —
-// bare names are resolved via FindExact before traversal.
-func (e *Engine) graphAction(ctx context.Context, req QueryRequest, resp map[string]any) (map[string]any, error) {
-	g := func() map[string]any {
-		resp["action"] = req.Action
-		return resp
-	}
-	// One recovery sentence for an unresolvable end of the walk: name WHICH
-	// end was not found, quote it, and give the one step that fixes it. That
-	// is what lets an agent tell a typo from a verb that is misconfigured.
-	// The value is the string the lookup was given, not the verb.
-	//
-	// An unresolvable end is an ANSWER, never graph.ErrUnknownNode: that error
-	// reached the agent as a failed tool call reading `graph: unknown node`,
-	// naming neither the verb nor the seed nor a next step, and it made the
-	// same typo look like a broken verb.
-	unresolved := func(what, value string) (map[string]any, error) {
-		resp["hits"] = []any{}
-		resp["reachable"] = false
-		resp["guidance"] = fmt.Sprintf(
-			"No indexed element matches the %s %q; resolve it with query (action empty) to a qualified_name, then retry %s with that exact QN.",
-			what, value, req.Action)
-		return g(), nil
-	}
-	seed, err := e.resolveGraphSeed(ctx, req.Query)
-	if err != nil {
-		return nil, err
-	}
-	if seed != req.Query {
-		resp["resolved_query"] = seed
-	}
-	switch req.Action {
-	case "impact":
-		// depth comes from args.depth (Rust --depth parity); limit is a
-		// result-count concept, not a traversal depth.
-		depth := argInt(req.Args, "depth", 2)
-		hits, bounds, err := graph.Impact(ctx, e.st, seed, depth)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
-		if err != nil {
-			return nil, err
-		}
-		// The result carries the VERB's name, like every other graph verb:
-		// impact under `hits` was the same key the search ladder uses, and
-		// these are different shapes (qualified_name + depth, not elements),
-		// so the plausible reading of a 21-entry `hits` was "21 elements
-		// matched a text query" when it meant "21 nodes depend on this". The
-		// alias stays so an agent that learned `hits` is not broken.
-		resp["impact"] = hits
-		resp["hits"] = hits
-		markBounds(resp, bounds)
-		return g(), nil
-	case "path":
-		toRaw := argStr(req.Args, "to")
-		if toRaw == "" {
-			return nil, fmt.Errorf("query path requires args.to (target qualified name)")
-		}
-		to, err := e.resolveGraphSeed(ctx, toRaw)
-		if err != nil {
-			return nil, err
-		}
-		if to != toRaw {
-			resp["resolved_to"] = to
-		}
-		// maxDepth comes from args.depth (default 2) — Limit is a result
-		// count, not a traversal bound; paths are a single answer anyway.
-		maxDepth := argInt(req.Args, "depth", 0) // 0 = graph default
-		path, bounds, err := graph.ShortestPath(ctx, e.st, seed, to, maxDepth)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			// Name the end that is unknown: "graph: unknown node" left the
-			// caller guessing which of from/to to fix. And answer, rather
-			// than fail: the end that does not resolve is a fact the caller
-			// can act on.
-			for _, end := range []struct{ label, qn string }{{"from (query)", seed}, {"to (args.to)", to}} {
-				if els, ferr := e.st.FindExact(end.qn); ferr == nil && len(els) == 0 {
-					return unresolved(end.label, end.qn)
-				}
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-		markBounds(resp, bounds)
-		switch {
-		case path != nil:
-			resp["path"] = path
-			resp["reachable"] = true
-		case bounds.Truncated:
-			// The walk stopped at the node budget: the answer is unknown, so
-			// reachable is left out rather than reported as false.
-			resp["path"] = []string{}
-			resp["guidance"] = "Search stopped at the node budget before reaching the target; the answer is unknown, not unreachable. Narrow the question or lower args.depth."
-		default:
-			resp["path"] = []string{}
-			resp["reachable"] = false
-			resp["guidance"] = "No path found. Confirm both ends with query (action empty) and retry path with exact qualified_names (args.to required)."
-		}
-		return g(), nil
-	case "callers":
-		qns, err := graph.Callers(ctx, e.st, seed)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
-		if err != nil {
-			return nil, err
-		}
-		resp["callers"] = qns
-		if len(qns) == 0 {
-			resp["guidance"] = graphEmptyGuidance("callers", seed)
-		}
-		return g(), nil
-	case "callees":
-		qns, err := graph.Callees(ctx, e.st, seed)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
-		if err != nil {
-			return nil, err
-		}
-		resp["callees"] = qns
-		if len(qns) == 0 {
-			resp["guidance"] = graphEmptyGuidance("callees", seed)
-		}
-		return g(), nil
-	case "context":
-		out, err := graph.Context(ctx, e.st, seed, req.Limit)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range out {
-			resp[k] = v
-		}
-		return g(), nil
-	case "explain":
-		out, err := graph.Explain(ctx, e.st, seed)
-		if errors.Is(err, graph.ErrUnknownNode) {
-			return unresolved("seed", req.Query)
-		}
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range out {
-			resp[k] = v
-		}
-		return g(), nil
-	}
-	return nil, fmt.Errorf("unreachable graph action %q", req.Action)
 }
 
 // markBounds reports the effective depth of a traversal and, only when the node
