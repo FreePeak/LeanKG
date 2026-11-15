@@ -1,6 +1,6 @@
 # Plan: context propagation and interface redesign
 
-**Status:** IN PROGRESS (2026-11-13): CX-13 is in a PR; the rest is not started · **Tracks:** [plan-context-and-interfaces-refactor-tracker.md](plan-context-and-interfaces-refactor-tracker.md) (`CX-01..CX-52`) · **Base:** `6b4b741e`
+**Status:** IMPLEMENTED on the local integration branch `integration/cx`, pending review (2026-11-15): CX-13 is PR #584, the other rows are local and not pushed, CX-52 is dropped (D6) · **Tracks:** [plan-context-and-interfaces-refactor-tracker.md](plan-context-and-interfaces-refactor-tracker.md) (`CX-01..CX-52`) · **Base:** `6b4b741e`
 **Source:** a static review of the whole module on 2026-11-13. An AST scan of the 326 non-test, non-generated Go files produced the counts below; a per-package read of every slice (store; core/graph/mcp; rest/rpc/web/dashboard/auth; index/docindex/prdindex/langs/ontology/tstree; embed/memory; cmd/telemetry/sessionlink/update; the remaining packages) produced the findings. Findings marked **verified** were re-read line by line while writing this plan; the rest come from the per-package review and are re-confirmed by the failing test that opens each PR. Nothing here was reproduced against a running server.
 
 This is the working plan for one programme of waves. When a phase lands, its outcome moves into the PRD changelog; when the last phase lands, this file moves to `docs/archive/`.
@@ -389,7 +389,7 @@ Optional, and last.
 | # | Decision | Recommendation |
 |---|---|---|
 | D1 | the web API is unauthenticated on the `--ui` listener by design (`cmd/leankg/main.go:687-697`), and `/api/file` serves any file under the project root (`web/api_file.go:169-198`) | gate `/api/file` behind the bearer token when the gate is on; serve it ungated only on a loopback bind |
-| D2 | rare-token bound: `/5000` (SQLite today) or `/500` (PG today, and the comments) | `/500` on both engines, after measuring SQLite recall before and after |
+| D2 | rare-token bound: `/5000` (SQLite today) or `/500` (PG today, and the comments) | `/5000` on both engines, per the measured SQLite recall before and after (decided; PG recall and the real-embedder sweep are still open) |
 | D3 | login throttle | in-memory per-account backoff, in the same PR as the uniform error (CX-12) |
 | D4 | where the token budget applies | in core, for every transport; the MCP default stays the same |
 | D5 | `index --hook` time budget | 10 s by default, overridable by flag or environment |
