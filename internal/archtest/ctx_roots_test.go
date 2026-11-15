@@ -12,7 +12,6 @@ import (
 var backgroundBudget = map[string]int{
 	"internal/index":     2,
 	"internal/lsp":       1,
-	"internal/memory":    11,
 	"internal/registry":  1,
 	"internal/session":   1,
 	"internal/setup":     1,
