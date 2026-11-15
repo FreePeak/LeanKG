@@ -1,0 +1,26 @@
+{
+  "result": {
+    "code_ref_count": 0,
+    "concept_match_count": 0,
+    "extracted_keywords": [
+      "alpha"
+    ],
+    "fallback_results": [
+      {
+        "content": "func Alpha() int {\n\treturn Beta() + 1\n}",
+        "element_type": "function",
+        "file_path": "src/alpha.go",
+        "language": "go",
+        "line_end": 3,
+        "line_start": 1,
+        "name": "Alpha",
+        "qualified_name": "src/alpha.go::Alpha"
+      }
+    ],
+    "fallback_used": true,
+    "linked_code": [],
+    "linked_code_count": 0,
+    "matched_concepts": [],
+    "query": "alpha"
+  }
+}

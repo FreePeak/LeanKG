@@ -1,0 +1,13 @@
+{
+  "partners": [
+    {
+      "count": 1,
+      "path": ".gitignore"
+    },
+    {
+      "count": 1,
+      "path": "util.go"
+    }
+  ],
+  "path": "main.go"
+}

@@ -1,0 +1,3 @@
+{
+  "error": "LEANKG_ERROR_UNKNOWN_ACTION: query action \"bogus\" (valid: search, exact, fuzzy, semantic, element, impact, path, callers, callees, context, explain, memory, session, ontology, prd, incidents, env_conflicts, service_context, portfolio, history, cochange, churn; empty = ladder router). Fix: use one of the tool's documented action values (see the tool's inputSchema `action` enum in tools/list for the exact set) (docs: docs/archive/mcp-tools.md)"
+}

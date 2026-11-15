@@ -1,0 +1,20 @@
+{
+  "conflicts": [
+    {
+      "conflict_type": "missing_in_env",
+      "detail": "Service 'svc-a' is missing in local environment",
+      "risk": "MEDIUM"
+    },
+    {
+      "conflict_type": "missing_in_env",
+      "detail": "Service 'svc-a' is missing in staging environment",
+      "risk": "MEDIUM"
+    },
+    {
+      "conflict_type": "missing_in_env",
+      "detail": "Service 'svc-a' is missing in production environment",
+      "risk": "HIGH"
+    }
+  ],
+  "service": "svc-a"
+}

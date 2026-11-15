@@ -1,0 +1,12 @@
+{
+  "command": "canvas",
+  "refs": [
+    {
+      "node_id": "node-1",
+      "path": ".leankg/sessions/s1/refs/node-1.md",
+      "sha256": "47317b01099959fa40efebee37254415511f6f9fde3c93a74223e3730e515398",
+      "summary": "short"
+    }
+  ],
+  "session_id": "s1"
+}

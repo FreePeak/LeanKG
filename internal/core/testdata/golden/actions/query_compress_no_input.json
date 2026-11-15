@@ -1,0 +1,3 @@
+{
+  "error": "query compress requires one of: args.tool+args.response, args.cmd (+ output in query), or a file path in query"
+}

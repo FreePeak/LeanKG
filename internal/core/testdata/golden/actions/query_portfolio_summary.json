@@ -1,0 +1,10 @@
+{
+  "action": "portfolio",
+  "cmd": "summary",
+  "count": 0,
+  "hot_limit": 8,
+  "projects": [],
+  "registered": 0,
+  "registry": "sqlite portfolio registry at <TMP>/portfolio.db",
+  "tier": "T0 — registry rows and on-disk store presence; no project store was opened"
+}
