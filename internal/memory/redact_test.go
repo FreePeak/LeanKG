@@ -24,7 +24,7 @@ import (
 // The secrets here are invented shapes (FK-0001), never a real credential.
 func TestMemoryWriteRedactsSecrets(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,21 +38,21 @@ func TestMemoryWriteRedactsSecrets(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{"create", func() error { return m.Create("topics/probe.md", body) }},
-		{"append", func() error { return m.Append("topics/probe.md", body) }},
+		{"create", func() error { return m.Create(context.Background(), "topics/probe.md", body) }},
+		{"append", func() error { return m.Append(context.Background(), "topics/probe.md", body) }},
 		{"insert", func() error {
 			// insert/add READ the file first, so seed it the way production
 			// callers do: these verbs edit an existing note.
-			if err := m.Create("topics/probe.md", "seed line\n"); err != nil {
+			if err := m.Create(context.Background(), "topics/probe.md", "seed line\n"); err != nil {
 				return err
 			}
-			return m.Insert("topics/probe.md", body, 1)
+			return m.Insert(context.Background(), "topics/probe.md", body, 1)
 		}},
 		{"add", func() error {
-			if err := m.Create("topics/probe.md", "seed line\n"); err != nil {
+			if err := m.Create(context.Background(), "topics/probe.md", "seed line\n"); err != nil {
 				return err
 			}
-			return m.Add("topics/probe.md", body)
+			return m.Add(context.Background(), "topics/probe.md", body)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +89,7 @@ func TestMemoryWriteRedactsSecrets(t *testing.T) {
 // the operator put there.
 func TestMemoryReadsUntouched(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestMemoryReadsUntouched(t *testing.T) {
 // prompt is otherwise in the bank verbatim forever.
 func TestSessionRetainRedactsSecrets(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestSessionRetainIndexesRedactedText(t *testing.T) {
 // The secrets are invented shapes (FK-0001), never a real credential.
 func TestPreFixMemoryIsRedactedOnRead(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestPreFixMemoryIsRedactedOnRead(t *testing.T) {
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
 	}
-	m, err = Open(dir, false)
+	m, err = Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestPreFixMemoryIsRedactedOnRead(t *testing.T) {
 		assertClean(t, "View", got)
 	})
 	t.Run("search", func(t *testing.T) {
-		hits, err := m.Search("rotate", 10)
+		hits, err := m.Search(context.Background(), "rotate", 10)
 		if err != nil {
 			t.Fatal(err)
 		}

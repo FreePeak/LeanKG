@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -14,7 +15,7 @@ import (
 // openFTS opens (creating if needed) the FTS5 side index at path and applies
 // its schema. It mirrors the store's DSN style: busy_timeout plus WAL, one
 // connection so writes serialize.
-func openFTS(path string) (*sql.DB, error) {
+func openFTS(ctx context.Context, path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("memory: create root: %w", err)
 	}
@@ -50,7 +51,7 @@ func openFTS(path string) (*sql.DB, error) {
 		`CREATE TABLE IF NOT EXISTS memory_cursors (
 			kind TEXT NOT NULL, key TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (kind, key))`,
 	} {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("memory: init FTS schema: %w", err)
 		}
@@ -60,8 +61,9 @@ func openFTS(path string) (*sql.DB, error) {
 
 // reindex replaces a file's rows in the FTS index. One row per non-empty
 // line, path-keyed; called after every successful write.
-func (m *Memory) reindex(key string) error {
-	if err := m.deleteRows(key); err != nil {
+func (m *Memory) reindex(ctx context.Context, key string) error {
+	ctx = context.WithoutCancel(ctx)
+	if err := m.deleteRows(ctx, key); err != nil {
 		return err
 	}
 	data, err := os.ReadFile(filepath.Join(m.real, filepath.FromSlash(key)))
@@ -71,18 +73,18 @@ func (m *Memory) reindex(key string) error {
 		}
 		return err
 	}
-	tx, err := m.fts.Begin()
+	tx, err := m.fts.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := insertFileRows(tx, key, string(data)); err != nil {
+	if err := insertFileRows(ctx, tx, key, string(data)); err != nil {
 		tx.Rollback()
 		return err
 	}
 	return tx.Commit()
 }
 
-func insertFileRows(tx *sql.Tx, key, data string) error {
+func insertFileRows(ctx context.Context, tx *sql.Tx, key, data string) error {
 	for i, line := range strings.Split(Redact(data), "\n") {
 		if i > 10000 {
 			break // index the head; whole-file BLOBs are a W2 upgrade
@@ -91,7 +93,7 @@ func insertFileRows(tx *sql.Tx, key, data string) error {
 		if line == "" {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO memory_fts(kind, path, bank, entry_id, doc, body) VALUES ('file', ?, '', '', '', ?)`, key, line); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO memory_fts(kind, path, bank, entry_id, doc, body) VALUES ('file', ?, '', '', '', ?)`, key, line); err != nil {
 			return err
 		}
 	}
@@ -99,8 +101,9 @@ func insertFileRows(tx *sql.Tx, key, data string) error {
 }
 
 // deleteRows removes all index rows for one path.
-func (m *Memory) deleteRows(key string) error {
-	if _, err := m.fts.Exec(`DELETE FROM memory_fts WHERE kind = 'file' AND path = ?`, key); err != nil {
+func (m *Memory) deleteRows(ctx context.Context, key string) error {
+	ctx = context.WithoutCancel(ctx)
+	if _, err := m.fts.ExecContext(ctx, `DELETE FROM memory_fts WHERE kind = 'file' AND path = ?`, key); err != nil {
 		return err
 	}
 	return nil
@@ -118,7 +121,7 @@ type Hit struct {
 // needs one of them, ranking rewards more and rarer ones) after dropping
 // stopwords; the old per-line AND missed any fact whose words spanned two
 // lines.
-func (m *Memory) Search(query string, limit int) ([]Hit, error) {
+func (m *Memory) Search(ctx context.Context, query string, limit int) ([]Hit, error) {
 	match := matchQuery(query)
 	if match == "" {
 		return []Hit{}, nil
@@ -126,7 +129,7 @@ func (m *Memory) Search(query string, limit int) ([]Hit, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := m.fts.Query(`
+	rows, err := m.fts.QueryContext(ctx, `
 		SELECT path, body, bm25(memory_fts) AS score
 		FROM memory_fts
 		WHERE memory_fts MATCH ? AND kind = 'file'
@@ -208,22 +211,25 @@ type SpaceReport struct {
 //
 // Safe on a live memory: it takes this handle's own write connection (one per
 // Memory, MaxOpenConns(1)) and no other.
-func (m *Memory) Compact() error {
+func (m *Memory) Compact(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var mode int64
-	if err := m.fts.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+	if err := m.fts.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&mode); err != nil {
 		// An index too old to answer the pragma is not a reason to skip the
 		// reclaim; fall through to the vacuum.
 		mode = 0
 	}
 	if mode == 0 {
-		if _, err := m.fts.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+		if _, err := m.fts.ExecContext(ctx, `PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
 			return fmt.Errorf("memory: request incremental vacuum: %w", err)
 		}
-		if _, err := m.fts.Exec(`VACUUM`); err != nil {
+		if _, err := m.fts.ExecContext(ctx, `VACUUM`); err != nil {
 			return fmt.Errorf("memory: enable incremental vacuum: %w", err)
 		}
 	}
-	if _, err := m.fts.Exec(`PRAGMA incremental_vacuum`); err != nil {
+	if _, err := m.fts.ExecContext(ctx, `PRAGMA incremental_vacuum`); err != nil {
 		return fmt.Errorf("memory: incremental vacuum: %w", err)
 	}
 	// The bank JSONL files are the source of truth on disk. A compaction
@@ -231,17 +237,17 @@ func (m *Memory) Compact() error {
 	// forever (measured: the live bank grew ~88.6 KB/day, ~45 rows/day,
 	// 448 rows for 304 distinct bodies), so the bank files are rewritten
 	// here too — crash-safely, and with no row lost.
-	if err := m.compactBanks(); err != nil {
+	if err := m.compactBanks(ctx); err != nil {
 		return fmt.Errorf("memory: compact banks: %w", err)
 	}
 	// The stale vector collections go with them: a collection under a model
 	// id nobody queries any more is dead weight (dense.go keys vectors by
 	// model, so nothing ever looked at it again). The live collection is
 	// never touched.
-	if _, _, err := m.PruneStaleVectors(); err != nil {
+	if _, _, err := m.PruneStaleVectors(ctx); err != nil {
 		return fmt.Errorf("memory: prune stale vectors: %w", err)
 	}
-	if _, err := m.fts.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+	if _, err := m.fts.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		return fmt.Errorf("memory: wal_checkpoint(TRUNCATE): %w", err)
 	}
 	return nil
@@ -251,7 +257,7 @@ func (m *Memory) Compact() error {
 // no-write probe, and it reports page_count rather than the stat size: in WAL
 // mode a mass delete frees pages into the -wal sidecar, and the main file only
 // shrinks once that sidecar is checkpointed back — which is what Compact does.
-func (m *Memory) Space() (SpaceReport, error) {
+func (m *Memory) Space(ctx context.Context) (SpaceReport, error) {
 	rep := SpaceReport{Path: m.ftsPath}
 	if fi, err := os.Stat(m.ftsPath); err == nil {
 		rep.SizeBytes = fi.Size()
@@ -260,13 +266,13 @@ func (m *Memory) Space() (SpaceReport, error) {
 		rep.WALBytes = fi.Size()
 	}
 	var pageSize, pageCount, freelist int64
-	if err := m.fts.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+	if err := m.fts.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
 		return rep, fmt.Errorf("memory: page_size: %w", err)
 	}
-	if err := m.fts.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+	if err := m.fts.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
 		return rep, fmt.Errorf("memory: page_count: %w", err)
 	}
-	if err := m.fts.QueryRow(`PRAGMA freelist_count`).Scan(&freelist); err != nil {
+	if err := m.fts.QueryRowContext(ctx, `PRAGMA freelist_count`).Scan(&freelist); err != nil {
 		return rep, fmt.Errorf("memory: freelist_count: %w", err)
 	}
 	rep.PageSize = pageSize

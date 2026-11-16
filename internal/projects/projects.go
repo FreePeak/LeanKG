@@ -380,7 +380,7 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	}
 	var mem *memory.Memory
 	if cfg.Memory {
-		if mem, err = memory.Open(dir, false); err != nil {
+		if mem, err = memory.Open(ctx, dir, false); err != nil {
 			_ = st.Close()
 			return nil, fmt.Errorf("projects: memory for %s: %w", dir, err)
 		}

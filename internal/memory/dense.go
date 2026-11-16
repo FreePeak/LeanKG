@@ -81,7 +81,7 @@ func modelIDOf(key string) string {
 // local|384" next to the live collection's 690 rows (1,413,120 B), and the
 // old collection was never collected — dense.go keys vectors by model, so
 // nothing ever looked at it again.
-func (m *Memory) PruneStaleVectors() (models int, vectors int, err error) {
+func (m *Memory) PruneStaleVectors(ctx context.Context) (models int, vectors int, err error) {
 	m.vecMu.Lock()
 	defer m.vecMu.Unlock()
 	keep := m.keepModelIDs
@@ -100,7 +100,7 @@ func (m *Memory) PruneStaleVectors() (models int, vectors int, err error) {
 		// Nothing is known to be live: keep every collection.
 		return 0, 0, nil
 	}
-	rows, err := m.fts.Query(`SELECT model, COUNT(*) FROM memory_vectors GROUP BY model`)
+	rows, err := m.fts.QueryContext(ctx, `SELECT model, COUNT(*) FROM memory_vectors GROUP BY model`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("memory: read vector collections: %w", err)
 	}
@@ -125,7 +125,7 @@ func (m *Memory) PruneStaleVectors() (models int, vectors int, err error) {
 		return 0, 0, fmt.Errorf("memory: read vector collections: %w", err)
 	}
 	for _, d := range drop {
-		if _, err := m.fts.Exec(`DELETE FROM memory_vectors WHERE model = ?`, d.model); err != nil {
+		if _, err := m.fts.ExecContext(ctx, `DELETE FROM memory_vectors WHERE model = ?`, d.model); err != nil {
 			return models, vectors, fmt.Errorf("memory: prune vector collection %s: %w", d.model, err)
 		}
 		models++

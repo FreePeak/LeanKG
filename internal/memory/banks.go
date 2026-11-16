@@ -227,7 +227,13 @@ func (m *Memory) SessionRetain(ctx context.Context, scope Scope, cwd, bank, sess
 		return RetainResult{}, fmt.Errorf("memory: retained_through_user_turn must be >= 0")
 	}
 	target := m.WriteBank(scope, cwd, bank)
-	if seen, ok := m.sessionCursor(sessionID); ok && throughUserTurn <= seen {
+	seen, ok := m.sessionCursor(ctx, sessionID)
+	// A cancelled read reports no cursor; without this check the gate would open
+	// and a batch already retained could be appended a second time.
+	if err := ctx.Err(); err != nil {
+		return RetainResult{}, err
+	}
+	if ok && throughUserTurn <= seen {
 		recordRetain(ctx, target, 0, len(turns), 0, start)
 		return RetainResult{Bank: target, Skipped: len(turns), RetainedThroughUserTurn: seen}, nil
 	}
@@ -251,7 +257,7 @@ func (m *Memory) SessionRetain(ctx context.Context, scope Scope, cwd, bank, sess
 			Metadata:   entryMetadata(sessionID, sourceID, len(turns), throughUserTurn, cwd, tags),
 		})
 	}
-	if err := m.appendBank(target, entries); err != nil {
+	if err := m.appendBank(ctx, target, entries); err != nil {
 		return RetainResult{}, err
 	}
 	recordRetain(ctx, target, len(entries), 0, 0, start)
@@ -312,8 +318,8 @@ func (m *Memory) scopeCwd(cwd string) string {
 // session across every bank (Rust retained_through_user_turn, store.rs:64-87
 // — session-keyed, so concurrent sessions sharing one bank never suppress
 // each other's batches; the REST Retain contract stays per-bank by design).
-func (m *Memory) sessionCursor(sessionID string) (int, bool) {
-	return m.cursor("session", sessionID)
+func (m *Memory) sessionCursor(ctx context.Context, sessionID string) (int, bool) {
+	return m.cursor(ctx, "session", sessionID)
 }
 
 // Retain appends a transcript batch to a bank as JSONL, tagging every row's
@@ -331,7 +337,13 @@ func (m *Memory) Retain(ctx context.Context, bank string, entries []Entry, throu
 		return RetainResult{}, err
 	}
 	start := time.Now()
-	if cur := m.bankCursor(bank); throughUserTurn <= cur {
+	cur := m.bankCursor(ctx, bank)
+	// A cancelled read reports cursor 0; without this check the gate would open
+	// and a batch already retained could be appended a second time.
+	if err := ctx.Err(); err != nil {
+		return RetainResult{}, err
+	}
+	if throughUserTurn <= cur {
 		recordRetain(ctx, bank, 0, len(entries), 0, start)
 		return RetainResult{Bank: bank, Skipped: len(entries), RetainedThroughUserTurn: cur}, nil
 	}
@@ -342,7 +354,7 @@ func (m *Memory) Retain(ctx context.Context, bank string, entries []Entry, throu
 		entries[i].Metadata["retained_through_user_turn"] = throughUserTurn
 	}
 	applyEntryDefaults(entries)
-	if err := m.appendBank(bank, entries); err != nil {
+	if err := m.appendBank(ctx, bank, entries); err != nil {
 		return RetainResult{}, err
 	}
 	recordRetain(ctx, bank, len(entries), 0, 0, start)
@@ -361,7 +373,7 @@ func (m *Memory) RetainRaw(ctx context.Context, bank string, entries []Entry) er
 	}
 	start := time.Now()
 	applyEntryDefaults(entries)
-	if err := m.appendBank(bank, entries); err != nil {
+	if err := m.appendBank(ctx, bank, entries); err != nil {
 		return err
 	}
 	recordRetain(ctx, bank, len(entries), 0, 0, start)
@@ -413,13 +425,13 @@ func (m *Memory) RetainReplacing(ctx context.Context, bank string, entries []Ent
 		for _, d := range replaceDocs {
 			drop[d] = true
 		}
-		n, err := m.rewriteBankLocked(bank, func(e Entry) bool { return drop[entryDocumentID(e)] })
+		n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return drop[entryDocumentID(e)] })
 		if err != nil {
 			return 0, err
 		}
 		replaced = n
 	}
-	if err := m.appendBankLocked(bank, entries); err != nil {
+	if err := m.appendBankLocked(ctx, bank, entries); err != nil {
 		return replaced, err
 	}
 	recordRetain(ctx, bank, len(entries), 0, replaced, start)
@@ -438,7 +450,7 @@ func (m *Memory) DeleteDocument(ctx context.Context, bank, documentID string) (i
 	start := time.Now()
 	m.bankMu.Lock()
 	defer m.bankMu.Unlock()
-	n, err := m.rewriteBankLocked(bank, func(e Entry) bool { return entryDocumentID(e) == documentID })
+	n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return entryDocumentID(e) == documentID })
 	if err != nil {
 		return 0, err
 	}
@@ -502,7 +514,7 @@ func rowKey(e Entry) string {
 // bank file (temp file + rename, so a crash leaves the old bank intact).
 // Lines that fail to parse are kept verbatim: a rewrite must never be the
 // thing that loses data. Callers hold bankMu.
-func (m *Memory) rewriteBankLocked(bank string, drop func(Entry) bool) (int, error) {
+func (m *Memory) rewriteBankLocked(ctx context.Context, bank string, drop func(Entry) bool) (int, error) {
 	path := m.bankPath(bank)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -531,7 +543,7 @@ func (m *Memory) rewriteBankLocked(bank string, drop func(Entry) bool) (int, err
 	if err := writeBankFile(path, kept.String()); err != nil {
 		return 0, err
 	}
-	if err := m.reindexBankLocked(bank); err != nil {
+	if err := m.reindexBankLocked(ctx, bank); err != nil {
 		return removed, err
 	}
 	return removed, nil
@@ -554,7 +566,7 @@ func writeBankFile(path, content string) error {
 // compactBanks rewrites every bank file under the memory root with its
 // duplicate rows collapsed. Callers hold no lock: each bank is compacted
 // under bankMu.
-func (m *Memory) compactBanks() error {
+func (m *Memory) compactBanks(ctx context.Context) error {
 	banks, err := os.ReadDir(filepath.Join(m.root, "banks"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -563,12 +575,15 @@ func (m *Memory) compactBanks() error {
 		return fmt.Errorf("memory: read banks dir: %w", err)
 	}
 	for _, b := range banks {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if b.IsDir() || !strings.HasSuffix(b.Name(), ".jsonl") {
 			continue
 		}
 		bank := strings.TrimSuffix(b.Name(), ".jsonl")
 		m.bankMu.Lock()
-		_, err := m.compactBankLocked(bank)
+		_, err := m.compactBankLocked(ctx, bank)
 		m.bankMu.Unlock()
 		if err != nil {
 			return err
@@ -587,7 +602,7 @@ func (m *Memory) compactBanks() error {
 // (measured: the live bank grew ~88.6 KB/day, ~45 rows/day). The write is
 // crash-safe (temp file + rename) and the index is re-derived from the
 // rewritten file. Callers hold bankMu.
-func (m *Memory) compactBankLocked(bank string) (int, error) {
+func (m *Memory) compactBankLocked(ctx context.Context, bank string) (int, error) {
 	path := m.bankPath(bank)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -635,7 +650,7 @@ func (m *Memory) compactBankLocked(bank string) (int, error) {
 	if err := writeBankFile(path, kept.String()); err != nil {
 		return 0, err
 	}
-	if err := m.reindexBankLocked(bank); err != nil {
+	if err := m.reindexBankLocked(ctx, bank); err != nil {
 		return removed, err
 	}
 	return removed, nil
@@ -643,13 +658,13 @@ func (m *Memory) compactBankLocked(bank string) (int, error) {
 
 // appendBank writes rows to the bank's JSONL, creating the banks dir on
 // first use. Raw append, no cursor logic — callers own idempotency.
-func (m *Memory) appendBank(bank string, entries []Entry) error {
+func (m *Memory) appendBank(ctx context.Context, bank string, entries []Entry) error {
 	m.bankMu.Lock()
 	defer m.bankMu.Unlock()
-	return m.appendBankLocked(bank, entries)
+	return m.appendBankLocked(ctx, bank, entries)
 }
 
-func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
+func (m *Memory) appendBankLocked(ctx context.Context, bank string, entries []Entry) error {
 	if err := os.MkdirAll(filepath.Join(m.root, "banks"), 0o755); err != nil {
 		return fmt.Errorf("memory: create banks dir: %w", err)
 	}
@@ -659,7 +674,7 @@ func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 	// client owns (an explicit metadata.document_id) are left alone — their
 	// lifecycle is the client's (the Hindsight replace/append contract), and
 	// the explicit replace path drops them.
-	if err := m.dedupeBankLocked(bank, entries); err != nil {
+	if err := m.dedupeBankLocked(ctx, bank, entries); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(m.bankPath(bank), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -682,7 +697,7 @@ func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 			return fmt.Errorf("memory: encode entry: %w", err)
 		}
 	}
-	return m.indexAppendLocked(bank, entries)
+	return m.indexAppendLocked(ctx, bank, entries)
 }
 
 // dedupeBankLocked drops the existing rows the incoming entries supersede:
@@ -692,7 +707,7 @@ func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 // (the Hindsight replace/append contract), and a chunked document keeps one
 // document id across rows with DIFFERENT bodies. Only a row whose identity
 // AND body match an incoming row is a duplicate of it.
-func (m *Memory) dedupeBankLocked(bank string, entries []Entry) error {
+func (m *Memory) dedupeBankLocked(ctx context.Context, bank string, entries []Entry) error {
 	keys := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		if entryDocumentID(e) != "" {
@@ -703,15 +718,15 @@ func (m *Memory) dedupeBankLocked(bank string, entries []Entry) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	_, err := m.rewriteBankLocked(bank, func(e Entry) bool { return keys[rowKey(e)] })
+	_, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return keys[rowKey(e)] })
 	return err
 }
 
 // bankCursor is the highest retained_through_user_turn stored in the bank
 // (0 for a missing/empty bank), kept in the index on every append (RS-20; it
 // used to re-read the bank JSONL on every retain).
-func (m *Memory) bankCursor(bank string) int {
-	v, _ := m.cursor("bank", sanitizeBank(bank))
+func (m *Memory) bankCursor(ctx context.Context, bank string) int {
+	v, _ := m.cursor(ctx, "bank", sanitizeBank(bank))
 	return v
 }
 

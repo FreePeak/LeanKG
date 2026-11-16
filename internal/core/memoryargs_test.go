@@ -226,7 +226,7 @@ func TestMemorySearchRefusesUnknownCommand(t *testing.T) {
 // under args should still get results rather than a silent empty list.
 func TestMemorySearchTakesTheTermFromQueryOrArgs(t *testing.T) {
 	e, mem := newEngine(t)
-	if err := mem.Create("topics/probe.md", "zebra-unique-token lives here"); err != nil {
+	if err := mem.Create(context.Background(), "topics/probe.md", "zebra-unique-token lives here"); err != nil {
 		t.Fatal(err)
 	}
 	for name, req := range map[string]QueryRequest{

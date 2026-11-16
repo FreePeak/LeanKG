@@ -51,11 +51,11 @@ func TestRecallRanksByMeaningfulTerms(t *testing.T) {
 // the JSONL banks and Markdown files.
 func TestIndexRebuildsFromSources(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Create("topics/a.md", "kubernetes upgrade notes\n"); err != nil {
+	if err := m.Create(context.Background(), "topics/a.md", "kubernetes upgrade notes\n"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Retain(context.Background(), "b", []Entry{{Content: "giraffes at turn three", Metadata: map[string]any{"session_id": "s1"}}}, 3); err != nil {
@@ -65,21 +65,21 @@ func TestIndexRebuildsFromSources(t *testing.T) {
 	for _, f := range []string{"index.db", "index.db-wal", "index.db-shm"} {
 		_ = os.Remove(m.Root() + "/" + f)
 	}
-	m2, err := Open(dir, false)
+	m2, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m2.Close()
-	if hits, _ := m2.Search("kubernetes", 5); len(hits) != 1 {
+	if hits, _ := m2.Search(context.Background(), "kubernetes", 5); len(hits) != 1 {
 		t.Fatalf("file rows not rebuilt: %v", hits)
 	}
 	if got, _ := m2.Recall(context.Background(), "b", "giraffes", 5); len(got) != 1 {
 		t.Fatalf("bank rows not rebuilt: %v", got)
 	}
-	if c := m2.bankCursor("b"); c != 3 {
+	if c := m2.bankCursor(context.Background(), "b"); c != 3 {
 		t.Fatalf("bank cursor after rebuild = %d, want 3", c)
 	}
-	if c, ok := m2.sessionCursor("s1"); !ok || c != 3 {
+	if c, ok := m2.sessionCursor(context.Background(), "s1"); !ok || c != 3 {
 		t.Fatalf("session cursor after rebuild = %d %v, want 3", c, ok)
 	}
 	// The rebuilt cursor still gates: a batch at turn 3 is skipped.

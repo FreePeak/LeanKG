@@ -1006,7 +1006,7 @@ func (e *Engine) annotateConfidence(ctx context.Context, resp map[string]any, st
 // --- memory actions (ride the 4-tool surface; #369) ---
 
 // MemoryRead handles read-only memory commands: view, snapshot, search.
-func (e *Engine) MemoryRead(command, path, query string, limit int) (map[string]any, error) {
+func (e *Engine) MemoryRead(ctx context.Context, command, path, query string, limit int) (map[string]any, error) {
 	if e.mem == nil {
 		return nil, fmt.Errorf("memory not initialized")
 	}
@@ -1014,7 +1014,7 @@ func (e *Engine) MemoryRead(command, path, query string, limit int) (map[string]
 	if !ok {
 		return nil, fmt.Errorf("unknown memory read command %q (valid: view, snapshot, search)", command)
 	}
-	return h(e, path, query, limit)
+	return h(e, ctx, path, query, limit)
 }
 
 // --- shaping ---

@@ -94,7 +94,7 @@ func cmdReflect(ctx context.Context, args []string) error {
 			}
 		}
 	}
-	if _, err := session.ReflectOutcome(dir, question, nodeList, outcome, *note); err != nil {
+	if _, err := session.ReflectOutcome(ctx, dir, question, nodeList, outcome, *note); err != nil {
 		return verbFatal(err)
 	}
 	fmt.Printf("Recorded reflection for outcome '%s'\n", outcome)

@@ -28,7 +28,7 @@ func newEngine(t *testing.T) (*Engine, *memory.Memory) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mem, err := memory.Open(dir, false)
+	mem, err := memory.Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,14 +222,14 @@ func TestMemoryWriteAndReadRouting(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("memory create: %v", err)
 	}
-	out, err := e.MemoryRead("snapshot", "", "", 0)
+	out, err := e.MemoryRead(ctx, "snapshot", "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out["content"].(string), "# Core notes") {
 		t.Fatalf("snapshot: %v", out)
 	}
-	out, err = e.MemoryRead("search", "", "notes", 5)
+	out, err = e.MemoryRead(ctx, "search", "", "notes", 5)
 	if err != nil {
 		t.Fatal(err)
 	}

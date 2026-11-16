@@ -14,6 +14,7 @@
 package memory
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -79,7 +80,10 @@ type Memory struct {
 // Open opens (creating if needed) the memory tree for projectDir, or the
 // global home tree when global is true. It creates the directories, empty
 // MEMORY.md/USER.md, and topics/ if missing.
-func Open(projectDir string, global bool) (*Memory, error) {
+func Open(ctx context.Context, projectDir string, global bool) (*Memory, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var root string
 	if global {
 		home, err := os.UserHomeDir()
@@ -109,10 +113,10 @@ func Open(projectDir string, global bool) (*Memory, error) {
 		return nil, fmt.Errorf("memory: resolve root: %w", err)
 	}
 	m := &Memory{root: root, real: real, ftsPath: filepath.Join(root, "index.db")}
-	if m.fts, err = openFTS(m.ftsPath); err != nil {
+	if m.fts, err = openFTS(ctx, m.ftsPath); err != nil {
 		return nil, err
 	}
-	if err := m.ensureIndex(); err != nil {
+	if err := m.ensureIndex(ctx); err != nil {
 		m.fts.Close()
 		return nil, err
 	}
@@ -244,7 +248,10 @@ func (m *Memory) Exists(path string) bool {
 	return err == nil
 }
 
-func (m *Memory) Create(path, content string) error {
+func (m *Memory) Create(ctx context.Context, path, content string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	full, key, err := m.resolve(path)
 	if err != nil {
 		return err
@@ -255,14 +262,17 @@ func (m *Memory) Create(path, content string) error {
 	if err := writeMemoryFile(full, content); err != nil {
 		return err
 	}
-	return m.reindex(key)
+	return m.reindex(ctx, key)
 }
 
 // Append adds content to an existing memory file, creating it when absent,
 // and reindexes the key so the new lines become searchable rows. A raw file
 // append would skip the index, which is how a written-but-unfindable file
 // happens (found with the reflect mirroring, session/reflect.go MirrorToMemory).
-func (m *Memory) Append(path, content string) error {
+func (m *Memory) Append(ctx context.Context, path, content string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	full, key, err := m.resolve(path)
 	if err != nil {
 		return err
@@ -286,12 +296,15 @@ func (m *Memory) Append(path, content string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return m.reindex(key)
+	return m.reindex(ctx, key)
 }
 
 // StrReplace replaces the single occurrence of old with new. Zero or
 // multiple occurrences fail with ErrAmbiguousMatch.
-func (m *Memory) StrReplace(path, old, new string) error {
+func (m *Memory) StrReplace(ctx context.Context, path, old, new string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	full, key, err := m.resolve(path)
 	if err != nil {
 		return err
@@ -310,12 +323,15 @@ func (m *Memory) StrReplace(path, old, new string) error {
 	if err := writeMemoryFile(full, out); err != nil {
 		return err
 	}
-	return m.reindex(key)
+	return m.reindex(ctx, key)
 }
 
 // Insert inserts content so that it starts at line insertLine (1-based);
 // insertLine 0 (or less) prepends.
-func (m *Memory) Insert(path, content string, insertLine int) error {
+func (m *Memory) Insert(ctx context.Context, path, content string, insertLine int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	full, key, err := m.resolve(path)
 	if err != nil {
 		return err
@@ -344,11 +360,14 @@ func (m *Memory) Insert(path, content string, insertLine int) error {
 	if err := writeMemoryFile(full, out); err != nil {
 		return err
 	}
-	return m.reindex(key)
+	return m.reindex(ctx, key)
 }
 
 // Delete removes the file and its index rows.
-func (m *Memory) Delete(path string) error {
+func (m *Memory) Delete(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	_, key, err := m.resolve(path)
 	if err != nil {
 		return err
@@ -357,11 +376,14 @@ func (m *Memory) Delete(path string) error {
 	if err := os.Remove(full); err != nil {
 		return err
 	}
-	return m.deleteRows(key)
+	return m.deleteRows(ctx, key)
 }
 
 // Rename moves a memory file, updating the index rows to the new path.
-func (m *Memory) Rename(oldPath, newPath string) error {
+func (m *Memory) Rename(ctx context.Context, oldPath, newPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	_, oldKey, err := m.resolve(oldPath)
 	if err != nil {
 		return err
@@ -376,10 +398,10 @@ func (m *Memory) Rename(oldPath, newPath string) error {
 	if err := os.Rename(filepath.Join(m.real, filepath.FromSlash(oldKey)), newFull); err != nil {
 		return err
 	}
-	if err := m.deleteRows(oldKey); err != nil {
+	if err := m.deleteRows(ctx, oldKey); err != nil {
 		return err
 	}
-	return m.reindex(newKey)
+	return m.reindex(ctx, newKey)
 }
 
 func replaceOnce(content, old, new string) (string, error) {

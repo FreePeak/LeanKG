@@ -119,14 +119,14 @@ These IDs may be mirrored into `prd-task-tracker.md` when the owner adopts the p
 | context.Background() in non-main non-test code | 32 | 0 | 6 (archtest backgroundBudget in internal/archtest/ctx_roots_test.go: index 2, lsp 1, registry 1, session 1, setup 1; grep agrees) |
 | context.TODO() | 0 | 0 | 0 (grep, non-test, whole repo; archtest asserts zero) |
 | store capability type assertions in consumers | 7 | 0 | 0 (grep for type assertions to store roles outside internal/store; two unrelated `interface{...}` assertions remain, internal/doctor/doctor.go:1227 and internal/telemetry/retention.go:108) |
-| non-Context database/sql calls on the SQLite side | 153 | 0 | 28 (archtest ioBudget `sql-no-ctx`: internal/memory 28; the internal/store entry is gone) |
+| non-Context database/sql calls on the SQLite side | 153 | 0 | 0 (archtest ioBudget has no internal/memory entry any more, internal/archtest/ctx_io_test.go, so `sql-no-ctx` is 0 repo-wide on the SQLite side) |
 
 Once CX-13 lands, `internal/archtest` budgets are the machine-checked source of truth for the Background/TODO and ctx-less I/O counts.
 
 ## Definition of done
 
 - [x] `TestStoreRolesTakeContext` passes with the allowlist `{Close, Path, Engine, Mode}`; `rg pgCtx internal` is empty.
-- [ ] Non-Context `database/sql` calls on the SQLite side go from 153 to 0. (open: 28 non-Context calls remain in internal/memory per ioBudget; internal/store is 0)
+- [x] Non-Context `database/sql` calls on the SQLite side go from 153 to 0. (done: the `internal/memory` ioBudget entry is removed and TestNoContextlessIO passes; every SQL call in internal/memory takes the caller's ctx; index writes that follow a file mutation run on `context.WithoutCancel` (reindex, deleteRows, indexAppendLocked, reindexBankLocked); public mutating ops and Open/Compact refuse a cancelled ctx up front; pinned by internal/memory/ctx_test.go and internal/session/reflect_test.go)
 - [ ] `exec.Command(`, `http.NewRequest(` and timeout-less `http.Client` values under `internal/` are 0. (open: 3 exec.Command calls in non-test code: internal/dashboard/browser.go:20, internal/embed/embedtest/embedtest.go:100, internal/gitobj/gittest/gittest.go:33; 1 timeout-less http.Client: internal/sources/gcs.go:47; http.NewRequest 0)
 - [ ] Non-test `context.TODO()` is 0; `context.Background()` outside `package main` is 0 (down from 32), with detached work on `WithoutCancel`; every ratchet budget is at its floor. (open: context.Background() outside package main is 6, not 0: index 2, lsp 1, registry 1, session 1, setup 1; TODO is 0; the budgets are not at their floor)
 - [x] Store capability type assertions are 0 (down from 7); `FTSBackend` and the hybrid interfaces are deleted.

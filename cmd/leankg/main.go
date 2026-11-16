@@ -456,7 +456,7 @@ afterSidecars:
 		// existing deployment's banks never move underneath it. The root is
 		// logged because it is also the single-writer anchor: two servers on
 		// one root append to the same JSONL with no cross-process lock.
-		if mem, err = memory.Open(dir, *memoryGlobal); err != nil {
+		if mem, err = memory.Open(ctx, dir, *memoryGlobal); err != nil {
 			return fmt.Errorf("memory: %w", err)
 		}
 		log.Printf("leankg memory root %s", mem.Root())
@@ -835,7 +835,7 @@ func fleetTargets(ctx context.Context, defaultDir string, st store.Backend, mem 
 		}
 		t := maintain.Target{Store: bs, Label: filepath.Base(d)}
 		closeTarget := func() { _ = bs.Close() }
-		if pm := openProjectMemory(d, keepModelIDs); pm != nil {
+		if pm := openProjectMemory(ctx, d, keepModelIDs); pm != nil {
 			t.Mem = pm
 			closeTarget = func() { _ = pm.Close(); _ = bs.Close() }
 		}
@@ -851,11 +851,11 @@ func fleetTargets(ctx context.Context, defaultDir string, st store.Backend, mem 
 // The existence probe matters: memory.Open CREATES the tree (the root, the
 // core files and the index), so a maintenance pass must not give a project
 // that never used memory a memory tree.
-func openProjectMemory(dir string, keepModelIDs []string) *memory.Memory {
+func openProjectMemory(ctx context.Context, dir string, keepModelIDs []string) *memory.Memory {
 	if _, err := os.Stat(filepath.Join(dir, ".leankg", "memory", "index.db")); err != nil {
 		return nil
 	}
-	m, err := memory.Open(dir, false)
+	m, err := memory.Open(ctx, dir, false)
 	if err != nil {
 		log.Printf("maintenance: open memory %s: %v", dir, err)
 		return nil

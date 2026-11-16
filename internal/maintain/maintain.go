@@ -398,16 +398,16 @@ func CompactMemory(ctx context.Context, mem *memory.Memory, opts Options) {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	before, berr := mem.Space()
+	before, berr := mem.Space(ctx)
 	if berr != nil {
 		logf("maintain: memory space probe: %v", berr)
 		return
 	}
-	if err := mem.Compact(); err != nil {
+	if err := mem.Compact(ctx); err != nil {
 		logf("maintain: memory compact: %v", err)
 		return
 	}
-	after, aerr := mem.Space()
+	after, aerr := mem.Space(ctx)
 	if aerr != nil {
 		logf("maintain: memory re-probe: %v", aerr)
 		return

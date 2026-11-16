@@ -13,7 +13,7 @@ import (
 
 func openTest(t *testing.T) *Memory {
 	t.Helper()
-	m, err := Open(t.TempDir(), false)
+	m, err := Open(context.Background(), t.TempDir(), false)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -23,7 +23,7 @@ func openTest(t *testing.T) *Memory {
 
 func TestOpenCreatesLayout(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -70,21 +70,21 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 	if _, err := m.View("topics/evil.md", 0); !errors.Is(err, ErrOutsideRoot) {
 		t.Errorf("View through escaping symlink: err = %v, want ErrOutsideRoot", err)
 	}
-	if err := m.Create("topics/evil.md", "x"); !errors.Is(err, ErrOutsideRoot) {
+	if err := m.Create(context.Background(), "topics/evil.md", "x"); !errors.Is(err, ErrOutsideRoot) {
 		t.Errorf("Create over escaping symlink: err = %v, want ErrOutsideRoot", err)
 	}
 	// Dangling symlink pointing outside: also refused.
 	if err := os.Symlink(filepath.Join(root, "..", "nowhere.md"), filepath.Join(root, "topics", "dangling.md")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if err := m.Create("topics/dangling.md", "x"); !errors.Is(err, ErrOutsideRoot) {
+	if err := m.Create(context.Background(), "topics/dangling.md", "x"); !errors.Is(err, ErrOutsideRoot) {
 		t.Errorf("Create over dangling outside symlink: err = %v, want ErrOutsideRoot", err)
 	}
 }
 
 func TestCoreFileOverflow(t *testing.T) {
 	m := openTest(t)
-	err := m.Create("MEMORY.md", strings.Repeat("x", CoreFileBytes+1))
+	err := m.Create(context.Background(), "MEMORY.md", strings.Repeat("x", CoreFileBytes+1))
 	var eo ErrOverflow
 	if !errors.As(err, &eo) {
 		t.Fatalf("Create overflow: err = %v, want ErrOverflow", err)
@@ -96,48 +96,48 @@ func TestCoreFileOverflow(t *testing.T) {
 	if c, _ := m.View("MEMORY.md", 0); c != "" {
 		t.Errorf("failed write mutated file: %q", c)
 	}
-	if err := m.Create("MEMORY.md", strings.Repeat("x", CoreFileBytes)); err != nil {
+	if err := m.Create(context.Background(), "MEMORY.md", strings.Repeat("x", CoreFileBytes)); err != nil {
 		t.Errorf("Create at limit: %v", err)
 	}
 	// Add pushing past the limit also refuses.
 	m2 := openTest(t)
-	if err := m2.Add("USER.md", strings.Repeat("y", CoreFileBytes-4)); err != nil {
+	if err := m2.Add(context.Background(), "USER.md", strings.Repeat("y", CoreFileBytes-4)); err != nil {
 		t.Fatalf("Add under limit: %v", err)
 	}
-	if err := m2.Add("USER.md", "z"); !errors.As(err, &eo) {
+	if err := m2.Add(context.Background(), "USER.md", "z"); !errors.As(err, &eo) {
 		t.Errorf("Add overflow: err = %v, want ErrOverflow", err)
 	}
 	// topics/ is unbounded.
-	if err := m.Create("topics/big.md", strings.Repeat("x", CoreFileBytes*3)); err != nil {
+	if err := m.Create(context.Background(), "topics/big.md", strings.Repeat("x", CoreFileBytes*3)); err != nil {
 		t.Errorf("topics overflow should not apply: %v", err)
 	}
 }
 
 func TestAmbiguousReplace(t *testing.T) {
 	m := openTest(t)
-	if err := m.Create("topics/a.md", "alpha beta gamma beta\n"); err != nil {
+	if err := m.Create(context.Background(), "topics/a.md", "alpha beta gamma beta\n"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := m.StrReplace("topics/a.md", "beta", "B"); !errors.Is(err, ErrAmbiguousMatch) {
+	if err := m.StrReplace(context.Background(), "topics/a.md", "beta", "B"); !errors.Is(err, ErrAmbiguousMatch) {
 		t.Errorf("two occurrences: err = %v, want ErrAmbiguousMatch", err)
 	}
-	if err := m.StrReplace("topics/a.md", "nope", "B"); !errors.Is(err, ErrAmbiguousMatch) {
+	if err := m.StrReplace(context.Background(), "topics/a.md", "nope", "B"); !errors.Is(err, ErrAmbiguousMatch) {
 		t.Errorf("zero occurrences: err = %v, want ErrAmbiguousMatch", err)
 	}
-	if err := m.StrReplace("topics/a.md", "alpha", "ALPHA"); err != nil {
+	if err := m.StrReplace(context.Background(), "topics/a.md", "alpha", "ALPHA"); err != nil {
 		t.Fatalf("unique replace: %v", err)
 	}
 	if c, _ := m.View("topics/a.md", 0); c != "ALPHA beta gamma beta" {
 		t.Errorf("after replace: %q", c)
 	}
 	// Remove keeps the rest of the line.
-	if err := m.Remove("topics/a.md", "gamma"); err != nil {
+	if err := m.Remove(context.Background(), "topics/a.md", "gamma"); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	if c, _ := m.View("topics/a.md", 0); c != "ALPHA beta  beta" {
 		t.Errorf("after remove: %q", c)
 	}
-	if err := m.Remove("topics/a.md", "beta"); !errors.Is(err, ErrAmbiguousMatch) {
+	if err := m.Remove(context.Background(), "topics/a.md", "beta"); !errors.Is(err, ErrAmbiguousMatch) {
 		t.Errorf("ambiguous remove: err = %v, want ErrAmbiguousMatch", err)
 	}
 }
@@ -153,10 +153,10 @@ func TestSnapshotHeaderFormat(t *testing.T) {
 		t.Errorf("empty snapshot =\n%q\nwant\n%q", got, wantEmpty)
 	}
 	// 748 bytes = 34% of 2200 (contract example); 264 bytes = 12%.
-	if err := m.Create("MEMORY.md", strings.Repeat("a", 748)); err != nil {
+	if err := m.Create(context.Background(), "MEMORY.md", strings.Repeat("a", 748)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := m.Create("USER.md", strings.Repeat("u", 264)); err != nil {
+	if err := m.Create(context.Background(), "USER.md", strings.Repeat("u", 264)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	got, err = m.Snapshot()
@@ -173,16 +173,16 @@ func TestSnapshotHeaderFormat(t *testing.T) {
 
 func TestInsertAndView(t *testing.T) {
 	m := openTest(t)
-	if err := m.Create("topics/a.md", "one\ntwo\n"); err != nil {
+	if err := m.Create(context.Background(), "topics/a.md", "one\ntwo\n"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := m.Insert("topics/a.md", "zero", 0); err != nil {
+	if err := m.Insert(context.Background(), "topics/a.md", "zero", 0); err != nil {
 		t.Fatalf("Insert prepend: %v", err)
 	}
 	if c, _ := m.View("topics/a.md", 0); c != "zero\none\ntwo" {
 		t.Errorf("after prepend: %q", c)
 	}
-	if err := m.Insert("topics/a.md", "mid", 3); err != nil {
+	if err := m.Insert(context.Background(), "topics/a.md", "mid", 3); err != nil {
 		t.Fatalf("Insert at line 3: %v", err)
 	}
 	if c, _ := m.View("topics/a.md", 0); c != "zero\none\nmid\ntwo" {
@@ -198,13 +198,13 @@ func TestInsertAndView(t *testing.T) {
 
 func TestFTSSearchRoundTrip(t *testing.T) {
 	m := openTest(t)
-	if err := m.Create("topics/a.md", "the quick brown fox\njumps high\n"); err != nil {
+	if err := m.Create(context.Background(), "topics/a.md", "the quick brown fox\njumps high\n"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := m.Create("topics/b.md", "a lazy dog sleeps\n"); err != nil {
+	if err := m.Create(context.Background(), "topics/b.md", "a lazy dog sleeps\n"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	hits, err := m.Search("fox", 0)
+	hits, err := m.Search(context.Background(), "fox", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -216,31 +216,31 @@ func TestFTSSearchRoundTrip(t *testing.T) {
 	}
 	// Query punctuation must not abort the MATCH expression; FTS5 AND
 	// requires both terms in the same indexed row (line).
-	if hits, _ = m.Search(`fox (quick",`, 0); len(hits) != 1 || hits[0].Path != "topics/a.md" {
+	if hits, _ = m.Search(context.Background(), `fox (quick",`, 0); len(hits) != 1 || hits[0].Path != "topics/a.md" {
 		t.Errorf("Search with syntax chars = %+v, want 1 hit", hits)
 	}
 	// StrReplace reindexes: fox is gone, cat replaces it.
-	if err := m.StrReplace("topics/a.md", "fox", "cat"); err != nil {
+	if err := m.StrReplace(context.Background(), "topics/a.md", "fox", "cat"); err != nil {
 		t.Fatalf("StrReplace: %v", err)
 	}
-	if hits, _ = m.Search("fox", 0); len(hits) != 0 {
+	if hits, _ = m.Search(context.Background(), "fox", 0); len(hits) != 0 {
 		t.Errorf("Search(fox) after replace = %+v, want none", hits)
 	}
-	if hits, _ = m.Search("cat", 0); len(hits) != 1 || hits[0].Path != "topics/a.md" {
+	if hits, _ = m.Search(context.Background(), "cat", 0); len(hits) != 1 || hits[0].Path != "topics/a.md" {
 		t.Errorf("Search(cat) after replace = %+v", hits)
 	}
 	// Rename re-keys the index.
-	if err := m.Rename("topics/b.md", "topics/c.md"); err != nil {
+	if err := m.Rename(context.Background(), "topics/b.md", "topics/c.md"); err != nil {
 		t.Fatalf("Rename: %v", err)
 	}
-	if hits, _ = m.Search("lazy", 0); len(hits) != 1 || hits[0].Path != "topics/c.md" {
+	if hits, _ = m.Search(context.Background(), "lazy", 0); len(hits) != 1 || hits[0].Path != "topics/c.md" {
 		t.Errorf("Search(lazy) after rename = %+v", hits)
 	}
 	// Delete drops the rows.
-	if err := m.Delete("topics/c.md"); err != nil {
+	if err := m.Delete(context.Background(), "topics/c.md"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if hits, _ = m.Search("lazy", 0); len(hits) != 0 {
+	if hits, _ = m.Search(context.Background(), "lazy", 0); len(hits) != 0 {
 		t.Errorf("Search(lazy) after delete = %+v", hits)
 	}
 }
@@ -645,7 +645,7 @@ func TestSessionHermeticNoHomeWrites(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	cwd := t.TempDir()
-	m, err := Open(t.TempDir(), false)
+	m, err := Open(context.Background(), t.TempDir(), false)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -673,7 +673,7 @@ func TestSessionHermeticNoHomeWrites(t *testing.T) {
 // the WAL back while the index still answers.
 func TestMemoryCompactReclaimsFTSPages(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -685,7 +685,7 @@ func TestMemoryCompactReclaimsFTSPages(t *testing.T) {
 		body = append(body, "line "+itoaTest(i)+" some searchable content about vacuuming")
 	}
 	for round := 0; round < 6; round++ {
-		if err := m.Create("topics/big.md", strings.Join(body, "\n")); err != nil {
+		if err := m.Create(context.Background(), "topics/big.md", strings.Join(body, "\n")); err != nil {
 			// Round 0 creates; later rounds rewrite through StrReplace, which is
 			// the replace-on-write path that actually churns the FTS index.
 			if round == 0 {
@@ -694,7 +694,7 @@ func TestMemoryCompactReclaimsFTSPages(t *testing.T) {
 			_ = err
 		}
 	}
-	before, err := m.Space()
+	before, err := m.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space before: %v", err)
 	}
@@ -702,10 +702,10 @@ func TestMemoryCompactReclaimsFTSPages(t *testing.T) {
 		t.Fatalf("no index yet: %+v", before)
 	}
 
-	if err := m.Compact(); err != nil {
+	if err := m.Compact(context.Background()); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
-	after, err := m.Space()
+	after, err := m.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space after: %v", err)
 	}
@@ -716,7 +716,7 @@ func TestMemoryCompactReclaimsFTSPages(t *testing.T) {
 		t.Errorf("freelist after compact = %d bytes, want 0", after.FreeBytes)
 	}
 	// The index still works.
-	hits, err := m.Search("vacuuming", 5)
+	hits, err := m.Search(context.Background(), "vacuuming", 5)
 	if err != nil {
 		t.Fatalf("search after compact: %v", err)
 	}
@@ -729,25 +729,25 @@ func TestMemoryCompactReclaimsFTSPages(t *testing.T) {
 // second compact must be a quiet no-op rather than a second full rewrite.
 func TestMemoryCompactIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer m.Close()
-	if err := m.Create("topics/a.md", "alpha beta gamma"); err != nil {
+	if err := m.Create(context.Background(), "topics/a.md", "alpha beta gamma"); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := m.Compact(); err != nil {
+	if err := m.Compact(context.Background()); err != nil {
 		t.Fatalf("first compact: %v", err)
 	}
-	first, err := m.Space()
+	first, err := m.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
-	if err := m.Compact(); err != nil {
+	if err := m.Compact(context.Background()); err != nil {
 		t.Fatalf("second compact: %v", err)
 	}
-	second, err := m.Space()
+	second, err := m.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}

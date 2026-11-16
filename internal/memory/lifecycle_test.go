@@ -61,7 +61,7 @@ func TestCompactPrunesStaleVectorCollection(t *testing.T) {
 	seedVector(t, m, stale, "bank", "old-2")
 	seedVector(t, m, live, "bank", "new-1")
 	m.SetProvider(stampedProvider{id: liveID}, func(context.Context) (float64, bool) { return 0, true })
-	if err := m.Compact(); err != nil {
+	if err := m.Compact(context.Background()); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
 	if n := countVectors(t, m, stale); n != 0 {
@@ -80,7 +80,7 @@ func TestCompactKeepsEveryCollectionWithoutALiveModel(t *testing.T) {
 	m := openTest(t)
 	const stale = "local|bge-small-en-v1.5-f16.gguf|local|384"
 	seedVector(t, m, stale, "bank", "old-1")
-	if err := m.Compact(); err != nil {
+	if err := m.Compact(context.Background()); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
 	if n := countVectors(t, m, stale); n != 1 {

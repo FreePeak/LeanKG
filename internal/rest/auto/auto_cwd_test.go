@@ -37,7 +37,7 @@ func TestAutoConfigRefusesCwdOutsideServedProject(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
+	mem, err := memory.Open(context.Background(), filepath.Join(served, ".leankg"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestAutoConfigNoCWDKeepsServingDefault(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
+	mem, err := memory.Open(context.Background(), filepath.Join(served, ".leankg"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestAutoConfigCwdInsideServedProject(t *testing.T) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
+	mem, err := memory.Open(context.Background(), filepath.Join(served, ".leankg"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

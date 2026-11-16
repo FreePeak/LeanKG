@@ -19,7 +19,7 @@ import (
 // reaches the project collapses it.
 func projectWithMemory(t *testing.T, dir string) {
 	t.Helper()
-	m, err := memory.Open(dir, false)
+	m, err := memory.Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatalf("open memory %s: %v", dir, err)
 	}
@@ -96,7 +96,7 @@ func TestFleetTargetsCompactEveryProjectMemory(t *testing.T) {
 		t.Fatalf("open default store: %v", err)
 	}
 	defer st.Close()
-	mem, err := memory.Open(defaultDir, false)
+	mem, err := memory.Open(context.Background(), defaultDir, false)
 	if err != nil {
 		t.Fatalf("open default memory: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestFleetTargetsSkipProjectsWithoutAMemoryIndex(t *testing.T) {
 	}
 	st.Close()
 
-	mem, err := memory.Open(defaultDir, false)
+	mem, err := memory.Open(context.Background(), defaultDir, false)
 	if err != nil {
 		t.Fatalf("open default memory: %v", err)
 	}

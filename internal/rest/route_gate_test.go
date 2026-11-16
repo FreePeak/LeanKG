@@ -31,7 +31,7 @@ func gatedREST(t *testing.T) http.Handler {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mem, err := memory.Open(dir, false)
+	mem, err := memory.Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}

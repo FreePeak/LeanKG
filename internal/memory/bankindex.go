@@ -20,29 +20,29 @@ import (
 const indexVersion = "3"
 
 // ensureIndex rebuilds index.db when it was built by another version.
-func (m *Memory) ensureIndex() error {
+func (m *Memory) ensureIndex(ctx context.Context) error {
 	var v string
-	err := m.fts.QueryRow(`SELECT value FROM memory_meta WHERE key = 'index_version'`).Scan(&v)
+	err := m.fts.QueryRowContext(ctx, `SELECT value FROM memory_meta WHERE key = 'index_version'`).Scan(&v)
 	if err == nil && v == indexVersion {
 		return nil
 	}
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("memory: read index version: %w", err)
 	}
-	return m.rebuildIndex()
+	return m.rebuildIndex(ctx)
 }
 
 // rebuildIndex re-derives every index row and cursor from the source files.
-func (m *Memory) rebuildIndex() error {
+func (m *Memory) rebuildIndex(ctx context.Context) error {
 	m.bankMu.Lock()
 	defer m.bankMu.Unlock()
-	tx, err := m.fts.Begin()
+	tx, err := m.fts.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, stmt := range []string{`DELETE FROM memory_fts`, `DELETE FROM memory_cursors`} {
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("memory: clear index: %w", err)
 		}
 	}
@@ -59,7 +59,7 @@ func (m *Memory) rebuildIndex() error {
 		if err != nil {
 			continue
 		}
-		if err := insertFileRows(tx, key, string(data)); err != nil {
+		if err := insertFileRows(ctx, tx, key, string(data)); err != nil {
 			return err
 		}
 	}
@@ -73,18 +73,18 @@ func (m *Memory) rebuildIndex() error {
 		if err != nil {
 			return err
 		}
-		if err := insertBankRows(tx, bank, entries); err != nil {
+		if err := insertBankRows(ctx, tx, bank, entries); err != nil {
 			return err
 		}
 	}
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO memory_meta (key, value) VALUES ('index_version', ?)`, indexVersion); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO memory_meta (key, value) VALUES ('index_version', ?)`, indexVersion); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 // insertBankRows indexes entries of one bank and advances the cursors.
-func insertBankRows(tx *sql.Tx, bank string, entries []Entry) error {
+func insertBankRows(ctx context.Context, tx *sql.Tx, bank string, entries []Entry) error {
 	bank = sanitizeBank(bank)
 	for _, e := range entries {
 		e = redactEntry(e)
@@ -92,7 +92,7 @@ func insertBankRows(tx *sql.Tx, bank string, entries []Entry) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO memory_fts(kind, path, bank, entry_id, doc, body) VALUES ('bank', '', ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO memory_fts(kind, path, bank, entry_id, doc, body) VALUES ('bank', '', ?, ?, ?, ?)`,
 			bank, e.ID, string(doc), e.Content); err != nil {
 			return fmt.Errorf("memory: index bank row: %w", err)
 		}
@@ -100,11 +100,11 @@ func insertBankRows(tx *sql.Tx, bank string, entries []Entry) error {
 		if !ok {
 			continue
 		}
-		if err := raiseCursor(tx, "bank", bank, turn); err != nil {
+		if err := raiseCursor(ctx, tx, "bank", bank, turn); err != nil {
 			return err
 		}
 		if sid, _ := e.Metadata["session_id"].(string); sid != "" {
-			if err := raiseCursor(tx, "session", sid, turn); err != nil {
+			if err := raiseCursor(ctx, tx, "session", sid, turn); err != nil {
 				return err
 			}
 		}
@@ -112,8 +112,8 @@ func insertBankRows(tx *sql.Tx, bank string, entries []Entry) error {
 	return nil
 }
 
-func raiseCursor(tx *sql.Tx, kind, key string, v int) error {
-	_, err := tx.Exec(`INSERT INTO memory_cursors (kind, key, value) VALUES (?, ?, ?)
+func raiseCursor(ctx context.Context, tx *sql.Tx, kind, key string, v int) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO memory_cursors (kind, key, value) VALUES (?, ?, ?)
 		ON CONFLICT (kind, key) DO UPDATE SET value = MAX(value, excluded.value)`, kind, key, v)
 	return err
 }
@@ -132,13 +132,14 @@ func intOf(v any) (int, bool) {
 }
 
 // indexAppendLocked indexes freshly appended rows. Callers hold bankMu.
-func (m *Memory) indexAppendLocked(bank string, entries []Entry) error {
-	tx, err := m.fts.Begin()
+func (m *Memory) indexAppendLocked(ctx context.Context, bank string, entries []Entry) error {
+	ctx = context.WithoutCancel(ctx)
+	tx, err := m.fts.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := insertBankRows(tx, bank, entries); err != nil {
+	if err := insertBankRows(ctx, tx, bank, entries); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -147,13 +148,14 @@ func (m *Memory) indexAppendLocked(bank string, entries []Entry) error {
 // reindexBankLocked re-derives one bank's rows after a rewrite (document
 // replace/delete) and recomputes the cursors it can have changed. Callers
 // hold bankMu.
-func (m *Memory) reindexBankLocked(bank string) error {
+func (m *Memory) reindexBankLocked(ctx context.Context, bank string) error {
+	ctx = context.WithoutCancel(ctx)
 	entries, err := m.readBankRows(bank)
 	if err != nil {
 		return err
 	}
 	key := sanitizeBank(bank)
-	tx, err := m.fts.Begin()
+	tx, err := m.fts.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -165,22 +167,22 @@ func (m *Memory) reindexBankLocked(bank string) error {
 		{`DELETE FROM memory_fts WHERE kind = 'bank' AND bank = ?`, []any{key}},
 		{`DELETE FROM memory_cursors WHERE kind = 'bank' AND key = ?`, []any{key}},
 	} {
-		if _, err := tx.Exec(stmt.q, stmt.args...); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt.q, stmt.args...); err != nil {
 			return err
 		}
 	}
-	if err := insertBankRows(tx, bank, entries); err != nil {
+	if err := insertBankRows(ctx, tx, bank, entries); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM memory_vectors WHERE bank = ? AND entry_id NOT IN
+	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_vectors WHERE bank = ? AND entry_id NOT IN
 		(SELECT entry_id FROM memory_fts WHERE kind = 'bank' AND bank = ?)`, key, key); err != nil {
 		return err
 	}
 	// Session cursors span banks: recompute them all from the indexed rows.
-	if _, err := tx.Exec(`DELETE FROM memory_cursors WHERE kind = 'session'`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_cursors WHERE kind = 'session'`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO memory_cursors (kind, key, value)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO memory_cursors (kind, key, value)
 		SELECT 'session', json_extract(doc, '$.metadata.session_id'),
 		       MAX(CAST(json_extract(doc, '$.metadata.retained_through_user_turn') AS INTEGER))
 		FROM memory_fts
@@ -194,9 +196,9 @@ func (m *Memory) reindexBankLocked(bank string) error {
 }
 
 // cursor reads one stored cursor.
-func (m *Memory) cursor(kind, key string) (int, bool) {
+func (m *Memory) cursor(ctx context.Context, kind, key string) (int, bool) {
 	var v int
-	if err := m.fts.QueryRow(`SELECT value FROM memory_cursors WHERE kind = ? AND key = ?`, kind, key).Scan(&v); err != nil {
+	if err := m.fts.QueryRowContext(ctx, `SELECT value FROM memory_cursors WHERE kind = ? AND key = ?`, kind, key).Scan(&v); err != nil {
 		return 0, false
 	}
 	return v, true
