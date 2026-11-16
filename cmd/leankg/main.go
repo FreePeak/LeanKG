@@ -730,14 +730,14 @@ afterSidecars:
 		// The UI listener is deliberately NOT gated by the exposure rule: the
 		// dashboard is public by design (the Render demo serves
 		// --read-only --ui :${PORT} to the internet), so it keeps a loud
-		// warning instead of a refusal. Its API is unauthenticated either way,
-		// except /api/file, which D1 gates above.
+		// warning instead of a refusal. Its query/import API is unauthenticated
+		// either way; /api/file is refused unless a token is configured (D1).
 		if !servebind.IsLoopback(*uiAddr) {
 			bound := "all interfaces" // `--ui :PORT` — the container/PaaS shape
 			if host, _, err := net.SplitHostPort(*uiAddr); err == nil && host != "" {
 				bound = host
 			}
-			log.Printf("warning: dashboard bound to %s — its API (query/file/import) is unauthenticated; bind loopback or front it with a proxy", bound)
+			log.Printf("warning: dashboard bound to %s — its query/import API is unauthenticated and /api/file is refused unless a token is configured; bind loopback or front it with a proxy", bound)
 		}
 		eps = append(eps, endpoint{addr: *uiAddr, h: uiMux})
 	}
