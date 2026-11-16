@@ -161,7 +161,7 @@ of the first matching prefix.
 
 1. **`internal/summarize` is the only LLM client** — follow its `Chat` interface + prompt/JSON validation pattern for any new AI judgment. Don't invent a second client.
 2. **Most heuristics are deliberate parity ports** from the deleted Rust tree — comments cite `source_file:line`. Changing behavior may break documented contracts.
-3. **`store.Backend` interface** is the boundary — any judgment service takes it as a dependency, never a concrete store (same pattern as `QueryEmbedder` in `core.go:54`).
+3. **`store.Backend` interface** is the boundary — any judgment service takes it as a dependency, never a concrete store (same pattern as the `embed.Provider` port in `internal/embed/provider.go:54`, which replaced `QueryEmbedder` in CX-41).
 4. **Freshness is a read-only claim** — the watermark belongs to writers, readers compare it. Any Score over freshness must not affect the watermark, only how the label is reported.
 5. **Noul ≠ "should I do it"** — a Noul near 0.5 means genuine uncertainty, not medium intent. Use it only when the binary yes/no loses information vs. the probability itself.
 6. **Score needs concrete level definitions** — "high quality" is meaningless; "≥45 lines AND cyclomatic complexity >10" is a level. Every Score must anchor its criteria to real thresholds from the codebase.

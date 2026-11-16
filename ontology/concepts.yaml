@@ -97,7 +97,7 @@ concepts:
     owned_by:
       - leankg
     code_refs:
-      - internal/store/store_pg.go::OpenPG
+      - internal/store/backend.go::OpenBackend
       - internal/store/pg_vectors.go
       - internal/store/pgmigrate.go
       - internal/store/engine_shared.go
@@ -149,9 +149,9 @@ concepts:
     docs:
       - docs/git-history.md
     code_refs:
-      - internal/githistory/githistory.go::History
-      - internal/githistory/githistory.go::CoChange
-      - internal/githistory/githistory.go::Churn
+      - internal/githistory/query.go::History
+      - internal/githistory/query.go::CoChange
+      - internal/githistory/query.go::Churn
       - internal/core/githistory.go::gitImport
 
   - id: ontology
