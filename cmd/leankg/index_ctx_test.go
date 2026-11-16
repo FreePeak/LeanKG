@@ -109,7 +109,8 @@ func TestHookBudgetResolution(t *testing.T) {
 }
 
 // index --hook past its budget returns (exit 0) promptly: the budget expires
-// before the first file, the run stops, and the call does not block.
+// before the first directory ends, the run pauses after it, and the call does
+// not block.
 func TestIndexHookStopsWhenBudgetExpires(t *testing.T) {
 	dir := writeSourceTree(t, 2000)
 	done := make(chan struct{})
@@ -121,5 +122,47 @@ func TestIndexHookStopsWhenBudgetExpires(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("index --hook did not return after its budget expired")
+	}
+}
+
+// storedFileCount is the number of file records in dir's store (0 before the
+// first run has created it).
+func storedFileCount(t *testing.T, dir string) int {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dir, ".leankg", "leankg.db")); os.IsNotExist(err) {
+		return 0
+	}
+	st, err := openStore(context.Background(), dir, "", store.RO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	n, err := st.FileCount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// index --hook under a budget one directory cannot outlast: each run keeps the
+// directories it finished, prints the paused line and exits 0, and the store
+// reaches the full tree one directory per run. A run after that has nothing to do.
+func TestIndexHookBudgetConvergesAcrossRuns(t *testing.T) {
+	const dirs, perDir = 20, 10
+	dir := writeSourceTree(t, dirs*perDir) // 20 packages of 10 files each
+	for run := 1; run <= dirs+1; run++ {
+		var err error
+		out := captureStdout(t, func() {
+			err = cmdIndex(context.Background(), []string{"--hook", "--hook-budget", "1ns", "--no-embed", dir})
+		})
+		if err != nil {
+			t.Fatalf("run %d: %v\n%s", run, err, out)
+		}
+		if got, want := storedFileCount(t, dir), perDir*min(run, dirs); got != want {
+			t.Fatalf("run %d stored %d files, want %d\n%s", run, got, want, out)
+		}
+		if paused := strings.Contains(out, "paused"); paused != (run < dirs) {
+			t.Fatalf("run %d paused = %v, want %v\n%s", run, paused, run < dirs, out)
+		}
 	}
 }

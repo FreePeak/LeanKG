@@ -37,6 +37,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/flock"
 	"github.com/FreePeak/LeanKG/internal/httpx"
+	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/maintain"
 	leankgmcp "github.com/FreePeak/LeanKG/internal/mcp"
@@ -963,7 +964,7 @@ func cmdIndex(ctx context.Context, args []string) error {
 	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
 	rebase := fs.Bool("rebase-root", false, "adopt this directory as the store's index root (after moving a checkout); without it a store built from another root refuses the walk")
 	hook := fs.Bool("hook", false, "SessionStart hook mode: exit 0 without indexing when HEAD exceeds LEANKG_HOOK_MAX_FILES or another index of the store is running; the embed is skipped when the backlog exceeds LEANKG_HOOK_MAX_EMBED")
-	hookBudgetFlag := fs.Duration("hook-budget", 0, "with --hook: time budget for the index and embed (default LEANKG_HOOK_BUDGET, else 10s); past it the run stops, prints one line and exits 0")
+	hookBudgetFlag := fs.Duration("hook-budget", 0, "with --hook: time budget for the index and embed (default LEANKG_HOOK_BUDGET, else 10s); once spent, the index stops before its next directory (a started directory always finishes) and the embed stops; prints one line and exits 0")
 	noEmbed := fs.Bool("no-embed", false, "index only: skip the incremental embed that follows a successful index")
 	positional, err := parseInterspersed("index", fs, args, 1)
 	if err != nil {
@@ -998,19 +999,22 @@ func cmdIndex(ctx context.Context, args []string) error {
 			return fmt.Errorf("index: refusing to index %s: not a directory", target)
 		}
 	}
-	// The hook's time budget covers the size gate, the index and the embed. It
-	// is a deadline on ctx, so the stages stop at their next unit of work.
+	// The hook's time budget covers the size gate, the index and the embed. The
+	// size gate and the embed stop at the hard deadline hardCtx; the index stops
+	// softly, between directories, once the budget is spent (index.WithBudget).
+	hardCtx, indexCtx := ctx, ctx
 	var budget time.Duration
 	if *hook {
 		budget = hookBudget(*hookBudgetFlag)
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, budget)
+		hardCtx, cancel = context.WithTimeout(ctx, budget)
 		defer cancel()
+		indexCtx = index.WithBudget(ctx, hardCtx.Done())
 	}
 	// The hook's size gate runs before any side effect: no setup-mode
 	// persistence, no .leankg, no store.
 	if *hook && *source == "" {
-		if msg := hookBigRepoSkip(ctx, target); msg != "" {
+		if msg := hookBigRepoSkip(hardCtx, target); msg != "" {
 			fmt.Println(msg)
 			return nil
 		}
@@ -1071,10 +1075,10 @@ func cmdIndex(ctx context.Context, args []string) error {
 	// command the user typed.
 	_ = mode
 
-	if err := runIndex(ctx, *project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
+	if err := runIndex(indexCtx, *project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
 		switch {
-		case *hook && errors.Is(ctx.Err(), context.DeadlineExceeded):
-			fmt.Printf("leankg index --hook: stopped %s after its %s time budget; the directories finished so far are kept, the one in progress is rolled back, and the next session start continues the index\n", storeDir, budget)
+		case *hook && errors.Is(err, index.ErrBudget):
+			fmt.Printf("leankg index --hook: paused %s after its %s time budget: every directory it started is finished and kept, none was rolled back, and the next session start indexes the remaining directories\n", storeDir, budget)
 			return nil
 		case errors.Is(err, context.Canceled):
 			return fmt.Errorf("index: interrupted; the directories finished so far are kept, the one in progress is rolled back; rerun to finish: %w", err)
@@ -1082,7 +1086,7 @@ func cmdIndex(ctx context.Context, args []string) error {
 		return fmt.Errorf("index: %v", err)
 	}
 	if !*noEmbed {
-		indexEmbed(ctx, storeDir, *hook)
+		indexEmbed(hardCtx, storeDir, *hook)
 	}
 	return nil
 }

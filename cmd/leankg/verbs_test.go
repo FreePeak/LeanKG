@@ -65,6 +65,7 @@ func TestRunVerbMapsVerbErrorToExitStatus(t *testing.T) {
 		{"bad flag", context.Background(), []string{"status", "--no-such-flag"}, 2},
 		{"index of a missing path", context.Background(), []string{"index", "--project", missing, missing}, 1},
 		{"index interrupted", cancelled, []string{"index", "--no-embed", "--project", "DIR", "DIR"}, 130},
+		{"index interrupted under hook", cancelled, []string{"index", "--hook", "--no-embed", "--project", "DIR", "DIR"}, 130},
 	}
 	fakes := map[string]verbFunc{
 		"fake success":     fake(nil),

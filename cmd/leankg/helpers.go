@@ -298,8 +298,9 @@ func indexStoreDir(project, target string) string {
 // runIndex performs a one-shot index run into the project store. A non-empty
 // source is a --source URI whose tree is synced into <project>/.leankg/sources
 // and indexed instead of target (Rust main.rs index path resolution). ctx is
-// honoured between files: a done ctx stops the run with its error, and the
-// directories already written stay committed.
+// honoured between files: a done ctx stops the run with its error. A ctx that
+// carries a spent index.WithBudget stops it between directories with
+// index.ErrBudget. Either way the directories already written stay committed.
 func runIndex(ctx context.Context, project, target, source, refName, auth string, rebaseRoot ...bool) error {
 	dir := indexStoreDir(project, target)
 	indexTarget := target
