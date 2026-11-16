@@ -805,7 +805,7 @@ func (m *Memory) recentBanksCounting(banks []string, limit int) ([]Entry, int, e
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
-	return rows, total, nil
+	return redactEntries(rows), total, nil
 }
 
 // InjectBlock renders ranked recall rows as the <memories>-equivalent

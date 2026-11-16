@@ -83,7 +83,7 @@ func (m *Memory) reindex(key string) error {
 }
 
 func insertFileRows(tx *sql.Tx, key, data string) error {
-	for i, line := range strings.Split(data, "\n") {
+	for i, line := range strings.Split(Redact(data), "\n") {
 		if i > 10000 {
 			break // index the head; whole-file BLOBs are a W2 upgrade
 		}
@@ -142,6 +142,7 @@ func (m *Memory) Search(query string, limit int) ([]Hit, error) {
 		if err := rows.Scan(&h.Path, &h.Snippet, &h.Score); err != nil {
 			return nil, err
 		}
+		h.Snippet = Redact(h.Snippet)
 		h.Score = -h.Score // bm25() returns negative-better
 		hits = append(hits, h)
 	}

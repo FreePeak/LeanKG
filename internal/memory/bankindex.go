@@ -14,7 +14,10 @@ import (
 // indexVersion versions the derived index.db layout. On open, a different
 // stored version rebuilds the whole index from the Markdown files and JSONL
 // banks (the sources of truth), so an upgrade never needs a migration.
-const indexVersion = "2"
+//
+// "3": index rows pass through Redact, so memory written before write-side
+// redaction is masked when the index is rebuilt.
+const indexVersion = "3"
 
 // ensureIndex rebuilds index.db when it was built by another version.
 func (m *Memory) ensureIndex() error {
@@ -84,6 +87,7 @@ func (m *Memory) rebuildIndex() error {
 func insertBankRows(tx *sql.Tx, bank string, entries []Entry) error {
 	bank = sanitizeBank(bank)
 	for _, e := range entries {
+		e = redactEntry(e)
 		doc, err := json.Marshal(e)
 		if err != nil {
 			return err
@@ -289,5 +293,5 @@ func (m *Memory) recallIndexed(ctx context.Context, banks []string, query string
 			break
 		}
 	}
-	return out, denseIDs, nil
+	return redactEntries(out), denseIDs, nil
 }

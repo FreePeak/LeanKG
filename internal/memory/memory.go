@@ -188,7 +188,7 @@ func (m *Memory) Snapshot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return snapshot(string(mem), string(usr)), nil
+	return snapshot(Redact(string(mem)), Redact(string(usr))), nil
 }
 
 func snapshot(mem, usr string) string {
@@ -221,10 +221,11 @@ func (m *Memory) View(path string, offsetLine int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	text := Redact(string(data))
 	if offsetLine <= 1 {
-		return strings.TrimSuffix(string(data), "\n"), nil
+		return strings.TrimSuffix(text, "\n"), nil
 	}
-	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	if offsetLine > len(lines) {
 		return "", nil
 	}
@@ -426,6 +427,16 @@ func redactEntry(e Entry) Entry {
 	e.Content = Redact(e.Content)
 	e.Metadata = redactMetadata(e.Metadata)
 	return e
+}
+
+// redactEntries applies redactEntry to each row before a read returns it, so a
+// row written before write-side redaction existed is masked on read too.
+// Redaction is idempotent, so a row already redacted is returned unchanged.
+func redactEntries(rows []Entry) []Entry {
+	for i := range rows {
+		rows[i] = redactEntry(rows[i])
+	}
+	return rows
 }
 
 // redactMetadata copies m with every string value redacted. Tags arrive as a
