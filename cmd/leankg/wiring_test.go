@@ -235,7 +235,7 @@ func TestDashboardListenerServesHealthAndShell(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(bin, "serve", "--read-only", "--ui", addr, "--project", proj)
+	cmd := exec.Command(bin, "serve", "--read-only", "--http", "127.0.0.1:0", "--ui", addr, "--project", proj)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("serve: %v", err)
@@ -386,7 +386,7 @@ func TestUIV2LegacyRoutesServeData(t *testing.T) {
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bin, "serve", "--read-only", "--ui", addr, "--project", proj)
+	cmd := exec.Command(bin, "serve", "--read-only", "--http", "127.0.0.1:0", "--ui", addr, "--project", proj)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("serve: %v", err)
