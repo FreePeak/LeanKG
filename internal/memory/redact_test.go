@@ -100,7 +100,7 @@ func TestMemoryReadsUntouched(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(m.Root(), "topics", "plain.md"), []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := m.View("topics/plain.md", 0)
+	got, err := m.View(context.Background(), "topics/plain.md", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,14 +267,14 @@ func TestPreFixMemoryIsRedactedOnRead(t *testing.T) {
 	}
 
 	t.Run("snapshot", func(t *testing.T) {
-		got, err := m.Snapshot()
+		got, err := m.Snapshot(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
 		assertClean(t, "Snapshot", got)
 	})
 	t.Run("view", func(t *testing.T) {
-		got, err := m.View("topics/legacy.md", 0)
+		got, err := m.View(context.Background(), "topics/legacy.md", 0)
 		if err != nil {
 			t.Fatal(err)
 		}

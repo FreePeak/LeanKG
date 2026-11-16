@@ -183,7 +183,10 @@ func (m *Memory) within(p string) bool {
 // Snapshot returns the session-start frozen core: a usage header line
 // followed by the full MEMORY.md and USER.md contents under section
 // headings. An empty core file contributes just its heading.
-func (m *Memory) Snapshot() (string, error) {
+func (m *Memory) Snapshot(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	mem, err := os.ReadFile(filepath.Join(m.real, "MEMORY.md"))
 	if err != nil {
 		return "", err
@@ -216,7 +219,10 @@ func snapshot(mem, usr string) string {
 // View returns the file starting at line offsetLine (1-based; 0 or less
 // returns the whole file). The trailing newline of the last line is not
 // included.
-func (m *Memory) View(path string, offsetLine int) (string, error) {
+func (m *Memory) View(ctx context.Context, path string, offsetLine int) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	full, _, err := m.resolve(path)
 	if err != nil {
 		return "", err

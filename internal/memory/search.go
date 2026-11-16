@@ -62,8 +62,8 @@ func openFTS(ctx context.Context, path string) (*sql.DB, error) {
 // reindex replaces a file's rows in the FTS index. One row per non-empty
 // line, path-keyed; called after every successful write.
 func (m *Memory) reindex(ctx context.Context, key string) error {
-	ctx = context.WithoutCancel(ctx)
-	if err := m.deleteRows(ctx, key); err != nil {
+	wctx := context.WithoutCancel(ctx)
+	if err := m.deleteRows(wctx, key); err != nil {
 		return err
 	}
 	data, err := os.ReadFile(filepath.Join(m.real, filepath.FromSlash(key)))
@@ -73,11 +73,11 @@ func (m *Memory) reindex(ctx context.Context, key string) error {
 		}
 		return err
 	}
-	tx, err := m.fts.BeginTx(ctx, nil)
+	tx, err := m.fts.BeginTx(wctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := insertFileRows(ctx, tx, key, string(data)); err != nil {
+	if err := insertFileRows(wctx, tx, key, string(data)); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -102,8 +102,8 @@ func insertFileRows(ctx context.Context, tx *sql.Tx, key, data string) error {
 
 // deleteRows removes all index rows for one path.
 func (m *Memory) deleteRows(ctx context.Context, key string) error {
-	ctx = context.WithoutCancel(ctx)
-	if _, err := m.fts.ExecContext(ctx, `DELETE FROM memory_fts WHERE kind = 'file' AND path = ?`, key); err != nil {
+	wctx := context.WithoutCancel(ctx)
+	if _, err := m.fts.ExecContext(wctx, `DELETE FROM memory_fts WHERE kind = 'file' AND path = ?`, key); err != nil {
 		return err
 	}
 	return nil

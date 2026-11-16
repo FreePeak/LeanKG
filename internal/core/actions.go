@@ -954,16 +954,16 @@ func (e *Engine) memDeleteDocument(ctx context.Context, _ ImportRequest, a memor
 	}, nil
 }
 
-func (e *Engine) readMemoryView(_ context.Context, path, _ string, _ int) (map[string]any, error) {
-	text, err := e.mem.View(path, 0)
+func (e *Engine) readMemoryView(ctx context.Context, path, _ string, _ int) (map[string]any, error) {
+	text, err := e.mem.View(ctx, path, 0)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"command": "view", "path": path, "content": text}, nil
 }
 
-func (e *Engine) readMemorySnapshot(_ context.Context, _, _ string, _ int) (map[string]any, error) {
-	text, err := e.mem.Snapshot()
+func (e *Engine) readMemorySnapshot(ctx context.Context, _, _ string, _ int) (map[string]any, error) {
+	text, err := e.mem.Snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}

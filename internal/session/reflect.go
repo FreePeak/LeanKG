@@ -26,6 +26,9 @@ import (
 // LessonsFile is the reflections artifact, relative to the project directory.
 const LessonsFile = ".leankg/reflections/LESSONS.md"
 
+// reflectMirrorTimeout bounds the memory mirror, which may rebuild the index.
+const reflectMirrorTimeout = 30 * time.Second
+
 // ReflectOutcome appends one query-outcome entry to
 // <projectDir>/.leankg/reflections/LESSONS.md, creating the directory and file
 // as needed, and returns the file path.
@@ -35,6 +38,9 @@ const LessonsFile = ".leankg/reflections/LESSONS.md"
 // verb which passed it through unchecked); nodes are the optional qualified
 // names that were returned; note is optional free-form context.
 func ReflectOutcome(ctx context.Context, projectDir, question string, nodes []string, outcome, note string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	path := filepath.Join(projectDir, filepath.FromSlash(LessonsFile))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("session: create reflections dir: %w", err)
@@ -69,7 +75,9 @@ func ReflectOutcome(ctx context.Context, projectDir, question string, nodes []st
 	// memory failure must not make `reflect` report failure for a reflection it
 	// did record.
 	// The lesson is already on disk, so the mirror must not be cancelled half way.
-	if err := MirrorToMemory(context.WithoutCancel(ctx), projectDir, entry); err != nil {
+	mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reflectMirrorTimeout)
+	defer cancel()
+	if err := MirrorToMemory(mctx, projectDir, entry); err != nil {
 		log.Printf("session: reflection mirrored to memory: %v", err)
 	}
 	return path, nil

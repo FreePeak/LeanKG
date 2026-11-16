@@ -67,7 +67,7 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 	if err := os.Symlink("/etc/passwd", filepath.Join(root, "topics", "evil.md")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if _, err := m.View("topics/evil.md", 0); !errors.Is(err, ErrOutsideRoot) {
+	if _, err := m.View(context.Background(), "topics/evil.md", 0); !errors.Is(err, ErrOutsideRoot) {
 		t.Errorf("View through escaping symlink: err = %v, want ErrOutsideRoot", err)
 	}
 	if err := m.Create(context.Background(), "topics/evil.md", "x"); !errors.Is(err, ErrOutsideRoot) {
@@ -93,7 +93,7 @@ func TestCoreFileOverflow(t *testing.T) {
 		t.Errorf("ErrOverflow = %+v", eo)
 	}
 	// The refused write must not have truncated or replaced the file.
-	if c, _ := m.View("MEMORY.md", 0); c != "" {
+	if c, _ := m.View(context.Background(), "MEMORY.md", 0); c != "" {
 		t.Errorf("failed write mutated file: %q", c)
 	}
 	if err := m.Create(context.Background(), "MEMORY.md", strings.Repeat("x", CoreFileBytes)); err != nil {
@@ -127,14 +127,14 @@ func TestAmbiguousReplace(t *testing.T) {
 	if err := m.StrReplace(context.Background(), "topics/a.md", "alpha", "ALPHA"); err != nil {
 		t.Fatalf("unique replace: %v", err)
 	}
-	if c, _ := m.View("topics/a.md", 0); c != "ALPHA beta gamma beta" {
+	if c, _ := m.View(context.Background(), "topics/a.md", 0); c != "ALPHA beta gamma beta" {
 		t.Errorf("after replace: %q", c)
 	}
 	// Remove keeps the rest of the line.
 	if err := m.Remove(context.Background(), "topics/a.md", "gamma"); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	if c, _ := m.View("topics/a.md", 0); c != "ALPHA beta  beta" {
+	if c, _ := m.View(context.Background(), "topics/a.md", 0); c != "ALPHA beta  beta" {
 		t.Errorf("after remove: %q", c)
 	}
 	if err := m.Remove(context.Background(), "topics/a.md", "beta"); !errors.Is(err, ErrAmbiguousMatch) {
@@ -144,7 +144,7 @@ func TestAmbiguousReplace(t *testing.T) {
 
 func TestSnapshotHeaderFormat(t *testing.T) {
 	m := openTest(t)
-	got, err := m.Snapshot()
+	got, err := m.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestSnapshotHeaderFormat(t *testing.T) {
 	if err := m.Create(context.Background(), "USER.md", strings.Repeat("u", 264)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, err = m.Snapshot()
+	got, err = m.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -179,19 +179,19 @@ func TestInsertAndView(t *testing.T) {
 	if err := m.Insert(context.Background(), "topics/a.md", "zero", 0); err != nil {
 		t.Fatalf("Insert prepend: %v", err)
 	}
-	if c, _ := m.View("topics/a.md", 0); c != "zero\none\ntwo" {
+	if c, _ := m.View(context.Background(), "topics/a.md", 0); c != "zero\none\ntwo" {
 		t.Errorf("after prepend: %q", c)
 	}
 	if err := m.Insert(context.Background(), "topics/a.md", "mid", 3); err != nil {
 		t.Fatalf("Insert at line 3: %v", err)
 	}
-	if c, _ := m.View("topics/a.md", 0); c != "zero\none\nmid\ntwo" {
+	if c, _ := m.View(context.Background(), "topics/a.md", 0); c != "zero\none\nmid\ntwo" {
 		t.Errorf("after insert: %q", c)
 	}
-	if c, _ := m.View("topics/a.md", 3); c != "mid\ntwo" {
+	if c, _ := m.View(context.Background(), "topics/a.md", 3); c != "mid\ntwo" {
 		t.Errorf("View from line 3: %q", c)
 	}
-	if c, _ := m.View("topics/a.md", 99); c != "" {
+	if c, _ := m.View(context.Background(), "topics/a.md", 99); c != "" {
 		t.Errorf("View past EOF: %q", c)
 	}
 }

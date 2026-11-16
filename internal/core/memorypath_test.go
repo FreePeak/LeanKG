@@ -72,7 +72,7 @@ func TestMemoryCurationAcceptsEitherPathOrFile(t *testing.T) {
 	}
 
 	// And the writes actually landed in ONE file — not two, not a new one.
-	body, err := mem.View("MEMORY.md", 0)
+	body, err := mem.View(context.Background(), "MEMORY.md", 0)
 	if err != nil {
 		t.Fatalf("read back MEMORY.md: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestMemoryCurationAcceptsEitherPathOrFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("args-nested add: %v", err)
 	}
-	user, err := mem.View("USER.md", 0)
+	user, err := mem.View(context.Background(), "USER.md", 0)
 	if err != nil {
 		t.Fatalf("read back USER.md: %v", err)
 	}

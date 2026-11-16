@@ -133,13 +133,13 @@ func intOf(v any) (int, bool) {
 
 // indexAppendLocked indexes freshly appended rows. Callers hold bankMu.
 func (m *Memory) indexAppendLocked(ctx context.Context, bank string, entries []Entry) error {
-	ctx = context.WithoutCancel(ctx)
-	tx, err := m.fts.BeginTx(ctx, nil)
+	wctx := context.WithoutCancel(ctx)
+	tx, err := m.fts.BeginTx(wctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := insertBankRows(ctx, tx, bank, entries); err != nil {
+	if err := insertBankRows(wctx, tx, bank, entries); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -149,13 +149,13 @@ func (m *Memory) indexAppendLocked(ctx context.Context, bank string, entries []E
 // replace/delete) and recomputes the cursors it can have changed. Callers
 // hold bankMu.
 func (m *Memory) reindexBankLocked(ctx context.Context, bank string) error {
-	ctx = context.WithoutCancel(ctx)
+	wctx := context.WithoutCancel(ctx)
 	entries, err := m.readBankRows(bank)
 	if err != nil {
 		return err
 	}
 	key := sanitizeBank(bank)
-	tx, err := m.fts.BeginTx(ctx, nil)
+	tx, err := m.fts.BeginTx(wctx, nil)
 	if err != nil {
 		return err
 	}
@@ -167,22 +167,22 @@ func (m *Memory) reindexBankLocked(ctx context.Context, bank string) error {
 		{`DELETE FROM memory_fts WHERE kind = 'bank' AND bank = ?`, []any{key}},
 		{`DELETE FROM memory_cursors WHERE kind = 'bank' AND key = ?`, []any{key}},
 	} {
-		if _, err := tx.ExecContext(ctx, stmt.q, stmt.args...); err != nil {
+		if _, err := tx.ExecContext(wctx, stmt.q, stmt.args...); err != nil {
 			return err
 		}
 	}
-	if err := insertBankRows(ctx, tx, bank, entries); err != nil {
+	if err := insertBankRows(wctx, tx, bank, entries); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_vectors WHERE bank = ? AND entry_id NOT IN
+	if _, err := tx.ExecContext(wctx, `DELETE FROM memory_vectors WHERE bank = ? AND entry_id NOT IN
 		(SELECT entry_id FROM memory_fts WHERE kind = 'bank' AND bank = ?)`, key, key); err != nil {
 		return err
 	}
 	// Session cursors span banks: recompute them all from the indexed rows.
-	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_cursors WHERE kind = 'session'`); err != nil {
+	if _, err := tx.ExecContext(wctx, `DELETE FROM memory_cursors WHERE kind = 'session'`); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO memory_cursors (kind, key, value)
+	if _, err := tx.ExecContext(wctx, `INSERT INTO memory_cursors (kind, key, value)
 		SELECT 'session', json_extract(doc, '$.metadata.session_id'),
 		       MAX(CAST(json_extract(doc, '$.metadata.retained_through_user_turn') AS INTEGER))
 		FROM memory_fts

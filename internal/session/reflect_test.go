@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -134,26 +135,30 @@ func TestMirroredReflectionKeepsTheRustArtifactIntact(t *testing.T) {
 	}
 }
 
-// TestReflectionMirrorSurvivesCancelledCallerContext pins that the lesson and
-// its memory mirror both land when the caller's ctx is already cancelled: the
-// lesson is on disk before the mirror runs, so the mirror must not be cancelled.
-func TestReflectionMirrorSurvivesCancelledCallerContext(t *testing.T) {
-	dir := t.TempDir()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := ReflectOutcome(ctx, dir, "where is the token budget applied", nil, "useful", "found it"); err != nil {
-		t.Fatalf("ReflectOutcome: %v", err)
+// flipCtx reports no error on its first Err call and context.Canceled on every
+// call after, so a test can cancel "after the lesson is written" without timing.
+type flipCtx struct {
+	context.Context
+	calls int
+}
+
+func (c *flipCtx) Err() error {
+	c.calls++
+	if c.calls > 1 {
+		return context.Canceled
 	}
-	lesson := readLessons(t, filepath.Join(dir, ".leankg", "reflections", "LESSONS.md"))
-	if !strings.Contains(lesson, "where is the token budget applied") {
-		t.Fatalf("lesson missing from LESSONS.md: %q", lesson)
-	}
+	return nil
+}
+
+// recallBodies returns the snippets the memory layer's search finds for query.
+func recallBodies(t *testing.T, dir, query string) string {
+	t.Helper()
 	m, err := memory.Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatalf("memory.Open: %v", err)
 	}
 	defer m.Close()
-	hits, err := m.Search(context.Background(), "token budget", 10)
+	hits, err := m.Search(context.Background(), query, 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -161,7 +166,40 @@ func TestReflectionMirrorSurvivesCancelledCallerContext(t *testing.T) {
 	for _, h := range hits {
 		bodies += h.Snippet + "\n"
 	}
-	if !strings.Contains(bodies, "where is the token budget applied") {
-		t.Fatalf("reflection written under a cancelled ctx is missing from memory: %d hits, none mention it", len(hits))
+	return bodies
+}
+
+// TestReflectOutcomeRefusesCancelledContext pins that a cancelled ctx stops the
+// write before any file is touched: no lesson on disk, nothing in memory search.
+func TestReflectOutcomeRefusesCancelledContext(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := ReflectOutcome(ctx, dir, "where is the token budget applied", nil, "useful", "found it")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReflectOutcome err = %v, want context.Canceled", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".leankg", "reflections", "LESSONS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("LESSONS.md written under a cancelled ctx (stat err = %v)", statErr)
+	}
+	if bodies := recallBodies(t, dir, "token budget"); strings.Contains(bodies, "where is the token budget applied") {
+		t.Fatalf("reflection written under a cancelled ctx is in memory search: %q", bodies)
+	}
+}
+
+// TestReflectionMirrorSurvivesCancelAfterLessonWritten pins that a cancel which
+// lands after the lesson is on disk does not stop the memory mirror.
+func TestReflectionMirrorSurvivesCancelAfterLessonWritten(t *testing.T) {
+	dir := t.TempDir()
+	ctx := &flipCtx{Context: context.Background()}
+	if _, err := ReflectOutcome(ctx, dir, "where is the token budget applied", nil, "useful", "found it"); err != nil {
+		t.Fatalf("ReflectOutcome: %v", err)
+	}
+	lesson := readLessons(t, filepath.Join(dir, ".leankg", "reflections", "LESSONS.md"))
+	if !strings.Contains(lesson, "where is the token budget applied") {
+		t.Fatalf("lesson missing from LESSONS.md: %q", lesson)
+	}
+	if bodies := recallBodies(t, dir, "token budget"); !strings.Contains(bodies, "where is the token budget applied") {
+		t.Fatalf("reflection written before a late cancel is missing from memory: %q", bodies)
 	}
 }

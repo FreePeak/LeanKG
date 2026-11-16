@@ -185,3 +185,66 @@ func TestIndexAppendIndexesRowsUnderCancelledContext(t *testing.T) {
 		t.Errorf("bank file lines = %d, indexed rows = %d; want 1 and 1", lines, indexed)
 	}
 }
+
+// TestViewAndSnapshotHonourCancelledContext pins that View and Snapshot return
+// ctx.Err() before they read any file.
+func TestViewAndSnapshotHonourCancelledContext(t *testing.T) {
+	m := openTest(t)
+	if _, err := m.View(cancelledCtx(), "MEMORY.md", 0); !errors.Is(err, context.Canceled) {
+		t.Errorf("View err = %v, want context.Canceled", err)
+	}
+	if _, err := m.Snapshot(cancelledCtx()); !errors.Is(err, context.Canceled) {
+		t.Errorf("Snapshot err = %v, want context.Canceled", err)
+	}
+}
+
+// TestDeleteRowsRemovesFileRowsUnderCancelledContext pins the detach invariant
+// for file rows: deleteRows ignores a cancelled ctx and clears the index rows.
+func TestDeleteRowsRemovesFileRowsUnderCancelledContext(t *testing.T) {
+	m := openTest(t)
+	const key = "topics/y.md"
+	if err := os.WriteFile(filepath.Join(m.Root(), "topics", "y.md"), []byte("alpha line\nbeta line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.reindex(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.deleteRows(cancelledCtx(), key); err != nil {
+		t.Fatalf("deleteRows err = %v, want nil", err)
+	}
+	var indexed int
+	if err := m.fts.QueryRow(`SELECT COUNT(*) FROM memory_fts WHERE kind = 'file' AND path = ?`, key).Scan(&indexed); err != nil {
+		t.Fatal(err)
+	}
+	if indexed != 0 {
+		t.Errorf("indexed file rows = %d, want 0 after deleteRows", indexed)
+	}
+}
+
+// TestReindexBankLockedIndexesRewrittenBankUnderCancelledContext pins the detach
+// invariant for bank rewrites: the file is already rewritten, so
+// reindexBankLocked ignores a cancelled ctx and the index matches the file.
+func TestReindexBankLockedIndexesRewrittenBankUnderCancelledContext(t *testing.T) {
+	m := openTest(t)
+	const bank = "ctx-rewrite"
+	if err := m.RetainRaw(context.Background(), bank, []Entry{{Content: "delta one"}, {Content: "delta two"}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(m.bankPath(bank))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRow := strings.SplitN(string(data), "\n", 2)[0]
+	if err := os.WriteFile(m.bankPath(bank), []byte(firstRow+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.bankMu.Lock()
+	err = m.reindexBankLocked(cancelledCtx(), bank)
+	m.bankMu.Unlock()
+	if err != nil {
+		t.Fatalf("reindexBankLocked err = %v, want nil", err)
+	}
+	if lines, indexed := bankRowCounts(t, m, bank); lines != 1 || indexed != 1 {
+		t.Errorf("bank file lines = %d, indexed rows = %d; want 1 and 1", lines, indexed)
+	}
+}
