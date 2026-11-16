@@ -555,16 +555,21 @@ afterSidecars:
 		if mem != nil {
 			mem.SetKeepModelIDs(keepModelIDs)
 		}
-		// Deferred so shutdown joins the fleet after runServers drains and
-		// before the router and the default store close (defers run LIFO).
-		defer joinFleet(maintain.RunFleet(ctx, func() []maintain.Target {
+		// The fleet runs on its own context so it stops on every serve return,
+		// not only when the root ctx is cancelled (stdio EOF, a bind failure).
+		// Defers run LIFO: cancelFleet fires before joinFleet waits, and the
+		// join runs after runServers drains and before the router and the
+		// default store close.
+		fctx, cancelFleet := context.WithCancel(ctx)
+		defer joinFleet(maintain.RunFleet(fctx, func() []maintain.Target {
 			// The REGISTRY sweep rides the same tick as the store
 			// maintenance: a row for a project that left the fleet must not
 			// outlive it, and nothing else ever pruned the registry. The
 			// callback runs once per pass, so this is once per tick.
-			sweepRegistry(ctx, eng)
-			return fleetTargets(ctx, dir, st, mem, router.List(), eng, keepModelIDs)
+			sweepRegistry(fctx, eng)
+			return fleetTargets(fctx, dir, st, mem, router.List(), eng, keepModelIDs)
 		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle), shutdownTimeout)
+		defer cancelFleet()
 	}
 
 	// Auto-config jobs outlive the request that started them. serve owns them:
