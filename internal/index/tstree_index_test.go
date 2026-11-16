@@ -99,10 +99,10 @@ func TestIndexDirWithRegistryLazyNested(t *testing.T) {
 	if _, err := IndexDirWith(context.Background(), st, dir, reg); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.FindExact("Handler"); len(got) == 0 {
+	if got, _ := st.FindExact(context.Background(), "Handler"); len(got) == 0 {
 		t.Fatal("go element missing via the registry path")
 	}
-	if got, _ := st.FindExact("App"); len(got) == 0 {
+	if got, _ := st.FindExact(context.Background(), "App"); len(got) == 0 {
 		t.Fatal("dart element missing via the registry path")
 	}
 }
