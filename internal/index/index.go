@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
@@ -265,6 +266,20 @@ const extractorVersion = "3"
 
 const extractorKVKey = "extractor_version"
 
+const reextractKVKey = "reextract_cursor"
+
+// ErrBudget is returned when the time budget given to WithBudget is spent
+// between two directories: the run stopped on purpose and resumes next time.
+var ErrBudget = errors.New("index: time budget spent")
+
+type budgetKey struct{}
+
+// WithBudget returns ctx carrying a time budget. Once spent is closed, the run
+// stops between directories (a started directory always finishes).
+func WithBudget(ctx context.Context, spent <-chan struct{}) context.Context {
+	return context.WithValue(ctx, budgetKey{}, spent)
+}
+
 func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (res Result, err error) {
 	prev, err := st.Files(ctx)
 	if err != nil {
@@ -282,6 +297,26 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		return res, err
 	}
 	reextract := len(prev) > 0 && ver != extractorVersion
+	if ver != extractorVersion && !reextract {
+		// An empty store has nothing to re-extract: stamp the version now, so a
+		// run the budget cuts short is not taken for an upgrade on the next run.
+		if err := st.KVSet(ctx, rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
+			return res, err
+		}
+	}
+	// An upgrade resumes from the last directory it finished, recorded as
+	// "<version>\n<dir>"; a cursor of another version says nothing about this one.
+	var cursor string
+	if reextract {
+		v, _, err := st.KVGet(ctx, rootKVNamespace, reextractKVKey)
+		if err != nil {
+			return res, err
+		}
+		if cv, cdir, ok := strings.Cut(v, "\n"); ok && cv == extractorVersion {
+			cursor = cdir
+		}
+	}
+	spent, _ := ctx.Value(budgetKey{}).(<-chan struct{})
 
 	// A repository root with commits is indexed from HEAD (committed content
 	// only, never the working tree). Any other directory walks the disk.
@@ -352,7 +387,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return res, err
 		}
 		rec, seen := prevByRel[c.rel]
-		trusted := seen && !reextract
+		trusted := seen && (!reextract || dirOf(c.rel) <= cursor)
 		var hash string
 		if c.oid != "" {
 			hash = gitKey(c.oid)
@@ -403,6 +438,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return res, err
 		}
 	}
+	slices.Sort(dirOrder) // a stable order across runs, so the cursor means the same thing in each
 
 	// pendingFile pairs each extracted file with its own record: a specialist
 	// file that writes itself is dropped here, so later files must not shift.
@@ -416,12 +452,29 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	//
 	// A file's writes run detached from ctx (wctx), so a cancel takes effect
 	// between files, never inside one. Call edges are resolved against the
-	// files of the same directory written in this run, so a run that stops
-	// part-way through a directory rolls back the files it finished in that
-	// directory: the rerun then sees them as changed and resolves every call
-	// against the same name set as an uninterrupted run.
+	// files of the same directory written in this run, so a cancel part-way
+	// through a directory rolls back the files it finished in that directory:
+	// the rerun then sees them as changed and resolves every call against the
+	// same name set as an uninterrupted run.
+	//
+	// The time budget is soft: once spent, the run stops BETWEEN directories,
+	// so every directory it started is finished and kept, and none is rolled
+	// back. An upgrade (reextract) records a cursor after each finished
+	// directory, so the next run re-extracts only the directories after it.
 	wctx := context.WithoutCancel(ctx)
-	for _, d := range dirOrder {
+	for i, d := range dirOrder {
+		if i > 0 {
+			select {
+			case <-spent:
+				// A signal also closes spent (the command derives the budget from
+				// its signal context): that must still report the cancel.
+				if err := ctx.Err(); err != nil {
+					return res, err
+				}
+				return res, ErrBudget
+			default:
+			}
+		}
 		files := byDir[d]
 		pending := make([]pendingFile, 0, len(files))
 		names := map[string][]string{} // package-scoped call targets
@@ -488,6 +541,12 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			}
 			return res, err
 		}
+		if reextract && d > cursor {
+			cursor = d
+			if err := st.KVSet(wctx, rootKVNamespace, reextractKVKey, extractorVersion+"\n"+d); err != nil {
+				return res, err
+			}
+		}
 	}
 	// Vectors are keyed by qualified name and DeleteByFile does not own them,
 	// so every deleted file or removed symbol left a vector behind (RS-05).
@@ -499,8 +558,11 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return res, fmt.Errorf("index: reclaim orphan vectors: %w", err)
 		}
 	}
-	if ver != extractorVersion {
+	if reextract {
 		if err := st.KVSet(ctx, rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
+			return res, err
+		}
+		if err := st.KVSet(ctx, rootKVNamespace, reextractKVKey, ""); err != nil {
 			return res, err
 		}
 	}
