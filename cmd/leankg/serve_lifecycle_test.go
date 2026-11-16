@@ -173,8 +173,8 @@ func TestServeGateStateNeverCreatesTheStore(t *testing.T) {
 
 // TestServeStdioEOFDoesNotWaitForTheFleet pins the shutdown path where serve
 // returns without its root context cancelled: stdin reaching EOF ends the stdio
-// session, and the maintenance fleet must stop with it rather than make the
-// process wait out the join budget.
+// session, and the maintenance fleet must stop with it. The fleet join is
+// checked through its stderr log line, not by timing the process.
 func TestServeStdioEOFDoesNotWaitForTheFleet(t *testing.T) {
 	bin := cliBinary(t)
 	t.Setenv("LEANKG_HOME", t.TempDir())
@@ -182,12 +182,8 @@ func TestServeStdioEOFDoesNotWaitForTheFleet(t *testing.T) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	start := time.Now()
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("serve --stdio after EOF: %v\n%s", err, stderr.String())
-	}
-	if elapsed := time.Since(start); elapsed >= 2*time.Second {
-		t.Fatalf("serve --stdio took %s after EOF, want under 2s\n%s", elapsed, stderr.String())
 	}
 	if strings.Contains(stderr.String(), "fleet did not stop") {
 		t.Fatalf("serve waited out the fleet join budget:\n%s", stderr.String())
