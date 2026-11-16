@@ -39,7 +39,7 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 
 |Command|Purpose|
 |---|---|
-|`leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --memory`|MCP HTTP + REST + memory (add `--rpc 127.0.0.1:9090` ConnectRPC, `--ui 127.0.0.1:8081` dashboard, `--read-only` reader role). A non-loopback `--http`/`--rest`/`--rpc` bind is REFUSED unless a token is configured (`leankg auth token create` / `LEANKG_TOKEN_ADMIN`) — see the exposure rule below. `--ui` is the one deliberately public listener (the container demo)|
+|`leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --memory`|MCP HTTP + REST + memory (add `--rpc 127.0.0.1:9090` ConnectRPC, `--ui 127.0.0.1:8081` dashboard, `--read-only` reader role). A non-loopback `--http`/`--rest`/`--rpc` bind is REFUSED unless a token is configured (`leankg auth token create` / `LEANKG_TOKEN_ADMIN`) — see the exposure rule below. `--ui` is the one listener without a refusal (the container demo), but its `/api/file` answers 403 on a non-loopback bind while no token is configured (D1)|
 |`leankg index <dir> [--hook] [--no-embed]`|Index a repository (3-signal incremental). A git repo root with commits reads HEAD git objects (uncommitted/untracked/ignored files skipped; change detection by blob ID); a directory without its own `.git` or a repo with no commits keeps the filesystem scan. Then runs the incremental embed unless `--no-embed`; embed failure is reported, not fatal. `--hook` exits 0 without indexing when HEAD has more than `LEANKG_HOOK_MAX_FILES` (default 10000) indexable files (printing the manual `leankg index <dir>` to run instead), or when another index of the store is running; hook embed only attaches to a running local provider and skips (one `embed skipped:` line, exit 0) when more than `LEANKG_HOOK_MAX_EMBED` (default 500) elements need vectors. `--hook` runs under a time budget (`--hook-budget`, else `LEANKG_HOOK_BUDGET`, default 10s) covering the size gate, index and embed; past it the run stops, prints one line and exits 0, and the next run resumes. SIGINT/SIGTERM stop a run at its next unit of work and exit 130.|
 |`leankg writer --project <dir>`|Index-once + fsnotify reconcile loop (pairs with `serve --read-only`). For a git-backed store a new commit (change of `.git/logs/HEAD`) triggers a reindex; saving without committing does not change the graph|
 |`leankg query <text> [--kind name\|impact] [--depth N]`|CLI query (L1 exact → L2 fuzzy fallback; graph impact)|
@@ -220,7 +220,10 @@ the file reader and the memory write path on the LAN — measured 2026-10-21, a
 LAN POST to the REST listener answered `{"written":1}`. The refusal names both
 ways out: bind `127.0.0.1`, or configure a token first. `--ui` is the ONE
 deliberately public listener (the container demo serves `--read-only --ui
-:${PORT}` to the internet), so it keeps a loud warning instead of a refusal.
+:${PORT}` to the internet), so it keeps a loud warning instead of a refusal. Its
+`/api/file` reader is the exception (D1): with the gate on it needs a Viewer
+token, and with the gate off it answers 403 `PERMISSION_DENIED` on any
+non-loopback bind, so the demo needs a token for the file viewer.
 Rule + test: `internal/servebind`, `cmd/leankg/servebind_test.go`.
 
 **A restart can leave a duplicate behind, and the duplicate can be the one

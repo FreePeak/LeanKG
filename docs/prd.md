@@ -16,7 +16,7 @@ The gate resolves the caller once and stores its role in the request context. Ea
 
 Live matrix, base against this change, gate on (`--http`, `--rest`, `--rpc`, `--ui`, `--memory`, `--hindsight-compat`). Every other route answers as before. The differences:
 
-- `/api/file` on the `--ui` listener needs a bearer token when the gate is on (Viewer minimum). This is decision D1; with the gate off it stays open.
+- `/api/file` on the `--ui` listener needs a bearer token when the gate is on (Viewer minimum). With the gate off it is served only on a loopback `--ui` bind and answers 403 `PERMISSION_DENIED` on any other bind. This is decision D1.
 - `GET /api/v1/ontology/matches` is a read. A Viewer now gets 200; the old prefix `/api/v1/ontology/match` also matched it and answered 403.
 - A path with no registered route, under the old write prefixes (`POST /api/v1/import/extra`) or the old DELETE rule for the memory mount (`DELETE /api/v1/memory/banks/{bank}/memories/{id}`), answers 404 to a Viewer instead of 403.
 

@@ -36,6 +36,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/flock"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/maintain"
 	leankgmcp "github.com/FreePeak/LeanKG/internal/mcp"
@@ -298,6 +299,24 @@ func serveGateOn(ctx context.Context, dir, engine, dbPath string) bool {
 		return false
 	}
 	return gateOn
+}
+
+// uiFileGate refuses GET /api/file on a --ui listener bound beyond loopback
+// while no token gates it: with the gate off every caller resolves to Admin,
+// so the file reader would serve any file under the project root to the LAN.
+// The gate is read per request, so a token revoked while serving closes the
+// route at once. An unknown gate state counts as off (fail closed).
+func uiFileGate(st auth.Store, addr string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gated, err := auth.GateEnabled(r.Context(), st)
+		if servebind.Exposed(addr, err == nil && gated) {
+			httpx.WriteError(w, errs.NewError(errs.PermissionDenied,
+				"the dashboard file viewer is refused on a non-loopback --ui bind while no auth token is configured",
+				"bind 127.0.0.1 (--ui 127.0.0.1:PORT), or configure a token (leankg auth token create, or LEANKG_TOKEN_VIEWER)"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func serve(ctx context.Context, args []string) error {
@@ -699,18 +718,20 @@ afterSidecars:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})))
-		// D1: /api/file serves any file under the project root, so it needs the
+		// D1: /api/file serves any file under the project root. It needs the
 		// bearer token (Viewer minimum) whenever the gate is on. With the gate off
-		// the middleware resolves Admin and the file stays open, as before.
-		uiMux.Handle("GET /api/file", auth.Public(auth.MiddlewareWithStore(st, auth.Require(auth.Viewer, dash))))
+		// it is served only on a loopback --ui bind; any other bind refuses it
+		// (uiFileGate), because the middleware resolves every caller to Admin when
+		// no token exists. The Render demo therefore needs a token for the viewer.
+		uiMux.Handle("GET /api/file", auth.Public(uiFileGate(st, *uiAddr, auth.MiddlewareWithStore(st, auth.Require(auth.Viewer, dash)))))
 		uiMux.Handle("/api/", auth.Public(dash))
 		uiMux.Handle("/", auth.Public(web.Handler()))
 		log.Printf("leankg serve (UI) on %s", *uiAddr)
 		// The UI listener is deliberately NOT gated by the exposure rule: the
 		// dashboard is public by design (the Render demo serves
 		// --read-only --ui :${PORT} to the internet), so it keeps a loud
-		// warning instead of a refusal. Its API (query/read/import) is
-		// unauthenticated either way.
+		// warning instead of a refusal. Its API is unauthenticated either way,
+		// except /api/file, which D1 gates above.
 		if !servebind.IsLoopback(*uiAddr) {
 			bound := "all interfaces" // `--ui :PORT` — the container/PaaS shape
 			if host, _, err := net.SplitHostPort(*uiAddr); err == nil && host != "" {
