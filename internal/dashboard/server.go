@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/sessionlink"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
@@ -42,7 +43,7 @@ type Options struct {
 	AllowRemote bool             // require the bearer token on every request
 	Now         func() time.Time // nil = time.Now
 
-	openStore func(home string, readOnly bool) (telemetry.Store, error) // test seam
+	openStore func(ctx context.Context, home string, readOnly bool) (telemetry.Store, error) // test seam
 }
 
 // Server is the dashboard HTTP handler plus its background linker.
@@ -114,7 +115,7 @@ func (s *Server) reconcileLinker(ctx context.Context) {
 	if s.led.linking() {
 		return
 	}
-	st, err := s.led.store()
+	st, err := s.led.store(ctx)
 	if err != nil {
 		return
 	}
@@ -171,10 +172,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET "+p+"consent", s.consentGet)
 	mux.HandleFunc("POST "+p+"consent", s.consentPost)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
-		writeErr(w, http.StatusNotFound, "not found")
+		httpx.WriteMessage(w, http.StatusNotFound, "not found")
 	})
 	mux.Handle("/", spaHandler())
-	return s.secure(mux)
+	return s.secure(httpx.Guard(mux))
 }
 
 // secure sets the response headers and, in remote mode, requires the bearer
@@ -191,7 +192,7 @@ func (s *Server) secure(next http.Handler) http.Handler {
 		}
 		if s.opts.AllowRemote && !s.bearerOK(r) {
 			h.Set("WWW-Authenticate", `Bearer realm="leankg-dashboard"`)
-			writeErr(w, http.StatusUnauthorized, "unauthorized: send Authorization: Bearer <token>")
+			httpx.WriteMessage(w, http.StatusUnauthorized, "unauthorized: send Authorization: Bearer <token>")
 			return
 		}
 		next.ServeHTTP(w, r)

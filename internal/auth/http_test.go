@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -102,7 +103,7 @@ func TestAuthRoutesHappyPath(t *testing.T) {
 		t.Fatalf("login = %d %v", code, resp)
 	}
 
-	orgs, err := st.OrgsByOwner(accountID)
+	orgs, err := st.OrgsByOwner(context.Background(), accountID)
 	if err != nil || len(orgs) != 1 {
 		t.Fatalf("bootstrap orgs = %+v, %v", orgs, err)
 	}
@@ -183,7 +184,7 @@ func TestAuthRoutesHappyPath(t *testing.T) {
 	if code != http.StatusOK || resp["data"] != true {
 		t.Fatalf("claim = %d %v", code, resp)
 	}
-	if owned, err := st.IsResourceOwner("knowledge", "entry-1", accountID); err != nil || !owned {
+	if owned, err := st.IsResourceOwner(context.Background(), "knowledge", "entry-1", accountID); err != nil || !owned {
 		t.Fatalf("ownership not recorded: %v, %v", owned, err)
 	}
 }
@@ -207,7 +208,7 @@ func TestAuthRoutesDenied(t *testing.T) {
 	ownerID := register("owner@example.com")
 	outsiderID := register("outsider@example.com")
 
-	orgs, err := st.OrgsByOwner(ownerID)
+	orgs, err := st.OrgsByOwner(context.Background(), ownerID)
 	if err != nil || len(orgs) != 1 {
 		t.Fatalf("orgs by owner = %+v, %v", orgs, err)
 	}
@@ -215,7 +216,7 @@ func TestAuthRoutesDenied(t *testing.T) {
 
 	// A viewer token for the outsider: no org label, so the org/ownership
 	// rungs cannot lift it above the token role.
-	viewerSecret, _, err := Mint(st, MintRequest{Name: "viewer", Role: "viewer", AccountID: outsiderID})
+	viewerSecret, _, err := Mint(context.Background(), st, MintRequest{Name: "viewer", Role: "viewer", AccountID: outsiderID})
 	if err != nil {
 		t.Fatalf("mint viewer: %v", err)
 	}
@@ -269,7 +270,7 @@ func TestAuthRoutesDenied(t *testing.T) {
 		// which is exactly what the resolution implements. An org owner can
 		// always re-mint a token for itself anyway, so the token-role check was
 		// a speed bump, not a boundary.
-		ownerViewer, _, err := Mint(st, MintRequest{
+		ownerViewer, _, err := Mint(context.Background(), st, MintRequest{
 			Name: "owner-viewer", Role: "viewer", AccountID: ownerID, OrgID: orgID,
 		})
 		if err != nil {
@@ -292,10 +293,10 @@ func TestAuthRoutesDenied(t *testing.T) {
 
 	t.Run("member cannot add members, outsider cannot list", func(t *testing.T) {
 		memberID := register("member@example.com")
-		if _, err := AddOrgMember(st, orgID, memberID, OrgRoleMember); err != nil {
+		if _, err := AddOrgMember(context.Background(), st, orgID, memberID, OrgRoleMember); err != nil {
 			t.Fatalf("add member: %v", err)
 		}
-		memberSecret, _, err := Mint(st, MintRequest{Name: "member", Role: "admin", AccountID: memberID, OrgID: orgID})
+		memberSecret, _, err := Mint(context.Background(), st, MintRequest{Name: "member", Role: "admin", AccountID: memberID, OrgID: orgID})
 		if err != nil {
 			t.Fatalf("mint member: %v", err)
 		}
@@ -306,7 +307,7 @@ func TestAuthRoutesDenied(t *testing.T) {
 			t.Fatalf("member add = %d %v", code, resp)
 		}
 
-		outsiderSecret, _, err := Mint(st, MintRequest{Name: "outsider", Role: "admin", AccountID: outsiderID})
+		outsiderSecret, _, err := Mint(context.Background(), st, MintRequest{Name: "outsider", Role: "admin", AccountID: outsiderID})
 		if err != nil {
 			t.Fatalf("mint outsider: %v", err)
 		}
@@ -357,7 +358,7 @@ func TestAuthRoutesDenied(t *testing.T) {
 	})
 
 	t.Run("revoke is idempotent and takes effect", func(t *testing.T) {
-		secret, tok, err := Mint(st, MintRequest{Name: "doomed", Role: "viewer", AccountID: ownerID})
+		secret, tok, err := Mint(context.Background(), st, MintRequest{Name: "doomed", Role: "viewer", AccountID: ownerID})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -365,11 +366,15 @@ func TestAuthRoutesDenied(t *testing.T) {
 		if code != http.StatusOK || resp["data"] != false {
 			t.Fatalf("unknown id revoke = %d %v", code, resp)
 		}
-		code, resp = doJSON(t, h, "POST", "/api/v1/auth/token/revoke", viewerSecret, map[string]string{"token_id": tok.ID})
+		ownerBearer, _, err := Mint(context.Background(), st, MintRequest{Name: "owner-bearer", Role: "viewer", AccountID: ownerID})
+		if err != nil {
+			t.Fatalf("mint owner bearer: %v", err)
+		}
+		code, resp = doJSON(t, h, "POST", "/api/v1/auth/token/revoke", ownerBearer, map[string]string{"token_id": tok.ID})
 		if code != http.StatusOK || resp["data"] != true {
 			t.Fatalf("revoke = %d %v", code, resp)
 		}
-		code, resp = doJSON(t, h, "POST", "/api/v1/auth/token/revoke", viewerSecret, map[string]string{"token_id": tok.ID})
+		code, resp = doJSON(t, h, "POST", "/api/v1/auth/token/revoke", ownerBearer, map[string]string{"token_id": tok.ID})
 		if code != http.StatusOK || resp["data"] != false {
 			t.Fatalf("second revoke = %d %v", code, resp)
 		}
@@ -390,4 +395,106 @@ func TestAuthRoutesDenied(t *testing.T) {
 	// The outsider's own token stays scoped to itself.
 	// The outsider never joined the org.
 	_ = outsiderID
+}
+
+// TestTokenListNeverReturnsHash pins CX-03: the list JSON carries no secret
+// key and no at-rest hash, for any caller.
+func TestTokenListNeverReturnsHash(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	h := newAuthServer(t, st)
+
+	const account = "acct-list"
+	bearer, bearerRow, err := Mint(context.Background(), st, MintRequest{Name: "viewer", Role: "viewer", AccountID: account})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if _, _, err := Mint(context.Background(), st, MintRequest{Name: "sibling", Role: "viewer", AccountID: account}); err != nil {
+		t.Fatalf("mint sibling: %v", err)
+	}
+
+	code, resp := doJSON(t, h, "GET", "/api/v1/auth/token", bearer, nil)
+	if code != http.StatusOK || resp["success"] != true {
+		t.Fatalf("list = %d %v", code, resp)
+	}
+	rows, ok := resp["data"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("list rows = %v; want 2", resp["data"])
+	}
+	for _, row := range rows {
+		m, _ := row.(map[string]any)
+		if _, has := m["secret"]; has {
+			t.Fatalf("list row carries a secret key: %v", m)
+		}
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), bearerRow.Secret) {
+		t.Fatalf("list leaks the at-rest hash %s", bearerRow.Secret)
+	}
+	if strings.Contains(string(raw), bearer) {
+		t.Fatal("list leaks the plaintext bearer")
+	}
+}
+
+// TestTokenRevokeNeedsOwnerOrAdmin pins CX-03: revoking another account's
+// token is refused with 403 unless the caller owns it or is an admin.
+func TestTokenRevokeNeedsOwnerOrAdmin(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	h := newAuthServer(t, st)
+
+	const owner, outsider, admin = "acct-owner", "acct-outsider", "acct-admin"
+	mint := func(name, role, account string) (string, store.Token) {
+		t.Helper()
+		secret, row, err := Mint(context.Background(), st, MintRequest{Name: name, Role: role, AccountID: account})
+		if err != nil {
+			t.Fatalf("mint %s: %v", name, err)
+		}
+		return secret, row
+	}
+	revoke := func(bearer, id string) (int, map[string]any) {
+		t.Helper()
+		return doJSON(t, h, "POST", "/api/v1/auth/token/revoke", bearer, map[string]string{"token_id": id})
+	}
+
+	outsiderBearer, _ := mint("outsider", "viewer", outsider)
+	ownerBearer, _ := mint("owner", "viewer", owner)
+	adminBearer, _ := mint("admin", "admin", admin)
+
+	t.Run("viewer cannot revoke another account's token", func(t *testing.T) {
+		victimSecret, victim := mint("victim-a", "viewer", owner)
+		code, resp := revoke(outsiderBearer, victim.ID)
+		if code != http.StatusForbidden || resp["success"] != false {
+			t.Fatalf("= %d %v; want 403", code, resp)
+		}
+		if code, _ := doJSON(t, h, "GET", "/api/v1/auth/token", victimSecret, nil); code != http.StatusOK {
+			t.Fatalf("refused revoke must leave the victim token usable: %d", code)
+		}
+	})
+
+	t.Run("owner can revoke own token", func(t *testing.T) {
+		_, victim := mint("victim-b", "viewer", owner)
+		code, resp := revoke(ownerBearer, victim.ID)
+		if code != http.StatusOK || resp["data"] != true {
+			t.Fatalf("= %d %v; want 200 true", code, resp)
+		}
+	})
+
+	t.Run("admin can revoke any token", func(t *testing.T) {
+		_, victim := mint("victim-c", "viewer", owner)
+		code, resp := revoke(adminBearer, victim.ID)
+		if code != http.StatusOK || resp["data"] != true {
+			t.Fatalf("= %d %v; want 200 true", code, resp)
+		}
+	})
+
+	t.Run("unknown id stays a no-op for any caller", func(t *testing.T) {
+		code, resp := revoke(outsiderBearer, "no-such-id")
+		if code != http.StatusOK || resp["data"] != false {
+			t.Fatalf("= %d %v; want 200 false", code, resp)
+		}
+	})
 }

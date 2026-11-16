@@ -1,6 +1,7 @@
 package grok
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -120,7 +121,7 @@ func TestLocateExactBySummaryID(t *testing.T) {
 	const sid = "01a0-exact-sid"
 	p := writeGrokSession(t, root, fixtureCwd, sid, t0, t0.Add(time.Minute), nil)
 	a := withRoot(t, root)
-	ref, conf, err := a.Locate("", sessionlink.CallRef{ClientSessionID: sid, Cwd: fixtureCwd})
+	ref, conf, err := a.Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: sid, Cwd: fixtureCwd}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,14 +142,14 @@ func TestLocateHeuristicByCwdTimeToolArgs(t *testing.T) {
 		update(callAt, 0, map[string]any{"sessionUpdate": "tool_call", "tool_call_id": "tc-9", "name": "mcp__leankg__query", "rawInput": args}),
 	})
 	a := withRoot(t, root)
-	ref, conf, err := a.Locate("", sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt.Add(time.Second)})
+	ref, conf, err := a.Locate(context.Background(), "", sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt.Add(time.Second)}, nil)
 	if err != nil {
 		t.Fatalf("heuristic: %v", err)
 	}
 	if ref.Path != p || float64(conf) >= 1 {
 		t.Errorf("heuristic = %+v conf=%v", ref, conf)
 	}
-	if _, _, err := a.Locate("", sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(map[string]any{"q": "nope"}), Cwd: fixtureCwd, TS: callAt}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), "", sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(map[string]any{"q": "nope"}), Cwd: fixtureCwd, TS: callAt}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("wrong args: err = %v", err)
 	}
 }
@@ -169,7 +170,7 @@ func TestWindowPromptFollowUpsAndAssembly(t *testing.T) {
 		update(callAt, 1, map[string]any{"sessionUpdate": "user_message_chunk", "content": text("next")}),
 		update(callAt, 1, map[string]any{"sessionUpdate": "tool_call", "tool_call_id": "tc-b", "name": "bash", "rawInput": map[string]any{"command": "ls"}}),
 	})
-	w, err := withRoot(t, root).Window(sessionlink.TranscriptRef{Client: "grok", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt}, 2)
+	w, err := withRoot(t, root).Window(context.Background(), sessionlink.TranscriptRef{Client: "grok", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt}, 2, nil)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -196,7 +197,7 @@ func TestTranscriptSkipsGarbageAndCaps(t *testing.T) {
 		update(t0, 0, map[string]any{"sessionUpdate": "user_message_chunk", "content": text(big)}),
 		update(t0, 0, map[string]any{"sessionUpdate": "hook_execution", "event_name": "x"}),
 	})
-	turns, err := withRoot(t, root).(*adapter).Transcript(sessionlink.TranscriptRef{Path: p}, 0)
+	turns, err := withRoot(t, root).(*adapter).Transcript(context.Background(), sessionlink.TranscriptRef{Path: p}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func TestTranscriptSkipsGarbageAndCaps(t *testing.T) {
 
 func TestMissingStoreIsNotFound(t *testing.T) {
 	a := withRoot(t, filepath.Join(t.TempDir(), "sessions"))
-	if _, _, err := a.Locate("", sessionlink.CallRef{ClientSessionID: "x", Cwd: fixtureCwd}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: "x", Cwd: fixtureCwd}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("err = %v", err)
 	}
 }

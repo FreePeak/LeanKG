@@ -27,7 +27,7 @@ func TestTreeSitterExtractionLanguages(t *testing.T) {
 		"dart":  {src: "import 'dart:math';\n\nclass Repo {\n  int size() { return 1; }\n}\n\nint add(int a, int b) { return a + b; }\n", want: []string{"Repo", "size", "add"}},
 	}
 	for lang, tc := range samples {
-		defs, err := tsExtract([]byte(tc.src), lang)
+		defs, err := tsExtract(context.Background(), []byte(tc.src), lang)
 		if err != nil {
 			t.Fatalf("%s: %v", lang, err)
 		}
@@ -50,7 +50,7 @@ func TestTreeSitterExtractionLanguages(t *testing.T) {
 // bundled grammar, so tsExtract returns nil and the regex tier runs.
 func TestTreeSitterNoGrammarFallsBack(t *testing.T) {
 	for _, lang := range []string{"md"} {
-		defs, err := tsExtract([]byte("class App {}\n"), lang)
+		defs, err := tsExtract(context.Background(), []byte("class App {}\n"), lang)
 		if err != nil {
 			t.Fatalf("%s: %v", lang, err)
 		}
@@ -64,12 +64,12 @@ func TestTreeSitterNoGrammarFallsBack(t *testing.T) {
 // end-to-end: a tree with go.mod at the root and pubspec.yaml in mobile/
 // indexes BOTH languages through the registry-routed IndexDirWith.
 func TestIndexDirWithRegistryLazyNested(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
@@ -89,7 +89,7 @@ func TestIndexDirWithRegistryLazyNested(t *testing.T) {
 		}
 	}
 	reg := langs.DefaultRegistry()
-	roots, err := reg.Activate(dir)
+	roots, err := reg.Activate(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +99,10 @@ func TestIndexDirWithRegistryLazyNested(t *testing.T) {
 	if _, err := IndexDirWith(context.Background(), st, dir, reg); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.FindExact("Handler"); len(got) == 0 {
+	if got, _ := st.FindExact(context.Background(), "Handler"); len(got) == 0 {
 		t.Fatal("go element missing via the registry path")
 	}
-	if got, _ := st.FindExact("App"); len(got) == 0 {
+	if got, _ := st.FindExact(context.Background(), "App"); len(got) == 0 {
 		t.Fatal("dart element missing via the registry path")
 	}
 }

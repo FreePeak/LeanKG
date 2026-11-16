@@ -1,0 +1,8 @@
+{
+  "banks": [
+    "proj-<BANK>"
+  ],
+  "command": "session_recall",
+  "count": 0,
+  "memories": []
+}

@@ -1,0 +1,31 @@
+{
+  "action": "explain",
+  "element": {
+    "content": "func Alpha() int {\n\treturn Beta() + 1\n}",
+    "element_type": "function",
+    "file_path": "src/alpha.go",
+    "language": "go",
+    "line_end": 3,
+    "line_start": 1,
+    "name": "Alpha",
+    "qualified_name": "src/alpha.go::Alpha"
+  },
+  "freshness": "possibly_stale",
+  "in_by_type": {},
+  "in_degree": 0,
+  "in_samples": [],
+  "limit": 10,
+  "out_by_type": {
+    "calls": 1
+  },
+  "out_degree": 1,
+  "out_samples": [
+    {
+      "confidence": 0.5,
+      "rel_type": "calls",
+      "source": "src/alpha.go::Alpha",
+      "target": "src/beta.go::Beta"
+    }
+  ],
+  "query": "src/alpha.go::Alpha"
+}

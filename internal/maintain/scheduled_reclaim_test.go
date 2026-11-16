@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,19 +21,19 @@ import (
 // (the leankg store held 745,472 B against a 1,048,576 B floor), so the
 // hourly pass reclaimed zero bytes everywhere while the machinery looked
 // healthy.
-func smallFreelistFixture(t *testing.T) *store.Store {
+func smallFreelistFixture(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	for i := range 200 {
 		p := "src/f" + itoa(i) + ".go"
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: "pkg.Fn" + itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + itoa(i),
@@ -53,16 +54,16 @@ func TestPassReclaimsAFreelistBelowTheOldOneMegabyteFloor(t *testing.T) {
 	st := smallFreelistFixture(t)
 	// The first pass performs the one-time header upgrade (auto_vacuum +
 	// VACUUM), which is what makes a freelist reclaimable at all.
-	if _, err := Pass(st, Options{}); err != nil {
+	if _, err := Pass(context.Background(), st, Options{}); err != nil {
 		t.Fatalf("first pass: %v", err)
 	}
 	// Re-create a freelist that is real but SMALLER than the old floor.
 	for i := range 40 {
-		if err := st.DeleteByFile("src/f" + itoa(i) + ".go"); err != nil {
+		if err := st.DeleteByFile(context.Background(), "src/f"+itoa(i)+".go"); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -88,16 +89,16 @@ func TestPassReclaimsAFreelistBelowTheOldOneMegabyteFloor(t *testing.T) {
 func TestRunFleetPrunesTheOldMetricRows(t *testing.T) {
 	st := collectionFixture(t)
 	old := time.Now().Add(-60 * 24 * time.Hour).Unix()
-	if err := st.RecordMetric(store.Metric{ToolName: "query", Timestamp: old, ProjectPath: "/p"}); err != nil {
+	if err := st.RecordMetric(context.Background(), store.Metric{ToolName: "query", Timestamp: old, ProjectPath: "/p"}); err != nil {
 		t.Fatalf("record the old metric: %v", err)
 	}
-	if err := st.RecordMetric(store.Metric{ToolName: "query", Timestamp: time.Now().Unix(), ProjectPath: "/p"}); err != nil {
+	if err := st.RecordMetric(context.Background(), store.Metric{ToolName: "query", Timestamp: time.Now().Unix(), ProjectPath: "/p"}); err != nil {
 		t.Fatalf("record the fresh metric: %v", err)
 	}
 	// A ten-year window counts every row, so the count says how many rows the
 	// ledger still holds — not how many fall inside the retention window.
 	const wideWindow = 3650
-	before, err := st.MetricsSummary("", wideWindow)
+	before, err := st.MetricsSummary(context.Background(), "", wideWindow)
 	if err != nil {
 		t.Fatalf("metrics summary before: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestRunFleetPrunesTheOldMetricRows(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		after, err := st.MetricsSummary("", wideWindow)
+		after, err := st.MetricsSummary(context.Background(), "", wideWindow)
 		if err != nil {
 			t.Fatalf("metrics summary after: %v", err)
 		}
@@ -131,22 +132,32 @@ func TestRunFleetPrunesTheOldMetricRows(t *testing.T) {
 // weeks without anyone noticing.
 func TestRunFleetLogsWhatThePassDid(t *testing.T) {
 	st := collectionFixture(t)
+	var mu sync.Mutex
 	var logs []string
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), logs...)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	RunFleet(ctx, func() []Target { return []Target{{Store: st, Label: "one"}} },
-		Options{Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }},
+		Options{Logf: func(f string, a ...any) {
+			mu.Lock()
+			defer mu.Unlock()
+			logs = append(logs, fmt.Sprintf(f, a...))
+		}},
 		10*time.Millisecond, 0)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		for _, l := range logs {
+		for _, l := range snapshot() {
 			if strings.Contains(l, "pass(es) over") {
 				return
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the fleet never logged what the pass did: %v", logs)
+			t.Fatalf("the fleet never logged what the pass did: %v", snapshot())
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -160,15 +171,15 @@ func TestRunFleetLogsWhatThePassDid(t *testing.T) {
 func TestSweepDropsTheStaleCollectionWithTheKeepFunc(t *testing.T) {
 	st := collectionFixture(t)
 	// The live collection is the one the newest embed run names.
-	runID, err := st.StartEmbedRun("live", "incremental", 1)
+	runID, err := st.StartEmbedRun(context.Background(), "live", "incremental", 1)
 	if err != nil {
 		t.Fatalf("start embed run: %v", err)
 	}
-	if err := st.FinishEmbedRun(runID, "completed", 1, 0, 0, 0, 0); err != nil {
+	if err := st.FinishEmbedRun(context.Background(), runID, "completed", 1, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish embed run: %v", err)
 	}
-	res := Sweep(st, Options{KeepModelIDsFunc: func(b store.Backend) []string {
-		id, err := store.CurrentModelID(b)
+	res := Sweep(context.Background(), st, Options{KeepModelIDsFunc: func(ctx context.Context, b Store) []string {
+		id, err := store.CurrentModelID(ctx, b)
 		if err != nil || id == "" {
 			return nil
 		}
@@ -190,17 +201,17 @@ func TestSweepDropsTheStaleCollectionWithTheKeepFunc(t *testing.T) {
 // stamped and nothing in emb_stamp says which one is live.
 func TestCurrentModelIDNamesTheNewestRun(t *testing.T) {
 	st := collectionFixture(t)
-	if id, err := store.CurrentModelID(st); err != nil || id != "" {
+	if id, err := store.CurrentModelID(context.Background(), st); err != nil || id != "" {
 		t.Fatalf("CurrentModelID on a store with no runs = %q, %v; want \"\"", id, err)
 	}
-	runID, err := st.StartEmbedRun("embeddinggemma-2", "incremental", 3)
+	runID, err := st.StartEmbedRun(context.Background(), "embeddinggemma-2", "incremental", 3)
 	if err != nil {
 		t.Fatalf("start embed run: %v", err)
 	}
-	if err := st.FinishEmbedRun(runID, "completed", 3, 0, 0, 0, 0); err != nil {
+	if err := st.FinishEmbedRun(context.Background(), runID, "completed", 3, 0, 0, 0, 0); err != nil {
 		t.Fatalf("finish embed run: %v", err)
 	}
-	id, err := store.CurrentModelID(st)
+	id, err := store.CurrentModelID(context.Background(), st)
 	if err != nil {
 		t.Fatalf("CurrentModelID: %v", err)
 	}

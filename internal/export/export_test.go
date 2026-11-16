@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -12,18 +13,18 @@ import (
 // helper used by internal/graph tests.
 func newFixture(t *testing.T, els []store.Element, rels []store.Relationship) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	s, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
-	if err := s.UpsertRelationships(rels); err != nil {
+	if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
 	return s
@@ -118,7 +119,7 @@ func TestTruncationBudget(t *testing.T) {
 
 func TestSelectFullGraph(t *testing.T) {
 	st := newFixture(t, testFixElements, testFixRels)
-	els, rels, meta, err := Select(st, Options{})
+	els, rels, meta, err := Select(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestSelectFullGraph(t *testing.T) {
 
 func TestSelectPathPrefix(t *testing.T) {
 	st := newFixture(t, testFixElements, testFixRels)
-	els, rels, meta, err := Select(st, Options{Path: "src/app"})
+	els, rels, meta, err := Select(context.Background(), st, Options{Path: "src/app"})
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestSelectPathPrefix(t *testing.T) {
 
 func TestSelectPathPrefixNormalizesDotSlash(t *testing.T) {
 	st := newFixture(t, testFixElements, testFixRels)
-	els, _, _, err := Select(st, Options{Path: "./src/app"})
+	els, _, _, err := Select(context.Background(), st, Options{Path: "./src/app"})
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -181,7 +182,7 @@ func TestSelectFileScoped(t *testing.T) {
 	}
 	st := newFixture(t, els, rels)
 
-	gotEls, gotRels, meta, err := Select(st, Options{File: "src/lib.rs", Depth: 2})
+	gotEls, gotRels, meta, err := Select(context.Background(), st, Options{File: "src/lib.rs", Depth: 2})
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -211,7 +212,7 @@ func TestSelectCommunityScope(t *testing.T) {
 		}
 		return []string{"src/app.rs::hub", "src/app.rs::leaf"}, "app", true
 	}
-	els, rels, meta, err := Select(st, Options{Community: "c1", Clusters: resolver})
+	els, rels, meta, err := Select(context.Background(), st, Options{Community: "c1", Clusters: resolver})
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -219,10 +220,10 @@ func TestSelectCommunityScope(t *testing.T) {
 		t.Fatalf("community scope: meta=%+v els=%d rels=%d", meta, len(els), len(rels))
 	}
 
-	if _, _, _, err := Select(st, Options{Community: "nope", Clusters: resolver}); err == nil {
+	if _, _, _, err := Select(context.Background(), st, Options{Community: "nope", Clusters: resolver}); err == nil {
 		t.Fatal("unknown community must be an error, not an empty export")
 	}
-	if _, _, _, err := Select(st, Options{Community: "c1"}); err == nil {
+	if _, _, _, err := Select(context.Background(), st, Options{Community: "c1"}); err == nil {
 		t.Fatal("community scope without a resolver must be an error")
 	}
 }
@@ -254,7 +255,7 @@ func TestClusterResolverMatchesIDThenLabel(t *testing.T) {
 
 func TestAllDoesNotFilter(t *testing.T) {
 	st := newFixture(t, testFixElements, testFixRels)
-	els, rels, err := All(st)
+	els, rels, err := All(context.Background(), st)
 	if err != nil {
 		t.Fatalf("all: %v", err)
 	}

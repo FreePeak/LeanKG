@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -23,14 +24,14 @@ import (
 
 // --- fixtures ---------------------------------------------------------------
 
-func testStore(t *testing.T) *store.Store {
+func testStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return st
@@ -49,14 +50,14 @@ func el(qn, content string) store.Element {
 	}
 }
 
-func seed(t *testing.T, st *store.Store, els ...store.Element) {
+func seed(t *testing.T, st store.Backend, els ...store.Element) {
 	t.Helper()
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 }
 
-func mustRun(t *testing.T, st *store.Store, p Provider, mode string) Report {
+func mustRun(t *testing.T, st store.Backend, p Provider, mode string) Report {
 	t.Helper()
 	rep, err := Run(context.Background(), st, p, mode)
 	if err != nil {
@@ -65,16 +66,16 @@ func mustRun(t *testing.T, st *store.Store, p Provider, mode string) Report {
 	return rep
 }
 
-func vectorCount(t *testing.T, st *store.Store, modelID string) int {
+func vectorCount(t *testing.T, st store.Backend, modelID string) int {
 	t.Helper()
-	n, err := st.VectorCount(modelID)
+	n, err := st.VectorCount(context.Background(), modelID)
 	if err != nil {
 		t.Fatalf("VectorCount: %v", err)
 	}
 	return n
 }
 
-func stampRows(t *testing.T, st *store.Store) int {
+func stampRows(t *testing.T, st store.Backend) int {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+st.Path()+"?_pragma=query_only(ON)")
 	if err != nil {
@@ -97,16 +98,24 @@ type overrideProvider struct {
 	provider          string // transport label override; "" keeps inner's
 }
 
-func (o overrideProvider) ModelID() string  { return o.modelID }
-func (o overrideProvider) Revision() string { return o.revision }
-func (o overrideProvider) Dimensions() int  { return o.dims }
-func (o overrideProvider) Distance() string { return o.inner.Distance() }
-func (o overrideProvider) Provider() string {
-	if o.provider != "" {
-		return o.provider
+// Identity is the inner identity with the overridden fields replaced.
+func (o overrideProvider) Identity() Identity {
+	id := o.inner.Identity()
+	if o.modelID != "" {
+		id.Model = o.modelID
 	}
-	return o.inner.Provider()
+	if o.revision != "" {
+		id.Revision = o.revision
+	}
+	if o.dims != 0 {
+		id.Dims = o.dims
+	}
+	if o.provider != "" {
+		id.Provider = o.provider
+	}
+	return id
 }
+
 func (o overrideProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	return o.inner.Embed(ctx, kind, texts)
 }
@@ -118,18 +127,12 @@ type wrongDimsProvider struct {
 	calls, failFirst int
 }
 
-func (w *wrongDimsProvider) ModelID() string  { return w.inner.ModelID() }
-func (w *wrongDimsProvider) Revision() string { return w.inner.Revision() }
-func (w *wrongDimsProvider) Dimensions() int  { return w.inner.Dimensions() }
-func (w *wrongDimsProvider) Distance() string { return w.inner.Distance() }
-func (w *wrongDimsProvider) Provider() string { return w.inner.Provider() }
-
 func (w *wrongDimsProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	w.calls++
 	if w.calls <= w.failFirst {
 		out := make([][]float32, len(texts))
 		for i := range out {
-			out[i] = make([]float32, w.inner.Dimensions()+1)
+			out[i] = make([]float32, w.inner.Identity().Dims+1)
 		}
 		return out, nil
 	}
@@ -138,12 +141,6 @@ func (w *wrongDimsProvider) Embed(ctx context.Context, kind TextKind, texts []st
 
 // errProvider always fails its Embed call: transport-level provider failure.
 type errProvider struct{ inner Provider }
-
-func (e errProvider) ModelID() string  { return e.inner.ModelID() }
-func (e errProvider) Revision() string { return e.inner.Revision() }
-func (e errProvider) Dimensions() int  { return e.inner.Dimensions() }
-func (e errProvider) Distance() string { return e.inner.Distance() }
-func (e errProvider) Provider() string { return e.inner.Provider() }
 
 func (e errProvider) Embed(context.Context, TextKind, []string) ([][]float32, error) {
 	return nil, errors.New("provider down")
@@ -163,7 +160,7 @@ func TestRunFullThenIncrementalSkipsUnchanged(t *testing.T) {
 	if rep.Coverage != 1 {
 		t.Fatalf("full run coverage: got %v, want 1", rep.Coverage)
 	}
-	if vectorCount(t, st, p.ModelID()) != 3 {
+	if vectorCount(t, st, p.Identity().Model) != 3 {
 		t.Fatalf("full run: want 3 vectors")
 	}
 
@@ -178,7 +175,7 @@ func TestRunFullThenIncrementalSkipsUnchanged(t *testing.T) {
 	if rep.Dirty != 1 || rep.Embedded != 1 || rep.Skipped != 2 {
 		t.Fatalf("incremental after edit: got %+v, want Dirty=1 Embedded=1 Skipped=2", rep)
 	}
-	if vectorCount(t, st, p.ModelID()) != 3 {
+	if vectorCount(t, st, p.Identity().Model) != 3 {
 		t.Fatalf("after edit: want still 3 vectors")
 	}
 }
@@ -192,7 +189,7 @@ func TestIncrementalBacklogMatchesRunDirty(t *testing.T) {
 	p := Deterministic(8)
 	assertBacklog := func(want int) {
 		t.Helper()
-		got, err := IncrementalBacklog(st, p)
+		got, err := IncrementalBacklog(context.Background(), st, p)
 		if err != nil {
 			t.Fatalf("IncrementalBacklog: %v", err)
 		}
@@ -221,12 +218,12 @@ func TestRunStampMismatchClearsAndRebuilds(t *testing.T) {
 	mustRun(t, st, p1, "full")
 
 	// Same model id, drifted revision: a full run must clear + rebuild.
-	p2 := overrideProvider{inner: Deterministic(8), modelID: p1.ModelID(), revision: "test:deterministic-v2", dims: 8}
+	p2 := overrideProvider{inner: Deterministic(8), modelID: p1.Identity().Model, revision: "test:deterministic-v2", dims: 8}
 	rep := mustRun(t, st, p2, "full")
 	if rep.Embedded != 2 {
 		t.Fatalf("rebuild: got %+v, want Embedded=2", rep)
 	}
-	cur, err := st.Stamp(p1.ModelID())
+	cur, err := st.Stamp(context.Background(), p1.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +233,7 @@ func TestRunStampMismatchClearsAndRebuilds(t *testing.T) {
 	if n := stampRows(t, st); n != 1 {
 		t.Fatalf("want exactly 1 stamp row, got %d", n)
 	}
-	if vectorCount(t, st, p1.ModelID()) != 2 {
+	if vectorCount(t, st, p1.Identity().Model) != 2 {
 		t.Fatalf("want 2 vectors after rebuild (no mixed/stale rows)")
 	}
 
@@ -262,7 +259,7 @@ func TestRunValidationFailureCountedNotFatal(t *testing.T) {
 	if rep.Coverage != 0 {
 		t.Fatalf("coverage: got %v, want 0", rep.Coverage)
 	}
-	run, err := st.LastEmbedRun(p.ModelID())
+	run, err := st.LastEmbedRunAny(context.Background())
 	if err != nil || run == nil {
 		t.Fatalf("LastEmbedRun: %v %v", run, err)
 	}
@@ -286,7 +283,7 @@ func TestRunProviderErrorSurfaces(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider down") {
 		t.Fatalf("Run error: got %v, want provider failure surfaced", err)
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "failed" {
 		t.Fatalf("run status: got %+v, want failed", run)
 	}
@@ -301,7 +298,7 @@ func TestRunEmptyStoreOK(t *testing.T) {
 			t.Fatalf("%s on empty store: got %+v", mode, rep)
 		}
 	}
-	if vectorCount(t, st, p.ModelID()) != 0 {
+	if vectorCount(t, st, p.Identity().Model) != 0 {
 		t.Fatal("empty store produced vectors")
 	}
 }
@@ -321,16 +318,11 @@ func TestRunTruncationCounted(t *testing.T) {
 // family label (to exercise family-specific text budgets), and records every
 // text it was asked to embed.
 type recordProvider struct {
-	inner    Provider
-	provider string
-	texts    []string
+	inner      Provider
+	provider   string
+	textCapPin int
+	texts      []string
 }
-
-func (r *recordProvider) ModelID() string  { return r.inner.ModelID() }
-func (r *recordProvider) Revision() string { return r.inner.Revision() }
-func (r *recordProvider) Dimensions() int  { return r.inner.Dimensions() }
-func (r *recordProvider) Distance() string { return r.inner.Distance() }
-func (r *recordProvider) Provider() string { return r.provider }
 
 func (r *recordProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	if kind == Document { // query-kind calls are the calibration probes
@@ -346,10 +338,9 @@ func (r *recordProvider) Embed(ctx context.Context, kind TextKind, texts []strin
 func TestRunLocalProviderTextBudget(t *testing.T) {
 	// local: a 4000-rune element is 512-token-safe-truncated and counted. No
 	// sidecar answers /props here, so the operator pin is the cap.
-	t.Setenv("LEANKG_EMBED_TEXT_CAP", fmt.Sprint(maxLocalTextChars))
 	st := testStore(t)
 	seed(t, st, el("a::big", strings.Repeat("x", 4000)))
-	p := &recordProvider{inner: Deterministic(8), provider: "local"}
+	p := &recordProvider{inner: Deterministic(8), provider: "local", textCapPin: maxLocalTextChars}
 	rep := mustRun(t, st, p, "full")
 	if rep.Truncations != 1 {
 		t.Fatalf("local run: Truncations=%d, want 1 (%+v)", rep.Truncations, rep)
@@ -381,12 +372,6 @@ type longTextProvider struct {
 	maxRunes int
 }
 
-func (l *longTextProvider) ModelID() string  { return l.inner.ModelID() }
-func (l *longTextProvider) Revision() string { return l.inner.Revision() }
-func (l *longTextProvider) Dimensions() int  { return l.inner.Dimensions() }
-func (l *longTextProvider) Distance() string { return l.inner.Distance() }
-func (l *longTextProvider) Provider() string { return l.inner.Provider() }
-
 func (l *longTextProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	for _, s := range texts {
 		if utf8.RuneCountInString(s) > l.maxRunes {
@@ -414,10 +399,10 @@ func TestRunPoisonItemDoesNotAbortRun(t *testing.T) {
 	if rep.Embedded != 1 || rep.Failed != 1 {
 		t.Fatalf("got %+v, want Embedded=1 Failed=1", rep)
 	}
-	if vectorCount(t, st, p.ModelID()) != 1 {
+	if vectorCount(t, st, p.Identity().Model) != 1 {
 		t.Fatal("healthy sibling lost its vector")
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "partial" {
 		t.Fatalf("run status: got %+v, want partial", run)
 	}
@@ -435,9 +420,75 @@ func TestRunAllFailedProviderAbortsLoudly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider down") || !strings.Contains(err.Error(), "all 1 item(s) failed") {
 		t.Fatalf("Run error: got %v, want loud all-failed abort naming the provider error", err)
 	}
-	run, _ := st.LastEmbedRun(p.ModelID())
+	run, _ := st.LastEmbedRunAny(context.Background())
 	if run == nil || run.Status != "failed" {
 		t.Fatalf("run status: got %+v, want failed", run)
+	}
+}
+
+// cancelAfterProvider serves its first n calls, then cancels the run's context
+// and fails the in-flight call the way an aborted request does (Ctrl-C mid-run).
+type cancelAfterProvider struct {
+	inner  Provider
+	n      int
+	calls  int
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfterProvider) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
+	c.calls++
+	if c.calls > c.n {
+		c.cancel()
+		return nil, ctx.Err()
+	}
+	return c.inner.Embed(ctx, kind, texts)
+}
+
+// A cancellation is not a poison element: a run stopped mid-way must not
+// count the aborted items as Failed, must not report partial, and must
+// return the cancellation so the CLI exits non-zero.
+func TestRunCancelledIsNotPoison(t *testing.T) {
+	st := testStore(t)
+	// Two files, so the run commits one group before the cancelled one.
+	seed(t, st,
+		store.Element{QualifiedName: "a::f1", ElementType: "function", Name: "f1", FilePath: "src/a.go", LineStart: 1, LineEnd: 2, Language: "go", Content: "func f1() {}"},
+		store.Element{QualifiedName: "b::f2", ElementType: "function", Name: "f2", FilePath: "src/b.go", LineStart: 1, LineEnd: 2, Language: "go", Content: "func f2() {}"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &cancelAfterProvider{inner: Deterministic(8), n: 1, cancel: cancel}
+
+	rep, err := Run(ctx, st, p, "full")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error: got %v, want context.Canceled", err)
+	}
+	if rep.Failed != 0 {
+		t.Fatalf("cancelled items counted as poison: %+v", rep)
+	}
+	run, _ := st.LastEmbedRunAny(context.Background())
+	if run == nil || run.Status != "cancelled" {
+		t.Fatalf("run status: got %+v, want cancelled", run)
+	}
+}
+
+// A run whose context is already cancelled records status cancelled and
+// returns the cancellation, never failed or ok.
+func TestRunPreCancelledRecordsCancelled(t *testing.T) {
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := Deterministic(8)
+
+	rep, err := Run(ctx, st, p, "full")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error: got %v, want context.Canceled", err)
+	}
+	if rep.Failed != 0 {
+		t.Fatalf("cancelled items counted as poison: %+v", rep)
+	}
+	run, _ := st.LastEmbedRunAny(context.Background())
+	if run == nil || run.Status != "cancelled" {
+		t.Fatalf("run status: got %+v, want cancelled", run)
 	}
 }
 
@@ -477,10 +528,10 @@ func TestRunUnknownModeRejected(t *testing.T) {
 
 func TestDeterministicProviderIdentity(t *testing.T) {
 	p := Deterministic(384)
-	if p.ModelID() != "deterministic-384" || p.Revision() != "test:deterministic-v1" ||
-		p.Dimensions() != 384 || p.Distance() != "cosine" || p.Provider() != "deterministic" {
+	if p.Identity().Model != "deterministic-384" || p.Identity().Revision != "test:deterministic-v1" ||
+		p.Identity().Dims != 384 || Distance != "cosine" || p.Identity().Provider != "deterministic" {
 		t.Fatalf("unexpected identity: %s %s %d %s %s",
-			p.ModelID(), p.Revision(), p.Dimensions(), p.Distance(), p.Provider())
+			p.Identity().Model, p.Identity().Revision, p.Identity().Dims, Distance, p.Identity().Provider)
 	}
 	vecs, err := p.Embed(context.Background(), Document, []string{"hello", "hello"})
 	if err != nil {
@@ -583,79 +634,49 @@ func TestOpenAICompatibleErrorIncludesBodySnippet(t *testing.T) {
 	}
 }
 
-// --- FromEnv -------------------------------------------------------------------
+// --- Attach and Start ---------------------------------------------------------
 
-func TestFromEnv(t *testing.T) {
+func TestAttachConfig(t *testing.T) {
 	t.Run("deterministic", func(t *testing.T) {
-		t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
-		t.Setenv("LEANKG_EMBED_MODEL", "")
-		t.Setenv("LEANKG_EMBED_BASE_URL", "")
-		t.Setenv("LEANKG_EMBED_DIMS", "16")
-		t.Setenv("LEANKG_EMBED_REVISION", "")
-		t.Setenv("LEANKG_EMBED_API_KEY", "")
-		p, err := FromEnv()
+		p, _, err := Attach(Config{Provider: "deterministic", Dims: 16})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.ModelID() != "deterministic-16" || p.Dimensions() != 16 {
-			t.Fatalf("got %s/%d", p.ModelID(), p.Dimensions())
+		if p.Identity().Model != "deterministic-16" || p.Identity().Dims != 16 {
+			t.Fatalf("got %s/%d", p.Identity().Model, p.Identity().Dims)
 		}
 	})
 
 	t.Run("openai requires model", func(t *testing.T) {
-		t.Setenv("LEANKG_EMBED_PROVIDER", "openai")
-		// The absent case is the point of this case, so it is stated, not
-		// inherited: an operator's exported LEANKG_EMBED_MODEL must not make
-		// the openai provider look configured.
-		t.Setenv("LEANKG_EMBED_MODEL", "")
-		t.Setenv("LEANKG_EMBED_BASE_URL", "")
-		t.Setenv("LEANKG_EMBED_DIMS", "")
-		t.Setenv("LEANKG_EMBED_REVISION", "")
-		t.Setenv("LEANKG_EMBED_API_KEY", "")
-		if _, err := FromEnv(); err == nil {
-			t.Fatal("want error when LEANKG_EMBED_MODEL unset for openai")
+		if _, _, err := Attach(Config{Provider: "openai"}); err == nil {
+			t.Fatal("want error when no model is configured for openai")
 		}
-		t.Setenv("LEANKG_EMBED_MODEL", "text-embedding-3-small")
-		t.Setenv("LEANKG_EMBED_BASE_URL", "https://api.example.com/v1")
-		t.Setenv("LEANKG_EMBED_API_KEY", "sk-x")
-		t.Setenv("LEANKG_EMBED_DIMS", "1536")
-		p, err := FromEnv()
+		p, _, err := Attach(Config{Provider: "openai", Model: "text-embedding-3-small",
+			BaseURL: "https://api.example.com/v1", APIKey: "sk-x", Dims: 1536})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.ModelID() != "text-embedding-3-small" || p.Dimensions() != 1536 || p.Provider() != "openai" {
-			t.Fatalf("got %s/%d/%s", p.ModelID(), p.Dimensions(), p.Provider())
+		if p.Identity().Model != "text-embedding-3-small" || p.Identity().Dims != 1536 || p.Identity().Provider != "openai" {
+			t.Fatalf("got %s/%d/%s", p.Identity().Model, p.Identity().Dims, p.Identity().Provider)
 		}
 	})
 
 	t.Run("local attaches to an explicit base URL", func(t *testing.T) {
-		t.Setenv("LEANKG_EMBED_PROVIDER", "local")
-		// Both halves of this case are stated: no endpoint to attach to (the
-		// absent case), and the explicit one (the present case). The model
-		// stays unset so the local identity is the legacy "local"/"local:local".
-		t.Setenv("LEANKG_EMBED_MODEL", "")
-		t.Setenv("LEANKG_EMBED_DIMS", "")
-		t.Setenv("LEANKG_EMBED_REVISION", "")
-		t.Setenv("LEANKG_EMBED_API_KEY", "")
-		t.Setenv("LEANKG_EMBED_BASE_URL", "")
-		// Attach constructor: without a base URL there is nothing to attach
-		// to and it must fail with an actionable error, never silently
-		// produce vectors.
-		if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "sidecar") {
+		// Attach never spawns: without a base URL there is nothing to attach to,
+		// and it must fail with an actionable error, never silently produce vectors.
+		if _, _, err := Attach(Config{Provider: "local"}); err == nil || !strings.Contains(err.Error(), "sidecar") {
 			t.Fatalf("want actionable sidecar error, got %v", err)
 		}
 		// Hermetic: a sidecar with no /props (another OpenAI-compatible
-		// server) keeps the legacy identity. Never a fixed port — a real
-		// sidecar on this host would answer and fingerprint the test.
+		// server) keeps the legacy identity. Never a fixed port.
 		bare := httptest.NewServer(http.NotFoundHandler())
 		defer bare.Close()
-		t.Setenv("LEANKG_EMBED_BASE_URL", bare.URL+"/v1")
-		p, err := FromEnv()
+		p, _, err := Attach(Config{Provider: "local", BaseURL: bare.URL + "/v1"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Provider() != "local" {
-			t.Fatalf("Provider: got %q, want local", p.Provider())
+		if p.Identity().Provider != "local" {
+			t.Fatalf("Provider: got %q, want local", p.Identity().Provider)
 		}
 		o, ok := p.(*localProvider)
 		if !ok {
@@ -664,15 +685,15 @@ func TestFromEnv(t *testing.T) {
 		if o.baseURL != bare.URL+"/v1" {
 			t.Fatalf("base URL: got %q", o.baseURL)
 		}
-		if o.ModelID() != "local" || o.Revision() != "local:local" {
-			t.Fatalf("stamp defaults: got %s/%s", o.ModelID(), o.Revision())
+		if err := p.Probe(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if o.Identity().Model != "local" || o.Identity().Revision != "local:local" {
+			t.Fatalf("stamp defaults: got %s/%s", o.Identity().Model, o.Identity().Revision)
 		}
 	})
 
 	t.Run("local fingerprints the served model (RS-14)", func(t *testing.T) {
-		t.Setenv("LEANKG_EMBED_PROVIDER", "local")
-		t.Setenv("LEANKG_EMBED_REVISION", "")
-		t.Setenv("LEANKG_EMBED_MODEL", "")
 		model := "/cache/hub/models--x--bge-gguf/snapshots/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-f16.gguf"
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/props" {
@@ -682,29 +703,35 @@ func TestFromEnv(t *testing.T) {
 			_, _ = w.Write([]byte(`{"model_path":"` + model + `","default_generation_settings":{"n_ctx":512}}`))
 		}))
 		defer srv.Close()
-		t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL+"/v1")
-		p, err := FromEnv()
+		p, _, err := Attach(Config{Provider: "local", BaseURL: srv.URL + "/v1"})
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := p.Probe(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		want := "local:bge-small-en-v1.5-f16.gguf@d32f8c040ea3b516330eeb75b72bcc2d3a780ab7"
-		if got := p.Revision(); got != want {
+		if got := p.Identity().Revision; got != want {
 			t.Fatalf("revision = %q, want %q", got, want)
 		}
-		if tb := p.(*localProvider).TextBudget(); tb != 960 {
+		if tb := p.Identity().TextBudget; tb != 960 {
 			t.Fatalf("text budget from n_ctx 512 = %d, want 960", tb)
 		}
 		// An explicit operator pin still wins.
-		t.Setenv("LEANKG_EMBED_REVISION", "my-pin")
-		p2, _ := FromEnv()
-		if p2.Revision() != "my-pin" {
-			t.Fatalf("explicit pin overridden: %q", p2.Revision())
+		p2, _, err := Attach(Config{Provider: "local", BaseURL: srv.URL + "/v1", Revision: "my-pin"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p2.Probe(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if p2.Identity().Revision != "my-pin" {
+			t.Fatalf("explicit pin overridden: %q", p2.Identity().Revision)
 		}
 	})
 
 	t.Run("unknown provider", func(t *testing.T) {
-		t.Setenv("LEANKG_EMBED_PROVIDER", "quantum")
-		if _, err := FromEnv(); err == nil {
+		if _, _, err := Attach(Config{Provider: "quantum"}); err == nil {
 			t.Fatal("want error for unknown provider")
 		}
 	})
@@ -715,14 +742,13 @@ func TestFromEnv(t *testing.T) {
 func TestNDJSONRoundTrip(t *testing.T) {
 	// The export resolves its provider from the environment, as the import does:
 	// the deterministic provider at width 8 is the identity both sides share.
-	t.Setenv("LEANKG_EMBED_PROVIDER", "deterministic")
-	t.Setenv("LEANKG_EMBED_DIMS", "8")
+	cfg := Config{Provider: "deterministic", Dims: 8}
 	st1 := testStore(t)
 	els := []store.Element{el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"), el("b::g", "def g(): pass")}
 	seed(t, st1, els...)
 
 	var buf bytes.Buffer
-	if err := ExportNDJSON(context.Background(), st1, "deterministic-8", &buf); err != nil {
+	if err := ExportNDJSON(context.Background(), st1, cfg, "deterministic-8", &buf); err != nil {
 		t.Fatalf("ExportNDJSON: %v", err)
 	}
 
@@ -767,7 +793,7 @@ func TestNDJSONRoundTrip(t *testing.T) {
 	st2 := testStore(t)
 	seed(t, st2, els...)
 	import1 := simulateOffsite(&buf)
-	rep, err := ImportNDJSON(context.Background(), st2, "deterministic-8", "test:deterministic-v1", "cosine", 8, import1)
+	rep, err := ImportNDJSON(context.Background(), st2, cfg, "deterministic-8", "test:deterministic-v1", "cosine", 8, import1)
 	if err != nil {
 		t.Fatalf("ImportNDJSON: %v", err)
 	}
@@ -777,16 +803,16 @@ func TestNDJSONRoundTrip(t *testing.T) {
 	if vectorCount(t, st2, "deterministic-8") != 3 {
 		t.Fatal("import: want 3 vectors")
 	}
-	cur, _ := st2.Stamp("deterministic-8")
+	cur, _ := st2.Stamp(context.Background(), "deterministic-8")
 	if cur == nil || cur.Revision != "test:deterministic-v1" || cur.Dimensions != 8 || cur.Distance != "cosine" || cur.Provider != "deterministic" {
 		t.Fatalf("import stamp: got %+v", cur)
 	}
 
 	buf2 := bytes.Buffer{}
-	if err := ExportNDJSON(context.Background(), st2, "deterministic-8", &buf2); err != nil {
+	if err := ExportNDJSON(context.Background(), st2, cfg, "deterministic-8", &buf2); err != nil {
 		t.Fatal(err)
 	}
-	rep, err = ImportNDJSON(context.Background(), st2, "deterministic-8", "test:deterministic-v1", "cosine", 8, simulateOffsite(&buf2))
+	rep, err = ImportNDJSON(context.Background(), st2, cfg, "deterministic-8", "test:deterministic-v1", "cosine", 8, simulateOffsite(&buf2))
 	if err != nil {
 		t.Fatalf("re-import: %v", err)
 	}
@@ -796,10 +822,7 @@ func TestNDJSONRoundTrip(t *testing.T) {
 }
 
 func TestImportNDJSONDimGuardAndOrphans(t *testing.T) {
-	t.Setenv("LEANKG_EMBED_PROVIDER", "openai")
-	t.Setenv("LEANKG_EMBED_MODEL", "m")
-	t.Setenv("LEANKG_EMBED_DIMS", "8")
-	t.Setenv("LEANKG_EMBED_REVISION", "rev")
+	cfg := Config{Provider: "openai", Model: "m", Dims: 8, Revision: "rev"}
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 
@@ -807,7 +830,7 @@ func TestImportNDJSONDimGuardAndOrphans(t *testing.T) {
 	// writes nothing (crash-consistent).
 	r := strings.NewReader(`{"qualified_name":"a::f1","vec":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]}` + "\n" +
 		`{"qualified_name":"a::f2","vec":[0.1,0.2,0.3,0.4,0.5,0.6,0.7]}` + "\n")
-	if _, err := ImportNDJSON(context.Background(), st, "m", "rev", "cosine", 8, r); err == nil {
+	if _, err := ImportNDJSON(context.Background(), st, cfg, "m", "rev", "cosine", 8, r); err == nil {
 		t.Fatal("want error for wrong-dim import line")
 	}
 	if vectorCount(t, st, "m") != 0 {
@@ -817,7 +840,7 @@ func TestImportNDJSONDimGuardAndOrphans(t *testing.T) {
 	// A line for a QN with no element counts as an orphan and is not written.
 	r = strings.NewReader(`{"qualified_name":"gone::x","vec":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]}` + "\n" +
 		`{"qualified_name":"a::f1","vec":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]}` + "\n")
-	rep, err := ImportNDJSON(context.Background(), st, "m", "rev", "cosine", 8, r)
+	rep, err := ImportNDJSON(context.Background(), st, cfg, "m", "rev", "cosine", 8, r)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -839,14 +862,14 @@ func TestRunIncrementalOnFreshStampsCollection(t *testing.T) {
 	if rep.Embedded != 2 {
 		t.Fatalf("incremental fresh: got %+v, want Embedded=2", rep)
 	}
-	cur, err := st.Stamp(p.ModelID())
+	cur, err := st.Stamp(context.Background(), p.Identity().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cur == nil {
 		t.Fatal("incremental run on fresh store left NO stamp — L3 would be dead")
 	}
-	if cur.Revision != p.Revision() || cur.Provider != p.Provider() {
+	if cur.Revision != p.Identity().Revision || cur.Provider != p.Identity().Provider {
 		t.Fatalf("stamp: got %+v", cur)
 	}
 }
@@ -859,15 +882,15 @@ func TestRunIncrementalMismatchHardFails(t *testing.T) {
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
 	p1 := Deterministic(8)
 	mustRun(t, st, p1, "full")
-	before := vectorCount(t, st, p1.ModelID())
+	before := vectorCount(t, st, p1.Identity().Model)
 
-	p2 := overrideProvider{inner: Deterministic(8), modelID: p1.ModelID(), revision: "test:deterministic-v2", dims: 8}
+	p2 := overrideProvider{inner: Deterministic(8), modelID: p1.Identity().Model, revision: "test:deterministic-v2", dims: 8}
 	if _, err := Run(context.Background(), st, p2, "incremental"); err == nil {
 		t.Fatal("incremental against drifted stamp must hard-fail")
 	} else if !strings.Contains(err.Error(), "leankg-embed full") {
 		t.Fatalf("error must carry the rebuild directive: %v", err)
 	}
-	if got := vectorCount(t, st, p1.ModelID()); got != before {
+	if got := vectorCount(t, st, p1.Identity().Model); got != before {
 		t.Fatalf("failed incremental run must not touch vectors: had %d, now %d", before, got)
 	}
 }
@@ -895,7 +918,7 @@ func TestRunIncrementalIgnoresProviderLabel(t *testing.T) {
 	if rep.Embedded != 1 || rep.Skipped != 2 {
 		t.Fatalf("incremental: got %+v, want Embedded=1 Skipped=2", rep)
 	}
-	cur, err := st.Stamp("embeddinggemma-2")
+	cur, err := st.Stamp(context.Background(), "embeddinggemma-2")
 	if err != nil || cur == nil || cur.Provider != "openai" {
 		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
 	}
@@ -929,7 +952,7 @@ func TestRunIncrementalRefusesLabelThatChangesTextCap(t *testing.T) {
 	if got := vectorCount(t, st, "embeddinggemma-2"); got != before {
 		t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
 	}
-	if cur, err := st.Stamp("embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
+	if cur, err := st.Stamp(context.Background(), "embeddinggemma-2"); err != nil || cur == nil || cur.Provider != "openai" {
 		t.Fatalf("stored stamp = %+v, %v; want the original provider openai kept", cur, err)
 	}
 }
@@ -954,17 +977,17 @@ func TestRunIncrementalRefusesRealStampDrift(t *testing.T) {
 			seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
 			p := Deterministic(8)
 			mustRun(t, st, p, "full")
-			stored, err := st.Stamp(p.ModelID())
+			stored, err := st.Stamp(context.Background(), p.Identity().Model)
 			if err != nil || stored == nil {
 				t.Fatalf("stamp after full: %v %v", stored, err)
 			}
 			drifted := *stored
 			tc.break_(&drifted)
-			if err := st.WriteStamp(drifted); err != nil {
+			if err := st.WriteStamp(context.Background(), drifted); err != nil {
 				t.Fatal(err)
 			}
 			seed(t, st, el("a::f3", "func f3() {}"))
-			before := vectorCount(t, st, p.ModelID())
+			before := vectorCount(t, st, p.Identity().Model)
 
 			_, err = Run(context.Background(), st, p, "incremental")
 			if err == nil || !strings.Contains(err.Error(), "stamp mismatch") {
@@ -973,10 +996,10 @@ func TestRunIncrementalRefusesRealStampDrift(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.field) {
 				t.Fatalf("drift error must name %q: %v", tc.field, err)
 			}
-			if got := vectorCount(t, st, p.ModelID()); got != before {
+			if got := vectorCount(t, st, p.Identity().Model); got != before {
 				t.Fatalf("refused run must write no vectors: had %d, now %d", before, got)
 			}
-			if after, _ := st.Stamp(p.ModelID()); after == nil || *after != drifted {
+			if after, _ := st.Stamp(context.Background(), p.Identity().Model); after == nil || *after != drifted {
 				t.Fatalf("refused run must leave the stored stamp: got %+v, want %+v", after, drifted)
 			}
 		})
@@ -990,28 +1013,33 @@ func TestRunCalibratesNoiseFloor(t *testing.T) {
 	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"))
 	p := Deterministic(8)
 	rep := mustRun(t, st, p, "full")
-	floor, ok := ReadCalibration(st, StampOf(p))
+	floor, ok := ReadCalibration(context.Background(), st, StampOf(p))
 	if !ok || rep.NoiseFloor != floor {
 		t.Fatalf("calibration: ok=%v floor=%v report=%v", ok, floor, rep.NoiseFloor)
 	}
 	other := StampOf(p)
 	other.ChunkerVersion++
-	if _, ok := ReadCalibration(st, other); ok {
+	if _, ok := ReadCalibration(context.Background(), st, other); ok {
 		t.Fatal("calibration leaked to another collection identity")
 	}
 }
 
 // --- write-side text cap: one cap per run, recorded in the stamp -----------
 
-// hermeticLocalEnv clears the operator knobs a local-sidecar test must not
-// inherit and pins the revision, so the stamp identity stays the same across
+// localModel is the model id a local provider with no Config.Model stamps.
+func localModel() string { return "local" }
+
+// localCfg is the configuration a local-sidecar test runs under: the sidecar at
+// sc, with the revision pinned so the stamp identity stays the same across
 // providers built from different /props answers.
-func hermeticLocalEnv(t *testing.T) {
-	t.Helper()
-	for _, k := range []string{"LEANKG_EMBED_MODEL", "LEANKG_EMBED_DIMS", "LEANKG_EMBED_TEXT_CAP"} {
-		t.Setenv(k, "")
-	}
-	t.Setenv("LEANKG_EMBED_REVISION", "test-local-pin")
+func localCfg(sc *localSidecar) Config {
+	return Config{Provider: "local", BaseURL: sc.URL + "/v1", Revision: "test-local-pin"}
+}
+
+// withPin is cfg with the operator's write-cap pin set to n runes.
+func withPin(cfg Config, n int) Config {
+	cfg.TextCap = n
+	return cfg
 }
 
 // localSidecar is an httptest stand-in for the llama.cpp sidecar: /v1/embeddings
@@ -1072,18 +1100,24 @@ func (sc *localSidecar) takeInputs() []string {
 
 // localRun runs against sc with a fresh local provider, so each call sees the
 // sidecar's /props as it is now (a provider caches a successful fingerprint).
-func localRun(t *testing.T, st *store.Store, sc *localSidecar, mode string) (Report, error) {
+func localRun(t *testing.T, st store.Backend, sc *localSidecar, mode string) (Report, error) {
 	t.Helper()
-	p, err := newLocalProvider(sc.URL + "/v1")
+	return localRunCfg(t, st, localCfg(sc), mode)
+}
+
+// localRunCfg runs the pipeline under cfg against the store.
+func localRunCfg(t *testing.T, st store.Backend, cfg Config, mode string) (Report, error) {
+	t.Helper()
+	p, _, err := Attach(cfg)
 	if err != nil {
-		t.Fatalf("newLocalProvider: %v", err)
+		t.Fatalf("Attach: %v", err)
 	}
 	return Run(context.Background(), st, p, mode)
 }
 
-func storedStamp(t *testing.T, st *store.Store, modelID string) store.ModelStamp {
+func storedStamp(t *testing.T, st store.Backend, modelID string) store.ModelStamp {
 	t.Helper()
-	cur, err := st.Stamp(modelID)
+	cur, err := st.Stamp(context.Background(), modelID)
 	if err != nil || cur == nil {
 		t.Fatalf("stamp for %s: %v %v", modelID, cur, err)
 	}
@@ -1097,19 +1131,22 @@ type budgetSeq struct {
 	inner   Provider
 	budgets []int
 	calls   int
+	cur     int
 	texts   []string
 }
 
-func (b *budgetSeq) ModelID() string  { return b.inner.ModelID() }
-func (b *budgetSeq) Revision() string { return b.inner.Revision() }
-func (b *budgetSeq) Dimensions() int  { return b.inner.Dimensions() }
-func (b *budgetSeq) Distance() string { return b.inner.Distance() }
-func (b *budgetSeq) Provider() string { return "local" }
-
-func (b *budgetSeq) TextBudget() int {
-	i := min(b.calls, len(b.budgets)-1)
+// Probe advances the sidecar budget one step per run, as a /props re-read would.
+func (b *budgetSeq) Probe(context.Context) error {
+	b.cur = b.budgets[min(b.calls, len(b.budgets)-1)]
 	b.calls++
-	return b.budgets[i]
+	return nil
+}
+
+func (b *budgetSeq) Identity() Identity {
+	id := b.inner.Identity()
+	id.Provider = "local"
+	id.TextBudget = b.cur
+	return id
 }
 
 func (b *budgetSeq) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
@@ -1122,7 +1159,6 @@ func (b *budgetSeq) Embed(ctx context.Context, kind TextKind, texts []string) ([
 // (a) a recorded cap survives a /props outage: the incremental run embeds at
 // the stored cap and leaves the stamp alone.
 func TestWriteCapStoredCapSurvivesPropsOutage(t *testing.T) {
-	hermeticLocalEnv(t)
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 	sc := newLocalSidecar(t, 2048) // budget 2*2048-64 = 4032 runes
@@ -1164,7 +1200,6 @@ func maxRuneLen(texts []string) int {
 func TestWriteCapRefusesWhenNothingDeterminesIt(t *testing.T) {
 	for _, mode := range []string{"incremental", "full"} {
 		t.Run(mode, func(t *testing.T) {
-			hermeticLocalEnv(t)
 			st := testStore(t)
 			seed(t, st, el("a::f1", "func f1() {}"))
 			sc := newLocalSidecar(t, 0) // /props 404, no pin
@@ -1186,12 +1221,10 @@ func TestWriteCapRefusesWhenNothingDeterminesIt(t *testing.T) {
 // (c) the operator pin is the cap when the sidecar cannot say, and it is
 // recorded in the stamp.
 func TestWriteCapPinUsedWhenNoBudget(t *testing.T) {
-	hermeticLocalEnv(t)
-	t.Setenv("LEANKG_EMBED_TEXT_CAP", "1000")
 	st := testStore(t)
 	seed(t, st, el("a::big", strings.Repeat("x", 9000)))
 	sc := newLocalSidecar(t, 0)
-	if _, err := localRun(t, st, sc, "full"); err != nil {
+	if _, err := localRunCfg(t, st, withPin(localCfg(sc), 1000), "full"); err != nil {
 		t.Fatalf("full with pin and no /props: %v", err)
 	}
 	if got := storedStamp(t, st, localModel()).TextCap; got != 1000 {
@@ -1205,7 +1238,6 @@ func TestWriteCapPinUsedWhenNoBudget(t *testing.T) {
 // (d) a sidecar whose n_ctx shrank below the recorded cap: an incremental run
 // refuses and names `leankg-embed full`; a full run rebuilds at the new cap.
 func TestWriteCapSidecarShrinkRefusesIncrementalAndFullRestamps(t *testing.T) {
-	hermeticLocalEnv(t)
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 	sc := newLocalSidecar(t, 4032) // budget 8000
@@ -1240,7 +1272,6 @@ func TestWriteCapSidecarShrinkRefusesIncrementalAndFullRestamps(t *testing.T) {
 // (e) a sidecar budget above the recorded cap keeps the recorded cap and says so
 // in one note.
 func TestWriteCapKeepsStoredWhenSidecarBudgetGrows(t *testing.T) {
-	hermeticLocalEnv(t)
 	st := testStore(t)
 	seed(t, st, el("a::f1", "func f1() {}"))
 	sc := newLocalSidecar(t, 2048) // budget 4032
@@ -1273,15 +1304,15 @@ func TestWriteCapFillsLegacyStampWithoutTouchingIdentity(t *testing.T) {
 	seed(t, st, el("a::f1", "func f1() {}"))
 	p := overrideProvider{inner: Deterministic(8), modelID: "embeddinggemma-2", revision: "test:gemma-v1", dims: 8, provider: "openai"}
 	mustRun(t, st, p, "full")
-	legacy := storedStamp(t, st, p.ModelID())
+	legacy := storedStamp(t, st, p.Identity().Model)
 	legacy.TextCap = 0
-	if err := st.WriteStamp(legacy); err != nil {
+	if err := st.WriteStamp(context.Background(), legacy); err != nil {
 		t.Fatal(err)
 	}
 	seed(t, st, el("a::f2", "func f2() {}"))
 	mustRun(t, st, p, "incremental")
 
-	got := storedStamp(t, st, p.ModelID())
+	got := storedStamp(t, st, p.Identity().Model)
 	if got.TextCap != 8000 {
 		t.Fatalf("legacy stamp TextCap = %d, want 8000 filled in", got.TextCap)
 	}
@@ -1309,7 +1340,172 @@ func TestWriteCapOneCapPerRunWhenPropsFlips(t *testing.T) {
 			t.Fatalf("text %d cut at %d runes, want the run's one cap of 2000 (a /props failure mid-run must not change it)", i, n)
 		}
 	}
-	if got := storedStamp(t, st, p.ModelID()).TextCap; got != 2000 {
+	if got := storedStamp(t, st, p.Identity().Model).TextCap; got != 2000 {
 		t.Fatalf("stamp TextCap = %d, want 2000", got)
 	}
 }
+
+// --- CX-33: request timeout, ctx-aware HTTP, bounded run loop ---------------
+
+// hungEndpoint holds every embeddings request until the client gives up. Any
+// other path answers 404, so the local provider's /props probe fails fast.
+func hungEndpoint(t *testing.T) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/embeddings" {
+			http.NotFound(w, r)
+			return
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	return srv
+}
+
+// within runs fn and fails the test when fn has not returned after limit, so a
+// hung call shows up as a failure instead of a stuck test binary. It returns
+// how long fn took.
+func within(t *testing.T, limit time.Duration, fn func()) time.Duration {
+	t.Helper()
+	start := time.Now()
+	done := make(chan struct{})
+	go func() { defer close(done); fn() }()
+	select {
+	case <-done:
+		return time.Since(start)
+	case <-time.After(limit):
+		t.Fatalf("did not return within %s", limit)
+		return 0
+	}
+}
+
+// The client of every provider built by OpenAICompatible has a request timeout:
+// a client without one waits forever on a hung endpoint.
+func TestOpenAICompatibleClientHasRequestTimeout(t *testing.T) {
+	p := OpenAICompatible("http://127.0.0.1:1/v1", "", "m-1", 4, "rev-1").(*openaiCompatible)
+	if p.client.Timeout <= 0 {
+		t.Fatalf("client Timeout = %s, want a positive request timeout", p.client.Timeout)
+	}
+}
+
+// LEANKG_EMBED_REQUEST_TIMEOUT_SECS sets the timeout the factories use, and an
+// unusable value is an error rather than a silent default.
+// A hung endpoint returns by the configured request timeout with the
+// timeout error, never by waiting for the endpoint.
+func TestEmbedHungEndpointReturnsByRequestTimeout(t *testing.T) {
+	srv := hungEndpoint(t)
+	p, _, err := Attach(Config{Provider: "local", BaseURL: srv.URL + "/v1", RequestTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	var embedErr error
+	took := within(t, 15*time.Second, func() {
+		_, embedErr = p.Embed(context.Background(), Document, []string{"alpha"})
+	})
+	if !errors.Is(embedErr, ErrEndpointTimeout) {
+		t.Fatalf("Embed error = %v, want ErrEndpointTimeout", embedErr)
+	}
+	if took > 5*time.Second {
+		t.Fatalf("Embed returned after %s, want about the 1s request timeout", took)
+	}
+}
+
+// A cancelled ctx aborts an in-flight request at once; the caller sees the
+// cancellation, not a timeout.
+func TestEmbedCancelAbortsInFlightRequest(t *testing.T) {
+	srv := hungEndpoint(t)
+	p := OpenAICompatible(srv.URL+"/v1", "", "m-1", 4, "rev-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(100*time.Millisecond, cancel)
+	var embedErr error
+	took := within(t, 5*time.Second, func() {
+		_, embedErr = p.Embed(ctx, Document, []string{"alpha"})
+	})
+	if !errors.Is(embedErr, context.Canceled) {
+		t.Fatalf("Embed error = %v, want context.Canceled", embedErr)
+	}
+	if took > 2*time.Second {
+		t.Fatalf("cancelled Embed returned after %s, want within 2s", took)
+	}
+}
+
+// A request timeout is an endpoint failure: the run stops at once, records
+// failed, and does not retry item by item (which would multiply the wait).
+func TestRunHungEndpointFailsAtRequestTimeout(t *testing.T) {
+	srv := hungEndpoint(t)
+	p, _, err := Attach(Config{Provider: "local", BaseURL: srv.URL + "/v1", RequestTimeout: time.Second, TextCap: 1000})
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	st := testStore(t)
+	seed(t, st, el("a::f1", "func f1() {}"), el("a::f2", "func f2() {}"), el("a::f3", "func f3() {}"))
+	var runErr error
+	took := within(t, 15*time.Second, func() {
+		_, runErr = Run(context.Background(), st, p, "full")
+	})
+	if !errors.Is(runErr, ErrEndpointTimeout) {
+		t.Fatalf("Run error = %v, want ErrEndpointTimeout", runErr)
+	}
+	if took > 8*time.Second {
+		t.Fatalf("Run returned after %s, want about the 1s request timeout", took)
+	}
+	run, _ := st.LastEmbedRunAny(context.Background())
+	if run == nil || run.Status != "failed" {
+		t.Fatalf("run status: got %+v, want failed", run)
+	}
+}
+
+// Cancellation stops the run at the next batch boundary: three batches, the
+// cancel lands during the first call, so no further batch is sent and the run
+// is recorded cancelled.
+func TestRunStopsAtNextBatchOnCancel(t *testing.T) {
+	st := testStore(t)
+	els := make([]store.Element, 0, 3*batchSize)
+	for i := range 3 * batchSize {
+		els = append(els, el(fmt.Sprintf("a::f%d", i), "func f() {}"))
+	}
+	seed(t, st, els...)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &cancelAfterProvider{inner: Deterministic(8), n: 1, cancel: cancel}
+
+	_, err := Run(ctx, st, p, "full")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("Embed calls = %d, want 2 (the batch in flight at the cancel, then no more)", p.calls)
+	}
+	run, _ := st.LastEmbedRunAny(context.Background())
+	if run == nil || run.Status != "cancelled" {
+		t.Fatalf("run status: got %+v, want cancelled", run)
+	}
+}
+
+func (o overrideProvider) Probe(ctx context.Context) error { return o.inner.Probe(ctx) }
+
+func (w wrongDimsProvider) Identity() Identity              { return w.inner.Identity() }
+func (w wrongDimsProvider) Probe(ctx context.Context) error { return w.inner.Probe(ctx) }
+
+func (e errProvider) Identity() Identity              { return e.inner.Identity() }
+func (e errProvider) Probe(ctx context.Context) error { return e.inner.Probe(ctx) }
+
+func (r recordProvider) Identity() Identity {
+	id := r.inner.Identity()
+	id.Provider = r.provider
+	id.TextCapPin = r.textCapPin
+	return id
+}
+
+func (r recordProvider) Probe(ctx context.Context) error { return r.inner.Probe(ctx) }
+
+func (l longTextProvider) Identity() Identity              { return l.inner.Identity() }
+func (l longTextProvider) Probe(ctx context.Context) error { return l.inner.Probe(ctx) }
+
+func (c cancelAfterProvider) Identity() Identity              { return c.inner.Identity() }
+func (c cancelAfterProvider) Probe(ctx context.Context) error { return c.inner.Probe(ctx) }

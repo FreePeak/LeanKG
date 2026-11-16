@@ -20,22 +20,22 @@ import (
 // read-only handle finds it by exact match.
 func newProject(t *testing.T, dir, name string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	qn := "pkg." + name
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: qn, ElementType: "function", Name: name,
 		FilePath: strings.ToLower(name) + ".go", Language: "go",
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.BumpWatermark(); err != nil {
+	if err := st.BumpWatermark(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -53,7 +53,7 @@ func storeChild(o Options) Child {
 			return nil, err
 		}
 		defer st.Close()
-		els, err := st.FindExact(q.Text)
+		els, err := st.FindExact(context.Background(), q.Text)
 		if err != nil {
 			return nil, err
 		}
@@ -61,7 +61,7 @@ func storeChild(o Options) Child {
 		for _, el := range els {
 			hits = append(hits, map[string]any{"qualified_name": el.QualifiedName, "name": el.Name})
 		}
-		n, err := st.ElementCount()
+		n, err := st.ElementCount(context.Background())
 		if err != nil {
 			return nil, err
 		}
@@ -347,7 +347,7 @@ func TestCanonicalAndStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The registry key must be the same identity store.OpenPG hashes into a
+	// The registry key must be the same identity store.OpenBackend hashes into a
 	// schema name: absolute and symlink-resolved (macOS t.TempDir lives under
 	// /var -> /private/var, exactly the divergence that broke the Rust sweep).
 	if !filepath.IsAbs(c) {
@@ -397,14 +397,14 @@ func TestPortfolioAcrossPGSiblingSchemas(t *testing.T) {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		st, err := store.OpenPG(ctx, url, d, store.RW)
+		st, err := store.OpenBackend(ctx, store.OpenOptions{Engine: store.EnginePostgres, PGURL: url, ProjectDir: d, Mode: store.RW})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.Migrate(); err != nil {
+		if err := st.Migrate(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha",
 			FilePath: "alpha.go", Language: "go",
 		}}); err != nil {
@@ -446,12 +446,12 @@ func clearPGRegistry(t *testing.T, o Options) {
 		t.Fatalf("open PG registry: %v", err)
 	}
 	defer reg.Close()
-	rows, err := reg.ProjectList()
+	rows, err := reg.ProjectList(context.Background())
 	if err != nil {
 		t.Fatalf("list PG registry: %v", err)
 	}
 	for _, r := range rows {
-		if _, err := reg.ProjectForget(r.Dir); err != nil {
+		if _, err := reg.ProjectForget(context.Background(), r.Dir); err != nil {
 			t.Fatalf("clear PG registry row %s: %v", r.Dir, err)
 		}
 	}

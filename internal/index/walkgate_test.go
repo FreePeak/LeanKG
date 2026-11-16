@@ -3,6 +3,7 @@
 package index
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,14 +14,14 @@ import (
 
 // newScratchStore opens a migrated store inside dir (the same shape
 // setupProject builds, minus the fixture copy).
-func newScratchStore(t *testing.T, dir string) *store.Store {
+func newScratchStore(t *testing.T, dir string) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -81,11 +82,11 @@ func TestWalkSkipsDotFilesNotJustDotDirs(t *testing.T) {
 		t.Fatal("fixture produced no elements; the walk itself is broken, not the gate")
 	}
 	// The visible source is indexed — this is a gate test, not a walk test.
-	if els, _ := st.FindExact("Visible"); len(els) != 1 {
+	if els, _ := st.FindExact(context.Background(), "Visible"); len(els) != 1 {
 		t.Fatalf("visible.go must still index (got %d elements for Visible)", len(els))
 	}
 
-	files, err := st.Files()
+	files, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestWalkSkipsDotFilesNotJustDotDirs(t *testing.T) {
 	}
 
 	// And the content gate: no element may carry the secret-shaped body.
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

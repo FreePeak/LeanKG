@@ -45,6 +45,11 @@ const (
 	poolWaitMaxMS  = 600000
 )
 
+// defaultProbeTimeout bounds one probe of one check, and the open of the probe
+// handle: a store that accepts a connection and never answers comes back as a
+// FAIL finding after this long instead of hanging the report.
+const defaultProbeTimeout = 10 * time.Second
+
 // CheckStatus is the severity of one deep-check finding.
 type CheckStatus string
 
@@ -188,23 +193,23 @@ type Edge struct {
 // is provable without a live backend.
 type Probes interface {
 	// PingMS performs one trivial timed round trip in milliseconds.
-	PingMS() (int64, error)
+	PingMS(ctx context.Context) (int64, error)
 	// AppliedMigrations lists the versions recorded in the ledger.
-	AppliedMigrations() ([]int, error)
+	AppliedMigrations(ctx context.Context) ([]int, error)
 	// IndexedFiles lists the distinct file paths currently indexed.
-	IndexedFiles() ([]string, error)
+	IndexedFiles(ctx context.Context) ([]string, error)
 	// RecordedFiles lists every path in the file bookkeeping table
 	// (code_files) — the set the index walk itself maintains. The
 	// file-coverage check compares the two (#332 tripwire).
-	RecordedFiles() ([]string, error)
+	RecordedFiles(ctx context.Context) ([]string, error)
 	// QualifiedNames lists every qualified_name, duplicates preserved
 	// (duplicate detection depends on them).
-	QualifiedNames() ([]string, error)
+	QualifiedNames(ctx context.Context) ([]string, error)
 	// RelationshipEdges samples up to 1000 edges.
-	RelationshipEdges() ([]Edge, error)
+	RelationshipEdges(ctx context.Context) ([]Edge, error)
 	// EmbeddedNames returns the qualified_names with embedding state and
 	// whether the embedding tables exist (false = never built).
-	EmbeddedNames() (names []string, present bool, err error)
+	EmbeddedNames(ctx context.Context) (names []string, present bool, err error)
 	// EngineName reports the backend kind ("sqlite" | "postgres").
 	EngineName() string
 }
@@ -253,7 +258,7 @@ func sqliteProbes(projectDir string) (*dbProbes, error) {
 
 // pgProbes connects to the Postgres from pgURL, pins search_path to the
 // project's schema-per-project schema (leankg_<sha256(dir)[:16]> — the
-// same derivation store.OpenPG uses), and sets the read-only transaction
+// same derivation store.OpenBackend uses), and sets the read-only transaction
 // default so probes can never write.
 func pgProbes(ctx context.Context, projectDir, pgURL string) (*dbProbes, error) {
 	schema, err := pgSchemaForDir(projectDir)
@@ -283,20 +288,20 @@ func (p *dbProbes) EngineName() string { return p.engine }
 // PingMS times one trivial round trip after a warm-up, so lazy connect
 // and TLS handshake never pollute the steady-state measurement (the Rust
 // parity behavior: one untimed warm-up, one timed probe).
-func (p *dbProbes) PingMS() (int64, error) {
-	if _, err := p.db.Exec("SELECT 1"); err != nil {
+func (p *dbProbes) PingMS(ctx context.Context) (int64, error) {
+	if _, err := p.db.ExecContext(ctx, "SELECT 1"); err != nil {
 		return 0, err // warm-up also failed: unreachable, timed or not
 	}
 	start := time.Now()
-	if _, err := p.db.Exec("SELECT 1"); err != nil {
+	if _, err := p.db.ExecContext(ctx, "SELECT 1"); err != nil {
 		return 0, err
 	}
 	return time.Since(start).Milliseconds(), nil
 }
 
 // AppliedMigrations reads the version ledger both engines share.
-func (p *dbProbes) AppliedMigrations() ([]int, error) {
-	rows, err := p.db.Query(`SELECT version FROM schema_migrations ORDER BY version`)
+func (p *dbProbes) AppliedMigrations(ctx context.Context) ([]int, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		return nil, err
 	}
@@ -318,27 +323,27 @@ func (p *dbProbes) AppliedMigrations() ([]int, error) {
 // would make index-freshness and file-coverage fire on every federated store.
 // Synthetic markers (prd://, note/, conversations/) stay visible here; each
 // caller filters what it must not treat as a file on disk.
-func (p *dbProbes) IndexedFiles() ([]string, error) {
+func (p *dbProbes) IndexedFiles(ctx context.Context) ([]string, error) {
 	// CAST keeps the predicate engine-portable: metadata is JSONB on
 	// PostgreSQL (LIKE needs text) and TEXT on sqlite.
-	return p.strings(`SELECT DISTINCT file_path FROM code_elements
+	return p.strings(ctx, `SELECT DISTINCT file_path FROM code_elements
 		WHERE COALESCE(CAST(metadata AS text), '') NOT LIKE '%"federation_source"%'
 		ORDER BY file_path`)
 }
 
 // RecordedFiles reads the file bookkeeping table.
-func (p *dbProbes) RecordedFiles() ([]string, error) {
-	return p.strings(`SELECT path FROM code_files ORDER BY path`)
+func (p *dbProbes) RecordedFiles(ctx context.Context) ([]string, error) {
+	return p.strings(ctx, `SELECT path FROM code_files ORDER BY path`)
 }
 
 // QualifiedNames enumerates every qualified_name; duplicates preserved.
-func (p *dbProbes) QualifiedNames() ([]string, error) {
-	return p.strings(`SELECT qualified_name FROM code_elements ORDER BY qualified_name`)
+func (p *dbProbes) QualifiedNames(ctx context.Context) ([]string, error) {
+	return p.strings(ctx, `SELECT qualified_name FROM code_elements ORDER BY qualified_name`)
 }
 
 // RelationshipEdges samples the orphan-scan window.
-func (p *dbProbes) RelationshipEdges() ([]Edge, error) {
-	rows, err := p.db.Query(
+func (p *dbProbes) RelationshipEdges(ctx context.Context) ([]Edge, error) {
+	rows, err := p.db.QueryContext(ctx,
 		`SELECT source_qualified, target_qualified, rel_type FROM relationships LIMIT ?`, orphanLimit)
 	if err != nil {
 		return nil, err
@@ -357,8 +362,8 @@ func (p *dbProbes) RelationshipEdges() ([]Edge, error) {
 
 // EmbeddedNames reads embedding_state across models; present=false when
 // the tables were never created.
-func (p *dbProbes) EmbeddedNames() ([]string, bool, error) {
-	names, err := p.strings(`SELECT DISTINCT qualified_name FROM embedding_state ORDER BY qualified_name`)
+func (p *dbProbes) EmbeddedNames(ctx context.Context) ([]string, bool, error) {
+	names, err := p.strings(ctx, `SELECT DISTINCT qualified_name FROM embedding_state ORDER BY qualified_name`)
 	if err != nil {
 		if tableAbsent(err) {
 			return nil, false, nil
@@ -374,13 +379,13 @@ func (p *dbProbes) EmbeddedNames() ([]string, bool, error) {
 // Probes implementation (or test stub) has to change to be useful everywhere
 // else — the finding degrades to the model-less wording when it is absent.
 type stampedModels interface {
-	StampedModelIDs() ([]string, error)
+	StampedModelIDs(ctx context.Context) ([]string, error)
 }
 
 // StampedModelIDs lists the embedding models this store has stamped, so the
 // coverage finding can say which collection the percentage is about.
-func (p *dbProbes) StampedModelIDs() ([]string, error) {
-	rows, err := p.db.Query(`SELECT model_id FROM emb_stamp ORDER BY model_id`)
+func (p *dbProbes) StampedModelIDs(ctx context.Context) ([]string, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT model_id FROM emb_stamp ORDER BY model_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -402,17 +407,19 @@ func (p *dbProbes) StampedModelIDs() ([]string, error) {
 // against an absent PG still tells you which checks could not run).
 type unreachableProbes struct{ cause error }
 
-func (u unreachableProbes) PingMS() (int64, error)                 { return 0, u.cause }
-func (u unreachableProbes) AppliedMigrations() ([]int, error)      { return nil, u.cause }
-func (u unreachableProbes) IndexedFiles() ([]string, error)        { return nil, u.cause }
-func (u unreachableProbes) RecordedFiles() ([]string, error)       { return nil, u.cause }
-func (u unreachableProbes) QualifiedNames() ([]string, error)      { return nil, u.cause }
-func (u unreachableProbes) RelationshipEdges() ([]Edge, error)     { return nil, u.cause }
-func (u unreachableProbes) EmbeddedNames() ([]string, bool, error) { return nil, false, u.cause }
-func (u unreachableProbes) EngineName() string                     { return "unreachable" }
+func (u unreachableProbes) PingMS(context.Context) (int64, error)             { return 0, u.cause }
+func (u unreachableProbes) AppliedMigrations(context.Context) ([]int, error)  { return nil, u.cause }
+func (u unreachableProbes) IndexedFiles(context.Context) ([]string, error)    { return nil, u.cause }
+func (u unreachableProbes) RecordedFiles(context.Context) ([]string, error)   { return nil, u.cause }
+func (u unreachableProbes) QualifiedNames(context.Context) ([]string, error)  { return nil, u.cause }
+func (u unreachableProbes) RelationshipEdges(context.Context) ([]Edge, error) { return nil, u.cause }
+func (u unreachableProbes) EmbeddedNames(context.Context) ([]string, bool, error) {
+	return nil, false, u.cause
+}
+func (u unreachableProbes) EngineName() string { return "unreachable" }
 
-func (p *dbProbes) strings(query string) ([]string, error) {
-	rows, err := p.db.Query(query)
+func (p *dbProbes) strings(ctx context.Context, query string) ([]string, error) {
+	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +447,7 @@ func tableAbsent(err error) bool {
 
 // pgSchemaForDir derives the per-project Postgres schema:
 // leankg_ + first 16 hex chars of sha256(canonical absolute dir). This is
-// the same derivation store.OpenPG applies (pgSchemaForDir there is
+// the same derivation store.OpenBackend applies (pgSchemaForDir there is
 // unexported); identical algorithm + identical input keep the two names
 // in sync.
 // ponytail: duplicated from store_pg.go rather than exporting it there —
@@ -502,21 +509,23 @@ type Env struct {
 	// exists (RunDeep always wires a source; the source reports its own
 	// absence). See fleet.go.
 	Fleet FleetSource
+	// ProbeTimeout bounds each check (0 = defaultProbeTimeout).
+	ProbeTimeout time.Duration
 }
 
 // Check is one named diagnosis over the deployment.
 type Check interface {
 	Name() string
-	Run(probes Probes, env Env) Finding
+	Run(ctx context.Context, probes Probes, env Env) Finding
 }
 
 type checkFunc struct {
 	name string
-	run  func(Probes, Env) Finding
+	run  func(context.Context, Probes, Env) Finding
 }
 
-func (c checkFunc) Name() string                { return c.name }
-func (c checkFunc) Run(p Probes, e Env) Finding { return c.run(p, e) }
+func (c checkFunc) Name() string                                     { return c.name }
+func (c checkFunc) Run(ctx context.Context, p Probes, e Env) Finding { return c.run(ctx, p, e) }
 
 // Defaults is the standard check registry, in Rust deep.rs order.
 func Defaults() []Check {
@@ -535,13 +544,25 @@ func Defaults() []Check {
 	}
 }
 
-// RunAll executes the checks in registry order.
-func RunAll(checks []Check, probes Probes, env Env) Report {
+// RunAll executes the checks in registry order. Each check runs under its own
+// ProbeTimeout-bounded ctx derived from ctx, so a probe that never answers
+// becomes a FAIL finding and the rest of the report still runs. A cancelled
+// ctx (SIGINT) stops the run between checks and is returned as the error.
+func RunAll(ctx context.Context, checks []Check, probes Probes, env Env) (Report, error) {
+	timeout := env.ProbeTimeout
+	if timeout <= 0 {
+		timeout = defaultProbeTimeout
+	}
 	r := Report{Findings: make([]Finding, 0, len(checks))}
 	for _, c := range checks {
-		r.Findings = append(r.Findings, c.Run(probes, env))
+		if err := ctx.Err(); err != nil {
+			return r, err
+		}
+		cctx, cancel := context.WithTimeout(ctx, timeout)
+		r.Findings = append(r.Findings, c.Run(cctx, probes, env))
+		cancel()
 	}
-	return r
+	return r, ctx.Err()
 }
 
 // ---------------------------------------------------------------------------
@@ -551,13 +572,13 @@ func RunAll(checks []Check, probes Probes, env Env) Report {
 // checkStoreLatency: connectivity + round-trip latency against the
 // store (PG when the engine is postgres; the SQLite file otherwise — the
 // Rust check targeted the CozoDb handle the same way).
-func checkStoreLatency(p Probes, _ Env) Finding {
+func checkStoreLatency(ctx context.Context, p Probes, _ Env) Finding {
 	const check = "pg-latency"
 	warn := int64(latencyWarnMS)
 	if v := latencyWarnFromEnv(); v > warn {
 		warn = v
 	}
-	ms, err := p.PingMS()
+	ms, err := p.PingMS(ctx)
 	switch {
 	case err != nil:
 		return Finding{check, StatusFail, fmt.Sprintf("unreachable: %v", err),
@@ -595,9 +616,9 @@ func latencyWarnFromEnv() int64 {
 }
 
 // checkMigrations: applied ledger vs the embedded migration list.
-func checkMigrations(p Probes, _ Env) Finding {
+func checkMigrations(ctx context.Context, p Probes, _ Env) Finding {
 	const check = "migrations"
-	applied, err := p.AppliedMigrations()
+	applied, err := p.AppliedMigrations(ctx)
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read migration ledger: %v", err),
 			"The schema_migrations table must exist after Migrate; verify connectivity " +
@@ -636,7 +657,7 @@ func checkMigrations(p Probes, _ Env) Finding {
 }
 
 // checkIndexFreshness: indexed files vs on-disk indexable files.
-func checkIndexFreshness(p Probes, env Env) Finding {
+func checkIndexFreshness(ctx context.Context, p Probes, env Env) Finding {
 	const check = "index-freshness"
 	// The bookkeeping table is the source of truth for "the indexer has seen
 	// this file": a supported file that legitimately yields ZERO elements
@@ -646,7 +667,7 @@ func checkIndexFreshness(p Probes, env Env) Finding {
 	// WARN that trains users to ignore the report. (Found dogfooding on this
 	// repo: 24 recorded, zero-element files — ui-v2 configs, build-tag stubs,
 	// calc.h — read as drift no matter how many times index ran. #406.)
-	indexed, err := p.RecordedFiles()
+	indexed, err := p.RecordedFiles(ctx)
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read indexed file list: %v", err),
 			"code_files should be readable after an index; verify connectivity and schema."}
@@ -758,14 +779,14 @@ func fileExists(path string) bool {
 }
 
 // checkEmbeddingCoverage: embedding_state coverage over code_elements.
-func checkEmbeddingCoverage(p Probes, env Env) Finding {
+func checkEmbeddingCoverage(ctx context.Context, p Probes, env Env) Finding {
 	const check = "embedding-coverage"
-	qns, err := p.QualifiedNames()
+	qns, err := p.QualifiedNames(ctx)
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read code_elements: %v", err),
 			"Coverage is measured against indexed elements; verify connectivity and that an index exists."}
 	}
-	names, present, err := p.EmbeddedNames()
+	names, present, err := p.EmbeddedNames(ctx)
 	switch {
 	case err != nil:
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read embedding_state: %v", err),
@@ -810,7 +831,7 @@ func checkEmbeddingCoverage(p Probes, env Env) Finding {
 	// needs is which collection this percentage is about.
 	model := "(model not reported)"
 	if sm, ok := p.(stampedModels); ok {
-		if ids, merr := sm.StampedModelIDs(); merr == nil && len(ids) > 0 {
+		if ids, merr := sm.StampedModelIDs(ctx); merr == nil && len(ids) > 0 {
 			model = strings.Join(ids, ",")
 		}
 	}
@@ -823,7 +844,7 @@ func checkEmbeddingCoverage(p Probes, env Env) Finding {
 }
 
 // checkPoolEnv: LEANKG_PG_POOL_SIZE / LEANKG_PG_POOL_WAIT_MS sanity.
-func checkPoolEnv(_ Probes, env Env) Finding {
+func checkPoolEnv(ctx context.Context, _ Probes, env Env) Finding {
 	const check = "pool-env"
 	status := StatusPass
 	var details, hints []string
@@ -900,14 +921,14 @@ func isAllDigits(s string) bool {
 }
 
 // checkOrphanedRelationships: edges whose endpoints no longer exist.
-func checkOrphanedRelationships(p Probes, _ Env) Finding {
+func checkOrphanedRelationships(ctx context.Context, p Probes, _ Env) Finding {
 	const check = "orphaned-relationships"
-	edges, err := p.RelationshipEdges()
+	edges, err := p.RelationshipEdges(ctx)
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot sample relationships: %v", err),
 			"Verify connectivity; the relationships table is created by migrations."}
 	}
-	qns, err := p.QualifiedNames()
+	qns, err := p.QualifiedNames(ctx)
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read code_elements: %v", err),
 			"Orphan detection needs the element set to compare against."}
@@ -934,9 +955,9 @@ func checkOrphanedRelationships(p Probes, _ Env) Finding {
 }
 
 // checkDuplicateNames: duplicated qualified_names in code_elements.
-func checkDuplicateNames(p Probes, _ Env) Finding {
+func checkDuplicateNames(ctx context.Context, p Probes, _ Env) Finding {
 	const check = "duplicate-names"
-	qns, err := p.QualifiedNames()
+	qns, err := p.QualifiedNames(ctx)
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read code_elements: %v", err),
 			"Duplicate detection needs the full qualified_name column; verify connectivity."}
@@ -980,7 +1001,7 @@ func checkDuplicateNames(p Probes, _ Env) Finding {
 
 // checkLeankgDir: .leankg directory writability + lock state: idle single-
 // flight tokens are normal, only a held flock is reported.
-func checkLeankgDir(_ Probes, env Env) Finding {
+func checkLeankgDir(ctx context.Context, _ Probes, env Env) Finding {
 	const check = "leankg-dir"
 	dir := env.LeankgDir
 	info, err := os.Stat(dir)
@@ -1062,7 +1083,7 @@ func lockHolder(path string) string {
 // and the deployment ends up keyed on the wrong schema. FAIL on a dangling
 // anchor, WARN on an unreadable config, otherwise report the identity and the
 // effective Postgres URL tier. No leankg.yaml at all is normal (defaults).
-func checkProjectConfig(_ Probes, env Env) Finding {
+func checkProjectConfig(ctx context.Context, _ Probes, env Env) Finding {
 	const check = "config"
 	if env.ConfigErr != nil {
 		return Finding{check, StatusWarn, fmt.Sprintf("unreadable leankg.yaml: %v", env.ConfigErr),
@@ -1180,16 +1201,20 @@ func RunDeep(ctx context.Context, projectRoot, engineName, pgURL string, checks 
 	if cfg != nil && cfg.Project.ProjectPath != "" {
 		candidates = append(candidates, canonicalProjectRootIn(cfg.Project.ProjectPath, root))
 	}
+	// One budget for the whole candidate search: an unreachable store must
+	// not cost a probe timeout per candidate.
+	openCtx, cancelOpen := context.WithTimeout(ctx, defaultProbeTimeout)
 	var probes Probes
 	var lastErr error
 	for _, cand := range dedupDirs(candidates) {
-		p, err := openProbes(ctx, cand, engineName, pgURL)
+		p, err := openProbes(openCtx, cand, engineName, pgURL)
 		if err == nil {
 			probes = p
 			break
 		}
 		lastErr = err
 	}
+	cancelOpen()
 	if probes == nil {
 		// Graceful degradation: a doctor run against an absent/unreachable
 		// backend still produces the structured report — the DB-backed
@@ -1205,21 +1230,21 @@ func RunDeep(ctx context.Context, projectRoot, engineName, pgURL string, checks 
 	}()
 
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(root); aerr != nil {
+	if _, aerr := reg.Activate(ctx, root); aerr != nil {
 		reg = nil // a language-detection failure must not kill the report
 	}
 	if checks == nil {
 		checks = Defaults()
 	}
-	return RunAll(checks, probes, Env{
+	return RunAll(ctx, checks, probes, Env{
 		ProjectRoot: root,
 		LeankgDir:   leankgDir,
 		Pool:        PoolEnvFromEnv(),
 		Registry:    reg,
 		Config:      cfg,
 		ConfigErr:   cfgErr,
-		Fleet:       fleetProbe{ctx: ctx, opts: portfolioreg.Options{Engine: engineName, PGURL: pgURL}},
-	}), nil
+		Fleet:       fleetProbe{opts: portfolioreg.Options{Engine: engineName, PGURL: pgURL}},
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,14 +1268,14 @@ func isSyntheticElementPath(path string) bool {
 // relative paths so the bug cannot reproduce through that door — but any future
 // divergence between the element set and the file set is exactly the same
 // silent-corruption class, so doctor fails on it.
-func checkFileCoverage(p Probes, _ Env) Finding {
+func checkFileCoverage(ctx context.Context, p Probes, _ Env) Finding {
 	const check = "file-coverage"
-	elementPaths, err := p.IndexedFiles()
+	elementPaths, err := p.IndexedFiles(ctx)
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read element file paths: %v", err),
 			"File coverage needs code_elements; verify the store opens read-only."}
 	}
-	recorded, err := p.RecordedFiles()
+	recorded, err := p.RecordedFiles(ctx)
 	if err != nil {
 		return Finding{check, StatusFail, fmt.Sprintf("cannot read code_files: %v", err),
 			"The file bookkeeping table is created by the migrations; re-run `leankg index`."}

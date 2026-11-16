@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,33 +13,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/orgknowledge"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // withOrgKnowledge opens the project store (same --project/$LEANKG_PROJECT
 // convention as the other verbs), runs fn and closes the handle.
-func withOrgKnowledge(project string, mode store.Mode, fn func(*orgknowledge.Knowledge) error) {
-	st, _, err := openVerbStore(project, mode)
+func withOrgKnowledge(ctx context.Context, project string, mode store.Mode, fn func(*orgknowledge.Knowledge) error) error {
+	st, _, err := openVerbStore(ctx, project, mode)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 	if err := fn(orgknowledge.New(st)); err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
+	return nil
 }
 
 // cmdIncident ports `leankg incident add|list|show`.
-func cmdIncident(args []string) {
+func cmdIncident(ctx context.Context, args []string) error {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg incident <add|list|show> ...")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
 	case "add":
-		fs := flag.NewFlagSet("incident add", flag.ExitOnError)
+		fs := flag.NewFlagSet("incident add", flag.ContinueOnError)
 		project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 		title := fs.String("title", "", "incident title")
 		severity := fs.String("severity", "", "severity: P0|P1|P2|P3")
@@ -48,7 +51,9 @@ func cmdIncident(args []string) {
 		prevention := fs.String("prevention", "", "prevention advice")
 		env := fs.String("env", "production", "environment")
 		ticket := fs.String("ticket", "", "linked ticket id")
-		parseInterspersed("incident add", fs, rest, 0)
+		if _, err := parseInterspersed("incident add", fs, rest, 0); err != nil {
+			return err
+		}
 		now := time.Now().Unix()
 		inc := store.Incident{
 			Env: *env, Title: *title, Severity: *severity, OccurredAt: now,
@@ -67,8 +72,8 @@ func cmdIncident(args []string) {
 		if *ticket != "" {
 			inc.LinkedTicket = ticket
 		}
-		withOrgKnowledge(*project, store.RW, func(k *orgknowledge.Knowledge) error {
-			created, err := k.CreateIncident(inc)
+		return withOrgKnowledge(ctx, *project, store.RW, func(k *orgknowledge.Knowledge) error {
+			created, err := k.CreateIncident(ctx, inc)
 			if err != nil {
 				return err
 			}
@@ -79,15 +84,17 @@ func cmdIncident(args []string) {
 		})
 
 	case "list":
-		fs := flag.NewFlagSet("incident list", flag.ExitOnError)
+		fs := flag.NewFlagSet("incident list", flag.ContinueOnError)
 		project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 		service := fs.String("service", "", "service name")
 		env := fs.String("env", "production", "environment")
 		pattern := fs.String("pattern", "", "search pattern (title or root cause)")
 		limit := fs.Int("limit", 10, "limit results")
-		parseInterspersed("incident list", fs, rest, 0)
-		withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
-			incidents, err := k.QueryIncidents(*service, *pattern, *env, *limit)
+		if _, err := parseInterspersed("incident list", fs, rest, 0); err != nil {
+			return err
+		}
+		return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
+			incidents, err := k.QueryIncidents(ctx, *service, *pattern, *env, *limit)
 			if err != nil {
 				return err
 			}
@@ -114,16 +121,19 @@ func cmdIncident(args []string) {
 		})
 
 	case "show":
-		fs := flag.NewFlagSet("incident show", flag.ExitOnError)
+		fs := flag.NewFlagSet("incident show", flag.ContinueOnError)
 		project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-		positional := parseInterspersed("incident show", fs, rest, 1)
+		positional, err := parseInterspersed("incident show", fs, rest, 1)
+		if err != nil {
+			return err
+		}
 		if len(positional) < 1 {
 			fmt.Fprintln(os.Stderr, "usage: leankg incident show <id> [--project DIR]")
-			os.Exit(2)
+			return cliexit.Code(2)
 		}
 		id := positional[0]
-		withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
-			inc, found, err := k.GetIncident(id)
+		return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
+			inc, found, err := k.GetIncident(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -159,7 +169,7 @@ func cmdIncident(args []string) {
 
 	default:
 		fmt.Fprintf(os.Stderr, "leankg: unknown incident subcommand %q\n", sub)
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 }
 
@@ -172,23 +182,25 @@ func cmdIncident(args []string) {
 // subcommand, service-context and team-map do not carry notes, no MCP notes
 // action, no /api/v2 notes route). Three Rust read ports sat in Go with zero
 // production callers. Same shape #470 fixed for reflect and #507 for lessons.
-func cmdNote(args []string) {
-	fs := flag.NewFlagSet("note", flag.ExitOnError)
+func cmdNote(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("note", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	target := fs.String("target", "", "target service or element qualified name")
 	content := fs.String("content", "", "note content (omit to list the notes on --target)")
 	env := fs.String("env", "local", "environment")
-	parseInterspersed("note", fs, args, 0)
+	if _, err := parseInterspersed("note", fs, args, 0); err != nil {
+		return err
+	}
 
 	if strings.TrimSpace(*content) == "" {
 		// Read mode. RO, because a list must never need a writable store.
 		if strings.TrimSpace(*target) == "" {
 			fmt.Fprintln(os.Stderr, "usage: leankg note --target TARGET --content TEXT   (write)")
 			fmt.Fprintln(os.Stderr, "       leankg note --target TARGET                  (list)")
-			os.Exit(2)
+			return cliexit.Code(2)
 		}
-		withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
-			notes, err := k.NotesFor(*target)
+		return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
+			notes, err := k.NotesFor(ctx, *target)
 			if err != nil {
 				return err
 			}
@@ -205,11 +217,10 @@ func cmdNote(args []string) {
 			}
 			return nil
 		})
-		return
 	}
 
-	withOrgKnowledge(*project, store.RW, func(k *orgknowledge.Knowledge) error {
-		note, err := k.AddNote(*target, *content, *env, orgknowledge.AuthorFromEnv())
+	return withOrgKnowledge(ctx, *project, store.RW, func(k *orgknowledge.Knowledge) error {
+		note, err := k.AddNote(ctx, *target, *content, *env, orgknowledge.AuthorFromEnv())
 		if err != nil {
 			return err
 		}
@@ -220,13 +231,15 @@ func cmdNote(args []string) {
 }
 
 // cmdEnvConflicts ports `leankg env-conflicts --service NAME`.
-func cmdEnvConflicts(args []string) {
-	fs := flag.NewFlagSet("env-conflicts", flag.ExitOnError)
+func cmdEnvConflicts(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("env-conflicts", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	service := fs.String("service", "", "service name")
-	parseInterspersed("env-conflicts", fs, args, 0)
-	withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
-		report, err := k.EnvConflictReport(*service)
+	if _, err := parseInterspersed("env-conflicts", fs, args, 0); err != nil {
+		return err
+	}
+	return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
+		report, err := k.EnvConflictReport(ctx, *service)
 		if err != nil {
 			return err
 		}
@@ -236,14 +249,16 @@ func cmdEnvConflicts(args []string) {
 
 // cmdServiceContext renders the get_service_context payload (Rust served it
 // over MCP and /api/v2/service/context; the JSON matches that shape).
-func cmdServiceContext(args []string) {
-	fs := flag.NewFlagSet("service-context", flag.ExitOnError)
+func cmdServiceContext(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("service-context", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	service := fs.String("service", "", "service name (element qualified name)")
 	env := fs.String("env", "production", "environment")
-	parseInterspersed("service-context", fs, args, 0)
-	withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
-		ctx, err := k.ServiceContext(*service, *env)
+	if _, err := parseInterspersed("service-context", fs, args, 0); err != nil {
+		return err
+	}
+	return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
+		ctx, err := k.ServiceContext(ctx, *service, *env)
 		if err != nil {
 			return err
 		}
@@ -252,13 +267,15 @@ func cmdServiceContext(args []string) {
 }
 
 // cmdTeamMap renders the get_team_map payload (Rust served it over MCP).
-func cmdTeamMap(args []string) {
-	fs := flag.NewFlagSet("team-map", flag.ExitOnError)
+func cmdTeamMap(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("team-map", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	env := fs.String("env", "production", "environment")
-	parseInterspersed("team-map", fs, args, 0)
-	withOrgKnowledge(*project, store.RO, func(k *orgknowledge.Knowledge) error {
-		teams, err := k.TeamMap(*env)
+	if _, err := parseInterspersed("team-map", fs, args, 0); err != nil {
+		return err
+	}
+	return withOrgKnowledge(ctx, *project, store.RO, func(k *orgknowledge.Knowledge) error {
+		teams, err := k.TeamMap(ctx, *env)
 		if err != nil {
 			return err
 		}

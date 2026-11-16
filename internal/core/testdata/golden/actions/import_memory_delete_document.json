@@ -1,0 +1,7 @@
+{
+  "bank": "proj-<BANK>",
+  "command": "delete_document",
+  "document_id": "doc-missing",
+  "memory_units_deleted": 0,
+  "ok": true
+}

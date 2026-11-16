@@ -1,6 +1,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -14,7 +15,7 @@ func TestServiceContextAggregate(t *testing.T) {
 	k, st := openKnowledge(t)
 	service := "api"
 
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{
 			QualifiedName: service, ElementType: "service", Name: "api",
 			FilePath: "service.yaml", Language: "go", Metadata: map[string]any{"version": "abc123"},
@@ -36,7 +37,7 @@ func TestServiceContextAggregate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed elements: %v", err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: service, Target: "database", RelType: "calls", Confidence: 1},
 		{Source: "gateway", Target: service, RelType: "service_calls", Confidence: 1},
 		// Wrong rel_type: must not appear in either direction.
@@ -44,7 +45,7 @@ func TestServiceContextAggregate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed relationships: %v", err)
 	}
-	if err := st.ServiceMetadataUpsert(store.ServiceMetadata{
+	if err := st.ServiceMetadataUpsert(context.Background(), store.ServiceMetadata{
 		ServiceName: service, Env: "production", Team: strPtr("payments"),
 		OnCall: strPtr("payments-oncall"), RepoURL: strPtr("https://example.test/api"),
 		Language: strPtr("go"), CreatedAt: 1, UpdatedAt: 1,
@@ -66,12 +67,12 @@ func TestServiceContextAggregate(t *testing.T) {
 		i.AffectedServices = []string{"api"}
 	})
 	for _, inc := range []store.Incident{open, resolved, otherEnv} {
-		if _, err := k.CreateIncident(inc); err != nil {
+		if _, err := k.CreateIncident(context.Background(), inc); err != nil {
 			t.Fatalf("seed incident %s: %v", inc.ID, err)
 		}
 	}
 
-	ctx, err := k.ServiceContext(service, "production")
+	ctx, err := k.ServiceContext(context.Background(), service, "production")
 	if err != nil {
 		t.Fatalf("ServiceContext: %v", err)
 	}
@@ -111,13 +112,13 @@ func TestServiceContextAggregate(t *testing.T) {
 
 	// An env snapshot wins over the live element's metadata: it is that env's
 	// recorded view (the Rust row was env-scoped).
-	if err := k.SnapshotElements("production", []store.Element{{
+	if err := k.SnapshotElements(context.Background(), "production", []store.Element{{
 		QualifiedName: service, ElementType: "service", Name: "api", FilePath: "service.yaml",
 		Metadata: map[string]any{"version": "deployed-v9"},
 	}}); err != nil {
 		t.Fatalf("SnapshotElements: %v", err)
 	}
-	ctx, err = k.ServiceContext(service, "production")
+	ctx, err = k.ServiceContext(context.Background(), service, "production")
 	if err != nil {
 		t.Fatalf("ServiceContext after snapshot: %v", err)
 	}
@@ -126,14 +127,14 @@ func TestServiceContextAggregate(t *testing.T) {
 	}
 
 	// A service the engine has never seen still answers, empty.
-	empty, err := k.ServiceContext("nowhere", "production")
+	empty, err := k.ServiceContext(context.Background(), "nowhere", "production")
 	if err != nil {
 		t.Fatalf("ServiceContext(unknown): %v", err)
 	}
 	if empty.Version != nil || len(empty.Calls) != 0 || empty.OpenIncidents != 0 || empty.LastIncident != nil {
 		t.Fatalf("unknown service should be empty: %+v", empty)
 	}
-	if _, err := k.ServiceContext("  ", "production"); err == nil {
+	if _, err := k.ServiceContext(context.Background(), "  ", "production"); err == nil {
 		t.Fatal("blank service must be rejected")
 	}
 }
@@ -149,7 +150,7 @@ func TestServiceContextRiskCap(t *testing.T) {
 			i.AffectedServices = []string{"billing"}
 			i.RootCause = "cause-" + id
 		})
-		if _, err := k.CreateIncident(inc); err != nil {
+		if _, err := k.CreateIncident(context.Background(), inc); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
@@ -161,7 +162,7 @@ func TestServiceContextRiskCap(t *testing.T) {
 		seedIncident("inc-"+string(rune('a'+i)), at, strPtr("prevention-"+string(rune('a'+i))))
 	}
 
-	ctx, err := k.ServiceContext("billing", "production")
+	ctx, err := k.ServiceContext(context.Background(), "billing", "production")
 	if err != nil {
 		t.Fatalf("ServiceContext: %v", err)
 	}
@@ -177,20 +178,20 @@ func TestServiceContextRiskCap(t *testing.T) {
 // typed struct, with absent optionals rendered as JSON null (Rust serde).
 func TestServiceContextJSON(t *testing.T) {
 	k, st := openKnowledge(t)
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "api", ElementType: "service", Name: "api", FilePath: "service.yaml",
 		Metadata: map[string]any{"version": "abc123"},
 	}}); err != nil {
 		t.Fatalf("seed element: %v", err)
 	}
-	if _, err := k.CreateIncident(incident("inc-json", func(i *store.Incident) {
+	if _, err := k.CreateIncident(context.Background(), incident("inc-json", func(i *store.Incident) {
 		i.Title, i.OccurredAt = "API timeout", 2000
 		i.AffectedServices = []string{"api"}
 	})); err != nil {
 		t.Fatalf("seed incident: %v", err)
 	}
 
-	payload, err := k.ServiceContextJSON("api", "production")
+	payload, err := k.ServiceContextJSON(context.Background(), "api", "production")
 	if err != nil {
 		t.Fatalf("ServiceContextJSON: %v", err)
 	}

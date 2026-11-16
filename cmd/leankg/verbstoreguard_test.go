@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,13 +22,13 @@ import (
 func seedUnmigratedStore(t *testing.T, dir string) {
 	t.Helper()
 	path := filepath.Join(dir, ".leankg", "leankg.db")
-	st, err := store.Open(path, store.RW)
+	st, err := openFixtureStore(path, store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	// The query fails (no schema_migrations table yet) and that is what
 	// forces the connection — and so the file — to exist.
-	_, _ = store.AppliedMigrations(st)
+	_, _ = st.AppliedMigrations(context.Background())
 	if err := st.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}

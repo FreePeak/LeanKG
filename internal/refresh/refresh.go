@@ -50,6 +50,11 @@ type Options struct {
 	RefName string
 	// Auth is the credential for Source ("" falls back to the source's env vars).
 	Auth string
+	// Start resolves the embedding provider for the embed stage, and the release
+	// that stops it. nil means no provider is configured: the embed stage is
+	// skipped with a reason. The caller (cmd/, the server) builds it from the
+	// configuration it read, so this package never reads the environment.
+	Start func(context.Context) (embed.Provider, func(), error)
 }
 
 // Result summarizes one refresh run.
@@ -90,18 +95,18 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	res.Path = indexPath
 
-	st, err := store.OpenBackend(ctx, project, os.Getenv("LEANKG_DB_ENGINE"), os.Getenv("LEANKG_PG_URL"), "", store.RW)
+	st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: project, Engine: os.Getenv("LEANKG_DB_ENGINE"), PGURL: os.Getenv("LEANKG_PG_URL"), DBPath: "", Mode: store.RW})
 	if err != nil {
 		return res, fmt.Errorf("refresh: open store: %w", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		return res, fmt.Errorf("refresh: migrate: %w", err)
 	}
 
 	// 1. Index code — lazy language activation governs what gets indexed.
 	reg := langs.DefaultRegistry()
-	if _, err := reg.Activate(indexPath); err != nil {
+	if _, err := reg.Activate(ctx, indexPath); err != nil {
 		return res, fmt.Errorf("refresh: language detection: %w", err)
 	}
 	res.Code, err = index.IndexDirWith(ctx, st, indexPath, reg)
@@ -131,17 +136,27 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if opts.Full {
 		mode = "full"
 	}
-	res.Embed, res.EmbedSkipped, err = EmbedStage(ctx, st, project, embed.StartProvider, mode)
+	start := opts.Start
+	if start == nil {
+		start = noProvider
+	}
+	res.Embed, res.EmbedSkipped, err = EmbedStage(ctx, st, project, start, mode)
 	if err != nil {
 		return res, fmt.Errorf("refresh: embed: %w", err)
 	}
 	return res, nil
 }
 
+// noProvider is the start function of a refresh whose caller configured no
+// embedding provider: the embed stage reports that as its skip reason.
+func noProvider(context.Context) (embed.Provider, func(), error) {
+	return nil, func() {}, errors.New("no embedding provider configured")
+}
+
 // EmbedStage is the embed stage shared by refresh and `leankg index`: one embed
 // run over st, serialized with leankg-embed through <storeDir>/embed.lock.
-// start resolves the provider and the release that stops it: embed.StartProvider
-// for a manual run, embed.AttachHookProvider for the SessionStart hook.
+// start resolves the provider and the release that stops it: embed.Start for a
+// manual run, embed.AttachHook for the SessionStart hook.
 //
 // The lock belongs NEXT TO THE STORE, not next to the project: a standalone
 // store (FR-P2) has no <project>/.leankg at all, and the lock must not create

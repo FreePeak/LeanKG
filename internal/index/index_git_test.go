@@ -13,21 +13,21 @@ import (
 )
 
 // gitIndexStore opens a migrated store outside any repository under test.
-func gitIndexStore(t *testing.T) *store.Store {
+func gitIndexStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "s.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
 }
 
 // gitIndexRun runs one IndexDirWith pass over dir and fails the test on error.
-func gitIndexRun(t *testing.T, st *store.Store, dir string) Result {
+func gitIndexRun(t *testing.T, st store.Backend, dir string) Result {
 	t.Helper()
 	res, err := IndexDirWith(context.Background(), st, dir, nil)
 	if err != nil {
@@ -37,9 +37,9 @@ func gitIndexRun(t *testing.T, st *store.Store, dir string) Result {
 }
 
 // gitIndexHas reports whether the store holds exactly one element with qn.
-func gitIndexHas(t *testing.T, st *store.Store, qn string) bool {
+func gitIndexHas(t *testing.T, st store.Backend, qn string) bool {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestIndexGitRootAdoptsWalkStoreWithoutReextract(t *testing.T) {
 	if adopted.Files != 0 {
 		t.Fatalf("adopting run: Files = %d, want 0 (identical bytes)", adopted.Files)
 	}
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestSupportedFilesGitRootListsHEAD(t *testing.T) {
 	gittest.WriteFile(t, root, "u.go", "package u\n")
 
 	reg := langs.NewRegistry()
-	if _, err := reg.Activate(root); err != nil {
+	if _, err := reg.Activate(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
 	files, err := SupportedFiles(root, reg)

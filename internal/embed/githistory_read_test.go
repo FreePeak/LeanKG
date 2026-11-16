@@ -1,6 +1,7 @@
 package embed
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,15 +13,15 @@ import (
 // with the same header-plus-content text as code, or commit messages would
 // never be searchable by meaning.
 func TestReadElementsIncludesGitHistoryRows(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "s.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "git:commit:abc1234def",
 		ElementType:   "commit",
 		Name:          "abc1234 rotate the signing key",
@@ -28,7 +29,7 @@ func TestReadElementsIncludesGitHistoryRows(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	els, err := readElements(st)
+	els, err := readElements(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}

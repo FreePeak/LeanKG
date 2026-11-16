@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
@@ -166,23 +167,23 @@ type stampShape struct {
 // The full identity — model, revision, dims, distance, provider, chunker
 // version and the query/document prefix pair — is what a reader compares, so
 // every component is persisted.
-func (s *Store) WriteStamp(st ModelStamp) error {
-	shape, err := s.stampShape()
+func (s *Store) WriteStamp(ctx context.Context, st ModelStamp) error {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return fmt.Errorf("store: stamp shape: %w", err)
 	}
-	if _, err := s.db.Exec(stampUpsertFor(shape.cols, func(int) string { return "?" }), stampValues(st, shape.cols)...); err != nil {
+	if _, err := s.db.ExecContext(ctx, stampUpsertFor(shape.cols, func(int) string { return "?" }), stampValues(st, shape.cols)...); err != nil {
 		return fmt.Errorf("store: write stamp %s: %w", st.ModelID, err)
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // stampColumns probes the emb_stamp columns this store's schema carries.
 // A store that never had the table (or that predates the stamp migrations)
 // yields no optional columns; the read then fails with the driver's own
 // "no such table: emb_stamp", which is the truth about that store.
-func (s *Store) stampColumns() (stampColumnSet, error) {
-	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('emb_stamp')`)
+func (s *Store) stampColumns(ctx context.Context) (stampColumnSet, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('emb_stamp')`)
 	if err != nil {
 		return nil, err
 	}
@@ -200,8 +201,8 @@ func (s *Store) stampColumns() (stampColumnSet, error) {
 
 // stampShape probes this store's emb_stamp columns and builds the read
 // shape from them.
-func (s *Store) stampShape() (*stampShape, error) {
-	cols, err := s.stampColumns()
+func (s *Store) stampShape(ctx context.Context) (*stampShape, error) {
+	cols, err := s.stampColumns(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -216,15 +217,12 @@ func (s *Store) stampShape() (*stampShape, error) {
 // rebuild), and a column the schema does not have AT ALL is projected as its
 // documented default (text_cap 0 = "cap never recorded") instead of failing
 // the read with "no such column".
-func (s *Store) Stamp(modelID string) (*ModelStamp, error) {
-	shape, err := s.stampShape()
+func (s *Store) Stamp(ctx context.Context, modelID string) (*ModelStamp, error) {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var st ModelStamp
-	err = s.db.QueryRow(shape.selectSQL+` WHERE model_id = ?`, modelID).
-		Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap)
+	st, err := scanStamp(s.db.QueryRowContext(ctx, shape.selectSQL+` WHERE model_id = ?`, modelID))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -235,8 +233,8 @@ func (s *Store) Stamp(modelID string) (*ModelStamp, error) {
 }
 
 // EmbeddingStateMap returns qualified_name -> content_hash for a model.
-func (s *Store) EmbeddingStateMap(modelID string) (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT qualified_name, content_hash FROM embedding_state WHERE model_id = ?`, modelID)
+func (s *Store) EmbeddingStateMap(ctx context.Context, modelID string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT qualified_name, content_hash FROM embedding_state WHERE model_id = ?`, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -253,14 +251,14 @@ func (s *Store) EmbeddingStateMap(modelID string) (map[string]string, error) {
 }
 
 // SetEmbeddingStates records embedding_state rows for freshly embedded QNs.
-func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) error {
-	tx, err := s.db.Begin()
+func (s *Store) SetEmbeddingStates(ctx context.Context, modelID string, states map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for qn, h := range states {
-		if _, err := tx.Exec(`INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
 			VALUES (?,?,?,'embedded',strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			ON CONFLICT(model_id, qualified_name) DO UPDATE SET content_hash=excluded.content_hash,
 				state='embedded', embedded_at=excluded.embedded_at`, modelID, qn, h); err != nil {
@@ -270,26 +268,25 @@ func (s *Store) SetEmbeddingStates(modelID string, states map[string]string) err
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // Stamps returns all persisted model stamps. The read shape follows the
 // store's schema exactly like Store.Stamp's.
-func (s *Store) Stamps() ([]ModelStamp, error) {
-	shape, err := s.stampShape()
+func (s *Store) Stamps(ctx context.Context) ([]ModelStamp, error) {
+	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(shape.selectSQL)
+	rows, err := s.db.QueryContext(ctx, shape.selectSQL)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []ModelStamp
 	for rows.Next() {
-		var st ModelStamp
-		if err := rows.Scan(&st.ModelID, &st.Revision, &st.Dimensions, &st.Distance, &st.Provider,
-			&st.ChunkerVersion, &st.QueryPrefix, &st.DocumentPrefix, &st.TextCap); err != nil {
+		st, err := scanStamp(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, st)
@@ -310,26 +307,26 @@ func (s *Store) Stamps() ([]ModelStamp, error) {
 // same atomic-replace boundary the reference relies on.)
 //
 // Callers pass a file's complete vector set; an empty set is a caller bug.
-func (s *Store) ReplaceFileVectors(modelID string, rows []VectorRow, states map[string]string) error {
+func (s *Store) ReplaceFileVectors(ctx context.Context, modelID string, rows []VectorRow, states map[string]string) error {
 	if len(rows) == 0 {
 		return fmt.Errorf("store: ReplaceFileVectors %s: no vectors", modelID)
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, r := range rows {
-		if _, err := tx.Exec(`DELETE FROM embedding_vectors WHERE model_id = ? AND qualified_name = ?`, modelID, r.QualifiedName); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_vectors WHERE model_id = ? AND qualified_name = ?`, modelID, r.QualifiedName); err != nil {
 			return fmt.Errorf("store: replace vector %s: %w", r.QualifiedName, err)
 		}
-		if _, err := tx.Exec(`INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)`,
 			modelID, r.QualifiedName, encodeVec(r.Vec)); err != nil {
 			return fmt.Errorf("store: replace vector %s: %w", r.QualifiedName, err)
 		}
 	}
 	for qn, h := range states {
-		if _, err := tx.Exec(`INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_state (model_id, qualified_name, content_hash, state, embedded_at)
 			VALUES (?,?,?,'embedded',strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			ON CONFLICT(model_id, qualified_name) DO UPDATE SET content_hash=excluded.content_hash,
 				state='embedded', embedded_at=excluded.embedded_at`, modelID, qn, h); err != nil {
@@ -339,7 +336,7 @@ func (s *Store) ReplaceFileVectors(modelID string, rows []VectorRow, states map[
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // UpsertVectors writes a batch of vectors for a model in ONE transaction:
@@ -347,17 +344,17 @@ func (s *Store) ReplaceFileVectors(modelID string, rows []VectorRow, states map[
 // (issue #368 AC: batch upsert semantics). The embed pipeline's live path is
 // the per-file ReplaceFileVectors; UpsertVectors stays for batch-style
 // callers (NDJSON import) and direct vector injection.
-func (s *Store) UpsertVectors(modelID string, rows []VectorRow) error {
+func (s *Store) UpsertVectors(ctx context.Context, modelID string, rows []VectorRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, r := range rows {
-		if _, err := tx.Exec(`INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO embedding_vectors (model_id, qualified_name, vec) VALUES (?,?,?)
 			ON CONFLICT(model_id, qualified_name) DO UPDATE SET vec=excluded.vec`,
 			modelID, r.QualifiedName, encodeVec(r.Vec)); err != nil {
 			return fmt.Errorf("store: upsert vector %s: %w", r.QualifiedName, err)
@@ -366,32 +363,35 @@ func (s *Store) UpsertVectors(modelID string, rows []VectorRow) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // ClearVectors drops all vectors + state for a model (stamp-guard rebuild).
-func (s *Store) ClearVectors(modelID string) error {
+func (s *Store) ClearVectors(ctx context.Context, modelID string) error {
 	for _, stmt := range []string{
 		`DELETE FROM embedding_vectors WHERE model_id = ?`,
 		`DELETE FROM embedding_state WHERE model_id = ?`,
 	} {
-		if _, err := s.db.Exec(stmt, modelID); err != nil {
+		if _, err := s.db.ExecContext(ctx, stmt, modelID); err != nil {
 			return err
 		}
 	}
-	return s.BumpWatermark()
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteOrphanVectors removes vector + state rows for elements that no
 // longer exist, every model at once — the anti-join VectorCoverage reports,
 // made repairable (gc). The watermark bumps only when rows actually go.
-func (s *Store) DeleteOrphanVectors() (int, error) {
-	tx, err := s.db.Begin()
+func (s *Store) DeleteOrphanVectors(ctx context.Context) (int, error) {
+	if err := requireWritable(s.mode); err != nil {
+		return 0, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	vres, err := tx.Exec(`DELETE FROM embedding_vectors
+	vres, err := tx.ExecContext(ctx, `DELETE FROM embedding_vectors
 		WHERE qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
 	if err != nil {
 		return 0, err
@@ -400,7 +400,7 @@ func (s *Store) DeleteOrphanVectors() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	sres, err := tx.Exec(`DELETE FROM embedding_state
+	sres, err := tx.ExecContext(ctx, `DELETE FROM embedding_state
 		WHERE qualified_name NOT IN (SELECT qualified_name FROM code_elements)`)
 	if err != nil {
 		return 0, err
@@ -415,13 +415,13 @@ func (s *Store) DeleteOrphanVectors() (int, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	return int(nv), s.BumpWatermark()
+	return int(nv), s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // VectorCount returns the vector count for a model.
-func (s *Store) VectorCount(modelID string) (int, error) {
+func (s *Store) VectorCount(ctx context.Context, modelID string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM embedding_vectors WHERE model_id = ?`, modelID).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embedding_vectors WHERE model_id = ?`, modelID).Scan(&n)
 	return n, err
 }
 
@@ -435,8 +435,11 @@ func (s *Store) VectorCount(modelID string) (int, error) {
 // An empty keep is a NO-OP (see the Backend contract): the caller that does
 // not know which collection is live must not be able to delete it. The
 // watermark bumps only when rows actually go, like every other purge here.
-func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
-	keep = cleanModelIDs(keep)
+func (s *Store) DeleteStaleStamps(ctx context.Context, keep []string) (StaleStampSweep, error) {
+	keep, err := prepareStaleSweep(s.mode, keep)
+	if err != nil {
+		return StaleStampSweep{}, err
+	}
 	if len(keep) == 0 {
 		return StaleStampSweep{}, nil
 	}
@@ -458,7 +461,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	// degrades to L2, which is a truth about the store, not a licence to
 	// delete it.
 	var have int
-	err := s.db.QueryRow(`SELECT 1 FROM embedding_vectors WHERE model_id IN (`+in+`) LIMIT 1`, args...).Scan(&have)
+	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM embedding_vectors WHERE model_id IN (`+in+`) LIMIT 1`, args...).Scan(&have)
 	if err != nil && err != sql.ErrNoRows {
 		return StaleStampSweep{}, err
 	}
@@ -466,13 +469,13 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 		return StaleStampSweep{}, nil
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	vres, err := tx.Exec(`DELETE FROM embedding_vectors WHERE model_id NOT IN (`+in+`)`, args...)
+	vres, err := tx.ExecContext(ctx, `DELETE FROM embedding_vectors WHERE model_id NOT IN (`+in+`)`, args...)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -480,7 +483,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
-	sres, err := tx.Exec(`DELETE FROM embedding_state WHERE model_id NOT IN (`+in+`)`, args...)
+	sres, err := tx.ExecContext(ctx, `DELETE FROM embedding_state WHERE model_id NOT IN (`+in+`)`, args...)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -488,7 +491,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
-	mres, err := tx.Exec(`DELETE FROM emb_stamp WHERE model_id NOT IN (`+in+`)`, args...)
+	mres, err := tx.ExecContext(ctx, `DELETE FROM emb_stamp WHERE model_id NOT IN (`+in+`)`, args...)
 	if err != nil {
 		return StaleStampSweep{}, err
 	}
@@ -503,7 +506,7 @@ func (s *Store) DeleteStaleStamps(keep []string) (StaleStampSweep, error) {
 		return StaleStampSweep{}, err
 	}
 	out := StaleStampSweep{Models: int(nm), Vectors: int(nv), State: int(ns)}
-	return out, s.BumpWatermark()
+	return out, s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // cleanModelIDs normalizes a keep list: empty entries dropped, duplicates
@@ -541,36 +544,20 @@ const vectorSelectCols = `embedding_vectors.qualified_name,
 	COALESCE(ce.metadata,'{}')`
 
 // SearchVectors performs the single ANN-equivalent shape: in-process cosine
-// over the model's vectors, hydrated against code_elements.
-// ponytail: O(n) scan per query — fine to ~100k vectors at 384 dims (~0.15s
-// on M2 Pro); upgrade path is sqlite-vec when scale demands it.
-func (s *Store) SearchVectors(modelID string, q []float32, k int) ([]VectorSearchHit, error) {
-	return s.SearchVectorsScoped(modelID, q, k, nil)
-}
-
-// SearchVectorsScoped is SearchVectors over the caller's own population: keep
-// admits a row into the ranking. A nil keep means the whole corpus, so the
-// default is byte-for-byte what it was.
+// over the model's vectors, hydrated against code_elements, restricted to the
+// elements q.Filter admits.
 //
-// The primitive exists because of a measured corpus, not a hunch: on this
-// repository's own store 22% of the elements are test fixtures and 37% are
-// archived docs, so 60% of the vector population is a document a working
-// engineer is not asking about — and a bare-symbol query ranks those documents
-// above the function. Both fusion arms rank over the same set, so no weight
-// pair closes the gap; scoping the SET is the only lever, and it is the
-// caller's decision.
-//
-// ponytail: the predicate runs inside the O(n) scan this arm already does, so
-// it costs one call per row and adds no second pass. The PostgreSQL arm cannot
-// push a Go predicate into its HNSW SQL (see pg_fts.go), which is why the
-// scope is a caller-side decision rather than a WHERE clause.
-func (s *Store) SearchVectorsScoped(modelID string, q []float32, k int, keep func(Element) bool) ([]VectorSearchHit, error) {
-	if len(q) == 0 {
+// ponytail: O(n) scan per query, fine to ~100k vectors at 384 dims (~0.15s on
+// M2 Pro); upgrade path is sqlite-vec when scale demands it. The filter runs
+// inside the scan this arm already does, so every excluded row is dropped
+// before the top-K selection and K admitted rows are returned when they exist.
+func (s *Store) SearchVectors(ctx context.Context, q VectorQuery) ([]VectorSearchHit, error) {
+	if len(q.Vec) == 0 {
 		return nil, nil
 	}
-	rows, err := s.db.Query(`SELECT `+vectorSelectCols+`, embedding_vectors.vec
+	rows, err := s.db.QueryContext(ctx, `SELECT `+vectorSelectCols+`, embedding_vectors.vec
 		FROM embedding_vectors JOIN code_elements ce ON ce.qualified_name = embedding_vectors.qualified_name
-		WHERE embedding_vectors.model_id = ?`, modelID)
+		WHERE embedding_vectors.model_id = ?`, q.ModelID)
 	if err != nil {
 		return nil, err
 	}
@@ -589,21 +576,20 @@ func (s *Store) SearchVectorsScoped(modelID string, q []float32, k int, keep fun
 			&el.Language, &el.ParentQualified, &el.Content, &meta, &buf); err != nil {
 			return nil, err
 		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &el.Metadata)
-		}
+		el.Metadata = decodeJSONObject(meta)
 		v := decodeVec(buf)
-		if len(v) != len(q) {
+		if len(v) != len(q.Vec) {
 			continue // stamped collection mismatch should never reach here; skip defensively
 		}
-		if keep != nil && !keep(el) {
+		if !q.Filter.Admits(el) {
 			continue // outside the caller's population: never ranked at all
 		}
-		hits = append(hits, scored{el: el, val: cosine(q, v)})
+		hits = append(hits, scored{el: el, val: cosine(q.Vec, v)})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	k := q.K
 	// partial sort top-k (k is small; n scan already done)
 	for i := 0; i < len(hits) && i < k; i++ {
 		best := i
@@ -657,18 +643,18 @@ func cosine(a, b []float32) float64 {
 }
 
 // Watermark returns the current freshness sequence number.
-func (s *Store) Watermark() (int64, int64, error) {
+func (s *Store) Watermark(ctx context.Context) (int64, int64, error) {
 	var seq, at int64
-	err := s.db.QueryRow(`SELECT seq, at FROM write_watermark WHERE id = 1`).Scan(&seq, &at)
+	err := s.db.QueryRowContext(ctx, `SELECT seq, at FROM write_watermark WHERE id = 1`).Scan(&seq, &at)
 	return seq, at, err
 }
 
 // BumpWatermark advances the freshness sequence (one call per commit batch).
-func (s *Store) BumpWatermark() error {
+func (s *Store) BumpWatermark(ctx context.Context) error {
 	if s.mode == RO {
 		return nil // readers never bump
 	}
-	_, err := s.db.Exec(`UPDATE write_watermark SET seq = seq + 1, at = ? WHERE id = 1`, time.Now().Unix())
+	_, err := s.db.ExecContext(ctx, `UPDATE write_watermark SET seq = seq + 1, at = ? WHERE id = 1`, time.Now().Unix())
 	return err
 }
 
@@ -686,8 +672,8 @@ type Inventory struct {
 }
 
 // SaveInventory persists the inventory under kv with the current watermark.
-func (s *Store) SaveInventory(inv Inventory) error {
-	seq, _, err := s.Watermark()
+func (s *Store) SaveInventory(ctx context.Context, inv Inventory) error {
+	seq, _, err := s.Watermark(ctx)
 	if err != nil {
 		return err
 	}
@@ -697,15 +683,15 @@ func (s *Store) SaveInventory(inv Inventory) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO kv (key, value) VALUES ('inventory', ?)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO kv (key, value) VALUES ('inventory', ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, string(b))
 	return err
 }
 
 // LoadInventory returns the persisted inventory; nil when never computed.
-func (s *Store) LoadInventory() (*Inventory, error) {
+func (s *Store) LoadInventory(ctx context.Context) (*Inventory, error) {
 	var val string
-	err := s.db.QueryRow(`SELECT value FROM kv WHERE key = 'inventory'`).Scan(&val)
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM kv WHERE key = 'inventory'`).Scan(&val)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -736,8 +722,8 @@ type EmbedRun struct {
 }
 
 // StartEmbedRun records a running pipeline run and returns its id.
-func (s *Store) StartEmbedRun(modelID, mode string, dirty int) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO embed_runs (model_id, mode, started_at, dirty, status) VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,'running')`, modelID, mode, dirty)
+func (s *Store) StartEmbedRun(ctx context.Context, modelID, mode string, dirty int) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO embed_runs (model_id, mode, started_at, dirty, status) VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,'running')`, modelID, mode, dirty)
 	if err != nil {
 		return 0, err
 	}
@@ -745,8 +731,8 @@ func (s *Store) StartEmbedRun(modelID, mode string, dirty int) (int64, error) {
 }
 
 // FinishEmbedRun closes a run record with the final counters.
-func (s *Store) FinishEmbedRun(id int64, status string, embedded, skipped, failed, truncations, orphans int) error {
-	_, err := s.db.Exec(`UPDATE embed_runs SET finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+func (s *Store) FinishEmbedRun(ctx context.Context, id int64, status string, embedded, skipped, failed, truncations, orphans int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE embed_runs SET finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
 		embedded=?, skipped=?, failed=?, truncations=?, orphans=?, status=? WHERE id=?`,
 		embedded, skipped, failed, truncations, orphans, status, id)
 	return err
@@ -783,10 +769,13 @@ func embedRunCutoff(cutoff time.Time) string {
 // (CurrentModelID), and the stale-collection sweep derives its keep set from
 // it. A row that is still "running" is closed out, not deleted, so the
 // history of the interrupted run survives.
-func (s *Store) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
+func (s *Store) PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRunPrune, error) {
 	var out EmbedRunPrune
+	if err := requireWritable(s.mode); err != nil {
+		return out, err
+	}
 	cut := embedRunCutoff(cutoff)
-	res, err := s.db.Exec(`UPDATE embed_runs SET status='failed', finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+	res, err := s.db.ExecContext(ctx, `UPDATE embed_runs SET status='failed', finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		WHERE status='running' AND started_at < ?`, cut)
 	if err != nil {
 		return out, fmt.Errorf("store: close out stale embed runs: %w", err)
@@ -794,7 +783,7 @@ func (s *Store) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 	if n, err := res.RowsAffected(); err == nil {
 		out.Closed = n
 	}
-	res, err = s.db.Exec(`DELETE FROM embed_runs
+	res, err = s.db.ExecContext(ctx, `DELETE FROM embed_runs
 		WHERE started_at < ? AND status <> 'running'
 		  AND id <> (SELECT COALESCE(MAX(id), 0) FROM embed_runs)`, cut)
 	if err != nil {
@@ -817,8 +806,8 @@ func (s *Store) PruneEmbedRuns(cutoff time.Time) (EmbedRunPrune, error) {
 // An empty id means "the store has never been embedded" — the caller must
 // treat that as "the current collection is unknown", not as "no collection is
 // current".
-func CurrentModelID(st Backend) (string, error) {
-	run, err := st.LastEmbedRunAny()
+func CurrentModelID(ctx context.Context, st EmbedRuns) (string, error) {
+	run, err := st.LastEmbedRunAny(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -829,33 +818,13 @@ func CurrentModelID(st Backend) (string, error) {
 }
 
 // LastEmbedRunAny returns the most recent embed run across all models.
-func (s *Store) LastEmbedRunAny() (*EmbedRun, error) {
-	row := s.db.QueryRow(`SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
-		FROM embed_runs ORDER BY id DESC LIMIT 1`)
-	var r EmbedRun
-	err := row.Scan(&r.ID, &r.ModelID, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Dirty, &r.Embedded, &r.Skipped, &r.Failed, &r.Truncations, &r.Orphans, &r.Status)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &r, nil
+func (s *Store) LastEmbedRunAny(ctx context.Context) (*EmbedRun, error) {
+	return scanEmbedRun(s.db.QueryRowContext(ctx, `SELECT `+embedRunCols+` FROM embed_runs ORDER BY id DESC LIMIT 1`), sql.ErrNoRows)
 }
 
 // LastEmbedRun returns the most recent run for a model; nil when none.
-func (s *Store) LastEmbedRun(modelID string) (*EmbedRun, error) {
-	row := s.db.QueryRow(`SELECT id, model_id, mode, started_at, finished_at, dirty, embedded, skipped, failed, truncations, orphans, status
-		FROM embed_runs WHERE model_id = ? ORDER BY id DESC LIMIT 1`, modelID)
-	var r EmbedRun
-	err := row.Scan(&r.ID, &r.ModelID, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Dirty, &r.Embedded, &r.Skipped, &r.Failed, &r.Truncations, &r.Orphans, &r.Status)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &r, nil
+func (s *Store) LastEmbedRun(ctx context.Context, modelID string) (*EmbedRun, error) {
+	return scanEmbedRun(s.db.QueryRowContext(ctx, `SELECT `+embedRunCols+` FROM embed_runs WHERE model_id = ? ORDER BY id DESC LIMIT 1`, modelID), sql.ErrNoRows)
 }
 
 // RefreshInventory recomputes the inventory snapshot from the live counts and
@@ -864,27 +833,31 @@ func (s *Store) LastEmbedRun(modelID string) (*EmbedRun, error) {
 // bookkeeping and the counts are already interface methods: an engine that
 // indexes, summarizes, or applies a federation pull must not leave readers
 // reporting possibly_stale forever.
-func RefreshInventory(st Backend) (Inventory, error) {
-	els, err := st.ElementCount()
+func RefreshInventory(ctx context.Context, st interface {
+	ElementReader
+	Vectors
+	Inventories
+}) (Inventory, error) {
+	els, err := st.ElementCount(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}
-	rels, err := st.RelationshipCount()
+	rels, err := st.RelationshipCount(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}
-	files, err := st.FileCount()
+	files, err := st.FileCount(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}
-	byType, err := st.ElementsByType()
+	byType, err := st.ElementsByType(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}
 	vectors := 0
-	if stamps, err := st.Stamps(); err == nil {
+	if stamps, err := st.Stamps(ctx); err == nil {
 		for _, ms := range stamps {
-			if n, err := st.VectorCount(ms.ModelID); err == nil {
+			if n, err := st.VectorCount(ctx, ms.ModelID); err == nil {
 				vectors += n
 			}
 		}
@@ -896,7 +869,7 @@ func RefreshInventory(st Backend) (Inventory, error) {
 		TotalVectors:       vectors,
 		ElementsByType:     byType,
 	}
-	if err := st.SaveInventory(inv); err != nil {
+	if err := st.SaveInventory(ctx, inv); err != nil {
 		return Inventory{}, err
 	}
 	return inv, nil

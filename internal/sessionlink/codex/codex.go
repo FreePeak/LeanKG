@@ -7,6 +7,7 @@ package codex
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -92,7 +93,10 @@ func uuidFromName(path string) string {
 
 // Locate finds the transcript for c: exact by session id (payload id or the
 // filename uuid), else heuristic on cwd, time window, normalized tool and args.
-func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.TranscriptRef{}, 0, err
+	}
 	files := listRollouts(root(home))
 	if cid := c.ClientSessionID; cid != "" {
 		for _, f := range files {
@@ -108,6 +112,9 @@ func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transc
 	var bestStart time.Time
 	var bestN int
 	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return sessionlink.TranscriptRef{}, 0, err
+		}
 		m := metaOf(f)
 		if m.cwd == "" || filepath.Clean(m.cwd) != filepath.Clean(c.Cwd) {
 			continue
@@ -118,7 +125,7 @@ func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transc
 		if !m.start.IsZero() && m.start.After(c.TS.Add(sessionlink.TurnHeuristic.Slack)) {
 			continue
 		}
-		s, err := load(f)
+		s, err := load(rd, f)
 		if err != nil {
 			continue
 		}
@@ -180,8 +187,11 @@ func metaOf(path string) candidate {
 }
 
 // Window extracts the bounded context around the matched leankg call.
-func (a *adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
-	s, err := load(t.Path)
+func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int, rd *sessionlink.Reader) (sessionlink.Window, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.Window{}, err
+	}
+	s, err := load(rd, t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -193,8 +203,11 @@ func (a *adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n i
 }
 
 // Transcript returns the session turns, capped. maxTurns <= 0 keeps all.
-func (a *adapter) Transcript(t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
-	s, err := load(t.Path)
+func (a *adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s, err := load(nil, t.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -238,9 +251,14 @@ type rawTokenPayload struct {
 
 type callPos struct{ turn, call int }
 
-// load parses a rollout into user and assistant turns, skipping garbage lines,
-// injected environment context and reasoning items.
-func load(path string) (session, error) {
+// load returns a rollout's turns, parsing the file at most once per Reader.
+func load(rd *sessionlink.Reader, path string) (session, error) {
+	return sessionlink.Parsed(rd, path, func() (session, error) { return parseFile(path) })
+}
+
+// parseFile parses a rollout into user and assistant turns, skipping garbage
+// lines, injected environment context and reasoning items.
+func parseFile(path string) (session, error) {
 	fi, err := os.Lstat(path)
 	if err != nil || !fi.Mode().IsRegular() {
 		return session{}, fmt.Errorf("%w: %v", sessionlink.ErrNotFound, err)

@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -50,7 +51,7 @@ func TestDashboardTextShape(t *testing.T) {
 			SavingsPercent: 80},
 	)
 
-	got, err := Dashboard(b, DashboardOptions{})
+	got, err := Dashboard(context.Background(), b, DashboardOptions{})
 	if err != nil {
 		t.Fatalf("dashboard: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestDashboardJSONShape(t *testing.T) {
 	record(t, b, store.Metric{ToolName: "query", Timestamp: anchor + 10, ProjectPath: "/a",
 		TokensSaved: 60, SavingsPercent: 60, Success: true, QueryPattern: "handle"})
 
-	got, err := Dashboard(b, DashboardOptions{Format: "json"})
+	got, err := Dashboard(context.Background(), b, DashboardOptions{Format: "json"})
 	if err != nil {
 		t.Fatalf("dashboard: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestDashboardJSONShape(t *testing.T) {
 	}
 
 	// An empty ledger still renders every section as an array.
-	empty, err := Dashboard(openTestBackend(t), DashboardOptions{Format: "json"})
+	empty, err := Dashboard(context.Background(), openTestBackend(t), DashboardOptions{Format: "json"})
 	if err != nil {
 		t.Fatalf("empty dashboard: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestDashboardJSONShape(t *testing.T) {
 // TestDashboardEmptyLedgerText pins the empty state (Rust render_text's early
 // return) and that the empty ledger is not an error.
 func TestDashboardEmptyLedgerText(t *testing.T) {
-	got, err := Dashboard(openTestBackend(t), DashboardOptions{})
+	got, err := Dashboard(context.Background(), openTestBackend(t), DashboardOptions{})
 	if err != nil {
 		t.Fatalf("dashboard: %v", err)
 	}
@@ -190,7 +191,7 @@ func TestDashboardCapsAndOrder(t *testing.T) {
 		store.Metric{ToolName: "old", Timestamp: anchor - 5*store.SecondsPerDay, ProjectPath: "/old", TokensSaved: 1},
 	)
 
-	out, err := Dashboard(b, DashboardOptions{Format: "json"})
+	out, err := Dashboard(context.Background(), b, DashboardOptions{Format: "json"})
 	if err != nil {
 		t.Fatalf("dashboard: %v", err)
 	}
@@ -224,7 +225,7 @@ func TestDashboardCapsAndOrder(t *testing.T) {
 		record(t, b2, store.Metric{ToolName: "query", Timestamp: anchor + int64(i),
 			QueryPattern: fmt.Sprintf("pattern%02d", i), Success: true})
 	}
-	patterns, err := Dashboard(b2, DashboardOptions{Format: "json"})
+	patterns, err := Dashboard(context.Background(), b2, DashboardOptions{Format: "json"})
 	if err != nil {
 		t.Fatalf("dashboard: %v", err)
 	}
@@ -255,7 +256,7 @@ func TestDashboardWindowAndErrors(t *testing.T) {
 			Calls int64 `json:"calls"`
 		} `json:"totals"`
 	}
-	out, err := Dashboard(b, DashboardOptions{Since: "1d", Format: "json"})
+	out, err := Dashboard(context.Background(), b, DashboardOptions{Since: "1d", Format: "json"})
 	if err != nil {
 		t.Fatalf("dashboard: %v", err)
 	}
@@ -266,11 +267,11 @@ func TestDashboardWindowAndErrors(t *testing.T) {
 		t.Fatalf("--since 1d calls = %d, want 1", payload.Totals.Calls)
 	}
 
-	if _, err := Dashboard(b, DashboardOptions{Since: "7"}); err == nil ||
+	if _, err := Dashboard(context.Background(), b, DashboardOptions{Since: "7"}); err == nil ||
 		!strings.Contains(err.Error(), "invalid --since window") {
 		t.Fatalf("bare --since must be rejected, got %v", err)
 	}
-	if _, err := Dashboard(b, DashboardOptions{Format: "yaml"}); err == nil ||
+	if _, err := Dashboard(context.Background(), b, DashboardOptions{Format: "yaml"}); err == nil ||
 		!strings.Contains(err.Error(), `unknown --format value "yaml"`) {
 		t.Fatalf("unknown --format must be rejected, got %v", err)
 	}

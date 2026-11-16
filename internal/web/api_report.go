@@ -4,6 +4,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,7 +17,6 @@ import (
 	"unicode"
 
 	"github.com/FreePeak/LeanKG/internal/core"
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // queryGraphNode is US-GF-03 QueryGraphNode.
@@ -244,7 +244,7 @@ func resolveSeedTerms(snap *snapshot, term string) []string {
 		}
 	}
 
-	found := make([]store.Element, 0, len(seen))
+	found := make([]core.Element, 0, len(seen))
 	for qn := range seen {
 		found = append(found, byQN[qn])
 	}
@@ -295,7 +295,7 @@ func resolveToQualified(snap *snapshot, input string) (string, bool) {
 	}
 	lower := strings.ToLower(input)
 
-	byName := []store.Element{}
+	byName := []core.Element{}
 	for _, e := range snap.elements {
 		if e.Name == input {
 			byName = append(byName, e)
@@ -344,7 +344,7 @@ func qnMatchesTerm(qn, term string) bool {
 	return false
 }
 
-func sourceFileOf(rel store.Relationship) string {
+func sourceFileOf(rel core.Relationship) string {
 	if s, ok := rel.Metadata["source_file"].(string); ok {
 		return s
 	}
@@ -354,13 +354,13 @@ func sourceFileOf(rel store.Relationship) string {
 // nlEngine is the loaded-graph working set for one query_graph call.
 type nlEngine struct {
 	snap *snapshot
-	out  map[string][]store.Relationship
-	in   map[string][]store.Relationship
+	out  map[string][]core.Relationship
+	in   map[string][]core.Relationship
 }
 
-func newNLEngine(snap *snapshot, rels []store.Relationship) *nlEngine {
-	out := map[string][]store.Relationship{}
-	in := map[string][]store.Relationship{}
+func newNLEngine(snap *snapshot, rels []core.Relationship) *nlEngine {
+	out := map[string][]core.Relationship{}
+	in := map[string][]core.Relationship{}
 	for _, r := range rels {
 		out[r.Source] = append(out[r.Source], r)
 		in[r.Target] = append(in[r.Target], r)
@@ -370,8 +370,8 @@ func newNLEngine(snap *snapshot, rels []store.Relationship) *nlEngine {
 
 // neighborsOf returns the undirected relationship set of a node, sorted by
 // provenance rank (EXTRACTED first), like the Rust BFS ordering.
-func (nl *nlEngine) neighborsOf(qn string) []store.Relationship {
-	neighbors := make([]store.Relationship, 0, len(nl.out[qn])+len(nl.in[qn]))
+func (nl *nlEngine) neighborsOf(qn string) []core.Relationship {
+	neighbors := make([]core.Relationship, 0, len(nl.out[qn])+len(nl.in[qn]))
 	neighbors = append(neighbors, nl.out[qn]...)
 	neighbors = append(neighbors, nl.in[qn]...)
 	sort.SliceStable(neighbors, func(i, j int) bool {
@@ -381,7 +381,7 @@ func (nl *nlEngine) neighborsOf(qn string) []store.Relationship {
 }
 
 // neighborOf returns the far end of a relationship relative to node.
-func neighborOf(rel store.Relationship, node string) (string, bool) {
+func neighborOf(rel core.Relationship, node string) (string, bool) {
 	if rel.Source == node {
 		return rel.Target, true
 	}
@@ -869,38 +869,39 @@ func dropLabel(edges []queryGraphEdge, label string) []queryGraphEdge {
 // --- POST /api/query-graph ---
 
 func (h *apiH) queryGraph(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var req struct {
 		Question    string `json:"question"`
 		TokenBudget *int   `json:"token_budget"`
 		MaxDepth    *int   `json:"max_depth"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeEnvelope(w, failEnvelope("invalid JSON body: "+err.Error()))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("invalid JSON body: "+err.Error()))
 		return
 	}
 	q := strings.TrimSpace(req.Question)
 	if q == "" {
-		writeEnvelope(w, failEnvelope("question must not be empty"))
+		respondEnvelope(w, http.StatusBadRequest, failEnvelope("question must not be empty"))
 		return
 	}
 
-	snap, err := loadSnapshot(h.engine.Store())
+	snap, err := loadSnapshot(ctx, h.engine)
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
-	rels, err := allRelationships(h.engine.Store())
+	rels, err := h.engine.GraphRelationships(ctx)
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	nl := newNLEngine(snap, rels)
 	result, err := nl.runQueryGraph(q, req.TokenBudget, req.MaxDepth)
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
-	writeEnvelope(w, okEnvelope(result))
+	respondEnvelope(w, http.StatusOK, okEnvelope(result))
 }
 
 // --- GET /api/graph/report ---
@@ -942,7 +943,7 @@ type GraphReport struct {
 // getGodNodes ports get_god_nodes(limit, excludeHubsPercentile): top
 // in+out degree elements, hub super-nodes above the percentile excluded,
 // deterministic tie-break by qualified name.
-func getGodNodes(snap *snapshot, rels []store.Relationship, limit, excludeHubsPercentile int) []GodNode {
+func getGodNodes(snap *snapshot, rels []core.Relationship, limit, excludeHubsPercentile int) []GodNode {
 	limit = min(max(limit, 1), 200)
 	degree := map[string]int{}
 	for _, r := range rels {
@@ -981,10 +982,10 @@ func getGodNodes(snap *snapshot, rels []store.Relationship, limit, excludeHubsPe
 	return out
 }
 
-func (h *apiH) graphReport(w http.ResponseWriter, _ *http.Request) {
-	report, err := buildGraphReport(h.projectDir, h.engine, "")
+func (h *apiH) graphReport(w http.ResponseWriter, r *http.Request) {
+	report, err := buildGraphReport(r.Context(), h.projectDir, h.engine, "")
 	if err != nil {
-		writeEnvelope(w, failEnvelope(err.Error()))
+		respondErr(w, err)
 		return
 	}
 	md := reportToMarkdown(report)
@@ -996,21 +997,21 @@ func (h *apiH) graphReport(w http.ResponseWriter, _ *http.Request) {
 		_ = os.WriteFile(outPath, []byte(md), 0o644)
 	}
 
-	writeEnvelope(w, okEnvelope(map[string]any{"markdown": md}))
+	respondEnvelope(w, http.StatusOK, okEnvelope(map[string]any{"markdown": md}))
 }
 
 // buildGraphReport assembles the US-GF-06 graph report over the engine's
 // store (Rust GraphEngine::generate_graph_report). projectName overrides the
 // display name; "" falls back to the project directory's basename, then
 // "project".
-func buildGraphReport(projectDir string, engine *core.Engine, projectName string) (GraphReport, error) {
+func buildGraphReport(ctx context.Context, projectDir string, engine *core.Engine, projectName string) (GraphReport, error) {
 	project := projectNameFor(projectDir, projectName)
 
-	snap, err := loadSnapshot(engine.Store())
+	snap, err := loadSnapshot(ctx, engine)
 	if err != nil {
 		return GraphReport{}, err
 	}
-	rels, err := allRelationships(engine.Store())
+	rels, err := engine.GraphRelationships(ctx)
 	if err != nil {
 		return GraphReport{}, err
 	}

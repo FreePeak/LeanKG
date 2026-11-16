@@ -34,7 +34,7 @@ import (
 func TestSessionLessonReadsTheFieldTheSchemaNames(t *testing.T) {
 	e, _ := newEngine(t)
 	dir := t.TempDir()
-	e.SetProjectDir(dir)
+	e.projectDir = dir
 	ctx := context.Background()
 
 	// The schema's field.

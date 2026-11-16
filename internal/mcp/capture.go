@@ -52,16 +52,20 @@ var sessionEnv = []struct{ env, client string }{
 	{"OPENCODE_SESSION_ID", "opencode"},
 }
 
-// SetRecorder attaches the capture sink (nil means Nop). Call it before the
-// server starts serving; it is not safe to swap while calls are in flight.
+// SetRecorder attaches the capture sink (nil means Nop). It may be called
+// while calls are in flight: a consent reload swaps the sink under recMu.
 func (s *Server) SetRecorder(rec telemetry.Recorder) {
 	if rec == nil {
 		rec = telemetry.Nop{}
 	}
+	s.recMu.Lock()
 	s.rec = rec
+	s.recMu.Unlock()
 }
 
 func (s *Server) recorder() telemetry.Recorder {
+	s.recMu.RLock()
+	defer s.recMu.RUnlock()
 	if s.rec == nil {
 		return telemetry.Nop{}
 	}
@@ -322,7 +326,7 @@ func (s *Server) finishCall(ctx context.Context, eng *core.Engine, req *mcp.Call
 	if st.PreTruncationToken > 0 {
 		pre = int64(st.PreTruncationToken)
 	}
-	s.recordMetric(eng, req, started, post, err, metricEval{
+	s.recordMetric(ctx, eng, req, started, post, err, metricEval{
 		baseline: base, saved: saved, postTokens: postTokens,
 	})
 	if sc := scratchFrom(ctx); sc != nil {

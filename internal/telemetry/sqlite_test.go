@@ -14,7 +14,7 @@ var t0 = time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC)
 
 func openTestLedger(t *testing.T) *SQLiteStore {
 	t.Helper()
-	st, err := OpenSQLite(filepath.Join(t.TempDir(), "telemetry.db"), false)
+	st, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "telemetry.db"), false)
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestSQLitePurgeAndStats(t *testing.T) {
 
 func TestSQLiteReadOnlyHandle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "telemetry.db")
-	rw, err := OpenSQLite(path, false)
+	rw, err := OpenSQLite(context.Background(), path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestSQLiteReadOnlyHandle(t *testing.T) {
 	if err := rw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ro, err := OpenSQLite(path, true)
+	ro, err := OpenSQLite(context.Background(), path, true)
 	if err != nil {
 		t.Fatalf("read-only open: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestSQLiteReadOnlyHandle(t *testing.T) {
 
 func TestSQLiteReadOnlyMissingWrapsErrNotExist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nope", "telemetry.db")
-	_, err := OpenSQLite(path, true)
+	_, err := OpenSQLite(context.Background(), path, true)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("err = %v, want ErrNotExist", err)
 	}
@@ -364,7 +364,7 @@ func TestSQLiteReadOnlyMissingWrapsErrNotExist(t *testing.T) {
 func TestSQLiteMigrationsAreIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "telemetry.db")
 	for i := 0; i < 2; i++ {
-		st, err := OpenSQLite(path, false)
+		st, err := OpenSQLite(context.Background(), path, false)
 		if err != nil {
 			t.Fatalf("open #%d: %v", i, err)
 		}
@@ -382,7 +382,7 @@ func TestSQLiteConcurrentWritersSeparateHandles(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, writers)
 	for w := 0; w < writers; w++ {
-		st, err := OpenSQLite(path, false)
+		st, err := OpenSQLite(context.Background(), path, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -410,7 +410,7 @@ func TestSQLiteConcurrentWritersSeparateHandles(t *testing.T) {
 	for err := range errs {
 		t.Fatalf("concurrent insert: %v", err)
 	}
-	st, err := OpenSQLite(path, true)
+	st, err := OpenSQLite(context.Background(), path, true)
 	if err != nil {
 		t.Fatal(err)
 	}

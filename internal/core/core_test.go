@@ -3,13 +3,14 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/FreePeak/LeanKG/internal/langs"
-	"github.com/FreePeak/LeanKG/internal/ontology"
-	"github.com/FreePeak/LeanKG/internal/session"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/langs"
+	"github.com/FreePeak/LeanKG/internal/ontology"
+	"github.com/FreePeak/LeanKG/internal/session"
 
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/memory"
@@ -19,19 +20,19 @@ import (
 func newEngine(t *testing.T) (*Engine, *memory.Memory) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(st, mem, nil), mem
+	return New(st, Options{Memory: mem}), mem
 }
 
 func TestResolveEnvelope(t *testing.T) {
@@ -63,7 +64,7 @@ func TestQueryLadderOrderAndProvenance(t *testing.T) {
 	}
 
 	// Seed: exact-match element + fuzzy-only element.
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.parseConfig", ElementType: "function", Name: "parseConfig", FilePath: "a.go", Language: "go", Content: "parse config file"},
 		{QualifiedName: "a.Widget", ElementType: "type", Name: "Widget", FilePath: "a.go", Language: "go", Content: "the frobnicator widget struct"},
 	}); err != nil {
@@ -112,12 +113,12 @@ func TestQuerySemanticDegradesToL2(t *testing.T) {
 
 func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
@@ -129,22 +130,22 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 		{QualifiedName: "m.alpha", ElementType: "function", Name: "alpha", FilePath: "m.go", Language: "go", Content: "alpha code"},
 		{QualifiedName: "m.beta", ElementType: "function", Name: "beta", FilePath: "m.go", Language: "go", Content: "beta code"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	qvec, err := p.Embed(context.Background(), embed.Query, []string{"alpha code"})
 	if err != nil || len(qvec) != 1 {
 		t.Fatalf("embed query: %v", err)
 	}
-	if err := st.UpsertVectors(p.ModelID(), []store.VectorRow{{QualifiedName: "m.alpha", Vec: qvec[0]}}); err != nil {
+	if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: "m.alpha", Vec: qvec[0]}}); err != nil {
 		t.Fatal(err)
 	}
 
-	embedder := QueryEmbedderFromProvider(p)
-	e := New(st, nil, embedder)
+	embedder := p
+	e := New(st, Options{Embedder: embedder})
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "alpha code"})
 	if err != nil {
 		t.Fatal(err)
@@ -167,35 +168,32 @@ func TestL3SemanticWithDeterministicProvider(t *testing.T) {
 
 type failingProvider struct{ inner embed.Provider }
 
-func (f failingProvider) ModelID() string  { return f.inner.ModelID() }
-func (f failingProvider) Revision() string { return f.inner.Revision() }
-func (f failingProvider) Dimensions() int  { return f.inner.Dimensions() }
-func (f failingProvider) Distance() string { return f.inner.Distance() }
-func (f failingProvider) Provider() string { return f.inner.Provider() }
+func (f failingProvider) Identity() embed.Identity        { return f.inner.Identity() }
+func (f failingProvider) Probe(ctx context.Context) error { return f.inner.Probe(ctx) }
 func (f failingProvider) Embed(_ context.Context, _ embed.TextKind, _ []string) ([][]float32, error) {
 	return nil, context.DeadlineExceeded
 }
 
 func TestL3ProviderFailureDegrades(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "x.y", ElementType: "function", Name: "y", FilePath: "x.go", Language: "go", Content: "some content here"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(store.ModelStamp{ModelID: "boom", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "test"}); err != nil {
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{ModelID: "boom", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	embedder := QueryEmbedderFromProvider(failingProvider{inner: embed.Deterministic(4)})
-	e := New(st, nil, embedder)
+	embedder := failingProvider{inner: embed.Deterministic(4)}
+	e := New(st, Options{Embedder: embedder})
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "content"})
 	if err != nil {
 		t.Fatalf("provider failure must degrade, not error: %v", err)
@@ -244,7 +242,7 @@ func TestMemoryWriteAndReadRouting(t *testing.T) {
 func TestStatusShape(t *testing.T) {
 	e, _ := newEngine(t)
 	dir := t.TempDir()
-	e.SetProjectDir(dir)
+	e.projectDir = dir
 	out, err := e.Status(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -269,12 +267,12 @@ func TestStatusShape(t *testing.T) {
 func TestEmptyHitGuidance(t *testing.T) {
 	e, _ := newEngine(t)
 	ctx := context.Background()
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Alpha", ElementType: "function", Name: "Alpha", FilePath: "a.go", Language: "go", Content: "alpha helper"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,12 +330,12 @@ func TestEmptyHitGuidance(t *testing.T) {
 func TestFreshnessStaleAfterWrite(t *testing.T) {
 	e, _ := newEngine(t)
 	ctx := context.Background()
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "f.F", ElementType: "function", Name: "F", FilePath: "f.go", Language: "go", Content: "c"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	out, _ := e.Query(ctx, QueryRequest{Query: "F"})
@@ -346,7 +344,7 @@ func TestFreshnessStaleAfterWrite(t *testing.T) {
 	}
 	// A write after the inventory flips the answer to possibly_stale — the
 	// DB-resident watermark contract (no TTL cache to race).
-	if err := e.st.UpsertRelationships([]store.Relationship{{Source: "f.F", Target: "f.F", RelType: "calls"}}); err != nil {
+	if err := e.st.UpsertRelationships(context.Background(), []store.Relationship{{Source: "f.F", Target: "f.F", RelType: "calls"}}); err != nil {
 		t.Fatal(err)
 	}
 	out, _ = e.Query(ctx, QueryRequest{Query: "F"})
@@ -375,24 +373,24 @@ func TestNLRoutePicksIdentifier(t *testing.T) {
 // wrong L3 answers over a drifted collection.
 func TestL3StampDriftDegrades(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "x.y", ElementType: "function", Name: "y", FilePath: "x.go", Language: "go", Content: "some content here"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(8)
-	if err := st.WriteStamp(store.ModelStamp{ModelID: p.ModelID(), Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Provider()}); err != nil {
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{ModelID: p.Identity().Model, Revision: "OLD-revision", Dimensions: 8, Distance: "cosine", Provider: p.Identity().Provider}); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, QueryEmbedderFromProvider(p))
+	e := New(st, Options{Embedder: p})
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "content"})
 	if err != nil {
 		t.Fatal(err)
@@ -408,7 +406,7 @@ func TestL3StampDriftDegrades(t *testing.T) {
 // the query tool's session action recalls it bit-for-bit, and the canvas lists it.
 func TestSessionOffloadRoundTripThroughCore(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	ctx := context.Background()
 
 	if _, err := e.Import(ctx, ImportRequest{
@@ -437,25 +435,25 @@ func TestSessionOffloadRoundTripThroughCore(t *testing.T) {
 // catalog matched against indexed elements persists and reads back.
 func TestOntologyMatchThroughCore(t *testing.T) {
 	e, _ := newEngine(t)
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	proj := t.TempDir()
-	e.SetProjectDir(proj)
+	e.projectDir = proj
 	catPath := filepath.Join(proj, "concepts.json")
 	if err := os.WriteFile(catPath, []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := e.OntologyMatch(catPath)
+	out, err := e.OntologyMatch(context.Background(), catPath)
 	if err != nil {
 		t.Fatalf("match: %v", err)
 	}
 	if matches, ok := out["matches"].([]ontology.Match); !ok || len(matches) != 1 {
 		t.Fatalf("matches: %+v", out)
 	}
-	again, err := e.OntologyMatches()
+	again, err := e.OntologyMatches(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,13 +468,13 @@ func TestOntologyMatchThroughCore(t *testing.T) {
 func TestOntologyImportAndQueryActions(t *testing.T) {
 	e, _ := newEngine(t)
 	ctx := context.Background()
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg.Login", ElementType: "function", Name: "Login", FilePath: "auth.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	proj := t.TempDir()
-	e.SetProjectDir(proj)
+	e.projectDir = proj
 	if err := os.WriteFile(filepath.Join(proj, "concepts.json"), []byte(`{"concepts":[{"id":"auth","label":"Authentication","aliases":["login"]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +509,7 @@ func TestSessionQueryActionReachable(t *testing.T) {
 	if _, err := e.Query(ctx, QueryRequest{Action: "session", Query: "s1"}); err == nil {
 		t.Fatal("session query without a project dir must error (cmd must call SetProjectDir)")
 	}
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	if _, err := e.Import(ctx, ImportRequest{
 		Action: "session", Command: "offload",
 		Args: map[string]any{"session_id": "s1", "node_id": "node-1", "payload": "x"},
@@ -533,7 +531,7 @@ func TestSessionQueryActionReachable(t *testing.T) {
 // hard error.
 func TestPatternActionDegradedWithoutAstGrep(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	// Ensure the CLI is absent for the probe (PATH stripped).
 	t.Setenv("PATH", t.TempDir())
 	out, err := e.Query(context.Background(), QueryRequest{
@@ -552,7 +550,7 @@ func TestPatternActionDegradedWithoutAstGrep(t *testing.T) {
 // TestPatternActionMissingArgs pins arg validation.
 func TestPatternActionMissingArgs(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
+	e.projectDir = t.TempDir()
 	if _, err := e.Query(context.Background(), QueryRequest{Action: "pattern", Query: "x"}); err == nil {
 		t.Fatal("pattern without args.pattern must error")
 	}
@@ -563,8 +561,8 @@ func TestPatternActionMissingArgs(t *testing.T) {
 // codebase, and the absence of a server binary is a clear error.
 func TestLSPQueryRequiresActiveLanguage(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetProjectDir(t.TempDir())
-	e.SetLangsRegistry(langs.DefaultRegistry())
+	e.projectDir = t.TempDir()
+	e.langsReg = langs.DefaultRegistry()
 	// registry not activated for any codebase → everything idle
 	if _, err := e.Query(context.Background(), QueryRequest{
 		Action: "lsp", Query: "Handler",
@@ -577,7 +575,7 @@ func TestLSPQueryRequiresActiveLanguage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.langsReg.Activate(dir); err != nil {
+	if _, err := e.langsReg.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	// gopls likely absent in CI — the error must name the failure clearly
@@ -599,8 +597,8 @@ func TestLanguagesStatusAction(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e.SetLangsRegistry(langs.DefaultRegistry())
-	if _, err := e.langsReg.Activate(dir); err != nil {
+	e.langsReg = langs.DefaultRegistry()
+	if _, err := e.langsReg.Activate(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	out, err := e.Query(context.Background(), QueryRequest{Action: "languages"})
@@ -625,14 +623,14 @@ func TestLanguagesStatusAction(t *testing.T) {
 // verb looks like a leaf).
 func TestGraphActionResolvesShortName(t *testing.T) {
 	e, _ := newEngine(t)
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg/a.go::Helper", ElementType: "function", Name: "Helper", FilePath: "pkg/a.go", Language: "go"},
 		{QualifiedName: "pkg/b.go::Caller", ElementType: "function", Name: "Caller", FilePath: "pkg/b.go", Language: "go"},
 		{QualifiedName: "pkg/a.go::Leaf", ElementType: "function", Name: "Leaf", FilePath: "pkg/a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.UpsertRelationships([]store.Relationship{
+	if err := e.st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: "pkg/b.go::Caller", Target: "pkg/a.go::Helper", RelType: "calls", Confidence: 1},
 		{Source: "pkg/a.go::Helper", Target: "pkg/a.go::Leaf", RelType: "calls", Confidence: 1},
 	}); err != nil {
@@ -683,7 +681,7 @@ func TestGraphActionResolvesShortName(t *testing.T) {
 func TestCompressReadAnchorsRelativePath(t *testing.T) {
 	e, _ := newEngine(t)
 	dir := t.TempDir()
-	e.SetProjectDir(dir)
+	e.projectDir = dir
 	sub := filepath.Join(dir, "pkg")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -717,7 +715,7 @@ func TestCompressReadAnchorsRelativePath(t *testing.T) {
 func TestFileArgsConfinedToProject(t *testing.T) {
 	e, _ := newEngine(t)
 	proj := t.TempDir()
-	e.SetProjectDir(proj)
+	e.projectDir = proj
 	if err := os.WriteFile(filepath.Join(proj, "in.go"), []byte("package p\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +749,7 @@ func TestQueryScopeStates(t *testing.T) {
 	_ = mem
 	n := 400
 	for i := 0; i < n; i++ {
-		if err := e.st.UpsertElements([]store.Element{{
+		if err := e.st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: fmt.Sprintf("pkg/a%d.go::A%d", i, i), ElementType: "func",
 			Name: fmt.Sprintf("A%d", i), FilePath: fmt.Sprintf("pkg/a%d.go", i), Language: "go", LineStart: 1,
 			Content: "memorable shared content in the corpus",

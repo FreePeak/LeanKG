@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,11 +32,11 @@ func seedFixture(t *testing.T) (dir string, eng *core.Engine) {
 			t.Fatal(err)
 		}
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
@@ -46,7 +47,7 @@ func seedFixture(t *testing.T) (dir string, eng *core.Engine) {
 		{QualifiedName: "src/db.rs::query_db", ElementType: "function", Name: "query_db", FilePath: "src/db.rs", LineStart: 1, LineEnd: 5, Language: "rust"},
 		{QualifiedName: "src/ghost.rs::ghost_fn", ElementType: "function", Name: "ghost_fn", FilePath: "src/ghost.rs", LineStart: 1, LineEnd: 5, Language: "rust"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	rels := []store.Relationship{
@@ -54,11 +55,10 @@ func seedFixture(t *testing.T) (dir string, eng *core.Engine) {
 		{Source: "src/auth.rs::login", Target: "src/db.rs::query_db", RelType: "calls", Confidence: 0.95, Metadata: map[string]any{"resolution_method": "typed"}},
 		{Source: "src/auth.rs::authenticate", Target: "src/ghost.rs::ghost_fn", RelType: "imports", Confidence: 0.2, Metadata: map[string]any{"resolution_method": "unresolved"}},
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatal(err)
 	}
-	eng = core.New(st, nil, nil)
-	eng.SetProjectDir(dir)
+	eng = core.New(st, core.Options{ProjectDir: dir})
 	return dir, eng
 }
 
@@ -347,7 +347,7 @@ func TestGraphExpandService(t *testing.T) {
 	}
 
 	// Missing path param → error envelope.
-	if code := getJSON(t, srv.URL+"/api/graph/expand-service", &env); code != 200 {
+	if code := getJSON(t, srv.URL+"/api/graph/expand-service", &env); code != 400 {
 		t.Fatalf("missing-param status %d", code)
 	}
 	if env.Success || env.Error == nil || !strings.Contains(*env.Error, "Missing 'path'") {
@@ -459,16 +459,15 @@ func TestServiceTopologyMultiRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	eng := core.New(st, nil, nil)
-	eng.SetProjectDir(dir)
+	eng := core.New(st, core.Options{ProjectDir: dir})
 	srv := httptest.NewServer(APIHandler(eng, nil))
 	t.Cleanup(srv.Close)
 
@@ -595,7 +594,7 @@ func TestQueryGraph(t *testing.T) {
 	}
 
 	// Blank question → error envelope.
-	if code := postJSON(t, srv.URL+"/api/query-graph", `{"question":"   "}`, &env); code != 200 {
+	if code := postJSON(t, srv.URL+"/api/query-graph", `{"question":"   "}`, &env); code != 400 {
 		t.Fatalf("blank status %d", code)
 	}
 	if env.Success || env.Error == nil || !strings.Contains(*env.Error, "empty") {
@@ -656,7 +655,7 @@ func TestProjectSwitch(t *testing.T) {
 	}
 
 	// Root is rejected with the Rust message.
-	if code := postJSON(t, srv.URL+"/api/project/switch", `{"path":"/"}`, &env); code != 200 {
+	if code := postJSON(t, srv.URL+"/api/project/switch", `{"path":"/"}`, &env); code != 400 {
 		t.Fatalf("root status %d", code)
 	}
 	if env.Error == nil || !strings.Contains(*env.Error, "filesystem root") {
@@ -668,7 +667,7 @@ func TestProjectSwitch(t *testing.T) {
 	// (LEANKG_PROJECT_DIRS); claiming switching is unsupported would be false.
 	// (TestProjectSwitchBehavior in api_switch_test.go covers the success path.)
 	other := t.TempDir()
-	if code := postJSON(t, srv.URL+"/api/project/switch", fmt.Sprintf(`{"path":%q}`, other), &env); code != 200 {
+	if code := postJSON(t, srv.URL+"/api/project/switch", fmt.Sprintf(`{"path":%q}`, other), &env); code != 400 {
 		t.Fatalf("other status %d", code)
 	}
 	if env.Success || env.Error == nil {
@@ -679,7 +678,7 @@ func TestProjectSwitch(t *testing.T) {
 	}
 
 	// github_url is refused too (Rust cloned; Go is single-project).
-	if code := postJSON(t, srv.URL+"/api/project/switch", `{"github_url":"https://example.com/x"}`, &env); code != 200 {
+	if code := postJSON(t, srv.URL+"/api/project/switch", `{"github_url":"https://example.com/x"}`, &env); code != 400 {
 		t.Fatalf("github status %d", code)
 	}
 	if env.Success {
@@ -772,11 +771,11 @@ func TestAllRoutesReturnJSON(t *testing.T) {
 func TestDetectCommunities(t *testing.T) {
 	// No calls/imports edges → folder fallback, one cluster per directory.
 	_, eng := seedFixture(t)
-	snap, err := loadSnapshot(eng.Store())
+	snap, err := loadSnapshot(context.Background(), eng)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rels, err := allRelationships(eng.Store())
+	rels, err := eng.GraphRelationships(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

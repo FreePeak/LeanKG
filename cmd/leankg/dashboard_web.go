@@ -6,13 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/dashboard"
 	"github.com/FreePeak/LeanKG/internal/sessionlink/all"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
@@ -59,8 +56,8 @@ type dashboardFlags struct {
 // parseDashboardFlags parses the one `leankg dashboard` flag set. Flags may
 // appear before or after positionals, as in every other verb here, and a
 // positional argument is refused. A parse error exits 2 with the usage.
-func parseDashboardFlags(args []string) *dashboardFlags {
-	fs := flag.NewFlagSet("dashboard", flag.ExitOnError)
+func parseDashboardFlags(args []string) (*dashboardFlags, error) {
+	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
 	f := &dashboardFlags{}
 	fs.StringVar(&f.addr, "addr", defaultDashboardAddr, "listen address (loopback unless --allow-remote)")
 	fs.BoolVar(&f.noOpen, "no-open", false, "do not open the browser")
@@ -72,7 +69,9 @@ func parseDashboardFlags(args []string) *dashboardFlags {
 	fs.StringVar(&f.project, "project", "", "project directory (tables) or project filter (dashboard)")
 	fs.StringVar(&f.since, "since", "", "window: <N>h, <N>d or <N>w (e.g. 24h, 7d, 30d); default all time")
 	fs.StringVar(&f.format, "format", "", "output format: text|json (prints the usage tables instead of serving the dashboard)")
-	parseInterspersed("dashboard", fs, args, 0)
+	if _, err := parseInterspersed("dashboard", fs, args, 0); err != nil {
+		return nil, err
+	}
 	// Visit reports the flags that were actually given, so the mode comes
 	// from the parsed values and not from a scan of argv: --format=text and
 	// --format "" both ask for the tables, no --format asks for the server.
@@ -82,15 +81,16 @@ func parseDashboardFlags(args []string) *dashboardFlags {
 			f.mode = dashboardModeTables
 		}
 	})
-	return f
+	return f, nil
 }
 
 // cmdDashboardWeb starts the loopback dashboard server and opens the browser.
-func cmdDashboardWeb(f *dashboardFlags) {
-	if err := runDashboardWeb(context.Background(), f, os.Stdout, dashboard.OpenBrowser); err != nil {
+func cmdDashboardWeb(ctx context.Context, f *dashboardFlags) error {
+	if err := runDashboardWeb(ctx, f, os.Stdout, dashboard.OpenBrowser); err != nil {
 		fmt.Fprintln(os.Stderr, "dashboard:", err)
-		os.Exit(1)
+		return cliexit.Code(1)
 	}
+	return nil
 }
 
 // runDashboardWeb serves the dashboard until ctx is done or SIGINT/SIGTERM
@@ -118,23 +118,22 @@ func runDashboardWeb(ctx context.Context, f *dashboardFlags, out io.Writer, open
 	if err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp", f.addr)
+	ls, err := bindAll(endpoint{addr: f.addr, h: srv.Handler()})
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", f.addr, err)
+		return err
 	}
-	url := "http://" + ln.Addr().String() + "/"
+	url := "http://" + ls[0].ln.Addr().String() + "/"
 
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := context.WithCancel(ctx)
 	defer stop()
 	runDone := make(chan struct{})
 	go func() {
 		defer close(runDone)
 		srv.Run(ctx)
 	}()
-
-	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second}
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- httpSrv.Serve(ln) }()
+	// Serving starts before the opener runs, so the opener can reach the URL.
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- runServers(ctx, ls...) }()
 
 	fmt.Fprintf(out, "LeanKG dashboard: %s (ledger %s)\n", url, telemetry.DBPath(home))
 	if f.allowRemote {
@@ -146,20 +145,10 @@ func runDashboardWeb(ctx context.Context, f *dashboardFlags, out io.Writer, open
 		}
 	}
 
-	var serveFailed error
-	select {
-	case <-ctx.Done():
-	case serveFailed = <-serveErr:
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = httpSrv.Shutdown(shutdownCtx)
+	serveErr := <-serveDone
 	stop()
 	<-runDone
-	if serveFailed != nil && !errors.Is(serveFailed, http.ErrServerClosed) {
-		return fmt.Errorf("serve %s: %w", url, serveFailed)
-	}
-	return nil
+	return serveErr
 }
 
 func errNotImplemented(what string) error { return fmt.Errorf("%s: not implemented yet", what) }

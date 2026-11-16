@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -205,33 +206,28 @@ func TestSidecarShutdownOnContextCancel(t *testing.T) {
 	waitPIDGone(t, pid)
 }
 
-func TestStartProviderSpawnsSidecar(t *testing.T) {
+func TestStartSpawnsSidecar(t *testing.T) {
 	script := stubSidecarScript(t)
-	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
 	// The spawn path is the subject: no endpoint to attach to, and no
 	// catalogued model whose widths would reject the width below.
-	t.Setenv("LEANKG_EMBED_BASE_URL", "")
-	t.Setenv("LEANKG_EMBED_MODEL", "")
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", script)
-	t.Setenv("LEANKG_EMBED_TEST_DIMS", "8")
 	port, err := freeTCPPort()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("LEANKG_EMBED_SIDECAR_PORT", strconv.Itoa(port))
-	t.Setenv("LEANKG_EMBED_DIMS", "8")
+	cfg := Config{Provider: "local", Dims: 8, Sidecar: SidecarConfig{Command: script, Port: port,
+		Args: DefaultSidecarArgs("")}}
+	t.Setenv("LEANKG_EMBED_TEST_DIMS", "8") // the stub sidecar reads its width from its own environment
 
-	p, release, err := StartProvider(context.Background())
+	p, release, err := Start(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("StartProvider: %v", err)
+		t.Fatalf("Start: %v", err)
 	}
 	defer release()
-	if p.Provider() != "local" {
-		t.Fatalf("Provider: got %q, want local", p.Provider())
+	if p.Identity().Provider != "local" {
+		t.Fatalf("Provider: got %q, want local", p.Identity().Provider)
 	}
-	if p.ModelID() != "local" || p.Revision() != "local:local" || p.Dimensions() != 8 {
-		t.Fatalf("stamp identity: got %s/%s/%d", p.ModelID(), p.Revision(), p.Dimensions())
+	if p.Identity().Model != "local" || p.Identity().Revision != "local:local" || p.Identity().Dims != 8 {
+		t.Fatalf("stamp identity: got %s/%s/%d", p.Identity().Model, p.Identity().Revision, p.Identity().Dims)
 	}
 	// A non-default model/revision flows into the stamp (fresh sidecar on a
 	// fresh port: the first one still holds its port).
@@ -239,20 +235,20 @@ func TestStartProviderSpawnsSidecar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("LEANKG_EMBED_SIDECAR_PORT", strconv.Itoa(port2))
-	t.Setenv("LEANKG_EMBED_MODEL", "nomic-embed")
-	t.Setenv("LEANKG_EMBED_REVISION", "gguf:abc123")
-	p2, release2, err := StartProvider(context.Background())
+	cfg.Sidecar.Port = port2
+	cfg.Model = "nomic-embed"
+	cfg.Revision = "gguf:abc123"
+	p2, release2, err := Start(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("StartProvider (named model): %v", err)
+		t.Fatalf("Start (named model): %v", err)
 	}
 	defer release2()
-	if p2.ModelID() != "nomic-embed" || p2.Revision() != "gguf:abc123" {
-		t.Fatalf("named stamp: got %s/%s", p2.ModelID(), p2.Revision())
+	if p2.Identity().Model != "nomic-embed" || p2.Identity().Revision != "gguf:abc123" {
+		t.Fatalf("named stamp: got %s/%s", p2.Identity().Model, p2.Identity().Revision)
 	}
 }
 
-func TestStartProviderAttachesToRunningSidecar(t *testing.T) {
+func TestStartAttachesToRunningSidecar(t *testing.T) {
 	// Already-running OpenAI-compatible sidecar: attach, never spawn.
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -265,21 +261,15 @@ func TestStartProviderAttachesToRunningSidecar(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
-	t.Setenv("LEANKG_EMBED_BASE_URL", srv.URL+"/v1")
-	t.Setenv("LEANKG_EMBED_API_KEY", "sk-test")
-	t.Setenv("LEANKG_EMBED_DIMS", "2")
 	// The attach path is the subject: the endpoint is the one above, and the
-	// model stays unset so the width below is not rejected by a catalogued
-	// row.
-	t.Setenv("LEANKG_EMBED_MODEL", "")
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	// Poison the spawn path: if StartProvider tried to spawn this, it must fail loudly.
-	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", "leankg-no-such-sidecar-binary")
+	// model stays unset so the width below is not rejected by a catalogued row.
+	// Poison the spawn path: if Start tried to spawn, it would run this command.
+	cfg := Config{Provider: "local", BaseURL: srv.URL + "/v1", APIKey: "sk-test", Dims: 2,
+		Sidecar: SidecarConfig{Command: "leankg-no-such-sidecar-binary"}}
 
-	p, release, err := StartProvider(context.Background())
+	p, release, err := Start(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("StartProvider attach: %v", err)
+		t.Fatalf("Start attach: %v", err)
 	}
 	defer release()
 	vecs, err := p.Embed(context.Background(), Query, []string{"q"})
@@ -294,16 +284,11 @@ func TestStartProviderAttachesToRunningSidecar(t *testing.T) {
 	}
 }
 
-func TestStartProviderSidecarAbsentFailsActionably(t *testing.T) {
-	t.Setenv("LEANKG_EMBED_PROVIDER", "local")
+func TestStartSidecarAbsentFailsActionably(t *testing.T) {
 	// The absent sidecar is the subject: with no endpoint to attach to, the
 	// spawn path is the only one left, and it must fail loudly.
-	t.Setenv("LEANKG_EMBED_BASE_URL", "")
-	t.Setenv("LEANKG_EMBED_MODEL", "")
-	t.Setenv("LEANKG_EMBED_REVISION", "")
-	t.Setenv("LEANKG_EMBED_DIMS", "")
-	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", "leankg-no-such-sidecar-binary")
-	_, _, err := StartProvider(context.Background())
+	cfg := Config{Provider: "local", Sidecar: SidecarConfig{Command: "leankg-no-such-sidecar-binary"}}
+	_, _, err := Start(context.Background(), cfg)
 	if err == nil {
 		t.Fatal("want hard error when the sidecar binary is absent")
 	}
@@ -334,6 +319,79 @@ func TestSidecarExitsDuringStartup(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q misses %q", err, want)
 		}
+	}
+}
+
+// portOf is the TCP port an httptest server listens on.
+func portOf(srv *httptest.Server) int {
+	return srv.Listener.Addr().(*net.TCPAddr).Port
+}
+
+// The adoption probe honours ctx: a stranger that holds the endpoint open must
+// not keep StartSidecar past the cancel.
+func TestStartSidecarProbeIsBoundedByContext(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	var err error
+	took := within(t, 5*time.Second, func() {
+		_, err = StartSidecar(ctx, SidecarConfig{
+			Command: "leankg-no-such-sidecar-binary", Port: portOf(srv),
+			ReadyTimeout: 2 * time.Second, PollInterval: 50 * time.Millisecond,
+		})
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("StartSidecar error = %v, want context.Canceled", err)
+	}
+	if took > 1500*time.Millisecond {
+		t.Fatalf("StartSidecar held %s after the cancel, want it to return at once", took)
+	}
+}
+
+// The health poll honours ctx: a spawned sidecar whose /health hangs must not
+// hold StartSidecar past the cancel.
+func TestStartSidecarHealthPollIsBoundedByContext(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			http.NotFound(w, r) // not an embeddings endpoint: the probe fails and a sidecar is spawned
+			return
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	script := filepath.Join(t.TempDir(), "sleep.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(300*time.Millisecond, cancel)
+
+	var err error
+	took := within(t, 10*time.Second, func() {
+		_, err = StartSidecar(ctx, SidecarConfig{
+			Command: script, Port: portOf(srv),
+			ReadyTimeout: 20 * time.Second, PollInterval: 50 * time.Millisecond,
+		})
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("StartSidecar error = %v, want context.Canceled", err)
+	}
+	if took > 1500*time.Millisecond {
+		t.Fatalf("StartSidecar held %s after the cancel, want the health poll to honour ctx", took)
 	}
 }
 
@@ -373,101 +431,23 @@ func TestSidecarNotFoundOnPATH(t *testing.T) {
 	}
 }
 
-func TestSidecarConfigFromEnv(t *testing.T) {
-	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", "my-server")
-	t.Setenv("LEANKG_EMBED_SIDECAR_ARGS", `-m "/models/with space.gguf" --ctx-size 2048`)
-	t.Setenv("LEANKG_EMBED_SIDECAR_PORT", "9999")
-	t.Setenv("LEANKG_EMBED_SIDECAR_READY_SECS", "5")
-	cfg, err := SidecarConfigFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Command != "my-server" || cfg.Port != 9999 || cfg.ReadyTimeout != 5*time.Second {
-		t.Fatalf("cfg: %+v", cfg)
-	}
-	if len(cfg.Args) != 4 || cfg.Args[0] != "-m" || cfg.Args[1] != "/models/with space.gguf" ||
-		cfg.Args[2] != "--ctx-size" || cfg.Args[3] != "2048" {
-		t.Fatalf("args: %#v", cfg.Args)
-	}
-	t.Setenv("LEANKG_EMBED_SIDECAR_PORT", "nope")
-	if _, err := SidecarConfigFromEnv(); err == nil {
-		t.Fatal("want error for invalid port")
-	}
-	t.Setenv("LEANKG_EMBED_SIDECAR_PORT", "70000")
-	if _, err := SidecarConfigFromEnv(); err == nil {
-		t.Fatal("want error for out-of-range port")
-	}
-}
-
-func TestSplitArgs(t *testing.T) {
-	cases := []struct {
-		in   string
-		want []string
-	}{
-		{"", nil},
-		{"  a  b ", []string{"a", "b"}},
-		{`-m '/path/with space.gguf' -c 2048`, []string{"-m", "/path/with space.gguf", "-c", "2048"}},
-		{`-m "/dq and 'sq' inside"`, []string{"-m", `/dq and 'sq' inside`}},
-		{`a\ b`, []string{"a b"}},
-	}
-	for _, c := range cases {
-		got, err := splitArgs(c.in)
-		if err != nil {
-			t.Fatalf("splitArgs(%q): %v", c.in, err)
-		}
-		if len(got) != len(c.want) {
-			t.Fatalf("splitArgs(%q): got %#v, want %#v", c.in, got, c.want)
-		}
-		for i := range got {
-			if got[i] != c.want[i] {
-				t.Fatalf("splitArgs(%q): got %#v, want %#v", c.in, got, c.want)
-			}
-		}
-	}
-	if _, err := splitArgs(`-m 'unterminated`); err == nil {
-		t.Fatal("want error for unterminated quote")
-	}
-}
-
-func TestSidecarConfigFromEnvDefaultsToLocalGGUF(t *testing.T) {
-	t.Setenv("LEANKG_EMBED_SIDECAR_CMD", "")
-	t.Setenv("LEANKG_EMBED_SIDECAR_ARGS", "")
-	t.Setenv("LEANKG_EMBED_SIDECAR_PORT", "")
-	t.Setenv("LEANKG_EMBED_SIDECAR_READY_SECS", "")
-	cfg, err := SidecarConfigFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := strings.Join(cfg.Args, " ")
-	if !strings.Contains(got, "--embeddings") {
-		t.Fatalf("default args miss --embeddings: %#v", cfg.Args)
-	}
-	// Pinned file present in ~/.leankg/models → served directly (-m).
-	if home, herr := os.UserHomeDir(); herr == nil && fileExists(filepath.Join(home, ".leankg", "models", DefaultLocalFile)) {
-		if !strings.Contains(got, "-m") || !strings.Contains(got, DefaultLocalFile) {
-			t.Fatalf("want -m <pinned file>, got %#v", cfg.Args)
-		}
-	} else {
-		// Otherwise the HF self-fetch fallback carries the pinned repo.
-		if !strings.Contains(got, DefaultLocalRepo) {
-			t.Fatalf("want -hf %s fallback, got %#v", DefaultLocalRepo, cfg.Args)
-		}
-	}
-	// An explicit ARGS always wins over the default.
-	t.Setenv("LEANKG_EMBED_SIDECAR_ARGS", "-m /custom/model.gguf --embeddings")
-	cfg, err = SidecarConfigFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(cfg.Args, " ") != "-m /custom/model.gguf --embeddings" {
-		t.Fatalf("explicit args lost: %#v", cfg.Args)
-	}
-}
-
 func TestSidecarNotFoundNamesDownload(t *testing.T) {
 	_, err := StartSidecar(context.Background(), SidecarConfig{Command: "leankg-no-such-sidecar-binary"})
 	if err == nil || !strings.Contains(err.Error(), DefaultLocalRepo) {
 		t.Fatalf("want not-found error naming %s, got %v", DefaultLocalRepo, err)
+	}
+}
+
+// An empty Command must fall back to llama-server, not reach exec with "".
+func TestSidecarDefaultsCommandToLlamaServer(t *testing.T) {
+	port, err := freeTCPPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	_, err = StartSidecar(context.Background(), SidecarConfig{Port: port, ReadyTimeout: 200 * time.Millisecond})
+	if err == nil || !strings.Contains(err.Error(), "llama-server") || strings.Contains(err.Error(), "no command") {
+		t.Fatalf("want llama-server not-found error for an empty Command, got %v", err)
 	}
 }
 

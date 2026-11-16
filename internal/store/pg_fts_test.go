@@ -5,7 +5,9 @@
 package store
 
 import (
+	"context"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -59,7 +61,7 @@ func TestFuseRRFCreditsMultiArmAgreement(t *testing.T) {
 	if _, ok := fused[1].Ranks[ArmTSVector]; ok {
 		t.Fatalf("solo ranks = %v; want no tsvector entry", fused[1].Ranks)
 	}
-	wantRanks := map[string]int{ArmVector: 2, ArmTSVector: 1, ArmTrigram: 1}
+	wantRanks := map[Arm]int{ArmVector: 2, ArmTSVector: 1, ArmTrigram: 1}
 	for name, rank := range wantRanks {
 		if fused[0].Ranks[name] != rank {
 			t.Fatalf("shared rank %s = %d; want %d", name, fused[0].Ranks[name], rank)
@@ -154,7 +156,7 @@ func TestPGFTSMigration(t *testing.T) {
 	s := openPGTest(t)
 
 	var name string
-	if err := s.pool.QueryRow(pgCtx, `SELECT name FROM schema_migrations WHERE version = 12`).Scan(&name); err != nil {
+	if err := s.pool.QueryRow(context.Background(), `SELECT name FROM schema_migrations WHERE version = 12`).Scan(&name); err != nil {
 		t.Fatalf("migration 12 not recorded: %v", err)
 	}
 	if name != "fts-tsvector-l2" {
@@ -168,7 +170,7 @@ func TestPGFTSMigration(t *testing.T) {
 	} {
 		var gen string
 		var typ string
-		if err := s.pool.QueryRow(pgCtx, `SELECT att.attgenerated, typ.typname
+		if err := s.pool.QueryRow(context.Background(), `SELECT att.attgenerated, typ.typname
 			FROM pg_attribute att JOIN pg_type typ ON typ.oid = att.atttypid
 			WHERE att.attrelid = $1::regclass AND att.attname = 'fts'`, c.table).Scan(&gen, &typ); err != nil {
 			t.Fatalf("%s.fts missing: %v", c.table, err)
@@ -179,7 +181,7 @@ func TestPGFTSMigration(t *testing.T) {
 	}
 	for _, idx := range []string{"idx_code_elements_fts", "idx_knowledge_entries_fts"} {
 		var am string
-		if err := s.pool.QueryRow(pgCtx, `SELECT a.amname FROM pg_class c
+		if err := s.pool.QueryRow(context.Background(), `SELECT a.amname FROM pg_class c
 			JOIN pg_am a ON a.oid = c.relam
 			WHERE c.oid = $1::regclass`, idx).Scan(&am); err != nil {
 			t.Fatalf("index %s missing: %v", idx, err)
@@ -192,7 +194,7 @@ func TestPGFTSMigration(t *testing.T) {
 	// default_text_search_config, which is per-database and STABLE.
 	for _, table := range []string{"code_elements", "knowledge_entries"} {
 		var expr string
-		if err := s.pool.QueryRow(pgCtx, `SELECT pg_get_expr(d.adbin, d.adrelid)
+		if err := s.pool.QueryRow(context.Background(), `SELECT pg_get_expr(d.adbin, d.adrelid)
 			FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
 			WHERE a.attrelid = $1::regclass AND a.attname = 'fts'`, table).Scan(&expr); err != nil {
 			t.Fatalf("%s.fts expression: %v", table, err)
@@ -203,20 +205,20 @@ func TestPGFTSMigration(t *testing.T) {
 	}
 }
 
-func TestPGSearchElementsFTS(t *testing.T) {
+func TestPGFindFuzzy(t *testing.T) {
 	s := openPGTest(t)
 	seed := []Element{
 		{QualifiedName: "pkg.parse_int", ElementType: "function", Name: "parse_int", FilePath: "a.go", Language: "go", Content: "strconv.Atoi"},
 		{QualifiedName: "pkg.ParseConfig", ElementType: "function", Name: "ParseConfig", FilePath: "b.go", Language: "go", Content: "reads the config"},
 		{QualifiedName: "pkg.Helper", ElementType: "function", Name: "Helper", FilePath: "c.go", Language: "go"},
 	}
-	if err := s.UpsertElements(seed); err != nil {
+	if err := s.UpsertElements(context.Background(), seed); err != nil {
 		t.Fatal(err)
 	}
 
 	// A lexeme hits its element; the 'simple' config keeps camelCase whole, so
 	// "ParseConfig" matches by identity and "Config" alone does not.
-	hits, method, err := s.SearchElementsFTS("ParseConfig", 10)
+	hits, method, err := s.FindFuzzy(context.Background(), "ParseConfig", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,44 +238,44 @@ func TestPGSearchElementsFTS(t *testing.T) {
 	// keyword arm comparable with sqlite's fts5(name, qualified_name, content):
 	// "Config" is not an identifier lexeme ('simple' never splits camelCase) but
 	// it IS a content lexeme of b.go, so the rung answers instead of going dark.
-	hits, method, err = s.SearchElementsFTS("Config", 10)
+	hits, method, err = s.FindFuzzy(context.Background(), "Config", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if method != ArmTSVector || len(hits) != 1 || hits[0].Element.QualifiedName != "pkg.ParseConfig" {
-		t.Fatalf("SearchElementsFTS(Config) = %+v, %q; want the content hit on pkg.ParseConfig via %s", hits, method, ArmTSVector)
+		t.Fatalf("FindFuzzy(Config) = %+v, %q; want the content hit on pkg.ParseConfig via %s", hits, method, ArmTSVector)
 	}
 	// The no-stemming property, asserted on the tsvector arm itself so the
 	// substring fallbacks cannot rescue it: "configs" lexemes nothing anywhere.
-	if raw, err := s.searchElementsTS("configs", 10); err != nil || len(raw) != 0 {
+	if raw, err := s.searchElementsTS(context.Background(), "configs", 10, ElementFilter{}); err != nil || len(raw) != 0 {
 		t.Fatalf("searchElementsTS(configs) = %+v, %v; want no rows (no stemming)", raw, err)
 	}
-	if got, _, err := s.SearchElementsFTS("parse int", 10); err != nil || len(got) != 1 ||
+	if got, _, err := s.FindFuzzy(context.Background(), "parse int", 10); err != nil || len(got) != 1 ||
 		got[0].Element.QualifiedName != "pkg.parse_int" {
 		t.Fatalf("multi-word query = %+v, %v; want pkg.parse_int", got, err)
 	}
 
 	// Empty query is not an error and matches nothing (parity with FindFuzzy).
-	if got, method, err := s.SearchElementsFTS("   ", 10); err != nil || len(got) != 0 || method != "" {
+	if got, method, err := s.FindFuzzy(context.Background(), "   ", 10); err != nil || len(got) != 0 || method != "" {
 		t.Fatalf("blank query = %+v, %q, %v; want empty", got, method, err)
 	}
 
 	// The generated column follows UPDATE: re-upserting a qualified name under a
 	// new name re-lexes with no sync code anywhere.
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.ParseConfig", ElementType: "function", Name: "ParseRuntime", FilePath: "b.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Asserted on the tsvector arm: after the rename the old lexeme must be
-	// gone from the generated column. SearchElementsFTS could not show that —
+	// gone from the generated column. FindFuzzy could not show that —
 	// its trigram fallback (by design) still fuzzy-matches ParseConfig to
 	// ParseRuntime at similarity ~0.8, which is the fallback working, not a
 	// stale index.
-	if raw, err := s.searchElementsTS("ParseConfig", 10); err != nil || len(raw) != 0 {
+	if raw, err := s.searchElementsTS(context.Background(), "ParseConfig", 10, ElementFilter{}); err != nil || len(raw) != 0 {
 		t.Fatalf("stale lexeme after upsert: %+v, %v", raw, err)
 	}
-	got, _, err := s.SearchElementsFTS("ParseRuntime", 10)
+	got, _, err := s.FindFuzzy(context.Background(), "ParseRuntime", 10)
 	if err != nil || len(got) != 1 || got[0].Element.Name != "ParseRuntime" {
 		t.Fatalf("re-lexed search = %+v, %v; want one ParseRuntime hit", got, err)
 	}
@@ -281,19 +283,19 @@ func TestPGSearchElementsFTS(t *testing.T) {
 
 // A query with no lexemes must not read as "no keyword match": it has to go
 // down the substring arms, where it can genuinely match.
-func TestPGSearchElementsFTSFallbackWithoutLexemes(t *testing.T) {
+func TestPGFindFuzzyFallbackWithoutLexemes(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.foo%bar", ElementType: "function", Name: "foo%bar", FilePath: "a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// The tsvector arm alone cannot serve this: no lexemes, no rows.
-	if ts, err := s.searchElementsTS("%", 10); err != nil || len(ts) != 0 {
+	if ts, err := s.searchElementsTS(context.Background(), "%", 10, ElementFilter{}); err != nil || len(ts) != 0 {
 		t.Fatalf("searchElementsTS(%%) = %+v, %v; want no rows", ts, err)
 	}
-	hits, method, err := s.SearchElementsFTS("%", 10)
+	hits, method, err := s.FindFuzzy(context.Background(), "%", 10)
 	if err != nil {
 		t.Fatalf("fallback must not error: %v", err)
 	}
@@ -306,27 +308,27 @@ func TestPGSearchElementsFTSFallbackWithoutLexemes(t *testing.T) {
 	// An over-budget query degrades the same way instead of dying on the
 	// tsquery parser.
 	big := strings.Repeat("word ", maxTsqueryWords+10)
-	if got, method, err := s.SearchElementsFTS(big, 10); err != nil || len(got) != 0 || method != ArmTrigram {
+	if got, method, err := s.FindFuzzy(context.Background(), big, 10); err != nil || len(got) != 0 || method != ArmTrigram {
 		t.Fatalf("over-budget query = %d hits, %q, %v; want 0 hits via trigram, no error", len(got), method, err)
 	}
 }
 
 // Migration 012 is what makes the tsvector arm possible; a schema that has it
 // applied must keep serving search when the index is gone underneath it.
-func TestPGSearchElementsFTSDegradesWithoutColumn(t *testing.T) {
+func TestPGFindFuzzyDegradesWithoutColumn(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.SocketHandler", ElementType: "function", Name: "SocketHandler", FilePath: "a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.pool.Exec(pgCtx, `ALTER TABLE code_elements DROP COLUMN fts`); err != nil {
+	if _, err := s.pool.Exec(context.Background(), `ALTER TABLE code_elements DROP COLUMN fts`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.searchElementsTS("SocketHandler", 10); err == nil {
+	if _, err := s.searchElementsTS(context.Background(), "SocketHandler", 10, ElementFilter{}); err == nil {
 		t.Fatal("searchElementsTS must fail without the tsvector column")
 	}
-	hits, method, err := s.SearchElementsFTS("SocketHandler", 10)
+	hits, method, err := s.FindFuzzy(context.Background(), "SocketHandler", 10)
 	if err != nil {
 		t.Fatalf("degraded search must not error: %v", err)
 	}
@@ -338,7 +340,7 @@ func TestPGSearchElementsFTSDegradesWithoutColumn(t *testing.T) {
 	}
 }
 
-func TestPGSearchKnowledgeFTS(t *testing.T) {
+func TestPGKnowledgeEntriesSearchRanked(t *testing.T) {
 	s := openPGTest(t)
 	entries := []KnowledgeEntry{
 		{ID: "K-1", KnowledgeType: "note", Title: "Socket close on resume",
@@ -349,12 +351,12 @@ func TestPGSearchKnowledgeFTS(t *testing.T) {
 			Content: "same words, other type", Environment: "local", Author: "a", UpdatedAt: 300},
 	}
 	for _, e := range entries {
-		if err := s.KnowledgeEntryUpsert(e); err != nil {
+		if err := s.KnowledgeEntryUpsert(context.Background(), e); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	hits, err := s.SearchKnowledgeFTS("socket resume", "", "", 10)
+	hits, err := s.KnowledgeEntriesSearch(context.Background(), "socket resume", "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +374,7 @@ func TestPGSearchKnowledgeFTS(t *testing.T) {
 	}
 
 	// Filters behave exactly as on KnowledgeEntriesSearch.
-	filtered, err := s.SearchKnowledgeFTS("socket resume", "note", "production", 10)
+	filtered, err := s.KnowledgeEntriesSearch(context.Background(), "socket resume", "note", "production", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,12 +386,12 @@ func TestPGSearchKnowledgeFTS(t *testing.T) {
 			t.Fatalf("filter leaked: %+v", h)
 		}
 	}
-	if one, err := s.SearchKnowledgeFTS("socket resume", "", "", 1); err != nil || len(one) != 1 || one[0].ID != "K-3" {
+	if one, err := s.KnowledgeEntriesSearch(context.Background(), "socket resume", "", "", 1); err != nil || len(one) != 1 || one[0].ID != "K-3" {
 		t.Fatalf("limit 1 = %+v, %v; want only the top hit K-3", one, err)
 	}
 	// A query with no lexemes goes down the substring path, where it matches
 	// nothing (and must not error).
-	if fallback, err := s.SearchKnowledgeFTS("***", "", "", 10); err != nil || len(fallback) != 0 {
+	if fallback, err := s.KnowledgeEntriesSearch(context.Background(), "***", "", "", 10); err != nil || len(fallback) != 0 {
 		t.Fatalf("fallback = %+v, %v; want no rows, no error", fallback, err)
 	}
 }
@@ -404,15 +406,15 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 		{QualifiedName: "pkg.Gamma", ElementType: "function", Name: "Gamma", FilePath: "c.go", Language: "go"},
 		{QualifiedName: "pkg.Delta", ElementType: "function", Name: "Delta", FilePath: "d.go", Language: "go"},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	st := ModelStamp{ModelID: "hybrid-model", Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "unit"}
-	if err := s.WriteStamp(st); err != nil {
+	if err := s.WriteStamp(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
 	// Cosine order for the query vector: Alpha, Beta, Gamma, Delta.
-	if err := s.UpsertVectors(st.ModelID, []VectorRow{
+	if err := s.UpsertVectors(context.Background(), st.ModelID, []VectorRow{
 		{QualifiedName: "pkg.Alpha", Vec: []float32{1, 0, 0, 0}},
 		{QualifiedName: "pkg.Beta", Vec: []float32{0.9, 0.1, 0, 0}},
 		{QualifiedName: "pkg.Gamma", Vec: []float32{0.8, 0.2, 0, 0}},
@@ -422,15 +424,18 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 	}
 
 	qvec := []float32{1, 0, 0, 0}
-	hits, method, err := s.HybridSearch(st.ModelID, "Delta", qvec, 10)
+	hits, kw, err := hybridSearch(s, st.ModelID, "Delta", qvec, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The name arm is fused in too (the ArmName ranking arm, gated on corpus
 	// rarity). It appears here because the fixture's query has a token rare
 	// enough to reach it — which is the arm working, not noise.
-	if method != "rrf("+ArmVector+"+"+ArmTSVector+"+"+ArmTrigram+"+"+ArmName+")" {
-		t.Fatalf("method = %q; want every arm that fired", method)
+	if got := armsOf(hits); !slices.Equal(got, []Arm{ArmVector, ArmTSVector, ArmTrigram, ArmName}) {
+		t.Fatalf("arms = %v; want every arm that fired", got)
+	}
+	if kw != ArmTSVector {
+		t.Fatalf("keyword arm = %q; want tsvector (it contributed)", kw)
 	}
 	if len(hits) != 4 {
 		t.Fatalf("hits = %+v; want 4", hits)
@@ -468,19 +473,19 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 
 	// A query with no lexemes leaves only the vector arm plus (empty) substring
 	// recall, so cosine order survives untouched.
-	hits, method, err = s.HybridSearch(st.ModelID, "***", qvec, 10)
+	hits, _, err = hybridSearch(s, st.ModelID, "***", qvec, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hits) != 4 || hits[0].Element.QualifiedName != "pkg.Alpha" {
 		t.Fatalf("no-lexeme hits = %+v; want cosine order", hits)
 	}
-	if method != "rrf("+ArmVector+")" {
-		t.Fatalf("method = %q; want vector arm only", method)
+	if got := armsOf(hits); !slices.Equal(got, []Arm{ArmVector}) {
+		t.Fatalf("arms = %v; want vector arm only", got)
 	}
 
 	// limit truncates the fused page, not just one arm.
-	if cut, _, err := s.HybridSearch(st.ModelID, "Delta", qvec, 2); err != nil || len(cut) != 2 {
+	if cut, _, err := hybridSearch(s, st.ModelID, "Delta", qvec, 2); err != nil || len(cut) != 2 {
 		t.Fatalf("limit 2 = %+v, %v; want 2 hits", cut, err)
 	}
 }
@@ -489,12 +494,12 @@ func TestPGHybridSearchFusesThreeArms(t *testing.T) {
 // arms — the degrade that keeps L3 useful on an un-embedded project.
 func TestPGHybridSearchWithoutVectors(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.UpsertElements([]Element{
+	if err := s.UpsertElements(context.Background(), []Element{
 		{QualifiedName: "pkg.Watermark", ElementType: "function", Name: "Watermark", FilePath: "a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	hits, method, err := s.HybridSearch("absent-model", "Watermark", nil, 10)
+	hits, kw, err := hybridSearch(s, "absent-model", "Watermark", nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,8 +507,11 @@ func TestPGHybridSearchWithoutVectors(t *testing.T) {
 		t.Fatalf("hits = %+v; want the keyword arms to carry the hit", hits)
 	}
 	// With no vectors, the keyword arms plus the name arm (see above).
-	if method != "rrf("+ArmTSVector+"+"+ArmTrigram+"+"+ArmName+")" {
-		t.Fatalf("method = %q; want the keyword arms plus the name arm", method)
+	if got := armsOf(hits); !slices.Equal(got, []Arm{ArmTSVector, ArmTrigram, ArmName}) {
+		t.Fatalf("arms = %v; want the keyword arms plus the name arm", got)
+	}
+	if kw != ArmTSVector {
+		t.Fatalf("keyword arm = %q; want tsvector", kw)
 	}
 	if hits[0].Similarity != 0 {
 		t.Fatalf("similarity = %v; want 0 with no vector arm", hits[0].Similarity)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/envfile"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -18,35 +20,35 @@ import (
 // cmdAuth dispatches the Rust `leankg auth` command (cli::AuthCommand):
 // register (account + bootstrap org) plus the token verbs. Rust's flat
 // `auth list-tokens` / `auth revoke` live under `auth token list|revoke` here.
-func cmdAuth(args []string) {
+func cmdAuth(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "auth: expected a subcommand (register | token create|list|revoke | admin init)")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	switch args[0] {
 	case "register":
-		authRegister(args[1:])
+		return authRegister(ctx, args[1:])
 	case "token":
-		cmdAuthToken(args[1:])
+		return cmdAuthToken(ctx, args[1:])
 	case "admin":
-		cmdAuthAdmin(args[1:])
+		return cmdAuthAdmin(ctx, args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "auth: unknown subcommand %q (valid: register | token create|list|revoke | admin init)\n", args[0])
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 }
 
-func cmdAuthAdmin(args []string) {
+func cmdAuthAdmin(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "auth admin: expected a subcommand (init)")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	switch args[0] {
 	case "init":
-		authAdminInit(args[1:])
+		return authAdminInit(ctx, args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "auth admin: unknown subcommand %q (valid: init)\n", args[0])
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 }
 
@@ -69,31 +71,34 @@ const (
 // authAdminInit bootstraps the one site-admin account (`leankg auth admin
 // init`). The plaintext password lives only in the env file; the store keeps a
 // PBKDF2 verifier. The output never prints the password.
-func authAdminInit(args []string) {
-	fs := flag.NewFlagSet("auth admin init", flag.ExitOnError)
+func authAdminInit(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("auth admin init", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	username := fs.String("username", "admin", "site-admin username")
 	envFile := fs.String("env-file", "", "file holding the admin credentials (default <project>/.env)")
-	parseInterspersed("auth admin init", fs, args, 0)
+	if _, err := parseInterspersed("auth admin init", fs, args, 0); err != nil {
+		return err
+	}
 
 	dir := resolveProjectDir(*project)
 	envPath := *envFile
 	if envPath == "" {
 		envPath = filepath.Join(dir, ".env")
 	}
-	engine, err := openEngine(dir, store.RW)
+	engine, st, err := openEngine(ctx, dir, store.RW)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
-	if err := engine.Store().Migrate(); err != nil {
-		fatalJSON(err)
+	defer st.Close()
+	defer engine.Close()
+	if err := st.Migrate(ctx); err != nil {
+		return fatalJSON(err)
 	}
 
 	key := auth.NormalizeEmail(*username)
-	outcome, err := bootstrapAdmin(engine.Store(), key, envPath)
+	outcome, err := bootstrapAdmin(ctx, st, key, envPath)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	switch outcome {
 	case adminCreatedGenerated:
@@ -105,6 +110,7 @@ func authAdminInit(args []string) {
 	case adminAlreadyInitialisedTightened:
 		fmt.Printf("Site admin %q is already initialised; the credentials in %s verify. Tightened the file mode to 0600 (it holds a plaintext password).\n", key, envPath)
 	}
+	return nil
 }
 
 // bootstrapAdmin makes sure the site-admin account for username exists and that
@@ -114,7 +120,7 @@ func authAdminInit(args []string) {
 // only when the env credentials verify against it. Every refusal happens before
 // any write, and the env file is written before the account so that a failed
 // account insert leaves credentials a rerun can use.
-func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcome, error) {
+func bootstrapAdmin(ctx context.Context, st store.Backend, username, envPath string) (adminInitOutcome, error) {
 	key := auth.NormalizeEmail(username)
 	env, err := envfile.Load(envPath)
 	if err != nil {
@@ -125,13 +131,13 @@ func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcom
 	}
 	envPassword, hasPassword := env[adminPasswordKey]
 
-	_, exists, err := st.AccountByEmail(key)
+	_, exists, err := st.AccountByEmail(ctx, key)
 	if err != nil {
 		return 0, err
 	}
 	if exists {
 		if hasPassword {
-			if _, err := auth.VerifyAdminLogin(st, key, envPassword); err == nil {
+			if _, err := auth.VerifyAdminLogin(ctx, st, key, envPassword); err == nil {
 				tightened, err := tightenEnvMode(envPath)
 				if err != nil {
 					return 0, err
@@ -145,7 +151,7 @@ func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcom
 		return 0, fmt.Errorf("admin %q already exists and the credentials in %s do not verify it; nothing changed", key, envPath)
 	}
 
-	anyAdmin, err := st.AdminExists()
+	anyAdmin, err := st.AdminExists(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -170,7 +176,7 @@ func bootstrapAdmin(st store.Backend, username, envPath string) (adminInitOutcom
 	}); err != nil {
 		return 0, err
 	}
-	if _, err := auth.CreateSiteAdmin(st, key, password); err != nil {
+	if _, err := auth.CreateSiteAdmin(ctx, st, key, password); err != nil {
 		return 0, err
 	}
 	return outcome, nil
@@ -202,68 +208,72 @@ func generateAdminPassword() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-func cmdAuthToken(args []string) {
+func cmdAuthToken(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "auth token: expected a subcommand (create | list | revoke)")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	switch args[0] {
 	case "create":
-		authTokenCreate(args[1:])
+		return authTokenCreate(ctx, args[1:])
 	case "list":
-		authTokenList(args[1:])
+		return authTokenList(ctx, args[1:])
 	case "revoke":
-		authTokenRevoke(args[1:])
+		return authTokenRevoke(ctx, args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "auth token: unknown subcommand %q (valid: create | list | revoke)\n", args[0])
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 }
 
 // authRegister creates an account plus its bootstrap org (Rust
 // AuthCommand::Register + auth_register, main.rs:4286-4299). The password is
 // hashed at rest; the CLI never echoes it.
-func authRegister(args []string) {
-	fs := flag.NewFlagSet("auth register", flag.ExitOnError)
+func authRegister(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("auth register", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	email := fs.String("email", "", "account email (required)")
 	password := fs.String("password", "", "account password (required, min 8 chars)")
 	name := fs.String("name", "", "account display name (required)")
-	parseInterspersed("auth register", fs, args, 0)
+	if _, err := parseInterspersed("auth register", fs, args, 0); err != nil {
+		return err
+	}
 	for _, missing := range []struct{ flag, value string }{
 		{"--email", *email}, {"--password", *password}, {"--name", *name},
 	} {
 		if missing.value == "" {
 			fmt.Fprintf(os.Stderr, "auth register: %s is required\n", missing.flag)
-			os.Exit(2)
+			return cliexit.Code(2)
 		}
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(dir, store.RW)
+	engine, st, err := openEngine(ctx, dir, store.RW)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
-	if err := engine.Store().Migrate(); err != nil {
-		fatalJSON(err)
+	defer st.Close()
+	defer engine.Close()
+	if err := st.Migrate(ctx); err != nil {
+		return fatalJSON(err)
 	}
 
-	account, err := auth.Register(engine.Store(), *email, *password, *name)
+	account, err := auth.Register(ctx, st, *email, *password, *name)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	// Rust auth_register output shape.
 	fmt.Println("Account registered:")
 	fmt.Printf("  ID:    %s\n", account.ID)
 	fmt.Printf("  Email: %s\n", account.Email)
 	fmt.Printf("  Name:  %s\n", account.Name)
+	return nil
 }
 
 // authTokenCreate mints one DB-backed bearer token (Rust
 // AuthCommand::Token + auth_issue_token). The plaintext is shown once; only
 // its SHA-256 hash is persisted.
-func authTokenCreate(args []string) {
-	fs := flag.NewFlagSet("auth token create", flag.ExitOnError)
+func authTokenCreate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("auth token create", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	name := fs.String("name", "", "token name (required)")
 	role := fs.String("role", "viewer", "token role: admin | contributor | viewer")
@@ -271,17 +281,19 @@ func authTokenCreate(args []string) {
 	orgID := fs.String("org-id", "", "org this token acts for (Rust --org-id)")
 	scopes := fs.String("scopes", "", "comma-separated opaque scope names")
 	ttl := fs.String("ttl", "", "token lifetime, e.g. 24h (default: never expires)")
-	parseInterspersed("auth token create", fs, args, 0)
+	if _, err := parseInterspersed("auth token create", fs, args, 0); err != nil {
+		return err
+	}
 	if *name == "" {
 		fmt.Fprintln(os.Stderr, "auth token create: --name is required")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	var lifetime time.Duration
 	if *ttl != "" {
 		d, err := time.ParseDuration(*ttl)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "auth token create: invalid --ttl %q: %v\n", *ttl, err)
-			os.Exit(2)
+			return cliexit.Code(2)
 		}
 		lifetime = d
 	}
@@ -294,19 +306,20 @@ func authTokenCreate(args []string) {
 		TTL:       lifetime,
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(dir, store.RW)
+	engine, st, err := openEngine(ctx, dir, store.RW)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
+	defer engine.Close()
 	// Minting needs the tokens table; a writer opens the schema first.
-	if err := engine.Store().Migrate(); err != nil {
-		fatalJSON(err)
+	if err := st.Migrate(ctx); err != nil {
+		return fatalJSON(err)
 	}
 
-	token, row, err := auth.Mint(engine.Store(), req)
+	token, row, err := auth.Mint(ctx, st, req)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	// Rust auth_issue_token output shape.
 	fmt.Println("Access token issued:")
@@ -315,26 +328,30 @@ func authTokenCreate(args []string) {
 	fmt.Println()
 	fmt.Println("IMPORTANT: Save this token - it will not be shown again:")
 	fmt.Printf("  %s\n", token)
+	return nil
 }
 
 // authTokenList prints token rows, revoked ones included (Rust
 // AuthCommand::ListTokens + auth_list_tokens). --account-id filters by the
 // token's account label, matching Rust's account-scoped listing.
-func authTokenList(args []string) {
-	fs := flag.NewFlagSet("auth token list", flag.ExitOnError)
+func authTokenList(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("auth token list", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	accountID := fs.String("account-id", "", "only tokens issued for this account (Rust --account-id)")
-	parseInterspersed("auth token list", fs, args, 0)
-	dir := resolveProjectDir(*project)
-	engine, err := openEngine(dir, store.RO)
-	if err != nil {
-		fatalJSON(err)
+	if _, err := parseInterspersed("auth token list", fs, args, 0); err != nil {
+		return err
 	}
-	defer engine.Store().Close()
-
-	tokens, err := engine.Store().TokenList()
+	dir := resolveProjectDir(*project)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
+	}
+	defer st.Close()
+	defer engine.Close()
+
+	tokens, err := st.TokenList(ctx)
+	if err != nil {
+		return fatalJSON(err)
 	}
 	if *accountID != "" {
 		kept := make([]store.Token, 0, len(tokens))
@@ -348,10 +365,10 @@ func authTokenList(args []string) {
 	switch {
 	case len(tokens) == 0 && *accountID != "":
 		fmt.Printf("No access tokens for account %s.\n", *accountID)
-		return
+		return nil
 	case len(tokens) == 0:
 		fmt.Println("No access tokens.")
-		return
+		return nil
 	case *accountID != "":
 		fmt.Printf("Access tokens for %s:\n", *accountID)
 	default:
@@ -360,30 +377,34 @@ func authTokenList(args []string) {
 	for _, t := range tokens {
 		fmt.Printf("  ID: %s  Name: %s  Role: %s  revoked: %t\n", t.ID, t.Name, t.Role, t.RevokedAt != 0)
 	}
+	return nil
 }
 
 // authTokenRevoke soft-revokes one token by id (Rust AuthCommand::Revoke +
 // auth_revoke_token). Revocation is idempotent: an unknown or already-revoked
 // id reports that state instead of failing.
-func authTokenRevoke(args []string) {
-	fs := flag.NewFlagSet("auth token revoke", flag.ExitOnError)
+func authTokenRevoke(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("auth token revoke", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	tokenID := fs.String("token-id", "", "token id to revoke (from `auth token list`)")
-	parseInterspersed("auth token revoke", fs, args, 0)
+	if _, err := parseInterspersed("auth token revoke", fs, args, 0); err != nil {
+		return err
+	}
 	if *tokenID == "" {
 		fmt.Fprintln(os.Stderr, "auth token revoke: --token-id is required")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(dir, store.RW)
+	engine, st, err := openEngine(ctx, dir, store.RW)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
+	defer engine.Close()
 
-	tokens, err := engine.Store().TokenList()
+	tokens, err := st.TokenList(ctx)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	found := false
 	revoked := false
@@ -397,16 +418,17 @@ func authTokenRevoke(args []string) {
 	}
 	if !found {
 		fmt.Printf("Access token '%s' not found.\n", *tokenID)
-		return
+		return nil
 	}
 	if revoked {
 		fmt.Printf("Access token '%s' already revoked.\n", *tokenID)
-		return
+		return nil
 	}
-	if err := engine.Store().TokenRevoke(*tokenID, time.Now().Unix()); err != nil {
-		fatalJSON(err)
+	if err := st.TokenRevoke(ctx, *tokenID, time.Now().Unix()); err != nil {
+		return fatalJSON(err)
 	}
 	fmt.Printf("Access token '%s' revoked.\n", *tokenID)
+	return nil
 }
 
 // splitScopes parses the comma-separated --scopes value, dropping blanks.

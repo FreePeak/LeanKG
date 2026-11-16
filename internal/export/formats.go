@@ -3,6 +3,7 @@ package export
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,12 +92,12 @@ type streamRelationship struct {
 // by element so peak memory stays O(1) instead of materializing the whole
 // document. Rust's budget guard (crate::budget) has no Go equivalent, so the
 // "truncated" flag can never be set here.
-func WriteJSONStreaming(w io.Writer, st store.Backend) error {
-	els, err := st.Elements()
+func WriteJSONStreaming(ctx context.Context, w io.Writer, st exportStore) error {
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return err
 	}
-	rels, err := st.RelationshipsAll(maxRelationships)
+	rels, err := st.RelationshipsAll(ctx, maxRelationships)
 	if err != nil {
 		return err
 	}

@@ -40,12 +40,12 @@ func TestIndexObjCMessageSendCallEdges(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "Greeter.m"), []byte(objcCallProjectFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := IndexDir(context.Background(), st, dir); err != nil {
@@ -61,7 +61,7 @@ func TestIndexObjCMessageSendCallEdges(t *testing.T) {
 		{"Greeter.m::describe", "Greeter.m::Greeter.name"},
 	}
 	for _, w := range want {
-		rels, err := st.Outgoing(w.caller)
+		rels, err := st.Outgoing(context.Background(), w.caller)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func TestIndexObjCMessageSendCallEdges(t *testing.T) {
 	}
 
 	// The class head is a type, never a message target.
-	rels, err := st.Outgoing("Greeter.m::Greeter.sayHello")
+	rels, err := st.Outgoing(context.Background(), "Greeter.m::Greeter.sayHello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestIndexObjCMessageSendCallEdges(t *testing.T) {
 	}
 
 	// A method without message sends emits no call edges.
-	rels, err = st.Outgoing("Greeter.m::Greeter.setup")
+	rels, err = st.Outgoing(context.Background(), "Greeter.m::Greeter.setup")
 	if err != nil {
 		t.Fatal(err)
 	}

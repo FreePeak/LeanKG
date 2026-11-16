@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	_ "modernc.org/sqlite"
 	"path/filepath"
 	"strings"
@@ -24,16 +25,16 @@ func TestWALModePinned(t *testing.T) {
 // even if it wanted to (query_only pragma is defense in depth).
 func TestReadOnlyRejectsWrite(t *testing.T) {
 	dir := t.TempDir()
-	rw, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RW)
+	rw, err := openSQLite(context.Background(), filepath.Join(dir, ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	rw.Close()
 
-	ro, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RO)
+	ro, err := openSQLite(context.Background(), filepath.Join(dir, ".leankg", "leankg.db"), RO)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,15 +48,15 @@ func TestReadOnlyRejectsWrite(t *testing.T) {
 // macOS checkouts) must open correctly.
 func TestSpaceInPath(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my project")
-	s, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(context.Background(), filepath.Join(dir, ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open with space in path: %v", err)
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := s.UpsertElements([]Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
+	if err := s.UpsertElements(context.Background(), []Element{{QualifiedName: "x", ElementType: "function", Name: "x", FilePath: "x.go", Language: "go"}}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	var n int

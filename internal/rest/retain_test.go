@@ -2,6 +2,7 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -40,21 +41,20 @@ import (
 // the field I read".
 func TestRESTRetainRejectsTheShapeItDoesNotUnderstand(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, mem, nil)
-	eng.SetProjectDir(dir)
-	mux := Handler(eng, mem)
+	eng := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
+	mux := gatedHandler(eng, mem)
 
 	post := func(body string) (int, string) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/memory/banks/b1/memories", strings.NewReader(body))
@@ -100,19 +100,19 @@ func TestRESTRetainRejectsTheShapeItDoesNotUnderstand(t *testing.T) {
 // visible, so "ok:true, retained:0" can never mean "silently dropped".
 func TestRESTRetainActuallyWrote(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := Handler(core.New(st, mem, nil), mem)
+	mux := gatedHandler(core.New(st, core.Options{Memory: mem}), mem)
 
 	payload, _ := json.Marshal(map[string]any{
 		"entries":           []map[string]any{{"content": "the stand must be open whenever development happens"}},
@@ -138,7 +138,7 @@ func TestRESTRetainActuallyWrote(t *testing.T) {
 	// And the entry is recallable, which is the only reason a retain is worth
 	// acknowledging. Recall needs a query by design — zero-match rows never
 	// surface — so query the words the entry was written with.
-	entries, err := mem.Recall("b1", "stand", 10)
+	entries, err := mem.Recall(context.Background(), "b1", "stand", 10)
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}

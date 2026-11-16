@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -50,12 +51,12 @@ func TestAuthTokenCLI(t *testing.T) {
 	dbPath := filepath.Join(dir, ".leankg", "leankg.db")
 	verify := func() (auth.Grant, bool, error) {
 		t.Helper()
-		st, err := store.Open(dbPath, store.RO)
+		st, err := openFixtureStore(dbPath, store.RO)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer st.Close()
-		return auth.Verify(st, secret)
+		return auth.Verify(context.Background(), st, secret)
 	}
 	grant, ok, err := verify()
 	if err != nil || !ok || grant.TokenID != id || grant.Role != auth.Contributor {

@@ -3,6 +3,7 @@
 package tstree
 
 import (
+	"context"
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
@@ -26,17 +27,13 @@ type Call struct {
 // a call node. objective-c message sends ([recv sel:arg]) yield one call per
 // selector; languages without a call walk return nil, nil so the caller keeps
 // its non-grammar behavior.
-func ExtractCalls(src []byte, lang string) ([]Call, error) {
+func ExtractCalls(ctx context.Context, src []byte, lang string) ([]Call, error) {
 	if lang != "objc" {
 		return nil, nil
 	}
-	p := parserFor(lang)
-	if p == nil {
-		return nil, nil
-	}
-	tree := p.Parse(nil, src)
-	if tree == nil {
-		return nil, nil
+	tree, err := parse(ctx, src, lang)
+	if err != nil || tree == nil {
+		return nil, err
 	}
 	return objcMessageCalls(tree.RootNode(), src), nil
 }

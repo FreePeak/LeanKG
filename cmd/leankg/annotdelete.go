@@ -7,45 +7,51 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 
 	"github.com/FreePeak/LeanKG/internal/annot"
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-func cmdDeleteAnnotation(args []string) {
-	fs := flag.NewFlagSet("delete-annotation", flag.ExitOnError)
+func cmdDeleteAnnotation(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("delete-annotation", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
-	_ = fs.Parse(args)
+	_ = cliexit.Parse(fs, args)
 
-	positional := parseInterspersed("delete-annotation", fs, args, 1)
+	positional, err := parseInterspersed("delete-annotation", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if len(positional) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: leankg delete-annotation <element> [--project DIR]")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	element := positional[0]
 
-	st, _, err := openVerbStore(*project, store.RW)
+	st, _, err := openVerbStore(ctx, *project, store.RW)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	defer st.Close()
 
 	// Read first so a typo is reported as "no such annotation" rather than a
 	// silent success — an idempotent delete that says "removed" when nothing
 	// was there is how a caller learns they mistyped the qualified name.
-	existing, err := annot.Get(st, element)
+	existing, err := annot.Get(ctx, st, element)
 	if err != nil {
-		verbFatal(err)
+		return verbFatal(err)
 	}
 	if existing == nil {
 		fmt.Printf("No annotation found for '%s' (nothing removed)\n", element)
-		return
+		return nil
 	}
-	if err := annot.Delete(st, element); err != nil {
-		verbFatal(err)
+	if err := annot.Delete(ctx, st, element); err != nil {
+		return verbFatal(err)
 	}
 	fmt.Printf("Removed annotation for '%s' (was: %s)\n", element, existing.Description)
+	return nil
 }

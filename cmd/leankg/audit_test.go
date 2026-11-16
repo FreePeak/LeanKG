@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -48,15 +49,15 @@ func TestParseTimeFilter(t *testing.T) {
 // handle, so the CLI under test owns the file afterward.
 func seedAuditLedger(t *testing.T, dir string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendAudit(&store.AuditEntry{
+	if err := st.AppendAudit(context.Background(), &store.AuditEntry{
 		At:      1_600_000_000,
 		Actor:   "tester",
 		Action:  "tool_call",
@@ -65,7 +66,7 @@ func seedAuditLedger(t *testing.T, dir string) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendAudit(&store.AuditEntry{Actor: "tester", Action: "index", Target: "repo"}); err != nil {
+	if err := st.AppendAudit(context.Background(), &store.AuditEntry{Actor: "tester", Action: "index", Target: "repo"}); err != nil {
 		t.Fatal(err)
 	}
 }

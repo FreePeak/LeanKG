@@ -76,16 +76,18 @@ type LangReport struct {
 // languages to enrich (Go engine tags or catalog names, e.g. "go", "ts",
 // "typescript"); an empty list means every language present in the store.
 // Absent or unresolvable servers never fail the pass.
-func Enrich(st store.Backend, dir string, want []string) (EnrichResult, error) {
+func Enrich(ctx context.Context, st store.Backend, dir string, want []string) (EnrichResult, error) {
 	b := FromLeanKGYAMLOrDefault(dir)
 	defer b.Shutdown()
-	return b.Enrich(st, dir, want)
+	return b.Enrich(ctx, st, dir, want)
 }
 
 // Enrich is the bridge-scoped pass (callers holding a Bridge reuse its pool).
-func (b *Bridge) Enrich(st store.Backend, dir string, want []string) (EnrichResult, error) {
+// A cancelled ctx stops the pass between files and returns its error; nothing
+// merged so far is written.
+func (b *Bridge) Enrich(ctx context.Context, st store.Backend, dir string, want []string) (EnrichResult, error) {
 	var res EnrichResult
-	els, err := st.Elements()
+	els, err := st.Elements(ctx)
 	if err != nil {
 		return res, err
 	}
@@ -125,7 +127,11 @@ func (b *Bridge) Enrich(st store.Backend, dir string, want []string) (EnrichResu
 		case !commandOnPath(sc.Command):
 			rep.Reason = fmt.Sprintf("server %q is not on PATH (install it or name one in leankg.yaml)", sc.Command)
 		default:
-			changed = append(changed, b.enrichLanguage(&rep, dir, id, tier, sc, byLang[id], existingQN, deadline)...)
+			elems, err := b.enrichLanguage(ctx, &rep, dir, id, tier, sc, byLang[id], existingQN, deadline)
+			if err != nil {
+				return res, err
+			}
+			changed = append(changed, elems...)
 		}
 		res.Languages = append(res.Languages, rep)
 		res.Files += rep.Files
@@ -136,7 +142,7 @@ func (b *Bridge) Enrich(st store.Backend, dir string, want []string) (EnrichResu
 	}
 
 	if len(changed) > 0 {
-		if err := st.UpsertElements(changed); err != nil {
+		if err := st.UpsertElements(ctx, changed); err != nil {
 			return res, err
 		}
 	}
@@ -145,7 +151,7 @@ func (b *Bridge) Enrich(st store.Backend, dir string, want []string) (EnrichResu
 	// symbol table, gated by the project's indexer.typed_resolve setting
 	// (Rust default "off"). Runs regardless of server availability — it
 	// spawns nothing (Rust parity: FR-LSP-A).
-	res.CallsUpgraded, err = HybridResolve(st, b.typedResolve)
+	res.CallsUpgraded, err = HybridResolve(ctx, st, b.typedResolve)
 	if err != nil {
 		return res, err
 	}
@@ -161,7 +167,7 @@ func (b *Bridge) Enrich(st store.Backend, dir string, want []string) (EnrichResu
 // elements and returns the elements to persist (enriched rows and newly
 // discovered ones). A server failure degrades the language (recorded in
 // rep.Reason) instead of failing the pass.
-func (b *Bridge) enrichLanguage(rep *LangReport, dir, id, tier string, sc ServerConfig, els []*store.Element, existingQN map[string]bool, deadline time.Time) []store.Element {
+func (b *Bridge) enrichLanguage(ctx context.Context, rep *LangReport, dir, id, tier string, sc ServerConfig, els []*store.Element, existingQN map[string]bool, deadline time.Time) ([]store.Element, error) {
 	files := map[string][]*store.Element{}
 	for _, e := range els {
 		files[e.FilePath] = append(files[e.FilePath], e)
@@ -175,9 +181,12 @@ func (b *Bridge) enrichLanguage(rep *LangReport, dir, id, tier string, sc Server
 	var out []store.Element
 	failures := 0
 	for _, rel := range rels {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
 		if time.Now().After(deadline) {
 			rep.Reason = "enrichment deadline reached (partial merge)"
-			return out
+			return out, nil
 		}
 		abs := rel
 		if !filepath.IsAbs(abs) {
@@ -188,13 +197,16 @@ func (b *Bridge) enrichLanguage(rep *LangReport, dir, id, tier string, sc Server
 		}
 		targets := files[rel]
 		root := b.WorkspaceFor(abs)
-		syms, err := b.documentSymbols(id, sc, root, abs)
+		syms, err := b.documentSymbols(ctx, id, sc, root, abs)
 		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return out, cerr // cancellation is not a server failure
+			}
 			// Every failure is recorded; the second one ends the language.
 			failures++
 			rep.Reason = fmt.Sprintf("server %q failed after %d files: %v", sc.Command, rep.Files, err)
 			if failures > 1 {
-				return out
+				return out, nil
 			}
 			continue
 		}
@@ -224,7 +236,7 @@ func (b *Bridge) enrichLanguage(rep *LangReport, dir, id, tier string, sc Server
 				if _, has := el.Metadata["lsp_signature"]; has {
 					continue
 				}
-				doc, err := b.hover(id, sc, root, abs, el)
+				doc, err := b.hover(ctx, id, sc, root, abs, el)
 				if err != nil || doc == "" {
 					continue
 				}
@@ -235,19 +247,22 @@ func (b *Bridge) enrichLanguage(rep *LangReport, dir, id, tier string, sc Server
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // documentSymbols fetches one document's symbols, respawning a dead pooled
 // server once (Rust bridge: a failed request drops the entry so the next call
 // spawns fresh). Each attempt's spawn is bounded by handshakeTimeout and its
 // request by the configured request timeout.
-func (b *Bridge) documentSymbols(id string, sc ServerConfig, root, abs string) ([]Symbol, error) {
+func (b *Bridge) documentSymbols(ctx context.Context, id string, sc ServerConfig, root, abs string) ([]Symbol, error) {
 	var lastErr error
 	for range 2 {
-		syms, err := b.getAndSymbols(id, sc, root, abs)
+		syms, err := b.getAndSymbols(ctx, id, sc, root, abs)
 		if err == nil {
 			return syms, nil
+		}
+		if ctx.Err() != nil {
+			return nil, err // a cancelled pass does not respawn the server
 		}
 		lastErr = err
 		b.manager.Evict(langs.Language(id), root)
@@ -255,33 +270,34 @@ func (b *Bridge) documentSymbols(id string, sc ServerConfig, root, abs string) (
 	return nil, lastErr
 }
 
-func (b *Bridge) getAndSymbols(id string, sc ServerConfig, root, abs string) ([]Symbol, error) {
-	c, err := b.clientFor(id, sc, root)
+func (b *Bridge) getAndSymbols(ctx context.Context, id string, sc ServerConfig, root, abs string) ([]Symbol, error) {
+	c, err := b.clientFor(ctx, id, sc, root)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout())
+	rctx, cancel := context.WithTimeout(ctx, b.requestTimeout())
 	defer cancel()
-	return c.DocumentSymbols(ctx, abs)
+	return c.DocumentSymbols(rctx, abs)
 }
 
 // clientFor returns the pooled server for (id, root), spawning it if needed.
 // The spawn and its initialize handshake get handshakeTimeout, not the request
 // timeout: a child context cannot outlive its parent, so a spawn that ran under
-// the request deadline ended at timeout_ms.
-func (b *Bridge) clientFor(id string, sc ServerConfig, root string) (*Client, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
+// the request deadline ended at timeout_ms. The spawn is bound to ctx only
+// until its handshake completes; the pooled server then outlives the call.
+func (b *Bridge) clientFor(ctx context.Context, id string, sc ServerConfig, root string) (*Client, error) {
+	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	return b.manager.GetCommand(ctx, langs.Language(id), sc.Command, sc.Args, root, sc.InitializationOptions)
+	return b.manager.GetCommand(hctx, langs.Language(id), sc.Command, sc.Args, root, sc.InitializationOptions)
 }
 
 // hover sends one hover request positioned at the element's declaration.
-func (b *Bridge) hover(id string, sc ServerConfig, root, abs string, el *store.Element) (string, error) {
-	c, err := b.clientFor(id, sc, root)
+func (b *Bridge) hover(ctx context.Context, id string, sc ServerConfig, root, abs string, el *store.Element) (string, error) {
+	c, err := b.clientFor(ctx, id, sc, root)
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout())
+	rctx, cancel := context.WithTimeout(ctx, b.requestTimeout())
 	defer cancel()
 	line := el.LineStart - 1
 	if line < 0 {
@@ -293,7 +309,7 @@ func (b *Bridge) hover(id string, sc ServerConfig, root, abs string, el *store.E
 			char = i
 		}
 	}
-	return c.Hover(ctx, abs, line, char)
+	return c.Hover(rctx, abs, line, char)
 }
 
 // mergeFile merges one file's symbols into its elements: matched elements get

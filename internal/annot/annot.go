@@ -8,6 +8,7 @@
 package annot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -35,8 +36,8 @@ type Record struct {
 }
 
 // load reads the whole annotation set. A missing KV document is an empty set.
-func load(st store.Backend) ([]Record, error) {
-	raw, ok, err := st.KVGet(kvNamespace, kvKey)
+func load(ctx context.Context, st store.KV) ([]Record, error) {
+	raw, ok, err := st.KVGet(ctx, kvNamespace, kvKey)
 	if err != nil {
 		return nil, fmt.Errorf("annot: read records: %w", err)
 	}
@@ -62,7 +63,7 @@ func sortRecords(recs []Record) {
 // writers race and the later save silently drops the earlier one (lost
 // update). Fine at the CLI/watcher cadence this package serves; the upgrade
 // path is a dedicated store table (or a store-level compare-and-swap).
-func save(st store.Backend, recs []Record) error {
+func save(ctx context.Context, st store.KV, recs []Record) error {
 	if recs == nil {
 		recs = []Record{}
 	}
@@ -71,15 +72,15 @@ func save(st store.Backend, recs []Record) error {
 	if err != nil {
 		return fmt.Errorf("annot: encode records: %w", err)
 	}
-	if err := st.KVSet(kvNamespace, kvKey, string(b)); err != nil {
+	if err := st.KVSet(ctx, kvNamespace, kvKey, string(b)); err != nil {
 		return fmt.Errorf("annot: write records: %w", err)
 	}
 	return nil
 }
 
 // Get returns the annotation for element, or nil when the element has none.
-func Get(st store.Backend, element string) (*Record, error) {
-	recs, err := load(st)
+func Get(ctx context.Context, st store.KV, element string) (*Record, error) {
+	recs, err := load(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -94,8 +95,8 @@ func Get(st store.Backend, element string) (*Record, error) {
 
 // Put upserts r keyed by r.Element (Rust :put semantics: an existing row for
 // the same element is replaced whole, so unset links are cleared).
-func Put(st store.Backend, r Record) error {
-	recs, err := load(st)
+func Put(ctx context.Context, st store.KV, r Record) error {
+	recs, err := load(ctx, st)
 	if err != nil {
 		return err
 	}
@@ -110,13 +111,13 @@ func Put(st store.Backend, r Record) error {
 	if !replaced {
 		recs = append(recs, r)
 	}
-	return save(st, recs)
+	return save(ctx, st, recs)
 }
 
 // Delete removes the annotation for element. Deleting an element that has no
 // annotation is a no-op, like the Rust :rm over zero rows.
-func Delete(st store.Backend, element string) error {
-	recs, err := load(st)
+func Delete(ctx context.Context, st store.KV, element string) error {
+	recs, err := load(ctx, st)
 	if err != nil {
 		return err
 	}
@@ -126,27 +127,27 @@ func Delete(st store.Backend, element string) error {
 			kept = append(kept, r)
 		}
 	}
-	return save(st, kept)
+	return save(ctx, st, kept)
 }
 
 // All returns every annotation, sorted by Element. An empty store yields an
 // empty slice, not an error.
-func All(st store.Backend) ([]Record, error) {
-	return load(st)
+func All(ctx context.Context, st store.KV) ([]Record, error) {
+	return load(ctx, st)
 }
 
 // ByUserStory returns the annotations linked to userStoryID.
-func ByUserStory(st store.Backend, userStoryID string) ([]Record, error) {
-	return filter(st, func(r Record) bool { return r.UserStoryID == userStoryID })
+func ByUserStory(ctx context.Context, st store.KV, userStoryID string) ([]Record, error) {
+	return filter(ctx, st, func(r Record) bool { return r.UserStoryID == userStoryID })
 }
 
 // ByFeature returns the annotations linked to featureID.
-func ByFeature(st store.Backend, featureID string) ([]Record, error) {
-	return filter(st, func(r Record) bool { return r.FeatureID == featureID })
+func ByFeature(ctx context.Context, st store.KV, featureID string) ([]Record, error) {
+	return filter(ctx, st, func(r Record) bool { return r.FeatureID == featureID })
 }
 
-func filter(st store.Backend, keep func(Record) bool) ([]Record, error) {
-	recs, err := load(st)
+func filter(ctx context.Context, st store.KV, keep func(Record) bool) ([]Record, error) {
+	recs, err := load(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -163,12 +164,12 @@ func filter(st store.Backend, keep func(Record) bool) ([]Record, error) {
 // embedded in a ".*<query>.*" regex which is matched against the lowercased
 // DESCRIPTION only — never against element names. An invalid regex (or one
 // the query makes invalid) is an error, as the Cozo query error was in Rust.
-func Search(st store.Backend, query string) ([]Record, error) {
+func Search(ctx context.Context, st store.KV, query string) ([]Record, error) {
 	re, err := regexp.Compile(".*" + strings.ToLower(query) + ".*")
 	if err != nil {
 		return nil, fmt.Errorf("annot: search pattern: %w", err)
 	}
-	recs, err := load(st)
+	recs, err := load(ctx, st)
 	if err != nil {
 		return nil, err
 	}
@@ -184,8 +185,8 @@ func Search(st store.Backend, query string) ([]Record, error) {
 // Annotate ports the Rust annotate_element CLI verb: create the annotation
 // when the element has none, update (replace) it when it does. created
 // reports which happened; a nil userStory/feature clears that link.
-func Annotate(st store.Backend, element, description string, userStory, feature *string) (bool, error) {
-	existing, err := Get(st, element)
+func Annotate(ctx context.Context, st store.KV, element, description string, userStory, feature *string) (bool, error) {
+	existing, err := Get(ctx, st, element)
 	if err != nil {
 		return false, err
 	}
@@ -196,7 +197,7 @@ func Annotate(st store.Backend, element, description string, userStory, feature 
 	if feature != nil {
 		r.FeatureID = *feature
 	}
-	if err := Put(st, r); err != nil {
+	if err := Put(ctx, st, r); err != nil {
 		return false, err
 	}
 	return existing == nil, nil
@@ -208,8 +209,8 @@ func Annotate(st store.Backend, element, description string, userStory, feature 
 // the story or feature link, and keeps the other one. On an element with no
 // annotation it creates one described "Linked to <kind> <id>". Any kind
 // other than "story" is treated as a feature link.
-func Link(st store.Backend, element, id, kind string) error {
-	existing, err := Get(st, element)
+func Link(ctx context.Context, st store.KV, element, id, kind string) error {
+	existing, err := Get(ctx, st, element)
 	if err != nil {
 		return err
 	}
@@ -220,7 +221,7 @@ func Link(st store.Backend, element, id, kind string) error {
 		} else {
 			r.FeatureID = id
 		}
-		return Put(st, r)
+		return Put(ctx, st, r)
 	}
 	r := *existing
 	if kind == "story" {
@@ -230,7 +231,7 @@ func Link(st store.Backend, element, id, kind string) error {
 		r.Description = withLinkSuffix(r.Description, "feature", id)
 		r.FeatureID = id
 	}
-	return Put(st, r)
+	return Put(ctx, st, r)
 }
 
 // withLinkSuffix appends " | Linked to <kind> <id>" unless the description

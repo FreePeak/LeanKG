@@ -1,0 +1,9 @@
+{
+  "git": {
+    "co_change_pairs": 2,
+    "commits": 2,
+    "files": 3,
+    "head": "<SHA>",
+    "incremental": false
+  }
+}

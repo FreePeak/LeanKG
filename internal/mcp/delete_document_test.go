@@ -20,12 +20,12 @@ import (
 func newMemoryTestServer(t *testing.T) (*mcp.ClientSession, *memory.Memory) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
@@ -33,8 +33,7 @@ func newMemoryTestServer(t *testing.T) (*mcp.ClientSession, *memory.Memory) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { mem.Close() })
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	srv := New(engine)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -77,7 +76,7 @@ func TestImportDeleteDocumentRemovesOneBankRow(t *testing.T) {
 	session, mem := newMemoryTestServer(t)
 	ctx := context.Background()
 
-	if err := mem.RetainRaw("bank", []memory.Entry{
+	if err := mem.RetainRaw(context.Background(), "bank", []memory.Entry{
 		{Content: "the deploy runbook lives in docs/deploy.md", Metadata: map[string]any{"document_id": "doc-a"}},
 		{Content: "postgres holds the vectors in pgvector", Metadata: map[string]any{"document_id": "doc-b"}},
 	}); err != nil {
@@ -113,7 +112,7 @@ func TestImportDeleteDocumentRemovesOneBankRow(t *testing.T) {
 		t.Fatalf("bank holds %d rows after the delete, want 1", n)
 	}
 	// The row that survived is the one that was not named.
-	entries, err := mem.Recall("bank", "postgres vectors", 5)
+	entries, err := mem.Recall(context.Background(), "bank", "postgres vectors", 5)
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}
@@ -128,7 +127,7 @@ func TestImportDeleteDocumentRemovesOneBankRow(t *testing.T) {
 func TestImportDeleteDocumentRequiresADocumentID(t *testing.T) {
 	session, mem := newMemoryTestServer(t)
 	ctx := context.Background()
-	if err := mem.RetainRaw("bank", []memory.Entry{{Content: "a row"}}); err != nil {
+	if err := mem.RetainRaw(context.Background(), "bank", []memory.Entry{{Content: "a row"}}); err != nil {
 		t.Fatalf("retain: %v", err)
 	}
 	_, err := session.CallTool(ctx, &mcp.CallToolParams{

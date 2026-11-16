@@ -111,16 +111,15 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	r := NewRouter(defaultDir, Config{ExtraDirs: []string{dirA}})
 	// Seed the default with an externally-opened engine: routing to it
 	// must hand back the SAME engine (one store handle per project).
-	st, err := store.OpenBackend(ctx, defaultDir, "sqlite", "", "", store.RW)
+	st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: defaultDir, Engine: "sqlite", PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	defEngine := core.New(st, nil, nil)
-	defEngine.SetProjectDir(defaultDir)
+	defEngine := core.New(st, core.Options{ProjectDir: defaultDir})
 	r.SeedDefault(&Project{Dir: defaultDir, Name: "primary", Store: st, Engine: defEngine})
 
 	got, err := r.EngineFor(ctx, "")
@@ -136,11 +135,11 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 	// store is refused as not indexed (see
 	// TestRoutedProjectWithoutAStoreIsRefused) — and it never migrates one
 	// either (see TestRoutedReadDoesNotMigrateTheStore).
-	alphaStore, err := store.OpenBackend(ctx, dirA, "sqlite", "", "", store.RW)
+	alphaStore, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dirA, Engine: "sqlite", PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := alphaStore.Migrate(); err != nil {
+	if err := alphaStore.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := alphaStore.Close(); err != nil {
@@ -172,7 +171,7 @@ func TestLazyOpenSeedAndClose(t *testing.T) {
 		t.Fatalf("Open after Close = %v, want closed error", err)
 	}
 	// Close must not have closed the seeded (externally owned) store.
-	if _, err := st.ElementCount(); err != nil {
+	if _, err := st.ElementCount(context.Background()); err != nil {
 		t.Fatalf("seeded store must survive router.Close: %v", err)
 	}
 }

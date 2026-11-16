@@ -161,13 +161,19 @@ func incidentWhere(q IncidentQuery, b *whereBuilder) string {
 func searchWhere(query, knowledgeType, environment string, b *whereBuilder) string {
 	t, c := b.bind(likeContains(query)), b.bind(likeContains(query))
 	conds := []string{"(LOWER(title) LIKE " + t + " ESCAPE '\\' OR LOWER(content) LIKE " + c + " ESCAPE '\\')"}
+	return strings.Join(append(conds, kindEnvConds(knowledgeType, environment, b)...), " AND ")
+}
+
+// kindEnvConds renders the optional exact knowledge type and environment filters.
+func kindEnvConds(knowledgeType, environment string, b *whereBuilder) []string {
+	var conds []string
 	if knowledgeType != "" {
 		conds = append(conds, "knowledge_type = "+b.bind(knowledgeType))
 	}
 	if environment != "" {
 		conds = append(conds, "environment = "+b.bind(environment))
 	}
-	return strings.Join(conds, " AND ")
+	return conds
 }
 
 // likeContains renders the SQL equivalent of the Rust .*needle.* regex: a
@@ -230,7 +236,7 @@ func decodeStringList(raw string) []string {
 // scanEnvVariants folds (qualified_name, env) rows — ordered by qualified
 // name — into the variants that appear in more than one environment. It
 // takes the shared row interface so SQLite and pgx rows use one path.
-func scanEnvVariants(rows versionRows) ([]EnvVariant, error) {
+func scanEnvVariants(rows scanRows) ([]EnvVariant, error) {
 	var grouped []EnvVariant
 	cur := -1
 	for rows.Next() {

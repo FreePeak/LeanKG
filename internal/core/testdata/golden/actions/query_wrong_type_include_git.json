@@ -1,0 +1,3 @@
+{
+  "error": "LEANKG_ERROR_INVALID_PARAM: args.include_git must be a boolean. Fix: send action and query as strings, limit as a whole number, and args as an object; re-read the tool's inputSchema for the exact types (docs: docs/mcp-tool-contract.md)"
+}

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -197,17 +200,17 @@ func TestServeBindAcceptsWildcardWithSiteAdmin(t *testing.T) {
 	t.Setenv("LEANKG_TOKEN_ADMIN", "")
 	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
 	t.Setenv("LEANKG_TOKEN_VIEWER", "")
-	st, err := store.Open(t.TempDir()+"/.leankg/leankg.db", store.RW)
+	st, err := openFixtureStore(t.TempDir()+"/.leankg/leankg.db", store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	check := func() error {
 		t.Helper()
-		gateOn, err := auth.GateEnabled(st)
+		gateOn, err := auth.GateEnabled(context.Background(), st)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -216,10 +219,87 @@ func TestServeBindAcceptsWildcardWithSiteAdmin(t *testing.T) {
 	if err := check(); err == nil {
 		t.Fatal("a wildcard bind with no token and no site admin must be refused")
 	}
-	if _, err := auth.CreateSiteAdmin(st, "ops", "correct horse battery staple"); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "ops", "correct horse battery staple"); err != nil {
 		t.Fatal(err)
 	}
 	if err := check(); err != nil {
 		t.Fatalf("a wildcard bind with a site admin must be allowed: %v", err)
+	}
+}
+
+// TestServeUIFileRouteExposure pins D1: the --ui dashboard's GET /api/file
+// reads any file under the project root. With no token configured the route
+// is served only on a loopback --ui bind; a wildcard bind answers 403
+// (PERMISSION_DENIED) instead of handing the file reader to the LAN. With a
+// viewer token configured, the wildcard bind keeps requiring it.
+//
+// The route is built inside serve, so the check runs against the real process.
+func TestServeUIFileRouteExposure(t *testing.T) {
+	bin := buildLeanKG(t)
+	proj := seedProject(t)
+	if out, err := exec.Command(bin, "index", proj, "--auto").CombinedOutput(); err != nil {
+		t.Fatalf("index: %v\n%s", err, out)
+	}
+
+	for _, c := range []struct {
+		name string
+		host string
+		env  []string
+		auth string
+		want int
+	}{
+		{"wildcard, no token: refused", "0.0.0.0", nil, "", http.StatusForbidden},
+		{"loopback, no token: open", "127.0.0.1", nil, "", http.StatusOK},
+		{"wildcard, viewer token, no bearer: 401", "0.0.0.0", []string{"LEANKG_TOKEN_VIEWER=s3cret"}, "", http.StatusUnauthorized},
+		{"wildcard, viewer token, bearer: open", "0.0.0.0", []string{"LEANKG_TOKEN_VIEWER=s3cret"}, "Bearer s3cret", http.StatusOK},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			port := freePortStr(t)
+			cmd := exec.Command(bin, "serve", "--read-only", "--ui", c.host+":"+port, "--http", "127.0.0.1:0", "--project", proj)
+			cmd.Env = append(tokenFreeEnv(), c.env...)
+			logs := &lockedBuffer{}
+			cmd.Stdout, cmd.Stderr = logs, logs
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("serve: %v", err)
+			}
+			defer func() {
+				_ = cmd.Process.Kill()
+				_, _ = cmd.Process.Wait()
+			}()
+
+			base := "http://127.0.0.1:" + port
+			for deadline := time.Now().Add(20 * time.Second); ; {
+				if resp, err := http.Get(base + "/health"); err == nil {
+					resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						break
+					}
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("dashboard did not come up:\n%s", logs.String())
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			req, err := http.NewRequest(http.MethodGet, base+"/api/file?path=demo.go", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.auth != "" {
+				req.Header.Set("Authorization", c.auth)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("GET /api/file: %v\n%s", err, logs.String())
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != c.want {
+				t.Fatalf("GET /api/file on --ui %s: %d, want %d; body=%s", c.host+":"+port, resp.StatusCode, c.want, body)
+			}
+			if c.want == http.StatusForbidden && !strings.Contains(string(body), "LEANKG_ERROR_PERMISSION_DENIED") {
+				t.Errorf("403 body lacks the PERMISSION_DENIED code: %s", body)
+			}
+		})
 	}
 }

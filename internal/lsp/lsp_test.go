@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -19,13 +21,21 @@ import (
 // fakeLSP is a POSIX-sh LSP server: it answers the handshake, serves canned
 // symbol payloads, and can be told to go mute on documentSymbol requests.
 // Behaviour is selected with FAKE_LSP_MODE: hier (default) | flat | silent |
-// rich | crash. rich mode answers per-URI documentSymbol payloads (with detail +
-// hierarchy) and hover docs, which the enrichment tests consume. crash exits on
-// the first documentSymbol request, so a test can see a server die mid-pass.
+// rich | crash | hang. rich mode answers per-URI documentSymbol payloads (with
+// detail + hierarchy) and hover docs, which the enrichment tests consume. crash
+// exits on the first documentSymbol request, so a test can see a server die
+// mid-pass. hang never answers the handshake; it records its pid in
+// HANG_PID_FILE and a background child's pid in HANG_CHILD_FILE.
 // FAKE_LSP_INIT_DELAY=<seconds> delays the initialize answer, so a test can
 // make the handshake slower than the request timeout.
 const fakeLSP = `#!/bin/sh
 mode="${FAKE_LSP_MODE:-hier}"
+if [ "$mode" = hang ]; then
+  echo $$ > "$HANG_PID_FILE"
+  sleep 60 & echo $! > "$HANG_CHILD_FILE"
+  wait
+  exit 0
+fi
 cr=$(printf '\r')
 
 send() {
@@ -92,7 +102,47 @@ while :; do
 done
 `
 
-// fakeSpec drops a POSIX-sh fake server on PATH and returns a spec that
+// sharedFakeDir holds the one fake server every test execs (fake-lsp, behaviour
+// selected by FAKE_LSP_MODE). TestMain writes and warms it once.
+var sharedFakeDir string
+
+// TestMain writes the fake server once and execs it once before any test runs.
+//
+// Why: macOS verifies a newly written executable on its first exec, and under
+// contention that verification queues behind other processes spawning binaries.
+// Measured on this machine (evidence: lsp-cold-exec-under-load.txt): a first
+// exec of a fresh script took 5.6s to 10.7s with 24 concurrent spawners, while a
+// re-exec of the same file took 5.6ms. A per-test fake paid that cold cost inside
+// the test's 5s pid-file deadline, which flaked TestManagerSpawnHoldsNoLock. The
+// warm-up below has no deadline, so the cost is paid once, outside every budget.
+func TestMain(m *testing.M) {
+	if runtime.GOOS == "windows" {
+		os.Exit(m.Run())
+	}
+	dir, err := os.MkdirTemp("", "lsp-fake-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lsp test setup:", err)
+		os.Exit(1)
+	}
+	script := filepath.Join(dir, "fake-lsp")
+	if err := os.WriteFile(script, []byte(fakeLSP), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "lsp test setup:", err)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	// With no stdin the fake reads EOF and exits 0 at once.
+	if err := exec.Command(script).Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "lsp test setup: warm-up exec failed:", err)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	sharedFakeDir = dir
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// fakeSpec puts the shared fake server on PATH in mode and returns a spec that
 // resolves to it. The caller's t.Setenv-scoped PATH is inherited because the
 // manager never overrides the child environment.
 func fakeSpec(t *testing.T, mode string) *langs.LSPSpec {
@@ -100,13 +150,7 @@ func fakeSpec(t *testing.T, mode string) *langs.LSPSpec {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake LSP server is a POSIX sh script")
 	}
-	dir := t.TempDir()
-	script := filepath.Join(dir, "fake-lsp")
-	if err := os.WriteFile(script, []byte(fakeLSP), 0o755); err != nil {
-		t.Fatalf("write fake server: %v", err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("FAKE_LSP_MODE", mode)
+	fakeServerDir(t, mode)
 	return &langs.LSPSpec{Commands: []string{"fake-lsp"}}
 }
 

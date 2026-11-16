@@ -67,7 +67,8 @@ type dirtyItem struct{ file, qn, text, hash string }
 // runs would move the write cap. Writers use writeCapFor, which keeps the cap
 // recorded in the stamp or refuses before any write.
 func TextCap(p Provider) int {
-	return capForLabel(p.Provider(), sidecarBudget(p))
+	id := p.Identity()
+	return capForLabel(id.Provider, id.TextBudget)
 }
 
 // capForLabel is the rune cap for provider label `label` given the sidecar's
@@ -114,11 +115,8 @@ func resolveWriteCap(label string, budget, pin, stored int) (int, error) {
 // answer that changes mid-run cannot change the cut. ExportNDJSON calls it too,
 // so an export's text is the live cut.
 func writeCapFor(cur *store.ModelStamp, p Provider, mode string) (int, string, error) {
-	pin, err := textCapPin()
-	if err != nil {
-		return 0, "", err
-	}
-	return writeCap(mode, StampOf(p), cur, sidecarBudget(p), pin)
+	id := p.Identity()
+	return writeCap(mode, id.Stamp(), cur, id.TextBudget, id.TextCapPin)
 }
 
 // writeCap is the rule behind writeCapFor, pure so each branch is testable.
@@ -157,15 +155,6 @@ func writeCap(mode string, want store.ModelStamp, cur *store.ModelStamp, budget,
 	return recorded, "", nil
 }
 
-// sidecarBudget is the text budget the local sidecar reports from /props, in
-// runes; 0 when p has none or the sidecar cannot be asked.
-func sidecarBudget(p Provider) int {
-	if tb, ok := unwrapProvider(p).(interface{ TextBudget() int }); ok {
-		return tb.TextBudget()
-	}
-	return 0
-}
-
 // planText is the text a live run sends for one element: documentText cut to
 // limit runes (the run's one write cap, writeCapFor), and whether it was cut.
 // Run embeds it and ExportNDJSON writes it, so an offsite embedder receives the
@@ -186,7 +175,7 @@ func planText(limit int, e elementText) (text string, truncated bool) {
 // it as the line's text, so the offsite embedder and the live run cannot drift.
 func documentInput(p Provider, limit int, e elementText) string {
 	text, _ := planText(limit, e)
-	_, document := Prefixes(p.ModelID())
+	_, document := Prefixes(p.Identity().Model)
 	return prefixTexts(document, []string{text})[0]
 }
 
@@ -204,17 +193,7 @@ func TruncateText(s string, n int) string {
 // model id. Every vector writer AND the L3 query guard compare this value, so
 // chunker or prefix drift is caught exactly like a revision change.
 func StampOf(p Provider) store.ModelStamp {
-	q, d := Prefixes(p.ModelID())
-	return store.ModelStamp{
-		ModelID:        p.ModelID(),
-		Revision:       p.Revision(),
-		Dimensions:     p.Dimensions(),
-		Distance:       p.Distance(),
-		Provider:       p.Provider(),
-		ChunkerVersion: ChunkerVersion,
-		QueryPrefix:    q,
-		DocumentPrefix: d,
-	}
+	return p.Identity().Stamp()
 }
 
 // stampDrift names the stamp components that differ, so the rebuild directive
@@ -261,13 +240,30 @@ func join(parts []string, sep string) string {
 // the run; a batch failing validation (count/dims/finiteness) is counted in
 // Report.Failed and the run continues to status partial. Vectors and state
 // land per file in one transaction (see embedFiles).
-func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report, error) {
+func Run(ctx context.Context, st Store, p Provider, mode string) (Report, error) {
+	// The run ledger records the run even when ctx is cancelled (a cancelled
+	// run is stored as cancelled), so its writes do not take the caller's ctx.
+	ledger := context.WithoutCancel(ctx)
 	start := time.Now()
 	rep := Report{Mode: mode, Backend: st.Engine()}
 	if mode != "incremental" && mode != "full" {
 		return rep, fmt.Errorf("embed: unknown mode %q (want incremental|full)", mode)
 	}
-	modelID := p.ModelID()
+	modelID := p.Identity().Model
+	// stopped records a run that ctx stopped before its plan was made: the run
+	// still leaves its ledger row, as cancelled.
+	stopped := func(err error) (Report, error) {
+		if runID, serr := st.StartEmbedRun(ledger, modelID, mode, 0); serr == nil {
+			_ = st.FinishEmbedRun(ledger, runID, failedStatus(err), 0, 0, 0, 0, 0)
+		}
+		return rep, err
+	}
+	if err := ctx.Err(); err != nil {
+		return stopped(err)
+	}
+	if err := p.Probe(ctx); err != nil {
+		return rep, err
+	}
 	want := StampOf(p)
 	// Stamp guard (FR-ZCP-11 contract): every vector writer enforces the
 	// same hard-rebuild rule over the WHOLE identity — model, revision,
@@ -275,7 +271,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	//   full        + mismatch ⇒ clear + re-stamp (rebuild, never mixed)
 	//   incremental + mismatch ⇒ HARD FAIL with a rebuild directive (writeCap)
 	//   no stamp    ⇒ write (first build, both modes)
-	cur, err := st.Stamp(modelID)
+	cur, err := st.Stamp(ctx, modelID)
 	if err != nil {
 		return rep, err
 	}
@@ -293,7 +289,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 		rep.Notes = append(rep.Notes, note)
 	}
 	if cur != nil && (!cur.Matches(want) || (mode == "full" && cur.TextCap != writeLimit)) {
-		if err := st.ClearVectors(modelID); err != nil {
+		if err := st.ClearVectors(ctx, modelID); err != nil {
 			return rep, err
 		}
 		cur = nil
@@ -306,18 +302,21 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 			stamp = *cur
 		}
 		stamp.TextCap = writeLimit
-		if err := st.WriteStamp(stamp); err != nil {
+		if err := st.WriteStamp(ctx, stamp); err != nil {
 			return rep, err
 		}
 	}
 
 	// Plan: dirty = elements whose content hash differs from embedding_state
 	// (incremental) or all elements (full).
-	elems, err := readElements(st)
+	elems, err := readElements(ctx, st)
 	if err != nil {
+		if ctx.Err() != nil {
+			return stopped(err)
+		}
 		return rep, err
 	}
-	states, err := st.EmbeddingStateMap(modelID)
+	states, err := st.EmbeddingStateMap(ctx, modelID)
 	if err != nil {
 		return rep, err
 	}
@@ -336,7 +335,7 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	}
 	rep.Dirty = len(dirty)
 
-	runID, err := st.StartEmbedRun(modelID, mode, rep.Dirty)
+	runID, err := st.StartEmbedRun(ledger, modelID, mode, rep.Dirty)
 	if err != nil {
 		return rep, err
 	}
@@ -344,22 +343,22 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	status := "ok"
 	if err := embedFiles(ctx, st, p, modelID, groupByFile(dirty), &rep); err != nil {
 		rep.Duration = time.Since(start)
-		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, failedStatus(err), rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
 	}
 
 	// Reclaim vectors whose element is gone before measuring coverage: the
 	// run used to report `Orphans: N` and leave them to `leankg gc` while L3
 	// served them as hits (RS-05).
-	if _, err := st.DeleteOrphanVectors(); err != nil {
+	if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 		rep.Duration = time.Since(start)
-		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, fmt.Errorf("embed: reclaim orphan vectors: %w", err)
 	}
-	covered, orphans, err := readVectorCounts(st, modelID)
+	covered, orphans, err := readVectorCounts(ctx, st, modelID)
 	if err != nil {
 		rep.Duration = time.Since(start)
-		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
 	}
 	rep.Orphans = orphans
@@ -370,25 +369,41 @@ func Run(ctx context.Context, st store.Backend, p Provider, mode string) (Report
 	// Re-measure the noise floor whenever the collection changed (or was
 	// never measured for this identity). A calibration failure costs only the
 	// low-confidence flag and dense memory recall, never the run.
-	if _, ok := ReadCalibration(st, StampOf(p)); rep.Embedded > 0 || !ok {
+	if _, ok := ReadCalibration(ctx, st, StampOf(p)); rep.Embedded > 0 || !ok {
 		if floor, ok, err := Calibrate(ctx, st, p); err == nil && ok {
 			rep.NoiseFloor = floor
 		}
-	} else if floor, ok := ReadCalibration(st, StampOf(p)); ok {
+	} else if floor, ok := ReadCalibration(ctx, st, StampOf(p)); ok {
 		rep.NoiseFloor = floor
 	}
 	rep.Duration = time.Since(start)
-	if err := st.FinishEmbedRun(runID, status, rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
+	// A stop requested after the writes began still records the run as
+	// cancelled: it is neither ok nor partial, and the caller sees the error.
+	cancelErr := ctx.Err()
+	if cancelErr != nil {
+		status = "cancelled"
+	}
+	if err := st.FinishEmbedRun(ledger, runID, status, rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
 		return rep, err
 	}
 	// The inventory snapshot carries TotalVectors, and this writer just moved
 	// the watermark past it: without the refresh a fully embedded project is
 	// reported possibly_stale until the next index. (Found by dogfooding the
 	// embedding pipeline on this repo itself.)
-	if _, err := store.RefreshInventory(st); err != nil {
+	if _, err := store.RefreshInventory(ctx, st); err != nil {
 		return rep, fmt.Errorf("embed: inventory snapshot: %w", err)
 	}
-	return rep, nil
+	return rep, cancelErr
+}
+
+// failedStatus is the run status recorded when embedFiles returns err: a
+// cancellation is "cancelled" (the stop was requested, the data did not fail),
+// anything else is "failed".
+func failedStatus(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	return "failed"
 }
 
 // needsVector is the incremental selection, shared by Run and IncrementalBacklog
@@ -403,12 +418,12 @@ func needsVector(qn, hash string, states map[string]string) bool {
 // IncrementalBacklog counts the elements an incremental Run over st with provider
 // p would embed. It reads the store and never calls the provider, so a caller can
 // size the embed before it starts one.
-func IncrementalBacklog(st store.Backend, p Provider) (int, error) {
-	elems, err := readElements(st)
+func IncrementalBacklog(ctx context.Context, st Store, p Provider) (int, error) {
+	elems, err := readElements(ctx, st)
 	if err != nil {
 		return 0, err
 	}
-	states, err := st.EmbeddingStateMap(p.ModelID())
+	states, err := st.EmbeddingStateMap(ctx, p.Identity().Model)
 	if err != nil {
 		return 0, err
 	}
@@ -455,10 +470,11 @@ func groupByFile(dirty []dirtyItem) [][]dirtyItem {
 // fail-loud contract (found dogfooding `leankg-embed` on this repository).
 //
 // A permanent configuration error (ErrEndpointConfig: wrong base URL, refused
-// API key, a reply that is not an embeddings object) is not a poison element:
-// embedFiles returns it at once, before any retry or shrink, so a misconfigured
+// API key, a reply that is not an embeddings object) and a request timeout
+// (ErrEndpointTimeout: a hung endpoint) are not poison elements: embedFiles
+// returns them at once, before any retry or shrink, so a misconfigured or hung
 // endpoint costs one request and writes nothing from the failing group.
-func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
+func embedFiles(ctx context.Context, st Store, p Provider, modelID string, groups [][]dirtyItem, rep *Report) error {
 	var lastErr error
 	for _, group := range groups {
 		rows := make([]store.VectorRow, 0, len(group))
@@ -474,8 +490,12 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 			}
 			vecs, err := p.Embed(ctx, Document, texts)
 			if err != nil {
-				if errors.Is(err, ErrEndpointConfig) {
+				if endpointDown(err) {
 					return err
+				}
+				// A cancelled run is not poison: stop, do not retry item by item.
+				if cerr := ctx.Err(); cerr != nil {
+					return cerr
 				}
 				// Per-item retry with shrink: a batch the provider rejected
 				// is retried item by item (healthy siblings still commit),
@@ -492,13 +512,16 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 					shrunk := false
 					for range 4 {
 						v, ierr := p.Embed(ctx, Document, []string{text})
-						if ierr == nil && validateBatch(v, 1, p.Dimensions()) == nil {
+						if ierr == nil && validateBatch(v, 1, p.Identity().Dims) == nil {
 							vec = v[0]
 							break
 						}
 						if ierr != nil {
-							if errors.Is(ierr, ErrEndpointConfig) {
+							if endpointDown(ierr) {
 								return ierr
+							}
+							if cerr := ctx.Err(); cerr != nil {
+								return cerr
 							}
 							lastErr = ierr
 						}
@@ -521,7 +544,7 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 				}
 				continue
 			}
-			if err := validateBatch(vecs, len(texts), p.Dimensions()); err != nil {
+			if err := validateBatch(vecs, len(texts), p.Identity().Dims); err != nil {
 				rep.Failed += len(batch)
 				continue
 			}
@@ -533,7 +556,7 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 		if len(rows) == 0 {
 			continue
 		}
-		if err := st.ReplaceFileVectors(modelID, rows, states); err != nil {
+		if err := st.ReplaceFileVectors(ctx, modelID, rows, states); err != nil {
 			return err
 		}
 		rep.Embedded += len(rows)
@@ -545,6 +568,12 @@ func embedFiles(ctx context.Context, st store.Backend, p Provider, modelID strin
 		return fmt.Errorf("embed: all %d item(s) failed: %w", rep.Failed, lastErr)
 	}
 	return nil
+}
+
+// endpointDown reports whether err means the endpoint cannot serve this run at
+// all (a configuration error or a request timeout), so no retry can help.
+func endpointDown(err error) bool {
+	return errors.Is(err, ErrEndpointConfig) || errors.Is(err, ErrEndpointTimeout)
 }
 
 func truncateRunes(s string, n int) string {

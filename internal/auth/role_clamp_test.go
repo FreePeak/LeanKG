@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,21 +17,21 @@ import (
 // CROSS-account issuance), which would be a straight escalation. Rust shipped
 // that hole while its doc comment claimed admin-only issuance.
 func TestViewerCannotMintAboveItsRole(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	acct, err := Register(st, "viewer@example.com", "password123", "V")
+	acct, err := Register(context.Background(), st, "viewer@example.com", "password123", "V")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	// A viewer token bound to that account.
-	viewerSecret, _, err := Mint(st, MintRequest{Name: "v", Role: "viewer", AccountID: acct.ID})
+	viewerSecret, _, err := Mint(context.Background(), st, MintRequest{Name: "v", Role: "viewer", AccountID: acct.ID})
 	if err != nil {
 		t.Fatalf("mint viewer: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestViewerCannotMintAboveItsRole(t *testing.T) {
 	if env.Data.Role != "viewer" {
 		t.Fatalf("issued role = %q, want viewer (no escalation)", env.Data.Role)
 	}
-	g, ok, err := Verify(st, env.Data.AccessToken)
+	g, ok, err := Verify(context.Background(), st, env.Data.AccessToken)
 	if err != nil || !ok {
 		t.Fatalf("verify issued token: ok=%v err=%v", ok, err)
 	}
@@ -73,23 +74,23 @@ func TestViewerCannotMintAboveItsRole(t *testing.T) {
 // clamping only non-writers left a contributor able to mint itself admin, and
 // the old account check let any writer issue a token bound to another account.
 func TestContributorCannotMintAdminOrForOthers(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mine, err := Register(st, "contrib@example.com", "password123", "C")
+	mine, err := Register(context.Background(), st, "contrib@example.com", "password123", "C")
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := Register(st, "other@example.com", "password123", "O")
+	other, err := Register(context.Background(), st, "other@example.com", "password123", "O")
 	if err != nil {
 		t.Fatal(err)
 	}
-	contrib, _, err := Mint(st, MintRequest{Name: "c", Role: "contributor", AccountID: mine.ID})
+	contrib, _, err := Mint(context.Background(), st, MintRequest{Name: "c", Role: "contributor", AccountID: mine.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

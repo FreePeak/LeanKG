@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -137,21 +138,21 @@ func runCLIWith(t *testing.T, dir string, env []string, args ...string) (string,
 func seedCLIProject(t *testing.T, els []store.Element, rels []store.Relationship) string {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if len(els) > 0 {
-		if err := st.UpsertElements(els); err != nil {
+		if err := st.UpsertElements(context.Background(), els); err != nil {
 			t.Fatalf("seed elements: %v", err)
 		}
 	}
 	if len(rels) > 0 {
-		if err := st.UpsertRelationships(rels); err != nil {
+		if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 			t.Fatalf("seed relationships: %v", err)
 		}
 	}

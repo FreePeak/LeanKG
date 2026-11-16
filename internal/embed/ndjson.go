@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -38,52 +37,21 @@ type importTarget struct {
 	provider Provider
 }
 
-// resolveImport resolves the import identity from the same LEANKG_EMBED_*
-// environment the live constructors read. It builds the provider the way
-// FromEnv does, which needs no network for a catalogued model or an operator
-// pin (see localPinned), so an import never needs a running provider. The
-// arguments are the import flags: an empty string or zero means "not given",
-// and a given value must equal the resolved one. A conflict is an error, so the
-// import never writes a stamp the live provider would not match.
-func resolveImport(model, revision, distance string, dims int) (importTarget, error) {
-	name, err := providerName()
+// resolveImport resolves the import identity from cfg, the same configuration
+// the live provider is built from. It builds the provider without spawning or
+// probing anything (build), which needs no network for a catalogued model or an
+// operator pin, so an import never needs a running provider. The arguments are
+// the import flags: an empty string or zero means "not given", and a given value
+// must equal the resolved one. A conflict is an error, so the import never
+// writes a stamp the live provider would not match.
+func resolveImport(cfg Config, model, revision, distance string, dims int) (importTarget, error) {
+	if cfg.providerName() == ProviderLocal && !cfg.localPinned() {
+		return importTarget{}, fmt.Errorf("embed: import cannot name the revision a running local sidecar reports for %q: "+
+			"set LEANKG_EMBED_REVISION, or name a catalogued model in LEANKG_EMBED_MODEL", cfg.localModelID())
+	}
+	p, native, err := build(cfg)
 	if err != nil {
 		return importTarget{}, err
-	}
-	// resolved is the model the environment selects; model is the flag, which
-	// is only compared against it.
-	var resolved string
-	var native, width int
-	var p Provider
-	switch name {
-	case "deterministic":
-		resolved = "deterministic"
-		if native, width, err = providerDims(resolved, defaultDims); err != nil {
-			return importTarget{}, err
-		}
-		p = Deterministic(width)
-	case "openai":
-		resolved = os.Getenv("LEANKG_EMBED_MODEL")
-		if native, width, err = providerDims(resolved, defaultDims); err != nil {
-			return importTarget{}, err
-		}
-		if p, err = openAIProvider("openai", "https://api.openai.com/v1"); err != nil {
-			return importTarget{}, err
-		}
-	case "local":
-		resolved = localModel()
-		if !localPinned(resolved) {
-			return importTarget{}, fmt.Errorf("embed: import cannot name the revision a running local sidecar reports for %q: "+
-				"set LEANKG_EMBED_REVISION, or name a catalogued model in LEANKG_EMBED_MODEL", resolved)
-		}
-		if native, width, err = providerDims(resolved, defaultDims); err != nil {
-			return importTarget{}, err
-		}
-		if p, err = newLocalProvider(os.Getenv("LEANKG_EMBED_BASE_URL")); err != nil {
-			return importTarget{}, err
-		}
-	default:
-		return importTarget{}, fmt.Errorf("embed: unknown LEANKG_EMBED_PROVIDER %q (want local|openai|deterministic)", name)
 	}
 	stamp := StampOf(p)
 	for _, check := range []error{
@@ -106,7 +74,7 @@ func matchImportFlag[T comparable](flag string, given, resolved T) error {
 	if given == unset || given == resolved {
 		return nil
 	}
-	return fmt.Errorf("embed: import %s %v conflicts with the live provider environment (%v); unset the flag or fix LEANKG_EMBED_*",
+	return fmt.Errorf("embed: import %s %v conflicts with the live provider configuration (%v); unset the flag or fix the provider configuration",
 		flag, given, resolved)
 }
 
@@ -122,19 +90,21 @@ func matchImportFlag[T comparable](flag string, given, resolved T) error {
 // prefix. content_hash stays the hash of the raw element content: it is the
 // resume key shared with Run, not a hash of the transmitted text.
 //
-// The provider is resolved from the LEANKG_EMBED_* environment exactly as the
-// import is (resolveImport); modelID is the --model flag and must agree with
-// it. The cut is the same write cap an incremental run resolves (writeCapFor):
+// The provider is resolved from cfg exactly as the import is (resolveImport);
+// modelID is the --model flag and must agree with it. The cut is the same write cap an incremental run resolves (writeCapFor):
 // the stored cap when the stamp has one, so an export works while /props is
 // down. With no stored cap, no /props budget and no LEANKG_EMBED_TEXT_CAP pin
 // the cap is undetermined and the export fails before writing anything.
-func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Writer) error {
-	target, err := resolveImport(modelID, "", "", 0)
+func ExportNDJSON(ctx context.Context, st Store, cfg Config, modelID string, w io.Writer) error {
+	target, err := resolveImport(cfg, modelID, "", "", 0)
 	if err != nil {
 		return err
 	}
 	p := target.provider
-	cur, err := st.Stamp(p.ModelID())
+	if err := p.Probe(ctx); err != nil {
+		return err
+	}
+	cur, err := st.Stamp(ctx, p.Identity().Model)
 	if err != nil {
 		return err
 	}
@@ -142,7 +112,7 @@ func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Wr
 	if err != nil {
 		return err
 	}
-	elems, err := readElements(st)
+	elems, err := readElements(ctx, st)
 	if err != nil {
 		return err
 	}
@@ -166,7 +136,7 @@ func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Wr
 // lines and writes them as the live provider's vectors for this environment.
 //
 // The stamp is the one the live provider writes (resolveImport): the model,
-// revision, distance, width, provider and prefixes come from LEANKG_EMBED_*.
+// revision, distance, width, provider and prefixes come from cfg.
 // modelID, revision, distance and dims are optional overrides that must agree
 // with that resolution. A mismatched collection is cleared first (same guard
 // as a full Run).
@@ -184,17 +154,20 @@ func ExportNDJSON(ctx context.Context, st store.Backend, modelID string, w io.Wr
 // already holds a vector for the element's current content or for the content
 // the line was embedded from. A line whose QN has no live element counts as an
 // orphan and is not written.
-func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, distance string, dims int, r io.Reader) (Report, error) {
+func ImportNDJSON(ctx context.Context, st Store, cfg Config, modelID, revision, distance string, dims int, r io.Reader) (Report, error) {
+	// The run ledger records the run even when ctx is cancelled (a cancelled
+	// run is stored as cancelled), so its writes do not take the caller's ctx.
+	ledger := context.WithoutCancel(ctx)
 	start := time.Now()
 	rep := Report{Mode: "import", Backend: st.Engine()}
 
-	target, err := resolveImport(modelID, revision, distance, dims)
+	target, err := resolveImport(cfg, modelID, revision, distance, dims)
 	if err != nil {
 		return rep, err
 	}
 	want, native := target.stamp, target.native
 	width := want.Dimensions
-	cur, err := st.Stamp(want.ModelID)
+	cur, err := st.Stamp(ctx, want.ModelID)
 	if err != nil {
 		return rep, err
 	}
@@ -205,18 +178,18 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 	// identity change clears the collection and rewrites the stamp, also with 0,
 	// because the old cap described vectors that are gone.
 	if cur != nil && !cur.Matches(want) {
-		if err := st.ClearVectors(want.ModelID); err != nil {
+		if err := st.ClearVectors(ctx, want.ModelID); err != nil {
 			return rep, err
 		}
 		cur = nil
 	}
 	if cur == nil {
-		if err := st.WriteStamp(want); err != nil {
+		if err := st.WriteStamp(ctx, want); err != nil {
 			return rep, err
 		}
 	}
 
-	elems, err := readElements(st)
+	elems, err := readElements(ctx, st)
 	if err != nil {
 		return rep, err
 	}
@@ -224,17 +197,17 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 	for _, e := range elems {
 		elementByQN[e.QN] = contentHashHex(e.Content)
 	}
-	resume, err := st.EmbeddingStateMap(want.ModelID)
+	resume, err := st.EmbeddingStateMap(ctx, want.ModelID)
 	if err != nil {
 		return rep, err
 	}
 
-	runID, err := st.StartEmbedRun(want.ModelID, "import", 0)
+	runID, err := st.StartEmbedRun(ledger, want.ModelID, "import", 0)
 	if err != nil {
 		return rep, err
 	}
 	fail := func(err error) (Report, error) {
-		_ = st.FinishEmbedRun(runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
+		_ = st.FinishEmbedRun(ledger, runID, "failed", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans)
 		return rep, err
 	}
 
@@ -246,10 +219,10 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 		if len(rows) == 0 {
 			return nil
 		}
-		if err := st.UpsertVectors(want.ModelID, rows); err != nil {
+		if err := st.UpsertVectors(ctx, want.ModelID, rows); err != nil {
 			return err
 		}
-		if err := st.SetEmbeddingStates(want.ModelID, states); err != nil {
+		if err := st.SetEmbeddingStates(ctx, want.ModelID, states); err != nil {
 			return err
 		}
 		rows = rows[:0]
@@ -315,14 +288,14 @@ func ImportNDJSON(ctx context.Context, st store.Backend, modelID, revision, dist
 
 	// Add stored orphans (vectors whose element no longer exists) to any
 	// input orphans counted above — the two sets are disjoint.
-	covered, dbOrphans, err := readVectorCounts(st, want.ModelID)
+	covered, dbOrphans, err := readVectorCounts(ctx, st, want.ModelID)
 	if err != nil {
 		return fail(err)
 	}
 	rep.Orphans += dbOrphans
 	rep.Coverage = coverage(covered, len(elems))
 	rep.Duration = time.Since(start)
-	if err := st.FinishEmbedRun(runID, "ok", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
+	if err := st.FinishEmbedRun(ledger, runID, "ok", rep.Embedded, rep.Skipped, rep.Failed, rep.Truncations, rep.Orphans); err != nil {
 		return rep, err
 	}
 	return rep, nil

@@ -19,24 +19,24 @@ import (
 // miss now says so when any annotation exists.
 func TestSearchAnnotationsHint(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	// Empty store: the miss stays the plain one-line answer (nothing to hint at).
-	hits, err := annot.Search(st, "anything")
+	hits, err := annot.Search(context.Background(), st, "anything")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hits) != 0 {
 		t.Fatalf("empty store returned %d hits", len(hits))
 	}
-	all, err := annot.All(st)
+	all, err := annot.All(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,17 +47,17 @@ func TestSearchAnnotationsHint(t *testing.T) {
 	// With a row present, a description-only search matches; the feature id
 	// does not — which is the case the message must cover.
 	feature := "FR-9999-DEMO"
-	if _, err := annot.Annotate(st, "pkg/a.go::Do", "hint probe", nil, &feature); err != nil {
+	if _, err := annot.Annotate(context.Background(), st, "pkg/a.go::Do", "hint probe", nil, &feature); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := annot.Search(st, feature); len(hits) != 0 {
+	if hits, _ := annot.Search(context.Background(), st, feature); len(hits) != 0 {
 		t.Errorf("feature id matched %d rows — annot.Search is description-only by design", len(hits))
 	}
-	if hits, _ := annot.Search(st, "hint probe"); len(hits) != 1 {
+	if hits, _ := annot.Search(context.Background(), st, "hint probe"); len(hits) != 1 {
 		t.Errorf("description search returned %d rows, want 1", len(hits))
 	}
 	// The count the message prints comes from All, so it must see the row.
-	all, err = annot.All(st)
+	all, err = annot.All(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path"
@@ -42,7 +43,7 @@ var wikiLinkRE = regexp.MustCompile(`\[\[([^\[\]]+)\]\]`)
 // Idempotent by construction: elements upsert on qualified name, relationships
 // on (source, target, rel_type), so a second Pull over an unchanged vault
 // writes the same rows and adds nothing new.
-func (e *Engine) Pull() (PullResult, error) {
+func (e *Engine) Pull(ctx context.Context) (PullResult, error) {
 	if e.st == nil {
 		return PullResult{}, errors.New("obsidian: pull requires a store")
 	}
@@ -94,7 +95,7 @@ func (e *Engine) Pull() (PullResult, error) {
 			}
 		}
 		if ann, ok := readAnnotationLine(content); ok && ann != "" && meta["leankg_id"] != "" {
-			imported, conflict, err := e.importAnnotation(meta["leankg_id"], ann)
+			imported, conflict, err := e.importAnnotation(ctx, meta["leankg_id"], ann)
 			if err != nil {
 				return res, err
 			}
@@ -107,10 +108,10 @@ func (e *Engine) Pull() (PullResult, error) {
 		}
 	}
 
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(ctx, els); err != nil {
 		return res, err
 	}
-	if err := e.st.UpsertRelationships(rels); err != nil {
+	if err := e.st.UpsertRelationships(ctx, rels); err != nil {
 		return res, err
 	}
 	res.Notes = len(els)
@@ -141,14 +142,14 @@ func addRelationship(rels *[]store.Relationship, seen map[string]bool, source, t
 // Empty annotations are skipped. Rust created an empty business_logic row for
 // every generated note (the template writes leankg_annotation: ""), which
 // records nothing; skipping loses no information and keeps the store clean.
-func (e *Engine) importAnnotation(elementID, annotation string) (bool, *Conflict, error) {
-	existing, found, err := e.st.KVGet(AnnotationNamespace, elementID)
+func (e *Engine) importAnnotation(ctx context.Context, elementID, annotation string) (bool, *Conflict, error) {
+	existing, found, err := e.st.KVGet(ctx, AnnotationNamespace, elementID)
 	if err != nil {
 		return false, nil, fmt.Errorf("obsidian: read annotation for %s: %w", elementID, err)
 	}
 	switch {
 	case !found:
-		if err := e.st.KVSet(AnnotationNamespace, elementID, annotation); err != nil {
+		if err := e.st.KVSet(ctx, AnnotationNamespace, elementID, annotation); err != nil {
 			return false, nil, fmt.Errorf("obsidian: import annotation for %s: %w", elementID, err)
 		}
 		return true, nil, nil

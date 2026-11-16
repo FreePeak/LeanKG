@@ -12,14 +12,14 @@ import (
 // traverses: pkg/b.go::Caller calls pkg/a.go::Helper, which calls Leaf.
 func seedGraph(t *testing.T, e *Engine) {
 	t.Helper()
-	if err := e.st.UpsertElements([]store.Element{
+	if err := e.st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "pkg/a.go::Helper", ElementType: "function", Name: "Helper", FilePath: "pkg/a.go", Language: "go"},
 		{QualifiedName: "pkg/b.go::Caller", ElementType: "function", Name: "Caller", FilePath: "pkg/b.go", Language: "go"},
 		{QualifiedName: "pkg/a.go::Leaf", ElementType: "function", Name: "Leaf", FilePath: "pkg/a.go", Language: "go"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.UpsertRelationships([]store.Relationship{
+	if err := e.st.UpsertRelationships(context.Background(), []store.Relationship{
 		{Source: "pkg/b.go::Caller", Target: "pkg/a.go::Helper", RelType: "calls", Confidence: 1},
 		{Source: "pkg/a.go::Helper", Target: "pkg/a.go::Leaf", RelType: "calls", Confidence: 1},
 	}); err != nil {

@@ -11,6 +11,7 @@ import (
 
 	connect "connectrpc.com/connect"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/rest"
 	leankgv1 "github.com/FreePeak/LeanKG/internal/rpc/leankg/v1"
@@ -23,6 +24,17 @@ import (
 // leankgv1connect.NewLeanKGHandler does.
 func Handler(engine *core.Engine, rec telemetry.Recorder) (string, http.Handler) {
 	return leankgv1connect.NewLeanKGHandler(NewLeanKGService(engine), connect.WithInterceptors(CaptureInterceptor(rec)))
+}
+
+// Mount registers the LeanKG service on mux with the role each procedure
+// needs (CX-49): Import writes and needs Contributor, Query, Status and
+// MemoryRead need Viewer. The service path itself is the Viewer floor for any
+// other procedure name, which the service answers as unimplemented.
+func Mount(mux *http.ServeMux, engine *core.Engine, rec telemetry.Recorder) {
+	path, handler := Handler(engine, rec)
+	h := ArgsRefusalRecovery(handler)
+	mux.Handle(leankgv1connect.LeanKGImportProcedure, auth.Require(auth.Contributor, h))
+	mux.Handle(path, auth.Require(auth.Viewer, h))
 }
 
 // CaptureInterceptor records each unary ConnectRPC call as one

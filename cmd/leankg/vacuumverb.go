@@ -23,15 +23,18 @@ import (
 // write lock for the whole rewrite. The default is deliberately the gentle
 // one: `leankg vacuum` must be safe to run against a store a reader is
 // serving.
-func cmdVacuum(args []string) {
-	fs := flag.NewFlagSet("vacuum", flag.ExitOnError)
+func cmdVacuum(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("vacuum", flag.ContinueOnError)
 	project := fs.String("project", ".", "project directory whose store is compacted (default cwd)")
 	engine := fs.String("engine", "", "storage engine: sqlite|postgres (default: LEANKG_DB_ENGINE, else sqlite)")
 	full := fs.Bool("full", false, "rewrite the whole store (whole-file VACUUM) instead of a bounded incremental reclaim")
 	maxPages := fs.Int("max-pages", maintain.DefaultMaxPages, "free pages a bounded incremental pass returns (ignored by --full)")
 	pageSize := fs.Int("page-size", 0, "rewrite the store with this page size (e.g. 8192): an opt-in, lossless whole-file rewrite that stops every vector row from owning a whole page (sqlite only)")
 	quiet := fs.Bool("quiet", false, "print only the bytes reclaimed")
-	positional := parseInterspersed("vacuum", fs, args, 1)
+	positional, err := parseInterspersed("vacuum", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if len(positional) == 1 {
 		*project = positional[0]
 	}
@@ -39,18 +42,18 @@ func cmdVacuum(args []string) {
 	if eng == "" {
 		eng = os.Getenv("LEANKG_DB_ENGINE")
 	}
-	st, err := openStore(context.Background(), *project, "", store.RW)
+	st, err := openStoreWith(ctx, *project, eng, "", store.RW)
 	if err != nil {
-		fatalText(fmt.Errorf("vacuum: open store: %w", err))
+		return verbFatal(fmt.Errorf("vacuum: open store: %w", err))
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
-		fatalText(fmt.Errorf("vacuum: migrate: %w", err))
+	if err := st.Migrate(ctx); err != nil {
+		return verbFatal(fmt.Errorf("vacuum: migrate: %w", err))
 	}
 
 	if *pageSize > 0 {
 		if eng == "postgres" {
-			fatalText(fmt.Errorf("vacuum: --page-size applies to the sqlite engine only"))
+			return verbFatal(fmt.Errorf("vacuum: --page-size applies to the sqlite engine only"))
 		}
 		// The rewrite needs the write lock and a second copy of the file, so
 		// the store is closed first and the rewrite runs on its own
@@ -58,42 +61,47 @@ func cmdVacuum(args []string) {
 		// store's file layout is an operator's decision.
 		path := st.Path()
 		if err := st.Close(); err != nil {
-			fatalText(fmt.Errorf("vacuum: close store: %w", err))
+			return verbFatal(fmt.Errorf("vacuum: close store: %w", err))
 		}
-		res, err := store.UpgradePageSize(path, *pageSize)
+		res, err := store.UpgradePageSize(ctx, path, *pageSize)
 		if err != nil {
-			fatalText(fmt.Errorf("vacuum: page size: %w", err))
+			return verbFatal(fmt.Errorf("vacuum: page size: %w", err))
 		}
 		if *quiet {
 			fmt.Printf("%d\n", res.AfterBytes-res.BeforeBytes)
-			return
+			return nil
 		}
 		fmt.Printf("vacuum: %s page size %d -> %d (%d -> %d bytes), %d vector(s) preserved\n",
 			path, res.Before, res.After, res.BeforeBytes, res.AfterBytes, res.Vectors)
-		return
+		return nil
 	}
 
 	if *full {
-		before, err := st.Space()
+		before, err := st.Space(ctx)
 		if err != nil {
-			fatalText(fmt.Errorf("vacuum: %w", err))
+			return verbFatal(fmt.Errorf("vacuum: %w", err))
 		}
-		if err := st.Vacuum(); err != nil {
-			fatalText(fmt.Errorf("vacuum: %w", err))
+		if _, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainReclaimFull}); err != nil {
+			return verbFatal(fmt.Errorf("vacuum: %w", err))
 		}
-		if err := st.Checkpoint(); err != nil {
+		// ANALYZE is what --full has always run on PostgreSQL, where the full
+		// rewrite is skipped; SQLite reports it as skipped.
+		if _, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainAnalyze}); err != nil {
+			return verbFatal(fmt.Errorf("vacuum: %w", err))
+		}
+		if _, err := st.Maintain(ctx, store.MaintainOp{Kind: store.MaintainCheckpoint}); err != nil {
 			fmt.Fprintf(os.Stderr, "vacuum: checkpoint: %v\n", err)
 		}
-		after, err := st.Space()
+		after, err := st.Space(ctx)
 		if err != nil {
-			fatalText(fmt.Errorf("vacuum: %w", err))
+			return verbFatal(fmt.Errorf("vacuum: %w", err))
 		}
 		if *quiet {
 			// A rewrite can leave the store bigger; the number is the space
 			// returned, so a growth is reported as a negative reclaim rather
 			// than a signed delta an operator has to decode.
 			fmt.Printf("%d\n", before.SizeBytes-after.SizeBytes)
-			return
+			return nil
 		}
 		// The full rewrite can leave the store bigger (the auto_vacuum header
 		// upgrade), so the summary names the outcome instead of printing a
@@ -102,10 +110,10 @@ func cmdVacuum(args []string) {
 			st.Engine(), before.SizeBytes, after.SizeBytes,
 			maintain.Result{Before: before.SizeBytes, After: after.SizeBytes}.ReclaimSummary(),
 			before.Path)
-		return
+		return nil
 	}
 
-	res, err := maintain.Pass(st, maintain.Options{
+	res, err := maintain.Pass(ctx, st, maintain.Options{
 		MaxPages:     *maxPages,
 		MinFreeBytes: 0,
 		Logf: func(format string, a ...any) {
@@ -115,11 +123,11 @@ func cmdVacuum(args []string) {
 		},
 	})
 	if err != nil {
-		fatalText(fmt.Errorf("vacuum: %w", err))
+		return verbFatal(fmt.Errorf("vacuum: %w", err))
 	}
 	if *quiet {
 		fmt.Printf("%d\n", res.Reclaimed)
-		return
+		return nil
 	}
 	// The pass also SWEEPS first (orphan edges, orphan vectors), so the
 	// space it reclaimed may be space it made by deleting rows. Report
@@ -135,4 +143,5 @@ func cmdVacuum(args []string) {
 			res.Sweep.OrphanEdges, res.Sweep.OrphanVectors,
 			res.Sweep.StaleModels, res.Sweep.StaleVectors, res.Sweep.StaleState)
 	}
+	return nil
 }

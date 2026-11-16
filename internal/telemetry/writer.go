@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,6 +34,11 @@ type recorder struct {
 	st      Store
 	level   Level
 	maxBody int
+	// ctx is the server-lifetime ctx the caller passed to NewRecorder. The
+	// recorder owns its writer goroutine and Close joins it, which is the one
+	// runner type the context plan allows to hold a ctx. Flushes never use it
+	// directly: they run detached from its cancellation.
+	ctx context.Context
 
 	ch      chan queued
 	dropped atomic.Int64
@@ -52,12 +59,14 @@ type recorder struct {
 
 // NewRecorder returns a Recorder that writes to st at level. Off returns a
 // recorder that drops everything and starts no goroutine. Close flushes,
-// stops the writer and closes st.
-func NewRecorder(st Store, level Level, maxBodyBytes int) Recorder {
+// stops the writer and closes st. ctx is the server-lifetime context; a
+// cancelled ctx does not drop queued events, because the flushes that carry
+// them run detached from it.
+func NewRecorder(ctx context.Context, st Store, level Level, maxBodyBytes int) Recorder {
 	if level != Metadata && level != Bodies {
 		level = Off
 	}
-	r := &recorder{st: st, level: level, maxBody: maxBodyBytes, done: make(chan struct{})}
+	r := &recorder{ctx: ctx, st: st, level: level, maxBody: maxBodyBytes, done: make(chan struct{})}
 	if level == Off {
 		// No writer and no queue. `closed` stays false because it marks
 		// "Close was called", not "not capturing": the level alone is Off, so
@@ -163,28 +172,27 @@ func (r *recorder) run() {
 	// construction path that never started one. The once keeps a revived
 	// recorder (SetLevel re-armed it) from double-closing.
 	defer r.writerOnce.Do(func() { close(r.done) })
-	defer func() { _ = recover() }() // a store panic must not reach the server
 
 	var calls []CallEvent
 	var mems []MemoryEvent
 	pending := func() int { return len(calls) + len(mems) }
 	flush := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), flushTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), flushTimeout)
 		defer cancel()
 		if len(calls) > 0 {
-			if err := r.st.InsertCalls(ctx, calls); err != nil {
+			if err := guard("InsertCalls", func() error { return r.st.InsertCalls(ctx, calls) }); err != nil {
 				r.dropped.Add(int64(len(calls))) // lost with the batch; counted
 			}
 			calls = calls[:0]
 		}
 		if len(mems) > 0 {
-			if err := r.st.InsertMemoryEvents(ctx, mems); err != nil {
+			if err := guard("InsertMemoryEvents", func() error { return r.st.InsertMemoryEvents(ctx, mems) }); err != nil {
 				r.dropped.Add(int64(len(mems)))
 			}
 			mems = mems[:0]
 		}
 		if n := r.dropped.Swap(0); n > 0 {
-			if err := r.st.AddDropped(ctx, n); err != nil {
+			if err := guard("AddDropped", func() error { return r.st.AddDropped(ctx, n) }); err != nil {
 				r.dropped.Add(n) // keep the count for the next flush
 			}
 		}
@@ -199,10 +207,15 @@ func (r *recorder) run() {
 				flush()
 				return
 			}
-			if q.call != nil {
-				calls = append(calls, r.prepareCall(*q.call))
-			} else if q.mem != nil {
-				mems = append(mems, r.prepareMemory(*q.mem))
+			if err := guard("prepare", func() error {
+				if q.call != nil {
+					calls = append(calls, r.prepareCall(*q.call))
+				} else if q.mem != nil {
+					mems = append(mems, r.prepareMemory(*q.mem))
+				}
+				return nil
+			}); err != nil {
+				r.dropped.Add(1) // the event is lost; counted
 			}
 			if pending() >= batchSize {
 				flush()
@@ -211,6 +224,20 @@ func (r *recorder) run() {
 			flush()
 		}
 	}
+}
+
+// guard runs fn and turns a panic into a logged error. The writer runs guard
+// around every sink call and every event, so a panicking sink or event loses
+// only its own batch (the caller counts it) and capture continues. A single
+// recover at the top of run would instead end the goroutine without a trace.
+func guard(what string, fn func() error) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("telemetry: writer panic in %s: %v", what, p)
+			err = fmt.Errorf("writer panic in %s: %v", what, p)
+		}
+	}()
+	return fn()
 }
 
 // prepareCall fills ID and TS and applies the body policy (DS-02): below

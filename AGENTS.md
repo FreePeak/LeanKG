@@ -17,7 +17,7 @@ make dual-engine         # sqlite + live-PostgreSQL acceptance gate (needs :5433
 make go-ui-assets        # build ui-v2 and sync dist/ into internal/web/embed
 ```
 
-Store contract: `internal/store/backend.go` (Backend interface; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).
+Store contract: `internal/store/roles.go` (one interface per role) and `internal/store/backend.go` (`Backend` composes the roles; SQLite = *Store, PostgreSQL = PGStore). PG tests gate on `LEANKG_TEST_PG_URL` (local fixture: docker pgvector :5433, creds postgres/postgres, db leankg).
 
 Test-layer policy (owner decision, 2026-09-14): **unit tests stay in-process
 and fast** — no real provider/network calls, no sleeps; `go test ./...` is
@@ -39,8 +39,8 @@ The `go-engine` CI job runs only the in-process suite (both tag sets) with a
 
 |Command|Purpose|
 |---|---|
-|`leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --memory`|MCP HTTP + REST + memory (add `--rpc 127.0.0.1:9090` ConnectRPC, `--ui 127.0.0.1:8081` dashboard, `--read-only` reader role). A non-loopback `--http`/`--rest`/`--rpc` bind is REFUSED unless a token is configured (`leankg auth token create` / `LEANKG_TOKEN_ADMIN`) — see the exposure rule below. `--ui` is the one deliberately public listener (the container demo)|
-|`leankg index <dir> [--hook] [--no-embed]`|Index a repository (3-signal incremental). A git repo root with commits reads HEAD git objects (uncommitted/untracked/ignored files skipped; change detection by blob ID); a directory without its own `.git` or a repo with no commits keeps the filesystem scan. Then runs the incremental embed unless `--no-embed`; embed failure is reported, not fatal. `--hook` exits 0 without indexing when HEAD has more than `LEANKG_HOOK_MAX_FILES` (default 10000) indexable files (printing the manual `leankg index <dir>` to run instead), or when another index of the store is running; hook embed only attaches to a running local provider and skips (one `embed skipped:` line, exit 0) when more than `LEANKG_HOOK_MAX_EMBED` (default 500) elements need vectors|
+|`leankg serve --http 127.0.0.1:9699 --rest 127.0.0.1:8080 --memory`|MCP HTTP + REST + memory (add `--rpc 127.0.0.1:9090` ConnectRPC, `--ui 127.0.0.1:8081` dashboard, `--read-only` reader role). A non-loopback `--http`/`--rest`/`--rpc` bind is REFUSED unless a token is configured (`leankg auth token create` / `LEANKG_TOKEN_ADMIN`) — see the exposure rule below. `--ui` is the one listener without a refusal (the container demo), but its `/api/file` answers 403 on a non-loopback bind while no token is configured (D1)|
+|`leankg index <dir> [--hook] [--no-embed]`|Index a repository (3-signal incremental). A git repo root with commits reads HEAD git objects (uncommitted/untracked/ignored files skipped; change detection by blob ID); a directory without its own `.git` or a repo with no commits keeps the filesystem scan. Then runs the incremental embed unless `--no-embed`; embed failure is reported, not fatal. `--hook` exits 0 without indexing when HEAD has more than `LEANKG_HOOK_MAX_FILES` (default 10000) indexable files (printing the manual `leankg index <dir>` to run instead), or when another index of the store is running; hook embed only attaches to a running local provider and skips (one `embed skipped:` line, exit 0) when more than `LEANKG_HOOK_MAX_EMBED` (default 500) elements need vectors. `--hook` runs under a time budget (`--hook-budget`, else `LEANKG_HOOK_BUDGET`, default 10s): the size gate and the embed stop at the budget, the index stops softly, between directories (a started directory always finishes and is kept); past it the run prints one line and exits 0, and the next run resumes. An extractor-version upgrade resumes from `reextract_cursor`. SIGINT/SIGTERM stop a run at its next unit of work and exit 130.|
 |`leankg writer --project <dir>`|Index-once + fsnotify reconcile loop (pairs with `serve --read-only`). For a git-backed store a new commit (change of `.git/logs/HEAD`) triggers a reindex; saving without committing does not change the graph|
 |`leankg query <text> [--kind name\|impact] [--depth N]`|CLI query (L1 exact → L2 fuzzy fallback; graph impact)|
 |`leankg impact <file> [--depth N]`|Impact radius of a file (same as `query <file> --kind impact`)|
@@ -72,7 +72,7 @@ before scaling to small nested-repo parents. Never bulk-index the `freepeak` por
 ## Development workflow
 
 1. Update `docs/prd.md` + `docs/prd-task-tracker.md` (the only two live docs)
-2. Implement in `internal/` + `cmd/` — Backend consumers take `store.Backend`, never a concrete store
+2. Implement in `internal/` + `cmd/` — store consumers depend on the narrowest role they use (plan section 3.3); only composition roots (`cmd/*`, `core.New`, `store.OpenBackend`) hold a `store.Backend`; no concrete store type outside `internal/store`
 3. `make go-build && make go-test && make go-vet`
 4. Commit (one feature per commit; no AI attribution); main is protected → PRs only
 5. `scripts/test-dual-engine.sh` for storage-layer changes
@@ -181,7 +181,11 @@ sequenceDiagram
 
 The same gate covers REST and ConnectRPC. Those surfaces have no login tool, so once a site admin exists they need a bearer token minted with `leankg auth token create`.
 
+**Route roles.** Every route on a gated listener declares its role at registration: `auth.Require(auth.Contributor, h)` for a write, `auth.Require(auth.Viewer, h)` for a read, and `auth.Public(h)` for a route with no role floor (the auth bootstrap, liveness, the MCP handshake). The gate stores the caller's role in the request context; `Require` reads it and denies a request that has no role. `internal/archtest` fails on a route registered without a declaration.
+
 stdio (`leankg serve --stdio`) is not gated. It runs as Admin because it is a local subprocess started by the user.
+
+**Account status.** A token minted for an existing account stops authenticating (the same 401 an unknown token gets) while that account is not `active`, so disabling an account revokes its tokens at once. A token whose account id has no row (a free-form label from before accounts existed) is not affected and keeps its minted role; a token with no account id is unchanged.
 
 **Admin bootstrap.**
 
@@ -216,7 +220,10 @@ the file reader and the memory write path on the LAN — measured 2026-10-21, a
 LAN POST to the REST listener answered `{"written":1}`. The refusal names both
 ways out: bind `127.0.0.1`, or configure a token first. `--ui` is the ONE
 deliberately public listener (the container demo serves `--read-only --ui
-:${PORT}` to the internet), so it keeps a loud warning instead of a refusal.
+:${PORT}` to the internet), so it keeps a loud warning instead of a refusal. Its
+`/api/file` reader is the exception (D1): with the gate on it needs a Viewer
+token, and with the gate off it answers 403 `PERMISSION_DENIED` on any
+non-loopback bind, so the demo needs a token for the file viewer.
 Rule + test: `internal/servebind`, `cmd/leankg/servebind_test.go`.
 
 **A restart can leave a duplicate behind, and the duplicate can be the one

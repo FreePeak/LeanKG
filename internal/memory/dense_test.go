@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/FreePeak/LeanKG/internal/embed"
 )
 
 // conceptVectorizer embeds text into fixed concept dimensions, so meaning
@@ -20,8 +22,11 @@ var concepts = [][]string{
 	{"cake", "chocolate", "flour", "bake"},
 }
 
-func (c *conceptVectorizer) Key() string            { return "concept-v1" }
-func (c *conceptVectorizer) Floor() (float64, bool) { return c.floor, true }
+func (c *conceptVectorizer) Identity() embed.Identity {
+	return embed.Identity{Provider: "test", Model: "concept-v1", Dims: len(concepts) + 1}
+}
+func (c *conceptVectorizer) Probe(context.Context) error           { return nil }
+func (c *conceptVectorizer) Floor(context.Context) (float64, bool) { return c.floor, true }
 func (c *conceptVectorizer) vec(t string) []float32 {
 	v := make([]float32, len(concepts)+1)
 	v[len(concepts)] = 0.3 // shared background, like a real model's anisotropy
@@ -37,11 +42,10 @@ func (c *conceptVectorizer) vec(t string) []float32 {
 	}
 	return v
 }
-func (c *conceptVectorizer) EmbedQuery(_ context.Context, t string) ([]float32, error) {
-	return c.vec(t), nil
-}
-func (c *conceptVectorizer) EmbedDocuments(_ context.Context, ts []string) ([][]float32, error) {
-	c.calls += len(ts)
+func (c *conceptVectorizer) Embed(_ context.Context, kind embed.TextKind, ts []string) ([][]float32, error) {
+	if kind == embed.Document {
+		c.calls += len(ts)
+	}
 	out := make([][]float32, len(ts))
 	for i, t := range ts {
 		out[i] = c.vec(t)
@@ -55,29 +59,29 @@ func (c *conceptVectorizer) EmbedDocuments(_ context.Context, ts []string) ([][]
 // nothing; rows are embedded once.
 func TestDenseRecallFindsParaphrasesAboveFloor(t *testing.T) {
 	m := openTest(t)
-	if err := m.RetainRaw("b", []Entry{
+	if err := m.RetainRaw(context.Background(), "b", []Entry{
 		{ID: "pg", Content: "We store embeddings in pgvector on Postgres."},
 		{ID: "rel", Content: "CI will publish binaries when the tag lands."},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := m.Recall("b", "which database holds the vectors", 3); len(got) != 0 {
+	if got, _ := m.Recall(context.Background(), "b", "which database holds the vectors", 3); len(got) != 0 {
 		t.Fatalf("precondition: lexical recall should miss the paraphrase, got %v", got)
 	}
 	cv := &conceptVectorizer{floor: 0.5}
-	m.SetVectorizer(cv)
-	got, err := m.Recall("b", "which database holds the vectors", 3)
+	m.SetProvider(cv, cv.Floor)
+	got, err := m.Recall(context.Background(), "b", "which database holds the vectors", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) == 0 || got[0].ID != "pg" {
 		t.Fatalf("paraphrase recall = %v, want pg first", got)
 	}
-	if got, _ := m.Recall("b", "chocolate cake recipe", 3); len(got) != 0 {
+	if got, _ := m.Recall(context.Background(), "b", "chocolate cake recipe", 3); len(got) != 0 {
 		t.Fatalf("unrelated question recalled %v", got)
 	}
 	before := cv.calls
-	if _, err := m.Recall("b", "ship the release", 3); err != nil {
+	if _, err := m.Recall(context.Background(), "b", "ship the release", 3); err != nil {
 		t.Fatal(err)
 	}
 	if cv.calls != before {
@@ -85,7 +89,7 @@ func TestDenseRecallFindsParaphrasesAboveFloor(t *testing.T) {
 	}
 	// Keyword-length queries stay lexical: "database" alone shares no word
 	// with the pg row, so it recalls nothing.
-	if got, _ := m.Recall("b", "database", 3); len(got) != 0 {
+	if got, _ := m.Recall(context.Background(), "b", "database", 3); len(got) != 0 {
 		t.Fatalf("one-word query used the dense arm: %v", got)
 	}
 }

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +13,7 @@ import (
 func TestBankReadSurface(t *testing.T) {
 	m := openTest(t)
 	bank := "demo"
-	if err := m.RetainRaw(bank, []Entry{
+	if err := m.RetainRaw(context.Background(), bank, []Entry{
 		{ID: "a", Content: "first row", Timestamp: 100},
 		{ID: "b", Content: "second row", Timestamp: 300,
 			Metadata: map[string]any{"document_id": "doc-b", "tags": []any{"project:x"}}},
@@ -21,7 +22,7 @@ func TestBankReadSurface(t *testing.T) {
 		t.Fatalf("RetainRaw: %v", err)
 	}
 	// A second bank, so the root-level counters have something to count.
-	if err := m.RetainRaw("other", []Entry{{ID: "z", Content: "elsewhere", Timestamp: 50}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "other", []Entry{{ID: "z", Content: "elsewhere", Timestamp: 50}}); err != nil {
 		t.Fatalf("RetainRaw(other): %v", err)
 	}
 
@@ -74,7 +75,7 @@ func TestBankReadSurface(t *testing.T) {
 		}
 	})
 	t.Run("exact id wins over a document_id collision", func(t *testing.T) {
-		if err := m.RetainRaw(bank, []Entry{{ID: "doc-b", Content: "id literally named doc-b", Timestamp: 400}}); err != nil {
+		if err := m.RetainRaw(context.Background(), bank, []Entry{{ID: "doc-b", Content: "id literally named doc-b", Timestamp: 400}}); err != nil {
 			t.Fatal(err)
 		}
 		e, found, _ := m.ByID(bank, "doc-b")

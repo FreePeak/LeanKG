@@ -37,24 +37,30 @@ func (f *fakeRouter) MultiProject() bool { return f.multi }
 
 func openEngine(t *testing.T, dir string) *core.Engine {
 	t.Helper()
+	e, _ := openEngineWithStore(t, dir)
+	return e
+}
+
+// openEngineWithStore is openEngine that also returns the store the engine
+// wraps, for tests that read rows directly.
+func openEngineWithStore(t *testing.T, dir string) (*core.Engine, store.Backend) {
+	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := core.New(st, mem, nil)
-	e.SetProjectDir(dir)
-	return e
+	return core.New(st, core.Options{Memory: mem, ProjectDir: dir}), st
 }
 
 // TestAutoConfigHonoursProjectSelector is the follow-up to #490's finding:
@@ -73,7 +79,7 @@ func TestAutoConfigHonoursProjectSelector(t *testing.T) {
 	otherEng := openEngine(t, otherDir)
 	r := &fakeRouter{engines: map[string]*core.Engine{otherDir: otherEng}, multi: true}
 
-	h := RegisterAutoConfig(http.NewServeMux(), defEng, WithRouter(r))
+	h := gatedAutoConfig(http.NewServeMux(), defEng, WithRouter(r))
 	body := []byte(`{"index_enabled":false,"embed_enabled":false}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config?project="+otherDir, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -98,7 +104,7 @@ func TestAutoConfigRefusesUnknownProject(t *testing.T) {
 	defEng := openEngine(t, filepath.Join(base, "default"))
 	r := &fakeRouter{engines: map[string]*core.Engine{}, multi: true, err: errors.New("unknown project \"/nope\" — queries never fall back to another project's data")}
 
-	h := RegisterAutoConfig(http.NewServeMux(), defEng, WithRouter(r))
+	h := gatedAutoConfig(http.NewServeMux(), defEng, WithRouter(r))
 	body := []byte(`{"index_enabled":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config?project=/nope", bytes.NewReader(body))
 	rec := httptest.NewRecorder()

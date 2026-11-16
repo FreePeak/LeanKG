@@ -1,0 +1,22 @@
+{
+  "action": "context",
+  "element": {
+    "content": "func Alpha() int {\n\treturn Beta() + 1\n}",
+    "element_type": "function",
+    "file_path": "src/alpha.go",
+    "language": "go",
+    "line_end": 3,
+    "line_start": 1,
+    "name": "Alpha",
+    "qualified_name": "src/alpha.go::Alpha"
+  },
+  "freshness": "possibly_stale",
+  "incoming": {},
+  "limit": 10,
+  "outgoing": {
+    "calls": [
+      "src/beta.go::Beta"
+    ]
+  },
+  "query": "src/alpha.go::Alpha"
+}

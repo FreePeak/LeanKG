@@ -10,6 +10,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -31,7 +32,7 @@ type EnvConflict struct {
 
 // SnapshotElements records the current state of elements as one environment's
 // view, replacing any earlier snapshot for the same (env, qualified_name).
-func (k *Knowledge) SnapshotElements(env string, els []store.Element) error {
+func (k *Knowledge) SnapshotElements(ctx context.Context, env string, els []store.Element) error {
 	now := k.now()
 	snaps := make([]store.EnvSnapshot, 0, len(els))
 	for _, e := range els {
@@ -45,7 +46,7 @@ func (k *Knowledge) SnapshotElements(env string, els []store.Element) error {
 			CapturedAt:    now,
 		})
 	}
-	return k.st.EnvSnapshotsPut(snaps)
+	return k.st.EnvSnapshotsPut(ctx, snaps)
 }
 
 // FindEnvConflicts reports how `service` (an element qualified name) differs
@@ -57,7 +58,7 @@ func (k *Knowledge) SnapshotElements(env string, els []store.Element) error {
 //
 // Risk is HIGH for a production gap or a version mismatch, MEDIUM otherwise
 // (Rust's classification).
-func (k *Knowledge) FindEnvConflicts(service string) ([]EnvConflict, error) {
+func (k *Knowledge) FindEnvConflicts(ctx context.Context, service string) ([]EnvConflict, error) {
 	type envMeta struct {
 		env  string
 		meta map[string]any
@@ -65,7 +66,7 @@ func (k *Knowledge) FindEnvConflicts(service string) ([]EnvConflict, error) {
 	var present []envMeta
 	conflicts := []EnvConflict{}
 	for _, env := range StandardEnvs {
-		snap, ok, err := k.st.EnvSnapshotGet(env, service)
+		snap, ok, err := k.st.EnvSnapshotGet(ctx, env, service)
 		if err != nil {
 			return nil, err
 		}

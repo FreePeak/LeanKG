@@ -20,8 +20,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
@@ -144,7 +146,7 @@ func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.
 	// servers merge their symbols and typed call edges into the store.
 	if res.Files > 0 {
 		if _, _, configured := lsp.LoadProject(dir); configured {
-			er, err := lsp.Enrich(st, dir, activeLangTags(reg))
+			er, err := lsp.Enrich(ctx, st, dir, activeLangTags(reg))
 			if err != nil {
 				return res, err
 			}
@@ -205,16 +207,19 @@ func IsGitKeyed(contentHash string) bool {
 // orphan sweep (store.DeleteOrphanVectors), never by a per-file delete
 // (which would also discard the vectors of a changed file's unchanged
 // symbols).
-func DeleteFiles(ctx context.Context, st store.Backend, paths []string) (int, error) {
+func DeleteFiles(ctx context.Context, st store.IndexWriter, paths []string) (int, error) {
 	n := 0
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
 			return n, err
 		}
-		if err := st.DeleteByFile(p); err != nil {
+		// The pair runs detached from ctx: a cancel never leaves a record
+		// whose elements are already gone.
+		wctx := context.WithoutCancel(ctx)
+		if err := st.DeleteByFile(wctx, p); err != nil {
 			return n, err
 		}
-		if err := st.DeleteFileRecord(p); err != nil {
+		if err := st.DeleteFileRecord(wctx, p); err != nil {
 			return n, err
 		}
 		n++
@@ -224,16 +229,16 @@ func DeleteFiles(ctx context.Context, st store.Backend, paths []string) (int, er
 
 // RebaseRoot records dir as the store's index root, replacing any previous
 // one (`leankg index --rebase-root` after moving a checkout).
-func RebaseRoot(st store.Backend, dir string) error {
-	return st.KVSet(rootKVNamespace, rootKVKey, CanonicalRoot(dir))
+func RebaseRoot(ctx context.Context, st store.Backend, dir string) error {
+	return st.KVSet(ctx, rootKVNamespace, rootKVKey, CanonicalRoot(dir))
 }
 
 // checkRoot enforces the tripwire: a store with no recorded root (built
 // before RS-02, or empty) adopts dir; a store with files and a different
 // recorded root refuses the walk before anything is deleted.
-func checkRoot(st store.Backend, dir string, hasFiles bool) error {
+func checkRoot(ctx context.Context, st store.Backend, dir string, hasFiles bool) error {
 	want := CanonicalRoot(dir)
-	got, ok, err := st.KVGet(rootKVNamespace, rootKVKey)
+	got, ok, err := st.KVGet(ctx, rootKVNamespace, rootKVKey)
 	if err != nil {
 		return err
 	}
@@ -243,7 +248,7 @@ func checkRoot(st store.Backend, dir string, hasFiles bool) error {
 			"index the recorded root, open the other directory as its own project, or run `leankg index --rebase-root <dir>` if the checkout moved")
 	}
 	if !ok || got != want {
-		return st.KVSet(rootKVNamespace, rootKVKey, want)
+		return st.KVSet(ctx, rootKVNamespace, rootKVKey, want)
 	}
 	return nil
 }
@@ -261,8 +266,22 @@ const extractorVersion = "3"
 
 const extractorKVKey = "extractor_version"
 
+const reextractKVKey = "reextract_cursor"
+
+// ErrBudget is returned when the time budget given to WithBudget is spent
+// between two directories: the run stopped on purpose and resumes next time.
+var ErrBudget = errors.New("index: time budget spent")
+
+type budgetKey struct{}
+
+// WithBudget returns ctx carrying a time budget. Once spent is closed, the run
+// stops between directories (a started directory always finishes).
+func WithBudget(ctx context.Context, spent <-chan struct{}) context.Context {
+	return context.WithValue(ctx, budgetKey{}, spent)
+}
+
 func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (res Result, err error) {
-	prev, err := st.Files()
+	prev, err := st.Files(ctx)
 	if err != nil {
 		return res, err
 	}
@@ -270,14 +289,34 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	for _, f := range prev {
 		prevByRel[f.Path] = f
 	}
-	if err := checkRoot(st, dir, len(prev) > 0); err != nil {
+	if err := checkRoot(ctx, st, dir, len(prev) > 0); err != nil {
 		return res, err
 	}
-	ver, _, err := st.KVGet(rootKVNamespace, extractorKVKey)
+	ver, _, err := st.KVGet(ctx, rootKVNamespace, extractorKVKey)
 	if err != nil {
 		return res, err
 	}
 	reextract := len(prev) > 0 && ver != extractorVersion
+	if ver != extractorVersion && !reextract {
+		// An empty store has nothing to re-extract: stamp the version now, so a
+		// run the budget cuts short is not taken for an upgrade on the next run.
+		if err := st.KVSet(ctx, rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
+			return res, err
+		}
+	}
+	// An upgrade resumes from the last directory it finished, recorded as
+	// "<version>\n<dir>"; a cursor of another version says nothing about this one.
+	var cursor string
+	if reextract {
+		v, _, err := st.KVGet(ctx, rootKVNamespace, reextractKVKey)
+		if err != nil {
+			return res, err
+		}
+		if cv, cdir, ok := strings.Cut(v, "\n"); ok && cv == extractorVersion {
+			cursor = cdir
+		}
+	}
+	spent, _ := ctx.Value(budgetKey{}).(<-chan struct{})
 
 	// A repository root with commits is indexed from HEAD (committed content
 	// only, never the working tree). Any other directory walks the disk.
@@ -348,7 +387,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 			return res, err
 		}
 		rec, seen := prevByRel[c.rel]
-		trusted := seen && !reextract
+		trusted := seen && (!reextract || dirOf(c.rel) <= cursor)
 		var hash string
 		if c.oid != "" {
 			hash = gitKey(c.oid)
@@ -395,10 +434,11 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		byDir[d] = append(byDir[d], changedFile{candidate: c, hash: hash})
 	}
 	if len(rekeys) > 0 {
-		if err := st.UpsertFiles(rekeys); err != nil {
+		if err := st.UpsertFiles(ctx, rekeys); err != nil {
 			return res, err
 		}
 	}
+	slices.Sort(dirOrder) // a stable order across runs, so the cursor means the same thing in each
 
 	// pendingFile pairs each extracted file with its own record: a specialist
 	// file that writes itself is dropped here, so later files must not shift.
@@ -407,54 +447,104 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 		fe  fileElements
 		src []byte
 	}
-	for _, d := range dirOrder {
-		if err := ctx.Err(); err != nil {
-			return res, err
+	// ctx is checked per file, not per directory: one package can hold
+	// thousands of files, and a cancel must stop it within a file's work.
+	//
+	// A file's writes run detached from ctx (wctx), so a cancel takes effect
+	// between files, never inside one. Call edges are resolved against the
+	// files of the same directory written in this run, so a cancel part-way
+	// through a directory rolls back the files it finished in that directory:
+	// the rerun then sees them as changed and resolves every call against the
+	// same name set as an uninterrupted run.
+	//
+	// The time budget is soft: once spent, the run stops BETWEEN directories,
+	// so every directory it started is finished and kept, and none is rolled
+	// back. An upgrade (reextract) records a cursor after each finished
+	// directory, so the next run re-extracts only the directories after it.
+	wctx := context.WithoutCancel(ctx)
+	for i, d := range dirOrder {
+		if i > 0 {
+			select {
+			case <-spent:
+				// A signal also closes spent (the command derives the budget from
+				// its signal context): that must still report the cancel.
+				if err := ctx.Err(); err != nil {
+					return res, err
+				}
+				return res, ErrBudget
+			default:
+			}
 		}
 		files := byDir[d]
 		pending := make([]pendingFile, 0, len(files))
 		names := map[string][]string{} // package-scoped call targets
 		for _, f := range files {
+			if err := ctx.Err(); err != nil {
+				return res, err
+			}
 			src, err := f.content(rd)
 			if err != nil {
 				return res, err
 			}
-			if handled, err := indexSpecialistFile(st, f.rel, src, f.size, f.mtimeNS, f.hash, &res); err != nil {
+			if handled, err := indexSpecialistFile(wctx, st, f.rel, src, f.size, f.mtimeNS, f.hash, &res); err != nil {
 				return res, err
 			} else if handled {
 				continue // the specialist own its extraction AND its writes
 			}
-			fe := extractFileAs(f.rel, src, f.lang)
+			fe, err := extractFileAs(ctx, f.rel, src, f.lang)
+			if err != nil {
+				return res, err
+			}
 			pending = append(pending, pendingFile{changedFile: f, fe: fe, src: src})
 			for _, e := range fe.elements {
 				names[e.name] = append(names[e.name], e.qn)
 			}
 		}
-		for _, p := range pending {
-			f := p.changedFile
-			if err := st.DeleteByFile(f.rel); err != nil {
-				return res, err
-			}
-			if err := st.UpsertElements(p.fe.toStore()); err != nil {
-				return res, err
-			}
-			rels := relationships(p.fe.elements, names)
-			if err := st.UpsertRelationships(rels); err != nil {
-				return res, err
-			}
-			if err := st.UpsertFiles([]store.FileRecord{{
-				Path: f.rel, Size: f.size, MtimeNS: f.mtimeNS,
-				ContentHash: f.hash,
-			}}); err != nil {
-				return res, err
-			}
-			res.Files++
-			res.Elements += len(p.fe.elements)
-			res.Relationships += len(rels)
-			if f.lang == "kotlin" {
-				if err := indexKotlinExtras(st, f.rel, p.src, &res); err != nil {
-					return res, err
+		var touched []string // files whose writes began in this directory
+		err := func() error {
+			for _, p := range pending {
+				if err := ctx.Err(); err != nil {
+					return err
 				}
+				f := p.changedFile
+				touched = append(touched, f.rel)
+				if err := st.DeleteByFile(wctx, f.rel); err != nil {
+					return err
+				}
+				if err := st.UpsertElements(wctx, p.fe.toStore()); err != nil {
+					return err
+				}
+				rels := relationships(p.fe.elements, names)
+				if err := st.UpsertRelationships(wctx, rels); err != nil {
+					return err
+				}
+				if err := st.UpsertFiles(wctx, []store.FileRecord{{
+					Path: f.rel, Size: f.size, MtimeNS: f.mtimeNS,
+					ContentHash: f.hash,
+				}}); err != nil {
+					return err
+				}
+				res.Files++
+				res.Elements += len(p.fe.elements)
+				res.Relationships += len(rels)
+				if f.lang == "kotlin" {
+					if err := indexKotlinExtras(wctx, st, f.rel, p.src, &res); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}()
+		if err != nil {
+			if _, uerr := DeleteFiles(wctx, st, touched); uerr != nil {
+				err = errors.Join(err, uerr)
+			}
+			return res, err
+		}
+		if reextract && d > cursor {
+			cursor = d
+			if err := st.KVSet(wctx, rootKVNamespace, reextractKVKey, extractorVersion+"\n"+d); err != nil {
+				return res, err
 			}
 		}
 	}
@@ -464,12 +554,15 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	// DeleteByFile, which would also discard the vectors of a changed file's
 	// UNCHANGED symbols and force them to re-embed.
 	if res.DeletedFiles > 0 || res.Files > 0 {
-		if _, err := st.DeleteOrphanVectors(); err != nil {
+		if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 			return res, fmt.Errorf("index: reclaim orphan vectors: %w", err)
 		}
 	}
-	if ver != extractorVersion {
-		if err := st.KVSet(rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
+	if reextract {
+		if err := st.KVSet(ctx, rootKVNamespace, extractorKVKey, extractorVersion); err != nil {
+			return res, err
+		}
+		if err := st.KVSet(ctx, rootKVNamespace, reextractKVKey, ""); err != nil {
 			return res, err
 		}
 	}
@@ -481,7 +574,7 @@ func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerF
 	// again afterwards — so the record and the content describe one tree. A
 	// filesystem-scanned store records the empty id: it was not built from a
 	// git tree, and claiming one would be a lie the reconcile would act on.
-	if err := store.SetHead(st, headCommit); err != nil {
+	if err := store.SetHead(ctx, st, headCommit); err != nil {
 		return res, err
 	}
 	return res, nil

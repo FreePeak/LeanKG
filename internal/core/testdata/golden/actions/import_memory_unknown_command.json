@@ -1,0 +1,3 @@
+{
+  "error": "unknown memory command \"bogus\" (valid: create, str_replace, insert, delete, delete_document, rename, add, replace, remove, session_retain)"
+}

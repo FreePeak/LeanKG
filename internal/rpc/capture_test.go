@@ -47,19 +47,19 @@ func (r *callRecorder) snapshot() []telemetry.CallEvent {
 func serveRPC(t *testing.T, rec telemetry.Recorder) leankgv1connect.LeanKGClient {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
+	engine := core.New(st, core.Options{Memory: mem})
 	path, handler := leankgv1connect.NewLeanKGHandler(NewLeanKGService(engine),
 		connect.WithInterceptors(CaptureInterceptor(rec)))
 	mux := http.NewServeMux()

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,7 +14,10 @@ import (
 // indexVersion versions the derived index.db layout. On open, a different
 // stored version rebuilds the whole index from the Markdown files and JSONL
 // banks (the sources of truth), so an upgrade never needs a migration.
-const indexVersion = "2"
+//
+// "3": index rows pass through Redact, so memory written before write-side
+// redaction is masked when the index is rebuilt.
+const indexVersion = "3"
 
 // ensureIndex rebuilds index.db when it was built by another version.
 func (m *Memory) ensureIndex() error {
@@ -83,6 +87,7 @@ func (m *Memory) rebuildIndex() error {
 func insertBankRows(tx *sql.Tx, bank string, entries []Entry) error {
 	bank = sanitizeBank(bank)
 	for _, e := range entries {
+		e = redactEntry(e)
 		doc, err := json.Marshal(e)
 		if err != nil {
 			return err
@@ -203,7 +208,7 @@ func (m *Memory) cursor(kind, key string) (int, bool) {
 // match at least one query term surface. Each returned row carries its
 // relative Score (Entry.Score). denseIDs names the rows the dense arm ranked
 // (nil when it did not contribute).
-func (m *Memory) recallIndexed(banks []string, query string, limit int, keep func(Entry) bool) (out []Entry, denseIDs map[string]bool, err error) {
+func (m *Memory) recallIndexed(ctx context.Context, banks []string, query string, limit int, keep func(Entry) bool) (out []Entry, denseIDs map[string]bool, err error) {
 	match := matchQuery(query)
 	if match == "" || len(banks) == 0 {
 		return nil, nil, nil
@@ -219,7 +224,7 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 			marks = append(marks, "?")
 		}
 	}
-	rows, err := m.fts.Query(`SELECT bank, entry_id, doc, bm25(memory_fts) FROM memory_fts
+	rows, err := m.fts.QueryContext(ctx, `SELECT bank, entry_id, doc, bm25(memory_fts) FROM memory_fts
 		WHERE memory_fts MATCH ? AND kind = 'bank' AND bank IN (`+strings.Join(marks, ",")+`)`, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("memory: recall: %w", err)
@@ -271,7 +276,7 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 	}
 	ranked := lexical
 	if v := m.vectorizer(); v != nil {
-		if dense := m.denseCandidates(v, banks, query); len(dense) > 0 {
+		if dense := m.denseCandidates(ctx, v, banks, query); len(dense) > 0 {
 			denseIDs = make(map[string]bool, len(dense))
 			for _, d := range dense {
 				denseIDs[d.ID] = true
@@ -288,5 +293,5 @@ func (m *Memory) recallIndexed(banks []string, query string, limit int, keep fun
 			break
 		}
 	}
-	return out, denseIDs, nil
+	return redactEntries(out), denseIDs, nil
 }

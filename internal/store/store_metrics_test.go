@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -37,10 +38,10 @@ func TestMetricRecordAndReadRoundTrip(t *testing.T) {
 		CorrectElements: 7, TotalExpected: 9, F1Score: 0.91,
 		QueryPattern: "handle", QueryFile: "svc.go", QueryDepth: 3, Success: true,
 	}
-	if err := s.RecordMetric(want); err != nil {
+	if err := s.RecordMetric(context.Background(), want); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	if err := s.RecordMetric(Metric{ToolName: "status", Timestamp: now - 10, ProjectPath: "/proj", Success: true}); err != nil {
+	if err := s.RecordMetric(context.Background(), Metric{ToolName: "status", Timestamp: now - 10, ProjectPath: "/proj", Success: true}); err != nil {
 		t.Fatalf("record bare row: %v", err)
 	}
 	if n := countMetrics(t, s); n != 2 {
@@ -68,14 +69,14 @@ func TestMetricRecordAndReadRoundTrip(t *testing.T) {
 		t.Fatalf("unset optionals must read as zero values: %+v", bare)
 	}
 
-	sum, err := s.MetricsSummary("", 30)
+	sum, err := s.MetricsSummary(context.Background(), "", 30)
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
 	if sum.TotalInvocations != 2 || sum.TotalTokensSaved != 8480 {
 		t.Fatalf("summary over both rows: %+v", sum)
 	}
-	sum, err = s.MetricsSummary("status", 30)
+	sum, err = s.MetricsSummary(context.Background(), "status", 30)
 	if err != nil {
 		t.Fatalf("filtered summary: %v", err)
 	}
@@ -114,12 +115,12 @@ func TestMetricsSummaryBuckets(t *testing.T) {
 			TokensSaved: 50000, CorrectElements: 1, TotalExpected: 1},
 	}
 	for _, r := range rows[:5] {
-		if err := s.RecordMetric(r); err != nil {
+		if err := s.RecordMetric(context.Background(), r); err != nil {
 			t.Fatalf("record %s: %v", r.ToolName, err)
 		}
 	}
 
-	sum, err := s.MetricsSummary("", 30)
+	sum, err := s.MetricsSummary(context.Background(), "", 30)
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestMetricsSummaryBuckets(t *testing.T) {
 	}
 
 	// The retention window is a real filter: 1 day keeps only today's rows.
-	todayOnly, err := s.MetricsSummary("", 1)
+	todayOnly, err := s.MetricsSummary(context.Background(), "", 1)
 	if err != nil {
 		t.Fatalf("1-day summary: %v", err)
 	}
@@ -206,12 +207,12 @@ func TestUsageAggregatesBuckets(t *testing.T) {
 		{ToolName: "query", Timestamp: anchor + 40, ProjectPath: "/a", TokensSaved: 1, IsDeleted: true},
 	}
 	for _, r := range rows {
-		if err := s.RecordMetric(r); err != nil {
+		if err := s.RecordMetric(context.Background(), r); err != nil {
 			t.Fatalf("record: %v", err)
 		}
 	}
 
-	agg, err := s.UsageAggregates(0)
+	agg, err := s.UsageAggregates(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("aggregates: %v", err)
 	}
@@ -263,7 +264,7 @@ func TestUsageAggregatesBuckets(t *testing.T) {
 	}
 
 	// A cutoff excludes the previous day's row.
-	windowed, err := s.UsageAggregates(anchor)
+	windowed, err := s.UsageAggregates(context.Background(), anchor)
 	if err != nil {
 		t.Fatalf("windowed aggregates: %v", err)
 	}
@@ -283,12 +284,12 @@ func TestMetricsCleanupRetention(t *testing.T) {
 	olderSoftDeleted := Metric{ToolName: "query", Timestamp: now - 50*SecondsPerDay, IsDeleted: true}
 	fresh := Metric{ToolName: "query", Timestamp: now - SecondsPerDay, TokensSaved: 20}
 	for _, m := range []Metric{old, olderSoftDeleted, fresh} {
-		if err := s.RecordMetric(m); err != nil {
+		if err := s.RecordMetric(context.Background(), m); err != nil {
 			t.Fatalf("record: %v", err)
 		}
 	}
 
-	n, err := s.CleanupMetrics(30)
+	n, err := s.CleanupMetrics(context.Background(), 30)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -298,12 +299,12 @@ func TestMetricsCleanupRetention(t *testing.T) {
 	if got := countMetrics(t, s); got != 1 {
 		t.Fatalf("ledger size after cleanup = %d, want 1", got)
 	}
-	if n, err = s.CleanupMetrics(30); err != nil || n != 0 {
+	if n, err = s.CleanupMetrics(context.Background(), 30); err != nil || n != 0 {
 		t.Fatalf("second cleanup = %d, %v; want 0, nil", n, err)
 	}
 
 	// A zero-day retention window sweeps everything older than now.
-	if n, err = s.CleanupMetrics(0); err != nil || n != 1 {
+	if n, err = s.CleanupMetrics(context.Background(), 0); err != nil || n != 1 {
 		t.Fatalf("zero-day cleanup = %d, %v; want 1, nil", n, err)
 	}
 	if got := countMetrics(t, s); got != 0 {
@@ -317,11 +318,11 @@ func TestMetricsResetAll(t *testing.T) {
 	s := openTestStore(t)
 	now := time.Now().Unix()
 	for i := 0; i < 3; i++ {
-		if err := s.RecordMetric(Metric{ToolName: "query", Timestamp: now - int64(i), IsDeleted: i == 0}); err != nil {
+		if err := s.RecordMetric(context.Background(), Metric{ToolName: "query", Timestamp: now - int64(i), IsDeleted: i == 0}); err != nil {
 			t.Fatalf("record: %v", err)
 		}
 	}
-	n, err := s.ResetMetrics()
+	n, err := s.ResetMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -331,7 +332,7 @@ func TestMetricsResetAll(t *testing.T) {
 	if got := countMetrics(t, s); got != 0 {
 		t.Fatalf("ledger size after reset = %d, want 0", got)
 	}
-	if n, err = s.ResetMetrics(); err != nil || n != 0 {
+	if n, err = s.ResetMetrics(context.Background()); err != nil || n != 0 {
 		t.Fatalf("second reset = %d, %v; want 0, nil", n, err)
 	}
 }
@@ -340,33 +341,33 @@ func TestMetricsResetAll(t *testing.T) {
 // records nothing and must not turn every served call into a write error.
 func TestRecordMetricReadOnlyNoOp(t *testing.T) {
 	dir := t.TempDir()
-	rw, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RW)
+	rw, err := openSQLite(context.Background(), filepath.Join(dir, ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open rw: %v", err)
 	}
-	if err := rw.Migrate(); err != nil {
+	if err := rw.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := rw.Close(); err != nil {
 		t.Fatalf("close rw: %v", err)
 	}
 
-	ro, err := Open(filepath.Join(dir, ".leankg", "leankg.db"), RO)
+	ro, err := openSQLite(context.Background(), filepath.Join(dir, ".leankg", "leankg.db"), RO)
 	if err != nil {
 		t.Fatalf("open ro: %v", err)
 	}
 	t.Cleanup(func() { ro.Close() })
-	if err := ro.RecordMetric(Metric{ToolName: "query", Timestamp: time.Now().Unix()}); err != nil {
+	if err := ro.RecordMetric(context.Background(), Metric{ToolName: "query", Timestamp: time.Now().Unix()}); err != nil {
 		t.Fatalf("read-only record must no-op, got %v", err)
 	}
 	if n := countMetrics(t, ro); n != 0 {
 		t.Fatalf("read-only store recorded %d rows, want 0", n)
 	}
 	// Reads still work on the reader role.
-	if _, err := ro.MetricsSummary("", 30); err != nil {
+	if _, err := ro.MetricsSummary(context.Background(), "", 30); err != nil {
 		t.Fatalf("read-only summary: %v", err)
 	}
-	if _, err := ro.UsageAggregates(0); err != nil {
+	if _, err := ro.UsageAggregates(context.Background(), 0); err != nil {
 		t.Fatalf("read-only aggregates: %v", err)
 	}
 }
@@ -376,7 +377,7 @@ func TestRecordMetricReadOnlyNoOp(t *testing.T) {
 // becomes usable in place, keeps its rows across a second Migrate, and the
 // migration ledger stays ascending and unique.
 func TestMetricsMigrationIsAdditiveAndIdempotent(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(context.Background(), filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -406,22 +407,22 @@ func TestMetricsMigrationIsAdditiveAndIdempotent(t *testing.T) {
 		t.Fatal("context_metrics must not exist before migration 011")
 	}
 
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate 011: %v", err)
 	}
-	if err := s.RecordMetric(Metric{ToolName: "query", Timestamp: time.Now().Unix(), TokensSaved: 5}); err != nil {
+	if err := s.RecordMetric(context.Background(), Metric{ToolName: "query", Timestamp: time.Now().Unix(), TokensSaved: 5}); err != nil {
 		t.Fatalf("record after upgrade: %v", err)
 	}
 
 	// Re-running the migration is a no-op and keeps the rows.
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
 	if n := countMetrics(t, s); n != 1 {
 		t.Fatalf("ledger size after second migrate = %d, want 1", n)
 	}
 
-	applied, err := AppliedMigrations(s)
+	applied, err := s.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

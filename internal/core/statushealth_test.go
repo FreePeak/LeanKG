@@ -21,34 +21,34 @@ type stampsReadFails struct {
 	cause error
 }
 
-func (s stampsReadFails) Stamps() ([]store.ModelStamp, error) { return nil, s.cause }
+func (s stampsReadFails) Stamps(ctx context.Context) ([]store.ModelStamp, error) { return nil, s.cause }
 
 // seededStore opens a migrated store holding one element, one stamped model
 // and one vector: a store that really does have embeddings, so a payload that
 // claims "no embeddings" is demonstrably wrong.
-func seededStore(t *testing.T) *store.Store {
+func seededStore(t *testing.T) store.Backend {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "m.alpha", ElementType: "function", Name: "alpha",
 		FilePath: "m.go", Language: "go", Content: "alpha code",
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(store.ModelStamp{
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{
 		ModelID: "m-1", Revision: "r1", Dimensions: 4, Distance: "cosine", Provider: "test",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors("m-1", []store.VectorRow{{QualifiedName: "m.alpha", Vec: []float32{1, 0, 0, 0}}}); err != nil {
+	if err := st.UpsertVectors(context.Background(), "m-1", []store.VectorRow{{QualifiedName: "m.alpha", Vec: []float32{1, 0, 0, 0}}}); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -62,7 +62,7 @@ func seededStore(t *testing.T) *store.Store {
 func TestStatusUnhealthyWhenEmbeddingsReadFails(t *testing.T) {
 	st := seededStore(t)
 	cause := errors.New("no such table: emb_stamp")
-	e := New(stampsReadFails{Backend: st, cause: cause}, nil, nil)
+	e := New(stampsReadFails{Backend: st, cause: cause}, Options{})
 
 	out, err := e.Status(context.Background())
 	if err != nil {
@@ -113,7 +113,7 @@ func TestStatusUnhealthyWhenEmbeddingsReadFails(t *testing.T) {
 // invert a constant: a store whose embeddings layer reads fine is healthy.
 func TestStatusHealthyStoreReportsHealthy(t *testing.T) {
 	st := seededStore(t)
-	e := New(st, nil, nil)
+	e := New(st, Options{})
 
 	out, err := e.Status(context.Background())
 	if err != nil {
@@ -140,15 +140,15 @@ func TestStatusHealthyStoreReportsHealthy(t *testing.T) {
 // FAILED reports null plus embeddings_error.
 func TestStatusHealthyStoreWithoutEmbeddings(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, nil)
+	e := New(st, Options{})
 
 	out, err := e.Status(context.Background())
 	if err != nil {
@@ -177,7 +177,7 @@ func TestStatusHealthyStoreWithoutEmbeddings(t *testing.T) {
 // make the store unreadable, so it must not flip healthy.
 func TestStatusProviderUnreachableIsNotUnhealthy(t *testing.T) {
 	st := seededStore(t)
-	e := New(st, nil, QueryEmbedderFromProvider(failingProvider{inner: embed.Deterministic(4)}))
+	e := New(st, Options{Embedder: failingProvider{inner: embed.Deterministic(4)}})
 
 	out, err := e.Status(context.Background())
 	if err != nil {

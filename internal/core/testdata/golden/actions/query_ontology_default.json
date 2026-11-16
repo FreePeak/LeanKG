@@ -1,0 +1,9 @@
+{
+  "matches": [
+    {
+      "concept_id": "alpha",
+      "qn": "src/alpha.go::Alpha",
+      "via": "alias"
+    }
+  ]
+}

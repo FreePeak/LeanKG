@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -89,7 +90,7 @@ func TestLocateExactBySessionID(t *testing.T) {
 		jsonLine(t, map[string]any{"sessionId": sid, "projectHash": hashFor(fixtureCwd), "startTime": t0.Format(time.RFC3339)}),
 		jsonLine(t, map[string]any{"id": "m1", "timestamp": t0.Format(time.RFC3339), "type": "user", "content": "hello"}),
 	}, ""))
-	ref, conf, err := New().Locate(h, sessionlink.CallRef{ClientSessionID: sid, Cwd: fixtureCwd})
+	ref, conf, err := New().Locate(context.Background(), h, sessionlink.CallRef{ClientSessionID: sid, Cwd: fixtureCwd}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,14 +115,14 @@ func TestLocateHeuristicByProjectHashTimeToolArgs(t *testing.T) {
 			"toolCalls": []map[string]any{{"id": "tc2", "name": "mcp_leankg_query", "args": args}}}),
 	}, ""))
 	a := New()
-	ref, conf, err := a.Locate(h, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt.Add(time.Second)})
+	ref, conf, err := a.Locate(context.Background(), h, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt.Add(time.Second)}, nil)
 	if err != nil {
 		t.Fatalf("heuristic: %v", err)
 	}
 	if ref.Path != p || float64(conf) >= 1 {
 		t.Errorf("heuristic = %+v conf=%v", ref, conf)
 	}
-	if _, _, err := a.Locate(h, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(map[string]any{"q": "no"}), Cwd: fixtureCwd, TS: callAt}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), h, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(map[string]any{"q": "no"}), Cwd: fixtureCwd, TS: callAt}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("wrong args: err = %v", err)
 	}
 }
@@ -154,7 +155,7 @@ func TestWindowPromptFollowUpsTokensAndRewrite(t *testing.T) {
 	}, ""))
 
 	a := New()
-	w, err := a.Window(sessionlink.TranscriptRef{Client: "gemini", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt}, 2)
+	w, err := a.Window(context.Background(), sessionlink.TranscriptRef{Client: "gemini", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt}, 2, nil)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestWindowPromptFollowUpsTokensAndRewrite(t *testing.T) {
 	if w.FollowUps[1].Norm != "read" || w.FollowUps[1].Target != "internal/app/x.go" {
 		t.Errorf("follow-up 1 = %+v", w.FollowUps[1])
 	}
-	all, err := a.Transcript(sessionlink.TranscriptRef{Client: "gemini", Path: p}, 0)
+	all, err := a.Transcript(context.Background(), sessionlink.TranscriptRef{Client: "gemini", Path: p}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +201,7 @@ func TestLegacyWholeFileJSON(t *testing.T) {
 	}
 	raw, _ := json.Marshal(doc)
 	p := writeChat(t, h, hashFor(fixtureCwd), "session-legacy.json", string(raw))
-	w, err := New().Window(sessionlink.TranscriptRef{Client: "gemini", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt}, 1)
+	w, err := New().Window(context.Background(), sessionlink.TranscriptRef{Client: "gemini", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hashOf(args), Cwd: fixtureCwd, TS: callAt}, 1, nil)
 	if err != nil {
 		t.Fatalf("legacy window: %v", err)
 	}
@@ -212,13 +213,13 @@ func TestLegacyWholeFileJSON(t *testing.T) {
 func TestUnparseableIsUnsupported(t *testing.T) {
 	h := home(t)
 	p := writeChat(t, h, hashFor(fixtureCwd), "session-bad.jsonl", "nothing useful\n{\"unrelated\":1}\n")
-	if _, err := New().(*adapter).Transcript(sessionlink.TranscriptRef{Path: p}, 0); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
+	if _, err := New().(*adapter).Transcript(context.Background(), sessionlink.TranscriptRef{Path: p}, 0); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
 		t.Errorf("err = %v, want ErrUnsupportedVersion", err)
 	}
 }
 
 func TestMissingStoreIsNotFound(t *testing.T) {
-	if _, _, err := New().Locate(home(t), sessionlink.CallRef{ClientSessionID: "x", Cwd: fixtureCwd}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := New().Locate(context.Background(), home(t), sessionlink.CallRef{ClientSessionID: "x", Cwd: fixtureCwd}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("err = %v", err)
 	}
 }

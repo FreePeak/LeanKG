@@ -12,6 +12,7 @@ workflows:
     description: Index a repository, optionally embed it, then answer queries through the search ladder.
     entry_points:
       - cmd/leankg/main.go
+      - internal/cliexit/cliexit.go::Finish
       - internal/core/core.go::Query
     steps:
       - id: index
@@ -55,9 +56,9 @@ workflows:
       - id: read
         name: Read history, cochange and churn
         code_refs:
-          - internal/githistory/githistory.go::History
-          - internal/githistory/githistory.go::CoChange
-          - internal/githistory/githistory.go::Churn
+          - internal/githistory/query.go::History
+          - internal/githistory/query.go::CoChange
+          - internal/githistory/query.go::Churn
           - internal/core/githistory.go::gitHistoryQuery
 
   - id: search_ladder_resolution

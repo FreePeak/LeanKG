@@ -7,6 +7,7 @@ package claudecode
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -50,15 +51,18 @@ func slug(cwd string) string {
 // Locate finds the transcript for c. An exact client session id is used when
 // present; otherwise the heuristic (cwd slug, time range, tool and args hash)
 // picks the newest covering transcript.
-func (a adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (a adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.TranscriptRef{}, 0, err
+	}
 	r := root(home)
 	if c.ClientSessionID != "" {
-		return locateExact(r, c)
+		return locateExact(ctx, r, c, rd)
 	}
-	return locateHeuristic(r, c)
+	return locateHeuristic(ctx, r, c, rd)
 }
 
-func locateExact(r string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func locateExact(ctx context.Context, r string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
 	sid := c.ClientSessionID
 	if !sessionlink.ValidSessionID(sid) {
 		return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
@@ -73,7 +77,10 @@ func locateExact(r string, c sessionlink.CallRef) (sessionlink.TranscriptRef, se
 	}
 	for _, main := range mains {
 		for _, p := range append([]string{main}, subagentFiles(main, sid)...) {
-			ev, _, err := parseFile(p)
+			if err := ctx.Err(); err != nil {
+				return sessionlink.TranscriptRef{}, 0, err
+			}
+			ev, _, err := loadFile(rd, p)
 			if errors.Is(err, sessionlink.ErrUnsupportedVersion) {
 				unsupported = true
 			}
@@ -104,7 +111,7 @@ type candidate struct {
 	matches int
 }
 
-func locateHeuristic(r string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func locateHeuristic(ctx context.Context, r string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
 	if c.Cwd == "" || c.Tool == "" {
 		return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
 	}
@@ -128,7 +135,10 @@ func locateHeuristic(r string, c sessionlink.CallRef) (sessionlink.TranscriptRef
 			if !c.TS.IsZero() && fi.ModTime().Before(c.TS.Add(-sessionlink.CallLookBack)) {
 				continue
 			}
-			ev, cwd, err := parseFile(p)
+			if err := ctx.Err(); err != nil {
+				return sessionlink.TranscriptRef{}, 0, err
+			}
+			ev, cwd, err := loadFile(rd, p)
 			if errors.Is(err, sessionlink.ErrUnsupportedVersion) {
 				unsupported = true
 			}
@@ -191,8 +201,11 @@ func sessionIDOf(p string) string {
 }
 
 // Window extracts up to n turns before and after the matched call.
-func (adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
-	ev, _, err := parseFile(t.Path)
+func (adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int, rd *sessionlink.Reader) (sessionlink.Window, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.Window{}, err
+	}
+	ev, _, err := loadFile(rd, t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -204,12 +217,30 @@ func (adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n int)
 }
 
 // Transcript returns the whole file's turns, capped at maxTurns.
-func (adapter) Transcript(t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
-	ev, _, err := parseFile(t.Path)
+func (adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ev, _, err := loadFile(nil, t.Path)
 	if err != nil {
 		return nil, err
 	}
 	return sessionlink.TurnsOf(ev, maxTurns), nil
+}
+
+// parsedFile is one transcript as loadFile memoizes it.
+type parsedFile struct {
+	events []sessionlink.Event
+	cwd    string
+}
+
+// loadFile returns the transcript at path, parsing it at most once per Reader.
+func loadFile(rd *sessionlink.Reader, path string) ([]sessionlink.Event, string, error) {
+	p, err := sessionlink.Parsed(rd, path, func() (parsedFile, error) {
+		ev, cwd, err := parseFile(path)
+		return parsedFile{events: ev, cwd: cwd}, err
+	})
+	return p.events, p.cwd, err
 }
 
 // parseFile reads a transcript into adapter-neutral events and the first cwd

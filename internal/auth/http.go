@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -23,10 +24,13 @@ import (
 // (~292 years). A ttl_secs beyond it would wrap to "never expires".
 const maxTTLSecs = math.MaxInt64 / int64(time.Second)
 
-// Routes returns the /api/v1/auth/* handler tree over a store.
-func Routes(st store.Backend) http.Handler {
+// Routes returns the /api/v1/auth/* handler tree over a store. Every route is
+// Public: the bootstrap is mounted outside the listener gate, and each handler
+// resolves its own caller (caller, requireAccount), so its failures keep the
+// envelope's 400 shape instead of the gate's 401.
+func Routes(st Store) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/auth/register", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /api/v1/auth/register", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -35,14 +39,14 @@ func Routes(st store.Backend) http.Handler {
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		account, err := Register(st, req.Email, req.Password, req.Name)
+		account, err := Register(r.Context(), st, req.Email, req.Password, req.Name)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
 		}
 		writeOK(w, account)
-	})
-	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/login", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -50,14 +54,14 @@ func Routes(st store.Backend) http.Handler {
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		account, err := VerifyLogin(st, req.Email, req.Password)
+		account, err := VerifyLogin(r.Context(), st, req.Email, req.Password)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
 		}
 		writeOK(w, account)
-	})
-	mux.HandleFunc("POST /api/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/token", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			AccountID string `json:"account_id"`
 			OrgID     string `json:"org_id"`
@@ -102,7 +106,7 @@ func Routes(st store.Backend) http.Handler {
 			}
 			ttl = time.Duration(secs) * time.Second
 		}
-		secret, row, err := Mint(st, MintRequest{
+		secret, row, err := Mint(r.Context(), st, MintRequest{
 			Name:      req.Name,
 			Role:      role,
 			AccountID: req.AccountID,
@@ -124,8 +128,8 @@ func Routes(st store.Backend) http.Handler {
 			issued.ExpiresAt = &row.ExpiresAt
 		}
 		writeOK(w, issued)
-	})
-	mux.HandleFunc("GET /api/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /api/v1/auth/token", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, ok := caller(st, w, r)
 		if !ok {
 			return
@@ -133,57 +137,60 @@ func Routes(st store.Backend) http.Handler {
 		// A caller with an account sees only its own tokens (Rust
 		// list_tokens(ctx.client_id)); a process-level caller (env token or
 		// the no-token local default) has no account to filter by and sees all.
-		rows, err := st.TokenList()
+		rows, err := st.TokenList(r.Context())
 		if err != nil {
 			writeFail(w, err.Error())
 			return
 		}
-		if ctx.AccountID == "" {
-			writeOK(w, rows)
-			return
-		}
-		own := make([]store.Token, 0, len(rows))
+		visible := make([]tokenSummary, 0, len(rows))
 		for _, t := range rows {
-			if t.AccountID == ctx.AccountID {
-				own = append(own, t)
+			if ctx.AccountID == "" || t.AccountID == ctx.AccountID {
+				visible = append(visible, summarizeToken(t))
 			}
 		}
-		writeOK(w, own)
-	})
-	mux.HandleFunc("POST /api/v1/auth/token/revoke", func(w http.ResponseWriter, r *http.Request) {
+		writeOK(w, visible)
+	})))
+	mux.Handle("POST /api/v1/auth/token/revoke", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			TokenID string `json:"token_id"`
 		}
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		// Rust checked only that an Authorization header was present before
-		// revoking any token id. The Go port requires a VALID bearer (every
-		// other protected handler does); revocation stays unscoped, matching
-		// Rust, so any valid caller may revoke any token id.
-		if _, ok := caller(st, w, r); !ok {
+		// Revoking needs a valid bearer and either admin rights or ownership of
+		// the token (CX-03). Rust checked only for an Authorization header, so
+		// any bearer could revoke any token id.
+		ctx, ok := caller(st, w, r)
+		if !ok {
 			return
 		}
-		rows, err := st.TokenList()
+		rows, err := st.TokenList(r.Context())
 		if err != nil {
 			writeFail(w, err.Error())
 			return
 		}
 		revoked := false
 		for _, t := range rows {
-			if t.ID != req.TokenID || t.RevokedAt != 0 {
+			if t.ID != req.TokenID {
 				continue
 			}
-			if err := st.TokenRevoke(t.ID, time.Now().Unix()); err != nil {
-				writeFail(w, err.Error())
+			if !ctx.CanAdmin() && (ctx.AccountID == "" || t.AccountID != ctx.AccountID) {
+				msg := "insufficient permission to revoke another account's token (owner or admin required)"
+				httpx.WriteJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: &msg})
 				return
 			}
-			revoked = true
+			if t.RevokedAt == 0 {
+				if err := st.TokenRevoke(r.Context(), t.ID, time.Now().Unix()); err != nil {
+					writeFail(w, err.Error())
+					return
+				}
+				revoked = true
+			}
 			break
 		}
 		writeOK(w, revoked)
-	})
-	mux.HandleFunc("POST /api/v1/auth/org", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/org", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Rust took a bare JSON string body here (Json(name): Json<String>).
 		var name string
 		if err := json.NewDecoder(r.Body).Decode(&name); err != nil {
@@ -194,14 +201,14 @@ func Routes(st store.Backend) http.Handler {
 		if !ok {
 			return
 		}
-		org, err := CreateOrg(st, name, ctx.AccountID)
+		org, err := CreateOrg(r.Context(), st, name, ctx.AccountID)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
 		}
 		writeOK(w, org)
-	})
-	mux.HandleFunc("POST /api/v1/auth/org/{org_id}/member", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/org/{org_id}/member", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			AccountID string `json:"account_id"`
 			Role      string `json:"role"`
@@ -214,7 +221,7 @@ func Routes(st store.Backend) http.Handler {
 			return
 		}
 		orgID := r.PathValue("org_id")
-		allowed, err := OrgRoleSufficient(st, orgID, ctx.AccountID, OrgRoleAdmin)
+		allowed, err := OrgRoleSufficient(r.Context(), st, orgID, ctx.AccountID, OrgRoleAdmin)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -223,20 +230,20 @@ func Routes(st store.Backend) http.Handler {
 			writeFail(w, "insufficient permission: org admin+ required")
 			return
 		}
-		member, err := AddOrgMember(st, orgID, req.AccountID, req.Role)
+		member, err := AddOrgMember(r.Context(), st, orgID, req.AccountID, req.Role)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
 		}
 		writeOK(w, member)
-	})
-	mux.HandleFunc("GET /api/v1/auth/org/{org_id}/members", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /api/v1/auth/org/{org_id}/members", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, ok := requireAccount(st, w, r)
 		if !ok {
 			return
 		}
 		orgID := r.PathValue("org_id")
-		allowed, err := OrgRoleSufficient(st, orgID, ctx.AccountID, OrgRoleViewer)
+		allowed, err := OrgRoleSufficient(r.Context(), st, orgID, ctx.AccountID, OrgRoleViewer)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -245,14 +252,14 @@ func Routes(st store.Backend) http.Handler {
 			writeFail(w, "not an org member")
 			return
 		}
-		members, err := st.OrgMembers(orgID)
+		members, err := st.OrgMembers(r.Context(), orgID)
 		if err != nil {
 			writeFail(w, err.Error())
 			return
 		}
 		writeOK(w, members)
-	})
-	mux.HandleFunc("POST /api/v1/auth/resource/claim", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /api/v1/auth/resource/claim", Public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ResourceType string `json:"resource_type"`
 			ResourceID   string `json:"resource_id"`
@@ -265,18 +272,18 @@ func Routes(st store.Backend) http.Handler {
 		if !ok {
 			return
 		}
-		if err := ClaimResource(st, req.ResourceType, req.ResourceID, ctx.AccountID, req.OrgID); err != nil {
+		if err := ClaimResource(r.Context(), st, req.ResourceType, req.ResourceID, ctx.AccountID, req.OrgID); err != nil {
 			writeFail(w, err.Error())
 			return
 		}
 		writeOK(w, true)
-	})
+	})))
 	return mux
 }
 
 // caller resolves the request's auth context, writing the Rust-shaped error
 // response itself when the request is not authorized.
-func caller(st store.Backend, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
+func caller(st Store, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
 	ctx, err := Resolve(st, r)
 	if err != nil {
 		writeFail(w, err.Error())
@@ -289,7 +296,7 @@ func caller(st store.Backend, w http.ResponseWriter, r *http.Request) (AuthConte
 // account: org and ownership endpoints attribute their writes to it, so a
 // process-level caller (env token, or the no-token local default) cannot use
 // them.
-func requireAccount(st store.Backend, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
+func requireAccount(st Store, w http.ResponseWriter, r *http.Request) (AuthContext, bool) {
 	ctx, ok := caller(st, w, r)
 	if !ok {
 		return AuthContext{}, false
@@ -301,6 +308,30 @@ func requireAccount(st store.Backend, w http.ResponseWriter, r *http.Request) (A
 	return ctx, true
 }
 
+// tokenSummary is the token-list wire shape: store.Token without the at-rest
+// hash. The hash is never serialized to a client (CX-03), the same rule that
+// keeps password_hash off the account response.
+type tokenSummary struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Role       string   `json:"role"`
+	CreatedAt  int64    `json:"created_at"`
+	AccountID  string   `json:"account_id,omitempty"`
+	OrgID      string   `json:"org_id,omitempty"`
+	Scopes     []string `json:"scopes,omitempty"`
+	ExpiresAt  int64    `json:"expires_at,omitempty"`
+	RevokedAt  int64    `json:"revoked_at,omitempty"`
+	LastUsedAt int64    `json:"last_used_at,omitempty"`
+}
+
+func summarizeToken(t store.Token) tokenSummary {
+	return tokenSummary{
+		ID: t.ID, Name: t.Name, Role: t.Role, CreatedAt: t.CreatedAt,
+		AccountID: t.AccountID, OrgID: t.OrgID, Scopes: t.Scopes,
+		ExpiresAt: t.ExpiresAt, RevokedAt: t.RevokedAt, LastUsedAt: t.LastUsedAt,
+	}
+}
+
 // apiResponse is the Rust ApiResponse<T> wire shape: all three keys are always
 // present, with null for the unset one.
 type apiResponse struct {
@@ -310,17 +341,11 @@ type apiResponse struct {
 }
 
 func writeOK(w http.ResponseWriter, data any) {
-	writeJSON(w, http.StatusOK, apiResponse{Success: true, Data: data})
+	httpx.WriteJSON(w, http.StatusOK, apiResponse{Success: true, Data: data})
 }
 
 func writeFail(w http.ResponseWriter, msg string) {
-	writeJSON(w, http.StatusBadRequest, apiResponse{Success: false, Error: &msg})
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	httpx.WriteJSON(w, http.StatusBadRequest, apiResponse{Success: false, Error: &msg})
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, into any) bool {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -112,7 +113,7 @@ func (s *spyAdapter) Detect(string) bool { s.hit("Detect"); return true }
 
 func (s *spyAdapter) Roots(string) []string { s.hit("Roots"); return []string{"/spy"} }
 
-func (s *spyAdapter) Locate(_ string, c CallRef) (TranscriptRef, Confidence, error) {
+func (s *spyAdapter) Locate(_ context.Context, _ string, c CallRef, _ *Reader) (TranscriptRef, Confidence, error) {
 	s.hit("Locate")
 	if s.locate == nil {
 		return TranscriptRef{}, 0, ErrNotFound
@@ -121,7 +122,7 @@ func (s *spyAdapter) Locate(_ string, c CallRef) (TranscriptRef, Confidence, err
 	return t, Confidence(conf), err
 }
 
-func (s *spyAdapter) Window(t TranscriptRef, c CallRef, n int) (Window, error) {
+func (s *spyAdapter) Window(_ context.Context, t TranscriptRef, c CallRef, n int, _ *Reader) (Window, error) {
 	s.hit("Window")
 	if s.window == nil {
 		return Window{}, errors.New("no window")
@@ -129,7 +130,7 @@ func (s *spyAdapter) Window(t TranscriptRef, c CallRef, n int) (Window, error) {
 	return s.window(t, c, n)
 }
 
-func (s *spyAdapter) Transcript(TranscriptRef, int) ([]Turn, error) {
+func (s *spyAdapter) Transcript(context.Context, TranscriptRef, int) ([]Turn, error) {
 	s.hit("Transcript")
 	return nil, nil
 }
@@ -434,5 +435,93 @@ func TestLoopRereadsConfigEachPass(t *testing.T) {
 	defer mu.Unlock()
 	if reads < 3 {
 		t.Fatalf("cfgFn read %d times, want at least 3 (one per pass)", reads)
+	}
+}
+
+// parseCounter stands in for a transcript store. Locate reads every candidate
+// through the Reader and Window reads the matched one, as the real adapters
+// do; parses counts how often each file is actually parsed.
+type parseCounter struct {
+	client string
+	files  []countedFile
+	parses map[string]int
+}
+
+type countedFile struct {
+	path   string
+	covers bool
+}
+
+func (p *parseCounter) Client() string        { return p.client }
+func (p *parseCounter) Detect(string) bool    { return true }
+func (p *parseCounter) Roots(string) []string { return nil }
+func (p *parseCounter) Transcript(context.Context, TranscriptRef, int) ([]Turn, error) {
+	return nil, nil
+}
+
+func (p *parseCounter) read(rd *Reader, path string) error {
+	_, err := Parsed(rd, path, func() (string, error) {
+		p.parses[path]++
+		return path, nil
+	})
+	return err
+}
+
+func (p *parseCounter) Locate(_ context.Context, _ string, _ CallRef, rd *Reader) (TranscriptRef, Confidence, error) {
+	var found string
+	for _, f := range p.files {
+		if err := p.read(rd, f.path); err != nil {
+			return TranscriptRef{}, 0, err
+		}
+		if f.covers && found == "" {
+			found = f.path
+		}
+	}
+	if found == "" {
+		return TranscriptRef{}, 0, ErrNotFound
+	}
+	return TranscriptRef{Client: p.client, Path: found, SessionID: "s1"}, 1, nil
+}
+
+func (p *parseCounter) Window(_ context.Context, t TranscriptRef, _ CallRef, _ int, rd *Reader) (Window, error) {
+	if err := p.read(rd, t.Path); err != nil {
+		return Window{}, err
+	}
+	return baseWindow(1), nil
+}
+
+// A Link pass over many calls on the same transcripts parses each file once:
+// the candidates are shared by every call's Locate, and the match is shared by
+// its Window.
+func TestLinkParsesEachTranscriptOncePerPass(t *testing.T) {
+	grantOnly(t, "claude-code")
+	var calls []telemetry.CallEvent
+	for i := 0; i < 50; i++ {
+		calls = append(calls, mkCall(fmt.Sprintf("c%d", i), "claude-code", "s1", baseTS.Add(time.Duration(i)*time.Second)))
+	}
+	st := newFakeStore(calls)
+	pc := &parseCounter{
+		client: "claude-code",
+		files: []countedFile{
+			{path: "/t/a.jsonl", covers: false},
+			{path: "/t/b.jsonl", covers: true},
+			{path: "/t/c.jsonl", covers: true},
+		},
+		parses: map[string]int{},
+	}
+	stats, err := Link(context.Background(), st, telemetry.Config{}, t.TempDir(), []Adapter{pc}, baseTS.Add(10*time.Minute), 2*time.Minute)
+	if err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	if stats.Linked != 50 {
+		t.Fatalf("linked = %d, want 50", stats.Linked)
+	}
+	if len(pc.parses) != len(pc.files) {
+		t.Fatalf("parsed files = %d, want %d", len(pc.parses), len(pc.files))
+	}
+	for path, n := range pc.parses {
+		if n != 1 {
+			t.Errorf("%s parsed %d times in one Link pass, want 1", path, n)
+		}
 	}
 }

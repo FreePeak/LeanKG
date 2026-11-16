@@ -7,6 +7,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -142,7 +143,7 @@ func (r *pgServiceMetaRow) dest() []any {
 }
 
 // IncidentUpsert inserts or replaces an incident keyed by ID.
-func (s *PGStore) IncidentUpsert(inc Incident) error {
+func (s *PGStore) IncidentUpsert(ctx context.Context, inc Incident) error {
 	if inc.ID == "" {
 		return fmt.Errorf("store: incident upsert: id is required")
 	}
@@ -150,7 +151,7 @@ func (s *PGStore) IncidentUpsert(inc Incident) error {
 	if env == "" {
 		env = "local"
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO incidents (`+incidentCols+`)
+	_, err := s.pool.Exec(ctx, `INSERT INTO incidents (`+incidentCols+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (id) DO UPDATE SET
 			env=excluded.env, title=excluded.title, severity=excluded.severity,
@@ -170,9 +171,9 @@ func (s *PGStore) IncidentUpsert(inc Incident) error {
 }
 
 // IncidentByID resolves one incident by id.
-func (s *PGStore) IncidentByID(id string) (Incident, bool, error) {
+func (s *PGStore) IncidentByID(ctx context.Context, id string) (Incident, bool, error) {
 	var r pgIncidentRow
-	err := s.pool.QueryRow(pgCtx, `SELECT `+pgIncidentCols+` FROM incidents WHERE id = $1`, id).Scan(r.dest()...)
+	err := s.pool.QueryRow(ctx, `SELECT `+pgIncidentCols+` FROM incidents WHERE id = $1`, id).Scan(r.dest()...)
 	if err != nil {
 		if isNoRows(err) {
 			return Incident{}, false, nil
@@ -183,8 +184,8 @@ func (s *PGStore) IncidentByID(id string) (Incident, bool, error) {
 }
 
 // IncidentDelete removes an incident; an absent id is a no-op.
-func (s *PGStore) IncidentDelete(id string) error {
-	if _, err := s.pool.Exec(pgCtx, `DELETE FROM incidents WHERE id = $1`, id); err != nil {
+func (s *PGStore) IncidentDelete(ctx context.Context, id string) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM incidents WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("store: incident delete %s: %w", id, err)
 	}
 	return nil
@@ -192,11 +193,11 @@ func (s *PGStore) IncidentDelete(id string) error {
 
 // IncidentsQuery lists incidents newest first (see the SQLite method for the
 // ordering note).
-func (s *PGStore) IncidentsQuery(q IncidentQuery) ([]Incident, error) {
+func (s *PGStore) IncidentsQuery(ctx context.Context, q IncidentQuery) ([]Incident, error) {
 	b := &whereBuilder{ph: func(n int) string { return fmt.Sprintf("$%d", n) }}
 	where := incidentWhere(q, b)
 	clause := limitSQL(q.Limit, b)
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgIncidentCols+` FROM incidents WHERE `+where+
+	rows, err := s.pool.Query(ctx, `SELECT `+pgIncidentCols+` FROM incidents WHERE `+where+
 		` ORDER BY occurred_at DESC, id ASC`+clause, b.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: incidents query: %w", err)
@@ -214,7 +215,7 @@ func (s *PGStore) IncidentsQuery(q IncidentQuery) ([]Incident, error) {
 }
 
 // KnowledgeEntryUpsert inserts or replaces a knowledge entry keyed by ID.
-func (s *PGStore) KnowledgeEntryUpsert(e KnowledgeEntry) error {
+func (s *PGStore) KnowledgeEntryUpsert(ctx context.Context, e KnowledgeEntry) error {
 	if e.ID == "" {
 		return fmt.Errorf("store: knowledge entry upsert: id is required")
 	}
@@ -226,7 +227,7 @@ func (s *PGStore) KnowledgeEntryUpsert(e KnowledgeEntry) error {
 	if kt == "" {
 		kt = "general"
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO knowledge_entries (`+knowledgeCols+`)
+	_, err := s.pool.Exec(ctx, `INSERT INTO knowledge_entries (`+knowledgeCols+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (id) DO UPDATE SET
 			knowledge_type=excluded.knowledge_type, title=excluded.title, content=excluded.content,
@@ -243,9 +244,9 @@ func (s *PGStore) KnowledgeEntryUpsert(e KnowledgeEntry) error {
 }
 
 // KnowledgeEntryByID resolves one knowledge entry by id.
-func (s *PGStore) KnowledgeEntryByID(id string) (KnowledgeEntry, bool, error) {
+func (s *PGStore) KnowledgeEntryByID(ctx context.Context, id string) (KnowledgeEntry, bool, error) {
 	var r pgKnowledgeRow
-	err := s.pool.QueryRow(pgCtx, `SELECT `+pgKnowledgeCols+` FROM knowledge_entries WHERE id = $1`, id).Scan(r.dest()...)
+	err := s.pool.QueryRow(ctx, `SELECT `+pgKnowledgeCols+` FROM knowledge_entries WHERE id = $1`, id).Scan(r.dest()...)
 	if err != nil {
 		if isNoRows(err) {
 			return KnowledgeEntry{}, false, nil
@@ -256,45 +257,46 @@ func (s *PGStore) KnowledgeEntryByID(id string) (KnowledgeEntry, bool, error) {
 }
 
 // KnowledgeEntryDelete removes a knowledge entry; an absent id is a no-op.
-func (s *PGStore) KnowledgeEntryDelete(id string) error {
-	if _, err := s.pool.Exec(pgCtx, `DELETE FROM knowledge_entries WHERE id = $1`, id); err != nil {
+func (s *PGStore) KnowledgeEntryDelete(ctx context.Context, id string) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM knowledge_entries WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("store: knowledge entry delete %s: %w", id, err)
 	}
 	return nil
 }
 
 // KnowledgeEntriesByElement lists the entries anchored to one element.
-func (s *PGStore) KnowledgeEntriesByElement(qualifiedName string) ([]KnowledgeEntry, error) {
-	return s.pgKnowledgeRows(`SELECT `+pgKnowledgeCols+` FROM knowledge_entries
+func (s *PGStore) KnowledgeEntriesByElement(ctx context.Context, qualifiedName string) ([]KnowledgeEntry, error) {
+	return s.pgKnowledgeRows(ctx, `SELECT `+pgKnowledgeCols+` FROM knowledge_entries
 		WHERE element_qualified = $1 ORDER BY updated_at DESC, id ASC`, qualifiedName)
 }
 
 // KnowledgeEntriesByFeature lists the entries anchored to one feature.
-func (s *PGStore) KnowledgeEntriesByFeature(featureID string) ([]KnowledgeEntry, error) {
-	return s.pgKnowledgeRows(`SELECT `+pgKnowledgeCols+` FROM knowledge_entries
+func (s *PGStore) KnowledgeEntriesByFeature(ctx context.Context, featureID string) ([]KnowledgeEntry, error) {
+	return s.pgKnowledgeRows(ctx, `SELECT `+pgKnowledgeCols+` FROM knowledge_entries
 		WHERE feature_id = $1 ORDER BY updated_at DESC, id ASC`, featureID)
 }
 
 // KnowledgeEntriesByEnvironment lists the newest entries in one environment.
-func (s *PGStore) KnowledgeEntriesByEnvironment(environment string, limit int) ([]KnowledgeEntry, error) {
+func (s *PGStore) KnowledgeEntriesByEnvironment(ctx context.Context, environment string, limit int) ([]KnowledgeEntry, error) {
 	b := &whereBuilder{ph: func(n int) string { return fmt.Sprintf("$%d", n) }}
 	where := "environment = " + b.bind(environment)
-	return s.pgKnowledgeRows(`SELECT `+pgKnowledgeCols+` FROM knowledge_entries WHERE `+where+
+	return s.pgKnowledgeRows(ctx, `SELECT `+pgKnowledgeCols+` FROM knowledge_entries WHERE `+where+
 		` ORDER BY updated_at DESC, id ASC`+limitSQL(limit, b), b.args...)
 }
 
-// KnowledgeEntriesSearch substring-matches title or content (optionally
-// narrowed by knowledge type and environment), newest first.
-func (s *PGStore) KnowledgeEntriesSearch(query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
+// knowledgeSubstringSearch substring-matches title or content (optionally
+// narrowed by knowledge type and environment), newest first. It is the
+// fallback behind KnowledgeEntriesSearch.
+func (s *PGStore) knowledgeSubstringSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	b := &whereBuilder{ph: func(n int) string { return fmt.Sprintf("$%d", n) }}
 	where := searchWhere(query, knowledgeType, environment, b)
 	clause := limitSQL(limit, b)
-	return s.pgKnowledgeRows(`SELECT `+pgKnowledgeCols+` FROM knowledge_entries WHERE `+where+
+	return s.pgKnowledgeRows(ctx, `SELECT `+pgKnowledgeCols+` FROM knowledge_entries WHERE `+where+
 		` ORDER BY updated_at DESC, id ASC`+clause, b.args...)
 }
 
-func (s *PGStore) pgKnowledgeRows(query string, args ...any) ([]KnowledgeEntry, error) {
-	rows, err := s.pool.Query(pgCtx, query, args...)
+func (s *PGStore) pgKnowledgeRows(ctx context.Context, query string, args ...any) ([]KnowledgeEntry, error) {
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: knowledge query: %w", err)
 	}
@@ -311,7 +313,7 @@ func (s *PGStore) pgKnowledgeRows(query string, args ...any) ([]KnowledgeEntry, 
 }
 
 // ServiceMetadataUpsert inserts or replaces one (service, env) profile.
-func (s *PGStore) ServiceMetadataUpsert(m ServiceMetadata) error {
+func (s *PGStore) ServiceMetadataUpsert(ctx context.Context, m ServiceMetadata) error {
 	if m.ServiceName == "" {
 		return fmt.Errorf("store: service metadata upsert: service_name is required")
 	}
@@ -319,7 +321,7 @@ func (s *PGStore) ServiceMetadataUpsert(m ServiceMetadata) error {
 	if env == "" {
 		env = "local"
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO service_metadata (`+serviceMetaCols+`)
+	_, err := s.pool.Exec(ctx, `INSERT INTO service_metadata (`+serviceMetaCols+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT (service_name, env) DO UPDATE SET
 			team=excluded.team, on_call=excluded.on_call, repo_url=excluded.repo_url,
@@ -338,9 +340,9 @@ func (s *PGStore) ServiceMetadataUpsert(m ServiceMetadata) error {
 }
 
 // ServiceMetadataGet resolves one (service, env) profile.
-func (s *PGStore) ServiceMetadataGet(service, env string) (ServiceMetadata, bool, error) {
+func (s *PGStore) ServiceMetadataGet(ctx context.Context, service, env string) (ServiceMetadata, bool, error) {
 	var r pgServiceMetaRow
-	err := s.pool.QueryRow(pgCtx, `SELECT `+pgServiceMetaCols+` FROM service_metadata
+	err := s.pool.QueryRow(ctx, `SELECT `+pgServiceMetaCols+` FROM service_metadata
 		WHERE service_name = $1 AND env = $2`, service, env).Scan(r.dest()...)
 	if err != nil {
 		if isNoRows(err) {
@@ -353,15 +355,15 @@ func (s *PGStore) ServiceMetadataGet(service, env string) (ServiceMetadata, bool
 
 // EnvSnapshotsPut writes environment-scoped element snapshots in one
 // transaction, replacing each (env, qualified_name) row.
-func (s *PGStore) EnvSnapshotsPut(snaps []EnvSnapshot) error {
+func (s *PGStore) EnvSnapshotsPut(ctx context.Context, snaps []EnvSnapshot) error {
 	if len(snaps) == 0 {
 		return nil
 	}
-	tx, err := s.pool.Begin(pgCtx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(pgCtx) }()
+	defer func() { _ = tx.Rollback(ctx) }()
 	for _, snap := range snaps {
 		if snap.Env == "" || snap.QualifiedName == "" {
 			return fmt.Errorf("store: env snapshot: env and qualified_name are required")
@@ -374,7 +376,7 @@ func (s *PGStore) EnvSnapshotsPut(snaps []EnvSnapshot) error {
 			}
 			meta = string(b)
 		}
-		if _, err := tx.Exec(pgCtx, `INSERT INTO env_snapshots (`+envSnapshotCols+`)
+		if _, err := tx.Exec(ctx, `INSERT INTO env_snapshots (`+envSnapshotCols+`)
 			VALUES ($1,$2,$3,$4,$5,$6,$7)
 			ON CONFLICT (env, qualified_name) DO UPDATE SET
 				element_type=excluded.element_type, name=excluded.name, file_path=excluded.file_path,
@@ -384,14 +386,14 @@ func (s *PGStore) EnvSnapshotsPut(snaps []EnvSnapshot) error {
 			return fmt.Errorf("store: env snapshot upsert %s/%s: %w", snap.Env, snap.QualifiedName, err)
 		}
 	}
-	return tx.Commit(pgCtx)
+	return tx.Commit(ctx)
 }
 
 // EnvSnapshotGet resolves one environment-scoped element snapshot.
-func (s *PGStore) EnvSnapshotGet(env, qualifiedName string) (EnvSnapshot, bool, error) {
+func (s *PGStore) EnvSnapshotGet(ctx context.Context, env, qualifiedName string) (EnvSnapshot, bool, error) {
 	var snap EnvSnapshot
 	var meta string
-	err := s.pool.QueryRow(pgCtx, `SELECT `+envSnapshotCols+` FROM env_snapshots
+	err := s.pool.QueryRow(ctx, `SELECT `+envSnapshotCols+` FROM env_snapshots
 		WHERE env = $1 AND qualified_name = $2`, env, qualifiedName).Scan(
 		&snap.Env, &snap.QualifiedName, &snap.ElementType, &snap.Name, &snap.FilePath, &meta, &snap.CapturedAt)
 	if err != nil {
@@ -400,19 +402,17 @@ func (s *PGStore) EnvSnapshotGet(env, qualifiedName string) (EnvSnapshot, bool, 
 		}
 		return EnvSnapshot{}, false, fmt.Errorf("store: env snapshot get: %w", err)
 	}
-	if meta != "" && meta != "{}" {
-		_ = json.Unmarshal([]byte(meta), &snap.Metadata)
-	}
+	snap.Metadata = decodeJSONObject(meta)
 	return snap, true, nil
 }
 
 // EnvSnapshotConflictsWith lists conflicts_with relationships with the needle
 // in either endpoint (mirror of the SQLite method).
-func (s *PGStore) EnvSnapshotConflictsWith(needle string, limit int) ([]Relationship, error) {
+func (s *PGStore) EnvSnapshotConflictsWith(ctx context.Context, needle string, limit int) ([]Relationship, error) {
 	b := &whereBuilder{ph: func(n int) string { return fmt.Sprintf("$%d", n) }}
 	where := "rel_type = 'conflicts_with' AND (LOWER(source_qualified) LIKE " + b.bind(likeContains(needle)) +
 		" ESCAPE '\\' OR LOWER(target_qualified) LIKE " + b.bind(likeContains(needle)) + " ESCAPE '\\')"
-	rows, err := s.pool.Query(pgCtx, `SELECT source_qualified, target_qualified, rel_type, confidence, metadata `+
+	rows, err := s.pool.Query(ctx, `SELECT source_qualified, target_qualified, rel_type, confidence, metadata `+
 		`FROM relationships WHERE `+where+` ORDER BY source_qualified, target_qualified`+limitSQL(limit, b), b.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: conflicts_with query: %w", err)
@@ -425,9 +425,7 @@ func (s *PGStore) EnvSnapshotConflictsWith(needle string, limit int) ([]Relation
 		if err := rows.Scan(&r.Source, &r.Target, &r.RelType, &r.Confidence, &meta); err != nil {
 			return nil, fmt.Errorf("store: conflicts_with scan: %w", err)
 		}
-		if meta != "" && meta != "{}" {
-			_ = json.Unmarshal([]byte(meta), &r.Metadata)
-		}
+		r.Metadata = decodeJSONObject(meta)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -435,10 +433,10 @@ func (s *PGStore) EnvSnapshotConflictsWith(needle string, limit int) ([]Relation
 
 // EnvSnapshotEnvVariants lists the qualified names snapshotted in more than
 // one environment and containing needle (mirror of the SQLite method).
-func (s *PGStore) EnvSnapshotEnvVariants(needle string, limit int) ([]EnvVariant, error) {
+func (s *PGStore) EnvSnapshotEnvVariants(ctx context.Context, needle string, limit int) ([]EnvVariant, error) {
 	b := &whereBuilder{ph: func(n int) string { return fmt.Sprintf("$%d", n) }}
 	where := "LOWER(qualified_name) LIKE " + b.bind(likeContains(needle)) + " ESCAPE '\\'"
-	rows, err := s.pool.Query(pgCtx, `SELECT qualified_name, env FROM env_snapshots WHERE `+where+
+	rows, err := s.pool.Query(ctx, `SELECT qualified_name, env FROM env_snapshots WHERE `+where+
 		` ORDER BY qualified_name ASC, env ASC`, b.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: env variants query: %w", err)
@@ -456,8 +454,8 @@ func (s *PGStore) EnvSnapshotEnvVariants(needle string, limit int) ([]EnvVariant
 
 // ServiceMetadataAll lists every service profile in one environment, ordered
 // by service name (mirror of the SQLite method).
-func (s *PGStore) ServiceMetadataAll(env string) ([]ServiceMetadata, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+pgServiceMetaCols+` FROM service_metadata
+func (s *PGStore) ServiceMetadataAll(ctx context.Context, env string) ([]ServiceMetadata, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+pgServiceMetaCols+` FROM service_metadata
 		WHERE env = $1 ORDER BY service_name ASC`, env)
 	if err != nil {
 		return nil, fmt.Errorf("store: service metadata list: %w", err)

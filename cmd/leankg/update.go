@@ -15,22 +15,23 @@ import (
 	"os"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/update"
 )
 
 // cmdUpdate returns the process exit code: 0 when nothing needed doing or the
 // install succeeded, 1 when --check found a newer release or anything failed,
-// 2 on a flag error (flag.ExitOnError handles that path itself).
-func cmdUpdate(args []string) int {
-	fs := flag.NewFlagSet("update", flag.ExitOnError)
+// 2 on a flag error (flag.ContinueOnError handles that path itself).
+func cmdUpdate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	check := fs.Bool("check", false, "report the current and latest version without installing (exit 1 when behind)")
 	repo := fs.String("repo", update.DefaultRepo, "repository to update from, as owner/name")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if err := cliexit.Parse(fs, args); err != nil {
+		return err
 	}
 	if extra := fs.Args(); len(extra) > 0 {
 		fmt.Fprintf(os.Stderr, "update: unexpected argument %q\n", extra[0])
-		return 2
+		return cliexit.Code(2)
 	}
 
 	token := os.Getenv("GITHUB_TOKEN")
@@ -38,7 +39,7 @@ func cmdUpdate(args []string) int {
 	if *check {
 		fmt.Printf("current: %s\n", cur)
 	}
-	res, err := update.Run(context.Background(), update.Options{
+	res, err := update.Run(ctx, update.Options{
 		Repo:           *repo,
 		CurrentVersion: cur,
 		Token:          token,
@@ -50,10 +51,10 @@ func cmdUpdate(args []string) int {
 	case errors.As(err, &pe):
 		// The one failure with a known fix: print it as a copy-paste command.
 		fmt.Fprintln(os.Stderr, pe)
-		return 1
+		return cliexit.Code(1)
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "update: %v\n", err)
-		return 1
+		return cliexit.Code(1)
 	}
 
 	switch res.Status {
@@ -63,7 +64,7 @@ func cmdUpdate(args []string) int {
 		fmt.Printf("latest:  %s — up to date\n", res.Latest)
 	case update.StatusCheckedBehind:
 		fmt.Printf("latest:  %s — a newer release is available (run `leankg update`)\n", res.Latest)
-		return 1
+		return cliexit.Code(1)
 	case update.StatusUpdated:
 		fmt.Printf("updated leankg %s -> %s (%s)\n", res.Current, res.Latest, res.AssetName)
 		fmt.Printf("installed: %s\n", strings.Join(res.Replaced, "\ninstalled: "))
@@ -75,5 +76,5 @@ func cmdUpdate(args []string) int {
 	if res.Notice != "" {
 		fmt.Println(res.Notice)
 	}
-	return 0
+	return cliexit.Code(0)
 }

@@ -5,6 +5,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -12,14 +13,14 @@ import (
 func TestSummaryRoundTripAndResumeFields(t *testing.T) {
 	s := openTestStore(t)
 
-	if _, ok, err := s.SummaryGet("missing.go"); err != nil || ok {
+	if _, ok, err := s.SummaryGet(context.Background(), "missing.go"); err != nil || ok {
 		t.Fatalf("absent row: ok=%v err=%v", ok, err)
 	}
 	row := FileSummary{Path: "a.go", ContentHash: "h1", Model: "m1", Summary: "first prose"}
-	if err := s.SummaryUpsert(row); err != nil {
+	if err := s.SummaryUpsert(context.Background(), row); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	got, ok, err := s.SummaryGet("a.go")
+	got, ok, err := s.SummaryGet(context.Background(), "a.go")
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
@@ -32,13 +33,13 @@ func TestSummaryRoundTripAndResumeFields(t *testing.T) {
 
 	// Re-summarizing replaces the row: one row per path, the latest hash wins.
 	row.ContentHash, row.Summary = "h2", "second prose"
-	if err := s.SummaryUpsert(row); err != nil {
+	if err := s.SummaryUpsert(context.Background(), row); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
-	if err := s.SummaryUpsert(FileSummary{Path: "b.go", ContentHash: "h3", Model: "m1", Summary: "b prose"}); err != nil {
+	if err := s.SummaryUpsert(context.Background(), FileSummary{Path: "b.go", ContentHash: "h3", Model: "m1", Summary: "b prose"}); err != nil {
 		t.Fatalf("upsert b: %v", err)
 	}
-	all, err := s.SummariesAll()
+	all, err := s.SummariesAll(context.Background())
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -50,7 +51,7 @@ func TestSummaryRoundTripAndResumeFields(t *testing.T) {
 	}
 
 	// A path is required: a row without one could never be resumed.
-	if err := s.SummaryUpsert(FileSummary{Summary: "no path"}); err == nil {
+	if err := s.SummaryUpsert(context.Background(), FileSummary{Summary: "no path"}); err == nil {
 		t.Error("an empty path must be rejected")
 	}
 }
@@ -76,20 +77,20 @@ func TestSummaryTableExistsAfterMigrate(t *testing.T) {
 // (gated behind LEANKG_TEST_PG_URL like the rest of the PG suite).
 func TestPGSummaryRoundTrip(t *testing.T) {
 	s := openPGTest(t)
-	if err := s.SummaryUpsert(FileSummary{Path: "a.go", ContentHash: "h1", Model: "m1", Summary: "prose"}); err != nil {
+	if err := s.SummaryUpsert(context.Background(), FileSummary{Path: "a.go", ContentHash: "h1", Model: "m1", Summary: "prose"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	got, ok, err := s.SummaryGet("a.go")
+	got, ok, err := s.SummaryGet(context.Background(), "a.go")
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
 	if got.ContentHash != "h1" || got.Model != "m1" || got.Summary != "prose" || got.UpdatedAt == "" {
 		t.Errorf("round trip: %+v", got)
 	}
-	if err := s.SummaryUpsert(FileSummary{Path: "a.go", ContentHash: "h2", Model: "m2", Summary: "prose 2"}); err != nil {
+	if err := s.SummaryUpsert(context.Background(), FileSummary{Path: "a.go", ContentHash: "h2", Model: "m2", Summary: "prose 2"}); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
-	all, err := s.SummariesAll()
+	all, err := s.SummariesAll(context.Background())
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestPGSummaryRoundTrip(t *testing.T) {
 		t.Fatalf("replace: %+v", all)
 	}
 	var name string
-	if err := s.pool.QueryRow(pgCtx, `SELECT name FROM schema_migrations WHERE version = 14`).Scan(&name); err != nil {
+	if err := s.pool.QueryRow(context.Background(), `SELECT name FROM schema_migrations WHERE version = 14`).Scan(&name); err != nil {
 		t.Fatalf("migration 014 not recorded: %v", err)
 	}
 	if !strings.Contains(name, "file-summaries") {

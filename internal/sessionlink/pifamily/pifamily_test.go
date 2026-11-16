@@ -1,6 +1,7 @@
 package pifamily
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -159,14 +160,14 @@ func TestLocateExactByHeaderAndFilenameID(t *testing.T) {
 		jsonl(t, header(sid, fixtureCwd), userMsg("u1", "", "hello", t0)))
 
 	a := adapterWithRoot(t, root)
-	ref, conf, err := a.Locate("", sessionlink.CallRef{ClientSessionID: sid, Cwd: fixtureCwd})
+	ref, conf, err := a.Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: sid, Cwd: fixtureCwd}, nil)
 	if err != nil {
 		t.Fatalf("exact by header id: %v", err)
 	}
 	if ref.Path != p2 || float64(conf) != 1.0 || ref.SessionID != sid {
 		t.Errorf("exact header locate = %+v conf=%v", ref, conf)
 	}
-	ref, conf, err = a.Locate("", sessionlink.CallRef{ClientSessionID: uuid, Cwd: fixtureCwd})
+	ref, conf, err = a.Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: uuid, Cwd: fixtureCwd}, nil)
 	if err != nil {
 		t.Fatalf("exact by filename uuid: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestLocateHeuristicByCwdTimeToolAndArgs(t *testing.T) {
 			assistantMsg("a1", "u1", callAt, []line{toolCall("c1", "mcp__leankg__query", args)}, nil)))
 
 	a := adapterWithRoot(t, root)
-	ref, conf, err := a.Locate("", sessionlink.CallRef{Tool: "query", ArgsHash: hash, Cwd: fixtureCwd, TS: callAt.Add(time.Second)})
+	ref, conf, err := a.Locate(context.Background(), "", sessionlink.CallRef{Tool: "query", ArgsHash: hash, Cwd: fixtureCwd, TS: callAt.Add(time.Second)}, nil)
 	if err != nil {
 		t.Fatalf("heuristic locate: %v", err)
 	}
@@ -209,14 +210,14 @@ func TestLocateHeuristicRejectsWrongArgsOrTime(t *testing.T) {
 			assistantMsg("a1", "u1", callAt, []line{toolCall("c1", "mcp__leankg__query", line{"q": "one"})}, nil)))
 	a := adapterWithRoot(t, root)
 	wrongHash, _ := leankgCall(t, line{"q": "two"})
-	if _, _, err := a.Locate("", sessionlink.CallRef{Tool: "query", ArgsHash: wrongHash, Cwd: fixtureCwd, TS: callAt}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), "", sessionlink.CallRef{Tool: "query", ArgsHash: wrongHash, Cwd: fixtureCwd, TS: callAt}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("wrong args: err = %v, want ErrNotFound", err)
 	}
 	goodHash, _ := leankgCall(t, line{"q": "one"})
-	if _, _, err := a.Locate("", sessionlink.CallRef{Tool: "query", ArgsHash: goodHash, Cwd: fixtureCwd, TS: t0.Add(3 * time.Hour)}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), "", sessionlink.CallRef{Tool: "query", ArgsHash: goodHash, Cwd: fixtureCwd, TS: t0.Add(3 * time.Hour)}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("outside time window: err = %v, want ErrNotFound", err)
 	}
-	if _, _, err := a.Locate("", sessionlink.CallRef{Tool: "query", ArgsHash: goodHash, Cwd: "/synthetic/elsewhere", TS: callAt}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), "", sessionlink.CallRef{Tool: "query", ArgsHash: goodHash, Cwd: "/synthetic/elsewhere", TS: callAt}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("cwd mismatch: err = %v, want ErrNotFound", err)
 	}
 }
@@ -234,7 +235,7 @@ func TestActiveBranchOnlyIsTraversed(t *testing.T) {
 		userMsg("u2", "u1", "second prompt", t0.Add(time.Minute)),
 		assistantMsg("a2", "u2", t0.Add(time.Minute+time.Second), []line{toolCall("c-new", "mcp__leankg__query", active)}, nil),
 	))
-	turns, err := adapterWithRoot(t, root).(*adapter).Transcript(sessionlink.TranscriptRef{Client: "pi", Path: p}, 0)
+	turns, err := adapterWithRoot(t, root).(*adapter).Transcript(context.Background(), sessionlink.TranscriptRef{Client: "pi", Path: p}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +248,7 @@ func TestActiveBranchOnlyIsTraversed(t *testing.T) {
 	}
 	oldHash := telemetry.ArgsHash(mustJSON(t, abandoned))
 	a := adapterWithRoot(t, root)
-	if _, err := a.Window(sessionlink.TranscriptRef{Client: "pi", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: oldHash, Cwd: fixtureCwd}, 2); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, err := a.Window(context.Background(), sessionlink.TranscriptRef{Client: "pi", Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: oldHash, Cwd: fixtureCwd}, 2, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("abandoned call window err = %v, want ErrNotFound", err)
 	}
 }
@@ -282,8 +283,8 @@ func TestWindowPromptBeforeAfterAndFollowUps(t *testing.T) {
 		userMsg("u2", "a2", "next task", callAt.Add(time.Minute)),
 		assistantMsg("a3", "u2", callAt.Add(2*time.Minute), []line{toolCall("c-bash", "bash", line{"command": "ls"})}, nil),
 	))
-	w, err := adapterWithRoot(t, root).Window(sessionlink.TranscriptRef{Client: "pi", Path: p, SessionID: "sid-w"},
-		sessionlink.CallRef{Tool: "query", ArgsHash: hash, Cwd: fixtureCwd, TS: callAt}, 1)
+	w, err := adapterWithRoot(t, root).Window(context.Background(), sessionlink.TranscriptRef{Client: "pi", Path: p, SessionID: "sid-w"},
+		sessionlink.CallRef{Tool: "query", ArgsHash: hash, Cwd: fixtureCwd, TS: callAt}, 1, nil)
 	if err != nil {
 		t.Fatalf("window: %v", err)
 	}
@@ -325,7 +326,7 @@ func TestTokenUsageMappedPerAssistantTurn(t *testing.T) {
 		userMsg("u1", "", "count", t0),
 		assistantMsg("a1", "u1", t0.Add(time.Second), []line{{"type": "text", "text": "ok"}}, usageFixture),
 	))
-	turns, err := adapterWithRoot(t, root).(*adapter).Transcript(sessionlink.TranscriptRef{Path: p}, 0)
+	turns, err := adapterWithRoot(t, root).(*adapter).Transcript(context.Background(), sessionlink.TranscriptRef{Path: p}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +357,7 @@ func TestGarbageLinesAndXdevTitleSkipped(t *testing.T) {
 	)
 	p := writeSession(t, root, "--synthetic-project-a--", "uuid-g", t0, content)
 	a := adapterWithRoot(t, root)
-	w, err := a.Window(sessionlink.TranscriptRef{Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hash, Cwd: fixtureCwd, TS: callAt}, 3)
+	w, err := a.Window(context.Background(), sessionlink.TranscriptRef{Path: p}, sessionlink.CallRef{Tool: "query", ArgsHash: hash, Cwd: fixtureCwd, TS: callAt}, 3, nil)
 	if err != nil {
 		t.Fatalf("window over garbage: %v", err)
 	}
@@ -368,7 +369,7 @@ func TestGarbageLinesAndXdevTitleSkipped(t *testing.T) {
 func TestUnparseableStructureIsUnsupported(t *testing.T) {
 	root := piRoot(t)
 	p := writeSession(t, root, "--synthetic-project-a--", "uuid-n", t0, "garbage only\nno json here\n")
-	if _, err := adapterWithRoot(t, root).(*adapter).Transcript(sessionlink.TranscriptRef{Path: p}, 0); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
+	if _, err := adapterWithRoot(t, root).(*adapter).Transcript(context.Background(), sessionlink.TranscriptRef{Path: p}, 0); !errors.Is(err, sessionlink.ErrUnsupportedVersion) {
 		t.Errorf("err = %v, want ErrUnsupportedVersion", err)
 	}
 }
@@ -386,14 +387,14 @@ func TestSymlinkOutsideStoreIgnored(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "2026-10-01T09-00-00.000Z_uuid-link.jsonl")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	if _, _, err := adapterWithRoot(t, root).Locate("", sessionlink.CallRef{ClientSessionID: "sid-link", Cwd: fixtureCwd}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := adapterWithRoot(t, root).Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: "sid-link", Cwd: fixtureCwd}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("symlinked transcript must not be followed: err = %v", err)
 	}
 }
 
 func TestMissingStoreIsNotFound(t *testing.T) {
 	a := adapterWithRoot(t, filepath.Join(t.TempDir(), "absent"))
-	if _, _, err := a.Locate("", sessionlink.CallRef{ClientSessionID: "x", Cwd: fixtureCwd}); !errors.Is(err, sessionlink.ErrNotFound) {
+	if _, _, err := a.Locate(context.Background(), "", sessionlink.CallRef{ClientSessionID: "x", Cwd: fixtureCwd}, nil); !errors.Is(err, sessionlink.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }

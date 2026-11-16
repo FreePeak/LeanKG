@@ -11,12 +11,12 @@ import (
 
 func openStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "s.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -58,7 +58,7 @@ func mustImport(t *testing.T, st store.Backend, root string) Result {
 // edgeCount counts outgoing edges of one relationship type from source.
 func edgeCount(t *testing.T, st store.Backend, source, relType string) int {
 	t.Helper()
-	rels, err := st.Outgoing(source)
+	rels, err := st.Outgoing(context.Background(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func edgeCount(t *testing.T, st store.Backend, source, relType string) int {
 // (0 when there is no edge).
 func coChangeCount(t *testing.T, st store.Backend, a, b string) int {
 	t.Helper()
-	rels, err := st.Outgoing("git:file:" + a)
+	rels, err := st.Outgoing(context.Background(), "git:file:"+a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,10 +96,10 @@ func TestImportWritesCommitAuthorFileElementsAndEdges(t *testing.T) {
 		t.Fatalf("result = %+v, want 2 commits, full import", res)
 	}
 	head := gittest.Git(t, root, "rev-parse", "HEAD")
-	if els, _ := st.FindExact("git:commit:" + head); len(els) != 1 || els[0].ElementType != "commit" {
+	if els, _ := st.FindExact(context.Background(), "git:commit:"+head); len(els) != 1 || els[0].ElementType != "commit" {
 		t.Fatalf("head commit element missing or wrong type: %+v", els)
 	}
-	if els, _ := st.FindExact("git:author:t@example.com"); len(els) != 1 || els[0].ElementType != "author" {
+	if els, _ := st.FindExact(context.Background(), "git:author:t@example.com"); len(els) != 1 || els[0].ElementType != "author" {
 		t.Fatalf("author element missing: %+v", els)
 	}
 	if got := edgeCount(t, st, "git:file:a.go", "modified_in"); got != 2 {
@@ -111,7 +111,7 @@ func TestImportWritesCommitAuthorFileElementsAndEdges(t *testing.T) {
 	if got := coChangeCount(t, st, "a.go", "b.go"); got != 1 {
 		t.Fatalf("a.go->b.go co_change count = %d, want 1", got)
 	}
-	if v, ok, _ := st.KVGet(kvNamespace, kvHeadKey); !ok || v != head {
+	if v, ok, _ := st.KVGet(context.Background(), kvNamespace, kvHeadKey); !ok || v != head {
 		t.Fatalf("recorded history head = %q ok=%v, want %s", v, ok, head)
 	}
 }
@@ -147,7 +147,7 @@ func TestImportRebuildsWhenRecordedHeadIsNotAncestor(t *testing.T) {
 	root := repoWithCommits(t)
 	st := openStore(t)
 	mustImport(t, st, root)
-	if err := st.KVSet(kvNamespace, kvHeadKey, "0000000000000000000000000000000000000000"); err != nil {
+	if err := st.KVSet(context.Background(), kvNamespace, kvHeadKey, "0000000000000000000000000000000000000000"); err != nil {
 		t.Fatal(err)
 	}
 	res := mustImport(t, st, root)

@@ -12,20 +12,20 @@ import (
 // collectionFixture opens a migrated store holding TWO vector collections:
 // "live" (the one the query path searches) and "old" (an abandoned one —
 // the state every model swap used to leave behind).
-func collectionFixture(t *testing.T) *store.Store {
+func collectionFixture(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// A real element: a vector whose qualified name has no element is an
 	// ORPHAN by the store's own definition, and the orphan sweep would
 	// remove it before the stale-collection sweep ever saw it.
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "pkg.Fn", ElementType: "function", Name: "Fn",
 		FilePath: "pkg.go", Language: "go", LineStart: 1, LineEnd: 3,
 		Content: "func Fn() {}",
@@ -33,13 +33,13 @@ func collectionFixture(t *testing.T) *store.Store {
 		t.Fatalf("upsert element: %v", err)
 	}
 	for _, model := range []string{"live", "old"} {
-		if err := st.WriteStamp(store.ModelStamp{
+		if err := st.WriteStamp(context.Background(), store.ModelStamp{
 			ModelID: model, Revision: "rev-" + model, Dimensions: 4,
 			Distance: "cosine", Provider: "local",
 		}); err != nil {
 			t.Fatalf("write stamp %s: %v", model, err)
 		}
-		if err := st.UpsertVectors(model, []store.VectorRow{
+		if err := st.UpsertVectors(context.Background(), model, []store.VectorRow{
 			{QualifiedName: "pkg.Fn", Vec: []float32{1, 0, 0, 0}},
 		}); err != nil {
 			t.Fatalf("upsert vectors %s: %v", model, err)
@@ -50,16 +50,16 @@ func collectionFixture(t *testing.T) *store.Store {
 
 // hasCollection reports whether the store still holds a collection under
 // modelID (stamp + vectors).
-func hasCollection(t *testing.T, st *store.Store, modelID string) bool {
+func hasCollection(t *testing.T, st store.Backend, modelID string) bool {
 	t.Helper()
-	stamp, err := st.Stamp(modelID)
+	stamp, err := st.Stamp(context.Background(), modelID)
 	if err != nil {
 		t.Fatalf("stamp %s: %v", modelID, err)
 	}
 	if stamp == nil {
 		return false
 	}
-	n, err := st.VectorCount(modelID)
+	n, err := st.VectorCount(context.Background(), modelID)
 	if err != nil {
 		t.Fatalf("vector count %s: %v", modelID, err)
 	}
@@ -68,7 +68,7 @@ func hasCollection(t *testing.T, st *store.Store, modelID string) bool {
 
 func TestPassSweepsStaleCollections(t *testing.T) {
 	st := collectionFixture(t)
-	res, err := Pass(st, Options{KeepModelIDs: []string{"live"}})
+	res, err := Pass(context.Background(), st, Options{KeepModelIDs: []string{"live"}})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -89,34 +89,34 @@ func TestPassSweepsStaleCollections(t *testing.T) {
 // "embeddinggemma-2". A store whose keep collection is absent is BEHIND,
 // not stale — its one collection must survive the pass.
 func TestPassKeepsACollectionWhenTheKeepOneIsAbsent(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "pkg.Fn", ElementType: "function", Name: "Fn",
 		FilePath: "pkg.go", Language: "go", LineStart: 1, LineEnd: 3,
 		Content: "func Fn() {}",
 	}}); err != nil {
 		t.Fatalf("upsert element: %v", err)
 	}
-	if err := st.WriteStamp(store.ModelStamp{
+	if err := st.WriteStamp(context.Background(), store.ModelStamp{
 		ModelID: "local", Revision: "rev-local", Dimensions: 4,
 		Distance: "cosine", Provider: "local",
 	}); err != nil {
 		t.Fatalf("write stamp: %v", err)
 	}
-	if err := st.UpsertVectors("local", []store.VectorRow{
+	if err := st.UpsertVectors(context.Background(), "local", []store.VectorRow{
 		{QualifiedName: "pkg.Fn", Vec: []float32{1, 0, 0, 0}},
 	}); err != nil {
 		t.Fatalf("upsert vectors: %v", err)
 	}
 
-	res, err := Pass(st, Options{KeepModelIDs: []string{"embeddinggemma-2"}})
+	res, err := Pass(context.Background(), st, Options{KeepModelIDs: []string{"embeddinggemma-2"}})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestPassKeepsACollectionWhenTheKeepOneIsAbsent(t *testing.T) {
 
 func TestPassWithoutAKeepListLeavesEveryCollection(t *testing.T) {
 	st := collectionFixture(t)
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestRunFleetSweepsEveryProject(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	for _, st := range []*store.Store{first, second} {
+	for _, st := range []store.Backend{first, second} {
 		if !hasCollection(t, st, "live") {
 			t.Error("a live collection was dropped")
 		}

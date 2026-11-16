@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -40,7 +41,7 @@ func TestResolvePrecedence(t *testing.T) {
 	t.Run("token role", func(t *testing.T) {
 		clearTokenEnv(t)
 		st := openAuthStore(t)
-		secret, _, err := Mint(st, MintRequest{Name: "plain", Role: "viewer"})
+		secret, _, err := Mint(context.Background(), st, MintRequest{Name: "plain", Role: "viewer"})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -55,7 +56,7 @@ func TestResolvePrecedence(t *testing.T) {
 
 	t.Run("token role outranks env", func(t *testing.T) {
 		st := openAuthStore(t)
-		secret, tok, err := Mint(st, MintRequest{Name: "dual", Role: "admin"})
+		secret, tok, err := Mint(context.Background(), st, MintRequest{Name: "dual", Role: "admin"})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -78,7 +79,7 @@ func TestResolvePrecedence(t *testing.T) {
 		orgID, _, member := orgWithMember(t, st)
 
 		// The token claims admin; the org membership says member.
-		secret, _, err := Mint(st, MintRequest{Name: "member-token", Role: "admin", AccountID: member.ID, OrgID: orgID})
+		secret, _, err := Mint(context.Background(), st, MintRequest{Name: "member-token", Role: "admin", AccountID: member.ID, OrgID: orgID})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -94,19 +95,19 @@ func TestResolvePrecedence(t *testing.T) {
 	t.Run("org ownership outranks org role", func(t *testing.T) {
 		clearTokenEnv(t)
 		st := openAuthStore(t)
-		account, err := Register(st, "boss@example.com", "password123", "Boss")
+		account, err := Register(context.Background(), st, "boss@example.com", "password123", "Boss")
 		if err != nil {
 			t.Fatalf("register: %v", err)
 		}
-		orgs, err := st.OrgsByOwner(account.ID)
+		orgs, err := st.OrgsByOwner(context.Background(), account.ID)
 		if err != nil || len(orgs) != 1 {
 			t.Fatalf("orgs by owner = %+v, %v", orgs, err)
 		}
 		// Downgrade the membership row: ownership still outranks it.
-		if _, err := AddOrgMember(st, orgs[0].ID, account.ID, OrgRoleViewer); err != nil {
+		if _, err := AddOrgMember(context.Background(), st, orgs[0].ID, account.ID, OrgRoleViewer); err != nil {
 			t.Fatalf("downgrade membership: %v", err)
 		}
-		secret, _, err := Mint(st, MintRequest{Name: "boss-token", Role: "viewer", AccountID: account.ID, OrgID: orgs[0].ID})
+		secret, _, err := Mint(context.Background(), st, MintRequest{Name: "boss-token", Role: "viewer", AccountID: account.ID, OrgID: orgs[0].ID})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -122,14 +123,14 @@ func TestResolvePrecedence(t *testing.T) {
 	t.Run("resource ownership outranks everything", func(t *testing.T) {
 		clearTokenEnv(t)
 		st := openAuthStore(t)
-		account, err := Register(st, "owner2@example.com", "password123", "Owner2")
+		account, err := Register(context.Background(), st, "owner2@example.com", "password123", "Owner2")
 		if err != nil {
 			t.Fatalf("register: %v", err)
 		}
-		if err := ClaimResource(st, "knowledge", "entry-1", account.ID, ""); err != nil {
+		if err := ClaimResource(context.Background(), st, "knowledge", "entry-1", account.ID, ""); err != nil {
 			t.Fatalf("claim: %v", err)
 		}
-		secret, _, err := Mint(st, MintRequest{Name: "viewer-token", Role: "viewer", AccountID: account.ID})
+		secret, _, err := Mint(context.Background(), st, MintRequest{Name: "viewer-token", Role: "viewer", AccountID: account.ID})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -153,7 +154,7 @@ func TestResolvePrecedence(t *testing.T) {
 	t.Run("unknown org label falls back to token role", func(t *testing.T) {
 		clearTokenEnv(t)
 		st := openAuthStore(t)
-		secret, _, err := Mint(st, MintRequest{Name: "stale-org", Role: "contributor", AccountID: "ghost", OrgID: "no-such-org"})
+		secret, _, err := Mint(context.Background(), st, MintRequest{Name: "stale-org", Role: "contributor", AccountID: "ghost", OrgID: "no-such-org"})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -168,12 +169,12 @@ func TestResolvePrecedence(t *testing.T) {
 
 	t.Run("revoked token never falls through to env", func(t *testing.T) {
 		st := openAuthStore(t)
-		secret, tok, err := Mint(st, MintRequest{Name: "revoked", Role: "admin"})
+		secret, tok, err := Mint(context.Background(), st, MintRequest{Name: "revoked", Role: "admin"})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
 		t.Setenv("LEANKG_TOKEN_ADMIN", secret) // static copy of the same secret
-		if err := st.TokenRevoke(tok.ID, 1); err != nil {
+		if err := st.TokenRevoke(context.Background(), tok.ID, 1); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
 		if _, err := Resolve(st, reqWith(secret)); !errors.Is(err, store.ErrTokenRevoked) {
@@ -184,7 +185,7 @@ func TestResolvePrecedence(t *testing.T) {
 	t.Run("missing and unknown tokens with tokens configured", func(t *testing.T) {
 		clearTokenEnv(t)
 		st := openAuthStore(t)
-		if _, _, err := Mint(st, MintRequest{Name: "configured", Role: "viewer"}); err != nil {
+		if _, _, err := Mint(context.Background(), st, MintRequest{Name: "configured", Role: "viewer"}); err != nil {
 			t.Fatalf("mint: %v", err)
 		}
 		if _, err := Resolve(st, reqWith("")); err == nil {
@@ -198,7 +199,7 @@ func TestResolvePrecedence(t *testing.T) {
 	t.Run("scopes round-trip and gate by membership", func(t *testing.T) {
 		clearTokenEnv(t)
 		st := openAuthStore(t)
-		secret, _, err := Mint(st, MintRequest{Name: "scoped", Role: "contributor", Scopes: []string{"org:read", "org:write"}})
+		secret, _, err := Mint(context.Background(), st, MintRequest{Name: "scoped", Role: "contributor", Scopes: []string{"org:read", "org:write"}})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -220,7 +221,7 @@ func TestResolvePrecedence(t *testing.T) {
 	t.Run("unscoped token allows any scope", func(t *testing.T) {
 		clearTokenEnv(t)
 		st := openAuthStore(t)
-		secret, _, err := Mint(st, MintRequest{Name: "unscoped", Role: "viewer"})
+		secret, _, err := Mint(context.Background(), st, MintRequest{Name: "unscoped", Role: "viewer"})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -241,7 +242,7 @@ func TestClassifyUsesEnterpriseResolution(t *testing.T) {
 	st := openAuthStore(t)
 	orgID, _, member := orgWithMember(t, st)
 
-	secret, _, err := Mint(st, MintRequest{Name: "member-token", Role: "admin", AccountID: member.ID, OrgID: orgID})
+	secret, _, err := Mint(context.Background(), st, MintRequest{Name: "member-token", Role: "admin", AccountID: member.ID, OrgID: orgID})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -258,20 +259,92 @@ func TestClassifyUsesEnterpriseResolution(t *testing.T) {
 // org member, and returns the org id, the owner and the member.
 func orgWithMember(t *testing.T, st store.Backend) (orgID string, owner, member store.Account) {
 	t.Helper()
-	owner, err := Register(st, "org-owner@example.com", "password123", "OrgOwner")
+	owner, err := Register(context.Background(), st, "org-owner@example.com", "password123", "OrgOwner")
 	if err != nil {
 		t.Fatalf("register owner: %v", err)
 	}
-	orgs, err := st.OrgsByOwner(owner.ID)
+	orgs, err := st.OrgsByOwner(context.Background(), owner.ID)
 	if err != nil || len(orgs) != 1 {
 		t.Fatalf("orgs by owner = %+v, %v", orgs, err)
 	}
-	member, err = Register(st, "org-member@example.com", "password123", "OrgMember")
+	member, err = Register(context.Background(), st, "org-member@example.com", "password123", "OrgMember")
 	if err != nil {
 		t.Fatalf("register member: %v", err)
 	}
-	if _, err := AddOrgMember(st, orgs[0].ID, member.ID, OrgRoleMember); err != nil {
+	if _, err := AddOrgMember(context.Background(), st, orgs[0].ID, member.ID, OrgRoleMember); err != nil {
 		t.Fatalf("add member: %v", err)
 	}
 	return orgs[0].ID, owner, member
+}
+
+// TestDisabledAccountTokenRejected pins the account-status check: a token
+// minted for an account stops authenticating when the account is disabled
+// and works again once it is active. The rejection is the same error an
+// unknown token gets, so the 401 does not reveal the account state. A token
+// with no account id (process-level) is not affected.
+func TestDisabledAccountTokenRejected(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	acct := store.Account{ID: "acct-7", Email: "bob@example.com", Name: "Bob", Status: "active", CreatedAt: 1, UpdatedAt: 1}
+	if err := st.AccountUpsert(context.Background(), acct); err != nil {
+		t.Fatalf("account upsert: %v", err)
+	}
+	secret, _, err := Mint(context.Background(), st, MintRequest{Name: "bob", Role: "contributor", AccountID: acct.ID})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	plain, _, err := Mint(context.Background(), st, MintRequest{Name: "plain", Role: "viewer"})
+	if err != nil {
+		t.Fatalf("mint plain: %v", err)
+	}
+	if _, err := Resolve(st, reqWith(secret)); err != nil {
+		t.Fatalf("active account: resolve: %v; want success", err)
+	}
+
+	acct.Status = "disabled"
+	if err := st.AccountUpsert(context.Background(), acct); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	_, err = Resolve(st, reqWith(secret))
+	_, unknownErr := Resolve(st, reqWith("lkg_not-a-minted-token"))
+	if err == nil || unknownErr == nil {
+		t.Fatalf("disabled account: err = %v, unknown = %v; want both rejected", err, unknownErr)
+	}
+	if err.Error() != unknownErr.Error() {
+		t.Fatalf("disabled account error %q differs from unknown token %q", err, unknownErr)
+	}
+	if _, _, err := RoleOrAnonymous(st, reqWith(secret)); err == nil {
+		t.Fatal("disabled account: RoleOrAnonymous accepted the token; the HTTP gate must answer 401")
+	}
+	if _, err := Resolve(st, reqWith(plain)); err != nil {
+		t.Fatalf("accountless token: resolve: %v; want success", err)
+	}
+
+	acct.Status = "active"
+	if err := st.AccountUpsert(context.Background(), acct); err != nil {
+		t.Fatalf("re-enable: %v", err)
+	}
+	if _, err := Resolve(st, reqWith(secret)); err != nil {
+		t.Fatalf("re-enabled account: resolve: %v; want success", err)
+	}
+}
+
+// TestLegacyAccountLabelKeepsWorking pins the fail-closed scope of the
+// account-status check: only an existing account that is not active rejects
+// its tokens. A token whose account id has no row (a free-form label minted
+// before accounts existed) keeps authenticating with its minted role.
+func TestLegacyAccountLabelKeepsWorking(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	secret, _, err := Mint(context.Background(), st, MintRequest{Name: "legacy", Role: "contributor", AccountID: "free-form-label"})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	ctx, err := Resolve(st, reqWith(secret))
+	if err != nil {
+		t.Fatalf("token for a missing account: resolve: %v; want success", err)
+	}
+	if ctx.Role != Contributor || ctx.Via != ViaToken {
+		t.Fatalf("ctx = %+v; want Contributor/token", ctx)
+	}
 }

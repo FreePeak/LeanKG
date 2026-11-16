@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -31,14 +32,14 @@ import (
 const DefaultPageSize = 8192
 
 // PageSize reports the page size of the SQLite store at path.
-func PageSize(path string) (int, error) {
+func PageSize(ctx context.Context, path string) (int, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(10000)")
 	if err != nil {
 		return 0, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	defer db.Close()
 	var size int
-	if err := db.QueryRow("PRAGMA page_size").Scan(&size); err != nil {
+	if err := db.QueryRowContext(ctx, "PRAGMA page_size").Scan(&size); err != nil {
 		return 0, fmt.Errorf("store: read page size of %s: %w", path, err)
 	}
 	return size, nil
@@ -77,7 +78,7 @@ type PageSizeUpgrade struct {
 //
 // The vector rows are counted before and after: a rewrite that lost a vector
 // is a bug, not a compaction, and the count is what says so.
-func UpgradePageSize(path string, size int) (PageSizeUpgrade, error) {
+func UpgradePageSize(ctx context.Context, path string, size int) (PageSizeUpgrade, error) {
 	out := PageSizeUpgrade{Path: path}
 	if size < 512 || size > 65536 || size&(size-1) != 0 {
 		return out, fmt.Errorf("store: page size %d is not a power of two between 512 and 65536", size)
@@ -85,7 +86,7 @@ func UpgradePageSize(path string, size int) (PageSizeUpgrade, error) {
 	if _, err := os.Stat(path); err != nil {
 		return out, fmt.Errorf("store: no store at %s: %w", path, err)
 	}
-	before, err := PageSize(path)
+	before, err := PageSize(ctx, path)
 	if err != nil {
 		return out, err
 	}
@@ -104,31 +105,31 @@ func UpgradePageSize(path string, size int) (PageSizeUpgrade, error) {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 
-	vectorsBefore, err := countVectors(db)
+	vectorsBefore, err := countVectors(ctx, db)
 	if err != nil {
 		return out, err
 	}
-	journal, err := currentJournalMode(db)
+	journal, err := currentJournalMode(ctx, db)
 	if err != nil {
 		return out, err
 	}
 	if journal != "delete" {
-		if _, err := db.Exec(`PRAGMA journal_mode = DELETE`); err != nil {
+		if _, err := db.ExecContext(ctx, `PRAGMA journal_mode = DELETE`); err != nil {
 			return out, fmt.Errorf("store: leave WAL mode: %w", err)
 		}
 	}
-	if _, err := db.Exec(`PRAGMA page_size = ` + strconv.Itoa(size)); err != nil {
+	if _, err := db.ExecContext(ctx, `PRAGMA page_size = `+strconv.Itoa(size)); err != nil {
 		return out, fmt.Errorf("store: set page size: %w", err)
 	}
-	if _, err := db.Exec(`VACUUM`); err != nil {
+	if _, err := db.ExecContext(ctx, `VACUUM`); err != nil {
 		return out, fmt.Errorf("store: rewrite at page size %d: %w", size, err)
 	}
 	if journal != "delete" {
-		if _, err := db.Exec(`PRAGMA journal_mode = ` + journal); err != nil {
+		if _, err := db.ExecContext(ctx, `PRAGMA journal_mode = `+journal); err != nil {
 			return out, fmt.Errorf("store: restore %s mode: %w", journal, err)
 		}
 	}
-	after, err := PageSize(path)
+	after, err := PageSize(ctx, path)
 	if err != nil {
 		return out, err
 	}
@@ -139,7 +140,7 @@ func UpgradePageSize(path string, size int) (PageSizeUpgrade, error) {
 	if after != size {
 		return out, fmt.Errorf("store: the rewrite left page_size %d, want %d", after, size)
 	}
-	vectorsAfter, err := countVectors(db)
+	vectorsAfter, err := countVectors(ctx, db)
 	if err != nil {
 		return out, err
 	}
@@ -151,9 +152,9 @@ func UpgradePageSize(path string, size int) (PageSizeUpgrade, error) {
 }
 
 // countVectors counts the rows of the vector table, if the store has one.
-func countVectors(db *sql.DB) (int, error) {
+func countVectors(ctx context.Context, db *sql.DB) (int, error) {
 	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM embedding_vectors`).Scan(&n)
+	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embedding_vectors`).Scan(&n)
 	if err != nil {
 		// A store without the vector table (an empty project, a pre-vector
 		// database) has nothing to lose.
@@ -166,9 +167,9 @@ func countVectors(db *sql.DB) (int, error) {
 }
 
 // currentJournalMode reports the store's journal mode.
-func currentJournalMode(db *sql.DB) (string, error) {
+func currentJournalMode(ctx context.Context, db *sql.DB) (string, error) {
 	var mode string
-	if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
 		return "", fmt.Errorf("store: read journal mode: %w", err)
 	}
 	return mode, nil

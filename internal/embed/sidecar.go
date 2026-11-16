@@ -17,14 +17,6 @@ import (
 	"time"
 )
 
-// envOrSidecar reads an environment variable with a fallback.
-func envOrSidecar(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 // Sidecar lifecycle for the local embedding provider (LEANKG_EMBED_PROVIDER=local).
 
 // The Rust engine ran ONNX in-process; the Go engine instead drives an
@@ -34,7 +26,7 @@ func envOrSidecar(key, fallback string) string {
 // provider that cannot be constructed fails hard with an actionable
 // error — never a silent degrade to fake vectors.
 
-// Defaults for the sidecar environment (see SidecarConfigFromEnv).
+// Defaults for the sidecar (cmd/internal/embedenv fills Config.Sidecar from the environment).
 const (
 	defaultSidecarCommand = "llama-server"
 	// DefaultLocalRepo / DefaultLocalFile are the pinned local GGUF the
@@ -71,55 +63,12 @@ func (c SidecarConfig) BaseURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d/v1", c.Port)
 }
 
-// SidecarConfigFromEnv reads the sidecar environment:
-//
-//	LEANKG_EMBED_SIDECAR_CMD       executable (default llama-server)
-//	LEANKG_EMBED_SIDECAR_ARGS      shell-quoted extra argv (default: serve
-//	                               the pinned bge-small-en-v1.5 GGUF with --embeddings)
-//	LEANKG_EMBED_SIDECAR_PORT      port (default 8080)
-//	LEANKG_EMBED_SIDECAR_READY_SECS  startup health-poll bound (default 120)
-func SidecarConfigFromEnv() (SidecarConfig, error) {
-	cfg := SidecarConfig{
-		Command:      envOrSidecar("LEANKG_EMBED_SIDECAR_CMD", defaultSidecarCommand),
-		Port:         defaultSidecarPort,
-		ReadyTimeout: defaultReadyTimeout,
-		PollInterval: defaultPollInterval,
-	}
-	raw := os.Getenv("LEANKG_EMBED_SIDECAR_ARGS")
-	if raw == "" {
-		cfg.Args = defaultSidecarArgs()
-	} else {
-		args, err := splitArgs(raw)
-		if err != nil {
-			return cfg, fmt.Errorf("embed: invalid LEANKG_EMBED_SIDECAR_ARGS: %w", err)
-		}
-		cfg.Args = args
-	}
-	if v := os.Getenv("LEANKG_EMBED_SIDECAR_PORT"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > 65535 {
-			return cfg, fmt.Errorf("embed: invalid LEANKG_EMBED_SIDECAR_PORT %q", v)
-		}
-		cfg.Port = n
-	}
-	if v := os.Getenv("LEANKG_EMBED_SIDECAR_READY_SECS"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return cfg, fmt.Errorf("embed: invalid LEANKG_EMBED_SIDECAR_READY_SECS %q", v)
-		}
-		cfg.ReadyTimeout = time.Duration(n) * time.Second
-	}
-	return cfg, nil
-}
-
-// defaultSidecarArgs serves the pinned local GGUF with embedding support.
-// An explicit LEANKG_EMBED_SIDECAR_ARGS always wins; when the pinned file
-// already sits in ~/.leankg/models it is served directly, otherwise
-// llama-server fetches it from HuggingFace on first use (-hf) into the hub
-// cache (~/.cache/huggingface) — operator action is the binary only, never
-// a manual download (e2e-verified 2026-09-18: fresh HOME, 21 s incl. fetch).
-func defaultSidecarArgs() []string {
-	if home, err := os.UserHomeDir(); err == nil {
+// DefaultSidecarArgs serves the pinned local GGUF with embedding support: the
+// copy in <home>/.leankg/models when it is there, else llama-server's -hf fetch
+// from HuggingFace on first use into the hub cache. Config.Sidecar.Args
+// replaces it whenever the operator names argv.
+func DefaultSidecarArgs(home string) []string {
+	if home != "" {
 		if p := filepath.Join(home, ".leankg", "models", DefaultLocalFile); fileExists(p) {
 			return []string{"-m", p, "--embeddings", "-c", "8192"}
 		}
@@ -171,6 +120,9 @@ type Sidecar struct {
 // Adopting keeps the attach-or-spawn contract the PRD already claims: one
 // sidecar per port, whoever started it, nobody killing someone else's.
 func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
+	if cfg.Command == "" {
+		cfg.Command = defaultSidecarCommand
+	}
 	if cfg.Port == 0 {
 		cfg.Port = defaultSidecarPort
 	}
@@ -187,7 +139,7 @@ func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 	// answer nothing on /health, and only an endpoint that really embeds
 	// deserves adoption. A stranger on the port must still surface as the
 	// actionable startup error below, never as a silently wrong provider.
-	if ready, err := probeEmbeddings(cfg.BaseURL()); err == nil && ready {
+	if ready, err := probeEmbeddings(ctx, cfg.BaseURL()); err == nil && ready {
 		return &Sidecar{
 			port:    cfg.Port,
 			exited:  make(chan struct{}),
@@ -195,18 +147,28 @@ func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
 			adopted: true,
 		}, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("embed: sidecar startup canceled: %w", err)
+	}
 
 	args := append([]string(nil), cfg.Args...)
 	if !portFlagPresent(args) {
 		args = append(args, "--port", strconv.Itoa(cfg.Port))
 	}
 
-	cmd := exec.Command(cfg.Command, args...)
+	cmd := exec.CommandContext(ctx, cfg.Command, args...)
 	if cfg.Env != nil {
 		cmd.Env = append(os.Environ(), cfg.Env...)
 	}
-	// Own process group so Shutdown can kill the sidecar's children too.
+	// Own process group so Shutdown can kill the sidecar's children too. A
+	// cancelled ctx asks the whole group to stop; WaitDelay keeps Wait from
+	// blocking on the stderr pipe that a child still holds open.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		killGroup(cmd.Process.Pid, syscall.SIGTERM)
+		return nil
+	}
+	cmd.WaitDelay = shutdownGrace
 	stderr := &tailBuffer{limit: stderrTail}
 	cmd.Stderr = stderr
 
@@ -270,9 +232,9 @@ func (s *Sidecar) BaseURL() string { return fmt.Sprintf("http://127.0.0.1:%d/v1"
 // GGUF it loaded, so the probe never depends on configuration. A non-2xx or a
 // body without an embedding is "not a sidecar", which is the answer that
 // keeps a stranger on the port out of the provider.
-func probeEmbeddings(baseURL string) (bool, error) {
+func probeEmbeddings(ctx context.Context, baseURL string) (bool, error) {
 	body := strings.NewReader(`{"model":"leankg-adopt-probe","input":[" "]}`)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/embeddings", body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/embeddings", body)
 	if err != nil {
 		return false, err
 	}
@@ -315,7 +277,11 @@ func (s *Sidecar) Shutdown() error {
 			case <-s.exited:
 			case <-time.After(shutdownGrace):
 				killGroup(s.cmd.Process.Pid, syscall.SIGKILL)
-				<-s.exited
+				// SIGKILL cannot be caught: wait a bounded time for the reap, never forever.
+				select {
+				case <-s.exited:
+				case <-time.After(shutdownGrace):
+				}
 			}
 		}
 		close(s.done)
@@ -370,7 +336,11 @@ func awaitHealthy(ctx context.Context, url string, timeout, interval time.Durati
 			return errSidecarExited
 		case <-time.After(interval):
 		}
-		resp, err := client.Get(url)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
 		if err == nil {
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
@@ -418,12 +388,12 @@ func (t *tailBuffer) String() string {
 	return strings.TrimRight(string(t.buf), "\n")
 }
 
-// splitArgs splits a shell-quoted argument string the way /bin/sh would:
+// SplitArgs splits a shell-quoted argument string the way /bin/sh would:
 // whitespace separates words, single and double quotes group them, and a
 // backslash escapes the next byte outside quotes (and inside double
 // quotes). ponytail: hand-rolled because go.mod is frozen; upgrade to
 // shellwords if escaping corner cases ever matter.
-func splitArgs(s string) ([]string, error) {
+func SplitArgs(s string) ([]string, error) {
 	var args []string
 	var cur strings.Builder
 	inWord, quote := false, byte(0)

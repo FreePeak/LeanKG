@@ -5,6 +5,7 @@
 package web
 
 import (
+	"context"
 	"path/filepath"
 
 	"github.com/FreePeak/LeanKG/internal/core"
@@ -13,12 +14,12 @@ import (
 // GodNodes returns the top-N most connected elements for the engine's project
 // (US-GF-05 / Rust GraphEngine::get_god_nodes). A percentile above 0 drops
 // the super-hub tail before the limit is applied.
-func GodNodes(engine *core.Engine, limit, excludeHubsPercentile int) ([]GodNode, error) {
-	snap, err := loadSnapshot(engine.Store())
+func GodNodes(ctx context.Context, engine *core.Engine, limit, excludeHubsPercentile int) ([]GodNode, error) {
+	snap, err := loadSnapshot(ctx, engine)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := allRelationships(engine.Store())
+	rels, err := engine.GraphRelationships(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -27,8 +28,8 @@ func GodNodes(engine *core.Engine, limit, excludeHubsPercentile int) ([]GodNode,
 
 // GraphReportFor builds the US-GF-06 graph report for the engine's project.
 // projectDir supplies the default display name; projectName overrides it.
-func GraphReportFor(engine *core.Engine, projectDir, projectName string) (GraphReport, error) {
-	return buildGraphReport(projectDir, engine, projectName)
+func GraphReportFor(ctx context.Context, engine *core.Engine, projectDir, projectName string) (GraphReport, error) {
+	return buildGraphReport(ctx, projectDir, engine, projectName)
 }
 
 // GraphReportMarkdown renders a report as the GRAPH_REPORT.md body

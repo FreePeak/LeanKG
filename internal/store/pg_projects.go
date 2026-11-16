@@ -4,19 +4,22 @@
 // pgx rows, and lower(name) where sqlite spells COLLATE NOCASE.
 package store
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // ProjectUpsert registers a project, or refreshes the row keyed on Dir — see
 // projects.go for the contract (registered_at survives, last_indexed COALESCEs,
 // names are not unique).
-func (s *PGStore) ProjectUpsert(p ProjectRecord) error {
+func (s *PGStore) ProjectUpsert(ctx context.Context, p ProjectRecord) error {
 	if p.Dir == "" || p.Name == "" || p.RegisteredAt == "" {
 		return fmt.Errorf("store: project upsert: dir, name and registered_at are required")
 	}
 	if s.mode == RO {
 		return fmt.Errorf("store: project upsert requires RW mode")
 	}
-	if _, err := s.pool.Exec(pgCtx, `INSERT INTO projects (`+projectCols+`)
+	if _, err := s.pool.Exec(ctx, `INSERT INTO projects (`+projectCols+`)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT(dir) DO UPDATE SET
 			name = excluded.name,
@@ -30,8 +33,8 @@ func (s *PGStore) ProjectUpsert(p ProjectRecord) error {
 }
 
 // ProjectGet reads the row for one canonical project directory.
-func (s *PGStore) ProjectGet(dir string) (ProjectRecord, bool, error) {
-	row := s.pool.QueryRow(pgCtx, `SELECT `+projectCols+` FROM projects WHERE dir = $1`, dir)
+func (s *PGStore) ProjectGet(ctx context.Context, dir string) (ProjectRecord, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+projectCols+` FROM projects WHERE dir = $1`, dir)
 	p, err := scanProject(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -43,8 +46,8 @@ func (s *PGStore) ProjectGet(dir string) (ProjectRecord, bool, error) {
 }
 
 // ProjectList enumerates the registry (see projects.go for the ordering).
-func (s *PGStore) ProjectList() ([]ProjectRecord, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+projectCols+` FROM projects
+func (s *PGStore) ProjectList(ctx context.Context) ([]ProjectRecord, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+projectCols+` FROM projects
 		ORDER BY lower(name), dir`)
 	if err != nil {
 		return nil, fmt.Errorf("store: project list: %w", err)
@@ -66,11 +69,11 @@ func (s *PGStore) ProjectList() ([]ProjectRecord, error) {
 
 // ProjectForget removes the row for one canonical directory and reports
 // whether anything went (an unknown dir is a no-op, not an error).
-func (s *PGStore) ProjectForget(dir string) (bool, error) {
+func (s *PGStore) ProjectForget(ctx context.Context, dir string) (bool, error) {
 	if s.mode == RO {
 		return false, fmt.Errorf("store: project forget requires RW mode")
 	}
-	ct, err := s.pool.Exec(pgCtx, `DELETE FROM projects WHERE dir = $1`, dir)
+	ct, err := s.pool.Exec(ctx, `DELETE FROM projects WHERE dir = $1`, dir)
 	if err != nil {
 		return false, fmt.Errorf("store: project forget %s: %w", dir, err)
 	}

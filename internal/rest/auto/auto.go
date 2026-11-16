@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
-	"github.com/FreePeak/LeanKG/internal/index"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/refresh"
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // AutoConfigRequest controls the MCP auto-init behaviors served over REST.
@@ -46,16 +46,10 @@ var (
 func decodeJSON[T any](w http.ResponseWriter, r *http.Request, into *T) bool {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		httpx.WriteMessage(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}
 	return true
-}
-
-func writeAutoJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 // Router is the per-request project selector (internal/projects). It is an
@@ -68,7 +62,55 @@ type Router interface {
 // Option configures RegisterAutoConfig.
 type Option func(*config)
 
-type config struct{ router Router }
+type config struct {
+	router     Router
+	jobs       *Jobs
+	embedStart func(context.Context) (embed.Provider, func(), error)
+}
+
+// run starts fn on the jobs' server-lifetime context. Without a wired Jobs it
+// runs on a copy of the request context that is not cancelled when the
+// handler returns (values are kept, cancellation is not). Such a job is not
+// stopped on shutdown, so serve must wire a Jobs for that.
+func (c config) run(r *http.Request, fn func(context.Context)) {
+	if c.jobs != nil {
+		c.jobs.Go(fn)
+		return
+	}
+	go fn(context.WithoutCancel(r.Context()))
+}
+
+// Jobs runs the background auto-config jobs. Its context is derived from the
+// server's root context, so a job outlives the request that started it.
+type Jobs struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+// NewJobs derives the jobs' context from root, the server lifetime context.
+func NewJobs(root context.Context) *Jobs {
+	ctx, cancel := context.WithCancel(root)
+	return &Jobs{ctx: ctx, cancel: cancel}
+}
+
+// Go runs fn in a goroutine tracked by Wait and Stop.
+func (j *Jobs) Go(fn func(context.Context)) {
+	j.wg.Add(1)
+	go func() {
+		defer j.wg.Done()
+		fn(j.ctx)
+	}()
+}
+
+// Wait blocks until every started job has returned.
+func (j *Jobs) Wait() { j.wg.Wait() }
+
+// Stop cancels the jobs' context and waits for them to return.
+func (j *Jobs) Stop() {
+	j.cancel()
+	j.wg.Wait()
+}
 
 // WithRouter lets the endpoint honour ?project=<dir or name>, the same
 // selector the query path uses.
@@ -80,6 +122,17 @@ type config struct{ router Router }
 // With it, the selector resolves before the engine is chosen.
 func WithRouter(r Router) Option { return func(c *config) { c.router = r } }
 
+// WithJobs runs the auto-config jobs on jobs. The serve command wires one
+// Jobs with the server's root context and calls Stop on shutdown.
+func WithJobs(j *Jobs) Option { return func(c *config) { c.jobs = j } }
+
+// WithEmbedStart names how the auto-embed job resolves its provider (the serve
+// command passes embed.Start over the configuration it read). Without it an
+// auto-embed request is skipped with a reason.
+func WithEmbedStart(start func(context.Context) (embed.Provider, func(), error)) Option {
+	return func(c *config) { c.embedStart = start }
+}
+
 // RegisterAutoConfig mounts POST /api/v1/mcp/auto-config on the mux.
 // The endpoint triggers background auto-index and/or auto-embed for the
 // selected project; both default to off and must be explicitly enabled.
@@ -89,8 +142,8 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 		o(&cfg)
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/", h)
-	mux.HandleFunc("POST /api/v1/mcp/auto-config", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/", auth.Public(h)) // delegates; the REST or MCP mux declares its own roles
+	mux.Handle("POST /api/v1/mcp/auto-config", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		eng := engine
 		// ?project= wins when a router is wired; without one we keep the
 		// single-engine behaviour a stdio spawn depends on.
@@ -99,17 +152,17 @@ func RegisterAutoConfig(h http.Handler, engine *core.Engine, opts ...Option) htt
 			if err != nil {
 				// Fail closed: an unknown selector never falls back to the
 				// default engine, and nothing is indexed.
-				writeAutoJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+				httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			eng = resolved
 		}
-		handleAutoConfig(w, r, eng)
-	})
+		handleAutoConfig(w, r, eng, cfg)
+	})))
 	return mux
 }
 
-func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engine) {
+func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engine, cfg config) {
 	var req AutoConfigRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -118,16 +171,7 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 		req.EmbedDebounceSecs = 120
 	}
 
-	ctx := r.Context()
 	projectDir := engine.ProjectDir()
-	st := engine.Store()
-
-	if req.IndexEnabled {
-		go startAutoIndex(ctx, st, projectDir)
-	}
-	if req.EmbedEnabled {
-		go startAutoEmbed(ctx, st, projectDir, req.EmbedDebounceSecs)
-	}
 
 	// FR-ZCP-01 clause 3: a caller asking to auto-index the project it is
 	// working in must not silently index a different one. The routing layer
@@ -137,7 +181,7 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 	// We refuse with the fix rather than acting on a project they are not in
 	// — the same fail-closed rule #480 applied to the query path.
 	if req.CWD != "" && !withinDir(projectDir, req.CWD) && !withinDir(req.CWD, projectDir) {
-		writeAutoJSON(w, http.StatusConflict, map[string]any{
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{
 			"error":   "cwd is not inside the project this endpoint serves",
 			"cwd":     req.CWD,
 			"project": projectDir,
@@ -145,7 +189,14 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 		})
 		return
 	}
-	writeAutoJSON(w, http.StatusOK, map[string]any{
+	// Jobs start only after the refusal above, so a refused request starts none.
+	if req.IndexEnabled {
+		cfg.run(r, func(ctx context.Context) { startAutoIndex(ctx, engine, projectDir) })
+	}
+	if req.EmbedEnabled {
+		cfg.run(r, func(ctx context.Context) { startAutoEmbed(ctx, projectDir, req.EmbedDebounceSecs, cfg.embedStart) })
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"index_enabled":          req.IndexEnabled,
 		"embed_enabled":          req.EmbedEnabled,
 		"embed_debounce_seconds": req.EmbedDebounceSecs,
@@ -155,7 +206,7 @@ func handleAutoConfig(w http.ResponseWriter, r *http.Request, engine *core.Engin
 
 // startAutoIndex runs the index in a background goroutine (single-flight per
 // process: a second call while one is in flight is a no-op with a logged note).
-func startAutoIndex(ctx context.Context, st store.Backend, dir string) {
+func startAutoIndex(ctx context.Context, engine *core.Engine, dir string) {
 	autoIndexMu.Lock()
 	if autoIndexRunning {
 		autoIndexMu.Unlock()
@@ -175,24 +226,37 @@ func startAutoIndex(ctx context.Context, st store.Backend, dir string) {
 		return
 	}
 	langReg := langs.DefaultRegistry()
-	if _, aerr := langReg.Activate(dir); aerr != nil {
+	if _, aerr := langReg.Activate(ctx, dir); aerr != nil {
 		log.Printf("auto-config: index language detection: %v", aerr)
 		return
 	}
-	res, err := index.IndexDirWith(ctx, st, dir, langReg)
+	res, err := engine.IndexDir(ctx, dir, langReg)
 	if err != nil {
 		log.Printf("auto-config: index failed: %v", err)
 		return
 	}
-	if _, ierr := store.RefreshInventory(st); ierr != nil {
+	if ierr := engine.RefreshInventory(ctx); ierr != nil {
 		log.Printf("auto-config: index inventory refresh: %v", ierr)
 	}
 	log.Printf("auto-config: index complete: files=%d elements=%d relationships=%d", res.Files, res.Elements, res.Relationships)
 }
 
+// embedDebounce holds the embed job for its debounce window and reports false
+// when the job's context ended first. Tests replace it to drive the window by
+// channel instead of by the clock.
+var embedDebounce = func(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
 // startAutoEmbed waits the debounce window for index to settle, then runs
 // the embedding pipeline in a background goroutine (single-flight per process).
-func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceSecs int) {
+func startAutoEmbed(ctx context.Context, dir string, debounceSecs int,
+	start func(context.Context) (embed.Provider, func(), error)) {
 	autoEmbedMu.Lock()
 	if autoEmbedRunning {
 		autoEmbedMu.Unlock()
@@ -207,13 +271,15 @@ func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceS
 		autoEmbedMu.Unlock()
 	}()
 
-	select {
-	case <-ctx.Done():
+	if !embedDebounce(ctx, time.Duration(debounceSecs)*time.Second) {
 		return
-	case <-time.After(time.Duration(debounceSecs) * time.Second):
 	}
 
-	provider, release, err := embed.StartProvider(ctx)
+	if start == nil {
+		log.Printf("auto-config: embed skipped: no embedding provider configured")
+		return
+	}
+	provider, release, err := start(ctx)
 	if err != nil {
 		log.Printf("auto-config: embed skipped: %v", err)
 		return
@@ -221,7 +287,7 @@ func startAutoEmbed(ctx context.Context, st store.Backend, dir string, debounceS
 	defer release()
 	_ = provider
 
-	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir})
+	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir, Start: start})
 	if err != nil {
 		log.Printf("auto-config: embed failed: %v", err)
 		return

@@ -29,13 +29,13 @@ type fakeAdapter struct {
 func (f fakeAdapter) Client() string        { return f.client }
 func (f fakeAdapter) Detect(string) bool    { return f.detect }
 func (f fakeAdapter) Roots(string) []string { return f.roots }
-func (f fakeAdapter) Locate(string, sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (f fakeAdapter) Locate(context.Context, string, sessionlink.CallRef, *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
 	return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
 }
-func (f fakeAdapter) Window(sessionlink.TranscriptRef, sessionlink.CallRef, int) (sessionlink.Window, error) {
+func (f fakeAdapter) Window(context.Context, sessionlink.TranscriptRef, sessionlink.CallRef, int, *sessionlink.Reader) (sessionlink.Window, error) {
 	return sessionlink.Window{}, sessionlink.ErrNotFound
 }
-func (f fakeAdapter) Transcript(sessionlink.TranscriptRef, int) ([]sessionlink.Turn, error) {
+func (f fakeAdapter) Transcript(context.Context, sessionlink.TranscriptRef, int) ([]sessionlink.Turn, error) {
 	return nil, nil
 }
 
@@ -142,7 +142,7 @@ func TestRoutesWithoutLedgerServeEmptyShapes(t *testing.T) {
 	home := t.TempDir()
 	var opened int
 	srv := testServer(t, home, func(o *Options) {
-		o.openStore = func(string, bool) (telemetry.Store, error) { opened++; return nil, os.ErrNotExist }
+		o.openStore = func(context.Context, string, bool) (telemetry.Store, error) { opened++; return nil, os.ErrNotExist }
 	})
 	h := srv.Handler()
 	for _, c := range apiGETs {
@@ -170,7 +170,7 @@ func TestSeededLedgerIsOpenedAndConsulted(t *testing.T) {
 	}
 	fs := &fakeStore{stats: telemetry.Stats{Path: telemetry.DBPath(home), SizeBytes: 4096, DroppedEvents: 7}}
 	srv := testServer(t, home, func(o *Options) {
-		o.openStore = func(string, bool) (telemetry.Store, error) { return fs, nil }
+		o.openStore = func(context.Context, string, bool) (telemetry.Store, error) { return fs, nil }
 	})
 	h := srv.Handler()
 	for _, c := range apiGETs {
@@ -366,7 +366,7 @@ func TestConsentPurgeRemovesLedger(t *testing.T) {
 		}
 	}
 	srv := testServer(t, home, func(o *Options) {
-		o.openStore = func(string, bool) (telemetry.Store, error) { return &fakeStore{}, nil }
+		o.openStore = func(context.Context, string, bool) (telemetry.Store, error) { return &fakeStore{}, nil }
 	})
 	body := `{"capture":"off","sessions":[],"purge":true}`
 	rec := do(t, srv.Handler(), http.MethodPost, "/api/dashboard/v1/consent", consentHeaders(srv), body)
@@ -474,7 +474,7 @@ func TestNormalizeListsEmitsEmptyArrays(t *testing.T) {
 		Kids  []inner  `json:"kids"`
 	}
 	rec := httptest.NewRecorder()
-	writeJSON(rec, http.StatusOK, outer{Child: &inner{}, Kids: []inner{{}}})
+	respondJSON(rec, http.StatusOK, outer{Child: &inner{}, Kids: []inner{{}}})
 	want := `{"kpis":[],"child":{"items":[]},"kids":[{"items":[]}]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s\nwant %s", got, want)

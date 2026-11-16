@@ -82,7 +82,8 @@ concepts:
     owned_by:
       - leankg
     code_refs:
-      - internal/store/store.go::Open
+      - internal/store/store.go::openSQLite
+      - internal/store/engine_shared.go
 
   - id: postgres_store
     type: data_store
@@ -96,9 +97,10 @@ concepts:
     owned_by:
       - leankg
     code_refs:
-      - internal/store/store_pg.go::OpenPG
+      - internal/store/backend.go::OpenBackend
       - internal/store/pg_vectors.go
       - internal/store/pgmigrate.go
+      - internal/store/engine_shared.go
 
   - id: indexer
     type: service
@@ -147,9 +149,9 @@ concepts:
     docs:
       - docs/git-history.md
     code_refs:
-      - internal/githistory/githistory.go::History
-      - internal/githistory/githistory.go::CoChange
-      - internal/githistory/githistory.go::Churn
+      - internal/githistory/query.go::History
+      - internal/githistory/query.go::CoChange
+      - internal/githistory/query.go::Churn
       - internal/core/githistory.go::gitImport
 
   - id: ontology
@@ -195,6 +197,7 @@ concepts:
       - leankg
     code_refs:
       - internal/auth/http.go
+      - internal/auth/route.go::Require
       - internal/mcp/server.go::anonymousGate
 
   - id: authenticate_tool
@@ -256,6 +259,9 @@ concepts:
     code_refs:
       - internal/rest/rest.go
       - internal/rpc/service.go
+      - internal/httpx/httpx.go
+      - internal/core/decode_query.go
+      - internal/core/budget.go
 
   - id: web_ui
     type: service
@@ -270,6 +276,7 @@ concepts:
       - leankg
     code_refs:
       - internal/web/web.go
+      - internal/core/graphread.go
       - ui-v2
 
   - id: tree_sitter_tier

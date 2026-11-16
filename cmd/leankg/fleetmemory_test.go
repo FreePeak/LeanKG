@@ -40,11 +40,11 @@ func projectWithMemory(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(banks, "bank.jsonl"), []byte(buf.String()), 0o644); err != nil {
 		t.Fatalf("write fixture bank: %v", err)
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open store %s: %v", dir, err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate store %s: %v", dir, err)
 	}
 	if err := st.Close(); err != nil {
@@ -91,7 +91,7 @@ func TestFleetTargetsCompactEveryProjectMemory(t *testing.T) {
 		}
 	}
 
-	st, err := store.Open(filepath.Join(defaultDir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(defaultDir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open default store: %v", err)
 	}
@@ -115,10 +115,10 @@ func TestFleetTargetsCompactEveryProjectMemory(t *testing.T) {
 	// One pass over the fleet.
 	opts := maintain.Options{Logf: t.Logf}
 	for _, tg := range targets {
-		if _, err := maintain.Pass(tg.Store, opts); err != nil {
+		if _, err := maintain.Pass(context.Background(), tg.Store, opts); err != nil {
 			t.Fatalf("pass %s: %v", tg.Label, err)
 		}
-		maintain.CompactMemory(tg.Mem, opts)
+		maintain.CompactMemory(context.Background(), tg.Mem, opts)
 		if tg.Close != nil {
 			tg.Close()
 		}
@@ -138,11 +138,11 @@ func TestFleetTargetsSkipProjectsWithoutAMemoryIndex(t *testing.T) {
 	defaultDir := t.TempDir()
 	projectWithMemory(t, defaultDir)
 	plain := t.TempDir()
-	st, err := store.Open(filepath.Join(plain, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(plain, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	st.Close()
@@ -152,7 +152,7 @@ func TestFleetTargetsSkipProjectsWithoutAMemoryIndex(t *testing.T) {
 		t.Fatalf("open default memory: %v", err)
 	}
 	defer mem.Close()
-	defStore, err := store.Open(filepath.Join(defaultDir, ".leankg", "leankg.db"), store.RW)
+	defStore, err := openFixtureStore(filepath.Join(defaultDir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatalf("open default store: %v", err)
 	}

@@ -1,15 +1,18 @@
 package store
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestAuditLedgerChain(t *testing.T) {
 	s := openTestStore(t)
 	for i, action := range []string{"import", "query", "import", "status"} {
-		if err := s.AppendAudit(&AuditEntry{Actor: "test", Action: action, Target: "t1", Details: map[string]any{"i": i}}); err != nil {
+		if err := s.AppendAudit(context.Background(), &AuditEntry{Actor: "test", Action: action, Target: "t1", Details: map[string]any{"i": i}}); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
 	}
-	tail, err := s.AuditTail(4)
+	tail, err := s.AuditTail(context.Background(), 4)
 	if err != nil || len(tail) != 4 {
 		t.Fatalf("tail: %v len=%d", err, len(tail))
 	}
@@ -24,7 +27,7 @@ func TestAuditLedgerChain(t *testing.T) {
 	if tail[2].PrevHash != tail[1].Hash {
 		t.Fatalf("chain link broken: %s != %s", tail[2].PrevHash, tail[1].Hash)
 	}
-	ok, brokenAt, err := s.VerifyAuditChain()
+	ok, brokenAt, err := s.VerifyAuditChain(context.Background())
 	if err != nil || !ok || brokenAt != 0 {
 		t.Fatalf("verify: ok=%v brokenAt=%d err=%v", ok, brokenAt, err)
 	}
@@ -33,7 +36,7 @@ func TestAuditLedgerChain(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE audit_ledger SET target='tampered' WHERE seq=2`); err != nil {
 		t.Fatal(err)
 	}
-	ok, brokenAt, err = s.VerifyAuditChain()
+	ok, brokenAt, err = s.VerifyAuditChain(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,10 +51,10 @@ func TestBackendInterfaceSatisfied(t *testing.T) {
 	if b.Engine() != "sqlite" {
 		t.Fatalf("engine = %q", b.Engine())
 	}
-	if _, err := b.Elements(); err != nil {
+	if _, err := b.Elements(context.Background()); err != nil {
 		t.Fatalf("elements: %v", err)
 	}
-	if c, o, err := b.VectorCoverage("none"); err != nil || c != 0 || o != 0 {
+	if c, o, err := b.VectorCoverage(context.Background(), "none"); err != nil || c != 0 || o != 0 {
 		t.Fatalf("coverage: %d %d %v", c, o, err)
 	}
 }

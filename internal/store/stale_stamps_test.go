@@ -1,5 +1,8 @@
 package store
 
+import (
+	"context"
+)
 import "testing"
 
 // seedCollection writes one model's stamp, vectors and embedding state, so a
@@ -8,7 +11,7 @@ import "testing"
 // and then find empty).
 func seedCollection(t *testing.T, s *Store, modelID string, qns []string) {
 	t.Helper()
-	if err := s.WriteStamp(ModelStamp{
+	if err := s.WriteStamp(context.Background(), ModelStamp{
 		ModelID: modelID, Revision: "rev-" + modelID, Dimensions: 4,
 		Distance: "cosine", Provider: "local",
 	}); err != nil {
@@ -20,10 +23,10 @@ func seedCollection(t *testing.T, s *Store, modelID string, qns []string) {
 		rows = append(rows, VectorRow{QualifiedName: qn, Vec: []float32{1, 0, 0, 0}})
 		states[qn] = "hash-" + qn
 	}
-	if err := s.UpsertVectors(modelID, rows); err != nil {
+	if err := s.UpsertVectors(context.Background(), modelID, rows); err != nil {
 		t.Fatalf("upsert vectors %s: %v", modelID, err)
 	}
-	if err := s.SetEmbeddingStates(modelID, states); err != nil {
+	if err := s.SetEmbeddingStates(context.Background(), modelID, states); err != nil {
 		t.Fatalf("set states %s: %v", modelID, err)
 	}
 }
@@ -36,7 +39,7 @@ func collectionCounts(t *testing.T, s *Store, modelID string) (vectors, states i
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM embedding_state WHERE model_id = ?`, modelID).Scan(&states); err != nil {
 		t.Fatalf("count states %s: %v", modelID, err)
 	}
-	stamp, err := s.Stamp(modelID)
+	stamp, err := s.Stamp(context.Background(), modelID)
 	if err != nil {
 		t.Fatalf("stamp %s: %v", modelID, err)
 	}
@@ -48,7 +51,7 @@ func TestDeleteStaleStampsDropsOnlyUnkeptCollections(t *testing.T) {
 	seedCollection(t, s, "live", []string{"a.Foo", "a.Bar"})
 	seedCollection(t, s, "old", []string{"a.Baz"})
 
-	sw, err := s.DeleteStaleStamps([]string{"live"})
+	sw, err := s.DeleteStaleStamps(context.Background(), []string{"live"})
 	if err != nil {
 		t.Fatalf("DeleteStaleStamps: %v", err)
 	}
@@ -71,7 +74,7 @@ func TestDeleteStaleStampsWithNoKeepIsANoOp(t *testing.T) {
 		seedCollection(t, s, "live", []string{"a.Foo"})
 		seedCollection(t, s, "old", []string{"a.Baz"})
 
-		sw, err := s.DeleteStaleStamps(keep)
+		sw, err := s.DeleteStaleStamps(context.Background(), keep)
 		if err != nil {
 			t.Fatalf("DeleteStaleStamps(%v): %v", keep, err)
 		}
@@ -93,7 +96,7 @@ func TestDeleteStaleStampsKeepsEveryListedCollection(t *testing.T) {
 	seedCollection(t, s, "b", []string{"a.Baz"})
 	seedCollection(t, s, "c", []string{"a.Qux"})
 
-	sw, err := s.DeleteStaleStamps([]string{"a", "b", "c"})
+	sw, err := s.DeleteStaleStamps(context.Background(), []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("DeleteStaleStamps: %v", err)
 	}
@@ -120,7 +123,7 @@ func TestDeleteStaleStampsKeepsACollectionTheStoreDoesNotHaveTheKeepFor(t *testi
 	s := openTestStore(t)
 	seedCollection(t, s, "local", []string{"a.Foo"})
 
-	sw, err := s.DeleteStaleStamps([]string{"embeddinggemma-2"})
+	sw, err := s.DeleteStaleStamps(context.Background(), []string{"embeddinggemma-2"})
 	if err != nil {
 		t.Fatalf("DeleteStaleStamps: %v", err)
 	}
@@ -140,7 +143,7 @@ func TestDeleteStaleStampsDropsTheOldCollectionWhenTheKeepOneExists(t *testing.T
 	seedCollection(t, s, "local", []string{"a.Foo"})
 	seedCollection(t, s, "embeddinggemma-2", []string{"a.Bar"})
 
-	sw, err := s.DeleteStaleStamps([]string{"embeddinggemma-2"})
+	sw, err := s.DeleteStaleStamps(context.Background(), []string{"embeddinggemma-2"})
 	if err != nil {
 		t.Fatalf("DeleteStaleStamps: %v", err)
 	}

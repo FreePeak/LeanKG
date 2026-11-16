@@ -23,7 +23,7 @@ func TestOpenWithCaptureOffStillSweepsAnExistingLedger(t *testing.T) {
 	// A ledger from an earlier session, with a row past the retention
 	// window and one inside it.
 	path := DBPath(home)
-	st, err := OpenSQLite(path, false)
+	st, err := OpenSQLite(context.Background(), path, false)
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestOpenWithCaptureOffStillSweepsAnExistingLedger(t *testing.T) {
 	}
 
 	// Capture is off (no consent), but the ledger exists: it must be swept.
-	rec, err := Open(home)
+	rec, err := Open(context.Background(), home)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestOpenWithCaptureOffStillSweepsAnExistingLedger(t *testing.T) {
 		t.Fatal("the first retention sweep did not finish")
 	}
 
-	after, err := OpenStore(home, true)
+	after, err := OpenStore(context.Background(), home, true)
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestPurgeRemovesExpiredABRuns(t *testing.T) {
 func TestPurgeReclaimsPagesAndTruncatesTheWAL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "telemetry.db")
-	st, err := OpenSQLite(path, false)
+	st, err := OpenSQLite(context.Background(), path, false)
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
@@ -224,11 +224,11 @@ func TestEnableIncrementalVacuumConvertsAnExistingLedger(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	if err := EnableIncrementalVacuum(path); err != nil {
+	if err := EnableIncrementalVacuum(context.Background(), path); err != nil {
 		t.Fatalf("EnableIncrementalVacuum: %v", err)
 	}
 
-	after, err := OpenSQLite(path, false)
+	after, err := OpenSQLite(context.Background(), path, false)
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}

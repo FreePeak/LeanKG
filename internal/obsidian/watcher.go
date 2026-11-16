@@ -105,7 +105,7 @@ func (e *Engine) debounceLoop(ctx context.Context, events <-chan rawEvent, debou
 			if opts.OnEvent != nil {
 				opts.OnEvent(ev.path)
 			}
-			res, err := e.Pull()
+			res, err := e.Pull(ctx)
 			if opts.OnSync != nil {
 				opts.OnSync(res, err)
 			}

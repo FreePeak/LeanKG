@@ -27,13 +27,17 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/doctor"
 	"github.com/FreePeak/LeanKG/internal/embed"
 	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/flock"
+	"github.com/FreePeak/LeanKG/internal/httpx"
+	"github.com/FreePeak/LeanKG/internal/index"
 	"github.com/FreePeak/LeanKG/internal/langs"
 	"github.com/FreePeak/LeanKG/internal/maintain"
 	leankgmcp "github.com/FreePeak/LeanKG/internal/mcp"
@@ -52,132 +56,110 @@ import (
 	"github.com/FreePeak/LeanKG/internal/web"
 )
 
+// verbFunc is the handler shape of every verb: the root context from main, the
+// arguments after the verb name, and the error main maps to an exit status.
+type verbFunc func(ctx context.Context, args []string) error
+
+// verbs routes every command name to its handler.
+var verbs = map[string]verbFunc{
+	"serve": cmdServe,
+	"index": cmdIndex,
+	"query": cmdQuery,
+	"impact": func(ctx context.Context, args []string) error {
+		return cmdQuery(ctx, append([]string{args[0], "--kind", "impact"}, args[1:]...))
+	},
+	"writer":  cmdWriter,
+	"connect": cmdConnect,
+	"install": cmdInstall,
+	"version": func(context.Context, []string) error {
+		fmt.Println("leankg " + Version())
+		return nil
+	},
+	"obsidian":           cmdObsidian,
+	"setup":              cmdSetup,
+	"status":             cmdStatus,
+	"doctor":             cmdDoctor,
+	"run":                cmdRun,
+	"detect-clusters":    cmdDetectClusters,
+	"report":             cmdReport,
+	"gods":               cmdGods,
+	"ctags":              cmdCtags,
+	"cost":               cmdCost,
+	"migrate":            cmdMigrate,
+	"audit":              cmdAudit,
+	"metrics":            cmdMetrics,
+	"dashboard":          cmdDashboard,
+	"telemetry":          cmdTelemetry,
+	"auth":               cmdAuth,
+	"tunnels":            cmdTunnels,
+	"quality":            cmdQuality,
+	"reflect":            cmdReflect,
+	"refresh":            cmdRefresh,
+	"gc":                 cmdGC,
+	"vacuum":             cmdVacuum,
+	"register":           cmdRegister,
+	"unregister":         cmdUnregister,
+	"list":               cmdListRepos,
+	"status-repo":        cmdStatusRepo,
+	"export":             cmdExport,
+	"pack":               cmdPack,
+	"generate":           cmdGenerate,
+	"annotate":           cmdAnnotate,
+	"prd":                cmdPRD,
+	"prd-trace":          cmdPRDTrace,
+	"link":               cmdLink,
+	"delete-annotation":  cmdDeleteAnnotation,
+	"search-annotations": cmdSearchAnnotations,
+	"show-annotations":   cmdShowAnnotations,
+	"mine-conversations": cmdMineConversations,
+	"incident":           cmdIncident,
+	"note":               cmdNote,
+	"env-conflicts":      cmdEnvConflicts,
+	"service-context":    cmdServiceContext,
+	"team-map":           cmdTeamMap,
+	"push":               cmdPush,
+	"pull":               cmdPull,
+	"update":             cmdUpdate,
+	"summarize":          cmdSummarize,
+	"register-project":   cmdRegisterProject,
+	"projects":           cmdProjects,
+	"help":               showUsage,
+	"-h":                 showUsage,
+	"--help":             showUsage,
+}
+
+// runVerb runs the verb named by argv[0] and returns the process exit status.
+// It is the one place a verb's error becomes a status (cliexit.Finish).
+func runVerb(ctx context.Context, argv []string) int {
+	fn, ok := verbs[argv[0]]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "leankg: unknown command %q\n\n", argv[0])
+		usage()
+		return 2
+	}
+	return cliexit.Finish(fn(ctx, argv[1:]), os.Stderr)
+}
+
+func showUsage(context.Context, []string) error {
+	usage()
+	return nil
+}
+
 func main() {
 	log.SetFlags(0)
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
 	}
-	switch os.Args[1] {
-	case "serve":
-		cmdServe(os.Args[2:])
-	case "index":
-		cmdIndex(os.Args[2:])
-	case "query":
-		cmdQuery(os.Args[2:])
-	case "impact":
-		cmdQuery(append([]string{os.Args[2], "--kind", "impact"}, os.Args[3:]...))
-	case "writer":
-		cmdWriter(os.Args[2:])
-	case "connect":
-		cmdConnect(os.Args[2:])
-	case "install":
-		cmdInstall(os.Args[2:])
-	case "version":
-		fmt.Println("leankg " + Version())
-	case "obsidian":
-		cmdObsidian(os.Args[2:])
-	case "setup":
-		cmdSetup(os.Args[2:])
-	case "status":
-		cmdStatus(os.Args[2:])
-	case "doctor":
-		os.Exit(cmdDoctor(os.Args[2:]))
-	case "run":
-		cmdRun(os.Args[2:])
-	case "detect-clusters":
-		cmdDetectClusters(os.Args[2:])
-	case "report":
-		cmdReport(os.Args[2:])
-	case "gods":
-		cmdGods(os.Args[2:])
-	case "ctags":
-		cmdCtags(os.Args[2:])
-	case "cost":
-		cmdCost(os.Args[2:])
-	case "migrate":
-		cmdMigrate(os.Args[2:])
-	case "audit":
-		cmdAudit(os.Args[2:])
-	case "metrics":
-		cmdMetrics(os.Args[2:])
-	case "dashboard":
-		cmdDashboard(os.Args[2:])
-	case "telemetry":
-		cmdTelemetry(os.Args[2:])
-	case "auth":
-		cmdAuth(os.Args[2:])
-	case "tunnels":
-		cmdTunnels(os.Args[2:])
-	case "quality":
-		cmdQuality(os.Args[2:])
-	case "reflect":
-		cmdReflect(os.Args[2:])
-	case "refresh":
-		cmdRefresh(os.Args[2:])
-	case "gc":
-		cmdGC(os.Args[2:])
-	case "vacuum":
-		cmdVacuum(os.Args[2:])
-	case "register":
-		cmdRegister(os.Args[2:])
-	case "unregister":
-		cmdUnregister(os.Args[2:])
-	case "list":
-		cmdListRepos(os.Args[2:])
-	case "status-repo":
-		cmdStatusRepo(os.Args[2:])
-	case "export":
-		cmdExport(os.Args[2:])
-	case "pack":
-		cmdPack(os.Args[2:])
-	case "generate":
-		cmdGenerate(os.Args[2:])
-	case "annotate":
-		cmdAnnotate(os.Args[2:])
-	case "prd":
-		cmdPRD(os.Args[2:])
-	case "prd-trace":
-		cmdPRDTrace(os.Args[2:])
-	case "link":
-		cmdLink(os.Args[2:])
-	case "delete-annotation":
-		cmdDeleteAnnotation(os.Args[2:])
-	case "search-annotations":
-		cmdSearchAnnotations(os.Args[2:])
-	case "show-annotations":
-		cmdShowAnnotations(os.Args[2:])
-	case "mine-conversations":
-		cmdMineConversations(os.Args[2:])
-	case "incident":
-		cmdIncident(os.Args[2:])
-	case "note":
-		cmdNote(os.Args[2:])
-	case "env-conflicts":
-		cmdEnvConflicts(os.Args[2:])
-	case "service-context":
-		cmdServiceContext(os.Args[2:])
-	case "team-map":
-		cmdTeamMap(os.Args[2:])
-	case "push":
-		cmdPush(os.Args[2:])
-	case "pull":
-		cmdPull(os.Args[2:])
-	case "update":
-		os.Exit(cmdUpdate(os.Args[2:]))
-	case "summarize":
-		cmdSummarize(os.Args[2:])
-	case "register-project":
-		cmdRegisterProject(os.Args[2:])
-	case "projects":
-		cmdProjects(os.Args[2:])
-	case "-h", "--help", "help":
-		usage()
-	default:
-		fmt.Fprintf(os.Stderr, "leankg: unknown command %q\n\n", os.Args[1])
-		usage()
-		os.Exit(2)
-	}
+	// The one root context: the first SIGINT or SIGTERM cancels it, and the
+	// verbs that take ctx stop at their next unit of work. Restoring the default
+	// handlers on that first cancel lets a second Ctrl-C end a run that is slow
+	// to stop.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	context.AfterFunc(ctx, stop)
+	status := runVerb(ctx, os.Args[1:])
+	stop()
+	os.Exit(status)
 }
 
 func usage() {
@@ -290,8 +272,56 @@ func newScopedMCPServer(engine *core.Engine, router *projects.Router) *leankgmcp
 	return srv
 }
 
-func cmdServe(args []string) {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+// cmdServe labels serve's error for main. serve returns its error rather than
+// calling log.Fatal, so its defers (store close, telemetry flush, auto-config
+// job join) run before the process exits.
+func cmdServe(ctx context.Context, args []string) error {
+	if err := serve(ctx, args); err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	return nil
+}
+
+// serveGateOn reports whether the auth gate is on for a serve of dir. It is
+// read before serve touches the store: a read-only open never creates the
+// database, and a project with no store yet can only be gated by an env token.
+// An unknown gate state fails closed (off), so a non-loopback bind is refused
+// rather than silently exposed.
+func serveGateOn(ctx context.Context, dir, engine, dbPath string) bool {
+	st, err := openStoreWith(ctx, dir, engine, dbPath, store.RO)
+	if err != nil {
+		st = nil
+	} else {
+		defer st.Close()
+	}
+	gateOn, gateErr := auth.GateEnabled(ctx, st)
+	if gateErr != nil {
+		log.Printf("warning: auth gate state unknown: %v", gateErr)
+		return false
+	}
+	return gateOn
+}
+
+// uiFileGate refuses GET /api/file on a --ui listener bound beyond loopback
+// while no token gates it: with the gate off every caller resolves to Admin,
+// so the file reader would serve any file under the project root to the LAN.
+// The gate is read per request, so a token revoked while serving closes the
+// route at once. An unknown gate state counts as off (fail closed).
+func uiFileGate(st auth.Store, addr string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gated, err := auth.GateEnabled(r.Context(), st)
+		if servebind.Exposed(addr, err == nil && gated) {
+			httpx.WriteError(w, errs.NewError(errs.PermissionDenied,
+				"the dashboard file viewer is refused on a non-loopback --ui bind while no auth token is configured",
+				"bind 127.0.0.1 (--ui 127.0.0.1:PORT), or configure a token (leankg auth token create, or LEANKG_TOKEN_VIEWER)"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func serve(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	dbFlag := fs.String("db", "", "standalone SQLite store file path (default empty = <project>/.leankg/leankg.db); sets the project directory optional (FR-P2)")
 	stdio := fs.Bool("stdio", false, "serve MCP over stdio")
@@ -305,11 +335,36 @@ func cmdServe(args []string) {
 	uiAddr := fs.String("ui", "", "dashboard address serving the embedded ui-v2 build (e.g. 127.0.0.1:8081; deliberately public — its API is unauthenticated)")
 	hindsightCompat := fs.Bool("hindsight-compat", false, "on the REST listener, mount the Hindsight-wire compat aliases (/v1/default/banks/...) that omp's memory.backend=hindsight speaks; requires --memory")
 	memoryGlobal := fs.Bool("memory-global", false, "keep the memory layer in ~/.leankg/memory instead of <project>/.leankg/memory (shared/portfolio memory root; requires --memory)")
-	if err := fs.Parse(args); err != nil {
-		log.Fatal(err)
+	if err := cliexit.Parse(fs, args); err != nil {
+		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	addr := *httpAddr
+	if addr == "" && *restAddr == "" {
+		// Loopback by default (RS-03): the MCP surface reads project files and
+		// indexes, and with no token configured every caller is Admin. Pass
+		// --http :9699 explicitly to listen on every interface.
+		addr = defaultHTTPAddr
+	}
+	// Flag facts are checked before any store is opened or migrated, so a bad
+	// combination leaves the database file untouched. The listen addresses are
+	// checked for syntax only here (GateOn is set so no exposure is refused);
+	// the exposure rule below needs the auth state the store holds.
+	binds := []struct {
+		kind servebind.Kind
+		addr string
+	}{
+		{servebind.KindMCP, addr},
+		{servebind.KindREST, *restAddr},
+		{servebind.KindRPC, *rpcAddr},
+	}
+	if *stdio && (*httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "") {
+		return errors.New("--stdio is exclusive of --http/--rest/--rpc/--ui")
+	}
+	for _, l := range binds {
+		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: true}); err != nil {
+			return err
+		}
+	}
 	// SIGHUP re-reads consent: an operator who grants or withdraws telemetry
 	// mid-session must not have to restart the server (plan v4.15 §8).
 	watchConsentReload(ctx)
@@ -319,22 +374,36 @@ func cmdServe(args []string) {
 		var err error
 		dir, err = os.Getwd()
 		if err != nil {
-			log.Fatalf("resolve cwd: %v", err)
+			return fmt.Errorf("resolve cwd: %w", err)
 		}
 	}
-	// Standalone mode: the DB is externally imported (FR-P2-3);
-	// the user owns the store — do not anchor to a .leankg dir
-	// that doesn't exist.
-	if dbPath := projectcfg.StandaloneDBPath(dir); dbPath != "" {
-		goto serveStart
-	}
-	// leankg.yaml project.project_path / project.root anchor,
-	// canonicalized before use (Rust MCPServer::resolve_project_root, N3).
-	if dbDir := filepath.Join(dir, ".leankg"); projectcfg.ResolveProjectDBDir(dbDir) != dbDir {
-		dir = filepath.Dir(projectcfg.ResolveProjectRoot(dbDir))
-	}
+	// leankg.yaml project.project_path / project.root anchor, canonicalized
+	// before use (Rust MCPServer::resolve_project_root, N3); the writer applies
+	// the same rule (anchorProjectDir).
+	dir = anchorProjectDir(dir)
 
-serveStart:
+	eng := *engineName
+	if eng == "" {
+		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
+	}
+	// Exposure gate (RS-03, enforced) before any side effect: a listener that
+	// leaves the loopback interface is REFUSED unless a token gates its
+	// callers. With the gate off every caller resolves to Admin, so a wildcard
+	// bind hands the project graph, the file reader and the memory write path
+	// to every host that can route to this machine (measured 2026-10-21: a LAN
+	// POST to the REST listener answered {"written":1}). The gate state is read
+	// through a read-only open, which never creates the store, so a refused
+	// serve leaves no database file, starts no sidecar and runs no migration.
+	//
+	// The UI listener is deliberately NOT gated here: the dashboard is public
+	// by design (the Render demo serves --read-only --ui :${PORT}), so it keeps
+	// its own warning.
+	gateOn := serveGateOn(ctx, dir, eng, *dbFlag)
+	for _, l := range binds {
+		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
+			return err
+		}
+	}
 
 	// Standalone mode skips the project-gated sidecars (they expect
 	// a .leankg dir in dir — FR-P2-3).
@@ -353,29 +422,21 @@ afterSidecars:
 	if *readOnly {
 		mode = store.RO
 	}
-	eng := *engineName
-	if eng == "" {
-		eng = envOr("LEANKG_DB_ENGINE", "sqlite")
-	}
-	dbPath := *dbFlag
-	if dbPath == "" {
-		dbPath = projectcfg.StandaloneDBPath(dir)
-	}
-	st, err := store.OpenBackend(ctx, dir, eng, projectcfg.PGURL(dir), dbPath, mode)
+	st, err := openStoreWith(ctx, dir, eng, *dbFlag, mode)
 	if err != nil {
-		log.Fatalf("open store: %s", storeErrText(eng, err))
+		return fmt.Errorf("open store: %s", storeErrText(eng, err))
 	}
 	defer st.Close()
 	if !*readOnly {
-		if err := st.Migrate(); err != nil {
-			log.Fatalf("migrate: %v", err)
+		if err := st.Migrate(ctx); err != nil {
+			return fmt.Errorf("migrate: %w", err)
 		}
 	}
 
 	// Process-wide capture sink (plan v4.15): a no-op unless the user granted
 	// consent in telemetry.yaml. Memory and lesson events and the REST and
 	// ConnectRPC call rows all go to it.
-	rec := telemetryRecorder()
+	rec := telemetryRecorder(ctx)
 	defer closeTelemetry()
 	// The sinks are registered so a SIGHUP consent reload can re-point them at
 	// a recorder built after startup (capture was off then). Every consumer
@@ -396,7 +457,7 @@ afterSidecars:
 		// logged because it is also the single-writer anchor: two servers on
 		// one root append to the same JSONL with no cross-process lock.
 		if mem, err = memory.Open(dir, *memoryGlobal); err != nil {
-			log.Fatalf("memory: %v", err)
+			return fmt.Errorf("memory: %w", err)
 		}
 		log.Printf("leankg memory root %s", mem.Root())
 	}
@@ -405,13 +466,12 @@ afterSidecars:
 	// process fronts many project stores, and the default one is not the
 	// only one that fills up. See the fleet block below.
 
-	var embedder core.QueryEmbedder
+	embedCfg, embedCfgErr := embedConfigFromEnv()
 	if *embedProvider != "" {
-		if err := os.Setenv("LEANKG_EMBED_PROVIDER", *embedProvider); err != nil {
-			log.Fatalf("set provider env: %v", err)
-		}
+		embedCfg.Provider = *embedProvider
 	}
-	if os.Getenv("LEANKG_EMBED_PROVIDER") != "" {
+	var embedder embed.Provider
+	if embedCfg.Provider != "" {
 		// A query-time embedder is an OPTION on the serve path, not a
 		// precondition: the engine serves exact (L1), fuzzy (L2), graph,
 		// memory, REST and UI without it, and the L3 rung already degrades
@@ -424,21 +484,18 @@ afterSidecars:
 		// "unreachable" with no clue why (found 2026-10-03 driving
 		// xdev's autostart, where LEANKG_EMBED_SIDECAR_PORT pointed at a
 		// port a previous sidecar still held).
-		p, release, perr := embed.StartProvider(ctx)
+		p, release, perr := embedStart(embedCfg, embedCfgErr)(ctx)
 		if perr != nil {
 			log.Printf("embed provider unavailable — serving without L3 semantic: %v", perr)
 		} else {
 			defer release()
-			embedder = core.QueryEmbedderFromProvider(p)
+			embedder = p
 		}
 	}
-	engine := core.New(st, mem, embedder)
-	engine.SetProjectDir(dir) // enables the session actions
-
 	// Lazy language activation: detect the languages this codebase (incl.
 	// nested repos) actually uses; everything else stays idle.
 	langReg := langs.DefaultRegistry()
-	if roots, err := langReg.Activate(dir); err != nil {
+	if roots, err := langReg.Activate(ctx, dir); err != nil {
 		log.Printf("language detection failed: %v", err)
 	} else {
 		var summary []string
@@ -452,7 +509,8 @@ afterSidecars:
 		sort.Strings(summary)
 		log.Printf("languages active: %s", strings.Join(summary, "; "))
 	}
-	engine.SetLangsRegistry(langReg)
+	engine := core.New(st, core.Options{Memory: mem, Embedder: embedder, ProjectDir: dir, Langs: langReg})
+	defer engine.Close()
 
 	// Multi-project serving (LEANKG_PROJECT_DIRS): register the extra
 	// projects and route `?project=` / tool-arg `project` to them. With
@@ -504,7 +562,7 @@ afterSidecars:
 		interval := maintain.IntervalFromEnv(os.Getenv)
 		var keepModelIDs []string
 		if embedder != nil {
-			if id, _ := embedder.Describe(); id != "" {
+			if id := embedder.Identity().Model; id != "" {
 				keepModelIDs = []string{id}
 			}
 		}
@@ -517,70 +575,47 @@ afterSidecars:
 		if mem != nil {
 			mem.SetKeepModelIDs(keepModelIDs)
 		}
-		maintain.RunFleet(ctx, func() []maintain.Target {
+		// The fleet runs on its own context so it stops on every serve return,
+		// not only when the root ctx is cancelled (stdio EOF, a bind failure).
+		// Defers run LIFO: cancelFleet fires before joinFleet waits, and the
+		// join runs after runServers drains and before the router and the
+		// default store close.
+		fctx, cancelFleet := context.WithCancel(ctx)
+		defer joinFleet(maintain.RunFleet(fctx, func() []maintain.Target {
 			// The REGISTRY sweep rides the same tick as the store
 			// maintenance: a row for a project that left the fleet must not
 			// outlive it, and nothing else ever pruned the registry. The
 			// callback runs once per pass, so this is once per tick.
-			sweepRegistry(ctx, eng)
-			return fleetTargets(ctx, dir, st, mem, router.List(), eng, keepModelIDs)
-		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle)
+			sweepRegistry(fctx, eng)
+			return fleetTargets(fctx, dir, st, mem, router.List(), eng, keepModelIDs)
+		}, maintain.Options{Logf: log.Printf, KeepModelIDs: keepModelIDs}, interval, maintain.FirstIdle), shutdownTimeout)
+		defer cancelFleet()
 	}
 
+	// Auto-config jobs outlive the request that started them. serve owns them:
+	// they are cancelled and joined when serve returns, before the store closes
+	// (defers run last-in first-out).
+	jobs := restauto.NewJobs(ctx)
+	defer jobs.Stop()
+
 	if *stdio {
-		if *httpAddr != "" || *restAddr != "" || *rpcAddr != "" || *uiAddr != "" {
-			log.Fatal("serve: --stdio is exclusive of --http/--rest/--rpc/--ui")
-		}
 		// stdio is one process-bound MCP session; per-project selection
 		// travels as the `project` tool argument, routed through the
 		// router hook.
 		srv := newScopedMCPServer(engine, router)
+		srv.SetAuthStore(st) // authenticate logs in against the store serve opened
 		srv.SetRecorder(rec) // plan v4.15 DS-04: capture tools/call and identity
 		registerMCPSink(srv)
 		log.Printf("leankg serve (stdio) project=%s engine=%s", dir, st.Engine())
-		if err := srv.RunStdio(ctx); err != nil {
-			log.Fatalf("stdio: %v", err)
+		if err := srv.RunStdio(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("stdio: %w", err)
 		}
-		return
+		return nil
 	}
 
-	addr := *httpAddr
-	if addr == "" && *restAddr == "" {
-		// Loopback by default (RS-03): the MCP surface reads project files and
-		// indexes, and with no token configured every caller is Admin. Pass
-		// --http :9699 explicitly to listen on every interface.
-		addr = defaultHTTPAddr
-	}
-	// Exposure gate (RS-03, enforced): a listener that leaves the loopback
-	// interface is REFUSED unless a token gates its callers. With the gate
-	// off every caller resolves to Admin, so a wildcard bind hands the
-	// project graph, the file reader and the memory write path to every
-	// host that can route to this machine — the measured defect (2026-10-21:
-	// a LAN POST to the REST listener answered {"written":1}). The refusal
-	// names the fix instead of warning and binding anyway.
-	//
-	// The UI listener is deliberately NOT gated here: the dashboard is
-	// public by design (the Render demo serves --read-only --ui :${PORT}),
-	// so it keeps its own warning.
-	gateOn, gateErr := auth.GateEnabled(st)
-	if gateErr != nil {
-		// An unknown gate state fails closed: treat it as "no token", so a
-		// non-loopback bind is refused rather than silently exposed.
-		log.Printf("warning: auth gate state unknown: %v", gateErr)
-		gateOn = false
-	}
-	for _, l := range []struct {
-		kind servebind.Kind
-		addr string
-	}{
-		{servebind.KindMCP, addr},
-		{servebind.KindREST, *restAddr},
-		{servebind.KindRPC, *rpcAddr},
-	} {
-		if err := servebind.Check(l.kind, l.addr, servebind.Options{GateOn: gateOn}); err != nil {
-			log.Fatalf("serve: %v", err)
-		}
-	}
+	// Every listener is collected here and bound together below, so a port
+	// already in use is reported before any of them starts serving.
+	var eps []endpoint
 	if addr != "" {
 		mcpSrv := leankgmcp.New(engine, leankgmcp.WithProjectRequired(router.MultiProject()))
 		mcpSrv.SetProjectRouter(router)
@@ -588,7 +623,7 @@ afterSidecars:
 		mcpSrv.SetRecorder(rec) // plan v4.15 DS-04/DS-05: HTTP capture and headers
 		registerMCPSink(mcpSrv)
 		h := httpMux(mcpSrv.HTTPHandler())
-		h = routeByProject(ctx, router, h, func(p *projects.Project) http.Handler {
+		h = routeByProject(router, h, func(p *projects.Project) http.Handler {
 			pSrv := newScopedMCPServer(p.Engine, router)
 			pSrv.SetAuthStore(st)
 			pSrv.SetRecorder(rec)
@@ -597,9 +632,12 @@ afterSidecars:
 		})
 		// RegisterAutoConfig RETURNS the wrapped mux; the endpoint lives in
 		// that returned handler, so serving the original one served everything
-		// except /api/v1/mcp/auto-config.
-		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
-		go serveHTTP(ctx, h, addr)
+		// except /api/v1/mcp/auto-config. Auto-config is the one write route on
+		// this listener, so it alone is gated (CX-02).
+		autoConfig := restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs),
+			restauto.WithEmbedStart(embedStart(embedCfg, embedCfgErr)))
+		h = gateAutoConfig(st, h, autoConfig)
+		eps = append(eps, endpoint{addr: addr, h: h})
 	}
 	if *restAddr != "" {
 		var restOpts []rest.HandlerOption
@@ -608,10 +646,11 @@ afterSidecars:
 		}
 		// Routing sits INSIDE the auth boundary: token gating applies
 		// before a selector is resolved or its name echoed back.
-		h := routeByProject(ctx, router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
+		h := routeByProject(router, rest.Handler(engine, mem, restOpts...), func(p *projects.Project) http.Handler {
 			return rest.Handler(p.Engine, p.Memory, restOpts...)
 		})
-		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router))
+		h = restauto.RegisterAutoConfig(h, engine, restauto.WithRouter(router), restauto.WithJobs(jobs),
+			restauto.WithEmbedStart(embedStart(embedCfg, embedCfgErr)))
 		// The REST capture handler is built explicitly so a consent reload can
 		// re-point its sink (a level raise that reached nobody was the bug).
 		cap := rest.NewCaptureHandler(rec, telemetry.TransportREST)
@@ -622,30 +661,29 @@ afterSidecars:
 		// Rust registered them outside the auth middleware for the same reason.
 		// Everything else sits behind the bearer gate.
 		root := http.NewServeMux()
-		root.Handle("/api/v1/auth/", auth.Routes(st))
-		root.Handle("/", auth.MiddlewareWithStore(st, h))
+		root.Handle("/api/v1/auth/", auth.Public(auth.Routes(st)))
+		root.Handle("/", auth.Public(auth.MiddlewareWithStore(st, h)))
 		log.Printf("leankg serve (REST) on %s", *restAddr)
-		go serveHTTP(ctx, root, *restAddr)
+		eps = append(eps, endpoint{addr: *restAddr, h: root})
 	}
 	if *rpcAddr != "" {
-		path, handler := rpc.Handler(engine, rec)
 		mux := http.NewServeMux()
 		// Liveness for the same reason the MCP, REST and UI mounts carry one:
 		// FR-SELF-01 asks for /health on every listener, and a ConnectRPC
 		// mux answers 404 for everything but the service route, so an
 		// orchestrator probe against this address saw a dead server that was
 		// in fact serving. Same envelope as the other listeners.
-		mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		mux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
-		})
+		})))
 		// The descriptor types `args` as map<string,string>, so a typed action
 		// argument cannot be carried on this wire. The codec refuses by naming
 		// its own internal `value` field, which the caller never sent; this
 		// translates the refusal to name their value and this wire's limit.
-		mux.Handle(path, rpc.ArgsRefusalRecovery(handler))
+		rpc.Mount(mux, engine, rec)
 		log.Printf("leankg serve (ConnectRPC: gRPC+gRPC-Web+JSON) on %s", *rpcAddr)
-		go serveHTTP(ctx, auth.MiddlewareWithStore(st, mux), *rpcAddr)
+		eps = append(eps, endpoint{addr: *rpcAddr, h: auth.MiddlewareWithStore(st, mux)})
 	}
 	if *uiAddr != "" {
 		// One address, two surfaces: /api/ wins, the SPA fallback serves
@@ -667,7 +705,7 @@ afterSidecars:
 			}
 			return dir, true
 		}
-		dash := routeByProject(ctx, router,
+		dash := routeByProject(router,
 			web.APIHandler(engine, mem, web.WithProjectSwitcher(switcher)),
 			func(p *projects.Project) http.Handler {
 				return web.APIHandler(p.Engine, p.Memory, web.WithProjectDir(p.Dir), web.WithProjectSwitcher(switcher))
@@ -677,28 +715,38 @@ afterSidecars:
 		// SPA fallback would answer 200 for /health anyway, but with HTML,
 		// which makes a health check that cannot tell a serving dashboard from
 		// a broken one. Same envelope as rest.Handler's /health.
-		uiMux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		uiMux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
-		})
-		uiMux.Handle("/api/", dash)
-		uiMux.Handle("/", web.Handler())
+		})))
+		// D1: /api/file serves any file under the project root. It needs the
+		// bearer token (Viewer minimum) whenever the gate is on. With the gate off
+		// it is served only on a loopback --ui bind; any other bind refuses it
+		// (uiFileGate), because the middleware resolves every caller to Admin when
+		// no token exists. The Render demo therefore needs a token for the viewer.
+		uiMux.Handle("GET /api/file", auth.Public(uiFileGate(st, *uiAddr, auth.MiddlewareWithStore(st, auth.Require(auth.Viewer, dash)))))
+		uiMux.Handle("/api/", auth.Public(dash))
+		uiMux.Handle("/", auth.Public(web.Handler()))
 		log.Printf("leankg serve (UI) on %s", *uiAddr)
 		// The UI listener is deliberately NOT gated by the exposure rule: the
 		// dashboard is public by design (the Render demo serves
 		// --read-only --ui :${PORT} to the internet), so it keeps a loud
-		// warning instead of a refusal. Its API (query/read/import) is
-		// unauthenticated either way.
+		// warning instead of a refusal. Its query/import API is unauthenticated
+		// either way; /api/file is refused unless a token is configured (D1).
 		if !servebind.IsLoopback(*uiAddr) {
 			bound := "all interfaces" // `--ui :PORT` — the container/PaaS shape
 			if host, _, err := net.SplitHostPort(*uiAddr); err == nil && host != "" {
 				bound = host
 			}
-			log.Printf("warning: dashboard bound to %s — its API (query/file/import) is unauthenticated; bind loopback or front it with a proxy", bound)
+			log.Printf("warning: dashboard bound to %s — its query/import API is unauthenticated and /api/file is refused unless a token is configured; bind loopback or front it with a proxy", bound)
 		}
-		go serveHTTP(ctx, uiMux, *uiAddr)
+		eps = append(eps, endpoint{addr: *uiAddr, h: uiMux})
 	}
-	<-ctx.Done()
+	ls, err := bindAll(eps...)
+	if err != nil {
+		return err
+	}
+	return runServers(ctx, ls...)
 }
 
 // defaultHTTPAddr is the MCP listener when serve is given no address.
@@ -717,7 +765,7 @@ func maintenanceStoreExists(ctx context.Context, dir, engine string) bool {
 		_, err := os.Stat(filepath.Join(dir, ".leankg", "leankg.db"))
 		return err == nil
 	}
-	probe, err := store.OpenBackend(ctx, dir, engine, os.Getenv("LEANKG_PG_URL"), "", store.RO)
+	probe, err := openStoreWith(ctx, dir, engine, "", store.RO)
 	if err != nil {
 		return false
 	}
@@ -780,7 +828,7 @@ func fleetTargets(ctx context.Context, defaultDir string, st store.Backend, mem 
 		if !maintenanceStoreExists(ctx, d, eng) {
 			continue
 		}
-		bs, err := store.OpenBackend(ctx, d, eng, os.Getenv("LEANKG_PG_URL"), "", store.RW)
+		bs, err := openStoreWith(ctx, d, eng, "", store.RW)
 		if err != nil {
 			log.Printf("maintenance: open %s: %v", d, err)
 			continue
@@ -816,16 +864,16 @@ func openProjectMemory(dir string, keepModelIDs []string) *memory.Memory {
 	return m
 }
 
-func cmdDoctor(args []string) int {
-	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+func cmdDoctor(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default: cwd, discovered upward for --deep)")
 	deep := fs.Bool("deep", false, "run the deep self-diagnosis suite (latency, migrations, freshness, embeddings, pool env, orphans, duplicates, .leankg dir)")
 	format := fs.String("format", "text", "output format for --deep: text (default) or json")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if err := cliexit.Parse(fs, args); err != nil {
+		return err
 	}
 	if *deep {
-		return doctorDeep(*project, *format)
+		return cliexit.Code(doctorDeep(ctx, *project, *format))
 	}
 	dir := *project
 	if dir == "" {
@@ -845,7 +893,7 @@ func cmdDoctor(args []string) int {
 		dbDir := projectcfg.ResolveProjectRoot(filepath.Join(dir, ".leankg"))
 		dbPath = filepath.Join(dbDir, "leankg.db")
 	}
-	st, err := store.Open(dbPath, store.RO)
+	st, err := openStore(ctx, dir, dbPath, store.RO)
 	if err != nil {
 		// A missing store is not a storage-layer event to the reader: it means
 		// the project has not been indexed. Naming the syscall ("read-only open
@@ -854,26 +902,26 @@ func cmdDoctor(args []string) int {
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") {
 			fmt.Printf("FAIL not indexed: no store at %s\n", dbPath)
 			fmt.Println("     run `leankg index .` in this project, then `leankg doctor` again")
-			return 2
+			return cliexit.Code(2)
 		}
 		fmt.Printf("FAIL store: %v\n", err)
-		return 2
+		return cliexit.Code(2)
 	}
 	defer st.Close()
-	els, err1 := st.ElementCount()
-	files, err2 := st.FileCount()
-	seq, at, err3 := st.Watermark()
+	els, err1 := st.ElementCount(ctx)
+	files, err2 := st.FileCount(ctx)
+	seq, at, err3 := st.Watermark(ctx)
 	if err1 != nil || err2 != nil || err3 != nil {
 		fmt.Println("FAIL store queries:", err1, err2, err3)
-		return 2
+		return cliexit.Code(2)
 	}
 	fmt.Printf("ok store=%s elements=%d files=%d watermark(seq=%d at=%d)\n", st.Path(), els, files, seq, at)
-	return 0
+	return nil
 }
 
 // doctorDeep runs the H9 self-diagnosis suite (internal/doctor) and
 // returns the CI exit code: 0 all-pass, 1 any warn, 2 any fail.
-func doctorDeep(projectFlag, format string) int {
+func doctorDeep(ctx context.Context, projectFlag, format string) int {
 	dir := projectFlag
 	if dir == "" {
 		dir, _ = os.Getwd()
@@ -882,8 +930,6 @@ func doctorDeep(projectFlag, format string) int {
 	// entry or a leankg.yaml — the hand-rolled walk missed the config-only
 	// case, and the config's project_path anchor is applied inside RunDeep.
 	dir = projectcfg.FindProjectRoot(dir)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	report, err := doctor.RunDeep(ctx, dir, envOr("LEANKG_DB_ENGINE", ""), projectcfg.PGURL(dir), nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "leankg doctor --deep: %v\n", err)
@@ -908,8 +954,8 @@ func doctorDeep(projectFlag, format string) int {
 	return code
 }
 
-func cmdIndex(args []string) {
-	fs := flag.NewFlagSet("index", flag.ExitOnError)
+func cmdIndex(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("index", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd)")
 	source := fs.String("source", "", "remote source URI: git+<url>, gs://bucket/prefix, or a local path")
 	refName := fs.String("ref-name", "", "git ref for --source git+... (default: main)")
@@ -918,13 +964,17 @@ func cmdIndex(args []string) {
 	manual := fs.Bool("manual", false, "first-run setup mode: never index or embed unless explicitly asked")
 	rebase := fs.Bool("rebase-root", false, "adopt this directory as the store's index root (after moving a checkout); without it a store built from another root refuses the walk")
 	hook := fs.Bool("hook", false, "SessionStart hook mode: exit 0 without indexing when HEAD exceeds LEANKG_HOOK_MAX_FILES or another index of the store is running; the embed is skipped when the backlog exceeds LEANKG_HOOK_MAX_EMBED")
+	hookBudgetFlag := fs.Duration("hook-budget", 0, "with --hook: time budget for the index and embed (default LEANKG_HOOK_BUDGET, else 10s); once spent, the index stops before its next directory (a started directory always finishes) and the embed stops; prints one line and exits 0")
 	noEmbed := fs.Bool("no-embed", false, "index only: skip the incremental embed that follows a successful index")
-	positional := parseInterspersed("index", fs, args, 1)
+	positional, err := parseInterspersed("index", fs, args, 1)
+	if err != nil {
+		return err
+	}
 	if *auto && *manual {
-		log.Fatal("index: --auto and --manual are mutually exclusive")
+		return errors.New("index: --auto and --manual are mutually exclusive")
 	}
 	if len(positional) == 0 && *source == "" {
-		log.Fatal("index requires a directory argument (or --source)")
+		return errors.New("index requires a directory argument (or --source)")
 	}
 	target := ""
 	if len(positional) == 1 {
@@ -941,20 +991,32 @@ func cmdIndex(args []string) {
 		info, serr := os.Stat(target)
 		if serr != nil {
 			if os.IsNotExist(serr) {
-				log.Fatalf("index: refusing to index %s: no such file or directory (an empty existing directory indexes fine — this is a path that does not exist)", target)
+				return fmt.Errorf("index: refusing to index %s: no such file or directory (an empty existing directory indexes fine — this is a path that does not exist)", target)
 			}
-			log.Fatalf("index: refusing to index %s: %v", target, serr)
+			return fmt.Errorf("index: refusing to index %s: %v", target, serr)
 		}
 		if !info.IsDir() {
-			log.Fatalf("index: refusing to index %s: not a directory", target)
+			return fmt.Errorf("index: refusing to index %s: not a directory", target)
 		}
+	}
+	// The hook's time budget covers the size gate, the index and the embed. The
+	// size gate and the embed stop at the hard deadline hardCtx; the index stops
+	// softly, between directories, once the budget is spent (index.WithBudget).
+	hardCtx, indexCtx := ctx, ctx
+	var budget time.Duration
+	if *hook {
+		budget = hookBudget(*hookBudgetFlag)
+		var cancel context.CancelFunc
+		hardCtx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+		indexCtx = index.WithBudget(ctx, hardCtx.Done())
 	}
 	// The hook's size gate runs before any side effect: no setup-mode
 	// persistence, no .leankg, no store.
 	if *hook && *source == "" {
-		if msg := hookBigRepoSkip(target); msg != "" {
+		if msg := hookBigRepoSkip(hardCtx, target); msg != "" {
 			fmt.Println(msg)
-			return
+			return nil
 		}
 	}
 	// One index per store at a time. Hook mode gives up on a held lock so a
@@ -962,21 +1024,20 @@ func cmdIndex(args []string) {
 	storeDir := indexStoreDir(*project, target)
 	lockPath := filepath.Join(storeDir, ".leankg", "index.lock")
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
-		log.Fatalf("index: create .leankg: %v", err)
+		return fmt.Errorf("index: create .leankg: %v", err)
 	}
 	var unlock func()
-	var err error
 	if *hook {
 		unlock, err = flock.TryLock(lockPath)
 		if errors.Is(err, flock.ErrHeld) {
 			fmt.Printf("leankg index --hook: skipped %s: another index of this store is running\n", storeDir)
-			return
+			return nil
 		}
 	} else {
 		unlock, err = flock.Lock(lockPath)
 	}
 	if err != nil {
-		log.Fatalf("index: lock %s: %v", lockPath, err)
+		return fmt.Errorf("index: lock %s: %v", lockPath, err)
 	}
 	defer unlock()
 
@@ -1014,12 +1075,20 @@ func cmdIndex(args []string) {
 	// command the user typed.
 	_ = mode
 
-	if err := runIndex(*project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
-		log.Fatalf("index: %v", err)
+	if err := runIndex(indexCtx, *project, target, *source, *refName, sourceAuth(*authFlag), *rebase); err != nil {
+		switch {
+		case *hook && errors.Is(err, index.ErrBudget):
+			fmt.Printf("leankg index --hook: paused %s after its %s time budget: every directory it started is finished and kept, none was rolled back, and the next session start indexes the remaining directories\n", storeDir, budget)
+			return nil
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("index: interrupted; the directories finished so far are kept, the one in progress is rolled back; rerun to finish: %w", err)
+		}
+		return fmt.Errorf("index: %v", err)
 	}
 	if !*noEmbed {
-		indexEmbed(storeDir, *hook)
+		indexEmbed(hardCtx, storeDir, *hook)
 	}
+	return nil
 }
 
 // promptSetupMode asks the one first-run question (Rust setup_config prompt):

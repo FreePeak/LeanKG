@@ -7,6 +7,7 @@ package grok
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -113,7 +114,10 @@ func listSessions(r string) []sessionDir {
 
 // Locate finds the transcript for c: exact by session id, else heuristic on
 // cwd, time window, normalized tool and args hash.
-func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.TranscriptRef{}, 0, err
+	}
 	sessions := listSessions(root(home))
 	if cid := c.ClientSessionID; cid != "" {
 		for _, s := range sessions {
@@ -128,6 +132,9 @@ func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transc
 	var best *sessionDir
 	var bestN int
 	for i := range sessions {
+		if err := ctx.Err(); err != nil {
+			return sessionlink.TranscriptRef{}, 0, err
+		}
 		s := &sessions[i]
 		if filepath.Clean(s.cwd) != filepath.Clean(c.Cwd) {
 			continue
@@ -138,7 +145,7 @@ func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transc
 		if !s.created.IsZero() && s.created.After(c.TS.Add(sessionlink.TurnHeuristic.Slack)) {
 			continue
 		}
-		sess, err := load(s.updates)
+		sess, err := load(rd, s.updates)
 		if err != nil {
 			continue
 		}
@@ -165,8 +172,11 @@ func (a *adapter) ref(s sessionDir) sessionlink.TranscriptRef {
 }
 
 // Window extracts the bounded context around the matched leankg call.
-func (a *adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
-	s, err := load(t.Path)
+func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int, rd *sessionlink.Reader) (sessionlink.Window, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.Window{}, err
+	}
+	s, err := load(rd, t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -178,8 +188,11 @@ func (a *adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n i
 }
 
 // Transcript returns the session turns, capped. maxTurns <= 0 keeps all.
-func (a *adapter) Transcript(t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
-	s, err := load(t.Path)
+func (a *adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s, err := load(nil, t.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -219,9 +232,14 @@ type rawUpdate struct {
 
 type callPos struct{ turn, call int }
 
-// load parses updates.jsonl into user and assistant turns. Garbage lines are
+// load returns updates.jsonl's turns, parsing the file at most once per Reader.
+func load(rd *sessionlink.Reader, path string) (session, error) {
+	return sessionlink.Parsed(rd, path, func() (session, error) { return parseFile(path) })
+}
+
+// parseFile parses updates.jsonl into user and assistant turns. Garbage lines are
 // skipped. Reasoning (agent_thought_chunk) and hook updates never enter a turn.
-func load(path string) (session, error) {
+func parseFile(path string) (session, error) {
 	fi, err := os.Lstat(path)
 	if err != nil || !fi.Mode().IsRegular() {
 		return session{}, fmt.Errorf("%w: %v", sessionlink.ErrNotFound, err)

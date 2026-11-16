@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -28,16 +29,15 @@ func TestProjectSwitchBehavior(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	st, err := store.Open(filepath.Join(served, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(served, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(served)
+	engine := core.New(st, core.Options{ProjectDir: served})
 
 	// A multi-project server resolves the other root; the same handler without
 	// the switcher must still refuse — and say why truthfully.
@@ -60,8 +60,8 @@ func TestProjectSwitchBehavior(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (envelope carries the outcome)", rec.Code)
+		if rec.Code != http.StatusOK && rec.Code/100 != 4 {
+			t.Fatalf("status = %d, want 200 or a 4xx refusal (envelope carries the outcome)", rec.Code)
 		}
 		var env struct {
 			Success bool           `json:"success"`

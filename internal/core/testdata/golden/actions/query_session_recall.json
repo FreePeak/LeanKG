@@ -1,0 +1,5 @@
+{
+  "command": "recall",
+  "node_id": "node-1",
+  "payload": "payload-one"
+}

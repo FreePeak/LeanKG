@@ -21,20 +21,19 @@ import (
 func newTestServer(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir) // mirrors cmd/leankg serve
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir}) // mirrors cmd/leankg serve
 	return connectTo(t, New(engine))
 }
 
@@ -253,16 +252,15 @@ func TestMCPRBACGatesWriteToolsOverWire(t *testing.T) {
 	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
 
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{ProjectDir: dir})
 	h := New(engine).HTTPHandler()
 
 	// no header: anonymous, so the import is refused by the MCP layer with the
@@ -303,8 +301,8 @@ func TestNewActionsOverMCPWire(t *testing.T) {
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "query",
 		Arguments: map[string]any{
-			"action": "pattern", "query": "x",
-			"args": map[string]any{"pattern": "func $F($A)", "lang": "go", "limit": 5},
+			"action": "pattern", "query": "x", "limit": 5,
+			"args": map[string]any{"pattern": "func $F($A)", "lang": "go"},
 		},
 	})
 	if err != nil {
@@ -346,16 +344,15 @@ func TestNewActionsOverMCPWire(t *testing.T) {
 // server the real client (DSH) could not talk to.
 func TestMCPNewProtocolVersionOverHTTP(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{ProjectDir: dir})
 	h := New(engine).HTTPHandler()
 
 	// post sends one tools/list. SEP-2575 makes a compliant client state the
@@ -416,20 +413,19 @@ func TestMCPHonorsDBMintedTokens(t *testing.T) {
 	t.Setenv("LEANKG_TOKEN_ADMIN", "")
 	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	plain, _, err := auth.Mint(st, auth.MintRequest{Name: "ci", Role: "viewer"})
+	plain, _, err := auth.Mint(context.Background(), st, auth.MintRequest{Name: "ci", Role: "viewer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{ProjectDir: dir})
 	srv := New(engine)
 	srv.SetAuthStore(st)
 	h := srv.HTTPHandler()
@@ -509,19 +505,18 @@ func (f fakeRouter) MultiProject() bool { return f.multi }
 func newServerForTest(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	return New(engine)
 }

@@ -31,12 +31,12 @@ import (
 // is about the ROUTE and not about a provider's ranking quality.
 func TestLadderPrefersSemanticOverWeakKeyword(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
@@ -58,10 +58,10 @@ func TestLadderPrefersSemanticOverWeakKeyword(t *testing.T) {
 		FilePath: "docs/report.md", Language: "md",
 		Content: "search results ranked and fused during the reporting run",
 	}
-	if err := st.UpsertElements([]store.Element{impl, noise}); err != nil {
+	if err := st.UpsertElements(context.Background(), []store.Element{impl, noise}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	// Store the QUERY-kind embedding of the question as the implementation's
@@ -70,11 +70,11 @@ func TestLadderPrefersSemanticOverWeakKeyword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors(p.ModelID(), []store.VectorRow{{QualifiedName: impl.QualifiedName, Vec: qvec[0]}}); err != nil {
+	if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: impl.QualifiedName, Vec: qvec[0]}}); err != nil {
 		t.Fatal(err)
 	}
 
-	e := New(st, nil, QueryEmbedderFromProvider(p))
+	e := New(st, Options{Embedder: p})
 	const question = "how are results ranked and fused"
 
 	// The question is keyword-heavy, so L2 does return something — that is

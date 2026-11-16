@@ -2,6 +2,7 @@ package maintain
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,19 +14,19 @@ import (
 
 // bloatFixture opens a migrated store whose freelist is most of the file, so
 // a pass has something real to reclaim.
-func bloatFixture(t *testing.T) *store.Store {
+func bloatFixture(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	for i := 0; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: "pkg.Fn" + itoa(i),
 			ElementType:   "function",
 			Name:          "Fn" + itoa(i),
@@ -38,7 +39,7 @@ func bloatFixture(t *testing.T) *store.Store {
 	}
 	for i := 0; i < 350; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -60,7 +61,7 @@ func itoa(i int) string {
 func TestPassReclaimsFreelist(t *testing.T) {
 	st := bloatFixture(t)
 	var logs int
-	res, err := Pass(st, Options{Logf: func(string, ...any) { logs++ }})
+	res, err := Pass(context.Background(), st, Options{Logf: func(string, ...any) { logs++ }})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestPassReclaimsFreelist(t *testing.T) {
 		t.Error("expected a reclaim log line")
 	}
 	// Data survives the pass.
-	if n, err := st.ElementCount(); err != nil || n != 50 {
+	if n, err := st.ElementCount(context.Background()); err != nil || n != 50 {
 		t.Errorf("element count = %d (err %v), want 50", n, err)
 	}
 }
@@ -92,18 +93,18 @@ func TestPassRunsTheIncrementalSweepOnceAutoVacuumIsOn(t *testing.T) {
 	st := bloatFixture(t)
 	// First pass upgrades the header; then make a new freelist so the second
 	// pass has something the bounded sweep must reclaim.
-	if _, err := Pass(st, Options{}); err != nil {
+	if _, err := Pass(context.Background(), st, Options{}); err != nil {
 		t.Fatalf("first pass: %v", err)
 	}
 	for i := 350; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
 	// MinFreeBytes=1 bypasses the 1 MB floor: the point here is the sweep
 	// itself, and the floor has its own test below.
-	res, err := Pass(st, Options{MinFreeBytes: 1})
+	res, err := Pass(context.Background(), st, Options{MinFreeBytes: 1})
 	if err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
@@ -116,15 +117,15 @@ func TestPassRunsTheIncrementalSweepOnceAutoVacuumIsOn(t *testing.T) {
 }
 
 func TestPassSkipsReclaimBelowFloor(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -138,21 +139,21 @@ func TestPassSkipsReclaimBelowFloor(t *testing.T) {
 
 func TestPassHeaderUpgradeIsOneShot(t *testing.T) {
 	st := bloatFixture(t)
-	if _, err := Pass(st, Options{}); err != nil {
+	if _, err := Pass(context.Background(), st, Options{}); err != nil {
 		t.Fatalf("pass: %v", err)
 	}
-	before, err := st.Space()
+	before, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
 	if res.Reclaimed != 0 {
 		t.Errorf("second pass reclaimed %d bytes; the header upgrade must not repeat", res.Reclaimed)
 	}
-	after, err := st.Space()
+	after, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space after: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestRunIsDisabledByNonPositiveInterval(t *testing.T) {
 	Run(ctx, st, nil, Options{}, 0, 0)
 	// Give a wrongly-started goroutine far more than enough time to fire.
 	time.Sleep(100 * time.Millisecond)
-	rep, err := st.Space()
+	rep, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
@@ -189,12 +190,12 @@ func TestRunFiresOnTicker(t *testing.T) {
 	st := bloatFixture(t)
 	// Prime the header so the ticker's own bounded sweep has to do the
 	// reclaim, rather than the one-shot header-upgrade VACUUM.
-	if _, err := Pass(st, Options{MinFreeBytes: 1}); err != nil {
+	if _, err := Pass(context.Background(), st, Options{MinFreeBytes: 1}); err != nil {
 		t.Fatalf("prime: %v", err)
 	}
 	for i := 350; i < 400; i++ {
 		p := "src/f" + string(rune('a'+i%26)) + itoa(i) + ".go"
-		if err := st.DeleteByFile(p); err != nil {
+		if err := st.DeleteByFile(context.Background(), p); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	}
@@ -217,7 +218,7 @@ func TestRunFiresOnTicker(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the maintenance ticker never ran")
 	}
-	rep, err := st.Space()
+	rep, err := st.Space(context.Background())
 	if err != nil {
 		t.Fatalf("space: %v", err)
 	}
@@ -232,5 +233,30 @@ func TestRunFiresOnTicker(t *testing.T) {
 
 func TestCompactMemoryNilIsNoOp(t *testing.T) {
 	// Memory is optional (`serve --memory`); a nil *Memory must not panic.
-	CompactMemory(nil, Options{})
+	CompactMemory(context.Background(), nil, Options{})
+}
+
+// TestPassFailsWhenHeaderUpgradeIsRefused: the header upgrade runs first and its
+// failure is fatal, so a pass on a read-only handle returns the refusal instead
+// of logging it and carrying on.
+func TestPassFailsWhenHeaderUpgradeIsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "leankg.db")
+	rw, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: path, Mode: store.RW})
+	if err != nil {
+		t.Fatalf("open rw: %v", err)
+	}
+	if err := rw.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := rw.Close(); err != nil {
+		t.Fatalf("close rw: %v", err)
+	}
+	ro, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: path, Mode: store.RO})
+	if err != nil {
+		t.Fatalf("open ro: %v", err)
+	}
+	defer ro.Close()
+	if _, err := Pass(context.Background(), ro, Options{}); !errors.Is(err, store.ErrReadOnly) {
+		t.Fatalf("pass on a read-only handle: err = %v, want ErrReadOnly", err)
+	}
 }

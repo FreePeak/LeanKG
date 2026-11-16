@@ -300,13 +300,13 @@ func TestBankNameDeterministic(t *testing.T) {
 func TestRetainCursorResume(t *testing.T) {
 	m := openTest(t)
 	es := []Entry{{Content: "deploy kubernetes cluster"}}
-	if _, err := m.Retain("sess1", es, 4); err != nil {
+	if _, err := m.Retain(context.Background(), "sess1", es, 4); err != nil {
 		t.Fatalf("Retain: %v", err)
 	}
 	before, _ := os.ReadFile(m.bankPath("sess1"))
 	// Same or lower cursor: skipped entirely.
 	for _, cur := range []int{4, 3} {
-		if _, err := m.Retain("sess1", es, cur); err != nil {
+		if _, err := m.Retain(context.Background(), "sess1", es, cur); err != nil {
 			t.Fatalf("Retain(%d): %v", cur, err)
 		}
 	}
@@ -315,10 +315,10 @@ func TestRetainCursorResume(t *testing.T) {
 		t.Error("re-retain at/below cursor must not append rows")
 	}
 	// Higher cursor: appended, and the cursor lands in metadata.
-	if _, err := m.Retain("sess1", []Entry{{Content: "second batch", Metadata: map[string]any{"session_id": "s"}}, {Content: "third"}}, 7); err != nil {
+	if _, err := m.Retain(context.Background(), "sess1", []Entry{{Content: "second batch", Metadata: map[string]any{"session_id": "s"}}, {Content: "third"}}, 7); err != nil {
 		t.Fatalf("Retain(7): %v", err)
 	}
-	got, err := m.Recall("sess1", "second batch", 0)
+	got, err := m.Recall(context.Background(), "sess1", "second batch", 0)
 	if err != nil {
 		t.Fatalf("Recall: %v", err)
 	}
@@ -326,23 +326,23 @@ func TestRetainCursorResume(t *testing.T) {
 		t.Errorf("Recall cursor = %+v", got)
 	}
 	// New bank starts at cursor 0: nothing skipped.
-	if _, err := m.Retain("sess2", es, 1); err != nil {
+	if _, err := m.Retain(context.Background(), "sess2", es, 1); err != nil {
 		t.Fatalf("Retain new bank: %v", err)
 	}
 }
 
 func TestRetainRawNoCursor(t *testing.T) {
 	m := openTest(t)
-	if err := m.RetainRaw("hb", []Entry{{Content: "first heartbeat row"}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "hb", []Entry{{Content: "first heartbeat row"}}); err != nil {
 		t.Fatalf("RetainRaw: %v", err)
 	}
 	// Contrast with the cursor-gated path: with no cursor (0) a plain Retain
 	// is a silent no-op — the hindsight wire has no cursor concept, so every
 	// compat retain must land.
-	if _, err := m.Retain("hb", []Entry{{Content: "dropped"}}, 0); err != nil {
+	if _, err := m.Retain(context.Background(), "hb", []Entry{{Content: "dropped"}}, 0); err != nil {
 		t.Fatalf("Retain: %v", err)
 	}
-	if err := m.RetainRaw("hb", []Entry{{Content: "second heartbeat row"}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "hb", []Entry{{Content: "second heartbeat row"}}); err != nil {
 		t.Fatalf("RetainRaw: %v", err)
 	}
 	data, err := os.ReadFile(m.bankPath("hb"))
@@ -361,10 +361,10 @@ func TestRecallZeroMatchFiltered(t *testing.T) {
 		{Content: "pasta recipe with garlic"},
 		{Content: "pasta shapes list"},
 	}
-	if _, err := m.Retain("cook", es, 2); err != nil {
+	if _, err := m.Retain(context.Background(), "cook", es, 2); err != nil {
 		t.Fatalf("Retain: %v", err)
 	}
-	got, err := m.Recall("cook", "pasta", 0)
+	got, err := m.Recall(context.Background(), "cook", "pasta", 0)
 	if err != nil {
 		t.Fatalf("Recall: %v", err)
 	}
@@ -374,14 +374,14 @@ func TestRecallZeroMatchFiltered(t *testing.T) {
 	if got[0].Content != "pasta recipe with garlic" && got[0].Content != "pasta shapes list" {
 		t.Errorf("unexpected first entry %q", got[0].Content)
 	}
-	if got, _ = m.Recall("cook", "zebra unicorn", 0); len(got) != 0 {
+	if got, _ = m.Recall(context.Background(), "cook", "zebra unicorn", 0); len(got) != 0 {
 		t.Errorf("zero-match recall = %+v, want empty", got)
 	}
-	if got, _ = m.Recall("cook", "", 0); len(got) != 0 {
+	if got, _ = m.Recall(context.Background(), "cook", "", 0); len(got) != 0 {
 		t.Errorf("empty query = %+v, want empty", got)
 	}
 	// limit applies.
-	if got, _ = m.Recall("cook", "pasta", 1); len(got) != 1 {
+	if got, _ = m.Recall(context.Background(), "cook", "pasta", 1); len(got) != 1 {
 		t.Errorf("limit=1 returned %d", len(got))
 	}
 }
@@ -432,7 +432,7 @@ func TestParseScopeModes(t *testing.T) {
 func TestSessionRetainRoundTripAndCursor(t *testing.T) {
 	m := openTest(t)
 	turns := []string{"user asked about kubernetes deploys", "assistant explained rolling updates"}
-	res, err := m.SessionRetain(ScopePerProject, "", "", "sess-1", turns, 4, nil)
+	res, err := m.SessionRetain(context.Background(), ScopePerProject, "", "", "sess-1", turns, 4, nil)
 	if err != nil {
 		t.Fatalf("SessionRetain: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestSessionRetainRoundTripAndCursor(t *testing.T) {
 		t.Errorf("row id %q must derive from session", row.ID)
 	}
 	// Recall merges the same bank and ranks the match.
-	banks, got, err := m.SessionRecall(ScopePerProject, "", "", "kubernetes deploys", 8)
+	banks, got, err := m.SessionRecall(context.Background(), ScopePerProject, "", "", "kubernetes deploys", 8)
 	if err != nil {
 		t.Fatalf("SessionRecall: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestSessionRetainRoundTripAndCursor(t *testing.T) {
 		t.Errorf("recall got = %+v", got)
 	}
 	// Idempotency is session-keyed: cursor 4 (or lower) skips the batch.
-	res, err = m.SessionRetain(ScopePerProject, "", "", "sess-1", []string{"duplicate"}, 4, nil)
+	res, err = m.SessionRetain(context.Background(), ScopePerProject, "", "", "sess-1", []string{"duplicate"}, 4, nil)
 	if err != nil {
 		t.Fatalf("re-retain: %v", err)
 	}
@@ -486,25 +486,25 @@ func TestSessionRetainRoundTripAndCursor(t *testing.T) {
 		t.Fatalf("re-retain result = %+v", res)
 	}
 	// A different session in the SAME bank is not suppressed.
-	res, err = m.SessionRetain(ScopePerProject, "", "", "sess-2", []string{"other session kubernetes note"}, 1, nil)
+	res, err = m.SessionRetain(context.Background(), ScopePerProject, "", "", "sess-2", []string{"other session kubernetes note"}, 1, nil)
 	if err != nil {
 		t.Fatalf("sess-2 retain: %v", err)
 	}
 	if res.Written != 1 {
 		t.Fatalf("sess-2 result = %+v", res)
 	}
-	_, got, _ = m.SessionRecall(ScopePerProject, "", "", "kubernetes", 8)
+	_, got, _ = m.SessionRecall(context.Background(), ScopePerProject, "", "", "kubernetes", 8)
 	if len(got) != 2 {
 		t.Errorf("merged recall = %d rows, want 2", len(got))
 	}
 	// Validation errors.
-	if _, err := m.SessionRetain(ScopePerProject, "", "", "", turns, 1, nil); err == nil {
+	if _, err := m.SessionRetain(context.Background(), ScopePerProject, "", "", "", turns, 1, nil); err == nil {
 		t.Error("missing session_id must error")
 	}
-	if _, err := m.SessionRetain(ScopePerProject, "", "", "s", nil, 1, nil); err == nil {
+	if _, err := m.SessionRetain(context.Background(), ScopePerProject, "", "", "s", nil, 1, nil); err == nil {
 		t.Error("missing turns must error")
 	}
-	if _, err := m.SessionRetain(ScopePerProject, "", "", "s", []string{"ok", "  "}, 1, nil); err == nil {
+	if _, err := m.SessionRetain(context.Background(), ScopePerProject, "", "", "s", []string{"ok", "  "}, 1, nil); err == nil {
 		t.Error("empty turn must error (unrecallable row)")
 	}
 }
@@ -515,7 +515,7 @@ func TestSessionScopesEndToEnd(t *testing.T) {
 	projBank := BankName(cwd)
 
 	// global: writes + reads the shared bank only.
-	res, err := proj.SessionRetain(ScopeGlobal, cwd, "", "s-g", []string{"global memory about postgres"}, 1, nil)
+	res, err := proj.SessionRetain(context.Background(), ScopeGlobal, cwd, "", "s-g", []string{"global memory about postgres"}, 1, nil)
 	if err != nil {
 		t.Fatalf("global retain: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestSessionScopesEndToEnd(t *testing.T) {
 		t.Fatalf("global write bank = %q, want %q", res.Bank, SharedBank)
 	}
 	// per-project write stays out of the shared bank.
-	if _, err := proj.SessionRetain(ScopePerProject, cwd, "", "s-p", []string{"project memory about redis"}, 1, nil); err != nil {
+	if _, err := proj.SessionRetain(context.Background(), ScopePerProject, cwd, "", "s-p", []string{"project memory about redis"}, 1, nil); err != nil {
 		t.Fatalf("project retain: %v", err)
 	}
 	if _, err := os.Stat(proj.bankPath(SharedBank)); err != nil {
@@ -538,17 +538,17 @@ func TestSessionScopesEndToEnd(t *testing.T) {
 	}
 
 	// per-project read: shared rows invisible.
-	_, got, _ := proj.SessionRecall(ScopePerProject, cwd, "", "postgres", 8)
+	_, got, _ := proj.SessionRecall(context.Background(), ScopePerProject, cwd, "", "postgres", 8)
 	if len(got) != 0 {
 		t.Errorf("per-project recall saw shared rows: %+v", got)
 	}
 	// global read: project rows invisible.
-	_, got, _ = proj.SessionRecall(ScopeGlobal, cwd, "", "redis", 8)
+	_, got, _ = proj.SessionRecall(context.Background(), ScopeGlobal, cwd, "", "redis", 8)
 	if len(got) != 0 {
 		t.Errorf("global recall saw project rows: %+v", got)
 	}
 	// tagged read: both, project rows first on rank ties.
-	banks, got, _ := proj.SessionRecall(ScopePerProjectTagged, cwd, "", "memory", 8)
+	banks, got, _ := proj.SessionRecall(context.Background(), ScopePerProjectTagged, cwd, "", "memory", 8)
 	if len(banks) != 2 || banks[0] != projBank || banks[1] != SharedBank {
 		t.Fatalf("tagged banks = %v", banks)
 	}
@@ -560,14 +560,14 @@ func TestSessionScopesEndToEnd(t *testing.T) {
 	}
 
 	// bank-name mode: explicit bank overrides scope routing entirely.
-	res, err = proj.SessionRetain(ScopeGlobal, cwd, "custom-bank", "s-b", []string{"custom bank memory"}, 1, nil)
+	res, err = proj.SessionRetain(context.Background(), ScopeGlobal, cwd, "custom-bank", "s-b", []string{"custom bank memory"}, 1, nil)
 	if err != nil {
 		t.Fatalf("custom retain: %v", err)
 	}
 	if res.Bank != "custom-bank" {
 		t.Errorf("explicit bank ignored: %+v", res)
 	}
-	banks, got, _ = proj.SessionRecall(ScopePerProject, cwd, "custom-bank", "custom", 8)
+	banks, got, _ = proj.SessionRecall(context.Background(), ScopePerProject, cwd, "custom-bank", "custom", 8)
 	if len(banks) != 1 || banks[0] != "custom-bank" || len(got) != 1 {
 		t.Errorf("bank-mode recall = %v %+v", banks, got)
 	}
@@ -576,14 +576,14 @@ func TestSessionScopesEndToEnd(t *testing.T) {
 func TestFirstTurnMemoriesInjection(t *testing.T) {
 	m := openTest(t)
 	cwd := m.scopeCwd("")
-	if _, err := m.SessionRetain(ScopePerProject, cwd, "", "s1", []string{"kubernetes rolling update lesson"}, 1, nil); err != nil {
+	if _, err := m.SessionRetain(context.Background(), ScopePerProject, cwd, "", "s1", []string{"kubernetes rolling update lesson"}, 1, nil); err != nil {
 		t.Fatalf("retain: %v", err)
 	}
-	if _, err := m.SessionRetain(ScopePerProject, cwd, "", "s2", []string{"redis cache lesson"}, 2, nil); err != nil {
+	if _, err := m.SessionRetain(context.Background(), ScopePerProject, cwd, "", "s2", []string{"redis cache lesson"}, 2, nil); err != nil {
 		t.Fatalf("retain 2: %v", err)
 	}
 	// Ranked case: query selects + ranks.
-	block, entries, err := m.FirstTurnMemories(ScopePerProject, cwd, "", "kubernetes lesson")
+	block, entries, err := m.FirstTurnMemories(context.Background(), ScopePerProject, cwd, "", "kubernetes lesson")
 	if err != nil {
 		t.Fatalf("FirstTurnMemories: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestFirstTurnMemoriesInjection(t *testing.T) {
 		t.Fatalf("block = %q", block)
 	}
 	// Cold case: empty query returns the newest rows instead of nothing.
-	block, entries, _ = m.FirstTurnMemories(ScopePerProject, cwd, "", "")
+	block, entries, _ = m.FirstTurnMemories(context.Background(), ScopePerProject, cwd, "", "")
 	if len(entries) != 2 {
 		t.Fatalf("cold entries = %d, want 2", len(entries))
 	}
@@ -605,7 +605,7 @@ func TestFirstTurnMemoriesInjection(t *testing.T) {
 		t.Fatalf("cold block = %q", block)
 	}
 	// Empty bank: no block at all ("" — callers skip it).
-	block, entries, _ = m.FirstTurnMemories(ScopeGlobal, cwd, "", "")
+	block, entries, _ = m.FirstTurnMemories(context.Background(), ScopeGlobal, cwd, "", "")
 	if block != "" || len(entries) != 0 {
 		t.Errorf("empty recall must render \"\", got %q %+v", block, entries)
 	}
@@ -651,14 +651,14 @@ func TestSessionHermeticNoHomeWrites(t *testing.T) {
 	}
 	defer m.Close()
 	for _, scope := range []Scope{ScopePerProject, ScopeGlobal, ScopePerProjectTagged} {
-		if _, err := m.SessionRetain(scope, cwd, "", "herm", []string{"hermetic kubernetes memory"}, 1, nil); err != nil {
+		if _, err := m.SessionRetain(context.Background(), scope, cwd, "", "herm", []string{"hermetic kubernetes memory"}, 1, nil); err != nil {
 			t.Fatalf("retain %v: %v", scope, err)
 		}
-		if _, _, err := m.SessionRecall(scope, cwd, "", "kubernetes", 8); err != nil {
+		if _, _, err := m.SessionRecall(context.Background(), scope, cwd, "", "kubernetes", 8); err != nil {
 			t.Fatalf("recall %v: %v", scope, err)
 		}
 	}
-	if _, _, err := m.FirstTurnMemories(ScopePerProjectTagged, cwd, "", ""); err != nil {
+	if _, _, err := m.FirstTurnMemories(context.Background(), ScopePerProjectTagged, cwd, "", ""); err != nil {
 		t.Fatalf("first-turn: %v", err)
 	}
 	entries, _ := os.ReadDir(home)
@@ -774,7 +774,7 @@ func itoaTest(i int) string {
 // a tag-scoped recall could never match anything a conversation retained.
 func TestSessionRetainTagsLandInMetadata(t *testing.T) {
 	m := openTest(t)
-	if _, err := m.SessionRetainCtx(context.Background(), ScopePerProject, "", "", "k2",
+	if _, err := m.SessionRetain(context.Background(), ScopePerProject, "", "", "k2",
 		[]string{"a tagged turn"}, 1, []string{"project:leankg", "scope:local"}); err != nil {
 		t.Fatalf("SessionRetain: %v", err)
 	}

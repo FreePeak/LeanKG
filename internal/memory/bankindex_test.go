@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -18,13 +19,13 @@ func TestRecallTieBreaksRecency(t *testing.T) {
 	// collapses two rows of the SAME body that no client owns (that is the
 	// content-identity dedupe), so a fixture that needs two identical rows
 	// to rank against each other has to be client-owned.
-	if err := m.RetainRaw("probe", []Entry{{ID: "old-1", Content: "alpha probe row", Timestamp: oldTS, Metadata: map[string]any{"document_id": "probe-doc"}}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "probe", []Entry{{ID: "old-1", Content: "alpha probe row", Timestamp: oldTS, Metadata: map[string]any{"document_id": "probe-doc"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.RetainRaw("probe", []Entry{{ID: "new-1", Content: "alpha probe row", Timestamp: newTS, Metadata: map[string]any{"document_id": "probe-doc"}}}); err != nil {
+	if err := m.RetainRaw(context.Background(), "probe", []Entry{{ID: "new-1", Content: "alpha probe row", Timestamp: newTS, Metadata: map[string]any{"document_id": "probe-doc"}}}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := m.RecallBanks([]string{"probe"}, "alpha probe", 2)
+	rows, err := m.RecallBanks(context.Background(), []string{"probe"}, "alpha probe", 2)
 	if err != nil {
 		t.Fatal(err)
 	}

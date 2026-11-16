@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -48,21 +50,24 @@ type costEstimate struct {
 // (cost_estimate.rs + cli::CLICommand::Cost); the project's indexed file
 // census replaces Rust's --file/--files selectors, so the verb needs no graph
 // scan and stays a pure read.
-func cmdCost(args []string) {
-	fs := flag.NewFlagSet("cost", flag.ExitOnError)
+func cmdCost(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("cost", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	format := fs.String("format", "text", "output format: text | json")
-	parseInterspersed("cost", fs, args, 0)
-	dir := resolveProjectDir(*project)
-	engine, err := openEngine(dir, store.RO)
-	if err != nil {
-		fatalJSON(err)
+	if _, err := parseInterspersed("cost", fs, args, 0); err != nil {
+		return err
 	}
-	defer engine.Store().Close()
-
-	elements, err := engine.Store().Elements()
+	dir := resolveProjectDir(*project)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
+	}
+	defer st.Close()
+	defer engine.Close()
+
+	elements, err := st.Elements(ctx)
+	if err != nil {
+		return fatalJSON(err)
 	}
 	est := estimateCost(filesForElements(elements), dir)
 
@@ -78,8 +83,9 @@ func cmdCost(args []string) {
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "cost: unknown format %q (valid: text|json)\n", *format)
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
+	return nil
 }
 
 // filesForElements collects the distinct source files behind indexed elements

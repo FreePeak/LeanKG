@@ -41,15 +41,15 @@ Notes referencing ` + "`src/web/handlers.rs::api_graph_expand_service`" + ` and 
 `
 
 // setupStore opens a migrated SQLite store under a fresh temp dir.
-func setupStore(t *testing.T) (*store.Store, string) {
+func setupStore(t *testing.T) (store.Backend, string) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st, dir
@@ -269,7 +269,7 @@ func TestKnowledgeEntriesProjection(t *testing.T) {
 
 // upsertWorkflow pins one workflow with two steps: one carrying the
 // requirement's code path, one carrying its feature id in metadata.
-func upsertWorkflow(t *testing.T, st *store.Store) {
+func upsertWorkflow(t *testing.T, st store.Backend) {
 	t.Helper()
 	wf := store.Element{
 		QualifiedName: "local:default:workflow:pr-index:v1",
@@ -304,12 +304,12 @@ func upsertWorkflow(t *testing.T, st *store.Store) {
 		FilePath:      "ontology://local:default:workflow:unrelated:v1",
 		Language:      "ontology",
 	}
-	if err := st.UpsertElements([]store.Element{wf, stepA, stepB, other}); err != nil {
+	if err := st.UpsertElements(context.Background(), []store.Element{wf, stepA, stepB, other}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func mustIndex(t *testing.T, st *store.Store, content string) IndexResult {
+func mustIndex(t *testing.T, st store.Backend, content string) IndexResult {
 	t.Helper()
 	res, err := Index(context.Background(), st, "docs/prd.md", content, "local")
 	if err != nil {
@@ -329,7 +329,7 @@ func TestIndexLandsQueryableEntities(t *testing.T) {
 		t.Errorf("created/updated = %d/%d, want %d/0 (fresh store)", res.Created, res.Updated, res.Elements)
 	}
 
-	req, ok, err := RequirementByID(st, "FR-ZCP-02")
+	req, ok, err := RequirementByID(context.Background(), st, "FR-ZCP-02")
 	if err != nil || !ok {
 		t.Fatalf("RequirementByID: ok=%v err=%v", ok, err)
 	}
@@ -347,17 +347,17 @@ func TestIndexLandsQueryableEntities(t *testing.T) {
 		t.Errorf("metadata acceptance criteria = %v, want 2", req.Metadata[MetaAC])
 	}
 
-	if _, ok, err := UserStoryByID(st, "US-SURF-01"); err != nil || !ok {
+	if _, ok, err := UserStoryByID(context.Background(), st, "US-SURF-01"); err != nil || !ok {
 		t.Errorf("UserStoryByID: ok=%v err=%v", ok, err)
 	}
-	reqs, err := Requirements(st)
+	reqs, err := Requirements(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(reqs) != len(Parse(fixturePRD).Requirements) {
 		t.Errorf("Requirements() = %d entities", len(reqs))
 	}
-	uss, err := UserStories(st)
+	uss, err := UserStories(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestIndexIsIdempotent(t *testing.T) {
 		t.Fatalf("second run created/updated = %d/%d, want 0/%d (pure re-index)",
 			second.Created, second.Updated, first.Elements)
 	}
-	reqs, err := Requirements(st)
+	reqs, err := Requirements(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestIndexIsIdempotent(t *testing.T) {
 		t.Fatalf("entity count after re-index = %d, want %d", len(reqs), first.Requirements)
 	}
 	relCount := func() int {
-		all, err := st.RelationshipsAll(1000)
+		all, err := st.RelationshipsAll(context.Background(), 1000)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -407,13 +407,13 @@ func TestIndexRebuildsOnRemovedRequirements(t *testing.T) {
 	short := "# PRD\n\n**FR-KEEP-01 — Kept (Must Have, P0)**\n\n- Only this one remains.\n"
 	mustIndex(t, st, short)
 
-	if _, ok, err := RequirementByID(st, "FR-ZCP-02"); err != nil || ok {
+	if _, ok, err := RequirementByID(context.Background(), st, "FR-ZCP-02"); err != nil || ok {
 		t.Errorf("FR-ZCP-02 survived the rebuild (ok=%v err=%v)", ok, err)
 	}
-	if _, ok, err := RequirementByID(st, "FR-KEEP-01"); err != nil || !ok {
+	if _, ok, err := RequirementByID(context.Background(), st, "FR-KEEP-01"); err != nil || !ok {
 		t.Errorf("FR-KEEP-01 missing after the rebuild (ok=%v err=%v)", ok, err)
 	}
-	reqs, err := Requirements(st)
+	reqs, err := Requirements(context.Background(), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,10 +422,10 @@ func TestIndexRebuildsOnRemovedRequirements(t *testing.T) {
 	}
 	// The knowledge projection is rebuilt with the entities: a row for a
 	// requirement the document dropped must not survive.
-	if _, ok, err := st.KnowledgeEntryByID("prd-req-FR-ZCP-02"); err != nil || ok {
+	if _, ok, err := st.KnowledgeEntryByID(context.Background(), "prd-req-FR-ZCP-02"); err != nil || ok {
 		t.Errorf("knowledge row prd-req-FR-ZCP-02 survived the rebuild (ok=%v err=%v)", ok, err)
 	}
-	if _, ok, err := st.KnowledgeEntryByID("prd-req-FR-KEEP-01"); err != nil || !ok {
+	if _, ok, err := st.KnowledgeEntryByID(context.Background(), "prd-req-FR-KEEP-01"); err != nil || !ok {
 		t.Errorf("knowledge row prd-req-FR-KEEP-01 missing (ok=%v err=%v)", ok, err)
 	}
 }
@@ -440,7 +440,7 @@ func TestIndexKnowledgeSurface(t *testing.T) {
 		t.Fatalf("knowledge entries = %d, want one row per entity", res.KnowledgeEntries)
 	}
 
-	row, ok, err := st.KnowledgeEntryByID("prd-req-FR-ZCP-02")
+	row, ok, err := st.KnowledgeEntryByID(context.Background(), "prd-req-FR-ZCP-02")
 	if err != nil || !ok {
 		t.Fatalf("knowledge row: ok=%v err=%v", ok, err)
 	}
@@ -454,7 +454,7 @@ func TestIndexKnowledgeSurface(t *testing.T) {
 		t.Errorf("timestamps = %d/%d", row.CreatedAt, row.UpdatedAt)
 	}
 
-	byFeature, err := st.KnowledgeEntriesByFeature("FR-SURF-01")
+	byFeature, err := st.KnowledgeEntriesByFeature(context.Background(), "FR-SURF-01")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,9 +476,9 @@ func TestIndexKnowledgeSurface(t *testing.T) {
 }
 
 // knowledgeRowsForEnv lists the knowledge rows of one environment.
-func knowledgeRowsForEnv(t *testing.T, st *store.Store, env string) []store.KnowledgeEntry {
+func knowledgeRowsForEnv(t *testing.T, st store.Backend, env string) []store.KnowledgeEntry {
 	t.Helper()
-	rows, err := st.KnowledgeEntriesByEnvironment(env, 0)
+	rows, err := st.KnowledgeEntriesByEnvironment(context.Background(), env, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ func TestIndexLinksRequirementsToWorkflows(t *testing.T) {
 	}
 
 	for _, fid := range []string{"FR-ONT-PROC-01", "FR-ZCP-02"} {
-		wfs, err := WorkflowsForFeature(st, fid)
+		wfs, err := WorkflowsForFeature(context.Background(), st, fid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -518,7 +518,7 @@ func TestIndexLinksRequirementsToWorkflows(t *testing.T) {
 	}
 
 	// The unrelated workflow never links.
-	wfs, err := WorkflowsForFeature(st, "FR-SURF-01")
+	wfs, err := WorkflowsForFeature(context.Background(), st, "FR-SURF-01")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +527,7 @@ func TestIndexLinksRequirementsToWorkflows(t *testing.T) {
 	}
 
 	// Reverse read: the workflow reports both features.
-	fids, err := FeaturesForWorkflow(st, "local:default:workflow:pr-index:v1")
+	fids, err := FeaturesForWorkflow(context.Background(), st, "local:default:workflow:pr-index:v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,11 +542,11 @@ func TestIndexLinksRequirementsToWorkflows(t *testing.T) {
 	// Both edge endpoints resolve to elements (the doctor --deep orphaned-edge
 	// contract).
 	for _, fid := range []string{"FR-ONT-PROC-01", "FR-ZCP-02"} {
-		if _, ok, err := RequirementByID(st, fid); err != nil || !ok {
+		if _, ok, err := RequirementByID(context.Background(), st, fid); err != nil || !ok {
 			t.Errorf("link source %s is not an element (ok=%v err=%v)", fid, ok, err)
 		}
 	}
-	all, err := st.Elements()
+	all, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +554,7 @@ func TestIndexLinksRequirementsToWorkflows(t *testing.T) {
 	for _, e := range all {
 		present[e.QualifiedName] = true
 	}
-	rels, err := st.RelationshipsAll(1000)
+	rels, err := st.RelationshipsAll(context.Background(), 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +572,7 @@ func TestTraceJoinsRequirementsWithWorkflows(t *testing.T) {
 	upsertWorkflow(t, st)
 	mustIndex(t, st, fixturePRD)
 
-	rows, err := Trace(st, "")
+	rows, err := Trace(context.Background(), st, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,7 +609,7 @@ func TestTraceJoinsRequirementsWithWorkflows(t *testing.T) {
 		t.Errorf("FR-SURF-01 unexpectedly linked: %v", unlinked.Workflows)
 	}
 
-	one, err := Trace(st, "FR-ZCP-02")
+	one, err := Trace(context.Background(), st, "FR-ZCP-02")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +617,7 @@ func TestTraceJoinsRequirementsWithWorkflows(t *testing.T) {
 		t.Errorf("Trace(FR-ZCP-02) = %+v", one)
 	}
 
-	none, err := Trace(st, "FR-NOPE-99")
+	none, err := Trace(context.Background(), st, "FR-NOPE-99")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +639,7 @@ func TestIndexCoexistsWithDocindex(t *testing.T) {
 		FilePath:      "docs/prd.md",
 		Language:      "markdown",
 	}
-	if err := st.UpsertElements([]store.Element{doc}); err != nil {
+	if err := st.UpsertElements(context.Background(), []store.Element{doc}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -647,7 +647,7 @@ func TestIndexCoexistsWithDocindex(t *testing.T) {
 	if _, err := Index(context.Background(), st, "docs/prd.md", fixturePRD, "local"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := elementByQN(st, "docs/prd.md#milestone-a"); err != nil || !ok {
+	if _, ok, err := elementByQN(context.Background(), st, "docs/prd.md#milestone-a"); err != nil || !ok {
 		t.Errorf("doc element destroyed by PRD re-index (ok=%v err=%v)", ok, err)
 	}
 }
@@ -668,7 +668,7 @@ func TestIndexDocument(t *testing.T) {
 	if res.Source != "docs/prd.md" || res.Requirements == 0 {
 		t.Fatalf("IndexDocument result = %+v", res)
 	}
-	if _, ok, err := RequirementByID(st, "FR-ZCP-02"); err != nil || !ok {
+	if _, ok, err := RequirementByID(context.Background(), st, "FR-ZCP-02"); err != nil || !ok {
 		t.Errorf("FR-ZCP-02 not indexed from disk (ok=%v err=%v)", ok, err)
 	}
 

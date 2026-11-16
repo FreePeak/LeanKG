@@ -169,7 +169,7 @@ func (r Result) Summary() string {
 // the error is non-nil only when the pipeline could not do its job at all (no
 // provider for a real run, an unreadable store). A completed-but-degraded run
 // returns a Result whose Fatal is set.
-func Run(ctx context.Context, st store.Backend, opts Options) (Result, error) {
+func Run(ctx context.Context, st indexStore, opts Options) (Result, error) {
 	dir, err := filepath.Abs(opts.ProjectDir)
 	if err != nil {
 		return Result{}, fmt.Errorf("summarize: project dir: %w", err)
@@ -190,7 +190,7 @@ func Run(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 	}
 
 	p := &pipeline{st: st, opts: opts, dir: dir, nodesDir: nodesDir}
-	recs, err := st.Files()
+	recs, err := st.Files(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("summarize: list indexed files: %w", err)
 	}
@@ -199,16 +199,34 @@ func Run(ctx context.Context, st store.Backend, opts Options) (Result, error) {
 	ws := p.pass1(ctx, recs)
 	nodes := p.pass2(ctx, ws)
 	if !opts.DryRun && len(nodes) > 0 {
-		if err := p.persist(nodes); err != nil {
+		if err := p.persist(ctx, nodes); err != nil {
 			return p.report(), err
 		}
 	}
 	return p.report(), nil
 }
 
+// indexStore is the store surface the pipeline uses: the indexed file list and
+// element lookup, the graph edges of a node, the summary checkpoint, the KV
+// synthesis cache, and the writes of generated nodes. The composed store
+// satisfies it.
+type indexStore interface {
+	Files(ctx context.Context) ([]store.FileRecord, error)
+	FindExact(ctx context.Context, name string) ([]store.Element, error)
+	Incoming(ctx context.Context, target string) ([]store.Relationship, error)
+	SummaryGet(ctx context.Context, path string) (store.FileSummary, bool, error)
+	SummaryUpsert(ctx context.Context, sum store.FileSummary) error
+	KVGet(ctx context.Context, namespace, key string) (string, bool, error)
+	KVSet(ctx context.Context, namespace, key, value string) error
+	DeleteByFile(ctx context.Context, path string) error
+	UpsertElements(ctx context.Context, els []store.Element) error
+	UpsertRelationships(ctx context.Context, rels []store.Relationship) error
+	UpsertFiles(ctx context.Context, files []store.FileRecord) error
+}
+
 // pipeline carries the state the two passes share.
 type pipeline struct {
-	st       store.Backend
+	st       indexStore
 	opts     Options
 	dir      string
 	nodesDir string
@@ -314,7 +332,7 @@ func (p *pipeline) summarizeFile(ctx context.Context, rel string) (work, error) 
 	// A hit is served even after the gate closes — it costs nothing.
 	model := p.model()
 	if !p.opts.Force {
-		got, ok, serr := p.st.SummaryGet(rel)
+		got, ok, serr := p.st.SummaryGet(ctx, rel)
 		if serr != nil {
 			return w, fmt.Errorf("summarize: read summary for %s: %w", rel, serr)
 		}
@@ -356,7 +374,7 @@ func (p *pipeline) summarizeFile(ctx context.Context, rel string) (work, error) 
 	// The write IS the checkpoint: graft buffers summaries and flushes the
 	// cache every 15s (build.ts:170-180); one row per file is strictly more
 	// crash-tolerant and needs no timer.
-	if serr := p.st.SummaryUpsert(store.FileSummary{
+	if serr := p.st.SummaryUpsert(ctx, store.FileSummary{
 		Path: rel, ContentHash: w.hash, Model: model, Summary: text,
 	}); serr != nil {
 		return w, fmt.Errorf("summarize: store summary for %s: %w", rel, serr)

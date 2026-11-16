@@ -16,6 +16,7 @@
 package federation
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -49,10 +51,9 @@ func (b *badPayload) Unwrap() error { return b.err }
 // instead of re-deriving the method/path pairing the receiver serves.
 // Patterns are exact: /api/v2/graph/push and /api/v2/graph are different
 // documents, and a Go mux matches a bare pattern literally.
-func Register(mux *http.ServeMux, st store.Backend, projectDir string) {
-	fed := Receiver(st, projectDir)
-	mux.Handle("POST "+PushPath, fed)
-	mux.Handle("GET "+GraphPath, fed)
+func Register(mux *http.ServeMux, fed http.Handler) {
+	mux.Handle("POST "+PushPath, auth.Require(auth.Contributor, fed))
+	mux.Handle("GET "+GraphPath, auth.Require(auth.Viewer, fed))
 }
 
 // Receiver serves one project's graph over the federation protocol.
@@ -65,7 +66,7 @@ func Receiver(st store.Backend, projectDir string) http.Handler {
 		case req.Method == http.MethodGet && req.URL.Path == GraphPath:
 			r.publish(w, req)
 		default:
-			writeError(w, http.StatusMethodNotAllowed, fmt.Errorf(
+			httpx.WriteMessage(w, http.StatusMethodNotAllowed, fmt.Sprintf(
 				"federation: %s %s is not a graph route (expected POST %s or GET %s)",
 				req.Method, req.URL.Path, PushPath, GraphPath))
 		}
@@ -80,34 +81,35 @@ type receiver struct {
 // push applies the received graph and answers with the envelope plus the
 // transfer's own counts.
 func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
 	role, err := h.callerRole(req)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, err)
+		httpx.WriteMessage(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	if role < auth.Contributor {
-		writeError(w, http.StatusForbidden, fmt.Errorf(
+		httpx.WriteMessage(w, http.StatusForbidden, fmt.Sprintf(
 			"federation: pushing needs a Contributor token, this caller is %s", role))
 		return
 	}
 
 	var payload pushPayload
 	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("federation: decode push body: %w", err))
+		httpx.WriteMessage(w, http.StatusBadRequest, fmt.Errorf("federation: decode push body: %w", err).Error())
 		return
 	}
 	now := time.Now().UTC()
-	elements, relationships, err := applyGraph(h.st, payload, now)
+	elements, relationships, err := applyGraph(ctx, h.st, payload, now)
 	if err != nil {
 		var bad *badPayload
 		if errors.As(err, &bad) {
-			writeError(w, http.StatusBadRequest, err)
+			httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 		} else {
-			writeError(w, http.StatusInternalServerError, err)
+			httpx.WriteMessage(w, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, graphDocument{
+	httpx.WriteJSON(w, http.StatusOK, graphDocument{
 		pushPayload: pushPayload{
 			Env:           payload.Env,
 			Service:       payload.Service,
@@ -125,21 +127,21 @@ func (h *receiver) push(w http.ResponseWriter, req *http.Request) {
 // a graph it could already query through /api/v1/query.
 func (h *receiver) publish(w http.ResponseWriter, req *http.Request) {
 	if _, err := h.callerRole(req); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
+		httpx.WriteMessage(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	elements, err := h.st.Elements()
+	elements, err := h.st.Elements(req.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("federation: read elements: %w", err))
+		httpx.WriteMessage(w, http.StatusInternalServerError, fmt.Errorf("federation: read elements: %w", err).Error())
 		return
 	}
-	relationships, err := readRelationships(h.st)
+	relationships, err := readRelationships(req.Context(), h.st)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		httpx.WriteMessage(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	now := time.Now().UTC()
-	writeJSON(w, http.StatusOK, graphDocument{
+	httpx.WriteJSON(w, http.StatusOK, graphDocument{
 		pushPayload: pushPayload{
 			// The store has no env column, so the published envelope reports the
 			// environment the caller asked about, falling back to "local".
@@ -183,7 +185,7 @@ type graphDocument struct {
 // Two store transactions (elements, then relationships) rather than one: the
 // Backend interface exposes no cross-table transaction, and both writes are
 // idempotent upserts, so re-running a sync that failed between them converges.
-func applyGraph(st store.Backend, payload pushPayload, at time.Time) (int, int, error) {
+func applyGraph(ctx context.Context, st store.Backend, payload pushPayload, at time.Time) (int, int, error) {
 	if err := validateGraph(payload); err != nil {
 		return 0, 0, err
 	}
@@ -198,7 +200,7 @@ func applyGraph(st store.Backend, payload pushPayload, at time.Time) (int, int, 
 		// ponytail: reads the whole local graph per sync that carries elements.
 		// Upgrade path is a qualified-name-batched read, or a content-preserving
 		// upsert in internal/store — both outside this package's ownership.
-		content, err := localContent(st)
+		content, err := localContent(ctx, st)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -220,7 +222,7 @@ func applyGraph(st store.Backend, payload pushPayload, at time.Time) (int, int, 
 			}
 			elements = append(elements, element)
 		}
-		if err := st.UpsertElements(elements); err != nil {
+		if err := st.UpsertElements(ctx, elements); err != nil {
 			return 0, 0, fmt.Errorf("federation: apply elements: %w", err)
 		}
 	}
@@ -236,7 +238,7 @@ func applyGraph(st store.Backend, payload pushPayload, at time.Time) (int, int, 
 				Metadata:   provenance(in.Metadata, payload, at),
 			})
 		}
-		if err := st.UpsertRelationships(relationships); err != nil {
+		if err := st.UpsertRelationships(ctx, relationships); err != nil {
 			return 0, 0, fmt.Errorf("federation: apply relationships: %w", err)
 		}
 	}
@@ -265,8 +267,8 @@ func validateGraph(payload pushPayload) error {
 }
 
 // localContent maps every qualified name in the store to its element content.
-func localContent(st store.Backend) (map[string]string, error) {
-	existing, err := st.Elements()
+func localContent(ctx context.Context, st store.Backend) (map[string]string, error) {
+	existing, err := st.Elements(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("federation: read local elements: %w", err)
 	}
@@ -298,16 +300,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// writeError answers in the same shape internal/rest uses, so one client
-// parses errors from the graph routes and every other endpoint alike.
-func writeError(w http.ResponseWriter, code int, err error) {
-	writeJSON(w, code, map[string]string{"error": err.Error()})
 }

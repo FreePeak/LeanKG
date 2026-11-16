@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -14,19 +15,19 @@ import (
 // counts — Explain reports all edges).
 func newFixture(t *testing.T) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	s, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	els := make([]store.Element, 0, 6)
 	for _, qn := range []string{"a", "b", "c", "d", "e", "x"} {
 		els = append(els, store.Element{QualifiedName: qn, Name: qn, ElementType: "func", FilePath: qn + ".go"})
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	rels := []store.Relationship{
@@ -38,7 +39,7 @@ func newFixture(t *testing.T) store.Backend {
 		// non-calls edge: caller/callee filters must drop it; degree counts keep it
 		{Source: "a", Target: "b", RelType: "imports", Confidence: 0.5},
 	}
-	if err := s.UpsertRelationships(rels); err != nil {
+	if err := s.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
 	return s
@@ -58,7 +59,7 @@ func qns(hits []Hit) []string {
 func TestImpact(t *testing.T) {
 	st := newFixture(t)
 
-	hits, err := Impact(st, "a", 1)
+	hits, _, err := Impact(context.Background(), st, "a", 1)
 	if err != nil {
 		t.Fatalf("Impact(a,1): %v", err)
 	}
@@ -70,7 +71,7 @@ func TestImpact(t *testing.T) {
 	}
 
 	// deeper traversal adds nothing: a has exactly one dependent.
-	hits, err = Impact(st, "a", 5)
+	hits, _, err = Impact(context.Background(), st, "a", 5)
 	if err != nil {
 		t.Fatalf("Impact(a,5): %v", err)
 	}
@@ -79,13 +80,13 @@ func TestImpact(t *testing.T) {
 	}
 
 	// c: dependents b+e (d1), a (d2), x (d3).
-	hits, _ = Impact(st, "c", 5)
+	hits, _, _ = Impact(context.Background(), st, "c", 5)
 	// depth-then-QN order: c(0), b+e(1), a(2), x(3)
 	if got, want := qns(hits), []string{"c", "b", "e", "a", "x"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Impact(c,5) = %v, want %v", got, want)
 	}
 
-	if _, err := Impact(st, "nope", 2); !errors.Is(err, ErrUnknownNode) {
+	if _, _, err := Impact(context.Background(), st, "nope", 2); !errors.Is(err, ErrUnknownNode) {
 		t.Fatalf("Impact(unknown) err = %v, want ErrUnknownNode", err)
 	}
 }
@@ -93,7 +94,7 @@ func TestImpact(t *testing.T) {
 func TestShortestPath(t *testing.T) {
 	st := newFixture(t)
 
-	path, err := ShortestPath(st, "a", "d", 5)
+	path, _, err := ShortestPath(context.Background(), st, "a", "d", 5)
 	if err != nil {
 		t.Fatalf("ShortestPath(a,d): %v", err)
 	}
@@ -102,7 +103,7 @@ func TestShortestPath(t *testing.T) {
 	}
 
 	// undirected view: reverse direction walks the same edges backwards
-	path, err = ShortestPath(st, "d", "a", 5)
+	path, _, err = ShortestPath(context.Background(), st, "d", "a", 5)
 	if err != nil {
 		t.Fatalf("ShortestPath(d,a): %v", err)
 	}
@@ -111,7 +112,7 @@ func TestShortestPath(t *testing.T) {
 	}
 
 	// undirected: a-b-c-e IS connected (e calls c)
-	path, err = ShortestPath(st, "a", "e", 5)
+	path, _, err = ShortestPath(context.Background(), st, "a", "e", 5)
 	if err != nil {
 		t.Fatalf("ShortestPath(a,e): %v", err)
 	}
@@ -119,18 +120,18 @@ func TestShortestPath(t *testing.T) {
 		t.Fatalf("ShortestPath(a,e) = %v, want %v", got, want)
 	}
 
-	if _, err := ShortestPath(st, "nope", "a", 5); !errors.Is(err, ErrUnknownNode) {
+	if _, _, err := ShortestPath(context.Background(), st, "nope", "a", 5); !errors.Is(err, ErrUnknownNode) {
 		t.Fatalf("ShortestPath(unknown,a) err = %v, want ErrUnknownNode", err)
 	}
 
-	if path, err := ShortestPath(st, "a", "a", 5); err != nil || !reflect.DeepEqual(path, []string{"a"}) {
+	if path, _, err := ShortestPath(context.Background(), st, "a", "a", 5); err != nil || !reflect.DeepEqual(path, []string{"a"}) {
 		t.Fatalf("self path: %v %v", path, err)
 	}
 }
 
 func TestCallersCalleesFilterRelType(t *testing.T) {
 	st := newFixture(t)
-	callers, err := Callers(st, "b")
+	callers, err := Callers(context.Background(), st, "b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestCallersCalleesFilterRelType(t *testing.T) {
 	if got, want := callers, []string{"a"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Callers(b) = %v, want %v", got, want)
 	}
-	callees, err := Callees(st, "b")
+	callees, err := Callees(context.Background(), st, "b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestCallersCalleesFilterRelType(t *testing.T) {
 
 func TestContextAndExplain(t *testing.T) {
 	st := newFixture(t)
-	ctx, err := Context(st, "b", 10)
+	ctx, err := Context(context.Background(), st, "b", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func TestContextAndExplain(t *testing.T) {
 	assertList(ctx, "incoming", "imports", []string{"a"})
 
 	// limit caps each grouped list (b has 2 distinct incoming callers).
-	ctx2, err := Context(st, "b", 1)
+	ctx2, err := Context(context.Background(), st, "b", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +184,7 @@ func TestContextAndExplain(t *testing.T) {
 		t.Fatalf("Context(b,1) incoming[calls] len = %d, want 1 (capped)", got)
 	}
 
-	ex, err := Explain(st, "b")
+	ex, err := Explain(context.Background(), st, "b")
 	if err != nil {
 		t.Fatal(err)
 	}

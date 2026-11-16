@@ -93,32 +93,34 @@ var sweepers = struct {
 // builds a recorder lazily (cmd/leankg's consent reload, when capture was
 // off at startup) needs the same retention sweep the normal open path
 // installs, or a first-after-reload ledger would never be swept.
-func StartRetention(st Store, days int) (func(), error) {
+func StartRetention(ctx context.Context, st Store, days int) (func(), error) {
 	if st == nil {
 		return func() {}, nil
 	}
-	return startRetention(st, days).stop, nil
+	return startRetention(ctx, st, days).stop, nil
 }
 
 // startRetention sweeps st now and then daily until the returned handle's
 // stop function is called. A store that knows its own path joins the
 // sweeper for that path, so the two open paths (Open and a consent reload)
 // share one ticker over one file.
-func startRetention(st Store, days int) *retentionHandle {
+func startRetention(ctx context.Context, st Store, days int) *retentionHandle {
 	if p, ok := st.(interface{ Path() string }); ok && p.Path() != "" {
-		return startPathRetention(p.Path(), days)
+		return startPathRetention(ctx, p.Path(), days)
 	}
-	return startStoreRetention(st, days)
+	return startStoreRetention(ctx, st, days)
 }
 
 // startPathRetention starts (or joins) the retention sweeper for the ledger
-// at path and returns a handle that releases this holder.
+// at path and returns a handle that releases this holder. The sweeper runs on
+// the ctx of the holder that started it: a joining holder shares that sweep
+// and its ctx, and stop ends it.
 //
 // The sweeper owns its own handle to the ledger: it keeps working whichever
 // handle opened it, and it never interferes with the recorder's writes. The
 // first sweep runs in the background, so opening a ledger never blocks on
 // the purge (which waits for any other process reading the file).
-func startPathRetention(path string, days int) *retentionHandle {
+func startPathRetention(ctx context.Context, path string, days int) *retentionHandle {
 	sweepers.mu.Lock()
 	if s, ok := sweepers.m[path]; ok {
 		s.refs++
@@ -129,7 +131,7 @@ func startPathRetention(path string, days int) *retentionHandle {
 	sweepers.m[path] = s
 	sweepers.mu.Unlock()
 
-	st, err := openLedger(path)
+	st, err := openLedger(ctx, path)
 	if err != nil {
 		log.Printf("telemetry: retention: open %s: %v", path, err)
 		sweepers.mu.Lock()
@@ -144,7 +146,7 @@ func startPathRetention(path string, days int) *retentionHandle {
 	go func() {
 		defer close(s.done)
 		defer st.Close()
-		sweepLedger(st, days)
+		sweepLedger(ctx, st, days)
 		close(s.swept)
 		t := time.NewTicker(retentionEvery)
 		defer t.Stop()
@@ -153,7 +155,7 @@ func startPathRetention(path string, days int) *retentionHandle {
 			case <-s.stop:
 				return
 			case <-t.C:
-				sweepLedger(st, days)
+				sweepLedger(ctx, st, days)
 			}
 		}
 	}()
@@ -163,14 +165,14 @@ func startPathRetention(path string, days int) *retentionHandle {
 // startStoreRetention sweeps st now and then daily until the returned stop
 // function is called. It is the fallback for a store that does not know its
 // own path.
-func startStoreRetention(st Store, days int) *retentionHandle {
+func startStoreRetention(ctx context.Context, st Store, days int) *retentionHandle {
 	swept := make(chan struct{})
 	done := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
 		defer func() { _ = recover() }()
-		sweepLedger(st, days)
+		sweepLedger(ctx, st, days)
 		close(swept)
 		t := time.NewTicker(retentionEvery)
 		defer t.Stop()
@@ -179,7 +181,7 @@ func startStoreRetention(st Store, days int) *retentionHandle {
 			case <-done:
 				return
 			case <-t.C:
-				sweepLedger(st, days)
+				sweepLedger(ctx, st, days)
 			}
 		}
 	}()
@@ -197,10 +199,10 @@ func startStoreRetention(st Store, days int) *retentionHandle {
 
 // sweepLedger runs one retention sweep. A failure is logged (the ledger
 // meta row records it too) so it cannot pass unnoticed.
-func sweepLedger(st Store, days int) {
-	ctx, cancel := context.WithTimeout(context.Background(), sweepTimeout)
+func sweepLedger(ctx context.Context, st Store, days int) {
+	sctx, cancel := context.WithTimeout(ctx, sweepTimeout)
 	defer cancel()
-	if _, err := retentionSweepAt(ctx, st, days, time.Now()); err != nil {
+	if _, err := retentionSweepAt(sctx, st, days, time.Now()); err != nil {
 		log.Printf("telemetry: retention sweep failed: %v", err)
 	}
 }
@@ -232,9 +234,9 @@ func releaseSweeper(path string, s *sweeper) {
 
 // openLedger opens the ledger at path for writing without ever creating it:
 // the sweeper must never bring a ledger into existence.
-func openLedger(path string) (*SQLiteStore, error) {
+func openLedger(ctx context.Context, path string) (*SQLiteStore, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	return OpenSQLite(path, false)
+	return OpenSQLite(ctx, path, false)
 }

@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"context"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -244,19 +245,19 @@ func TestHybridResolveStoreRoundTrip(t *testing.T) {
 		elem("pkg/a.go::Helper", "function", "Helper", "pkg/a.go", "go", ""),
 		elem("pkg/b.go::Main", "function", "Main", "pkg/b.go", "go", ""),
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{{
 		Source: "pkg/b.go::Main", Target: "pkg/a.go::Helper", RelType: "calls", Confidence: 0.5,
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	n, err := HybridResolve(st, "go")
+	n, err := HybridResolve(context.Background(), st, "go")
 	if err != nil || n != 1 {
 		t.Fatalf("HybridResolve = %d, %v; want 1, nil", n, err)
 	}
-	rels, err := st.RelationshipsAll(10)
+	rels, err := st.RelationshipsAll(context.Background(), 10)
 	if err != nil || len(rels) != 1 {
 		t.Fatalf("reload rels: %d, %v", len(rels), err)
 	}
@@ -267,7 +268,7 @@ func TestHybridResolveStoreRoundTrip(t *testing.T) {
 		t.Errorf("persisted confidence = %v", rels[0].Confidence)
 	}
 	// Second run: already-typed edges are not rewritten.
-	if n, err = HybridResolve(st, "go"); err != nil || n != 0 {
+	if n, err = HybridResolve(context.Background(), st, "go"); err != nil || n != 0 {
 		t.Errorf("second HybridResolve = %d, %v; want 0, nil", n, err)
 	}
 }

@@ -1,6 +1,7 @@
 package docgen
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,12 +25,12 @@ type fixtureSpec struct {
 // newFixture opens a migrated SQLite store in a temp dir and loads the spec.
 func newFixture(t *testing.T, spec fixtureSpec) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -61,7 +62,7 @@ func newFixture(t *testing.T, spec fixtureSpec) store.Backend {
 		})
 	}
 	if len(els) > 0 {
-		if err := st.UpsertElements(els); err != nil {
+		if err := st.UpsertElements(context.Background(), els); err != nil {
 			t.Fatalf("upsert elements: %v", err)
 		}
 	}
@@ -80,7 +81,7 @@ func newFixture(t *testing.T, spec fixtureSpec) store.Backend {
 		}
 	}
 	if len(rels) > 0 {
-		if err := st.UpsertRelationships(rels); err != nil {
+		if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 			t.Fatalf("upsert relationships: %v", err)
 		}
 	}
@@ -123,7 +124,7 @@ var baseRelCounts = map[string]int{
 
 func TestAgentsMDCountsAndCaps(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 25, Files: 35, Funcs: 55, Classes: 35, RelCounts: baseRelCounts})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -201,7 +202,7 @@ func TestAgentsMDCountsAndCaps(t *testing.T) {
 
 func TestAgentsMDRelationshipHistogram(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 1, Files: 1, Funcs: 55, RelCounts: baseRelCounts})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -228,7 +229,7 @@ func TestAgentsMDRelationshipHistogram(t *testing.T) {
 
 func TestAgentsMDEmptyModulesFallsBackToTree(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Files: 2, Funcs: 1})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -242,7 +243,7 @@ func TestAgentsMDEmptyModulesFallsBackToTree(t *testing.T) {
 
 func TestAgentsMDNoTruncationUnderCaps(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 2, Files: 3, Funcs: 5, Classes: 1, RelCounts: map[string]int{"calls": 3}})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -256,11 +257,11 @@ func TestAgentsMDNoTruncationUnderCaps(t *testing.T) {
 
 func TestAgentsMDDeterministic(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 25, Files: 35, Funcs: 55, Classes: 35, RelCounts: baseRelCounts})
-	a, err := AgentsMD(st)
+	a, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
-	b, err := AgentsMD(st)
+	b, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD (2nd): %v", err)
 	}
@@ -273,7 +274,7 @@ func TestWriteCreatesAgentsMD(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Modules: 25, Files: 35, Funcs: 55, Classes: 35, RelCounts: baseRelCounts})
 	docsDir := filepath.Join(t.TempDir(), "docs")
 
-	path, err := Write(st, docsDir)
+	path, err := Write(context.Background(), st, docsDir)
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -288,7 +289,7 @@ func TestWriteCreatesAgentsMD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}
@@ -303,7 +304,7 @@ func TestWriteCreatesAgentsMD(t *testing.T) {
 
 func TestAgentsMDDescribesTheGoEngine(t *testing.T) {
 	st := newFixture(t, fixtureSpec{Files: 1, Funcs: 1})
-	body, err := AgentsMD(st)
+	body, err := AgentsMD(context.Background(), st)
 	if err != nil {
 		t.Fatalf("AgentsMD: %v", err)
 	}

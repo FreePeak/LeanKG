@@ -31,12 +31,12 @@ func TestIndexDartConstructorAndEnumElements(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "factory.dart"), []byte(dartProjectFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := IndexDir(context.Background(), st, dir); err != nil {
@@ -53,7 +53,7 @@ func TestIndexDartConstructorAndEnumElements(t *testing.T) {
 		{"green", "factory.dart::Color.green"},
 	}
 	for _, w := range want {
-		els, err := st.FindExact(w.name)
+		els, err := st.FindExact(context.Background(), w.name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +68,7 @@ func TestIndexDartConstructorAndEnumElements(t *testing.T) {
 		}
 	}
 
-	cls, err := st.FindExact("factory.dart::Factory")
+	cls, err := st.FindExact(context.Background(), "factory.dart::Factory")
 	if err != nil {
 		t.Fatal(err)
 	}

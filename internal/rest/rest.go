@@ -16,17 +16,16 @@ package rest
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/core"
-	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/federation"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
-	"github.com/FreePeak/LeanKG/internal/orgknowledge"
 )
 
 // Handler builds the REST mux over an engine.
@@ -36,42 +35,47 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 	for _, o := range opts {
 		o(&cfg)
 	}
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	})
-	mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /health", auth.Public(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})))
+	mux.Handle("GET /api/v1/status", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out, err := engine.Status(r.Context())
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
-	})
-	mux.HandleFunc("POST /api/v1/query", func(w http.ResponseWriter, r *http.Request) {
-		var req core.QueryRequest
-		if !decode(w, r, &req) {
+		httpx.WriteJSON(w, http.StatusOK, out)
+	})))
+	mux.Handle("POST /api/v1/query", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var fields map[string]any
+		if !decode(w, r, &fields) {
 			return
 		}
-		out, err := engine.Query(r.Context(), req)
+		req, err := core.DecodeQuery(fields)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
-	})
-	mux.HandleFunc("POST /api/v1/import", func(w http.ResponseWriter, r *http.Request) {
+		ans, err := engine.QueryAnswer(r.Context(), req)
+		if err != nil {
+			httpx.WriteError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, ans.Body)
+	})))
+	mux.Handle("POST /api/v1/import", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req core.ImportRequest
 		if !decode(w, r, &req) {
 			return
 		}
 		out, err := engine.Import(r.Context(), req)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
-	})
-	mux.HandleFunc("POST /api/v1/session/read", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, out)
+	})))
+	mux.Handle("POST /api/v1/session/read", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Command   string `json:"command"` // recall | canvas
 			SessionID string `json:"session_id"`
@@ -82,38 +86,38 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		}
 		out, err := engine.SessionRead(body.Command, body.SessionID, body.NodeID)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
-	})
-	mux.HandleFunc("POST /api/v1/ontology/match", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, out)
+	})))
+	mux.Handle("POST /api/v1/ontology/match", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Catalog string `json:"catalog"` // path to the concept catalog JSON
 		}
 		if !decode(w, r, &body) {
 			return
 		}
-		out, err := engine.OntologyMatch(body.Catalog)
+		out, err := engine.OntologyMatch(r.Context(), body.Catalog)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
-	})
-	mux.HandleFunc("GET /api/v1/ontology/matches", func(w http.ResponseWriter, r *http.Request) {
-		out, err := engine.OntologyMatches()
+		httpx.WriteJSON(w, http.StatusOK, out)
+	})))
+	mux.Handle("GET /api/v1/ontology/matches", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out, err := engine.OntologyMatches(r.Context())
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
-	})
+		httpx.WriteJSON(w, http.StatusOK, out)
+	})))
 	// FR-ZCP org-knowledge reads (Rust /api/v2 routes; the Go envelope is the
 	// existing writeJSON payload shape). Param defaults follow the Rust
 	// handlers: env=production, limit=10.
-	org := orgknowledge.New(engine.Store())
-	mux.HandleFunc("GET /api/v2/incidents", func(w http.ResponseWriter, r *http.Request) {
+	org := engine.OrgKnowledge()
+	mux.Handle("GET /api/v2/incidents", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		env := q.Get("env")
 		if env == "" {
@@ -123,47 +127,47 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 		if limit == 0 {
 			limit = 10
 		}
-		incidents, err := org.QueryIncidents(q.Get("service"), q.Get("pattern"), env, limit)
+		incidents, err := org.QueryIncidents(r.Context(), q.Get("service"), q.Get("pattern"), env, limit)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
 		// A list answer says whether there IS a list to return: `null` and
 		// `[]` are different answers ("never configured" and "configured and
 		// found nothing"), and the note names the causes an empty list can
 		// have at this route without pretending to pick between them.
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"incidents": core.NonNil(incidents),
 			"note": "no incidents recorded for this filter; an empty list means either no incident store is " +
 				"configured (`leankg incident import` to add one) or nothing matched the filter",
 		})
-	})
-	mux.HandleFunc("GET /api/v2/env/diff", func(w http.ResponseWriter, r *http.Request) {
-		conflicts, err := org.FindEnvConflicts(r.URL.Query().Get("service"))
+	})))
+	mux.Handle("GET /api/v2/env/diff", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conflicts, err := org.FindEnvConflicts(r.Context(), r.URL.Query().Get("service"))
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"conflicts": conflicts})
-	})
-	mux.HandleFunc("GET /api/v2/service/context", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"conflicts": conflicts})
+	})))
+	mux.Handle("GET /api/v2/service/context", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		env := r.URL.Query().Get("env")
 		if env == "" {
 			env = "production"
 		}
-		ctx, err := org.ServiceContext(r.URL.Query().Get("service"), env)
+		ctx, err := org.ServiceContext(r.Context(), r.URL.Query().Get("service"), env)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, ctx)
-	})
+		httpx.WriteJSON(w, http.StatusOK, ctx)
+	})))
 	// Federation receiver (#372): POST /api/v2/graph/push + GET /api/v2/graph,
 	// per-project (routeByProject wraps each project handler), caller-authenticated
 	// with Contributor+ required to write.
-	federation.Register(mux, engine.Store(), engine.ProjectDir())
+	federation.Register(mux, engine.FederationReceiver())
 	if mem != nil {
-		mux.HandleFunc("POST /api/v1/memory/banks/{bank}/memories", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("POST /api/v1/memory/banks/{bank}/memories", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			bank := r.PathValue("bank")
 			// Hindsight-shaped retain body: TOP-LEVEL through_user_turn
 			// cursor; entries carry {"content", optional "id", "metadata"}
@@ -189,7 +193,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 				return
 			}
 			if body.Entries == nil {
-				writeJSON(w, http.StatusBadRequest, map[string]any{
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 					"error": "entries is required (an explicit \"entries\": [] is a valid no-op; " +
 						"this route reads `entries`, not the hindsight-compat mount's `items`)",
 				})
@@ -200,7 +204,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			// silently swallow it.
 			for i, e := range *body.Entries {
 				if strings.TrimSpace(e.Content) == "" {
-					writeJSON(w, http.StatusBadRequest, map[string]any{
+					httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 						"error": fmt.Sprintf("entries[%d].content is empty — empty entries would be unrecallable", i),
 					})
 					return
@@ -208,24 +212,24 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			}
 			var res memory.RetainResult
 			if body.ThroughUserTurn == nil {
-				if err := mem.RetainRawCtx(r.Context(), bank, *body.Entries); err != nil {
-					writeErr(w, err)
+				if err := mem.RetainRaw(r.Context(), bank, *body.Entries); err != nil {
+					httpx.WriteError(w, err)
 					return
 				}
 				res = memory.RetainResult{Bank: bank, Written: len(*body.Entries)}
 			} else {
 				var err error
-				if res, err = mem.RetainCtx(r.Context(), bank, *body.Entries, *body.ThroughUserTurn); err != nil {
-					writeErr(w, err)
+				if res, err = mem.Retain(r.Context(), bank, *body.Entries, *body.ThroughUserTurn); err != nil {
+					httpx.WriteError(w, err)
 					return
 				}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"ok": true, "retained": res.Written, "skipped": res.Skipped,
 				"retained_through_user_turn": res.RetainedThroughUserTurn,
 			})
-		})
-		mux.HandleFunc("POST /api/v1/memory/banks/{bank}/recall", func(w http.ResponseWriter, r *http.Request) {
+		})))
+		mux.Handle("POST /api/v1/memory/banks/{bank}/recall", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			bank := r.PathValue("bank")
 			var body struct {
 				Query string `json:"query"`
@@ -234,26 +238,26 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			if !decode(w, r, &body) {
 				return
 			}
-			entries, err := mem.RecallCtx(r.Context(), bank, body.Query, body.Limit)
+			entries, err := mem.Recall(r.Context(), bank, body.Query, body.Limit)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
 			// The list is never null: an empty bank and a bank that was never
 			// configured are different answers, and the note says which is
 			// which at this route.
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"entries": core.NonNil(entries),
 				"note": "bank " + bank + " holds nothing matching this query; recall matches on query tokens, " +
 					"and an empty query matches nothing",
 			})
-		})
+		})))
 		// FR-ZCP-07 session surface (hindsight-shaped): retain with a
 		// session-keyed cursor, recall merged across the scope's banks, and the
 		// first-turn <memories> injection read. (Mem275 proposed
 		// `memories:inject`; Go ServeMux segments keep no colon convention, so
 		// the read lives at /inject — same semantics, cleaner route.)
-		mux.HandleFunc("POST /api/v1/memory/session/retain", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("POST /api/v1/memory/session/retain", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				SessionID               string   `json:"session_id"`
 				Turns                   []string `json:"turns"`
@@ -270,17 +274,17 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			}
 			scope, err := memory.ParseScope(body.Scope)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
-			res, err := mem.SessionRetainCtx(r.Context(), scope, body.CWD, body.Bank, body.SessionID, body.Turns, body.RetainedThroughUserTurn, body.Tags)
+			res, err := mem.SessionRetain(r.Context(), scope, body.CWD, body.Bank, body.SessionID, body.Turns, body.RetainedThroughUserTurn, body.Tags)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, res)
-		})
-		mux.HandleFunc("POST /api/v1/memory/session/recall", func(w http.ResponseWriter, r *http.Request) {
+			httpx.WriteJSON(w, http.StatusOK, res)
+		})))
+		mux.Handle("POST /api/v1/memory/session/recall", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				Query string `json:"query"`
 				Limit int    `json:"limit"`
@@ -293,28 +297,28 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			}
 			scope, err := memory.ParseScope(body.Scope)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
-			banks, entries, err := mem.SessionRecallCtx(r.Context(), scope, body.CWD, body.Bank, body.Query, body.Limit)
+			banks, entries, err := mem.SessionRecall(r.Context(), scope, body.CWD, body.Bank, body.Query, body.Limit)
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"banks": banks, "count": len(entries), "memories": memory.RankEntries(entries),
 			})
-		})
+		})))
 		injectHandle := func(w http.ResponseWriter, r *http.Request, bank string) {
 			q := r.URL.Query()
 			scope, err := memory.ParseScope(q.Get("scope"))
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
 			text, injectedIDs, total, err := mem.FirstTurnMemoriesWithIDs(r.Context(), scope, q.Get("cwd"), bank, q.Get("query"))
 			if err != nil {
-				writeErr(w, err)
+				httpx.WriteError(w, err)
 				return
 			}
 			// injected_ids and total are additive: the count and the text are
@@ -323,48 +327,30 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			// is how many rows the recall FOUND, so "the block shows 8" no
 			// longer reads as "there are 8" (FR-SMA-06's marker half — the
 			// block also names the hidden count in text).
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"count": len(injectedIDs), "text": text, "injected_ids": injectedIDs, "total": total,
 			})
 		}
-		mux.HandleFunc("GET /api/v1/memory/banks/{bank}/inject", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("GET /api/v1/memory/banks/{bank}/inject", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			injectHandle(w, r, r.PathValue("bank"))
-		})
+		})))
 		// The bank-less form is what an external hook uses: a hook cannot know
 		// the mnemopi bank name (it embeds a hash of the cwd), and guessing one
 		// reads the wrong bank silently. An empty bank means the server's own
 		// default for the scope, which is exactly what the hook wants.
-		mux.HandleFunc("GET /api/v1/memory/inject", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("GET /api/v1/memory/inject", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			injectHandle(w, r, "")
-		})
+		})))
 	}
 	if cfg.hindsightCompat && mem != nil {
 		registerHindsightCompat(mux, mem)
 	}
-	return mux
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// writeErr renders a failed REST call. An error carrying a catalog code
-// (internal/errs) also exposes it as `code`, so clients branch on the stable
-// token instead of matching prose (FR-ZCP-12).
-func writeErr(w http.ResponseWriter, err error) {
-	body := map[string]any{"error": err.Error()}
-	var coded *errs.Error
-	if errors.As(err, &coded) {
-		body["code"] = coded.Code()
-	}
-	writeJSON(w, http.StatusBadRequest, body)
+	return httpx.Guard(mux)
 }
 
 func decode[T any](w http.ResponseWriter, r *http.Request, into *T) bool {
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body: " + err.Error()})
+		httpx.WriteMessage(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}
 	return true

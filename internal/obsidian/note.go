@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -273,11 +274,11 @@ updated: %s
 // Export-filtered paths and Note elements (the vault's own mirror image) get
 // no note; per-element failures are counted, not fatal, exactly like the Rust
 // push that logged and continued.
-func (e *Engine) Push() (PushResult, error) {
+func (e *Engine) Push(ctx context.Context) (PushResult, error) {
 	if e.st == nil {
 		return PushResult{}, errors.New("obsidian: push requires a store")
 	}
-	elements, err := e.st.Elements()
+	elements, err := e.st.Elements(ctx)
 	if err != nil {
 		return PushResult{}, fmt.Errorf("obsidian: list elements: %w", err)
 	}
@@ -289,11 +290,11 @@ func (e *Engine) Push() (PushResult, error) {
 		if el.ElementType == NoteType || skipExportPath(el.FilePath) {
 			continue
 		}
-		rels, err := e.st.Outgoing(el.QualifiedName)
+		rels, err := e.st.Outgoing(ctx, el.QualifiedName)
 		if err != nil {
 			return res, fmt.Errorf("obsidian: relationships of %s: %w", el.QualifiedName, err)
 		}
-		annotation, _, err := e.st.KVGet(AnnotationNamespace, el.QualifiedName)
+		annotation, _, err := e.st.KVGet(ctx, AnnotationNamespace, el.QualifiedName)
 		if err != nil {
 			return res, fmt.Errorf("obsidian: annotation of %s: %w", el.QualifiedName, err)
 		}

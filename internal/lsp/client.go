@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/langs"
@@ -87,10 +88,11 @@ type Client struct {
 	lang    langs.Language
 	rootDir string
 
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdinMu sync.Mutex
-	out     *bufio.Reader
+	cmd      *exec.Cmd
+	stopProc context.CancelFunc // ends the spawn context once the process is reaped
+	stdin    io.WriteCloser
+	stdinMu  sync.Mutex
+	out      *bufio.Reader
 
 	mu         sync.Mutex
 	pending    map[int64]chan rpcResult
@@ -140,9 +142,17 @@ func StartCommand(ctx context.Context, lang langs.Language, bin string, args []s
 		return nil, err
 	}
 
-	cmd := exec.Command(bin, args...)
+	// ctx bounds the spawn and its handshake only. Until the handshake
+	// completes, a cancelled ctx kills the server's process group; once the
+	// server is up it outlives ctx and is torn down by Close.
+	procCtx, stopProc := context.WithCancel(context.WithoutCancel(ctx))
+	cmd := exec.CommandContext(procCtx, bin, args...)
 	cmd.Dir = abs
 	cmd.Stderr = io.Discard
+	// The server leads its own process group so a kill reaches the children it
+	// spawned, not only the leader.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killGroup(cmd) }
 	// A server that spawns children inheriting stdout would hold the pipe
 	// open past Process.Kill and stall Wait for the child's lifetime
 	// (TestErrTimeout hung 60s on `sh -c 'sleep 60'`). WaitDelay force-closes
@@ -150,20 +160,25 @@ func StartCommand(ctx context.Context, lang langs.Language, bin string, args []s
 	cmd.WaitDelay = 500 * time.Millisecond
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		stopProc()
 		return nil, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		stopProc()
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
+		stopProc()
 		return nil, fmt.Errorf("%w: spawn %s: %v", ErrNoServer, bin, err)
 	}
+	unbind := context.AfterFunc(ctx, stopProc)
 
 	c := &Client{
 		lang:       lang,
 		rootDir:    abs,
 		cmd:        cmd,
+		stopProc:   stopProc,
 		stdin:      stdin,
 		out:        bufio.NewReader(stdout),
 		pending:    make(map[int64]chan rpcResult),
@@ -187,15 +202,31 @@ func StartCommand(ctx context.Context, lang langs.Language, bin string, args []s
 		init["initializationOptions"] = initOpts
 	}
 	if _, err := c.request(hctx, "initialize", init); err != nil {
+		unbind()
 		c.forceStop()
 		return nil, err
 	}
 	if err := c.notify("initialized", map[string]any{}); err != nil {
+		unbind()
 		c.forceStop()
 		return nil, err
 	}
+	if !unbind() {
+		// ctx ended after the handshake: the server was already killed.
+		c.forceStop()
+		return nil, ctx.Err()
+	}
 	c.touch()
 	return c, nil
+}
+
+// killGroup kills the process group a server leads (see StartCommand). It is
+// called only while the leader has not been reaped, so the group id is ours.
+func killGroup(cmd *exec.Cmd) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
 
 // Language returns the language the server was started for.
@@ -234,7 +265,7 @@ func (c *Client) forceStop() {
 
 	waited := make(chan struct{})
 	go func() {
-		killer := time.AfterFunc(2*time.Second, func() { _ = c.cmd.Process.Kill() })
+		killer := time.AfterFunc(2*time.Second, func() { _ = killGroup(c.cmd) })
 		_ = c.cmd.Wait()
 		killer.Stop()
 		close(waited)
@@ -242,10 +273,11 @@ func (c *Client) forceStop() {
 	select {
 	case <-waited:
 	case <-time.After(4 * time.Second):
-		_ = c.cmd.Process.Kill()
+		_ = killGroup(c.cmd)
 		<-waited
 	}
 	<-c.readerDone
+	c.stopProc()
 }
 
 func (c *Client) touch() {
@@ -354,7 +386,7 @@ func (c *Client) request(ctx context.Context, method string, params any) (json.R
 		return r.result, r.err
 	case <-ctx.Done():
 		c.dropPending(id)
-		return nil, fmt.Errorf("%w: %s: %v", ErrTimeout, method, ctx.Err())
+		return nil, fmt.Errorf("%w: %s: %w", ErrTimeout, method, ctx.Err())
 	}
 }
 

@@ -32,22 +32,21 @@ func writeProject(t *testing.T) string {
 
 func engineAt(t *testing.T, dir string) *Engine {
 	t.Helper()
-	st, err := store.OpenBackend(context.Background(), dir, "sqlite", "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: "sqlite", PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	e := New(st, nil, nil)
-	e.SetProjectDir(dir)
+	e := New(st, Options{ProjectDir: dir})
 	return e
 }
 
 func count(t *testing.T, e *Engine) int {
 	t.Helper()
-	n, err := e.st.ElementCount()
+	n, err := e.st.ElementCount(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +152,7 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 	}
 	e := engineAt(t, dir)
 	p := embed.Deterministic(64)
-	e.SetEmbedder(QueryEmbedderFromProvider(p))
+	e.embedder = p
 	ctx := context.Background()
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
 		t.Fatal(err)
@@ -167,7 +166,7 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: "."}); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := e.st.VectorCount(p.ModelID())
+	vecs, _ := e.st.VectorCount(context.Background(), p.Identity().Model)
 	if els := count(t, e); vecs != els {
 		t.Fatalf("after re-index: %d vectors for %d elements (orphans left behind)", vecs, els)
 	}
@@ -209,7 +208,7 @@ func TestImportDocsRelativeAnchorsAtProject(t *testing.T) {
 	if _, err := e.Import(ctx, ImportRequest{Action: "docs", Path: "docs"}); err != nil {
 		t.Fatalf("import docs relative: %v", err)
 	}
-	files, _ := e.st.Files()
+	files, _ := e.st.Files(context.Background())
 	got := map[string]bool{}
 	for _, f := range files {
 		got[f.Path] = true
@@ -265,7 +264,7 @@ func TestRelativeProjectDirAcceptsAbsolutePaths(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	e.SetProjectDir(".")
+	e.projectDir, _ = filepath.Abs(".")
 	ctx := context.Background()
 	if _, err := e.Import(ctx, ImportRequest{Action: "repo", Path: dir}); err != nil {
 		t.Fatalf("import repo <abs project root> with project dir \".\": %v", err)

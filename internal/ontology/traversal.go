@@ -1,6 +1,7 @@
 package ontology
 
 import (
+	"context"
 	"sort"
 	"strings"
 
@@ -160,7 +161,7 @@ type DiscoveredFunction struct {
 // GlobalFunctionCap. When BFS yields nothing for a seed whose code links
 // live in metadata.code_refs, falls back to keyed path-prefix resolution
 // (parity with traverse_to_functions).
-func TraverseToFunctions(st store.Backend, seeds []UpperSeed, env string) ([]DiscoveredFunction, error) {
+func TraverseToFunctions(ctx context.Context, st store.Backend, seeds []UpperSeed, env string) ([]DiscoveredFunction, error) {
 	var discovered []DiscoveredFunction
 	seen := map[string]int{} // function QN -> index into discovered
 	total := 0
@@ -193,11 +194,11 @@ func TraverseToFunctions(st store.Backend, seeds []UpperSeed, env string) ([]Dis
 				continue
 			}
 
-			outgoing, err := st.Outgoing(item.qn)
+			outgoing, err := st.Outgoing(ctx, item.qn)
 			if err != nil {
 				return nil, err
 			}
-			incoming, err := st.Incoming(item.qn)
+			incoming, err := st.Incoming(ctx, item.qn)
 			if err != nil {
 				return nil, err
 			}
@@ -219,7 +220,7 @@ func TraverseToFunctions(st store.Backend, seeds []UpperSeed, env string) ([]Dis
 				}
 				visited[neighbor] = true
 
-				el, ok, err := findElementByQN(st, neighbor)
+				el, ok, err := findElementByQN(ctx, st, neighbor)
 				if err != nil {
 					return nil, err
 				}
@@ -241,7 +242,7 @@ func TraverseToFunctions(st store.Backend, seeds []UpperSeed, env string) ([]Dis
 		}
 
 		if foundForSeed == 0 && needsCodeRefsFallback(upper.ElementType) {
-			if err := resolveCodeRefsFallback(st, upper, env, seedCap,
+			if err := resolveCodeRefsFallback(ctx, st, upper, env, seedCap,
 				&discovered, seen, &total); err != nil {
 				return nil, err
 			}
@@ -265,10 +266,10 @@ func needsCodeRefsFallback(elementType string) bool {
 
 // resolveCodeRefsFallback resolves metadata.code_refs of an upper seed
 // into concrete function nodes (parity with resolve_code_refs_fallback).
-func resolveCodeRefsFallback(st store.Backend, upper UpperSeed, env string, fanoutCap int,
+func resolveCodeRefsFallback(ctx context.Context, st store.Backend, upper UpperSeed, env string, fanoutCap int,
 	discovered *[]DiscoveredFunction, seen map[string]int, total *int) error {
 
-	el, ok, err := findElementByQN(st, upper.QualifiedName)
+	el, ok, err := findElementByQN(ctx, st, upper.QualifiedName)
 	if err != nil || !ok {
 		return err
 	}
@@ -283,7 +284,7 @@ func resolveCodeRefsFallback(st store.Backend, upper UpperSeed, env string, fano
 			break
 		}
 		// Exact QN first, then file::symbol / path forms.
-		resolved, err := ResolveCodeRefs(st, []string{rawRef}, fanoutCap-matched)
+		resolved, err := ResolveCodeRefs(ctx, st, []string{rawRef}, fanoutCap-matched)
 		if err != nil {
 			return err
 		}

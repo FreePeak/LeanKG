@@ -373,7 +373,7 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 	// Rust index_prd counted an already-present row as an update), the ids
 	// this document wrote last time (stale rows to drop) and the workflow
 	// steps the link pass matches against.
-	all, err := st.Elements()
+	all, err := st.Elements(ctx)
 	if err != nil {
 		return out, fmt.Errorf("prdindex: read elements: %w", err)
 	}
@@ -400,7 +400,7 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 			continue
 		}
 		out.Removed++
-		if err := st.KnowledgeEntryDelete(qn); err != nil {
+		if err := st.KnowledgeEntryDelete(ctx, qn); err != nil {
 			return out, fmt.Errorf("prdindex: drop stale row %s: %w", qn, err)
 		}
 	}
@@ -408,7 +408,7 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 	// Rebuild: "prd://<doc>" is unique to this document, so the delete can
 	// only touch these entities — never the doc elements internal/docindex
 	// writes for the same markdown file.
-	if err := st.DeleteByFile(filePrefix + docPath); err != nil {
+	if err := st.DeleteByFile(ctx, filePrefix+docPath); err != nil {
 		return out, fmt.Errorf("prdindex: clear %s: %w", docPath, err)
 	}
 
@@ -419,7 +419,7 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 	entries := KnowledgeEntries(res, env)
 	for i := range entries {
 		entries[i].CreatedAt, entries[i].UpdatedAt = now, now
-		if err := st.KnowledgeEntryUpsert(entries[i]); err != nil {
+		if err := st.KnowledgeEntryUpsert(ctx, entries[i]); err != nil {
 			return out, fmt.Errorf("prdindex: knowledge upsert %s: %w", entries[i].ID, err)
 		}
 	}
@@ -428,11 +428,11 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 	if len(els) == 0 {
 		return out, nil
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(ctx, els); err != nil {
 		return out, fmt.Errorf("prdindex: upsert elements: %w", err)
 	}
 	rels := linksFrom(workflowSteps(all), res, docPath)
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(ctx, rels); err != nil {
 		return out, fmt.Errorf("prdindex: upsert links: %w", err)
 	}
 	out.WorkflowLinks = len(rels)
@@ -528,11 +528,11 @@ func Elements(res Result, docPath, env string, now int64) []store.Element {
 //
 // An edge is emitted only for steps whose parent is a stored workflow, so
 // every endpoint resolves to an element.
-func Links(st store.Backend, res Result, docPath string) ([]store.Relationship, error) {
+func Links(ctx context.Context, st store.Backend, res Result, docPath string) ([]store.Relationship, error) {
 	if len(res.Requirements) == 0 {
 		return nil, nil
 	}
-	all, err := st.Elements()
+	all, err := st.Elements(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("prdindex: read elements: %w", err)
 	}
@@ -612,31 +612,31 @@ func linksFrom(steps []store.Element, res Result, docPath string) []store.Relati
 }
 
 // RequirementByID returns the requirement entity for a feature id.
-func RequirementByID(st store.Backend, id string) (store.Element, bool, error) {
-	return elementByQN(st, requirementQN(id))
+func RequirementByID(ctx context.Context, st store.Backend, id string) (store.Element, bool, error) {
+	return elementByQN(ctx, st, requirementQN(id))
 }
 
 // UserStoryByID returns the user story entity for a user story id.
-func UserStoryByID(st store.Backend, id string) (store.Element, bool, error) {
-	return elementByQN(st, userStoryQN(id))
+func UserStoryByID(ctx context.Context, st store.Backend, id string) (store.Element, bool, error) {
+	return elementByQN(ctx, st, userStoryQN(id))
 }
 
 // Requirements lists every indexed requirement entity, ordered by qualified
 // name.
-func Requirements(st store.Backend) ([]store.Element, error) {
-	return elementsByType(st, TypeRequirement)
+func Requirements(ctx context.Context, st store.Backend) ([]store.Element, error) {
+	return elementsByType(ctx, st, TypeRequirement)
 }
 
 // UserStories lists every indexed user story entity, ordered by qualified
 // name.
-func UserStories(st store.Backend) ([]store.Element, error) {
-	return elementsByType(st, TypeUserStory)
+func UserStories(ctx context.Context, st store.Backend) ([]store.Element, error) {
+	return elementsByType(ctx, st, TypeUserStory)
 }
 
 // WorkflowsForFeature returns the workflow GIDs linked to a feature id (the
 // get_workflows_for_feature read over the implemented_by edges).
-func WorkflowsForFeature(st store.Backend, featureID string) ([]string, error) {
-	rels, err := st.Outgoing(requirementQN(featureID))
+func WorkflowsForFeature(ctx context.Context, st store.Backend, featureID string) ([]string, error) {
+	rels, err := st.Outgoing(ctx, requirementQN(featureID))
 	if err != nil {
 		return nil, err
 	}
@@ -651,8 +651,8 @@ func WorkflowsForFeature(st store.Backend, featureID string) ([]string, error) {
 
 // FeaturesForWorkflow returns the feature ids a workflow implements (the
 // get_features_for_workflow read).
-func FeaturesForWorkflow(st store.Backend, workflowGID string) ([]string, error) {
-	rels, err := st.Incoming(workflowGID)
+func FeaturesForWorkflow(ctx context.Context, st store.Backend, workflowGID string) ([]string, error) {
+	rels, err := st.Incoming(ctx, workflowGID)
 	if err != nil {
 		return nil, err
 	}
@@ -712,8 +712,8 @@ func KnowledgeEntries(res Result, env string) []store.KnowledgeEntry {
 }
 
 // elementByQN loads one element by its qualified name.
-func elementByQN(st store.Backend, qn string) (store.Element, bool, error) {
-	found, err := st.FindExact(qn)
+func elementByQN(ctx context.Context, st store.Backend, qn string) (store.Element, bool, error) {
+	found, err := st.FindExact(ctx, qn)
 	if err != nil {
 		return store.Element{}, false, err
 	}
@@ -725,8 +725,8 @@ func elementByQN(st store.Backend, qn string) (store.Element, bool, error) {
 	return store.Element{}, false, nil
 }
 
-func elementsByType(st store.Backend, typ string) ([]store.Element, error) {
-	all, err := st.Elements()
+func elementsByType(ctx context.Context, st store.Backend, typ string) ([]store.Element, error) {
+	all, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1087,10 +1087,10 @@ type Coverage struct {
 
 // Trace returns one Coverage row per indexed requirement, or the single row of
 // featureID when it is non-empty. Rows are ordered by feature id.
-func Trace(st store.Backend, featureID string) ([]Coverage, error) {
+func Trace(ctx context.Context, st store.Backend, featureID string) ([]Coverage, error) {
 	var reqs []store.Element
 	if featureID != "" {
-		el, ok, err := RequirementByID(st, featureID)
+		el, ok, err := RequirementByID(ctx, st, featureID)
 		if err != nil {
 			return nil, err
 		}
@@ -1099,7 +1099,7 @@ func Trace(st store.Backend, featureID string) ([]Coverage, error) {
 		}
 	} else {
 		var err error
-		reqs, err = Requirements(st)
+		reqs, err = Requirements(ctx, st)
 		if err != nil {
 			return nil, err
 		}
@@ -1108,7 +1108,7 @@ func Trace(st store.Backend, featureID string) ([]Coverage, error) {
 
 	out := make([]Coverage, 0, len(reqs))
 	for _, el := range reqs {
-		wfs, err := WorkflowsForFeature(st, el.Name)
+		wfs, err := WorkflowsForFeature(ctx, st, el.Name)
 		if err != nil {
 			return nil, err
 		}

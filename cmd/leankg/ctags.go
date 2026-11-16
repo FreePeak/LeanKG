@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -8,47 +9,52 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // cmdCtags renders the indexed elements as a readtags-compatible `tags` file.
 // Ported from the Rust `leankg tags --format=ctags` verb
 // (ctags_export.rs + cli::CLICommand::Tags).
-func cmdCtags(args []string) {
-	fs := flag.NewFlagSet("ctags", flag.ExitOnError)
+func cmdCtags(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("ctags", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	out := fs.String("out", "", "write the tags file to FILE instead of stdout (Rust's --output)")
 	format := fs.String("format", "ctags", "export format (only ctags is wired, like the Rust TagsFormat enum)")
-	parseInterspersed("ctags", fs, args, 0)
+	if _, err := parseInterspersed("ctags", fs, args, 0); err != nil {
+		return err
+	}
 	if *format != "ctags" {
 		fmt.Fprintf(os.Stderr, "ctags: unknown format %q (valid: ctags)\n", *format)
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
+	defer engine.Close()
 
-	elements, err := engine.Store().Elements()
+	elements, err := st.Elements(ctx)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	tags := renderTags(elements)
 	if *out == "" {
 		fmt.Print(tags)
-		return
+		return nil
 	}
 	path := *out
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(dir, path)
 	}
 	if err := os.WriteFile(path, []byte(tags), 0o644); err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	// The Rust verb printed this note on stdout; keep stdout tags-only.
 	fmt.Fprintf(os.Stderr, "wrote %d tags to %s\n", strings.Count(tags, "\n"), path)
+	return nil
 }
 
 // ctagsKindFor maps a LeanKG element type to its ctags kind shorthand

@@ -34,7 +34,7 @@ func clearTokenEnv(t *testing.T) {
 // gate on: with no token anywhere the store is open (auth's local default).
 func mint(t *testing.T, st store.Backend, role string) string {
 	t.Helper()
-	secret, _, err := auth.Mint(st, auth.MintRequest{Name: "federation-" + role, Role: role})
+	secret, _, err := auth.Mint(context.Background(), st, auth.MintRequest{Name: "federation-" + role, Role: role})
 	if err != nil {
 		t.Fatalf("mint %s token: %v", role, err)
 	}
@@ -82,7 +82,7 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 func elementsByQN(t *testing.T, st store.Backend) map[string]store.Element {
 	t.Helper()
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		t.Fatalf("read elements: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestReceiverAppliesPushPolicy(t *testing.T) {
 	}
 	assertProvenance(t, els["pkg.New"].Metadata, "pusher-service", "production")
 
-	rels, err := st.RelationshipsAll(maxRelationships)
+	rels, err := st.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestReceiverNeverDeletesUnmentionedRows(t *testing.T) {
 	token := mint(t, st, "contributor")
 
 	before := elementCount(t, st)
-	relsBefore, err := st.RelationshipsAll(maxRelationships)
+	relsBefore, err := st.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestReceiverNeverDeletesUnmentionedRows(t *testing.T) {
 			t.Errorf("%s was deleted by a push that never mentioned it", qn)
 		}
 	}
-	relsAfter, err := st.RelationshipsAll(maxRelationships)
+	relsAfter, err := st.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}
@@ -414,19 +414,20 @@ func TestRegisterMountsBothRoutes(t *testing.T) {
 	seedGraph(t, st)
 
 	mux := http.NewServeMux()
-	Register(mux, st, "/srv/mounted")
+	Register(mux, Receiver(st, "/srv/mounted"))
+	gated := auth.MiddlewareWithStore(st, mux)
 
-	if rec := serve(t, mux, http.MethodGet, GraphPath, "", nil); rec.Code != http.StatusOK {
+	if rec := serve(t, gated, http.MethodGet, GraphPath, "", nil); rec.Code != http.StatusOK {
 		t.Fatalf("GET %s = %d, want 200", GraphPath, rec.Code)
 	}
-	rec := serve(t, mux, http.MethodGet, PushPath, "", nil)
+	rec := serve(t, gated, http.MethodGet, PushPath, "", nil)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET %s = %d, want 405 (the mux rejects the method)", PushPath, rec.Code)
 	}
 	doc := pushDoc(t, "local", "svc", []wireElement{
 		{QualifiedName: "pkg.Mounted", ElementType: "function", Name: "Mounted", FilePath: "m.go", Language: "go"},
 	}, nil)
-	if rec := serve(t, mux, http.MethodPost, PushPath, doc, nil); rec.Code != http.StatusOK {
+	if rec := serve(t, gated, http.MethodPost, PushPath, doc, nil); rec.Code != http.StatusOK {
 		t.Fatalf("POST %s = %d, want 200: %s", PushPath, rec.Code, rec.Body.String())
 	}
 	if _, ok := elementsByQN(t, st)["pkg.Mounted"]; !ok {
@@ -449,15 +450,15 @@ func TestReceiverBehindAuthMiddleware(t *testing.T) {
 	contributor := mint(t, st, "contributor")
 
 	mux := http.NewServeMux()
-	Register(mux, st, "/srv/gated")
+	Register(mux, Receiver(st, "/srv/gated"))
 	h := auth.MiddlewareWithStore(st, mux)
 	body := pushDoc(t, "local", "svc", nil, nil)
 
 	if rec := serve(t, h, http.MethodPost, PushPath, body, nil); rec.Code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated push = %d, want 401 from the middleware", rec.Code)
 	}
-	// The middleware admits a viewer (these paths are not in its write prefix
-	// list); the receiver's own gate is what refuses the write.
+	// The push route declares Contributor at Register, so the route refuses a
+	// viewer; the receiver's own role check still holds behind it.
 	if rec := serve(t, h, http.MethodPost, PushPath, body, map[string]string{"Authorization": "Bearer " + viewer}); rec.Code != http.StatusForbidden {
 		t.Errorf("viewer push = %d, want 403 from the receiver", rec.Code)
 	}
@@ -481,8 +482,8 @@ func TestFederationPushPullRoundTrip(t *testing.T) {
 	receiver := openStore(t)
 	token := mint(t, receiver, "contributor")
 	mux := http.NewServeMux()
-	Register(mux, receiver, "/srv/receiver")
-	srv := httptest.NewServer(mux)
+	Register(mux, Receiver(receiver, "/srv/receiver"))
+	srv := httptest.NewServer(auth.MiddlewareWithStore(receiver, mux))
 	t.Cleanup(srv.Close)
 
 	res, err := Push(context.Background(), source, Options{
@@ -519,7 +520,7 @@ func TestFederationPushPullRoundTrip(t *testing.T) {
 			t.Errorf("%s did not survive the round trip", qn)
 		}
 	}
-	rels, err := third.RelationshipsAll(maxRelationships)
+	rels, err := third.RelationshipsAll(context.Background(), maxRelationships)
 	if err != nil {
 		t.Fatalf("relationships: %v", err)
 	}

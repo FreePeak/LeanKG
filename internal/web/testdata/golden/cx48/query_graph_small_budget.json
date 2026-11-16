@@ -1,0 +1,2 @@
+HTTP 200
+{"success":true,"data":{"question":"what connects authenticate to query_db?","seeds":["src/auth.rs::authenticate","src/db.rs::query_db"],"nodes":[{"qualified_name":"src/auth.rs::authenticate","name":"authenticate","element_type":"function","file_path":"src/auth.rs","is_seed":true},{"qualified_name":"src/db.rs::query_db","name":"query_db","element_type":"function","file_path":"src/db.rs","is_seed":true}],"edges":[],"hops":2,"truncated":true,"token_budget":200,"tokens_estimate":115},"error":null}

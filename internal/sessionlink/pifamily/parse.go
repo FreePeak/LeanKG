@@ -88,8 +88,14 @@ func readHeader(path string) (sessionHeader, bool) {
 	return sessionHeader{}, false
 }
 
-// load parses one transcript file into its active-branch turns.
-func load(path string) (session, error) {
+// load returns one transcript's active-branch turns, parsing the file at most
+// once per Reader.
+func load(rd *sessionlink.Reader, path string) (session, error) {
+	return sessionlink.Parsed(rd, path, func() (session, error) { return parseFile(path) })
+}
+
+// parseFile parses one transcript file into its active-branch turns.
+func parseFile(path string) (session, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return session{}, fmt.Errorf("%w: %v", sessionlink.ErrNotFound, err)

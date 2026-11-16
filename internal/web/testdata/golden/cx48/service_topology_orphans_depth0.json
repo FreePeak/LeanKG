@@ -1,0 +1,2 @@
+HTTP 200
+{"success":true,"data":{"nodes":[{"id":"service:001","label":"001","properties":{"name":"001","filePath":"<PROJECT>","elementType":"Service"}},{"id":"folder:src","label":"src","properties":{"name":"src","filePath":"src/","elementType":"Folder"}}],"relationships":[],"projectType":"single_repo"},"error":null}

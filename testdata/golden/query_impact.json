@@ -1,5 +1,6 @@
 {
   "action": "impact",
+  "depth": 2,
   "freshness": "possibly_stale",
   "hits": [
     {

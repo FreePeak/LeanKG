@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/gitobj"
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Change is one commit that touched a file, as recorded on its modified_in
@@ -46,8 +45,8 @@ type ChurnOptions struct {
 
 // History lists the commits that touched path, newest first, from the stored
 // modified_in edges. limit <= 0 means no limit.
-func History(st store.Backend, path string, limit int) ([]Change, error) {
-	rels, err := st.Outgoing("git:file:" + path)
+func History(ctx context.Context, st historyStore, path string, limit int) ([]Change, error) {
+	rels, err := st.Outgoing(ctx, "git:file:"+path)
 	if err != nil {
 		return nil, err
 	}
@@ -75,8 +74,8 @@ func History(st store.Backend, path string, limit int) ([]Change, error) {
 // CoChange lists the files that changed in the same commits as path, most
 // frequent first, from the stored co_changed_with edges. limit <= 0 means no
 // limit.
-func CoChange(st store.Backend, path string, limit int) ([]Partner, error) {
-	rels, err := st.Outgoing("git:file:" + path)
+func CoChange(ctx context.Context, st historyStore, path string, limit int) ([]Partner, error) {
+	rels, err := st.Outgoing(ctx, "git:file:"+path)
 	if err != nil {
 		return nil, err
 	}

@@ -24,7 +24,7 @@ func TestLadderRoutesProseToHybrid(t *testing.T) {
 			Content: fmt.Sprintf("// RenderWidget%d draws the widget frame.\nfunc RenderWidget%d() {}", i, i),
 		})
 	}
-	if err := e.st.UpsertElements(els); err != nil {
+	if err := e.st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(64)
@@ -46,7 +46,7 @@ func TestLadderRoutesProseToHybrid(t *testing.T) {
 		t.Fatalf("no embedder: prose answered by %s, want L2", r)
 	}
 
-	e.SetEmbedder(QueryEmbedderFromProvider(p))
+	e.embedder = p
 	if r, reason := rung("draws the widget frame"); r != "L3" || !strings.Contains(reason, "rrf(vector+fts5)") {
 		t.Fatalf("prose: %s %q, want L3 rrf(vector+fts5)", r, reason)
 	}
@@ -77,9 +77,9 @@ func TestIsProse(t *testing.T) {
 }
 
 // downEmbedder always fails, like a stopped sidecar.
-type downEmbedder struct{ QueryEmbedder }
+type downEmbedder struct{ stubIdentity }
 
-func (downEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
+func (downEmbedder) Embed(context.Context, embed.TextKind, []string) ([][]float32, error) {
 	return nil, fmt.Errorf("dial tcp 127.0.0.1:1: connection refused")
 }
 
@@ -88,7 +88,7 @@ func (downEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
 // query degrades.
 func TestStatusReportsEmbedderOutage(t *testing.T) {
 	e, _ := newEngine(t)
-	e.SetEmbedder(downEmbedder{QueryEmbedderFromProvider(embed.Deterministic(8))})
+	e.embedder = downEmbedder{}
 	out, err := e.Status(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -119,8 +119,8 @@ func (r *lenRecorder) Embed(ctx context.Context, kind embed.TextKind, texts []st
 // sidecar (a 962-token query used to degrade L3 to keywords).
 func TestLongQueryIsTruncatedNotDegraded(t *testing.T) {
 	rec := &lenRecorder{innerProvider: embed.Deterministic(8)}
-	q := QueryEmbedderFromProvider(rec)
-	if _, err := q.EmbedQuery(context.Background(), strings.Repeat("vector ", 5000)); err != nil {
+	q := rec
+	if _, err := embed.EmbedQuery(context.Background(), q, strings.Repeat("vector ", 5000)); err != nil {
 		t.Fatal(err)
 	}
 	if limit := embed.TextCap(rec); rec.got > limit {
@@ -134,14 +134,14 @@ func TestLongQueryIsTruncatedNotDegraded(t *testing.T) {
 // uncalibrated collection carries no flag.
 func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 	e, _ := newEngine(t)
-	if err := e.st.UpsertElements([]store.Element{{QualifiedName: "a.go::Widget", ElementType: "function", Name: "Widget", FilePath: "a.go", Language: "go", Content: "func Widget() {}"}}); err != nil {
+	if err := e.st.UpsertElements(context.Background(), []store.Element{{QualifiedName: "a.go::Widget", ElementType: "function", Name: "Widget", FilePath: "a.go", Language: "go", Content: "func Widget() {}"}}); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
 	if _, err := embed.Run(context.Background(), e.st, p, "full"); err != nil {
 		t.Fatal(err)
 	}
-	e.SetEmbedder(QueryEmbedderFromProvider(p))
+	e.embedder = p
 	ask := func() map[string]any {
 		out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "unrelated cooking question"})
 		if err != nil {
@@ -150,21 +150,21 @@ func TestSemanticConfidenceAgainstNoiseFloor(t *testing.T) {
 		return out
 	}
 	stamp := embed.StampOf(p)
-	if err := embed.WriteCalibration(e.st, stamp, 0.999); err != nil {
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, 0.999); err != nil {
 		t.Fatal(err)
 	}
 	out := ask()
 	if out["retrieval"].(map[string]any)["confidence"] != "low" || len(hitsOf(out)) == 0 || !strings.Contains(fmt.Sprint(out["guidance"]), "noise floor") {
 		t.Fatalf("below floor: %v", out)
 	}
-	if err := embed.WriteCalibration(e.st, stamp, -1); err != nil {
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, -1); err != nil {
 		t.Fatal(err)
 	}
 	if out := ask(); out["retrieval"].(map[string]any)["confidence"] != "normal" {
 		t.Fatalf("above floor: %v", out["retrieval"])
 	}
 	stamp.Revision = "other"
-	if err := embed.WriteCalibration(e.st, stamp, 0.999); err != nil { // calibration for another identity
+	if err := embed.WriteCalibration(context.Background(), e.st, stamp, 0.999); err != nil { // calibration for another identity
 		t.Fatal(err)
 	}
 	if _, ok := ask()["retrieval"].(map[string]any)["confidence"]; ok {

@@ -1,6 +1,9 @@
 package doctor
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestTheCoverageWarnNamesTheCollection pins the second half of wave 20's rule,
 // on the check a user hits most often after freshness.
@@ -34,7 +37,7 @@ func TestTheCoverageWarnNamesTheCollection(t *testing.T) {
 	}
 	stamped := &stampedProbeProbes{stubProbes: probes, models: []string{"bge-small-en-v1.5-f16.gguf"}}
 
-	f := checkEmbeddingCoverage(stamped, Env{})
+	f := checkEmbeddingCoverage(context.Background(), stamped, Env{})
 	if f.Status != StatusWarn {
 		t.Fatalf("fixture must WARN, got %s (%s)", f.Status, f.Detail)
 	}
@@ -60,7 +63,7 @@ type stampedProbeProbes struct {
 	models []string
 }
 
-func (p *stampedProbeProbes) StampedModelIDs() ([]string, error) { return p.models, nil }
+func (p *stampedProbeProbes) StampedModelIDs(context.Context) ([]string, error) { return p.models, nil }
 
 func contains(hay, needle string) bool {
 	return len(needle) == 0 || (len(hay) >= len(needle) && indexOf(hay, needle) >= 0)

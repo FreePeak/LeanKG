@@ -19,7 +19,7 @@ import (
 // the import is at fault.
 func TestImportMigratesTheStoreItWritesTo(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,8 +27,7 @@ func TestImportMigratesTheStoreItWritesTo(t *testing.T) {
 	// No Migrate() on purpose: the store has no schema at all, and the write
 	// path is the only thing that can bring it up to date.
 
-	e := New(st, nil, nil)
-	e.SetProjectDir(dir)
+	e := New(st, Options{ProjectDir: dir})
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nfunc F() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +35,7 @@ func TestImportMigratesTheStoreItWritesTo(t *testing.T) {
 	if _, err := e.Import(context.Background(), ImportRequest{Action: "dir", Path: "."}); err != nil {
 		t.Fatalf("import into a store with no schema: %v", err)
 	}
-	applied, err := store.AppliedMigrations(st)
+	applied, err := st.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

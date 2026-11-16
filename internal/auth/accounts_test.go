@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -74,7 +75,7 @@ func TestRegisterCreatesAccountAndBootstrapOrg(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	account, err := Register(st, "  Alice@Example.COM ", "password123", "Alice")
+	account, err := Register(context.Background(), st, "  Alice@Example.COM ", "password123", "Alice")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -84,11 +85,11 @@ func TestRegisterCreatesAccountAndBootstrapOrg(t *testing.T) {
 	if account.Status != "active" || account.ID == "" {
 		t.Fatalf("account = %+v; want active with an id", account)
 	}
-	if _, err := VerifyLogin(st, "alice@example.com", "password123"); err != nil {
+	if _, err := VerifyLogin(context.Background(), st, "alice@example.com", "password123"); err != nil {
 		t.Fatalf("stored verifier does not match the password: %v", err)
 	}
 
-	orgs, err := st.OrgsByOwner(account.ID)
+	orgs, err := st.OrgsByOwner(context.Background(), account.ID)
 	if err != nil {
 		t.Fatalf("orgs by owner: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestRegisterCreatesAccountAndBootstrapOrg(t *testing.T) {
 	if orgs[0].Name != "Alice's org" || orgs[0].OwnerAccountID != account.ID {
 		t.Fatalf("bootstrap org = %+v", orgs[0])
 	}
-	members, err := st.OrgMembers(orgs[0].ID)
+	members, err := st.OrgMembers(context.Background(), orgs[0].ID)
 	if err != nil {
 		t.Fatalf("org members: %v", err)
 	}
@@ -111,16 +112,16 @@ func TestRegisterRejectsDuplicateEmailAndShortPassword(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	if _, err := Register(st, "dup@example.com", "password123", "Dup"); err != nil {
+	if _, err := Register(context.Background(), st, "dup@example.com", "password123", "Dup"); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
-	if _, err := Register(st, "DUP@example.com", "password123", "Dup2"); err == nil {
+	if _, err := Register(context.Background(), st, "DUP@example.com", "password123", "Dup2"); err == nil {
 		t.Fatal("duplicate email (different case) must be rejected")
 	}
-	if _, err := Register(st, "new@example.com", "short", "New"); err == nil {
+	if _, err := Register(context.Background(), st, "new@example.com", "short", "New"); err == nil {
 		t.Fatal("short password must be rejected")
 	}
-	if _, err := Register(st, "not-an-email", "password123", "NoAt"); err == nil {
+	if _, err := Register(context.Background(), st, "not-an-email", "password123", "NoAt"); err == nil {
 		t.Fatal("email without @ must be rejected")
 	}
 }
@@ -129,20 +130,20 @@ func TestVerifyLoginRoundTrip(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	if _, err := Register(st, "login@example.com", "password123", "Log"); err != nil {
+	if _, err := Register(context.Background(), st, "login@example.com", "password123", "Log"); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	account, err := VerifyLogin(st, "LOGIN@example.com", "password123")
+	account, err := VerifyLogin(context.Background(), st, "LOGIN@example.com", "password123")
 	if err != nil {
 		t.Fatalf("login with mixed-case email: %v", err)
 	}
 	if account.Email != "login@example.com" {
 		t.Fatalf("login account = %+v", account)
 	}
-	if _, err := VerifyLogin(st, "login@example.com", "wrong"); err == nil {
+	if _, err := VerifyLogin(context.Background(), st, "login@example.com", "wrong"); err == nil {
 		t.Fatal("wrong password must fail")
 	}
-	if _, err := VerifyLogin(st, "nobody@example.com", "password123"); err == nil {
+	if _, err := VerifyLogin(context.Background(), st, "nobody@example.com", "password123"); err == nil {
 		t.Fatal("unknown account must fail")
 	}
 }
@@ -153,21 +154,21 @@ func TestOrgRoleSufficientChecksHierarchy(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	owner, err := Register(st, "owner@example.com", "password123", "Owner")
+	owner, err := Register(context.Background(), st, "owner@example.com", "password123", "Owner")
 	if err != nil {
 		t.Fatalf("register owner: %v", err)
 	}
-	org, err := st.OrgsByOwner(owner.ID)
+	org, err := st.OrgsByOwner(context.Background(), owner.ID)
 	if err != nil || len(org) != 1 {
 		t.Fatalf("orgs by owner = %+v, %v", org, err)
 	}
 	orgID := org[0].ID
 
-	member, err := Register(st, "member@example.com", "password123", "Member")
+	member, err := Register(context.Background(), st, "member@example.com", "password123", "Member")
 	if err != nil {
 		t.Fatalf("register member: %v", err)
 	}
-	if _, err := AddOrgMember(st, orgID, member.ID, OrgRoleMember); err != nil {
+	if _, err := AddOrgMember(context.Background(), st, orgID, member.ID, OrgRoleMember); err != nil {
 		t.Fatalf("add member: %v", err)
 	}
 
@@ -180,7 +181,7 @@ func TestOrgRoleSufficientChecksHierarchy(t *testing.T) {
 		{member.ID, OrgRoleViewer, true},
 		{"nobody", OrgRoleViewer, false},
 	} {
-		got, err := OrgRoleSufficient(st, orgID, c.account, c.required)
+		got, err := OrgRoleSufficient(context.Background(), st, orgID, c.account, c.required)
 		if err != nil {
 			t.Fatalf("OrgRoleSufficient(%q, %q): %v", c.account, c.required, err)
 		}
@@ -189,7 +190,7 @@ func TestOrgRoleSufficientChecksHierarchy(t *testing.T) {
 		}
 	}
 
-	if _, err := AddOrgMember(st, orgID, member.ID, "superuser"); err == nil {
+	if _, err := AddOrgMember(context.Background(), st, orgID, member.ID, "superuser"); err == nil {
 		t.Fatal("an unknown org role must be rejected")
 	}
 }
@@ -198,25 +199,25 @@ func TestCreateOrgOwnsAndClaimsResource(t *testing.T) {
 	clearTokenEnv(t)
 	st := openAuthStore(t)
 
-	account, err := Register(st, "builder@example.com", "password123", "Builder")
+	account, err := Register(context.Background(), st, "builder@example.com", "password123", "Builder")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	org, err := CreateOrg(st, "Second org", account.ID)
+	org, err := CreateOrg(context.Background(), st, "Second org", account.ID)
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
-	if sufficient, err := OrgRoleSufficient(st, org.ID, account.ID, OrgRoleAdmin); err != nil || !sufficient {
+	if sufficient, err := OrgRoleSufficient(context.Background(), st, org.ID, account.ID, OrgRoleAdmin); err != nil || !sufficient {
 		t.Fatalf("creator is not org admin+: %v, %v", sufficient, err)
 	}
-	if orgs, _ := st.OrgsByOwner(account.ID); len(orgs) != 2 {
+	if orgs, _ := st.OrgsByOwner(context.Background(), account.ID); len(orgs) != 2 {
 		t.Fatalf("orgs by owner = %d; want 2 (bootstrap + created)", len(orgs))
 	}
 
-	if err := ClaimResource(st, "knowledge", "entry-1", account.ID, org.ID); err != nil {
+	if err := ClaimResource(context.Background(), st, "knowledge", "entry-1", account.ID, org.ID); err != nil {
 		t.Fatalf("claim resource: %v", err)
 	}
-	owned, err := IsResourceOwner(st, "knowledge", "entry-1", account.ID)
+	owned, err := IsResourceOwner(context.Background(), st, "knowledge", "entry-1", account.ID)
 	if err != nil || !owned {
 		t.Fatalf("is resource owner = %v, %v; want true", owned, err)
 	}

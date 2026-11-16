@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,12 +13,12 @@ import (
 // the scan must ignore (Rust filters element_type = "function" exactly).
 func qualityFixture(t *testing.T) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	s, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	els := []store.Element{
@@ -29,7 +30,7 @@ func qualityFixture(t *testing.T) store.Backend {
 		{QualifiedName: "d.go::M.Method", ElementType: "method", Name: "Method", FilePath: "d.go", LineStart: 1, LineEnd: 400, Language: "go"},
 		{QualifiedName: "d.go::Big", ElementType: "class", Name: "Big", FilePath: "d.go", LineStart: 1, LineEnd: 500, Language: "go"},
 	}
-	if err := s.UpsertElements(els); err != nil {
+	if err := s.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	return s
@@ -46,7 +47,7 @@ func names(els []store.Element) []string {
 func TestOversizedFunctionsThresholdsAndOrder(t *testing.T) {
 	st := qualityFixture(t)
 
-	got, err := OversizedFunctions(st, 50, "")
+	got, err := OversizedFunctions(context.Background(), st, 50, "")
 	if err != nil {
 		t.Fatalf("OversizedFunctions: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestOversizedFunctionsThresholdsAndOrder(t *testing.T) {
 func TestOversizedFunctionsLanguageFilterAndBoundary(t *testing.T) {
 	st := qualityFixture(t)
 
-	got, err := OversizedFunctions(st, 50, "python")
+	got, err := OversizedFunctions(context.Background(), st, 50, "python")
 	if err != nil {
 		t.Fatalf("OversizedFunctions: %v", err)
 	}
@@ -70,14 +71,14 @@ func TestOversizedFunctionsLanguageFilterAndBoundary(t *testing.T) {
 	}
 
 	// The threshold is inclusive: a 49-line span is out, 50 is in.
-	got, err = OversizedFunctions(st, 200, "")
+	got, err = OversizedFunctions(context.Background(), st, 200, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(names(got), ",") != "fn200" {
 		t.Fatalf("minLines=200 names = %v, want [fn200]", names(got))
 	}
-	got, err = OversizedFunctions(st, 201, "")
+	got, err = OversizedFunctions(context.Background(), st, 201, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,22 +88,22 @@ func TestOversizedFunctionsLanguageFilterAndBoundary(t *testing.T) {
 }
 
 func TestOversizedTieBreakByQualifiedName(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	els := []store.Element{
 		{QualifiedName: "z.go::zz", ElementType: "function", Name: "zz", FilePath: "z.go", LineStart: 1, LineEnd: 80, Language: "go"},
 		{QualifiedName: "a.go::aa", ElementType: "function", Name: "aa", FilePath: "a.go", LineStart: 1, LineEnd: 80, Language: "go"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	got, err := OversizedFunctions(st, 1, "")
+	got, err := OversizedFunctions(context.Background(), st, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}

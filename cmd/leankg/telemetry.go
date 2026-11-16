@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/sessionlink/all"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 )
@@ -34,70 +35,79 @@ type telemetryEnableOpts struct {
 }
 
 // cmdTelemetry implements `leankg telemetry status|enable|disable|purge|link|import-ab`.
-func cmdTelemetry(args []string) {
+func cmdTelemetry(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		telemetryUsage()
+		return telemetryUsage()
 	}
 	home := telemetry.Home()
 	switch args[0] {
 	case "status":
-		fs := flag.NewFlagSet("telemetry status", flag.ExitOnError)
+		fs := flag.NewFlagSet("telemetry status", flag.ContinueOnError)
 		jsonOut := fs.Bool("json", false, "print the status as JSON")
-		parseInterspersed("telemetry status", fs, args[1:], 0)
-		if err := telemetryStatus(home, *jsonOut, os.Stdout); err != nil {
-			fatalJSON(err)
+		if _, err := parseInterspersed("telemetry status", fs, args[1:], 0); err != nil {
+			return err
+		}
+		if err := telemetryStatus(ctx, home, *jsonOut, os.Stdout); err != nil {
+			return fatalJSON(err)
 		}
 	case "enable":
 		var opts telemetryEnableOpts
-		fs := flag.NewFlagSet("telemetry enable", flag.ExitOnError)
+		fs := flag.NewFlagSet("telemetry enable", flag.ContinueOnError)
 		fs.BoolVar(&opts.bodies, "bodies", false, "also record redacted, capped args and response bodies")
 		fs.StringVar(&opts.sessions, "sessions", "", "comma list of agents whose transcripts may be read, or 'all'")
 		fs.BoolVar(&opts.yes, "yes", false, "grant without the interactive confirmation")
-		parseInterspersed("telemetry enable", fs, args[1:], 0)
+		if _, err := parseInterspersed("telemetry enable", fs, args[1:], 0); err != nil {
+			return err
+		}
 		if err := telemetryEnable(home, opts, os.Stdin, stdinIsTTY(), os.Stdout); err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 	case "disable":
-		parseInterspersed("telemetry disable", flag.NewFlagSet("telemetry disable", flag.ExitOnError), args[1:], 0)
+		if _, err := parseInterspersed("telemetry disable", flag.NewFlagSet("telemetry disable", flag.ContinueOnError), args[1:], 0); err != nil {
+			return err
+		}
 		if err := telemetryDisable(home, os.Stdout); err != nil {
-			fatalJSON(err)
+			return fatalJSON(err)
 		}
 	case "purge":
-		fs := flag.NewFlagSet("telemetry purge", flag.ExitOnError)
+		fs := flag.NewFlagSet("telemetry purge", flag.ContinueOnError)
 		before := fs.String("before", "", "delete rows older than this: 30d, or a date like 2026-09-01")
 		all := fs.Bool("all", false, "delete every row")
-		parseInterspersed("telemetry purge", fs, args[1:], 0)
+		if _, err := parseInterspersed("telemetry purge", fs, args[1:], 0); err != nil {
+			return err
+		}
 		now := time.Now()
 		var cutoff time.Time
 		switch {
 		case *all && *before != "":
-			fatalJSON(errors.New("telemetry purge: use --before or --all, not both"))
+			return fatalJSON(errors.New("telemetry purge: use --before or --all, not both"))
 		case *all:
 			cutoff = now.Add(24 * time.Hour) // every row written so far
 		case *before != "":
 			t, err := parseBefore(*before, now)
 			if err != nil {
-				fatalJSON(err)
+				return fatalJSON(err)
 			}
 			cutoff = t
 		default:
-			fatalJSON(errors.New("telemetry purge: pass --before <30d|date> or --all"))
+			return fatalJSON(errors.New("telemetry purge: pass --before <30d|date> or --all"))
 		}
-		if err := telemetryPurge(home, cutoff, os.Stdout); err != nil {
-			fatalJSON(err)
+		if err := telemetryPurge(ctx, home, cutoff, os.Stdout); err != nil {
+			return fatalJSON(err)
 		}
 	case "link":
-		cmdTelemetryLink(args[1:])
+		return cmdTelemetryLink(ctx, args[1:])
 	case "import-ab":
-		cmdTelemetryImportAB(args[1:])
+		return cmdTelemetryImportAB(ctx, args[1:])
 	default:
-		telemetryUsage()
+		return telemetryUsage()
 	}
+	return nil
 }
 
-func telemetryUsage() {
+func telemetryUsage() error {
 	fmt.Fprintln(os.Stderr, "usage: leankg telemetry status [--json] | enable [--bodies] [--sessions <list|all>] [--yes] | disable | purge (--before <30d|date> | --all) | link | import-ab <dir>")
-	os.Exit(2)
+	return cliexit.Code(2)
 }
 
 // stdinIsTTY reports whether stdin is a character device, so a y/N prompt
@@ -228,17 +238,17 @@ func telemetryDisable(home string, out io.Writer) error {
 }
 
 // telemetryPurge deletes rows older than before. It never creates a ledger.
-func telemetryPurge(home string, before time.Time, out io.Writer) error {
+func telemetryPurge(ctx context.Context, home string, before time.Time, out io.Writer) error {
 	if _, err := os.Stat(telemetry.DBPath(home)); errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(out, "no telemetry ledger at %s; nothing to purge\n", telemetry.DBPath(home))
 		return nil
 	}
-	st, err := telemetry.OpenStore(home, false)
+	st, err := telemetry.OpenStore(context.Background(), home, false)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	n, err := st.Purge(context.Background(), before)
+	n, err := st.Purge(ctx, before)
 	if err != nil {
 		return err
 	}
@@ -274,7 +284,7 @@ type telemetryStatusView struct {
 
 // telemetryStatus reports the config, effective level, grants and, when the
 // ledger exists, its Stats. It opens the ledger read-only and never creates it.
-func telemetryStatus(home string, asJSON bool, out io.Writer) error {
+func telemetryStatus(ctx context.Context, home string, asJSON bool, out io.Writer) error {
 	cfg, err := telemetry.LoadConfig(home)
 	if err != nil {
 		return err
@@ -300,10 +310,10 @@ func telemetryStatus(home string, asJSON bool, out io.Writer) error {
 		MaxBodyBytes:    cfg.MaxBodyBytes,
 	}
 	if v.DBPresent {
-		if st, err := telemetry.OpenStore(home, true); err != nil {
+		if st, err := telemetry.OpenStore(context.Background(), home, true); err != nil {
 			v.StatsError = err.Error()
 		} else {
-			stats, err := st.Stats(context.Background())
+			stats, err := st.Stats(ctx)
 			_ = st.Close()
 			if err != nil {
 				v.StatsError = err.Error()
@@ -447,7 +457,6 @@ var (
 	// silent no-op, which is exactly the "first grant after startup does
 	// nothing" bug this reload exists to prevent.
 	telemetryBuildOnce sync.Once
-	telemetryRec       telemetry.Recorder = telemetry.Nop{}
 	// telemetryStop holds the retention sweep's cancel for a lazily built
 	// recorder (ReloadTelemetry), so a close stops the sweep before the store.
 	telemetryStop   func()
@@ -456,16 +465,19 @@ var (
 
 // telemetryRecorder returns the process-wide capture Recorder: telemetry.Nop
 // unless the user granted consent in $LEANKG_HOME/telemetry.yaml.
-func telemetryRecorder() telemetry.Recorder {
+func telemetryRecorder(ctx context.Context) telemetry.Recorder {
 	telemetryOnce.Do(func() {
-		rec, err := telemetry.Open(telemetry.Home())
+		rec, err := telemetry.Open(ctx, telemetry.Home())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "telemetry: capture disabled: %v\n", err)
 			return
 		}
-		telemetryRec = rec
+		telemetrySinks.setLive(rec)
 	})
-	return telemetryRec
+	if rec := telemetrySinks.current(); rec != nil {
+		return rec
+	}
+	return telemetry.Nop{}
 }
 
 // closeTelemetry stops the retention sweep then flushes the process Recorder.
@@ -477,7 +489,9 @@ func closeTelemetry() {
 	if stop != nil {
 		stop()
 	}
-	_ = telemetryRec.Close()
+	if rec := telemetrySinks.current(); rec != nil {
+		_ = rec.Close()
+	}
 }
 
 // ReloadTelemetry re-reads the consent file and applies the level to the live
@@ -489,7 +503,7 @@ func closeTelemetry() {
 // means off" contract. Reloading on such a server therefore has to build the
 // recorder on demand, or a first-time grant after startup would still capture
 // nothing and the operator would conclude the reload is broken.
-func ReloadTelemetry() error {
+func ReloadTelemetry(ctx context.Context) error {
 	cfg, err := telemetry.LoadConfig(telemetry.Home())
 	if err != nil {
 		return fmt.Errorf("telemetry reload: %w", err)
@@ -498,7 +512,7 @@ func ReloadTelemetry() error {
 	if level == telemetry.Off {
 		// Nothing to raise. Lowering a live recorder to Off is still applied,
 		// so a mid-session withdrawal stops capture immediately.
-		if rec := telemetryRecorder(); rec != nil {
+		if rec := telemetryRecorder(ctx); rec != nil {
 			if err := rec.SetLevel(telemetry.Off); err != nil {
 				return fmt.Errorf("telemetry reload: %w", err)
 			}
@@ -507,12 +521,12 @@ func ReloadTelemetry() error {
 	}
 	// Build the recorder once for this process if startup found capture off.
 	telemetryBuildOnce.Do(func() {
-		st, oerr := telemetry.OpenStore(telemetry.Home(), false)
+		st, oerr := telemetry.OpenStore(ctx, telemetry.Home(), false)
 		if oerr != nil {
 			fmt.Fprintf(os.Stderr, "telemetry reload: open ledger: %v\n", oerr)
 			return
 		}
-		stop, serr := telemetry.StartRetention(st, cfg.RetentionDays)
+		stop, serr := telemetry.StartRetention(ctx, st, cfg.RetentionDays)
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "telemetry reload: retention: %v\n", serr)
 			return
@@ -520,10 +534,10 @@ func ReloadTelemetry() error {
 		telemetryStopMu.Lock()
 		telemetryStop = stop
 		telemetryStopMu.Unlock()
-		rec := telemetry.NewRecorder(st, level, cfg.MaxBodyBytes)
-		telemetryRec = rec
+		rec := telemetry.NewRecorder(ctx, st, level, cfg.MaxBodyBytes)
+		telemetrySinks.setLive(rec)
 	})
-	rec := telemetryRecorder()
+	rec := telemetryRecorder(ctx)
 	if rec == nil {
 		return fmt.Errorf("telemetry reload: no recorder available")
 	}
@@ -531,7 +545,7 @@ func ReloadTelemetry() error {
 		return fmt.Errorf("telemetry reload: %w", err)
 	}
 	// Re-point the consumers at the (possibly new) recorder.
-	installTelemetrySinks(rec)
+	telemetrySinks.install(rec)
 	log.Printf("telemetry: consent reloaded at %s", level)
 	return nil
 }
@@ -543,11 +557,11 @@ func ReloadTelemetry() error {
 // nobody until the sinks are pointed at it. Without this the reload logs
 // success and captures nothing — the exact "it does not work" report the reload
 // exists to prevent.
-var telemetrySinks []func(telemetry.Recorder)
+var telemetrySinks sinkRegistry
 
 // AddTelemetrySink registers a consumer to be re-pointed when a reload builds
 // a recorder (serve registers its four sinks once, at startup).
-func AddTelemetrySink(fn func(telemetry.Recorder)) { telemetrySinks = append(telemetrySinks, fn) }
+func AddTelemetrySink(fn func(telemetry.Recorder)) { telemetrySinks.add(fn) }
 
 // watchConsentReload reloads consent on SIGHUP until ctx is done. SIGHUP is the
 // conventional "re-read your config" signal, so it is what an operator already
@@ -563,7 +577,7 @@ func watchConsentReload(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ch:
-				if err := ReloadTelemetry(); err != nil {
+				if err := ReloadTelemetry(ctx); err != nil {
 					log.Printf("telemetry reload: %v", err)
 				}
 			}
@@ -574,27 +588,59 @@ func watchConsentReload(ctx context.Context) {
 // registerMCPSink records one live MCP server so a consent reload can re-point
 // it. MCP servers are created per listener and lazily per project, so the sink
 // list cannot be known at startup; each New(engine) registers itself here as
-// it is built. The pointer is kept, not the value, because every consumer holds
-// the Recorder it was given at start.
-var (
-	mcpSinkMu sync.Mutex
-	mcpSinks  []interface{ SetRecorder(telemetry.Recorder) }
-)
-
+// it is built. The method value keeps the server, not the Recorder it was given
+// at start, so a reload reaches it.
 func registerMCPSink(srv interface{ SetRecorder(telemetry.Recorder) }) {
-	mcpSinkMu.Lock()
-	defer mcpSinkMu.Unlock()
-	mcpSinks = append(mcpSinks, srv)
+	telemetrySinks.add(srv.SetRecorder)
 }
 
-// installTelemetrySinks re-points every consumer at rec.
-func installTelemetrySinks(rec telemetry.Recorder) {
-	for _, fn := range telemetrySinks {
-		fn(rec)
+// sinkRegistry is the list of consumers a consent reload re-points. Serve adds
+// to it at startup and from request goroutines (a lazily built MCP server)
+// while the SIGHUP goroutine walks it, so every access takes the lock.
+// sinkRegistry is also the holder of the live process recorder. The SIGHUP
+// reload writes it and request goroutines and shutdown read it, so every
+// access goes through mu.
+type sinkRegistry struct {
+	mu   sync.Mutex
+	live telemetry.Recorder // nil until a recorder is built
+	fns  []func(telemetry.Recorder)
+}
+
+// add registers a consumer and hands it the live recorder when there is one.
+// Both happen under mu, the lock install takes to publish a new recorder, so
+// a consumer built during a reload ends up with the new recorder and never
+// keeps the startup value. fn must not register another sink.
+func (r *sinkRegistry) add(fn func(telemetry.Recorder)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fns = append(r.fns, fn)
+	if r.live != nil {
+		fn(r.live)
 	}
-	mcpSinkMu.Lock()
-	defer mcpSinkMu.Unlock()
-	for _, srv := range mcpSinks {
-		srv.SetRecorder(rec)
+}
+
+// setLive makes rec the live recorder without re-pointing consumers.
+func (r *sinkRegistry) setLive(rec telemetry.Recorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.live = rec
+}
+
+// current returns the live recorder, or nil before one is set.
+func (r *sinkRegistry) current() telemetry.Recorder {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.live
+}
+
+// install makes rec the live recorder and points every consumer at it. It
+// walks a copy, so a consumer that registers another one does not deadlock.
+func (r *sinkRegistry) install(rec telemetry.Recorder) {
+	r.mu.Lock()
+	r.live = rec
+	fns := append([]func(telemetry.Recorder){}, r.fns...)
+	r.mu.Unlock()
+	for _, fn := range fns {
+		fn(rec)
 	}
 }

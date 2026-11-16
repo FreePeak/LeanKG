@@ -5,6 +5,7 @@
 package pifamily
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,7 +77,10 @@ func (a *adapter) Detect(home string) bool {
 // id or filename uuid) wins; otherwise the heuristic requires the same cwd, a
 // file touched inside the time window, and a leankg tool call with the same
 // normalized name and args hash.
-func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+func (a *adapter) Locate(ctx context.Context, home string, c sessionlink.CallRef, rd *sessionlink.Reader) (sessionlink.TranscriptRef, sessionlink.Confidence, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.TranscriptRef{}, 0, err
+	}
 	root := a.root(home)
 	if root == "" {
 		return sessionlink.TranscriptRef{}, 0, sessionlink.ErrNotFound
@@ -100,6 +104,9 @@ func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transc
 	var bestStart time.Time
 	var bestN int
 	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return sessionlink.TranscriptRef{}, 0, err
+		}
 		hdr, ok := readHeader(f)
 		if !ok || filepath.Clean(hdr.cwd) != filepath.Clean(c.Cwd) {
 			continue
@@ -110,7 +117,7 @@ func (a *adapter) Locate(home string, c sessionlink.CallRef) (sessionlink.Transc
 		if !hdr.start.IsZero() && hdr.start.After(c.TS.Add(sessionlink.TurnHeuristic.Slack)) {
 			continue
 		}
-		s, err := load(f)
+		s, err := load(rd, f)
 		if err != nil {
 			continue
 		}
@@ -136,8 +143,11 @@ func (a *adapter) ref(path, id string) sessionlink.TranscriptRef {
 }
 
 // Window extracts the bounded context around the matched leankg call.
-func (a *adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n int) (sessionlink.Window, error) {
-	s, err := load(t.Path)
+func (a *adapter) Window(ctx context.Context, t sessionlink.TranscriptRef, c sessionlink.CallRef, n int, rd *sessionlink.Reader) (sessionlink.Window, error) {
+	if err := ctx.Err(); err != nil {
+		return sessionlink.Window{}, err
+	}
+	s, err := load(rd, t.Path)
 	if err != nil {
 		return sessionlink.Window{}, err
 	}
@@ -149,8 +159,11 @@ func (a *adapter) Window(t sessionlink.TranscriptRef, c sessionlink.CallRef, n i
 }
 
 // Transcript returns the active branch as capped turns. maxTurns <= 0 keeps all.
-func (a *adapter) Transcript(t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
-	s, err := load(t.Path)
+func (a *adapter) Transcript(ctx context.Context, t sessionlink.TranscriptRef, maxTurns int) ([]sessionlink.Turn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s, err := load(nil, t.Path)
 	if err != nil {
 		return nil, err
 	}

@@ -22,19 +22,18 @@ const testAdminPassword = "correct horse battery staple"
 func newAdminServer(t *testing.T, username string) (*Server, store.Backend) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.CreateSiteAdmin(st, username, testAdminPassword); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, username, testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{ProjectDir: dir})
 	srv := New(engine)
 	srv.SetAuthStore(st)
 	return srv, st
@@ -97,7 +96,7 @@ func TestAuthenticateMintsAdminToken(t *testing.T) {
 		t.Fatalf("expires_at is %v after login, want about 24h", d)
 	}
 
-	grant, ok, err := auth.Verify(st, out.Token)
+	grant, ok, err := auth.Verify(context.Background(), st, out.Token)
 	if err != nil || !ok {
 		t.Fatalf("minted token does not verify: ok=%v err=%v", ok, err)
 	}
@@ -219,17 +218,18 @@ func TestAuthenticateNeverRecordsSecrets(t *testing.T) {
 	}
 }
 
-// TestAuthenticateWorksOverStdioWithoutAuthStore pins that the stdio session,
-// which never gets SetAuthStore, can still log in: the login is checked and the
-// token minted in the engine's own store.
-func TestAuthenticateWorksOverStdioWithoutAuthStore(t *testing.T) {
+// TestAuthenticateWorksOverStdioWithAuthStore pins that the stdio session can
+// log in when serve hands it the store (cmd/leankg sets SetAuthStore on the
+// stdio server too): the login is checked and the token minted in that store.
+func TestAuthenticateWorksOverStdioWithAuthStore(t *testing.T) {
 	st := newGateStore(t)
-	if _, err := auth.CreateSiteAdmin(st, "stdio-login", testAdminPassword); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "stdio-login", testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(t.TempDir())
-	session := connectTo(t, New(engine))
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
+	srv := New(engine)
+	srv.SetAuthStore(st)
+	session := connectTo(t, srv)
 
 	res, err := callAuthenticate(session, "stdio-login", testAdminPassword)
 	if err != nil {
@@ -241,7 +241,22 @@ func TestAuthenticateWorksOverStdioWithoutAuthStore(t *testing.T) {
 	if err := json.Unmarshal([]byte(toolText(t, res)), &out); err != nil || !strings.HasPrefix(out.Token, "lkg_") {
 		t.Fatalf("stdio login returned no token: %v %s", err, toolText(t, res))
 	}
-	if _, ok, err := auth.Verify(st, out.Token); err != nil || !ok {
+	if _, ok, err := auth.Verify(context.Background(), st, out.Token); err != nil || !ok {
 		t.Fatalf("stdio-minted token is not in the engine store: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestAuthenticateRefusesWithoutAuthStore pins that a server with no auth store
+// does not reach into the engine's store to check logins: it refuses.
+func TestAuthenticateRefusesWithoutAuthStore(t *testing.T) {
+	st := newGateStore(t)
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "no-store", testAdminPassword); err != nil {
+		t.Fatal(err)
+	}
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
+	session := connectTo(t, New(engine))
+
+	if _, err := callAuthenticate(session, "no-store", testAdminPassword); err == nil {
+		t.Fatal("authenticate without an auth store must refuse, not log in")
 	}
 }

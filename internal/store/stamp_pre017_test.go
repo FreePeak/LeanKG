@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 )
@@ -20,7 +21,7 @@ import (
 // pre-017 store, not a hand-edited one.
 func openPre017Store(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
+	s, err := openSQLite(context.Background(), filepath.Join(t.TempDir(), ".leankg", "leankg.db"), RW)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestStampReadsPre017Store(t *testing.T) {
 		t.Fatalf("seed pre-017 stamp row: %v", err)
 	}
 
-	got, err := s.Stamp("pre017")
+	got, err := s.Stamp(context.Background(), "pre017")
 	if err != nil {
 		t.Fatalf("read stamp on a pre-017 store: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestStampReadsPre017Store(t *testing.T) {
 		t.Fatalf("stamp identity = %+v", got)
 	}
 
-	all, err := s.Stamps()
+	all, err := s.Stamps(context.Background())
 	if err != nil {
 		t.Fatalf("list stamps on a pre-017 store: %v", err)
 	}
@@ -106,10 +107,10 @@ func TestWriteStampOnPre017Store(t *testing.T) {
 		ModelID: "pre017", Revision: "r1", Dimensions: 8, Distance: "cosine",
 		Provider: "local", ChunkerVersion: 3, QueryPrefix: "q: ", DocumentPrefix: "d: ",
 	}
-	if err := s.WriteStamp(want); err != nil {
+	if err := s.WriteStamp(context.Background(), want); err != nil {
 		t.Fatalf("write stamp on a pre-017 store: %v", err)
 	}
-	got, err := s.Stamp(want.ModelID)
+	got, err := s.Stamp(context.Background(), want.ModelID)
 	if err != nil {
 		t.Fatalf("read stamp back: %v", err)
 	}
@@ -131,13 +132,13 @@ func TestStampAfterMigratingPre017Store(t *testing.T) {
 		VALUES ('legacy', 'r1', 8, 'cosine', 'local', 3, '', '')`); err != nil {
 		t.Fatalf("seed pre-017 stamp row: %v", err)
 	}
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate to 017: %v", err)
 	}
 	if _, err := s.db.Exec(`SELECT text_cap FROM emb_stamp`); err != nil {
 		t.Fatalf("migration 017 did not add text_cap: %v", err)
 	}
-	got, err := s.Stamp(legacy.ModelID)
+	got, err := s.Stamp(context.Background(), legacy.ModelID)
 	if err != nil {
 		t.Fatalf("read stamp after migrating: %v", err)
 	}
@@ -149,10 +150,10 @@ func TestStampAfterMigratingPre017Store(t *testing.T) {
 		ModelID: "fresh", Revision: "r1", Dimensions: 8, Distance: "cosine",
 		Provider: "local", TextCap: 8000,
 	}
-	if err := s.WriteStamp(fresh); err != nil {
+	if err := s.WriteStamp(context.Background(), fresh); err != nil {
 		t.Fatalf("write stamp after migrating: %v", err)
 	}
-	got, err = s.Stamp(fresh.ModelID)
+	got, err = s.Stamp(context.Background(), fresh.ModelID)
 	if err != nil {
 		t.Fatalf("read fresh stamp: %v", err)
 	}

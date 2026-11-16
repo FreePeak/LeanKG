@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,19 +43,19 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 		{"internal/decoy_test.go::TestRankAgain", one(0.99)},
 		{"internal/real.go::Rank", one(0.98)},
 	} {
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: e.qn, ElementType: "function",
 			Name: e.qn[strings.LastIndex(e.qn, "::")+2:], FilePath: e.qn[:strings.Index(e.qn, "::")],
 			Language: "go", Content: "func rank() {}",
 		}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(scopeModel, []store.VectorRow{{QualifiedName: e.qn, Vec: e.vec}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), scopeModel, []store.VectorRow{{QualifiedName: e.qn, Vec: e.vec}}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	hits, err := st.SearchVectors(scopeModel, []float32{1, 0, 0}, 10)
+	hits, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: scopeModel, Vec: []float32{1, 0, 0}, K: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,9 +64,8 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 	}
 
 	// The scoped form must drop the excluded prefix and keep the answer.
-	scoped, err := st.SearchVectorsScoped(scopeModel, []float32{1, 0, 0}, 10, func(el store.Element) bool {
-		return !strings.Contains(el.FilePath, "_test.go")
-	})
+	scoped, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: scopeModel, Vec: []float32{1, 0, 0}, K: 10,
+		Filter: store.ElementFilter{ExcludePathContains: []string{"_test.go"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 
 	// A nil filter is the old behaviour, exactly: this is an extension, never
 	// a silent narrowing of what an unscoped caller sees.
-	again, err := st.SearchVectorsScoped(scopeModel, []float32{1, 0, 0}, 10, nil)
+	again, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: scopeModel, Vec: []float32{1, 0, 0}, K: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,19 +97,19 @@ func TestVectorSearchCanBeScoped(t *testing.T) {
 		{"internal/a.go::First", 1.0}, {"internal/a.go::Second", 0.9}, {"internal/a.go::Third", 0.8},
 	}
 	for _, o := range ordered {
-		if err := st.UpsertElements([]store.Element{{
+		if err := st.UpsertElements(context.Background(), []store.Element{{
 			QualifiedName: o.qn, ElementType: "function", Name: o.qn[strings.LastIndex(o.qn, "::")+2:],
 			FilePath: "internal/a.go", Language: "go", Content: "func f() {}",
 		}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(scopeModel, []store.VectorRow{{QualifiedName: o.qn, Vec: one(o.x)}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), scopeModel, []store.VectorRow{{QualifiedName: o.qn, Vec: one(o.x)}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	filtered, err := st.SearchVectorsScoped(scopeModel, []float32{1, 0, 0}, 10, func(el store.Element) bool {
-		return el.FilePath == "internal/a.go"
-	})
+	// Admit only internal/a.go: exclude the two other files seeded above.
+	filtered, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: scopeModel, Vec: []float32{1, 0, 0}, K: 10,
+		Filter: store.ElementFilter{ExcludePathContains: []string{"decoy", "real.go"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,13 +135,13 @@ func qualifiedNames(hits []store.VectorSearchHit) []string {
 	return out
 }
 
-func newScopeFixture(t *testing.T) *store.Store {
+func newScopeFixture(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "scope.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "scope.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })

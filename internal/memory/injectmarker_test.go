@@ -27,7 +27,7 @@ func TestInjectedBlockNamesWhatItHid(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		turns = append(turns, "row content that is long enough to matter to the budget")
 	}
-	if _, err := m.SessionRetainCtx(context.Background(), ScopeGlobal, dir, "probe", "sess", turns, 30, nil); err != nil {
+	if _, err := m.SessionRetain(context.Background(), ScopeGlobal, dir, "probe", "sess", turns, 30, nil); err != nil {
 		t.Fatal(err)
 	}
 	text, ids, total, err := m.FirstTurnMemoriesWithIDs(context.Background(), ScopeGlobal, dir, "probe", "")

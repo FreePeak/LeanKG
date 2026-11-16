@@ -33,6 +33,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/auth"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
 )
 
@@ -60,13 +62,13 @@ type hindsightItem struct {
 }
 
 func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
-	mux.HandleFunc("PUT /v1/default/banks/{bank}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
+	mux.Handle("PUT /v1/default/banks/{bank}", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"bank_id": r.PathValue("bank"), "object": "bank",
 		})
-	})
+	})))
 
-	mux.HandleFunc("POST /v1/default/banks/{bank}/memories", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /v1/default/banks/{bank}/memories", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Items []hindsightItem `json:"items"`
 			Async *bool           `json:"async,omitempty"`
@@ -105,16 +107,16 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 				replaceDocs = append(replaceDocs, it.DocumentID)
 			}
 		}
-		if _, err := mem.RetainReplacingCtx(r.Context(), r.PathValue("bank"), entries, replaceDocs); err != nil {
-			writeErr(w, err)
+		if _, err := mem.RetainReplacing(r.Context(), r.PathValue("bank"), entries, replaceDocs); err != nil {
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"bank_id": r.PathValue("bank"), "object": "retain_result", "written": len(entries),
 		})
-	})
+	})))
 
-	mux.HandleFunc("POST /v1/default/banks/{bank}/memories/recall", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /v1/default/banks/{bank}/memories/recall", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Query     string   `json:"query"`
 			Tags      []string `json:"tags,omitempty"`
@@ -126,30 +128,30 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 		if !validTagsMatch[body.TagsMatch] {
 			// tags_match is a closed vocabulary; a typo used to read as "any"
 			// and silently widened the filter to untagged (global) rows.
-			writeJSON(w, http.StatusBadRequest, map[string]any{
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 				"error": "tags_match must be one of any, all, any_strict, all_strict, exact (got " + strconv.Quote(body.TagsMatch) + ")",
 			})
 			return
 		}
-		entries, err := mem.RecallFilteredCtx(r.Context(), []string{r.PathValue("bank")}, body.Query, defaultRecallLimit,
+		entries, err := mem.RecallFiltered(r.Context(), []string{r.PathValue("bank")}, body.Query, defaultRecallLimit,
 			func(e memory.Entry) bool { return entryHasTags(e, body.Tags, body.TagsMatch) })
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"results": hindsightRows(entries)})
-	})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": hindsightRows(entries)})
+	})))
 
-	mux.HandleFunc("POST /v1/default/banks/{bank}/reflect", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /v1/default/banks/{bank}/reflect", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Query string `json:"query"`
 		}
 		if !decode(w, r, &body) {
 			return
 		}
-		entries, err := mem.RecallCtx(r.Context(), r.PathValue("bank"), body.Query, 5)
+		entries, err := mem.Recall(r.Context(), r.PathValue("bank"), body.Query, 5)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
 		text := "No memories in this bank yet."
@@ -160,61 +162,61 @@ func registerHindsightCompat(mux *http.ServeMux, mem *memory.Memory) {
 			}
 			text = strings.Join(lines, "\n")
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"text": text})
-	})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"text": text})
+	})))
 	// K4: the client's /memory stats calls this and printed "server
 	// unreachable" for a healthy server while it 404'd.
-	mux.HandleFunc("GET /v1/default/banks/{bank}/stats", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /v1/default/banks/{bank}/stats", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		stats, err := mem.Stats(r.PathValue("bank"))
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, stats)
-	})
+		httpx.WriteJSON(w, http.StatusOK, stats)
+	})))
 
-	mux.HandleFunc("DELETE /v1/default/banks/{bank}/documents/{document_id}", func(w http.ResponseWriter, r *http.Request) {
-		n, err := mem.DeleteDocumentCtx(r.Context(), r.PathValue("bank"), r.PathValue("document_id"))
+	mux.Handle("DELETE /v1/default/banks/{bank}/documents/{document_id}", auth.Require(auth.Contributor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n, err := mem.DeleteDocument(r.Context(), r.PathValue("bank"), r.PathValue("document_id"))
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true, "document_id": r.PathValue("document_id"), "memory_units_deleted": n,
 		})
-	})
+	})))
 
 	// K3: read parity with the native mount's row access — by-id for the
 	// client's read-before-edit seam, and a list for indexing/export. Both
 	// are reads, so neither is in auth's write set.
-	mux.HandleFunc("GET /v1/default/banks/{bank}/memories", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /v1/default/banks/{bank}/memories", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		offset, _ := strconv.Atoi(q.Get("offset"))
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		entries, total, err := mem.List(r.PathValue("bank"), offset, limit)
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"bank_id": r.PathValue("bank"), "object": "list", "total": total,
 			"results": hindsightRows(entries),
 		})
-	})
-	mux.HandleFunc("GET /v1/default/banks/{bank}/memories/{id}", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /v1/default/banks/{bank}/memories/{id}", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e, found, err := mem.ByID(r.PathValue("bank"), r.PathValue("id"))
 		if err != nil {
-			writeErr(w, err)
+			httpx.WriteError(w, err)
 			return
 		}
 		if !found {
-			writeJSON(w, http.StatusNotFound, map[string]any{
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
 				"error": "no memory with id " + r.PathValue("id") + " in bank " + r.PathValue("bank"),
 			})
 			return
 		}
-		writeJSON(w, http.StatusOK, hindsightRows([]memory.Entry{e})[0])
-	})
+		httpx.WriteJSON(w, http.StatusOK, hindsightRows([]memory.Entry{e})[0])
+	})))
 }
 
 // hindsightRows renders entries in the client's recall/list row shape, so a

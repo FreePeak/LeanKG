@@ -102,17 +102,17 @@ func TestServePathSweepsTheRegistry(t *testing.T) {
 		t.Fatalf("read main.go: %v", err)
 	}
 	body := string(src)
-	if !strings.Contains(body, "sweepRegistry(ctx, eng)") {
+	if !strings.Contains(body, "sweepRegistry(fctx, eng)") {
 		t.Error("the serve path never calls sweepRegistry — the registry sweep would never fire")
 	}
 	// The call must be on the maintenance tick, not a one-off at start-up:
 	// a start-up-only sweep would prune the rows that appear later.
-	if !strings.Contains(body, "maintain.RunFleet(ctx, func() []maintain.Target {") {
+	if !strings.Contains(body, "maintain.RunFleet(fctx, func() []maintain.Target {") {
 		t.Error("the maintenance tick no longer has the fleet target callback the sweep rides")
 	}
 	// The sweep must be inside that callback, not somewhere else in the
 	// function: the call site is what decides whether it runs per tick.
-	idx := strings.Index(body, "maintain.RunFleet(ctx, func() []maintain.Target {")
+	idx := strings.Index(body, "maintain.RunFleet(fctx, func() []maintain.Target {")
 	if idx < 0 {
 		t.Fatal("no maintain.RunFleet call in main.go")
 	}
@@ -120,7 +120,7 @@ func TestServePathSweepsTheRegistry(t *testing.T) {
 	if end := strings.Index(tail, "}, maintain.Options{"); end > 0 {
 		tail = tail[:end]
 	}
-	if !strings.Contains(tail, "sweepRegistry(ctx, eng)") {
+	if !strings.Contains(tail, "sweepRegistry(fctx, eng)") {
 		t.Error("sweepRegistry is not called inside the maintenance tick — it would not run once per tick")
 	}
 }

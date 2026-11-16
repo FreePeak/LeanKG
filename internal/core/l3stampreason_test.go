@@ -21,7 +21,7 @@ type unreadableStampStore struct {
 	err error
 }
 
-func (s unreadableStampStore) Stamp(modelID string) (*store.ModelStamp, error) {
+func (s unreadableStampStore) Stamp(ctx context.Context, modelID string) (*store.ModelStamp, error) {
 	return nil, s.err
 }
 
@@ -37,19 +37,19 @@ func (s unreadableStampStore) Stamp(modelID string) (*store.ModelStamp, error) {
 // the store). A read error must name its cause.
 func TestL3DegradeReasonNamesUnreadableStamp(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// The error a pre-017 store's stamp read produced.
 	readErr := errors.New(`no such column: text_cap`)
 	broken := unreadableStampStore{Backend: st, err: readErr}
 	p := embed.Deterministic(4)
-	e := New(broken, nil, QueryEmbedderFromProvider(p))
+	e := New(broken, Options{Embedder: p})
 
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "anything"})
 	if err != nil {
@@ -83,18 +83,18 @@ func TestL3DegradeReasonNamesUnreadableStamp(t *testing.T) {
 // missing-collection one.
 func TestL3DegradeReasonStillSaysNoVectorCollection(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// A real, migrated store with NO stamp row for the embedder's model:
 	// the collection genuinely does not exist.
 	p := embed.Deterministic(4)
-	e := New(st, nil, QueryEmbedderFromProvider(p))
+	e := New(st, Options{Embedder: p})
 
 	out, err := e.Query(context.Background(), QueryRequest{Action: "semantic", Query: "anything"})
 	if err != nil {
@@ -105,7 +105,7 @@ func TestL3DegradeReasonStillSaysNoVectorCollection(t *testing.T) {
 		t.Fatalf("no retrieval in %v", out)
 	}
 	reason, _ := r["reason"].(string)
-	if !strings.Contains(reason, "no vector collection for model "+p.ModelID()) {
+	if !strings.Contains(reason, "no vector collection for model "+p.Identity().Model) {
 		t.Fatalf("reason must still say the collection is missing: %q", reason)
 	}
 	if !strings.Contains(reason, "degraded from L3") {

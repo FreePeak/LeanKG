@@ -29,12 +29,12 @@ func clearEnvTokens(t *testing.T) {
 func newGateStore(t *testing.T) store.Backend {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -43,8 +43,7 @@ func newGateStore(t *testing.T) store.Backend {
 // newGateHandler serves an HTTP MCP handler over st, the way serve does.
 func newGateHandler(t *testing.T, st store.Backend) http.Handler {
 	t.Helper()
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(t.TempDir())
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
 	srv := New(engine)
 	srv.SetAuthStore(st)
 	return srv.HTTPHandler()
@@ -88,7 +87,7 @@ func requireAuthenticateHint(t *testing.T, body string) {
 func TestGateOnAnonymousMatrix(t *testing.T) {
 	clearEnvTokens(t)
 	st := newGateStore(t)
-	if _, err := auth.CreateSiteAdmin(st, "matrix-admin", testAdminPassword); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "matrix-admin", testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
 	h := newGateHandler(t, st)
@@ -136,7 +135,7 @@ func TestGateOnAnonymousMatrix(t *testing.T) {
 		}
 	})
 	t.Run("an expired token is HTTP 401", func(t *testing.T) {
-		expired, _, err := auth.Mint(st, auth.MintRequest{Name: "old", Role: "admin", TTL: -time.Second})
+		expired, _, err := auth.Mint(context.Background(), st, auth.MintRequest{Name: "old", Role: "admin", TTL: -time.Second})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,7 +145,7 @@ func TestGateOnAnonymousMatrix(t *testing.T) {
 		}
 	})
 	t.Run("a valid token keeps RBAC and reaches the tool", func(t *testing.T) {
-		token, _, err := auth.Mint(st, auth.MintRequest{Name: "live", Role: "admin", TTL: time.Hour})
+		token, _, err := auth.Mint(context.Background(), st, auth.MintRequest{Name: "live", Role: "admin", TTL: time.Hour})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,15 +187,16 @@ func TestGateOnFromEnvToken(t *testing.T) {
 // failingAdminStore fails the site-admin probe, the way a broken store would.
 type failingAdminStore struct{ store.Backend }
 
-func (failingAdminStore) AdminExists() (bool, error) { return false, errors.New("store unavailable") }
+func (failingAdminStore) AdminExists(context.Context) (bool, error) {
+	return false, errors.New("store unavailable")
+}
 
 // TestGateFailsClosedOnStoreError pins fail-closed: when the gate cannot be
 // read, an anonymous request is restricted (never Admin).
 func TestGateFailsClosedOnStoreError(t *testing.T) {
 	clearEnvTokens(t)
 	st := newGateStore(t)
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(t.TempDir())
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
 	srv := New(engine)
 	srv.SetAuthStore(failingAdminStore{st})
 	h := srv.HTTPHandler()
@@ -214,11 +214,10 @@ func TestGateFailsClosedOnStoreError(t *testing.T) {
 func TestStdioIsUngatedAdmin(t *testing.T) {
 	clearEnvTokens(t)
 	st := newGateStore(t)
-	if _, err := auth.CreateSiteAdmin(st, "stdio-admin", testAdminPassword); err != nil {
+	if _, err := auth.CreateSiteAdmin(context.Background(), st, "stdio-admin", testAdminPassword); err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, nil, nil)
-	engine.SetProjectDir(t.TempDir())
+	engine := core.New(st, core.Options{ProjectDir: t.TempDir()})
 	session := connectTo(t, New(engine))
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "status", Arguments: map[string]any{}})
 	if err != nil || res.IsError {

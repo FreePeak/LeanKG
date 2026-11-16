@@ -64,20 +64,19 @@ func (f *fakeRec) byMethod(method string) []telemetry.CallEvent {
 func newCaptureEngine(t *testing.T) (*core.Engine, string) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(dir)
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: dir})
 	return engine, dir
 }
 
@@ -528,20 +527,19 @@ func BenchmarkCaptureMetadata(b *testing.B) {
 }
 
 func benchCapture(b *testing.B, rec telemetry.Recorder) {
-	st, err := store.Open(filepath.Join(b.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(b.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		b.Fatal(err)
 	}
 	mem, err := memory.Open(b.TempDir(), false)
 	if err != nil {
 		b.Fatal(err)
 	}
-	engine := core.New(st, mem, nil)
-	engine.SetProjectDir(b.TempDir())
+	engine := core.New(st, core.Options{Memory: mem, ProjectDir: b.TempDir()})
 	srv := New(engine)
 	srv.SetRecorder(rec)
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: core.ToolStatus, Arguments: json.RawMessage("{}")}}

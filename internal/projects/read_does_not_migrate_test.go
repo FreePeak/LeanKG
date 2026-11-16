@@ -23,11 +23,11 @@ func pre017Project(t *testing.T) string {
 	t.Helper()
 	dir := canonical(t.TempDir())
 	path := filepath.Join(dir, ".leankg", "leankg.db")
-	st, err := store.Open(path, store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: path, Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if err := st.Close(); err != nil {
@@ -73,7 +73,7 @@ func TestRoutedReadDoesNotMigrateTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open the routed project: %v", err)
 	}
-	applied, err := store.AppliedMigrations(p.Store)
+	applied, err := p.Store.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

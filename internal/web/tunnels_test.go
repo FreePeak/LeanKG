@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"github.com/FreePeak/LeanKG/internal/core"
 	"strings"
 	"testing"
 
@@ -13,12 +15,12 @@ import (
 // to per-folder clusters exactly as the Rust engine's persisted column did.
 func newTunnelStore(t *testing.T) store.Backend {
 	t.Helper()
-	st, err := store.Open(t.TempDir()+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: t.TempDir() + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	els := []store.Element{
@@ -27,7 +29,7 @@ func newTunnelStore(t *testing.T) store.Backend {
 		{QualifiedName: "src/b/y.go::y", ElementType: "function", Name: "y", FilePath: "src/b/y.go"},
 		{QualifiedName: "src/b/y.go::y2", ElementType: "function", Name: "y2", FilePath: "src/b/y.go"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatalf("upsert elements: %v", err)
 	}
 	rels := []store.Relationship{
@@ -42,7 +44,7 @@ func newTunnelStore(t *testing.T) store.Backend {
 		// One endpoint outside every cluster: skipped, not a tunnel.
 		{Source: "src/b/y.go::y2", Target: "missing::fn", RelType: "references", Confidence: 0.99},
 	}
-	if err := st.UpsertRelationships(rels); err != nil {
+	if err := st.UpsertRelationships(context.Background(), rels); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
 	return st
@@ -50,7 +52,7 @@ func newTunnelStore(t *testing.T) store.Backend {
 
 func TestClusterAssignments(t *testing.T) {
 	st := newTunnelStore(t)
-	cl, err := ClusterAssignments(st)
+	cl, err := ClusterAssignments(context.Background(), core.New(st, core.Options{}))
 	if err != nil {
 		t.Fatalf("ClusterAssignments: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestClusterAssignments(t *testing.T) {
 
 func TestTunnels(t *testing.T) {
 	st := newTunnelStore(t)
-	ts, err := Tunnels(st)
+	ts, err := Tunnels(context.Background(), core.New(st, core.Options{}))
 	if err != nil {
 		t.Fatalf("Tunnels: %v", err)
 	}
@@ -142,15 +144,15 @@ func TestRenderTunnels(t *testing.T) {
 }
 
 func TestTunnelsEmptyGraph(t *testing.T) {
-	st, err := store.Open(t.TempDir()+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: t.TempDir() + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ts, err := Tunnels(st)
+	ts, err := Tunnels(context.Background(), core.New(st, core.Options{}))
 	if err != nil {
 		t.Fatalf("Tunnels on empty store: %v", err)
 	}

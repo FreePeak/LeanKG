@@ -1,0 +1,12 @@
+{
+  "deprecated": "args.cmd is deprecated; send args.command",
+  "status": {
+    "concept_counts": {},
+    "dynamic_concepts": 0,
+    "dynamic_workflows": 0,
+    "nodes_missing_aliases": 0,
+    "procedural_counts": {},
+    "total_aliases": 0,
+    "workflows_without_failure_modes": 0
+  }
+}

@@ -3,6 +3,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -70,7 +71,7 @@ func SplitServices(affected string) []string {
 
 // CreateIncident validates and stores an incident, assigning an INC-<uuid> id
 // when the caller left it empty (Rust CLI did the same before insert).
-func (k *Knowledge) CreateIncident(inc store.Incident) (store.Incident, error) {
+func (k *Knowledge) CreateIncident(ctx context.Context, inc store.Incident) (store.Incident, error) {
 	if inc.ID == "" {
 		inc.ID = NewID("INC-")
 	}
@@ -80,7 +81,7 @@ func (k *Knowledge) CreateIncident(inc store.Incident) (store.Incident, error) {
 	if err := ValidateIncident(inc); err != nil {
 		return store.Incident{}, err
 	}
-	if err := k.st.IncidentUpsert(inc); err != nil {
+	if err := k.st.IncidentUpsert(ctx, inc); err != nil {
 		return store.Incident{}, err
 	}
 	return inc, nil
@@ -88,33 +89,35 @@ func (k *Knowledge) CreateIncident(inc store.Incident) (store.Incident, error) {
 
 // GetIncident resolves one incident by id (Rust db::get_incident / `incident
 // show`).
-func (k *Knowledge) GetIncident(id string) (store.Incident, bool, error) {
-	return k.st.IncidentByID(id)
+func (k *Knowledge) GetIncident(ctx context.Context, id string) (store.Incident, bool, error) {
+	return k.st.IncidentByID(ctx, id)
 }
 
 // UpdateIncident re-validates and replaces an incident (Rust update_incident
 // was a validated upsert).
-func (k *Knowledge) UpdateIncident(inc store.Incident) (store.Incident, error) {
+func (k *Knowledge) UpdateIncident(ctx context.Context, inc store.Incident) (store.Incident, error) {
 	if inc.ID == "" {
 		return store.Incident{}, errors.New("incident id is required")
 	}
-	return k.CreateIncident(inc)
+	return k.CreateIncident(ctx, inc)
 }
 
 // DeleteIncident removes an incident (Rust db::delete_incident).
-func (k *Knowledge) DeleteIncident(id string) error { return k.st.IncidentDelete(id) }
+func (k *Knowledge) DeleteIncident(ctx context.Context, id string) error {
+	return k.st.IncidentDelete(ctx, id)
+}
 
 // QueryIncidents lists incidents newest first with the Rust
 // db::query_incidents filters: service is a case-insensitive substring of the
 // affected-services list, pattern of title or root_cause, env an exact match
 // ("" = every environment). limit <= 0 returns every match — the surfaces pass
 // their own default (CLI 10, MCP 5, REST 10).
-func (k *Knowledge) QueryIncidents(service, pattern, env string, limit int) ([]store.Incident, error) {
-	return k.st.IncidentsQuery(store.IncidentQuery{Service: service, Pattern: pattern, Env: env, Limit: limit})
+func (k *Knowledge) QueryIncidents(ctx context.Context, service, pattern, env string, limit int) ([]store.Incident, error) {
+	return k.st.IncidentsQuery(ctx, store.IncidentQuery{Service: service, Pattern: pattern, Env: env, Limit: limit})
 }
 
 // IncidentsForService is the Rust query_incidents_for_service shortcut
 // (service + env, no pattern).
-func (k *Knowledge) IncidentsForService(service, env string, limit int) ([]store.Incident, error) {
-	return k.st.IncidentsQuery(store.IncidentQuery{Service: service, Env: env, Limit: limit})
+func (k *Knowledge) IncidentsForService(ctx context.Context, service, env string, limit int) ([]store.Incident, error) {
+	return k.st.IncidentsQuery(ctx, store.IncidentQuery{Service: service, Env: env, Limit: limit})
 }

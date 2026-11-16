@@ -5,14 +5,17 @@
 // unset org label.
 package store
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // AccountUpsert inserts or replaces an account keyed by ID.
-func (s *PGStore) AccountUpsert(a Account) error {
+func (s *PGStore) AccountUpsert(ctx context.Context, a Account) error {
 	if a.ID == "" || a.Email == "" {
 		return fmt.Errorf("store: account upsert: id and email are required")
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO accounts (`+accountCols+`)
+	_, err := s.pool.Exec(ctx, `INSERT INTO accounts (`+accountCols+`)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (id) DO UPDATE SET
 			email = excluded.email, name = excluded.name,
@@ -28,17 +31,17 @@ func (s *PGStore) AccountUpsert(a Account) error {
 
 // AdminExists reports whether any account is a site admin (see the SQLite
 // twin for why this is a point probe).
-func (s *PGStore) AdminExists() (bool, error) {
+func (s *PGStore) AdminExists(ctx context.Context) (bool, error) {
 	var found bool
-	if err := s.pool.QueryRow(pgCtx, `SELECT EXISTS(SELECT 1 FROM accounts WHERE site_admin)`).Scan(&found); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM accounts WHERE site_admin)`).Scan(&found); err != nil {
 		return false, fmt.Errorf("store: admin exists: %w", err)
 	}
 	return found, nil
 }
 
 // AccountByEmail resolves an account by its exact (already normalized) email.
-func (s *PGStore) AccountByEmail(email string) (Account, bool, error) {
-	row := s.pool.QueryRow(pgCtx, `SELECT `+accountCols+` FROM accounts WHERE email = $1`, email)
+func (s *PGStore) AccountByEmail(ctx context.Context, email string) (Account, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+accountCols+` FROM accounts WHERE email = $1`, email)
 	a, err := scanAccount(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -49,12 +52,26 @@ func (s *PGStore) AccountByEmail(email string) (Account, bool, error) {
 	return a, true, nil
 }
 
+// AccountByID resolves an account by its primary key. A token minted for an
+// account resolves through it, so the account status gates the token.
+func (s *PGStore) AccountByID(ctx context.Context, id string) (Account, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+accountCols+` FROM accounts WHERE id = $1`, id)
+	a, err := scanAccount(row.Scan)
+	if err != nil {
+		if isNoRows(err) {
+			return Account{}, false, nil
+		}
+		return Account{}, false, fmt.Errorf("store: account by id: %w", err)
+	}
+	return a, true, nil
+}
+
 // OrgUpsert inserts or replaces an org keyed by ID.
-func (s *PGStore) OrgUpsert(o Org) error {
+func (s *PGStore) OrgUpsert(ctx context.Context, o Org) error {
 	if o.ID == "" || o.OwnerAccountID == "" {
 		return fmt.Errorf("store: org upsert: id and owner_account_id are required")
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO orgs (`+orgCols+`)
+	_, err := s.pool.Exec(ctx, `INSERT INTO orgs (`+orgCols+`)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (id) DO UPDATE SET
 			name = excluded.name, owner_account_id = excluded.owner_account_id,
@@ -67,8 +84,8 @@ func (s *PGStore) OrgUpsert(o Org) error {
 }
 
 // OrgByID resolves one org by id.
-func (s *PGStore) OrgByID(id string) (Org, bool, error) {
-	row := s.pool.QueryRow(pgCtx, `SELECT `+orgCols+` FROM orgs WHERE id = $1`, id)
+func (s *PGStore) OrgByID(ctx context.Context, id string) (Org, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+orgCols+` FROM orgs WHERE id = $1`, id)
 	o, err := scanOrg(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -80,8 +97,8 @@ func (s *PGStore) OrgByID(id string) (Org, bool, error) {
 }
 
 // OrgsByOwner lists the orgs owned by an account.
-func (s *PGStore) OrgsByOwner(ownerAccountID string) ([]Org, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+orgCols+` FROM orgs WHERE owner_account_id = $1 ORDER BY created_at, id`, ownerAccountID)
+func (s *PGStore) OrgsByOwner(ctx context.Context, ownerAccountID string) ([]Org, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+orgCols+` FROM orgs WHERE owner_account_id = $1 ORDER BY created_at, id`, ownerAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("store: orgs by owner: %w", err)
 	}
@@ -98,11 +115,11 @@ func (s *PGStore) OrgsByOwner(ownerAccountID string) ([]Org, error) {
 }
 
 // OrgMembershipUpsert adds or re-roles an org member.
-func (s *PGStore) OrgMembershipUpsert(m OrgMember) error {
+func (s *PGStore) OrgMembershipUpsert(ctx context.Context, m OrgMember) error {
 	if m.OrgID == "" || m.AccountID == "" {
 		return fmt.Errorf("store: org membership upsert: org_id and account_id are required")
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO org_memberships (`+orgMemberCols+`)
+	_, err := s.pool.Exec(ctx, `INSERT INTO org_memberships (`+orgMemberCols+`)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (org_id, account_id) DO UPDATE SET
 			role = excluded.role, joined_at = excluded.joined_at`,
@@ -114,8 +131,8 @@ func (s *PGStore) OrgMembershipUpsert(m OrgMember) error {
 }
 
 // OrgMemberOf resolves one membership row.
-func (s *PGStore) OrgMemberOf(orgID, accountID string) (OrgMember, bool, error) {
-	row := s.pool.QueryRow(pgCtx, `SELECT `+orgMemberCols+` FROM org_memberships WHERE org_id = $1 AND account_id = $2`, orgID, accountID)
+func (s *PGStore) OrgMemberOf(ctx context.Context, orgID, accountID string) (OrgMember, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+orgMemberCols+` FROM org_memberships WHERE org_id = $1 AND account_id = $2`, orgID, accountID)
 	m, err := scanOrgMember(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -127,8 +144,8 @@ func (s *PGStore) OrgMemberOf(orgID, accountID string) (OrgMember, bool, error) 
 }
 
 // OrgMembers lists every member of an org.
-func (s *PGStore) OrgMembers(orgID string) ([]OrgMember, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT `+orgMemberCols+` FROM org_memberships WHERE org_id = $1 ORDER BY joined_at, account_id`, orgID)
+func (s *PGStore) OrgMembers(ctx context.Context, orgID string) ([]OrgMember, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+orgMemberCols+` FROM org_memberships WHERE org_id = $1 ORDER BY joined_at, account_id`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("store: org members: %w", err)
 	}
@@ -145,11 +162,11 @@ func (s *PGStore) OrgMembers(orgID string) ([]OrgMember, error) {
 }
 
 // TeamMemberUpsert adds or re-roles a team member.
-func (s *PGStore) TeamMemberUpsert(m TeamMember) error {
+func (s *PGStore) TeamMemberUpsert(ctx context.Context, m TeamMember) error {
 	if m.TeamID == "" || m.AccountID == "" {
 		return fmt.Errorf("store: team member upsert: team_id and account_id are required")
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO team_members (team_id, account_id, role, joined_at)
+	_, err := s.pool.Exec(ctx, `INSERT INTO team_members (team_id, account_id, role, joined_at)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (team_id, account_id) DO UPDATE SET
 			role = excluded.role, joined_at = excluded.joined_at`,
@@ -161,8 +178,8 @@ func (s *PGStore) TeamMemberUpsert(m TeamMember) error {
 }
 
 // TeamMemberOf resolves one team membership row.
-func (s *PGStore) TeamMemberOf(teamID, accountID string) (TeamMember, bool, error) {
-	row := s.pool.QueryRow(pgCtx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = $1 AND account_id = $2`, teamID, accountID)
+func (s *PGStore) TeamMemberOf(ctx context.Context, teamID, accountID string) (TeamMember, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = $1 AND account_id = $2`, teamID, accountID)
 	m, err := scanTeamMember(row.Scan)
 	if err != nil {
 		if isNoRows(err) {
@@ -174,8 +191,8 @@ func (s *PGStore) TeamMemberOf(teamID, accountID string) (TeamMember, bool, erro
 }
 
 // TeamMembers lists every member of a team.
-func (s *PGStore) TeamMembers(teamID string) ([]TeamMember, error) {
-	rows, err := s.pool.Query(pgCtx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = $1 ORDER BY joined_at, account_id`, teamID)
+func (s *PGStore) TeamMembers(ctx context.Context, teamID string) ([]TeamMember, error) {
+	rows, err := s.pool.Query(ctx, `SELECT team_id, account_id, role, joined_at FROM team_members WHERE team_id = $1 ORDER BY joined_at, account_id`, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("store: team members: %w", err)
 	}
@@ -193,11 +210,11 @@ func (s *PGStore) TeamMembers(teamID string) ([]TeamMember, error) {
 
 // ResourceClaim records that ownerAccountID owns a resource; orgID "" means
 // unset (NULL).
-func (s *PGStore) ResourceClaim(resourceType, resourceID, ownerAccountID, orgID string) error {
+func (s *PGStore) ResourceClaim(ctx context.Context, resourceType, resourceID, ownerAccountID, orgID string) error {
 	if resourceType == "" || resourceID == "" || ownerAccountID == "" {
 		return fmt.Errorf("store: resource claim: resource_type, resource_id and owner_account_id are required")
 	}
-	_, err := s.pool.Exec(pgCtx, `INSERT INTO resource_ownership
+	_, err := s.pool.Exec(ctx, `INSERT INTO resource_ownership
 		(resource_type, resource_id, owner_account_id, org_id, created_at)
 		VALUES ($1, $2, $3, NULLIF($4, ''), $5)
 		ON CONFLICT (resource_type, resource_id, owner_account_id) DO UPDATE SET
@@ -210,9 +227,9 @@ func (s *PGStore) ResourceClaim(resourceType, resourceID, ownerAccountID, orgID 
 }
 
 // IsResourceOwner reports whether accountID owns the resource.
-func (s *PGStore) IsResourceOwner(resourceType, resourceID, accountID string) (bool, error) {
+func (s *PGStore) IsResourceOwner(ctx context.Context, resourceType, resourceID, accountID string) (bool, error) {
 	var n int
-	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM resource_ownership
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM resource_ownership
 		WHERE resource_type = $1 AND resource_id = $2 AND owner_account_id = $3`,
 		resourceType, resourceID, accountID).Scan(&n); err != nil {
 		return false, fmt.Errorf("store: is resource owner: %w", err)

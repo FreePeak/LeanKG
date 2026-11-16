@@ -1,6 +1,7 @@
 package maintain
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ import (
 // verb prints that.
 func TestPassReportsGrowthHonestly(t *testing.T) {
 	st := bloatFixture(t)
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
@@ -96,15 +97,15 @@ func TestPassReclaimSummaryNamesTheOutcome(t *testing.T) {
 // file bigger. The pass must not report a negative reclaim.
 func TestPassOnAFreshStoreGrows(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	res, err := Pass(st, Options{})
+	res, err := Pass(context.Background(), st, Options{})
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}

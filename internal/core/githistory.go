@@ -27,7 +27,12 @@ func gitImportSlot(st store.Backend) chan struct{} {
 // history is read from the project root, the same tree the code index walks.
 // The walk, the cursor write and the inventory refresh run under the store's
 // git import slot; a caller that cannot get the slot before ctx ends gives up.
-func (e *Engine) gitImport(ctx context.Context, req ImportRequest) (map[string]any, error) {
+// gitImportArgs are the args of import{action:"git"}.
+type gitImportArgs struct {
+	MaxCommits int `json:"max_commits"`
+}
+
+func (e *Engine) gitImport(ctx context.Context, _ ImportRequest, a gitImportArgs) (map[string]any, error) {
 	slot := gitImportSlot(e.st)
 	select {
 	case slot <- struct{}{}:
@@ -37,12 +42,12 @@ func (e *Engine) gitImport(ctx context.Context, req ImportRequest) (map[string]a
 	defer func() { <-slot }()
 
 	res, err := githistory.Import(ctx, e.st, e.projectRoot(), githistory.Options{
-		MaxCommits: argInt(req.Args, "max_commits", 0),
+		MaxCommits: a.MaxCommits,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if _, err := e.refreshInventory(); err != nil {
+	if _, err := e.refreshInventory(ctx); err != nil {
 		return nil, err
 	}
 	return map[string]any{"git": res}, nil
@@ -51,7 +56,14 @@ func (e *Engine) gitImport(ctx context.Context, req ImportRequest) (map[string]a
 // gitHistoryQuery answers the history, cochange and churn query actions.
 // history and cochange take the file path in query (project-relative, or
 // absolute inside the project); churn takes args.since as a git date.
-func (e *Engine) gitHistoryQuery(ctx context.Context, req QueryRequest) (map[string]any, error) {
+// gitHistoryArgs are the args of query{action:"history"|"cochange"|"churn"}.
+// since is read by churn only.
+type gitHistoryArgs struct {
+	envelopeArgs
+	Since string `json:"since"`
+}
+
+func (e *Engine) gitHistoryQuery(ctx context.Context, req QueryRequest, a gitHistoryArgs) (map[string]any, error) {
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10
@@ -59,7 +71,7 @@ func (e *Engine) gitHistoryQuery(ctx context.Context, req QueryRequest) (map[str
 	if req.Action == "churn" {
 		files, err := githistory.Churn(ctx, e.projectRoot(), githistory.ChurnOptions{
 			Limit: limit,
-			Since: argStr(req.Args, "since"),
+			Since: a.Since,
 		})
 		if err != nil {
 			return nil, err
@@ -71,13 +83,13 @@ func (e *Engine) gitHistoryQuery(ctx context.Context, req QueryRequest) (map[str
 	}
 	path := e.relToProject(req.Query)
 	if req.Action == "cochange" {
-		partners, err := githistory.CoChange(e.st, path, limit)
+		partners, err := githistory.CoChange(ctx, e.st, path, limit)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"path": path, "partners": partners}, nil
 	}
-	commits, err := githistory.History(e.st, path, limit)
+	commits, err := githistory.History(ctx, e.st, path, limit)
 	if err != nil {
 		return nil, err
 	}

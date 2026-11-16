@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"os"
 	"testing"
 )
@@ -15,11 +16,11 @@ func TestRecallRanksByMeaningfulTerms(t *testing.T) {
 		{ID: "vi", Content: "Quyết định: dùng Postgres để lưu vector nhúng cho tìm kiếm ngữ nghĩa."},
 		{ID: "noise", Content: "the the the and of to in is it that"},
 	}
-	if err := m.RetainRaw("q", es); err != nil {
+	if err := m.RetainRaw(context.Background(), "q", es); err != nil {
 		t.Fatal(err)
 	}
 	first := func(q string) string {
-		got, err := m.Recall("q", q, 3)
+		got, err := m.Recall(context.Background(), "q", q, 3)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +58,7 @@ func TestIndexRebuildsFromSources(t *testing.T) {
 	if err := m.Create("topics/a.md", "kubernetes upgrade notes\n"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Retain("b", []Entry{{Content: "giraffes at turn three", Metadata: map[string]any{"session_id": "s1"}}}, 3); err != nil {
+	if _, err := m.Retain(context.Background(), "b", []Entry{{Content: "giraffes at turn three", Metadata: map[string]any{"session_id": "s1"}}}, 3); err != nil {
 		t.Fatal(err)
 	}
 	m.Close()
@@ -72,7 +73,7 @@ func TestIndexRebuildsFromSources(t *testing.T) {
 	if hits, _ := m2.Search("kubernetes", 5); len(hits) != 1 {
 		t.Fatalf("file rows not rebuilt: %v", hits)
 	}
-	if got, _ := m2.Recall("b", "giraffes", 5); len(got) != 1 {
+	if got, _ := m2.Recall(context.Background(), "b", "giraffes", 5); len(got) != 1 {
 		t.Fatalf("bank rows not rebuilt: %v", got)
 	}
 	if c := m2.bankCursor("b"); c != 3 {
@@ -82,7 +83,7 @@ func TestIndexRebuildsFromSources(t *testing.T) {
 		t.Fatalf("session cursor after rebuild = %d %v, want 3", c, ok)
 	}
 	// The rebuilt cursor still gates: a batch at turn 3 is skipped.
-	res, err := m2.Retain("b", []Entry{{Content: "dup"}}, 3)
+	res, err := m2.Retain(context.Background(), "b", []Entry{{Content: "dup"}}, 3)
 	if err != nil || res.Skipped != 1 {
 		t.Fatalf("cursor gate after rebuild: %+v %v", res, err)
 	}

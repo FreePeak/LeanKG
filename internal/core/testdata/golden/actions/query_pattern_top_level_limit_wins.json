@@ -1,0 +1,22 @@
+{
+  "hits": [
+    {
+      "Col": 1,
+      "File": "src/alpha.go",
+      "Line": 3,
+      "Text": "func Alpha() int {"
+    },
+    {
+      "Col": 1,
+      "File": "src/beta.go",
+      "Line": 6,
+      "Text": "func Beta() int {"
+    }
+  ],
+  "query": "",
+  "retrieval": {
+    "reason": "structural pattern match (go)",
+    "rung": "ast-grep",
+    "scope": "all"
+  }
+}

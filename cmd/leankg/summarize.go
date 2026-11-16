@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/store"
 	"github.com/FreePeak/LeanKG/internal/summarize"
 )
@@ -21,28 +22,29 @@ import (
 // unreadable store) and a fatal gate reason: a quota-dead provider must never
 // look like a green run (graft #127). A completed run with a few failed files
 // prints them and exits 0 — the tier is partial but the pass did its job.
-func cmdSummarize(args []string) {
-	fs := flag.NewFlagSet("summarize", flag.ExitOnError)
+func cmdSummarize(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("summarize", flag.ContinueOnError)
 	project := fs.String("project", ".", "project root whose .leankg store receives the meaning tier")
 	force := fs.Bool("force", false, "ignore the content-hash resume and re-summarize every indexed file")
 	dryRun := fs.Bool("dry-run", false, "report what the run would spend without calling the provider or writing anything")
 	concurrency := fs.Int("concurrency", summarize.Concurrency, "how many files pass 1 summarizes at once")
-	parseInterspersed("summarize", fs, args, 0)
+	if _, err := parseInterspersed("summarize", fs, args, 0); err != nil {
+		return err
+	}
 
 	dir := *project
 	if dir == "" {
 		dir = "."
 	}
-	ctx := context.Background()
 	st, err := openStore(ctx, dir, "", store.RW)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "summarize: open store: %v\n", err)
-		os.Exit(1)
+		return cliexit.Code(1)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "summarize: migrate: %v\n", err)
-		os.Exit(1)
+		return cliexit.Code(1)
 	}
 
 	res, err := summarize.Run(ctx, st, summarize.Options{
@@ -53,7 +55,7 @@ func cmdSummarize(args []string) {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "summarize: %v\n", err)
-		os.Exit(1)
+		return cliexit.Code(1)
 	}
 	fmt.Println(res.Summary())
 	const shownErrors = 10
@@ -67,11 +69,12 @@ func cmdSummarize(args []string) {
 	// The pass writes elements and relationships; refresh the snapshot so
 	// status/doctor don't call the project stale after a successful run.
 	if !*dryRun {
-		if _, ierr := store.RefreshInventory(st); ierr != nil {
+		if _, ierr := store.RefreshInventory(ctx, st); ierr != nil {
 			fmt.Fprintf(os.Stderr, "summarize: inventory snapshot: %v\n", ierr)
 		}
 	}
 	if res.Fatal != "" {
-		os.Exit(1)
+		return cliexit.Code(1)
 	}
+	return nil
 }

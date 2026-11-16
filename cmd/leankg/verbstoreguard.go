@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -31,12 +32,12 @@ func verbEngine() string {
 //
 // The refusal is the diagnosis `leankg doctor` prints for the same state, and
 // exits with doctor's FAIL code (2).
-func requireStore(verb, dir string) {
+func requireStore(ctx context.Context, verb, dir string) error {
 	eng := verbEngine()
-	if verbStoreExists(context.Background(), dir, eng) {
-		return
+	if verbStoreExists(ctx, dir, eng) {
+		return nil
 	}
-	refuseNotIndexed(verb, dir, eng, storeHint(verb))
+	return refuseNotIndexed(verb, dir, eng, storeHint(verb))
 }
 
 // storeHint is the recovery sentence for each refusing verb: the command that
@@ -80,7 +81,7 @@ func verbStoreExists(ctx context.Context, dir, engine string) bool {
 		}
 		return maintenanceStoreExists(ctx, dir, engine)
 	}
-	probe, err := store.OpenBackend(ctx, dir, engine, projectcfg.PGURL(dir), "", store.RO)
+	probe, err := openStoreWith(ctx, dir, engine, "", store.RO)
 	if err != nil {
 		return !errors.Is(err, store.ErrSchemaMissing)
 	}
@@ -112,9 +113,9 @@ func verbStoreSubject(dir, engine string) string {
 // doctor's own report IS its stdout, but a metrics summary, a dashboard table
 // and a migrate result are all stdout contracts, and a text line in the
 // middle of one corrupts it.
-func refuseNotIndexed(verb, dir, engine, hint string) {
+func refuseNotIndexed(verb, dir, engine, hint string) error {
 	fmt.Fprintf(os.Stderr, "FAIL not indexed: no store at %s (project %s)\n",
 		verbStoreSubject(dir, engine), dir)
 	fmt.Fprintf(os.Stderr, "     %s\n", hint)
-	os.Exit(2)
+	return cliexit.Code(2)
 }

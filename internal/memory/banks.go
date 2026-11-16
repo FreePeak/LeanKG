@@ -209,13 +209,13 @@ type RetainResult struct {
 // back to this store's own project dir. The batch is idempotent per session
 // (store.rs:92-108): a retained_through_user_turn at or below the session's
 // stored cursor skips the whole batch.
-func (m *Memory) SessionRetain(scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int, tags []string) (RetainResult, error) {
-	return m.SessionRetainCtx(context.Background(), scope, cwd, bank, sessionID, turns, throughUserTurn, tags)
-}
-
-// SessionRetainCtx is SessionRetain with the caller's context, so the retain
-// event joins the transport call that made it (telemetry.WithIdentity).
-func (m *Memory) SessionRetainCtx(ctx context.Context, scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int, tags []string) (RetainResult, error) {
+//
+// The caller's ctx carries the transport identity (telemetry.WithIdentity) and
+// cancels the call before any row is written.
+func (m *Memory) SessionRetain(ctx context.Context, scope Scope, cwd, bank, sessionID string, turns []string, throughUserTurn int, tags []string) (RetainResult, error) {
+	if err := ctx.Err(); err != nil {
+		return RetainResult{}, err
+	}
 	start := time.Now()
 	if sessionID == "" {
 		return RetainResult{}, fmt.Errorf("memory: session_retain requires session_id")
@@ -265,15 +265,9 @@ func (m *Memory) SessionRetainCtx(ctx context.Context, scope Scope, cwd, bank, s
 // scope.ReadBanks merges in matrix order (project first, shared appended
 // in tagged mode; bank.rs:88-95). Returns the consulted banks plus the
 // ranked rows; limit <= 0 means 8 (the OMP recallLimit).
-func (m *Memory) SessionRecall(scope Scope, cwd, bank, query string, limit int) (banks []string, entries []Entry, err error) {
-	return m.SessionRecallCtx(context.Background(), scope, cwd, bank, query, limit)
-}
-
-// SessionRecallCtx is SessionRecall with the caller's context (see
-// SessionRetainCtx).
-func (m *Memory) SessionRecallCtx(ctx context.Context, scope Scope, cwd, bank, query string, limit int) (banks []string, entries []Entry, err error) {
+func (m *Memory) SessionRecall(ctx context.Context, scope Scope, cwd, bank, query string, limit int) (banks []string, entries []Entry, err error) {
 	banks = m.sessionReadBanks(scope, cwd, bank)
-	entries, err = m.RecallBanksCtx(ctx, banks, query, limit)
+	entries, err = m.RecallBanks(ctx, banks, query, limit)
 	return banks, entries, err
 }
 
@@ -332,12 +326,10 @@ func (m *Memory) sessionCursor(sessionID string) (int, bool) {
 // The result says what happened: a skipped batch reports Skipped and the
 // stored cursor, never a write (RS-07: the REST handler answered
 // `retained: N` for batches this gate had dropped).
-func (m *Memory) Retain(bank string, entries []Entry, throughUserTurn int) (RetainResult, error) {
-	return m.RetainCtx(context.Background(), bank, entries, throughUserTurn)
-}
-
-// RetainCtx is Retain with the caller's context (see SessionRetainCtx).
-func (m *Memory) RetainCtx(ctx context.Context, bank string, entries []Entry, throughUserTurn int) (RetainResult, error) {
+func (m *Memory) Retain(ctx context.Context, bank string, entries []Entry, throughUserTurn int) (RetainResult, error) {
+	if err := ctx.Err(); err != nil {
+		return RetainResult{}, err
+	}
 	start := time.Now()
 	if cur := m.bankCursor(bank); throughUserTurn <= cur {
 		recordRetain(ctx, bank, 0, len(entries), 0, start)
@@ -363,12 +355,10 @@ func (m *Memory) RetainCtx(ctx context.Context, bank string, entries []Entry, th
 // no retained_through_user_turn concept, and routing it through Retain's
 // cursor would silently drop every write after the first (a missing cursor
 // is 0, and 0 <= 0 short-circuits).
-func (m *Memory) RetainRaw(bank string, entries []Entry) error {
-	return m.RetainRawCtx(context.Background(), bank, entries)
-}
-
-// RetainRawCtx is RetainRaw with the caller's context (see SessionRetainCtx).
-func (m *Memory) RetainRawCtx(ctx context.Context, bank string, entries []Entry) error {
+func (m *Memory) RetainRaw(ctx context.Context, bank string, entries []Entry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	start := time.Now()
 	applyEntryDefaults(entries)
 	if err := m.appendBank(bank, entries); err != nil {
@@ -406,15 +396,13 @@ func applyEntryDefaults(entries []Entry) {
 // every existing row whose metadata document_id is in replaceDocs is dropped
 // before entries are appended, under one lock so a concurrent retain never
 // lands between the drop and the append. An empty replaceDocs is RetainRaw.
-func (m *Memory) RetainReplacing(bank string, entries []Entry, replaceDocs []string) error {
-	_, err := m.RetainReplacingCtx(context.Background(), bank, entries, replaceDocs)
-	return err
-}
-
-// RetainReplacingCtx is RetainReplacing that also reports how many existing
-// rows the document upsert dropped (the replaced count). The count goes to
-// telemetry; the Hindsight retain response does not carry it.
-func (m *Memory) RetainReplacingCtx(ctx context.Context, bank string, entries []Entry, replaceDocs []string) (int, error) {
+// It returns how many existing rows the document upsert dropped (the replaced
+// count). The count goes to telemetry; the Hindsight retain response does not
+// carry it.
+func (m *Memory) RetainReplacing(ctx context.Context, bank string, entries []Entry, replaceDocs []string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	start := time.Now()
 	applyEntryDefaults(entries)
 	m.bankMu.Lock()
@@ -440,13 +428,10 @@ func (m *Memory) RetainReplacingCtx(ctx context.Context, bank string, entries []
 
 // DeleteDocument removes every row of one document from a bank and reports
 // how many rows went. A missing bank or unknown document deletes nothing.
-func (m *Memory) DeleteDocument(bank, documentID string) (int, error) {
-	return m.DeleteDocumentCtx(context.Background(), bank, documentID)
-}
-
-// DeleteDocumentCtx is DeleteDocument with the caller's context (see
-// SessionRetainCtx).
-func (m *Memory) DeleteDocumentCtx(ctx context.Context, bank, documentID string) (int, error) {
+func (m *Memory) DeleteDocument(ctx context.Context, bank, documentID string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if strings.TrimSpace(documentID) == "" {
 		return 0, nil
 	}
@@ -684,18 +669,16 @@ func (m *Memory) appendBankLocked(bank string, entries []Entry) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	for i := range entries {
-		e := entries[i]
-		e.Content = Redact(e.Content)
-		if e.Metadata == nil {
-			// Share the map with the caller's entry, so the indexed row
-			// carries the same content id the file does.
+		// Redact the caller's row in place: the file and the index (built
+		// from entries below) must both hold the redacted form.
+		entries[i] = redactEntry(entries[i])
+		if entries[i].Metadata == nil {
 			entries[i].Metadata = map[string]any{}
-			e.Metadata = entries[i].Metadata
 		}
-		if _, ok := e.Metadata["content_id"]; !ok {
-			e.Metadata["content_id"] = contentDocumentID(e.Content)
+		if _, ok := entries[i].Metadata["content_id"]; !ok {
+			entries[i].Metadata["content_id"] = contentDocumentID(entries[i].Content)
 		}
-		if err := enc.Encode(e); err != nil {
+		if err := enc.Encode(entries[i]); err != nil {
 			return fmt.Errorf("memory: encode entry: %w", err)
 		}
 	}
@@ -735,13 +718,8 @@ func (m *Memory) bankCursor(bank string) int {
 // Recall returns up to limit entries scored by query-token overlap from one
 // bank. Zero-match entries never surface. limit <= 0 means 8 (OMP recall
 // limit).
-func (m *Memory) Recall(bank, query string, limit int) ([]Entry, error) {
-	return m.RecallBanksCtx(context.Background(), []string{bank}, query, limit)
-}
-
-// RecallCtx is Recall with the caller's context (see SessionRetainCtx).
-func (m *Memory) RecallCtx(ctx context.Context, bank, query string, limit int) ([]Entry, error) {
-	return m.RecallBanksCtx(ctx, []string{bank}, query, limit)
+func (m *Memory) Recall(ctx context.Context, bank, query string, limit int) ([]Entry, error) {
+	return m.RecallBanks(ctx, []string{bank}, query, limit)
 }
 
 // RecallBanks merges ranked recall across banks in order (Rust
@@ -749,26 +727,19 @@ func (m *Memory) RecallCtx(ctx context.Context, bank, query string, limit int) (
 // unique-query-token overlap, zero-match rows never surface, and the merged
 // set is ranked score-descending (stable — bank order breaks ties, matching
 // the reference's append-then-sort). Missing banks read as empty.
-func (m *Memory) RecallBanks(banks []string, query string, limit int) ([]Entry, error) {
-	return m.RecallBanksCtx(context.Background(), banks, query, limit)
-}
-
-// RecallBanksCtx is RecallBanks with the caller's context (see
-// SessionRetainCtx).
-func (m *Memory) RecallBanksCtx(ctx context.Context, banks []string, query string, limit int) ([]Entry, error) {
-	return m.RecallFilteredCtx(ctx, banks, query, limit, nil)
+func (m *Memory) RecallBanks(ctx context.Context, banks []string, query string, limit int) ([]Entry, error) {
+	return m.RecallFiltered(ctx, banks, query, limit, nil)
 }
 
 // RecallFiltered is RecallBanks with an eligibility filter applied BEFORE
 // ranking and the limit, so a scope filter (hindsight tags) narrows the
 // candidate set instead of an already-truncated page. A nil keep admits all.
-func (m *Memory) RecallFiltered(banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
-	return m.RecallFilteredCtx(context.Background(), banks, query, limit, keep)
-}
-
-// RecallFilteredCtx is RecallFiltered with the caller's context: every recall
-// ends here, so this is the one place a recall event is recorded.
-func (m *Memory) RecallFilteredCtx(ctx context.Context, banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
+// Every recall ends here, so this is the one place a recall event is recorded.
+// A cancelled ctx returns ctx.Err() and records nothing.
+func (m *Memory) RecallFiltered(ctx context.Context, banks []string, query string, limit int, keep func(Entry) bool) ([]Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 8
 	}
@@ -776,8 +747,13 @@ func (m *Memory) RecallFilteredCtx(ctx context.Context, banks []string, query st
 	// RS-18: bm25 over the index (porter stemming, accent folding, stopwords
 	// dropped from the query) instead of raw unique-token overlap over a full
 	// JSONL scan, where a row of stopwords outranked real content.
-	rows, denseIDs, err := m.recallIndexed(banks, query, limit, keep)
+	rows, denseIDs, err := m.recallIndexed(ctx, banks, query, limit, keep)
 	if err != nil {
+		return nil, err
+	}
+	// The dense arm swallows its own errors, so a cancel that landed during
+	// it is re-checked here: no partial result is returned or recorded.
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	recordRecall(ctx, banks, query, limit, rows, denseIDs, start)
@@ -829,7 +805,7 @@ func (m *Memory) recentBanksCounting(banks []string, limit int) ([]Entry, int, e
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
-	return rows, total, nil
+	return redactEntries(rows), total, nil
 }
 
 // InjectBlock renders ranked recall rows as the <memories>-equivalent

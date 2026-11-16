@@ -225,7 +225,7 @@ func CheckStore(ctx context.Context, o Options, dir string) (StoreStatus, error)
 		return st, err
 	}
 	st.StorePath = storePath(o.engine(), child, dir)
-	root, ok, kerr := child.KVGet(rootKVNamespace, rootKVKey)
+	root, ok, kerr := child.KVGet(ctx, rootKVNamespace, rootKVKey)
 	_ = child.Close()
 	if kerr != nil {
 		st.Reason = StoreUnreadable

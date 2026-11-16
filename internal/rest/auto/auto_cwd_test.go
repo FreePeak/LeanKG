@@ -29,22 +29,21 @@ func TestAutoConfigRefusesCwdOutsideServedProject(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	st, err := store.OpenBackend(context.Background(), served, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: served, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, mem, nil)
-	eng.SetProjectDir(served)
+	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
-	h := RegisterAutoConfig(http.NewServeMux(), eng)
+	h := gatedAutoConfig(http.NewServeMux(), eng)
 	body, _ := json.Marshal(AutoConfigRequest{IndexEnabled: true, CWD: caller})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -71,22 +70,21 @@ func TestAutoConfigNoCWDKeepsServingDefault(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(served, ".leankg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.OpenBackend(context.Background(), served, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: served, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, mem, nil)
-	eng.SetProjectDir(served)
+	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
-	h := RegisterAutoConfig(http.NewServeMux(), eng)
+	h := gatedAutoConfig(http.NewServeMux(), eng)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader([]byte(`{}`)))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -114,22 +112,21 @@ func TestAutoConfigCwdInsideServedProject(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.OpenBackend(context.Background(), served, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: served, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(filepath.Join(served, ".leankg"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, mem, nil)
-	eng.SetProjectDir(served)
+	eng := core.New(st, core.Options{Memory: mem, ProjectDir: served})
 
-	h := RegisterAutoConfig(http.NewServeMux(), eng)
+	h := gatedAutoConfig(http.NewServeMux(), eng)
 	body, _ := json.Marshal(AutoConfigRequest{CWD: sub})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/auto-config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()

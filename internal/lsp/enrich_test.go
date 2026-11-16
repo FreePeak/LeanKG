@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,15 +10,15 @@ import (
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-func newTestStore(t *testing.T) (string, *store.Store) {
+func newTestStore(t *testing.T) (string, store.Backend) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return dir, st
@@ -47,16 +48,16 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 		{QualifiedName: "b.go::Main", ElementType: "function", Name: "Main", FilePath: "b.go",
 			LineStart: 1, LineEnd: 3, Language: "go", Content: "func Main() {}"},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(context.Background(), els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{{
 		Source: "b.go::Main", Target: "a.go::Handle", RelType: "calls", Confidence: 0.5,
 	}}); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
@@ -134,7 +135,7 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 	}
 
 	// The CALLS edge was upgraded by the in-process tier.
-	rels, err := st.RelationshipsAll(10)
+	rels, err := st.RelationshipsAll(context.Background(), 10)
 	if err != nil || len(rels) != 1 {
 		t.Fatalf("relationships = %v (%v)", rels, err)
 	}
@@ -146,7 +147,7 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 	}
 
 	// Empty want list = every language present in the index.
-	res, err = Enrich(st, dir, nil)
+	res, err = Enrich(context.Background(), st, dir, nil)
 	if err != nil {
 		t.Fatalf("Enrich(all): %v", err)
 	}
@@ -161,13 +162,13 @@ func TestEnrichMergesLSPSymbolsIntoElements(t *testing.T) {
 func TestEnrichWithoutServerIsNoOp(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // nothing on PATH: no catalog server resolves
 	dir, st := newTestStore(t)
-	if err := st.UpsertElements([]store.Element{elem(
+	if err := st.UpsertElements(context.Background(), []store.Element{elem(
 		"main.rs::boot", "function", "boot", "main.rs", "rust", "",
 	)}); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"rust"})
+	res, err := Enrich(context.Background(), st, dir, []string{"rust"})
 	if err != nil {
 		t.Fatalf("Enrich err = %v, want nil (graceful absence)", err)
 	}
@@ -194,19 +195,19 @@ func TestEnrichTypedResolveOffByDefault(t *testing.T) {
 	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  servers:\n    go:\n      command: fake-lsp\n")
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
 			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{
+	if err := st.UpsertRelationships(context.Background(), []store.Relationship{{
 		Source: "a.go::Handle", Target: "a.go::Handle", RelType: "calls", Confidence: 0.5,
 	}}); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
@@ -216,7 +217,7 @@ func TestEnrichTypedResolveOffByDefault(t *testing.T) {
 	if res.CallsUpgraded != 0 {
 		t.Errorf("CallsUpgraded = %d, want 0 with typed_resolve unset", res.CallsUpgraded)
 	}
-	rels, err := st.RelationshipsAll(10)
+	rels, err := st.RelationshipsAll(context.Background(), 10)
 	if err != nil || len(rels) != 1 {
 		t.Fatalf("relationships = %v (%v)", rels, err)
 	}
@@ -234,7 +235,7 @@ func TestEnrichAcceptsRegistryActiveLanguages(t *testing.T) {
 	writeFile(t, dir, "a.go", "package scratch\n\nfunc Handle(x int) error { return nil }\n")
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  servers:\n    go:\n      command: fake-lsp\n")
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
 			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
 	}); err != nil {
@@ -242,14 +243,14 @@ func TestEnrichAcceptsRegistryActiveLanguages(t *testing.T) {
 	}
 
 	reg := langs.NewRegistry()
-	if _, err := reg.Activate(dir); err != nil {
+	if _, err := reg.Activate(context.Background(), dir); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
 	var active []string
 	for _, l := range reg.Active() {
 		active = append(active, string(l))
 	}
-	res, err := Enrich(st, dir, active)
+	res, err := Enrich(context.Background(), st, dir, active)
 	if err != nil {
 		t.Fatalf("Enrich(%v): %v", active, err)
 	}
@@ -263,13 +264,13 @@ func TestEnrichConfiguredButMissingServerIsNoOp(t *testing.T) {
 	dir, st := newTestStore(t)
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  servers:\n    go:\n      command: not-a-real-lsp-binary\n")
-	if err := st.UpsertElements([]store.Element{elem(
+	if err := st.UpsertElements(context.Background(), []store.Element{elem(
 		"main.go::main", "function", "main", "main.go", "go", "",
 	)}); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich err = %v, want nil", err)
 	}
@@ -283,7 +284,7 @@ func TestEnrichConfiguredButMissingServerIsNoOp(t *testing.T) {
 
 func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatalf("FindExact(%s): %v", qn, err)
 	}
@@ -302,13 +303,13 @@ func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 func TestEnrichExpandedLanguageWithoutServerIsGraceful(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	dir, st := newTestStore(t)
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		elem("Program.cs::Main", "function", "Main", "Program.cs", "csharp", ""),
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"csharp"})
+	res, err := Enrich(context.Background(), st, dir, []string{"csharp"})
 	if err != nil {
 		t.Fatalf("Enrich err = %v, want nil", err)
 	}
@@ -334,14 +335,14 @@ func TestEnrichHandshakeOutlivesRequestTimeout(t *testing.T) {
 	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  timeout_ms: 500\n  servers:\n    go:\n      command: fake-lsp\n")
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
 			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}
@@ -359,14 +360,14 @@ func TestEnrichRecordsFirstFailureReason(t *testing.T) {
 	writeFile(t, dir, "a.go", "package a\n\nfunc Handle(x int) error { return nil }\n")
 	writeFile(t, dir, "leankg.yaml",
 		"lsp:\n  servers:\n    go:\n      command: fake-lsp\n")
-	if err := st.UpsertElements([]store.Element{
+	if err := st.UpsertElements(context.Background(), []store.Element{
 		{QualifiedName: "a.go::Handle", ElementType: "function", Name: "Handle", FilePath: "a.go",
 			LineStart: 3, LineEnd: 7, Language: "go", Content: "func Handle(x int) error {"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := Enrich(st, dir, []string{"go"})
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
 	if err != nil {
 		t.Fatalf("Enrich: %v", err)
 	}

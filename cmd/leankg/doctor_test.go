@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,14 +22,14 @@ func doctorProject(t *testing.T, broken bool) string {
 		t.Fatal(err)
 	}
 	if broken {
-		st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+		st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer st.Close()
 		// A dangling edge: the target element is not indexed (the
 		// delete-then-stale production path the orphan check exists for).
-		if err := st.UpsertRelationships([]store.Relationship{
+		if err := st.UpsertRelationships(context.Background(), []store.Relationship{
 			{Source: "pkg.Hello", Target: "pkg.Ghost", RelType: "calls"},
 		}); err != nil {
 			t.Fatal(err)

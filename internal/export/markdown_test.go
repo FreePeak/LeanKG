@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -250,7 +251,7 @@ func TestMarkdownClusterDetails(t *testing.T) {
 
 func TestCollectMarkdownFromStore(t *testing.T) {
 	st := newFixture(t, testFixElements, testFixRels)
-	doc, err := CollectMarkdown(st, "demo", testTS)
+	doc, err := CollectMarkdown(context.Background(), st, "demo", testTS)
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -296,7 +297,7 @@ func TestExportMarkdownWritesArtifact(t *testing.T) {
 	st := newFixture(t, testFixElements, testFixRels)
 	project := t.TempDir()
 
-	res, err := ExportMarkdown(st, project, "")
+	res, err := ExportMarkdown(context.Background(), st, project, "")
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -316,7 +317,7 @@ func TestExportMarkdownWritesArtifact(t *testing.T) {
 	}
 
 	// A relative --out anchors on the project root and creates its parents.
-	res, err = ExportMarkdown(st, project, "docs/graph.md")
+	res, err = ExportMarkdown(context.Background(), st, project, "docs/graph.md")
 	if err != nil {
 		t.Fatalf("export rel: %v", err)
 	}
@@ -330,7 +331,7 @@ func TestExportMarkdownWritesArtifact(t *testing.T) {
 
 func mustCollect(t *testing.T, st store.Backend) *MarkdownDoc {
 	t.Helper()
-	doc, err := CollectMarkdown(st, "demo", testTS)
+	doc, err := CollectMarkdown(context.Background(), st, "demo", testTS)
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}

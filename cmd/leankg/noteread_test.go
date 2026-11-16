@@ -23,25 +23,25 @@ import (
 // for lessons.
 func TestNoteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	k := orgknowledge.New(st)
 	const target = "pkg.Service.Handle"
-	if _, err := k.AddNote(target, "rotate the key before shipping", "local", "tester"); err != nil {
+	if _, err := k.AddNote(context.Background(), target, "rotate the key before shipping", "local", "tester"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := k.AddNote("pkg.Other", "unrelated note", "local", "tester"); err != nil {
+	if _, err := k.AddNote(context.Background(), "pkg.Other", "unrelated note", "local", "tester"); err != nil {
 		t.Fatal(err)
 	}
 
 	// The reader the CLI now calls.
-	notes, err := k.NotesFor(target)
+	notes, err := k.NotesFor(context.Background(), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestNoteReadRoundTrip(t *testing.T) {
 		t.Errorf("note content lost: %q", notes[0].Content)
 	}
 	// An unknown target is an honest empty, never an error.
-	none, err := k.NotesFor("pkg.Nothing")
+	none, err := k.NotesFor(context.Background(), "pkg.Nothing")
 	if err != nil {
 		t.Fatalf("unknown target errored: %v", err)
 	}
@@ -69,26 +69,26 @@ func TestNoteVerbListsWhenContentIsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Seed through the store the verb will open.
-	st, err := store.OpenBackend(context.Background(), dir, store.EngineSQLite, "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: store.EngineSQLite, PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orgknowledge.New(st).AddNote("leankg", "zz-note-verb probe", "local", "tester"); err != nil {
+	if _, err := orgknowledge.New(st).AddNote(context.Background(), "leankg", "zz-note-verb probe", "local", "tester"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	out := captureStdout(t, func() { cmdNote([]string{"--project", dir, "--target", "leankg"}) })
+	out := captureStdout(t, func() { cmdNote(context.Background(), []string{"--project", dir, "--target", "leankg"}) })
 	if !strings.Contains(out, "zz-note-verb probe") {
 		t.Errorf("note list did not print the note it stored: %q", out)
 	}
 	// A target with no notes says so rather than printing nothing at all.
-	out = captureStdout(t, func() { cmdNote([]string{"--project", dir, "--target", "no-such-target"}) })
+	out = captureStdout(t, func() { cmdNote(context.Background(), []string{"--project", dir, "--target", "no-such-target"}) })
 	if !strings.Contains(out, "no-such-target") {
 		t.Errorf("empty list is silent: %q", out)
 	}

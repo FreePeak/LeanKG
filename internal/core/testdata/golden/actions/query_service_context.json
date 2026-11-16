@@ -1,0 +1,16 @@
+{
+  "called_by": [],
+  "calls": [],
+  "env": "prod",
+  "known_risks": [],
+  "language": null,
+  "last_incident": null,
+  "on_call": null,
+  "open_incidents": 0,
+  "recent_incidents": [],
+  "repo_url": null,
+  "schemas": [],
+  "service": "svc-a",
+  "team": null,
+  "version": null
+}

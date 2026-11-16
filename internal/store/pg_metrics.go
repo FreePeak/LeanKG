@@ -5,15 +5,18 @@
 // boolean literals.
 package store
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // RecordMetric appends one context_metrics row (Rust db::record_metric). A
 // read-only backend no-ops with a nil error, like the sqlite implementation.
-func (s *PGStore) RecordMetric(m Metric) error {
+func (s *PGStore) RecordMetric(ctx context.Context, m Metric) error {
 	if s.mode == RO {
 		return nil
 	}
-	if _, err := s.pool.Exec(pgCtx, `INSERT INTO context_metrics (`+metricWriteCols+`) VALUES (`+
+	if _, err := s.pool.Exec(ctx, `INSERT INTO context_metrics (`+metricWriteCols+`) VALUES (`+
 		sqlPlaceholders(metricColumnCount, true)+`)`, metricValues(m)...); err != nil {
 		return fmt.Errorf("store: record metric %s: %w", m.ToolName, err)
 	}
@@ -22,7 +25,7 @@ func (s *PGStore) RecordMetric(m Metric) error {
 
 // metricRows reads one live window (soft-deleted rows excluded, ascending by
 // timestamp then tool name).
-func (s *PGStore) metricRows(tool string, sinceCutoff int64) ([]Metric, error) {
+func (s *PGStore) metricRows(ctx context.Context, tool string, sinceCutoff int64) ([]Metric, error) {
 	q := `SELECT ` + metricReadCols + ` FROM context_metrics WHERE is_deleted = FALSE AND timestamp >= $1`
 	args := []any{sinceCutoff}
 	if tool != "" {
@@ -30,7 +33,7 @@ func (s *PGStore) metricRows(tool string, sinceCutoff int64) ([]Metric, error) {
 		args = append(args, tool)
 	}
 	q += ` ORDER BY timestamp, tool_name`
-	rows, err := s.pool.Query(pgCtx, q, args...)
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: metrics window: %w", err)
 	}
@@ -40,8 +43,8 @@ func (s *PGStore) metricRows(tool string, sinceCutoff int64) ([]Metric, error) {
 
 // MetricsSummary reports the last retentionDays of the ledger, optionally for
 // one tool (empty = every tool).
-func (s *PGStore) MetricsSummary(tool string, retentionDays int) (MetricSummary, error) {
-	rows, err := s.metricRows(tool, metricsCutoff(retentionDays))
+func (s *PGStore) MetricsSummary(ctx context.Context, tool string, retentionDays int) (MetricSummary, error) {
+	rows, err := s.metricRows(ctx, tool, metricsCutoff(retentionDays))
 	if err != nil {
 		return MetricSummary{}, err
 	}
@@ -50,8 +53,8 @@ func (s *PGStore) MetricsSummary(tool string, retentionDays int) (MetricSummary,
 
 // UsageAggregates returns the H10/FR-PLG-8 buckets; sinceCutoff == 0 means all
 // time.
-func (s *PGStore) UsageAggregates(sinceCutoff int64) (UsageAggregates, error) {
-	rows, err := s.metricRows("", sinceCutoff)
+func (s *PGStore) UsageAggregates(ctx context.Context, sinceCutoff int64) (UsageAggregates, error) {
+	rows, err := s.metricRows(ctx, "", sinceCutoff)
 	if err != nil {
 		return UsageAggregates{}, err
 	}
@@ -60,32 +63,32 @@ func (s *PGStore) UsageAggregates(sinceCutoff int64) (UsageAggregates, error) {
 
 // CleanupMetrics deletes rows older than retentionDays and reports how many
 // went. Soft-deleted rows are purged too (retention sweep, not a view filter).
-func (s *PGStore) CleanupMetrics(retentionDays int) (int64, error) {
+func (s *PGStore) CleanupMetrics(ctx context.Context, retentionDays int) (int64, error) {
 	cutoff := metricsCutoff(retentionDays)
 	var n int64
-	if err := s.pool.QueryRow(pgCtx,
+	if err := s.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM context_metrics WHERE timestamp < $1`, cutoff).Scan(&n); err != nil {
 		return 0, fmt.Errorf("store: count metrics before cleanup: %w", err)
 	}
 	if n == 0 {
 		return 0, nil
 	}
-	if _, err := s.pool.Exec(pgCtx, `DELETE FROM context_metrics WHERE timestamp < $1`, cutoff); err != nil {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM context_metrics WHERE timestamp < $1`, cutoff); err != nil {
 		return 0, fmt.Errorf("store: cleanup metrics: %w", err)
 	}
 	return n, nil
 }
 
 // ResetMetrics deletes the whole ledger and reports how many rows went.
-func (s *PGStore) ResetMetrics() (int64, error) {
+func (s *PGStore) ResetMetrics(ctx context.Context) (int64, error) {
 	var n int64
-	if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM context_metrics`).Scan(&n); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM context_metrics`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("store: count metrics for reset: %w", err)
 	}
 	if n == 0 {
 		return 0, nil
 	}
-	if _, err := s.pool.Exec(pgCtx, `DELETE FROM context_metrics`); err != nil {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM context_metrics`); err != nil {
 		return 0, fmt.Errorf("store: reset metrics: %w", err)
 	}
 	return n, nil

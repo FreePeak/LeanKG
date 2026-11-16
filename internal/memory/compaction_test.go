@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -52,7 +53,7 @@ func TestCompactRewritesTheBankFile(t *testing.T) {
 	if _, err := os.Stat(m.bankPath("bank") + ".tmp"); !os.IsNotExist(err) {
 		t.Fatalf("temp file left behind: %v", err)
 	}
-	got, err := m.Recall("bank", "postgres vectors", 5)
+	got, err := m.Recall(context.Background(), "bank", "postgres vectors", 5)
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}

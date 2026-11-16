@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/FreePeak/LeanKG/internal/telemetry"
@@ -66,22 +67,33 @@ type CaptureHandler struct {
 // built after startup without rebuilding the handler chain; a level raise that
 // reached nobody was the bug this holder exists to prevent.
 type RecorderHolder struct {
+	mu  sync.RWMutex
 	rec telemetry.Recorder
 }
 
 // SetRecorder hands the holder a new recorder; nil means Nop. Safe to call
-// while requests are in flight — a handler reads the field per request.
+// while requests are in flight: the swap and each request's read are ordered
+// by mu.
 func (h *RecorderHolder) SetRecorder(rec telemetry.Recorder) {
 	if rec == nil {
 		rec = telemetry.Nop{}
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.rec = rec
 }
 
-func (h *RecorderHolder) Level() telemetry.Level { return h.rec.Level() }
+// current returns the recorder in force now. A request takes it once, so its
+// level check and its row go to the same sink even if a reload lands mid-call.
+func (h *RecorderHolder) current() telemetry.Recorder {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.rec
+}
 
 func (c *CaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if c.rec.Level() == telemetry.Off {
+	rec := c.rec.current()
+	if rec.Level() == telemetry.Off {
 		c.next.ServeHTTP(w, r)
 		return
 	}
@@ -132,7 +144,7 @@ func (c *CaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ev.Freshness = cls.Freshness
 	ev.Hits = cls.Hits
 	ev.HitFiles = strings.Join(cls.HitFiles, "\n")
-	if c.rec.rec.Level() == telemetry.Bodies {
+	if rec.Level() == telemetry.Bodies {
 		if raw != nil {
 			ev.ArgsRedacted = telemetry.Cap(telemetry.Redact(string(raw)), telemetry.DefaultMaxBodyBytes)
 		}
@@ -140,7 +152,7 @@ func (c *CaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ev.BodyRedacted = telemetry.Cap(telemetry.Redact(string(cw.body)), telemetry.DefaultMaxBodyBytes)
 		}
 	}
-	c.rec.rec.RecordCall(ev)
+	rec.RecordCall(ev)
 }
 
 // captureBody is the subset of a request body the row records.

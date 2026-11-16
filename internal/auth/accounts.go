@@ -9,6 +9,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
@@ -160,7 +161,7 @@ func newID() (string, error) {
 // Register creates an account plus its bootstrap org owned by that account,
 // with the account as the org's owner member. Duplicate emails and passwords
 // shorter than 8 characters are rejected (Rust AccountStore::register).
-func Register(st store.Backend, email, password, name string) (store.Account, error) {
+func Register(ctx context.Context, st Store, email, password, name string) (store.Account, error) {
 	email = NormalizeEmail(email)
 	if !strings.Contains(email, "@") {
 		return store.Account{}, errors.New("invalid email")
@@ -168,7 +169,7 @@ func Register(st store.Backend, email, password, name string) (store.Account, er
 	if err := ValidatePassword(password); err != nil {
 		return store.Account{}, err
 	}
-	if _, found, err := st.AccountByEmail(email); err != nil {
+	if _, found, err := st.AccountByEmail(ctx, email); err != nil {
 		return store.Account{}, err
 	} else if found {
 		return store.Account{}, fmt.Errorf("account already exists: %s", email)
@@ -191,35 +192,26 @@ func Register(st store.Backend, email, password, name string) (store.Account, er
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := st.AccountUpsert(account); err != nil {
+	if err := st.AccountUpsert(ctx, account); err != nil {
 		return store.Account{}, err
 	}
-	if _, err := CreateOrg(st, name+"'s org", account.ID); err != nil {
+	if _, err := CreateOrg(ctx, st, name+"'s org", account.ID); err != nil {
 		return store.Account{}, err
 	}
 	return account, nil
 }
 
-// VerifyLogin checks credentials and returns the account. Email matching is
-// case-insensitive; a wrong password and an unknown account are distinct
-// errors (Rust verify_login).
-func VerifyLogin(st store.Backend, email, password string) (store.Account, error) {
-	account, found, err := st.AccountByEmail(NormalizeEmail(email))
-	if err != nil {
-		return store.Account{}, err
-	}
-	if !found {
-		return store.Account{}, fmt.Errorf("no account for %s", email)
-	}
-	if !VerifyPassword(password, account.PasswordHash) {
-		return store.Account{}, errors.New("invalid password")
-	}
-	return account, nil
+// VerifyLogin checks credentials for the REST login and returns the account.
+// Email matching is case-insensitive. A wrong password and an unknown account
+// return the same error, at comparable cost, and repeated failures are
+// throttled (see verifyLogin). Port of Rust verify_login.
+func VerifyLogin(ctx context.Context, st Store, email, password string) (store.Account, error) {
+	return verifyLogin(ctx, loginThrottle, st, email, password, false)
 }
 
 // CreateOrg creates an org owned by ownerAccountID and adds that account as
 // its owner member (Rust AccountStore::create_org).
-func CreateOrg(st store.Backend, name, ownerAccountID string) (store.Org, error) {
+func CreateOrg(ctx context.Context, st Store, name, ownerAccountID string) (store.Org, error) {
 	now := time.Now().Unix()
 	id, err := newID()
 	if err != nil {
@@ -232,10 +224,10 @@ func CreateOrg(st store.Backend, name, ownerAccountID string) (store.Org, error)
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	if err := st.OrgUpsert(org); err != nil {
+	if err := st.OrgUpsert(ctx, org); err != nil {
 		return store.Org{}, err
 	}
-	if err := st.OrgMembershipUpsert(store.OrgMember{
+	if err := st.OrgMembershipUpsert(ctx, store.OrgMember{
 		OrgID:     org.ID,
 		AccountID: ownerAccountID,
 		Role:      OrgRoleOwner,
@@ -248,7 +240,7 @@ func CreateOrg(st store.Backend, name, ownerAccountID string) (store.Org, error)
 
 // AddOrgMember adds or re-roles an org member. The role must be one of the
 // four org roles (Rust add_member).
-func AddOrgMember(st store.Backend, orgID, accountID, role string) (store.OrgMember, error) {
+func AddOrgMember(ctx context.Context, st Store, orgID, accountID, role string) (store.OrgMember, error) {
 	if !ValidOrgRole(role) {
 		return store.OrgMember{}, fmt.Errorf("invalid role %q", role)
 	}
@@ -258,7 +250,7 @@ func AddOrgMember(st store.Backend, orgID, accountID, role string) (store.OrgMem
 		Role:      role,
 		JoinedAt:  time.Now().Unix(),
 	}
-	if err := st.OrgMembershipUpsert(member); err != nil {
+	if err := st.OrgMembershipUpsert(ctx, member); err != nil {
 		return store.OrgMember{}, err
 	}
 	return member, nil
@@ -266,8 +258,8 @@ func AddOrgMember(st store.Backend, orgID, accountID, role string) (store.OrgMem
 
 // OrgRoleSufficient reports whether accountID holds required or a higher org
 // role in orgID. A non-member is never sufficient (Rust org_role_sufficient).
-func OrgRoleSufficient(st store.Backend, orgID, accountID, required string) (bool, error) {
-	member, found, err := st.OrgMemberOf(orgID, accountID)
+func OrgRoleSufficient(ctx context.Context, st Store, orgID, accountID, required string) (bool, error) {
+	member, found, err := st.OrgMemberOf(ctx, orgID, accountID)
 	if err != nil || !found {
 		return false, err
 	}
@@ -276,12 +268,12 @@ func OrgRoleSufficient(st store.Backend, orgID, accountID, required string) (boo
 
 // ClaimResource records that ownerAccountID owns a resource (Rust
 // AccountStore::claim_resource).
-func ClaimResource(st store.Backend, resourceType, resourceID, ownerAccountID, orgID string) error {
-	return st.ResourceClaim(resourceType, resourceID, ownerAccountID, orgID)
+func ClaimResource(ctx context.Context, st Store, resourceType, resourceID, ownerAccountID, orgID string) error {
+	return st.ResourceClaim(ctx, resourceType, resourceID, ownerAccountID, orgID)
 }
 
 // IsResourceOwner reports whether accountID owns the resource (Rust
 // AccountStore::is_resource_owner).
-func IsResourceOwner(st store.Backend, resourceType, resourceID, accountID string) (bool, error) {
-	return st.IsResourceOwner(resourceType, resourceID, accountID)
+func IsResourceOwner(ctx context.Context, st Store, resourceType, resourceID, accountID string) (bool, error) {
+	return st.IsResourceOwner(ctx, resourceType, resourceID, accountID)
 }

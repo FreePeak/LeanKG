@@ -11,21 +11,21 @@ import (
 )
 
 // setupStore opens a migrated SQLite store under a fresh temp project dir.
-func setupStore(t *testing.T) (string, *store.Store) {
+func setupStore(t *testing.T) (string, store.Backend) {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return dir, st
 }
 
-func indexDocs(t *testing.T, st *store.Store, dir string) Result {
+func indexDocs(t *testing.T, st store.Backend, dir string) Result {
 	t.Helper()
 	res, err := IndexDocs(context.Background(), st, dir)
 	if err != nil {
@@ -46,9 +46,9 @@ func writeFile(t *testing.T, dir, rel, content string) {
 }
 
 // mustFind asserts exactly one element with the given qualified name.
-func mustFind(t *testing.T, st *store.Store, qn string) store.Element {
+func mustFind(t *testing.T, st store.Backend, qn string) store.Element {
 	t.Helper()
-	els, err := st.FindExact(qn)
+	els, err := st.FindExact(context.Background(), qn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestIndexDocsSections(t *testing.T) {
 	}
 
 	// contains edges from the section hierarchy, confidence 1.0.
-	rels, err := st.Outgoing("guide.md#guide")
+	rels, err := st.Outgoing(context.Background(), "guide.md#guide")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestIndexDocsSections(t *testing.T) {
 			t.Fatalf("edge %+v, want contains@1.0", r)
 		}
 	}
-	rels, err = st.Outgoing("guide.md#install")
+	rels, err = st.Outgoing(context.Background(), "guide.md#install")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +180,10 @@ func TestIndexDocsChangeDetection(t *testing.T) {
 		t.Fatalf("changed run: %+v, want Files=1 Elements=1 Skipped=0", res)
 	}
 	mustFind(t, st, "doc.md#two")
-	if els, err := st.FindExact("doc.md#one"); err != nil || len(els) != 0 {
+	if els, err := st.FindExact(context.Background(), "doc.md#one"); err != nil || len(els) != 0 {
 		t.Fatalf("stale element after re-index: %v, %v", els, err)
 	}
-	if n, _ := st.ElementCount(); n != 1 {
+	if n, _ := st.ElementCount(context.Background()); n != 1 {
 		t.Fatalf("element count: %d, want 1", n)
 	}
 }
@@ -204,13 +204,13 @@ func TestIndexDocsDeletion(t *testing.T) {
 	if res.Skipped != 1 || res.Files != 0 {
 		t.Fatalf("deletion run: %+v, want Skipped=1 Files=0", res)
 	}
-	if n, _ := st.ElementCount(); n != 1 {
+	if n, _ := st.ElementCount(context.Background()); n != 1 {
 		t.Fatalf("element count after deletion: %d, want 1", n)
 	}
-	if n, _ := st.FileCount(); n != 1 {
+	if n, _ := st.FileCount(context.Background()); n != 1 {
 		t.Fatalf("file count after deletion: %d, want 1", n)
 	}
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestIndexDocsDeletion(t *testing.T) {
 			t.Fatal("stale code_files row for deleted file")
 		}
 	}
-	if els, err := st.FindExact("gone.md#gone"); err != nil || len(els) != 0 {
+	if els, err := st.FindExact(context.Background(), "gone.md#gone"); err != nil || len(els) != 0 {
 		t.Fatalf("stale element + FTS rows after deletion: %v, %v", els, err)
 	}
 }
@@ -246,10 +246,10 @@ func TestIndexDocsSkipList(t *testing.T) {
 func TestIndexDocsScopedToMarkdown(t *testing.T) {
 	dir, st := setupStore(t)
 	writeFile(t, dir, "doc.md", "# Doc\nx\n")
-	if err := st.UpsertFiles([]store.FileRecord{{Path: "src.go", Size: 10, MtimeNS: 1, ContentHash: "deadbeef"}}); err != nil {
+	if err := st.UpsertFiles(context.Background(), []store.FileRecord{{Path: "src.go", Size: 10, MtimeNS: 1, ContentHash: "deadbeef"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "src.go::Widget", Name: "Widget", ElementType: "function",
 		FilePath: "src.go", Language: "go", LineStart: 1, LineEnd: 2,
 	}}); err != nil {
@@ -261,7 +261,7 @@ func TestIndexDocsScopedToMarkdown(t *testing.T) {
 	}
 
 	kept := false
-	recs, err := st.Files()
+	recs, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestIndexDocsHeadinglessFile(t *testing.T) {
 	if res.Files != 1 || res.Elements != 0 {
 		t.Fatalf("run: %+v, want Files=1 Elements=0", res)
 	}
-	if n, _ := st.FileCount(); n != 1 {
+	if n, _ := st.FileCount(context.Background()); n != 1 {
 		t.Fatalf("file count: %d, want 1", n)
 	}
 }
@@ -333,7 +333,7 @@ func TestIndexDocsUnderKeepsRootKeysAndScope(t *testing.T) {
 	if _, err := IndexDocsUnder(context.Background(), st, dir, filepath.Join(dir, "docs")); err != nil {
 		t.Fatal(err)
 	}
-	files, err := st.Files()
+	files, err := st.Files(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

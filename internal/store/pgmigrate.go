@@ -9,7 +9,10 @@
 // "best-effort" must stay outside.
 package store
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // pgMigration is one versioned step of the PostgreSQL layout.
 type pgMigration struct {
@@ -471,44 +474,53 @@ CREATE INDEX IF NOT EXISTS idx_accounts_site_admin ON accounts (site_admin) WHER
 `},
 }
 
+// AppliedMigrations is the PostgreSQL twin of (*Store).AppliedMigrations.
+func (s *PGStore) AppliedMigrations(ctx context.Context) ([]int, error) {
+	rows, err := s.pool.Query(ctx, appliedMigrationsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("store: applied migrations: %w", err)
+	}
+	defer rows.Close()
+	return collectVersions(rows)
+}
+
 // Migrate applies all pending migrations (RW only). Migrations are applied in
 // order and recorded in schema_migrations; each runs inside one transaction.
-func (s *PGStore) Migrate() error {
-	if s.mode == RO {
-		return fmt.Errorf("store: migrate requires RW mode")
+func (s *PGStore) Migrate(ctx context.Context) error {
+	if err := migrateModeError(s.mode); err != nil {
+		return err
 	}
-	if _, err := s.pool.Exec(pgCtx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
+	if _, err := s.pool.Exec(ctx, schemaMigrationsDDL); err != nil {
 		return fmt.Errorf("store: ensure schema_migrations: %w", err)
 	}
 	for _, m := range pgMigrations {
 		var done int
-		if err := s.pool.QueryRow(pgCtx, `SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, m.version).Scan(&done); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, m.version).Scan(&done); err != nil {
 			return err
 		}
 		if done == 1 {
 			continue
 		}
 		for _, stmt := range m.bestEffort {
-			_, _ = s.pool.Exec(pgCtx, stmt) // optional: extension may be unavailable; must not fail the migration
+			_, _ = s.pool.Exec(ctx, stmt) // optional: extension may be unavailable; must not fail the migration
 		}
 		if m.ddl != "" {
-			tx, err := s.pool.Begin(pgCtx)
+			tx, err := s.pool.Begin(ctx)
 			if err != nil {
 				return err
 			}
-			if _, err := tx.Exec(pgCtx, m.ddl); err != nil {
-				_ = tx.Rollback(pgCtx)
+			if _, err := tx.Exec(ctx, m.ddl); err != nil {
+				_ = tx.Rollback(ctx)
 				return fmt.Errorf("store: migration %03d %s: %w", m.version, m.name, err)
 			}
-			if _, err := tx.Exec(pgCtx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, `+pgNow+`)`, m.version, m.name); err != nil {
-				_ = tx.Rollback(pgCtx)
+			if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, `+pgNow+`)`, m.version, m.name); err != nil {
+				_ = tx.Rollback(ctx)
 				return fmt.Errorf("store: record migration %03d: %w", m.version, err)
 			}
-			if err := tx.Commit(pgCtx); err != nil {
+			if err := tx.Commit(ctx); err != nil {
 				return fmt.Errorf("store: record migration %03d: %w", m.version, err)
 			}
-		} else if _, err := s.pool.Exec(pgCtx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, `+pgNow+`)`, m.version, m.name); err != nil {
+		} else if _, err := s.pool.Exec(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, `+pgNow+`)`, m.version, m.name); err != nil {
 			return fmt.Errorf("store: record migration %03d: %w", m.version, err)
 		}
 	}

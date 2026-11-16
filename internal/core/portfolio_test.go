@@ -18,15 +18,15 @@ import (
 // seedFleetProject gives dir a real store with one callable element.
 func seedFleetProject(t *testing.T, dir string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertElements([]store.Element{{
+	if err := st.UpsertElements(context.Background(), []store.Element{{
 		QualifiedName: "pkg.Shared", ElementType: "function", Name: "Shared",
 		FilePath: "shared.go", Language: "go",
 	}}); err != nil {
@@ -50,7 +50,7 @@ func TestPortfolioQueryFansOutThroughLadder(t *testing.T) {
 	}
 
 	e, _ := newEngine(t) // the serving project is a third, unrelated store
-	out, err := e.portfolioQuery(ctx, QueryRequest{Query: "Shared", Limit: 5})
+	out, err := e.Query(ctx, QueryRequest{Action: "portfolio", Query: "Shared", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestPortfolioQueryReportsUnindexedProjectAsChildError(t *testing.T) {
 	}
 
 	e, _ := newEngine(t)
-	out, err := e.portfolioQuery(ctx, QueryRequest{Query: "Shared", Limit: 5})
+	out, err := e.Query(ctx, QueryRequest{Action: "portfolio", Query: "Shared", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestPortfolioQueryReportsT0ParentAsNotIndexed(t *testing.T) {
 	}
 
 	e, _ := newEngine(t)
-	out, err := e.portfolioQuery(ctx, QueryRequest{Query: "Shared", Limit: 5})
+	out, err := e.Query(ctx, QueryRequest{Action: "portfolio", Query: "Shared", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestPortfolioSummaryIsT0Manifest(t *testing.T) {
 
 	e, _ := newEngine(t)
 	// The manifest needs no query text: it is a registry read, not a search.
-	out, err := e.portfolioQuery(ctx, QueryRequest{Args: map[string]any{"cmd": PortfolioSummaryAction}})
+	out, err := e.Query(ctx, QueryRequest{Action: "portfolio", Args: map[string]any{"cmd": PortfolioSummaryAction}})
 	if err != nil {
 		t.Fatalf("summary must not require query text: %v", err)
 	}
@@ -198,12 +198,12 @@ func TestPortfolioSummaryIsT0Manifest(t *testing.T) {
 
 func TestPortfolioQueryRefusesRecursion(t *testing.T) {
 	e, _ := newEngine(t)
-	if _, err := e.portfolioQuery(context.Background(), QueryRequest{
+	if _, err := e.Query(context.Background(), QueryRequest{Action: "portfolio",
 		Query: "x", Args: map[string]any{"action": PortfolioAction},
 	}); err == nil || !strings.Contains(err.Error(), "cannot fan out") {
 		t.Fatalf("recursive child action = %v; want the guard", err)
 	}
-	if _, err := e.portfolioQuery(context.Background(), QueryRequest{}); err == nil {
+	if _, err := e.Query(context.Background(), QueryRequest{Action: "portfolio"}); err == nil {
 		t.Fatal("a fan-out with neither query text nor cmd=summary must ask for one")
 	}
 }

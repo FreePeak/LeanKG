@@ -1,7 +1,7 @@
 // Package githistory records a repository's commit history in the store as
 // ordinary elements and relationships, so commits are searchable and the file
 // graph carries what changed together. It reads git through internal/gitobj
-// and writes only through store.Backend.
+// and writes only through the store roles it declares.
 //
 // Shape (see docs/git-history.md):
 //   - commit element  git:commit:<sha>     element_type commit
@@ -54,12 +54,24 @@ type Result struct {
 	Incremental   bool   `json:"incremental"`
 }
 
+// historyStore is the store surface the importer and the history queries
+// call: element and edge writes, the edge read behind History and CoChange,
+// and the KV head checkpoint. The composed store satisfies it.
+type historyStore interface {
+	FindExact(ctx context.Context, name string) ([]store.Element, error)
+	UpsertElements(ctx context.Context, els []store.Element) error
+	UpsertRelationships(ctx context.Context, rels []store.Relationship) error
+	Outgoing(ctx context.Context, source string) ([]store.Relationship, error)
+	KVGet(ctx context.Context, namespace, key string) (string, bool, error)
+	KVSet(ctx context.Context, namespace, key, value string) error
+}
+
 // Import records the history of the repository at root into st. When the
 // last imported HEAD is still an ancestor of HEAD, only the new commits are
 // walked and co-change counts are added to the stored ones. Otherwise the
 // window is rebuilt and co-change counts are overwritten, so a rebuild never
 // double counts.
-func Import(ctx context.Context, st store.Backend, root string, opts Options) (Result, error) {
+func Import(ctx context.Context, st historyStore, root string, opts Options) (Result, error) {
 	head, ok, err := gitobj.HeadCommit(ctx, root)
 	if err != nil {
 		return Result{}, err
@@ -67,7 +79,7 @@ func Import(ctx context.Context, st store.Backend, root string, opts Options) (R
 	if !ok {
 		return Result{}, nil
 	}
-	stored, _, err := st.KVGet(kvNamespace, kvHeadKey)
+	stored, _, err := st.KVGet(ctx, kvNamespace, kvHeadKey)
 	if err != nil {
 		return Result{}, err
 	}
@@ -96,17 +108,17 @@ func Import(ctx context.Context, st store.Backend, root string, opts Options) (R
 	for _, c := range commits {
 		b.add(c)
 	}
-	pairs, err := b.coChange(st, incremental)
+	pairs, err := b.coChange(ctx, st, incremental)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := st.UpsertElements(b.elements()); err != nil {
+	if err := st.UpsertElements(ctx, b.elements()); err != nil {
 		return Result{}, err
 	}
-	if err := st.UpsertRelationships(b.relationships(pairs)); err != nil {
+	if err := st.UpsertRelationships(ctx, b.relationships(pairs)); err != nil {
 		return Result{}, err
 	}
-	if err := st.KVSet(kvNamespace, kvHeadKey, head); err != nil {
+	if err := st.KVSet(ctx, kvNamespace, kvHeadKey, head); err != nil {
 		return Result{}, err
 	}
 	return Result{
@@ -162,7 +174,7 @@ func (b *batch) add(c gitobj.HistoryCommit) {
 // coChange returns the final count of every pair in this batch. An
 // incremental import adds the batch to the counts already stored on the
 // edges; a rebuild keeps the batch counts as they are.
-func (b *batch) coChange(st store.Backend, incremental bool) (map[pairKey]int, error) {
+func (b *batch) coChange(ctx context.Context, st historyStore, incremental bool) (map[pairKey]int, error) {
 	out := make(map[pairKey]int, len(b.delta))
 	for k, n := range b.delta {
 		out[k] = n
@@ -177,7 +189,7 @@ func (b *batch) coChange(st store.Backend, incremental bool) (map[pairKey]int, e
 		rels, ok := outgoing[k.a]
 		if !ok {
 			var err error
-			if rels, err = st.Outgoing("git:file:" + k.a); err != nil {
+			if rels, err = st.Outgoing(ctx, "git:file:"+k.a); err != nil {
 				return nil, err
 			}
 			outgoing[k.a] = rels

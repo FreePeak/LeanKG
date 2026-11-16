@@ -10,29 +10,20 @@ import (
 // drops must be lowered in the same diff, and a directory must reach 0 and
 // leave the map.
 var backgroundBudget = map[string]int{
-	"internal/core":      2,
-	"internal/index":     2,
-	"internal/langs":     1,
-	"internal/lsp":       4,
-	"internal/memory":    11,
-	"internal/registry":  1,
-	"internal/session":   1,
-	"internal/setup":     1,
-	"internal/store":     1,
-	"internal/telemetry": 8,
+	"internal/index":    2,
+	"internal/lsp":      1,
+	"internal/registry": 1,
+	"internal/session":  1,
+	"internal/setup":    1,
 }
 
-// todoBudget is the measured count of context.TODO() calls per directory in
-// non-main packages. It may rise only in store role-migration PRs (plan P2),
-// and it must reach 0 by the end of P3.
-var todoBudget = map[string]int{}
-
-// TestContextRootsRatchet counts context root calls (Background and TODO) in
-// non-main packages and compares each directory with its budget.
+// TestContextRootsRatchet counts context root calls in non-main packages.
+// context.Background() is compared with backgroundBudget; context.TODO() must
+// be zero in every package (the P3 burn-down is done, so there is no budget).
 func TestContextRootsRatchet(t *testing.T) {
 	_, files := scanLibrary(t)
 	compareBudget(t, "context.Background", countByDir(files, isContextRoot("Background")), backgroundBudget)
-	compareBudget(t, "context.TODO", countByDir(files, isContextRoot("TODO")), todoBudget)
+	compareBudget(t, "context.TODO", countByDir(files, isContextRoot("TODO")), nil)
 }
 
 // isContextRoot matches calls of the form context.<name>().

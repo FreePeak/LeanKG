@@ -81,6 +81,8 @@ func Link(ctx context.Context, st telemetry.Store, cfg telemetry.Config, home st
 		return nil
 	}
 
+	// One Reader per pass: calls that share a transcript parse it once.
+	rd := NewReader()
 	sessions := map[string]*telemetry.Session{}
 	statusOf := map[string]string{}
 	paths := map[string]string{}
@@ -108,7 +110,7 @@ func Link(ctx context.Context, st telemetry.Store, cfg telemetry.Config, home st
 		}
 
 		c := callRef(ev)
-		t, conf, err := a.Locate(home, c)
+		t, conf, err := a.Locate(ctx, home, c, rd)
 		switch {
 		case errors.Is(err, ErrNotFound):
 			stats.NotFound++
@@ -125,7 +127,7 @@ func Link(ctx context.Context, st telemetry.Store, cfg telemetry.Config, home st
 			continue
 		}
 
-		w, err := a.Window(t, c, windowTurns)
+		w, err := a.Window(ctx, t, c, windowTurns, rd)
 		if err != nil {
 			stats.Errors++
 			continue

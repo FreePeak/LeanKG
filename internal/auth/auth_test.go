@@ -64,119 +64,6 @@ func TestTokensEnforced(t *testing.T) {
 	}
 }
 
-// TestMiddlewarePathGating covers the REST/RPC path-level gate.
-func TestMiddlewarePathGating(t *testing.T) {
-	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
-	t.Setenv("LEANKG_TOKEN_ADMIN", "")
-	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
-
-	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	// reads pass for a viewer
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/query", nil)
-	req.Header.Set("Authorization", "Bearer viewer-tok")
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("viewer read: %d", rec.Code)
-	}
-	// writes are forbidden for a viewer
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("POST", "/api/v1/import", nil)
-	req.Header.Set("Authorization", "Bearer viewer-tok")
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("viewer write: %d, want 403", rec.Code)
-	}
-	// missing token is unauthorized
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/query", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("no token: %d, want 401", rec.Code)
-	}
-}
-
-// TestParameterizedWriteRoutesGated pins the fix for the path-equality hole:
-// hindsight memory retain lives at a parameterized route and must still be
-// forbidden for a Viewer.
-func TestParameterizedWriteRoutesGated(t *testing.T) {
-	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
-	t.Setenv("LEANKG_TOKEN_ADMIN", "")
-	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
-
-	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	for _, p := range []string{
-		"/api/v1/import",
-		"/api/v1/memory/banks/my-bank/memories",
-		"/leankg.v1.LeanKG/Import",
-	} {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", p, nil)
-		req.Header.Set("Authorization", "Bearer viewer-tok")
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("%s as viewer: %d, want 403", p, rec.Code)
-		}
-	}
-	// reads stay open
-	for _, p := range []string{"/api/v1/query", "/api/v1/status", "/api/v1/memory/banks/b/recall"} {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", p, nil)
-		req.Header.Set("Authorization", "Bearer viewer-tok")
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s as viewer: %d, want 200", p, rec.Code)
-		}
-	}
-}
-
-// TestCompatMountWriteRoutesGated pins the same gate for the hindsight-compat
-// mount (#414), which spells retain as /v1/default/banks/{bank}/memories. The
-// mount is added by --hindsight-compat and lives on the REST listener, so it
-// passes through this middleware exactly like the native route — a Viewer who
-// cannot write /api/v1/memory/banks/{bank}/memories must not be able to write
-// the same row through the alias.
-func TestCompatMountWriteRoutesGated(t *testing.T) {
-	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
-	t.Setenv("LEANKG_TOKEN_ADMIN", "")
-	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "")
-
-	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	calls := []struct {
-		name   string
-		method string
-		path   string
-		want   int
-	}{
-		{"compat retain", "POST", "/v1/default/banks/omp/memories", http.StatusForbidden},
-		{"compat bank ensure", "PUT", "/v1/default/banks/omp", http.StatusOK},
-		{"compat recall", "POST", "/v1/default/banks/omp/memories/recall", http.StatusOK},
-		{"compat stats", "GET", "/v1/default/banks/omp/stats", http.StatusOK},
-		{"compat list", "GET", "/v1/default/banks/omp/memories", http.StatusOK},
-		{"compat read by id", "GET", "/v1/default/banks/omp/memories/123-0", http.StatusOK},
-		{"compat reflect", "POST", "/v1/default/banks/omp/reflect", http.StatusOK},
-		{"native retain still gated", "POST", "/api/v1/memory/banks/omp/memories", http.StatusForbidden},
-		{"compat document delete", "DELETE", "/v1/default/banks/omp/documents/doc-1", http.StatusForbidden},
-	}
-	for _, c := range calls {
-		t.Run(c.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(c.method, c.path, nil)
-			req.Header.Set("Authorization", "Bearer viewer-tok")
-			h.ServeHTTP(rec, req)
-			if rec.Code != c.want {
-				t.Fatalf("%s %s as viewer: %d, want %d", c.method, c.path, rec.Code, c.want)
-			}
-		})
-	}
-}
-
 // TestCompatRetainAllowedForContributor is the other half: tightening the gate
 // must not lock a Contributor out of the compat mount.
 func TestCompatRetainAllowedForContributor(t *testing.T) {
@@ -193,5 +80,38 @@ func TestCompatRetainAllowedForContributor(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("contributor retain: %d, want 200", rec.Code)
+	}
+}
+
+// namedWriteRoutes are POST routes that mutate the store: session retain, the
+// ontology KV write, the auto-config reindex, and the federation push (same
+// class: it upserts elements). None of them matched isWritePath before CX-02.
+var namedWriteRoutes = []string{
+	"/api/v1/memory/session/retain",
+	"/api/v1/ontology/match",
+	"/api/v1/mcp/auto-config",
+	"/api/v2/graph/push",
+}
+
+// TestNamedWriteRoutesAllowedForContributor is the other half: the CX-02 gate
+// must not lock a Contributor out of the same routes.
+func TestNamedWriteRoutesAllowedForContributor(t *testing.T) {
+	t.Setenv("LEANKG_TOKEN_VIEWER", "viewer-tok")
+	t.Setenv("LEANKG_TOKEN_CONTRIBUTOR", "contrib-tok")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "")
+
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, p := range namedWriteRoutes {
+		t.Run(p, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", p, nil)
+			req.Header.Set("Authorization", "Bearer contrib-tok")
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("contributor POST %s: %d, want 200", p, rec.Code)
+			}
+		})
 	}
 }

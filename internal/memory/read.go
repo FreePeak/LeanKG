@@ -12,7 +12,7 @@ import (
 // This file is the READ-side bank surface the decision doc
 // (xdev/docs/decisions/leankg-memory-backend.md, K3/K4) promised but the Go
 // tree never had: stats, read-by-id, and list. Every route here is a read, so
-// none of them belongs in auth.writePrefixes.
+// none of them is declared with auth.Require(auth.Contributor, ...) in the route table.
 //
 // Rows are read from the bank JSONL on every call — the same unindexed scan
 // RecallBanks does. ponytail: O(rows) per call with no index and no freshness
@@ -97,14 +97,14 @@ func (m *Memory) ByID(bank, id string) (Entry, bool, error) {
 	}
 	for _, e := range rows {
 		if e.ID == id {
-			return e, true, nil
+			return redactEntry(e), true, nil
 		}
 	}
 	// Second pass: document_id in metadata. Kept separate so an exact id
 	// always wins over a document id collision.
 	for _, e := range rows {
 		if doc, _ := e.Metadata["document_id"].(string); doc != "" && doc == id {
-			return e, true, nil
+			return redactEntry(e), true, nil
 		}
 	}
 	return Entry{}, false, nil
@@ -131,7 +131,7 @@ func (m *Memory) List(bank string, offset, limit int) ([]Entry, int, error) {
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
-	return rows, total, nil
+	return redactEntries(rows), total, nil
 }
 
 // Banks lists the bank names present in this root, sorted, without the .jsonl

@@ -49,7 +49,7 @@ func TestGolden(t *testing.T) {
 	defer mem.Close()
 	seedMemory(t, mem)
 
-	eng := core.New(st, mem, core.QueryEmbedderFromProvider(embed.Deterministic(8)))
+	eng := core.New(st, core.Options{Memory: mem, Embedder: embed.Deterministic(8)})
 
 	status, err := eng.Status(ctx)
 	if err != nil {
@@ -110,7 +110,7 @@ func l0Response(t *testing.T, ctx context.Context, lk string) map[string]any {
 	t.Helper()
 	empty := openStore(t, filepath.Join(lk, "empty.db"))
 	defer empty.Close()
-	eng := core.New(empty, nil, nil)
+	eng := core.New(empty, core.Options{})
 	r, err := eng.Query(ctx, core.QueryRequest{Query: "anything"})
 	if err != nil {
 		t.Fatal(err)
@@ -118,13 +118,13 @@ func l0Response(t *testing.T, ctx context.Context, lk string) map[string]any {
 	return r
 }
 
-func openStore(t *testing.T, path string) *store.Store {
+func openStore(t *testing.T, path string) store.Backend {
 	t.Helper()
-	st, err := store.Open(path, store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: path, Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return st
@@ -132,7 +132,7 @@ func openStore(t *testing.T, path string) *store.Store {
 
 // seed writes the fixed corpus: two elements, one calls edge, one stamped
 // collection with a single deterministic vector.
-func seed(t *testing.T, ctx context.Context, st *store.Store) {
+func seed(t *testing.T, ctx context.Context, st store.Backend) {
 	t.Helper()
 	els := []store.Element{
 		{
@@ -146,10 +146,10 @@ func seed(t *testing.T, ctx context.Context, st *store.Store) {
 			Content: "func Beta() int {\n\treturn 41\n}",
 		},
 	}
-	if err := st.UpsertElements(els); err != nil {
+	if err := st.UpsertElements(ctx, els); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertRelationships([]store.Relationship{{
+	if err := st.UpsertRelationships(ctx, []store.Relationship{{
 		Source: "src/alpha.go::Alpha", Target: "src/beta.go::Beta",
 		RelType: "calls", Confidence: 0.5,
 	}}); err != nil {
@@ -159,14 +159,14 @@ func seed(t *testing.T, ctx context.Context, st *store.Store) {
 	prov := embed.Deterministic(8)
 	// embed.StampOf is what the writer records, so the reader's whole-identity
 	// guard (#279) sees a matching collection instead of degrading.
-	if err := st.WriteStamp(embed.StampOf(prov)); err != nil {
+	if err := st.WriteStamp(ctx, embed.StampOf(prov)); err != nil {
 		t.Fatal(err)
 	}
 	vecs, err := prov.Embed(ctx, embed.Document, []string{els[0].Content})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertVectors(prov.ModelID(), []store.VectorRow{
+	if err := st.UpsertVectors(ctx, prov.Identity().Model, []store.VectorRow{
 		{QualifiedName: els[0].QualifiedName, Vec: vecs[0]},
 	}); err != nil {
 		t.Fatal(err)

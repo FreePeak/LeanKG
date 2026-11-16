@@ -3,12 +3,13 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const testExe = "/usr/local/bin/leankg"

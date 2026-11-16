@@ -34,16 +34,16 @@ import (
 // prose question never triggers a name search.
 func TestL3FusesANameArm(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	p := embed.Deterministic(16)
-	if err := st.WriteStamp(embed.StampOf(p)); err != nil {
+	if err := st.WriteStamp(context.Background(), embed.StampOf(p)); err != nil {
 		t.Fatal(err)
 	}
 	// The answer: a two-line helper whose name is what the question says. The
@@ -58,19 +58,18 @@ func TestL3FusesANameArm(t *testing.T) {
 			Content: strings.Repeat("// truncate the text sent to a provider over and over again. ", 40)},
 	}
 	for _, e := range els {
-		if err := st.UpsertElements([]store.Element{e}); err != nil {
+		if err := st.UpsertElements(context.Background(), []store.Element{e}); err != nil {
 			t.Fatal(err)
 		}
 		qvec, err := p.Embed(context.Background(), embed.Document, []string{e.Content})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.UpsertVectors(p.ModelID(), []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
+		if err := st.UpsertVectors(context.Background(), p.Identity().Model, []store.VectorRow{{QualifiedName: e.QualifiedName, Vec: qvec[0]}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	e := New(st, nil, QueryEmbedderFromProvider(p))
-	e.SetProjectDir(dir)
+	e := New(st, Options{Embedder: p, ProjectDir: dir})
 	ctx := context.Background()
 
 	// A PROSE question whose rare word is part of the symbol's name: the
@@ -88,16 +87,16 @@ func TestL3FusesANameArm(t *testing.T) {
 	}
 	// The name arm must be visible in the per-arm provenance, or an agent
 	// cannot tell why an answer surfaced.
-	// The transport keeps the ranks map as store's own type (map[string]int),
+	// The transport keeps the ranks map as store's own type (map[store.Arm]int),
 	// not map[string]any — the JSON shape is what an agent sees, and the golden
 	// pins that, so the assertion reads the type the engine actually builds.
-	ranks, _ := hits[0]["ranks"].(map[string]int)
+	ranks, _ := hits[0]["ranks"].(map[store.Arm]int)
 	if _, ok := ranks[store.ArmName]; !ok {
 		t.Errorf("the top hit must carry a %s rank, got %v", store.ArmName, hits[0]["ranks"])
 	}
 	// And in the retrieval reason, the one place an agent reads without parsing
 	// per-hit detail.
-	if !strings.Contains(retrievalString(out), store.ArmName) {
+	if !strings.Contains(retrievalString(out), string(store.ArmName)) {
 		t.Errorf("retrieval.reason must name the %s arm, got %q", store.ArmName, retrievalString(out))
 	}
 	// The ANSWER must be the symbol the question named — that is the whole
@@ -114,7 +113,7 @@ func TestL3FusesANameArm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(retrievalString(out), store.ArmName) {
+	if strings.Contains(retrievalString(out), string(store.ArmName)) {
 		t.Errorf("a prose question must not summon the name arm: %q", retrievalString(out))
 	}
 }

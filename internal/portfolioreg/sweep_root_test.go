@@ -26,15 +26,15 @@ func newStoreWithRoot(t *testing.T, dir, root string) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(dbPath, store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dbPath, Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := index.RebaseRoot(st, root); err != nil {
+	if err := index.RebaseRoot(context.Background(), st, root); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -129,11 +129,11 @@ func TestSweepRootCheckIgnoresHealthyStores(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(dbPath, store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dbPath, Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {
@@ -252,14 +252,14 @@ func TestCheckStoreIgnoresASharedStore(t *testing.T) {
 
 	// A store built from a DIFFERENT project, shared with this one.
 	other := t.TempDir()
-	st, err := store.Open(shared, store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: shared, Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := index.RebaseRoot(st, other); err != nil {
+	if err := index.RebaseRoot(context.Background(), st, other); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {

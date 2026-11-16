@@ -1,0 +1,9 @@
+{
+  "cmd": "git status",
+  "content": "On branch main\nnothing to commit, working tree clean",
+  "output_lines": 2,
+  "savings_percent": 0,
+  "tokens": 13,
+  "total_lines": 2,
+  "total_tokens": 13
+}

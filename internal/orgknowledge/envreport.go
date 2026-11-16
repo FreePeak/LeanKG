@@ -7,6 +7,7 @@
 package orgknowledge
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -33,15 +34,15 @@ type EnvConflictReport struct {
 // EnvConflictReport gathers the verb's two sections. The service argument is
 // matched as a case-insensitive substring of the endpoints (the Rust
 // regex_matches(lowercase(...), ".*svc.*")).
-func (k *Knowledge) EnvConflictReport(service string) (EnvConflictReport, error) {
+func (k *Knowledge) EnvConflictReport(ctx context.Context, service string) (EnvConflictReport, error) {
 	rep := EnvConflictReport{Service: service}
-	pairs, err := k.st.EnvSnapshotConflictsWith(service, 0)
+	pairs, err := k.st.EnvSnapshotConflictsWith(ctx, service, 0)
 	if err != nil {
 		return rep, err
 	}
 	rep.Pairs = pairs
 
-	variants, err := k.st.EnvSnapshotEnvVariants(service, 0)
+	variants, err := k.st.EnvSnapshotEnvVariants(ctx, service, 0)
 	if err != nil {
 		return rep, err
 	}

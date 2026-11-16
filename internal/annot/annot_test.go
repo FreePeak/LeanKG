@@ -1,6 +1,8 @@
 package annot
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -10,12 +12,12 @@ import (
 
 func newStore(t *testing.T) store.Backend {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), ".leankg", "leankg.db"), store.RW)
+	s, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(); err != nil {
+	if err := s.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return s
@@ -23,7 +25,7 @@ func newStore(t *testing.T) store.Backend {
 
 func getRecord(t *testing.T, st store.Backend, element string) *Record {
 	t.Helper()
-	r, err := Get(st, element)
+	r, err := Get(context.Background(), st, element)
 	if err != nil {
 		t.Fatalf("get %s: %v", element, err)
 	}
@@ -38,7 +40,7 @@ func TestAnnotateCreateAndUpdate(t *testing.T) {
 	}
 
 	story, feature := "US-1", "FR-9"
-	created, err := Annotate(st, "pkg.Parse", "parses input", &story, nil)
+	created, err := Annotate(context.Background(), st, "pkg.Parse", "parses input", &story, nil)
 	if err != nil {
 		t.Fatalf("annotate create: %v", err)
 	}
@@ -50,7 +52,7 @@ func TestAnnotateCreateAndUpdate(t *testing.T) {
 		t.Fatalf("Get after create = %+v; want %+v", got, want)
 	}
 
-	created, err = Annotate(st, "pkg.Parse", "parses input strictly", nil, &feature)
+	created, err = Annotate(context.Background(), st, "pkg.Parse", "parses input strictly", nil, &feature)
 	if err != nil {
 		t.Fatalf("annotate update: %v", err)
 	}
@@ -67,20 +69,20 @@ func TestAnnotateCreateAndUpdate(t *testing.T) {
 func TestDelete(t *testing.T) {
 	st := newStore(t)
 
-	if err := Put(st, Record{Element: "pkg.A", Description: "a"}); err != nil {
+	if err := Put(context.Background(), st, Record{Element: "pkg.A", Description: "a"}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if err := Delete(st, "pkg.A"); err != nil {
+	if err := Delete(context.Background(), st, "pkg.A"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if r := getRecord(t, st, "pkg.A"); r != nil {
 		t.Fatalf("Get after Delete = %+v; want nil", r)
 	}
-	if recs, err := All(st); err != nil || len(recs) != 0 {
+	if recs, err := All(context.Background(), st); err != nil || len(recs) != 0 {
 		t.Fatalf("All after Delete = %v, %v; want empty", recs, err)
 	}
 	// Deleting an element that never had an annotation is a no-op.
-	if err := Delete(st, "pkg.Missing"); err != nil {
+	if err := Delete(context.Background(), st, "pkg.Missing"); err != nil {
 		t.Fatalf("delete missing: %v", err)
 	}
 }
@@ -88,7 +90,7 @@ func TestDelete(t *testing.T) {
 func TestAllSortedAndEmptyStore(t *testing.T) {
 	st := newStore(t)
 
-	recs, err := All(st)
+	recs, err := All(context.Background(), st)
 	if err != nil {
 		t.Fatalf("All on empty store: %v", err)
 	}
@@ -97,11 +99,11 @@ func TestAllSortedAndEmptyStore(t *testing.T) {
 	}
 
 	for _, qn := range []string{"pkg.C", "pkg.A", "pkg.B"} {
-		if err := Put(st, Record{Element: qn, Description: qn}); err != nil {
+		if err := Put(context.Background(), st, Record{Element: qn, Description: qn}); err != nil {
 			t.Fatalf("put %s: %v", qn, err)
 		}
 	}
-	recs, err = All(st)
+	recs, err = All(context.Background(), st)
 	if err != nil {
 		t.Fatalf("All: %v", err)
 	}
@@ -121,14 +123,14 @@ func TestSearch(t *testing.T) {
 		{Element: "auth.Login", Description: "Validates the bearer token"},
 		{Element: "auth.Session", Description: "Refreshes a session"},
 	} {
-		if err := Put(st, r); err != nil {
+		if err := Put(context.Background(), st, r); err != nil {
 			t.Fatalf("put %s: %v", r.Element, err)
 		}
 	}
 
 	check := func(query string, want []string) {
 		t.Helper()
-		recs, err := Search(st, query)
+		recs, err := Search(context.Background(), st, query)
 		if err != nil {
 			t.Fatalf("Search(%q): %v", query, err)
 		}
@@ -150,7 +152,7 @@ func TestSearch(t *testing.T) {
 	check("auth", nil)
 	check("Login", nil)
 
-	if _, err := Search(st, "["); err == nil {
+	if _, err := Search(context.Background(), st, "["); err == nil {
 		t.Fatal("Search with an invalid regex returned no error")
 	}
 }
@@ -163,12 +165,12 @@ func TestByUserStoryAndByFeature(t *testing.T) {
 		{Element: "pkg.B", Description: "b", UserStoryID: "US-1", FeatureID: "FR-2"},
 		{Element: "pkg.C", Description: "c", FeatureID: "FR-2"},
 	} {
-		if err := Put(st, r); err != nil {
+		if err := Put(context.Background(), st, r); err != nil {
 			t.Fatalf("put %s: %v", r.Element, err)
 		}
 	}
 
-	got, err := ByUserStory(st, "US-1")
+	got, err := ByUserStory(context.Background(), st, "US-1")
 	if err != nil {
 		t.Fatalf("ByUserStory: %v", err)
 	}
@@ -176,7 +178,7 @@ func TestByUserStoryAndByFeature(t *testing.T) {
 		t.Fatalf("ByUserStory(US-1) = %v; want %v", elements(got), want)
 	}
 
-	got, err = ByFeature(st, "FR-2")
+	got, err = ByFeature(context.Background(), st, "FR-2")
 	if err != nil {
 		t.Fatalf("ByFeature: %v", err)
 	}
@@ -184,7 +186,7 @@ func TestByUserStoryAndByFeature(t *testing.T) {
 		t.Fatalf("ByFeature(FR-2) = %v; want %v", elements(got), want)
 	}
 
-	got, err = ByUserStory(st, "US-9")
+	got, err = ByUserStory(context.Background(), st, "US-9")
 	if err != nil {
 		t.Fatalf("ByUserStory miss: %v", err)
 	}
@@ -204,7 +206,7 @@ func elements(recs []Record) []string {
 func TestLinkCreatesAnnotation(t *testing.T) {
 	st := newStore(t)
 
-	if err := Link(st, "pkg.Story", "US-7", "story"); err != nil {
+	if err := Link(context.Background(), st, "pkg.Story", "US-7", "story"); err != nil {
 		t.Fatalf("link story: %v", err)
 	}
 	want := Record{Element: "pkg.Story", Description: "Linked to story US-7", UserStoryID: "US-7"}
@@ -212,7 +214,7 @@ func TestLinkCreatesAnnotation(t *testing.T) {
 		t.Fatalf("linked story = %+v; want %+v", got, want)
 	}
 
-	if err := Link(st, "pkg.Feature", "FR-3", "feature"); err != nil {
+	if err := Link(context.Background(), st, "pkg.Feature", "FR-3", "feature"); err != nil {
 		t.Fatalf("link feature: %v", err)
 	}
 	want = Record{Element: "pkg.Feature", Description: "Linked to feature FR-3", FeatureID: "FR-3"}
@@ -224,10 +226,10 @@ func TestLinkCreatesAnnotation(t *testing.T) {
 func TestLinkAppendsSuffixOnceAndKeepsOtherLink(t *testing.T) {
 	st := newStore(t)
 
-	if err := Put(st, Record{Element: "pkg.A", Description: "handles retries", FeatureID: "FR-1"}); err != nil {
+	if err := Put(context.Background(), st, Record{Element: "pkg.A", Description: "handles retries", FeatureID: "FR-1"}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if err := Link(st, "pkg.A", "US-2", "story"); err != nil {
+	if err := Link(context.Background(), st, "pkg.A", "US-2", "story"); err != nil {
 		t.Fatalf("link: %v", err)
 	}
 	want := Record{
@@ -242,10 +244,10 @@ func TestLinkAppendsSuffixOnceAndKeepsOtherLink(t *testing.T) {
 
 	// A description that already starts with "Linked to" is not appended to
 	// again — this is the create-then-relink path.
-	if err := Link(st, "pkg.Linked", "US-1", "story"); err != nil {
+	if err := Link(context.Background(), st, "pkg.Linked", "US-1", "story"); err != nil {
 		t.Fatalf("link create: %v", err)
 	}
-	if err := Link(st, "pkg.Linked", "US-1", "story"); err != nil {
+	if err := Link(context.Background(), st, "pkg.Linked", "US-1", "story"); err != nil {
 		t.Fatalf("relink: %v", err)
 	}
 	want = Record{Element: "pkg.Linked", Description: "Linked to story US-1", UserStoryID: "US-1"}
@@ -257,10 +259,10 @@ func TestLinkAppendsSuffixOnceAndKeepsOtherLink(t *testing.T) {
 func TestLinkFeatureKindSetsFeatureID(t *testing.T) {
 	st := newStore(t)
 
-	if err := Put(st, Record{Element: "pkg.A", Description: "does things", UserStoryID: "US-1"}); err != nil {
+	if err := Put(context.Background(), st, Record{Element: "pkg.A", Description: "does things", UserStoryID: "US-1"}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if err := Link(st, "pkg.A", "FR-4", "feature"); err != nil {
+	if err := Link(context.Background(), st, "pkg.A", "FR-4", "feature"); err != nil {
 		t.Fatalf("link: %v", err)
 	}
 	want := Record{
@@ -274,14 +276,34 @@ func TestLinkFeatureKindSetsFeatureID(t *testing.T) {
 	}
 
 	// Any non-"story" kind is a feature link.
-	if err := Link(st, "pkg.B", "EP-5", "epic"); err != nil {
+	if err := Link(context.Background(), st, "pkg.B", "EP-5", "epic"); err != nil {
 		t.Fatalf("link epic: %v", err)
 	}
-	got, err := ByFeature(st, "EP-5")
+	got, err := ByFeature(context.Background(), st, "EP-5")
 	if err != nil {
 		t.Fatalf("ByFeature: %v", err)
 	}
 	if want := []string{"pkg.B"}; !reflect.DeepEqual(elements(got), want) {
 		t.Fatalf("ByFeature(EP-5) = %v; want %v", elements(got), want)
+	}
+}
+
+// A cancelled ctx stops an annotation read and write before the store is
+// touched (CX-27: the caller's ctx reaches the KV calls, no context.TODO).
+func TestCancelledContextStopsAnnotations(t *testing.T) {
+	st := newStore(t)
+	if err := Put(context.Background(), st, Record{Element: "pkg.A", Description: "a"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Put(cancelled, st, Record{Element: "pkg.B", Description: "b"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Put with cancelled ctx = %v; want context.Canceled", err)
+	}
+	if _, err := All(cancelled, st); !errors.Is(err, context.Canceled) {
+		t.Fatalf("All with cancelled ctx = %v; want context.Canceled", err)
+	}
+	if recs, err := All(context.Background(), st); err != nil || len(recs) != 1 {
+		t.Fatalf("after a cancelled Put: recs = %v, %v; want only pkg.A", recs, err)
 	}
 }

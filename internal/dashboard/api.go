@@ -2,12 +2,13 @@ package dashboard
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"reflect"
 	"strconv"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/sessionlink"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 	"github.com/FreePeak/LeanKG/internal/telemetry/metrics"
@@ -26,13 +27,13 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) (reqCtx, bool) 
 	cfg, err := s.config()
 	if err != nil {
 		log.Printf("dashboard: telemetry config: %v", err)
-		writeErr(w, http.StatusInternalServerError, "telemetry config unreadable")
+		httpx.WriteMessage(w, http.StatusInternalServerError, "telemetry config unreadable")
 		return reqCtx{}, false
 	}
-	st, err := s.led.store()
+	st, err := s.led.store(r.Context())
 	if err != nil {
 		log.Printf("dashboard: telemetry ledger: %v", err)
-		writeErr(w, http.StatusInternalServerError, "telemetry ledger unavailable")
+		httpx.WriteMessage(w, http.StatusInternalServerError, "telemetry ledger unavailable")
 		return reqCtx{}, false
 	}
 	q := r.URL.Query()
@@ -40,7 +41,7 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) (reqCtx, bool) 
 	if v := q.Get("since"); v != "" {
 		t, err := ParseSince(v, s.opts.Now())
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
+			httpx.WriteMessage(w, http.StatusBadRequest, err.Error())
 			return reqCtx{}, false
 		}
 		since = t
@@ -58,12 +59,17 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) (reqCtx, bool) 
 }
 
 func (s *Server) respond(w http.ResponseWriter, v any, err error) {
-	if err != nil {
-		log.Printf("dashboard: %v", err)
-		writeErr(w, http.StatusInternalServerError, "internal error")
+	if errors.Is(err, context.Canceled) {
+		// The client went away mid-report: nothing to log, not a failure.
+		w.WriteHeader(httpx.StatusClientClosedRequest)
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	if err != nil {
+		log.Printf("dashboard: %v", err)
+		httpx.WriteMessage(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	respondJSON(w, http.StatusOK, v)
 }
 
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
@@ -99,10 +105,10 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found {
-		writeErr(w, http.StatusNotFound, "session not found")
+		httpx.WriteMessage(w, http.StatusNotFound, "session not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) transcript(w http.ResponseWriter, r *http.Request) {
@@ -116,10 +122,10 @@ func (s *Server) transcript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found {
-		writeErr(w, http.StatusNotFound, "session not found")
+		httpx.WriteMessage(w, http.StatusNotFound, "session not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) call(w http.ResponseWriter, r *http.Request) {
@@ -133,10 +139,10 @@ func (s *Server) call(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found {
-		writeErr(w, http.StatusNotFound, "call not found")
+		httpx.WriteMessage(w, http.StatusNotFound, "call not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	respondJSON(w, http.StatusOK, out)
 }
 
 var failureGroups = map[string]bool{"reason": true, "tool": true, "client": true}
@@ -151,7 +157,7 @@ func (s *Server) failures(w http.ResponseWriter, r *http.Request) {
 		group = "reason"
 	}
 	if !failureGroups[group] {
-		writeErr(w, http.StatusBadRequest, "group must be reason, tool or client")
+		httpx.WriteMessage(w, http.StatusBadRequest, "group must be reason, tool or client")
 		return
 	}
 	out, err := metrics.Failures(r.Context(), rc.st, rc.opts, group)
@@ -192,7 +198,12 @@ func (s *Server) transcriptSource(cfg telemetry.Config) metrics.TranscriptSource
 	if !s.anyGranted(cfg) {
 		return nil
 	}
-	return func(_ context.Context, sess telemetry.Session) ([]sessionlink.Turn, error) {
+	return func(ctx context.Context, sess telemetry.Session) ([]sessionlink.Turn, error) {
+		// One transcript per session: stop before reading the next one once
+		// the request is gone.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !telemetry.SessionsGranted(cfg, sess.ClientName) || sess.TranscriptPath == "" {
 			return nil, nil
 		}
@@ -200,7 +211,7 @@ func (s *Server) transcriptSource(cfg telemetry.Config) metrics.TranscriptSource
 		if a == nil {
 			return nil, nil
 		}
-		return a.Transcript(sessionlink.TranscriptRef{
+		return a.Transcript(ctx, sessionlink.TranscriptRef{
 			Client:    sess.ClientName,
 			Path:      telemetry.ExpandHome(sess.TranscriptPath), // stored redacted (~)
 			SessionID: sess.ClientSessionID,
@@ -214,7 +225,7 @@ func paging(w http.ResponseWriter, r *http.Request) (limit, offset int, ok bool)
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 500 {
-			writeErr(w, http.StatusBadRequest, "limit must be between 1 and 500")
+			httpx.WriteMessage(w, http.StatusBadRequest, "limit must be between 1 and 500")
 			return 0, 0, false
 		}
 		limit = n
@@ -222,7 +233,7 @@ func paging(w http.ResponseWriter, r *http.Request) (limit, offset int, ok bool)
 	if v := q.Get("offset"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
-			writeErr(w, http.StatusBadRequest, "offset must be 0 or more")
+			httpx.WriteMessage(w, http.StatusBadRequest, "offset must be 0 or more")
 			return 0, 0, false
 		}
 		offset = n
@@ -230,15 +241,9 @@ func paging(w http.ResponseWriter, r *http.Request) (limit, offset int, ok bool)
 	return limit, offset, true
 }
 
-func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
-
-// writeJSON encodes v with every nil slice written as [] (RS-09: no null lists).
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(withEmptyLists(v))
+// respondJSON writes v through the shared writer with every nil slice written as [] (RS-09: no null lists).
+func respondJSON(w http.ResponseWriter, status int, v any) {
+	httpx.WriteJSON(w, status, withEmptyLists(v))
 }
 
 // withEmptyLists returns a copy of v in which every nil slice reachable through

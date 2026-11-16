@@ -1,0 +1,8 @@
+{
+  "bank": "proj-<BANK>",
+  "command": "session_retain",
+  "ok": true,
+  "retained_through_user_turn": 2,
+  "skipped": 0,
+  "written": 2
+}

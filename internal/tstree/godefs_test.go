@@ -2,7 +2,10 @@
 
 package tstree
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestExtractGoKeepsTypesAndMethodOwners pins the Go definitions the grammar
 // tier must produce.
@@ -38,7 +41,7 @@ type B struct{ y int }
 
 func (b *B) String() string { return "b" }
 `)
-	defs, err := Extract(src, "go")
+	defs, err := Extract(context.Background(), src, "go")
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/FreePeak/LeanKG/internal/auth"
 	"io"
 	"net"
 	"net/http"
@@ -25,12 +26,12 @@ import (
 // holding one element per name in `symbols`.
 func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := openFixtureStore(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var els []store.Element
@@ -41,14 +42,14 @@ func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 		})
 	}
 	if len(els) > 0 {
-		if err := st.UpsertElements(els); err != nil {
+		if err := st.UpsertElements(context.Background(), els); err != nil {
 			t.Fatal(err)
 		}
 		// Bookkeeping row too: a real indexed file always has one, and
 		// doctor's file-coverage check (#332 guard) FAILS a store whose
 		// elements have no code_files row — that divergence is the bug it
 		// exists to catch, so fixtures must not model it as healthy.
-		if err := st.UpsertFiles([]store.FileRecord{{
+		if err := st.UpsertFiles(context.Background(), []store.FileRecord{{
 			Path: "a.go", Size: 64, MtimeNS: time.Now().UnixNano(), ContentHash: "seed",
 		}}); err != nil {
 			t.Fatal(err)
@@ -59,15 +60,14 @@ func seedProjectDir(t *testing.T, dir string, symbols ...string) {
 // engineOver opens a serving-style engine over a seeded project dir.
 func engineOver(t *testing.T, dir string) *core.Engine {
 	t.Helper()
-	st, err := store.OpenBackend(context.Background(), dir, "sqlite", "", "", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{ProjectDir: dir, Engine: "sqlite", PGURL: "", DBPath: "", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, nil, nil)
-	eng.SetProjectDir(dir)
+	eng := core.New(st, core.Options{ProjectDir: dir})
 	t.Cleanup(func() { _ = st.Close() })
 	return eng
 }
@@ -124,10 +124,9 @@ func TestRESTProjectRouting(t *testing.T) {
 	})
 	defer router.Close()
 
-	ctx := context.Background()
-	h := routeByProject(ctx, router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
+	h := auth.MiddlewareWithStore(nil, routeByProject(router, rest.Handler(defaultEng, nil), func(p *projects.Project) http.Handler {
 		return rest.Handler(p.Engine, p.Memory)
-	})
+	}))
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 

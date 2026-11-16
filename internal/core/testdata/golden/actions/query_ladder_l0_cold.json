@@ -1,0 +1,12 @@
+{
+  "freshness": "cold",
+  "guidance": "Index a repository first: leankg import <dir> or tool import {action:\"repo\", path:...}",
+  "hits": [],
+  "limit": 10,
+  "query": "anything",
+  "retrieval": {
+    "reason": "no elements indexed",
+    "rung": "L0",
+    "scope": "all"
+  }
+}

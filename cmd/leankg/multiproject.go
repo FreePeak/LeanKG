@@ -1,11 +1,10 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"net/http"
 	"sync"
 
+	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/projects"
 )
 
@@ -16,7 +15,6 @@ import (
 // the single-project serving path is byte-identical to a router-less
 // process.
 type projectRouting struct {
-	ctx      context.Context
 	router   *projects.Router
 	fallback http.Handler
 	build    func(*projects.Project) http.Handler
@@ -27,15 +25,16 @@ type projectRouting struct {
 
 // routeByProject wraps fallback with `?project=` dispatch. build mounts
 // one transport handler over a project's engine (e.g. rest.Handler or
-// leankgmcp.New(engine).HTTPHandler()).
-func routeByProject(ctx context.Context, router *projects.Router, fallback http.Handler, build func(*projects.Project) http.Handler) http.Handler {
-	return &projectRouting{
-		ctx:      ctx,
+// leankgmcp.New(engine).HTTPHandler()). The router keeps no context: each
+// request opens its project on that request's own context, and a request
+// whose client has gone away is refused before anything is opened.
+func routeByProject(router *projects.Router, fallback http.Handler, build func(*projects.Project) http.Handler) http.Handler {
+	return httpx.Guard(&projectRouting{
 		router:   router,
 		fallback: fallback,
 		build:    build,
 		cache:    map[string]http.Handler{},
-	}
+	})
 }
 
 func (h *projectRouting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -44,9 +43,10 @@ func (h *projectRouting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.fallback.ServeHTTP(w, r)
 		return
 	}
-	p, err := h.router.Open(h.ctx, sel)
+	p, err := h.router.Open(r.Context(), sel)
 	if err != nil {
-		writeProjectError(w, err)
+		// FR-ZCP-02: an unknown project is refused as a 404, never routed to the default.
+		httpx.WriteMessage(w, http.StatusNotFound, err.Error())
 		return
 	}
 	h.handlerFor(p).ServeHTTP(w, r)
@@ -62,17 +62,4 @@ func (h *projectRouting) handlerFor(p *projects.Project) http.Handler {
 	built := h.build(p)
 	h.cache[p.Dir] = built
 	return built
-}
-
-// writeProjectError renders the FR-ZCP-02 unknown-project rejection as
-// JSON — an explicit route key never falls back to the default project.
-func writeProjectError(w http.ResponseWriter, err error) {
-	b, merr := json.Marshal(map[string]string{"error": err.Error()})
-	if merr != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write(b)
 }

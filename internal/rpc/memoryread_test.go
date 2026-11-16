@@ -21,19 +21,19 @@ import (
 func memoryReadService(t *testing.T) leankgv1connect.LeanKGClient {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, ".leankg", "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, handler := leankgv1connect.NewLeanKGHandler(NewLeanKGService(core.New(st, mem, nil)))
+	path, handler := leankgv1connect.NewLeanKGHandler(NewLeanKGService(core.New(st, core.Options{Memory: mem})))
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	srv := httptest.NewServer(mux)

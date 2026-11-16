@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -39,23 +40,22 @@ import (
 // The rule, applied: **a list answer says whether there is a list to return.**
 func TestTheRESTSuccessShapeNeverContradictsTheBody(t *testing.T) {
 	dir := t.TempDir()
-	st, err := store.Open(dir+"/.leankg/leankg.db", store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: dir + "/.leankg/leankg.db", Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	eng := core.New(st, nil, nil)
-	eng.SetProjectDir(dir)
+	eng := core.New(st, core.Options{ProjectDir: dir})
 	// A real memory handle: the memory routes are only mounted when one is
 	// present, and without it they 404 (a separate, separately-honest fact).
 	mem, err := memory.Open(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := Handler(eng, mem)
+	mux := gatedHandler(eng, mem)
 
 	for _, tc := range []struct{ name, method, path, listKey string }{
 		{"ontology matches", http.MethodGet, "/api/v1/ontology/matches", "matches"},

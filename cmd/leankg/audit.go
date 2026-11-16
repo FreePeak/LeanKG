@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -21,63 +23,70 @@ const auditLedgerCap = 1 << 20
 
 // cmdAudit dispatches `leankg audit export|verify` (Rust FR-ENT-1:
 // cli::AuditCommand + main.rs run_audit_command).
-func cmdAudit(args []string) {
+func cmdAudit(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "audit: expected a subcommand (export | verify)")
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	switch args[0] {
 	case "export":
-		cmdAuditExport(args[1:])
+		return cmdAuditExport(ctx, args[1:])
 	case "verify":
-		cmdAuditVerify(args[1:])
+		return cmdAuditVerify(ctx, args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "audit: unknown subcommand %q (valid: export | verify)\n", args[0])
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 }
 
 // cmdAuditExport prints the ledger window as JSONL, one entry per line, or
 // writes it to --out. Ported from cli::AuditCommand::Export +
 // cli::audit::export_ledger_jsonl.
-func cmdAuditExport(args []string) {
-	fs := flag.NewFlagSet("audit export", flag.ExitOnError)
+func cmdAuditExport(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("audit export", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	since := fs.String("since", "", "only entries at/after T (RFC3339 | epoch seconds | 90s|30m|24h|7d)")
 	until := fs.String("until", "", "only entries at/before T")
 	format := fs.String("format", "jsonl", "output format (only jsonl is wired, like the Rust AuditFormat enum)")
 	out := fs.String("out", "", "write to FILE instead of stdout")
-	parseInterspersed("audit export", fs, args, 0)
+	if _, err := parseInterspersed("audit export", fs, args, 0); err != nil {
+		return err
+	}
 	if *format != "jsonl" {
 		fmt.Fprintf(os.Stderr, "audit export: unknown format %q (valid: jsonl)\n", *format)
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	window, err := parseAuditWindow(*since, *until)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "audit export:", err)
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
+	defer engine.Close()
 
-	entries, err := auditEntries(engine.Store(), window)
+	entries, err := auditEntries(ctx, st, window)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
-	jsonl := auditJSONL(entries)
+	jsonl, err := auditJSONL(entries)
+	if err != nil {
+		return err
+	}
 	if *out == "" {
 		fmt.Print(jsonl)
-		return
+		return nil
 	}
 	if err := os.WriteFile(*out, []byte(jsonl), 0o644); err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	// The Rust verb printed this note on stdout; keep stdout export-only.
 	fmt.Fprintf(os.Stderr, "wrote %d audit entries to %s\n", len(entries), *out)
+	return nil
 }
 
 // cmdAuditVerify walks the hash chain and exits non-zero when it is broken.
@@ -87,37 +96,41 @@ func cmdAuditExport(args []string) {
 // ledger (there is no windowed chain query), so --since/--until only scope the
 // count reported here — the integrity check itself is strictly stronger than
 // the Rust window check.
-func cmdAuditVerify(args []string) {
-	fs := flag.NewFlagSet("audit verify", flag.ExitOnError)
+func cmdAuditVerify(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("audit verify", flag.ContinueOnError)
 	project := fs.String("project", "", "project directory (default cwd, or LEANKG_PROJECT)")
 	since := fs.String("since", "", "count only entries at/after T (RFC3339 | epoch seconds | 90s|30m|24h|7d)")
 	until := fs.String("until", "", "count only entries at/before T")
-	parseInterspersed("audit verify", fs, args, 0)
+	if _, err := parseInterspersed("audit verify", fs, args, 0); err != nil {
+		return err
+	}
 	window, err := parseAuditWindow(*since, *until)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "audit verify:", err)
-		os.Exit(2)
+		return cliexit.Code(2)
 	}
 	dir := resolveProjectDir(*project)
-	engine, err := openEngine(dir, store.RO)
+	engine, st, err := openEngine(ctx, dir, store.RO)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
-	defer engine.Store().Close()
+	defer st.Close()
+	defer engine.Close()
 
-	ok, brokenAt, err := engine.Store().VerifyAuditChain()
+	ok, brokenAt, err := st.VerifyAuditChain(ctx)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	if !ok {
 		fmt.Fprintf(os.Stderr, "FAIL: audit chain broken at seq %d\n", brokenAt)
-		os.Exit(1)
+		return cliexit.Code(1)
 	}
-	entries, err := auditEntries(engine.Store(), window)
+	entries, err := auditEntries(ctx, st, window)
 	if err != nil {
-		fatalJSON(err)
+		return fatalJSON(err)
 	}
 	fmt.Printf("OK: audit chain intact (%d entries verified)\n", len(entries))
+	return nil
 }
 
 // auditWindow is the inclusive [since, until] time window; zero times mean
@@ -157,8 +170,8 @@ func (w auditWindow) contains(at int64) bool {
 }
 
 // auditEntries tails the ledger and keeps the window (Rust query_audit).
-func auditEntries(st store.Backend, w auditWindow) ([]store.AuditEntry, error) {
-	all, err := st.AuditTail(auditLedgerCap)
+func auditEntries(ctx context.Context, st store.Backend, w auditWindow) ([]store.AuditEntry, error) {
+	all, err := st.AuditTail(ctx, auditLedgerCap)
 	if err != nil {
 		return nil, err
 	}
@@ -175,16 +188,16 @@ func auditEntries(st store.Backend, w auditWindow) ([]store.AuditEntry, error) {
 // ledger record carries different fields than the Rust one
 // (seq/at/actor/action/target/details/prev_hash/hash), so the exporter emits
 // the store's own field names.
-func auditJSONL(entries []store.AuditEntry) string {
+func auditJSONL(entries []store.AuditEntry) (string, error) {
 	var b strings.Builder
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
 	for i := range entries {
 		if err := enc.Encode(&entries[i]); err != nil {
-			fatalJSON(err)
+			return "", fatalJSON(err)
 		}
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // parseTimeFilter ports cli::audit::parse_time_filter: a relative duration

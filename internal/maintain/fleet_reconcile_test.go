@@ -32,12 +32,12 @@ func TestFleetPassReconcilesStoreWithHEAD(t *testing.T) {
 	gittest.Git(t, dir, "add", ".")
 	gittest.Git(t, dir, "commit", "-m", "first")
 
-	st, err := store.Open(filepath.Join(t.TempDir(), "leankg.db"), store.RW)
+	st, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(t.TempDir(), "leankg.db"), Mode: store.RW})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.Migrate(); err != nil {
+	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := index.IndexDir(context.Background(), st, dir); err != nil {
@@ -73,7 +73,7 @@ func TestFleetPassReconcilesStoreWithHEAD(t *testing.T) {
 
 // hasElement reports whether the store holds an element of the given file.
 func hasElement(st store.Backend, path string) bool {
-	els, err := st.Elements()
+	els, err := st.Elements(context.Background())
 	if err != nil {
 		return false
 	}

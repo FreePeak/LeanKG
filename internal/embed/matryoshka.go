@@ -39,15 +39,14 @@ type matryoshka struct {
 	width  int
 }
 
-func (m matryoshka) ModelID() string  { return m.inner.ModelID() }
-func (m matryoshka) Revision() string { return m.inner.Revision() }
-func (m matryoshka) Distance() string { return m.inner.Distance() }
-func (m matryoshka) Provider() string { return m.inner.Provider() }
-func (m matryoshka) Dimensions() int  { return m.width }
+// Identity is the inner identity at the served width.
+func (m matryoshka) Identity() Identity {
+	id := m.inner.Identity()
+	id.Dims = m.width
+	return id
+}
 
-// Unwrap exposes the provider underneath, for capability probes such as the
-// sidecar's TextBudget (see unwrapProvider).
-func (m matryoshka) Unwrap() Provider { return m.inner }
+func (m matryoshka) Probe(ctx context.Context) error { return m.inner.Probe(ctx) }
 
 func (m matryoshka) Embed(ctx context.Context, kind TextKind, texts []string) ([][]float32, error) {
 	vecs, err := m.inner.Embed(ctx, kind, texts)
@@ -66,22 +65,10 @@ func (m matryoshka) Embed(ctx context.Context, kind TextKind, texts []string) ([
 // withWidth serves inner at width: inner itself when width is its native width,
 // otherwise the truncation wrapper. Both env constructors (newLocalProvider and
 // openAIProvider) are the only places a catalogued provider is built, so every
-// entry point (FromEnv, StartProvider, AttachHookProvider) reaches this one call.
+// entry point (Start, Attach, AttachHook) reaches this one call.
 func withWidth(inner Provider, native, width int) Provider {
 	if width == native {
 		return inner
 	}
 	return matryoshka{inner: inner, native: native, width: width}
-}
-
-// unwrapProvider peels decorators down to the concrete provider they wrap, so a
-// capability probe (an interface assertion on the provider) sees the sidecar.
-func unwrapProvider(p Provider) Provider {
-	for {
-		u, ok := p.(interface{ Unwrap() Provider })
-		if !ok {
-			return p
-		}
-		p = u.Unwrap()
-	}
 }
