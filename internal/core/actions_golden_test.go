@@ -275,12 +275,27 @@ func seedMemoryFile(rel, content string) actionSetup {
 // stubAstGrep puts a fixed-output ast-grep on PATH alone, so the pattern rung
 // runs its real invocation and parsing without the host's CLI deciding the
 // answer. The stub prints one match whatever the pattern is.
+const (
+	astGrepAlpha = `{"file":"src/alpha.go","range":{"start":{"line":2,"column":0},"end":{"line":4,"column":1}},"text":"func Alpha() int {"}`
+	astGrepBeta  = `{"file":"src/beta.go","range":{"start":{"line":5,"column":0},"end":{"line":7,"column":1}},"text":"func Beta() int {"}`
+)
+
 func stubAstGrep(f *actionFixture) {
+	stubAstGrepMatches(f, "["+astGrepAlpha+"]")
+}
+
+// stubAstGrepTwo serves two matches, so a limit has something to cut.
+func stubAstGrepTwo(f *actionFixture) {
+	stubAstGrepMatches(f, "["+astGrepAlpha+","+astGrepBeta+"]")
+}
+
+// stubAstGrepMatches puts a fake ast-grep first on PATH that prints matches.
+func stubAstGrepMatches(f *actionFixture, matches string) {
 	dir := filepath.Join(f.root, "bin")
 	f.must(os.MkdirAll(dir, 0o755))
-	matches := filepath.Join(dir, "matches.json")
-	f.must(os.WriteFile(matches, []byte(`[{"file":"src/alpha.go","range":{"start":{"line":2,"column":0},"end":{"line":4,"column":1}},"text":"func Alpha() int {"}]`), 0o644))
-	f.must(os.WriteFile(filepath.Join(dir, "ast-grep"), []byte("#!/bin/sh\n/bin/cat "+matches+"\n"), 0o755))
+	matchesFile := filepath.Join(dir, "matches.json")
+	f.must(os.WriteFile(matchesFile, []byte(matches), 0o644))
+	f.must(os.WriteFile(filepath.Join(dir, "ast-grep"), []byte("#!/bin/sh\n/bin/cat "+matchesFile+"\n"), 0o755))
 	f.t.Setenv("PATH", dir)
 }
 
@@ -379,6 +394,12 @@ var actionCases = []actionCase{
 		run: qry(QueryRequest{Action: "pattern", Limit: 5, Args: map[string]any{"pattern": "func $F($A)", "lang": "go"}})},
 	{name: "query_pattern_missing_pattern", action: "query/pattern", setup: seedActionCorpus,
 		run: qry(QueryRequest{Action: "pattern"})},
+	{name: "query_pattern_args_limit", action: "query/pattern", setup: chain(seedActionCorpus, stubAstGrepTwo),
+		run: qry(QueryRequest{Action: "pattern", Args: map[string]any{"pattern": "func $F($A)", "lang": "go", "limit": 1}})},
+	{name: "query_pattern_top_level_limit_wins", action: "query/pattern", setup: chain(seedActionCorpus, stubAstGrepTwo),
+		run: qry(QueryRequest{Action: "pattern", Limit: 2, Args: map[string]any{"pattern": "func $F($A)", "lang": "go", "limit": 1}})},
+	{name: "query_lsp_args_limit", action: "query/lsp", setup: seedActionCorpus,
+		run: qry(QueryRequest{Action: "lsp", Args: map[string]any{"lang": "go", "limit": 2}})},
 
 	// --- query: session reads (args.command) --------------------------------
 	{name: "query_session_recall", action: "query/session", sub: "recall", setup: seedSession,
@@ -423,6 +444,8 @@ var actionCases = []actionCase{
 		run: qry(QueryRequest{Action: "impact", Query: "src/beta.go::Beta", Args: map[string]any{"depth": "banana"}})},
 	{name: "query_depth_string_spelling", action: "query/impact", setup: seedActionCorpus,
 		run: qry(QueryRequest{Action: "impact", Query: "src/beta.go::Beta", Args: map[string]any{"depth": "2"}})},
+	{name: "query_depth_empty_string", action: "query/impact", setup: seedActionCorpus,
+		run: qry(QueryRequest{Action: "impact", Query: "src/beta.go::Beta", Args: map[string]any{"depth": ""}})},
 	{name: "query_ontology_command_key", action: "query/ontology", sub: "matches", setup: chain(seedActionCorpus, seedCatalog),
 		run: qry(QueryRequest{Action: "ontology", Args: map[string]any{"command": "matches"}})},
 	{name: "query_wrong_type_include_git", action: "query/exact", setup: seedActionCorpus,
@@ -495,6 +518,8 @@ var actionCases = []actionCase{
 	// --- import: compressed reader, ontology -------------------------------
 	{name: "import_read", action: "import/read", setup: seedSourceFiles,
 		run: imp(ImportRequest{Action: "read", Path: "src/alpha.go", Args: map[string]any{"mode": "full"}})},
+	{name: "import_read_fresh_true", action: "import/read", setup: seedSourceFiles,
+		run: imp(ImportRequest{Action: "read", Path: "src/alpha.go", Args: map[string]any{"mode": "full", "fresh": true}})},
 	{name: "import_read_missing_path", action: "import/read", run: imp(ImportRequest{Action: "read"})},
 	{name: "import_read_invalid_mode", action: "import/read", setup: seedSourceFiles,
 		run: imp(ImportRequest{Action: "read", Path: "src/alpha.go", Args: map[string]any{"mode": "bogus"}})},

@@ -1341,7 +1341,7 @@ func (e *Engine) activeLanguages() []langs.Language {
 }
 
 // lspCommandHandler answers one query{action:"lsp"} sub-command with symbols.
-type lspCommandHandler func(e *Engine, ctx context.Context, client *lsp.Client, req QueryRequest, a lspArgs) (any, error)
+type lspCommandHandler func(e *Engine, ctx context.Context, client *lsp.Client, req QueryRequest, a lspArgs) ([]lsp.Symbol, error)
 
 // lspCommands is the query{action:"lsp"} sub-command registry (args.command).
 var lspCommands = map[string]lspCommandHandler{
@@ -1393,13 +1393,21 @@ func (e *Engine) lspQuery(ctx context.Context, req QueryRequest, a lspArgs, resp
 	if err != nil {
 		return nil, err
 	}
-	resp["symbols"] = syms
+	resp["symbols"] = capSymbols(syms, req.Limit)
 	resp["server"] = client.Language()
 	resp["retrieval"] = map[string]any{"rung": "lsp", "reason": fmt.Sprintf("language server symbols (%s)", a.Lang)}
 	return resp, nil
 }
 
-func (e *Engine) lspDocumentSymbols(ctx context.Context, client *lsp.Client, _ QueryRequest, a lspArgs) (any, error) {
+// capSymbols keeps the first limit symbols; a limit of 0 keeps them all.
+func capSymbols(syms []lsp.Symbol, limit int) []lsp.Symbol {
+	if limit > 0 && len(syms) > limit {
+		return syms[:limit]
+	}
+	return syms
+}
+
+func (e *Engine) lspDocumentSymbols(ctx context.Context, client *lsp.Client, _ QueryRequest, a lspArgs) ([]lsp.Symbol, error) {
 	if a.Path == "" {
 		return nil, fmt.Errorf("lsp document requires args.path (file to inspect)")
 	}
@@ -1413,7 +1421,7 @@ func (e *Engine) lspDocumentSymbols(ctx context.Context, client *lsp.Client, _ Q
 // lspWorkspaceSymbols polls briefly: real servers (gopls) index lazily after
 // initialize, so an immediate workspace/symbol returns empty. The poll runs
 // while ctx allows so the tier actually answers instead of always returning null.
-func (e *Engine) lspWorkspaceSymbols(ctx context.Context, client *lsp.Client, req QueryRequest, _ lspArgs) (any, error) {
+func (e *Engine) lspWorkspaceSymbols(ctx context.Context, client *lsp.Client, req QueryRequest, _ lspArgs) ([]lsp.Symbol, error) {
 	var syms []lsp.Symbol
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -1443,7 +1451,7 @@ func (e *Engine) lspWorkspaceSymbols(ctx context.Context, client *lsp.Client, re
 type compressReadArgs struct {
 	Mode  string `json:"mode"`
 	Lines string `json:"lines"`
-	Fresh string `json:"fresh"`
+	Fresh bool   `json:"fresh"`
 }
 
 // compressArgs are the args of query{action:"compress"}: the reader's keys plus
@@ -1474,7 +1482,7 @@ func (e *Engine) compressRead(path string, a compressReadArgs) (map[string]any, 
 		Path:      abs,
 		Mode:      mode,
 		LinesSpec: a.Lines,
-		Fresh:     a.Fresh == "true",
+		Fresh:     a.Fresh,
 	})
 	if err != nil {
 		return nil, err

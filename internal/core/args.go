@@ -20,7 +20,8 @@ import (
 // The proto wire carries every arg as a string, so an int or bool field also
 // accepts its string spelling, and a []string field also accepts a
 // comma-separated string (the shape an agent sends against one advertised
-// field). A nil value is the same as an absent key.
+// field). A nil value is the same as an absent key, and so is "" for a number
+// or a boolean (the proto wire's unset value).
 
 // decodeArgs decodes args into T and refuses a key T does not name.
 func decodeArgs[T any](args map[string]any) (T, error) {
@@ -114,6 +115,9 @@ func argTypeError(key, want string) error {
 
 // setArg stores raw into f, which is addressable. key names the arg in errors.
 func setArg(f reflect.Value, key string, raw any) error {
+	if s, ok := raw.(string); ok && s == "" && isNumOrBool(f.Type()) {
+		return nil
+	}
 	switch f.Kind() {
 	case reflect.String:
 		s, ok := raw.(string)
@@ -164,6 +168,18 @@ func setArg(f reflect.Value, key string, raw any) error {
 		return fmt.Errorf("args: %s has unsupported kind %s", key, f.Kind())
 	}
 	return nil
+}
+
+// isNumOrBool reports whether t is an integer or a boolean, or a pointer to one.
+func isNumOrBool(t reflect.Type) bool {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return true
+	}
+	return false
 }
 
 // wholeArg reads a whole number from a JSON number, a Go integer or a decimal

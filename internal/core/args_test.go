@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/lsp"
 )
 
 type argsFixture struct {
@@ -119,4 +120,60 @@ func TestDecodeArgsNoArgsActionRefusesAnyKey(t *testing.T) {
 	}
 	_, err := decodeArgs[noArgs](map[string]any{"path": "x"})
 	requireInvalidParam(t, err, `unknown args key "path" (this action takes no args)`)
+}
+
+// The proto wire sends "" for an unset number or boolean. That is absent, not a
+// bad value: the field keeps its zero value (nil for a pointer) so the action's
+// default applies. A string field still takes "" as a value.
+type unsetArgsFixture struct {
+	Count int    `json:"count"`
+	Flag  bool   `json:"flag"`
+	Depth *int   `json:"depth"`
+	On    *bool  `json:"on"`
+	Name  string `json:"name"`
+}
+
+func TestDecodeArgsEmptyStringIsAbsentForNumbersAndBooleans(t *testing.T) {
+	got, err := decodeArgs[unsetArgsFixture](map[string]any{
+		"count": "", "flag": "", "depth": "", "on": "", "name": "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Count != 0 || got.Flag || got.Depth != nil || got.On != nil || got.Name != "" {
+		t.Fatalf("decoded %+v, want every field at its zero value", got)
+	}
+}
+
+// fresh is a boolean on the wire (JSON true) and on the proto wire ("true").
+func TestDecodeArgsReadFreshIsABoolean(t *testing.T) {
+	for _, raw := range []any{true, "true", false, "false"} {
+		if _, err := decodeArgs[compressReadArgs](map[string]any{"fresh": raw}); err != nil {
+			t.Fatalf("fresh=%v: %v", raw, err)
+		}
+	}
+}
+
+// limit is a whole number on pattern and lsp; the schema documents it.
+func TestDecodeArgsFullScanLimit(t *testing.T) {
+	if _, err := decodeArgs[patternArgs](map[string]any{"pattern": "func $F($A)", "limit": float64(5)}); err != nil {
+		t.Fatalf("pattern limit: %v", err)
+	}
+	if _, err := decodeArgs[lspArgs](map[string]any{"lang": "go", "limit": "5"}); err != nil {
+		t.Fatalf("lsp limit: %v", err)
+	}
+}
+
+// args.limit caps the symbols a lsp query returns; a limit of 0 caps nothing.
+func TestCapSymbolsHonoursLimit(t *testing.T) {
+	syms := []lsp.Symbol{{Name: "A"}, {Name: "B"}, {Name: "C"}}
+	if got := capSymbols(syms, 2); len(got) != 2 || got[1].Name != "B" {
+		t.Fatalf("limit 2: got %v", got)
+	}
+	if got := capSymbols(syms, 0); len(got) != 3 {
+		t.Fatalf("limit 0 must cap nothing, got %d", len(got))
+	}
+	if got := capSymbols(syms, 9); len(got) != 3 {
+		t.Fatalf("limit above the count must keep all, got %d", len(got))
+	}
 }

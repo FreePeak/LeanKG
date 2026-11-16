@@ -637,10 +637,11 @@ type lspArgs struct {
 	Lang    string `json:"lang"`
 	Command string `json:"command"`
 	Path    string `json:"path"`
+	Limit   int    `json:"limit"`
 }
 
 func (e *Engine) queryLSP(ctx context.Context, req QueryRequest, a lspArgs) (map[string]any, error) {
-	return e.lspQuery(ctx, req, a, map[string]any{"query": req.Query})
+	return e.lspQuery(ctx, withArgLimit(req, a.Limit), a, map[string]any{"query": req.Query})
 }
 
 // patternArgs are the args of query{action:"pattern"}.
@@ -648,10 +649,20 @@ type patternArgs struct {
 	envelopeArgs
 	Pattern string `json:"pattern"`
 	Lang    string `json:"lang"`
+	Limit   int    `json:"limit"`
 }
 
 func (e *Engine) queryPattern(ctx context.Context, req QueryRequest, a patternArgs) (map[string]any, error) {
-	return e.patternQuery(ctx, req, a, map[string]any{"query": req.Query})
+	return e.patternQuery(ctx, withArgLimit(req, a.Limit), a, map[string]any{"query": req.Query})
+}
+
+// withArgLimit applies args.limit to a full-scan action (pattern, lsp). The
+// top-level limit wins when both are sent, as the tool schema documents.
+func withArgLimit(req QueryRequest, argLimit int) QueryRequest {
+	if req.Limit == 0 {
+		req.Limit = argLimit
+	}
+	return req
 }
 
 // sessionReadArgs are the args of query{action:"session"}.
