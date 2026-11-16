@@ -12,11 +12,42 @@ import (
 // depends on the store roles it calls. The map can only shrink.
 var backendRoots = map[string]int{"internal/core/core.go": 2}
 
+// openBackendSites is the budget of store.OpenBackend calls per non-test file
+// outside internal/store and cmd/. Each entry opens and closes its own store
+// handle; new sites must be added here deliberately.
+var openBackendSites = map[string]int{
+	"internal/convo/convo.go":               1,
+	"internal/core/portfolio.go":            1,
+	"internal/doctor/fleet.go":              1,
+	"internal/portfolioreg/portfolioreg.go": 2,
+	"internal/portfolioreg/sweep.go":        1,
+	"internal/projects/projects.go":         1,
+	"internal/refresh/refresh.go":           1,
+	"internal/registry/registry.go":         1,
+}
+
 // TestBackendOnlyInCompositionRoots fails when a file names store.Backend more
 // often than its backendRoots budget, and when a budget is larger than the
 // file's actual count (lower the entry).
 func TestBackendOnlyInCompositionRoots(t *testing.T) {
 	_, files := scanLibrary(t)
+	counts := countPerFile(files, isBackendRef)
+	compareFileBudget(t, "backendRoots", "store.Backend references",
+		"depend on the store roles it calls instead", counts, backendRoots)
+}
+
+// TestOpenBackendOnlyAtKnownSites pins the store.OpenBackend call sites outside
+// the composition roots to openBackendSites.
+func TestOpenBackendOnlyAtKnownSites(t *testing.T) {
+	_, files := scanLibrary(t)
+	counts := countPerFile(files, func(n ast.Node) bool { return isPkgCall(n, "store", "OpenBackend") })
+	compareFileBudget(t, "openBackendSites", "store.OpenBackend calls",
+		"open the store through a role or add the site to openBackendSites deliberately", counts, openBackendSites)
+}
+
+// countPerFile counts hits per repo-relative file among the non-test files
+// outside cmd/ and internal/store, keeping only files with at least one hit.
+func countPerFile(files []sourceFile, hit func(ast.Node) bool) map[string]int {
 	counts := map[string]int{}
 	for _, f := range files {
 		if underDir(f.Dir, "cmd") || underDir(f.Dir, "internal/store") {
@@ -24,7 +55,7 @@ func TestBackendOnlyInCompositionRoots(t *testing.T) {
 		}
 		hits := 0
 		ast.Inspect(f.AST, func(n ast.Node) bool {
-			if isBackendRef(n) {
+			if hit(n) {
 				hits++
 			}
 			return true
@@ -33,17 +64,24 @@ func TestBackendOnlyInCompositionRoots(t *testing.T) {
 			counts[f.Rel] = hits
 		}
 	}
+	return counts
+}
 
+// compareFileBudget applies the two-way ratchet to per-file counts: a file above
+// its budget fails with hint, a budget above the file's count must be lowered,
+// and a zero count must drop its entry. mapName names the budget map in messages.
+func compareFileBudget(t *testing.T, mapName, what, hint string, counts, budget map[string]int) {
+	t.Helper()
 	for rel, got := range counts {
-		if want := backendRoots[rel]; got > want {
-			t.Errorf("%s names store.Backend %d time(s) (budget %d): depend on the store roles it calls instead", rel, got, want)
+		if want := budget[rel]; got > want {
+			t.Errorf("%s: %d %s (budget %d): %s", rel, got, what, want, hint)
 		}
 	}
-	for rel, want := range backendRoots {
+	for rel, want := range budget {
 		if got := counts[rel]; got == 0 {
-			t.Errorf("remove the backendRoots entry for %s in internal/archtest/store_roles_test.go: it has no store.Backend references or no longer exists", rel)
+			t.Errorf("remove the %s entry for %s in internal/archtest/store_roles_test.go: it has no %s or no longer exists", mapName, rel, what)
 		} else if got < want {
-			t.Errorf("lower the backendRoots entry for %s to %d in internal/archtest/store_roles_test.go", rel, got)
+			t.Errorf("lower the %s entry for %s to %d in internal/archtest/store_roles_test.go", mapName, rel, got)
 		}
 	}
 }

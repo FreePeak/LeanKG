@@ -17,8 +17,9 @@ import (
 // comparable map keys.
 var gitImportSlots sync.Map
 
-func gitImportSlot(st any) chan struct{} {
-	slot, _ := gitImportSlots.LoadOrStore(st, make(chan struct{}, 1))
+// gitImportSlot returns the git import slot of the engine's store handle.
+func (e *Engine) gitImportSlot() chan struct{} {
+	slot, _ := gitImportSlots.LoadOrStore(e.st, make(chan struct{}, 1))
 	return slot.(chan struct{})
 }
 
@@ -32,7 +33,7 @@ type gitImportArgs struct {
 }
 
 func (e *Engine) gitImport(ctx context.Context, _ ImportRequest, a gitImportArgs) (map[string]any, error) {
-	slot := gitImportSlot(e.st)
+	slot := e.gitImportSlot()
 	select {
 	case slot <- struct{}{}:
 	case <-ctx.Done():
