@@ -172,6 +172,15 @@ func kindOf(op fsnotify.Op) string {
 	}
 }
 
+// watchStore is the store surface the watcher drives: the index pass it
+// flushes and the inventory snapshot it refreshes afterwards.
+type watchStore interface {
+	index.Store
+	store.ElementReader
+	store.Vectors
+	store.Inventories
+}
+
 // Start walks root adding every directory to an fsnotify watcher, acquires
 // the single-flight lock <root>/.leankg/watch.lock (LOCK_EX|LOCK_NB — a
 // second Start on the same project returns ErrAlreadyWatching), and spawns
@@ -179,7 +188,7 @@ func kindOf(op fsnotify.Op) string {
 // index.IndexDir once per flush; ctx.Done stops cleanly. For a git-backed root
 // (a repository top-level with a commit) the git dir is watched for HEAD
 // moves too, so a commit triggers the same flush.
-func Start(ctx context.Context, st store.Backend, root string, opts Options) (*Watcher, error) {
+func Start(ctx context.Context, st watchStore, root string, opts Options) (*Watcher, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("watch: resolve root: %w", err)
@@ -335,7 +344,7 @@ func Start(ctx context.Context, st store.Backend, root string, opts Options) (*W
 // fleet leg, where the live writer daemon made the WARN permanent, not
 // transient. Refresh errors are not surfaced — a snapshot hiccup must not
 // drop an index pass, and doctor reports the lag honestly meanwhile.
-func flushIndex(ctx context.Context, st store.Backend, abs string, opts Options) error {
+func flushIndex(ctx context.Context, st watchStore, abs string, opts Options) error {
 	if _, err := index.IndexDirWith(ctx, st, abs, opts.Registry); err != nil {
 		return err
 	}

@@ -7,18 +7,17 @@ import (
 	"sync"
 
 	"github.com/FreePeak/LeanKG/internal/githistory"
-	"github.com/FreePeak/LeanKG/internal/store"
 )
 
-// gitImportSlots holds one single-slot semaphore per store (store.Backend ->
+// gitImportSlots holds one single-slot semaphore per store handle (handle ->
 // chan struct{}). The history cursor is read and written inside a git import,
 // so two imports over one store must not interleave: the second waits here,
 // then finds HEAD already stored and reports an incremental no-op. Engines that
-// share a store share the slot. Backends are pointers, so they are comparable
-// map keys.
+// share a store share the slot. Store handles are pointers, so they are
+// comparable map keys.
 var gitImportSlots sync.Map
 
-func gitImportSlot(st store.Backend) chan struct{} {
+func gitImportSlot(st any) chan struct{} {
 	slot, _ := gitImportSlots.LoadOrStore(st, make(chan struct{}, 1))
 	return slot.(chan struct{})
 }

@@ -14,7 +14,7 @@
 // Ported from the Rust implementation (src/ontology/{procedural,loader,
 // sync,query,concept,safe_discover}.rs and src/retrieval/
 // ontology_traversal.rs); Rust-only storage semantics (Cozo Datalog) are
-// re-expressed over store.Backend.
+// re-expressed over ontologyStore.
 package ontology
 
 import (
@@ -27,6 +27,22 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
+
+// ontologyStore is the store surface the ontology layer calls: element and
+// relationship writes, element and edge reads, and the namespaced KV. The
+// composed store satisfies it.
+type ontologyStore interface {
+	UpsertElements(ctx context.Context, els []store.Element) error
+	UpsertRelationships(ctx context.Context, rels []store.Relationship) error
+	DeleteByFile(ctx context.Context, path string) error
+	KVSet(ctx context.Context, namespace, key, value string) error
+	KVGet(ctx context.Context, namespace, key string) (string, bool, error)
+	Elements(ctx context.Context) ([]store.Element, error)
+	ElementCount(ctx context.Context) (int, error)
+	FindExact(ctx context.Context, name string) ([]store.Element, error)
+	Outgoing(ctx context.Context, source string) ([]store.Relationship, error)
+	Incoming(ctx context.Context, target string) ([]store.Relationship, error)
+}
 
 // Concept is one catalog entry.
 type Concept struct {
@@ -82,7 +98,7 @@ func LoadCatalog(path string) (*Catalog, error) {
 // anywhere wins over a label-name match, which wins over a label-substring
 // match. (concept, element) pairs are deduped keeping the strongest
 // provenance; the result is sorted by ConceptID then QN.
-func (c *Catalog) MatchElements(ctx context.Context, st store.Backend) ([]Match, error) {
+func (c *Catalog) MatchElements(ctx context.Context, st ontologyStore) ([]Match, error) {
 	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
@@ -142,7 +158,7 @@ func (c *Catalog) MatchElements(ctx context.Context, st store.Backend) ([]Match,
 }
 
 // SaveMatches persists the match set under the "ontology" KV namespace.
-func SaveMatches(ctx context.Context, st store.Backend, matches []Match) error {
+func SaveMatches(ctx context.Context, st ontologyStore, matches []Match) error {
 	b, err := json.Marshal(matches)
 	if err != nil {
 		return err
@@ -151,7 +167,7 @@ func SaveMatches(ctx context.Context, st store.Backend, matches []Match) error {
 }
 
 // LoadMatches reads the match set back; a missing key yields (nil, nil).
-func LoadMatches(ctx context.Context, st store.Backend) ([]Match, error) {
+func LoadMatches(ctx context.Context, st ontologyStore) ([]Match, error) {
 	s, ok, err := st.KVGet(ctx, "ontology", "matches")
 	if err != nil || !ok {
 		return nil, err

@@ -213,12 +213,22 @@ func (r PullResult) Report(stdout, stderr io.Writer) {
 	fmt.Fprintln(stdout, r.Message())
 }
 
+// graphStore is the store surface federation reads and applies graphs through.
+// The composed store satisfies it.
+type graphStore interface {
+	Elements(ctx context.Context) ([]store.Element, error)
+	RelationshipsAll(ctx context.Context, limit int) ([]store.Relationship, error)
+	RelationshipCount(ctx context.Context) (int, error)
+	UpsertElements(ctx context.Context, els []store.Element) error
+	UpsertRelationships(ctx context.Context, rels []store.Relationship) error
+}
+
 // Push sends the whole local graph to {remote}/api/v2/graph/push.
 //
 // Only a local read, request-build, transport or response-read failure is
 // returned as an error (Rust's `?`, exit 1); a rejected request comes back as
 // a PushResult with Failed() set, matching the Rust command's exit 0.
-func Push(ctx context.Context, st store.Backend, opts Options) (PushResult, error) {
+func Push(ctx context.Context, st graphStore, opts Options) (PushResult, error) {
 	els, err := st.Elements(ctx)
 	if err != nil {
 		return PushResult{}, fmt.Errorf("federation: read local elements: %w", err)
@@ -281,7 +291,7 @@ func Push(ctx context.Context, st store.Backend, opts Options) (PushResult, erro
 // route existed. Only a local transport fault or a malformed graph document is
 // an error (Rust's `?`, exit 1); a rejected request is a PullResult with
 // Failed() set, matching Rust's exit 0 on "Pull failed (…)".
-func Pull(ctx context.Context, st store.Backend, opts Options) (PullResult, error) {
+func Pull(ctx context.Context, st graphStore, opts Options) (PullResult, error) {
 	if st == nil {
 		return PullResult{}, errors.New("federation: pull needs a store to apply into")
 	}
@@ -411,7 +421,7 @@ func isGraphEnvelope(body []byte) bool {
 
 // readRelationships reads every local relationship, refusing to publish a
 // graph the paged read may have truncated.
-func readRelationships(ctx context.Context, st store.Backend) ([]store.Relationship, error) {
+func readRelationships(ctx context.Context, st graphStore) ([]store.Relationship, error) {
 	rels, err := st.RelationshipsAll(ctx, maxRelationships)
 	if err != nil {
 		return nil, fmt.Errorf("federation: read local relationships: %w", err)

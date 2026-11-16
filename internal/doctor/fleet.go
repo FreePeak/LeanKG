@@ -95,7 +95,7 @@ func (f fleetProbe) Fleet(ctx context.Context) ([]FleetStatus, error) {
 			out = append(out, st)
 			continue
 		}
-		child, err := f.opts.OpenChild(ctx, p.Dir)
+		child, err := store.OpenBackend(ctx, f.opts.ChildOpenOptions(p.Dir))
 		if err != nil {
 			st.Unreadable = err.Error()
 			out = append(out, st)

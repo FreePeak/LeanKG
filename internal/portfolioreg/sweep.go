@@ -215,7 +215,7 @@ func AutoSweep(ctx context.Context, o Options) (SweepReport, error) {
 func CheckStore(ctx context.Context, o Options, dir string) (StoreStatus, error) {
 	st := StoreStatus{Dir: dir, Reason: StoreOK}
 	shared := storeIsShared(o.engine(), dir)
-	child, err := o.OpenChild(ctx, dir)
+	child, err := store.OpenBackend(ctx, o.ChildOpenOptions(dir))
 	if err != nil {
 		if storeAbsent(err) {
 			st.Reason = StoreNoStore
@@ -224,7 +224,7 @@ func CheckStore(ctx context.Context, o Options, dir string) (StoreStatus, error)
 		st.Reason = StoreUnreadable
 		return st, err
 	}
-	st.StorePath = storePath(o.engine(), child, dir)
+	st.StorePath = storePath(o.engine(), child.Path(), dir)
 	root, ok, kerr := child.KVGet(ctx, rootKVNamespace, rootKVKey)
 	_ = child.Close()
 	if kerr != nil {
@@ -251,11 +251,11 @@ func CheckStore(ctx context.Context, o Options, dir string) (StoreStatus, error)
 // server, and the backend's own path is the redacted DSN — the same for
 // every project, so it cannot name one. There the project's directory is
 // the identity.
-func storePath(engine string, child store.Backend, dir string) string {
+func storePath(engine, childPath, dir string) string {
 	if engine == store.EnginePostgres {
 		return dir
 	}
-	return child.Path()
+	return childPath
 }
 
 // storeIsShared reports whether a project's store lives OUTSIDE the

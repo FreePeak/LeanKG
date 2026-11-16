@@ -101,7 +101,7 @@ func KotlinExtras(rel string, src []byte) ([]store.Element, []store.Relationship
 // its content. Returns handled=false when the file is not claimed (caller falls
 // back to generic extraction). Wiring: called from indexDir's changed-file loop
 // BEFORE extractFileAs.
-func indexSpecialistFile(ctx context.Context, st store.Backend, rel string, src []byte, size, mtimeNS int64, hash string, res *Result) (bool, error) {
+func indexSpecialistFile(ctx context.Context, st store.IndexWriter, rel string, src []byte, size, mtimeNS int64, hash string, res *Result) (bool, error) {
 	els, rels, claimed := ExtractSpecialist(rel, src)
 	if !claimed {
 		return false, nil
@@ -129,7 +129,7 @@ func indexSpecialistFile(ctx context.Context, st store.Backend, rel string, src 
 // indexKotlinExtras persists the Kotlin-side Android extractor output for one
 // already-indexed .kt/.kts file, from its content. Wiring: called from indexDir
 // after the generic upsert for files with lang == "kotlin".
-func indexKotlinExtras(ctx context.Context, st store.Backend, rel string, src []byte, res *Result) error {
+func indexKotlinExtras(ctx context.Context, st store.IndexWriter, rel string, src []byte, res *Result) error {
 	els, rels := KotlinExtras(rel, src)
 	if err := st.UpsertElements(ctx, els); err != nil {
 		return err

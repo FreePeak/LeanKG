@@ -69,11 +69,15 @@ func TestRoutedReadDoesNotMigrateTheStore(t *testing.T) {
 		Mode:       store.RW,
 		EngineName: store.EngineSQLite,
 	})
-	p, err := r.Open(context.Background(), dir)
-	if err != nil {
+	if _, err := r.Open(context.Background(), dir); err != nil {
 		t.Fatalf("open the routed project: %v", err)
 	}
-	applied, err := p.Store.AppliedMigrations(context.Background())
+	ro, err := store.OpenBackend(context.Background(), store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RO})
+	if err != nil {
+		t.Fatalf("open the store read-only: %v", err)
+	}
+	defer ro.Close()
+	applied, err := ro.AppliedMigrations(context.Background())
 	if err != nil {
 		t.Fatalf("applied migrations: %v", err)
 	}

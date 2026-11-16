@@ -84,7 +84,7 @@ type Status struct {
 // name, aliases and description, returning scored hits sorted descending
 // (parity with search_ontology_nodes). depth is accepted for API parity
 // but the search itself is depth-independent.
-func SearchOntologyNodes(ctx context.Context, st store.Backend, query string) ([]NodeInfo, error) {
+func SearchOntologyNodes(ctx context.Context, st ontologyStore, query string) ([]NodeInfo, error) {
 	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func SearchOntologyNodes(ctx context.Context, st store.Backend, query string) ([
 
 // ontologyElements returns every stored ontology element (file_path
 // ontology://) ordered by qualified name.
-func ontologyElements(ctx context.Context, st store.Backend) ([]store.Element, error) {
+func ontologyElements(ctx context.Context, st ontologyStore) ([]store.Element, error) {
 	els, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func ontologyElements(ctx context.Context, st store.Backend) ([]store.Element, e
 }
 
 // findElementByQN finds a single element by qualified name (any layer).
-func findElementByQN(ctx context.Context, st store.Backend, qn string) (store.Element, bool, error) {
+func findElementByQN(ctx context.Context, st ontologyStore, qn string) (store.Element, bool, error) {
 	// FindExact matches on name or qualified name case-insensitively; filter
 	// for the exact qualified name.
 	els, err := st.FindExact(ctx, qn)
@@ -153,11 +153,11 @@ func findElementByQN(ctx context.Context, st store.Backend, qn string) (store.El
 // ExpandContext expands an ontology node to related code context over DB
 // relationships, recursing up to depth hops (parity with
 // expand_ontology_context).
-func ExpandContext(ctx context.Context, st store.Backend, gid string, depth int) ([]store.Element, []store.Relationship, error) {
+func ExpandContext(ctx context.Context, st ontologyStore, gid string, depth int) ([]store.Element, []store.Relationship, error) {
 	return expandContext(ctx, st, gid, depth, map[string]bool{gid: true})
 }
 
-func expandContext(ctx context.Context, st store.Backend, gid string, depth int, visited map[string]bool) ([]store.Element, []store.Relationship, error) {
+func expandContext(ctx context.Context, st ontologyStore, gid string, depth int, visited map[string]bool) ([]store.Element, []store.Relationship, error) {
 	var elements []store.Element
 	var rels []store.Relationship
 
@@ -202,7 +202,7 @@ func expandContext(ctx context.Context, st store.Backend, gid string, depth int,
 // (parity with get_ontology_context): matched nodes, their expanded
 // neighborhoods, code_refs resolution for concept-layer nodes, and
 // workflow / step / failure-mode payloads for procedural matches.
-func GetContext(ctx context.Context, st store.Backend, query string, depth int) (ContextResult, error) {
+func GetContext(ctx context.Context, st ontologyStore, query string, depth int) (ContextResult, error) {
 	matched, err := SearchOntologyNodes(ctx, st, query)
 	if err != nil {
 		return ContextResult{}, err
@@ -271,7 +271,7 @@ func GetContext(ctx context.Context, st store.Backend, query string, depth int) 
 // Trace finds a workflow by name/alias/GID (or by a step's name, tracing
 // its parent workflow) and returns its ordered steps — the
 // kg_trace_workflow behavior (parity with trace_workflow).
-func Trace(ctx context.Context, st store.Backend, workflowQuery string) ([]WorkflowStepNode, error) {
+func Trace(ctx context.Context, st ontologyStore, workflowQuery string) ([]WorkflowStepNode, error) {
 	workflowGID := ""
 	workflow, err := findWorkflow(ctx, st, workflowQuery)
 	if err != nil {
@@ -331,7 +331,7 @@ func Trace(ctx context.Context, st store.Backend, workflowQuery string) ([]Workf
 
 // findWorkflow searches workflow nodes by name / alias / GID substring
 // (parity with search_workflows); first match wins.
-func findWorkflow(ctx context.Context, st store.Backend, query string) (*WorkflowNode, error) {
+func findWorkflow(ctx context.Context, st ontologyStore, query string) (*WorkflowNode, error) {
 	q := strings.ToLower(query)
 	els, err := ontologyElements(ctx, st)
 	if err != nil {
@@ -445,7 +445,7 @@ func failureModeFromElement(el store.Element) (FailureModeNode, error) {
 // probe (full query first, then keywords), keep the best score per GID,
 // then resolve all matched concepts' code_refs against indexed elements.
 // With no concept hit, a name-based code search is returned as fallback.
-func ConceptSearch(ctx context.Context, st store.Backend, rawInput string, limit int) (ConceptSearchResult, error) {
+func ConceptSearch(ctx context.Context, st ontologyStore, rawInput string, limit int) (ConceptSearchResult, error) {
 	keywords := ExtractKeywords(rawInput)
 	if limit == 0 {
 		limit = 20
@@ -552,7 +552,7 @@ func ConceptSearch(ctx context.Context, st store.Backend, rawInput string, limit
 // ResolveCodeRefs resolves code references (file paths, directory paths, or
 // file::symbol references) against indexed code elements (parity with
 // resolve_code_refs). Bounded by limit; never a full-table scan.
-func ResolveCodeRefs(ctx context.Context, st store.Backend, codeRefs []string, limit int) ([]store.Element, error) {
+func ResolveCodeRefs(ctx context.Context, st ontologyStore, codeRefs []string, limit int) ([]store.Element, error) {
 	if len(codeRefs) == 0 || limit == 0 {
 		return nil, nil
 	}
@@ -647,8 +647,8 @@ func ResolveCodeRefs(ctx context.Context, st store.Backend, codeRefs []string, l
 //
 // ponytail: one full element scan per probe, capped at limit. The Rust
 // engine had the same scan complexity (:limit still walks the relation).
-// Upgrade path: a Backend method backed by an indexed LIKE/substring query.
-func searchByName(ctx context.Context, st store.Backend, name string, limit int, excludeOntology bool) ([]store.Element, error) {
+// Upgrade path: an ontologyStore method backed by an indexed LIKE/substring query.
+func searchByName(ctx context.Context, st ontologyStore, name string, limit int, excludeOntology bool) ([]store.Element, error) {
 	if limit < 1 {
 		limit = 1
 	}
@@ -678,13 +678,13 @@ func searchByName(ctx context.Context, st store.Backend, name string, limit int,
 // searchCodeElementsByName is the name-based fallback when no concept
 // matched (parity with search_code_elements_by_name). Only non-ontology
 // elements are considered.
-func searchCodeElementsByName(ctx context.Context, st store.Backend, name string, limit int) ([]store.Element, error) {
+func searchCodeElementsByName(ctx context.Context, st ontologyStore, name string, limit int) ([]store.Element, error) {
 	return searchByName(ctx, st, name, limit, true)
 }
 
 // OntologyStatus computes counts by type over the stored ontology layer
 // (parity with get_ontology_status).
-func OntologyStatus(ctx context.Context, st store.Backend) (Status, error) {
+func OntologyStatus(ctx context.Context, st ontologyStore) (Status, error) {
 	els, err := ontologyElements(ctx, st)
 	if err != nil {
 		return Status{}, err
@@ -778,7 +778,7 @@ func ScoreLevel(score float64) MatchLevel {
 // (sum of node MatchScores / count). It is the input to the Noul
 // L3 gate in internal/core/core.go: confidence < MinConfidence →
 // skip L3, degrade to L2. Returns 0 when nothing matches.
-func OntologyConfidence(ctx context.Context, st store.Backend, query string) (float64, error) {
+func OntologyConfidence(ctx context.Context, st ontologyStore, query string) (float64, error) {
 	nodes, err := SearchOntologyNodes(ctx, st, query)
 	if err != nil {
 		return 0, err
@@ -953,7 +953,7 @@ type SelfTestReport struct {
 
 // SelfTest probes each kg_* query path; ok=true means the call completed
 // without error.
-func SelfTest(ctx context.Context, st store.Backend) SelfTestReport {
+func SelfTest(ctx context.Context, st ontologyStore) SelfTestReport {
 	probe := "__selftest__"
 
 	var report SelfTestReport

@@ -42,7 +42,7 @@ const (
 )
 
 // allRelationshipsLimit caps the relationship read well above any realistic
-// graph. store.Backend.RelationshipsAll treats limit <= 0 as 1000 rows, so the
+// graph. The RelationshipsAll read treats limit <= 0 as 1000 rows, so the
 // full edge set must be requested explicitly (same convention as web/api.go).
 const allRelationshipsLimit = 1 << 20
 
@@ -69,7 +69,10 @@ type Manifest struct {
 // manifest. It errors out (instead of truncating) if the selected slice exceeds
 // the node ceiling: the contract advertises "refuses to truncate", and silent
 // row-drop would make that a lie.
-func WritePack(ctx context.Context, st store.Backend, outDir string, opts Options) (Manifest, error) {
+func WritePack(ctx context.Context, st interface {
+	Elements(ctx context.Context) ([]store.Element, error)
+	RelationshipsAll(ctx context.Context, limit int) ([]store.Relationship, error)
+}, outDir string, opts Options) (Manifest, error) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return Manifest{}, fmt.Errorf("create pack dir: %w", err)
 	}

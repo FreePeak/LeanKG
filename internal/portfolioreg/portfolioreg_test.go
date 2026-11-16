@@ -41,14 +41,14 @@ func newProject(t *testing.T, dir, name string) {
 }
 
 // storeChild is the test's per-project executor: it opens the project through
-// the SAME read-only path production uses (Options.OpenChild) and answers in
+// the SAME read-only path production uses (Options.ChildOpenOptions) and answers in
 // the envelope shape the core child emits (hits + freshness + retrieval.rung).
 // That keeps the test honest about the open-per-project contract (a missing
 // store errors, it never silently indexes) without importing core's ladder,
 // which core's own tests cover.
 func storeChild(o Options) Child {
 	return func(ctx context.Context, p store.ProjectRecord, q Query) (map[string]any, error) {
-		st, err := o.OpenChild(ctx, p.Dir)
+		st, err := store.OpenBackend(ctx, o.ChildOpenOptions(p.Dir))
 		if err != nil {
 			return nil, err
 		}
@@ -364,17 +364,17 @@ func TestCanonicalAndStamp(t *testing.T) {
 	}
 }
 
-func TestOpenChildNeverWrites(t *testing.T) {
+func TestChildOpenOptionsNeverWrites(t *testing.T) {
 	dir := t.TempDir()
 	o := Options{DBPath: filepath.Join(t.TempDir(), "portfolio.db")}
 	ctx := context.Background()
 	// A portfolio child opens read-only: with no store at all it fails — it
 	// does not create one, which is the "never eager-index" rule.
-	if _, err := o.OpenChild(ctx, dir); err == nil {
-		t.Fatal("OpenChild on an unindexed project must fail")
+	if _, err := store.OpenBackend(ctx, o.ChildOpenOptions(dir)); err == nil {
+		t.Fatal("a child open on an unindexed project must fail")
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".leankg")); err == nil {
-		t.Fatal("OpenChild created a .leankg directory: a fleet read must not write")
+		t.Fatal("a child open created a .leankg directory: a fleet read must not write")
 	}
 }
 

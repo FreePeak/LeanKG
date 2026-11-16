@@ -115,7 +115,7 @@ func staticOwner(ext string) (string, bool) {
 // HEAD (committed content, change detection by blob ID); any other directory is
 // walked from disk. Walked files whose size+mtime match the stored record or
 // whose SHA-256 matches ContentHash are skipped without any writes.
-func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error) {
+func IndexDir(ctx context.Context, st Store, dir string) (Result, error) {
 	return IndexDirWith(ctx, st, dir, nil)
 }
 
@@ -124,7 +124,7 @@ func IndexDir(ctx context.Context, st store.Backend, dir string) (Result, error)
 // (lazy activation; a .kt file in a Go-only tree is skipped, not indexed),
 // and extraction routes by the owner language. reg == nil keeps the legacy
 // static behavior.
-func IndexDirWith(ctx context.Context, st store.Backend, dir string, reg *langs.Registry) (Result, error) {
+func IndexDirWith(ctx context.Context, st Store, dir string, reg *langs.Registry) (Result, error) {
 	owner := staticOwner
 	if reg != nil {
 		owner = func(ext string) (string, bool) {
@@ -229,14 +229,14 @@ func DeleteFiles(ctx context.Context, st store.IndexWriter, paths []string) (int
 
 // RebaseRoot records dir as the store's index root, replacing any previous
 // one (`leankg index --rebase-root` after moving a checkout).
-func RebaseRoot(ctx context.Context, st store.Backend, dir string) error {
+func RebaseRoot(ctx context.Context, st store.KV, dir string) error {
 	return st.KVSet(ctx, rootKVNamespace, rootKVKey, CanonicalRoot(dir))
 }
 
 // checkRoot enforces the tripwire: a store with no recorded root (built
 // before RS-02, or empty) adopts dir; a store with files and a different
 // recorded root refuses the walk before anything is deleted.
-func checkRoot(ctx context.Context, st store.Backend, dir string, hasFiles bool) error {
+func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) error {
 	want := CanonicalRoot(dir)
 	got, ok, err := st.KVGet(ctx, rootKVNamespace, rootKVKey)
 	if err != nil {
@@ -280,7 +280,7 @@ func WithBudget(ctx context.Context, spent <-chan struct{}) context.Context {
 	return context.WithValue(ctx, budgetKey{}, spent)
 }
 
-func indexDir(ctx context.Context, st store.Backend, dir string, owner extOwnerFunc) (res Result, err error) {
+func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (res Result, err error) {
 	prev, err := st.Files(ctx)
 	if err != nil {
 		return res, err

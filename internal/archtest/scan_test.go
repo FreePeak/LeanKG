@@ -147,6 +147,21 @@ func isPkgCall(n ast.Node, pkg string, sels ...string) bool {
 	return slices.Contains(sels, sel)
 }
 
+// funcName returns "Func" for a function and "Recv.Method" for a method.
+func funcName(d *ast.FuncDecl) string {
+	if d.Recv == nil || len(d.Recv.List) == 0 {
+		return d.Name.Name
+	}
+	recv := d.Recv.List[0].Type
+	if star, ok := recv.(*ast.StarExpr); ok {
+		recv = star.X
+	}
+	if id, ok := recv.(*ast.Ident); ok {
+		return id.Name + "." + d.Name.Name
+	}
+	return d.Name.Name
+}
+
 // compareBudget applies the two-way ratchet to counts keyed by directory.
 // Above budget, below budget and unbudgeted non-zero counts all fail.
 func compareBudget(t *testing.T, rule string, counts, budget map[string]int) {

@@ -349,12 +349,27 @@ func Parse(content string) Result {
 	return res
 }
 
+// prdStore is the slice of the store the PRD indexer reads and rewrites: the
+// element and edge reads plus the writes that rebuild one document's entities
+// and knowledge rows.
+type prdStore interface {
+	Elements(ctx context.Context) ([]store.Element, error)
+	FindExact(ctx context.Context, name string) ([]store.Element, error)
+	Outgoing(ctx context.Context, source string) ([]store.Relationship, error)
+	Incoming(ctx context.Context, target string) ([]store.Relationship, error)
+	DeleteByFile(ctx context.Context, path string) error
+	UpsertElements(ctx context.Context, els []store.Element) error
+	UpsertRelationships(ctx context.Context, rels []store.Relationship) error
+	KnowledgeEntryDelete(ctx context.Context, id string) error
+	KnowledgeEntryUpsert(ctx context.Context, e store.KnowledgeEntry) error
+}
+
 // Index parses content and replaces the entities of docPath in the store:
 // prd_requirement / prd_user_story elements plus one implemented_by edge per
 // (requirement, workflow) pair the document names. Re-indexing is a clean
 // rebuild keyed on the synthetic file path, so it is idempotent for edits that
 // remove requirements too, not just for re-reads of an unchanged document.
-func Index(ctx context.Context, st store.Backend, docPath, content, env string) (IndexResult, error) {
+func Index(ctx context.Context, st prdStore, docPath, content, env string) (IndexResult, error) {
 	res := Parse(content)
 	out := IndexResult{
 		Source:       docPath,
@@ -441,7 +456,7 @@ func Index(ctx context.Context, st store.Backend, docPath, content, env string) 
 
 // IndexDocument reads projectRoot/relDoc and indexes it. A missing document is
 // an error (the Rust index_prd refused to run without its source).
-func IndexDocument(ctx context.Context, st store.Backend, projectRoot, relDoc, env string) (IndexResult, error) {
+func IndexDocument(ctx context.Context, st prdStore, projectRoot, relDoc, env string) (IndexResult, error) {
 	path := filepath.Join(projectRoot, filepath.FromSlash(relDoc))
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -528,7 +543,7 @@ func Elements(res Result, docPath, env string, now int64) []store.Element {
 //
 // An edge is emitted only for steps whose parent is a stored workflow, so
 // every endpoint resolves to an element.
-func Links(ctx context.Context, st store.Backend, res Result, docPath string) ([]store.Relationship, error) {
+func Links(ctx context.Context, st prdStore, res Result, docPath string) ([]store.Relationship, error) {
 	if len(res.Requirements) == 0 {
 		return nil, nil
 	}
@@ -612,30 +627,30 @@ func linksFrom(steps []store.Element, res Result, docPath string) []store.Relati
 }
 
 // RequirementByID returns the requirement entity for a feature id.
-func RequirementByID(ctx context.Context, st store.Backend, id string) (store.Element, bool, error) {
+func RequirementByID(ctx context.Context, st prdStore, id string) (store.Element, bool, error) {
 	return elementByQN(ctx, st, requirementQN(id))
 }
 
 // UserStoryByID returns the user story entity for a user story id.
-func UserStoryByID(ctx context.Context, st store.Backend, id string) (store.Element, bool, error) {
+func UserStoryByID(ctx context.Context, st prdStore, id string) (store.Element, bool, error) {
 	return elementByQN(ctx, st, userStoryQN(id))
 }
 
 // Requirements lists every indexed requirement entity, ordered by qualified
 // name.
-func Requirements(ctx context.Context, st store.Backend) ([]store.Element, error) {
+func Requirements(ctx context.Context, st prdStore) ([]store.Element, error) {
 	return elementsByType(ctx, st, TypeRequirement)
 }
 
 // UserStories lists every indexed user story entity, ordered by qualified
 // name.
-func UserStories(ctx context.Context, st store.Backend) ([]store.Element, error) {
+func UserStories(ctx context.Context, st prdStore) ([]store.Element, error) {
 	return elementsByType(ctx, st, TypeUserStory)
 }
 
 // WorkflowsForFeature returns the workflow GIDs linked to a feature id (the
 // get_workflows_for_feature read over the implemented_by edges).
-func WorkflowsForFeature(ctx context.Context, st store.Backend, featureID string) ([]string, error) {
+func WorkflowsForFeature(ctx context.Context, st prdStore, featureID string) ([]string, error) {
 	rels, err := st.Outgoing(ctx, requirementQN(featureID))
 	if err != nil {
 		return nil, err
@@ -651,7 +666,7 @@ func WorkflowsForFeature(ctx context.Context, st store.Backend, featureID string
 
 // FeaturesForWorkflow returns the feature ids a workflow implements (the
 // get_features_for_workflow read).
-func FeaturesForWorkflow(ctx context.Context, st store.Backend, workflowGID string) ([]string, error) {
+func FeaturesForWorkflow(ctx context.Context, st prdStore, workflowGID string) ([]string, error) {
 	rels, err := st.Incoming(ctx, workflowGID)
 	if err != nil {
 		return nil, err
@@ -712,7 +727,7 @@ func KnowledgeEntries(res Result, env string) []store.KnowledgeEntry {
 }
 
 // elementByQN loads one element by its qualified name.
-func elementByQN(ctx context.Context, st store.Backend, qn string) (store.Element, bool, error) {
+func elementByQN(ctx context.Context, st prdStore, qn string) (store.Element, bool, error) {
 	found, err := st.FindExact(ctx, qn)
 	if err != nil {
 		return store.Element{}, false, err
@@ -725,7 +740,7 @@ func elementByQN(ctx context.Context, st store.Backend, qn string) (store.Elemen
 	return store.Element{}, false, nil
 }
 
-func elementsByType(ctx context.Context, st store.Backend, typ string) ([]store.Element, error) {
+func elementsByType(ctx context.Context, st prdStore, typ string) ([]store.Element, error) {
 	all, err := st.Elements(ctx)
 	if err != nil {
 		return nil, err
@@ -1087,7 +1102,7 @@ type Coverage struct {
 
 // Trace returns one Coverage row per indexed requirement, or the single row of
 // featureID when it is non-empty. Rows are ordered by feature id.
-func Trace(ctx context.Context, st store.Backend, featureID string) ([]Coverage, error) {
+func Trace(ctx context.Context, st prdStore, featureID string) ([]Coverage, error) {
 	var reqs []store.Element
 	if featureID != "" {
 		el, ok, err := RequirementByID(ctx, st, featureID)

@@ -161,7 +161,7 @@ type DiscoveredFunction struct {
 // GlobalFunctionCap. When BFS yields nothing for a seed whose code links
 // live in metadata.code_refs, falls back to keyed path-prefix resolution
 // (parity with traverse_to_functions).
-func TraverseToFunctions(ctx context.Context, st store.Backend, seeds []UpperSeed, env string) ([]DiscoveredFunction, error) {
+func TraverseToFunctions(ctx context.Context, st ontologyStore, seeds []UpperSeed, env string) ([]DiscoveredFunction, error) {
 	var discovered []DiscoveredFunction
 	seen := map[string]int{} // function QN -> index into discovered
 	total := 0
@@ -266,7 +266,7 @@ func needsCodeRefsFallback(elementType string) bool {
 
 // resolveCodeRefsFallback resolves metadata.code_refs of an upper seed
 // into concrete function nodes (parity with resolve_code_refs_fallback).
-func resolveCodeRefsFallback(ctx context.Context, st store.Backend, upper UpperSeed, env string, fanoutCap int,
+func resolveCodeRefsFallback(ctx context.Context, st ontologyStore, upper UpperSeed, env string, fanoutCap int,
 	discovered *[]DiscoveredFunction, seen map[string]int, total *int) error {
 
 	el, ok, err := findElementByQN(ctx, st, upper.QualifiedName)

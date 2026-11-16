@@ -25,6 +25,7 @@
 package obsidian
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -95,15 +96,26 @@ func VaultPath(leankgDir, custom string) string {
 	return filepath.Join(leankgDir, "obsidian", "vault")
 }
 
+// vaultStore is the store surface the vault sync reads and writes: elements,
+// one-hop edges, and the KV annotations. The composed store satisfies it.
+type vaultStore interface {
+	Elements(ctx context.Context) ([]store.Element, error)
+	Outgoing(ctx context.Context, source string) ([]store.Relationship, error)
+	KVGet(ctx context.Context, namespace, key string) (string, bool, error)
+	UpsertElements(ctx context.Context, els []store.Element) error
+	UpsertRelationships(ctx context.Context, rels []store.Relationship) error
+	KVSet(ctx context.Context, namespace, key, value string) error
+}
+
 // Engine binds one vault to the store it syncs with.
 type Engine struct {
 	vault string
-	st    store.Backend
+	st    vaultStore
 }
 
 // New returns an engine for vaultPath. st may be nil for the filesystem-only
 // operations (Init, Status); Push and Pull require a store.
-func New(vaultPath string, st store.Backend) *Engine {
+func New(vaultPath string, st vaultStore) *Engine {
 	return &Engine{vault: vaultPath, st: st}
 }
 

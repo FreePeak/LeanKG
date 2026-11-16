@@ -128,11 +128,18 @@ func (o Options) pgURL(dir string) string {
 	return projectcfg.PGURL(dir)
 }
 
+// Registry is the registry handle Open returns: the project list and forget
+// operations plus Close. It is all a registry caller needs.
+type Registry interface {
+	store.Projects
+	Close() error
+}
+
 // Open opens the registry store itself. RW creates and migrates it on first
 // use (that is what bootstraps a fleet); RO requires it to exist, so a reader
 // gets ErrNoRegistry rather than an empty fleet it cannot distinguish from a
 // missing one.
-func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error) {
+func Open(ctx context.Context, o Options, mode store.Mode) (Registry, error) {
 	switch o.engine() {
 	case store.EnginePostgres:
 		url := o.pgURL("")
@@ -186,10 +193,11 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 	}
 }
 
-// OpenChild opens one registered project's store READ-ONLY: the sqlite child
-// resolves to <dir>/.leankg/leankg.db, the Postgres child to that project's own
-// schema on the shared server, search_path pinned by store.OpenBackend exactly as it
-// is for the project's own readers — so a fleet query reads the same rows the
+// ChildOpenOptions are the store.OpenOptions that open one registered
+// project's store READ-ONLY: the sqlite child resolves to
+// <dir>/.leankg/leankg.db, the Postgres child to that project's own schema on
+// the shared server, search_path pinned by store.OpenBackend exactly as it is
+// for the project's own readers — so a fleet query reads the same rows the
 // project reads, and no cross-schema UNION is built out of concatenated names.
 //
 // CEILING: one lazily-dialing pool per child, used and closed inside one
@@ -197,8 +205,8 @@ func Open(ctx context.Context, o Options, mode store.Mode) (store.Backend, error
 // children, sequential). The upgrade path if fan-out latency ever matters is a
 // shared pool that checks out a connection and SETs search_path per child
 // inside a transaction — which needs every Backend reader to run in that tx.
-func (o Options) OpenChild(ctx context.Context, dir string) (store.Backend, error) {
-	return store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dir, Engine: o.engine(), PGURL: o.pgURL(dir), DBPath: "", Mode: store.RO})
+func (o Options) ChildOpenOptions(dir string) store.OpenOptions {
+	return store.OpenOptions{ProjectDir: dir, Engine: o.engine(), PGURL: o.pgURL(dir), DBPath: "", Mode: store.RO}
 }
 
 // Canonical turns a project path into the registry key: absolute, with symlinks
@@ -250,7 +258,7 @@ func Register(ctx context.Context, o Options, dir, name string, elements, files 
 }
 
 // stamp upserts one row against an already-open registry handle.
-func stamp(ctx context.Context, reg store.Backend, dir, name string, elements, files int, indexedAt *time.Time) (store.ProjectRecord, error) {
+func stamp(ctx context.Context, reg store.Projects, dir, name string, elements, files int, indexedAt *time.Time) (store.ProjectRecord, error) {
 	if name == "" {
 		if prev, ok, err := reg.ProjectGet(ctx, dir); err == nil && ok {
 			name = prev.Name
@@ -283,7 +291,7 @@ func stamp(ctx context.Context, reg store.Backend, dir, name string, elements, f
 // from the store the run just wrote and registers the project. It is
 // BEST-EFFORT by contract — a fleet registration must never turn a successful
 // index into a failed command, so callers log the error and move on.
-func RegisterAfterIndex(ctx context.Context, o Options, st store.Backend, dir string) error {
+func RegisterAfterIndex(ctx context.Context, o Options, st store.ElementReader, dir string) error {
 	elements, err := st.ElementCount(ctx)
 	if err != nil {
 		return fmt.Errorf("portfolioreg: read element count: %w", err)
@@ -341,7 +349,7 @@ func Projects(ctx context.Context, o Options) ([]store.ProjectRecord, error) {
 }
 
 // ProjectsOf lists the registry from an already-open handle.
-func ProjectsOf(ctx context.Context, reg store.Backend) ([]store.ProjectRecord, error) {
+func ProjectsOf(ctx context.Context, reg store.Projects) ([]store.ProjectRecord, error) {
 	rows, err := reg.ProjectList(ctx)
 	if err != nil {
 		return nil, err
@@ -626,7 +634,7 @@ type Query struct {
 }
 
 // Child serves q inside one registered project. Implementations open the
-// project read-only (Options.OpenChild) and return that project's own query
+// project read-only (Options.ChildOpenOptions) and return that project's own query
 // envelope; hits and freshness are lifted out of it. An error becomes a
 // per-child error entry — a failing project NEVER disappears from the result.
 type Child func(ctx context.Context, p store.ProjectRecord, q Query) (map[string]any, error)
