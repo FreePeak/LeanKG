@@ -438,6 +438,19 @@ func TestSidecarNotFoundNamesDownload(t *testing.T) {
 	}
 }
 
+// An empty Command must fall back to llama-server, not reach exec with "".
+func TestSidecarDefaultsCommandToLlamaServer(t *testing.T) {
+	port, err := freeTCPPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	_, err = StartSidecar(context.Background(), SidecarConfig{Port: port, ReadyTimeout: 200 * time.Millisecond})
+	if err == nil || !strings.Contains(err.Error(), "llama-server") || strings.Contains(err.Error(), "no command") {
+		t.Fatalf("want llama-server not-found error for an empty Command, got %v", err)
+	}
+}
+
 // TestStartSidecarAdoptsRunningSidecar is the guard for the crash that made
 // the MCP server unreachable: a llama-server already serving the configured
 // port (here: the fake sidecar started by hand, standing in for the one an

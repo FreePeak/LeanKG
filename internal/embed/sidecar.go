@@ -120,6 +120,9 @@ type Sidecar struct {
 // Adopting keeps the attach-or-spawn contract the PRD already claims: one
 // sidecar per port, whoever started it, nobody killing someone else's.
 func StartSidecar(ctx context.Context, cfg SidecarConfig) (*Sidecar, error) {
+	if cfg.Command == "" {
+		cfg.Command = defaultSidecarCommand
+	}
 	if cfg.Port == 0 {
 		cfg.Port = defaultSidecarPort
 	}
