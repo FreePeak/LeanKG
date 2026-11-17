@@ -2,6 +2,7 @@ package index
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -9,6 +10,22 @@ import (
 
 // wordRe tokenizes element content into whole identifiers.
 var wordRe = regexp.MustCompile(`\w+`)
+
+// callEdgeTypes are the edge types relationships() derives from element names.
+// An incremental run replaces exactly these on an unchanged sibling; contains
+// and every resource or framework edge stay as they are.
+var callEdgeTypes = []string{"calls", "references"}
+
+// callEdges keeps the edges of callEdgeTypes from a relationships() batch.
+func callEdges(rels []store.Relationship) []store.Relationship {
+	var out []store.Relationship
+	for _, r := range rels {
+		if slices.Contains(callEdgeTypes, r.RelType) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
 
 // relationships computes the relationship batch for one file's elements:
 //   - contains: parent -> child, confidence 1.0;
@@ -19,8 +36,8 @@ var wordRe = regexp.MustCompile(`\w+`)
 //     an objc message selector such as "log:level:" is not a word and can
 //     only be resolved by the tree-sitter tier).
 //
-// nameTargets maps every element name seen this run to its qualified names;
-// call targets may live in other files processed in this run.
+// nameTargets maps every element name of the directory to its qualified names,
+// changed and unchanged files alike; call targets may live in any of them.
 //
 // Heuristic guards (documented ceilings — the naive "every word vs every
 // name" match explodes on JS/TS corpora where thousands of short identifiers

@@ -30,7 +30,8 @@ type IndexWriter interface {
 	// belongs to file path with rels, in one transaction. Elements, other edge
 	// types, the file record and vectors are untouched. When the stored set already
 	// equals rels (source, target, rel_type, confidence) it writes nothing and does
-	// not bump the watermark.
+	// not bump the watermark. Caller contract: every rel must be sourced in path and
+	// have a type in relTypes.
 	ReplaceFileRelationships(ctx context.Context, path string, relTypes []string, rels []Relationship) error
 	DeleteFileRecord(ctx context.Context, path string) error
 }
