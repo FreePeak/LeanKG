@@ -2,7 +2,9 @@ package index
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -258,4 +260,399 @@ func TestSupportedFilesGitRootListsHEAD(t *testing.T) {
 	if want := []string{"a.go"}; !slices.Equal(files, want) {
 		t.Fatalf("SupportedFiles = %q, want %q (u.go is untracked)", files, want)
 	}
+}
+
+// crossFileSources is the package crossFileFixture commits. a.go, the file the
+// existing test edits, calls into b.go and c.go, so the only cross-file edges
+// leave it. b.go's betaHelper calls alphaTwo, which b.go defines itself, so it
+// adds no cross-file edge. No unchanged file calls into a.go, so an incoming
+// edge into the edited file is not covered by this fixture.
+var crossFileSources = map[string]string{
+	"a.go": "package pkg\n\n// Alpha drives the cross-file calls.\nfunc Alpha() {\n\tbetaHelper()\n\tgammaHelper()\n}\n\n// AlphaTwo calls into c.go.\nfunc AlphaTwo() {\n\tgammaHelper()\n}\n",
+	"b.go": "package pkg\n\n// betaHelper calls back into a.go.\nfunc betaHelper() {\n\talphaTwo()\n}\n\nfunc alphaTwo() {}\n",
+	"c.go": "package pkg\n\nfunc gammaHelper() {}\n",
+}
+
+// crossFileAlphaReworded is a.go after a comment-only edit.
+const crossFileAlphaReworded = "package pkg\n\n// Alpha drives the cross-file calls, reworded.\nfunc Alpha() {\n\tbetaHelper()\n\tgammaHelper()\n}\n\n// AlphaTwo calls into c.go.\nfunc AlphaTwo() {\n\tgammaHelper()\n}\n"
+
+// deltaSiblingSources has c.go calling deltaHelper, which no file defines yet.
+var deltaSiblingSources = map[string]string{
+	"a.go": "package pkg\n\nfunc Alpha() {}\n",
+	"b.go": "package pkg\n\nfunc Beta() {}\n",
+	"c.go": "package pkg\n\nfunc gammaHelper() {\n\tdeltaHelper()\n}\n",
+}
+
+// deltaAlphaWithHelper is a.go after the commit that defines deltaHelper.
+const deltaAlphaWithHelper = "package pkg\n\nfunc Alpha() {}\n\nfunc deltaHelper() {}\n"
+
+// writeSources writes files (name -> source) under root.
+func writeSources(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for name, src := range files {
+		gittest.WriteFile(t, root, name, src)
+	}
+}
+
+// commitAll stages every change under root and commits it.
+func commitAll(t *testing.T, root, msg string) {
+	t.Helper()
+	gittest.Git(t, root, "add", "-A")
+	gittest.Git(t, root, "commit", "-q", "-m", msg)
+}
+
+// gitPackageFixture commits files (name -> source) as one git root and returns it.
+func gitPackageFixture(t *testing.T, files map[string]string) string {
+	t.Helper()
+	gittest.SkipWithoutGit(t)
+	root := t.TempDir()
+	gittest.Git(t, root, "init", "-q")
+	writeSources(t, root, files)
+	commitAll(t, root, "fixture")
+	return root
+}
+
+// crossFileFixture commits crossFileSources as one git root.
+func crossFileFixture(t *testing.T) string {
+	t.Helper()
+	return gitPackageFixture(t, crossFileSources)
+}
+
+// crossFileEdges returns the store's relationships whose endpoints sit in
+// different files, keyed as "source -> target [rel_type]".
+func crossFileEdges(t *testing.T, st store.Backend) map[string]bool {
+	t.Helper()
+	rels, err := st.RelationshipsAll(context.Background(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, r := range rels {
+		srcFile, _, _ := strings.Cut(r.Source, "::")
+		dstFile, _, _ := strings.Cut(r.Target, "::")
+		if srcFile != dstFile {
+			out[r.Source+" -> "+r.Target+" ["+r.RelType+"]"] = true
+		}
+	}
+	return out
+}
+
+// allEdges returns every relationship in st keyed as
+// "source -> target [rel_type] confidence".
+func allEdges(t *testing.T, st store.Backend) map[string]bool {
+	t.Helper()
+	rels, err := st.RelationshipsAll(context.Background(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, r := range rels {
+		out[fmt.Sprintf("%s -> %s [%s] %g", r.Source, r.Target, r.RelType, r.Confidence)] = true
+	}
+	return out
+}
+
+// reportEdgeDiff fails the test, naming each edge present on one side only,
+// when the got and want edge sets differ.
+func reportEdgeDiff(t *testing.T, label string, got, want map[string]bool) {
+	t.Helper()
+	var missing, extra []string
+	for e := range want {
+		if !got[e] {
+			missing = append(missing, e)
+		}
+	}
+	for e := range got {
+		if !want[e] {
+			extra = append(extra, e)
+		}
+	}
+	if len(missing) == 0 && len(extra) == 0 {
+		return
+	}
+	slices.Sort(missing)
+	slices.Sort(extra)
+	t.Errorf("%s\n  missing (%d): %q\n  extra (%d): %q", label, len(missing), missing, len(extra), extra)
+}
+
+// assertEdgesMatchFresh indexes root into a fresh store and fails unless st holds
+// the same relationships (source, target, type, confidence).
+func assertEdgesMatchFresh(t *testing.T, st store.Backend, root string) {
+	t.Helper()
+	fresh := gitIndexStore(t)
+	gitIndexRun(t, fresh, root)
+	want := allEdges(t, fresh)
+	if len(want) == 0 {
+		t.Fatal("fresh index holds no relationships: the fixture exercises nothing")
+	}
+	reportEdgeDiff(t, "incremental edges differ from a fresh full index", allEdges(t, st), want)
+}
+
+// gitIndexIncoming returns the relationships whose target is target.
+func gitIndexIncoming(t *testing.T, st store.Backend, target string) []store.Relationship {
+	t.Helper()
+	rels, err := st.Incoming(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rels
+}
+
+// gitIndexHasEdge reports whether st holds source -> target with relType.
+func gitIndexHasEdge(t *testing.T, st store.Backend, source, target, relType string) bool {
+	t.Helper()
+	for _, r := range gitIndexIncoming(t, st, target) {
+		if r.Source == source && r.RelType == relType {
+			return true
+		}
+	}
+	return false
+}
+
+// TestIndexGitRootIncrementalKeepsCrossFileEdges: after a commit edits one file,
+// the incremental run must hold the same cross-file edges as a fresh full index
+// of that commit.
+func TestIndexGitRootIncrementalKeepsCrossFileEdges(t *testing.T) {
+	root := crossFileFixture(t)
+	st := gitIndexStore(t)
+	gitIndexRun(t, st, root)
+
+	gittest.WriteFile(t, root, "a.go", crossFileAlphaReworded)
+	gittest.Git(t, root, "add", "a.go")
+	gittest.Git(t, root, "commit", "-q", "-m", "edit a")
+	gitIndexRun(t, st, root)
+
+	fresh := gitIndexStore(t)
+	gitIndexRun(t, fresh, root)
+	reportEdgeDiff(t, "incremental cross-file edges differ from a fresh full index", crossFileEdges(t, st), crossFileEdges(t, fresh))
+	assertEdgesMatchFresh(t, st, root)
+}
+
+// TestIndexGitRootIncrementalLinksSiblingToNewSymbol: c.go calls deltaHelper,
+// which no file defines at first. The commit adds it to a.go, so the unchanged
+// c.go must gain an edge to the new symbol.
+func TestIndexGitRootIncrementalLinksSiblingToNewSymbol(t *testing.T) {
+	root := gitPackageFixture(t, deltaSiblingSources)
+	st := gitIndexStore(t)
+	gitIndexRun(t, st, root)
+
+	gittest.WriteFile(t, root, "a.go", deltaAlphaWithHelper)
+	commitAll(t, root, "add deltaHelper")
+
+	res := gitIndexRun(t, st, root)
+	if res.Files != 1 || res.Skipped != 2 {
+		t.Fatalf("incremental run: %+v, want Files=1 Skipped=2", res)
+	}
+	if !gitIndexHasEdge(t, st, "c.go::gammaHelper", "a.go::deltaHelper", "calls") {
+		t.Error("missing edge c.go::gammaHelper -> a.go::deltaHelper [calls]: the unchanged sibling was not linked to the new symbol")
+	}
+	assertEdgesMatchFresh(t, st, root)
+}
+
+// TestIndexGitRootIncrementalFollowsMovedSymbol: movedHelper moves from b.go to
+// a.go in one commit. The unchanged c.go calls it, so its edge must follow the
+// symbol to a.go, and no edge may keep pointing at b.go.
+func TestIndexGitRootIncrementalFollowsMovedSymbol(t *testing.T) {
+	root := gitPackageFixture(t, map[string]string{
+		"a.go": "package pkg\n\nfunc Alpha() {}\n",
+		"b.go": "package pkg\n\nfunc movedHelper() {}\n",
+		"c.go": "package pkg\n\nfunc gammaHelper() {\n\tmovedHelper()\n}\n",
+	})
+	st := gitIndexStore(t)
+	gitIndexRun(t, st, root)
+
+	gittest.WriteFile(t, root, "a.go", "package pkg\n\nfunc Alpha() {}\n\nfunc movedHelper() {}\n")
+	gittest.WriteFile(t, root, "b.go", "package pkg\n\nfunc Beta() {}\n")
+	commitAll(t, root, "move movedHelper to a.go")
+
+	res := gitIndexRun(t, st, root)
+	if res.Files != 2 || res.Skipped != 1 {
+		t.Fatalf("incremental run: %+v, want Files=2 Skipped=1", res)
+	}
+	if !gitIndexHasEdge(t, st, "c.go::gammaHelper", "a.go::movedHelper", "calls") {
+		t.Error("missing edge c.go::gammaHelper -> a.go::movedHelper [calls]: the sibling edge did not follow the moved symbol")
+	}
+	if got := gitIndexIncoming(t, st, "b.go::movedHelper"); len(got) != 0 {
+		t.Errorf("%d edges still target the removed b.go::movedHelper: %+v", len(got), got)
+	}
+	assertEdgesMatchFresh(t, st, root)
+}
+
+// TestIndexGitRootIncrementalDropsEdgesToRemovedSymbol: doomedHelper is removed
+// from a.go while the unchanged c.go still calls it. No maintenance run is
+// performed, so the incremental pass itself must drop the dangling edge.
+func TestIndexGitRootIncrementalDropsEdgesToRemovedSymbol(t *testing.T) {
+	root := gitPackageFixture(t, map[string]string{
+		"a.go": "package pkg\n\nfunc Alpha() {\n\tBeta()\n}\n\nfunc doomedHelper() {}\n",
+		"b.go": "package pkg\n\nfunc Beta() {}\n",
+		"c.go": "package pkg\n\nfunc gammaHelper() {\n\tdoomedHelper()\n}\n",
+	})
+	st := gitIndexStore(t)
+	gitIndexRun(t, st, root)
+
+	// Alpha -> Beta survives the commit, so the fresh index is not empty.
+	gittest.WriteFile(t, root, "a.go", "package pkg\n\nfunc Alpha() {\n\tBeta()\n}\n")
+	commitAll(t, root, "remove doomedHelper")
+	gitIndexRun(t, st, root)
+
+	if got := gitIndexIncoming(t, st, "a.go::doomedHelper"); len(got) != 0 {
+		t.Errorf("%d edges still target the removed a.go::doomedHelper: %+v", len(got), got)
+	}
+	assertEdgesMatchFresh(t, st, root)
+}
+
+// countingStore records which files an index run upserts elements for and deletes.
+type countingStore struct {
+	store.Backend
+	upserted map[string]int
+	deleted  map[string]int
+}
+
+func (s *countingStore) UpsertElements(ctx context.Context, els []store.Element) error {
+	for _, e := range els {
+		s.upserted[e.FilePath]++
+	}
+	return s.Backend.UpsertElements(ctx, els)
+}
+
+func (s *countingStore) DeleteByFile(ctx context.Context, path string) error {
+	s.deleted[path]++
+	return s.Backend.DeleteByFile(ctx, path)
+}
+
+// siblingSnapshot is the state an incremental run must leave alone for unchanged
+// files: their element rows, file-record content hashes and embedding states,
+// plus the model's vector count.
+type siblingSnapshot struct {
+	elements map[string]store.Element
+	hashes   map[string]string
+	states   map[string]string
+	vectors  int
+}
+
+func takeSiblingSnapshot(t *testing.T, st store.Backend, model string, paths ...string) siblingSnapshot {
+	t.Helper()
+	ctx := context.Background()
+	els, err := st.Elements(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := st.Files(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states, err := st.EmbeddingStateMap(ctx, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectors, err := st.VectorCount(ctx, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := siblingSnapshot{elements: map[string]store.Element{}, hashes: map[string]string{}, states: map[string]string{}, vectors: vectors}
+	for _, e := range els {
+		if slices.Contains(paths, e.FilePath) {
+			snap.elements[e.QualifiedName] = e
+		}
+	}
+	for _, f := range files {
+		if slices.Contains(paths, f.Path) {
+			snap.hashes[f.Path] = f.ContentHash
+		}
+	}
+	for qn, state := range states {
+		file, _, _ := strings.Cut(qn, "::")
+		if slices.Contains(paths, file) {
+			snap.states[qn] = state
+		}
+	}
+	return snap
+}
+
+// nearestVector returns the qualified name of the vector closest to vec.
+func nearestVector(t *testing.T, st store.Backend, model string, vec []float32) string {
+	t.Helper()
+	hits, err := st.SearchVectors(context.Background(), store.VectorQuery{ModelID: model, Vec: vec, K: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("SearchVectors: %d hits, want 1", len(hits))
+	}
+	return hits[0].Element.QualifiedName
+}
+
+// TestIndexGitRootIncrementalKeepsSiblingVectors: an incremental run that
+// rewrites a.go must leave the embedding state, vectors, element rows and file
+// records of the unchanged siblings b.go and c.go as they were, and must upsert
+// and delete only a.go.
+func TestIndexGitRootIncrementalKeepsSiblingVectors(t *testing.T) {
+	const model = "test-model"
+	root := gitPackageFixture(t, deltaSiblingSources)
+	st := gitIndexStore(t)
+	gitIndexRun(t, st, root)
+
+	ctx := context.Background()
+	if err := st.SetEmbeddingStates(ctx, model, map[string]string{"b.go::Beta": "hash-beta", "c.go::gammaHelper": "hash-gamma"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertVectors(ctx, model, []store.VectorRow{
+		{QualifiedName: "b.go::Beta", Vec: []float32{0, 0, 1}},
+		{QualifiedName: "c.go::gammaHelper", Vec: []float32{0, 1, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := takeSiblingSnapshot(t, st, model, "b.go", "c.go")
+	if got := nearestVector(t, st, model, []float32{0, 0, 1}); got != "b.go::Beta" {
+		t.Fatalf("before the run: nearest vector = %q, want b.go::Beta", got)
+	}
+
+	gittest.WriteFile(t, root, "a.go", deltaAlphaWithHelper)
+	commitAll(t, root, "add deltaHelper")
+	cs := &countingStore{Backend: st, upserted: map[string]int{}, deleted: map[string]int{}}
+	gitIndexRun(t, cs, root)
+
+	after := takeSiblingSnapshot(t, st, model, "b.go", "c.go")
+	if !reflect.DeepEqual(before.elements, after.elements) {
+		t.Errorf("sibling element rows changed:\n  before %+v\n  after  %+v", before.elements, after.elements)
+	}
+	if !reflect.DeepEqual(before.hashes, after.hashes) {
+		t.Errorf("sibling file ContentHash changed: before %v, after %v", before.hashes, after.hashes)
+	}
+	if !reflect.DeepEqual(before.states, after.states) {
+		t.Errorf("sibling embedding state changed: before %v, after %v", before.states, after.states)
+	}
+	if before.vectors != after.vectors {
+		t.Errorf("VectorCount: before %d, after %d", before.vectors, after.vectors)
+	}
+	if got := nearestVector(t, st, model, []float32{0, 0, 1}); got != "b.go::Beta" {
+		t.Errorf("after the run: nearest vector = %q, want the sibling b.go::Beta", got)
+	}
+	for path := range cs.upserted {
+		if path != "a.go" {
+			t.Errorf("UpsertElements called for %s, want only a.go", path)
+		}
+	}
+	for path := range cs.deleted {
+		if path != "a.go" {
+			t.Errorf("DeleteByFile called for %s, want only a.go", path)
+		}
+	}
+	if cs.upserted["a.go"] == 0 {
+		t.Error("UpsertElements never called for a.go: the counting store saw no run")
+	}
+}
+
+// TestIndexWalkIncrementalKeepsCrossFileEdges: the cross-file scenario of the git
+// test, run through the walk path of a plain directory with no git repository.
+func TestIndexWalkIncrementalKeepsCrossFileEdges(t *testing.T) {
+	root := t.TempDir()
+	writeSources(t, root, crossFileSources)
+	st := gitIndexStore(t)
+	gitIndexRun(t, st, root)
+
+	gittest.WriteFile(t, root, "a.go", crossFileAlphaReworded)
+	gitIndexRun(t, st, root)
+
+	assertEdgesMatchFresh(t, st, root)
 }

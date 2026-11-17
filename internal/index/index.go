@@ -5,12 +5,15 @@
 //   - Extraction is regex-per-language; bodies end at the next element start
 //     (Python indentation-bounded, Markdown until a higher-level heading)
 //     rather than brace/indent exactness.
-//   - `calls` relationships are recomputed only for files processed in this
-//     run, against element names seen in this run; call edges whose source
-//     lives in an unchanged file are not refreshed.
+//   - `calls` and `references` relationships are re-derived per directory: when
+//     a directory has a changed file, every file of it is re-linked against the
+//     directory's element names (changed files are rewritten; unchanged files
+//     only have their call and reference edges replaced). A directory with no
+//     changed file keeps its edges, so a deleted file's symbols stay linked from
+//     its neighbours until that directory changes.
 //   - Store.DeleteByFile removes relationships sourced by a file's elements;
-//     edges pointing into a deleted file from other files survive until those
-//     files are re-indexed.
+//     edges pointing into a deleted file from other files survive until their
+//     directory has a changed file.
 //
 // Deleted files: contract UPDATE (owner decision) — store.DeleteFileRecord
 // exists and is called, so no stale code_files rows remain.
@@ -260,9 +263,10 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // comments in content; signature-only names as references) never reached
 // an existing store at all; v3 (#531, word boundary after the TS/JS
 // `function` keyword) drops phantom elements such as `ality` from
-// `functionality`. A store recorded under another version re-extracts
-// every file once.
-const extractorVersion = "3"
+// `functionality`; v4 (incremental edge fix): stores indexed before it lost
+// cross-file edges on incremental runs, and the bump re-extracts them once.
+// A store recorded under another version re-extracts every file once.
+const extractorVersion = "4"
 
 const extractorKVKey = "extractor_version"
 
@@ -381,11 +385,14 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 	}
 	var rekeys []store.FileRecord // walk-written records that match a blob
 	byDir := map[string][]changedFile{}
+	dirCands := map[string][]candidate{} // every candidate of a directory, changed or not
 	var dirOrder []string
 	for _, c := range cands {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
+		d := dirOf(c.rel)
+		dirCands[d] = append(dirCands[d], c)
 		rec, seen := prevByRel[c.rel]
 		trusted := seen && (!reextract || dirOf(c.rel) <= cursor)
 		var hash string
@@ -427,7 +434,6 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 				continue
 			}
 		}
-		d := dirOf(c.rel)
 		if _, ok := byDir[d]; !ok {
 			dirOrder = append(dirOrder, d)
 		}
@@ -451,11 +457,12 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 	// thousands of files, and a cancel must stop it within a file's work.
 	//
 	// A file's writes run detached from ctx (wctx), so a cancel takes effect
-	// between files, never inside one. Call edges are resolved against the
-	// files of the same directory written in this run, so a cancel part-way
-	// through a directory rolls back the files it finished in that directory:
-	// the rerun then sees them as changed and resolves every call against the
-	// same name set as an uninterrupted run.
+	// between files, never inside one. Call edges are resolved against every
+	// file of the same directory, changed or unchanged. A cancel part-way
+	// through a directory rolls back the changed files it finished there, and
+	// the unchanged files' edges are replaced before any changed file is written,
+	// so the rerun sees the changed files as changed and resolves every call
+	// against the same name set as an uninterrupted run.
 	//
 	// The time budget is soft: once spent, the run stops BETWEEN directories,
 	// so every directory it started is finished and kept, and none is rolled
@@ -477,7 +484,6 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		}
 		files := byDir[d]
 		pending := make([]pendingFile, 0, len(files))
-		names := map[string][]string{} // package-scoped call targets
 		for _, f := range files {
 			if err := ctx.Err(); err != nil {
 				return res, err
@@ -496,8 +502,48 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 				return res, err
 			}
 			pending = append(pending, pendingFile{changedFile: f, fe: fe, src: src})
-			for _, e := range fe.elements {
+		}
+		// The unchanged files of a directory with a changed file are re-linked:
+		// their elements join name resolution and their call edges are replaced
+		// before the changed files are written, so an edge follows a symbol that
+		// was added, moved or removed beside it. Their elements, file records and
+		// vectors are not touched, and their counts stay in Skipped.
+		var siblings []fileElements
+		if len(pending) > 0 {
+			changed := make(map[string]bool, len(files))
+			for _, f := range files {
+				changed[f.rel] = true
+			}
+			sib, err := extractSiblings(ctx, dirCands[d], changed, rd)
+			if err != nil {
+				return res, err
+			}
+			siblings = sib
+		}
+		// Names are collected in candidate order, as a full index collects them,
+		// so the per-element edge ceilings pick the same targets.
+		extracted := make(map[string][]indexedElem, len(pending)+len(siblings))
+		for _, p := range pending {
+			extracted[p.rel] = p.fe.elements
+		}
+		for _, fe := range siblings {
+			extracted[fe.rel] = fe.elements
+		}
+		names := map[string][]string{} // package-scoped call targets
+		for _, c := range dirCands[d] {
+			for _, e := range extracted[c.rel] {
 				names[e.name] = append(names[e.name], e.qn)
+			}
+		}
+		// Sibling edges go first: a cancel or crash after this point leaves the
+		// changed files' records stale, so the rerun redoes the whole directory.
+		for _, fe := range siblings {
+			if err := ctx.Err(); err != nil {
+				return res, err
+			}
+			rels := callEdges(relationships(fe.elements, names))
+			if err := st.ReplaceFileRelationships(wctx, fe.rel, callEdgeTypes, rels); err != nil {
+				return res, err
 			}
 		}
 		var touched []string // files whose writes began in this directory
@@ -578,6 +624,31 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		return res, err
 	}
 	return res, nil
+}
+
+// extractSiblings extracts the candidates of one directory that this run does
+// not change, so their elements take part in name resolution. Specialist-claimed
+// files are indexed by their own extractor and are left out.
+func extractSiblings(ctx context.Context, cands []candidate, changed map[string]bool, rd *gitobj.Reader) ([]fileElements, error) {
+	var out []fileElements
+	for _, c := range cands {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if changed[c.rel] || SpecialistClaim(c.rel) {
+			continue
+		}
+		src, err := c.content(rd)
+		if err != nil {
+			return nil, err
+		}
+		fe, err := extractFileAs(ctx, c.rel, src, c.lang)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, fe)
+	}
+	return out, nil
 }
 
 // activeLangTags lists registry-active language ids for LSP enrichment; nil
