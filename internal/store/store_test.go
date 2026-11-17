@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -222,6 +224,114 @@ func TestWatermarkBumpsOnWrite(t *testing.T) {
 	seq1, _, _ := s.Watermark(context.Background())
 	if seq1 <= seq0 {
 		t.Fatalf("watermark did not advance: %d -> %d", seq0, seq1)
+	}
+}
+
+// replaceFileEdgesFixture seeds file f.go (f.A, f.B) and g.go (g.G) with the
+// edges the replace test needs: calls and references sourced at f.go (to be
+// replaced), contains and imports sourced at f.go (foreign types, kept), and
+// a calls edge sourced at g.go (a sibling, kept).
+func replaceFileEdgesFixture(t *testing.T, s Backend) []Relationship {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.UpsertElements(ctx, []Element{
+		{QualifiedName: "f.A", ElementType: "function", Name: "A", FilePath: "f.go", Language: "go"},
+		{QualifiedName: "f.B", ElementType: "function", Name: "B", FilePath: "f.go", Language: "go"},
+		{QualifiedName: "g.G", ElementType: "function", Name: "G", FilePath: "g.go", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	kept := []Relationship{
+		{Source: "f.A", Target: "f.B", RelType: "contains", Confidence: 1},
+		{Source: "f.A", Target: "g.G", RelType: "imports", Confidence: 1},
+		{Source: "g.G", Target: "f.B", RelType: "calls", Confidence: 1},
+	}
+	if err := s.UpsertRelationships(ctx, append([]Relationship{
+		{Source: "f.A", Target: "g.G", RelType: "calls", Confidence: 1},
+		{Source: "f.B", Target: "g.G", RelType: "references", Confidence: 1},
+	}, kept...)); err != nil {
+		t.Fatal(err)
+	}
+	return kept
+}
+
+// relKeys turns edges into a set keyed on source, target, rel_type and confidence.
+func relKeys(rels []Relationship) map[string]bool {
+	out := make(map[string]bool, len(rels))
+	for _, r := range rels {
+		out[fmt.Sprintf("%s %s %s %g", r.Source, r.Target, r.RelType, r.Confidence)] = true
+	}
+	return out
+}
+
+// assertEdgeSet fails unless the stored edges equal want as a set.
+func assertEdgeSet(t *testing.T, got, want []Relationship) {
+	t.Helper()
+	if g, w := relKeys(got), relKeys(want); !reflect.DeepEqual(g, w) {
+		t.Fatalf("edges differ:\n got  %v\n want %v", g, w)
+	}
+}
+
+func TestReplaceFileRelationships(t *testing.T) {
+	checkReplaceFileRelationships(t, openTestStore(t))
+}
+
+// checkReplaceFileRelationships runs the replace contract against any engine.
+func checkReplaceFileRelationships(t *testing.T, s Backend) {
+	ctx := context.Background()
+	kept := replaceFileEdgesFixture(t, s)
+	elements, err := s.Elements(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq0, _, _ := s.Watermark(ctx)
+
+	// Replace F's calls and references: the calls edge changes confidence,
+	// the references edge is dropped, a new references edge appears.
+	newRels := []Relationship{
+		{Source: "f.A", Target: "g.G", RelType: "calls", Confidence: 0.8},
+		{Source: "f.B", Target: "f.A", RelType: "references", Confidence: 0.9},
+	}
+	if err := s.ReplaceFileRelationships(ctx, "f.go", []string{"calls", "references"}, newRels); err != nil {
+		t.Fatal(err)
+	}
+	rels, err := s.RelationshipsAll(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEdgeSet(t, rels, append(append([]Relationship{}, newRels...), kept...))
+	if got, _ := s.Elements(ctx); !reflect.DeepEqual(got, elements) {
+		t.Fatalf("elements changed:\n got  %+v\n want %+v", got, elements)
+	}
+	seq1, _, _ := s.Watermark(ctx)
+	if seq1 <= seq0 {
+		t.Fatalf("watermark did not advance on a change: %d -> %d", seq0, seq1)
+	}
+
+	// The identical set is a no-op: no write, no watermark bump.
+	if err := s.ReplaceFileRelationships(ctx, "f.go", []string{"calls", "references"}, newRels); err != nil {
+		t.Fatal(err)
+	}
+	if seq2, _, _ := s.Watermark(ctx); seq2 != seq1 {
+		t.Fatalf("identical replace bumped the watermark %d -> %d", seq1, seq2)
+	}
+
+	// Empty rels removes F's calls and references and keeps the rest; a second
+	// empty replace has nothing to remove and does not bump the watermark.
+	if err := s.ReplaceFileRelationships(ctx, "f.go", []string{"calls", "references"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	rels, err = s.RelationshipsAll(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEdgeSet(t, rels, kept)
+	seq3, _, _ := s.Watermark(ctx)
+	if err := s.ReplaceFileRelationships(ctx, "f.go", []string{"calls", "references"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if seq4, _, _ := s.Watermark(ctx); seq4 != seq3 {
+		t.Fatalf("empty replace with nothing stored bumped the watermark %d -> %d", seq3, seq4)
 	}
 }
 

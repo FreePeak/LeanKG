@@ -139,6 +139,19 @@ func ftsContent(e Element) string {
 	return head + " " + e.QualifiedName + " " + c
 }
 
+// insertRelationshipTx writes one edge inside tx. Duplicate (source, target,
+// rel_type) rows are overwritten, not duplicated.
+func insertRelationshipTx(ctx context.Context, tx *sql.Tx, r Relationship) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
+		VALUES (?,?,?,?,?)
+		ON CONFLICT(source_qualified, target_qualified, rel_type) DO UPDATE SET
+			confidence=excluded.confidence, metadata=excluded.metadata`,
+		r.Source, r.Target, r.RelType, r.Confidence, encodeJSONObject(r.Metadata)); err != nil {
+		return fmt.Errorf("store: upsert relationship %s->%s: %w", r.Source, r.Target, err)
+	}
+	return nil
+}
+
 // UpsertRelationships writes a batch of relationships in one transaction.
 // Duplicate (source, target, rel_type) rows are overwritten, not duplicated.
 func (s *Store) UpsertRelationships(ctx context.Context, rels []Relationship) error {
@@ -151,13 +164,8 @@ func (s *Store) UpsertRelationships(ctx context.Context, rels []Relationship) er
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, r := range rels {
-		meta := encodeJSONObject(r.Metadata)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
-			VALUES (?,?,?,?,?)
-			ON CONFLICT(source_qualified, target_qualified, rel_type) DO UPDATE SET
-				confidence=excluded.confidence, metadata=excluded.metadata`,
-			r.Source, r.Target, r.RelType, r.Confidence, meta); err != nil {
-			return fmt.Errorf("store: upsert relationship %s->%s: %w", r.Source, r.Target, err)
+		if err := insertRelationshipTx(ctx, tx, r); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -207,6 +215,48 @@ func (s *Store) Files(ctx context.Context) ([]FileRecord, error) {
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// ReplaceFileRelationships swaps the relTypes edges sourced at file path for
+// rels (see IndexWriter). The compare and the write share one transaction.
+func (s *Store) ReplaceFileRelationships(ctx context.Context, path string, relTypes []string, rels []Relationship) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	where := `rel_type IN (` + sqlPlaceholders(len(relTypes), false) + `)
+		AND source_qualified IN (SELECT qualified_name FROM code_elements WHERE file_path = ?)`
+	args := make([]any, 0, len(relTypes)+1)
+	for _, t := range relTypes {
+		args = append(args, t)
+	}
+	args = append(args, path)
+	rows, err := tx.QueryContext(ctx, `SELECT source_qualified, target_qualified, rel_type, confidence, metadata
+		FROM relationships WHERE `+where, args...)
+	if err != nil {
+		return err
+	}
+	stored, err := scanRelationships(rows)
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if sameRelationshipSet(stored, rels) {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM relationships WHERE `+where, args...); err != nil {
+		return err
+	}
+	for _, r := range rels {
+		if err := insertRelationshipTx(ctx, tx, r); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteByFile removes all elements and relationships belonging to a file and

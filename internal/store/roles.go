@@ -26,6 +26,12 @@ type IndexWriter interface {
 	UpsertFiles(ctx context.Context, files []FileRecord) error
 	Files(ctx context.Context) ([]FileRecord, error)
 	DeleteByFile(ctx context.Context, path string) error
+	// ReplaceFileRelationships replaces the edges of relTypes whose SOURCE element
+	// belongs to file path with rels, in one transaction. Elements, other edge
+	// types, the file record and vectors are untouched. When the stored set already
+	// equals rels (source, target, rel_type, confidence) it writes nothing and does
+	// not bump the watermark.
+	ReplaceFileRelationships(ctx context.Context, path string, relTypes []string, rels []Relationship) error
 	DeleteFileRecord(ctx context.Context, path string) error
 }
 

@@ -251,6 +251,10 @@ func TestPGWatermarkBumps(t *testing.T) {
 	}
 }
 
+func TestPGReplaceFileRelationships(t *testing.T) {
+	checkReplaceFileRelationships(t, openPGTest(t))
+}
+
 func TestPGStampsAndVectors(t *testing.T) {
 	s := openPGTest(t)
 

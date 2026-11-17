@@ -141,6 +141,34 @@ func scanRelationships(rows scanRows) ([]Relationship, error) {
 	return out, rows.Err()
 }
 
+// relationshipKey is the identity of an edge for sameRelationshipSet.
+type relationshipKey struct {
+	source, target, relType string
+	confidence              float64
+}
+
+// sameRelationshipSet reports whether a and b hold the same edges, in any
+// order, on (source, target, rel_type, confidence). Metadata is not compared.
+func sameRelationshipSet(a, b []Relationship) bool {
+	keys := func(rels []Relationship) map[relationshipKey]bool {
+		out := make(map[relationshipKey]bool, len(rels))
+		for _, r := range rels {
+			out[relationshipKey{r.Source, r.Target, r.RelType, r.Confidence}] = true
+		}
+		return out
+	}
+	ka, kb := keys(a), keys(b)
+	if len(ka) != len(kb) {
+		return false
+	}
+	for k := range kb {
+		if !ka[k] {
+			return false
+		}
+	}
+	return true
+}
+
 // keepRareNameTokens drops every query token that appears in more than bound
 // symbol names (counts holds each token's capped count). It filters toks in
 // place, as the callers always did.

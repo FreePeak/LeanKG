@@ -156,6 +156,19 @@ func (s *PGStore) UpsertElements(ctx context.Context, els []Element) error {
 	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
+// pgInsertRelationshipTx writes one edge inside tx. Duplicate (source, target,
+// rel_type) rows are overwritten, not duplicated.
+func pgInsertRelationshipTx(ctx context.Context, tx pgx.Tx, r Relationship) error {
+	if _, err := tx.Exec(ctx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
+		VALUES ($1,$2,$3,$4,$5::jsonb)
+		ON CONFLICT (source_qualified, target_qualified, rel_type) DO UPDATE SET
+			confidence=excluded.confidence, metadata=excluded.metadata`,
+		r.Source, r.Target, r.RelType, r.Confidence, encodeJSONObject(r.Metadata)); err != nil {
+		return fmt.Errorf("store: upsert relationship %s->%s: %w", r.Source, r.Target, err)
+	}
+	return nil
+}
+
 // UpsertRelationships writes a batch of relationships in one transaction.
 // Duplicate (source, target, rel_type) rows are overwritten, not duplicated.
 func (s *PGStore) UpsertRelationships(ctx context.Context, rels []Relationship) error {
@@ -168,12 +181,8 @@ func (s *PGStore) UpsertRelationships(ctx context.Context, rels []Relationship) 
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	for _, r := range rels {
-		if _, err := tx.Exec(ctx, `INSERT INTO relationships (source_qualified, target_qualified, rel_type, confidence, metadata)
-			VALUES ($1,$2,$3,$4,$5::jsonb)
-			ON CONFLICT (source_qualified, target_qualified, rel_type) DO UPDATE SET
-				confidence=excluded.confidence, metadata=excluded.metadata`,
-			r.Source, r.Target, r.RelType, r.Confidence, encodeJSONObject(r.Metadata)); err != nil {
-			return fmt.Errorf("store: upsert relationship %s->%s: %w", r.Source, r.Target, err)
+		if err := pgInsertRelationshipTx(ctx, tx, r); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -223,6 +232,42 @@ func (s *PGStore) Files(ctx context.Context) ([]FileRecord, error) {
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// ReplaceFileRelationships swaps the relTypes edges sourced at file path for
+// rels (see IndexWriter). The compare and the write share one transaction.
+func (s *PGStore) ReplaceFileRelationships(ctx context.Context, path string, relTypes []string, rels []Relationship) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	const where = `rel_type = ANY($1) AND source_qualified IN (SELECT qualified_name FROM code_elements WHERE file_path = $2)`
+	rows, err := tx.Query(ctx, `SELECT source_qualified, target_qualified, rel_type, confidence, metadata::text
+		FROM relationships WHERE `+where, relTypes, path)
+	if err != nil {
+		return err
+	}
+	stored, err := scanRelationships(rows)
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if sameRelationshipSet(stored, rels) {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM relationships WHERE `+where, relTypes, path); err != nil {
+		return err
+	}
+	for _, r := range rels {
+		if err := pgInsertRelationshipTx(ctx, tx, r); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return s.BumpWatermark(context.WithoutCancel(ctx))
 }
 
 // DeleteByFile removes all elements and relationships belonging to a file.
