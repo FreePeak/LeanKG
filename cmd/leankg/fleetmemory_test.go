@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,5 +171,31 @@ func TestFleetTargetsSkipProjectsWithoutAMemoryIndex(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(plain, ".leankg", "memory")); !os.IsNotExist(err) {
 		t.Fatalf("the fleet created a memory tree for a project that has none: %v", err)
+	}
+}
+
+// TestFleetTargetsStopAtCancelledContext pins that a shutdown (a cancelled ctx)
+// ends the fleet build: no target is built for the projects left after the
+// cancel, and no "open memory" line is logged per project, because the cancel
+// is not a maintenance failure.
+func TestFleetTargetsStopAtCancelledContext(t *testing.T) {
+	defaultDir := t.TempDir()
+	routed1, routed2 := t.TempDir(), t.TempDir()
+	projectWithMemory(t, routed1)
+	projectWithMemory(t, routed2)
+
+	var logs bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	targets := fleetTargets(ctx, defaultDir, nil, nil, []string{routed1, routed2}, store.EngineSQLite, nil)
+	if len(targets) != 1 {
+		t.Fatalf("cancelled fleet build has %d targets, want 1 (the default project only)", len(targets))
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("cancelled fleet build logged:\n%s", logs.String())
 	}
 }

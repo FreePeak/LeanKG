@@ -135,16 +135,31 @@ func TestMirroredReflectionKeepsTheRustArtifactIntact(t *testing.T) {
 	}
 }
 
-// flipCtx reports no error on its first Err call and context.Canceled on every
-// call after, so a test can cancel "after the lesson is written" without timing.
-type flipCtx struct {
+// lateCancelCtx reports no error until something derives a context from it.
+// The first Done call (what context.WithTimeout makes on its parent) cancels it,
+// closing Done and returning context.Canceled from Err, so every context derived
+// after the lesson check observes the cancel. ReflectOutcome checks Err once,
+// before the lesson is written, and that check must still pass.
+type lateCancelCtx struct {
 	context.Context
-	calls int
+	done      chan struct{}
+	cancelled bool
 }
 
-func (c *flipCtx) Err() error {
-	c.calls++
-	if c.calls > 1 {
+func newLateCancelCtx() *lateCancelCtx {
+	return &lateCancelCtx{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (c *lateCancelCtx) Done() <-chan struct{} {
+	if !c.cancelled {
+		c.cancelled = true
+		close(c.done)
+	}
+	return c.done
+}
+
+func (c *lateCancelCtx) Err() error {
+	if c.cancelled {
 		return context.Canceled
 	}
 	return nil
@@ -191,7 +206,7 @@ func TestReflectOutcomeRefusesCancelledContext(t *testing.T) {
 // lands after the lesson is on disk does not stop the memory mirror.
 func TestReflectionMirrorSurvivesCancelAfterLessonWritten(t *testing.T) {
 	dir := t.TempDir()
-	ctx := &flipCtx{Context: context.Background()}
+	ctx := newLateCancelCtx()
 	if _, err := ReflectOutcome(ctx, dir, "where is the token budget applied", nil, "useful", "found it"); err != nil {
 		t.Fatalf("ReflectOutcome: %v", err)
 	}
