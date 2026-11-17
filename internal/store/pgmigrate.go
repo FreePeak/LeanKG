@@ -472,6 +472,28 @@ ALTER TABLE emb_stamp ADD COLUMN IF NOT EXISTS text_cap INTEGER NOT NULL DEFAULT
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS site_admin BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_accounts_site_admin ON accounts (site_admin) WHERE site_admin;
 `},
+	{19, "vector-extension-public", []string{
+		// Migration 001 runs CREATE EXTENSION vector with search_path pinned to
+		// the first project's schema, so the extension lands inside that schema
+		// and every other project's vector type fails with 42704. Move it to
+		// public, the one schema in every connection's search_path, as migration
+		// 012 does for pg_trgm. A DROP SCHEMA of the owning project would also
+		// cascade the extension away with every project's vector columns.
+		// Best-effort: without pgvector the DO block logs and returns.
+		`DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+		CREATE EXTENSION vector SCHEMA public;
+	ELSIF EXISTS (
+		SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+		WHERE e.extname = 'vector' AND n.nspname <> 'public') THEN
+		ALTER EXTENSION vector SET SCHEMA public;
+	END IF;
+EXCEPTION WHEN OTHERS THEN
+	RAISE NOTICE 'vector not moved to public (%); vector columns resolve only in the schema that holds the extension', SQLERRM;
+END
+$$`,
+	}, ``},
 }
 
 // AppliedMigrations is the PostgreSQL twin of (*Store).AppliedMigrations.
