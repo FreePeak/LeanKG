@@ -263,9 +263,10 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // comments in content; signature-only names as references) never reached
 // an existing store at all; v3 (#531, word boundary after the TS/JS
 // `function` keyword) drops phantom elements such as `ality` from
-// `functionality`. A store recorded under another version re-extracts
-// every file once.
-const extractorVersion = "3"
+// `functionality`; v4 (incremental edge fix): stores indexed before it lost
+// cross-file edges on incremental runs, and the bump re-extracts them once.
+// A store recorded under another version re-extracts every file once.
+const extractorVersion = "4"
 
 const extractorKVKey = "extractor_version"
 
