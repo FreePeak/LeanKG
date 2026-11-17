@@ -703,3 +703,43 @@ func TestPGNoOrphanHitsAndIdentifierTerms(t *testing.T) {
 		}
 	}
 }
+
+// Migration 1 creates the vector extension while search_path is pinned to the
+// first project's schema, so the extension lands inside that schema. A second
+// project must still resolve the vector type, which needs the extension in
+// public, and dropping the first project's schema must not take it away.
+func TestPGVectorExtensionSharedAcrossProjects(t *testing.T) {
+	ctx := context.Background()
+	a := openPGAt(t, t.TempDir())
+
+	// Force the broken state: the extension inside project A's schema.
+	var installed int
+	if err := a.pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_extension WHERE extname = 'vector'`).Scan(&installed); err != nil {
+		t.Fatal(err)
+	}
+	stmt := `ALTER EXTENSION vector SET SCHEMA ` + a.schema
+	if installed == 0 {
+		stmt = `CREATE EXTENSION vector SCHEMA ` + a.schema
+	}
+	if _, err := a.pool.Exec(ctx, stmt); err != nil {
+		t.Fatalf("%s: %v", stmt, err)
+	}
+	// Registered after openPGAt's DROP SCHEMA, so it runs first (LIFO): the
+	// extension leaves A's schema before A is dropped.
+	t.Cleanup(func() {
+		_, _ = a.pool.Exec(context.Background(), `ALTER EXTENSION vector SET SCHEMA public`)
+	})
+
+	b := openPGAt(t, t.TempDir())
+	if err := b.WriteStamp(ctx, ModelStamp{ModelID: "shared-vector", Revision: "r", Dimensions: 4, Distance: "cosine", Provider: "unit"}); err != nil {
+		t.Fatalf("second project WriteStamp: %v", err)
+	}
+
+	var schema string
+	if err := b.pool.QueryRow(ctx, `SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector'`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema != "public" {
+		t.Fatalf("vector extension schema = %q; want public", schema)
+	}
+}
