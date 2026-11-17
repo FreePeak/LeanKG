@@ -259,3 +259,74 @@ func TestSupportedFilesGitRootListsHEAD(t *testing.T) {
 		t.Fatalf("SupportedFiles = %q, want %q (u.go is untracked)", files, want)
 	}
 }
+
+// crossFileFixture commits one package of three files: a.go calls into b.go and
+// c.go, and b.go calls back into a.go. All three share a directory, the scope
+// call targets are resolved within.
+func crossFileFixture(t *testing.T) string {
+	t.Helper()
+	gittest.SkipWithoutGit(t)
+	root := t.TempDir()
+	gittest.Git(t, root, "init", "-q")
+	gittest.WriteFile(t, root, "a.go", "package pkg\n\n// Alpha drives the cross-file calls.\nfunc Alpha() {\n\tbetaHelper()\n\tgammaHelper()\n}\n\n// AlphaTwo calls into c.go.\nfunc AlphaTwo() {\n\tgammaHelper()\n}\n")
+	gittest.WriteFile(t, root, "b.go", "package pkg\n\n// betaHelper calls back into a.go.\nfunc betaHelper() {\n\talphaTwo()\n}\n\nfunc alphaTwo() {}\n")
+	gittest.WriteFile(t, root, "c.go", "package pkg\n\nfunc gammaHelper() {}\n")
+	gittest.Git(t, root, "add", "-A")
+	gittest.Git(t, root, "commit", "-q", "-m", "fixture")
+	return root
+}
+
+// crossFileEdges returns the store's relationships whose endpoints sit in
+// different files, keyed as "source -> target [rel_type]".
+func crossFileEdges(t *testing.T, st store.Backend) map[string]bool {
+	t.Helper()
+	rels, err := st.RelationshipsAll(context.Background(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, r := range rels {
+		srcFile, _, _ := strings.Cut(r.Source, "::")
+		dstFile, _, _ := strings.Cut(r.Target, "::")
+		if srcFile != dstFile {
+			out[r.Source+" -> "+r.Target+" ["+r.RelType+"]"] = true
+		}
+	}
+	return out
+}
+
+// TestIndexGitRootIncrementalKeepsCrossFileEdges: after a commit edits one file,
+// the incremental run must hold the same cross-file edges as a fresh full index
+// of that commit.
+func TestIndexGitRootIncrementalKeepsCrossFileEdges(t *testing.T) {
+	root := crossFileFixture(t)
+	st := gitIndexStore(t)
+	gitIndexRun(t, st, root)
+
+	gittest.WriteFile(t, root, "a.go", "package pkg\n\n// Alpha drives the cross-file calls, reworded.\nfunc Alpha() {\n\tbetaHelper()\n\tgammaHelper()\n}\n\n// AlphaTwo calls into c.go.\nfunc AlphaTwo() {\n\tgammaHelper()\n}\n")
+	gittest.Git(t, root, "add", "a.go")
+	gittest.Git(t, root, "commit", "-q", "-m", "edit a")
+	gitIndexRun(t, st, root)
+
+	fresh := gitIndexStore(t)
+	gitIndexRun(t, fresh, root)
+
+	got, want := crossFileEdges(t, st), crossFileEdges(t, fresh)
+	var missing, extra []string
+	for e := range want {
+		if !got[e] {
+			missing = append(missing, e)
+		}
+	}
+	for e := range got {
+		if !want[e] {
+			extra = append(extra, e)
+		}
+	}
+	slices.Sort(missing)
+	slices.Sort(extra)
+	if len(missing) > 0 || len(extra) > 0 {
+		t.Errorf("incremental cross-file edges differ from a fresh full index\n  missing (%d): %q\n  extra (%d): %q",
+			len(missing), missing, len(extra), extra)
+	}
+}
