@@ -1,6 +1,8 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,7 +26,7 @@ func readLessons(t *testing.T, path string) string {
 // Outcome bullet block, the optional Note line, and a trailing blank line.
 func TestReflectOutcomeAppendsRustEntry(t *testing.T) {
 	dir := t.TempDir()
-	path, err := ReflectOutcome(dir, "where is auth?", []string{"src/a.rs::auth", "src/b.rs::login"}, "useful", "found it")
+	path, err := ReflectOutcome(context.Background(), dir, "where is auth?", []string{"src/a.rs::auth", "src/b.rs::login"}, "useful", "found it")
 	if err != nil {
 		t.Fatalf("ReflectOutcome: %v", err)
 	}
@@ -40,7 +42,7 @@ func TestReflectOutcomeAppendsRustEntry(t *testing.T) {
 
 func TestReflectOutcomeNodesNoneAndNoNote(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := ReflectOutcome(dir, "cold query", nil, "dead_end", ""); err != nil {
+	if _, err := ReflectOutcome(context.Background(), dir, "cold query", nil, "dead_end", ""); err != nil {
 		t.Fatalf("ReflectOutcome: %v", err)
 	}
 	entry := readLessons(t, filepath.Join(dir, ".leankg", "reflections", "LESSONS.md"))
@@ -59,7 +61,7 @@ func TestReflectOutcomeAppendsEveryCall(t *testing.T) {
 	dir := t.TempDir()
 	// Rust appended unconditionally — no dedup (unlike session lessons.json).
 	for _, outcome := range []string{"useful", "corrected", "useful"} {
-		if _, err := ReflectOutcome(dir, "q", nil, outcome, ""); err != nil {
+		if _, err := ReflectOutcome(context.Background(), dir, "q", nil, outcome, ""); err != nil {
 			t.Fatalf("ReflectOutcome(%s): %v", outcome, err)
 		}
 	}
@@ -72,7 +74,7 @@ func TestReflectOutcomeAppendsEveryCall(t *testing.T) {
 func TestReflectOutcomeCreatesProjectTree(t *testing.T) {
 	// A project dir that does not exist yet (first-run layout).
 	dir := filepath.Join(t.TempDir(), "proj")
-	if _, err := ReflectOutcome(dir, "q", nil, "corrected", "note"); err != nil {
+	if _, err := ReflectOutcome(context.Background(), dir, "q", nil, "corrected", "note"); err != nil {
 		t.Fatalf("ReflectOutcome: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".leankg", "reflections", "LESSONS.md")); err != nil {
@@ -89,10 +91,10 @@ func TestReflectOutcomeCreatesProjectTree(t *testing.T) {
 // is false.
 func TestReflectionIsRecallableThroughTheMemoryLayer(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := ReflectOutcome(dir, "where is the token budget applied", []string{"core.applyBudget"}, "useful", "found it"); err != nil {
+	if _, err := ReflectOutcome(context.Background(), dir, "where is the token budget applied", []string{"core.applyBudget"}, "useful", "found it"); err != nil {
 		t.Fatalf("ReflectOutcome: %v", err)
 	}
-	m, err := memory.Open(dir, false)
+	m, err := memory.Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatalf("memory.Open: %v", err)
 	}
@@ -100,7 +102,7 @@ func TestReflectionIsRecallableThroughTheMemoryLayer(t *testing.T) {
 	// The reflection must be reachable the way recall reaches a memory: the
 	// layer's own search over its FTS index. A raw file append would leave the
 	// file present and the index empty, which is the bug this pins.
-	hits, err := m.Search("token budget", 10)
+	hits, err := m.Search(context.Background(), "token budget", 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -119,7 +121,7 @@ func TestReflectionIsRecallableThroughTheMemoryLayer(t *testing.T) {
 // memory layer indexes.
 func TestMirroredReflectionKeepsTheRustArtifactIntact(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := ReflectOutcome(dir, "where is auth?", nil, "useful", "n"); err != nil {
+	if _, err := ReflectOutcome(context.Background(), dir, "where is auth?", nil, "useful", "n"); err != nil {
 		t.Fatalf("ReflectOutcome: %v", err)
 	}
 	rust := readLessons(t, filepath.Join(dir, ".leankg", "reflections", "LESSONS.md"))
@@ -130,5 +132,74 @@ func TestMirroredReflectionKeepsTheRustArtifactIntact(t *testing.T) {
 	mirrored := readLessons(t, filepath.Join(dir, ".leankg", "memory", "topics", "REFLECTIONS.md"))
 	if mirrored != rust {
 		t.Fatalf("mirror differs from the Rust artifact:\nrust:    %q\nmirror: %q", rust, mirrored)
+	}
+}
+
+// flipCtx reports no error on its first Err call and context.Canceled on every
+// call after, so a test can cancel "after the lesson is written" without timing.
+type flipCtx struct {
+	context.Context
+	calls int
+}
+
+func (c *flipCtx) Err() error {
+	c.calls++
+	if c.calls > 1 {
+		return context.Canceled
+	}
+	return nil
+}
+
+// recallBodies returns the snippets the memory layer's search finds for query.
+func recallBodies(t *testing.T, dir, query string) string {
+	t.Helper()
+	m, err := memory.Open(context.Background(), dir, false)
+	if err != nil {
+		t.Fatalf("memory.Open: %v", err)
+	}
+	defer m.Close()
+	hits, err := m.Search(context.Background(), query, 10)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	var bodies string
+	for _, h := range hits {
+		bodies += h.Snippet + "\n"
+	}
+	return bodies
+}
+
+// TestReflectOutcomeRefusesCancelledContext pins that a cancelled ctx stops the
+// write before any file is touched: no lesson on disk, nothing in memory search.
+func TestReflectOutcomeRefusesCancelledContext(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := ReflectOutcome(ctx, dir, "where is the token budget applied", nil, "useful", "found it")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReflectOutcome err = %v, want context.Canceled", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".leankg", "reflections", "LESSONS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("LESSONS.md written under a cancelled ctx (stat err = %v)", statErr)
+	}
+	if bodies := recallBodies(t, dir, "token budget"); strings.Contains(bodies, "where is the token budget applied") {
+		t.Fatalf("reflection written under a cancelled ctx is in memory search: %q", bodies)
+	}
+}
+
+// TestReflectionMirrorSurvivesCancelAfterLessonWritten pins that a cancel which
+// lands after the lesson is on disk does not stop the memory mirror.
+func TestReflectionMirrorSurvivesCancelAfterLessonWritten(t *testing.T) {
+	dir := t.TempDir()
+	ctx := &flipCtx{Context: context.Background()}
+	if _, err := ReflectOutcome(ctx, dir, "where is the token budget applied", nil, "useful", "found it"); err != nil {
+		t.Fatalf("ReflectOutcome: %v", err)
+	}
+	lesson := readLessons(t, filepath.Join(dir, ".leankg", "reflections", "LESSONS.md"))
+	if !strings.Contains(lesson, "where is the token budget applied") {
+		t.Fatalf("lesson missing from LESSONS.md: %q", lesson)
+	}
+	if bodies := recallBodies(t, dir, "token budget"); !strings.Contains(bodies, "where is the token budget applied") {
+		t.Fatalf("reflection written before a late cancel is missing from memory: %q", bodies)
 	}
 }

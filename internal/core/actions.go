@@ -35,7 +35,7 @@ import (
 type actionHandler[R any] func(e *Engine, ctx context.Context, req R) (map[string]any, error)
 
 // memoryReadHandler serves one read-only memory command (view, snapshot, search).
-type memoryReadHandler func(e *Engine, path, query string, limit int) (map[string]any, error)
+type memoryReadHandler func(e *Engine, ctx context.Context, path, query string, limit int) (map[string]any, error)
 
 // graphVerb answers one connection verb once the query's seed has resolved.
 type graphVerb func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seed string, resp map[string]any) (map[string]any, error)
@@ -142,23 +142,23 @@ type memoryWriteHandler func(e *Engine, ctx context.Context, req ImportRequest, 
 var memoryWriteCommands = map[string]memoryWriteHandler{
 	"session_retain": (*Engine).memSessionRetain,
 	"create":         (*Engine).memCreate,
-	"str_replace": memFileEdit(func(e *Engine, a memoryArgs) error {
-		return e.mem.StrReplace(a.Path, a.Old, a.New)
+	"str_replace": memFileEdit(func(e *Engine, ctx context.Context, a memoryArgs) error {
+		return e.mem.StrReplace(ctx, a.Path, a.Old, a.New)
 	}),
-	"insert": memFileEdit(func(e *Engine, a memoryArgs) error {
-		return e.mem.Insert(a.Path, a.Content, a.InsertLine)
+	"insert": memFileEdit(func(e *Engine, ctx context.Context, a memoryArgs) error {
+		return e.mem.Insert(ctx, a.Path, a.Content, a.InsertLine)
 	}),
-	"delete":          memFileEdit(func(e *Engine, a memoryArgs) error { return e.mem.Delete(a.Path) }),
+	"delete":          memFileEdit(func(e *Engine, ctx context.Context, a memoryArgs) error { return e.mem.Delete(ctx, a.Path) }),
 	"delete_document": (*Engine).memDeleteDocument,
-	"rename": memFileEdit(func(e *Engine, a memoryArgs) error {
-		return e.mem.Rename(a.Path, a.NewPath)
+	"rename": memFileEdit(func(e *Engine, ctx context.Context, a memoryArgs) error {
+		return e.mem.Rename(ctx, a.Path, a.NewPath)
 	}),
-	"add": memFileEdit(func(e *Engine, a memoryArgs) error { return e.mem.Add(a.File, a.Text) }),
-	"replace": memFileEdit(func(e *Engine, a memoryArgs) error {
-		return e.mem.Replace(a.File, a.Old, a.New)
+	"add": memFileEdit(func(e *Engine, ctx context.Context, a memoryArgs) error { return e.mem.Add(ctx, a.File, a.Text) }),
+	"replace": memFileEdit(func(e *Engine, ctx context.Context, a memoryArgs) error {
+		return e.mem.Replace(ctx, a.File, a.Old, a.New)
 	}),
-	"remove": memFileEdit(func(e *Engine, a memoryArgs) error {
-		return e.mem.Remove(a.File, a.Text)
+	"remove": memFileEdit(func(e *Engine, ctx context.Context, a memoryArgs) error {
+		return e.mem.Remove(ctx, a.File, a.Text)
 	}),
 }
 
@@ -519,28 +519,28 @@ func (e *Engine) querySessionMemory(ctx context.Context, req QueryRequest, a que
 
 // queryMemoryView reads one memory file by path (RS-21: was ConnectRPC-only).
 // The path rides args.path; the top-level query is the fallback.
-func (e *Engine) queryMemoryView(_ context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
+func (e *Engine) queryMemoryView(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
 	path := a.Path
 	if path == "" {
 		path = req.Query
 	}
-	return e.MemoryRead("view", path, "", 0)
+	return e.MemoryRead(ctx, "view", path, "", 0)
 }
 
-func (e *Engine) queryMemorySnapshot(_ context.Context, _ QueryRequest, _ queryMemoryArgs) (map[string]any, error) {
-	return e.MemoryRead("snapshot", "", "", 0)
+func (e *Engine) queryMemorySnapshot(ctx context.Context, _ QueryRequest, _ queryMemoryArgs) (map[string]any, error) {
+	return e.MemoryRead(ctx, "snapshot", "", "", 0)
 }
 
 // queryMemorySearch serves the search command and the bare memory read. The
 // search term rides the top-level `query`, not args.query: the tool's own
 // schema advertises `query` as the search text, and session_recall takes it
 // from the same place.
-func (e *Engine) queryMemorySearch(_ context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
+func (e *Engine) queryMemorySearch(ctx context.Context, req QueryRequest, a queryMemoryArgs) (map[string]any, error) {
 	term := req.Query
 	if term == "" {
 		term = a.Query
 	}
-	return e.MemoryRead("search", "", term, req.Limit)
+	return e.MemoryRead(ctx, "search", "", term, req.Limit)
 }
 
 // ontologyArgs are the args of query{action:"ontology"}. command is the
@@ -888,9 +888,9 @@ func (e *Engine) memoryWrite(ctx context.Context, req ImportRequest, a memoryArg
 }
 
 // memFileEdit serves the memory commands that edit one file and report only ok.
-func memFileEdit(op func(e *Engine, a memoryArgs) error) memoryWriteHandler {
-	return func(e *Engine, _ context.Context, req ImportRequest, a memoryArgs) (map[string]any, error) {
-		if err := op(e, a); err != nil {
+func memFileEdit(op func(e *Engine, ctx context.Context, a memoryArgs) error) memoryWriteHandler {
+	return func(e *Engine, ctx context.Context, req ImportRequest, a memoryArgs) (map[string]any, error) {
+		if err := op(e, ctx, a); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true, "command": req.Command}, nil
@@ -919,9 +919,9 @@ func (e *Engine) memSessionRetain(ctx context.Context, req ImportRequest, a memo
 
 // memCreate keeps the memory-tool contract (create or overwrite), but an
 // overwrite is reported, never silent.
-func (e *Engine) memCreate(_ context.Context, req ImportRequest, a memoryArgs) (map[string]any, error) {
+func (e *Engine) memCreate(ctx context.Context, req ImportRequest, a memoryArgs) (map[string]any, error) {
 	existed := e.mem.Exists(a.Path)
-	if err := e.mem.Create(a.Path, a.Content); err != nil {
+	if err := e.mem.Create(ctx, a.Path, a.Content); err != nil {
 		return nil, err
 	}
 	return map[string]any{"ok": true, "command": req.Command, "overwrote": existed}, nil
@@ -954,27 +954,27 @@ func (e *Engine) memDeleteDocument(ctx context.Context, _ ImportRequest, a memor
 	}, nil
 }
 
-func (e *Engine) readMemoryView(path, _ string, _ int) (map[string]any, error) {
-	text, err := e.mem.View(path, 0)
+func (e *Engine) readMemoryView(ctx context.Context, path, _ string, _ int) (map[string]any, error) {
+	text, err := e.mem.View(ctx, path, 0)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"command": "view", "path": path, "content": text}, nil
 }
 
-func (e *Engine) readMemorySnapshot(_, _ string, _ int) (map[string]any, error) {
-	text, err := e.mem.Snapshot()
+func (e *Engine) readMemorySnapshot(ctx context.Context, _, _ string, _ int) (map[string]any, error) {
+	text, err := e.mem.Snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"command": "snapshot", "content": text}, nil
 }
 
-func (e *Engine) readMemorySearch(_, query string, limit int) (map[string]any, error) {
+func (e *Engine) readMemorySearch(ctx context.Context, _, query string, limit int) (map[string]any, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	hits, err := e.mem.Search(query, limit)
+	hits, err := e.mem.Search(ctx, query, limit)
 	if err != nil {
 		return nil, err
 	}

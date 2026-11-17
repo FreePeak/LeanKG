@@ -35,7 +35,7 @@ func TestCompactRewritesTheBankFile(t *testing.T) {
 	if err := os.WriteFile(m.bankPath("bank"), []byte(buf.String()), 0o644); err != nil {
 		t.Fatalf("write fixture bank: %v", err)
 	}
-	if err := m.Compact(); err != nil {
+	if err := m.Compact(context.Background()); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
 	lines := bankLines(t, m, "bank")

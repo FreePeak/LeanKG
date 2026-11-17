@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/FreePeak/LeanKG/internal/core"
 	"github.com/FreePeak/LeanKG/internal/embed"
@@ -380,7 +381,13 @@ func (cfg Config) open(ctx context.Context, dir string) (*Project, error) {
 	}
 	var mem *memory.Memory
 	if cfg.Memory {
-		if mem, err = memory.Open(dir, false); err != nil {
+		// Shared open: this handle serves every later request for the project,
+		// so it must not be bound to the first request's deadline.
+		const memoryOpenTimeout = 2 * time.Minute
+		octx, cancel := context.WithTimeout(context.WithoutCancel(ctx), memoryOpenTimeout)
+		mem, err = memory.Open(octx, dir, false)
+		cancel()
+		if err != nil {
 			_ = st.Close()
 			return nil, fmt.Errorf("projects: memory for %s: %w", dir, err)
 		}

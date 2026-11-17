@@ -257,7 +257,7 @@ func BenchmarkSearchVectors1k(b *testing.B) {
 // BenchmarkMemoryFTSSearch measures memory FTS5 search over 50 seeded
 // memory files (per-line index rows, unicode61 tokenizer).
 func BenchmarkMemoryFTSSearch(b *testing.B) {
-	m, err := memory.Open(b.TempDir(), false)
+	m, err := memory.Open(context.Background(), b.TempDir(), false)
 	if err != nil {
 		b.Fatalf("memory.Open: %v", err)
 	}
@@ -274,13 +274,13 @@ func BenchmarkMemoryFTSSearch(b *testing.B) {
 			}
 			fmt.Fprintf(&sb, "note%02d line%d\n", i, line)
 		}
-		if err := m.Create(fmt.Sprintf("topics/note%02d.md", i), sb.String()); err != nil {
+		if err := m.Create(context.Background(), fmt.Sprintf("topics/note%02d.md", i), sb.String()); err != nil {
 			b.Fatalf("memory.Create %d: %v", i, err)
 		}
 	}
 
 	const q = "alpha ledger"
-	sanity, err := m.Search(q, 10)
+	sanity, err := m.Search(context.Background(), q, 10)
 	if err != nil {
 		b.Fatalf("Search sanity: %v", err)
 	}
@@ -291,7 +291,7 @@ func BenchmarkMemoryFTSSearch(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := m.Search(q, 10); err != nil {
+		if _, err := m.Search(context.Background(), q, 10); err != nil {
 			b.Fatal(err)
 		}
 	}

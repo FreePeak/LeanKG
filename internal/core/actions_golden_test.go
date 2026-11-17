@@ -84,7 +84,7 @@ func openActionFixture(t *testing.T, root, project string) *actionFixture {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mem, err := memory.Open(project, false)
+	mem, err := memory.Open(context.Background(), project, false)
 	if err != nil {
 		t.Fatal(err)
 	}

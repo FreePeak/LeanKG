@@ -72,7 +72,7 @@ func newCaptureEngine(t *testing.T) (*core.Engine, string) {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mem, err := memory.Open(dir, false)
+	mem, err := memory.Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +535,7 @@ func benchCapture(b *testing.B, rec telemetry.Recorder) {
 	if err := st.Migrate(context.Background()); err != nil {
 		b.Fatal(err)
 	}
-	mem, err := memory.Open(b.TempDir(), false)
+	mem, err := memory.Open(context.Background(), b.TempDir(), false)
 	if err != nil {
 		b.Fatal(err)
 	}

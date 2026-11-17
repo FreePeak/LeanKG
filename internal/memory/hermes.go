@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -9,7 +10,10 @@ import (
 // Add appends text as a new "§ "-delimited entry to a memory file
 // (Hermes append sugar). Core-file bounds still apply: a push past
 // CoreFileBytes fails with ErrOverflow, leaving the file untouched.
-func (m *Memory) Add(file, text string) error {
+func (m *Memory) Add(ctx context.Context, file, text string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	full, key, err := m.resolve(file)
 	if err != nil {
 		return err
@@ -31,20 +35,23 @@ func (m *Memory) Add(file, text string) error {
 	if err := writeMemoryFile(full, out); err != nil {
 		return err
 	}
-	return m.reindex(key)
+	return m.reindex(ctx, key)
 }
 
 // Replace replaces the single occurrence of old with new in a memory file
 // (Hermes variant of StrReplace). Zero or multiple occurrences fail with
 // ErrAmbiguousMatch.
-func (m *Memory) Replace(file, old, new string) error {
-	return m.StrReplace(file, old, new)
+func (m *Memory) Replace(ctx context.Context, file, old, new string) error {
+	return m.StrReplace(ctx, file, old, new)
 }
 
 // Remove deletes the single occurrence of substr from the file, keeping the
 // rest of the containing line. Zero or multiple occurrences fail with
 // ErrAmbiguousMatch.
-func (m *Memory) Remove(file, substr string) error {
+func (m *Memory) Remove(ctx context.Context, file, substr string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	full, key, err := m.resolve(file)
 	if err != nil {
 		return err
@@ -66,5 +73,5 @@ func (m *Memory) Remove(file, substr string) error {
 	if err := writeMemoryFile(full, out); err != nil {
 		return err
 	}
-	return m.reindex(key)
+	return m.reindex(ctx, key)
 }

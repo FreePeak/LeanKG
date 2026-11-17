@@ -36,7 +36,7 @@ func newEngineWithStore(t *testing.T) (*core.Engine, store.Backend, *memory.Memo
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	mem, err := memory.Open(dir, false)
+	mem, err := memory.Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}

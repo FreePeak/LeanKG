@@ -42,7 +42,7 @@ func TestGolden(t *testing.T) {
 	defer st.Close()
 	seed(t, ctx, st)
 
-	mem, err := memory.Open(project, false)
+	mem, err := memory.Open(context.Background(), project, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	memSnap, err := eng.MemoryRead("snapshot", "", "", 0)
+	memSnap, err := eng.MemoryRead(context.Background(), "snapshot", "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

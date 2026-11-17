@@ -19,7 +19,7 @@ import (
 // dropped, and the API reports the true total alongside the injected prefix.
 func TestInjectedBlockNamesWhatItHid(t *testing.T) {
 	dir := t.TempDir()
-	m, err := Open(dir, false)
+	m, err := Open(context.Background(), dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
