@@ -167,7 +167,7 @@ func noProvider(context.Context) (embed.Provider, func(), error) {
 // A run that cannot happen is a skip, not an error: an unavailable provider or a
 // lock another embed run holds comes back as a non-empty skip reason with a zero
 // report. The error is set only when embed.Run itself fails.
-func EmbedStage(ctx context.Context, st store.Backend, storeDir string, start func(context.Context) (embed.Provider, func(), error), mode string) (embed.Report, string, error) {
+func EmbedStage(ctx context.Context, st embed.Store, storeDir string, start func(context.Context) (embed.Provider, func(), error), mode string) (embed.Report, string, error) {
 	lockDir := filepath.Dir(store.StandaloneDBPath(storeDir))
 	if lockDir == "" || lockDir == "." {
 		lockDir = filepath.Join(storeDir, ".leankg")

@@ -56,8 +56,15 @@ func Register(mux *http.ServeMux, fed http.Handler) {
 	mux.Handle("GET "+GraphPath, auth.Require(auth.Viewer, fed))
 }
 
+// receiverStore is what a receiver needs: the graph surface plus the token and
+// identity tables the caller's role resolves against.
+type receiverStore interface {
+	graphStore
+	auth.Store
+}
+
 // Receiver serves one project's graph over the federation protocol.
-func Receiver(st store.Backend, projectDir string) http.Handler {
+func Receiver(st receiverStore, projectDir string) http.Handler {
 	r := &receiver{st: st, service: serviceName(projectDir)}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch {
@@ -74,7 +81,7 @@ func Receiver(st store.Backend, projectDir string) http.Handler {
 }
 
 type receiver struct {
-	st      store.Backend
+	st      receiverStore
 	service string
 }
 
@@ -183,9 +190,9 @@ type graphDocument struct {
 // what "synced" means.
 //
 // Two store transactions (elements, then relationships) rather than one: the
-// Backend interface exposes no cross-table transaction, and both writes are
+// store contract exposes no cross-table transaction, and both writes are
 // idempotent upserts, so re-running a sync that failed between them converges.
-func applyGraph(ctx context.Context, st store.Backend, payload pushPayload, at time.Time) (int, int, error) {
+func applyGraph(ctx context.Context, st graphStore, payload pushPayload, at time.Time) (int, int, error) {
 	if err := validateGraph(payload); err != nil {
 		return 0, 0, err
 	}
@@ -267,7 +274,7 @@ func validateGraph(payload pushPayload) error {
 }
 
 // localContent maps every qualified name in the store to its element content.
-func localContent(ctx context.Context, st store.Backend) (map[string]string, error) {
+func localContent(ctx context.Context, st graphStore) (map[string]string, error) {
 	existing, err := st.Elements(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("federation: read local elements: %w", err)

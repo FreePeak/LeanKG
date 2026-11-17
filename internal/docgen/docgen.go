@@ -22,15 +22,21 @@ const (
 	maxRelTypes = 10
 )
 
+// docStore is the slice of the store the documentation renderer reads.
+type docStore interface {
+	Elements(ctx context.Context) ([]store.Element, error)
+	RelationshipsAll(ctx context.Context, limit int) ([]store.Relationship, error)
+}
+
 // allRelationshipsLimit caps the relationship read well above any realistic
-// graph. store.Backend.RelationshipsAll treats limit <= 0 as 1000 rows, so the
+// graph. The RelationshipsAll read treats limit <= 0 as 1000 rows, so the
 // full edge set must be requested explicitly (same convention as web/api.go
 // and internal/export).
 const allRelationshipsLimit = 1 << 20
 
 // AgentsMD renders the AGENTS.md body from the store (Rust
 // DocGenerator::generate_agents_md).
-func AgentsMD(ctx context.Context, st store.Backend) (string, error) {
+func AgentsMD(ctx context.Context, st docStore) (string, error) {
 	elements, err := st.Elements(ctx)
 	if err != nil {
 		return "", fmt.Errorf("docgen: list elements: %w", err)
@@ -144,7 +150,7 @@ func AgentsMD(ctx context.Context, st store.Backend) (string, error) {
 
 // Write renders the body and writes it to <docsDir>/AGENTS.md, creating
 // docsDir; it returns the written path.
-func Write(ctx context.Context, st store.Backend, docsDir string) (string, error) {
+func Write(ctx context.Context, st docStore, docsDir string) (string, error) {
 	body, err := AgentsMD(ctx, st)
 	if err != nil {
 		return "", err
@@ -184,6 +190,6 @@ func WriteFileTo(path, body string) (string, error) {
 	return path, nil
 }
 
-func allRelationships(ctx context.Context, st store.Backend) ([]store.Relationship, error) {
+func allRelationships(ctx context.Context, st docStore) ([]store.Relationship, error) {
 	return st.RelationshipsAll(ctx, allRelationshipsLimit)
 }

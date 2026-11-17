@@ -54,7 +54,7 @@ const (
 // inventory snapshot. A no-op index run that recorded the same commit again
 // would therefore make a perfectly fresh store report "possibly_stale" —
 // the freshness label must keep meaning what it means.
-func SetHead(ctx context.Context, st Backend, head string) error {
+func SetHead(ctx context.Context, st KV, head string) error {
 	cur, ok, err := Head(ctx, st)
 	if err != nil {
 		return err
@@ -68,7 +68,7 @@ func SetHead(ctx context.Context, st Backend, head string) error {
 // Head reads the recorded git commit id. ok is false when the key was never
 // written (a store indexed before this fact existed); an empty value with ok
 // true means the store was recorded as NOT git-indexed.
-func Head(ctx context.Context, st Backend) (string, bool, error) {
+func Head(ctx context.Context, st KV) (string, bool, error) {
 	v, ok, err := st.KVGet(ctx, IndexKVNamespace, HeadKVKey)
 	if err != nil {
 		return "", false, err

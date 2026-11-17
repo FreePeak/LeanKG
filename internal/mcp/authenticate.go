@@ -7,7 +7,6 @@ import (
 
 	"github.com/FreePeak/LeanKG/internal/auth"
 	"github.com/FreePeak/LeanKG/internal/errs"
-	"github.com/FreePeak/LeanKG/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -81,4 +80,4 @@ func (s *Server) handleAuthenticate(ctx context.Context, req *mcp.CallToolReques
 // adminStore is the store logins are checked against and tokens are minted
 // into. serve hands it in with SetAuthStore for HTTP and stdio alike; nil means
 // authenticate refuses rather than reaching into the engine.
-func (s *Server) adminStore() store.Backend { return s.authStore }
+func (s *Server) adminStore() auth.Store { return s.authStore }

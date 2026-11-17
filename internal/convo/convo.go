@@ -190,7 +190,7 @@ func MineIntoProject(ctx context.Context, project, input string, format Format) 
 // shares a conversation file path. (The Rust original interleaved them and
 // lost all but the last decision's edges; this port fixes that, which the
 // decided_about count assertion in TestIndexItemsPersistsNodesAndEdges pins.)
-func IndexItems(ctx context.Context, st store.Backend, project string, items []MinedItem) (MiningResult, error) {
+func IndexItems(ctx context.Context, st store.IndexWriter, project string, items []MinedItem) (MiningResult, error) {
 	var (
 		elements      []store.Element
 		relationships []store.Relationship

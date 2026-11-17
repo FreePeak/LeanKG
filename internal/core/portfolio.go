@@ -145,7 +145,7 @@ func childArgs(args map[string]any) map[string]any {
 // caller's query through the normal ladder. The handle closes when the child
 // answer is in hand, so a fan-out never accumulates open stores.
 func (e *Engine) portfolioChild(ctx context.Context, p store.ProjectRecord, q portfolioreg.Query) (map[string]any, error) {
-	st, err := e.portfolioOptions().OpenChild(ctx, p.Dir)
+	st, err := store.OpenBackend(ctx, e.portfolioOptions().ChildOpenOptions(p.Dir))
 	if err != nil {
 		return nil, err
 	}

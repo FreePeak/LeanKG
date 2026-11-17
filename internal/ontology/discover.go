@@ -51,7 +51,7 @@ func ClampLimit(limit int) int {
 // ponytail: counts elements per call via COUNT(*); the Rust engine cached a
 // limit-1 probe to avoid counting 662k rows. Upgrade path: cache the count
 // on the engine (invalidate on watermark bump) if this shows up in profiles.
-func IsMegaGraph(ctx context.Context, st store.Backend) (bool, error) {
+func IsMegaGraph(ctx context.Context, st ontologyStore) (bool, error) {
 	n, err := st.ElementCount(ctx)
 	if err != nil {
 		return false, err
@@ -78,7 +78,7 @@ func MegaGraphRefusal(tool string, elementCount int) map[string]any {
 
 // RefuseFullScanIfMega returns a refusal payload when the graph is a
 // mega-graph, else nil (parity with refuse_full_scan_if_mega).
-func RefuseFullScanIfMega(ctx context.Context, st store.Backend, tool string) (map[string]any, error) {
+func RefuseFullScanIfMega(ctx context.Context, st ontologyStore, tool string) (map[string]any, error) {
 	mega, err := IsMegaGraph(ctx, st)
 	if err != nil {
 		return map[string]any{
@@ -116,7 +116,7 @@ type DiscoverPage struct {
 // Discover implements ontology-first discovery with pagination (parity
 // with discover): concept search first; when it yields nothing, a scored
 // bounded name search over the query keywords (never a full-table load).
-func Discover(ctx context.Context, st store.Backend, query, env string, limit, offset int, preferOntology bool) (DiscoverPage, error) {
+func Discover(ctx context.Context, st ontologyStore, query, env string, limit, offset int, preferOntology bool) (DiscoverPage, error) {
 	limit = ClampLimit(limit)
 	if env == "" {
 		env = "local"
@@ -304,7 +304,7 @@ func DiscoverPageToJSON(page DiscoverPage) map[string]any {
 // skip full-graph dependent expansion: true when
 // LEANKG_INCREMENTAL_SKIP_DEPENDENTS=1/true, or when the graph is a
 // mega-graph (parity with skip_incremental_dependents).
-func SkipIncrementalDependents(ctx context.Context, st store.Backend) bool {
+func SkipIncrementalDependents(ctx context.Context, st ontologyStore) bool {
 	if v := os.Getenv("LEANKG_INCREMENTAL_SKIP_DEPENDENTS"); v == "1" || strings.EqualFold(v, "true") {
 		return true
 	}

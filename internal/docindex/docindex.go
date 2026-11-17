@@ -1,6 +1,6 @@
 // Package docindex implements the markdown documentation indexer of the Go
 // engine: it walks .md files, splits them at ATX headings into hierarchical
-// doc elements and feeds the same index layer (store.Backend) as
+// doc elements and feeds the same index layer (store.IndexWriter) as
 // internal/index, reusing its 3-signal change detection.
 package docindex
 
@@ -47,7 +47,7 @@ const maxContent = 8000
 // ponytail: extraction is regex-free line scanning, not a markdown parser —
 // ATX headings inside fenced code blocks are handled, indented/setext
 // headings and inline HTML are not (upgrade path: goldmark in a later wave).
-func IndexDocs(ctx context.Context, st store.Backend, dir string) (Result, error) {
+func IndexDocs(ctx context.Context, st store.IndexWriter, dir string) (Result, error) {
 	return IndexDocsUnder(ctx, st, dir, dir)
 }
 
@@ -57,7 +57,7 @@ func IndexDocs(ctx context.Context, st store.Backend, dir string) (Result, error
 // with a subdirectory) re-keyed docs/prd.md as prd.md and deleted every other
 // .md record of the project — `leankg refresh` did exactly that with its
 // <project>/docs default (RS-02/RS-08).
-func IndexDocsUnder(ctx context.Context, st store.Backend, root, dir string) (Result, error) {
+func IndexDocsUnder(ctx context.Context, st store.IndexWriter, root, dir string) (Result, error) {
 	var res Result
 
 	root, dir = canonical(root), canonical(dir)

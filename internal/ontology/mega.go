@@ -16,7 +16,7 @@ import "strconv"
 //     full-table scan runs.
 
 // GuardedActions lists the query-surface actions that full-scan the
-// element table on the Go engine (each reaches store.Backend.Elements()
+// element table on the Go engine (each reaches ontologyStore.Elements()
 // through ontologyElements). Match the names emitted in the refusal
 // payloads ("ontology/<cmd>").
 func GuardedActions() []string {

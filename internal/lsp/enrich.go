@@ -71,12 +71,21 @@ type LangReport struct {
 	Reason     string `json:"reason,omitempty"` // skip / degradation reason
 }
 
+// enrichStore is the store surface an enrichment pass reads and writes: the
+// indexed elements and relationship edges, nothing else.
+type enrichStore interface {
+	Elements(ctx context.Context) ([]store.Element, error)
+	UpsertElements(ctx context.Context, els []store.Element) error
+	RelationshipsAll(ctx context.Context, limit int) ([]store.Relationship, error)
+	UpsertRelationships(ctx context.Context, rels []store.Relationship) error
+}
+
 // Enrich merges language-server symbols into the elements already indexed
 // under dir, then runs the in-process typed resolve. want is the set of
 // languages to enrich (Go engine tags or catalog names, e.g. "go", "ts",
 // "typescript"); an empty list means every language present in the store.
 // Absent or unresolvable servers never fail the pass.
-func Enrich(ctx context.Context, st store.Backend, dir string, want []string) (EnrichResult, error) {
+func Enrich(ctx context.Context, st enrichStore, dir string, want []string) (EnrichResult, error) {
 	b := FromLeanKGYAMLOrDefault(dir)
 	defer b.Shutdown()
 	return b.Enrich(ctx, st, dir, want)
@@ -85,7 +94,7 @@ func Enrich(ctx context.Context, st store.Backend, dir string, want []string) (E
 // Enrich is the bridge-scoped pass (callers holding a Bridge reuse its pool).
 // A cancelled ctx stops the pass between files and returns its error; nothing
 // merged so far is written.
-func (b *Bridge) Enrich(ctx context.Context, st store.Backend, dir string, want []string) (EnrichResult, error) {
+func (b *Bridge) Enrich(ctx context.Context, st enrichStore, dir string, want []string) (EnrichResult, error) {
 	var res EnrichResult
 	els, err := st.Elements(ctx)
 	if err != nil {

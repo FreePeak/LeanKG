@@ -1,7 +1,7 @@
 // Package projects restores the Rust engine's multi-project serving
 // (LEANKG_PROJECT_DIRS): one serving process fronts several project
 // stores. The router owns the registry — env-parsed plus an explicit
-// list — and lazily opens a store.Backend + core.Engine per project
+// list — and lazily opens a project store + core.Engine per project
 // directory, keyed and selectable by directory path or by name. The
 // FR-ZCP-02 rule carries over: an explicit route key that resolves to
 // nothing NEVER falls back to the default project (that fallback served
@@ -51,13 +51,21 @@ func dedup(sorted []string) []string {
 	return out
 }
 
+// projectStore is the part of a project store the router uses: it names the
+// engine in its log line and closes the store on Close. Reads and writes go
+// through the engine, so the router holds no wider store contract.
+type projectStore interface {
+	Engine() string
+	Close() error
+}
+
 // Project is one lazily-opened project: its store, engine, and (when
 // --memory) markdown memory. Default is true for the serving process's
 // own project (the cwd) — seeded by cmd, never re-opened or closed here.
 type Project struct {
 	Dir    string // canonical absolute directory
 	Name   string // filepath.Base(Dir)
-	Store  store.Backend
+	Store  projectStore
 	Engine *core.Engine
 	Memory *memory.Memory
 

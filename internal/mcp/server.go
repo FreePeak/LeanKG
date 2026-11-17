@@ -56,7 +56,7 @@ type Server struct {
 	// call is about BEFORE it makes one.
 	projectRequired bool
 	srv             *mcp.Server
-	authStore       store.Backend // token store for HTTP callers; nil = env tokens only
+	authStore       auth.Store // token store for HTTP callers; nil = env tokens only
 
 	// Capture (plan v4.15 DS-04/DS-05). rec defaults to telemetry.Nop and is
 	// swapped by a consent reload while calls run, so recMu guards it. stdio
@@ -72,7 +72,7 @@ type Server struct {
 // token create`) as well as LEANKG_TOKEN_* env tokens. Without it a token
 // minted in the store gated REST and ConnectRPC but left MCP open as Admin
 // (RS-03). serve passes the default project's store, the one REST uses.
-func (s *Server) SetAuthStore(st store.Backend) { s.authStore = st }
+func (s *Server) SetAuthStore(st auth.Store) { s.authStore = st }
 
 // SetProjectRouter enables per-call project routing. The router resolves a
 // directory path or project name and errors on unknown selectors (never
