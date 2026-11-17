@@ -457,6 +457,9 @@ afterSidecars:
 		// logged because it is also the single-writer anchor: two servers on
 		// one root append to the same JSONL with no cross-process lock.
 		if mem, err = memory.Open(ctx, dir, *memoryGlobal); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
 			return fmt.Errorf("memory: %w", err)
 		}
 		log.Printf("leankg memory root %s", mem.Root())
@@ -819,6 +822,10 @@ func sweepRegistry(ctx context.Context, eng string) {
 func fleetTargets(ctx context.Context, defaultDir string, st store.Backend, mem *memory.Memory, routed []string, eng string, keepModelIDs []string) []maintain.Target {
 	out := []maintain.Target{{Store: st, Mem: mem, Label: filepath.Base(defaultDir)}}
 	for _, d := range routed {
+		// A shutdown stops the fleet build: no target for the projects left.
+		if ctx.Err() != nil {
+			break
+		}
 		if d == defaultDir {
 			continue
 		}
@@ -857,7 +864,10 @@ func openProjectMemory(ctx context.Context, dir string, keepModelIDs []string) *
 	}
 	m, err := memory.Open(ctx, dir, false)
 	if err != nil {
-		log.Printf("maintenance: open memory %s: %v", dir, err)
+		// A cancel during shutdown is not a maintenance failure.
+		if ctx.Err() == nil {
+			log.Printf("maintenance: open memory %s: %v", dir, err)
+		}
 		return nil
 	}
 	m.SetKeepModelIDs(keepModelIDs)
