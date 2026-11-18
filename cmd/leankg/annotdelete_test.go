@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/annot"
@@ -63,3 +64,27 @@ func TestDeleteAnnotationRoundTrip(t *testing.T) {
 }
 
 var _ = filepath.Join
+
+// TestDeleteAnnotationParsesFlagsOnce guards a double parse: the flags were
+// parsed once and then again by the positional reader, so a bad flag or -h
+// printed the usage twice. Each case must print the usage exactly once.
+func TestDeleteAnnotationParsesFlagsOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		code int
+	}{
+		{"bad flag", []string{"--no-such-flag"}, 2},
+		{"help", []string{"-h"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runCLI(t, append([]string{"delete-annotation"}, tc.args...)...)
+			if code != tc.code {
+				t.Errorf("exit = %d, want %d (stderr: %s)", code, tc.code, stderr)
+			}
+			if n := strings.Count(stderr, "Usage of delete-annotation"); n != 1 {
+				t.Errorf("usage printed %d times, want 1 (stderr: %s)", n, stderr)
+			}
+		})
+	}
+}

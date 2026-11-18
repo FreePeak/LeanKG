@@ -136,3 +136,27 @@ func TestVerbErrorsKeepCancellation(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenStoreReadsPGURLFromLeankgYAML guards the config precedence: a
+// PostgreSQL URL that is set only in the project's leankg.yaml must reach the
+// store, as it already does for `leankg serve`. The port is closed on purpose,
+// so the open fails at connect, never at the "requires LEANKG_PG_URL" check.
+func TestOpenStoreReadsPGURLFromLeankgYAML(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "leankg.yaml"),
+		[]byte("db:\n  url: postgres://leankg:leankg@127.0.0.1:1/leankg?connect_timeout=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LEANKG_PG_URL", "")
+	t.Setenv("LEANKG_DB_ENGINE", "postgres")
+	st, err := openStore(context.Background(), dir)
+	if st != nil {
+		_ = st.Close()
+	}
+	if err != nil && strings.Contains(err.Error(), "requires LEANKG_PG_URL") {
+		t.Fatalf("openStore ignored leankg.yaml db.url: %v", err)
+	}
+	if err == nil {
+		t.Fatal("openStore connected to a closed port; the fixture is wrong")
+	}
+}

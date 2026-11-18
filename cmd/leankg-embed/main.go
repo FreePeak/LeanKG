@@ -30,6 +30,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/cliargs"
 	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/embed"
+	"github.com/FreePeak/LeanKG/internal/projectcfg"
 	"github.com/FreePeak/LeanKG/internal/store"
 )
 
@@ -121,7 +122,7 @@ func openStore(ctx context.Context, project string) (store.Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dir, Engine: envOr("LEANKG_DB_ENGINE", "sqlite"), PGURL: os.Getenv("LEANKG_PG_URL"), DBPath: "", Mode: store.RW})
+	st, err := store.OpenBackend(ctx, store.OpenOptions{ProjectDir: dir, Engine: envOr("LEANKG_DB_ENGINE", "sqlite"), PGURL: projectcfg.PGURL(dir), DBPath: "", Mode: store.RW})
 	if err != nil {
 		return nil, err
 	}

@@ -14,7 +14,7 @@ with one typed position. Every consumer (`rungFuzzy` `:560`, `rungSemantic` `:62
 `graphAction` results) applies one threshold instead of interpreting three
 unrelated numbers.
 
-### 🥈 Hybrid fusion weighting — `internal/store/pg_fts.go:113`
+### [Silver] Hybrid fusion weighting — `internal/store/pg_fts.go:113`
 
 `FuseRRF` uses fixed `RRFK = 60` for all arms. `HybridHit` (`:145`) already carries
 per-arm scores (`KeywordScore`, `TrigramScore`, `Similarity`) that go unused after
@@ -22,7 +22,7 @@ fusion. A Score over arm quality per hit lets a learned reranker adjust weights
 instead of the static RRF formula — the cleanest insertion point for a model that
 improves retrieval.
 
-### 🥈 Memory hit ranking — `internal/memory/banks.go:432`
+### [Silver] Memory hit ranking — `internal/memory/banks.go:432`
 
 `RecallBanks` scores recall rows with native BM25 (Okapi) over tokenized
 content — rare query terms rank higher and short documents are not unfairly
@@ -33,7 +33,7 @@ each row's `Score float64` from that BM25 score. A typed tier over
 whether to compress them — the raw BM25 float is now available for that, per
 US-SM-04 (RRF over memory stores remains open).
 
-### 🥉 Freshness degree — `internal/store/backend.go:269`
+### [Bronze] Freshness degree — `internal/store/backend.go:269`
 
 Three buckets — `fresh` / `possibly_stale` / `cold` — with no gradation within them.
 A Score over `{current, slightly_behind, stale, very_stale, cold}` (each defined by
@@ -41,7 +41,7 @@ watermark delta + element count thresholds) lets the `megaGraphBanner` check
 (`core.go:303-308`) and query-response freshness act proportionally instead of
 binary "fresh / not fresh".
 
-### 🥉 Cluster labeling — `internal/web/clustering.go:223`
+### [Bronze] Cluster labeling — `internal/web/clustering.go:223`
 
 `generateClusterLabel` names clusters from a file path when Louvain finds none
 (`fallbackFolderClustering` at `:190`). A Score over `{coincidental, thematic, core}`
@@ -52,7 +52,7 @@ enough or whether the cluster needs a semantic label from a model.
 
 ## Noul — Yes/no probability, where the degree of belief matters
 
-### 🥇 Ontology fallback decision — `internal/ontology/query.go:528`
+### [Gold] Ontology fallback decision — `internal/ontology/query.go:528`
 
 `ConceptSearch` sets `fallbackUsed = len(matched) == 0` — a binary "did the ontology
 answer this?" decided by zero matches. A Noul *"Was this a genuine ontological
@@ -60,7 +60,7 @@ answer or a desperation fallback?"* propagates uncertainty downstream instead of
 false boolean. A caller seeing `noul: 0.4` knows concept results are thin and
 should not be over-trusted.
 
-### 🥇 L3 rung attempt gate — `internal/core/core.go:510`
+### [Gold] L3 rung attempt gate — `internal/core/core.go:510`
 
 Every query reaching L3 pays an embedding cost (HTTP round-trip to the sidecar).
 The current ladder always tries L3 and degrades on failure. A Noul
@@ -68,7 +68,7 @@ The current ladder always tries L3 and degrades on failure. A Noul
 element count + freshness could skip L3 entirely when `noul < 0.3`, falling through
 to L2 with a clear reason. The happy path is unchanged.
 
-### 🥈 Mega-graph boundary judgment — `internal/ontology/discover.go:53`
+### [Silver] Mega-graph boundary judgment — `internal/ontology/discover.go:53`
 
 `IsMegaGraph` is a hard boolean against `LEANKG_MAX_CACHE_ELEMENTS` (default 50000).
 `RefuseFullScanIfMega` (`:80`) returns a refusal with a `hint` field — a manual
@@ -76,14 +76,14 @@ routing decision. A Noul *"Is this graph large enough that a full scan is risky?
 softens the binary refusal into a graded advisory; the `recommended_tools` list can
 be ranked by confidence rather than hardcoded.
 
-### 🥈 Per-element re-embed decision — `internal/embed/run.go`
+### [Silver] Per-element re-embed decision — `internal/embed/run.go`
 
 Incremental embed skips elements whose content hash matches. When imports restructure
 or signatures move, the hash stays stable but the embedding context changes. A Noul
 per element — *"Does the surrounding context suggest this embedding is stale despite
 an unchanged hash?"* — triggers targeted re-embedding instead of full re-index.
 
-### 🥉 Env-conflict severity — `internal/orgknowledge/conflicts.go:60`
+### [Bronze] Env-conflict severity — `internal/orgknowledge/conflicts.go:60`
 
 `FindEnvConflicts` decides meaningful drift via exact-map equality
 (`metadataEqual`/`canonicalMeta`). A Noul for "is this drift meaningful enough to
@@ -94,7 +94,7 @@ drifts equally.
 
 ## Choice — Pick one from a defined set
 
-### 🥇 Auto-index decision — `internal/indexgate/indexgate.go:104`
+### [Gold] Auto-index decision — `internal/indexgate/indexgate.go:104`
 
 `Decide` already returns a `Decision` enum with named reason vocabulary
 (`ReadOnly`, `Disabled`, `NoGit`, `Index`, `Fresh`) — a 7-step decision table described
@@ -102,7 +102,7 @@ in its doc comment as "the decision half — designed for testable policy". It i
 Choice-shaped. Extending it to express uncertainty between `Fresh` and `Index` (the
 hard cutoff at `lastCommit <= lastWrite+threshold`) is a low-risk improvement.
 
-### 🥇 Compression mode selection — `internal/core/core.go:1140` / `internal/compress/modes.go:131`
+### [Gold] Compression mode selection — `internal/core/core.go:1140` / `internal/compress/modes.go:131`
 
 `compressRead` accepts `args.mode` as a free string validated against 8 options
 (adaptive, full, map, signatures, diff, aggressive, entropy, lines). `SelectAdaptive`
@@ -111,7 +111,7 @@ criteria describing each tradeoff — lets the engine recommend the right mode f
 file size, structure, and diff availability instead of requiring the caller to know
 each mode.
 
-### 🥈 Call resolution tier — `internal/lsp/hybrid.go:159`
+### [Silver] Call resolution tier — `internal/lsp/hybrid.go:159`
 
 `ResolveCall` returns `TypedHit{QualifiedName, Confidence}` with a tier table
 (receiver-method 0.97, same-module cross-file 0.98, same-file 0.94,
@@ -119,7 +119,7 @@ unique-project-wide 0.92). The confidence comes from static tier selection, not 
 the call-site context. A Choice over strategies — `{direct, inferred, speculative, ambiguous}` —
 classifies the certainty of the resolution so callers can decide inline-show vs. review-flag.
 
-### 🥈 File-to-extractor routing — `internal/index/specialists.go:18`
+### [Silver] File-to-extractor routing — `internal/index/specialists.go:18`
 
 `SpecialistClaim` is a filename/extension switch deciding which extractor claims a
 file; unclaimed files are dropped. This is inherently a Choice problem — which
@@ -127,13 +127,13 @@ extractor owns this file? — currently solved with string patterns. A Choice pr
 handles ambiguous extensions or mixed-marker files (e.g., a `.ts` file that is
 actually a Python config).
 
-### 🥉 Discovery strategy — `internal/ontology/discover.go:118`
+### [Bronze] Discovery strategy — `internal/ontology/discover.go:118`
 
 `Discover` switches between `ontology+concept` and `semantic+name`/`semantic+name_fallback`.
 The choice is currently fixed by code. A Choice primitive picks based on query
 characteristics — specific known concept → ontology path; open-ended query → semantic.
 
-### 🥉 Node type classification — `internal/convo/types.go:73`
+### [Bronze] Node type classification — `internal/convo/types.go:73`
 
 `Classify` returns `KindProblem` / `KindDecision` / `KindMilestone` / `KindPreference` /
 `KindGeneral` via keyword matching. Discrete categories from an unordered set —
@@ -146,14 +146,14 @@ of the first matching prefix.
 
 | Priority | Primitive | File:Line | Surface change | Behavior change |
 |---|---|---|---|---|
-| 🥈 | **Score** | `memory/banks.go:432` | Populate Score field | ✅ Done 2026-09-19 — BM25 score in `RankEntries`; typed tier extraction open |
-| 🥇 | **Noul** | `core.go:510` | Guard before L3 call | L3 skipped on unworthy queries; happy path unchanged |
-| 🥈 | **Score** | `store/pg_fts.go:113` | Add weight params to FuseRRF | Learned reranking replaces fixed RRFK |
-| 🥈 | **Score** | `memory/banks.go:432` | Populate Score field | First-turn injection becomes proportional |
-| 🥈 | **Noul** | `ontology/query.go:528` | Replace `len(matched)==0` | Downstream callers get uncertainty signal |
-| 🥉 | **Choice** | `indexgate/indexgate.go:104` | Extend Decision enum | Fresh/Index boundary becomes graded |
-| 🥉 | **Choice** | `compress/modes.go:131` | Add recommendation layer | Mode selection from context |
-| 🥉 | **Choice** | `convo/types.go:73` | Replace keyword classifier | Better event classification |
+| [Silver] | **Score** | `memory/banks.go:432` | Populate Score field | Done 2026-09-19 — BM25 score in `RankEntries`; typed tier extraction open |
+| [Gold] | **Noul** | `core.go:510` | Guard before L3 call | L3 skipped on unworthy queries; happy path unchanged |
+| [Silver] | **Score** | `store/pg_fts.go:113` | Add weight params to FuseRRF | Learned reranking replaces fixed RRFK |
+| [Silver] | **Score** | `memory/banks.go:432` | Populate Score field | First-turn injection becomes proportional |
+| [Silver] | **Noul** | `ontology/query.go:528` | Replace `len(matched)==0` | Downstream callers get uncertainty signal |
+| [Bronze] | **Choice** | `indexgate/indexgate.go:104` | Extend Decision enum | Fresh/Index boundary becomes graded |
+| [Bronze] | **Choice** | `compress/modes.go:131` | Add recommendation layer | Mode selection from context |
+| [Bronze] | **Choice** | `convo/types.go:73` | Replace keyword classifier | Better event classification |
 
 ---
 

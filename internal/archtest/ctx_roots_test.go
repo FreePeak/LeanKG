@@ -26,8 +26,8 @@ func TestContextRootsRatchet(t *testing.T) {
 }
 
 // isContextRoot matches calls of the form context.<name>().
-func isContextRoot(name string) func(ast.Node) bool {
-	return func(n ast.Node) bool {
-		return isPkgCall(n, "context", name)
+func isContextRoot(name string) nodeHit {
+	return func(f *sourceFile, n ast.Node) bool {
+		return isPkgCall(f, n, "context", name)
 	}
 }
