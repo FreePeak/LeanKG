@@ -285,9 +285,10 @@ func startAutoEmbed(ctx context.Context, dir string, debounceSecs int,
 		return
 	}
 	defer release()
-	_ = provider
+	// The provider is already started: refresh gets it back, not a second start.
+	reuse := func(context.Context) (embed.Provider, func(), error) { return provider, func() {}, nil }
 
-	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir, Start: start})
+	res, err := refresh.Run(ctx, refresh.Options{Project: dir, Path: dir, Start: reuse})
 	if err != nil {
 		log.Printf("auto-config: embed failed: %v", err)
 		return

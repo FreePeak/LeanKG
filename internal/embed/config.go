@@ -260,6 +260,7 @@ type localProvider struct {
 	*openaiCompatible
 	pinned bool
 
+	probeMu sync.Mutex // held across one /props read: concurrent Probe calls queue behind it
 	mu      sync.Mutex
 	probed  bool      // a /props answer was read
 	fpRev   string    // "local:<gguf>[@<commit>]" from the answer
@@ -289,25 +290,25 @@ var snapshotRe = regexp.MustCompile(`/snapshots/([0-9a-f]{40})/`)
 // by ctx says nothing and is retried on the next call. It is the only place the
 // local provider does I/O for its identity.
 func (l *localProvider) Probe(ctx context.Context) error {
+	l.probeMu.Lock()
+	defer l.probeMu.Unlock()
 	l.mu.Lock()
-	if l.probed || time.Now().Before(l.nextTry) {
-		l.mu.Unlock()
+	skip := l.probed || time.Now().Before(l.nextTry)
+	l.mu.Unlock()
+	if skip {
 		return nil
 	}
-	l.nextTry = time.Now().Add(propsRetry)
-	l.mu.Unlock()
 
 	rev, nctx, ok := l.fetchProps(ctx)
 	if err := ctx.Err(); err != nil {
-		l.mu.Lock()
-		l.nextTry = time.Time{}
-		l.mu.Unlock()
 		return err
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if ok {
-		l.mu.Lock()
 		l.probed, l.fpRev, l.fpCtx = true, rev, nctx
-		l.mu.Unlock()
+	} else {
+		l.nextTry = time.Now().Add(propsRetry)
 	}
 	return nil
 }

@@ -55,7 +55,7 @@ func positiveInt(lookup func(string) string, key string) (int, error) {
 }
 
 // textCap reads LEANKG_EMBED_TEXT_CAP, the operator's write-cap pin in runes.
-// Unset is 0 (no pin); a value outside [256, 8000] is an error.
+// Unset is 0 (no pin); a value outside [256, embed.MaxContentChars] is an error.
 func textCap(lookup func(string) string) (int, error) {
 	const key = "LEANKG_EMBED_TEXT_CAP"
 	raw := lookup(key)
@@ -63,8 +63,8 @@ func textCap(lookup func(string) string) (int, error) {
 		return 0, nil
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 256 || n > 8000 {
-		return 0, fmt.Errorf("embed: %s=%q: want an integer in [256, 8000]", key, raw)
+	if err != nil || n < 256 || n > embed.MaxContentChars {
+		return 0, fmt.Errorf("embed: %s=%q: want an integer in [256, %d]", key, raw, embed.MaxContentChars)
 	}
 	return n, nil
 }
