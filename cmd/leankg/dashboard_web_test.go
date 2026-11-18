@@ -95,7 +95,7 @@ func TestRunDashboardWebServesAndOpensStubbedBrowser(t *testing.T) {
 
 	var opened string
 	var status int
-	opener := func(url string) error {
+	opener := func(_ context.Context, url string) error {
 		opened = url
 		resp, err := http.Get(url + "api/dashboard/v1/overview")
 		if err != nil {
@@ -133,7 +133,7 @@ func TestRunDashboardWebNoOpenSkipsBrowser(t *testing.T) {
 		cancel()
 	}()
 	called := false
-	opener := func(string) error { called = true; return nil }
+	opener := func(context.Context, string) error { called = true; return nil }
 	if err := runDashboardWeb(ctx, mustParseDashboardFlags(t, []string{"--addr", "127.0.0.1:0", "--no-open"}), io.Discard, opener); err != nil {
 		t.Fatalf("runDashboardWeb: %v", err)
 	}

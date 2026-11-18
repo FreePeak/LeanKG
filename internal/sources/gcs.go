@@ -43,8 +43,9 @@ const (
 )
 
 // gcsHTTPClient is shared so list/download re-use connections across watch
-// polls; every request carries its own deadline.
-var gcsHTTPClient = &http.Client{}
+// polls; every request carries its own deadline, and the client Timeout is the
+// outer bound.
+var gcsHTTPClient = &http.Client{Timeout: gcsDownloadTimeout}
 
 // GcsSource is a `gs://bucket/prefix` source.
 type GcsSource struct {

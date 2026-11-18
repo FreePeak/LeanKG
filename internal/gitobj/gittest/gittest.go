@@ -30,7 +30,7 @@ func Git(t *testing.T, dir string, args ...string) string {
 		"-c", "init.defaultBranch=main",
 		"-c", "commit.gpgsign=false",
 	}, args...)
-	cmd := exec.Command("git", full...)
+	cmd := exec.CommandContext(t.Context(), "git", full...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.Output()

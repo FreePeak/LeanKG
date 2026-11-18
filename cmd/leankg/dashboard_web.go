@@ -95,7 +95,7 @@ func cmdDashboardWeb(ctx context.Context, f *dashboardFlags) error {
 
 // runDashboardWeb serves the dashboard until ctx is done or SIGINT/SIGTERM
 // arrives. opener is called with the URL unless --no-open is given.
-func runDashboardWeb(ctx context.Context, f *dashboardFlags, out io.Writer, opener func(url string) error) error {
+func runDashboardWeb(ctx context.Context, f *dashboardFlags, out io.Writer, opener func(ctx context.Context, url string) error) error {
 	if err := dashboard.CheckListen(f.addr, f.allowRemote, f.token); err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func runDashboardWeb(ctx context.Context, f *dashboardFlags, out io.Writer, open
 		fmt.Fprintln(out, "remote mode: every request needs 'Authorization: Bearer <token>'")
 	}
 	if !f.noOpen && opener != nil {
-		if err := opener(url); err != nil && !errors.Is(err, dashboard.ErrNoDisplay) {
+		if err := opener(ctx, url); err != nil && !errors.Is(err, dashboard.ErrNoDisplay) {
 			fmt.Fprintln(os.Stderr, "dashboard: could not open a browser:", err)
 		}
 	}
