@@ -170,3 +170,16 @@ const gitKeyPrefix = "git:"
 func gitKey(oid string) string { return gitKeyPrefix + oid }
 
 func isGitKey(contentHash string) bool { return strings.HasPrefix(contentHash, gitKeyPrefix) }
+
+// docKeyPrefix marks a ContentHash written by internal/docindex (`import docs`,
+// the docs step of `refresh`). Its rows key `<rel>#<slug>`; the index keys
+// `<rel>::<heading>`. A file keeps one producer, so the index re-extracts a
+// doc-keyed record and never adopts it, whichever ran last.
+const docKeyPrefix = "doc:"
+
+// DocContentKey is the ContentHash docindex stores for a file whose bytes hash
+// to sum.
+func DocContentKey(sum string) string { return docKeyPrefix + sum }
+
+// IsDocKeyed reports whether a stored content hash was written by docindex.
+func IsDocKeyed(contentHash string) bool { return strings.HasPrefix(contentHash, docKeyPrefix) }

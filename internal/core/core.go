@@ -129,7 +129,8 @@ func New(st store.Backend, opts Options) *Engine {
 
 // Close releases what the engine started: the LSP servers and the pool's idle
 // janitor. The store and the memory layer belong to the caller, who closes
-// them. Close is idempotent; a query after Close answers an error (CX-45).
+// them. Close is idempotent. After Close only the LSP queries answer an error
+// (errEngineClosed, CX-45); the other queries still run against the store.
 func (e *Engine) Close() {
 	e.lspMu.Lock()
 	defer e.lspMu.Unlock()

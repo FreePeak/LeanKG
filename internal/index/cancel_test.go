@@ -209,6 +209,7 @@ func assertRecordsHaveElements(t *testing.T, st store.Backend) {
 		}
 	}
 }
+
 // SupportedFiles walks the tree under the caller's ctx: a cancelled ctx (SIGINT,
 // or the doctor probe deadline) stops the walk with that cancel.
 func TestSupportedFilesStopsOnCancelledCtx(t *testing.T) {
@@ -219,5 +220,37 @@ func TestSupportedFilesStopsOnCancelledCtx(t *testing.T) {
 
 	if _, err := SupportedFiles(ctx, dir, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("SupportedFiles under a cancelled ctx: err = %v, want context.Canceled", err)
+	}
+}
+
+// TestCancelRollsBackSpecialistFiles: a specialist file (an AndroidManifest here)
+// is written during extraction, before the directory's ordinary writes begin.
+// A run cancelled part-way through that directory must roll the specialist file
+// back with the other changed files it finished, so a rerun re-indexes it. The
+// rollback used to cover only the files of the write loop.
+func TestCancelRollsBackSpecialistFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"AndroidManifest.xml": `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"/>`,
+		"a.go":                "package p\n\nfunc Alpha() {}\n",
+		"b.go":                "package p\n\nfunc Bravo() {}\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st := openIndexStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// DeleteByFile calls: 1 is the specialist's (written during extraction),
+	// 2 is a.go's (the first ordinary write). Cancelling after 2 stops the run
+	// before b.go, so the directory is cancelled part-way through.
+	w := &cancelInDeleteByFile{Backend: st, after: 2, cancel: cancel}
+	if _, err := IndexDir(ctx, w, dir); !errors.Is(err, context.Canceled) {
+		t.Fatalf("IndexDir error = %v, want context.Canceled", err)
+	}
+	if got := shapeOf(t, st).files; got != 0 {
+		t.Fatalf("file records after cancelled directory = %d, want 0: the specialist and a.go were not rolled back", got)
 	}
 }

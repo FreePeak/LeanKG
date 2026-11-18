@@ -197,6 +197,16 @@ func IsGitKeyed(contentHash string) bool {
 	return isGitKey(contentHash)
 }
 
+// rollbackDir removes the files a directory began writing before it failed or
+// was cancelled, so a rerun re-indexes them. The original error is returned;
+// a rollback failure is joined to it.
+func rollbackDir(ctx context.Context, st store.IndexWriter, touched []string, err error) error {
+	if _, uerr := DeleteFiles(ctx, st, touched); uerr != nil {
+		return errors.Join(err, uerr)
+	}
+	return err
+}
+
 // DeleteFiles removes the store content of the given file paths: the
 // elements and relationships the files own, and their file records.
 //
@@ -289,9 +299,13 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 	if err != nil {
 		return res, err
 	}
+	// A docindex-keyed record is another producer's: it is neither trusted
+	// (the index re-extracts the file) nor deleted (docindex owns it).
 	prevByRel := make(map[string]store.FileRecord, len(prev))
 	for _, f := range prev {
-		prevByRel[f.Path] = f
+		if !IsDocKeyed(f.ContentHash) {
+			prevByRel[f.Path] = f
+		}
 	}
 	if err := checkRoot(ctx, st, dir, len(prev) > 0); err != nil {
 		return res, err
@@ -484,22 +498,28 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		}
 		files := byDir[d]
 		pending := make([]pendingFile, 0, len(files))
+		var touched []string // files whose writes began in this directory, specialists included
 		for _, f := range files {
 			if err := ctx.Err(); err != nil {
-				return res, err
+				return res, rollbackDir(wctx, st, touched, err)
 			}
 			src, err := f.content(rd)
 			if err != nil {
-				return res, err
+				return res, rollbackDir(wctx, st, touched, err)
 			}
-			if handled, err := indexSpecialistFile(wctx, st, f.rel, src, f.size, f.mtimeNS, f.hash, &res); err != nil {
-				return res, err
-			} else if handled {
+			handled, err := indexSpecialistFile(wctx, st, f.rel, src, f.size, f.mtimeNS, f.hash, &res)
+			if handled {
+				touched = append(touched, f.rel) // its writes began, so a rollback covers it
+			}
+			if err != nil {
+				return res, rollbackDir(wctx, st, touched, err)
+			}
+			if handled {
 				continue // the specialist own its extraction AND its writes
 			}
 			fe, err := extractFileAs(ctx, f.rel, src, f.lang)
 			if err != nil {
-				return res, err
+				return res, rollbackDir(wctx, st, touched, err)
 			}
 			pending = append(pending, pendingFile{changedFile: f, fe: fe, src: src})
 		}
@@ -516,7 +536,7 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			}
 			sib, err := extractSiblings(ctx, dirCands[d], changed, rd)
 			if err != nil {
-				return res, err
+				return res, rollbackDir(wctx, st, touched, err)
 			}
 			siblings = sib
 		}
@@ -539,14 +559,13 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		// changed files' records stale, so the rerun redoes the whole directory.
 		for _, fe := range siblings {
 			if err := ctx.Err(); err != nil {
-				return res, err
+				return res, rollbackDir(wctx, st, touched, err)
 			}
 			rels := callEdges(relationships(fe.elements, names))
 			if err := st.ReplaceFileRelationships(wctx, fe.rel, callEdgeTypes, rels); err != nil {
-				return res, err
+				return res, rollbackDir(wctx, st, touched, err)
 			}
 		}
-		var touched []string // files whose writes began in this directory
 		err := func() error {
 			for _, p := range pending {
 				if err := ctx.Err(); err != nil {
@@ -582,10 +601,7 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			return nil
 		}()
 		if err != nil {
-			if _, uerr := DeleteFiles(wctx, st, touched); uerr != nil {
-				err = errors.Join(err, uerr)
-			}
-			return res, err
+			return res, rollbackDir(wctx, st, touched, err)
 		}
 		if reextract && d > cursor {
 			cursor = d

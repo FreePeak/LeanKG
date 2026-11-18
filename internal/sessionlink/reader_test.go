@@ -3,6 +3,7 @@ package sessionlink
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -87,5 +88,37 @@ func TestParsedReparsesWhenTypeDiffers(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("parse calls = %d, want 2", n)
+	}
+}
+
+// TestParsedBoundsKeptTranscripts pins that a pass holds a bounded number of
+// parsed transcripts. A transcript can run to tens of megabytes, and the memo
+// used to keep every file a pass touched until the pass ended. An evicted
+// transcript is parsed again on its next use, which costs time, not correctness.
+func TestParsedBoundsKeptTranscripts(t *testing.T) {
+	r := NewReader()
+	var n int
+	total := maxMemo * 4
+	for i := range total {
+		if _, err := Parsed(r, fmt.Sprintf("t%d.jsonl", i), countingParse(&n, "x", nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(r.parsed) > maxMemo {
+		t.Fatalf("kept %d transcripts, want at most %d", len(r.parsed), maxMemo)
+	}
+	before := n
+	if _, err := Parsed(r, "t0.jsonl", countingParse(&n, "x", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if n != before+1 {
+		t.Fatalf("evicted oldest key was not parsed again (parse calls %d -> %d)", before, n)
+	}
+	before = n
+	if _, err := Parsed(r, fmt.Sprintf("t%d.jsonl", total-1), countingParse(&n, "x", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if n != before {
+		t.Fatalf("newest key was parsed again (parse calls %d -> %d), want it kept", before, n)
 	}
 }

@@ -26,6 +26,8 @@ var redactRules = []struct {
 	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`), "[REDACTED:key]"},
 	{regexp.MustCompile(`\bxox[bpaors]-[A-Za-z0-9-]{10,}`), "[REDACTED:key]"},
+	// LeanKG bearer tokens: lkg_<32hex>_<8hex> (internal/auth.NewSecret).
+	{regexp.MustCompile(`\blkg_[A-Za-z0-9_]{16,}`), "[REDACTED:key]"},
 	// key=value and JSON "key": "value" pairs whose key names a secret.
 	// The prefix may carry a qualifier (db_password), but "max_tokens" does
 	// not match because "token" must be followed by the separator.

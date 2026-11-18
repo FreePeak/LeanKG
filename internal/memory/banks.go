@@ -423,7 +423,7 @@ func (m *Memory) RetainReplacing(ctx context.Context, bank string, entries []Ent
 	if len(replaceDocs) > 0 {
 		drop := make(map[string]bool, len(replaceDocs))
 		for _, d := range replaceDocs {
-			drop[d] = true
+			drop[Redact(d)] = true // rows store the redacted id; see entryDocumentID
 		}
 		n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return drop[entryDocumentID(e)] })
 		if err != nil {
@@ -450,7 +450,8 @@ func (m *Memory) DeleteDocument(ctx context.Context, bank, documentID string) (i
 	start := time.Now()
 	m.bankMu.Lock()
 	defer m.bankMu.Unlock()
-	n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return entryDocumentID(e) == documentID })
+	stored := Redact(documentID) // rows store the redacted id, so match that form
+	n, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return entryDocumentID(e) == stored })
 	if err != nil {
 		return 0, err
 	}
@@ -597,6 +598,12 @@ func (m *Memory) compactBanks(ctx context.Context) error {
 // with its body), keeping the LAST copy of each group — the newest one, and
 // the row a write-time dedupe would have left behind.
 //
+// Rows are keyed and written in their redacted form (redactEntry), the form
+// every write stores. A row written before write-side redaction therefore
+// collapses with its redacted twin, and its raw secret leaves the file. A row
+// whose content redaction changed loses its vector: the vector was embedded
+// from text that is no longer on disk, and the next recall re-embeds the row.
+//
 // The JSONL file is the source of truth on disk, so a compaction that
 // touched only the FTS side left the duplicates in the file forever
 // (measured: the live bank grew ~88.6 KB/day, ~45 rows/day). The write is
@@ -611,40 +618,52 @@ func (m *Memory) compactBankLocked(ctx context.Context, bank string) (int, error
 		}
 		return 0, fmt.Errorf("memory: read bank %s: %w", bank, err)
 	}
-	lines := make([]string, 0, 64)
+	type bankRow struct {
+		line   string // the line the row keeps
+		e      Entry  // the redacted row, when parsed
+		parsed bool
+	}
+	var rows []bankRow
 	for _, line := range strings.Split(string(data), "\n") {
 		if line == "" {
 			continue
 		}
-		lines = append(lines, line)
+		rows = append(rows, bankRow{line: line})
 	}
-	last := make(map[string]int, len(lines))
-	for i, line := range lines {
+	last := make(map[string]int, len(rows))
+	var changedIDs []string
+	for i := range rows {
 		var e Entry
-		if json.Unmarshal([]byte(line), &e) != nil {
+		if json.Unmarshal([]byte(rows[i].line), &e) != nil {
 			continue
 		}
-		last[rowKey(e)] = i
+		r := redactEntry(e)
+		rows[i].e, rows[i].parsed = r, true
+		last[rowKey(r)] = i
+		if r.Content != e.Content {
+			changedIDs = append(changedIDs, e.ID)
+		}
 	}
 	var kept strings.Builder
-	removed := 0
-	for i, line := range lines {
-		var e Entry
-		if json.Unmarshal([]byte(line), &e) != nil {
+	removed, rewritten := 0, false
+	for i, row := range rows {
+		switch {
+		case !row.parsed:
 			// A line that does not parse is kept verbatim: a rewrite must
 			// never be the thing that loses data.
-			kept.WriteString(line)
-			kept.WriteByte('\n')
-			continue
-		}
-		if last[rowKey(e)] != i {
+		case last[rowKey(row.e)] != i:
 			removed++
 			continue
+		default:
+			if b, err := json.Marshal(row.e); err == nil && string(b) != row.line {
+				row.line = string(b)
+				rewritten = true
+			}
 		}
-		kept.WriteString(line)
+		kept.WriteString(row.line)
 		kept.WriteByte('\n')
 	}
-	if removed == 0 {
+	if removed == 0 && !rewritten {
 		return 0, nil
 	}
 	if err := writeBankFile(path, kept.String()); err != nil {
@@ -652,6 +671,11 @@ func (m *Memory) compactBankLocked(ctx context.Context, bank string) (int, error
 	}
 	if err := m.reindexBankLocked(ctx, bank); err != nil {
 		return removed, err
+	}
+	for _, id := range changedIDs {
+		if _, err := m.fts.ExecContext(ctx, `DELETE FROM memory_vectors WHERE bank = ? AND entry_id = ?`, sanitizeBank(bank), id); err != nil {
+			return removed, fmt.Errorf("memory: drop stale vector: %w", err)
+		}
 	}
 	return removed, nil
 }
@@ -718,7 +742,7 @@ func (m *Memory) dedupeBankLocked(ctx context.Context, bank string, entries []En
 	if len(keys) == 0 {
 		return nil
 	}
-	_, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return keys[rowKey(e)] })
+	_, err := m.rewriteBankLocked(ctx, bank, func(e Entry) bool { return keys[rowKey(redactEntry(e))] })
 	return err
 }
 

@@ -397,7 +397,7 @@ func (s *Server) registerTools() {
 		InputSchema: s.schema(`{
 			"type": "object",
 			"properties": {
-				"action": {"type": "string", "enum": ["repo", "dir", "docs", "prd", "git", "memory", "session", "ontology", "read"], "description": "what to import (prd = index a PRD markdown document; git = record the commit history (args.max_commits, default 5000; incremental from the last imported HEAD); read = compressed file read: args.mode/lines/fresh)"},
+				"action": {"type": "string", "enum": ["repo", "dir", "docs", "prd", "git", "memory", "session", "ontology", "read"], "description": "what to import (docs = markdown under path via docindex, rows keyed <file>#<heading>; the index keeps the markdown it lists, rows keyed <file>::<heading>, whichever ran last, so docs covers only files the index does not list, such as git-ignored or uncommitted ones; prd = index a PRD markdown document; git = record the commit history (args.max_commits, default 5000; incremental from the last imported HEAD); read = compressed file read: args.mode/lines/fresh)"},
 				"path": {"type": "string", "description": "repository/directory to index, or memory file path (e.g. MEMORY.md, topics/x.md)"},
 				"command": {"type": "string", "enum": ["create", "str_replace", "insert", "delete", "delete_document", "rename", "add", "replace", "remove", "session_retain", "offload", "lesson"], "description": "memory write command (action=memory; session_retain carries transcript turns in args; delete_document removes a bank row by document_id), or session command (action=session: offload|lesson)"},
 				"content": {"type": "string"},
