@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/sessionlink"
 	"github.com/FreePeak/LeanKG/internal/telemetry"
 	"github.com/FreePeak/LeanKG/internal/telemetry/report"
@@ -354,6 +355,12 @@ func TestConsentPOSTRejectsBadInput(t *testing.T) {
 		rec := do(t, h, http.MethodPost, "/api/dashboard/v1/consent", consentHeaders(srv), body)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("body %s: status %d, want 400", body, rec.Code)
+		}
+		var got struct {
+			Code string `json:"code"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Code != errs.InvalidParam.Code {
+			t.Errorf("body %s: code %q (%v), want %s", body, got.Code, err, errs.InvalidParam.Code)
 		}
 	}
 }

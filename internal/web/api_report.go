@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/FreePeak/LeanKG/internal/core"
+	"github.com/FreePeak/LeanKG/internal/httpx"
 )
 
 // queryGraphNode is US-GF-03 QueryGraphNode.
@@ -68,8 +69,17 @@ type queryGraphResult struct {
 	Path           *shortestPathResult `json:"path,omitempty"`
 }
 
+// queryGraphAction names the budget row query-graph is cut by (ToolBudgets).
+const queryGraphAction = "query_graph"
+
+// nlMinTokenBudget and nlMaxTokenBudget bound the budget query-graph uses after
+// core has validated it. The response reports the value used.
 const (
-	nlDefaultTokenBudget = 2000
+	nlMinTokenBudget = 200
+	nlMaxTokenBudget = 20_000
+)
+
+const (
 	nlDefaultMaxDepth    = 2
 	nlMaxSeeds           = 8
 	nlMaxSeedHitsPerTerm = 3
@@ -556,12 +566,7 @@ func (nl *nlEngine) expandFromSeeds(seeds []string, maxDepth int) (map[string]*q
 }
 
 // runQueryGraph runs the full Rust query_graph pipeline over loaded slices.
-func (nl *nlEngine) runQueryGraph(question string, tokenBudget, maxDepth *int) (*queryGraphResult, error) {
-	budget := nlDefaultTokenBudget
-	if tokenBudget != nil {
-		budget = *tokenBudget
-	}
-	budget = min(max(budget, 200), 20_000)
+func (nl *nlEngine) runQueryGraph(question string, budget int, maxDepth *int) (*queryGraphResult, error) {
 	depth := nlDefaultMaxDepth
 	if maxDepth != nil {
 		depth = *maxDepth
@@ -872,11 +877,11 @@ func (h *apiH) queryGraph(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var req struct {
 		Question    string `json:"question"`
-		TokenBudget *int   `json:"token_budget"`
+		TokenBudget any    `json:"token_budget"`
 		MaxDepth    *int   `json:"max_depth"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, failEnvelope("invalid JSON body: "+err.Error()))
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		respondErr(w, err)
 		return
 	}
 	q := strings.TrimSpace(req.Question)
@@ -884,6 +889,12 @@ func (h *apiH) queryGraph(w http.ResponseWriter, r *http.Request) {
 		respondEnvelope(w, http.StatusBadRequest, failEnvelope("question must not be empty"))
 		return
 	}
+	budget, err := core.ResolveTokenBudget(queryGraphAction, req.TokenBudget)
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	budget = min(max(budget, nlMinTokenBudget), nlMaxTokenBudget)
 
 	snap, err := loadSnapshot(ctx, h.engine)
 	if err != nil {
@@ -896,7 +907,7 @@ func (h *apiH) queryGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nl := newNLEngine(snap, rels)
-	result, err := nl.runQueryGraph(q, req.TokenBudget, req.MaxDepth)
+	result, err := nl.runQueryGraph(q, budget, req.MaxDepth)
 	if err != nil {
 		respondErr(w, err)
 		return

@@ -11,22 +11,47 @@ import (
 	"net/http"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/store"
 )
+
+// MaxBodyBytes bounds a JSON request body on every HTTP decode path. A body
+// over it answers 413 RequestTooLarge instead of being read to the end.
+const MaxBodyBytes = 1 << 20
 
 // StatusClientClosedRequest is nginx's 499: the client closed the connection
 // before the answer was written. net/http has no constant for it.
 const StatusClientClosedRequest = 499
 
 // codeStatus is the one error-code table: the status a catalog code answers
-// with. An error with no entry here, catalog or not, is a bad request (400),
-// which is what the REST layer has always answered.
+// with. A code with no entry here is a bad request (400): the client sent
+// something the server cannot use (unknown action, missing or invalid param,
+// a path outside the project). Every other class answers with its own status.
 var codeStatus = map[string]int{
 	errs.Unauthorized.Code:     http.StatusUnauthorized,
 	errs.PermissionDenied.Code: http.StatusForbidden,
+	errs.ReadOnly.Code:         http.StatusForbidden,
+
+	errs.ProjectNotInitialized.Code: http.StatusNotFound,
+	errs.UnknownProject.Code:        http.StatusNotFound,
+	errs.UnknownTool.Code:           http.StatusNotFound,
+	errs.MethodNotFound.Code:        http.StatusNotFound,
+
+	errs.NoVectors.Code:         http.StatusConflict,
+	errs.IndexRootMismatch.Code: http.StatusConflict,
+
+	errs.PGUnreachable.Code:    http.StatusServiceUnavailable,
+	errs.TrgmUnavailable.Code:  http.StatusServiceUnavailable,
+	errs.IndexUnavailable.Code: http.StatusServiceUnavailable,
+
+	errs.RequestTooLarge.Code: http.StatusRequestEntityTooLarge,
+
+	errs.PGURLMalformed.Code:   http.StatusInternalServerError,
+	errs.AutoAttachFailed.Code: http.StatusInternalServerError,
 }
 
 // StatusFor returns the HTTP status a failed call answers with: 499 for a
-// cancelled call, the table's status for a catalog error, 400 otherwise.
+// cancelled call, the table's status for a catalog error, 500 for a store
+// failure, 400 otherwise.
 func StatusFor(err error) int {
 	if errors.Is(err, context.Canceled) {
 		return StatusClientClosedRequest
@@ -35,6 +60,10 @@ func StatusFor(err error) int {
 		if status, ok := codeStatus[code]; ok {
 			return status
 		}
+	}
+	var storeErr *store.Error
+	if errors.As(err, &storeErr) {
+		return http.StatusInternalServerError
 	}
 	return http.StatusBadRequest
 }
@@ -46,6 +75,28 @@ func CodeOf(err error) string {
 		return coded.Code()
 	}
 	return ""
+}
+
+// InvalidBody is the error for a request body that does not decode as JSON.
+// It carries the InvalidParam code, so every typed-body decode failure answers
+// with the same 400 and token as a bad query field.
+func InvalidBody(err error) error {
+	return errs.NewError(errs.InvalidParam, "invalid JSON body: "+err.Error(), "")
+}
+
+// DecodeJSON reads the request body into into, capped at MaxBodyBytes. A body
+// over the cap is RequestTooLarge; a body that does not decode is InvalidBody.
+func DecodeJSON(w http.ResponseWriter, r *http.Request, into any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
+	err := json.NewDecoder(r.Body).Decode(into)
+	if err == nil {
+		return nil
+	}
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return errs.NewError(errs.RequestTooLarge, errs.RequestTooLarge.Cause, "")
+	}
+	return InvalidBody(err)
 }
 
 // WriteJSON encodes v as the JSON body of a response with the given status.

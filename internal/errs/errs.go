@@ -187,6 +187,23 @@ var InvalidParam = ErrorCode{
 	DocAnchor: "docs/mcp-tool-contract.md",
 }
 
+// RequestTooLarge: a request body is over the transport's size limit.
+var RequestTooLarge = ErrorCode{
+	Code:      "LEANKG_ERROR_REQUEST_TOO_LARGE",
+	Cause:     "the request body is larger than the 1 MiB limit",
+	Fix:       "send a smaller body: pass a path or a filter instead of inlining file content, or split the request",
+	DocAnchor: "docs/mcp-tool-contract.md",
+}
+
+// IndexUnavailable: the project's index could not be read, so its status and
+// the UI onboarding that depends on it cannot be shown.
+var IndexUnavailable = ErrorCode{
+	Code:      "LEANKG_ERROR_INDEX_UNAVAILABLE",
+	Cause:     "the project's index store could not be read, so its status cannot be reported",
+	Fix:       "check the store with `leankg doctor --project <dir>`; if the index is missing or damaged, run `leankg index <dir>` to rebuild it",
+	DocAnchor: "README.md#get-started",
+}
+
 // Catalog is the registry, in presentation order (not significance).
 var Catalog = []ErrorCode{
 	PGUnreachable,
@@ -206,6 +223,8 @@ var Catalog = []ErrorCode{
 	PathOutsideProject,
 	IndexRootMismatch,
 	InvalidParam,
+	RequestTooLarge,
+	IndexUnavailable,
 }
 
 // All returns every registered error code, in presentation order.

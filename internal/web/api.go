@@ -10,7 +10,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/core"
+	"github.com/FreePeak/LeanKG/internal/errs"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
 )
@@ -269,7 +269,7 @@ func maxCacheElements() int {
 func (h *apiH) indexStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := h.engine.Status(r.Context())
 	if err != nil {
-		respondErr(w, err)
+		respondErr(w, indexStatusError(err))
 		return
 	}
 	pp := h.projectDir
@@ -286,13 +286,22 @@ func (h *apiH) indexStatus(w http.ResponseWriter, r *http.Request) {
 	respondEnvelope(w, http.StatusOK, okEnvelope(data))
 }
 
+// indexStatusError gives an unreadable index the 503 the UI onboarding branches
+// on. A failure already carrying a code keeps it.
+func indexStatusError(err error) error {
+	if httpx.CodeOf(err) != "" {
+		return err
+	}
+	return errs.NewError(errs.IndexUnavailable, err.Error(), "")
+}
+
 func (h *apiH) query(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Query  string         `json:"query"`
 		Params map[string]any `json:"params"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, failEnvelope("invalid JSON body: "+err.Error()))
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		respondErr(w, err)
 		return
 	}
 	qr, err := core.DecodeQueryParams(req.Query, req.Params)
@@ -347,8 +356,8 @@ func (h *apiH) projectSwitch(w http.ResponseWriter, r *http.Request) {
 		GithubURL string `json:"github_url"`
 		Reindex   bool   `json:"reindex"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, failEnvelope("invalid JSON body: "+err.Error()))
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		respondErr(w, err)
 		return
 	}
 	if req.GithubURL != "" {

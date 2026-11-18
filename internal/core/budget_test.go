@@ -84,3 +84,16 @@ func TestQueryAnswerRefusesBadTokenBudget(t *testing.T) {
 		}
 	}
 }
+
+// Every query action has an explicit budget row, so none silently falls back
+// to the default cap (the 1000-token fallback cut history, prd and friends).
+func TestEveryQueryActionHasAnExplicitBudget(t *testing.T) {
+	for action := range queryActions {
+		if action == "" {
+			continue // the ladder router is budgeted as "search"
+		}
+		if (budget.TokenBudget{}).MaxTokensForTool(action) == budget.DefaultMaxTokens {
+			t.Errorf("query action %q falls back to the default %d-token cap; add it to budget.ToolBudgets", action, budget.DefaultMaxTokens)
+		}
+	}
+}

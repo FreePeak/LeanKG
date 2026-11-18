@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/FreePeak/LeanKG/internal/errs"
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 func TestStatusForIsTheOneErrorTable(t *testing.T) {
@@ -30,6 +31,7 @@ func TestStatusForIsTheOneErrorTable(t *testing.T) {
 		{"unknown action is a bad request", errs.NewError(errs.UnknownAction, "nope", ""), http.StatusBadRequest},
 		{"invalid parameter is a bad request", errs.NewError(errs.InvalidParam, "limit", ""), http.StatusBadRequest},
 		{"uncoded error is a bad request", errors.New("boom"), http.StatusBadRequest},
+		{"store failure is a server fault", store.Fail("status", errors.New("no such table")), http.StatusInternalServerError},
 		{"cancelled call", context.Canceled, StatusClientClosedRequest},
 		{"wrapped cancelled call", fmt.Errorf("walk: %w", context.Canceled), StatusClientClosedRequest},
 	}

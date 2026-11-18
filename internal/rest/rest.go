@@ -15,7 +15,6 @@
 package rest
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -26,6 +25,7 @@ import (
 	"github.com/FreePeak/LeanKG/internal/federation"
 	"github.com/FreePeak/LeanKG/internal/httpx"
 	"github.com/FreePeak/LeanKG/internal/memory"
+	"github.com/FreePeak/LeanKG/internal/store"
 )
 
 // Handler builds the REST mux over an engine.
@@ -41,7 +41,7 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 	mux.Handle("GET /api/v1/status", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out, err := engine.Status(r.Context())
 		if err != nil {
-			httpx.WriteError(w, err)
+			httpx.WriteError(w, store.Fail("status", err))
 			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, out)
@@ -73,7 +73,8 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 			httpx.WriteError(w, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, out)
+		capped, _ := core.EnforceBudget(out, req.Action, 0)
+		httpx.WriteJSON(w, http.StatusOK, capped)
 	})))
 	mux.Handle("POST /api/v1/session/read", auth.Require(auth.Viewer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -349,8 +350,8 @@ func Handler(engine *core.Engine, mem *memory.Memory, opts ...HandlerOption) htt
 }
 
 func decode[T any](w http.ResponseWriter, r *http.Request, into *T) bool {
-	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		httpx.WriteMessage(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+	if err := httpx.DecodeJSON(w, r, into); err != nil {
+		httpx.WriteError(w, err)
 		return false
 	}
 	return true

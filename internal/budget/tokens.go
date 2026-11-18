@@ -36,10 +36,10 @@ type ToolBudget struct {
 // (core.QueryRequest.Action), so `semantic_search` is reached as action
 // `semantic` and must not silently fall back to the 1000-token default.
 var ToolBudgets = []ToolBudget{
-	{MaxTokens: 800, Actions: []string{"get_service_context"}},
+	{MaxTokens: 800, Actions: []string{"get_service_context", "service_context"}},
 	{MaxTokens: 6000, Actions: []string{"get_impact_radius", "impact"}},
-	{MaxTokens: 2000, Actions: []string{"query_incidents"}},
-	{MaxTokens: 2000, Actions: []string{"find_env_conflicts"}},
+	{MaxTokens: 2000, Actions: []string{"query_incidents", "incidents"}},
+	{MaxTokens: 2000, Actions: []string{"find_env_conflicts", "env_conflicts"}},
 	{MaxTokens: 2000, Actions: []string{"trace_call_chain"}},
 	{MaxTokens: 2000, Actions: []string{"semantic_search"}},
 	// The Go semantic rung answers the same hit shape as search/fuzzy, so it
@@ -56,6 +56,10 @@ var ToolBudgets = []ToolBudget{
 	{MaxTokens: 2000, Actions: []string{"query_graph"}},
 	{MaxTokens: 2000, Actions: []string{"get_dependencies"}},
 	{MaxTokens: 2000, Actions: []string{"get_dependents"}},
+	// Git history (after import git): a commit or co-change list per file.
+	{MaxTokens: 2000, Actions: []string{"history", "cochange", "churn"}},
+	// A PRD answer lists requirement sections; it has no Rust row to copy.
+	{MaxTokens: 4000, Actions: []string{"prd"}},
 	// Go actions beyond the Rust table.
 	{MaxTokens: 2000, Actions: []string{"status"}},
 	{MaxTokens: 2000, Actions: []string{"memory"}},

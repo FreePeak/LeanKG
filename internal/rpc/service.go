@@ -62,7 +62,8 @@ func (s *LeanKGService) Import(ctx context.Context, req *connect.Request[leankgv
 	if err != nil {
 		return nil, connect.NewError(connectCode(err), err)
 	}
-	js, err := jsonOf(out)
+	capped, _ := core.EnforceBudget(out, req.Msg.Action, 0)
+	js, err := jsonOf(capped)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -139,8 +140,16 @@ func connectCode(err error) connect.Code {
 		return connect.CodeUnauthenticated
 	case http.StatusForbidden:
 		return connect.CodePermissionDenied
+	case http.StatusNotFound:
+		return connect.CodeNotFound
+	case http.StatusConflict:
+		return connect.CodeAborted
 	case httpx.StatusClientClosedRequest:
 		return connect.CodeCanceled
+	case http.StatusInternalServerError:
+		return connect.CodeInternal
+	case http.StatusServiceUnavailable:
+		return connect.CodeUnavailable
 	}
 	return connect.CodeInvalidArgument
 }
