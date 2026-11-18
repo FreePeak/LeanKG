@@ -8,7 +8,10 @@ import (
 // ioBudget is the measured count of context-less I/O per directory and rule,
 // in non-main, non-test packages. Only non-zero entries appear. Like the other
 // budgets it only goes down, and an entry is removed when its count reaches 0.
-var ioBudget = map[string]map[string]int{}
+var ioBudget = map[string]map[string]int{
+	// Deliberate: a nil federation.Options.Client falls back to http.DefaultClient (no timeout), see federation.go:119-122.
+	"internal/federation": {"http.DefaultClient": 1},
+}
 
 // ioRule is one context-less I/O pattern with its AST matcher.
 type ioRule struct {
@@ -29,6 +32,7 @@ var ioRules = []ioRule{
 		return isPkgCall(n, "http", "Get", "Post", "PostForm", "Head")
 	}},
 	{"http.Client-without-Timeout", clientWithoutTimeout},
+	{"http.DefaultClient", isDefaultClient},
 	{"sql-no-ctx", isSQLWithoutCtx},
 }
 
@@ -76,6 +80,13 @@ func clientWithoutTimeout(n ast.Node) bool {
 		}
 	}
 	return true
+}
+
+// isDefaultClient matches a reference to http.DefaultClient, which has no
+// timeout. It is counted like a timeout-less http.Client literal.
+func isDefaultClient(n ast.Node) bool {
+	sel, ok := n.(*ast.SelectorExpr)
+	return ok && isPkgType(sel, "http", "DefaultClient")
 }
 
 // isPkgType reports whether expr is the qualified type pkg.name.
