@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -303,30 +304,28 @@ func (s *Store) KnowledgeEntriesByEnvironment(ctx context.Context, environment s
 // substring search. A query with no terms, or an index error, is substring-only.
 func (s *Store) KnowledgeEntriesSearch(ctx context.Context, query, knowledgeType, environment string, limit int) ([]KnowledgeEntry, error) {
 	ranked, err := s.knowledgeRanked(ctx, query, knowledgeType, environment, limit)
+	var degraded error
 	if err != nil {
-		ranked = nil // degrade to substring recall, as PostgreSQL does
+		// The keyword arm is unavailable (a store that predates the index,
+		// or an index error). Recall stays complete through the substring arm,
+		// but the order is recency only: say so instead of hiding it.
+		ranked = nil
+		degraded = fmt.Errorf("%w: %w", ErrRankingDegraded, err)
 	}
 	if limit > 0 && len(ranked) >= limit {
-		return ranked, nil
+		return ranked, degraded
 	}
 	substring, err := s.knowledgeSubstringSearch(ctx, query, knowledgeType, environment, limit)
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]bool, len(ranked))
-	for _, e := range ranked {
-		seen[e.ID] = true
-	}
-	for _, e := range substring {
-		if limit > 0 && len(ranked) >= limit {
-			break
-		}
-		if !seen[e.ID] {
-			ranked = append(ranked, e)
-		}
-	}
-	return ranked, nil
+	return fillKnowledgeRecall(ranked, substring, limit), degraded
 }
+
+// ErrRankingDegraded marks a keyword search whose results are complete but
+// whose relevance order is unavailable: the returned entries are the substring
+// matches, newest first. Test with errors.Is; the wrapped cause is the arm's error.
+var ErrRankingDegraded = errors.New("store: knowledge keyword ranking degraded")
 
 // knowledgeRanked is the keyword arm over knowledge_fts: hits ordered by bm25,
 // then recency. A query with no terms has no keyword arm.

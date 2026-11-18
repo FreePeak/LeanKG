@@ -81,3 +81,23 @@ func upsertVectorsFor(t *testing.T, st *Store, modelID string, els ...Element) e
 	}
 	return st.UpsertVectors(context.Background(), modelID, rows)
 }
+
+// TestSearchVectorsNegativeKReturnsEmpty pins that a negative K is clamped to
+// zero: the SQLite arm sliced hits[:k] unguarded and panicked, while the
+// PostgreSQL arm clamps with max(q.K, 0).
+func TestSearchVectorsNegativeKReturnsEmpty(t *testing.T) {
+	st := openTestStore(t)
+	if err := upsertVectorsFor(t, st, "m",
+		Element{QualifiedName: "a.go::A", Name: "A", FilePath: "a.go"},
+		Element{QualifiedName: "b.go::B", Name: "B", FilePath: "b.go"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := st.SearchVectors(context.Background(), VectorQuery{ModelID: "m", Vec: []float32{1, 0, 0, 0}, K: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("negative K hits = %d, want 0", len(hits))
+	}
+}

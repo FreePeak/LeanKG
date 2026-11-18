@@ -158,6 +158,25 @@ func incidentWhere(q IncidentQuery, b *whereBuilder) string {
 
 // searchWhere renders the Rust search_knowledge_entries filters (substring
 // over title or content, then optional exact type/environment).
+// fillKnowledgeRecall appends the substring hits the keyword arm did not
+// return, after the keyword hits and in their own order, until limit (0 means
+// no limit). Both engines share it so the recall contract is one rule.
+func fillKnowledgeRecall(ranked, substring []KnowledgeEntry, limit int) []KnowledgeEntry {
+	seen := make(map[string]bool, len(ranked))
+	for _, e := range ranked {
+		seen[e.ID] = true
+	}
+	for _, e := range substring {
+		if limit > 0 && len(ranked) >= limit {
+			break
+		}
+		if !seen[e.ID] {
+			ranked = append(ranked, e)
+		}
+	}
+	return ranked
+}
+
 func searchWhere(query, knowledgeType, environment string, b *whereBuilder) string {
 	t, c := b.bind(likeContains(query)), b.bind(likeContains(query))
 	conds := []string{"(LOWER(title) LIKE " + t + " ESCAPE '\\' OR LOWER(content) LIKE " + c + " ESCAPE '\\')"}

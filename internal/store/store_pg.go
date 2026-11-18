@@ -65,8 +65,16 @@ func openPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, 
 	// above ef_search) would return fewer rows than asked. iterative_scan keeps
 	// the index scan going until the LIMIT is met; it only continues when the
 	// first pass came up short, so unfiltered queries within ef_search are
-	// unchanged. Set per connection so no statement needs a transaction.
-	cfg.ConnConfig.RuntimeParams["hnsw.iterative_scan"] = "strict_order"
+	// unchanged. Set per connection so no statement needs a transaction. The
+	// setting exists only from pgvector 0.8.0, so the installed version decides
+	// whether it is set at all.
+	ver, err := pgVectorVersion(ctx, cfg.ConnConfig)
+	if err != nil {
+		return nil, err
+	}
+	if pgvectorHasIterativeScan(ver) {
+		cfg.ConnConfig.RuntimeParams["hnsw.iterative_scan"] = "strict_order"
+	}
 	// Every acquired connection — readers included — resolves unqualified
 	// tables inside the project's schema.
 	cfg.BeforeAcquire = func(ctx context.Context, conn *pgx.Conn) bool {
@@ -97,6 +105,32 @@ func openPG(ctx context.Context, pgURL, projectDir string, mode Mode) (Backend, 
 		return nil, fmt.Errorf("%w %s", ErrSchemaMissing, schema)
 	}
 	return s, nil
+}
+
+// pgVectorVersion reads the installed pgvector extension version over a
+// connection of its own, before the pool exists, so the pool's session
+// settings can depend on it. It is empty when the extension is absent.
+func pgVectorVersion(ctx context.Context, cc *pgx.ConnConfig) (string, error) {
+	conn, err := pgx.ConnectConfig(ctx, cc.Copy())
+	if err != nil {
+		return "", fmt.Errorf("store: connect postgres: %w", err)
+	}
+	defer conn.Close(context.WithoutCancel(ctx))
+	var ver string
+	if err := conn.QueryRow(ctx, `SELECT COALESCE((SELECT extversion FROM pg_extension WHERE extname = 'vector'), '')`).Scan(&ver); err != nil {
+		return "", fmt.Errorf("store: read pgvector version: %w", err)
+	}
+	return ver, nil
+}
+
+// pgvectorHasIterativeScan reports whether a pgvector version defines
+// hnsw.iterative_scan, which arrived in 0.8.0. Anything unparsable is false.
+func pgvectorHasIterativeScan(version string) bool {
+	var major, minor int
+	if _, err := fmt.Sscanf(version, "%d.%d", &major, &minor); err != nil {
+		return false
+	}
+	return major > 0 || minor >= 8
 }
 
 // pgSchemaForDir derives the per-project schema name: leankg_ + first 16 hex
@@ -326,7 +360,8 @@ const pgElementCols = `ce.qualified_name, ce.element_type, ce.name, ce.file_path
 func (s *PGStore) FindExact(ctx context.Context, name string) ([]Element, error) {
 	rows, err := s.pool.Query(ctx, `SELECT `+pgElementCols+` FROM code_elements ce
 		WHERE lower(ce.name) = lower($1) OR lower(ce.qualified_name) = lower($1)
-		ORDER BY length(ce.qualified_name) LIMIT 200`, name)
+		ORDER BY (ce.name = $1 OR ce.qualified_name = $1) DESC, length(ce.qualified_name) ASC,
+			ce.file_path ASC, ce.qualified_name ASC LIMIT 200`, name)
 	if err != nil {
 		return nil, err
 	}
@@ -689,6 +724,9 @@ func (s *PGStore) Stamp(ctx context.Context, modelID string) (*ModelStamp, error
 	if err != nil {
 		return nil, err
 	}
+	if shape.absent() {
+		return nil, nil
+	}
 	st, err := scanStamp(s.pool.QueryRow(ctx, shape.selectSQL+` WHERE model_id = $1`, modelID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -705,6 +743,9 @@ func (s *PGStore) Stamps(ctx context.Context) ([]ModelStamp, error) {
 	shape, err := s.stampShape(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if shape.absent() {
+		return nil, nil
 	}
 	rows, err := s.pool.Query(ctx, shape.selectSQL)
 	if err != nil {
@@ -1104,7 +1145,7 @@ func (s *PGStore) AppendAudit(ctx context.Context, e *AuditEntry) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, s.schema); err != nil {
 		return err
 	}

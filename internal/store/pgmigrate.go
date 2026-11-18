@@ -532,11 +532,11 @@ func (s *PGStore) Migrate(ctx context.Context) error {
 				return err
 			}
 			if _, err := tx.Exec(ctx, m.ddl); err != nil {
-				_ = tx.Rollback(ctx)
+				_ = tx.Rollback(context.WithoutCancel(ctx))
 				return fmt.Errorf("store: migration %03d %s: %w", m.version, m.name, err)
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, `+pgNow+`)`, m.version, m.name); err != nil {
-				_ = tx.Rollback(ctx)
+				_ = tx.Rollback(context.WithoutCancel(ctx))
 				return fmt.Errorf("store: record migration %03d: %w", m.version, err)
 			}
 			if err := tx.Commit(ctx); err != nil {
