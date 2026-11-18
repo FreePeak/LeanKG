@@ -41,8 +41,23 @@ func NewLoginThrottle(now func() time.Time) *LoginThrottle {
 func (t *LoginThrottle) Blocked(username string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	st := t.live(username, t.now())
-	return st != nil && !st.lockedUntil.IsZero()
+	return t.lockedAt(username, t.now())
+}
+
+// Reserve counts one attempt for username before its password check runs. It
+// returns false, without counting, while username is locked. Otherwise the
+// attempt is recorded as a failure, so concurrent attempts cannot all pass the
+// lockout check before any of them is counted. A failed attempt keeps its
+// reservation; a successful one releases it through Success.
+func (t *LoginThrottle) Reserve(username string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	if t.lockedAt(username, now) {
+		return false
+	}
+	t.recordFailure(username, now)
+	return true
 }
 
 // Failure records one failed attempt. The fifth consecutive failure in a streak
@@ -50,7 +65,17 @@ func (t *LoginThrottle) Blocked(username string) bool {
 func (t *LoginThrottle) Failure(username string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	now := t.now()
+	t.recordFailure(username, t.now())
+}
+
+// lockedAt reports whether username is inside a lockout at now. Caller holds mu.
+func (t *LoginThrottle) lockedAt(username string, now time.Time) bool {
+	st := t.live(username, now)
+	return st != nil && !st.lockedUntil.IsZero()
+}
+
+// recordFailure adds one failure for username at now. Caller holds mu.
+func (t *LoginThrottle) recordFailure(username string, now time.Time) {
 	t.sweep(now)
 	st := t.live(username, now)
 	if st == nil {

@@ -12,6 +12,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"time"
@@ -23,6 +24,11 @@ import (
 // maxTTLSecs is the largest whole-second TTL a time.Duration can hold
 // (~292 years). A ttl_secs beyond it would wrap to "never expires".
 const maxTTLSecs = math.MaxInt64 / int64(time.Second)
+
+// registrationFailedMsg is the one generic text a refused registration returns
+// (#586). It is the same for a duplicate email and any other refusal the
+// handler does not pass through.
+const registrationFailedMsg = "registration failed"
 
 // Routes returns the /api/v1/auth/* handler tree over a store. Every route is
 // Public: the bootstrap is mounted outside the listener gate, and each handler
@@ -40,6 +46,12 @@ func Routes(st Store) http.Handler {
 			return
 		}
 		account, err := Register(r.Context(), st, req.Email, req.Password, req.Name)
+		if errors.Is(err, ErrAccountExists) {
+			// Generic on purpose (#586): a duplicate answers like any other
+			// registration failure, so the response never reveals an existing email.
+			writeFail(w, registrationFailedMsg)
+			return
+		}
 		if err != nil {
 			writeFail(w, err.Error())
 			return
@@ -134,9 +146,6 @@ func Routes(st Store) http.Handler {
 		if !ok {
 			return
 		}
-		// A caller with an account sees only its own tokens (Rust
-		// list_tokens(ctx.client_id)); a process-level caller (env token or
-		// the no-token local default) has no account to filter by and sees all.
 		rows, err := st.TokenList(r.Context())
 		if err != nil {
 			writeFail(w, err.Error())
@@ -144,7 +153,7 @@ func Routes(st Store) http.Handler {
 		}
 		visible := make([]tokenSummary, 0, len(rows))
 		for _, t := range rows {
-			if ctx.AccountID == "" || t.AccountID == ctx.AccountID {
+			if tokenVisibleTo(ctx, t) {
 				visible = append(visible, summarizeToken(t))
 			}
 		}
@@ -322,6 +331,17 @@ type tokenSummary struct {
 	ExpiresAt  int64    `json:"expires_at,omitempty"`
 	RevokedAt  int64    `json:"revoked_at,omitempty"`
 	LastUsedAt int64    `json:"last_used_at,omitempty"`
+}
+
+// tokenVisibleTo is the token-list rule. A caller with an account sees only its
+// own tokens (Rust list_tokens(ctx.client_id)). A process-level caller (an env
+// token, or a DB token with no account) has no account to filter by, so it sees
+// the full list only when it is an admin; below admin it sees nothing (#586).
+func tokenVisibleTo(ctx AuthContext, t store.Token) bool {
+	if ctx.AccountID == "" {
+		return ctx.CanAdmin()
+	}
+	return t.AccountID == ctx.AccountID
 }
 
 func summarizeToken(t store.Token) tokenSummary {

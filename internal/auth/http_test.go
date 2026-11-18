@@ -498,3 +498,72 @@ func TestTokenRevokeNeedsOwnerOrAdmin(t *testing.T) {
 		}
 	})
 }
+
+// TestTokenListScopesProcessLevelCallers pins #586: an env token has no
+// account, so it is a process-level caller. A process-level viewer must not see
+// other accounts' token rows. Only a process-level admin sees the full list.
+func TestTokenListScopesProcessLevelCallers(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	h := newAuthServer(t, st)
+	for _, acct := range []string{"acct-scope-one", "acct-scope-two"} {
+		if _, _, err := Mint(context.Background(), st, MintRequest{Name: acct, Role: "viewer", AccountID: acct}); err != nil {
+			t.Fatalf("mint %s: %v", acct, err)
+		}
+	}
+	t.Setenv("LEANKG_TOKEN_VIEWER", "env-viewer")
+	t.Setenv("LEANKG_TOKEN_ADMIN", "env-admin")
+
+	rowsFor := func(bearer string) []any {
+		t.Helper()
+		code, resp := doJSON(t, h, "GET", "/api/v1/auth/token", bearer, nil)
+		if code != http.StatusOK {
+			t.Fatalf("list as %s = %d %v; want 200", bearer, code, resp)
+		}
+		rows, ok := resp["data"].([]any)
+		if !ok {
+			t.Fatalf("list data = %v; want an array", resp["data"])
+		}
+		return rows
+	}
+	if rows := rowsFor("env-viewer"); len(rows) != 0 {
+		t.Fatalf("process-level viewer listed %d token rows; want 0", len(rows))
+	}
+	if rows := rowsFor("env-admin"); len(rows) != 2 {
+		t.Fatalf("process-level admin listed %d token rows; want 2", len(rows))
+	}
+}
+
+// TestRegisterDuplicateEmailIsGeneric pins #586: registering an email that
+// already exists must not reveal that it exists. The duplicate answers the same
+// 400 envelope and generic text as the other registration failure, and never
+// echoes the email back.
+func TestRegisterDuplicateEmailIsGeneric(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	h := newAuthServer(t, st)
+	const email = "taken@example.com"
+	body := func(pw string) map[string]string {
+		return map[string]string{"email": email, "password": pw, "name": "Taken"}
+	}
+
+	if code, resp := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("password123")); code != http.StatusOK {
+		t.Fatalf("first register = %d %v", code, resp)
+	}
+	code, dup := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("password123"))
+	if code != http.StatusBadRequest || dup["success"] != false {
+		t.Fatalf("duplicate register = %d %v; want 400 failure", code, dup)
+	}
+	if got, _ := dup["error"].(string); got != "registration failed" {
+		t.Fatalf("duplicate error = %q; want generic %q", got, "registration failed")
+	}
+	raw, _ := json.Marshal(dup)
+	if strings.Contains(strings.ToLower(string(raw)), "taken@example.com") {
+		t.Fatalf("duplicate response echoes the email: %s", raw)
+	}
+
+	code, other := doJSON(t, h, "POST", "/api/v1/auth/register", "", body("short"))
+	if code != http.StatusBadRequest || other["success"] != false {
+		t.Fatalf("short-password register = %d %v; want 400 failure", code, other)
+	}
+}

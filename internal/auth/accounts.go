@@ -158,9 +158,15 @@ func newID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// ErrAccountExists is the duplicate-email rejection from Register. It names no
+// email: the HTTP surface answers it with generic text (#586), so an attacker
+// cannot tell an existing account from another registration failure.
+var ErrAccountExists = errors.New("account already exists")
+
 // Register creates an account plus its bootstrap org owned by that account,
-// with the account as the org's owner member. Duplicate emails and passwords
-// shorter than 8 characters are rejected (Rust AccountStore::register).
+// with the account as the org's owner member. Duplicate emails (ErrAccountExists)
+// and passwords shorter than 8 characters are rejected (Rust
+// AccountStore::register).
 func Register(ctx context.Context, st Store, email, password, name string) (store.Account, error) {
 	email = NormalizeEmail(email)
 	if !strings.Contains(email, "@") {
@@ -172,7 +178,7 @@ func Register(ctx context.Context, st Store, email, password, name string) (stor
 	if _, found, err := st.AccountByEmail(ctx, email); err != nil {
 		return store.Account{}, err
 	} else if found {
-		return store.Account{}, fmt.Errorf("account already exists: %s", email)
+		return store.Account{}, ErrAccountExists
 	}
 	hash, err := HashPassword(password)
 	if err != nil {

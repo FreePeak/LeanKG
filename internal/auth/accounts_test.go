@@ -222,3 +222,20 @@ func TestCreateOrgOwnsAndClaimsResource(t *testing.T) {
 		t.Fatalf("is resource owner = %v, %v; want true", owned, err)
 	}
 }
+
+// TestRegisterDuplicateErrorDoesNotEchoEmail pins #586 at the store seam: the
+// duplicate error names no email, so no caller can echo it back.
+func TestRegisterDuplicateErrorDoesNotEchoEmail(t *testing.T) {
+	clearTokenEnv(t)
+	st := openAuthStore(t)
+	if _, err := Register(context.Background(), st, "echo@example.com", "password123", "Echo"); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	_, err := Register(context.Background(), st, "ECHO@example.com", "password123", "Echo2")
+	if err == nil {
+		t.Fatal("duplicate email must be rejected")
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "echo@example.com") {
+		t.Fatalf("duplicate error echoes the email: %q", err.Error())
+	}
+}
