@@ -251,7 +251,7 @@ func cmdExport(ctx context.Context, args []string) error {
 	}
 	st, err := openStore(ctx, *project)
 	if err != nil {
-		return fmt.Errorf("store: %v", err)
+		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
 	w := os.Stdout
@@ -268,7 +268,7 @@ func cmdExport(ctx context.Context, args []string) error {
 		return fmt.Errorf("provider: %w", err)
 	}
 	if err := embed.ExportNDJSON(ctx, st, cfg, *modelID, w); err != nil {
-		return fmt.Errorf("export: %v", err)
+		return fmt.Errorf("export: %w", err)
 	}
 	return nil
 }
@@ -295,7 +295,7 @@ func cmdImport(ctx context.Context, args []string) error {
 	defer unlock()
 	st, err := openStore(ctx, *project)
 	if err != nil {
-		return fmt.Errorf("store: %v", err)
+		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
 	r := os.Stdin
@@ -313,7 +313,7 @@ func cmdImport(ctx context.Context, args []string) error {
 	}
 	report, err := embed.ImportNDJSON(ctx, st, cfg, *modelID, *revision, *distance, *dims, r)
 	if err != nil {
-		return fmt.Errorf("import: %v", err)
+		return fmt.Errorf("import: %w", err)
 	}
 	b, _ := json.Marshal(report)
 	fmt.Println(string(b))
@@ -328,22 +328,22 @@ func cmdStatus(ctx context.Context, args []string) error {
 	}
 	st, err := openStore(ctx, *project)
 	if err != nil {
-		return fmt.Errorf("store: %v", err)
+		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
 	out := map[string]any{}
 	if stamps, err := st.Stamps(ctx); err != nil {
-		return fmt.Errorf("status: stamps: %v", err)
+		return fmt.Errorf("status: stamps: %w", err)
 	} else {
 		out["stamps"] = stamps
 	}
 	if run, err := st.LastEmbedRunAny(ctx); err != nil {
-		return fmt.Errorf("status: last run: %v", err)
+		return fmt.Errorf("status: last run: %w", err)
 	} else if run != nil {
 		out["last_run"] = run
 	}
 	if els, err := st.ElementCount(ctx); err != nil {
-		return fmt.Errorf("status: elements: %v", err)
+		return fmt.Errorf("status: elements: %w", err)
 	} else {
 		out["elements"] = els
 	}

@@ -674,7 +674,7 @@ func checkIndexFreshness(ctx context.Context, p Probes, env Env) Finding {
 	}
 	disk := env.DiskFiles
 	if disk == nil {
-		disk, err = index.SupportedFiles(env.ProjectRoot, env.Registry)
+		disk, err = index.SupportedFiles(ctx, env.ProjectRoot, env.Registry)
 		if err != nil {
 			return Finding{check, StatusFail, fmt.Sprintf("cannot walk %s: %v", env.ProjectRoot, err),
 				"Fix filesystem permissions on the project root, or pass --project with the correct path."}

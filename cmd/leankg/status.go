@@ -56,7 +56,7 @@ func cmdStatus(ctx context.Context, args []string) error {
 	// reports the lazy activation state, not an empty list.
 	var langReg *langs.Registry
 	reg := langs.DefaultRegistry()
-	if _, aerr := reg.Activate(context.Background(), storeDir); aerr == nil {
+	if _, aerr := reg.Activate(ctx, storeDir); aerr == nil {
 		langReg = reg
 	}
 	engine := core.New(st, core.Options{ProjectDir: storeDir, Langs: langReg})

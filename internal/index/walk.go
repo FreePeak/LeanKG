@@ -15,7 +15,7 @@ import (
 // the two must never drift — this shares the indexer's own tables. A
 // repository root with a commit lists HEAD's files, as the indexer reads them;
 // any other directory is walked on disk.
-func SupportedFiles(dir string, reg *langs.Registry) ([]string, error) {
+func SupportedFiles(ctx context.Context, dir string, reg *langs.Registry) ([]string, error) {
 	if reg == nil {
 		reg = langs.DefaultRegistry()
 	}
@@ -23,7 +23,7 @@ func SupportedFiles(dir string, reg *langs.Registry) ([]string, error) {
 		l, ok := reg.ExtOwner(ext)
 		return string(l), ok
 	}
-	blobs, fromHEAD, err := gitobj.HeadBlobs(context.Background(), dir)
+	blobs, fromHEAD, err := gitobj.HeadBlobs(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +31,7 @@ func SupportedFiles(dir string, reg *langs.Registry) ([]string, error) {
 	var cands []candidate
 	if fromHEAD {
 		cands = gitCandidates(blobs, owner, &skipped)
-	} else if cands, err = walkCandidates(context.Background(), dir, owner, &skipped); err != nil {
+	} else if cands, err = walkCandidates(ctx, dir, owner, &skipped); err != nil {
 		return nil, err
 	}
 	var out []string

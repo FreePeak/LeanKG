@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,3 +69,43 @@ func TestLateSinkGetsLiveRecorder(t *testing.T) {
 
 // stubRecorder is a distinct Recorder value for identity checks.
 type stubRecorder struct{ telemetry.Nop }
+
+// blockingRecorder is a Recorder whose flush never finishes until block closes.
+type blockingRecorder struct {
+	telemetry.Nop
+	block <-chan struct{}
+}
+
+func (b blockingRecorder) Close() error {
+	<-b.block
+	return nil
+}
+
+// TestCloseTelemetryAbandonsBlockedFlush pins the shutdown bound: a ledger flush
+// that never returns must not hold the process. closeTelemetryWithin returns at
+// the budget and writes one line naming the abandoned flush.
+func TestCloseTelemetryAbandonsBlockedFlush(t *testing.T) {
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	telemetrySinks.install(blockingRecorder{block: block})
+	t.Cleanup(func() { telemetrySinks.install(telemetry.Nop{}) })
+
+	var out bytes.Buffer
+	closeTelemetryWithin(20*time.Millisecond, &out)
+	if !strings.Contains(out.String(), "abandoned") {
+		t.Fatalf("stderr = %q, want one line naming the abandoned flush", out.String())
+	}
+}
+
+// TestCloseTelemetryQuietWhenFlushFinishes pins the normal path: a flush that
+// returns within the budget writes nothing.
+func TestCloseTelemetryQuietWhenFlushFinishes(t *testing.T) {
+	telemetrySinks.install(telemetry.Nop{})
+	t.Cleanup(func() { telemetrySinks.install(telemetry.Nop{}) })
+
+	var out bytes.Buffer
+	closeTelemetryWithin(time.Second, &out)
+	if out.Len() != 0 {
+		t.Fatalf("stderr = %q, want nothing when the flush finishes", out.String())
+	}
+}

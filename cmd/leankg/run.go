@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/compress"
@@ -36,14 +37,22 @@ func cmdRun(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "run: no command provided. Usage: leankg run [--compress] -- <command> [args...]")
 		return cliexit.Code(2)
 	}
-	stdout, code, err := runCommand(fs.Args(), *compressOut)
+	stdout, code, err := runCommand(ctx, fs.Args(), *compressOut)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err // cliexit.Finish prints it and exits 130
+		}
 		fmt.Fprintln(os.Stderr, err)
 		return cliexit.Code(code)
 	}
 	_, _ = os.Stdout.WriteString(stdout)
 	return nil
 }
+
+// runWaitDelay bounds how long Wait keeps reading the child's stdout after the
+// child has exited or been killed. A grandchild that inherited stdout holds the
+// pipe open, so without the bound a cancel waits for that grandchild to finish.
+const runWaitDelay = 2 * time.Second
 
 // runCommand runs argv[0] with argv[1:] and returns the captured stdout plus
 // the process exit code. A non-zero child exit is an error carrying the exit
@@ -53,13 +62,27 @@ func cmdRun(ctx context.Context, args []string) error {
 //
 // stderr is captured for the failure message only: like the Rust runner, a
 // successful command contributes its stdout alone.
-func runCommand(argv []string, compressOut bool) (string, int, error) {
-	cmd := exec.Command(argv[0], argv[1:]...)
+//
+// A cancelled ctx kills the child and returns an error wrapping
+// context.Canceled. That check runs before the exit status is read, because a
+// child killed by the cancel (or by a terminal SIGINT to the process group)
+// would otherwise look like a plain exit-1 failure.
+func runCommand(ctx context.Context, argv []string, compressOut bool) (string, int, error) {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.WaitDelay = runWaitDelay
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	raw, err := cmd.Output()
 	cmdLine := strings.Join(argv, " ")
+	if errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil && cmd.ProcessState.Success() {
+		// The child exited 0; only a grandchild still held stdout past the
+		// bound. Its output is what the child wrote, so the run succeeds.
+		err = nil
+	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return string(raw), 1, fmt.Errorf("%s: %w", cmdLine, ctx.Err())
+		}
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {
 			// The command never started (missing binary, bad shebang...).

@@ -1093,7 +1093,7 @@ func cmdIndex(ctx context.Context, args []string) error {
 		case errors.Is(err, context.Canceled):
 			return fmt.Errorf("index: interrupted; the directories finished so far are kept, the one in progress is rolled back; rerun to finish: %w", err)
 		}
-		return fmt.Errorf("index: %v", err)
+		return fmt.Errorf("index: %w", err)
 	}
 	if !*noEmbed {
 		indexEmbed(hardCtx, storeDir, *hook)

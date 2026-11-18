@@ -1,16 +1,24 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/FreePeak/LeanKG/internal/cliexit"
 	"github.com/FreePeak/LeanKG/internal/compress"
 )
 
 // TestRunCommandCapturesStdout pins the happy path: argv execution, stdout
 // captured verbatim, no exit code.
 func TestRunCommandCapturesStdout(t *testing.T) {
-	out, code, err := runCommand([]string{"echo", "hello"}, false)
+	out, code, err := runCommand(context.Background(), []string{"echo", "hello"}, false)
 	if err != nil {
 		t.Fatalf("runCommand: %v", err)
 	}
@@ -29,11 +37,11 @@ func TestRunCommandCompressesStdout(t *testing.T) {
 	script := `for i in $(seq 1 80); do echo "line $i"; done`
 	argv := []string{"sh", "-c", script}
 
-	raw, code, err := runCommand(argv, false)
+	raw, code, err := runCommand(context.Background(), argv, false)
 	if err != nil || code != 0 {
 		t.Fatalf("raw run: code=%d err=%v", code, err)
 	}
-	compressed, code, err := runCommand(argv, true)
+	compressed, code, err := runCommand(context.Background(), argv, true)
 	if err != nil || code != 0 {
 		t.Fatalf("compressed run: code=%d err=%v", code, err)
 	}
@@ -49,7 +57,7 @@ func TestRunCommandCompressesStdout(t *testing.T) {
 // non-zero child exit must surface as an error naming the exit code, with the
 // child's stderr attached and stdout still captured.
 func TestRunCommandFailureCarriesExitCodeAndStderr(t *testing.T) {
-	out, code, err := runCommand([]string{"sh", "-c", "echo partial; echo boom >&2; exit 3"}, false)
+	out, code, err := runCommand(context.Background(), []string{"sh", "-c", "echo partial; echo boom >&2; exit 3"}, false)
 	if err == nil {
 		t.Fatal("non-zero child must be an error")
 	}
@@ -70,7 +78,7 @@ func TestRunCommandFailureCarriesExitCodeAndStderr(t *testing.T) {
 // TestRunCommandMissingBinary covers the never-started case (Rust's
 // "Failed to execute" path).
 func TestRunCommandMissingBinary(t *testing.T) {
-	_, code, err := runCommand([]string{"leankg-no-such-binary-1f2e3d"}, false)
+	_, code, err := runCommand(context.Background(), []string{"leankg-no-such-binary-1f2e3d"}, false)
 	if err == nil {
 		t.Fatal("missing binary must be an error")
 	}
@@ -124,4 +132,119 @@ func TestRunCLIExitAndStreamSplit(t *testing.T) {
 	if !strings.Contains(stderr, "no command provided") {
 		t.Fatalf("missing command stderr = %q", stderr)
 	}
+}
+
+// TestRunCommandCancelStopsChild pins the cancellation contract: a cancelled
+// ctx kills the child and the run reports context.Canceled (exit 130 through
+// cliexit.Finish), instead of waiting for the child to finish.
+func TestRunCommandCancelStopsChild(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(200*time.Millisecond, cancel) // the SIGINT/SIGTERM path
+	start := time.Now()
+	_, _, err := runCommand(ctx, []string{"sleep", "5"}, false)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled run error = %v, want one wrapping context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("cancelled run took %v, the child was not stopped", elapsed)
+	}
+}
+
+// TestRunVerbCancelExitsWith130 pins the exit status a cancelled `run` reports
+// through the same cliexit.Finish main uses.
+func TestRunVerbCancelExitsWith130(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := cmdRun(ctx, []string{"--", "sleep", "5"})
+	if got := cliexit.Finish(err, io.Discard); got != 130 {
+		t.Fatalf("cancelled run exit = %d, want 130 (err: %v)", got, err)
+	}
+}
+
+// TestRunCommandCancelReturnsWhenGrandchildHoldsStdout pins the bound on a
+// cancel: the child's grandchild inherits stdout, so the pipe stays open after
+// the child is killed. The run must still return promptly instead of waiting
+// for the grandchild to finish.
+func TestRunCommandCancelReturnsWhenGrandchildHoldsStdout(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	t.Cleanup(func() { killPidFile(t, pidFile) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	argv := []string{"sh", "-c", `sleep 30 & echo $! >"$1"; wait`, "sh", pidFile}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := runCommand(ctx, argv, false)
+		done <- err
+	}()
+	if !waitForFile(pidFile, 5*time.Second) {
+		t.Fatal("the grandchild never started")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled run error = %v, want one wrapping context.Canceled", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("cancelled run still waits on the grandchild that holds stdout")
+	}
+}
+
+// TestRunCommandChildExitWithGrandchildHoldingStdout pins the success path under
+// the same bound: the child exits 0 while a grandchild still holds stdout. The
+// captured stdout is returned as a success, not reported as a failed execution.
+func TestRunCommandChildExitWithGrandchildHoldingStdout(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	t.Cleanup(func() { killPidFile(t, pidFile) })
+	argv := []string{"sh", "-c", `sleep 30 & echo $! >"$1"; echo ok`, "sh", pidFile}
+	type result struct {
+		out  string
+		code int
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, code, err := runCommand(context.Background(), argv, false)
+		done <- result{out, code, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil || r.code != 0 {
+			t.Fatalf("exit 0 child: code=%d err=%v, want a success", r.code, r.err)
+		}
+		if !strings.HasPrefix(r.out, "ok\n") {
+			t.Fatalf("stdout = %q, want the child output", r.out)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run still waits on the grandchild after the child exited")
+	}
+}
+
+// killPidFile kills the process whose pid a test wrote to path, if it started.
+func killPidFile(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return
+	}
+	if p, err := os.FindProcess(pid); err == nil {
+		_ = p.Kill()
+	}
+}
+
+// waitForFile polls until path exists or the timeout passes.
+func waitForFile(path string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
 }

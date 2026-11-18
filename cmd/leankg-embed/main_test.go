@@ -116,3 +116,23 @@ func TestRunExitsNonZeroWhenWriteCapUndetermined(t *testing.T) {
 		t.Fatalf("exit output does not name the pin:\n%s", out)
 	}
 }
+
+// The verbs wrap their store and export errors with %w, so a cancelled run
+// still reports context.Canceled (exit 130) instead of a plain failure.
+func TestVerbErrorsKeepCancellation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LEANKG_DB_PATH", filepath.Join(dir, "leankg.db"))
+	t.Setenv("LEANKG_DB_ENGINE", "sqlite")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	verbs := map[string]func() error{
+		"export": func() error { return cmdExport(ctx, []string{"--project", dir, "--model", "m"}) },
+		"status": func() error { return cmdStatus(ctx, []string{"--project", dir}) },
+	}
+	for name, run := range verbs {
+		if err := run(); !errors.Is(err, context.Canceled) {
+			t.Errorf("%s: err = %v, want one wrapping context.Canceled", name, err)
+		}
+	}
+}

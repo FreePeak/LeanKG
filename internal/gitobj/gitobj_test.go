@@ -206,3 +206,22 @@ func TestCommittedGitDir(t *testing.T) {
 		}
 	})
 }
+
+// A cancel that kills the cat-file process surfaces as context.Canceled, not
+// as the broken pipe the read hits, so the caller's interrupt branch sees it.
+func TestReaderCancelReportsContextCanceled(t *testing.T) {
+	root := newFixtureRepo(t)
+	aOID := gittest.Git(t, root, "rev-parse", "HEAD:a.go")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	r, err := NewReader(ctx, root)
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	cancel()
+	_ = r.cmd.Wait() // the cancel has killed cat-file once Wait returns
+
+	if _, err := r.Read(aOID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Read after cancel: err = %v, want context.Canceled", err)
+	}
+}

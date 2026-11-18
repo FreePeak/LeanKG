@@ -255,6 +255,7 @@ func gitErr(what, stderr string, err error) error {
 // Reader streams blob contents through one long-lived `git cat-file --batch`
 // process. It is not safe for concurrent use.
 type Reader struct {
+	ctx   context.Context
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
 	out   *bufio.Reader
@@ -276,7 +277,16 @@ func NewReader(ctx context.Context, root string) (*Reader, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("gitobj: start cat-file: %w", err)
 	}
-	return &Reader{cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}, nil
+	return &Reader{ctx: ctx, cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}, nil
+}
+
+// pipeErr reports a failed read or write on the cat-file pipes. A cancelled
+// ctx kills cat-file, so the broken pipe that follows is the cancel itself.
+func (r *Reader) pipeErr(what string, err error) error {
+	if cerr := r.ctx.Err(); cerr != nil {
+		return fmt.Errorf("gitobj: %s: %w", what, cerr)
+	}
+	return fmt.Errorf("gitobj: %s: %w", what, err)
 }
 
 // Read returns the full contents of the object oid. A missing or ambiguous
@@ -286,11 +296,11 @@ func (r *Reader) Read(oid string) ([]byte, error) {
 		return nil, fmt.Errorf("gitobj: invalid object id %q", oid)
 	}
 	if _, err := io.WriteString(r.stdin, oid+"\n"); err != nil {
-		return nil, fmt.Errorf("gitobj: request %s: %w", oid, err)
+		return nil, r.pipeErr("request "+oid, err)
 	}
 	header, err := r.out.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("gitobj: header for %s: %w", oid, err)
+		return nil, r.pipeErr("header for "+oid, err)
 	}
 	fields := strings.Fields(header)
 	if len(fields) == 2 && (fields[1] == "missing" || fields[1] == "ambiguous") {
@@ -305,7 +315,7 @@ func (r *Reader) Read(oid string) ([]byte, error) {
 	}
 	body := make([]byte, size+1) // the contents, then the LF cat-file appends
 	if _, err := io.ReadFull(r.out, body); err != nil {
-		return nil, fmt.Errorf("gitobj: contents of %s: %w", oid, err)
+		return nil, r.pipeErr("contents of "+oid, err)
 	}
 	if body[size] != '\n' {
 		return nil, fmt.Errorf("gitobj: contents of %s not LF-terminated", oid)

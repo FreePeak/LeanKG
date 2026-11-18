@@ -209,3 +209,15 @@ func assertRecordsHaveElements(t *testing.T, st store.Backend) {
 		}
 	}
 }
+// SupportedFiles walks the tree under the caller's ctx: a cancelled ctx (SIGINT,
+// or the doctor probe deadline) stops the walk with that cancel.
+func TestSupportedFilesStopsOnCancelledCtx(t *testing.T) {
+	dir := t.TempDir()
+	writePackage(t, dir, "pkg")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := SupportedFiles(ctx, dir, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SupportedFiles under a cancelled ctx: err = %v, want context.Canceled", err)
+	}
+}
