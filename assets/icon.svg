@@ -1,26 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="LeanKG">
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#16233d"/>
-      <stop offset="100%" stop-color="#070b1c"/>
+      <stop offset="0" stop-color="#1A2744"/>
+      <stop offset="1" stop-color="#0B1120"/>
     </linearGradient>
-    <linearGradient id="edge" gradientUnits="userSpaceOnUse" x1="32" y1="8" x2="32" y2="56">
-      <stop offset="0%" stop-color="#7dd3fc"/>
-      <stop offset="100%" stop-color="#0891b2"/>
-    </linearGradient>
+    <filter id="markglow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
   </defs>
-
   <rect width="64" height="64" rx="14" fill="url(#tile)"/>
-
-  <!-- "K" drawn as a resolved graph: stem + two arms, terminal nodes, hub at the junction -->
-  <g stroke="url(#edge)" stroke-width="6.5" stroke-linecap="round" fill="none">
-    <path d="M22 14V50"/>
-    <path d="M22 32L43 15"/>
-    <path d="M22 32L43 49"/>
+  <rect x=".5" y=".5" width="63" height="63" rx="13.5" fill="none" stroke="#2A3A5E"/>
+  <g fill="none" stroke-width="4" stroke-linecap="round">
+    <path d="M21 15V49" stroke="#F4F7FB"/>
+    <path d="M21 32L44 49" stroke="#8FA3C7"/>
+    <path d="M21 32L44 15" stroke="#5EEAD4"/>
   </g>
-  <g fill="#e8fbff" stroke="#070b1c" stroke-width="2">
-    <circle cx="43" cy="15" r="5.5"/>
-    <circle cx="43" cy="49" r="5.5"/>
-  </g>
-  <circle cx="22" cy="32" r="7.5" fill="#f59e0b" stroke="#070b1c" stroke-width="2"/>
+  <circle cx="44" cy="15" r="5.5" fill="#5EEAD4" filter="url(#markglow)"/>
+  <circle cx="44" cy="49" r="5" fill="#0B1120" stroke="#8FA3C7" stroke-width="2.5"/>
+  <circle cx="21" cy="32" r="6.5" fill="#F4F7FB" stroke="#0B1120" stroke-width="2.5"/>
 </svg>
