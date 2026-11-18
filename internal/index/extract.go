@@ -189,6 +189,13 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 			if ends[i] < ms[i].line {
 				ends[i] = ms[i].line
 			}
+			// A brace-bounded element ends at its closing brace. Lines between
+			// that brace and the next declaration belong to the next one (its doc
+			// comment), so they are not part of this element.
+			if c := closingBraceLine(lines, ms[i].line, ends[i]); c > 0 {
+				ends[i] = c
+			}
+			ends[i] = trimTrailingComments(lines, ms[i].line, ends[i])
 		}
 	}
 
@@ -666,6 +673,58 @@ func qualify(fe fileElements) {
 		}
 		e.qn = base + e.name
 	}
+}
+
+// lexRe matches one string literal or one comment, left to right. A comment
+// starts only outside a string, so a "//" inside a string is not one. Quoted
+// literals never span a newline, so an unmatched quote in prose cannot swallow
+// the next line.
+var lexRe = regexp.MustCompile("(?m)\"(?:\\\\.|[^\"\\\\\n])*\"|'(?:\\\\.|[^'\\\\\n])*'|`[^`]*`|//.*$|#(?:[ \t].*)?$")
+
+// stripComments returns code without its line comments; string literals stay.
+func stripComments(code string) string {
+	return lexRe.ReplaceAllStringFunc(code, func(m string) string {
+		if m[0] == '/' || m[0] == '#' {
+			return ""
+		}
+		return m
+	})
+}
+
+// blankLiterals returns code without its comments and string literals, so a
+// brace inside either one is not counted.
+func blankLiterals(code string) string {
+	return lexRe.ReplaceAllString(code, "")
+}
+
+// closingBraceLine returns the line (1-based) on which the block opened at or
+// below start closes, looking no further than limit. It returns 0 when no block
+// closes inside that window: a brace-less declaration, or a block that runs past
+// limit (a class whose methods follow it), so the caller keeps its own bound.
+// Block comments spanning lines are not stripped; that is a documented ceiling.
+func closingBraceLine(lines []string, start, limit int) int {
+	depth, opened := 0, false
+	for n := start; n <= limit && n <= len(lines); n++ {
+		text := blankLiterals(lines[n-1])
+		if strings.Contains(text, "{") {
+			opened = true
+		}
+		depth += strings.Count(text, "{") - strings.Count(text, "}")
+		if opened && depth <= 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// trimTrailingComments backs end off over the blank and comment lines at its
+// tail. They open the next declaration's documentation, not this element's
+// body. start is never trimmed past.
+func trimTrailingComments(lines []string, start, end int) int {
+	for end > start && (strings.TrimSpace(lines[end-1]) == "" || isDocCommentLine(lines[end-1])) {
+		end--
+	}
+	return end
 }
 
 // boundContent fills Content from the source lines, bounded 8000 chars.
