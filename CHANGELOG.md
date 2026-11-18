@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.36.0](https://github.com/FreePeak/LeanKG/compare/v0.35.3...v0.36.0) (2026-11-18)
+
+
+### Features
+
+* add authenticate MCP tool and admin bootstrap ([#579](https://github.com/FreePeak/LeanKG/issues/579)) ([b871753](https://github.com/FreePeak/LeanKG/commit/b87175352bc81a39ff2aed8117ca655945a92bdc))
+* add LeanKG self-ontology (concepts and workflows) ([#583](https://github.com/FreePeak/LeanKG/issues/583)) ([6b4b741](https://github.com/FreePeak/LeanKG/commit/6b4b741e619be1ac194676373953424d7c27deba))
+* index git history (commits, authors, co-change) with history/cochange/churn queries ([#581](https://github.com/FreePeak/LeanKG/issues/581)) ([70b4186](https://github.com/FreePeak/LeanKG/commit/70b4186af6e6d1133ceef1f47af97f6ca6263eeb))
+* **store:** replace a file's call and reference edges in place ([c81cae1](https://github.com/FreePeak/LeanKG/commit/c81cae1c8063b721b3056996748ef76c8bb83073))
+
+
+### Bug Fixes
+
+* hide git history rows from default search and serialize git imports ([#582](https://github.com/FreePeak/LeanKG/issues/582)) ([bfc2f03](https://github.com/FreePeak/LeanKG/commit/bfc2f03ae609a3cbaa5dd57353dd0563ca11d37e))
+* **index:** bump the extractor version so stores that lost edges re-extract once ([b0458c1](https://github.com/FreePeak/LeanKG/commit/b0458c1acf9906d630c37d402711509ef3da60d5))
+* **index:** keep cross-file edges on an incremental index ([3858818](https://github.com/FreePeak/LeanKG/commit/3858818491cb8ae2e05039351f22fea9e68c2471))
+* **index:** keep cross-file edges on an incremental index ([#598](https://github.com/FreePeak/LeanKG/issues/598)) ([c0b195f](https://github.com/FreePeak/LeanKG/commit/c0b195f6963e8091c6c57cdfdfa7f01a1f0028ca))
+* stop the maintenance fleet at shutdown and pin the reflect mirror detach ([0100df0](https://github.com/FreePeak/LeanKG/commit/0100df0caeaa41a27de3d28ffe44885ebb482d8a))
+* stop the maintenance fleet at shutdown and pin the reflect mirror detach ([#596](https://github.com/FreePeak/LeanKG/issues/596)) ([0d7034e](https://github.com/FreePeak/LeanKG/commit/0d7034eef851815c04924978531b9ffafac2e4a8))
+* **store:** keep the pgvector extension in public so every project schema sees it ([88d0304](https://github.com/FreePeak/LeanKG/commit/88d03045e821f5ae54be832171f6665dd175b7ce))
+* **store:** keep the pgvector extension in public so every project schema sees it ([#597](https://github.com/FreePeak/LeanKG/issues/597)) ([5fab2cb](https://github.com/FreePeak/LeanKG/commit/5fab2cb1515f9824b9ec0248433caf19fd8279a8))
+
 ## [0.35.3](https://github.com/FreePeak/LeanKG/compare/v0.35.2...v0.35.3) (2026-10-22)
 
 
