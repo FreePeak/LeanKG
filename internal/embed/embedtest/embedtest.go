@@ -97,7 +97,7 @@ func RunInHostileEnv(t *testing.T, runPattern string) {
 	if err != nil {
 		t.Fatalf("locate the test binary: %v", err)
 	}
-	cmd := exec.Command(bin, "-test.run="+runPattern, "-test.count=1")
+	cmd := exec.CommandContext(t.Context(), bin, "-test.run="+runPattern, "-test.count=1")
 	// The marker tells the package's TestMain to leave the embed environment
 	// alone: in this child the hostile environment is the subject, so
 	// UnsetProcess must not wipe it before the test runs.

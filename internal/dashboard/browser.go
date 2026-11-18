@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,12 +13,12 @@ import (
 var ErrNoDisplay = errors.New("no display: cannot open a browser")
 
 // OpenBrowser starts the platform browser on url and does not wait for it.
-func OpenBrowser(url string) error {
+func OpenBrowser(ctx context.Context, url string) error {
 	name, args, err := browserCommand(runtime.GOOS, url, os.Getenv)
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(name, args...)
+	cmd := exec.CommandContext(ctx, name, args...)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

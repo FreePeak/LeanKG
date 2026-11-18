@@ -8,12 +8,7 @@ import (
 // ioBudget is the measured count of context-less I/O per directory and rule,
 // in non-main, non-test packages. Only non-zero entries appear. Like the other
 // budgets it only goes down, and an entry is removed when its count reaches 0.
-var ioBudget = map[string]map[string]int{
-	"internal/dashboard":       {"exec.Command": 1},
-	"internal/embed/embedtest": {"exec.Command": 1},
-	"internal/gitobj/gittest":  {"exec.Command": 1},
-	"internal/sources":         {"http.Client-without-Timeout": 1},
-}
+var ioBudget = map[string]map[string]int{}
 
 // ioRule is one context-less I/O pattern with its AST matcher.
 type ioRule struct {
