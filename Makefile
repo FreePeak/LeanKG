@@ -13,10 +13,11 @@ help:
 	@echo "  go-ui-assets    Sync the checked-in ui build into the Go embed dir"
 	@echo "  dual-engine     Run the dual-engine (sqlite + postgres) acceptance gate"
 	@echo "  scan-root-check Check the self-host scan-root scope (scripts/test-scan-root.sh)"
+	@echo "  live-test       Local live-test harness: real binary, temp fixtures, evidence in .live-evidence/ (LIVE_ARGS='--only 02')"
 	@echo "  clean           Remove Go build artifacts"
 	@echo "  install-go      Build-from-source installer (scripts/install-go.sh)"
 
-.PHONY: help go-build go-test go-bench go-vet go-ui-assets go-ui-dashboard go-ui-dashboard-check dual-engine scan-root-check clean install-go go-build-tstree go-test-tstree
+.PHONY: help go-build go-test go-bench go-vet go-ui-assets go-ui-dashboard go-ui-dashboard-check dual-engine scan-root-check live-test clean install-go go-build-tstree go-test-tstree
 
 go-build:
 	CGO_ENABLED=0 go build -o bin/ ./cmd/leankg ./cmd/leankg-embed
@@ -91,6 +92,11 @@ dual-engine:
 # served by be-kg. The check is a script, offline and fast.
 scan-root-check:
 	bash scripts/test-scan-root.sh
+
+# Local live-test harness (scripts/live/): builds the binary, starts it against
+# temp fixtures, runs every scenario. SQLite only; starts no container.
+live-test:
+	bash scripts/live/run.sh $(LIVE_ARGS)
 
 clean:
 	rm -rf bin
