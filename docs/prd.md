@@ -3128,6 +3128,8 @@ The 6→15 upgrade ran live against this repo's real 53 MB store by starting the
 
 **FR-ZCP-01 — Contextual project resolution (Must Have, P0)**
 
+> **Decision 2026-11-18: clause 2 (HTTP `roots/list`, step 2 below) is DROPPED.** The HTTP handler is stateless and `roots/list` is deprecated as of protocol 2026-07-28. A projectless HTTP call to a multi-project server is refused with `LEANKG_ERROR_MISSING_PARAM` and the client sends `project` as a tool argument. Clause 1 (stdio process cwd) stands; clause 3 (cwd-to-project registration table) is still open. Full rationale: `docs/mcp-multi-project-scoping.md` section 4.
+
 - Resolution order (first match wins):
   0. **Nearest repo marker wins**: walk up from the request cwd to the nearest `.leankg`/repo root (existing `find_leankg_for_path`, `server.rs:588-605`); that root IS the project. A cwd **outside** any repo marker (a container/workspace parent) resolves to the **portfolio scope**, never to a project (FR-ZCP-09).
   1. **stdio MCP**: process cwd → clause 0.

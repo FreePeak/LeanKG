@@ -246,10 +246,16 @@ that knowledge for its own REST graph client. So the durable shape is:
 3. the auto-resolution path (if it is wanted) waits for a non-deprecated
    mechanism.
 
-**Recommendation:** land the interim contract (done), port FR-ZCP-01 clause 2
-to the Go engine **only if** a non-deprecated mechanism appears, and
-re-point the client writers at the explicit argument rather than at a bare
-URL in the meantime.
+**Decision (2026-11-18): FR-ZCP-01 clause 2 is dropped, not ported.** The
+HTTP handler is stateless (`internal/mcp/server.go:284`), so there is no
+server-to-client channel for a `roots/list` probe, and the mechanism is
+deprecated as of protocol 2026-07-28. The interim contract stands: a
+projectless HTTP call to a multi-project server is refused before any engine
+runs (`internal/mcp/server.go:126-141`, `engineFor`), and the client names the
+project as the `project` tool argument. The client writers still emit a bare
+URL (`cmd/leankg/connect.go:103-108`); moving them to a per-server project
+setting is a follow-up. FR-ZCP-01 clause 3 (a server-side cwd-to-project
+table) stays open, so FR-ZCP-01 remains IN_PROGRESS.
 
 ---
 

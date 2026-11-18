@@ -281,8 +281,9 @@ func TestWriteClientHTTPShapes(t *testing.T) {
 
 // TestWriteClientHTTPURLHasNoQuery pins the FR-ZCP-04 URL contract at the
 // writer, not just in the prose: a remote entry carries the bare URL and no
-// `?project=`. The server's per-request project resolution (FR-ZCP-01:
-// stdio cwd, HTTP roots/list) makes the suffix unnecessary, and a hardcoded
+// `?project=`. Stdio resolves the project from its cwd (FR-ZCP-01 clause 1),
+// so the suffix is unnecessary there; HTTP callers pass the project as a tool
+// argument (roots/list was dropped 2026-11-18). A hardcoded
 // absolute path is a stale machine moment waiting to happen — measured
 // 2026-10-11 on this machine: three configs carrying
 // `?project=/workspace-freepeak` (a Docker mount that exists nowhere on the
