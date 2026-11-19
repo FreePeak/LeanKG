@@ -1374,7 +1374,14 @@
      "func": "TestAuditLedgerChain",
      "test": true,
      "line": 15
-    },
+    }
+   ]
+  },
+  {
+   "id": "PGStore.AuditTail",
+   "qualified_name": "internal/store/store_pg.go::PGStore.AuditTail",
+   "class": "method",
+   "callers": [
     {
      "file": "internal/store/store_pg_test.go",
      "func": "TestPGAudit",
@@ -1405,7 +1412,14 @@
      "func": "TestAuditLedgerChain",
      "test": true,
      "line": 30
-    },
+    }
+   ]
+  },
+  {
+   "id": "PGStore.VerifyAuditChain",
+   "qualified_name": "internal/store/store_pg.go::PGStore.VerifyAuditChain",
+   "class": "method",
+   "callers": [
     {
      "file": "internal/store/store_pg_test.go",
      "func": "TestPGAudit",
@@ -1463,12 +1477,6 @@
      "line": 144
     },
     {
-     "file": "internal/store/store_pg_test.go",
-     "func": "TestPGKVAndInventory",
-     "test": true,
-     "line": 367
-    },
-    {
      "file": "internal/store/store_test.go",
      "func": "TestInventoryFreshness",
      "test": true,
@@ -1477,16 +1485,23 @@
    ]
   },
   {
-   "id": "SaveInventory",
-   "qualified_name": "internal/store/vectors.go::Store.SaveInventory",
-   "class": "interface",
+   "id": "PGStore.LoadInventory",
+   "qualified_name": "internal/store/store_pg.go::PGStore.LoadInventory",
+   "class": "method",
    "callers": [
     {
      "file": "internal/store/store_pg_test.go",
      "func": "TestPGKVAndInventory",
      "test": true,
-     "line": 376
-    },
+     "line": 367
+    }
+   ]
+  },
+  {
+   "id": "SaveInventory",
+   "qualified_name": "internal/store/vectors.go::Store.SaveInventory",
+   "class": "interface",
+   "callers": [
     {
      "file": "internal/store/store_test.go",
      "func": "TestInventoryFreshness",
@@ -1498,6 +1513,19 @@
      "func": "RefreshInventory",
      "test": false,
      "line": 872
+    }
+   ]
+  },
+  {
+   "id": "PGStore.SaveInventory",
+   "qualified_name": "internal/store/store_pg.go::PGStore.SaveInventory",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGKVAndInventory",
+     "test": true,
+     "line": 376
     }
    ]
   },
@@ -1525,16 +1553,23 @@
      "line": 180
     },
     {
-     "file": "internal/store/pg_accounts_test.go",
-     "func": "TestPGAdminExists",
-     "test": true,
-     "line": 35
-    },
-    {
      "file": "internal/store/store_accounts_test.go",
      "func": "TestAdminExistsSQLite",
      "test": true,
      "line": 48
+    }
+   ]
+  },
+  {
+   "id": "PGStore.AdminExists",
+   "qualified_name": "internal/store/pg_accounts.go::PGStore.AdminExists",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/store/pg_accounts_test.go",
+     "func": "TestPGAdminExists",
+     "test": true,
+     "line": 35
     }
    ]
   },
@@ -1550,16 +1585,23 @@
      "line": 450
     },
     {
-     "file": "internal/store/store_pg_test.go",
-     "func": "TestPGElementOps",
-     "test": true,
-     "line": 140
-    },
-    {
      "file": "internal/store/vectors.go",
      "func": "RefreshInventory",
      "test": false,
      "line": 853
+    }
+   ]
+  },
+  {
+   "id": "PGStore.ElementsByType",
+   "qualified_name": "internal/store/store_pg.go::PGStore.ElementsByType",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/store/store_pg_test.go",
+     "func": "TestPGElementOps",
+     "test": true,
+     "line": 140
     }
    ]
   },
@@ -1573,18 +1615,6 @@
      "func": "Verify",
      "test": false,
      "line": 119
-    },
-    {
-     "file": "internal/store/pg_tokens_test.go",
-     "func": "TestPGTokenLifecycle",
-     "test": true,
-     "line": 101
-    },
-    {
-     "file": "internal/store/pg_tokens_test.go",
-     "func": "TestPGTokenRoundTrip",
-     "test": true,
-     "line": 28
     },
     {
      "file": "internal/store/store_tokens_test.go",
@@ -1609,6 +1639,25 @@
      "func": "TestTokenRoundTrip",
      "test": true,
      "line": 102
+    }
+   ]
+  },
+  {
+   "id": "PGStore.TokenFind",
+   "qualified_name": "internal/store/pg_tokens.go::PGStore.TokenFind",
+   "class": "method",
+   "callers": [
+    {
+     "file": "internal/store/pg_tokens_test.go",
+     "func": "TestPGTokenLifecycle",
+     "test": true,
+     "line": 101
+    },
+    {
+     "file": "internal/store/pg_tokens_test.go",
+     "func": "TestPGTokenRoundTrip",
+     "test": true,
+     "line": 28
     }
    ]
   },
