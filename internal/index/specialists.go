@@ -106,6 +106,8 @@ func indexSpecialistFile(ctx context.Context, st store.IndexWriter, rel string, 
 	if !claimed {
 		return false, nil
 	}
+	els = uniqueStoreElems(map[string]bool{}, els)
+	rels = dedupeRelationships(rels)
 	if err := st.DeleteByFile(ctx, rel); err != nil {
 		return true, err
 	}
@@ -127,10 +129,19 @@ func indexSpecialistFile(ctx context.Context, st store.IndexWriter, rel string, 
 }
 
 // indexKotlinExtras persists the Kotlin-side Android extractor output for one
-// already-indexed .kt/.kts file, from its content. Wiring: called from indexDir
-// after the generic upsert for files with lang == "kotlin".
-func indexKotlinExtras(ctx context.Context, st store.IndexWriter, rel string, src []byte, res *Result) error {
-	els, rels := KotlinExtras(rel, src)
+// already-indexed .kt/.kts file, from its content. fe is that file's generic
+// extraction: its names are taken first, so an extra that shares one (a nav
+// destination named like its fragment class) gets its own row instead of
+// overwriting the generic element. Wiring: called from indexDir after the
+// generic upsert for files with lang == "kotlin".
+func indexKotlinExtras(ctx context.Context, st store.IndexWriter, fe fileElements, src []byte, res *Result) error {
+	used := make(map[string]bool, len(fe.elements))
+	for _, g := range fe.elements {
+		used[g.qn] = true
+	}
+	els, rels := KotlinExtras(fe.rel, src)
+	els = uniqueStoreElems(used, els)
+	rels = dedupeRelationships(rels)
 	if err := st.UpsertElements(ctx, els); err != nil {
 		return err
 	}
@@ -140,4 +151,36 @@ func indexKotlinExtras(ctx context.Context, st store.IndexWriter, rel string, sr
 	res.Elements += len(els)
 	res.Relationships += len(rels)
 	return nil
+}
+
+// uniqueStoreElems is uniqueQNs over the QualifiedName of extracted store rows.
+func uniqueStoreElems(used map[string]bool, els []store.Element) []store.Element {
+	qns := make([]string, len(els))
+	for i := range els {
+		qns[i] = els[i].QualifiedName
+	}
+	for i, q := range uniqueQNs(used, qns) {
+		els[i].QualifiedName = q
+	}
+	return els
+}
+
+// dedupeRelationships keeps one edge per (source, target, rel_type), the last
+// one written, which is the row the store keeps for a repeated key. Two
+// extractors can name the same edge (a layout set by setContentView and by its
+// ViewBinding); the batch count must match the rows stored.
+func dedupeRelationships(rels []store.Relationship) []store.Relationship {
+	type key struct{ src, dst, typ string }
+	at := make(map[key]int, len(rels))
+	out := make([]store.Relationship, 0, len(rels))
+	for _, r := range rels {
+		k := key{r.Source, r.Target, r.RelType}
+		if i, ok := at[k]; ok {
+			out[i] = r
+			continue
+		}
+		at[k] = len(out)
+		out = append(out, r)
+	}
+	return out
 }

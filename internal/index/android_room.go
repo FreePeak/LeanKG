@@ -12,7 +12,8 @@ import (
 // abstract classes, foreign keys, and DAO queries.
 
 var (
-	roomEntityRe   = regexp.MustCompile(`(?s)@Entity\s*(?:\(.*?\))?\s*data\s+class\s+(\w+)`)
+	roomEntityRe   = regexp.MustCompile(`(?s)@Entity\s*(?:\((.*?)\))?\s*data\s+class\s+(\w+)`)
+	roomTableRe    = regexp.MustCompile(`tableName\s*=\s*"([^"]+)"`)
 	roomDaoRe      = regexp.MustCompile(`@Dao\s*\n?\s*\n?(?:interface|class)\s+(\w+)`)
 	roomDatabaseRe = regexp.MustCompile(`@Database\s*\([^)]*\)\s*\n?\s*abstract\s+class\s+(\w+)`)
 	roomFKRe       = regexp.MustCompile(`ForeignKey\s*\(\s*entity\s*=\s*(\w+)::class[^)]+parentColumns\s*=\s*\[(\w+)\][^)]+childColumns\s*=\s*\[(\w+)\]`)
@@ -37,10 +38,20 @@ func ExtractRoom(filePath string, src []byte) ([]store.Element, []store.Relation
 	}
 
 	var entities, daos, databases []store.Element
+	// tableOf maps a table name to the entity class that owns it. Room names a
+	// table by @Entity(tableName) and defaults it to the class name; a DAO query
+	// names the table, while the element is named by the class.
+	tableOf := map[string]string{}
 	for _, m := range roomEntityRe.FindAllStringSubmatch(content, -1) {
+		class := m[2]
+		table := class
+		if t := roomTableRe.FindStringSubmatch(m[1]); t != nil {
+			table = t[1]
+		}
+		tableOf[table] = class
 		entities = append(entities, roomElement(
-			filePath+"::RoomEntity:"+m[1], "room_entity", m[1],
-			map[string]any{"class_name": m[1]}))
+			filePath+"::RoomEntity:"+class, "room_entity", class,
+			map[string]any{"class_name": class}))
 	}
 	for _, m := range roomDaoRe.FindAllStringSubmatch(content, -1) {
 		daos = append(daos, roomElement(
@@ -107,9 +118,16 @@ func ExtractRoom(filePath string, src []byte) ([]store.Element, []store.Relation
 	for _, dao := range daos {
 		for _, qm := range roomQueryRe.FindAllStringSubmatch(content, -1) {
 			if fm := roomFromRe.FindStringSubmatch(qm[1]); fm != nil {
+				// A table with no entity in this file keeps its own name: it
+				// is the only spelling this file knows, and the sweep reclaims
+				// the edge if no such entity is ever indexed.
+				class, ok := tableOf[fm[1]]
+				if !ok {
+					class = fm[1]
+				}
 				relationships = append(relationships, store.Relationship{
 					Source:  dao.QualifiedName,
-					Target:  fmt.Sprintf("%s::RoomEntity:%s", filePath, fm[1]),
+					Target:  fmt.Sprintf("%s::RoomEntity:%s", filePath, class),
 					RelType: "room_dao_queries_entity", Confidence: 0.8,
 					Metadata: map[string]any{"query": qm[1]},
 				})

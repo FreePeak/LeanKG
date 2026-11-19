@@ -174,7 +174,6 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 	}
 	fe := indexDefsToElements(rel, lang, defs)
 	if lang == "md" {
-		mdUniqueNames(fe.elements)
 		markdownContent(fe.elements, ms, ends, lines)
 		return fe, nil
 	}
@@ -220,6 +219,7 @@ func indexDefsToElements(rel, lang string, defs []indexDef) fileElements {
 	}
 	assignParents(fe.elements)
 	qualify(fe)
+	uniqueElemQNs(map[string]bool{}, fe.elements)
 	return fe
 }
 
@@ -465,27 +465,36 @@ func mdIsDescendantTitle(i int, ms []match, ends []int, line int) bool {
 	return false
 }
 
-// mdUniqueNames disambiguates repeated heading titles inside one file. Two
-// headings with the same text ("## Notes" twice) would share a qualified
-// name, and the store's UNIQUE index on qualified_name would silently drop
-// one of them: the file would hold fewer elements than it has headings. The
-// suffix mirrors the doc indexer's own slug disambiguation.
-func mdUniqueNames(els []indexedElem) {
-	used := make(map[string]bool, len(els))
+// uniqueQNs gives each qualified name in qns its own spelling, in order, so
+// that no two elements of one file share a row in the store (qualified_name is
+// UNIQUE, and an upsert silently replaces the earlier row). The first spelling
+// of a name is kept; the n-th repeat (n >= 2) becomes "name (n)", taking the
+// lowest n whose spelling is not yet used. used holds every spelling taken so
+// far and is updated, so a caller can share it across the element batches of
+// one file. The scheme is a pure function of file order, so a re-index of an
+// unchanged file names every element the same way.
+func uniqueQNs(used map[string]bool, qns []string) []string {
+	out := make([]string, len(qns))
+	for i, q := range qns {
+		cand := q
+		for n := 2; used[cand]; n++ {
+			cand = q + " (" + strconv.Itoa(n) + ")"
+		}
+		used[cand] = true
+		out[i] = cand
+	}
+	return out
+}
+
+// uniqueElemQNs applies uniqueQNs to the qualified names of one file's
+// extracted elements.
+func uniqueElemQNs(used map[string]bool, els []indexedElem) {
+	qns := make([]string, len(els))
 	for i := range els {
-		q := els[i].qn
-		if !used[q] {
-			used[q] = true
-			continue
-		}
-		for n := 2; ; n++ {
-			cand := q + " (" + strconv.Itoa(n) + ")"
-			if !used[cand] {
-				els[i].qn = cand
-				used[cand] = true
-				break
-			}
-		}
+		qns[i] = els[i].qn
+	}
+	for i, q := range uniqueQNs(used, qns) {
+		els[i].qn = q
 	}
 }
 

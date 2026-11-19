@@ -365,8 +365,19 @@ func runIndex(ctx context.Context, project, target, source, refName, auth string
 	if err != nil {
 		return fmt.Errorf("index %s: %w", indexTarget, err)
 	}
+	// elements and relationships are the STORED totals, read after the run, so
+	// the line equals `leankg status`. res counts the writes attempted this run,
+	// and the orphan sweep removes edges the run did not write.
+	elements, err := st.ElementCount(ctx)
+	if err != nil {
+		return fmt.Errorf("count elements: %w", err)
+	}
+	relationships, err := st.RelationshipCount(ctx)
+	if err != nil {
+		return fmt.Errorf("count relationships: %w", err)
+	}
 	fmt.Printf("indexed %s: files=%d elements=%d relationships=%d skipped=%d\n",
-		indexTarget, res.Files, res.Elements, res.Relationships, res.Skipped)
+		indexTarget, res.Files, elements, relationships, res.Skipped)
 	// The count line ends the command with no obvious next step, and the one
 	// that matters (wire an agent) lives in a different verb.
 	fmt.Println("next: leankg install --target <client>  (claude-code | cursor | codex | gemini | opencode | omp | xdev)")
