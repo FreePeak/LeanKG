@@ -1248,15 +1248,15 @@
    ]
   },
   {
-   "id": "Callers",
-   "qualified_name": "internal/graph/graph.go::Callers",
+   "id": "CallSites",
+   "qualified_name": "internal/graph/graph.go::CallSites",
    "class": "qualified",
    "callers": [
     {
      "file": "internal/core/actions.go",
-     "func": "Engine.graphCallers",
+     "func": "Engine.graphCallSites",
      "test": false,
-     "line": 440
+     "line": 471
     },
     {
      "file": "internal/graph/budget_test.go",
