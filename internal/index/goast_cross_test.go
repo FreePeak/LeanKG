@@ -400,25 +400,16 @@ func TestGoInterfaceParamDispatchToTwoImplementers(t *testing.T) {
 	}
 }
 
-// TestGoUnknownReceiverUniqueMethodLinks: get().Frobnicate() has a receiver of
-// unknown type, and Frobnicate is the one method of that name in the module, so
-// it links at 0.3 as unique-name.
-func TestGoUnknownReceiverUniqueMethodLinks(t *testing.T) {
+// TestGoUnknownReceiverLinksNothing: get().Frobnicate() has a receiver of unknown
+// type. Frobnicate is the one method of that name in the module, but an unknown
+// receiver links to nothing (the unique-name rule was measured below target and
+// dropped).
+func TestGoUnknownReceiverLinksNothing(t *testing.T) {
 	st := precisionTree(t, map[string]string{
 		"internal/geo/geo.go": "package geo\n\ntype Shape struct{}\n\nfunc (Shape) Frobnicate() {}\n",
 		"internal/app/run.go": "package app\n\nfunc run(get func() int) {\n\tget().Frobnicate()\n}\n",
 	})
-	const src, dst = "internal/app/run.go::run", "internal/geo/geo.go::Shape.Frobnicate"
-	r, ok := edgeTo(t, st, src, dst, "calls")
-	if !ok {
-		t.Fatalf("unique method has no edge; outgoing %v", targetsFrom(t, st, src, "calls"))
-	}
-	if r.Confidence != 0.3 {
-		t.Fatalf("confidence = %v, want 0.3", r.Confidence)
-	}
-	if got, _ := r.Metadata["resolution"].(string); got != "unique-name" {
-		t.Fatalf("resolution = %q, want unique-name", got)
-	}
+	noEdgeTo(t, st, "internal/app/run.go::run", "internal/geo/geo.go::Shape.Frobnicate")
 }
 
 // TestGoUnknownReceiverTwoCandidatesNoEdge: Frobnicate is a method of two types in
@@ -483,4 +474,113 @@ func TestGoInterfaceFromUnchangedPackageDispatchesIncrementally(t *testing.T) {
 	if got, _ := r.Metadata["resolution"].(string); got != "interface-dispatch" {
 		t.Fatalf("resolution = %q, want interface-dispatch", got)
 	}
+}
+
+// TestGoTypeParameterIsNotAPackageName: Item is a type parameter of Wrap, so its
+// uses are not the package-level function Item, and Wrap links to nothing.
+func TestGoTypeParameterIsNotAPackageName(t *testing.T) {
+	st := indexedGraph(t, map[string]string{"a.go": "package a\n\nfunc Item() {}\n\n" +
+		"func Wrap[Item any](x Item) Item {\n\treturn x\n}\n"})
+	if _, ok := edgeTo(t, st, "a.go::Wrap", "a.go::Item", "references"); ok {
+		t.Fatal("type parameter Item links to the package function Item")
+	}
+}
+
+// TestGoInterfaceEmbeddedMethodDispatches: Store embeds IndexWriter from another
+// package and does not declare Replace itself. s.Replace() on a Store still
+// dispatches to the module's implementer of Replace, at 0.3.
+func TestGoInterfaceEmbeddedMethodDispatches(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/store/roles.go": "package store\n\ntype IndexWriter interface {\n\tReplace(x int)\n}\n",
+		"internal/store/impl.go":  "package store\n\ntype DB struct{}\n\nfunc (DB) Replace(x int) {}\n\nfunc (DB) Flush() {}\n",
+		"internal/idx/use.go": "package idx\n\nimport \"" + modPath + "/internal/store\"\n\n" +
+			"type Store interface {\n\tstore.IndexWriter\n\tFlush()\n}\n\nfunc use(s Store) {\n\ts.Replace(1)\n}\n",
+	})
+	r, ok := edgeTo(t, st, "internal/idx/use.go::use", "internal/store/impl.go::DB.Replace", "calls")
+	if !ok {
+		t.Fatalf("embedded Replace has no dispatch edge; outgoing %v", targetsFrom(t, st, "internal/idx/use.go::use", "calls"))
+	}
+	if r.Confidence != 0.3 {
+		t.Fatalf("confidence = %v, want 0.3", r.Confidence)
+	}
+}
+
+// TestGoInterfaceDispatchNeedsEveryMethod: Partial has Replace but not Flush, so
+// it does not implement Store and a call s.Replace() on a Store does not reach
+// it. Full implements both methods and is linked.
+func TestGoInterfaceDispatchNeedsEveryMethod(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/store/iface.go": "package store\n\ntype Store interface {\n\tReplace(x int)\n\tFlush()\n}\n",
+		"internal/impl/a.go":      "package impl\n\ntype Full struct{}\n\nfunc (Full) Replace(x int) {}\n\nfunc (Full) Flush() {}\n",
+		"internal/impl/b.go":      "package impl\n\ntype Partial struct{}\n\nfunc (Partial) Replace(x int) {}\n",
+		"internal/idx/use.go": "package idx\n\nimport \"" + modPath + "/internal/store\"\n\n" +
+			"func use(s store.Store) {\n\ts.Replace(1)\n}\n",
+	})
+	const src = "internal/idx/use.go::use"
+	if _, ok := edgeTo(t, st, src, "internal/impl/a.go::Full.Replace", "calls"); !ok {
+		t.Fatalf("Full implements Store but has no dispatch edge; outgoing %v", targetsFrom(t, st, src, "calls"))
+	}
+	noEdgeTo(t, st, src, "internal/impl/b.go::Partial.Replace")
+}
+
+// TestGoMultiValueConstructorResultIsTyped: g is the first result of NewPair, a
+// same-package function with two results, so g.Fetch() reaches GitSource.Fetch
+// only, not GcsSource.Fetch.
+func TestGoMultiValueConstructorResultIsTyped(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/src/src.go": "package src\n\ntype GitSource struct{}\n\nfunc (g *GitSource) Fetch() {}\n\n" +
+			"type GcsSource struct{}\n\nfunc (g *GcsSource) Fetch() {}\n\n" +
+			"func NewPair() (*GitSource, *GcsSource, error) {\n\treturn nil, nil, nil\n}\n\n" +
+			"func run() {\n\tg, _, _ := NewPair()\n\tg.Fetch()\n}\n",
+	})
+	const run = "internal/src/src.go::run"
+	if _, ok := edgeTo(t, st, run, "internal/src/src.go::GitSource.Fetch", "calls"); !ok {
+		t.Fatalf("first result of NewPair has no edge to GitSource.Fetch; outgoing %v", targetsFrom(t, st, run, "calls"))
+	}
+	noEdgeTo(t, st, run, "internal/src/src.go::GcsSource.Fetch")
+}
+
+// TestGoExternalReceiversAreNotLinked: a value from a stdlib call
+// (strings.NewReplacer) or a type assertion to a stdlib type (*exec.ExitError)
+// has an external type, so Replace and ExitCode do not reach the module's
+// methods of the same names.
+func TestGoExternalReceiversAreNotLinked(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/memory/memory.go": "package memory\n\nimport (\n\t\"os/exec\"\n\t\"strings\"\n)\n\ntype Memory struct{}\n\nfunc (m *Memory) Replace(s string) string { return s }\n\n" +
+			"type Report struct{}\n\nfunc (r Report) ExitCode() int { return 0 }\n\n" +
+			"func clean(s string) string {\n\treturn strings.NewReplacer(\"a\", \"b\").Replace(s)\n}\n\n" +
+			"func code(err error) int {\n\tee, ok := err.(*exec.ExitError)\n\tif !ok {\n\t\treturn 1\n\t}\n\treturn ee.ExitCode()\n}\n",
+	})
+	noEdgeTo(t, st, "internal/memory/memory.go::clean", "internal/memory/memory.go::Memory.Replace")
+	noEdgeTo(t, st, "internal/memory/memory.go::code", "internal/memory/memory.go::Report.ExitCode")
+}
+
+// TestGoConstructorFromImportedPackageTypesReceiver: srv := mcp.New() is typed by
+// the result of mcp.New (*Server), read from the constructor's package, so
+// srv.HTTPHandler() reaches Server.HTTPHandler and not Other.HTTPHandler. The
+// second run changes only the caller, so mcp is read from its KV record.
+func TestGoConstructorFromImportedPackageTypesReceiver(t *testing.T) {
+	st, dir := newCrossTree(t)
+	putFiles(t, dir, map[string]string{
+		"internal/mcp/server.go":  "package mcp\n\ntype Server struct{}\n\nfunc (s *Server) HTTPHandler() {}\n\nfunc New() *Server {\n\treturn &Server{}\n}\n",
+		"internal/other/other.go": "package other\n\ntype Other struct{}\n\nfunc (Other) HTTPHandler() {}\n",
+		"cmd/app/main.go":         "package main\n\nimport \"" + modPath + "/internal/mcp\"\n\nfunc run() {\n\tsrv := mcp.New()\n\tsrv.HTTPHandler()\n}\n",
+	})
+	indexTree(t, st, dir)
+	const src, server, other = "cmd/app/main.go::run", "internal/mcp/server.go::Server.HTTPHandler", "internal/other/other.go::Other.HTTPHandler"
+	r, ok := edgeTo(t, st, src, server, "calls")
+	if !ok {
+		t.Fatalf("srv typed by mcp.New has no edge to Server.HTTPHandler; outgoing %v", targetsFrom(t, st, src, "calls"))
+	}
+	if got, _ := r.Metadata["resolution"].(string); got != "method-by-name" {
+		t.Fatalf("resolution = %q, want method-by-name", got)
+	}
+	noEdgeTo(t, st, src, other)
+
+	putFiles(t, dir, map[string]string{"cmd/app/main.go": "package main\n\nimport \"" + modPath + "/internal/mcp\"\n\n// run serves.\nfunc run() {\n\tsrv := mcp.New()\n\tsrv.HTTPHandler()\n}\n"})
+	indexTree(t, st, dir)
+	if _, ok := edgeTo(t, st, src, server, "calls"); !ok {
+		t.Fatal("after an incremental run the constructor type is lost")
+	}
+	noEdgeTo(t, st, src, other)
 }

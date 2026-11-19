@@ -45,21 +45,32 @@ type typeRef struct {
 //   - Type: the receiver has this type (a parameter, a receiver, a declared
 //     variable, a composite literal);
 //   - Type and Field: the receiver is the field Field of a value of Type (r.field);
-//   - Ctor: the receiver is the result of a call to the same-package function Ctor.
+//   - Ctor and Index: the receiver is result number Index (0 for the first) of
+//     a call to the function Ctor: a same-package function, or, when Qual is set,
+//     a function of the package with that import path.
 type recvRef struct {
 	Type  typeRef
 	Field string
 	Ctor  string
+	Qual  string
+	Index int
 }
 
 // goDecls are the type declarations of a Go package (or one file of it) that
 // receiver typing reads. Per file, they come from goDefinitions; crosspkg.go
 // merges the files of a directory.
 type goDecls struct {
-	structs    map[string]goStruct // struct type name -> its fields and embedded types
-	ifaces     map[string][]string // interface type name -> the method names it declares
-	ctors      map[string]typeRef  // function name -> its first result type
-	fieldNames []string            // every struct field name, embedded fields included
+	structs map[string]goStruct  // struct type name -> its fields and embedded types
+	ifaces  map[string]goIface   // interface type name -> its methods and embedded interfaces
+	ctors   map[string][]typeRef // function name -> the type of each result (zero when not a type name)
+	methods map[string][]string  // type name -> the method names declared on it (all its files)
+}
+
+// goIface is one interface type as dispatch sees it: the method names it declares
+// itself, and the interfaces it embeds (their methods are part of its method set).
+type goIface struct {
+	methods []string
+	embeds  []typeRef
 }
 
 // goStruct is one struct type as receiver typing sees it.
@@ -69,7 +80,7 @@ type goStruct struct {
 }
 
 func newGoDecls() goDecls {
-	return goDecls{structs: map[string]goStruct{}, ifaces: map[string][]string{}, ctors: map[string]typeRef{}}
+	return goDecls{structs: map[string]goStruct{}, ifaces: map[string]goIface{}, ctors: map[string][]typeRef{}, methods: map[string][]string{}}
 }
 
 // merge adds the declarations of another file of the same package.
@@ -77,7 +88,9 @@ func (d *goDecls) merge(o goDecls) {
 	maps.Copy(d.structs, o.structs)
 	maps.Copy(d.ifaces, o.ifaces)
 	maps.Copy(d.ctors, o.ctors)
-	d.fieldNames = append(d.fieldNames, o.fieldNames...)
+	for t, names := range o.methods {
+		d.methods[t] = append(d.methods[t], names...)
+	}
 }
 
 // goDefinitions parses one Go file with the standard-library parser and
@@ -115,11 +128,10 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 			kind, owner := "function", ""
 			if d.Recv != nil && len(d.Recv.List) > 0 {
 				kind, owner = "method", bareTypeName(d.Recv.List[0].Type)
-			} else if res := d.Type.Results; res != nil && len(res.List) > 0 {
+				decls.methods[owner] = append(decls.methods[owner], d.Name.Name)
+			} else {
 				w.tparams = tparamsOf(d)
-				if t, ok := w.typeOf(res.List[0].Type); ok {
-					decls.ctors[d.Name.Name] = t
-				}
+				decls.ctors[d.Name.Name] = w.resultTypes(d.Type)
 			}
 			add(kind, d.Name.Name, d.Pos(), d.End(), owner, w.seeds(d))
 		case *ast.GenDecl:
@@ -154,23 +166,25 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 func (w *seedWalker) typeDecl(decls *goDecls, ts *ast.TypeSpec) {
 	switch t := ts.Type.(type) {
 	case *ast.InterfaceType:
-		decls.ifaces[ts.Name.Name] = interfaceMethodNames(t)
+		iface := goIface{methods: interfaceMethodNames(t)}
+		for _, f := range t.Methods.List {
+			if et, typed := w.typeOf(f.Type); typed && len(f.Names) == 0 {
+				iface.embeds = append(iface.embeds, et)
+			}
+		}
+		decls.ifaces[ts.Name.Name] = iface
 	case *ast.StructType:
 		s := goStruct{fields: map[string]typeRef{}}
 		for _, f := range t.Fields.List {
 			ft, typed := w.typeOf(f.Type)
-			if len(f.Names) == 0 {
-				decls.fieldNames = append(decls.fieldNames, bareTypeName(f.Type))
-				if typed {
-					s.embedded = append(s.embedded, ft)
-				}
+			if !typed {
 				continue
 			}
+			if len(f.Names) == 0 {
+				s.embedded = append(s.embedded, ft)
+			}
 			for _, n := range f.Names {
-				decls.fieldNames = append(decls.fieldNames, n.Name)
-				if typed {
-					s.fields[n.Name] = ft
-				}
+				s.fields[n.Name] = ft
 			}
 		}
 		decls.structs[ts.Name.Name] = s
@@ -178,8 +192,8 @@ func (w *seedWalker) typeDecl(decls *goDecls, ts *ast.TypeSpec) {
 }
 
 // interfaceMethodNames returns the method names an interface type declares.
-// Embedded interfaces and type-set terms have no name of their own and are
-// skipped.
+// Embedded interfaces and type-set terms are not methods and are skipped (see
+// goIface for the embedded ones).
 func interfaceMethodNames(it *ast.InterfaceType) []string {
 	if it.Methods == nil {
 		return nil
@@ -322,8 +336,11 @@ func (w *seedWalker) scope(root ast.Node) {
 		case *ast.FuncDecl:
 			bindFields(x.Recv)
 		case *ast.FuncType:
+			bindFields(x.TypeParams)
 			bindFields(x.Params)
 			bindFields(x.Results)
+		case *ast.TypeSpec:
+			bindFields(x.TypeParams)
 		case *ast.AssignStmt:
 			if x.Tok != token.DEFINE {
 				break
@@ -334,8 +351,11 @@ func (w *seedWalker) scope(root ast.Node) {
 					continue
 				}
 				var r recvRef
-				if len(x.Lhs) == len(x.Rhs) {
+				switch {
+				case len(x.Lhs) == len(x.Rhs):
 					r = w.recvOf(x.Rhs[i])
+				case len(x.Rhs) == 1:
+					r = w.callRef(x.Rhs[0], i)
 				}
 				bind(id.Name, r)
 			}
@@ -399,14 +419,57 @@ func (w *seedWalker) recvOf(e ast.Expr) recvRef {
 				return recvRef{Type: r.Type, Field: x.Sel.Name}
 			}
 		}
+	case *ast.CallExpr, *ast.TypeAssertExpr:
+		return w.callRef(e, 0)
+	}
+	return recvRef{}
+}
+
+// callRef reads the type of result index of a call, or of a type assertion (its
+// only value is index 0). A call is a function the declaration does not bind: a
+// same-package function (resolved later from the package's results) or a function
+// of an imported package (a value of a type that package declares, which is
+// external unless the package is in the run). A type assertion x.(T) has type T.
+func (w *seedWalker) callRef(e ast.Expr, index int) recvRef {
+	switch x := e.(type) {
+	case *ast.TypeAssertExpr:
+		if index == 0 && x.Type != nil {
+			if t, ok := w.typeOf(x.Type); ok {
+				return recvRef{Type: t}
+			}
+		}
 	case *ast.CallExpr:
-		if id, ok := x.Fun.(*ast.Ident); ok {
-			if _, declared := w.env[id.Name]; !declared {
-				return recvRef{Ctor: id.Name}
+		switch fn := x.Fun.(type) {
+		case *ast.Ident:
+			if _, declared := w.env[fn.Name]; !declared {
+				return recvRef{Ctor: fn.Name, Index: index}
+			}
+		case *ast.SelectorExpr:
+			if alias, ok := w.qualifiedAlias(fn); ok {
+				return recvRef{Ctor: fn.Sel.Name, Qual: w.imports[alias], Index: index}
 			}
 		}
 	}
 	return recvRef{}
+}
+
+// resultTypes returns the type of each result of a function, in order. A result
+// whose type is not a type name (or a type parameter) is the zero typeRef.
+func (w *seedWalker) resultTypes(ft *ast.FuncType) []typeRef {
+	if ft.Results == nil {
+		return nil
+	}
+	var out []typeRef
+	for _, f := range ft.Results.List {
+		t, ok := w.typeOf(f.Type)
+		if !ok {
+			t = typeRef{}
+		}
+		for range max(1, len(f.Names)) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // typeOf reads a type expression: a type name, a qualified type name whose

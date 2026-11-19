@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/gitobj"
@@ -12,42 +13,51 @@ import (
 
 // Cross-package resolution of Go name seeds (goast.go). A method seed x.Name is
 // resolved by the static type of x, which the AST tier reads from the syntax
-// (goast.go recvOf); the type decides the target:
+// (goast.go recvOf and callRef); the type decides the target:
 //   - qualified `alias.Name`: the import is mapped to a directory of the run by
 //     longest suffix match of its path (no go.mod parsing), then Name is looked
 //     up among that directory's exported non-method elements, confidence 0.8;
 //   - typed receiver of a module type T: the method T.Name, at 0.4 (method-by-name).
 //     When T has no such method but is an interface of the module that declares
 //     Name, the module's methods named Name are its implementers, at 0.3
-//     (interface-dispatch). A stdlib or external type links to nothing;
-//   - unknown receiver: a call to a method name that exactly one non-test method
-//     of the module carries links at 0.3 (unique-name). A stdlib-common name, a
-//     name that is a struct field of the caller's package, or a name with a
-//     capped lookup links to nothing. A value (not a call) with an unknown
-//     receiver links to nothing.
+//     (interface-dispatch). An implementer must have every method of the
+//     interface (its own and its embedded ones, as far as the run knows them).
+//     A stdlib or external type links to nothing;
+//   - unknown receiver: no edge. The unique-name rule (one module method of the
+//     name) was measured at 0.80 to 0.90 on seeded hand checks, below the 0.85
+//     target, and was dropped.
+//
+// A receiver's type comes from its declaration or binding (a parameter, a
+// receiver, a var, a composite literal, a type assertion), one struct-field
+// level, or the result of a call: a same-package function, or a function of an
+// imported package in the run (read from its declarations, or from the KV record
+// of an unchanged package). A result of a function of a package outside the run
+// is an external type and links to nothing.
 //
 // Interface-dispatch implementers: at most maxDispatchCandidates of them, test
-// files only from test files. A stdlib-common method name dispatches only through
-// an interface of the caller's own package.
+// files only from test files, and a full method set (the types of the run carry
+// their method names, so a partial test double is not an implementer). A
+// stdlib-common method name dispatches only through an interface of the caller's
+// own package.
 //
 // Element and declaration data: directories re-extracted this run are read from a
 // pre-pass over their Go files (crossIndex.byName and crossIndex.decls), so a
 // target declared later in the run is already known. Directories this run does
 // not touch are read from the store (Store.FindExact, filtered to the directories
-// not re-extracted); their interface method sets come from the KV record their
-// last extraction wrote. Struct fields and constructors are read only for the
-// caller's own package, which is always re-extracted with the caller.
+// not re-extracted); their declarations (interfaces, method sets, constructor
+// results) come from the KV record their last extraction wrote. Struct fields
+// are read only for the caller's own package, which is always re-extracted with
+// the caller.
 //
 // Documented ceilings:
 //   - FindExact matches case-insensitively and returns at most findExactLimit
 //     rows, so an incremental run can miss a target whose name has more matches
-//     than that. Such a name is marked capped and gets no dispatch or unique-name
-//     edges.
-//   - A constructor in another package (x := pkg.NewT()) is not typed: the
-//     receiver is unknown and falls back to the unique-name rule.
-//   - Promoted methods are followed one embedded level in the same package only.
-//   - An interface's embedded interfaces are not expanded; their methods are
-//     not dispatched.
+//     than that. Such a name is marked capped and gets no dispatch edges.
+//   - Promoted methods are followed one embedded level in the same package only,
+//     and a type whose methods are promoted is not an implementer of an interface
+//     it satisfies that way.
+//   - An interface's embedded interfaces are followed to a fixed depth
+//     (maxEmbedDepth); an embedded interface outside the run is not expanded.
 //   - A renamed or removed target leaves an edge from an unchanged importer
 //     pointing at a name that no longer exists. The orphan sweep in indexDir
 //     removes it, because the target is no longer an element.
@@ -59,19 +69,20 @@ import (
 const (
 	// findExactLimit is the row cap store.FindExact applies (SQLite and PostgreSQL).
 	findExactLimit = 200
-	// ifaceKVNamespace holds, per directory, the newline-joined "Type.Method"
-	// lines of the interfaces its Go files declare.
-	ifaceKVNamespace = "go-iface-methods"
+	// declKVNamespace holds, per directory, the newline-joined lines that
+	// declLines writes: the interfaces, method sets and constructor results of its Go types.
+	declKVNamespace = "go-iface-methods"
 
 	qualifiedConf = 0.8
 	methodConf    = 0.4
 	dispatchConf  = 0.3
 
 	maxDispatchCandidates = 6
+	maxEmbedDepth         = 4
 )
 
 // stdlibCommonMethods are method names so common across the standard library
-// and ordinary code that a link on them by name alone would be a guess.
+// and ordinary code that an interface-dispatch link on them would be a guess.
 var stdlibCommonMethods = map[string]bool{
 	"Close": true, "String": true, "Error": true, "Read": true, "Write": true,
 	"Len": true, "Less": true, "Swap": true, "Get": true, "Set": true, "Add": true,
@@ -137,12 +148,12 @@ func newCrossIndex(ctx context.Context, st Store, dirCands map[string][]candidat
 			b := baseOf(d)
 			cx.base[b] = append(cx.base[b], d)
 		}
-		v, _, err := st.KVGet(ctx, ifaceKVNamespace, d)
+		v, _, err := st.KVGet(ctx, declKVNamespace, d)
 		if err != nil {
 			return nil, err
 		}
 		stored[d] = v
-		cx.decls[d] = parseIfaceLines(v)
+		cx.decls[d] = parseDeclLines(v)
 	}
 	for _, d := range dirs {
 		if !changed[d] {
@@ -167,8 +178,8 @@ func newCrossIndex(ctx context.Context, st Store, dirCands map[string][]candidat
 			decls.merge(fe.decls)
 		}
 		cx.decls[d] = decls
-		if joined := decls.ifaceLines(); joined != stored[d] {
-			if err := st.KVSet(ctx, ifaceKVNamespace, d, joined); err != nil {
+		if joined := decls.declLines(); joined != stored[d] {
+			if err := st.KVSet(ctx, declKVNamespace, d, joined); err != nil {
 				return nil, err
 			}
 		}
@@ -253,7 +264,7 @@ func (cx *crossIndex) qualifiedTargets(dir, name string) []string {
 }
 
 // methodTargets resolves one method seed of a file: the typed receiver's method
-// or dispatch targets, or the unique-name target of an unknown receiver. A nil
+// or dispatch targets; an unknown receiver has none. A nil
 // index (a caller without cross-package data) resolves nothing.
 func (cx *crossIndex) methodTargets(file string, s goSeed) []methodTarget {
 	if cx == nil {
@@ -263,10 +274,7 @@ func (cx *crossIndex) methodTargets(file string, s goSeed) []methodTarget {
 	if t, ok := cx.receiverType(dir, s.Recv); ok {
 		return cx.typedTargets(file, dir, t, s.Name)
 	}
-	if !s.Call {
-		return nil
-	}
-	return cx.uniqueTargets(dir, s.Name)
+	return nil
 }
 
 // receiverType is the static type of a receiver, as far as the syntax and the
@@ -274,9 +282,20 @@ func (cx *crossIndex) methodTargets(file string, s goSeed) []methodTarget {
 func (cx *crossIndex) receiverType(dir string, r recvRef) (typeRef, bool) {
 	decls := cx.decls[dir]
 	switch {
-	case r.Ctor != "":
-		t, ok := decls.ctors[r.Ctor]
+	case r.Qual != "":
+		// A function of an imported package: external when the package is not in
+		// the run; otherwise its result, whose unqualified type is in that package.
+		dir := cx.dirForImport(r.Qual)
+		if dir == "" {
+			return typeRef{Path: r.Qual, Name: r.Ctor}, true
+		}
+		t, ok := cx.resultOf(dir, r.Ctor, r.Index)
+		if t.Path == "" {
+			t.Path = r.Qual
+		}
 		return t, ok
+	case r.Ctor != "":
+		return cx.resultOf(dir, r.Ctor, r.Index)
 	case r.Field != "":
 		if r.Type.Path != "" {
 			return typeRef{}, false
@@ -287,6 +306,16 @@ func (cx *crossIndex) receiverType(dir string, r recvRef) (typeRef, bool) {
 		return r.Type, true
 	}
 	return typeRef{}, false
+}
+
+// resultOf is result index of function fn declared in dir, when its type is a
+// type name.
+func (cx *crossIndex) resultOf(dir, fn string, index int) (typeRef, bool) {
+	results := cx.decls[dir].ctors[fn]
+	if index >= len(results) || results[index].Name == "" {
+		return typeRef{}, false
+	}
+	return results[index], true
 }
 
 // typeDir is the directory of the package a type is declared in, or "" for a
@@ -308,23 +337,47 @@ func (cx *crossIndex) typedTargets(file, dir string, t typeRef, name string) []m
 	if qn, ok := cx.methodOf(tdir, t.Name, name); ok {
 		return []methodTarget{{qn: qn, conf: methodConf, resolution: "method-by-name"}}
 	}
-	decls := cx.decls[tdir]
-	if slices.Contains(decls.ifaces[t.Name], name) {
+	if slices.Contains(cx.ifaceMethods(tdir, t.Name, 0), name) {
 		if stdlibCommonMethods[name] && tdir != dir {
 			return nil
 		}
 		var out []methodTarget
-		for _, qn := range cx.implementers(name, file) {
+		for _, qn := range cx.implementers(name, file, tdir, t.Name) {
 			out = append(out, methodTarget{qn: qn, conf: dispatchConf, resolution: "interface-dispatch"})
 		}
 		return out
 	}
-	for _, e := range decls.structs[t.Name].embedded {
+	for _, e := range cx.decls[tdir].structs[t.Name].embedded {
 		if qn, ok := cx.methodOf(cx.typeDir(e, tdir), e.Name, name); ok {
 			return []methodTarget{{qn: qn, conf: methodConf, resolution: "method-by-name"}}
 		}
 	}
 	return nil
+}
+
+// ifaceMethods is the method set of interface name of dir as far as the run knows
+// it: its own methods and those of the interfaces it embeds.
+func (cx *crossIndex) ifaceMethods(dir, name string, depth int) []string {
+	iface, ok := cx.decls[dir].ifaces[name]
+	if !ok || depth > maxEmbedDepth {
+		return nil
+	}
+	out := slices.Clone(iface.methods)
+	for _, e := range iface.embeds {
+		out = append(out, cx.ifaceMethods(cx.typeDir(e, dir), e.Name, depth+1)...)
+	}
+	return out
+}
+
+// hasMethods reports whether type owner of dir declares every method in need.
+func (cx *crossIndex) hasMethods(dir, owner string, need []string) bool {
+	have := cx.decls[dir].methods[owner]
+	for _, m := range need {
+		if !slices.Contains(have, m) {
+			return false
+		}
+	}
+	return true
 }
 
 // methodOf is the method owner.name declared in dir, if the module has one.
@@ -337,15 +390,16 @@ func (cx *crossIndex) methodOf(dir, owner, name string) (string, bool) {
 	return "", false
 }
 
-// implementers are the module's methods named name that a call through an
-// interface may reach, or nil when the call is not linked (see the package
-// comment).
-func (cx *crossIndex) implementers(name, file string) []string {
+// implementers are the module's methods named name whose type has the whole
+// method set of interface iface (of dir) that a call through it may reach, or nil
+// when the call is not linked (see the package comment).
+func (cx *crossIndex) implementers(name, file, dir, iface string) []string {
 	hits := cx.all[name]
+	need := cx.ifaceMethods(dir, iface, 0)
 	callerTest := isTestFile(file)
 	var out []string
 	for _, r := range hits.refs {
-		if r.etype != "method" || (!callerTest && isTestFile(r.rel)) {
+		if r.etype != "method" || (!callerTest && isTestFile(r.rel)) || !cx.hasMethods(dirOf(r.rel), ownerOf(r.qn), need) {
 			continue
 		}
 		out = append(out, r.qn)
@@ -354,29 +408,6 @@ func (cx *crossIndex) implementers(name, file string) []string {
 		return nil
 	}
 	return out
-}
-
-// uniqueTargets links a call on an unknown receiver to the one non-test method
-// of the module named name, when the name is not stdlib-common, not a struct
-// field of the caller's package, and not capped.
-func (cx *crossIndex) uniqueTargets(dir, name string) []methodTarget {
-	if stdlibCommonMethods[name] || slices.Contains(cx.decls[dir].fieldNames, name) {
-		return nil
-	}
-	hits := cx.all[name]
-	if hits.capped {
-		return nil
-	}
-	var found []string
-	for _, r := range hits.refs {
-		if r.etype == "method" && !isTestFile(r.rel) {
-			found = append(found, r.qn)
-		}
-	}
-	if len(found) != 1 {
-		return nil
-	}
-	return []methodTarget{{qn: found[0], conf: dispatchConf, resolution: "unique-name"}}
 }
 
 // ownerOf is the owning type of an element's qualified name ("file.go::T.M" -> "T").
@@ -388,28 +419,65 @@ func ownerOf(qn string) string {
 
 func isTestFile(rel string) bool { return strings.HasSuffix(rel, "_test.go") }
 
-// ifaceLines encodes the interface method sets as sorted "Type.Method" lines, the
-// form a directory's KV record keeps.
-func (d goDecls) ifaceLines() string {
+// declLines encodes the declarations receiver typing reads as sorted tab-separated
+// lines, the form a directory's KV record keeps: "Type\tm\tMethod" for an
+// interface method, "Type\te\tImportPath\tName" for an embedded interface (an
+// empty path for the package's own), "Type\tk\tMethod" for a method of a concrete
+// type and "Func\tr\tIndex\tImportPath\tName" for a named result of a function.
+func (d goDecls) declLines() string {
 	var lines []string
-	for t, ms := range d.ifaces {
-		for _, m := range ms {
-			lines = append(lines, t+"."+m)
+	for t, iface := range d.ifaces {
+		for _, m := range iface.methods {
+			lines = append(lines, strings.Join([]string{t, "m", m}, "\t"))
+		}
+		for _, e := range iface.embeds {
+			lines = append(lines, strings.Join([]string{t, "e", e.Path, e.Name}, "\t"))
+		}
+	}
+	for t, names := range d.methods {
+		for _, m := range names {
+			lines = append(lines, strings.Join([]string{t, "k", m}, "\t"))
+		}
+	}
+	for fn, results := range d.ctors {
+		for i, r := range results {
+			if r.Name != "" {
+				lines = append(lines, strings.Join([]string{fn, "r", strconv.Itoa(i), r.Path, r.Name}, "\t"))
+			}
 		}
 	}
 	slices.Sort(lines)
 	return strings.Join(lines, "\n")
 }
 
-// parseIfaceLines reads a directory's KV record back into its interface sets.
-func parseIfaceLines(v string) goDecls {
+// parseDeclLines reads a directory's KV record back into its declarations.
+func parseDeclLines(v string) goDecls {
 	d := newGoDecls()
 	if v == "" {
 		return d
 	}
 	for _, line := range strings.Split(v, "\n") {
-		if t, m, ok := strings.Cut(line, "."); ok {
-			d.ifaces[t] = append(d.ifaces[t], m)
+		f := strings.Split(line, "\t")
+		switch {
+		case len(f) == 3 && f[1] == "m":
+			i := d.ifaces[f[0]]
+			i.methods = append(i.methods, f[2])
+			d.ifaces[f[0]] = i
+		case len(f) == 4 && f[1] == "e":
+			i := d.ifaces[f[0]]
+			i.embeds = append(i.embeds, typeRef{Path: f[2], Name: f[3]})
+			d.ifaces[f[0]] = i
+		case len(f) == 3 && f[1] == "k":
+			d.methods[f[0]] = append(d.methods[f[0]], f[2])
+		case len(f) == 5 && f[1] == "r":
+			idx, err := strconv.Atoi(f[2])
+			if err != nil || idx < 0 {
+				continue
+			}
+			for len(d.ctors[f[0]]) <= idx {
+				d.ctors[f[0]] = append(d.ctors[f[0]], typeRef{})
+			}
+			d.ctors[f[0]][idx] = typeRef{Path: f[3], Name: f[4]}
 		}
 	}
 	return d

@@ -131,7 +131,7 @@ func fileRelationships(fe fileElements, names nameTable) []store.Relationship {
 //     elements (calls for a call site, references otherwise; confidence 0.5). An
 //     x.Name method seed (called or taken as a value) resolves through the
 //     receiver's static type in crossIndex.methodTargets (confidence 0.4,
-//     "method-by-name"; 0.3 for "interface-dispatch" or "unique-name"). Every
+//     "method-by-name"; 0.3 for "interface-dispatch"). Every
 //     such edge carries its first use line as
 //     metadata {"line": N}. Qualified seeds (alias.Name) make their edges in
 //     qualifiedEdges, outside these caps;

@@ -280,11 +280,16 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // Go edges: qualified alias.Name calls, method seeds by name and interface
 // dispatch, uncalled method values as references) adds edges that no v8 store
 // has, so stores re-extract once; v10 (receiver-typed Go method resolution: a
-// method seed resolves through the receiver's static type, unique-name only for
-// unknown receivers, field reads and stdlib receivers make no edge) replaces
-// v9's name-only edges, so stores re-extract once.
+// method seed resolves through the receiver's static type, field reads and
+// stdlib receivers make no edge) replaces
+// v9's name-only edges, so stores re-extract once; v11 (interface
+// dispatch needs the implementer's full method set, which the directory KV
+// record now carries) changes the same record, so stores re-extract once; v12
+// (unknown receivers link to nothing; constructor results of the run's packages
+// are in the KV record) changes the same record and the edges, so stores
+// re-extract once.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "10"
+const extractorVersion = "12"
 
 const extractorKVKey = "extractor_version"
 
