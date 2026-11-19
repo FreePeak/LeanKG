@@ -57,24 +57,20 @@ func callEdges(rels []store.Relationship) []store.Relationship {
 // changed and unchanged files alike; call targets may live in any of them.
 // forFile adds the cross-package view of one Go file.
 type nameTable struct {
-	all     map[string][]string // every element: the word heuristic and grammar seeds
-	funcs   map[string][]string // non-method elements: a bare Go identifier's targets
-	methods map[string][]string // methods: x.Name(...) targets
+	all   map[string][]string // every element: the word heuristic and grammar seeds
+	funcs map[string][]string // non-method elements: a bare Go identifier's targets
 
 	cross   *crossIndex
 	imports map[string]string // import name -> directory of the imported package
-	dirs    map[string]bool   // the directories of imports
 	file    string            // the file whose seeds are resolved
 }
 
 // nameTableOf indexes the qualified names of a directory's elements by name.
 func nameTableOf(els []indexedElem) nameTable {
-	nt := nameTable{all: map[string][]string{}, funcs: map[string][]string{}, methods: map[string][]string{}}
+	nt := nameTable{all: map[string][]string{}, funcs: map[string][]string{}}
 	for _, e := range els {
 		nt.all[e.name] = append(nt.all[e.name], e.qn)
-		if e.etype == "method" {
-			nt.methods[e.name] = append(nt.methods[e.name], e.qn)
-		} else {
+		if e.etype != "method" {
 			nt.funcs[e.name] = append(nt.funcs[e.name], e.qn)
 		}
 	}
@@ -88,38 +84,6 @@ func (nt nameTable) forFile(cx *crossIndex, fe fileElements) nameTable {
 	out.cross = cx
 	out.file = fe.rel
 	out.imports = cx.importDirs(fe.imports)
-	out.dirs = map[string]bool{}
-	for _, d := range out.imports {
-		out.dirs[d] = true
-	}
-	return out
-}
-
-// methodTarget is one candidate of a method seed.
-type methodTarget struct {
-	qn, resolution string
-	conf           float64
-}
-
-// methodTargets resolves a method seed by name: same-package methods first,
-// then the methods of the imported packages when the package has none, and
-// then, for an interface method name, the module's implementers (crosspkg.go).
-func (nt nameTable) methodTargets(name string) []methodTarget {
-	var out []methodTarget
-	for _, q := range nt.methods[name] {
-		out = append(out, methodTarget{qn: q, conf: methodConf, resolution: "method-by-name"})
-	}
-	if nt.cross == nil {
-		return out
-	}
-	if len(out) == 0 {
-		for _, q := range nt.cross.methodsIn(name, nt.dirs) {
-			out = append(out, methodTarget{qn: q, conf: methodConf, resolution: "method-by-name"})
-		}
-	}
-	for _, q := range nt.cross.dispatchTargets(name, nt.file, dirOf(nt.file)) {
-		out = append(out, methodTarget{qn: q, conf: dispatchConf, resolution: "interface-dispatch"})
-	}
 	return out
 }
 
@@ -165,9 +129,10 @@ func fileRelationships(fe fileElements, names nameTable) []store.Relationship {
 //   - Go elements from the AST tier (seeded): each name seed resolves in the
 //     element's directory. A bare identifier resolves to same-package non-method
 //     elements (calls for a call site, references otherwise; confidence 0.5). An
-//     x.Name method seed (called or taken as a value) resolves by name through
-//     methodTargets (confidence 0.4, resolution "method-by-name", or 0.3 for
-//     "interface-dispatch"). Every such edge carries its first use line as
+//     x.Name method seed (called or taken as a value) resolves through the
+//     receiver's static type in crossIndex.methodTargets (confidence 0.4,
+//     "method-by-name"; 0.3 for "interface-dispatch" or "unique-name"). Every
+//     such edge carries its first use line as
 //     metadata {"line": N}. Qualified seeds (alias.Name) make their edges in
 //     qualifiedEdges, outside these caps;
 //   - other elements: a whole-word identifier in the element's content matching
@@ -245,7 +210,7 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 				}
 				var targets []methodTarget
 				if s.Kind == "method" {
-					targets = names.methodTargets(s.Name)
+					targets = names.cross.methodTargets(names.file, s)
 				} else {
 					for _, q := range names.funcs[s.Name] {
 						targets = append(targets, methodTarget{qn: q, conf: 0.5})

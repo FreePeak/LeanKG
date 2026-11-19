@@ -207,13 +207,14 @@ func TestGoInterfaceDispatchSkipsStdlibCommonNames(t *testing.T) {
 		t.Fatalf("stdlib-common Close linked through interface dispatch: %v", got)
 	}
 
-	// Control: the same call links once the caller's own package declares a
-	// Close interface, which is the exception the rule allows.
+	// Control: a receiver typed with an interface the caller's own package
+	// declares links, which is the exception the rule allows.
 	putFiles(t, dir, map[string]string{
-		"internal/idx/closer.go": "package idx\n\ntype Closer interface {\n\tClose()\n}\n",
+		"internal/idx/closer.go": "package idx\n\ntype Closer interface {\n\tClose()\n}\n\n" +
+			"func useCloser(c Closer) {\n\tc.Close()\n}\n",
 	})
 	indexTree(t, st, dir)
-	if _, ok := edgeTo(t, st, "internal/idx/use.go::use", "internal/impl/a.go::A.Close", "calls"); !ok {
+	if _, ok := edgeTo(t, st, "internal/idx/closer.go::useCloser", "internal/impl/a.go::A.Close", "calls"); !ok {
 		t.Fatal("with a Close interface in the caller's package the call should link; it does not")
 	}
 }
@@ -282,5 +283,204 @@ func TestGoAstSeedsAreNotCutByPerElementCeiling(t *testing.T) {
 	last := fmt.Sprintf("a.go::T.M%d", calls-1)
 	if _, ok := edgeTo(t, st, "a.go::Caller", last, "calls"); !ok {
 		t.Fatalf("call %d of %d lost to the per-element ceiling", calls, calls)
+	}
+}
+
+// precisionTree writes files and indexes them into a fresh store. The
+// precision tests below read edges back by source and target.
+func precisionTree(t *testing.T, files map[string]string) store.Backend {
+	t.Helper()
+	st, dir := newCrossTree(t)
+	putFiles(t, dir, files)
+	indexTree(t, st, dir)
+	return st
+}
+
+// noEdgeTo fails when src has a calls or references edge to dst.
+func noEdgeTo(t *testing.T, st store.Backend, src, dst string) {
+	t.Helper()
+	for _, rel := range []string{"calls", "references"} {
+		if r, ok := edgeTo(t, st, src, dst, rel); ok {
+			t.Fatalf("%s has a %s edge to %s (%+v), want none", src, rel, dst, r)
+		}
+	}
+}
+
+// TestGoFieldReadIsNotAnEdge: r.Mode reads a field of Result. Opt in the same
+// package declares a method Mode, but a plain field read names no method.
+func TestGoFieldReadIsNotAnEdge(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/res/res.go": "package res\n\ntype Result struct {\n\tMode int\n}\n\n" +
+			"type Opt struct{}\n\nfunc (Opt) Mode() {}\n\n" +
+			"func show(r Result) int {\n\treturn r.Mode\n}\n",
+	})
+	noEdgeTo(t, st, "internal/res/res.go::show", "internal/res/res.go::Opt.Mode")
+}
+
+// TestGoFieldReadInCallArgIsNotAnEdge: sink(daos[0].Name) passes a field value.
+// Name is a field of Dao in the package, so the value is not a method value.
+func TestGoFieldReadInCallArgIsNotAnEdge(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/dao/dao.go": "package dao\n\ntype Dao struct {\n\tName string\n}\n\n" +
+			"type Opt struct{}\n\nfunc (Opt) Name() string { return \"\" }\n\n" +
+			"func sink(v string) {}\n\nfunc names(daos []Dao) {\n\tsink(daos[0].Name)\n}\n",
+	})
+	noEdgeTo(t, st, "internal/dao/dao.go::names", "internal/dao/dao.go::Opt.Name")
+}
+
+// TestGoTestingReceiverIsNotLinked: t.Fatal on a *testing.T is not Logger.Fatal,
+// the module method of the same package.
+func TestGoTestingReceiverIsNotLinked(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/app/log.go":      "package app\n\ntype Logger struct{}\n\nfunc (Logger) Fatal(msg string) {}\n",
+		"internal/app/app_test.go": "package app\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {\n\tt.Fatal(\"x\")\n}\n",
+	})
+	noEdgeTo(t, st, "internal/app/app_test.go::TestX", "internal/app/log.go::Logger.Fatal")
+}
+
+// TestGoStdlibReceiverIsNotLinked: rows.Close() on a *sql.Rows is not
+// Store.Close of the same package.
+func TestGoStdlibReceiverIsNotLinked(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/db/db.go": "package db\n\nimport \"database/sql\"\n\ntype Store struct{}\n\nfunc (Store) Close() {}\n\n" +
+			"func drain(rows *sql.Rows) {\n\trows.Close()\n}\n",
+	})
+	noEdgeTo(t, st, "internal/db/db.go::drain", "internal/db/db.go::Store.Close")
+}
+
+// TestGoSameNameMethodsResolveByReceiverType: g.Fetch() on a *GitSource reaches
+// GitSource.Fetch only, not GcsSource.Fetch of the same package.
+func TestGoSameNameMethodsResolveByReceiverType(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/src/src.go": "package src\n\ntype GitSource struct {\n\turi string\n}\n\n" +
+			"func (g *GitSource) Fetch() {}\n\nfunc (g *GitSource) read() string {\n\treturn g.uri\n}\n\n" +
+			"func (g *GitSource) run() {\n\tg.Fetch()\n}\n\n" +
+			"type GcsSource struct{}\n\nfunc (g *GcsSource) Fetch() {}\n\nfunc (g *GcsSource) uri() string { return \"\" }\n",
+	})
+	if _, ok := edgeTo(t, st, "internal/src/src.go::GitSource.run", "internal/src/src.go::GitSource.Fetch", "calls"); !ok {
+		t.Fatalf("g.Fetch() has no edge to GitSource.Fetch; outgoing %v", targetsFrom(t, st, "internal/src/src.go::GitSource.run", "calls"))
+	}
+	if _, ok := edgeTo(t, st, "internal/src/src.go::GitSource.run", "internal/src/src.go::GcsSource.Fetch", "calls"); ok {
+		t.Fatal("g.Fetch() on a *GitSource is linked to GcsSource.Fetch")
+	}
+	noEdgeTo(t, st, "internal/src/src.go::GitSource.read", "internal/src/src.go::GcsSource.uri")
+}
+
+// TestGoReceiverFromFieldAndConstructorResolves: h.src.Fetch() is typed through
+// the struct field src, and g.Fetch() through the same-package constructor
+// NewGit. Both reach GitSource.Fetch only.
+func TestGoReceiverFromFieldAndConstructorResolves(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/src/src.go": "package src\n\ntype GitSource struct{}\n\nfunc (g *GitSource) Fetch() {}\n\n" +
+			"type GcsSource struct{}\n\nfunc (g *GcsSource) Fetch() {}\n\n" +
+			"type Holder struct {\n\tsrc *GitSource\n}\n\nfunc NewGit() *GitSource {\n\treturn &GitSource{}\n}\n\n" +
+			"func (h *Holder) run() {\n\th.src.Fetch()\n\tg := NewGit()\n\tg.Fetch()\n}\n",
+	})
+	const run = "internal/src/src.go::Holder.run"
+	if _, ok := edgeTo(t, st, run, "internal/src/src.go::GitSource.Fetch", "calls"); !ok {
+		t.Fatalf("typed Fetch calls have no edge to GitSource.Fetch; outgoing %v", targetsFrom(t, st, run, "calls"))
+	}
+	if _, ok := edgeTo(t, st, run, "internal/src/src.go::GcsSource.Fetch", "calls"); ok {
+		t.Fatal("typed Fetch calls are linked to GcsSource.Fetch")
+	}
+}
+
+// TestGoInterfaceParamDispatchToTwoImplementers: a parameter typed with a local
+// interface links its method to both implementers in unimported packages, at 0.3.
+func TestGoInterfaceParamDispatchToTwoImplementers(t *testing.T) {
+	st := precisionTree(t, implementerTree(2))
+	for _, impl := range []string{"internal/impl0/a.go::A.Replace", "internal/impl1/a.go::A.Replace"} {
+		r, ok := edgeTo(t, st, "internal/idx/use.go::use", impl, "calls")
+		if !ok {
+			t.Fatalf("no interface-dispatch edge to %s; outgoing %v", impl, targetsFrom(t, st, "internal/idx/use.go::use", "calls"))
+		}
+		if r.Confidence != 0.3 {
+			t.Fatalf("%s confidence = %v, want 0.3", impl, r.Confidence)
+		}
+	}
+}
+
+// TestGoUnknownReceiverUniqueMethodLinks: get().Frobnicate() has a receiver of
+// unknown type, and Frobnicate is the one method of that name in the module, so
+// it links at 0.3 as unique-name.
+func TestGoUnknownReceiverUniqueMethodLinks(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/geo/geo.go": "package geo\n\ntype Shape struct{}\n\nfunc (Shape) Frobnicate() {}\n",
+		"internal/app/run.go": "package app\n\nfunc run(get func() int) {\n\tget().Frobnicate()\n}\n",
+	})
+	const src, dst = "internal/app/run.go::run", "internal/geo/geo.go::Shape.Frobnicate"
+	r, ok := edgeTo(t, st, src, dst, "calls")
+	if !ok {
+		t.Fatalf("unique method has no edge; outgoing %v", targetsFrom(t, st, src, "calls"))
+	}
+	if r.Confidence != 0.3 {
+		t.Fatalf("confidence = %v, want 0.3", r.Confidence)
+	}
+	if got, _ := r.Metadata["resolution"].(string); got != "unique-name" {
+		t.Fatalf("resolution = %q, want unique-name", got)
+	}
+}
+
+// TestGoUnknownReceiverTwoCandidatesNoEdge: Frobnicate is a method of two types in
+// two packages, so an unknown receiver links to neither.
+func TestGoUnknownReceiverTwoCandidatesNoEdge(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/geo/geo.go":   "package geo\n\ntype Shape struct{}\n\nfunc (Shape) Frobnicate() {}\n",
+		"internal/mesh/mesh.go": "package mesh\n\ntype Net struct{}\n\nfunc (Net) Frobnicate() {}\n",
+		"internal/app/run.go":   "package app\n\nfunc run(get func() int) {\n\tget().Frobnicate()\n}\n",
+	})
+	noEdgeTo(t, st, "internal/app/run.go::run", "internal/geo/geo.go::Shape.Frobnicate")
+	noEdgeTo(t, st, "internal/app/run.go::run", "internal/mesh/mesh.go::Net.Frobnicate")
+}
+
+// TestGoMethodValueNamedLikeFieldNoEdge: register(c.Mode) passes the field Mode of
+// the typed Config. Config has no method Mode, so the value links nowhere, even
+// though Opt in the package declares one.
+func TestGoMethodValueNamedLikeFieldNoEdge(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/cfg/cfg.go": "package cfg\n\ntype Config struct {\n\tMode int\n}\n\n" +
+			"type Opt struct{}\n\nfunc (Opt) Mode() {}\n\nfunc register(f any) {}\n\n" +
+			"func load(c Config) {\n\tregister(c.Mode)\n}\n",
+	})
+	noEdgeTo(t, st, "internal/cfg/cfg.go::load", "internal/cfg/cfg.go::Opt.Mode")
+}
+
+// TestGoMethodValueArgumentReferences: a method value passed as a call argument
+// from a typed receiver is a references edge with its line. Store.Use is the
+// same-package method, and the typed receiver s makes it exact.
+func TestGoMethodValueArgumentReferences(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"a.go": "package a\n\ntype Server struct{}\n\nfunc (s *Server) handle() {}\n\n" +
+			"func reg(f func()) {}\n\nfunc (s *Server) Register() {\n\treg(s.handle)\n}\n",
+	})
+	r, ok := edgeTo(t, st, "a.go::Server.Register", "a.go::Server.handle", "references")
+	if !ok {
+		t.Fatalf("method value has no references edge; outgoing %v", targetsFrom(t, st, "a.go::Server.Register", "references"))
+	}
+	if line, _ := lineMeta(r); line != 10 {
+		t.Fatalf("reference line = %d, want 10", line)
+	}
+}
+
+// TestGoInterfaceFromUnchangedPackageDispatchesIncrementally: the interface lives
+// in a package the second run does not re-extract, so its method set comes from
+// the KV record the first run wrote. The caller's call still dispatches.
+func TestGoInterfaceFromUnchangedPackageDispatchesIncrementally(t *testing.T) {
+	st, dir := newCrossTree(t)
+	putFiles(t, dir, map[string]string{
+		"internal/store/store.go": "package store\n\ntype Store interface {\n\tReplace(x int)\n}\n",
+		"internal/impl/a.go":      "package impl\n\ntype A struct{}\n\nfunc (A) Replace(x int) {}\n",
+		"internal/idx/use.go":     "package idx\n\nimport \"" + modPath + "/internal/store\"\n\nfunc use(s store.Store) {\n\ts.Replace(1)\n}\n",
+	})
+	indexTree(t, st, dir)
+
+	putFiles(t, dir, map[string]string{"internal/idx/use.go": "package idx\n\nimport \"" + modPath + "/internal/store\"\n\n// use replaces.\nfunc use(s store.Store) {\n\ts.Replace(2)\n}\n"})
+	indexTree(t, st, dir)
+	r, ok := edgeTo(t, st, "internal/idx/use.go::use", "internal/impl/a.go::A.Replace", "calls")
+	if !ok {
+		t.Fatalf("interface from an unchanged package lost its dispatch edge; outgoing %v", targetsFrom(t, st, "internal/idx/use.go::use", "calls"))
+	}
+	if got, _ := r.Metadata["resolution"].(string); got != "interface-dispatch" {
+		t.Fatalf("resolution = %q, want interface-dispatch", got)
 	}
 }

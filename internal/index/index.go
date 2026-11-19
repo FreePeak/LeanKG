@@ -279,9 +279,12 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // edges) changes every Go edge set, so stores re-extract once; v9 (cross-package
 // Go edges: qualified alias.Name calls, method seeds by name and interface
 // dispatch, uncalled method values as references) adds edges that no v8 store
-// has, so stores re-extract once.
+// has, so stores re-extract once; v10 (receiver-typed Go method resolution: a
+// method seed resolves through the receiver's static type, unique-name only for
+// unknown receivers, field reads and stdlib receivers make no edge) replaces
+// v9's name-only edges, so stores re-extract once.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "9"
+const extractorVersion = "10"
 
 const extractorKVKey = "extractor_version"
 
