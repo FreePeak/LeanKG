@@ -64,7 +64,8 @@ assert_contains "sqlite embed reports 1 element" '"Embedded":1' "$out"
 
 echo "== end-to-end: postgres =="
 out=$(cd "$SMOKE/proj" && LEANKG_DB_ENGINE=postgres LEANKG_PG_URL="$PG_URL" "$SMOKE/leankg" index . 2>&1)
-assert_contains "pg index ran" "elements=1" "$out"
+# One function plus the package element of the fixture directory (index v13).
+assert_contains "pg index ran" "elements=2" "$out"
 
 # Capture the schema THIS RUN created, immediately after the index that made
 # it. The previous code picked `tail -1` of every leankg_% schema AT THE END of

@@ -510,6 +510,9 @@ type countingStore struct {
 
 func (s *countingStore) UpsertElements(ctx context.Context, els []store.Element) error {
 	for _, e := range els {
+		if e.ElementType == packageElementType {
+			continue // a directory's package element, not a file's elements
+		}
 		s.upserted[e.FilePath]++
 	}
 	return s.Backend.UpsertElements(ctx, els)

@@ -167,7 +167,13 @@ func TestDeletedCodeIsNeverASemanticHit(t *testing.T) {
 		t.Fatal(err)
 	}
 	vecs, _ := e.st.VectorCount(context.Background(), p.Identity().Model)
-	if els := count(t, e); vecs != els {
+	// Go package elements carry no vector (embed.readElements skips them), so
+	// the vectors match every element but those.
+	byType, err := e.st.ElementsByType(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if els := count(t, e) - byType["package"]; vecs != els {
 		t.Fatalf("after re-index: %d vectors for %d elements (orphans left behind)", vecs, els)
 	}
 	out, err := e.Query(ctx, QueryRequest{Action: "semantic", Query: "RotateStagingCredentials", Limit: 50})

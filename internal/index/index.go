@@ -287,9 +287,11 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // record now carries) changes the same record, so stores re-extract once; v12
 // (unknown receivers link to nothing; constructor results of the run's packages
 // are in the KV record) changes the same record and the edges, so stores
-// re-extract once.
+// re-extract once; v13 (Go package elements, one per directory, with imports
+// edges between the package directories a Go file imports) adds elements and
+// edges that no v12 store has, so stores re-extract once.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "12"
+const extractorVersion = "13"
 
 const extractorKVKey = "extractor_version"
 
@@ -389,6 +391,12 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		return res, err
 	}
 	res.DeletedFiles += deleted
+	var goGone []string // the directory of every deleted Go file
+	for _, m := range missing {
+		if strings.HasSuffix(m, ".go") {
+			goGone = append(goGone, dirOf(m))
+		}
+	}
 
 	// Changed/new files. A git candidate is keyed by its blob ID: a stored record
 	// with the same key is skipped without reading anything. A walk candidate
@@ -471,6 +479,10 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 	changedDirs := make(map[string]bool, len(dirOrder))
 	for _, d := range dirOrder {
 		changedDirs[d] = true
+	}
+	pr, err := refreshPackages(ctx, st, cands, goGone, changedDirs, rd, &res)
+	if err != nil {
+		return res, err
 	}
 	cx, err := newCrossIndex(ctx, st, dirCands, changedDirs, rd)
 	if err != nil {
@@ -576,6 +588,19 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			}
 			rels := callEdges(fileRelationships(fe, names.forFile(cx, fe)))
 			if err := st.ReplaceFileRelationships(wctx, fe.rel, callEdgeTypes, rels); err != nil {
+				return res, err
+			}
+		}
+		// The package of a Go directory is written before its files, like the
+		// sibling edges: a cut run leaves the files' records stale, so the rerun
+		// redoes the whole directory and rewrites the package.
+		if pr.pkgs[d] {
+			fes := make([]fileElements, 0, len(pending)+len(siblings))
+			for _, p := range pending {
+				fes = append(fes, p.fe)
+			}
+			fes = append(fes, siblings...)
+			if err := writeGoPackage(ctx, st, pr, d, goImports(fes), &res); err != nil {
 				return res, err
 			}
 		}
