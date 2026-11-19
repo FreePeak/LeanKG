@@ -112,7 +112,7 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 		return nil, nil, nil, goDecls{}, false
 	}
 	imports = importPaths(f)
-	w := &seedWalker{fset: fset, imports: imports}
+	w := &seedWalker{fset: fset, imports: imports, lits: map[string]goIface{}}
 	decls = newGoDecls()
 	line := func(p token.Pos) int { return fset.Position(p).Line }
 	add := func(kind, name string, start, end token.Pos, owner string, refs []goSeed) {
@@ -158,7 +158,44 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 			}
 		}
 	}
+	maps.Copy(decls.ifaces, w.lits)
 	return defs, seeds, imports, decls, true
+}
+
+// ifaceLiteralPrefix starts the synthetic name of an inline interface literal.
+const ifaceLiteralPrefix = "interface{"
+
+// isIfaceLiteral reports whether a type name is the synthetic name of an inline
+// interface literal (see literalName), not a name the source declares.
+func isIfaceLiteral(name string) bool { return strings.HasPrefix(name, ifaceLiteralPrefix) }
+
+// literalName is the synthetic name of an inline interface literal: its method
+// set, sorted, with its embedded interfaces ("Path.Name", or "Name" in the
+// package). Two literals with the same method set share a name, which is right
+// because dispatch depends on the method set alone. The name holds no tab or
+// newline, so it can be a KV record field.
+func literalName(iface goIface) string {
+	parts := slices.Clone(iface.methods)
+	for _, e := range iface.embeds {
+		if e.Path == "" {
+			parts = append(parts, e.Name)
+		} else {
+			parts = append(parts, e.Path+"."+e.Name)
+		}
+	}
+	slices.Sort(parts)
+	return ifaceLiteralPrefix + strings.Join(parts, ";") + "}"
+}
+
+// ifaceOf reads an interface type's own methods and embedded interfaces.
+func (w *seedWalker) ifaceOf(it *ast.InterfaceType) goIface {
+	iface := goIface{methods: interfaceMethodNames(it)}
+	for _, f := range it.Methods.List {
+		if et, typed := w.typeOf(f.Type); typed && len(f.Names) == 0 {
+			iface.embeds = append(iface.embeds, et)
+		}
+	}
+	return iface
 }
 
 // typeDecl records what receiver typing reads from one type declaration. w.tparams
@@ -166,13 +203,7 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 func (w *seedWalker) typeDecl(decls *goDecls, ts *ast.TypeSpec) {
 	switch t := ts.Type.(type) {
 	case *ast.InterfaceType:
-		iface := goIface{methods: interfaceMethodNames(t)}
-		for _, f := range t.Methods.List {
-			if et, typed := w.typeOf(f.Type); typed && len(f.Names) == 0 {
-				iface.embeds = append(iface.embeds, et)
-			}
-		}
-		decls.ifaces[ts.Name.Name] = iface
+		decls.ifaces[ts.Name.Name] = w.ifaceOf(t)
 	case *ast.StructType:
 		s := goStruct{fields: map[string]typeRef{}}
 		for _, f := range t.Fields.List {
@@ -283,6 +314,7 @@ type seedWalker struct {
 	imports map[string]string  // import name -> import path
 	env     map[string]recvRef // names the declaration declares -> their receiver type (zero when unknown)
 	tparams map[string]bool    // type parameter names, which shadow package types
+	lits    map[string]goIface // inline interface literals read so far, by literalName
 	out     []goSeed
 }
 
@@ -473,10 +505,16 @@ func (w *seedWalker) resultTypes(ft *ast.FuncType) []typeRef {
 }
 
 // typeOf reads a type expression: a type name, a qualified type name whose
-// qualifier is an import of the file, or either behind pointers, parentheses and
-// type arguments. A type parameter is not a type name.
+// qualifier is an import of the file, an inline interface literal, or any of
+// these behind pointers, parentheses and type arguments. A type parameter is not
+// a type name.
 func (w *seedWalker) typeOf(e ast.Expr) (typeRef, bool) {
 	switch x := e.(type) {
+	case *ast.InterfaceType:
+		iface := w.ifaceOf(x)
+		name := literalName(iface)
+		w.lits[name] = iface
+		return typeRef{Name: name}, true
 	case *ast.StarExpr:
 		return w.typeOf(x.X)
 	case *ast.ParenExpr:
