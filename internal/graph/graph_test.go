@@ -339,6 +339,42 @@ func TestCallersOfFunctionIncludeValueUses(t *testing.T) {
 	}
 }
 
+// A method passed as a value from another file of its package (a method value
+// in registerTools, server.go) is a references edge with a use line. The
+// callers of the method seed must include it, and a signature mention of the
+// same method (references with no line) must stay out.
+func TestCallersOfMethodIncludeValueUseFromAnotherFile(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+	const (
+		seed     = "internal/mcp/authenticate.go::Server.handleAuthenticate"
+		register = "internal/mcp/server.go::Server.registerTools"
+		sig      = "internal/mcp/authenticate.go::Server.handleAuthenticateSchema"
+	)
+	if err := st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: seed, ElementType: "method", Name: "handleAuthenticate", FilePath: "internal/mcp/authenticate.go", LineStart: 45},
+		{QualifiedName: register, ElementType: "method", Name: "registerTools", FilePath: "internal/mcp/server.go", LineStart: 380},
+		{QualifiedName: sig, ElementType: "method", Name: "handleAuthenticateSchema", FilePath: "internal/mcp/authenticate.go", LineStart: 60},
+	}); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: register, Target: seed, RelType: "references", Confidence: 0.4, Metadata: map[string]any{"line": float64(463), "resolution": "method-by-name"}},
+		{Source: sig, Target: seed, RelType: "references", Confidence: 0.5},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+
+	sites, err := CallSites(ctx, st, []string{seed}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Site{{QN: register, File: "internal/mcp/server.go", Line: 463, Confidence: 0.4, RelType: "references"}}
+	if !reflect.DeepEqual(sites, want) {
+		t.Fatalf("Callers(handleAuthenticate) sites = %+v, want %+v", sites, want)
+	}
+}
+
 // A type's own methods mentioning the type are not external users: references
 // from a method whose receiver is the type are dropped, while references from
 // another type's method, from an interface (a type element) and from a
