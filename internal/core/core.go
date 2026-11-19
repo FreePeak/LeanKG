@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -661,7 +662,9 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	if werr != nil {
 		return nil, werr
 	}
-	demote := demotesTests(req.Action) && !mentionsTests(req.Query)
+	demoteTest := demotesTests(req.Action) && !mentionsTests(req.Query)
+	demoteDoc := demotesTests(req.Action) && !mentionsDocs(req.Query)
+	demote := demoteTest || demoteDoc
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10
@@ -686,7 +689,7 @@ func (e *Engine) Query(ctx context.Context, req QueryRequest) (map[string]any, e
 	}
 	if demote && out != nil {
 		if hits := hitsOf(out); len(hits) > 0 {
-			out["hits"] = demoteTestHits(hits, limit)
+			out["hits"] = demoteTestHits(hits, limit, demoteTest, demoteDoc)
 		}
 		out["limit"] = limit
 	}
@@ -843,8 +846,7 @@ func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[st
 // over the first stamped collection. Provider failure or absent wiring
 // DEGRADES to L2 — never a hard error (issue #368 AC: query-time provider
 // failure degrades the ladder with retrieval.reason).
-func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, env envelopeArgs) (map[string]any, error) {
-	gitKeep := searchKeep(env.IncludeGit)
+func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map[string]any, pin bool, keep store.ElementFilter, env envelopeArgs) (map[string]any, error) {
 	degrade := func(reason string) (map[string]any, error) {
 		// A cancelled caller is not a provider failure: it ends the rung with
 		// ctx.Err() instead of an L2 answer that would be cached as a result.
@@ -856,7 +858,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		}
 		// pin=false so rungFuzzy does not overwrite the L3-degrade reason;
 		// withEmptyHint still attaches next-step guidance on a zero-hit result.
-		return withEmptyHint(e.rungFuzzy(ctx, q, limit, resp, false, gitKeep))
+		return withEmptyHint(e.rungFuzzy(ctx, q, limit, resp, false, keep))
 	}
 	if e.embedder == nil {
 		return degrade("no embedding provider wired; degraded from L3")
@@ -894,18 +896,9 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// The caller may name the population to rank (args.scope). Applied to BOTH
-	// arms through the store's scoped search, so the keyword arm cannot
-	// reintroduce the very rows the caller excluded; and reported in the
-	// answer, so a narrowed corpus is visible rather than inferred. An unknown
-	// scope is an error, never a silent full corpus.
-	keep, scopeName, serr := scopePredicate(env.Scope)
-	if serr != nil {
-		return nil, serr
-	}
-	// The history rule composes with the caller's scope, so every arm of the
-	// store's search sees the same population.
-	keep = keep.Merge(gitKeep)
+	// keep is the caller's population (scope and history rule, see
+	// searchPrelude). Both arms of the hybrid search receive it, so the keyword
+	// arm cannot reintroduce rows the caller excluded.
 	// Query validated this already; parsed again here because the rung is also
 	// reachable as a pinned action. An unset weight is the default.
 	fw, _ := parseFusionWeight(env.Weight)
@@ -936,7 +929,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 			out = append(out, m)
 		}
 		resp["hits"] = out
-		resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + fusionArms(fused), "scope": scopeName}
+		resp["retrieval"] = map[string]any{"rung": "L3", "reason": "reciprocal-rank fusion " + fusionArms(fused)}
 		best, seen := 0.0, false
 		for _, h := range fused {
 			if _, ok := h.Ranks[store.ArmVector]; ok && (!seen || h.Similarity > best) {
@@ -957,7 +950,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 		out = append(out, m)
 	}
 	resp["hits"] = out
-	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)", "scope": scopeName}
+	resp["retrieval"] = map[string]any{"rung": "L3", "reason": "vector similarity (cosine)"}
 	if len(hits) > 0 {
 		e.annotateConfidence(ctx, resp, *stamp, hits[0].Similarity, true)
 	}
@@ -1654,21 +1647,23 @@ func scopePredicate(scope string) (store.ElementFilter, string, error) {
 	case "", ScopeAll:
 		return store.ElementFilter{}, ScopeAll, nil
 	case ScopeCode:
-		return fixtureFilter.Merge(archivedFilter), ScopeCode, nil
+		return fixtureFilter.Merge(archivedFilter).Merge(markdownFilter), ScopeCode, nil
 	case ScopeProd:
 		return fixtureFilter, ScopeProd, nil
 	}
 	return store.ElementFilter{}, "", fmt.Errorf("unknown scope %q (valid: all, code, prod)", scope)
 }
 
-// fixtureFilter excludes test fixtures; archivedFilter excludes archived docs.
-// The scope names below compose them.
+// fixtureFilter excludes test fixtures; archivedFilter excludes archived docs;
+// markdownFilter excludes markdown documents (root CLAUDE.md and AGENTS.md
+// included, which a prefix rule would miss). The scope names below compose them.
 var (
 	fixtureFilter = store.ElementFilter{
 		ExcludePathContains: []string{"testdata", "/fixtures/"},
 		ExcludePathSuffixes: []string{"_test.go", "fixtures.js"},
 	}
 	archivedFilter = store.ElementFilter{ExcludePathPrefixes: []string{"docs/archive/"}}
+	markdownFilter = store.ElementFilter{ExcludePathSuffixes: []string{".md", ".mdx"}}
 )
 
 // searchKeep is the default search population for every rung. Git history rows
@@ -1681,6 +1676,19 @@ func searchKeep(includeGit bool) store.ElementFilter {
 		return store.ElementFilter{}
 	}
 	return store.ElementFilter{ExcludeQNPrefixes: []string{"git:"}}
+}
+
+// commitRefRe is a git commit reference: 7 to 40 hex characters.
+var commitRefRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
+// commitLookup reports whether q is a commit reference. If it is, the lookup
+// text is its 7-character prefix, the token githistory.commitElement puts in
+// the commit row's name; otherwise the lookup text is q itself.
+func commitLookup(q string) (string, bool) {
+	if !commitRefRe.MatchString(q) {
+		return q, false
+	}
+	return strings.ToLower(q[:7]), true
 }
 
 // admit keeps the items whose element f admits, at most limit of them. The zero

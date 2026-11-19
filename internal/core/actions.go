@@ -184,10 +184,11 @@ var memoryReadCommands = map[string]memoryReadHandler{
 
 // searchScope is the envelope every search, rung and graph action shares.
 type searchScope struct {
-	resp  map[string]any
-	limit int
-	els   int
-	keep  store.ElementFilter
+	resp   map[string]any
+	limit  int
+	els    int
+	keep   store.ElementFilter
+	lookup string // the text the keyword and semantic rungs search (a commit reference is rewritten)
 }
 
 // searchPrelude validates the query text and builds the shared envelope: the
@@ -208,10 +209,17 @@ func (e *Engine) searchPrelude(ctx context.Context, req QueryRequest, env envelo
 		return searchScope{}, err
 	}
 	resp["freshness"] = e.freshness(ctx, els)
-	// One population rule for every rung: git history rows are hidden unless
-	// args.include_git is set (see searchKeep). The semantic rung applies the
-	// same rule as a store-side predicate.
-	return searchScope{resp: resp, limit: limit, els: els, keep: searchKeep(env.IncludeGit)}, nil
+	// One population rule for every rung: the caller's scope, and git history
+	// rows hidden unless args.include_git is set (see searchKeep). A commit
+	// reference admits them for its own lookup. The rules are store-side
+	// predicates on the semantic rung too.
+	scope, _, err := scopePredicate(env.Scope)
+	if err != nil {
+		return searchScope{}, err
+	}
+	lookup, isCommit := commitLookup(req.Query)
+	keep := searchKeep(env.IncludeGit || isCommit).Merge(scope)
+	return searchScope{resp: resp, limit: limit, els: els, keep: keep, lookup: lookup}, nil
 }
 
 func (e *Engine) queryExact(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
@@ -227,7 +235,7 @@ func (e *Engine) queryFuzzy(ctx context.Context, req QueryRequest, env envelopeA
 	if err != nil {
 		return nil, err
 	}
-	return e.rungFuzzy(ctx, req.Query, s.limit, s.resp, true, s.keep)
+	return e.rungFuzzy(ctx, s.lookup, s.limit, s.resp, true, s.keep)
 }
 
 func (e *Engine) querySemantic(ctx context.Context, req QueryRequest, env envelopeArgs) (map[string]any, error) {
@@ -235,7 +243,7 @@ func (e *Engine) querySemantic(ctx context.Context, req QueryRequest, env envelo
 	if err != nil {
 		return nil, err
 	}
-	return e.rungSemantic(ctx, req.Query, s.limit, s.resp, true, env)
+	return e.rungSemantic(ctx, s.lookup, s.limit, s.resp, true, s.keep, env)
 }
 
 // queryLadder is the ladder router: L0 cold, then L1 exact, L2 fuzzy, L3
@@ -245,7 +253,7 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 	if err != nil {
 		return nil, err
 	}
-	resp, limit, els, keep := s.resp, s.limit, s.els, s.keep
+	resp, limit, els, keep, lookup := s.resp, s.limit, s.els, s.keep, s.lookup
 	// One check per rung boundary: a rung that misses falls through to the
 	// next one, so cancellation is checked here instead.
 	if err := ctx.Err(); err != nil {
@@ -278,12 +286,12 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 		}
 		if conf == 0 || conf >= ontology.MinConfidence {
 			delete(resp, "guidance")
-			return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, env))
+			return withEmptyHint(e.rungSemantic(ctx, lookup, limit, resp, true, keep, env))
 		}
 	}
 	// pin=true: the rung knows which keyword arm served the hits, so it owns
 	// the reason (an L2 miss is overwritten by L3 below, which always sets one).
-	if _, err := e.rungFuzzy(ctx, req.Query, limit, resp, true, keep); err != nil {
+	if _, err := e.rungFuzzy(ctx, lookup, limit, resp, true, keep); err != nil {
 		return nil, err
 	} else if len(hitsOf(resp)) > 0 {
 		return resp, nil
@@ -295,12 +303,12 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 		return nil, err
 	}
 	if conf > 0 && conf < ontology.MinConfidence {
-		return withEmptyHint(e.rungFuzzy(ctx, req.Query, limit, resp, true, keep))
+		return withEmptyHint(e.rungFuzzy(ctx, lookup, limit, resp, true, keep))
 	}
 	// The empty L2 pass above left "No keyword match…" guidance; L3 sets its
 	// own (an outage reads as an outage, not as a phrasing problem — RS-15).
 	delete(resp, "guidance")
-	return withEmptyHint(e.rungSemantic(ctx, req.Query, limit, resp, true, env))
+	return withEmptyHint(e.rungSemantic(ctx, lookup, limit, resp, true, keep, env))
 }
 
 // graphArgs are the args of the connection verbs: depth (impact and path) and
