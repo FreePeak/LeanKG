@@ -55,24 +55,73 @@ func callEdges(rels []store.Relationship) []store.Relationship {
 
 // nameTable maps the element names of one directory to their qualified names,
 // changed and unchanged files alike; call targets may live in any of them.
+// forFile adds the cross-package view of one Go file.
 type nameTable struct {
-	all     map[string][]string // every element: the word heuristic and grammar seeds
-	funcs   map[string][]string // non-method elements: a bare Go identifier's targets
-	methods map[string][]string // methods: x.Name(...) targets
+	all   map[string][]string // every element: the word heuristic and grammar seeds
+	funcs map[string][]string // non-method elements: a bare Go identifier's targets
+
+	cross   *crossIndex
+	imports map[string]string // import name -> directory of the imported package
+	file    string            // the file whose seeds are resolved
 }
 
 // nameTableOf indexes the qualified names of a directory's elements by name.
 func nameTableOf(els []indexedElem) nameTable {
-	nt := nameTable{all: map[string][]string{}, funcs: map[string][]string{}, methods: map[string][]string{}}
+	nt := nameTable{all: map[string][]string{}, funcs: map[string][]string{}}
 	for _, e := range els {
 		nt.all[e.name] = append(nt.all[e.name], e.qn)
-		if e.etype == "method" {
-			nt.methods[e.name] = append(nt.methods[e.name], e.qn)
-		} else {
+		if e.etype != "method" {
 			nt.funcs[e.name] = append(nt.funcs[e.name], e.qn)
 		}
 	}
 	return nt
+}
+
+// forFile returns the table with the cross-package view of fe, the Go file the
+// seeds come from.
+func (nt nameTable) forFile(cx *crossIndex, fe fileElements) nameTable {
+	out := nt
+	out.cross = cx
+	out.file = fe.rel
+	out.imports = cx.importDirs(fe.imports)
+	return out
+}
+
+// qualifiedEdges resolves a file's qualified seeds (alias.Name) to the exported
+// elements of the imported directory, at confidence 0.8 with the use line. The
+// caps of relationships() do not apply to them: each is an exact import use.
+func qualifiedEdges(quals []qualifiedSeed, names nameTable) []store.Relationship {
+	var out []store.Relationship
+	seen := map[[3]string]bool{}
+	for _, q := range quals {
+		dir, ok := names.imports[q.Alias]
+		if !ok {
+			continue
+		}
+		rel := "references"
+		if q.Call {
+			rel = "calls"
+		}
+		for _, tqn := range names.cross.qualifiedTargets(dir, q.Name) {
+			key := [3]string{q.Source, tqn, rel}
+			if q.Source == tqn || seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, store.Relationship{
+				Source: q.Source, Target: tqn, RelType: rel, Confidence: qualifiedConf,
+				Metadata: map[string]any{"line": q.Line},
+			})
+		}
+	}
+	return out
+}
+
+// fileRelationships is the whole relationship batch of one Go or other file:
+// relationships() for its elements plus the cross-package edges of its
+// qualified seeds. names must come from forFile for a Go file.
+func fileRelationships(fe fileElements, names nameTable) []store.Relationship {
+	return append(relationships(fe.elements, names), qualifiedEdges(fe.qualified, names)...)
 }
 
 // relationships computes the relationship batch for one file's elements:
@@ -80,10 +129,12 @@ func nameTableOf(els []indexedElem) nameTable {
 //   - Go elements from the AST tier (seeded): each name seed resolves in the
 //     element's directory. A bare identifier resolves to same-package non-method
 //     elements (calls for a call site, references otherwise; confidence 0.5). An
-//     x.Name(...) method seed resolves to same-package methods named Name
-//     (confidence 0.4, resolution "method-by-name"). Every such edge carries its
-//     first call-site line as metadata {"line": N}. Qualified seeds (alias.Name)
-//     are left for the cross-package resolver and make no edge here;
+//     x.Name method seed (called or taken as a value) resolves through the
+//     receiver's static type in crossIndex.methodTargets (confidence 0.4,
+//     "method-by-name"; 0.3 for "interface-dispatch"). Every
+//     such edge carries its first use line as
+//     metadata {"line": N}. Qualified seeds (alias.Name) make their edges in
+//     qualifiedEdges, outside these caps;
 //   - other elements: a whole-word identifier in the element's content matching
 //     another element's name (confidence 0.5, self-calls dropped, one row per
 //     (source, target) pair), plus the grammar-derived call seeds carried by
@@ -97,7 +148,8 @@ func nameTableOf(els []indexedElem) nameTable {
 // ~870 edges per file, dominated by noise):
 //   - targets shorter than minCallNameLen are ignored (noise class); the
 //     grammar-derived seeds and the AST seeds are exempt (they are exact, not guesses);
-//   - at most maxEdgesPerElement outgoing calls per element;
+//   - at most maxEdgesPerElement outgoing word-heuristic calls per element (AST
+//     seeds are exempt from it, see the seeded branch);
 //   - at most maxEdgesPerFile calls per file.
 const (
 	minCallNameLen     = 4
@@ -143,39 +195,40 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 				linked[tqn] = true
 			}
 		}
-		outgoing := 0
 		if e.seeded {
+			// AST seeds are exact use sites, so they are not counted against the
+			// per-element ceiling, which guards the word heuristic. Under that
+			// ceiling a large function lost its later call sites to the first
+			// forty name fan-outs (index.go:556 in indexDir, main.go:628 in serve).
 			for _, s := range e.seeds {
-				if outgoing >= maxEdgesPerElement {
-					break
-				}
 				if s.Kind == "qualified" {
-					continue // cross-package: resolved by the next slice
+					continue // cross-package: qualifiedEdges
 				}
 				rel := "references"
 				if s.Call && callRel == "calls" {
 					rel = "calls"
 				}
-				targets, conf, meta := names.funcs[s.Name], 0.5, map[string]any{"line": s.Line}
+				var targets []methodTarget
 				if s.Kind == "method" {
-					targets, conf = names.methods[s.Name], 0.4
-					meta["resolution"] = "method-by-name"
-				}
-				for _, tqn := range targets {
-					if outgoing >= maxEdgesPerElement {
-						break
+					targets = names.cross.methodTargets(names.file, s)
+				} else {
+					for _, q := range names.funcs[s.Name] {
+						targets = append(targets, methodTarget{qn: q, conf: 0.5})
 					}
-					if linked[tqn] {
+				}
+				for _, t := range targets {
+					if linked[t.qn] {
 						continue
 					}
-					before := len(out)
-					add(e.qn, tqn, rel, conf, meta)
-					if len(out) > before {
-						outgoing++
+					meta := map[string]any{"line": s.Line}
+					if t.resolution != "" {
+						meta["resolution"] = t.resolution
 					}
+					add(e.qn, t.qn, rel, t.conf, meta)
 				}
 			}
 		} else {
+			outgoing := 0
 			// Scan the code only: the leading doc block (docLen bytes) is prose,
 			// not a call site, and line comments in the body are not code.
 			code := e.content

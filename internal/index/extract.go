@@ -97,8 +97,10 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 	// Go: the standard-library parser is the definitions tier in every build
 	// (CGO-free). A file it rejects falls through to the regex tier below.
 	if lang == "go" {
-		if defs, seeds, imports, ok := goDefinitions(src); ok {
-			return finishDefinitions(ctx, rel, src, lines, lang, defs, imports, seeds)
+		if defs, seeds, imports, decls, ok := goDefinitions(src); ok {
+			fe, err := finishDefinitions(ctx, rel, src, lines, lang, defs, imports, seeds)
+			fe.decls = decls
+			return fe, err
 		}
 	} else {
 		// Tree-sitter tier (tstree build only): richer symbol extraction for
@@ -190,12 +192,14 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 type fileElements struct {
 	rel      string
 	elements []indexedElem
-	// imports maps each explicit Go import alias to its import path; nil for
-	// other languages and for Go files with no aliased import.
+	// imports maps each Go import name (the alias, or the default package name)
+	// to its import path; nil for other languages.
 	imports map[string]string
-	// qualified holds the Go selector calls and references `alias.Name` the
-	// per-file seeds carry for cross-package resolution (not resolved here).
+	// qualified holds the Go selector calls and references `alias.Name`, which
+	// qualifiedEdges resolves across packages.
 	qualified []qualifiedSeed
+	// decls are the Go type declarations receiver typing reads (goast.go).
+	decls goDecls
 }
 
 // qualifiedSeed is one `alias.Name` use inside a Go element: the alias is an
