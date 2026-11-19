@@ -184,7 +184,12 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 		for i := range ms {
 			ends[i] = len(lines)
 			if i+1 < len(ms) {
-				ends[i] = ms[i+1].line - 1
+				// Stop before the next declaration's doc block, so that block
+				// is not absorbed into this element.
+				ends[i] = docCommentStart(lines, ms[i+1].line, lang) - 1
+				for ends[i] > ms[i].line && strings.TrimSpace(lines[ends[i]-1]) == "" {
+					ends[i]--
+				}
 			}
 			if ends[i] < ms[i].line {
 				ends[i] = ms[i].line
@@ -692,34 +697,42 @@ func boundContent(els []indexedElem, lines []string) {
 		if e > len(lines) {
 			e = len(lines)
 		}
-		if doc := docCommentStart(lines, s); doc < s {
+		if doc := docCommentStart(lines, s, els[i].lang); doc < s {
+			// The doc block is the content's leading bytes; relationships()
+			// scans past them, so prose in it never becomes an edge.
+			if els[i].etype != "doc" {
+				els[i].docLen = len(strings.Join(lines[doc-1:s-1], "\n")) + 1
+			}
 			s = doc
 		}
 		els[i].content = strings.Join(lines[s-1:e], "\n")
-		if els[i].etype != "doc" {
-			if doc := leadingDoc(lines, s, els[i].lang); doc != "" {
-				els[i].content = doc + "\n" + els[i].content
-				els[i].docLen = len(doc) + 1
-			}
-		}
 		els[i].content = store.ClipUTF8(els[i].content, maxContent)
 	}
 }
 
 // docCommentStart walks back from line `start` over a CONTIGUOUS comment block
 // directly above it and returns that block's first line (start itself when there
-// is none). Contiguity is the rule: a blank line or a second declaration ends
+// is none). Attribute or annotation lines for lang (`@Override`, `#[inline]`)
+// may sit between the block and the declaration; they are passed over and belong
+// to the block. Contiguity is the rule: a blank line or a second declaration ends
 // the block, so a comment belonging to the PREVIOUS element is never stolen.
 //
 // Recognised forms are the ones the indexed languages use: `//`, `///`, `//!`,
 // `#`, and a `/* … */` block. Anything else stops the walk.
-func docCommentStart(lines []string, start int) int {
+func docCommentStart(lines []string, start int, lang string) int {
 	if start < 2 || start > len(lines) {
 		return start
 	}
+	style := commentStyles[lang]
 	// `start` is 1-based, so the line above it is index start-2 in the 0-based
 	// slice below.
 	i := start - 2
+	for i >= 0 && isAttrLine(strings.TrimSpace(lines[i]), style) {
+		i--
+	}
+	if i < 0 {
+		return start
+	}
 	// A /* … */ block that ends on the line above. Having SEEN the terminator we
 	// know a block is open, and everything up to its `/*` is that block's body —
 	// a block comment cannot contain code, so no per-line filtering is needed or
@@ -741,6 +754,9 @@ func docCommentStart(lines []string, start int) int {
 	j := i
 	for j >= 0 && isDocCommentLine(lines[j]) {
 		j--
+	}
+	if j == i {
+		return start
 	}
 	return j + 2
 }

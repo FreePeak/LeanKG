@@ -6,13 +6,10 @@ import "strings"
 // declaration line, so the comment block directly above it — the most
 // natural-language text in a codebase — belonged to no element: neither the
 // keyword rung nor the embeddings could see it (a paraphrase of a function's
-// own doc comment ranked it 225th of 698). boundContent now prepends that
-// block to the element's Content; line_start stays the declaration line, so
-// navigation and LSP enrichment are unaffected.
-
-// maxDocLines bounds the captured block (license headers above the first
-// declaration are cut off by the blank line that follows them anyway).
-const maxDocLines = 40
+// own doc comment ranked it 225th of 698). boundContent now starts the
+// element's Content at that block (docCommentStart is the one mechanism for
+// it); line_start stays the declaration line, so navigation and LSP
+// enrichment are unaffected.
 
 // commentStyle is how a language spells line comments.
 type commentStyle struct {
@@ -46,64 +43,14 @@ var commentStyles = map[string]commentStyle{
 	"erlang": {line: []string{"%"}}, "ocaml": {block: true},
 }
 
-// isDocLine reports whether a trimmed, non-empty line is part of a leading
-// comment/attribute block for style.
-func isDocLine(t string, style commentStyle) bool {
-	for _, p := range style.line {
-		if strings.HasPrefix(t, p) {
-			return true
-		}
-	}
-	if style.block && (strings.HasPrefix(t, "/*") || strings.HasPrefix(t, "*") || strings.HasSuffix(t, "*/")) {
-		return true
-	}
+// isAttrLine reports whether a trimmed line is an attribute, annotation or
+// decorator for style. Such a line may sit between a doc block and its
+// declaration without ending the block.
+func isAttrLine(t string, style commentStyle) bool {
 	for _, p := range style.attrs {
 		if strings.HasPrefix(t, p) {
 			return true
 		}
 	}
 	return false
-}
-
-// leadingDoc returns the contiguous comment/attribute block directly above
-// the 1-based line start, or "" when there is none. A blank line ends it.
-func leadingDoc(lines []string, start int, lang string) string {
-	style, ok := commentStyles[lang]
-	if !ok || start <= 1 || start-1 > len(lines) {
-		return ""
-	}
-	var block []string
-	for i := start - 2; i >= 0 && len(block) < maxDocLines; i-- {
-		t := strings.TrimSpace(lines[i])
-		if t == "" || !isDocLine(t, style) {
-			break
-		}
-		block = append(block, lines[i])
-	}
-	if len(block) == 0 {
-		return ""
-	}
-	// Only attributes, no comment: nothing worth prepending.
-	hasComment := false
-	for _, l := range block {
-		t := strings.TrimSpace(l)
-		attr := false
-		for _, p := range style.attrs {
-			if strings.HasPrefix(t, p) {
-				attr = true
-				break
-			}
-		}
-		if !attr {
-			hasComment = true
-			break
-		}
-	}
-	if !hasComment {
-		return ""
-	}
-	for i, j := 0, len(block)-1; i < j; i, j = i+1, j-1 {
-		block[i], block[j] = block[j], block[i]
-	}
-	return strings.Join(block, "\n")
 }
