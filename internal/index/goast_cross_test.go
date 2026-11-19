@@ -262,3 +262,25 @@ func TestGoCommentAndStringMentionsResolveNothing(t *testing.T) {
 		t.Fatalf("comment or string mention produced references edges: %s", got)
 	}
 }
+
+// TestGoAstSeedsAreNotCutByPerElementCeiling: a function with more call sites
+// than the word-heuristic ceiling (maxEdgesPerElement) still links its last
+// call. The AST seeds are exact use sites, so the ceiling does not apply to them.
+func TestGoAstSeedsAreNotCutByPerElementCeiling(t *testing.T) {
+	const calls = maxEdgesPerElement + 5
+	var b strings.Builder
+	b.WriteString("package a\n\ntype T struct{}\n\n")
+	for i := range calls {
+		fmt.Fprintf(&b, "func (T) M%d() {}\n\n", i)
+	}
+	b.WriteString("func Caller(t T) {\n")
+	for i := range calls {
+		fmt.Fprintf(&b, "\tt.M%d()\n", i)
+	}
+	b.WriteString("}\n")
+	st := indexedGraph(t, map[string]string{"a.go": b.String()})
+	last := fmt.Sprintf("a.go::T.M%d", calls-1)
+	if _, ok := edgeTo(t, st, "a.go::Caller", last, "calls"); !ok {
+		t.Fatalf("call %d of %d lost to the per-element ceiling", calls, calls)
+	}
+}

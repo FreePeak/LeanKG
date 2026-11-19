@@ -183,7 +183,8 @@ func fileRelationships(fe fileElements, names nameTable) []store.Relationship {
 // ~870 edges per file, dominated by noise):
 //   - targets shorter than minCallNameLen are ignored (noise class); the
 //     grammar-derived seeds and the AST seeds are exempt (they are exact, not guesses);
-//   - at most maxEdgesPerElement outgoing calls per element;
+//   - at most maxEdgesPerElement outgoing word-heuristic calls per element (AST
+//     seeds are exempt from it, see the seeded branch);
 //   - at most maxEdgesPerFile calls per file.
 const (
 	minCallNameLen     = 4
@@ -229,12 +230,12 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 				linked[tqn] = true
 			}
 		}
-		outgoing := 0
 		if e.seeded {
+			// AST seeds are exact use sites, so they are not counted against the
+			// per-element ceiling, which guards the word heuristic. Under that
+			// ceiling a large function lost its later call sites to the first
+			// forty name fan-outs (index.go:556 in indexDir, main.go:628 in serve).
 			for _, s := range e.seeds {
-				if outgoing >= maxEdgesPerElement {
-					break
-				}
 				if s.Kind == "qualified" {
 					continue // cross-package: qualifiedEdges
 				}
@@ -251,9 +252,6 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 					}
 				}
 				for _, t := range targets {
-					if outgoing >= maxEdgesPerElement {
-						break
-					}
 					if linked[t.qn] {
 						continue
 					}
@@ -261,14 +259,11 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 					if t.resolution != "" {
 						meta["resolution"] = t.resolution
 					}
-					before := len(out)
 					add(e.qn, t.qn, rel, t.conf, meta)
-					if len(out) > before {
-						outgoing++
-					}
 				}
 			}
 		} else {
+			outgoing := 0
 			// Scan the code only: the leading doc block (docLen bytes) is prose,
 			// not a call site, and line comments in the body are not code.
 			code := e.content
