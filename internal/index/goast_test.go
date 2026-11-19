@@ -201,3 +201,56 @@ func TestGoPackageLevelDeclarationsAreQueryable(t *testing.T) {
 		}
 	}
 }
+
+// seedSet renders the name seeds of the element named name as "label line call"
+// strings, in source order, so a test pins kind, name, line and call flag.
+func seedSet(t *testing.T, fe fileElements, name string) []string {
+	t.Helper()
+	for _, e := range fe.elements {
+		if e.name != name {
+			continue
+		}
+		var out []string
+		for _, s := range e.seeds {
+			label := s.Name
+			if s.Kind == "qualified" {
+				label = s.Alias + "." + s.Name
+			}
+			out = append(out, fmt.Sprintf("%s:%s %d %t", s.Kind, label, s.Line, s.Call))
+		}
+		return out
+	}
+	t.Fatalf("no element named %q", name)
+	return nil
+}
+
+// TestGoNameSeeds pins what the AST walk records per element: calls versus
+// references, the qualified/method/ident kinds, declared names and locals that
+// are never uses, and the struct-field and composite-literal keys that are.
+func TestGoNameSeeds(t *testing.T) {
+	src := "package a\n\n" +
+		"import (\n\tcfg \"x/config\"\n\t\"x/util/v2\"\n)\n\n" +
+		"type Widget struct{}\n\n" +
+		"func F(w *Widget) int {\n\treturn helper(w.Name)\n}\n\n" +
+		"func G(s Widget) {\n\tcfg.Load()\n\tutil.Do(s.Run(), cfg.Value)\n}\n\n" +
+		"func H(items []Widget) int {\n\ttotal := 0\n\tfor _, it := range items {\n\t\ttotal += it.N\n\t}\n\treturn total\n}\n\n" +
+		"type Config struct {\n\tName  string\n\tWidth Widget\n}\n\n" +
+		"var def = Config{Name: fallback()}\n"
+	fe := extractAs(t, "a.go", []byte(src), "go")
+	cases := []struct {
+		name string
+		want []string
+	}{
+		{"F", []string{"ident:Widget 10 false", "ident:int 10 false", "ident:helper 11 true"}},
+		{"G", []string{"ident:Widget 14 false", "qualified:cfg.Load 15 true", "qualified:util.Do 16 true", "method:Run 16 true", "qualified:cfg.Value 16 false"}},
+		{"H", []string{"ident:Widget 19 false", "ident:int 19 false"}},
+		{"Config", []string{"ident:string 28 false", "ident:Widget 29 false"}},
+		{"def", []string{"ident:Config 32 false", "ident:fallback 32 true"}},
+	}
+	for _, c := range cases {
+		got := seedSet(t, fe, c.name)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s seeds:\n got: %q\nwant: %q", c.name, got, c.want)
+		}
+	}
+}

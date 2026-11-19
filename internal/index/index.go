@@ -273,9 +273,12 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // Go element set and ranges, so stores re-extract once; v7 (same-named
 // elements of one file get distinct qualified names, Room query edges name the
 // entity class, Hilt provided types are trimmed): stores indexed before it lost
-// same-named elements on upsert and carry edges to table names and padded types.
+// same-named elements on upsert and carry edges to table names and padded types;
+// v8 (Go call and reference edges from the AST: whole-body name seeds with
+// call-site lines, no word heuristic for AST elements, locals and comments never
+// edges) changes every Go edge set, so stores re-extract once.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "7"
+const extractorVersion = "8"
 
 const extractorKVKey = "extractor_version"
 
@@ -538,12 +541,11 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		for _, fe := range siblings {
 			extracted[fe.rel] = fe.elements
 		}
-		names := map[string][]string{} // package-scoped call targets
+		var dirEls []indexedElem // package-scoped call targets, in candidate order
 		for _, c := range dirCands[d] {
-			for _, e := range extracted[c.rel] {
-				names[e.name] = append(names[e.name], e.qn)
-			}
+			dirEls = append(dirEls, extracted[c.rel]...)
 		}
+		names := nameTableOf(dirEls)
 		// Sibling edges go first: a cancel or crash after this point leaves the
 		// changed files' records stale, so the rerun redoes the whole directory.
 		for _, fe := range siblings {
