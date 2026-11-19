@@ -287,9 +287,11 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // record now carries) changes the same record, so stores re-extract once; v12
 // (unknown receivers link to nothing; constructor results of the run's packages
 // are in the KV record) changes the same record and the edges, so stores
-// re-extract once.
+// re-extract once; v14 (receivers typed by an inline interface literal dispatch
+// like a named local interface; v13 is reserved for another branch) adds edges
+// that no v12 store has, so stores re-extract once.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "12"
+const extractorVersion = "14"
 
 const extractorKVKey = "extractor_version"
 

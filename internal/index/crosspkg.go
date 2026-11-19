@@ -338,7 +338,9 @@ func (cx *crossIndex) typedTargets(file, dir string, t typeRef, name string) []m
 		return []methodTarget{{qn: qn, conf: methodConf, resolution: "method-by-name"}}
 	}
 	if slices.Contains(cx.ifaceMethods(tdir, t.Name, 0), name) {
-		if stdlibCommonMethods[name] && tdir != dir {
+		// An inline literal is local to its file but has no declared name, so it
+		// takes no same-package exemption for a stdlib-common method name.
+		if stdlibCommonMethods[name] && (tdir != dir || isIfaceLiteral(t.Name)) {
 			return nil
 		}
 		var out []methodTarget

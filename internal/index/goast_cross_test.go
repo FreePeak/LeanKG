@@ -584,3 +584,82 @@ func TestGoConstructorFromImportedPackageTypesReceiver(t *testing.T) {
 	}
 	noEdgeTo(t, st, src, other)
 }
+
+// anonUseTree is implementerTree(n) with internal/idx/use.go replaced by the
+// given source, so the caller's receiver is typed by an inline interface literal.
+func anonUseTree(t *testing.T, n int, use string) store.Backend {
+	t.Helper()
+	files := implementerTree(n)
+	files["internal/idx/use.go"] = use
+	return precisionTree(t, files)
+}
+
+// TestGoAnonymousInterfaceParamDispatchToTwoImplementers: r is a parameter typed
+// by the inline literal interface{ Replace(x int) }, not by a named interface. The
+// call on line 4 links to both implementers in unimported packages, at 0.3, the
+// same as a named local interface.
+func TestGoAnonymousInterfaceParamDispatchToTwoImplementers(t *testing.T) {
+	st := anonUseTree(t, 2, "package idx\n\nfunc use(r interface{ Replace(x int) }) {\n\tr.Replace(1)\n}\n")
+	for _, impl := range []string{"internal/impl0/a.go::A.Replace", "internal/impl1/a.go::A.Replace"} {
+		r, ok := edgeTo(t, st, "internal/idx/use.go::use", impl, "calls")
+		if !ok {
+			t.Fatalf("no interface-dispatch edge to %s; outgoing %v", impl, targetsFrom(t, st, "internal/idx/use.go::use", "calls"))
+		}
+		if r.Confidence != 0.3 {
+			t.Fatalf("%s confidence = %v, want 0.3", impl, r.Confidence)
+		}
+		if got, _ := r.Metadata["resolution"].(string); got != "interface-dispatch" {
+			t.Fatalf("%s resolution = %q, want interface-dispatch", impl, got)
+		}
+		if line, _ := lineMeta(r); line != 4 {
+			t.Fatalf("%s call-site line = %d, want 4", impl, line)
+		}
+	}
+}
+
+// TestGoAnonymousInterfaceCommonOnlyLinksNothing: interface{ Close() error } is
+// a literal whose whole method set is stdlib-common, so r.Close() links to no
+// implementer, even though the module has one Close method outside the caller's
+// package. A literal gets no same-package exemption for common names.
+func TestGoAnonymousInterfaceCommonOnlyLinksNothing(t *testing.T) {
+	st := precisionTree(t, map[string]string{
+		"internal/impl/a.go":  "package impl\n\ntype A struct{}\n\nfunc (A) Close() error { return nil }\n",
+		"internal/idx/use.go": "package idx\n\nfunc use(r interface{ Close() error }) {\n\t_ = r.Close()\n}\n",
+	})
+	if got := targetsFrom(t, st, "internal/idx/use.go::use", "calls"); len(got) != 0 {
+		t.Fatalf("stdlib-common Close through a literal linked: %v", got)
+	}
+}
+
+// TestGoAnonymousInterfaceIgnoresStdlibEmbed: the literal embeds io.Reader and
+// declares Replace. Only the module-visible spec name Replace counts, so the call
+// links to the implementer of Replace (which has no Read), and the stdlib embed
+// neither adds a method nor blocks the link.
+func TestGoAnonymousInterfaceIgnoresStdlibEmbed(t *testing.T) {
+	st := anonUseTree(t, 1, "package idx\n\nimport \"io\"\n\n"+
+		"func use(r interface {\n\tio.Reader\n\tReplace(x int)\n}) {\n\tr.Replace(1)\n}\n")
+	r, ok := edgeTo(t, st, "internal/idx/use.go::use", "internal/impl0/a.go::A.Replace", "calls")
+	if !ok {
+		t.Fatalf("Replace through a literal with a stdlib embed has no edge; outgoing %v", targetsFrom(t, st, "internal/idx/use.go::use", "calls"))
+	}
+	if r.Confidence != 0.3 {
+		t.Fatalf("confidence = %v, want 0.3", r.Confidence)
+	}
+}
+
+// TestGoAnonymousInterfaceInEveryDeclarationForm: the literal type is read from a
+// var, a struct field, and a constructor result as well as a parameter. Each call
+// of Replace on it links to the implementer, at 0.3.
+func TestGoAnonymousInterfaceInEveryDeclarationForm(t *testing.T) {
+	st := anonUseTree(t, 1, "package idx\n\n"+
+		"type holder struct {\n\tr interface{ Replace(x int) }\n}\n\n"+
+		"func makeR() interface{ Replace(x int) } { return nil }\n\n"+
+		"func viaVar() {\n\tvar r interface{ Replace(x int) }\n\tr.Replace(1)\n}\n\n"+
+		"func viaField(h holder) {\n\th.r.Replace(1)\n}\n\n"+
+		"func viaResult() {\n\tmakeR().Replace(1)\n}\n")
+	for _, fn := range []string{"viaVar", "viaField", "viaResult"} {
+		if _, ok := edgeTo(t, st, "internal/idx/use.go::"+fn, "internal/impl0/a.go::A.Replace", "calls"); !ok {
+			t.Fatalf("%s: literal-typed Replace has no dispatch edge; outgoing %v", fn, targetsFrom(t, st, "internal/idx/use.go::"+fn, "calls"))
+		}
+	}
+}
