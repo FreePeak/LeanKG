@@ -138,10 +138,11 @@ func TestRelationships(t *testing.T) {
 		"sample.ts": 1, // ping->double
 		"sample.md": 2, // Design Notes->API, API->Details (contains)
 	}
-	// Cross-file: sample.go greet's content says `hello %s`, matching
-	// sample.py::Greeter.hello -> one more calls edge.
-	if res.Relationships != 16 {
-		t.Fatalf("Relationships = %d, want 16 (%v)", res.Relationships, want)
+	// The Go AST reads identifiers, not text: greet's string literal
+	// "hello %s" no longer links sample.py::Greeter.hello (the v6 word
+	// heuristic made that edge), so the total is one lower than v6's 16.
+	if res.Relationships != 15 {
+		t.Fatalf("Relationships = %d, want 15 (%v)", res.Relationships, want)
 	}
 }
 
@@ -218,11 +219,7 @@ func TestRelationshipsPerFile(t *testing.T) {
 // goRels builds the this-run name map for one file's elements and computes
 // its relationship batch.
 func goRels(fe fileElements) []store.Relationship {
-	names := map[string][]string{}
-	for _, e := range fe.elements {
-		names[e.name] = append(names[e.name], e.qn)
-	}
-	return relationships(fe.elements, names)
+	return relationships(fe.elements, nameTableOf(fe.elements))
 }
 
 func TestSkipList(t *testing.T) {

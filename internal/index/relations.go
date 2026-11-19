@@ -53,24 +53,50 @@ func callEdges(rels []store.Relationship) []store.Relationship {
 	return out
 }
 
+// nameTable maps the element names of one directory to their qualified names,
+// changed and unchanged files alike; call targets may live in any of them.
+type nameTable struct {
+	all     map[string][]string // every element: the word heuristic and grammar seeds
+	funcs   map[string][]string // non-method elements: a bare Go identifier's targets
+	methods map[string][]string // methods: x.Name(...) targets
+}
+
+// nameTableOf indexes the qualified names of a directory's elements by name.
+func nameTableOf(els []indexedElem) nameTable {
+	nt := nameTable{all: map[string][]string{}, funcs: map[string][]string{}, methods: map[string][]string{}}
+	for _, e := range els {
+		nt.all[e.name] = append(nt.all[e.name], e.qn)
+		if e.etype == "method" {
+			nt.methods[e.name] = append(nt.methods[e.name], e.qn)
+		} else {
+			nt.funcs[e.name] = append(nt.funcs[e.name], e.qn)
+		}
+	}
+	return nt
+}
+
 // relationships computes the relationship batch for one file's elements:
 //   - contains: parent -> child, confidence 1.0;
-//   - calls: a whole-word identifier in the element's content matching another
-//     element's name (confidence 0.5, self-calls dropped, one row per
+//   - Go elements from the AST tier (seeded): each name seed resolves in the
+//     element's directory. A bare identifier resolves to same-package non-method
+//     elements (calls for a call site, references otherwise; confidence 0.5). An
+//     x.Name(...) method seed resolves to same-package methods named Name
+//     (confidence 0.4, resolution "method-by-name"). Every such edge carries its
+//     first call-site line as metadata {"line": N}. Qualified seeds (alias.Name)
+//     are left for the cross-package resolver and make no edge here;
+//   - other elements: a whole-word identifier in the element's content matching
+//     another element's name (confidence 0.5, self-calls dropped, one row per
 //     (source, target) pair), plus the grammar-derived call seeds carried by
 //     the element (confidence 0.7 — an exact call site rather than a word:
 //     an objc message selector such as "log:level:" is not a word and can
 //     only be resolved by the tree-sitter tier).
-//
-// nameTargets maps every element name of the directory to its qualified names,
-// changed and unchanged files alike; call targets may live in any of them.
 //
 // Heuristic guards (documented ceilings — the naive "every word vs every
 // name" match explodes on JS/TS corpora where thousands of short identifiers
 // (`id`, `get`, `map`, `use`) collide across files: a 12 GB polyrepo produced
 // ~870 edges per file, dominated by noise):
 //   - targets shorter than minCallNameLen are ignored (noise class); the
-//     grammar-derived seeds are exempt (they are exact, not guesses);
+//     grammar-derived seeds and the AST seeds are exempt (they are exact, not guesses);
 //   - at most maxEdgesPerElement outgoing calls per element;
 //   - at most maxEdgesPerFile calls per file.
 const (
@@ -79,24 +105,24 @@ const (
 	maxEdgesPerFile    = 500
 )
 
-func relationships(els []indexedElem, nameTargets map[string][]string) []store.Relationship {
+func relationships(els []indexedElem, names nameTable) []store.Relationship {
 	var out []store.Relationship
 	seen := map[[3]string]bool{}
-	add := func(src, dst, typ string, conf float64) {
+	add := func(src, dst, typ string, conf float64, meta map[string]any) {
 		key := [3]string{src, dst, typ}
 		if src == dst || seen[key] {
 			return
 		}
 		seen[key] = true
 		out = append(out, store.Relationship{
-			Source: src, Target: dst, RelType: typ, Confidence: conf,
+			Source: src, Target: dst, RelType: typ, Confidence: conf, Metadata: meta,
 		})
 	}
 
 	for i := range els {
 		e := els[i]
 		if e.parent >= 0 {
-			add(els[e.parent].qn, e.qn, "contains", 1.0)
+			add(els[e.parent].qn, e.qn, "contains", 1.0, nil)
 		}
 		if e.etype == "doc" {
 			continue
@@ -112,51 +138,84 @@ func relationships(els []indexedElem, nameTargets map[string][]string) []store.R
 		// do not consume the heuristic per-element edge budget below.
 		linked := map[string]bool{}
 		for _, sel := range e.calls {
-			for _, tqn := range nameTargets[sel] {
-				add(e.qn, tqn, callRel, 0.7)
+			for _, tqn := range names.all[sel] {
+				add(e.qn, tqn, callRel, 0.7, nil)
 				linked[tqn] = true
 			}
 		}
 		outgoing := 0
-		// Scan the code only: the leading doc block (docLen bytes) is prose,
-		// not a call site, and line comments in the body are not code.
-		code := e.content
-		if e.docLen > 0 && e.docLen <= len(code) {
-			code = code[e.docLen:]
-		}
-		code = stripLineComments(code, commentStyles[e.lang])
-		// A name used only in the declaration's signature — a parameter,
-		// return or receiver type — is a reference, not a call: `Engine.Query`
-		// does not call `Engine`. Names in the body (Python `Greeter()`, Go
-		// `Widget{}`) stay calls. impact follows both edge types.
-		sig, body := splitSignature(code)
-		inBody := map[string]bool{}
-		for _, w := range wordRe.FindAllString(body, -1) {
-			inBody[w] = true
-		}
-		for _, w := range wordRe.FindAllString(sig+"\n"+body, -1) {
-			if len(w) < minCallNameLen {
-				continue // short identifiers are noise, not call sites
-			}
-			rel := callRel
-			if !inBody[w] {
-				rel = "references"
-			}
-			for _, target := range nameTargets[w] {
+		if e.seeded {
+			for _, s := range e.seeds {
 				if outgoing >= maxEdgesPerElement {
 					break
 				}
-				if linked[target] {
-					continue // the grammar already linked this pair exactly
+				if s.Kind == "qualified" {
+					continue // cross-package: resolved by the next slice
 				}
-				before := len(out)
-				add(e.qn, target, rel, 0.5)
-				if len(out) > before {
-					outgoing++
+				rel := "references"
+				if s.Call && callRel == "calls" {
+					rel = "calls"
+				}
+				targets, conf, meta := names.funcs[s.Name], 0.5, map[string]any{"line": s.Line}
+				if s.Kind == "method" {
+					targets, conf = names.methods[s.Name], 0.4
+					meta["resolution"] = "method-by-name"
+				}
+				for _, tqn := range targets {
+					if outgoing >= maxEdgesPerElement {
+						break
+					}
+					if linked[tqn] {
+						continue
+					}
+					before := len(out)
+					add(e.qn, tqn, rel, conf, meta)
+					if len(out) > before {
+						outgoing++
+					}
 				}
 			}
-			if outgoing >= maxEdgesPerElement {
-				break
+		} else {
+			// Scan the code only: the leading doc block (docLen bytes) is prose,
+			// not a call site, and line comments in the body are not code.
+			code := e.content
+			if e.docLen > 0 && e.docLen <= len(code) {
+				code = code[e.docLen:]
+			}
+			code = stripLineComments(code, commentStyles[e.lang])
+			// A name used only in the declaration's signature — a parameter,
+			// return or receiver type — is a reference, not a call: `Engine.Query`
+			// does not call `Engine`. Names in the body (Python `Greeter()`, Go
+			// `Widget{}`) stay calls. impact follows both edge types.
+			sig, body := splitSignature(code)
+			inBody := map[string]bool{}
+			for _, w := range wordRe.FindAllString(body, -1) {
+				inBody[w] = true
+			}
+			for _, w := range wordRe.FindAllString(sig+"\n"+body, -1) {
+				if len(w) < minCallNameLen {
+					continue // short identifiers are noise, not call sites
+				}
+				rel := callRel
+				if !inBody[w] {
+					rel = "references"
+				}
+				for _, target := range names.all[w] {
+					if outgoing >= maxEdgesPerElement {
+						break
+					}
+					if linked[target] {
+						continue // the grammar already linked this pair exactly
+					}
+					before := len(out)
+					add(e.qn, target, rel, 0.5, nil)
+					if len(out) > before {
+						outgoing++
+					}
+				}
+				if outgoing >= maxEdgesPerElement {
+					break
+				}
 			}
 		}
 		if len(out) >= maxEdgesPerFile {

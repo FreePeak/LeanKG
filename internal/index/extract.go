@@ -34,6 +34,11 @@ type indexedElem struct {
 	qn      string
 	recv    string   // Go method receiver type
 	calls   []string // grammar-derived call targets (objc message sends)
+	// seeds are the Go AST's name uses (goast.go). seeded marks an element the
+	// AST tier produced: relationships() then resolves seeds and never scans
+	// the element's text with the word heuristic.
+	seeds  []goSeed
+	seeded bool
 }
 
 // Package-level compiled regexes (documented ceiling: regex extraction,
@@ -92,8 +97,8 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 	// Go: the standard-library parser is the definitions tier in every build
 	// (CGO-free). A file it rejects falls through to the regex tier below.
 	if lang == "go" {
-		if defs, imports, ok := goDefinitions(src); ok {
-			return finishDefinitions(ctx, rel, src, lines, lang, defs, imports)
+		if defs, seeds, imports, ok := goDefinitions(src); ok {
+			return finishDefinitions(ctx, rel, src, lines, lang, defs, imports, seeds)
 		}
 	} else {
 		// Tree-sitter tier (tstree build only): richer symbol extraction for
@@ -104,7 +109,7 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 			return fileElements{}, cerr
 		}
 		if err == nil && len(defs) > 0 {
-			return finishDefinitions(ctx, rel, src, lines, lang, defs, nil)
+			return finishDefinitions(ctx, rel, src, lines, lang, defs, nil, nil)
 		}
 	}
 
@@ -189,6 +194,20 @@ type fileElements struct {
 	// imports maps each explicit Go import alias to its import path; nil for
 	// other languages and for Go files with no aliased import.
 	imports map[string]string
+	// qualified holds the Go selector calls and references `alias.Name` the
+	// per-file seeds carry for cross-package resolution (not resolved here).
+	qualified []qualifiedSeed
+}
+
+// qualifiedSeed is one `alias.Name` use inside a Go element: the alias is an
+// import name, Name is the package member, Line the use line, Call whether it
+// is a call site.
+type qualifiedSeed struct {
+	Source string
+	Alias  string
+	Name   string
+	Line   int
+	Call   bool
 }
 
 // indexDefsToElements is the one place definitions become indexed elements:
@@ -225,10 +244,19 @@ func indexDefsToElements(rel, lang string, defs []indexDef) fileElements {
 
 // finishDefinitions is the shared tail of the structural tiers (go parser and
 // tree-sitter): definitions become elements, content is bounded from the
-// source, and grammar-derived call seeds are attached.
-func finishDefinitions(ctx context.Context, rel string, src []byte, lines []string, lang string, defs []indexDef, imports map[string]string) (fileElements, error) {
+// source, and call seeds are attached (the Go AST's name seeds when seeds is
+// non-nil, grammar-derived call sites otherwise).
+func finishDefinitions(ctx context.Context, rel string, src []byte, lines []string, lang string, defs []indexDef, imports map[string]string, seeds [][]goSeed) (fileElements, error) {
 	fe := indexDefsToElements(rel, lang, defs)
 	fe.imports = imports
+	if seeds != nil {
+		// seeds[i] belongs to defs[i]: the AST tier emits one entry per definition.
+		for i := range fe.elements {
+			fe.elements[i].seeds = seeds[i]
+			fe.elements[i].seeded = true
+		}
+		fe.qualified = qualifiedOf(fe.elements)
+	}
 	boundContent(fe.elements, lines)
 	// Grammar-derived call sites seed "calls" edges in relationships().
 	if err := tsAttributeCalls(ctx, src, lang, fe.elements); err != nil {

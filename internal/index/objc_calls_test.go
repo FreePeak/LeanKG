@@ -15,11 +15,7 @@ func TestRelationshipsGrammarCallSeeds(t *testing.T) {
 		{qn: "Greeter.m::Greeter.log:level:", etype: "method", name: "log:level:", start: 7, end: 7, parent: -1},
 		{qn: "Greeter.m::Greeter", etype: "type", name: "Greeter", start: 1, end: 8, parent: -1},
 	}
-	names := map[string][]string{}
-	for _, e := range els {
-		names[e.name] = append(names[e.name], e.qn)
-	}
-	rels := relationships(els, names)
+	rels := relationships(els, nameTableOf(els))
 	got := map[string]float64{}
 	for _, r := range rels {
 		if r.Source != "Greeter.m::Greeter.sayHello" || r.RelType != "calls" {
@@ -52,7 +48,7 @@ func TestRelationshipsCallSeedShortNames(t *testing.T) {
 			calls: []string{"init:"}},
 		{qn: "f.m::Box.init:", etype: "method", name: "init:", start: 5, end: 5, parent: -1},
 	}
-	names := map[string][]string{"init:": {"f.m::Box.init:"}}
+	names := nameTable{all: map[string][]string{"init:": {"f.m::Box.init:"}}}
 	rels := relationships(els, names)
 	var found bool
 	for _, r := range rels {
