@@ -831,7 +831,7 @@ func (e *Engine) rungFuzzy(ctx context.Context, q string, limit int, resp map[st
 	}
 	hits := make([]map[string]any, 0, len(matches))
 	for _, m := range matches {
-		h := shapeElement(m.Element)
+		h := shapeElement(m.Element, limit)
 		h["score"] = m.Score
 		hits = append(hits, h)
 	}
@@ -922,7 +922,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	if len(fused) > 0 {
 		out := make([]map[string]any, 0, len(fused))
 		for _, h := range fused {
-			m := shapeElement(h.Element)
+			m := shapeElement(h.Element, limit)
 			m["similarity"] = h.Similarity
 			m["score"] = h.Score // the fused RRF score, not a single-arm score
 			m["ranks"] = h.Ranks
@@ -945,7 +945,7 @@ func (e *Engine) rungSemantic(ctx context.Context, q string, limit int, resp map
 	}
 	out := make([]map[string]any, 0, len(hits))
 	for _, h := range hits {
-		m := shapeElement(h.Element)
+		m := shapeElement(h.Element, limit)
 		m["similarity"] = h.Similarity
 		out = append(out, m)
 	}
@@ -1012,10 +1012,18 @@ func (e *Engine) MemoryRead(ctx context.Context, command, path, query string, li
 
 // --- shaping ---
 
+// compactHitLimit is the window size above which a search hit drops language
+// and line_end. A wide window is a list to scan, so each hit carries only what
+// locates it; a narrow one is read closely and keeps the full shape.
+const compactHitLimit = 5
+
+// hitSnippetBytes caps the content snippet of a search hit.
+const hitSnippetBytes = 200
+
 func shapeElements(els []store.Element, limit int) []map[string]any {
 	out := make([]map[string]any, 0, len(els))
 	for _, el := range els {
-		out = append(out, shapeElement(el))
+		out = append(out, shapeElement(el, limit))
 		if len(out) >= limit {
 			break
 		}
@@ -1023,22 +1031,24 @@ func shapeElements(els []store.Element, limit int) []map[string]any {
 	return out
 }
 
-func shapeElement(el store.Element) map[string]any {
+func shapeElement(el store.Element, limit int) map[string]any {
 	m := map[string]any{
 		"qualified_name": el.QualifiedName,
 		"element_type":   el.ElementType,
 		"name":           el.Name,
 		"file_path":      el.FilePath,
 		"line_start":     el.LineStart,
-		"line_end":       el.LineEnd,
-		"language":       el.Language,
+	}
+	if limit <= compactHitLimit {
+		m["line_end"] = el.LineEnd
+		m["language"] = el.Language
 	}
 	if el.ParentQualified != "" {
 		m["parent_qualified"] = el.ParentQualified
 	}
 	content := el.Content
-	if len(content) > 400 {
-		content = content[:400] + "…"
+	if len(content) > hitSnippetBytes {
+		content = content[:hitSnippetBytes] + "…"
 	}
 	m["content"] = content
 	return m
