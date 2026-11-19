@@ -459,7 +459,9 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 	// The embeddings state is read BEFORE the payload is built: it is the
 	// one read whose failure used to be swallowed, so it is the one read
 	// that decides healthy.
-	emb, embErr := e.embeddingsState(ctx, els)
+	// A Go package element carries no vector (embed.readElements skips it), so
+	// coverage is taken over the embeddable elements.
+	emb, embErr := e.embeddingsState(ctx, els-byType["package"])
 	out := map[string]any{
 		"backend":          e.st.Engine(),
 		"healthy":          embErr == nil,
@@ -586,9 +588,10 @@ func (e *Engine) Status(ctx context.Context) (map[string]any, error) {
 //   - one model's vector count failed: the models that could be counted
 //     are still published, the failed one is named in the error.
 //
-// els is the element count Status already read (it fails the whole call when
-// that read fails), passed in so the coverage math does not query it twice.
-func (e *Engine) embeddingsState(ctx context.Context, els int) ([]map[string]any, error) {
+// embeddable is the count of elements that take a vector, which Status already
+// read (it fails the whole call when that read fails), so the coverage math does
+// not query it twice.
+func (e *Engine) embeddingsState(ctx context.Context, embeddable int) ([]map[string]any, error) {
 	stamps, err := e.st.Stamps(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read embedding stamps: %w", err)
@@ -606,8 +609,8 @@ func (e *Engine) embeddingsState(ctx context.Context, els int) ([]map[string]any
 		// RS-25: freshness tracks the index only, so a store with un-embedded
 		// elements still read "fresh"; coverage says how much L3 can see.
 		coverage := 0.0
-		if els > 0 {
-			coverage = float64(min(vecs, els)) / float64(els)
+		if embeddable > 0 {
+			coverage = float64(min(vecs, embeddable)) / float64(embeddable)
 		}
 		states = append(states, map[string]any{
 			"coverage":   coverage,

@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -379,5 +380,43 @@ func TestEnrichRecordsFirstFailureReason(t *testing.T) {
 	}
 	if !strings.Contains(res.Reason, "server stream closed") {
 		t.Errorf("top-level reason = %q, want the server failure named", res.Reason)
+	}
+}
+
+// TestEnrichSkipsPackageElements: a Go package element (one per directory, its
+// file_path is the directory) is no file. The pass must not ask the server for
+// its symbols, so the Go report counts the real file only and gives no failure.
+func TestEnrichSkipsPackageElements(t *testing.T) {
+	fakeServerDir(t, "rich")
+	dir, st := newTestStore(t)
+	writeFile(t, dir, "a.go", "package a\n\nfunc Handle() {}\n")
+	writeFile(t, dir, "leankg.yaml",
+		"lsp:\n  servers:\n    go:\n      command: fake-lsp\n      args: [\"--mode=fake\"]\n")
+	// The package's directory exists on disk, so the pass reaches its file_path.
+	if err := os.Mkdir(filepath.Join(dir, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertElements(context.Background(), []store.Element{
+		elem("a.go::Handle", "function", "Handle", "a.go", "go", ""),
+		elem("a", "package", "a", "a", "go", ""),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Enrich(context.Background(), st, dir, []string{"go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep *LangReport
+	for i := range res.Languages {
+		if res.Languages[i].Language == "go" {
+			rep = &res.Languages[i]
+		}
+	}
+	if rep == nil {
+		t.Fatalf("no go report in %+v", res.Languages)
+	}
+	if rep.Files != 1 || rep.Reason != "" {
+		t.Fatalf("go report = %+v, want Files=1 (a.go only) and no reason", rep)
 	}
 }

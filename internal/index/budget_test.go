@@ -265,7 +265,9 @@ func TestSignalDuringSpentBudgetCancelsWithinAFile(t *testing.T) {
 		wantFiles int
 	}{
 		{"cancel_mid_directory", 2, 0},
-		{"cancel_at_directory_boundary", 4, 4},
+		// The package element of "." is its first write (v13), so the fourth file
+		// is the fifth write.
+		{"cancel_at_directory_boundary", 5, 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

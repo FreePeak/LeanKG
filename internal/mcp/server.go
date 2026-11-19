@@ -167,7 +167,7 @@ const serverInstructionsTemplate = `LeanKG is a code knowledge graph (exactly 4 
 5. Use status for health, freshness, resolved project_dir, and embedding coverage — not as a substitute for query.
 6. Keep context across sessions: at session start call query action=memory with args.command=session_recall (or memories). At session end call import action=memory command=session_retain with session_id + turns[] (args.scope=per-project|global|per-project-tagged, args.cwd optional); durable lessons use import action=session command=lesson with session_id + text.
 7. Call sites: callers, callees and impact take a qualified name; use them instead of re-grepping for a function's uses.
-8. Who references a symbol: query action=context with its qualified name; a file or package path does not resolve as a seed.
+8. Who references a symbol: query action=context with its qualified name. context on a package path (the directory) lists who imports it and what it imports; on a qualified element name it lists its edges.
 9. A file's git history: query action=history with the file path (after import action=git).
 10. Literal text search (a string, a comment, a config key): rg is fine; the index holds symbols, not every string.`
 

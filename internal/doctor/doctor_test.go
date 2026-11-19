@@ -552,3 +552,54 @@ func TestFileCoverageRealSqlite(t *testing.T) {
 		t.Fatalf("after bookkeeping caught up = %s (%s), want PASS", f.Status, f.Detail)
 	}
 }
+
+// TestPackageElementsAreNotFiles: a Go package element's file_path is its
+// directory and it has no code_files row and no vector. The file-coverage and
+// embedding-coverage probes must leave it out, so the checks read the real files
+// and the embeddable elements only.
+func TestPackageElementsAreNotFiles(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	st, err := store.OpenBackend(ctx, store.OpenOptions{DBPath: filepath.Join(dir, ".leankg", "leankg.db"), Mode: store.RW})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "a/a.go::A", ElementType: "function", Name: "A", FilePath: "a/a.go", Language: "go"},
+		{QualifiedName: "a", ElementType: "package", Name: "a", FilePath: "a", Language: "go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertFiles(ctx, []store.FileRecord{{Path: "a/a.go", Size: 10, MtimeNS: 1, ContentHash: "h"}}); err != nil {
+		t.Fatal(err)
+	}
+	pb, err := openProbes(ctx, dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := pb.(interface{ Close() error }); ok {
+		defer c.Close()
+	}
+
+	files, err := pb.IndexedFiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(files, ",") != "a/a.go" {
+		t.Fatalf("IndexedFiles = %v, want only the real file", files)
+	}
+	qns, err := pb.QualifiedNames(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(qns, ",") != "a/a.go::A" {
+		t.Fatalf("QualifiedNames = %v, want only the embeddable element", qns)
+	}
+	if f := checkFileCoverage(ctx, pb, Env{}); f.Status != StatusPass {
+		t.Fatalf("file-coverage = %s (%s), want PASS", f.Status, f.Detail)
+	}
+}

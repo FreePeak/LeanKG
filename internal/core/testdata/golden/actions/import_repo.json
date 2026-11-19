@@ -1,15 +1,16 @@
 {
   "indexed": {
-    "elements": 2,
+    "elements": 3,
     "files": 2,
     "relationships": 1,
     "skipped": 0
   },
   "status": {
     "backend": "sqlite",
-    "elements": 2,
+    "elements": 3,
     "elements_by_type": {
-      "function": 2
+      "function": 2,
+      "package": 1
     },
     "embeddings": [],
     "files": 2,

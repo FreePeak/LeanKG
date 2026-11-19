@@ -104,7 +104,7 @@ func TestServerAdvertisesAgentProtocol(t *testing.T) {
 		"context",
 		"history",
 		"rg is fine",
-		"does not resolve as a seed",
+		"lists who imports it",
 	} {
 		if !strings.Contains(lower, strings.ToLower(want)) {
 			t.Fatalf("initialize instructions missing %q: %s", want, initialize.Instructions)
