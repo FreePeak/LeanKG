@@ -267,9 +267,12 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // cross-file edges on incremental runs, and the bump re-extracts them once;
 // v5 (doc-comment boundaries, type/class references only, line comments not
 // scanned): stores indexed before it carry calls edges from prose mentions and
-// absorbed doc blocks, and the bump re-extracts them once.
+// absorbed doc blocks, and the bump re-extracts them once; v6 (same-named
+// elements of one file get distinct qualified names, Room query edges name the
+// entity class, Hilt provided types are trimmed): stores indexed before it lost
+// same-named elements on upsert and carry edges to table names and padded types.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "5"
+const extractorVersion = "6"
 
 const extractorKVKey = "extractor_version"
 
@@ -577,7 +580,7 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 				res.Elements += len(p.fe.elements)
 				res.Relationships += len(rels)
 				if f.lang == "kotlin" {
-					if err := indexKotlinExtras(wctx, st, f.rel, p.src, &res); err != nil {
+					if err := indexKotlinExtras(wctx, st, p.fe, p.src, &res); err != nil {
 						return err
 					}
 				}
@@ -597,12 +600,19 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			}
 		}
 	}
-	// Vectors are keyed by qualified name and DeleteByFile does not own them,
-	// so every deleted file or removed symbol left a vector behind (RS-05).
-	// Sweep once per run that changed anything, instead of cascading inside
-	// DeleteByFile, which would also discard the vectors of a changed file's
-	// UNCHANGED symbols and force them to re-embed.
+	// Two sweeps, once per run that changed anything, instead of cascading
+	// inside DeleteByFile (which owns only a file's OUTGOING edges):
+	//   - edges: an edge INTO a deleted file, and an edge to a target no
+	//     extractor made an element for, outlive the run that stopped them being
+	//     valid, so the stored counts would drift from a fresh index;
+	//   - vectors: keyed by qualified name and not owned by DeleteByFile, so every
+	//     deleted file or removed symbol left a vector behind (RS-05). A
+	//     per-file cascade would also discard the vectors of a changed file's
+	//     UNCHANGED symbols and force them to re-embed.
 	if res.DeletedFiles > 0 || res.Files > 0 {
+		if _, err := st.DeleteOrphanRelationships(ctx); err != nil {
+			return res, fmt.Errorf("index: reclaim orphan relationships: %w", err)
+		}
 		if _, err := st.DeleteOrphanVectors(ctx); err != nil {
 			return res, fmt.Errorf("index: reclaim orphan vectors: %w", err)
 		}

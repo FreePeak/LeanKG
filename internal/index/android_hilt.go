@@ -94,7 +94,7 @@ func ExtractHilt(filePath string, src []byte) ([]store.Element, []store.Relation
 		}
 
 		relationships = append(relationships, store.Relationship{
-			Source: qualifiedName, Target: "__type__" + returnType,
+			Source: qualifiedName, Target: "__type__" + cleanType,
 			RelType: "hilt_provides", Confidence: 0.9,
 			Metadata: map[string]any{"provided_type": returnType},
 		})

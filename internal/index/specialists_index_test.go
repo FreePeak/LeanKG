@@ -104,7 +104,7 @@ func TestIndexKotlinExtrasPersists(t *testing.T) {
 	}
 
 	var res Result
-	if err := indexKotlinExtras(context.Background(), st, "ui/MainActivity.kt", src, &res); err != nil {
+	if err := indexKotlinExtras(context.Background(), st, fileElements{rel: "ui/MainActivity.kt"}, src, &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.Elements == 0 {
@@ -158,5 +158,23 @@ func TestIndexDirSpecialistDoesNotShiftNextRecord(t *testing.T) {
 	index(t, st, dir)
 	if res := index(t, st, dir); res.Files != 0 || res.Skipped != 2 {
 		t.Fatalf("unchanged rerun: %+v, want Files=0 Skipped=2", res)
+	}
+}
+
+// TestIndexKotlinExtrasCountsMatchStore: the Kotlin extras of MainActivity.kt
+// hold a duplicated worker element and a duplicated inflates_layout edge. The
+// per-file counts must equal the rows the store keeps.
+func TestIndexKotlinExtrasCountsMatchStore(t *testing.T) {
+	src := mustReadFixture(t, "MainActivity.kt")
+	st := newParityStore(t)
+	var res Result
+	if err := indexKotlinExtras(context.Background(), st, fileElements{rel: "ui/MainActivity.kt"}, src, &res); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	els, _ := st.ElementCount(ctx)
+	rels, _ := st.RelationshipCount(ctx)
+	if res.Elements != els || res.Relationships != rels {
+		t.Fatalf("res = %d elements / %d relationships, store = %d / %d", res.Elements, res.Relationships, els, rels)
 	}
 }

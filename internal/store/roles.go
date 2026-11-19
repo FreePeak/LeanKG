@@ -167,10 +167,10 @@ type Maintainer interface {
 	// names the store's current collection (CurrentModelID).
 	PruneEmbedRuns(ctx context.Context, cutoff time.Time) (EmbedRunPrune, error)
 	// DeleteOrphanRelationships purges edges whose source or target element
-	// no longer exists (leankg gc; the repair `doctor --deep` names for the
-	// documented reconcile ceiling — edges into a deleted file survive until
-	// their source file is re-indexed, which incremental index never
-	// revisits). Returns the number of edges removed.
+	// no longer exists. It runs after every index pass that changed a file
+	// (edges into a deleted file, and edges to a target no extractor made an
+	// element for), as well as in maintain and `leankg gc`. Returns the number
+	// of edges removed.
 	DeleteOrphanRelationships(ctx context.Context) (int, error)
 	// DeleteOrphanVectors purges embedding_vectors + embedding_state rows
 	// whose qualified_name no longer belongs to any element, across every
