@@ -8,6 +8,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 
 	"github.com/FreePeak/LeanKG/internal/store"
@@ -242,17 +243,31 @@ func reconstruct(parent map[string]string, to string) []string {
 	return path
 }
 
-// Site is one "calls" edge seen from a seed, located at the call itself.
-type Site struct {
-	QN         string  // element at the other end of the edge
-	File       string  // file of the element that makes the call
-	Line       int     // call-site line
-	Confidence float64 // edge confidence
+// Relationship types a site query can read. A use of a non-callable element is
+// a references edge, so callers of such a seed read both (see siteRelTypes).
+const (
+	relCalls      = "calls"
+	relReferences = "references"
+)
+
+// nonCallable are the element types no call can target (the index's type,
+// class, enum, constant and variable kinds). A use of one is a reference.
+var nonCallable = map[string]bool{
+	"type": true, "class": true, "enum": true, "constant": true, "variable": true,
 }
 
-// callEdges returns the "calls" edges touching qn: incoming ones (callers) when
-// incoming is true, outgoing ones (callees) otherwise.
-func callEdges(ctx context.Context, st graphStore, qn string, incoming bool) ([]store.Relationship, error) {
+// Site is one edge seen from a seed, located at the use itself.
+type Site struct {
+	QN         string  // element at the other end of the edge
+	File       string  // file of the element that makes the use
+	Line       int     // use-site line
+	Confidence float64 // edge confidence
+	RelType    string  // relationship the edge was read through
+}
+
+// callEdges returns the edges of relTypes touching qn: incoming ones (callers)
+// when incoming is true, outgoing ones (callees) otherwise.
+func callEdges(ctx context.Context, st graphStore, qn string, incoming bool, relTypes []string) ([]store.Relationship, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -266,42 +281,57 @@ func callEdges(ctx context.Context, st graphStore, qn string, incoming bool) ([]
 	if err != nil {
 		return nil, err
 	}
-	calls := rels[:0]
+	kept := rels[:0]
 	for _, r := range rels {
-		if r.RelType == "calls" {
-			calls = append(calls, r)
+		if slices.Contains(relTypes, r.RelType) {
+			kept = append(kept, r)
 		}
 	}
-	return calls, nil
+	return kept, nil
 }
 
-// CallSites returns one Site per "calls" edge touching any seed, deduplicated
-// and sorted by QN, file and line. incoming selects callers (QN is the caller)
-// or callees (QN is the callee). The call sits in the element that makes it:
-// the caller for incoming edges, the seed for outgoing ones. Its line is the
-// edge's metadata "line" when present, else that element's line_start.
-func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool) ([]Site, error) {
+// CallSites returns one Site per edge touching any seed, deduplicated and
+// sorted by QN, file, line and rel type. incoming selects callers (QN is the
+// caller) or callees (QN is the callee). The use sits in the element that makes
+// it: the caller for incoming edges, the seed for outgoing ones. Its line is
+// the edge's metadata "line" when present, else that element's line_start.
+//
+// relType is an explicit filter and wins when set. When empty, a callee walk
+// reads "calls", and a caller walk reads "calls" plus "references" for a
+// non-callable seed (see nonCallable), so a type's users are found.
+func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool, relType string) ([]Site, error) {
 	holders := map[string]store.Element{}
+	locateOnce := func(qn string) (store.Element, error) {
+		if el, ok := holders[qn]; ok {
+			return el, nil
+		}
+		el, err := locate(ctx, st, qn)
+		if err != nil {
+			return store.Element{}, err
+		}
+		holders[qn] = el
+		return el, nil
+	}
 	seen := map[Site]bool{}
 	var sites []Site
 	for _, seed := range seeds {
-		rels, err := callEdges(ctx, st, seed, incoming)
+		relTypes, err := siteRelTypes(seed, incoming, relType, locateOnce)
+		if err != nil {
+			return nil, err
+		}
+		rels, err := callEdges(ctx, st, seed, incoming, relTypes)
 		if err != nil {
 			return nil, err
 		}
 		for _, r := range rels {
-			site := Site{QN: r.Target, Confidence: r.Confidence}
+			site := Site{QN: r.Target, Confidence: r.Confidence, RelType: r.RelType}
 			holder := seed
 			if incoming {
 				site.QN, holder = r.Source, r.Source
 			}
-			el, ok := holders[holder]
-			if !ok {
-				el, err = locate(ctx, st, holder)
-				if err != nil {
-					return nil, err
-				}
-				holders[holder] = el
+			el, err := locateOnce(holder)
+			if err != nil {
+				return nil, err
 			}
 			site.File, site.Line = el.FilePath, el.LineStart
 			if line, ok := callLine(r.Metadata); ok {
@@ -321,9 +351,31 @@ func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool
 		if a.File != b.File {
 			return a.File < b.File
 		}
-		return a.Line < b.Line
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		return a.RelType < b.RelType
 	})
 	return sites, nil
+}
+
+// siteRelTypes is the relationship set one seed's site query reads. The
+// explicit filter wins; callees and callers of a callable seed read calls only.
+func siteRelTypes(seed string, incoming bool, filter string, locateOnce func(string) (store.Element, error)) ([]string, error) {
+	if filter != "" {
+		return []string{filter}, nil
+	}
+	if !incoming {
+		return []string{relCalls}, nil
+	}
+	el, err := locateOnce(seed)
+	if err != nil {
+		return nil, err
+	}
+	if nonCallable[el.ElementType] {
+		return []string{relCalls, relReferences}, nil
+	}
+	return []string{relCalls}, nil
 }
 
 // SiteEnds returns the deduplicated, sorted QN of each site.
@@ -334,6 +386,19 @@ func SiteEnds(sites []Site) []string {
 			out = append(out, s.QN)
 		}
 	}
+	return out
+}
+
+// SiteRelTypes returns the distinct relationship types the sites were read
+// through, sorted.
+func SiteRelTypes(sites []Site) []string {
+	var out []string
+	for _, s := range sites {
+		if !slices.Contains(out, s.RelType) {
+			out = append(out, s.RelType)
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 

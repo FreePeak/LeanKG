@@ -131,7 +131,7 @@ func TestShortestPath(t *testing.T) {
 
 func TestCallersCalleesFilterRelType(t *testing.T) {
 	st := newFixture(t)
-	callers, err := CallSites(context.Background(), st, []string{"b"}, true)
+	callers, err := CallSites(context.Background(), st, []string{"b"}, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestCallersCalleesFilterRelType(t *testing.T) {
 	if got, want := SiteEnds(callers), []string{"a"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Callers(b) = %v, want %v", got, want)
 	}
-	callees, err := CallSites(context.Background(), st, []string{"b"}, false)
+	callees, err := CallSites(context.Background(), st, []string{"b"}, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,5 +200,109 @@ func TestContextAndExplain(t *testing.T) {
 func TestDepthClamp(t *testing.T) {
 	if clampDepth(0) != 2 || clampDepth(-3) != 2 || clampDepth(99) != 5 {
 		t.Fatal("clamp broken")
+	}
+}
+
+// newSiteFixture: F references type T and constant K (signature and body
+// uses, so references edges); G calls H; R references H only. Types and
+// constants are non-callable seeds, functions are callable ones.
+func newSiteFixture(t *testing.T) store.Backend {
+	t.Helper()
+	ctx := context.Background()
+	s, err := store.OpenBackend(ctx, store.OpenOptions{DBPath: filepath.Join(t.TempDir(), ".leankg", "leankg.db"), Mode: store.RW})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := s.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "f.go::F", ElementType: "function", Name: "F", FilePath: "f.go", LineStart: 10},
+		{QualifiedName: "g.go::G", ElementType: "function", Name: "G", FilePath: "g.go", LineStart: 20},
+		{QualifiedName: "h.go::H", ElementType: "function", Name: "H", FilePath: "h.go", LineStart: 30},
+		{QualifiedName: "r.go::R", ElementType: "function", Name: "R", FilePath: "r.go", LineStart: 40},
+		{QualifiedName: "t.go::T", ElementType: "type", Name: "T", FilePath: "t.go", LineStart: 1},
+		{QualifiedName: "k.go::K", ElementType: "constant", Name: "K", FilePath: "k.go", LineStart: 2},
+	}); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := s.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "f.go::F", Target: "t.go::T", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(12)}},
+		{Source: "f.go::F", Target: "k.go::K", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(13)}},
+		{Source: "g.go::G", Target: "h.go::H", RelType: "calls", Confidence: 0.5, Metadata: map[string]any{"line": float64(22)}},
+		{Source: "r.go::R", Target: "h.go::H", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(41)}},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+	return s
+}
+
+// A type seed's callers include the functions that reference it; a callable
+// seed's callers stay call-only, so a reference-only user is not a caller.
+func TestCallersOfTypeIncludeReferenceUsers(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+
+	typeCallers, err := CallSites(ctx, st, []string{"t.go::T"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := SiteEnds(typeCallers), []string{"f.go::F"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(T) = %v, want %v", got, want)
+	}
+
+	funcCallers, err := CallSites(ctx, st, []string{"h.go::H"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := SiteEnds(funcCallers), []string{"g.go::G"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(H) = %v, want %v (references-only user R must not appear)", got, want)
+	}
+
+	// Callees stay call-only: F's references to T and K are not callees.
+	callees, err := CallSites(ctx, st, []string{"f.go::F"}, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := SiteEnds(callees); len(got) != 0 {
+		t.Fatalf("Callees(F) = %v, want none (references are not calls)", got)
+	}
+}
+
+// A constant's site sits in the referencing function's file, at the line the
+// reference edge carries in its metadata, and names its rel type.
+func TestCallersOfConstantSiteFromReferenceEdge(t *testing.T) {
+	st := newSiteFixture(t)
+	sites, err := CallSites(context.Background(), st, []string{"k.go::K"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Site{{QN: "f.go::F", File: "f.go", Line: 13, Confidence: 0.5, RelType: "references"}}
+	if !reflect.DeepEqual(sites, want) {
+		t.Fatalf("Callers(K) sites = %+v, want %+v", sites, want)
+	}
+}
+
+// An explicit rel_type wins over the per-seed default: calls on a type seed
+// reads no edge, and references on a callable seed reads only the reference.
+func TestCallersExplicitRelTypeWins(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+
+	none, err := CallSites(ctx, st, []string{"t.go::T"}, true, "calls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("Callers(T, rel=calls) = %+v, want none", none)
+	}
+
+	refs, err := CallSites(ctx, st, []string{"h.go::H"}, true, "references")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := SiteEnds(refs), []string{"r.go::R"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(H, rel=references) = %v, want %v", got, want)
 	}
 }
