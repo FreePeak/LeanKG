@@ -89,6 +89,29 @@ func TestIndexCountsMatchStoreForSameNamedElements(t *testing.T) {
 	mustFind(t, st, "dup.go::init (2)")
 }
 
+// TestGoASTElementsGetUniqueQualifiedNames: the go/parser tier emits a const
+// and a func with the same name, plus two init funcs, all in one file. Each
+// must keep its own row, so the summary equals the store count and every
+// spelling is findable. The parser accepts this file; the compiler would not.
+func TestGoASTElementsGetUniqueQualifiedNames(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"ast.go": "package ast\n\nconst Name = 1\n\nfunc Name() {}\n\nfunc init() {}\n\nfunc init() {}\n",
+	})
+	st := newParityStore(t)
+	res := index(t, st, dir)
+
+	stored, err := st.ElementCount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Elements != stored {
+		t.Fatalf("res.Elements = %d, store ElementCount = %d", res.Elements, stored)
+	}
+	for _, qn := range []string{"ast.go::Name", "ast.go::Name (2)", "ast.go::init", "ast.go::init (2)"} {
+		mustFind(t, st, qn)
+	}
+}
+
 // TestDeletedFileLeavesNoDanglingIncomingEdges: a.go calls into b.go. Removing
 // b.go must remove the edge that pointed INTO it, so the store matches a fresh
 // index of the files that remain.
