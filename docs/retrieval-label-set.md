@@ -86,7 +86,7 @@ checkable rather than arguable.
 | 11 | find one element by exact identifier | `internal/store/elements.go::Store.FindExact` | elements.go |
 | 12 | take the single-flight lock for embedding | `cmd/leankg-embed/main.go::lock` | main.go |
 | 13 | the one tool that opens a project store | `internal/projects/projects.go::Config.open` | projects.go |
-| 14 | resolve a short name to a qualified name for graph verbs | `internal/core/core.go::Engine.resolveGraphSeed` | core.go |
+| 14 | resolve a short name to a qualified name for graph verbs | `internal/core/core.go::Engine.resolveGraphSeeds` | core.go |
 | 16 | how a batch that fails validation is handled | `internal/embed/provider.go::validateBatch` | provider.go |
 | 17 | hash one element's content for the embed state | `internal/embed/provider.go::contentHashHex` | provider.go |
 | 18 | compose the model stamp for a provider | `internal/embed/run.go::StampOf` | run.go |

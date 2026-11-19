@@ -1121,25 +1121,48 @@ func looksLikeIdentifier(s string) bool {
 	return true
 }
 
-// resolveGraphSeed turns a short name or bare identifier into the qualified
-// name graph verbs need. Relationships are keyed by qualified_name only, so a
+// resolveGraphSeeds turns a short name or bare identifier into the qualified
+// names graph verbs walk. Relationships are keyed by qualified_name only, so a
 // bare "ServeProjectDirs" used to look like a leaf (empty callers/callees) even
-// when the element and its edges were indexed. FindExact already ranks by
-// shortest qualified_name, matching L1. Unknown seeds pass through unchanged so
-// graph.ErrUnknownNode still fires for true misses.
-func (e *Engine) resolveGraphSeed(ctx context.Context, seed string) (string, error) {
+// when the element and its edges were indexed. A qualified name resolves to
+// exactly itself. A bare name shared by callable elements (Store.X and
+// PGStore.X) resolves to all of them, shortest qualified name first, so one
+// verb call answers for every same-named function or method. Any other bare
+// name resolves to the shortest match, as FindExact ranks it. Unknown seeds
+// pass through unchanged so graph.ErrUnknownNode still fires for true misses.
+// The result is never empty; index 0 is the seed the single-seed verbs use.
+func (e *Engine) resolveGraphSeeds(ctx context.Context, seed string) ([]string, error) {
 	seed = strings.TrimSpace(seed)
 	if seed == "" {
-		return seed, nil
+		return []string{seed}, nil
 	}
 	els, err := e.st.FindExact(ctx, seed)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if len(els) == 0 {
-		return seed, nil
+	var callables []string
+	for _, el := range els {
+		if el.QualifiedName == seed {
+			return []string{el.QualifiedName}, nil
+		}
+		if strings.EqualFold(el.Name, seed) && (el.ElementType == "function" || el.ElementType == "method") {
+			callables = append(callables, el.QualifiedName)
+		}
 	}
-	return els[0].QualifiedName, nil
+	switch {
+	case len(callables) > 0:
+		sort.Slice(callables, func(i, j int) bool {
+			if len(callables[i]) != len(callables[j]) {
+				return len(callables[i]) < len(callables[j])
+			}
+			return callables[i] < callables[j]
+		})
+		return callables, nil
+	case len(els) > 0:
+		return []string{els[0].QualifiedName}, nil
+	default:
+		return []string{seed}, nil
+	}
 }
 
 // markBounds reports the effective depth of a traversal and, only when the node

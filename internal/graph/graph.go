@@ -242,52 +242,125 @@ func reconstruct(parent map[string]string, to string) []string {
 	return path
 }
 
-// Callers returns the deduplicated, sorted set of elements with a "calls"
-// edge targeting qn.
-func Callers(ctx context.Context, st graphStore, qn string) ([]string, error) {
+// Site is one "calls" edge seen from a seed, located at the call itself.
+type Site struct {
+	QN         string  // element at the other end of the edge
+	File       string  // file of the element that makes the call
+	Line       int     // call-site line
+	Confidence float64 // edge confidence
+}
+
+// callEdges returns the "calls" edges touching qn: incoming ones (callers) when
+// incoming is true, outgoing ones (callees) otherwise.
+func callEdges(ctx context.Context, st graphStore, qn string, incoming bool) ([]store.Relationship, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rels, err := st.Incoming(ctx, qn)
+	var rels []store.Relationship
+	var err error
+	if incoming {
+		rels, err = st.Incoming(ctx, qn)
+	} else {
+		rels, err = st.Outgoing(ctx, qn)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return collectEnds(rels, true), nil
-}
-
-// Callees returns the deduplicated, sorted set of elements that qn's "calls"
-// edges target.
-func Callees(ctx context.Context, st graphStore, qn string) ([]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	rels, err := st.Outgoing(ctx, qn)
-	if err != nil {
-		return nil, err
-	}
-	return collectEnds(rels, false), nil
-}
-
-// collectEnds extracts the deduplicated, sorted opposite endpoint of each
-// "calls" edge: sources when incoming is true, targets otherwise.
-func collectEnds(rels []store.Relationship, incoming bool) []string {
-	seen := map[string]bool{}
-	var out []string
+	calls := rels[:0]
 	for _, r := range rels {
-		if r.RelType != "calls" {
-			continue
-		}
-		end := r.Target
-		if incoming {
-			end = r.Source
-		}
-		if !seen[end] {
-			seen[end] = true
-			out = append(out, end)
+		if r.RelType == "calls" {
+			calls = append(calls, r)
 		}
 	}
-	sort.Strings(out)
+	return calls, nil
+}
+
+// CallSites returns one Site per "calls" edge touching any seed, deduplicated
+// and sorted by QN, file and line. incoming selects callers (QN is the caller)
+// or callees (QN is the callee). The call sits in the element that makes it:
+// the caller for incoming edges, the seed for outgoing ones. Its line is the
+// edge's metadata "line" when present, else that element's line_start.
+func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool) ([]Site, error) {
+	holders := map[string]store.Element{}
+	seen := map[Site]bool{}
+	var sites []Site
+	for _, seed := range seeds {
+		rels, err := callEdges(ctx, st, seed, incoming)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rels {
+			site := Site{QN: r.Target, Confidence: r.Confidence}
+			holder := seed
+			if incoming {
+				site.QN, holder = r.Source, r.Source
+			}
+			el, ok := holders[holder]
+			if !ok {
+				el, err = locate(ctx, st, holder)
+				if err != nil {
+					return nil, err
+				}
+				holders[holder] = el
+			}
+			site.File, site.Line = el.FilePath, el.LineStart
+			if line, ok := callLine(r.Metadata); ok {
+				site.Line = line
+			}
+			if !seen[site] {
+				seen[site] = true
+				sites = append(sites, site)
+			}
+		}
+	}
+	sort.Slice(sites, func(i, j int) bool {
+		a, b := sites[i], sites[j]
+		if a.QN != b.QN {
+			return a.QN < b.QN
+		}
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		return a.Line < b.Line
+	})
+	return sites, nil
+}
+
+// SiteEnds returns the deduplicated, sorted QN of each site.
+func SiteEnds(sites []Site) []string {
+	var out []string
+	for i, s := range sites {
+		if i == 0 || s.QN != sites[i-1].QN {
+			out = append(out, s.QN)
+		}
+	}
 	return out
+}
+
+// locate returns the element whose qualified name is qn, or the zero Element
+// when none is indexed (an edge can name an element the index never saw).
+func locate(ctx context.Context, st graphStore, qn string) (store.Element, error) {
+	els, err := st.FindExact(ctx, qn)
+	if err != nil {
+		return store.Element{}, err
+	}
+	for _, el := range els {
+		if el.QualifiedName == qn {
+			return el, nil
+		}
+	}
+	return store.Element{}, nil
+}
+
+// callLine reads the call-site line an edge carries in its metadata.
+func callLine(meta map[string]any) (int, bool) {
+	switch v := meta["line"].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	}
+	return 0, false
 }
 
 // Context returns a focused view of qn: the element itself plus its

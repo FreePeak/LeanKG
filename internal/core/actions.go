@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/docindex"
@@ -39,6 +40,9 @@ type memoryReadHandler func(e *Engine, ctx context.Context, path, query string, 
 
 // graphVerb answers one connection verb once the query's seed has resolved.
 type graphVerb func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seed string, resp map[string]any) (map[string]any, error)
+
+// graphFanVerb answers one connection verb over every seed a bare name resolved to.
+type graphFanVerb func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error)
 
 // deprecatedSubCommandNote is the response note for a caller that still sends
 // the old `cmd` key for a sub-command (CX-44: `command` is the canonical key).
@@ -99,8 +103,8 @@ func init() {
 		"semantic":        queryAction((*Engine).querySemantic),
 		"impact":          graphQuery((*Engine).graphImpact),
 		"path":            graphQuery((*Engine).graphPath),
-		"callers":         graphQuery((*Engine).graphCallers),
-		"callees":         graphQuery((*Engine).graphCallees),
+		"callers":         graphFanQuery((*Engine).graphCallers),
+		"callees":         graphFanQuery((*Engine).graphCallees),
 		"context":         graphQuery((*Engine).graphContext),
 		"explain":         graphQuery((*Engine).graphExplain),
 		"memory":          queryAction((*Engine).queryMemory),
@@ -315,19 +319,26 @@ type graphArgs struct {
 // graphQuery adapts a connection verb to the registry: the shared envelope,
 // then the seed resolution every verb needs, then the verb itself.
 func graphQuery(verb graphVerb) actionHandler[QueryRequest] {
+	return graphFanQuery(func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
+		return verb(e, ctx, req, a, seeds[0], resp)
+	})
+}
+
+// graphFanQuery is graphQuery for a verb that walks every resolved seed.
+func graphFanQuery(verb graphFanVerb) actionHandler[QueryRequest] {
 	return queryAction(func(e *Engine, ctx context.Context, req QueryRequest, a graphArgs) (map[string]any, error) {
 		s, err := e.searchPrelude(ctx, req, a.envelopeArgs)
 		if err != nil {
 			return nil, err
 		}
-		seed, err := e.resolveGraphSeed(ctx, req.Query)
+		seeds, err := e.resolveGraphSeeds(ctx, req.Query)
 		if err != nil {
 			return nil, err
 		}
-		if seed != req.Query {
-			s.resp["resolved_query"] = seed
+		if seeds[0] != req.Query {
+			s.resp["resolved_query"] = seeds[0]
 		}
-		return verb(e, ctx, req, a, seed, s.resp)
+		return verb(e, ctx, req, a, seeds, s.resp)
 	})
 }
 
@@ -386,10 +397,11 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 	if toRaw == "" {
 		return nil, fmt.Errorf("query path requires args.to (target qualified name)")
 	}
-	to, err := e.resolveGraphSeed(ctx, toRaw)
+	tos, err := e.resolveGraphSeeds(ctx, toRaw)
 	if err != nil {
 		return nil, err
 	}
+	to := tos[0]
 	if to != toRaw {
 		resp["resolved_to"] = to
 	}
@@ -436,34 +448,38 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
-	qns, err := graph.Callers(ctx, e.st, seed)
-	if errors.Is(err, graph.ErrUnknownNode) {
-		return graphUnresolved(resp, req, "seed", req.Query)
-	}
+func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, _ graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
+	return e.graphCallSites(ctx, req, seeds, true, "callers", resp)
+}
+
+func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, _ graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
+	return e.graphCallSites(ctx, req, seeds, false, "callees", resp)
+}
+
+// graphCallSites answers callers (incoming) or callees (outgoing) over every
+// seed: the names under key, the seeds walked, and one "<file>:<line> <qn>
+// <confidence>" line per call so no follow-up lookup is needed for locations.
+func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, seeds []string, incoming bool, key string, resp map[string]any) (map[string]any, error) {
+	sites, err := graph.CallSites(ctx, e.st, seeds, incoming)
 	if err != nil {
 		return nil, err
 	}
-	resp["callers"] = qns
-	if len(qns) == 0 {
-		resp["guidance"] = graphEmptyGuidance("callers", seed)
+	resp["seeds"] = seeds
+	resp[key] = graph.SiteEnds(sites)
+	resp["sites"] = siteLines(sites)
+	if len(sites) == 0 {
+		resp["guidance"] = graphEmptyGuidance(key, strings.Join(seeds, ", "))
 	}
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
-	qns, err := graph.Callees(ctx, e.st, seed)
-	if errors.Is(err, graph.ErrUnknownNode) {
-		return graphUnresolved(resp, req, "seed", req.Query)
+// siteLines renders each call site as "<file>:<line> <qn> <confidence>".
+func siteLines(sites []graph.Site) []string {
+	out := make([]string, 0, len(sites))
+	for _, s := range sites {
+		out = append(out, fmt.Sprintf("%s:%d %s %s", s.File, s.Line, s.QN, strconv.FormatFloat(s.Confidence, 'f', -1, 64)))
 	}
-	if err != nil {
-		return nil, err
-	}
-	resp["callees"] = qns
-	if len(qns) == 0 {
-		resp["guidance"] = graphEmptyGuidance("callees", seed)
-	}
-	return graphDone(resp, req)
+	return out
 }
 
 func (e *Engine) graphContext(ctx context.Context, req QueryRequest, _ graphArgs, seed string, resp map[string]any) (map[string]any, error) {
