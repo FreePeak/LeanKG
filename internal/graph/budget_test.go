@@ -173,7 +173,7 @@ func TestCallersHonourCancelledCtx(t *testing.T) {
 	st := chainGraph(t, 3)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := CallSites(ctx, st, []string{"n001"}, true); !errors.Is(err, context.Canceled) {
+	if _, err := CallSites(ctx, st, []string{"n001"}, true, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("CallSites with a cancelled ctx: err = %v, want context.Canceled", err)
 	}
 }

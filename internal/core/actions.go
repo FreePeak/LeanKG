@@ -317,11 +317,13 @@ func (e *Engine) queryLadder(ctx context.Context, req QueryRequest, env envelope
 
 // graphArgs are the args of the connection verbs: depth (impact and path) and
 // to (path). Both are optional; depth stays nil when the caller did not send it,
-// because each verb has its own default.
+// because each verb has its own default. rel_type is read by callers and
+// callees only (an explicit relationship filter for the sites).
 type graphArgs struct {
 	envelopeArgs
-	Depth *int   `json:"depth"`
-	To    string `json:"to"`
+	Depth   *int   `json:"depth"`
+	To      string `json:"to"`
+	RelType string `json:"rel_type"`
 }
 
 // graphQuery adapts a connection verb to the registry: the shared envelope,
@@ -456,25 +458,27 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 	return graphDone(resp, req)
 }
 
-func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, _ graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
-	return e.graphCallSites(ctx, req, seeds, true, "callers", resp)
+func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
+	return e.graphCallSites(ctx, req, seeds, true, a.RelType, "callers", resp)
 }
 
-func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, _ graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
-	return e.graphCallSites(ctx, req, seeds, false, "callees", resp)
+func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
+	return e.graphCallSites(ctx, req, seeds, false, a.RelType, "callees", resp)
 }
 
 // graphCallSites answers callers (incoming) or callees (outgoing) over every
-// seed: the names under key, the seeds walked, and one "<file>:<line> <qn>
-// <confidence>" line per call so no follow-up lookup is needed for locations.
-func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, seeds []string, incoming bool, key string, resp map[string]any) (map[string]any, error) {
-	sites, err := graph.CallSites(ctx, e.st, seeds, incoming)
+// seed: the names under key, the seeds walked, one "<file>:<line> <qn>
+// <confidence>" line per site so no follow-up lookup is needed for locations,
+// and rel_types, the relationship types those sites were read through.
+func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, seeds []string, incoming bool, relType, key string, resp map[string]any) (map[string]any, error) {
+	sites, err := graph.CallSites(ctx, e.st, seeds, incoming, relType)
 	if err != nil {
 		return nil, err
 	}
 	resp["seeds"] = seeds
 	resp[key] = graph.SiteEnds(sites)
 	resp["sites"] = siteLines(sites)
+	resp["rel_types"] = graph.SiteRelTypes(sites)
 	if len(sites) == 0 {
 		resp["guidance"] = graphEmptyGuidance(key, strings.Join(seeds, ", "))
 	}

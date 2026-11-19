@@ -6,6 +6,9 @@
   "freshness": "possibly_stale",
   "limit": 10,
   "query": "src/beta.go::Beta",
+  "rel_types": [
+    "calls"
+  ],
   "seeds": [
     "src/beta.go::Beta"
   ],
