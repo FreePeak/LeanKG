@@ -916,6 +916,48 @@
      "func": "newTunnelStore",
      "test": true,
      "line": 18
+    },
+    {
+     "file": "benchmark/ab/callers_score_test.go",
+     "func": "TestCallersScoreIntegration",
+     "test": true,
+     "line": 205
+    },
+    {
+     "file": "benchmark/ab/efficiency_bytes_test.go",
+     "func": "TestSearchAnswerBytes",
+     "test": true,
+     "line": 67
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "newSiteFixture",
+     "test": true,
+     "line": 213
+    },
+    {
+     "file": "internal/index/count_parity_test.go",
+     "func": "newParityStore",
+     "test": true,
+     "line": 18
+    },
+    {
+     "file": "internal/index/doccomment_test.go",
+     "func": "indexedGraph",
+     "test": true,
+     "line": 80
+    },
+    {
+     "file": "internal/index/goast_cross_test.go",
+     "func": "newCrossTree",
+     "test": true,
+     "line": 24
+    },
+    {
+     "file": "internal/index/goast_test.go",
+     "func": "TestGoPackageLevelDeclarationsAreQueryable",
+     "test": true,
+     "line": 159
     }
    ],
    "defects": [
@@ -1035,6 +1077,18 @@
      "func": "flushIndex",
      "test": false,
      "line": 348
+    },
+    {
+     "file": "benchmark/ab/callers_score_test.go",
+     "func": "TestCallersScoreIntegration",
+     "test": true,
+     "line": 213
+    },
+    {
+     "file": "benchmark/ab/efficiency_bytes_test.go",
+     "func": "TestSearchAnswerBytes",
+     "test": true,
+     "line": 79
     }
    ]
   },
@@ -1269,6 +1323,42 @@
      "func": "TestCallersCalleesFilterRelType",
      "test": true,
      "line": 134
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersExplicitRelTypeWins",
+     "test": true,
+     "line": 294
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfConstantSiteFromReferenceEdge",
+     "test": true,
+     "line": 278
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfFunctionIncludeValueUses",
+     "test": true,
+     "line": 323
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfMethodIncludeValueUseFromAnotherFile",
+     "test": true,
+     "line": 368
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfTypeExcludeOwnMethods",
+     "test": true,
+     "line": 400
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallersOfTypeIncludeReferenceUsers",
+     "test": true,
+     "line": 248
     }
    ]
   },
@@ -1374,6 +1464,12 @@
      "func": "TestAuditLedgerChain",
      "test": true,
      "line": 15
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 167
     }
    ]
   },
@@ -1399,6 +1495,12 @@
      "func": "TestSharedAuditReadersPinBehaviour",
      "test": true,
      "line": 175
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 167
     }
    ]
   },
@@ -1474,6 +1576,12 @@
      "func": "hybridSearch",
      "test": true,
      "line": 100
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 59
     }
    ]
   },
@@ -1717,6 +1825,12 @@
      "func": "TestTokenRoundTrip",
      "test": true,
      "line": 102
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 157
     }
    ]
   },
@@ -1742,6 +1856,12 @@
      "func": "Verify",
      "test": false,
      "line": 119
+    },
+    {
+     "file": "internal/store/ctx_conformance_test.go",
+     "func": "ctxConformanceRoles",
+     "test": true,
+     "line": 157
     }
    ]
   },
@@ -1810,6 +1930,18 @@
      "func": "Store.LastEmbedRunAny",
      "test": false,
      "line": 821
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "lastRunReader",
+     "test": true,
+     "line": 17
+    },
+    {
+     "file": "internal/store/roles.go",
+     "func": "EmbedRuns",
+     "test": false,
+     "line": 138
     }
    ]
   },
@@ -1835,6 +1967,12 @@
      "func": "PGStore.Space",
      "test": false,
      "line": 17
+    },
+    {
+     "file": "internal/store/roles.go",
+     "func": "Maintainer",
+     "test": false,
+     "line": 158
     }
    ]
   }
