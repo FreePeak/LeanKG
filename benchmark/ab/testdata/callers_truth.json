@@ -1387,6 +1387,18 @@
      "func": "TestPGAudit",
      "test": true,
      "line": 411
+    },
+    {
+     "file": "cmd/leankg/audit.go",
+     "func": "auditEntries",
+     "test": false,
+     "line": 174
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "TestSharedAuditReadersPinBehaviour",
+     "test": true,
+     "line": 175
     }
    ]
   },
@@ -1425,6 +1437,18 @@
      "func": "TestPGAudit",
      "test": true,
      "line": 422
+    },
+    {
+     "file": "cmd/leankg/audit.go",
+     "func": "cmdAuditVerify",
+     "test": false,
+     "line": 120
+    },
+    {
+     "file": "internal/store/engine_shared_test.go",
+     "func": "TestSharedAuditReadersPinBehaviour",
+     "test": true,
+     "line": 191
     }
    ]
   },
@@ -1494,6 +1518,24 @@
      "func": "TestPGKVAndInventory",
      "test": true,
      "line": 367
+    },
+    {
+     "file": "internal/maintain/reconcile.go",
+     "func": "healInventory",
+     "test": false,
+     "line": 177
+    },
+    {
+     "file": "internal/store/backend.go",
+     "func": "Freshness",
+     "test": false,
+     "line": 144
+    },
+    {
+     "file": "internal/maintain/reconcile_inventory_test.go",
+     "func": "TestReconcileRefreshesTheInventoryCounts",
+     "test": true,
+     "line": 102
     }
    ]
   },
@@ -1526,6 +1568,12 @@
      "func": "TestPGKVAndInventory",
      "test": true,
      "line": 376
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "RefreshInventory",
+     "test": false,
+     "line": 872
     }
    ]
   },
@@ -1570,6 +1618,24 @@
      "func": "TestPGAdminExists",
      "test": true,
      "line": 35
+    },
+    {
+     "file": "cmd/leankg/auth.go",
+     "func": "bootstrapAdmin",
+     "test": false,
+     "line": 154
+    },
+    {
+     "file": "internal/auth/admin_test.go",
+     "func": "TestCreateSiteAdminStoresOnlyAVerifier",
+     "test": true,
+     "line": 135
+    },
+    {
+     "file": "internal/auth/resolve.go",
+     "func": "registry.tokensConfigured",
+     "test": false,
+     "line": 180
     }
    ]
   },
@@ -1602,6 +1668,18 @@
      "func": "TestPGElementOps",
      "test": true,
      "line": 140
+    },
+    {
+     "file": "internal/core/core.go",
+     "func": "Engine.Status",
+     "test": false,
+     "line": 450
+    },
+    {
+     "file": "internal/store/vectors.go",
+     "func": "RefreshInventory",
+     "test": false,
+     "line": 853
     }
    ]
   },
@@ -1658,6 +1736,12 @@
      "func": "TestPGTokenRoundTrip",
      "test": true,
      "line": 28
+    },
+    {
+     "file": "internal/auth/tokens.go",
+     "func": "Verify",
+     "test": false,
+     "line": 119
     }
    ]
   },
