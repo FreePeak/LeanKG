@@ -204,8 +204,9 @@ func TestDepthClamp(t *testing.T) {
 }
 
 // newSiteFixture: F references type T and constant K (signature and body
-// uses, so references edges); G calls H; R references H only. Types and
-// constants are non-callable seeds, functions are callable ones.
+// uses, so references edges); G calls H; R references H only, from a signature
+// mention (a references edge with no use line). Types and constants are
+// non-callable seeds, functions are callable ones.
 func newSiteFixture(t *testing.T) store.Backend {
 	t.Helper()
 	ctx := context.Background()
@@ -231,7 +232,7 @@ func newSiteFixture(t *testing.T) store.Backend {
 		{Source: "f.go::F", Target: "t.go::T", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(12)}},
 		{Source: "f.go::F", Target: "k.go::K", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(13)}},
 		{Source: "g.go::G", Target: "h.go::H", RelType: "calls", Confidence: 0.5, Metadata: map[string]any{"line": float64(22)}},
-		{Source: "r.go::R", Target: "h.go::H", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(41)}},
+		{Source: "r.go::R", Target: "h.go::H", RelType: "references", Confidence: 0.5},
 	}); err != nil {
 		t.Fatalf("upsert relationships: %v", err)
 	}
@@ -304,5 +305,67 @@ func TestCallersExplicitRelTypeWins(t *testing.T) {
 	}
 	if got, want := SiteEnds(refs), []string{"r.go::R"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Callers(H, rel=references) = %v, want %v", got, want)
+	}
+}
+
+// A callable seed's callers include a function that uses it as a value (a
+// references edge with a use line, e.g. a method value passed as an argument),
+// and a references edge with no line (a signature mention) is still excluded.
+func TestCallersOfFunctionIncludeValueUses(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+	if err := st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "f.go::F", Target: "h.go::H", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(14)}},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+
+	sites, err := CallSites(ctx, st, []string{"h.go::H"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := SiteEnds(sites), []string{"f.go::F", "g.go::G"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(H) = %v, want %v (value use F and call G; signature mention R excluded)", got, want)
+	}
+	want := []Site{
+		{QN: "f.go::F", File: "f.go", Line: 14, Confidence: 0.5, RelType: "references"},
+		{QN: "g.go::G", File: "g.go", Line: 22, Confidence: 0.5, RelType: "calls"},
+	}
+	if !reflect.DeepEqual(sites, want) {
+		t.Fatalf("Callers(H) sites = %+v, want %+v", sites, want)
+	}
+	if got, want := SiteRelTypes(sites), []string{"calls", "references"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(H) rel_types = %v, want %v", got, want)
+	}
+}
+
+// A type's own methods mentioning the type are not external users: references
+// from a method whose receiver is the type are dropped, while references from
+// another type's method, from an interface (a type element) and from a
+// function are kept.
+func TestCallersOfTypeExcludeOwnMethods(t *testing.T) {
+	st := newSiteFixture(t)
+	ctx := context.Background()
+	if err := st.UpsertElements(ctx, []store.Element{
+		{QualifiedName: "t.go::T.Clone", ElementType: "method", Name: "Clone", FilePath: "t.go", LineStart: 5},
+		{QualifiedName: "u.go::U.Wrap", ElementType: "method", Name: "Wrap", FilePath: "u.go", LineStart: 7},
+		{QualifiedName: "i.go::I", ElementType: "type", Name: "I", FilePath: "i.go", LineStart: 3},
+	}); err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	if err := st.UpsertRelationships(ctx, []store.Relationship{
+		{Source: "t.go::T.Clone", Target: "t.go::T", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(6)}},
+		{Source: "u.go::U.Wrap", Target: "t.go::T", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(8)}},
+		{Source: "i.go::I", Target: "t.go::T", RelType: "references", Confidence: 0.5},
+	}); err != nil {
+		t.Fatalf("upsert relationships: %v", err)
+	}
+
+	sites, err := CallSites(ctx, st, []string{"t.go::T"}, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := SiteEnds(sites), []string{"f.go::F", "i.go::I", "u.go::U.Wrap"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Callers(T) = %v, want %v (T.Clone is the type's own method and must not appear)", got, want)
 	}
 }

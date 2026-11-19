@@ -10,6 +10,7 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/FreePeak/LeanKG/internal/store"
 )
@@ -244,7 +245,7 @@ func reconstruct(parent map[string]string, to string) []string {
 }
 
 // Relationship types a site query can read. A use of a non-callable element is
-// a references edge, so callers of such a seed read both (see siteRelTypes).
+// a references edge, so callers of such a seed read both (see siteEdges).
 const (
 	relCalls      = "calls"
 	relReferences = "references"
@@ -265,9 +266,12 @@ type Site struct {
 	RelType    string  // relationship the edge was read through
 }
 
-// callEdges returns the edges of relTypes touching qn: incoming ones (callers)
-// when incoming is true, outgoing ones (callees) otherwise.
-func callEdges(ctx context.Context, st graphStore, qn string, incoming bool, relTypes []string) ([]store.Relationship, error) {
+// edgeKeep reports whether one edge touching a seed belongs to its site query.
+type edgeKeep func(r store.Relationship) bool
+
+// callEdges returns the edges touching qn that keep accepts: incoming ones
+// (callers) when incoming is true, outgoing ones (callees) otherwise.
+func callEdges(ctx context.Context, st graphStore, qn string, incoming bool, keep edgeKeep) ([]store.Relationship, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -283,7 +287,7 @@ func callEdges(ctx context.Context, st graphStore, qn string, incoming bool, rel
 	}
 	kept := rels[:0]
 	for _, r := range rels {
-		if slices.Contains(relTypes, r.RelType) {
+		if keep(r) {
 			kept = append(kept, r)
 		}
 	}
@@ -297,8 +301,9 @@ func callEdges(ctx context.Context, st graphStore, qn string, incoming bool, rel
 // the edge's metadata "line" when present, else that element's line_start.
 //
 // relType is an explicit filter and wins when set. When empty, a callee walk
-// reads "calls", and a caller walk reads "calls" plus "references" for a
-// non-callable seed (see nonCallable), so a type's users are found.
+// reads "calls", and a caller walk reads "calls" plus "references" (see
+// siteEdges). A caller that is a method of the seed type itself is not an
+// external user and is dropped.
 func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool, relType string) ([]Site, error) {
 	holders := map[string]store.Element{}
 	locateOnce := func(qn string) (store.Element, error) {
@@ -315,11 +320,11 @@ func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool
 	seen := map[Site]bool{}
 	var sites []Site
 	for _, seed := range seeds {
-		relTypes, err := siteRelTypes(seed, incoming, relType, locateOnce)
+		keep, err := siteEdges(seed, incoming, relType, locateOnce)
 		if err != nil {
 			return nil, err
 		}
-		rels, err := callEdges(ctx, st, seed, incoming, relTypes)
+		rels, err := callEdges(ctx, st, seed, incoming, keep)
 		if err != nil {
 			return nil, err
 		}
@@ -332,6 +337,9 @@ func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool
 			el, err := locateOnce(holder)
 			if err != nil {
 				return nil, err
+			}
+			if incoming && el.ElementType == "method" && methodOwner(el) == seed {
+				continue
 			}
 			site.File, site.Line = el.FilePath, el.LineStart
 			if line, ok := callLine(r.Metadata); ok {
@@ -359,23 +367,45 @@ func CallSites(ctx context.Context, st graphStore, seeds []string, incoming bool
 	return sites, nil
 }
 
-// siteRelTypes is the relationship set one seed's site query reads. The
-// explicit filter wins; callees and callers of a callable seed read calls only.
-func siteRelTypes(seed string, incoming bool, filter string, locateOnce func(string) (store.Element, error)) ([]string, error) {
+// siteEdges is the edge filter of one seed's site query. The explicit filter
+// wins. A callee walk reads calls. A caller walk of a non-callable seed reads
+// calls and every references edge. A caller walk of a callable seed reads calls
+// and only the references edges that carry a use line (a value use such as a
+// method value passed as an argument); a references edge with no line is a
+// heuristic signature mention and is not a caller.
+func siteEdges(seed string, incoming bool, filter string, locateOnce func(string) (store.Element, error)) (edgeKeep, error) {
 	if filter != "" {
-		return []string{filter}, nil
+		return func(r store.Relationship) bool { return r.RelType == filter }, nil
 	}
 	if !incoming {
-		return []string{relCalls}, nil
+		return func(r store.Relationship) bool { return r.RelType == relCalls }, nil
 	}
 	el, err := locateOnce(seed)
 	if err != nil {
 		return nil, err
 	}
 	if nonCallable[el.ElementType] {
-		return []string{relCalls, relReferences}, nil
+		return func(r store.Relationship) bool {
+			return r.RelType == relCalls || r.RelType == relReferences
+		}, nil
 	}
-	return []string{relCalls}, nil
+	return func(r store.Relationship) bool {
+		if r.RelType == relCalls {
+			return true
+		}
+		_, valueUse := callLine(r.Metadata)
+		return r.RelType == relReferences && valueUse
+	}, nil
+}
+
+// methodOwner is the qualified name of the type a method belongs to. The index
+// spells a method "<rel>::<Type>.<name>", and a Go receiver is not a parent
+// node, so without a recorded parent the owner is the name minus ".<name>".
+func methodOwner(el store.Element) string {
+	if el.ParentQualified != "" {
+		return el.ParentQualified
+	}
+	return strings.TrimSuffix(el.QualifiedName, "."+el.Name)
 }
 
 // SiteEnds returns the deduplicated, sorted QN of each site.

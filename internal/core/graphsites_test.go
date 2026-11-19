@@ -138,7 +138,7 @@ func seedRefGraph(t *testing.T, e *Engine) {
 	if err := e.st.UpsertRelationships(ctx, []store.Relationship{
 		{Source: "internal/graph/graph.go::Impact", Target: "internal/graph/graph.go::Bounds", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(94)}},
 		{Source: "internal/core/core.go::Run", Target: "internal/core/core.go::Helper", RelType: "calls", Confidence: 0.5, Metadata: map[string]any{"line": float64(7)}},
-		{Source: "internal/core/core.go::Reader", Target: "internal/core/core.go::Helper", RelType: "references", Confidence: 0.5, Metadata: map[string]any{"line": float64(61)}},
+		{Source: "internal/core/core.go::Reader", Target: "internal/core/core.go::Helper", RelType: "references", Confidence: 0.5},
 	}); err != nil {
 		t.Fatal(err)
 	}
