@@ -89,52 +89,23 @@ var (
 func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fileElements, error) {
 	lines := strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
 
-	// Tree-sitter tier first (tstree build only): richer symbol extraction
-	// for the bundled grammars, with real end lines. No grammar for the
-	// language ⇒ nil ⇒ regex fallback below.
-	defs, err := tsExtract(ctx, src, lang)
-	if cerr := ctx.Err(); cerr != nil {
-		return fileElements{}, cerr
-	}
-	if err == nil && len(defs) > 0 {
-		fe := fileElements{rel: rel}
-		for _, d := range defs {
-			end := d.EndLine
-			if end < d.StartLine {
-				end = d.StartLine
-			}
-			e := indexedElem{
-				name: d.Name, etype: d.Kind, lang: lang,
-				start: d.StartLine, end: end, parent: -1,
-			}
-			if d.Kind == "constructor" || d.Kind == "constant" {
-				// The grammar names a constructor after the constructor, not the
-				// class (and an enum value carries no type at all); recv carries
-				// the owning type so qualify() spells "<file>::Class.ctor" and
-				// "<file>::Enum.value" without depending on line-based parent
-				// detection (a one-line body has none).
-				e.recv = d.Owner
-			}
-			if d.Kind == "method" && d.Owner != "" {
-				// A Go method's owning type is its RECEIVER, and the receiver
-				// is not an enclosing node — a Go method is a sibling of its
-				// type, not a child of it — so line-based parent detection
-				// cannot find it. Without recv the method's qualified name was
-				// "<file>::Method" instead of "<file>::Type.Method", and the
-				// same repository indexed under `-tags tstree` answered
-				// DIFFERENT qualified names than the shipped CGO-free build.
-				e.recv = d.Owner
-			}
-			fe.elements = append(fe.elements, e)
+	// Go: the standard-library parser is the definitions tier in every build
+	// (CGO-free). A file it rejects falls through to the regex tier below.
+	if lang == "go" {
+		if defs, imports, ok := goDefinitions(src); ok {
+			return finishDefinitions(ctx, rel, src, lines, lang, defs, imports)
 		}
-		assignParents(fe.elements)
-		qualify(fe)
-		boundContent(fe.elements, lines)
-		// Grammar-derived call sites seed "calls" edges in relationships().
-		if err := tsAttributeCalls(ctx, src, lang, fe.elements); err != nil {
-			return fileElements{}, err
+	} else {
+		// Tree-sitter tier (tstree build only): richer symbol extraction for
+		// the bundled grammars, with real end lines. No grammar for the
+		// language ⇒ nil ⇒ regex fallback below.
+		defs, err := tsExtract(ctx, src, lang)
+		if cerr := ctx.Err(); cerr != nil {
+			return fileElements{}, cerr
 		}
-		return fe, nil
+		if err == nil && len(defs) > 0 {
+			return finishDefinitions(ctx, rel, src, lines, lang, defs, nil)
+		}
 	}
 
 	var ms []match
@@ -197,15 +168,11 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 		}
 	}
 
-	fe := fileElements{rel: rel}
+	defs := make([]indexDef, len(ms))
 	for i, m := range ms {
-		fe.elements = append(fe.elements, indexedElem{
-			name: m.name, etype: m.kind, lang: lang,
-			start: m.line, end: ends[i], parent: -1, recv: m.recv,
-		})
+		defs[i] = indexDef{Kind: m.kind, Name: m.name, StartLine: m.line, EndLine: ends[i], Owner: m.recv}
 	}
-	assignParents(fe.elements)
-	qualify(fe)
+	fe := indexDefsToElements(rel, lang, defs)
 	if lang == "md" {
 		mdUniqueNames(fe.elements)
 		markdownContent(fe.elements, ms, ends, lines)
@@ -219,6 +186,55 @@ func extractFileAs(ctx context.Context, rel string, src []byte, lang string) (fi
 type fileElements struct {
 	rel      string
 	elements []indexedElem
+	// imports maps each explicit Go import alias to its import path; nil for
+	// other languages and for Go files with no aliased import.
+	imports map[string]string
+}
+
+// indexDefsToElements is the one place definitions become indexed elements:
+// the owning type rides on recv for members (method, constructor, constant),
+// the parent is found by line containment and qualified names are assigned.
+// Every tier (go parser, tree-sitter, regex) calls it.
+func indexDefsToElements(rel, lang string, defs []indexDef) fileElements {
+	fe := fileElements{rel: rel, elements: make([]indexedElem, len(defs))}
+	for i, d := range defs {
+		end := d.EndLine
+		if end < d.StartLine {
+			end = d.StartLine
+		}
+		e := indexedElem{
+			name: d.Name, etype: d.Kind, lang: lang,
+			start: d.StartLine, end: end, parent: -1,
+		}
+		switch d.Kind {
+		case "method", "constructor", "constant":
+			// A Go method's owning type is its RECEIVER, which is a sibling of
+			// the method rather than an enclosing node, so line-based parent
+			// detection cannot find it. A constructor is named after the
+			// constructor, and an enum value carries no type. recv carries the
+			// owner so qualify() spells "<file>::Type.member" without depending
+			// on line-based parent detection (a one-line body has none).
+			e.recv = d.Owner
+		}
+		fe.elements[i] = e
+	}
+	assignParents(fe.elements)
+	qualify(fe)
+	return fe
+}
+
+// finishDefinitions is the shared tail of the structural tiers (go parser and
+// tree-sitter): definitions become elements, content is bounded from the
+// source, and grammar-derived call seeds are attached.
+func finishDefinitions(ctx context.Context, rel string, src []byte, lines []string, lang string, defs []indexDef, imports map[string]string) (fileElements, error) {
+	fe := indexDefsToElements(rel, lang, defs)
+	fe.imports = imports
+	boundContent(fe.elements, lines)
+	// Grammar-derived call sites seed "calls" edges in relationships().
+	if err := tsAttributeCalls(ctx, src, lang, fe.elements); err != nil {
+		return fileElements{}, err
+	}
+	return fe, nil
 }
 
 // toStore converts extracted elements to store rows.
