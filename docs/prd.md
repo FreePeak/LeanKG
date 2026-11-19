@@ -2502,7 +2502,7 @@ without erroring. Gate: 62 packages ok, `go vet` clean, `gofmt` clean.
 
 **What landed:**
 
-- **`resolveGraphSeed`** in `internal/core` — graph verbs run `FindExact` first and traverse on the shortest qualified_name (same ranking L1 already uses). Bare names and full QNs both work; `resolved_query` / `resolved_to` echo the canonical form. Unknown seeds still surface `graph.ErrUnknownNode`.
+- **`resolveGraphSeeds`** in `internal/core` — graph verbs run `FindExact` first and traverse on the shortest qualified_name (same ranking L1 already uses). A bare name shared by callable elements (e.g. `Store.X` and `PGStore.X`) resolves to all of them, and `callers` / `callees` walk every one and report `seeds` plus `sites` (`<file>:<line> <qn> <confidence>`). Bare names and full QNs both work; `resolved_query` / `resolved_to` echo the canonical form. Unknown seeds still surface `graph.ErrUnknownNode`.
 - **Auth gate enablement** — `tokensConfigured` counts LIVE DB tokens only. Soft-revoked and expired rows no longer keep REST locked at 401; the documented ceiling shifts to "keep an env token if you must never run open".
 - **`compressRead` path anchor** — relative paths join `projectDir` before open, matching the import repo/dir contract.
 

@@ -5,5 +5,11 @@
   ],
   "freshness": "possibly_stale",
   "limit": 10,
-  "query": "src/beta.go::Beta"
+  "query": "src/beta.go::Beta",
+  "seeds": [
+    "src/beta.go::Beta"
+  ],
+  "sites": [
+    "src/alpha.go:1 src/alpha.go::Alpha 0.5"
+  ]
 }

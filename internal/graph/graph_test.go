@@ -131,19 +131,19 @@ func TestShortestPath(t *testing.T) {
 
 func TestCallersCalleesFilterRelType(t *testing.T) {
 	st := newFixture(t)
-	callers, err := Callers(context.Background(), st, "b")
+	callers, err := CallSites(context.Background(), st, []string{"b"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// only the "calls" edge counts; the imports edge must be filtered.
-	if got, want := callers, []string{"a"}; !reflect.DeepEqual(got, want) {
+	if got, want := SiteEnds(callers), []string{"a"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Callers(b) = %v, want %v", got, want)
 	}
-	callees, err := Callees(context.Background(), st, "b")
+	callees, err := CallSites(context.Background(), st, []string{"b"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := callees, []string{"c"}; !reflect.DeepEqual(got, want) {
+	if got, want := SiteEnds(callees), []string{"c"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Callees(b) = %v, want %v", got, want)
 	}
 }
