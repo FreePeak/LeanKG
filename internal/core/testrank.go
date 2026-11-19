@@ -48,9 +48,45 @@ func demotesTests(action string) bool {
 	return false
 }
 
+// Doc demotion. A markdown section matches a question in prose as well as the
+// code it documents, and bm25 favours the prose, so a question about the code
+// was answered by CLAUDE.md or a README chunk. Unless the question names docs,
+// a doc hit counts as docDemotion positions lower, on the same window as tests.
+// docDemotion is not swept: it is set to testDemotion so the two demotions
+// read the same way.
+const docDemotion = testDemotion
+
+// mentionsDocs reports whether a query asks about documentation, in which case
+// doc hits keep their natural rank.
+func mentionsDocs(q string) bool {
+	for _, w := range strings.Fields(strings.ToLower(q)) {
+		w = strings.Trim(w, ".,;:?!\"'`()")
+		switch w {
+		case "doc", "docs", "documentation", "documented", "readme", "markdown", "md", "mdx", "changelog", "guide":
+			return true
+		}
+		if strings.HasSuffix(w, ".md") || strings.HasSuffix(w, ".mdx") {
+			return true
+		}
+	}
+	return false
+}
+
+// isDocHit reports whether a ranked hit is documentation: a markdown section
+// (element_type doc) or a markdown file.
+func isDocHit(h map[string]any) bool {
+	if t, _ := h["element_type"].(string); t == "doc" {
+		return true
+	}
+	fp, _ := h["file_path"].(string)
+	return strings.HasSuffix(fp, ".md") || strings.HasSuffix(fp, ".mdx")
+}
+
 // demoteTestHits reorders hits so a test-file hit ranks testDemotion places
-// lower, then trims to limit. The order is otherwise stable.
-func demoteTestHits(hits []map[string]any, limit int) []map[string]any {
+// lower (when demoteTests is set) and a doc hit ranks docDemotion lower (when
+// demoteDocs is set), then trims to limit. A hit can take both. The order is
+// otherwise stable.
+func demoteTestHits(hits []map[string]any, limit int, demoteTests, demoteDocs bool) []map[string]any {
 	type ranked struct {
 		h   map[string]any
 		pos int
@@ -58,8 +94,11 @@ func demoteTestHits(hits []map[string]any, limit int) []map[string]any {
 	rs := make([]ranked, len(hits))
 	for i, h := range hits {
 		pos := i
-		if fp, _ := h["file_path"].(string); isTestPath(fp) {
+		if fp, _ := h["file_path"].(string); demoteTests && isTestPath(fp) {
 			pos += testDemotion
+		}
+		if demoteDocs && isDocHit(h) {
+			pos += docDemotion
 		}
 		rs[i] = ranked{h, pos}
 	}
