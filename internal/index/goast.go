@@ -14,10 +14,10 @@ import (
 // text. Kinds:
 //   - "ident": a bare identifier resolved in the same package (a function, type,
 //     const or var; never a method, which a bare identifier cannot name);
-//   - "qualified": alias.Name where alias is an import name (cross-package; the
-//     next resolver consumes these, relationships() does not);
-//   - "method": x.Name(...) where x is not an import name, resolved to the
-//     same-package methods named Name.
+//   - "qualified": alias.Name where alias is an import name (cross-package;
+//     resolved by qualifiedEdges from the file's qualified seeds);
+//   - "method": x.Name, called or taken as a value, where x is not an import
+//     name; resolved by name (crosspkg.go), never by type.
 //
 // Call is true for a call site (the CallExpr's function), false for a plain
 // reference (a type in a signature, a composite literal's type, a value use).
@@ -31,20 +31,21 @@ type goSeed struct {
 
 // goDefinitions parses one Go file with the standard-library parser and
 // returns its file-scope definitions, the name seeds of each definition (seeds[i]
-// belongs to defs[i]) and its explicit import aliases (alias -> import path). It
-// is CGO-free and used by every build. ok is false when the parser rejects the
-// file; the caller then falls back to the regex tier.
+// belongs to defs[i]), its import names (name -> import path, an unaliased
+// import under its default name) and the method names its interface types
+// declare. It is CGO-free and used by every build. ok is false when the parser
+// rejects the file; the caller then falls back to the regex tier.
 //
 // Ranges come from AST positions: a declaration starts on its keyword or name
 // line and ends on its last token, so a comment or a string that merely looks
 // like a declaration is never an element. Methods are owned by their receiver's
 // bare type name ("*Set[T]" -> "Set"). Interfaces and structs are one element
 // each; their members are not separate elements.
-func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, ok bool) {
+func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[string]string, ifaces []string, ok bool) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
 	if err != nil {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	w := &seedWalker{fset: fset, imports: importNames(f)}
 	line := func(p token.Pos) int { return fset.Position(p).Line }
@@ -69,6 +70,9 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 				for _, s := range d.Specs {
 					ts := s.(*ast.TypeSpec)
 					add("type", ts.Name.Name, ts.Pos(), ts.End(), "", w.seeds(ts))
+					if it, ok := ts.Type.(*ast.InterfaceType); ok {
+						ifaces = append(ifaces, interfaceMethodNames(it)...)
+					}
 				}
 			case token.CONST, token.VAR:
 				kind := "variable"
@@ -85,22 +89,42 @@ func goDefinitions(src []byte) (defs []indexDef, seeds [][]goSeed, imports map[s
 			case token.IMPORT:
 				for _, s := range d.Specs {
 					is := s.(*ast.ImportSpec)
-					if is.Name == nil || is.Name.Name == "_" || is.Name.Name == "." {
-						continue
-					}
 					path, err := strconv.Unquote(is.Path.Value)
 					if err != nil {
+						continue
+					}
+					name := defaultPackageName(path)
+					if is.Name != nil {
+						name = is.Name.Name
+					}
+					if name == "_" || name == "." || name == "" {
 						continue
 					}
 					if imports == nil {
 						imports = map[string]string{}
 					}
-					imports[is.Name.Name] = path
+					imports[name] = path
 				}
 			}
 		}
 	}
-	return defs, seeds, imports, true
+	return defs, seeds, imports, ifaces, true
+}
+
+// interfaceMethodNames returns the method names an interface type declares.
+// Embedded interfaces and type-set terms have no name of their own and are
+// skipped.
+func interfaceMethodNames(it *ast.InterfaceType) []string {
+	if it.Methods == nil {
+		return nil
+	}
+	var out []string
+	for _, f := range it.Methods.List {
+		for _, n := range f.Names {
+			out = append(out, n.Name)
+		}
+	}
+	return out
 }
 
 // qualifiedOf collects the qualified seeds of already-qualified elements (their
@@ -261,15 +285,14 @@ func (w *seedWalker) use(e ast.Expr, call bool) {
 		w.ident(f, call)
 	case *ast.SelectorExpr:
 		x, isIdent := f.X.(*ast.Ident)
-		switch {
-		case isIdent && w.imports[x.Name] && !w.locals[x.Name]:
+		if isIdent && w.imports[x.Name] && !w.locals[x.Name] {
 			w.add(goSeed{Kind: "qualified", Alias: x.Name, Name: f.Sel.Name, Line: w.line(f.Sel.Pos()), Call: call})
-		case call:
-			w.add(goSeed{Kind: "method", Name: f.Sel.Name, Line: w.line(f.Sel.Pos()), Call: true})
-			w.walk(f.X)
-		default:
-			w.walk(f.X)
+			return
 		}
+		// Any other selector is a method, whether called or taken as a value
+		// (s.handle passed to a function); a field read is not told apart.
+		w.add(goSeed{Kind: "method", Name: f.Sel.Name, Line: w.line(f.Sel.Pos()), Call: call})
+		w.walk(f.X)
 	default:
 		w.walk(e)
 	}

@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -138,14 +139,15 @@ func TestGoParseErrorFallsBackToRegex(t *testing.T) {
 	}
 }
 
-// TestGoImportAliasesRecorded pins that explicit import aliases are kept on
-// the file result (alias -> import path). Blank and unaliased imports carry
-// no alias and are not recorded.
+// TestGoImportAliasesRecorded pins that the file result maps each import name
+// (the explicit alias, or the default package name of an unaliased import) to
+// its import path. Blank imports carry no name and are not recorded.
 func TestGoImportAliasesRecorded(t *testing.T) {
 	src := "package a\n\nimport (\n\tcfg \"github.com/x/config\"\n\t\"fmt\"\n\t_ \"embed\"\n)\n\nfunc F() { fmt.Println(cfg.X) }\n"
 	fe := extractAs(t, "a.go", []byte(src), "go")
-	if len(fe.imports) != 1 || fe.imports["cfg"] != "github.com/x/config" {
-		t.Fatalf("imports = %v, want map[cfg:github.com/x/config]", fe.imports)
+	want := map[string]string{"cfg": "github.com/x/config", "fmt": "fmt"}
+	if !maps.Equal(fe.imports, want) {
+		t.Fatalf("imports = %v, want %v", fe.imports, want)
 	}
 }
 
@@ -241,9 +243,11 @@ func TestGoNameSeeds(t *testing.T) {
 		name string
 		want []string
 	}{
-		{"F", []string{"ident:Widget 10 false", "ident:int 10 false", "ident:helper 11 true"}},
+		// w.Name is a field read; the AST tier cannot tell it from a method value,
+		// so it is a method seed by name (a documented ceiling).
+		{"F", []string{"ident:Widget 10 false", "ident:int 10 false", "ident:helper 11 true", "method:Name 11 false"}},
 		{"G", []string{"ident:Widget 14 false", "qualified:cfg.Load 15 true", "qualified:util.Do 16 true", "method:Run 16 true", "qualified:cfg.Value 16 false"}},
-		{"H", []string{"ident:Widget 19 false", "ident:int 19 false"}},
+		{"H", []string{"ident:Widget 19 false", "ident:int 19 false", "method:N 22 false"}},
 		{"Config", []string{"ident:string 28 false", "ident:Widget 29 false"}},
 		{"def", []string{"ident:Config 32 false", "ident:fallback 32 true"}},
 	}

@@ -14,6 +14,9 @@ type Store interface {
 	store.IndexWriter
 	store.KV
 	Elements(ctx context.Context) ([]store.Element, error)
+	// FindExact returns the elements whose name or qualified name matches name
+	// case-insensitively, at most 200 of them (cross-package resolution filters).
+	FindExact(ctx context.Context, name string) ([]store.Element, error)
 	RelationshipsAll(ctx context.Context, limit int) ([]store.Relationship, error)
 	DeleteOrphanRelationships(ctx context.Context) (int, error)
 	DeleteOrphanVectors(ctx context.Context) (int, error)

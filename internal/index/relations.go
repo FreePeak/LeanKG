@@ -55,10 +55,16 @@ func callEdges(rels []store.Relationship) []store.Relationship {
 
 // nameTable maps the element names of one directory to their qualified names,
 // changed and unchanged files alike; call targets may live in any of them.
+// forFile adds the cross-package view of one Go file.
 type nameTable struct {
 	all     map[string][]string // every element: the word heuristic and grammar seeds
 	funcs   map[string][]string // non-method elements: a bare Go identifier's targets
 	methods map[string][]string // methods: x.Name(...) targets
+
+	cross   *crossIndex
+	imports map[string]string // import name -> directory of the imported package
+	dirs    map[string]bool   // the directories of imports
+	file    string            // the file whose seeds are resolved
 }
 
 // nameTableOf indexes the qualified names of a directory's elements by name.
@@ -75,15 +81,95 @@ func nameTableOf(els []indexedElem) nameTable {
 	return nt
 }
 
+// forFile returns the table with the cross-package view of fe, the Go file the
+// seeds come from.
+func (nt nameTable) forFile(cx *crossIndex, fe fileElements) nameTable {
+	out := nt
+	out.cross = cx
+	out.file = fe.rel
+	out.imports = cx.importDirs(fe.imports)
+	out.dirs = map[string]bool{}
+	for _, d := range out.imports {
+		out.dirs[d] = true
+	}
+	return out
+}
+
+// methodTarget is one candidate of a method seed.
+type methodTarget struct {
+	qn, resolution string
+	conf           float64
+}
+
+// methodTargets resolves a method seed by name: same-package methods first,
+// then the methods of the imported packages when the package has none, and
+// then, for an interface method name, the module's implementers (crosspkg.go).
+func (nt nameTable) methodTargets(name string) []methodTarget {
+	var out []methodTarget
+	for _, q := range nt.methods[name] {
+		out = append(out, methodTarget{qn: q, conf: methodConf, resolution: "method-by-name"})
+	}
+	if nt.cross == nil {
+		return out
+	}
+	if len(out) == 0 {
+		for _, q := range nt.cross.methodsIn(name, nt.dirs) {
+			out = append(out, methodTarget{qn: q, conf: methodConf, resolution: "method-by-name"})
+		}
+	}
+	for _, q := range nt.cross.dispatchTargets(name, nt.file, dirOf(nt.file)) {
+		out = append(out, methodTarget{qn: q, conf: dispatchConf, resolution: "interface-dispatch"})
+	}
+	return out
+}
+
+// qualifiedEdges resolves a file's qualified seeds (alias.Name) to the exported
+// elements of the imported directory, at confidence 0.8 with the use line. The
+// caps of relationships() do not apply to them: each is an exact import use.
+func qualifiedEdges(quals []qualifiedSeed, names nameTable) []store.Relationship {
+	var out []store.Relationship
+	seen := map[[3]string]bool{}
+	for _, q := range quals {
+		dir, ok := names.imports[q.Alias]
+		if !ok {
+			continue
+		}
+		rel := "references"
+		if q.Call {
+			rel = "calls"
+		}
+		for _, tqn := range names.cross.qualifiedTargets(dir, q.Name) {
+			key := [3]string{q.Source, tqn, rel}
+			if q.Source == tqn || seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, store.Relationship{
+				Source: q.Source, Target: tqn, RelType: rel, Confidence: qualifiedConf,
+				Metadata: map[string]any{"line": q.Line},
+			})
+		}
+	}
+	return out
+}
+
+// fileRelationships is the whole relationship batch of one Go or other file:
+// relationships() for its elements plus the cross-package edges of its
+// qualified seeds. names must come from forFile for a Go file.
+func fileRelationships(fe fileElements, names nameTable) []store.Relationship {
+	return append(relationships(fe.elements, names), qualifiedEdges(fe.qualified, names)...)
+}
+
 // relationships computes the relationship batch for one file's elements:
 //   - contains: parent -> child, confidence 1.0;
 //   - Go elements from the AST tier (seeded): each name seed resolves in the
 //     element's directory. A bare identifier resolves to same-package non-method
 //     elements (calls for a call site, references otherwise; confidence 0.5). An
-//     x.Name(...) method seed resolves to same-package methods named Name
-//     (confidence 0.4, resolution "method-by-name"). Every such edge carries its
-//     first call-site line as metadata {"line": N}. Qualified seeds (alias.Name)
-//     are left for the cross-package resolver and make no edge here;
+//     x.Name method seed (called or taken as a value) resolves by name through
+//     methodTargets (confidence 0.4, resolution "method-by-name", or 0.3 for
+//     "interface-dispatch"). Every such edge carries its first use line as
+//     metadata {"line": N}. Qualified seeds (alias.Name) make their edges in
+//     qualifiedEdges, outside these caps;
 //   - other elements: a whole-word identifier in the element's content matching
 //     another element's name (confidence 0.5, self-calls dropped, one row per
 //     (source, target) pair), plus the grammar-derived call seeds carried by
@@ -150,26 +236,33 @@ func relationships(els []indexedElem, names nameTable) []store.Relationship {
 					break
 				}
 				if s.Kind == "qualified" {
-					continue // cross-package: resolved by the next slice
+					continue // cross-package: qualifiedEdges
 				}
 				rel := "references"
 				if s.Call && callRel == "calls" {
 					rel = "calls"
 				}
-				targets, conf, meta := names.funcs[s.Name], 0.5, map[string]any{"line": s.Line}
+				var targets []methodTarget
 				if s.Kind == "method" {
-					targets, conf = names.methods[s.Name], 0.4
-					meta["resolution"] = "method-by-name"
+					targets = names.methodTargets(s.Name)
+				} else {
+					for _, q := range names.funcs[s.Name] {
+						targets = append(targets, methodTarget{qn: q, conf: 0.5})
+					}
 				}
-				for _, tqn := range targets {
+				for _, t := range targets {
 					if outgoing >= maxEdgesPerElement {
 						break
 					}
-					if linked[tqn] {
+					if linked[t.qn] {
 						continue
 					}
+					meta := map[string]any{"line": s.Line}
+					if t.resolution != "" {
+						meta["resolution"] = t.resolution
+					}
 					before := len(out)
-					add(e.qn, tqn, rel, conf, meta)
+					add(e.qn, t.qn, rel, t.conf, meta)
 					if len(out) > before {
 						outgoing++
 					}

@@ -70,6 +70,9 @@ func indexedGraph(t *testing.T, files map[string]string) store.Backend {
 	ctx := context.Background()
 	dir := t.TempDir()
 	for name, src := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}

@@ -276,9 +276,12 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // same-named elements on upsert and carry edges to table names and padded types;
 // v8 (Go call and reference edges from the AST: whole-body name seeds with
 // call-site lines, no word heuristic for AST elements, locals and comments never
-// edges) changes every Go edge set, so stores re-extract once.
+// edges) changes every Go edge set, so stores re-extract once; v9 (cross-package
+// Go edges: qualified alias.Name calls, method seeds by name and interface
+// dispatch, uncalled method values as references) adds edges that no v8 store
+// has, so stores re-extract once.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "8"
+const extractorVersion = "9"
 
 const extractorKVKey = "extractor_version"
 
@@ -457,6 +460,14 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 		}
 	}
 	slices.Sort(dirOrder) // a stable order across runs, so the cursor means the same thing in each
+	changedDirs := make(map[string]bool, len(dirOrder))
+	for _, d := range dirOrder {
+		changedDirs[d] = true
+	}
+	cx, err := newCrossIndex(ctx, st, dirCands, changedDirs, rd)
+	if err != nil {
+		return res, err
+	}
 
 	// pendingFile pairs each extracted file with its own record: a specialist
 	// file that writes itself is dropped here, so later files must not shift.
@@ -546,13 +557,16 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 			dirEls = append(dirEls, extracted[c.rel]...)
 		}
 		names := nameTableOf(dirEls)
+		if err := cx.prefetch(ctx, st, dirEls); err != nil {
+			return res, err
+		}
 		// Sibling edges go first: a cancel or crash after this point leaves the
 		// changed files' records stale, so the rerun redoes the whole directory.
 		for _, fe := range siblings {
 			if err := ctx.Err(); err != nil {
 				return res, err
 			}
-			rels := callEdges(relationships(fe.elements, names))
+			rels := callEdges(fileRelationships(fe, names.forFile(cx, fe)))
 			if err := st.ReplaceFileRelationships(wctx, fe.rel, callEdgeTypes, rels); err != nil {
 				return res, err
 			}
@@ -571,7 +585,7 @@ func indexDir(ctx context.Context, st Store, dir string, owner extOwnerFunc) (re
 				if err := st.UpsertElements(wctx, p.fe.toStore()); err != nil {
 					return err
 				}
-				rels := relationships(p.fe.elements, names)
+				rels := fileRelationships(p.fe, names.forFile(cx, p.fe))
 				if err := st.UpsertRelationships(wctx, rels); err != nil {
 					return err
 				}

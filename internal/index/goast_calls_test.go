@@ -112,10 +112,11 @@ func TestGoMethodByNameEdgeIsLowConfidenceWithLine(t *testing.T) {
 	}
 }
 
-// TestGoQualifiedCallHasNoEdgeYet: store.Open(...) names a package through an
-// import, not the same-package Open. No edge is written (cross-package
-// resolution is the next slice), so the same-named local Open is not linked.
-func TestGoQualifiedCallHasNoEdgeYet(t *testing.T) {
+// TestGoQualifiedCallWithoutRepoPackageHasNoEdge: store.Open(...) names a package
+// through an import, not the same-package Open. The import's package is not in
+// the run (an external path), so nothing resolves and the same-named local Open
+// is not linked.
+func TestGoQualifiedCallWithoutRepoPackageHasNoEdge(t *testing.T) {
 	st := indexedGraph(t, map[string]string{
 		"a.go": "package a\n\nimport \"example.com/x/store\"\n\nfunc Use() {\n\tstore.Open(\"p\")\n}\n",
 		"b.go": "package a\n\nfunc Open(p string) {}\n",
