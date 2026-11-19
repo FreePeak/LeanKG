@@ -267,9 +267,12 @@ func checkRoot(ctx context.Context, st store.KV, dir string, hasFiles bool) erro
 // cross-file edges on incremental runs, and the bump re-extracts them once;
 // v5 (doc-comment boundaries, type/class references only, line comments not
 // scanned): stores indexed before it carry calls edges from prose mentions and
-// absorbed doc blocks, and the bump re-extracts them once.
+// absorbed doc blocks, and the bump re-extracts them once; v6 (Go definitions
+// from the go/parser AST: package-level const and var names, every type kind,
+// AST line ranges, generic receivers owned by the bare type name) changes the
+// Go element set and ranges, so stores re-extract once.
 // A store recorded under another version re-extracts every file once.
-const extractorVersion = "5"
+const extractorVersion = "6"
 
 const extractorKVKey = "extractor_version"
 
