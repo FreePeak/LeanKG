@@ -15,6 +15,18 @@
      "line": 545
     },
     {
+     "file": "internal/index/packages.go",
+     "func": "refreshPackages",
+     "test": false,
+     "line": 225
+    },
+    {
+     "file": "internal/index/packages.go",
+     "func": "writeGoPackage",
+     "test": false,
+     "line": 256
+    },
+    {
      "file": "internal/store/store_test.go",
      "func": "checkReplaceFileRelationships",
      "test": true,
@@ -958,6 +970,12 @@
      "func": "TestGoPackageLevelDeclarationsAreQueryable",
      "test": true,
      "line": 159
+    },
+    {
+     "file": "internal/doctor/doctor_test.go",
+     "func": "TestPackageElementsAreNotFiles",
+     "test": true,
+     "line": 563
     }
    ],
    "defects": [
@@ -1759,6 +1777,12 @@
      "line": 450
     },
     {
+     "file": "internal/refresh/refresh_test.go",
+     "func": "TestRunIndexesCodeDocsAndEmbeds",
+     "test": true,
+     "line": 126
+    },
+    {
      "file": "internal/store/vectors.go",
      "func": "RefreshInventory",
      "test": false,
@@ -1788,6 +1812,12 @@
      "func": "RefreshInventory",
      "test": false,
      "line": 853
+    },
+    {
+     "file": "internal/refresh/refresh_test.go",
+     "func": "TestRunIndexesCodeDocsAndEmbeds",
+     "test": true,
+     "line": 126
     }
    ]
   },
