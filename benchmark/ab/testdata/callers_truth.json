@@ -1325,12 +1325,6 @@
    "class": "qualified",
    "callers": [
     {
-     "file": "internal/core/actions.go",
-     "func": "Engine.graphCallSites",
-     "test": false,
-     "line": 471
-    },
-    {
      "file": "internal/graph/budget_test.go",
      "func": "TestCallersHonourCancelledCtx",
      "test": true,
@@ -1377,6 +1371,12 @@
      "func": "TestCallersOfTypeIncludeReferenceUsers",
      "test": true,
      "line": 248
+    },
+    {
+     "file": "internal/graph/graph_test.go",
+     "func": "TestCallSitesOnePerCallLine",
+     "test": true,
+     "line": 427
     }
    ]
   },
@@ -2005,6 +2005,46 @@
      "line": 158
     }
    ]
+  },
+  {
+   "id": "SitesBySeed",
+   "qualified_name": "internal/graph/graph.go::SitesBySeed",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "internal/graph/graph.go",
+     "func": "CallSites",
+     "test": false,
+     "line": 311
+    },
+    {
+     "file": "internal/core/actions.go",
+     "func": "Engine.graphCallSites",
+     "test": false,
+     "line": 535
+    }
+   ],
+   "defects": []
+  },
+  {
+   "id": "UnionSites",
+   "qualified_name": "internal/graph/graph.go::UnionSites",
+   "class": "qualified",
+   "callers": [
+    {
+     "file": "internal/graph/graph.go",
+     "func": "CallSites",
+     "test": false,
+     "line": 315
+    },
+    {
+     "file": "internal/core/actions.go",
+     "func": "Engine.graphCallSites",
+     "test": false,
+     "line": 539
+    }
+   ],
+   "defects": []
   }
  ]
 }

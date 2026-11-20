@@ -1049,6 +1049,11 @@ func shapeElement(el store.Element, limit int) map[string]any {
 	if el.ParentQualified != "" {
 		m["parent_qualified"] = el.ParentQualified
 	}
+	// A spec is a declaration, not an implementer, which changes what the
+	// element means, so the flag is kept on compact hits too.
+	if graph.IsInterfaceSpec(el) {
+		m["interface_spec"] = true
+	}
 	content := el.Content
 	if len(content) > hitSnippetBytes {
 		content = content[:hitSnippetBytes] + "…"
@@ -1843,6 +1848,40 @@ func scopePredicate(scope string) (store.ElementFilter, string, error) {
 		return fixtureFilter, ScopeProd, nil
 	}
 	return store.ElementFilter{}, "", fmt.Errorf("unknown scope %q (valid: all, code, prod)", scope)
+}
+
+// graphScope is the file rule a graph verb's args.scope applies to the files its
+// answer names (a caller's file, an impact node's file). prod keeps production
+// files (drops test files, reusing isTestPath); code drops markdown documents
+// (markdownFilter); all keeps everything. It returns the scope name the answer
+// echoes. An unknown value is the error scopePredicate gives.
+func graphScope(scope string) (keep func(file string) bool, name string, err error) {
+	_, name, err = scopePredicate(scope)
+	if err != nil {
+		return nil, "", err
+	}
+	switch name {
+	case ScopeProd:
+		return func(file string) bool { return !isTestPath(file) }, name, nil
+	case ScopeCode:
+		return func(file string) bool { return markdownFilter.Admits(store.Element{FilePath: file}) }, name, nil
+	}
+	return func(string) bool { return true }, name, nil
+}
+
+// keepSiteFiles drops the sites of every seed whose file keep rejects.
+func keepSiteFiles(bySeed map[string][]graph.Site, keep func(file string) bool) map[string][]graph.Site {
+	out := make(map[string][]graph.Site, len(bySeed))
+	for seed, sites := range bySeed {
+		kept := make([]graph.Site, 0, len(sites))
+		for _, s := range sites {
+			if keep(s.File) {
+				kept = append(kept, s)
+			}
+		}
+		out[seed] = kept
+	}
+	return out
 }
 
 // fixtureFilter excludes test fixtures; archivedFilter excludes archived docs;

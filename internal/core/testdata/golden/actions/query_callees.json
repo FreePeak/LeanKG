@@ -3,6 +3,7 @@
   "callees": [
     "src/beta.go::Beta"
   ],
+  "filtered_out": 0,
   "freshness": "possibly_stale",
   "limit": 10,
   "query": "src/alpha.go::Alpha",
@@ -10,6 +11,7 @@
     "calls"
   ],
   "resolved": true,
+  "scope": "all",
   "seed_counts": {
     "src/alpha.go::Alpha": 1
   },

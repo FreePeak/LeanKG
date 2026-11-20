@@ -169,7 +169,8 @@ const serverInstructionsTemplate = `LeanKG is a code knowledge graph (exactly 4 
 7. Call sites: callers, callees and impact take a qualified name; use them instead of re-grepping for a function's uses. callers on a bare method name merges every type that has it; pass a qualified name (file::Type.Method) to narrow; unknown names return did_you_mean.
 8. Who references a symbol: query action=context with its qualified name. context on a package path (the directory) lists who imports it and what it imports; on a qualified element name it lists its edges.
 9. A file's git history: query action=history with the file path (after import action=git).
-10. Literal text search (a string, a comment, a config key): rg is fine; the index holds symbols, not every string.`
+10. Literal text search (a string, a comment, a config key): rg is fine; the index holds symbols, not every string.
+11. callers/callees accept scope=prod to drop test callers; interface specs (interface_spec:true) are declarations, not implementers.`
 
 // projectRuleRequired is the project clause for a server that serves several
 // projects. The tool schema already requires the argument there; the clause

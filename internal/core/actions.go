@@ -404,6 +404,19 @@ func (e *Engine) graphImpact(ctx context.Context, req QueryRequest, a graphArgs,
 	if err != nil {
 		return nil, err
 	}
+	keep, scope, err := graphScope(a.Scope)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]graph.Hit, 0, len(hits))
+	for _, h := range hits {
+		if file, _, _ := strings.Cut(h.QN, "::"); keep(file) {
+			kept = append(kept, h)
+		}
+	}
+	resp["scope"] = scope
+	resp["filtered_out"] = len(hits) - len(kept)
+	hits = kept
 	// The result carries the VERB's name, like every other graph verb:
 	// impact under `hits` was the same key the search ladder uses, and
 	// these are different shapes (qualified_name + depth, not elements),
@@ -473,11 +486,11 @@ func (e *Engine) graphPath(ctx context.Context, req QueryRequest, a graphArgs, s
 }
 
 func (e *Engine) graphCallers(ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
-	return e.graphCallSites(ctx, req, seeds, true, a.RelType, "callers", resp)
+	return e.graphCallSites(ctx, req, a, seeds, true, "callers", resp)
 }
 
 func (e *Engine) graphCallees(ctx context.Context, req QueryRequest, a graphArgs, seeds []string, resp map[string]any) (map[string]any, error) {
-	return e.graphCallSites(ctx, req, seeds, false, a.RelType, "callees", resp)
+	return e.graphCallSites(ctx, req, a, seeds, false, "callees", resp)
 }
 
 // graphSiteLimit is the default cap on the sites a caller or callee answer
@@ -495,7 +508,12 @@ const graphSeedLead = 3
 // counts, and one "<file>:<line> <qn> <confidence>" line per call site. Sites
 // list production callers before test callers and are capped at graphSiteLimit
 // (or the caller's limit); total_sites and truncated say what the cap left out.
-func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, seeds []string, incoming bool, relType, key string, resp map[string]any) (map[string]any, error) {
+//
+// A caller walk of an interface spec also walks the implementers and the
+// sharing specs it dispatches through (graph.ExpandSpecSeeds); seeds reports
+// that expanded set. args.scope drops the sites whose file the scope excludes
+// (graphScope); filtered_out counts them.
+func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, a graphArgs, seeds []string, incoming bool, key string, resp map[string]any) (map[string]any, error) {
 	resolved, err := e.seedsResolved(ctx, seeds)
 	if err != nil {
 		return nil, err
@@ -503,13 +521,26 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, seeds []s
 	if !resolved {
 		return e.graphUnknownSeed(ctx, req, seeds, key, resp)
 	}
-	bySeed, err := graph.SitesBySeed(ctx, e.st, seeds, incoming, relType)
+	keep, scope, err := graphScope(a.Scope)
 	if err != nil {
 		return nil, err
 	}
-	sites := graph.UnionSites(seeds, bySeed)
+	walk := seeds
+	if incoming {
+		walk, err = graph.ExpandSpecSeeds(ctx, e.st, seeds)
+		if err != nil {
+			return nil, err
+		}
+	}
+	bySeed, err := graph.SitesBySeed(ctx, e.st, walk, incoming, a.RelType)
+	if err != nil {
+		return nil, err
+	}
+	all := graph.UnionSites(walk, bySeed)
+	bySeed = keepSiteFiles(bySeed, keep)
+	sites := graph.UnionSites(walk, bySeed)
 	callers := graph.SiteEnds(sites)
-	counts := seedCounts(seeds, bySeed)
+	counts := seedCounts(walk, bySeed)
 	limit := graphSiteLimit
 	if req.Limit > 0 {
 		limit = req.Limit
@@ -518,9 +549,11 @@ func (e *Engine) graphCallSites(ctx context.Context, req QueryRequest, seeds []s
 	if len(shown) > limit {
 		shown = shown[:limit]
 	}
-	resp["seeds"] = seeds
+	resp["seeds"] = walk
 	resp["resolved"] = true
 	resp["seed_counts"] = counts
+	resp["scope"] = scope
+	resp["filtered_out"] = len(all) - len(sites)
 	resp[key] = callers
 	resp["sites"] = siteLines(shown)
 	resp["total_sites"] = len(sites)
