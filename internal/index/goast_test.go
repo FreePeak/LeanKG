@@ -27,7 +27,8 @@ func elementSet(fe fileElements) []string {
 // TestGoDefinitionsAreElements pins the exact element set the Go extractor
 // emits for each declaration shape. Package-level const and var names are
 // elements, every type kind is a type element, an interface is one element
-// (its method specs are not), a generic receiver owns its method by the bare
+// whose declared method specs are method elements (an embedded interface is
+// not one), a generic receiver owns its method by the bare
 // type name, and text inside a comment or a blank name is never an element.
 func TestGoDefinitionsAreElements(t *testing.T) {
 	cases := []struct {
@@ -67,11 +68,13 @@ func TestGoDefinitionsAreElements(t *testing.T) {
 			},
 		},
 		{
-			name: "interface is one element, method specs are not",
+			name: "interface is one element, each method spec is a method element",
 			rel:  "a.go",
 			src:  "package a\n\ntype Reader interface {\n\tRead(p []byte) (int, error)\n\tClose() error\n}\n",
 			want: []string{
 				"a.go::Reader type 3-6",
+				"a.go::Reader.Close method 5-5",
+				"a.go::Reader.Read method 4-4",
 			},
 		},
 		{

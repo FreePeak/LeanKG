@@ -11,4 +11,7 @@ type indexDef struct {
 	// scope); a member whose name carries no owning type (dart constructors)
 	// uses it as that type.
 	Owner string
+	// Spec marks a Go interface method spec: a declared method with no body,
+	// owned by its interface. The element carries interface_spec in its metadata.
+	Spec bool
 }
